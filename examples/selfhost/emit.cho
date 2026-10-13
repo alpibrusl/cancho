@@ -137,6 +137,10 @@ pub fn label[&s](st: &!s [int]) -> [] int {
 // ------------------------------------------------------------------ types, operands ---
 
 pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
+    if types.is_erased(st, ty) {
+        // A capability held in a struct has no value, but the aggregate has a place for it.
+        return str(st, "{}");
+    }
     if ty == 3 {
         return str(st, "double");
     }
@@ -225,6 +229,9 @@ pub fn field_node[&s](st: &!s [int], item: int, index: int) -> [] int {
 // The aggregate value `acc` (or `undef` when it is -1) of type `ty` with element `index` of type
 // `fty` set to the operand.
 pub fn insert_at[&s](st: &!s [int], ty: int, acc: int, index: int, fty: int, known: bool, value: int, reg: int) -> [] int {
+    if types.is_erased(st, fty) {
+        return acc;
+    }
     let n = start(st);
     str(st, "insertvalue ");
     llvm_type(st, ty);
@@ -376,6 +383,10 @@ pub fn operand[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) ->
         // A string literal's global, `@str.<n>`, kept as `-2 - n`.
         str(st, "@str.");
         return nat(st, 0 - 2 - reg);
+    }
+    if !known && reg == 0 - 1 && types.is_named(st, ty) {
+        // A struct of capabilities has no value to hold.
+        return str(st, "zeroinitializer");
     }
     if known {
         if ty == 5 {

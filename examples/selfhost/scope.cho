@@ -216,7 +216,7 @@ fn node_codable[&s](st: &!s [int], node: int, ctx: int, depth: int) -> [] bool {
     if t == 0 {
         return false;
     }
-    if types.is_plain(t) {
+    if types.is_plain(t) || types.is_erased(st, t) {
         return true;
     }
     if types.is_boxslice(st, t) || types.is_box(st, t) || types.is_handle(st, t) || types.is_penum(st, t) {

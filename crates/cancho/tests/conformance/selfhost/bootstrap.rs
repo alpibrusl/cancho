@@ -49,6 +49,7 @@ fn own_source(root_module: &str) -> String {
         "netcode",
         "platform",
         "wordcode",
+        "lookup",
         "exprs",
         "body",
         "listing",

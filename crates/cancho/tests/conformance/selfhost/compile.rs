@@ -675,11 +675,21 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     // builds use names of their own, for they run at the same time.
     let probe = include_str!("dirs_probe.cho");
     jobs.push((probe.replace("NAME", "rust"), probe.replace("NAME", "cancho")));
-    // Programs of `tests/accept` that import nothing: what a block defers, run at each of its exits.
-    let defer =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/accept/defer.cho");
-    let program = std::fs::read_to_string(&defer).expect("a program of tests/accept");
-    jobs.push((program.clone(), program));
+    // Programs of `tests/accept` that import nothing: what a block defers, run at each of its exits; a struct that
+    // holds capabilities; capabilities forked.
+    for name in [
+        "defer",
+        "spawn_heap_in_struct",
+        "narrow_many_in_struct",
+        "fork_heap_workers",
+        "fork_clock_workers",
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/accept")
+            .join(format!("{name}.cho"));
+        let program = std::fs::read_to_string(&path).expect("a program of tests/accept");
+        jobs.push((program.clone(), program));
+    }
     for text in DOUBLE_LITERALS {
         let bits = text.replace('_', "").parse::<f64>().expect("a double").to_bits() as i64;
         let program = format!(

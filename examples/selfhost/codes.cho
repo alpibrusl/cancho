@@ -264,5 +264,11 @@ pub fn word_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     if lc.spells(text, from, to, "popcount") {
         return 80;
     }
+    if lc.spells(text, from, to, "fork_heap") {
+        return 81;
+    }
+    if lc.spells(text, from, to, "fork_clock") {
+        return 82;
+    }
     return 0;
 }

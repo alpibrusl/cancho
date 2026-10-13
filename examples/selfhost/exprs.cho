@@ -19,6 +19,7 @@ import selfhost.codes;
 import selfhost.threadcode;
 import selfhost.externcode;
 import selfhost.netcode;
+import selfhost.lookup;
 import selfhost.wordcode;
 import selfhost.instances;
 import selfhost.scope;
@@ -80,7 +81,7 @@ pub fn skip[&s](st: &!s [int], from: int, to: int) -> [] Ex {
 pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
-    if emit.on(st) && !writes_code(st, id) {
+    if emit.on(st) && !lookup.writes_code(st, id) {
         return skip(st, from, to);
     }
     if ast.is_kind(st, id, kinds.NK::EInt) {
@@ -188,7 +189,7 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         ast.fail(st, rules.r_not_an_enum(), from, to);
         return nothing();
     }
-    let variant = variant_named(st, text, item, ast.get(st, id, 6));
+    let variant = lookup.variant_named(st, text, item, ast.get(st, id, 6));
     if variant < 0 {
         ast.fail(st, rules.r_unknown_name(), from, to);
         return nothing();
@@ -609,24 +610,11 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
     return in_reg(boxed, emit.make_box(st, boxed, p, c.known, c.value, c.reg));
 }
 
-// The arm of the prelude enum `index` called like token `name`, as its number among all arms, or -1.
-pub fn prelude_arm_named[&s, &x](st: &!s [int], text: &x [byte], index: int, name: int) -> [] int {
-    let first = builtins.prelude_arm_first(index);
-    var k = 0;
-    while k < builtins.prelude_arm_count(index) {
-        if lc.spells(text, ast.tstart(st, name), ast.tend(st, name), builtins.arm_name(first + k)) {
-            return first + k;
-        }
-        k = k + 1;
-    }
-    return 0 - 1;
-}
-
 // `Spawned::Ok(child)`, `Stdio::Null`: a value of a prelude enum, each payload of the type the arm names.
 pub fn prelude_variant[&s, &x](st: &!s [int], text: &x [byte], id: int, index: int) -> [] Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
-    let arm = prelude_arm_named(st, text, index, ast.get(st, id, 6));
+    let arm = lookup.prelude_arm_named(st, text, index, ast.get(st, id, 6));
     if arm < 0 {
         ast.fail(st, rules.r_unknown_name(), from, to);
         return nothing();
@@ -772,30 +760,6 @@ pub fn alloc_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     return in_reg(result, emit.arena_value(st, arena, v.ty, v.known, v.value, v.reg));
 }
 
-// The Variant node of the enum `item` called like token `name`, or -1.
-pub fn variant_named[&s, &x](st: &!s [int], text: &x [byte], item: int, name: int) -> [] int {
-    var v = ast.get(st, item, 8);
-    while v >= 0 {
-        if ast.same(st, text, ast.get(st, v, 4), name) {
-            return v;
-        }
-        v = ast.next(st, v);
-    }
-    return 0 - 1;
-}
-
-// Is a field called `name` written in the literal's fields before `stop`?
-pub fn given_before[&s, &x](st: &!s [int], text: &x [byte], first: int, stop: int, name: int) -> [] bool {
-    var f = first;
-    while f != stop {
-        if ast.same(st, text, ast.get(st, f, 4), name) {
-            return true;
-        }
-        f = ast.next(st, f);
-    }
-    return false;
-}
-
 // `Name { a: x, b: y }`: every field, once, in declaration order, each of the declared type.
 pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let from = ast.nstart(st, id);
@@ -842,7 +806,7 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         let index = scope.field_index(st, text, item, name);
         if index < 0 {
             ast.fail(st, rules.r_unknown_name(), from, to);
-        } else if given_before(st, text, first, init, name) {
+        } else if lookup.given_before(st, text, first, init, name) {
             ast.fail(st, rules.r_duplicate_declaration(), from, to);
         } else if index < previous {
             ast.fail(st, rules.r_field_order(), ast.nstart(st, value), ast.nend(st, value));
@@ -860,7 +824,7 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     var decl = ast.get(st, item, 8);
     while decl >= 0 && ast.ok(st) {
-        if !given_before(st, text, first, 0 - 1, ast.get(st, decl, 4)) {
+        if !lookup.given_before(st, text, first, 0 - 1, ast.get(st, decl, 4)) {
             ast.fail(st, rules.r_missing_field(), from, to);
         }
         decl = ast.next(st, decl);
@@ -899,7 +863,7 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
         let index = scope.field_index(st, text, item, name);
         if index < 0 {
             ast.fail(st, rules.r_unknown_name(), from, to);
-        } else if given_before(st, text, first, init, name) {
+        } else if lookup.given_before(st, text, first, init, name) {
             ast.fail(st, rules.r_duplicate_declaration(), from, to);
         } else if index < previous {
             ast.fail(st, rules.r_field_order(), ast.nstart(st, value), ast.nend(st, value));
@@ -918,7 +882,7 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
     }
     var decl = ast.get(st, item, 8);
     while decl >= 0 && ast.ok(st) {
-        if !given_before(st, text, first, 0 - 1, ast.get(st, decl, 4)) {
+        if !lookup.given_before(st, text, first, 0 - 1, ast.get(st, decl, 4)) {
             ast.fail(st, rules.r_missing_field(), from, to);
         }
         decl = ast.next(st, decl);
@@ -972,6 +936,13 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     if emit.on(st) {
         let ft = scope.field_type(st, held, index);
+        if types.is_erased(st, ft) {
+            if types.is_ref(st, b.ty) && types.is_prelude(st, ft) {
+                // A capability held by a struct is borrowed through the reference to the struct.
+                return in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), ft), 0 - 1);
+            }
+            return in_reg(ft, 0 - 1);
+        }
         if !scope.struct_codable(st, held) {
             return skip(st, from, to);
         }
@@ -987,21 +958,6 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return in_reg(ft, emit.extract_field(st, held, b.reg, index));
     }
     return plain(scope.field_type(st, held, index));
-}
-
-// The expressions the code can be written for so far: whole numbers and booleans, names, the
-// operators, and calls.
-pub fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
-    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EFloat) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) || ast.is_kind(st, id, kinds.NK::EAllocSlice) || ast.is_kind(st, id, kinds.NK::ESlice) || ast.is_kind(st, id, kinds.NK::EAlloc) || ast.is_kind(st, id, kinds.NK::ETuple) || ast.is_kind(st, id, kinds.NK::ETupleField) {
-        return true;
-    }
-    if ast.is_kind(st, id, kinds.NK::EUnary) {
-        return true;
-    }
-    if ast.is_kind(st, id, kinds.NK::EBinary) {
-        return true;
-    }
-    return false;
 }
 
 pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
@@ -1024,7 +980,7 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return plain(scope.binding_type(st, i));
     }
     // A `static` of this module declared as a slice of scalars is a shared reference to it.
-    let table = static_named(st, text, name);
+    let table = lookup.static_named(st, text, name);
     if table >= 0 {
         let ty = scope.static_type(st, table);
         if ty == 0 {
@@ -1055,38 +1011,11 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     // A name that is not a local may still be a function used as a value, or a builtin: those are
     // values of types this slice does not check.
-    if names_something(st, text, name) {
+    if lookup.names_something(st, text, name) {
         return skip(st, from, to);
     }
     ast.fail(st, rules.r_unknown_name(), from, to);
     return nothing();
-}
-
-// The `static` item of the current module called like token `name`, or -1.
-pub fn static_named[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] int {
-    var it = st[15];
-    while it >= 0 {
-        if ast.is_kind(st, it, kinds.NK::IStatic) && ast.same(st, text, ast.get(st, it, 4), name) && ast.get(st, it, 13) == st[22] {
-            return it;
-        }
-        it = ast.next(st, it);
-    }
-    return 0 - 1;
-}
-
-// Is `name` a static of the current function's module, a function of any module, or a builtin?
-pub fn names_something[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] bool {
-    var it = st[15];
-    while it >= 0 {
-        if ast.is_kind(st, it, kinds.NK::IStatic) && ast.same(st, text, ast.get(st, it, 4), name) && ast.get(st, it, 13) == st[22] {
-            return true;
-        }
-        if ast.is_kind(st, it, kinds.NK::IFn) && ast.same(st, text, ast.get(st, it, 4), name) {
-            return true;
-        }
-        it = ast.next(st, it);
-    }
-    return pass1.builtin_named(st, text, name);
 }
 
 pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
@@ -1792,6 +1721,18 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if known >= 0 {
         if emit.on(st) && codes.net_code(text, ast.tstart(st, callee), ast.tend(st, callee)) > 0 {
             return net_call(st, text, id, codes.net_code(text, ast.tstart(st, callee), ast.tend(st, callee)));
+        }
+        if emit.on(st) && ast.get(st, id, 7) == 1 && codes.word_code(text, ast.tstart(st, callee), ast.tend(st, callee)) >= 81 {
+            // `fork_heap(parent)` and `fork_clock(clock)`: a new capability, which is nothing in the code.
+            let parent = expr(st, text, ast.get(st, id, 6));
+            if !ast.ok(st) {
+                return nothing();
+            }
+            var index = scope.heap_index();
+            if codes.word_code(text, ast.tstart(st, callee), ast.tend(st, callee)) == 82 {
+                index = netcode.prelude_named("Clock");
+            }
+            return in_reg(types.make_prelude(st, index), 0 - 1);
         }
         return builtin_call(st, text, id, known);
     }
