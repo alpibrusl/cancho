@@ -1,0 +1,15 @@
+killed  llvm: no clearing
+killed  llvm: the stack keeps one more (sgt)
+killed  llvm: take never pops
+killed  llvm: give never keeps
+killed  llvm: a thread's chunks are not freed when it ends
+killed  llvm: main makes no key
+killed  llvm: the key is stored without the one
+killed  cranelift: no clearing
+killed  cranelift: the stack keeps one more
+killed  cranelift: take never pops
+killed  cranelift: give never keeps
+killed  cranelift: a thread's chunks are not freed when it ends
+killed  cranelift: main makes no key
+killed  ir: fifteen slots
+EXIT 0

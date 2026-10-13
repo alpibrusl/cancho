@@ -334,6 +334,9 @@ impl<'a> Emitter<'a> {
                 .map_err(|e| CodegenError::plain(e.to_string()))?;
         }
 
+        // `docs/region-chunk-cache.md` §3: the chunk stack, only for a
+        // program that opens a region.
+        let regions = self.regions_used();
         ctx.clear();
         ctx.func.signature = sig;
         {
@@ -355,6 +358,10 @@ impl<'a> Emitter<'a> {
                 let address = builder.ins().global_value(pointer, global);
                 builder.ins().store(MemFlags::trusted(), value, address, 0);
             }
+            // The chunk stack's key, before any cancho code and so before any `spawn`.
+            if regions {
+                self.call_region_init(&mut builder);
+            }
 
             let callee = self.module.declare_func_in_func(declared[entry.0 as usize], builder.func);
             let call = builder.ins().call(callee, &[]);
@@ -364,6 +371,9 @@ impl<'a> Emitter<'a> {
             builder.finalize();
         }
         self.module.define_function(main, ctx).map_err(|e| CodegenError::plain(e.to_string()))?;
+        if regions {
+            self.define_region_cache(ctx, fb_ctx)?;
+        }
         Ok(())
     }
 }

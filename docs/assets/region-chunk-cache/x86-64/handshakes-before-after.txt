@@ -1,0 +1,88 @@
+######## base pass 1 02:33:32 load 1.97 1.17 0.67
+perf counters: user and kernel; load (1.96875, 1.1708984375, 0.6689453125)
+-- round 1 of 2, load (1.96875, 1.1708984375, 0.6689453125)
+server-full cancho tls_echo                     8027 handshakes     0.701 ms CPU    2.846 M cycles    9.680 M instructions
+server-full openssl s_server                   11896 handshakes     0.251 ms CPU    0.997 M cycles    1.779 M instructions
+server-full openssl oserv                      11968 handshakes     0.238 ms CPU    0.932 M cycles    1.762 M instructions
+server-resumed cancho tls_echo --tickets 2     13260 handshakes     0.517 ms CPU    2.001 M cycles    5.245 M instructions
+server-resumed openssl s_server                24195 handshakes     0.224 ms CPU    0.861 M cycles    1.734 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     1.175 ms CPU    4.526 M cycles   13.939 M instructions
+client-full openssl tconn                      14028 handshakes     0.418 ms CPU    1.635 M cycles    3.364 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.594 ms CPU    2.012 M cycles    5.147 M instructions
+client-resumed openssl tconn                   23528 handshakes     0.223 ms CPU    0.836 M cycles    1.652 M instructions
+-- round 2 of 2, load (1.43701171875, 1.15625, 0.69677734375)
+server-full cancho tls_echo                     6826 handshakes     0.746 ms CPU    2.849 M cycles    9.682 M instructions
+server-full openssl s_server                   11520 handshakes     0.259 ms CPU    0.990 M cycles    1.778 M instructions
+server-full openssl oserv                      11733 handshakes     0.243 ms CPU    0.929 M cycles    1.761 M instructions
+server-resumed cancho tls_echo --tickets 2     13064 handshakes     0.526 ms CPU    2.004 M cycles    5.250 M instructions
+server-resumed openssl s_server                23868 handshakes     0.227 ms CPU    0.859 M cycles    1.734 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     1.170 ms CPU    4.515 M cycles   13.891 M instructions
+client-full openssl tconn                      14011 handshakes     0.418 ms CPU    1.630 M cycles    3.361 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.554 ms CPU    1.901 M cycles    5.200 M instructions
+client-resumed openssl tconn                   23674 handshakes     0.221 ms CPU    0.828 M cycles    1.652 M instructions
+######## new pass 1 02:35:37 load 1.24 1.16 0.73
+perf counters: user and kernel; load (1.244140625, 1.1650390625, 0.73486328125)
+-- round 1 of 2, load (1.244140625, 1.1650390625, 0.73486328125)
+server-full cancho tls_echo                     9486 handshakes     0.486 ms CPU    1.844 M cycles    8.090 M instructions
+server-full openssl s_server                   11516 handshakes     0.259 ms CPU    0.992 M cycles    1.778 M instructions
+server-full openssl oserv                      11617 handshakes     0.245 ms CPU    0.933 M cycles    1.761 M instructions
+server-resumed cancho tls_echo --tickets 2     23252 handshakes     0.238 ms CPU    0.884 M cycles    3.303 M instructions
+server-resumed openssl s_server                23686 handshakes     0.228 ms CPU    0.859 M cycles    1.734 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.767 ms CPU    2.935 M cycles   11.312 M instructions
+client-full openssl tconn                      13902 handshakes     0.422 ms CPU    1.633 M cycles    3.361 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.379 ms CPU    1.010 M cycles    3.368 M instructions
+client-resumed openssl tconn                   23558 handshakes     0.223 ms CPU    0.831 M cycles    1.652 M instructions
+-- round 2 of 2, load (1.44140625, 1.24072265625, 0.7900390625)
+server-full cancho tls_echo                     8718 handshakes     0.490 ms CPU    1.848 M cycles    8.090 M instructions
+server-full openssl s_server                   11472 handshakes     0.260 ms CPU    0.992 M cycles    1.779 M instructions
+server-full openssl oserv                      11573 handshakes     0.247 ms CPU    0.932 M cycles    1.762 M instructions
+server-resumed cancho tls_echo --tickets 2     23233 handshakes     0.238 ms CPU    0.885 M cycles    3.304 M instructions
+server-resumed openssl s_server                23627 handshakes     0.229 ms CPU    0.862 M cycles    1.734 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.788 ms CPU    2.913 M cycles   11.306 M instructions
+client-full openssl tconn                      13636 handshakes     0.430 ms CPU    1.627 M cycles    3.366 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.323 ms CPU    1.070 M cycles    3.606 M instructions
+client-resumed openssl tconn                   23544 handshakes     0.223 ms CPU    0.822 M cycles    1.652 M instructions
+######## base pass 2 02:37:42 load 1.47 1.27 0.83
+perf counters: user and kernel; load (1.47119140625, 1.27392578125, 0.8330078125)
+-- round 1 of 2, load (1.47119140625, 1.27392578125, 0.8330078125)
+server-full cancho tls_echo                     6993 handshakes     0.749 ms CPU    2.821 M cycles    9.677 M instructions
+server-full openssl s_server                   11457 handshakes     0.260 ms CPU    0.987 M cycles    1.778 M instructions
+server-full openssl oserv                      11546 handshakes     0.248 ms CPU    0.931 M cycles    1.761 M instructions
+server-resumed cancho tls_echo --tickets 2     12779 handshakes     0.536 ms CPU    2.004 M cycles    5.242 M instructions
+server-resumed openssl s_server                23575 handshakes     0.230 ms CPU    0.857 M cycles    1.733 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     1.191 ms CPU    4.474 M cycles   13.843 M instructions
+client-full openssl tconn                      13811 handshakes     0.425 ms CPU    1.635 M cycles    3.365 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.561 ms CPU    1.938 M cycles    5.145 M instructions
+client-resumed openssl tconn                   23317 handshakes     0.225 ms CPU    0.834 M cycles    1.652 M instructions
+-- round 2 of 2, load (1.900390625, 1.42041015625, 0.9150390625)
+server-full cancho tls_echo                     7567 handshakes     0.752 ms CPU    2.827 M cycles    9.679 M instructions
+server-full openssl s_server                   11490 handshakes     0.259 ms CPU    0.984 M cycles    1.778 M instructions
+server-full openssl oserv                      11486 handshakes     0.250 ms CPU    0.932 M cycles    1.761 M instructions
+server-resumed cancho tls_echo --tickets 2     12790 handshakes     0.536 ms CPU    2.005 M cycles    5.248 M instructions
+server-resumed openssl s_server                23596 handshakes     0.230 ms CPU    0.858 M cycles    1.733 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     1.218 ms CPU    4.552 M cycles   13.937 M instructions
+client-full openssl tconn                      13825 handshakes     0.424 ms CPU    1.634 M cycles    3.363 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.592 ms CPU    2.090 M cycles    5.345 M instructions
+client-resumed openssl tconn                   23716 handshakes     0.221 ms CPU    0.820 M cycles    1.651 M instructions
+######## new pass 2 02:39:47 load 1.40 1.36 0.93
+perf counters: user and kernel; load (1.3642578125, 1.3515625, 0.92626953125)
+-- round 1 of 2, load (1.3642578125, 1.3515625, 0.92626953125)
+server-full cancho tls_echo                     9376 handshakes     0.492 ms CPU    1.844 M cycles    8.089 M instructions
+server-full openssl s_server                   11314 handshakes     0.263 ms CPU    0.991 M cycles    1.778 M instructions
+server-full openssl oserv                      11540 handshakes     0.248 ms CPU    0.930 M cycles    1.762 M instructions
+server-resumed cancho tls_echo --tickets 2     23111 handshakes     0.240 ms CPU    0.884 M cycles    3.303 M instructions
+server-resumed openssl s_server                23305 handshakes     0.232 ms CPU    0.856 M cycles    1.733 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.718 ms CPU    2.664 M cycles   10.889 M instructions
+client-full openssl tconn                      13576 handshakes     0.431 ms CPU    1.631 M cycles    3.360 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.299 ms CPU    0.994 M cycles    3.267 M instructions
+client-resumed openssl tconn                   23105 handshakes     0.227 ms CPU    0.831 M cycles    1.651 M instructions
+-- round 2 of 2, load (1.611328125, 1.42578125, 0.98046875)
+server-full cancho tls_echo                     8680 handshakes     0.494 ms CPU    1.849 M cycles    8.090 M instructions
+server-full openssl s_server                   11308 handshakes     0.264 ms CPU    0.991 M cycles    1.778 M instructions
+server-full openssl oserv                      11471 handshakes     0.249 ms CPU    0.934 M cycles    1.761 M instructions
+server-resumed cancho tls_echo --tickets 2     22899 handshakes     0.242 ms CPU    0.885 M cycles    3.303 M instructions
+server-resumed openssl s_server                23701 handshakes     0.229 ms CPU    0.852 M cycles    1.734 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.766 ms CPU    2.837 M cycles   10.913 M instructions
+client-full openssl tconn                      13866 handshakes     0.424 ms CPU    1.626 M cycles    3.362 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.283 ms CPU    1.031 M cycles    3.498 M instructions
+client-resumed openssl tconn                   23324 handshakes     0.225 ms CPU    0.831 M cycles    1.651 M instructions

@@ -272,6 +272,7 @@ mod body;
 mod crypto;
 mod dit;
 mod emit;
+mod region_cache;
 mod wasi_console;
 mod wasi_entry;
 

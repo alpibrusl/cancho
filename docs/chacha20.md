@@ -167,6 +167,9 @@ to memory that is freed straight afterwards. The keystream buffer in
 "no secret outlives the connection" can mean in this language. Without
 a guaranteed-store builtin, the honest answer is "it cannot be
 promised", and that is an open question for #198.
+*Corrected (`region-chunk-cache.md` §3.1): a region's memory is now cleared when the region ends, by the runtime, on both
+backends, before its chunk is kept or freed, and the optimiser cannot delete that clearing (the chunk is kept for reuse). What
+is still not promised: buffers outside regions (the heap, the stack, the caller's key), and a process that traps.*
 
 ---
 

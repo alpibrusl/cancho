@@ -213,9 +213,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         // what guarantees that — so releasing here is releasing memory
         // nothing can still reach.
         for index in (0..self.arenas.len()).rev() {
-            let Some((base_var, _)) = self.arenas[index] else { continue };
+            let Some((base_var, bump_var)) = self.arenas[index] else { continue };
             let held = self.builder.use_var(base_var);
-            self.free(held);
+            let end = self.builder.use_var(bump_var);
+            self.region_give(held, end);
         }
         match self.return_pointer {
             Some(address) => {

@@ -36,6 +36,12 @@ jobs:
       - name: Lints
         run: cargo clippy --all-targets -- -D warnings
 
+      # docs/region-chunk-cache.md §6: the brk count of nested regions is
+      # checked under strace, and on Linux in CI it is not skipped.
+      - name: strace (Linux)
+        if: runner.os == 'Linux'
+        run: command -v strace || (sudo apt-get update && sudo apt-get install -y strace)
+
       - name: Tests
         run: cargo test --workspace
 

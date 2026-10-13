@@ -509,3 +509,7 @@ cells, a block of 1,000 rows), which turns the cost into one lock
 acquisition per batch; on macOS `--threads` with a region per cell should
 be left off until a chunk cache exists. The reproduction is in
 `scripts/region_scaling.c`.
+
+*Fixed (`region-chunk-cache.md`, #375): each thread keeps the chunks its regions give back (at most 16). The same shape of
+program, 300,000 regions a thread, Cranelift, on this M4: 0.03 s at 1 thread, 0.03 s at 8 and 0.04 s at 16, where it was
+0.18, 3.82 and 8.76 s (§8.4 there). One region per batch is no longer needed for speed.*

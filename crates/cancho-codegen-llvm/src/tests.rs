@@ -1087,28 +1087,31 @@ fn a_region_left_by_return_frees_its_chunk_before_the_ret() {
         .unwrap_or_else(|(_, message)| panic!("{message}"));
     let count = |text: &str, what: &str| text.lines().filter(|l| l.contains(what)).count();
     // Every `ret` in a function that returns from inside a region comes
-    // straight after a `free` of an arena's chunk.
+    // straight after an arena's chunk is given back
+    // (`docs/region-chunk-cache.md` §3: `@cancho_region_give`, where it was `free`).
     for name in ["left_by_return", "nested"] {
         let text = function_text(&module, name);
         let lines: Vec<&str> = text.lines().map(str::trim).collect();
         for (at, line) in lines.iter().enumerate() {
             if line.starts_with("ret ") {
                 assert!(
-                    lines[..at].last().is_some_and(|l| l.starts_with("call void @free(")),
-                    "`{name}`: a `ret` with no `free` just before it:\n{text}"
+                    lines[..at]
+                        .last()
+                        .is_some_and(|l| l.starts_with("call void @cancho_region_give(")),
+                    "`{name}`: a `ret` with no give-back just before it:\n{text}"
                 );
             }
         }
     }
-    // `left_by_return`: one chunk, one `return`, one `free`.
+    // `left_by_return`: one chunk, one `return`, one give-back.
     let one = function_text(&module, "left_by_return");
-    assert_eq!(count(one, "call ptr @malloc("), 1, "{one}");
-    assert_eq!(count(one, "call void @free("), 1, "{one}");
-    // `nested`: the inner `return` frees both chunks, the inner region's
-    // fall-out frees its own, the outer `return` the outer one: four.
+    assert_eq!(count(one, "call ptr @cancho_region_take("), 1, "{one}");
+    assert_eq!(count(one, "call void @cancho_region_give("), 1, "{one}");
+    // `nested`: the inner `return` gives both chunks back, the inner region's
+    // fall-out its own, the outer `return` the outer one: four.
     let two = function_text(&module, "nested");
-    assert_eq!(count(two, "call ptr @malloc("), 2, "{two}");
-    assert_eq!(count(two, "call void @free("), 4, "{two}");
+    assert_eq!(count(two, "call ptr @cancho_region_take("), 2, "{two}");
+    assert_eq!(count(two, "call void @cancho_region_give("), 4, "{two}");
 }
 
 #[test]

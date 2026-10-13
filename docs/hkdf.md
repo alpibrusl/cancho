@@ -144,7 +144,9 @@ here too: no branch and no memory index may depend on a secret.
   `final` clears it. HKDF-Expand clears its last `T(i)`. All of these
   are best effort, for the reasons in `docs/chacha20.md` §3.2. The
   hash states' own buffers and schedules, which hold key-derived
-  words, are not cleared.
+  words, are not cleared. *Corrected (`region-chunk-cache.md` §3.1):
+  those in a region are now, since every region's bytes are cleared
+  when it ends.*
 - **Not claimed:** constant time measured statistically (that is #208),
   or anything about the Cranelift backend's object code.
 

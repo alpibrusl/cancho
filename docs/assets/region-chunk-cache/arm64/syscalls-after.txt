@@ -1,0 +1,16 @@
+== server full: 9239 handshakes
+  munmap         12 calls  0.00 a handshake
+  mmap           15 calls  0.00 a handshake
+  brk             9 calls  0.00 a handshake
+== server resumed: 17524 handshakes
+  munmap         12 calls  0.00 a handshake
+  mmap           15 calls  0.00 a handshake
+  brk             9 calls  0.00 a handshake
+== client tls_many 200: failed=0
+  munmap         11 calls
+  brk             9 calls
+  mmap           14 calls
+== client tls_many 1: failed=0
+  brk            10 calls
+  munmap          5 calls
+  mmap            8 calls

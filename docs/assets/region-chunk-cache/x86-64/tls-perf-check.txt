@@ -1,0 +1,36 @@
+baseline linux-x86_64 (Intel Core i7-1260P (a P-core), Ubuntu 26.04, Linux 7.0.0-38, clang from the system, valgrind 3.26; shared with other work (docs/tls-performance.md §2)); instructions: instructions a call
+operation                            size            now       recorded   ratio
+aes128gcm_open                       1024        3145.20        3149.20    1.00
+aes128gcm_open                      16384       43467.00       43471.00    1.00
+aes128gcm_open                         64         742.00         746.00    0.99
+aes128gcm_prepare                       0       32813.36       36560.40    0.90
+aes128gcm_seal                       1024        3142.20        3141.20    1.00
+aes128gcm_seal                      16384       43464.00       43463.00    1.00
+aes128gcm_seal                         64         739.00         737.80    1.00
+calibrate                               0        1006.64        1007.00    1.00
+chacha20poly1305_open                1024      118925.20      119409.00    1.00
+chacha20poly1305_open               16384     1791247.00     1790529.00    1.00
+chacha20poly1305_open                  64       14406.82       14964.00    0.96
+chacha20poly1305_seal                1024      118761.00      119047.80    1.00
+chacha20poly1305_seal               16384     1791081.00     1790184.00    1.00
+chacha20poly1305_seal                  64       14241.00       14601.20    0.98
+ecdsa_p256_sign                         0     1632016.00     1630478.00    1.00
+ecdsa_p256_sign_checked                 0     5127932.00     5126392.00    1.00
+ecdsa_p256_verify                       0     3487843.00     3488054.00    1.00
+hkdf_expand_label_32                    0       33504.00       34537.00    0.97
+hkdf_expand_label_48                    0       39228.00       37702.00    1.04
+hkdf_extract_32                         0       33013.64       33418.00    0.99
+hmac_sha256                          1024      146605.80      147007.00    1.00
+hmac_sha256                         16384     1856142.00     1856527.00    1.00
+hmac_sha256                            64       39758.82       40162.00    0.99
+p256_public                             0     1197032.00     1197245.00    1.00
+p256_shared                             0     5002558.00     5002771.00    1.00
+sha256                               1024      121885.80      122000.00    1.00
+sha256                              16384     1831422.00     1831538.00    1.00
+sha256                                 64       15039.00       15154.80    0.99
+sha384                               1024       58723.00       58802.20    1.00
+sha384                              16384      823981.00      824062.00    1.00
+sha384                                 64        8462.18        8543.00    0.99
+x25519_public                           0      693512.00      693989.00    1.00
+x25519_shared                           0      693548.00      694025.00    1.00
+33 of 33 rows within 1.3x either way of the baseline
