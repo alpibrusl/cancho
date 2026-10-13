@@ -8,8 +8,8 @@
 > back; the bytes a region used are **cleared when it ends**, before the chunk is kept or freed; a thread's chunks are freed
 > when it ends. Same chunk size, same trap, same programs; both backends, the same runtime. **As built (§8):** 9 `brk`
 > calls in a whole server run instead of 112 a handshake; the server's full handshake 34.6% cheaper on x86-64 (1.86 times
-> OpenSSL's `s_server` in cycles, from 2.87), a resumed one 55.8% (1.04 times OpenSSL's resumed: T5 as restated, met), the
-> client's 40.5%; on macOS 16 threads each opening 300,000 regions take 0.04 s where they took 8.8.
+> OpenSSL's `s_server` in cycles, from 2.87), a resumed one 55.8% (1.04 times OpenSSL's resumed: T5 as restated, met for the server), the
+> client's 40.5% (its resumed handshake 1.21 times OpenSSL's: T5 not met for the client, by 0.01); on macOS 16 threads each opening 300,000 regions take 0.04 s where they took 8.8.
 
 Related: [`tls-performance.md`](tls-performance.md) §3.5, §7 Q3, §10.3, §10.4, §10.8; [`threads.md`](threads.md) §7 (the
 macOS half, #375); [`linearity-and-effects.md`](linearity-and-effects.md) §6; [`zeroed-slices.md`](zeroed-slices.md) §1;
@@ -260,8 +260,10 @@ x86-64 in M cycles a handshake (user and kernel), arm64 in ms of CPU. The ratio 
   fell from 9.68M to 8.09M a full server handshake and from 5.24M to 3.30M a resumed one. OpenSSL's rows did not move
   (`s_server` 0.984 to 0.997M before, 0.991 to 0.992M after).
 - **Gate 2 met**: the server's full handshake at most 2.0 times `s_server` (1.86 on x86-64, 1.50 on arm64); the resumed one at
-  most 1.2 times OpenSSL's resumed (1.04, 1.12): **T5 as `tls-performance.md` §7 Q9 restates it is met on both machines**;
-  the client's at most 1.8 (1.64, 1.51). The arm64 changes are smaller than the experiment's there (−27.2%, −49.5%, −32.0%) on
+  most 1.2 times OpenSSL's resumed (1.04, 1.12): **T5 as `tls-performance.md` §7 Q9 restates it is met for the server on both machines**;
+  the client's at most 1.8 (1.64, 1.51). **T5 also covers the client's resumed handshake (#455), and there it is not met:
+  1.21 on x86-64, 1.33 on arm64** (from 2.32 and 2.35); that gate was stated before #455 widened T5 and named the server's
+  only. The arm64 changes are smaller than the experiment's there (−27.2%, −49.5%, −32.0%) on
   the server and larger on the client (−38.0% against −32.0%); the VM's figures move by about 10% between rounds.
 
 ### 8.3 What clearing costs (§3.1)

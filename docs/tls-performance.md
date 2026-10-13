@@ -12,7 +12,8 @@
 > next levers; claims below that the new measurements show false carry a note in place.
 >
 > **A1 as built (§10.11):** the allocator lever, built (`region-chunk-cache.md`): the full server handshake 1.86 times OpenSSL's
-> cycles on x86-64 (1.50 times its CPU on arm64), a resumed one 1.04 (1.12), which meets T5 as §7 Q9 restates it.
+> cycles on x86-64 (1.50 times its CPU on arm64), a resumed one 1.04 (1.12), which meets T5 as §7 Q9 restates it for the server; the
+> client's resumed handshake is 1.21 (1.33), just outside it.
 
 Related: [`tls-server.md`](tls-server.md) (§6, §10 and §11 have the figures this extends),
 [`tls-resumption.md`](tls-resumption.md) §1, [`ecdh.md`](ecdh.md), [`ecdsa.md`](ecdsa.md) §5,
@@ -76,7 +77,7 @@ P-256 leaf signed by a P-256 CA)**, and in **cycles** where the machine can coun
 | **T2.** a full handshake on the client, chain and host name verified | at most **5 times** a verifying OpenSSL client (`benches/server/tconn.c`) | 3 times |
 | **T3.** a request on an established connection, server CPU | at most **1.2 times** OpenSSL's server answering the same request (`benches/server/oserv.c`) | parity |
 | **T4.** bulk AEAD, seal and open | AES-128-GCM at most **3 times** OpenSSL at 1 KiB and 16 KiB, **1.5 times** at 64 bytes; ChaCha20-Poly1305 documented as it is until a vector-type decision (§4.4) | 2 times |
-| **T5.** resumed handshake (#379) | no more than the full handshake's two X25519 operations **plus 10 percentage points of a full handshake** (41.8% of today's full handshake at today's shares, §4.3). Not 1.1 times the X25519 operations: that reading (35.0%) is not met by tickets with A1 alone. *Restated 2026-10-13 (§7 Q9, decided as proposed): **at most 1.2 times OpenSSL's resumed handshake, server and client; stretch: parity**, the same form as T1 to T3. The bound above fell every time the full handshake got cheaper. As built (§10.3): 2.34 and 2.37 times on x86-64, 2.17 and 2.12 on arm64; with glibc not trimming (A1's experiment) 1.05 and 1.14 times.* | |
+| **T5.** resumed handshake (#379) | no more than the full handshake's two X25519 operations **plus 10 percentage points of a full handshake** (41.8% of today's full handshake at today's shares, §4.3). Not 1.1 times the X25519 operations: that reading (35.0%) is not met by tickets with A1 alone. *Restated 2026-10-13 (§7 Q9, decided as proposed): **at most 1.2 times OpenSSL's resumed handshake, server and client; stretch: parity**, the same form as T1 to T3. The bound above fell every time the full handshake got cheaper. As built (§10.3): 2.34 and 2.37 times on x86-64, 2.17 and 2.12 on arm64; with glibc not trimming (A1's experiment) 1.05 and 1.14 times.* *With A1 built (§10.11): server 1.04 and client 1.21 on x86-64, 1.12 and 1.33 on arm64: met for the server, not for the client.* | |
 
 T1 does not give up the verify-before-send check (`tls-server.md` §3.3): OpenSSL does not make one, so T1 compares a
 server that does more with one that does less. That is the honest comparison and is why the target is 5, not 3.
@@ -941,7 +942,7 @@ effort, and the changes that came first, and gave most, were the fields and the 
 | **T2** client, full, at most 5 times a verifying OpenSSL client (stretch 3) | **2.77** | **2.26** | **met, and the stretch** |
 | **T3** a kept request, at most 1.2 times `oserv` (stretch parity) | **1.11, 1.13** | **1.15, 1.13** | **met**; not parity |
 | **T4** AES-128-GCM at most 3 times at 1 and 16 KiB, 1.5 at 64 bytes (stretch 2) | 0.57, 1.15, 0.21 | 0.79, 1.08, 0.29 | **met, and the stretch**. ChaCha20-Poly1305 documented: 6.1 to 11.5 (x86-64), 2.6 to 9.9 (arm64) |
-| **T5** resumed: at most the two X25519 operations plus 10 points of a full handshake | bound 0.30M + 0.28M = 0.58M; **measured 2.00M** (0.90M with glibc not trimming, against a bound of 0.48M) | 0.297 ms against a bound of about 0.09 ms | **not met** (*as built with A1, §10.11: 0.884M; restated as at most 1.2 times OpenSSL's resumed handshake (§7 Q9), met: 1.04 on x86-64, 1.12 on arm64*) |
+| **T5** resumed: at most the two X25519 operations plus 10 points of a full handshake | bound 0.30M + 0.28M = 0.58M; **measured 2.00M** (0.90M with glibc not trimming, against a bound of 0.48M) | 0.297 ms against a bound of about 0.09 ms | **not met** (*as built with A1, §10.11: 0.884M; restated as at most 1.2 times OpenSSL's resumed handshake (§7 Q9), met by the server: 1.04 on x86-64, 1.12 on arm64; not by the client: 1.21, 1.33*) |
 
 T5 is not met, and the levers of §10.8 do not meet it either (the arithmetic in §10.8 leaves a resumed handshake at about 0.69M
 cycles). It was written when the rest of a handshake was 5% of it; it is now 22% of a full one and most of a resumed one, and
@@ -1032,7 +1033,8 @@ least of four rounds; raw output in [`assets/region-chunk-cache/`](assets/region
   since it skips `malloc` and `free` as well as the kernel. On arm64 the server's gain is smaller than the experiment's
   (23.8 against 27.2%, 45.6 against 49.5%) and the client's larger (38.0 against 32.0%); the VM moves about 10% between rounds.
 - **The targets**: T1 1.86 (x86-64) and 1.50 (arm64), inside its 3-times stretch; T2 1.64 and 1.51; **T5, as §7 Q9 restates it
-  (at most 1.2 times OpenSSL's resumed handshake), is met: 1.04 and 1.12**. As first written (the two ladders plus 10 points of
+  (at most 1.2 times OpenSSL's resumed handshake, server and client), is met for the server: 1.04 and 1.12**, and not for the
+  client: 1.21 and 1.33 (from 2.32 and 2.35). As first written (the two ladders plus 10 points of
   a full handshake: 0.30M + 0.18M = 0.48M), it is not: 0.884M.
 - **Clearing each region's bytes when it ends costs +0.1% of a full handshake's instructions and +0.3% of a resumed one's**,
   inside the cycles' spread (`region-chunk-cache.md` §8.3).
