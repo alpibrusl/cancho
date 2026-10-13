@@ -362,6 +362,12 @@ machine throughout (load average 4 to 7, some scheduled on the measured core's s
 runs; the instruction counts are exact and are the steady figure. OpenSSL is 3.5.5 `openssl speed` on the same core, cycles from
 `perf stat` over its run. Raw output: [`assets/wide-multiply/381/`](assets/wide-multiply/381/).
 
+*The commits named here and in the raw output* (b2651fea, 6b5299e5, 8a596168, 541a03cc, d4436b62, 028ce885) are the history as
+measured, kept on the branch `p256-wide-multiply-evidence`; the PR's commits are the same changes rebased onto `main`. At 541a03cc
+and 028ce885 every `std` file is byte for byte the PR's. At 6b5299e5 (the P-384 timing) `std/bigmod.cho` is; at b2651fea (the
+P-256 timing) `std/p256_kernels.cho` differs only in calling its own `mac` where the PR calls `std.field25519_51`'s, and its
+kernels' object code is the PR's instruction for instruction (`kernels_object_identity.txt`).
+
 | user | operation | before: cycles, instructions | after | gain (cycles; instructions) | OpenSSL cycles | after / OpenSSL |
 |---|---|---|---|---|---|---|
 | **P-256** ([`p256-fast.md`](p256-fast.md) §13) | field multiplication | 158, 782 | 99, 451 | 1.60; 1.73 | | |
