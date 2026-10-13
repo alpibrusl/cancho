@@ -711,7 +711,7 @@ the same form as T1 to T3. As built it is 2.34 and 2.37 times; with glibc not tr
    64 bytes and 1 KiB and within 1.15 times at 16 KiB. SHA-256 (4.5 to 11 times) and ChaCha20-Poly1305 (2.6 to 11.5) did
    not move. Each costs inside a handshake what it costs alone, as in §3.
 5. **The next levers, ranked by measured gain** (§10.8): A1 (34% of a server handshake, measured by the experiment), P-256 on
-   `mul_wide` (about 15 points, arithmetic), the per-identity table for the check (about 7.5), a SHA-256 builtin (about 6.5,
+   `mul_wide` (about 15 points, arithmetic; *as built, §10.15: 19.9% of the A1-built handshake, 13 points of this one*), the per-identity table for the check (about 7.5), a SHA-256 builtin (about 6.5,
    and 10 of a resumed handshake), then small ones; for a kept request, the work-area copies (up to 24%). Applied in that order
    the server's full handshake comes to about 1.1 to 1.2 times OpenSSL's (arithmetic from measured parts).
 
@@ -964,14 +964,14 @@ sequence below the table applies each to what the ones before it leave.
 | # | lever | issue | basis | server full | server resumed | client full | kept request |
 |---|---|---|---|---|---|---|---|
 | **A1** | **keep freed region chunks per thread** (a small stack of them: the key schedule nests regions three deep, `hmac.init` in `hkdf.expand` in `hkdf.expand_label`), so `free` never trims and `malloc` never grows the heap. Compiler change, both backends | #375 | **measured**: glibc told not to trim, alternating (§10.3); *built (§10.11): 34.6% (arm64 23.8), 55.8% (45.6), 40.5% (38.0)* | **34.4%** (arm64 27.2) | **54.9%** (49.5) | **40.3%** (32.0) | 0 (no `brk` now) |
-| **P1** | **P-256's field on `mul_wide`**: four 64-bit limbs in place of ten of 28 bits (`wide-multiply.md` §11) | #381 | the multiplication kernels (`p256_kernels.mul_p`, `sqr_p`, `sqr_n`) are 24.7% of the server's handshake and 22.2% of the client's by the profile (self time; all kernels 33.0%); assumed **2.5 times** on them, the low end of `wide-multiply.md` §11's 3 to 3.5 for `bigmod` | 14.8 points | 0 | 13.3 | 0 |
+| **P1** | **P-256's field on `mul_wide`**: four 64-bit limbs in place of ten of 28 bits (`wide-multiply.md` §11) | #381 | the multiplication kernels (`p256_kernels.mul_p`, `sqr_p`, `sqr_n`) are 24.7% of the server's handshake and 22.2% of the client's by the profile (self time; all kernels 33.0%); assumed **2.5 times** on them, the low end of `wide-multiply.md` §11's 3 to 3.5 for `bigmod`; *built (§10.15): five 56-bit limbs inside the kernels, 1.4 to 1.6 times on them; the full handshake 19.9% cheaper on the server (0.37M cycles; this row projected 0.42M), 20.3% on the client* | 14.8 points | 0 | 13.3 | 0 |
 | **B2** | **a fixed-base table for the server's own key** (the check as two combs) | #380 | the check is 24.4%; two combs are about 1.44 times cheaper than a wNAF verification: 2 × `public_key` less one inversion mod p plus one mod n, against `verify_raw`, from `p256-fast.md` §9's M4 parts (34.6, 5.8, 10.0 against 105.8 µs); *built (§10.13) as a split-wNAF table, not two combs: the check 2.03 times cheaper, the full server handshake 24% fewer instructions, the client's 18% (B3)* | 7.5 points | 0 | (B3, per trust anchor: 4.7 on the chain's 15.4%) | 0 |
-| **D3** | **a SHA-256 builtin** (SHA-NI, ARMv8 SHA-2) | #445 | `crypto.compress` is 7.3% of the server's handshake, 11.6% of a resumed one, 3.8% of the client's (self time); assumed OpenSSL's speed a block (9.4 times on x86-64 at 16 KiB, 11.3 on arm64); *built with D4 (§10.14): SHA-256 at 0.78 to 1.00 of OpenSSL's cycles, the two together 11.5% of a full server handshake and 27.6% of a resumed one, 90% and 88% of the cycles projected here* | 6.5 points | 10.3 | 3.4 | 0 |
-| **D4** | **HMAC with the key pads kept** (HKDF reuses a keyed state); *built (§10.14)* | #446 | `hmac.init`'s two compressions, outside its regions: at most 9.9 − 8.1 = 1.8% of the server's handshake, 16.5 − 12.8 = 3.7% of a resumed one, 1.8% of the client's | at most 1.8 | 3.7 | 1.8 | 0 |
+| **D3** | **a SHA-256 builtin** (SHA-NI, ARMv8 SHA-2) | #445 | `crypto.compress` is 7.3% of the server's handshake, 11.6% of a resumed one, 3.8% of the client's (self time); assumed OpenSSL's speed a block (9.4 times on x86-64 at 16 KiB, 11.3 on arm64); *built with D4 (§10.15): SHA-256 at 0.78 to 1.00 of OpenSSL's cycles, the two together 11.5% of a full server handshake and 27.6% of a resumed one, 90% and 88% of the cycles projected here* | 6.5 points | 10.3 | 3.4 | 0 |
+| **D4** | **HMAC with the key pads kept** (HKDF reuses a keyed state); *built (§10.15)* | #446 | `hmac.init`'s two compressions, outside its regions: at most 9.9 − 8.1 = 1.8% of the server's handshake, 16.5 − 12.8 = 3.7% of a resumed one, 1.8% of the client's | at most 1.8 | 3.7 | 1.8 | 0 |
 | **L1** | **#395's work areas without the copy a call**: keep a busy connection's lease across calls, or copy only what the call changed | #447 | `tls.lease` + `tls.settle` are 23.6% of a kept request inclusive (arm64 26.6%); the measured upper bound | 0 | 0 | 0 | **up to 23.6%** (26.6) |
 | X1 | X25519 to OpenSSL's cost; one inversion for the two ladders (C3) | | 10.8% of the handshake at 1.40 times OpenSSL: at most 3.1 points; the two inversions are 1.4% (C3: 0.7) | at most 3.1 | 4.4 | 1.9 | 0 |
 | **R1** | **an AEAD that seals in place**, so the record layer stops copying | #448 | the layer around the cipher (§10.5): 36 of 80 ns at 64 bytes, 174 of 2,838 at 16 KiB (x86-64); `tls_record.*` is 1.3% of a kept request inclusive | under 1 | under 1 | under 1 | under 1.3%; **45% of a 64-byte record's seal, 6 to 11% of a 16 KiB one** on Linux; more on macOS |
-| M1 | `std.bigmod` on `mul_wide` (P-384, RSA) | #381 | not in this handshake; 3 to 3.5 times on `mont_mul` by `wide-multiply.md` §11's arithmetic | 0 | 0 | 0 | 0 |
+| M1 | `std.bigmod` on `mul_wide` (P-384, RSA) | #381 | not in this handshake; 3 to 3.5 times on `mont_mul` by `wide-multiply.md` §11's arithmetic; *built (§10.15): RSA-2048 verification 6.8 times fewer cycles, P-384 3.9 to 5.1* | 0 | 0 | 0 | 0 |
 
 **Applied in order to the x86-64 server's full handshake (arithmetic, from the shares above):**
 
@@ -979,7 +979,7 @@ sequence below the table applies each to what the ones before it leave.
 |---|---|---|---|
 | as built | 100% | 2.83 | 2.86 times |
 | + A1 (measured; *as built, §10.11: 65.4%, 1.844M, 1.86 times*) | 65.6% | 1.86 | 1.87 |
-| + P1 (2.5 times on the kernels: 24.7 × 0.6) | 50.8% | 1.44 | 1.45 |
+| + P1 (2.5 times on the kernels: 24.7 × 0.6; *as built, §10.15: 52.4%, 1.483M, 1.48 times*) | 50.8% | 1.44 | 1.45 |
 | + B2 (1.44 times on what is left of the check, about 14.2%; *as built, 2.03 times on the check, §10.13*) | 46.5% | 1.32 | 1.33 |
 | + D4 (1.8) then D3 (on the 5.5 points of compression left: × 0.89) | 39.8% | 1.13 | **1.14** |
 
@@ -1131,3 +1131,36 @@ handshake:
   (a TLS_AES_256_GCM_SHA384 handshake's hash, and the second transcript every handshake keeps until the suite is known) stays in
   software at 1.4 to 3 times OpenSSL.
 
+### 10.15 P1 and M1 as built, and Poly1305 (#381)
+
+[`p256-fast.md`](p256-fast.md) §13 and [`wide-multiply.md`](wide-multiply.md) §12 built P1, M1 and Poly1305 on the wide-multiply
+builtins. P1 is not what §10.8's row describes: four 64-bit limbs were measured and not chosen (they change the representation
+#380's files read and lose §4.4 of `p256-fast.md`'s lazy reduction); five 56-bit limbs inside the kernels were, and the
+additions and subtractions became `wrapping_*`. Measured against `main` at `3d7e8e9d` (A1 built, before §10.12's L1 and R1 merged), alternating, on the machines of
+§10.1; raw output in [`assets/wide-multiply/381/`](assets/wide-multiply/381/).
+
+**Handshakes** (`scripts/tls_handshake_cost.py <bin> --seconds 8 --rounds 2 --cpu 0 --peer-cpu 1 server-full client-full`, the two
+builds alternating twice, the least of four rounds; x86-64 `gram` with `--sudo-perf`, user and kernel cycles, load average 3.1 to
+3.6 from other agents' jobs; arm64 the Docker VM of §10.1, CPU time, load 3.0 to 6.7):
+
+| | x86-64 cycles: `main` → branch | **change** | **ratio to OpenSSL** | instructions | arm64 CPU: `main` → branch | **change** | **ratio** |
+|---|---|---|---|---|---|---|---|
+| server, full | 1.852M → **1.483M** | **−19.9%** | 1.85 → **1.48** `s_server` (`oserv` 1.96 → 1.57) | 8.09M → 6.11M | 0.293 → **0.251 ms** | **−14.3%** | 1.57 → **1.34** (`oserv` 2.12 → 1.79) |
+| client, full | 2.673M → **2.130M** | **−20.3%** | 1.63 → **1.31** `tconn` | 10.5 to 10.9M → 7.9M | 0.423 → **0.358 ms** | **−15.4%** | 1.53 → **1.28** |
+
+The resumed rows were not run: a resumed handshake does no P-256 operation and no ChaCha20-Poly1305 (the cipher is AES-128-GCM).
+§10.8 projected P1 at 14.8 points of the pre-A1 server handshake, 0.42M cycles; it took 0.37M (13 points of it, 19.9% of the
+A1-built one), with the kernels 1.4 to 1.6 times faster rather than the 2.5 assumed: the additions, the subtractions and the
+inversions, which the projection left out, paid the rest. The client's projected 13.3 points (0.60M) came to 0.54M. T1 is now 1.48
+times `s_server` on x86-64 and 1.34 on arm64; T2 1.31 and 1.28.
+
+**Primitives** (x86-64 cycles on `gram`, the least of six runs; [`p256-fast.md`](p256-fast.md) §13.4, [`wide-multiply.md`](wide-multiply.md)
+§12): P-256 ECDH 980k → 568k cycles (5.54 → **3.21** times OpenSSL), the signature 327k → 225k (4.61 → **3.17**), a verification
+682k → 417k (2.92 → **1.78**); RSA-2048 verification 1.05M → 0.15M (17.8 → **2.61**), P-384 ECDH 11.9M → 3.1M (12.1 → **3.10**);
+Poly1305 over 16 KiB 89.6k → 39.0k. ChaCha20-Poly1305 is otherwise ChaCha20's (its rows below moved 7 to 9% in instructions).
+
+**The guard** (§6). `scripts/tls_perf.py check` failed exactly the five P-256 rows as cheaper than 1/1.3 on both machines
+(x86-64 0.58 to 0.66; arm64 0.73 to 0.76; ChaCha20-Poly1305 0.91 to 0.95, inside the guard), so both entries were re-recorded
+on their own machines (`record` on `gram`; in the arm64 VM), keeping their descriptions; `check` then passes 33 of 33 on each and
+`scripts/tls_perf_mutant.py` fails exactly its four rows on each. `aes128gcm_prepare` came back 0.82 of the arm64 entry before
+re-recording, inside the guard and untouched by this change (a change since that entry was recorded).

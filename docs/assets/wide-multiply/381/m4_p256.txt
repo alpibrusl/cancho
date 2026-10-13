@@ -1,0 +1,13 @@
+# Apple M4 Max, macOS 26.2, native arm64, LLVM; 2026-10-13 08:53, load averages 5.35 to 5.56 (other jobs);
+# python3 scripts/p256_bench.py <the branch at d4436b62> --vs <main 3d7e8e9d> m q o p i n g h k c v (the P-256 kernels' arm64 code is the head's: same instruction counts)
+m field multiplication mod p                   14 ns   (other: 19 ns, 1.3x)
+q field squaring mod p                         12 ns   (other: 17 ns, 1.3x)
+o multiplication mod n                         26 ns   (other: 27 ns, 1.0x)
+p field addition + subtraction mod p            7 ns   (other: 12 ns, 1.7x)
+i inversion mod p                            4315 ns   (other: 5613 ns, 1.3x)
+n inversion mod n                            7601 ns   (other: 10006 ns, 1.3x)
+g ecdh.public_key (k*G)                     22493 ns, 44459 per second   (other: 34703 ns, 1.5x)
+h ecdh.shared (k*P)                         97029 ns, 10306 per second   (other: 138383 ns, 1.4x)
+k ecdsa_sign.sign                           41201 ns, 24271 per second   (other: 52746 ns, 1.3x)
+c ecdsa_sign.sign_checked                  113603 ns, 8803 per second   (other: 159663 ns, 1.4x)
+v ecdsa.verify_raw                          71744 ns, 13938 per second   (other: 105226 ns, 1.5x)

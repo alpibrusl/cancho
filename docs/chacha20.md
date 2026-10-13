@@ -73,6 +73,12 @@ then under 2^57, and the sum of five is under 2^60. The carries out of
 those sums are under 2^34, and `5 * c` folded into `h0` is under 2^37.
 No addition or multiplication can overflow on any input.
 
+*Superseded (#381, [`wide-multiply.md`](wide-multiply.md) §12): Poly1305 is now three limbs of 44, 44 and 42 bits, the layout of
+poly1305-donna's 64-bit code: nine products a block, each taken whole with `mul_wide` into a two-word accumulator, against 25.
+`s1 = 20 r1` and `s2 = 20 r2` are made once per key. With a block added, `h`'s limbs are under 2^45 (the top under 2^43), a
+column under 2^92, a carry out under 2^48, and `h1` under 2^44 + 48 between blocks (computed from the clamped `r`). The block
+loop keeps `h` in registers across blocks (`poly_blocks`).*
+
 The arithmetic is still written `wrapping_add` and `wrapping_mul`, which
 #199 asks for. A checked `+` compiles to an overflow test whose
 condition is computed from the operands. Here the operands are secret,

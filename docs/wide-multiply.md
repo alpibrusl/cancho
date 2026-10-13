@@ -1,6 +1,6 @@
 # Wide multiply and add-with-carry: three builtins, prototyped on X25519
 
-> **Status: design and prototype.** Issue #381, part of #378 (TLS performance: closing the gap with OpenSSL). The question it
+> **Status: built, on X25519 (§10), P-256, `std.bigmod` and Poly1305 (§12).** Issue #381, part of #378 (TLS performance: closing the gap with OpenSSL). The question it
 > answers is whether the language is missing two instructions that every public-key operation here is waiting for. §2 is the
 > measurement that was made *before* the compiler was touched; §3 to §9 are the design; §10 is what the prototype (X25519
 > only) measured; §11 is what each other user of narrow limbs would gain, by arithmetic, for a person to decide. Where a later
@@ -347,3 +347,120 @@ it was better than its C estimate.
 
 The ordering by value, which is a decision for a person: `std.bigmod` first (one change speeds P-256, P-384, ECDSA verification and RSA),
 then Ed25519, then Poly1305.
+
+*As built (§12): P-256 had left `std.bigmod` before this was built (#397's own field), so P-256, `std.bigmod` and Poly1305 were three
+changes. The table's arithmetic was low for `std.bigmod` (RSA-2048 verification 6.8 times fewer instructions on x86-64 against 3 to
+3.5, P-384 4.2 times) and for Poly1305 (2.3 times on a 16 KiB MAC against 2 to 2.5), and does not apply to P-256, whose field was
+already straight-line: 1.6 times on the multiplication, 1.4 to 1.7 on the operations. Ed25519 was not moved.*
+
+## 12. As built: P-256, `std.bigmod`, Poly1305 (#381)
+
+The three other users of narrow limbs, moved in that order, each a commit kept because it paid. All figures are on `gram` (the
+i7-1260P of §2, Linux x86-64, LLVM backend, CPU 0 pinned) in user-space cycles and instructions through `sudo perf stat`
+(`kernel.perf_event_paranoid` was left at 4), each the least of several runs alternating the two builds. Other agents' jobs ran on the
+machine throughout (load average 4 to 7, some scheduled on the measured core's sibling), so cycles moved by up to two times between
+runs; the instruction counts are exact and are the steady figure. OpenSSL is 3.5.5 `openssl speed` on the same core, cycles from
+`perf stat` over its run. Raw output: [`assets/wide-multiply/381/`](assets/wide-multiply/381/).
+
+| user | operation | before: cycles, instructions | after | gain (cycles; instructions) | OpenSSL cycles | after / OpenSSL |
+|---|---|---|---|---|---|---|
+| **P-256** ([`p256-fast.md`](p256-fast.md) §13) | field multiplication | 158, 782 | 99, 451 | 1.60; 1.73 | | |
+| | ECDH `shared` (k·P) | 980,090, 5,002,519 | 567,604, 2,912,470 | **1.73**; 1.72 | 176,845 | **3.21** (5.54 before) |
+| | `public_key` (k·G) | 233,437, 1,197,041 | 141,568, 713,529 | 1.65; 1.68 | | |
+| | ECDSA sign | 326,959, 1,632,023 | 224,736, 1,075,660 | **1.45**; 1.52 | 70,906 | **3.17** (4.61) |
+| | ECDSA verify | 682,396, 3,431,653 | 416,757, 2,026,587 | **1.64**; 1.69 | 233,829 | **1.78** (2.92) |
+| **`std.bigmod`** | RSA-2048 verification (PKCS#1 v1.5, e = 65537) | 1,052,321, 5.36M | 154,232, 0.79M | **6.8**; 6.8 | 59,173 | 2.61 (17.8) |
+| | RSA-4096 verification | 4,096,539, 21.05M | 570,300, 2.95M | **7.2**; 7.1 | 193,384 | 2.95 (21.2) |
+| | P-384 ECDSA verify | 13,341,161, 67 to 69M | 2,608,260, 13.8 to 14.2M | **5.1**; 4.9 | 1,290,556 | 2.02 (10.3) |
+| | P-384 ECDH `shared` | 11,950,097, 60.84M | 3,066,688, 14.55M | **3.9**; 4.2 | 989,481 | 3.10 (12.1) |
+| | P-384 `public_key` | 12,209,672, 60.82M | 3,217,849, 14.54M | 3.8; 4.2 | | |
+| **Poly1305** | 16-byte message | 209, 712 | 186, 598 | 1.12; 1.19 | | |
+| | 1 KiB | 5,810, 17,470 | 2,577, 7,150 | **2.25**; 2.44 | | |
+| | 16 KiB | 89,605, 272,830 | 39,039, 106,990 | **2.30**; 2.55 | | |
+
+The P-256 rows are `tests/programs/p256_profile.cho` (`scripts/p256_bench.py`'s ops); the `std.bigmod` rows the conformance drivers
+of `std.rsa`, `std.ecdsa` and `std.ecdh` run the same input many times (a random key a run, so the P-384 verification's instructions
+move with it; the outputs of the two builds compared equal on every run); Poly1305 a driver that chains `chacha20.poly1305` over one
+message. In the TLS benchmark of `docs/tls-performance.md` §6, ChaCha20-Poly1305's rows came down by 7 to 9% in instructions
+(1.790M to 1.628M at 16 KiB on x86-64, 1.790M to 1.698M on arm64): that is Poly1305's part of the AEAD; ChaCha20 is the rest,
+untouched (§10.15 there).
+
+### 12.1 What each change is
+
+- **P-256** ([`p256-fast.md`](p256-fast.md) §13): five limbs of 56 bits inside the generated kernels, each packing two of the
+  element's 28-bit limbs, so R = 2^280, the representation, the constants, the tables and every caller stay; 25 `mul_wide` a
+  multiplication and 15 a squaring against 100 and 55 products; the reduction in radix 2^56 using the prime's form. Four 64-bit
+  limbs were measured first and not chosen (there, §13.1).
+- **`std.bigmod`**: 64-bit limbs read as unsigned words. CIOS with the reduction fused as a second carry chain: a step is two
+  `mul_wide` and four `add_carry`, and neither chain's sum can exceed two words. The reductions, additions and subtractions are
+  `add_carry` and `sub_borrow` chains; a limb comparison is a borrow, never `<` on a signed `int` (a mutant that compares them as
+  signed is killed by every RSA modulus, whose top limb has its top bit set). A byte no longer straddles two limbs. The register
+  slot stays 139 words so every caller's `work` keeps its layout. `tests/vectors/bigmod_powers.txt` gains 180 cases at moduli a
+  multiple of 64 bits long (400 in all).
+- **Poly1305** (`std.chacha20`): poly1305-donna-64's three limbs of 44, 44 and 42 bits, nine `mul_wide` a block against 25
+  products, `20 r1` and `20 r2` made once per key, and a block loop (`poly_blocks`) that keeps the accumulator in registers from one
+  block to the next instead of storing it in the state between calls; `poly1305` and the AEAD's `poly_padded` call it once for
+  their whole blocks. The bounds, from the clamped key: a column under 2^92, a carry under 2^48, h1 under 2^44 + 48 between blocks.
+- **One two-word accumulator.** `mac` and `addw` are `std.field25519_51`'s, made public; the P-256 kernels and Poly1305 call them
+  (the duplication check found the copies). The program is one LLVM module, so this changed no instruction: the P-256 kernels'
+  x86-64 object code is the same before and after, instruction for instruction (`kernels_object_identity.txt`).
+
+*Why the gains differ from §11's arithmetic.* `std.bigmod` gained more than the k² count: its 30-bit loops were checked arithmetic
+over `w[x + i]` indices, each addition and index tested, which #397 measured at 2.4 times on P-256's multiplication; the new loops are
+`wrapping_*` and the builtins over slices, and LLVM's inner loop is two `mul`s and their carries with no bounds check left in it.
+P-256 gained less: its field was already straight-line with a multiplication-free reduction (#397), and on x86-64 without BMI2 every
+`mul` writes `rax:rdx`, so the 35 `mul`s of a multiplication keep the register allocator spilling (161 `mov`s among about 440
+instructions in `mul_p`); §10.6's first item, `mulx` behind a CPU test, is where that would go.
+
+### 12.2 Gates
+
+- **Vectors**, byte for byte, both backends where the suite runs both: `tests/vectors/p256.txt` (the kernels at their worst-case
+  limbs), RFC 6979, Wycheproof ECDH (P-256, P-384), ECDSA and RSA, NIST CAVP KAS and SigVer, the RSA NIST files, RFC 8439's
+  ChaCha20-Poly1305 and Poly1305 vectors and Wycheproof's, the new bigmod limb boundaries. `cargo test --workspace` in the arm64
+  Linux container at 541a03cc: 685 passed, and the one known container failure (`project::a_compiler_other_than_the_one_named_is_refused`,
+  which needs a git checkout); CI runs both targets.
+- **Differentials** (`assets/wide-multiply/381/differentials.txt`, at d4436b62, before the shared accumulator, which changed no
+  instruction; arm64 Linux, OpenSSL 3.0.13, pyca/cryptography 41): ECDSA signing
+  against OpenSSL 10,000 signed and 10,000 flipped, against RFC 6979 in Python 10,000, keys 600 checks; ECDSA verification 4,000 a
+  curve and `registers` 20,000; ECDH 1,000 key pairs a curve (4,200 checks); the P-256 field against Python 444,704 cases (LLVM) and
+  69,476 (Cranelift); `pow_mod` against Python 20,000 (LLVM) and 2,000 (Cranelift); RSA against OpenSSL 2,000 and 2,000 flipped;
+  ChaCha20-Poly1305 against OpenSSL 20,000 cases, 60,000 checks (LLVM) and 2,000 (Cranelift); ECDH on Cranelift 100 key pairs a
+  curve. **0 differences in all.**
+- **Bounds**: `scripts/p256_gen.py` proves every kernel's accumulators and carries (above); `scripts/p256_bounds.py` closes for every
+  formula, unchanged, since the element and §4.3's invariants are.
+- **Mutants**, all killed or argued: `p256_mutants.py`, the 36 its kernel names select (32 on the kernels, the shared accumulator and
+  the constants, rewritten for the new code, and four formula mutants whose names share a fragment), 36 killed at the head;
+  `rsa_mutants.py` 26 of 26; `ecdh_mutants.py` 17 of 17 (one stale since #397 re-anchored, P-384's encoding check reached again);
+  `chacha20_mutants.py` 20 of 20 at 541a03cc, and one dropped as equivalent with its argument in the script (a single final carry
+  pass: h1 cannot reach 2^44 after one).
+- **Constant time**: below.
+
+### 12.3 Constant time
+
+dudect on `gram`, LLVM, `rdtscp`, CPUs 0 and 1 (one physical core, both threads; the script and the program), governor
+`powersave` (not changed), 10^6 measurements a test, the classes interleaved; the bar is |t| < 4.5. Raw logs with the commit, machine,
+governor and load at start and end are in [`assets/wide-multiply/381/`](assets/wide-multiply/381/).
+
+| path | test | median (TSC cycles) | max \|t\| |
+|---|---|---|---|
+| P-256 `ecdh.public_key` (b2651fea) | scalar 1 / a fixed scalar / 0x88..88 / n − 1 / 16^63, each against random | 90,541 to 95,517 | 1.35 / 1.61 / 1.29 / 1.78 / 2.10 |
+| P-256 `ecdh.shared` | scalar 1 / fixed / 16^63 | 486,934 to 565,173 | 2.14 / 1.59 / 1.98 |
+| P-256 `ecdsa_sign.sign` | a fixed key / the key 1 | 213,032 / 215,300 | 1.61 / 2.29 |
+| P-384 `ecdh.shared` (`std.bigmod`, 6b5299e5) | scalar 1 / fixed / 16^95 | 2,478,068 to 3,571,888 | 1.82 / 1.34 / 2.10 |
+| ChaCha20-Poly1305, 64 bytes and 13 of associated data (541a03cc) | seal: a fixed key / fixed data; open: fixed data / a tag wrong first or last, each against random (`gcm_timing.py --chacha20`) | 1,154 to 2,622 | 2.45 / 2.02 / 1.55 / 1.69 |
+| the same at 1 KiB (`--size 1024`) | the same four | 2,433 to 20,022 | 2.11 / 2.18 / 2.31 / 2.08 |
+
+The P-256 runs timed b2651fea; the kernels' object code at the head is that commit's, instruction for instruction
+(`kernels_object_identity.txt`). `std.bigmod` has not changed since 6b5299e5. **Not run:** P-384's `public_key` (the same ladder as
+`shared` with G as the point), whose five tests were stopped to free the core for the measurements above and restarted after them,
+so this table does not yet have them; Cranelift; Apple silicon.
+
+**The branch audit** (`scripts/chacha20_branches.py` and `p256_ctx.py` over the x86-64 objects; `assets/wide-multiply/381/branches*.txt`):
+every P-256 kernel has exactly one conditional jump that is not to a trap, the `je` after `cmp $0xa` and `setge` on the three slice
+lengths, the never-taken test of §13.2 of `p256-fast.md`; `canon_*` none. In `std.chacha20` (`aead_driver.cho`) none of the functions
+that do arithmetic on the key or the accumulator has one (`poly_block`, `poly_finish`, `le64`, `shr44`, `shr42`, `field25519_51.mac`
+and `addw` among them); `poly_blocks`'s jumps are its loop over the message's length and the never-taken test of the block's. In
+`std.bigmod` (`ecdh_driver.cho`), `mont_mul`, `ct_reduce`, `add` and `sub` have 29, every one read in the disassembly: the limb
+count k (`test`, `cmp $1`, its parity for the unrolled loops), loop counters, and LLVM's overlap and remainder tests of the copy it
+vectorised; none tests a limb, a borrow or the mask, which is made without a branch (`setb`, `sete`, `neg`) and passes through
+`value_barrier`.

@@ -1,0 +1,10 @@
+# commit b2651fea (branch p256-wide-multiply); machine gram, Intel Core i7-1260P, Linux 7.0.0-38-generic, x86-64; LLVM backend
+# taskset -c 0-1 (one physical core, both threads); governor of cpu0/cpu1: powersave/powersave
+# start: 2026-10-13T08:16:57+02:00;  08:16:57 up 5 days, 21:36,  4 users,  load average: 0,92, 2,25, 1,60
+# python3 scripts/ecdh_timing.py ecdh_timing 1000000 --curves=256 --public-key
+P-256 public_key scalar 1     1000000 samples, median 90541 cycles, max |t| = 1.35
+P-256 public_key fixed scalar 1000000 samples, median 93030 cycles, max |t| = 1.61
+P-256 public_key scalar 0x88.. 1000000 samples, median 93202 cycles, max |t| = 1.29
+P-256 public_key scalar n - 1 1000000 samples, median 95339 cycles, max |t| = 1.78
+P-256 public_key scalar 16^k  1000000 samples, median 95517 cycles, max |t| = 2.10
+# end: 2026-10-13T08:21:13+02:00;  08:21:13 up 5 days, 21:40,  5 users,  load average: 1,44, 1,66, 1,50

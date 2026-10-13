@@ -1,0 +1,27 @@
+# p256-fast.md §11.1: the three kernels before the choice. gram, 2026-10-13 ~08:13 CEST, load average about 3 to 4 from other jobs;
+# scratchpad cyc.py: (C(rounds) - C(1)) / (rounds - 1), sudo perf stat cpu_core cycles/u and instructions/u, CPU 0, least of 5 a
+# driver, the drivers alternating. Ops of tests/programs/p256_profile.cho: m multiplication, q squaring, p an addition and a
+# subtraction (sub32), h ecdh.shared.
+#   prof_before  main's 10 x 28-bit kernels
+#   prof_g       5 x 56-bit kernels as committed in b2651fea (wrapping add/sub, the length test)
+#   prof_sh      prof_g with the reduction's constants written as shifts (not kept)
+#   mul4g        a scratch prototype: 4 x 64-bit limbs, R = 2^256, product scanning into three words, four reduction rounds and
+#                the final conditional subtraction; add and sub reduced; checked against Python on chains of 1,000 operations.
+#                Its `q` is a multiplication of x by itself (no dedicated squaring); its `h` row is meaningless (no ladder).
+m   prof_before: 158 cyc 782 ins   prof_g: 98 cyc 451 ins   prof_sh: 94 cyc 487 ins   mul4g: 86 cyc 332 ins
+q   prof_before: 114 cyc 573 ins   prof_g: 81 cyc 345 ins   prof_sh: 75 cyc 367 ins   mul4g: 84 cyc 331 ins
+p   prof_before: 75 cyc 390 ins   prof_g: 36 cyc 220 ins   prof_sh: 35 cyc 220 ins   mul4g: 30 cyc 117 ins
+h   prof_before: 980,378 cyc 5,002,518 ins   prof_g: 566,859 cyc 2,912,470 ins   prof_sh: 564,978 cyc 3,068,334 ins   mul4g: 11 cyc 4 ins
+# and o i n g k v for prof_before, prof_g, prof_sh:
+o   prof_before: 177 cyc 827 ins   prof_g: 130 cyc 526 ins   prof_sh: 130 cyc 526 ins
+i   prof_before: 34,691 cyc 179,248 ins   prof_g: 24,981 cyc 106,566 ins   prof_sh: 23,283 cyc 113,766 ins
+n   prof_before: 49,488 cyc 212,060 ins   prof_g: 38,757 cyc 141,395 ins   prof_sh: 38,799 cyc 141,395 ins
+g   prof_before: 233,844 cyc 1,197,041 ins   prof_g: 141,758 cyc 713,529 ins   prof_sh: 139,788 cyc 751,329 ins
+k   prof_before: 325,847 cyc 1,632,023 ins   prof_g: 226,401 cyc 1,075,660 ins   prof_sh: 225,024 cyc 1,113,460 ins
+v   prof_before: 681,654 cyc 3,431,653 ins   prof_g: 416,368 cyc 2,026,587 ins   prof_sh: 415,495 cyc 2,119,730 ins
+
+# Apple M4 Max, macOS, load average 4.7, scripts/p256_bench.py <first> --vs <second> (time, best of five alternating):
+# mul4 (the prototype, before the length test was added to it) against the 5 x 56-bit kernels before §11.2's wrapping additions and length test
+m field multiplication mod p                   14 ns   (other: 16 ns, 1.1x)
+q field squaring mod p                         15 ns   (other: 14 ns, 1.0x)
+p field addition + subtraction mod p            9 ns   (other: 13 ns, 1.5x)

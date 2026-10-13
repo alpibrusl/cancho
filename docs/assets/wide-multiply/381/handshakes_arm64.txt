@@ -1,0 +1,50 @@
+# arm64 Linux (Docker Desktop VM on the Apple M4 Max), 6.8.0-100-generic, 6 vCPUs, OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)
+### main round 1 2026-10-13T08:18:59+00:00 load 6.25 6.71 5.66 1/1250 2099
+perf counters: none; load (6.2490234375, 6.71044921875, 5.66064453125)
+server-full cancho tls_echo                    14007 handshakes     0.294 ms CPU
+server-full openssl s_server                   16444 handshakes     0.201 ms CPU
+server-full openssl oserv                       9970 handshakes     0.255 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.500 ms CPU
+client-full openssl tconn                      12652 handshakes     0.347 ms CPU
+server-full cancho tls_echo                     9421 handshakes     0.373 ms CPU
+server-full openssl s_server                   16127 handshakes     0.201 ms CPU
+server-full openssl oserv                      13128 handshakes     0.191 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     1.090 ms CPU
+client-full openssl tconn                      12876 handshakes     0.350 ms CPU
+### head round 1 2026-10-13T08:20:10+00:00 load 4.64 6.08 5.51 2/1250 2122
+perf counters: none; load (4.64404296875, 6.0791015625, 5.51318359375)
+server-full cancho tls_echo                    14669 handshakes     0.266 ms CPU
+server-full openssl s_server                   17323 handshakes     0.188 ms CPU
+server-full openssl oserv                      19141 handshakes     0.141 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.358 ms CPU
+client-full openssl tconn                      17250 handshakes     0.281 ms CPU
+server-full cancho tls_echo                    14610 handshakes     0.251 ms CPU
+server-full openssl s_server                   17347 handshakes     0.190 ms CPU
+server-full openssl oserv                      19387 handshakes     0.140 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.358 ms CPU
+client-full openssl tconn                      17218 handshakes     0.279 ms CPU
+### main round 2 2026-10-13T08:21:20+00:00 load 3.55 5.46 5.34 2/1252 2145
+perf counters: none; load (3.5478515625, 5.458984375, 5.33740234375)
+server-full cancho tls_echo                    13609 handshakes     0.293 ms CPU
+server-full openssl s_server                   17319 handshakes     0.189 ms CPU
+server-full openssl oserv                      19447 handshakes     0.139 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.424 ms CPU
+client-full openssl tconn                      17577 handshakes     0.276 ms CPU
+server-full cancho tls_echo                    13603 handshakes     0.293 ms CPU
+server-full openssl s_server                   17394 handshakes     0.187 ms CPU
+server-full openssl oserv                      19533 handshakes     0.138 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.423 ms CPU
+client-full openssl tconn                      17510 handshakes     0.277 ms CPU
+### head round 2 2026-10-13T08:22:30+00:00 load 3.28 5.00 5.18 2/1245 2168
+perf counters: none; load (3.28125, 4.99658203125, 5.1845703125)
+server-full cancho tls_echo                    14643 handshakes     0.251 ms CPU
+server-full openssl s_server                   17480 handshakes     0.188 ms CPU
+server-full openssl oserv                      19397 handshakes     0.141 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.364 ms CPU
+client-full openssl tconn                      17355 handshakes     0.279 ms CPU
+server-full cancho tls_echo                    14587 handshakes     0.251 ms CPU
+server-full openssl s_server                   17163 handshakes     0.191 ms CPU
+server-full openssl oserv                      19309 handshakes     0.140 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.378 ms CPU
+client-full openssl tconn                      17418 handshakes     0.280 ms CPU
+### end 2026-10-13T08:23:40+00:00 load 2.99 4.55 5.01 2/1241 2191
