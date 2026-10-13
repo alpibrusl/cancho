@@ -72,7 +72,7 @@ P-256 leaf signed by a P-256 CA)**, and in **cycles** where the machine can coun
 | **T2.** a full handshake on the client, chain and host name verified | at most **5 times** a verifying OpenSSL client (`benches/server/tconn.c`) | 3 times |
 | **T3.** a request on an established connection, server CPU | at most **1.2 times** OpenSSL's server answering the same request (`benches/server/oserv.c`) | parity |
 | **T4.** bulk AEAD, seal and open | AES-128-GCM at most **3 times** OpenSSL at 1 KiB and 16 KiB, **1.5 times** at 64 bytes; ChaCha20-Poly1305 documented as it is until a vector-type decision (§4.4) | 2 times |
-| **T5.** resumed handshake (#379) | no more than the full handshake's two X25519 operations **plus 10 percentage points of a full handshake** (41.8% of today's full handshake at today's shares, §4.3). Not 1.1 times the X25519 operations: that reading (35.0%) is not met by tickets with A1 alone | |
+| **T5.** resumed handshake (#379) | no more than the full handshake's two X25519 operations **plus 10 percentage points of a full handshake** (41.8% of today's full handshake at today's shares, §4.3). Not 1.1 times the X25519 operations: that reading (35.0%) is not met by tickets with A1 alone. *Restated 2026-10-13 (§7 Q9, decided as proposed): **at most 1.2 times OpenSSL's resumed handshake, server and client; stretch: parity**, the same form as T1 to T3. The bound above fell every time the full handshake got cheaper. As built (§10.3): 2.34 and 2.37 times on x86-64, 2.17 and 2.12 on arm64; with glibc not trimming (A1's experiment) 1.05 and 1.14 times.* | |
 
 T1 does not give up the verify-before-send check (`tls-server.md` §3.3): OpenSSL does not make one, so T1 compares a
 server that does more with one that does less. That is the honest comparison and is why the target is 5, not 3.
@@ -638,7 +638,7 @@ are "a CPU feature the language can't name" and want one design.
 **Q8. What does "within 3 to 5 times" mean for P-384, RSA and TLS 1.2?** Not measured here (§5). *Proposed:* P-256 and X25519
 are the targets; P-384 is 1.7 times the P-256 handshake (`tls-server.md` §6) and follows B5; RSA signing is #385's.
 
-**Q9. Is T5 restated against OpenSSL's resumed handshake?** (Added with §10.) T5 bounds a resumed handshake by the full one's
+**Q9. Is T5 restated against OpenSSL's resumed handshake?** (Added with §10.) *Decided as proposed (2026-10-13): T5 is now at most 1.2 times OpenSSL's resumed handshake, server and client, stretch parity (the T5 row in §1.1 says so).* T5 bounds a resumed handshake by the full one's
 two ladders plus 10 points of it; as built it is not met (2.00M cycles against 0.58M on x86-64) and the bound falls every time
 the full handshake gets cheaper. *Proposed:* **at most 1.2 times OpenSSL's resumed handshake, server and client, stretch parity**:
 the same form as T1 to T3. As built it is 2.34 and 2.37 times; with glibc not trimming (A1's experiment) 1.05 and 1.14 times
