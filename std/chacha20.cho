@@ -1,6 +1,7 @@
 edition 7;
 module std.chacha20;
 import std.bytes;
+import std.field25519_51;
 
 // `std.chacha20` — ChaCha20, Poly1305 and the ChaCha20-Poly1305 AEAD
 // (RFC 8439). `docs/chacha20.md` is the design; this is sub-issue 2
@@ -210,7 +211,8 @@ pub fn xor[&k, &n, &i, &o](key: &k [byte], counter: int, nonce: &n [byte], input
 // `st` is eight words: `r0..r2`, then `s1 = 20 r1` and `s2 = 20 r2` (the
 // reduction's `2^130 = 5` folded into the shift of a limb above the top),
 // then the accumulator `h0..h2`. A product of two limbs is taken whole
-// with `mul_wide` and summed into a two-word accumulator with `add_carry`.
+// with `mul_wide` and summed into a two-word accumulator with `add_carry`
+// (`field25519_51.mac`, the accumulator X25519's field sums its columns in).
 // Bounds: `r` is clamped below 2^44, 2^44 and 2^40, so `s1` is under
 // 2^48.4 and `s2` under 2^44.4; with a message block added every limb of
 // `h` is under 2^45 (the top one under 2^43), a product under 2^93.4, a
@@ -235,19 +237,6 @@ fn shr44(hi: int, lo: int) -> [] int {
 
 fn shr42(hi: int, lo: int) -> [] int {
     return lo >> 42 & 0x3fffff | hi << 22;
-}
-
-// `(hi, lo) + w` for a word `w`.
-fn addw(hi: int, lo: int, w: int) -> [] (int, int) {
-    let (s, c) = add_carry(lo, w, 0);
-    return (wrapping_add(hi, c), s);
-}
-
-// `(hi, lo) + a * b`, a two-word accumulator plus the whole product.
-fn mac(hi: int, lo: int, a: int, b: int) -> [] (int, int) {
-    let (h, l) = mul_wide(a, b);
-    let (s, c) = add_carry(lo, l, 0);
-    return (wrapping_add(wrapping_add(hi, h), c), s);
 }
 
 fn poly_init[&s, &k](st: &!s [int], key: &k [byte]) -> [] int {
@@ -300,22 +289,22 @@ fn poly_blocks[&s, &m](st: &!s [int], m: &m [byte], hibit: int) -> [] int {
         h1 = wrapping_add(h1, (t0 >> 44 & 0xfffff | t1 << 20) & m44());
         h2 = wrapping_add(h2, t1 >> 24 & 0xffffffffff | top);
 
-        let (a0, b0) = mac(0, 0, h0, r0);
-        let (a0, b0) = mac(a0, b0, h1, s2);
-        let (a0, b0) = mac(a0, b0, h2, s1);
-        let (a1, b1) = mac(0, 0, h0, r1);
-        let (a1, b1) = mac(a1, b1, h1, r0);
-        let (a1, b1) = mac(a1, b1, h2, s2);
-        let (a2, b2) = mac(0, 0, h0, r2);
-        let (a2, b2) = mac(a2, b2, h1, r1);
-        let (a2, b2) = mac(a2, b2, h2, r0);
+        let (a0, b0) = field25519_51.mac(0, 0, h0, r0);
+        let (a0, b0) = field25519_51.mac(a0, b0, h1, s2);
+        let (a0, b0) = field25519_51.mac(a0, b0, h2, s1);
+        let (a1, b1) = field25519_51.mac(0, 0, h0, r1);
+        let (a1, b1) = field25519_51.mac(a1, b1, h1, r0);
+        let (a1, b1) = field25519_51.mac(a1, b1, h2, s2);
+        let (a2, b2) = field25519_51.mac(0, 0, h0, r2);
+        let (a2, b2) = field25519_51.mac(a2, b2, h1, r1);
+        let (a2, b2) = field25519_51.mac(a2, b2, h2, r0);
 
         var c = shr44(a0, b0);
         h0 = b0 & m44();
-        let (a1, b1) = addw(a1, b1, c);
+        let (a1, b1) = field25519_51.addw(a1, b1, c);
         c = shr44(a1, b1);
         h1 = b1 & m44();
-        let (a2, b2) = addw(a2, b2, c);
+        let (a2, b2) = field25519_51.addw(a2, b2, c);
         c = shr42(a2, b2);
         h2 = b2 & 0x3ffffffffff;
         // 2^130 = 5 modulo p.

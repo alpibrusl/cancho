@@ -64,7 +64,8 @@ mut(K, "mul_p", "mul_p: the 2^32 - 1 limb of p off by one", "mac(h4, l4, m0, 429
 mut(K, "mul_p", "mul_p: an input limb packed at 27 bits", "let a1 = xs[2] | xs[3] << 28;", "let a1 = xs[2] | xs[3] << 27;")
 mut(K, "mul_p", "mul_p: an output limb not masked", "os[0] = r0 & 268435455;", "os[0] = r0;")
 mut(K, "mul_p", "mul_p: the top limb of the answer dropped", "os[9] = r4 >> 28;", "os[9] = 0;")
-mut(K, "mac", "mac: the low word's carry dropped", "return (wrapping_add(wrapping_add(hi, h), c), s);", "return (wrapping_add(hi, h), s);")
+# The two-word accumulator the kernels sum their columns in is `std.field25519_51`'s (#381).
+mut("std/field25519_51.cho", "mac", "mac: the low word's carry dropped", "return (wrapping_add(wrapping_add(hi, h), c), s);", "return (wrapping_add(hi, h), s);")
 mut(K, "shr56", "shr56: a carry taken at 55 bits", "return lo >> 56 & 255 | hi << 8;", "return lo >> 55 & 511 | hi << 9;")
 mut(K, "shr56", "shr56: the low word's bits not masked", "return lo >> 56 & 255 | hi << 8;", "return lo >> 56 | hi << 8;")
 mut(K, "sqr_p", "sqr_p: the doubling of a cross term dropped", "let d2 = a2 << 1;", "let d2 = a2;")
