@@ -1,6 +1,6 @@
 # `std.p256`: faster P-256 (#380, part of #378)
 
-> **Status: built; not independently reviewed (#209).** §1 is the profile that came first (the design was committed before the code); §2 to §7 are the design as built, §8 its gates, §9 what it costs, §10 what fell short. **§11, a table for a key that verifies many signatures (B2 and B3 of #378: a TLS server's own key, a client's trust anchors), and §12, P-384 measured and decided, came after (#380 reopened).** The TLS performance
+> **Status: built; not independently reviewed (#209).** §1 is the profile that came first (the design was committed before the code); §2 to §7 are the design as built, §8 its gates, §9 what it costs, §10 what fell short. **§11, a table for a key that verifies many signatures (B2 and B3 of #378: a TLS server's own key, a client's trust anchors), and §12, P-384 measured and decided, came after (#380 reopened); §13 moved the field's multiplications onto `mul_wide` (#381).** The TLS performance
 > work (#378) names P-256 as the largest single cost in a server handshake: `std.ecdsa_sign.sign` is 0.80 ms on an M4 and
 > 1.24 ms on the i7 of `gram`, OpenSSL's is 23 µs. `docs/ecdsa.md` §5.4 and `docs/ecdsa-sign.md` §9 said where the time goes
 > without measuring it. §1 measures it; §2 to §7 are the design that follows from the numbers; §8 is how it is checked.
@@ -176,7 +176,10 @@ limb's product (2^64) does not fit this language's signed 64-bit `int`.
 *Where a wide multiply would be used.* The product of two 28-bit limbs fits in `int`. A builtin giving the high and low
 halves of a 64×64 product would let the limbs be 64 bits (4 limbs, 16 products), and this module's kernels would be rewritten
 on it by changing the generator; nothing outside `std/p256_kernels.cho` (generated) would change, and its tests
-(`tests/vectors/p256.txt`) would be the check.
+(`tests/vectors/p256.txt`) would be the check. *Corrected (#381, §13): four 64-bit limbs would change more than the kernels.
+R = 2^256 leaves no headroom for §4.4's lazy reduction, and the representation is read outside them (the comb's 10,400 words,
+`p256_vf`'s wNAF digits, `load`, `store`, `pow`'s nibbles). What was built is five 56-bit limbs inside the kernels only, each
+packing two of the 28-bit limbs, R unchanged; §13 measured both.*
 
 ### 4.3 `wrapping_*`, and the proof that it cannot wrap
 
@@ -461,7 +464,8 @@ handshake whose other costs are the TLS engine's, and it is verification alone t
   OpenSSL's cost; it is built on #381's field, not on this one.*
 - **Against OpenSSL**: signing is still about 2.5 times its time (23 µs on the i7 of `docs/ecdsa-sign.md` §7 against §9's figure), and
   the ladder (`shared`) about five times; both are field-multiplication bound at 20 ns, and OpenSSL's are assembly with a 64-bit
-  multiply.
+  multiply. *Since #381 (§13.4): on `gram`, in cycles against OpenSSL 3.5.5 on the same core, signing 3.2 times, `shared` 3.2 times,
+  a verification 1.8 times.*
 - **Not timing-tested:** `p256_vf` (public data) and the key parser (as before). Cranelift was not timed (`docs/ecdh.md` §3 found its
   P-384 noisy; P-256 was not re-run on it here).
 - **Not independently reviewed** (#209), and not run: the server interop matrix of `docs/tls-server.md` §10.2 needs the container of
@@ -700,3 +704,133 @@ It is **not built here**, because its field belongs to #381: that issue's scope 
 verification (§7) with the generator's runs, and the key tables (§11) for P-384 anchors, which are 35 of the system bundle's 128.
 #380 stays open for it; #381's `std.bigmod` on `mul_wide` (3 to 3.5 times on `mont_mul`, `docs/tls-performance.md` §10.8, M1) is the
 interim gain. No secret path changed, so there is no P-384 timing test to run.
+## 13. The field on `mul_wide` (#381)
+
+> #381 (of #378) asked for P-256's field on the wide-multiply builtins of [`wide-multiply.md`](wide-multiply.md) (#393), and for
+> the choice between four 64-bit limbs (#397's estimate: 16 `mul_wide` a multiplication against 100 products, 10 a squaring
+> against 55, at the cost of the lazy reduction's headroom) and five limbs to be made from measurements. §13.1 is what was measured
+> first, §13.2 the design that follows, §13.3 its gates, §13.4 its cost. Machine names and loads as §1; `gram` figures are cycles
+> (`cpu_core/cycles/u` through `sudo perf stat`, CPU 0 pinned, the least of five runs a driver, two drivers alternating) and
+> instructions (exact), because its clock moves under `powersave` and other agents' jobs; `kernel.perf_event_paranoid` was not
+> changed (it reads 4; `perf` ran under `sudo`).
+
+### 13.1 Measured before choosing
+
+Three kernels for p, each `p256_bench.py`'s `m`, `q` and `p` loops on `gram`: today's 28-bit field (`main`), five limbs of 56 bits
+inside the kernels (each packing two of the 28-bit limbs, so R stays 2^280 and nothing else changes), and a prototype of four
+64-bit limbs with R = 2^256 (`mul_wide` product scanning into a three-word accumulator, four reduction rounds, the final
+conditional subtraction; add and subtract fully reduced, as R = 2^256 forces: there is no headroom above p). The prototype was
+checked against Python on chains of 1,000 operations; it is not in the tree, its figures are
+[`assets/wide-multiply/381/prototype_4x64.txt`](assets/wide-multiply/381/prototype_4x64.txt).
+
+| kernel (x86-64, `gram`) | 10 × 28 bits (`main`) | 5 × 56 bits | 4 × 64 bits, prototype |
+|---|---|---|---|
+| multiplication mod p | 158 cycles, 782 instructions | 98, 451 | **86**, 332 |
+| squaring mod p | 114, 573 | **81**, 345 (dedicated) | 84, 331 (a multiplication) |
+| an addition and a subtraction | 75, 390 | 36, 220 | **30**, 117 (each reduced) |
+
+On the M4 the first run (load 4.7; later ones, at load 8 to 17, moved by up to two times and are not used) gave 16 ns for the
+5 × 56 multiplication (before §13.2's `wrapping_*` additions and length test) against 14 for 4 × 64, 14 against 15 for the squaring, and 13 against 9 for
+the pair.
+
+**The choice: five limbs of 56 bits.** Four 64-bit limbs were 12% cheaper on the multiplication and 17% on an addition and a
+subtraction, which on the ladder's 4,810 multiplications and 7,642 additions and subtractions (§1.1) is about 10 to 15% of an
+operation (arithmetic). For it they change the representation every caller reads: `p256_vf`'s wNAF reads a scalar's bits as 28-bit
+limbs, the comb's 10,400 words are 28-bit limbs in R = 2^280, and `load`, `store`, `below` and `pow`'s nibbles are written for
+them. The formulas of §4.4 add and subtract without reducing, up to 66 p, which R = 2^256 cannot hold, so every addition would
+reduce and `p256_bounds.py`'s proof would be replaced. Those files are being changed by #380 at the same time. Five 56-bit
+limbs keep all of it: the change is inside `std/p256_kernels.cho` and its generator. #397's statement that four 64-bit limbs
+would be confined to the generator was wrong for this reason (corrected in §4.2).
+
+### 13.2 As built
+
+`scripts/p256_gen.py` writes the four Montgomery kernels (`mul_p`, `sqr_p`, `mul_n`, `sqr_n`) on the builtins:
+
+- **Packing.** Each pair of 28-bit limbs of an input becomes one 56-bit limb (`xs[2i] | xs[2i + 1] << 28`); the five limbs of the
+  answer are split back into ten. An element in `work` is what it was.
+- **The product, column by column.** Every product of two 56-bit limbs is taken whole with `mul_wide` and added into a two-word
+  accumulator (`mac`: `mul_wide`, then `add_carry`), 25 products a multiplication, 15 a squaring (the cross terms against a doubled
+  limb). A column's carry is the accumulator shifted right by 56 (`shr56`, one funnel shift).
+- **The reduction, in radix 2^56: five steps, the same R = 2^280.** p is -1 modulo 2^96, so -p⁻¹ is 1 modulo 2^56 and the quotient
+  digit is the column's low limb, as in §4.2; p's 56-bit limbs are 2^56 − 1, 2^40 − 1, 0, 2^24 and 2^32 − 1, so the first costs
+  nothing and the others are three `mac`s a step. n's are general: n' modulo 2^56 is one `wrapping_mul`, then five `mac`s a step.
+  The Montgomery quotient below R is unique, so every answer is the 28-bit kernels' answer word for word.
+- **The bounds, proved by the generator for every column at the inputs' largest limbs** (the header of the generated file):
+  the largest accumulator is 2^114.92 (limit 2^127; `mul_n`, column 4), the largest carry between columns 2^58.92 (limit 2^63).
+  A wrong bound is a failed generation. §4.3's invariants are unchanged, so `p256_bounds.py` needs nothing new and still closes.
+- **`add` and `sub_K` stay on 28-bit limbs but are `wrapping_*`**: they were checked arithmetic, a test and a branch for each of
+  their 20 additions. The generator checks every limb's sum before its carry: under 2^29.99 (limit 2^31).
+- **One test of the slices' lengths a kernel**, `if len(xs) < 10 || ... { return -1; }`, which no call can make true (a slice is
+  ten words or the slicing trapped). It tells LLVM what it could not prove from `w[x..x + 10]`, and the bounds checks of the
+  kernel's thirty constant indices go: 33 compares in `add` before, 6 after (arm64 object).
+
+*Tried, measured, not kept:* the reduction's constants written as shifts instead of `mac` (94 cycles against 98 for a multiplication
+on `gram`, 75 against 81 for a squaring, but 36 more instructions, and `shared` within 0.3%); an addition with one parallel carry
+round instead of a chain (slower on the M4, 11 ns against 8 for the pair).
+
+### 13.3 Gates
+
+- **Vectors, byte for byte, both backends**: `tests/vectors/p256.txt` (1,823 cases, the four kernels at their worst-case limbs among
+  them), RFC 6979 A.2.5, Wycheproof ECDH and ECDSA, NIST CAVP KAS and SigVer, the key files, the TLS suites of `cargo test`.
+- **Differentials** (arm64 Linux, OpenSSL 3.0.13; [`wide-multiply.md`](wide-multiply.md) §12.2): the field against Python 444,704
+  cases (LLVM) and 69,476 (Cranelift); signing against OpenSSL 10,000 and against RFC 6979 in Python 10,000; keys 600 checks;
+  verification 4,000 a curve; ECDH 1,000 key pairs a curve. 0 differences.
+- **Bounds**: the generator's (§13.2); `scripts/p256_bounds.py` closes for every formula, unchanged.
+- **Mutants**: `scripts/p256_mutants.py`, its kernel mutants rewritten for the new code (a cross product dropped, the quotient
+  digit's carry, each special limb of p off, a limb packed at 27 bits, an output limb unmasked, the top limb dropped, the
+  accumulator's carry, the column shift at 55 bits and unmasked, the squaring's doubling, a square and a cross term left out, n'
+  off by one, a limb of n, the quotient unmasked, the carries of `add` and `sub_4`, and the unchanged `canon_*` and constants
+  mutants): **36 selected, 36 killed** at the head (`assets/wide-multiply/381/p256_mutants.txt`); after the rebase onto §11's
+  tables (#465), the whole script: 165, 155 killed, 10 surviving, each one `EQUIVALENT` argues, none on the kernels
+  (`p256_mutants_full_rebased.txt`).
+- **Constant time**: dudect on `gram` at 10^6 measurements a test, the ten tests of §8.3, all below 4.5 (largest 2.29; the table is
+  `wide-multiply.md` §12.3). The branch audit of §8.2 repeated over the kernels: each has exactly one conditional jump that is
+  not to a trap, the never-taken test of the slices' lengths (`cmp $0xa`, `setge`, `je`), and `canon_*` none
+  (`assets/wide-multiply/381/branches_p256.txt`).
+
+### 13.4 Cost
+
+`gram` (x86-64), cycles and instructions as in the note above §13.1, the least of six runs in two sessions (load average 4 to 7;
+the branch's kernels at b2651fea and at the head are the same object code); raw:
+[`assets/wide-multiply/381/p256_cycles.txt`](assets/wide-multiply/381/p256_cycles.txt):
+
+| operation | `main` | branch | gain (cycles; instructions) |
+|---|---|---|---|
+| field multiplication mod p | 158 cycles, 782 instructions | 99, 451 | 1.60; 1.73 |
+| field squaring mod p | 113, 573 | 80, 345 | 1.41; 1.66 |
+| multiplication mod n | 174, 827 | 130, 526 | 1.34; 1.57 |
+| an addition and a subtraction | 73, 390 | 34, 220 | 2.15; 1.77 |
+| inversion mod p | 34,950, 179,248 | 24,936, 106,566 | 1.40; 1.68 |
+| inversion mod n | 49,534, 212,060 | 38,764, 141,395 | 1.28; 1.50 |
+| `ecdh.public_key` (k·G) | 233,437, 1,197,041 | 141,568, 713,529 | **1.65**; 1.68 |
+| `ecdh.shared` (k·P) | 980,090, 5,002,519 | 567,604, 2,912,470 | **1.73**; 1.72 |
+| `ecdsa_sign.sign` | 326,959, 1,632,023 | 224,736, 1,075,660 | **1.45**; 1.52 |
+| `ecdsa_sign.sign_checked` | 1,007,407, 5,062,738 | 646,106, 3,101,308 | 1.56; 1.63 |
+| `ecdsa.verify_raw` | 682,396, 3,431,653 | 416,757, 2,026,587 | **1.64**; 1.69 |
+
+Against OpenSSL 3.5.5 on the same core (`openssl speed`, cycles from `perf stat`,
+[`openssl_gram.txt`](assets/wide-multiply/381/openssl_gram.txt)): ECDH 176,845 cycles, so `shared` is **3.21**
+times it (5.54 on `main`); signing 70,906, **3.17** times (4.61); verification 233,829, **1.78** times (2.92).
+
+**Apple M4 Max**, macOS, `scripts/p256_bench.py <branch> --vs <main>` (time, best of five alternating; load average 5.4;
+[`m4_p256.txt`](assets/wide-multiply/381/m4_p256.txt)):
+
+| operation | `main` | branch | |
+|---|---|---|---|
+| field multiplication mod p | 19 ns | 14 ns | 1.3x |
+| field squaring mod p | 17 ns | 12 ns | 1.3x |
+| an addition and a subtraction | 12 ns | 7 ns | 1.7x |
+| inversion mod p / mod n | 5.6 / 10.0 µs | 4.3 / 7.6 µs | 1.3x |
+| `ecdh.public_key` | 34.7 µs | 22.5 µs | **1.5x** |
+| `ecdh.shared` | 138.4 µs | 97.0 µs | **1.4x** |
+| `ecdsa_sign.sign` | 52.7 µs | 41.2 µs | **1.3x** |
+| `ecdsa_sign.sign_checked` | 159.7 µs | 113.6 µs | 1.4x |
+| `ecdsa.verify_raw` | 105.2 µs | 71.7 µs | **1.5x** |
+
+The M4 gains less than x86-64: its old kernel's 100 multiply-adds were already cheap there (§1.2: 23 ns against 44 on the i7),
+and its new one's `mul` and `umulh` are two instructions a product where x86-64's `mul` is one. In a TLS handshake
+([`tls-performance.md`](tls-performance.md) §10.15) the server's full handshake is 19.9% cheaper on x86-64 and 14.3% on arm64.
+
+*Not done:* `mulx` and `adcx`/`adox` behind a CPU test (the baseline x86-64 target has no BMI2; `wide-multiply.md` §10.6's first
+item); a dedicated reduction for n's form; four 64-bit limbs, which would also need `p256_vf`, the comb and the lazy formulas
+changed (§13.1).

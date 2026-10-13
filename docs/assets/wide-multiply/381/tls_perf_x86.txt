@@ -1,0 +1,53 @@
+    Finished `release` profile [optimized] target(s) in 3m 11s
+# commit ff6d7958 (rebased onto #466); gram; valgrind-3.26.0;  15:05:04 up 6 days,  4:24,  7 users,  load average: 4,50, 3,58, 2,66
+## check (before re-recording)
+baseline linux-x86_64 (Intel Core i7-1260P (a P-core), Ubuntu 26.04, Linux 7.0.0-38, clang from the system, valgrind 3.26; shared with other work (docs/tls-performance.md §2)); instructions: instructions a call
+operation                            size            now       recorded   ratio
+aes128gcm_open                       1024        3145.20        3149.20    1.00
+aes128gcm_open                      16384       43467.00       43471.00    1.00
+aes128gcm_open                         64         742.00         746.00    0.99
+aes128gcm_prepare                       0       32813.36       36560.40    0.90
+aes128gcm_seal                       1024        3142.20        3141.20    1.00
+aes128gcm_seal                      16384       43464.00       43463.00    1.00
+aes128gcm_seal                         64         739.00         737.80    1.00
+calibrate                               0        1006.64        1007.00    1.00
+chacha20poly1305_open                1024      108636.20      119409.00    0.91
+chacha20poly1305_open               16384     1628318.00     1790529.00    0.91
+chacha20poly1305_open                  64       13658.00       14964.00    0.91
+chacha20poly1305_seal                1024      108473.80      119047.80    0.91
+chacha20poly1305_seal               16384     1628170.00     1790184.00    0.91
+chacha20poly1305_seal                  64       13492.00       14601.20    0.92
+ecdsa_p256_sign                         0     1067250.00     1630478.00    0.65  CHEAPER THAN 1/1.3: re-record the baseline
+ecdsa_p256_sign_checked                 0     3126979.00     5126392.00    0.61  CHEAPER THAN 1/1.3: re-record the baseline
+ecdsa_p256_sign_checked_tabled          0     1997228.00     3183352.00    0.63  CHEAPER THAN 1/1.3: re-record the baseline
+ecdsa_p256_verify                       0     2060849.00     3488054.00    0.59  CHEAPER THAN 1/1.3: re-record the baseline
+ecdsa_p256_verify_tabled                0      931099.00     1543233.00    0.60  CHEAPER THAN 1/1.3: re-record the baseline
+hkdf_expand_label_32                    0       31851.00       31851.00    1.00
+hkdf_expand_label_48                    0       34288.00       34288.00    1.00
+hkdf_extract_32                         0       31069.00       31069.00    1.00
+hmac_sha256                          1024      141563.80      141563.80    1.00
+hmac_sha256                         16384     1807420.00     1807402.00    1.00
+hmac_sha256                            64       37447.00       37447.00    1.00
+p256_public                             0      713484.00     1197245.00    0.60  CHEAPER THAN 1/1.3: re-record the baseline
+p256_shared                             0     2912475.00     5002771.00    0.58  CHEAPER THAN 1/1.3: re-record the baseline
+sha256                               1024      118578.80      118578.80    1.00
+sha256                              16384     1784435.00     1784435.00    1.00
+sha256                                 64       14462.00       14462.00    1.00
+sha384                               1024       58731.00       58802.20    1.00
+sha384                              16384      823989.00      824062.00    1.00
+sha384                                 64        8470.18        8543.00    0.99
+x25519_public                           0      693513.00      693989.00    1.00
+x25519_shared                           0      693549.00      694025.00    1.00
+hkdf_expand_label_prepared_32           0       16062.64       16062.60    1.00
+29 of 36 rows within 1.3x either way of the baseline
+## exit 1
+## record
+recorded 36 quotients and 36 instruction counts for linux-x86_64 in /home/alpibru/Workspace/p256-wide/src/scripts/../benches/tls_baseline.json
+## exit 0
+## check (after)
+36 of 36 rows within 1.3x either way of the baseline
+## exit 0
+## mutant guard
+32 of 36 rows within 1.3x either way of the baseline
+ok: the guard failed exactly the 4 mutated rows
+## exit 0

@@ -1,0 +1,21 @@
+# commit 8a596168 (std.bigmod as at the head); lexsys-hooks-env, arm64 Linux on the M4 (Docker), pyca/cryptography 41.0.7, OpenSSL 3.0.13; python3 scripts/ecdh_mutants.py <cancho>
+unmutated: passes 1277 cases and the differential
+killed        ecdh: b times the wrong product in the addition: case 60: K 384 df17be65645873cb7c70c57b19fe3af1d2e3ab20f2d9a00a78dc1b
+killed        ecdh: the doubling's Z one factor of 2 short: case 60: K 384 df17be65645873cb7c70c57b19fe3af1d2e3ab20f2d9a00a78dc1b
+killed        ecdh: three doublings a window, not four: case 60: K 384 df17be65645873cb7c70c57b19fe3af1d2e3ab20f2d9a00a78dc1b
+killed        ecdh: the windows of a byte in the wrong order: case 60: K 384 df17be65645873cb7c70c57b19fe3af1d2e3ab20f2d9a00a78dc1b
+killed        ecdh: a select that matches two indices: case 60: K 384 df17be65645873cb7c70c57b19fe3af1d2e3ab20f2d9a00a78dc1b
+killed        ecdh: the table doubled, not stepped: case 60: K 384 df17be65645873cb7c70c57b19fe3af1d2e3ab20f2d9a00a78dc1b
+killed        ecdh: infinity with Y = 0: case 60: K 384 df17be65645873cb7c70c57b19fe3af1d2e3ab20f2d9a00a78dc1b
+killed        ecdh: the on-curve check skipped: case 65: S 384 e721233a975e944601693f98e6ea16dea8d1b3fd171e21afade280
+killed        ecdh: the curve equation with -2x, not -3x: case 61: S 384 df17be65645873cb7c70c57b19fe3af1d2e3ab20f2d9a00a78dc1b
+killed        ecdh: every scalar accepted: case 1265: K 256 000000000000000000000000000000000000000000000000000000
+killed        ecdh: the scalar compared the wrong way: case 0: K 256 d18944fa9c790c73f9ae0e1bf60d43c455566956b5129ab46d8171
+killed        ecdh: the public key's y from X: case 60: K 384 df17be65645873cb7c70c57b19fe3af1d2e3ab20f2d9a00a78dc1b
+killed        ecdh: a point's first byte not checked: case 1273: S 384 070707070707070707070707070707070707070707070707070707
+killed        bigmod: the reduction's mask inverted: power 0: 3fc231c9 9f3344d507b07fa4 271aadc4
+killed        bigmod: the reduction blind to the carry limb: power 220: fff63c0179e58219 89419f936769fc70 9cecdeeea1560927
+killed        bigmod: a modulus with its top bit set measured short: case 60: K 384 df17be65645873cb7c70c57b19fe3af1d2e3ab20f2d9a00a78dc1b
+killed        bigmod: a negative difference left unreduced: case 60: K 384 df17be65645873cb7c70c57b19fe3af1d2e3ab20f2d9a00a78dc1b
+17 mutants, 17 killed
+exit 0

@@ -35,7 +35,12 @@ FUNCTIONS = [
     "chacha20.m32",
     "chacha20.le32",
     "bytes.store_le32",
-    "chacha20.dot5",
+    "chacha20.le64",
+    "chacha20.m44",
+    "chacha20.shr44",
+    "chacha20.shr42",
+    "field25519_51.mac",
+    "field25519_51.addw",
     "chacha20.poly_block",
     "chacha20.poly_finish",
 ]
@@ -44,6 +49,8 @@ LOOPS = [
     "chacha20.block_into",
     "chacha20.xor",
     "chacha20.poly_init",
+    # #381: the block loop, whose branches are the message's length and the never-taken test of the slices' lengths.
+    "chacha20.poly_blocks",
     "chacha20.poly_padded",
     "chacha20.poly1305",
     "chacha20.aead_tag",

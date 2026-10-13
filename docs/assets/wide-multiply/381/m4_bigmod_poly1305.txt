@@ -1,0 +1,10 @@
+# Apple M4 Max, macOS 26.2, native arm64, LLVM; before = origin/main 3d7e8e9d, after = 028ce885; 10:20  up 7 days, 13:32, 5 users, load averages: 12.78 11.23 11.77
+RSA-2048 verify          before     182.0 us   after      25.7 us    7.09x   outputs identical
+RSA-4096 verify          before     700.1 us   after      93.1 us    7.52x   outputs identical
+P-384 ECDSA verify       before    2309.0 us   after     526.3 us    4.39x   outputs identical
+P-384 ecdh.public_key    before    2039.8 us   after     511.3 us    3.99x   outputs identical
+P-384 ecdh.shared        before    1987.7 us   after     508.0 us    3.91x   outputs identical
+Poly1305, 16 bytes       before        21 ns   after        21 ns    1.00x   outputs identical
+Poly1305, 1 KiB          before       536 ns   after       349 ns    1.54x   outputs identical
+Poly1305, 16 KiB         before      8587 ns   after      5395 ns    1.59x   outputs identical
+# end 10:20  up 7 days, 13:32, 5 users, load averages: 10.63 10.90 11.63

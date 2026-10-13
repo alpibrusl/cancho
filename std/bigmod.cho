@@ -1,4 +1,4 @@
-edition 6;
+edition 7;
 module std.bigmod;
 
 // `std.bigmod` -- unsigned integers modulo an odd `n` of up to 4,096
@@ -15,10 +15,11 @@ module std.bigmod;
 // numbers live in the caller's `work`, `work_len()` words, so nothing is
 // allocated from a size the input names.
 //
-// A number is 30-bit limbs, least significant first: the widest limb
-// for which Montgomery multiplication's fused step,
-// `t[j] + a*b[j] + m*n[j] + carry`, stays below 2^62 with checked
-// arithmetic (`docs/rsa.md` §2.1).
+// A number is 64-bit limbs, least significant first, each an `int` read
+// as the unsigned word it is (`docs/rsa.md` §2.1, `docs/wide-multiply.md`
+// §11): products are taken whole with `mul_wide` and sums carried with
+// `add_carry` and `sub_borrow`, so no limb arithmetic can trap, and a
+// comparison of two limbs is a borrow, never `<` on a signed `int`.
 
 pub fn ok() -> [] int {
     return 0;
@@ -77,22 +78,20 @@ pub fn max_bits() -> [] int {
     return 4096;
 }
 
-fn mask() -> [] int {
-    return 0x3fffffff;
-}
-
-// 4,096 bits in 30-bit limbs, rounded up.
+// 4,096 bits in 64-bit limbs.
 fn max_limbs() -> [] int {
-    return 137;
+    return 64;
 }
 
-// One number's slot in `work`: `max_limbs()` and two more, for the
-// Montgomery accumulator's carry limbs.
+// One number's slot in `work`. It stays the 139 words of the 30-bit limbs
+// this module had (137 and two carry limbs), so that every caller's `work`
+// keeps its layout: `std.ecdh` and `std.ecdsa` size P-256's work from
+// `registers_len`.
 fn stride() -> [] int {
     return 139;
 }
 
-// `work`: [0] the limb count k, [1] n' = -n^-1 mod 2^30, then six slots.
+// `work`: [0] the limb count k, [1] n' = -n^-1 mod 2^64, then six slots.
 fn slot(i: int) -> [] int {
     return 2 + i * stride();
 }
@@ -144,6 +143,7 @@ pub fn bit_length[&b](b: &b [byte]) -> [] int {
 }
 
 // Big-endian `b` into the `k` limbs at `at`; -3 when it needs more.
+// Eight bytes make a limb, so no byte straddles two.
 fn load[&b, &w](b: &b [byte], w: &!w [int], at: int, k: int) -> [] int {
     var i = 0;
     while i < k + 2 {
@@ -155,19 +155,11 @@ fn load[&b, &w](b: &b [byte], w: &!w [int], at: int, k: int) -> [] int {
     while j >= 0 {
         let v = int_of(b[j]);
         if v != 0 {
-            let idx = p / 30;
-            let off = p % 30;
+            let idx = p / 64;
             if idx >= k {
                 return -3;
             }
-            w[at + idx] = w[at + idx] | v << off & mask();
-            let high = v >> 30 - off;
-            if off > 22 && high != 0 {
-                if idx + 1 >= k {
-                    return -3;
-                }
-                w[at + idx + 1] = w[at + idx + 1] | high;
-            }
+            w[at + idx] = w[at + idx] | v << p % 64;
         }
         p = p + 8;
         j = j - 1;
@@ -179,15 +171,10 @@ fn load[&b, &w](b: &b [byte], w: &!w [int], at: int, k: int) -> [] int {
 fn store[&w, &o](w: &w [int], at: int, k: int, out: &!o [byte]) -> [] int {
     var j = 0;
     while j < len(out) {
-        let p = j * 8;
-        let idx = p / 30;
-        let off = p % 30;
+        let idx = j / 8;
         var v = 0;
         if idx < k {
-            v = w[at + idx] >> off;
-            if off > 22 && idx + 1 < k {
-                v = v | w[at + idx + 1] << 30 - off;
-            }
+            v = w[at + idx] >> 8 * (j % 8);
         }
         out[len(out) - 1 - j] = byte_of(v & 255);
         j = j + 1;
@@ -196,7 +183,7 @@ fn store[&w, &o](w: &w [int], at: int, k: int, out: &!o [byte]) -> [] int {
 }
 
 // -1, 0 or 1 as the `k` limbs at `x` (plus the limb at `x + k`) compare
-// with the modulus.
+// with the modulus. Variable time: for public values.
 fn compare_n[&w](w: &w [int], x: int, k: int) -> [] int {
     if w[x + k] != 0 {
         return 1;
@@ -205,11 +192,10 @@ fn compare_n[&w](w: &w [int], x: int, k: int) -> [] int {
     while i >= 0 {
         let a = w[x + i];
         let b = w[slot_n() + i];
-        if a > b {
-            return 1;
-        }
-        if a < b {
-            return -1;
+        if a != b {
+            // The limbs are unsigned words: `a < b` is the borrow of `a - b`.
+            let (d, under) = sub_borrow(a, b, 0);
+            return 1 - 2 * under;
         }
         i = i - 1;
     }
@@ -217,17 +203,17 @@ fn compare_n[&w](w: &w [int], x: int, k: int) -> [] int {
 }
 
 // x -= n, for x >= n; clears the limb at `x + k`. Branches on nothing
-// but `k`: the borrow is the sign of each limb's difference.
+// but `k`.
 fn subtract_n[&w](w: &!w [int], x: int, k: int) -> [] int {
     var under = 0;
     var i = 0;
     while i < k {
-        let d = w[x + i] - w[slot_n() + i] - under;
-        w[x + i] = d & mask();
-        under = d >> 63 & 1;
+        let (d, b) = sub_borrow(w[x + i], w[slot_n() + i], under);
+        w[x + i] = d;
+        under = b;
         i = i + 1;
     }
-    w[x + k] = w[x + k] - under;
+    w[x + k] = wrapping_sub(w[x + k], under);
     return 0;
 }
 
@@ -236,91 +222,113 @@ fn subtract_n[&w](w: &!w [int], x: int, k: int) -> [] int {
 // the comparison is a borrow computed over every limb, and n is
 // subtracted under a mask rather than behind a branch.
 fn ct_reduce[&w](w: &!w [int], x: int, k: int) -> [] int {
+    let xs = w[x..x + k + 1];
+    let ns = w[slot_n()..slot_n() + k];
     var under = 0;
     var i = 0;
     while i < k {
-        let d = w[x + i] - w[slot_n() + i] - under;
-        under = d >> 63 & 1;
+        let (d, b) = sub_borrow(xs[i], ns[i], under);
+        under = b;
         i = i + 1;
     }
-    under = w[x + k] - under >> 63 & 1;
+    let (top, below) = sub_borrow(xs[k], 0, under);
     // -1 (all ones) when x >= n, 0 when x < n, through the barrier so
     // the optimiser cannot make the subtraction below a branch on it
     // (`docs/value-barrier.md`).
-    let m = value_barrier(under - 1);
+    let m = value_barrier(below - 1);
     under = 0;
     i = 0;
     while i < k {
-        let d = w[x + i] - (w[slot_n() + i] & m) - under;
-        w[x + i] = d & mask();
-        under = d >> 63 & 1;
+        let (d, b) = sub_borrow(xs[i], ns[i] & m, under);
+        xs[i] = d;
+        under = b;
         i = i + 1;
     }
-    w[x + k] = w[x + k] - under;
+    xs[k] = wrapping_sub(xs[k], under);
     return 0;
 }
 
 fn copy[&w](w: &!w [int], from: int, to: int, k: int) -> [] int {
+    let a = w[from..from + k + 1];
+    let b = w[to..to + k + 1];
     var i = 0;
     while i < k + 1 {
-        w[to + i] = w[from + i];
+        b[i] = a[i];
         i = i + 1;
     }
     return 0;
 }
 
-// dst = x * y * R^-1 mod n, for x, y < n (CIOS, with the reduction fused
-// into the multiplication's inner loop). `dst` may be `x` or `y`.
+// dst = x * y * R^-1 mod n, for x, y < n: CIOS with the reduction fused
+// into the multiplication's inner loop as a second carry chain
+// (`docs/wide-multiply.md` §11). Step j adds a_i b_j and then m n_j to
+// t_j, each with its own carry word; neither sum can exceed 2^128 - 1, so
+// a carry is one word. `dst` may be `x` or `y`.
 fn mont_mul[&w](w: &!w [int], x: int, y: int, dst: int) -> [] int {
     let k = w[0];
     let ninv = w[1];
-    let n = slot_n();
-    let t = slot_t();
+    let ns = w[slot_n()..slot_n() + k];
+    let ts = w[slot_t()..slot_t() + k + 1];
+    let xs = w[x..x + k];
+    let ys = w[y..y + k];
     var j = 0;
-    while j < k + 2 {
-        w[t + j] = 0;
+    while j < k + 1 {
+        ts[j] = 0;
         j = j + 1;
     }
     var i = 0;
     while i < k {
-        let a = w[x + i];
-        var s = w[t] + a * w[y];
-        let m = (s & mask()) * ninv & mask();
-        s = s + m * w[n];
-        var c = s >> 30;
+        let a = xs[i];
+        let (h0, l0) = mul_wide(a, ys[0]);
+        let (u0, k0) = add_carry(ts[0], l0, 0);
+        var ca = wrapping_add(h0, k0);
+        // t_0 + m n_0 is 0 modulo 2^64.
+        let m = wrapping_mul(u0, ninv);
+        let (g0, q0) = mul_wide(m, ns[0]);
+        let (z0, kz) = add_carry(u0, q0, 0);
+        var cm = wrapping_add(g0, kz);
         j = 1;
         while j < k {
-            s = w[t + j] + a * w[y + j] + m * w[n + j] + c;
-            w[t + j - 1] = s & mask();
-            c = s >> 30;
+            let (h, l) = mul_wide(a, ys[j]);
+            let (u, ka) = add_carry(ts[j], l, 0);
+            let (u2, kb) = add_carry(u, ca, 0);
+            ca = wrapping_add(wrapping_add(h, ka), kb);
+            let (g, q) = mul_wide(m, ns[j]);
+            let (v, kc) = add_carry(u2, q, 0);
+            let (v2, kd) = add_carry(v, cm, 0);
+            cm = wrapping_add(wrapping_add(g, kc), kd);
+            ts[j - 1] = v2;
             j = j + 1;
         }
-        s = w[t + k] + c;
-        w[t + k - 1] = s & mask();
-        w[t + k] = s >> 30;
+        // The top limb is 0 or 1 (t stays below 2n), so the two carries
+        // and it make at most one more word and a bit.
+        let (u, ka) = add_carry(ts[k], ca, 0);
+        let (v, kb) = add_carry(u, cm, 0);
+        ts[k - 1] = v;
+        ts[k] = ka + kb;
         i = i + 1;
     }
     // Below 2n: one subtraction at most, made or not without a branch.
-    ct_reduce(w, t, k);
-    copy(w, t, dst, k);
+    ct_reduce(w, slot_t(), k);
+    copy(w, slot_t(), dst, k);
     w[dst + k] = 0;
     return 0;
 }
 
-// -n^-1 mod 2^30, by Newton's iteration from n0 (right to 3 bits, as n
-// is odd; each step doubles the bits right).
+// -n^-1 mod 2^64, by Newton's iteration from n0 (right to 3 bits, as n
+// is odd; each step doubles the bits right: 6, 12, 24, 48, 96).
 fn neg_inverse(n0: int) -> [] int {
     var inv = n0;
     var i = 0;
     while i < 5 {
-        inv = inv * (2 - (n0 * inv & mask())) & mask();
+        inv = wrapping_mul(inv, wrapping_sub(2, wrapping_mul(n0, inv)));
         i = i + 1;
     }
-    return (1 << 30) - inv & mask();
+    return wrapping_sub(0, inv);
 }
 
 // R^2 mod n into its slot (`docs/rsa.md` §2.2): 2R mod n by doubling
-// from 2^(bits - 1), then that (2 in Montgomery form) to the power 30k.
+// from 2^(bits - 1), then that (2 in Montgomery form) to the power 64k.
 fn r_squared[&w](w: &!w [int], bits: int) -> [] int {
     let k = w[0];
     let two = slot_two();
@@ -329,15 +337,15 @@ fn r_squared[&w](w: &!w [int], bits: int) -> [] int {
         w[two + i] = 0;
         i = i + 1;
     }
-    w[two + (bits - 1) / 30] = 1 << (bits - 1) % 30;
-    var d = 30 * k + 1 - (bits - 1);
+    w[two + (bits - 1) / 64] = 1 << (bits - 1) % 64;
+    var d = 64 * k + 1 - (bits - 1);
     while d > 0 {
         var carry = 0;
         i = 0;
         while i < k {
-            let v = w[two + i] << 1 | carry;
-            w[two + i] = v & mask();
-            carry = v >> 30;
+            let v = w[two + i];
+            w[two + i] = v << 1 | carry;
+            carry = v >> 63 & 1;
             i = i + 1;
         }
         w[two + k] = carry;
@@ -346,8 +354,8 @@ fn r_squared[&w](w: &!w [int], bits: int) -> [] int {
         }
         d = d - 1;
     }
-    // (2R)^(30k) in Montgomery form is 2^(30k) R = R^2 mod n.
-    let e = 30 * k;
+    // (2R)^(64k) in Montgomery form is 2^(64k) R = R^2 mod n.
+    let e = 64 * k;
     var top = 0;
     while 1 << top + 1 <= e {
         top = top + 1;
@@ -378,7 +386,7 @@ pub fn setup[&n, &w](n: &n [byte], w: &!w [int]) -> [] int {
     if int_of(n[len(n) - 1]) & 1 == 0 {
         return -1;
     }
-    let k = (bits + 29) / 30;
+    let k = (bits + 63) / 64;
     w[0] = k;
     load(n, w, slot_n(), k);
     w[1] = neg_inverse(w[slot_n()]);
@@ -480,7 +488,7 @@ pub fn load_reduced[&b, &w](b: &b [byte], w: &!w [int], r: int) -> [] int {
 // more bits than the register's limbs, which is its length, public.
 pub fn load_secret[&b, &w](b: &b [byte], w: &!w [int], r: int) -> [] int {
     let k = w[0];
-    if 8 * len(b) > 30 * k {
+    if 8 * len(b) > 64 * k {
         return -3;
     }
     var i = 0;
@@ -488,18 +496,13 @@ pub fn load_secret[&b, &w](b: &b [byte], w: &!w [int], r: int) -> [] int {
         w[r + i] = 0;
         i = i + 1;
     }
-    // Bit positions only: which limb a byte lands in, and whether it
-    // straddles two, depend on where it is, not on what it is.
+    // Bit positions only: which limb a byte lands in depends on where it
+    // is, not on what it is.
     var p = 0;
     var j = len(b) - 1;
     while j >= 0 {
         let v = int_of(b[j]);
-        let idx = p / 30;
-        let off = p % 30;
-        w[r + idx] = w[r + idx] | v << off & mask();
-        if off > 22 {
-            w[r + idx + 1] = w[r + idx + 1] | v >> 30 - off;
-        }
+        w[r + p / 64] = w[r + p / 64] | v << p % 64;
         p = p + 8;
         j = j - 1;
     }
@@ -511,7 +514,7 @@ pub fn store_reg[&w, &o](w: &w [int], r: int, out: &!o [byte]) -> [] int {
     return store(w, r, w[0], out);
 }
 
-// Register `r` = v, for 0 <= v < 2^30 and v < n.
+// Register `r` = v, for 0 <= v and v < n.
 pub fn set_small[&w](w: &!w [int], r: int, v: int) -> [] int {
     var i = 0;
     while i < w[0] + 2 {
@@ -544,15 +547,18 @@ pub fn from_mont[&w](w: &!w [int], a: int, dst: int) -> [] int {
 // dst = a + b mod n.
 pub fn add[&w](w: &!w [int], a: int, b: int, dst: int) -> [] int {
     let k = w[0];
+    let xs = w[a..a + k];
+    let ys = w[b..b + k];
+    let ds = w[dst..dst + k + 1];
     var carry = 0;
     var i = 0;
     while i < k {
-        let v = w[a + i] + w[b + i] + carry;
-        w[dst + i] = v & mask();
-        carry = v >> 30;
+        let (v, c) = add_carry(xs[i], ys[i], carry);
+        ds[i] = v;
+        carry = c;
         i = i + 1;
     }
-    w[dst + k] = carry;
+    ds[k] = carry;
     ct_reduce(w, dst, k);
     return 0;
 }
@@ -561,24 +567,28 @@ pub fn add[&w](w: &!w [int], a: int, b: int, dst: int) -> [] int {
 // from the final borrow.
 pub fn sub[&w](w: &!w [int], a: int, b: int, dst: int) -> [] int {
     let k = w[0];
+    let xs = w[a..a + k];
+    let ys = w[b..b + k];
+    let ds = w[dst..dst + k + 1];
+    let ns = w[slot_n()..slot_n() + k];
     var under = 0;
     var i = 0;
     while i < k {
-        let v = w[a + i] - w[b + i] - under;
-        w[dst + i] = v & mask();
-        under = v >> 63 & 1;
+        let (v, b) = sub_borrow(xs[i], ys[i], under);
+        ds[i] = v;
+        under = b;
         i = i + 1;
     }
-    w[dst + k] = 0;
+    ds[k] = 0;
     // Below zero: add n back; the carry out of the top limb is the
     // borrow it cancels.
     let m = value_barrier(0 - under);
     var carry = 0;
     i = 0;
     while i < k {
-        let v = w[dst + i] + (w[slot_n() + i] & m) + carry;
-        w[dst + i] = v & mask();
-        carry = v >> 30;
+        let (v, c) = add_carry(ds[i], ns[i] & m, carry);
+        ds[i] = v;
+        carry = c;
         i = i + 1;
     }
     return 0;
@@ -608,19 +618,23 @@ pub fn equal[&w](w: &w [int], a: int, b: int) -> [] bool {
 
 // Bit `i` of register `a` (as stored: in Montgomery form if it is).
 pub fn bit[&w](w: &w [int], a: int, i: int) -> [] int {
-    return w[a + i / 30] >> i % 30 & 1;
+    return w[a + i / 64] >> i % 64 & 1;
 }
 
 // The number of bits in n.
 pub fn modulus_bits[&w](w: &w [int]) -> [] int {
     var i = w[0] - 1;
     var top = w[slot_n() + i];
+    if top < 0 {
+        // The top bit of the unsigned word is set.
+        return i * 64 + 64;
+    }
     var bits = 0;
     while top > 0 {
         bits = bits + 1;
         top = top >> 1;
     }
-    return i * 30 + bits;
+    return i * 64 + bits;
 }
 
 // dst = a^-1 mod n, by Fermat: a^(n-2). Only for a prime n and a != 0;
@@ -635,14 +649,9 @@ pub fn inverse[&w](w: &!w [int], a: int, dst: int) -> [] int {
     var i = 0;
     var take = 2;
     while take > 0 {
-        let v = w[e + i] - take;
-        if v < 0 {
-            w[e + i] = v + (1 << 30);
-            take = 1;
-        } else {
-            w[e + i] = v;
-            take = 0;
-        }
+        let (v, under) = sub_borrow(w[e + i], take, 0);
+        w[e + i] = v;
+        take = under;
         i = i + 1;
     }
     // dst = 1 in Montgomery form, then square-and-multiply.

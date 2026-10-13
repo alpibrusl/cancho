@@ -27,12 +27,17 @@ MUTANTS = [
     ("nine double rounds, not ten", "while round < 10", "while round < 9"),
     ("a wrong constant", "work[0] = 0x61707865", "work[0] = 0x61707866"),
     ("the input words not added back", "m32(wrapping_add(work[16 + i], work[i]))", "m32(work[16 + i])"),
-    ("a skipped Poly1305 carry", "    d1 = wrapping_add(d1, c);\n", "    d1 = wrapping_add(d1, 0);\n"),
-    ("r not clamped", "le32(key, 3) >> 2 & 0x3ffff03", "le32(key, 3) >> 2 & 0x3ffffff"),
+    # #381: Poly1305 on three limbs of 44, 44 and 42 bits (`mul_wide`); its mutants re-anchored on that code.
+    ("a skipped Poly1305 carry", "let (a1, b1) = field25519_51.addw(a1, b1, c);", "let (a1, b1) = field25519_51.addw(a1, b1, 0);"),
+    ("a Poly1305 carry taken at 42 bits", "    c = shr44(a1, b1);\n", "    c = shr42(a1, b1);\n"),
+    ("r not clamped", "(t0 >> 44 & 0xfffff | t1 << 20) & 0xfffffc0ffff", "(t0 >> 44 & 0xfffff | t1 << 20) & 0xfffffffffff"),
     ("pad16 block without its 2^128 bit", "poly_block(st, scratch[0..16], 0x1000000)", "poly_block(st, scratch[0..16], 0)"),
-    ("never reduced below p", "let keep = value_barrier(g4 >> 63);", "let keep = 0;"),
-    ("h - p computed as h + 5", "let g4 = wrapping_sub(wrapping_add(h4, c), 0x4000000);", "let g4 = wrapping_add(h4, c);"),
-    ("the carry into the tag's second word dropped", "f = wrapping_add(wrapping_add(w1, le32(key, 20)), f >> 32);", "f = wrapping_add(w1, le32(key, 20));"),
+    ("never reduced below p", "let keep = value_barrier(g2 >> 63);", "let keep = 0;"),
+    ("h - p computed as h + 5", "let g2 = wrapping_sub(wrapping_add(h2, c), 0x40000000000);", "let g2 = wrapping_add(h2, c);"),
+    ("the carry into the tag's second word dropped", "let f1 = wrapping_add(wrapping_add(w1, le64(key, 24)), k);", "let f1 = wrapping_add(w1, le64(key, 24));"),
+    # "The final carry pass made once" was here: it is equivalent. `poly_blocks` leaves h0 under 2^44, h2 under 2^42 and h1
+    # under 2^44 + 48, so in `poly_finish`'s first pass a carry out of h1 leaves h1 under 48 and one out of h0 lands there;
+    # without one, h2 and h0 cannot carry. h1 is below 2^44 after one pass. The second stays, as in poly1305-donna-64.
     ("a one-byte-short tag compare", "while i < 16 {\n            diff = diff | int_of(want[i]) ^ int_of(sealed[text + i]);", "while i < 15 {\n            diff = diff | int_of(want[i]) ^ int_of(sealed[text + i]);"),
     ("plaintext released on a bad tag", "    if diff != 0 {\n        return refused_tag_mismatch();\n    }\n    xor(key, 1, nonce, sealed[0..text], out);", "    if diff != diff {\n        return refused_tag_mismatch();\n    }\n    xor(key, 1, nonce, sealed[0..text], out);"),
     # In place (docs/record-in-place.md §3).
@@ -47,7 +52,10 @@ MUTANTS = [
     ("the lengths block in the wrong order", "bytes.store_le32(lens, 0, m32(len(aad)));", "bytes.store_le32(lens, 0, m32(len(ct)));"),
     ("encryption from counter 0", "xor(key, 1, nonce, plaintext, out[0..text]);", "xor(key, 0, nonce, plaintext, out[0..text]);"),
     ("the counter allowed to wrap", "blocks > 0x100000000 - counter", "blocks > 0x100000001 - counter"),
-    ("a wrong product in the Poly1305 multiply", "let gh = wrapping_mul(g, h);", "let gh = wrapping_mul(g, g);"),
+    ("a wrong product in the Poly1305 multiply", "let (a1, b1) = field25519_51.mac(a1, b1, h2, s2);", "let (a1, b1) = field25519_51.mac(a1, b1, h2, s1);"),
+    # The two-word accumulator itself (`mac`, `addw`) is `std.field25519_51`'s, shared since #381; its mutant is in
+    # scripts/p256_mutants.py, which mutates that file.
+    ("a block's 2^128 bit at 2^127", "let top = hibit << 16;", "let top = hibit << 15;"),
     ("a long nonce accepted", "    if len(nonce) != 12 {\n        return refused_nonce_length();\n    }\n    if (text", "    if len(nonce) < 12 {\n        return refused_nonce_length();\n    }\n    if (text"),
 ]
 

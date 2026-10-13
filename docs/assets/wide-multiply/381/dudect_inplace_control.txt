@@ -1,0 +1,51 @@
+# gram, x86-64, LLVM, taskset -c 0-1, governor powersave; python3 scripts/gcm_timing.py <timing> 1000000 --chacha20 --in-place --size 64 --control: each test's second class timed against itself. 'old harness' = tests/programs/gcm_timing.cho as #463 left it, built by the branch's compiler (pre-rebase, std as the PR's).
+## old harness, branch, control, round 1 2026-10-13T13:29:57+02:00 load average: 2,16, 1,22, 0,76
+seal, data (control)  1000000 samples, median 1564 cycles, max |t| = 1.53
+open, data (control)  1000000 samples, median 906 cycles, max |t| = 1.74
+open, tag (control)   1000000 samples, median 917 cycles, max |t| = 1.93
+## old harness, branch, control, round 2 2026-10-13T13:30:33+02:00 load average: 1,64, 1,19, 0,77
+seal, data (control)  1000000 samples, median 1656 cycles, max |t| = 2.74
+open, data (control)  1000000 samples, median 954 cycles, max |t| = 2.69
+open, tag (control)   1000000 samples, median 928 cycles, max |t| = 9.75
+## old harness, branch, control, round 3 2026-10-13T13:31:09+02:00 load average: 1,48, 1,20, 0,79
+seal, data (control)  1000000 samples, median 1674 cycles, max |t| = 2.52
+open, data (control)  1000000 samples, median 934 cycles, max |t| = 9.10
+open, tag (control)   1000000 samples, median 938 cycles, max |t| = 2.78
+## old harness, branch, control, round 4 2026-10-13T13:31:45+02:00 load average: 1,25, 1,17, 0,81
+seal, data (control)  1000000 samples, median 1730 cycles, max |t| = 2.63
+open, data (control)  1000000 samples, median 939 cycles, max |t| = 3.88
+open, tag (control)   1000000 samples, median 935 cycles, max |t| = 13.89
+
+# 'fixed harness' = gcm_timing.cho with every record copied into one set of buffers before timing (this PR), built by main's compiler (8920be5d) and the branch's (cf02de1d)
+## fixed harness, branch, control, round 1 2026-10-13T13:32:50+02:00 load average: 0,84, 1,09, 0,80
+seal, data (control)  1000000 samples, median 1483 cycles, max |t| = 1.58
+open, data (control)  1000000 samples, median 881 cycles, max |t| = 2.38
+open, tag (control)   1000000 samples, median 904 cycles, max |t| = 1.26
+## fixed harness, main, control, round 1 2026-10-13T13:33:25+02:00 load average: 0,91, 1,08, 0,81
+seal, data (control)  1000000 samples, median 1708 cycles, max |t| = 1.79
+open, data (control)  1000000 samples, median 1002 cycles, max |t| = 1.43
+open, tag (control)   1000000 samples, median 1004 cycles, max |t| = 1.84
+## fixed harness, branch, control, round 2 2026-10-13T13:34:01+02:00 load average: 1,03, 1,08, 0,83
+seal, data (control)  1000000 samples, median 1666 cycles, max |t| = 1.64
+open, data (control)  1000000 samples, median 938 cycles, max |t| = 1.13
+open, tag (control)   1000000 samples, median 965 cycles, max |t| = 2.37
+## fixed harness, main, control, round 2 2026-10-13T13:34:38+02:00 load average: 1,01, 1,07, 0,83
+seal, data (control)  1000000 samples, median 1771 cycles, max |t| = 1.74
+open, data (control)  1000000 samples, median 1012 cycles, max |t| = 2.31
+open, tag (control)   1000000 samples, median 1013 cycles, max |t| = 2.11
+## fixed harness, branch, control, round 3 2026-10-13T13:35:15+02:00 load average: 1,01, 1,06, 0,84
+seal, data (control)  1000000 samples, median 1706 cycles, max |t| = 1.28
+open, data (control)  1000000 samples, median 934 cycles, max |t| = 1.73
+open, tag (control)   1000000 samples, median 955 cycles, max |t| = 1.95
+## fixed harness, main, control, round 3 2026-10-13T13:35:53+02:00 load average: 1,00, 1,05, 0,85
+seal, data (control)  1000000 samples, median 1755 cycles, max |t| = 1.92
+open, data (control)  1000000 samples, median 1020 cycles, max |t| = 1.78
+open, tag (control)   1000000 samples, median 1024 cycles, max |t| = 2.08
+## fixed harness, branch, control, round 4 2026-10-13T13:36:30+02:00 load average: 1,00, 1,05, 0,86
+seal, data (control)  1000000 samples, median 1701 cycles, max |t| = 2.41
+open, data (control)  1000000 samples, median 934 cycles, max |t| = 2.21
+open, tag (control)   1000000 samples, median 933 cycles, max |t| = 1.63
+## fixed harness, main, control, round 4 2026-10-13T13:37:08+02:00 load average: 1,31, 1,12, 0,89
+seal, data (control)  1000000 samples, median 1807 cycles, max |t| = 1.97
+open, data (control)  1000000 samples, median 1007 cycles, max |t| = 1.67
+open, tag (control)   1000000 samples, median 1028 cycles, max |t| = 2.73

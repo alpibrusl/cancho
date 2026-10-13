@@ -1,0 +1,846 @@
+# commit 541a03cc; gram x86-64; LLVM; scripts/chacha20_branches.py over tests/programs/aead_driver.cho (std.chacha20, default list) and tests/programs/ecdh_driver.cho (std.bigmod)
+chacha20.quarter:
+      1 jae to a trap, after `cmp %rsi,%r8`
+      1 jae to a trap, after `cmp %rsi,%r9`
+      1 jae to a trap, after `cmp %rsi,%rcx`
+      1 jae to a trap, after `cmp %rsi,%rdx`
+      1 jo to a trap, after `add $K,%r8`
+      1 jo to a trap, after `add $K,%r9`
+      1 jo to a trap, after `add $K,%rcx`
+      1 jo to a trap, after `add $K,%rdx`
+chacha20.rotl32:
+      1 jae to a trap, after `cmp $K,%rdx`
+      1 jae to a trap, after `cmp $K,%rsi`
+chacha20.m32:
+chacha20.le32:
+      1 jae to a trap, after `cmp %rsi,%r8`
+      1 jae to a trap, after `cmp %rsi,%rax`
+      1 jae to a trap, after `cmp %rsi,%rcx`
+      1 jae to a trap, after `cmp %rsi,%rdx`
+      1 jo to a trap, after `add $K,%r8`
+      1 jo to a trap, after `add $K,%rcx`
+      1 jo to a trap, after `inc %rax`
+bytes.store_le32:
+      2 jae to a trap, after `cmp %rsi,%rax`
+      2 jae to a trap, after `cmp %rsi,%rdx`
+      1 jo to a trap, after `add $K,%rax`
+      1 jo to a trap, after `add $K,%rdx`
+      1 jo to a trap, after `inc %rax`
+chacha20.le64:
+      1 jae to a trap, after `cmp %rsi,%r10`
+      1 jae to a trap, after `cmp %rsi,%r11`
+      1 jae to a trap, after `cmp %rsi,%r8`
+      1 jae to a trap, after `cmp %rsi,%r9`
+      1 jae to a trap, after `cmp %rsi,%rax`
+      1 jae to a trap, after `cmp %rsi,%rbx`
+      1 jae to a trap, after `cmp %rsi,%rcx`
+      1 jae to a trap, after `cmp %rsi,%rdx`
+      1 jo to a trap, after `add $K,%r10`
+      1 jo to a trap, after `add $K,%r8`
+      1 jo to a trap, after `add $K,%r9`
+      1 jo to a trap, after `add $K,%rbx`
+      1 jo to a trap, after `add $K,%rcx`
+      1 jo to a trap, after `inc %r11`
+      1 jo to a trap, after `inc %rax`
+chacha20.m44:
+chacha20.shr44:
+chacha20.shr42:
+field25519_51.mac:
+field25519_51.addw:
+chacha20.poly_block:
+      1 jbe to a trap, after `cmp $K,%rcx`
+chacha20.poly_finish:
+      7 jbe to a trap, after `cmp $K,%r9`
+      8 jbe to a trap, after `cmp $K,%rcx`
+      2 jbe to a trap, after `cmp $K,%rsi`
+      8 je to a trap, after `cmp $K,%r9`
+      8 je to a trap, after `cmp $K,%rcx`
+      1 je to a trap, after `cmp $K,%rsi`
+      1 je to a trap, after `test %r9,%r9`
+chacha20.block_into (branches on lengths, counters and the tag comparison):
+      1 jae to a trap, after `cmp %r15,%rax`
+      1 jae to a trap, after `cmp %r15,%rdx`
+      2 jae to a trap, after `cmp %r15,%rsi`
+     14 jb to a trap, after `cmp $K,%rsi`
+      1 jb to a trap, after `sub $K,%r12`
+      3 jbe to a trap, after `cmp $K,%r14`
+      5 jbe to a trap, after `cmp $K,%r8`
+      1 jbe to a trap, after `cmp $K,%rsi`
+      2 je to a trap, after `add $K,%r12`
+     22 je to a trap, after `cmp $K,%r12`
+      4 je to a trap, after `cmp $K,%r14`
+      6 je to a trap, after `cmp $K,%r8`
+      2 je to a trap, after `cmp $K,%rsi`
+      7 je to a trap, after `jb 2add <lexs_std.chacha20.block_into+K>`
+      7 je to a trap, after `jb 2ae1 <lexs_std.chacha20.block_into+K>`
+      1 je to a trap, after `test %r14,%r14`
+      1 je to a trap, after `test %r8,%r8`
+      1 je to a trap, after `test %rsi,%rsi`
+      1 jne on public data (to be read), after `cmp $K,%rax`
+      1 jne on public data (to be read), after `dec %r13`
+chacha20.xor (branches on lengths, counters and the tag comparison):
+      1 cmova
+      1 cmovae
+      3 cmovb
+      1 cmove
+      1 cmovg
+      1 cmovns
+      1 ja to a trap, after `cmp %rax,%r14`
+      1 ja to a trap, after `cmp %rax,%rcx`
+      1 jae on public data (to be read), after `cmp $K,%rbp`
+      1 jae to a trap, after `jge 1c50 <lexs_std.chacha20.xor+K>`
+      1 jb on public data (to be read), after `cmpq $K,K(%rsp)`
+      1 jb on public data (to be read), after `mov K(%rsp),%r8`
+      1 jb to a trap, after `cmp %r14,%rcx`
+      1 jb to a trap, after `cmp %r9,%r14`
+      1 je on public data (to be read), after `test %rax,%rax`
+      1 je on public data (to be read), after `test %rcx,%rcx`
+      1 je on public data (to be read), after `test %rdi,%rdi`
+      1 je to a trap, after `test %r9,%r9`
+      1 jg on public data (to be read), after `cmp %rdi,%rsi`
+      1 jge on public data (to be read), after `cmp %r13,%rcx`
+      1 jl on public data (to be read), after `cmp %r13,%r15`
+      1 jle on public data (to be read), after `test %r13,%r13`
+      1 jne on public data (to be read), after `cmp $K,%r8`
+      1 jne on public data (to be read), after `cmp $K,%rax`
+      1 jne on public data (to be read), after `cmp $K,%rsi`
+      1 jne on public data (to be read), after `cmp %rcx,%r13`
+      1 jne on public data (to be read), after `cmp K(%rsp),%r13`
+      1 jne on public data (to be read), after `mov $K,%rax`
+      1 jo to a trap, after `add $K,%r15`
+      1 jo to a trap, after `add $K,%rcx`
+      1 jo to a trap, after `mov K(%rsp),%r8`
+chacha20.poly_init (branches on lengths, counters and the tag comparison):
+      7 jbe to a trap, after `cmp $K,%rcx`
+      3 jbe to a trap, after `cmp $K,%rsi`
+      8 je to a trap, after `cmp $K,%rcx`
+      4 je to a trap, after `cmp $K,%rsi`
+      1 je to a trap, after `test %rcx,%rcx`
+      1 je to a trap, after `test %rsi,%rsi`
+chacha20.poly_blocks (branches on lengths, counters and the tag comparison):
+      1 ja to a trap, after `jg 36e1 <lexs_std.chacha20.poly_blocks+K>`
+      1 jg on public data (to be read), after `cmp -K(%rsp),%rdi`
+      1 jle on public data (to be read), after `cmp $K,%rsi`
+      1 jno on public data (to be read), after `add $K,%rdi`
+chacha20.poly_padded (branches on lengths, counters and the tag comparison):
+      1 cmovns
+      1 ja to a trap, after `cmp %r13,%r14`
+      1 jae to a trap, after `cmp %r12,%rax`
+      1 jae to a trap, after `jge 2e86 <lexs_std.chacha20.poly_padded+K>`
+      1 jbe to a trap, after `cmp $K,%r12`
+     15 je to a trap, after `cmp $K,%r12`
+      1 je to a trap, after `test %r12,%r12`
+      1 jge on public data (to be read), after `cmp %r13,%r14`
+      1 jge on public data (to be read), after `cmp %r13,%rcx`
+      1 jno on public data (to be read), after `add %rax,%rdx`
+      1 jo to a trap, after `inc %rax`
+      1 jo to a trap, after `sub %rcx,%r14`
+chacha20.poly1305 (branches on lengths, counters and the tag comparison):
+      1 cmovns
+      1 ja to a trap, after `cmp %r11,%r10`
+      1 ja to a trap, after `cmp %r13,%r14`
+      1 ja to a trap, after `mov K(%rsp),%rdx`
+      1 jae to a trap, after `cmp $K,%rsi`
+      1 jb to a trap, after `cmp %r12,%r10`
+      1 jb to a trap, after `cmp %rdx,%r9`
+      1 je on public data (to be read), after `test %rax,%rax`
+      1 je on public data (to be read), after `test %rcx,%rcx`
+      1 je on public data (to be read), after `test %rdi,%rdi`
+      1 je to a trap, after `cmp $K,%rcx`
+      1 je to a trap, after `cmp %rcx,%r8`
+      1 je to a trap, after `cmp %rcx,%rbp`
+      1 je to a trap, after `test %r12,%r12`
+      1 jge on public data (to be read), after `cmp %r13,%r14`
+      1 jge on public data (to be read), after `cmp %r13,%rdi`
+      1 jge on public data (to be read), after `cmp %r13,%rsi`
+      1 jl on public data (to be read), after `cmp $K,%r9`
+      1 jne on public data (to be read), after `cmp $K,%rsi`
+      1 jno on public data (to be read), after `add %rcx,%rsi`
+      1 jo to a trap, after `add %rsi,%rdi`
+      1 jo to a trap, after `movq $K,K(%r12)`
+chacha20.aead_tag (branches on lengths, counters and the tag comparison):
+      1 ja to a trap, after `cmp %r10,%r13`
+      1 ja to a trap, after `cmp %r10,%rbp`
+      1 ja to a trap, after `cmp %rax,%r14`
+      1 ja to a trap, after `cmp %rax,%r15`
+      1 ja to a trap, after `cmp (%rsp),%r12`
+      1 jb to a trap, after `cmp %r13,%r12`
+      1 jb to a trap, after `cmp %r14,%r15`
+      1 jb to a trap, after `cmp %r15,%rbp`
+      1 jb to a trap, after `cmp %rbp,%r13`
+      1 jb to a trap, after `cmp %rbx,%r14`
+      1 je on public data (to be read), after `test %rax,%rax`
+      1 je on public data (to be read), after `test %rcx,%rcx`
+      1 je on public data (to be read), after `test %rdi,%rdi`
+      1 je to a trap, after `test %rbx,%rbx`
+chacha20.seal (branches on lengths, counters and the tag comparison):
+      1 ja to a trap, after `cmp %rcx,%r13`
+      1 jae to a trap, after `cmp $K,%r13`
+      1 jge on public data (to be read), after `cmp %rsi,%rcx`
+      1 jne on public data (to be read), after `cmp $K,%rcx`
+      1 jne on public data (to be read), after `cmp $K,%rsi`
+      1 jne on public data (to be read), after `cmp %rsi,%rcx`
+      1 jo to a trap, after `add $K,%rcx`
+chacha20.open (branches on lengths, counters and the tag comparison):
+      1 cmovae
+      1 ja to a trap, after `cmp %rax,%r15`
+      1 jb to a trap, after `cmp $K,%rax`
+      1 jb to a trap, after `cmp %rbx,%r15`
+      1 je on public data (to be read), after `test %rax,%rax`
+      1 je on public data (to be read), after `test %rcx,%rcx`
+      1 je on public data (to be read), after `test %rdi,%rdi`
+      1 je to a trap, after `mov K(%rsp),%rdi`
+      1 jg on public data (to be read), after `cmp $K,%r13`
+      1 jne on public data (to be read), after `cmp $K,%rcx`
+      2 jne on public data (to be read), after `cmp $K,%rsi`
+      1 jne on public data (to be read), after `cmp %rcx,%r12`
+      1 jne on public data (to be read), after `mov $K,%rax`
+      1 jne on public data (to be read), after `mov K(%rsp),%rdi`
+      1 jo to a trap, after `add $K,%rax`
+50 conditional jumps in the looping functions, for the reader
+0 conditional jumps that are not traps
+## exit 0
+## p256_ctx.py aead.o chacha20.poly_blocks
+--- jle at 34ea
+   34d1: push %r15
+   34d3: push %r14
+   34d5: push %r13
+   34d7: push %r12
+   34d9: push %rbx
+   34da: mov %rdx,-0x8(%rsp)
+   34df: mov $0xffffffffffffffff,%rax
+   34e6: cmp $0x7,%rsi
+=> 34ea: jle 36f4 <lexs_std.chacha20.poly_blocks+0x224>
+   34f0: mov (%rdi),%rax
+   34f3: mov %rax,-0x20(%rsp)
+--- jg at 3555
+   3529: mov 0x30(%rdi),%rdx
+   352d: mov %rdi,-0x48(%rsp)
+   3532: mov 0x38(%rdi),%rsi
+   3536: mov $0x10,%edi
+   353b: mov %rcx,-0x10(%rsp)
+   3540: mov -0x20(%rsp),%r9
+   3545: data16 cs nopw 0x0(%rax,%rax,1)
+   3550: cmp -0x10(%rsp),%rdi
+=> 3555: jg 36e1 <lexs_std.chacha20.poly_blocks+0x211>
+   355b: ja 36ff <lexs_std.chacha20.poly_blocks+0x22f>
+   3561: mov -0x8(%rsp),%rcx
+--- jno at 36d9
+   36b8: add %r15,%rax
+   36bb: mov %rax,%rdx
+   36be: sar $0x2c,%rdx
+   36c2: add %r14,%rdx
+   36c5: and %r8,%rax
+   36c8: movabs $0x3ffffffffff,%rcx
+   36d2: and %rcx,%rsi
+   36d5: add $0x10,%rdi
+=> 36d9: jno 3550 <lexs_std.chacha20.poly_blocks+0x80>
+   36df: ud2 
+   36e1: mov -0x48(%rsp),%rcx
+## p256_ctx.py aead.o chacha20.poly1305
+--- jne at 1349
+   1331: push %r15
+   1333: push %r14
+   1335: push %r13
+   1337: push %r12
+   1339: push %rbx
+   133a: sub $0x28,%rsp
+   133e: mov $0xffffffffffffffff,%rax
+   1345: cmp $0x20,%rsi
+=> 1349: jne 15db <lexs_std.chacha20.poly1305+0x2ab>
+   134f: mov $0xfffffffffffffffd,%rax
+   1356: cmp $0x10,%r9
+--- jl at 135a
+   1337: push %r12
+   1339: push %rbx
+   133a: sub $0x28,%rsp
+   133e: mov $0xffffffffffffffff,%rax
+   1345: cmp $0x20,%rsi
+   1349: jne 15db <lexs_std.chacha20.poly1305+0x2ab>
+   134f: mov $0xfffffffffffffffd,%rax
+   1356: cmp $0x10,%r9
+=> 135a: jl 15db <lexs_std.chacha20.poly1305+0x2ab>
+   1360: mov %rcx,%r13
+   1363: mov %rdx,%r15
+--- je at 137d
+   135a: jl 15db <lexs_std.chacha20.poly1305+0x2ab>
+   1360: mov %rcx,%r13
+   1363: mov %rdx,%r15
+   1366: mov %rdi,%rbx
+   1369: mov %r8,0x18(%rsp)
+   136e: mov %r9,0x10(%rsp)
+   1373: mov 0x0(%rip),%rdi        # 137a <lexs_std.chacha20.poly1305+0x4a>
+   137a: test %rdi,%rdi
+=> 137d: je 13a0 <lexs_std.chacha20.poly1305+0x70>
+   137f: dec %edi
+   1381: call 1386 <lexs_std.chacha20.poly1305+0x56>
+--- je at 1389
+   1369: mov %r8,0x18(%rsp)
+   136e: mov %r9,0x10(%rsp)
+   1373: mov 0x0(%rip),%rdi        # 137a <lexs_std.chacha20.poly1305+0x4a>
+   137a: test %rdi,%rdi
+   137d: je 13a0 <lexs_std.chacha20.poly1305+0x70>
+   137f: dec %edi
+   1381: call 1386 <lexs_std.chacha20.poly1305+0x56>
+   1386: test %rax,%rax
+=> 1389: je 13a0 <lexs_std.chacha20.poly1305+0x70>
+   138b: mov (%rax),%rcx
+   138e: test %rcx,%rcx
+--- je at 1391
+   137a: test %rdi,%rdi
+   137d: je 13a0 <lexs_std.chacha20.poly1305+0x70>
+   137f: dec %edi
+   1381: call 1386 <lexs_std.chacha20.poly1305+0x56>
+   1386: test %rax,%rax
+   1389: je 13a0 <lexs_std.chacha20.poly1305+0x70>
+   138b: mov (%rax),%rcx
+   138e: test %rcx,%rcx
+=> 1391: je 13a0 <lexs_std.chacha20.poly1305+0x70>
+   1393: lea -0x1(%rcx),%rdx
+   1397: mov %rdx,(%rax)
+--- cmovns at 1498
+   1477: mov %rdx,0x10(%r12)
+   147c: shl $0x2,%rcx
+   1480: lea (%rcx,%rcx,4),%rax
+   1484: mov %rax,0x18(%r12)
+   1489: shl $0x2,%rdx
+   148d: lea (%rdx,%rdx,4),%rax
+   1491: lea 0xf(%r13),%rcx
+   1495: test %r13,%r13
+=> 1498: cmovns %r13,%rcx
+   149c: mov %rax,0x20(%r12)
+   14a1: and $0xfffffffffffffff0,%rcx
+--- jge at 14f5
+   14d3: ja 15f4 <lexs_std.chacha20.poly1305+0x2c4>
+   14d9: mov $0xa,%esi
+   14de: mov $0x1000000,%r8d
+   14e4: mov %r12,%rdi
+   14e7: mov %r15,%rdx
+   14ea: mov %r14,%rcx
+   14ed: call 14f2 <lexs_std.chacha20.poly1305+0x1c2>
+   14f2: cmp %r13,%r14
+=> 14f5: jge 1583 <lexs_std.chacha20.poly1305+0x253>
+   14fb: lea 0x60(%r12),%r9
+   1500: cmp 0x20(%rsp),%r9
+--- jge at 1537
+   1519: xorps %xmm0,%xmm0
+   151c: movups %xmm0,(%rdx)
+   151f: lea (%r15,%r14,1),%rax
+   1523: lea -0x1(%rbp),%r8
+   1527: xor %ecx,%ecx
+   1529: nopl 0x0(%rax)
+   1530: lea (%r14,%rcx,1),%rsi
+   1534: cmp %r13,%rsi
+=> 1537: jge 158a <lexs_std.chacha20.poly1305+0x25a>
+   1539: cmp %rcx,%rbp
+   153c: je 15ea <lexs_std.chacha20.poly1305+0x2ba>
+--- jge at 1564
+   1546: je 15ec <lexs_std.chacha20.poly1305+0x2bc>
+   154c: movzbl (%rax,%rcx,1),%esi
+   1550: mov %sil,0x50(%r12,%rcx,1)
+   1555: lea 0x1(%rcx),%rsi
+   1559: mov %r14,%rdi
+   155c: add %rsi,%rdi
+   155f: jo 1581 <lexs_std.chacha20.poly1305+0x251>
+   1561: cmp %r13,%rdi
+=> 1564: jge 158d <lexs_std.chacha20.poly1305+0x25d>
+   1566: cmp %rcx,%r8
+   1569: je 15ea <lexs_std.chacha20.poly1305+0x2ba>
+--- jno at 157f
+   1564: jge 158d <lexs_std.chacha20.poly1305+0x25d>
+   1566: cmp %rcx,%r8
+   1569: je 15ea <lexs_std.chacha20.poly1305+0x2ba>
+   156b: movzbl (%r15,%rdi,1),%esi
+   1570: mov %sil,0x51(%r12,%rcx,1)
+   1575: add $0x2,%rcx
+   1579: mov %r14,%rsi
+   157c: add %rcx,%rsi
+=> 157f: jno 1530 <lexs_std.chacha20.poly1305+0x200>
+   1581: ud2 
+   1583: mov 0x8(%rsp),%r14
+## p256_ctx.py aead.o chacha20.poly_padded
+--- cmovns at 2d35
+   2d23: push %r14
+   2d25: push %r13
+   2d27: push %r12
+   2d29: push %rbx
+   2d2a: push %rax
+   2d2b: mov %rcx,%r13
+   2d2e: lea 0xf(%rcx),%rax
+   2d32: test %rcx,%rcx
+=> 2d35: cmovns %rcx,%rax
+   2d39: and $0xfffffffffffffff0,%rax
+   2d3d: sub %rax,%rcx
+--- jge at 2d76
+   2d58: mov %r8,%rbx
+   2d5b: mov %rdx,%rbp
+   2d5e: mov %rdi,%r15
+   2d61: mov $0x1000000,%r8d
+   2d67: mov %rsi,(%rsp)
+   2d6b: mov %r14,%rcx
+   2d6e: call 2d73 <lexs_std.chacha20.poly_padded+0x53>
+   2d73: cmp %r13,%r14
+=> 2d76: jge 2ea2 <lexs_std.chacha20.poly_padded+0x182>
+   2d7c: test %r12,%r12
+   2d7f: je 2eb9 <lexs_std.chacha20.poly_padded+0x199>
+--- jge at 2e63
+   2e48: cmp $0xf,%r12
+   2e4c: je 2eb9 <lexs_std.chacha20.poly_padded+0x199>
+   2e4e: movb $0x0,0xf(%rbx)
+   2e52: xor %eax,%eax
+   2e54: mov %r14,%rcx
+   2e57: mov (%rsp),%rsi
+   2e5b: nopl 0x0(%rax,%rax,1)
+   2e60: cmp %r13,%rcx
+=> 2e63: jge 2e86 <lexs_std.chacha20.poly_padded+0x166>
+   2e65: jae 2eb3 <lexs_std.chacha20.poly_padded+0x193>
+   2e67: cmp %r12,%rax
+--- jno at 2e82
+   2e6a: jae 2eb5 <lexs_std.chacha20.poly_padded+0x195>
+   2e6c: movzbl 0x0(%rbp,%rcx,1),%edx
+   2e71: mov %dl,(%rbx,%rax,1)
+   2e74: inc %rax
+   2e77: jo 2eb7 <lexs_std.chacha20.poly_padded+0x197>
+   2e79: inc %rcx
+   2e7c: mov %r14,%rdx
+   2e7f: add %rax,%rdx
+=> 2e82: jno 2e60 <lexs_std.chacha20.poly_padded+0x140>
+   2e84: ud2 
+   2e86: cmp $0xf,%r12
+## bigmod
+bigmod.mont_mul:
+      1 ja to a trap, after `cmp %r14,%rcx`
+      1 ja to a trap, after `cmp %rax,%rdx`
+      1 ja to a trap, after `cmp %rcx,%r8`
+      1 ja to a trap, after `cmp %rdi,K(%rsp)`
+      1 ja to a trap, after `cmp %rsi,%r12`
+      2 ja to a trap, after `cmp %rsi,%rax`
+      1 ja to a trap, after `cmp %rsi,%rdi`
+      1 jae to a trap, after `cmp %r12,%rax`
+      1 jae to a trap, after `cmp %r14,%rax`
+      1 jae to a trap, after `cmp %r15,%r14`
+      1 jae to a trap, after `cmp %r15,%rbp`
+      1 jb NOT to a trap, after `mov K(%rsp),%r8`
+      1 jbe to a trap, after `cmp $K,%r12`
+      1 jbe to a trap, after `cmp $K,%rax`
+      1 je NOT to a trap, after `mov K(%rsp),%r9`
+      1 je NOT to a trap, after `or %dl,%sil`
+      1 je NOT to a trap, after `test $K,%dil`
+      1 je to a trap, after `cmp $K,%rsi`
+      1 je to a trap, after `cmp K(%rsp),%rdi`
+      1 je to a trap, after `test %rsi,%rsi`
+      1 jle NOT to a trap, after `cmp %r14,%rax`
+      1 jle NOT to a trap, after `mov %r14,K(%rsp)`
+      1 jne NOT to a trap, after `cmp $K,%r14`
+      1 jne NOT to a trap, after `cmp %r14,%rbp`
+      1 jne NOT to a trap, after `cmp %rdi,%rdx`
+      1 jne NOT to a trap, after `cmp %rdx,%r8`
+      1 jne NOT to a trap, after `dec %r8`
+      1 jne NOT to a trap, after `mov K(%rsp),%rdi`
+      1 jo to a trap, after `add $K,%r12`
+      1 jo to a trap, after `add $K,%rax`
+      1 jo to a trap, after `add %r14,%rax`
+      1 jo to a trap, after `add %r14,%rdi`
+      1 jo to a trap, after `add %r15,%rax`
+      1 jo to a trap, after `inc %r12`
+      1 jo to a trap, after `inc %rax`
+      1 jo to a trap, after `inc %rcx`
+      1 js NOT to a trap, after `cmpq $K,K(%rsp)`
+      1 js NOT to a trap, after `test %r14,%r14`
+bigmod.ct_reduce:
+      1 ja to a trap, after `cmp %rsi,%r8`
+      1 ja to a trap, after `cmp %rsi,%rax`
+      1 jae to a trap, after `cmp %r8,%rcx`
+      1 jb to a trap, after `sub %rdx,%r8`
+      1 jbe to a trap, after `cmp $K,%rax`
+      1 je NOT to a trap, after `test $K,%cl`
+      2 jle NOT to a trap, after `test %rcx,%rcx`
+      1 jne NOT to a trap, after `add $K,%r9`
+      1 jne NOT to a trap, after `cmp $K,%rcx`
+      1 jne NOT to a trap, after `cmp %rsi,%rcx`
+      1 jne NOT to a trap, after `test $K,%cl`
+      1 jo to a trap, after `add $K,%rax`
+      1 jo to a trap, after `add %rcx,%r8`
+      1 jo to a trap, after `inc %r8`
+bigmod.add:
+      1 ja to a trap, after `cmp %r9,%rax`
+      1 ja to a trap, after `cmp %r9,%rdx`
+      3 ja to a trap, after `cmp %rsi,%r9`
+      1 jae to a trap, after `cmp %r9,%rcx`
+      1 jb NOT to a trap, after `cmp %r9,%rcx`
+      1 jb to a trap, after `sub %r8,%r9`
+      1 je to a trap, after `test %rsi,%rsi`
+      1 jle NOT to a trap, after `test %rcx,%rcx`
+      1 jne NOT to a trap, after `cmp %rbx,%rcx`
+      3 jo to a trap, after `add %rcx,%r9`
+      1 jo to a trap, after `inc %r9`
+bigmod.sub:
+      1 ja to a trap, after `cmp %r9,%rcx`
+      1 ja to a trap, after `cmp %r9,%rdx`
+      1 ja to a trap, after `cmp %rsi,%r10`
+      3 ja to a trap, after `cmp %rsi,%r9`
+      1 jae to a trap, after `cmp %r9,%rax`
+      1 jb NOT to a trap, after `cmp %r9,%rax`
+      1 jb to a trap, after `sub %r8,%r9`
+      1 jbe to a trap, after `cmp $K,%r10`
+      1 je to a trap, after `test %rsi,%rsi`
+      2 jle NOT to a trap, after `test %rax,%rax`
+      1 jne NOT to a trap, after `cmp %r10,%rax`
+      1 jne NOT to a trap, after `cmp %r8,%rax`
+      1 jo to a trap, after `add $K,%r10`
+      3 jo to a trap, after `add %rax,%r9`
+      1 jo to a trap, after `inc %r9`
+29 conditional jumps that are not traps
+## exit 1
+## p256_ctx.py ecdh_drv.o bigmod.mont_mul
+--- js at 2963
+   293a: ja 2c91 <lexs_std.bigmod.mont_mul+0x401>
+   2940: mov %rsi,0x20(%rsp)
+   2945: cmp %rdi,0x10(%rsp)
+   294a: ja 2c93 <lexs_std.bigmod.mont_mul+0x403>
+   2950: mov 0x8(%rbx),%rax
+   2954: mov %rax,0x40(%rsp)
+   2959: add $0xfffffffffffffdd2,%r12
+   2960: test %r14,%r14
+=> 2963: js 2993 <lexs_std.bigmod.mont_mul+0x103>
+   2965: xor %eax,%eax
+   2967: nopw 0x0(%rax,%rax,1)
+--- jle at 2991
+   2965: xor %eax,%eax
+   2967: nopw 0x0(%rax,%rax,1)
+   2970: cmp %r12,%rax
+   2973: jae 2c6d <lexs_std.bigmod.mont_mul+0x3dd>
+   2979: movq $0x0,0x1170(%rbx,%rax,8)
+   2985: inc %rax
+   2988: jo 2c6f <lexs_std.bigmod.mont_mul+0x3df>
+   298e: cmp %r14,%rax
+=> 2991: jle 2970 <lexs_std.bigmod.mont_mul+0xe0>
+   2993: mov %r8,0x18(%rsp)
+   2998: test %r14,%r14
+--- jle at 29a0
+   2979: movq $0x0,0x1170(%rbx,%rax,8)
+   2985: inc %rax
+   2988: jo 2c6f <lexs_std.bigmod.mont_mul+0x3df>
+   298e: cmp %r14,%rax
+   2991: jle 2970 <lexs_std.bigmod.mont_mul+0xe0>
+   2993: mov %r8,0x18(%rsp)
+   2998: test %r14,%r14
+   299b: mov %r14,0x8(%rsp)
+=> 29a0: jle 2af4 <lexs_std.bigmod.mont_mul+0x264>
+   29a6: lea (%rbx,%rdx,8),%rax
+   29aa: mov %rax,0x30(%rsp)
+--- jne at 2a32
+   2a14: mov %r10,%rdi
+   2a17: imul 0x40(%rsp),%rdi
+   2a1d: mov %rdi,%rax
+   2a20: mulq 0x10(%rbx)
+   2a24: mov %rdx,%r13
+   2a27: add %r10,%rax
+   2a2a: adc $0x0,%r13
+   2a2e: cmp $0x1,%r14
+=> 2a32: jne 2a40 <lexs_std.bigmod.mont_mul+0x1b0>
+   2a34: mov %r12,%r9
+   2a37: mov %r13,%r8
+--- jne at 2a9b
+   2a7d: setb %r8b
+   2a81: add %r13,%rax
+   2a84: adc %rdx,%r8
+   2a87: mov %rax,0x1170(%rbx,%r14,8)
+   2a8f: inc %r14
+   2a92: mov %r8,%r13
+   2a95: mov %r9,%r12
+   2a98: cmp %r14,%rbp
+=> 2a9b: jne 2a50 <lexs_std.bigmod.mont_mul+0x1c0>
+   2a9d: mov 0x8(%rsp),%r14
+   2aa2: cmp %r15,%r14
+--- jne at 2aee
+   2ac8: setb %sil
+   2acc: add %rax,%r9
+   2acf: adc $0x0,%rsi
+   2ad3: mov %r8,0x1168(%rbx,%r14,8)
+   2adb: mov %rsi,0x1170(%rbx,%r14,8)
+   2ae3: inc %r11
+   2ae6: cmp %r14,%r11
+   2ae9: mov 0x38(%rsp),%rdi
+=> 2aee: jne 29e0 <lexs_std.bigmod.mont_mul+0x150>
+   2af4: mov $0x22e,%edx
+   2af9: mov %rbx,%rdi
+--- js at 2b44
+   2b20: mov %rax,%rcx
+   2b23: inc %rcx
+   2b26: jo 2c97 <lexs_std.bigmod.mont_mul+0x407>
+   2b2c: cmp %r14,%rcx
+   2b2f: ja 2c99 <lexs_std.bigmod.mont_mul+0x409>
+   2b35: cmp %rcx,%r8
+   2b38: ja 2c9b <lexs_std.bigmod.mont_mul+0x40b>
+   2b3e: cmpq $0x0,0x8(%rsp)
+=> 2b44: js 2c4f <lexs_std.bigmod.mont_mul+0x3bf>
+   2b4a: lea 0x0(,%r8,8),%rcx
+   2b52: cmp $0x4,%r12
+--- je at 2b6b
+   2b44: js 2c4f <lexs_std.bigmod.mont_mul+0x3bf>
+   2b4a: lea 0x0(,%r8,8),%rcx
+   2b52: cmp $0x4,%r12
+   2b56: setb %dl
+   2b59: lea -0x1170(%rcx),%rsi
+   2b60: cmp $0x20,%rsi
+   2b64: setb %sil
+   2b68: or %dl,%sil
+=> 2b6b: je 2b76 <lexs_std.bigmod.mont_mul+0x2e6>
+   2b6d: xor %edx,%edx
+   2b6f: mov 0x8(%rsp),%r9
+--- jne at 2bb0
+   2b85: xor %edi,%edi
+   2b87: nopw 0x0(%rax,%rax,1)
+   2b90: movups 0x1170(%rbx,%rdi,8),%xmm0
+   2b98: movups 0x1180(%rbx,%rdi,8),%xmm1
+   2ba0: movups %xmm0,-0x10(%rsi,%rdi,8)
+   2ba5: movups %xmm1,(%rsi,%rdi,8)
+   2ba9: add $0x4,%rdi
+   2bad: cmp %rdi,%rdx
+=> 2bb0: jne 2b90 <lexs_std.bigmod.mont_mul+0x300>
+   2bb2: cmp %rdx,%r12
+   2bb5: mov 0x8(%rsp),%r9
+--- je at 2bba
+   2b98: movups 0x1180(%rbx,%rdi,8),%xmm1
+   2ba0: movups %xmm0,-0x10(%rsi,%rdi,8)
+   2ba5: movups %xmm1,(%rsi,%rdi,8)
+   2ba9: add $0x4,%rdi
+   2bad: cmp %rdi,%rdx
+   2bb0: jne 2b90 <lexs_std.bigmod.mont_mul+0x300>
+   2bb2: cmp %rdx,%r12
+   2bb5: mov 0x8(%rsp),%r9
+=> 2bba: je 2c4f <lexs_std.bigmod.mont_mul+0x3bf>
+   2bc0: mov %r9,%rsi
+   2bc3: sub %rdx,%rsi
+--- je at 2bcf
+   2bb2: cmp %rdx,%r12
+   2bb5: mov 0x8(%rsp),%r9
+   2bba: je 2c4f <lexs_std.bigmod.mont_mul+0x3bf>
+   2bc0: mov %r9,%rsi
+   2bc3: sub %rdx,%rsi
+   2bc6: mov %r9d,%edi
+   2bc9: not %edi
+   2bcb: test $0x3,%dil
+=> 2bcf: je 2bf4 <lexs_std.bigmod.mont_mul+0x364>
+   2bd1: lea (%rbx,%r8,8),%rdi
+   2bd5: lea 0x1(%r9),%r8d
+--- jne at 2bf2
+   2bd1: lea (%rbx,%r8,8),%rdi
+   2bd5: lea 0x1(%r9),%r8d
+   2bd9: and $0x3,%r8d
+   2bdd: nopl (%rax)
+   2be0: mov 0x1170(%rbx,%rdx,8),%r9
+   2be8: mov %r9,(%rdi,%rdx,8)
+   2bec: inc %rdx
+   2bef: dec %r8
+=> 2bf2: jne 2be0 <lexs_std.bigmod.mont_mul+0x350>
+   2bf4: cmp $0x3,%rsi
+   2bf8: mov 0x8(%rsp),%r8
+--- jb at 2bfd
+   2bdd: nopl (%rax)
+   2be0: mov 0x1170(%rbx,%rdx,8),%r9
+   2be8: mov %r9,(%rdi,%rdx,8)
+   2bec: inc %rdx
+   2bef: dec %r8
+   2bf2: jne 2be0 <lexs_std.bigmod.mont_mul+0x350>
+   2bf4: cmp $0x3,%rsi
+   2bf8: mov 0x8(%rsp),%r8
+=> 2bfd: jb 2c4f <lexs_std.bigmod.mont_mul+0x3bf>
+   2bff: lea (%rbx,%rdx,8),%rdi
+   2c03: lea (%rbx,%rdx,8),%rsi
+--- jne at 2c4d
+   2c2a: mov -0x8(%rsi,%rdx,8),%rdi
+   2c2f: mov %rdi,-0x8(%rcx,%rdx,8)
+   2c34: mov (%rsi,%rdx,8),%rdi
+   2c38: mov %rdi,(%rcx,%rdx,8)
+   2c3c: mov 0x8(%rsi,%rdx,8),%rdi
+   2c41: mov %rdi,0x8(%rcx,%rdx,8)
+   2c46: add $0x4,%rdx
+   2c4a: cmp %rdx,%r8
+=> 2c4d: jne 2c20 <lexs_std.bigmod.mont_mul+0x390>
+   2c4f: cmp %r14,%rax
+   2c52: jae 2c9d <lexs_std.bigmod.mont_mul+0x40d>
+## p256_ctx.py ecdh_drv.o bigmod.ct_reduce
+--- jle at 2d0e
+   2cea: add $0x2,%rax
+   2cee: jo 2e11 <lexs_std.bigmod.ct_reduce+0x151>
+   2cf4: cmp %rsi,%rax
+   2cf7: ja 2e13 <lexs_std.bigmod.ct_reduce+0x153>
+   2cfd: cmp $0x1,%rax
+   2d01: jbe 2e15 <lexs_std.bigmod.ct_reduce+0x155>
+   2d07: lea (%rdi,%rdx,8),%rax
+   2d0b: test %rcx,%rcx
+=> 2d0e: jle 2d24 <lexs_std.bigmod.ct_reduce+0x64>
+   2d10: cmp $0x1,%rcx
+   2d14: jne 2d28 <lexs_std.bigmod.ct_reduce+0x68>
+--- jne at 2d14
+   2cf4: cmp %rsi,%rax
+   2cf7: ja 2e13 <lexs_std.bigmod.ct_reduce+0x153>
+   2cfd: cmp $0x1,%rax
+   2d01: jbe 2e15 <lexs_std.bigmod.ct_reduce+0x155>
+   2d07: lea (%rdi,%rdx,8),%rax
+   2d0b: test %rcx,%rcx
+   2d0e: jle 2d24 <lexs_std.bigmod.ct_reduce+0x64>
+   2d10: cmp $0x1,%rcx
+=> 2d14: jne 2d28 <lexs_std.bigmod.ct_reduce+0x68>
+   2d16: xor %esi,%esi
+   2d18: xor %edx,%edx
+--- jne at 2d1d
+   2d07: lea (%rdi,%rdx,8),%rax
+   2d0b: test %rcx,%rcx
+   2d0e: jle 2d24 <lexs_std.bigmod.ct_reduce+0x64>
+   2d10: cmp $0x1,%rcx
+   2d14: jne 2d28 <lexs_std.bigmod.ct_reduce+0x68>
+   2d16: xor %esi,%esi
+   2d18: xor %edx,%edx
+   2d1a: test $0x1,%cl
+=> 2d1d: jne 2d8f <lexs_std.bigmod.ct_reduce+0xcf>
+   2d1f: jmp 2da6 <lexs_std.bigmod.ct_reduce+0xe6>
+   2d24: xor %edx,%edx
+--- jne at 2d86
+   2d69: or %r11b,%bpl
+   2d6c: cmp 0x18(%rdi,%rsi,1),%rbx
+   2d71: setb %r11b
+   2d75: sete %dl
+   2d78: and %bpl,%dl
+   2d7b: or %r11b,%dl
+   2d7e: add $0x10,%rsi
+   2d82: add $0xfffffffffffffffe,%r9
+=> 2d86: jne 2d50 <lexs_std.bigmod.ct_reduce+0x90>
+   2d88: pop %rbx
+   2d89: pop %rbp
+--- je at 2d8d
+   2d78: and %bpl,%dl
+   2d7b: or %r11b,%dl
+   2d7e: add $0x10,%rsi
+   2d82: add $0xfffffffffffffffe,%r9
+   2d86: jne 2d50 <lexs_std.bigmod.ct_reduce+0x90>
+   2d88: pop %rbx
+   2d89: pop %rbp
+   2d8a: test $0x1,%cl
+=> 2d8d: je 2da6 <lexs_std.bigmod.ct_reduce+0xe6>
+   2d8f: mov (%rax,%rsi,1),%r9
+   2d93: cmp 0x10(%rdi,%rsi,1),%r9
+--- jle at 2dc5
+   2dab: cmpq $0x0,(%rax,%rcx,8)
+   2db0: setne %sil
+   2db4: not %dl
+   2db6: or %sil,%dl
+   2db9: movzbl %dl,%edx
+   2dbc: and $0x1,%edx
+   2dbf: neg %rdx
+   2dc2: test %rcx,%rcx
+=> 2dc5: jle 2dff <lexs_std.bigmod.ct_reduce+0x13f>
+   2dc7: xor %esi,%esi
+   2dc9: xor %r8d,%r8d
+--- jne at 2dfb
+   2ddf: setb %r10b
+   2de3: sub %r8,%r9
+   2de6: setb %r8b
+   2dea: mov %r9,(%rax,%rsi,8)
+   2dee: inc %rsi
+   2df1: or %r10b,%r8b
+   2df4: movzbl %r8b,%r8d
+   2df8: cmp %rsi,%rcx
+=> 2dfb: jne 2dd0 <lexs_std.bigmod.ct_reduce+0x110>
+   2dfd: jmp 2e02 <lexs_std.bigmod.ct_reduce+0x142>
+   2dff: xor %r8d,%r8d
+## p256_ctx.py ecdh_drv.o bigmod.add
+--- jle at 4221
+   420b: inc %r9
+   420e: jo 4285 <lexs_std.bigmod.add+0xd5>
+   4210: cmp %rsi,%r9
+   4213: ja 4287 <lexs_std.bigmod.add+0xd7>
+   4215: sub %r8,%r9
+   4218: jb 4289 <lexs_std.bigmod.add+0xd9>
+   421a: lea (%rdi,%r8,8),%r10
+   421e: test %rcx,%rcx
+=> 4221: jle 426c <lexs_std.bigmod.add+0xbc>
+   4223: lea (%rdi,%rdx,8),%rdx
+   4227: lea (%rdi,%rax,8),%r11
+--- jne at 4252
+   4238: setb %bpl
+   423c: add %rax,%r14
+   423f: setb %al
+   4242: or %bpl,%al
+   4245: movzbl %al,%eax
+   4248: mov %r14,(%r10,%rbx,8)
+   424c: inc %rbx
+   424f: cmp %rbx,%rcx
+=> 4252: jne 4230 <lexs_std.bigmod.add+0x80>
+   4254: cmp %r9,%rcx
+   4257: jae 4273 <lexs_std.bigmod.add+0xc3>
+--- jb at 4271
+   4260: call 4265 <lexs_std.bigmod.add+0xb5>
+   4265: xor %eax,%eax
+   4267: pop %rbx
+   4268: pop %r14
+   426a: pop %rbp
+   426b: ret 
+   426c: xor %eax,%eax
+   426e: cmp %r9,%rcx
+=> 4271: jb 4259 <lexs_std.bigmod.add+0xa9>
+   4273: ud2 
+   4275: ud2 
+## p256_ctx.py ecdh_drv.o bigmod.sub
+--- jle at 4326
+   4302: add $0x2,%r10
+   4306: jo 43c1 <lexs_std.bigmod.sub+0x131>
+   430c: cmp %rsi,%r10
+   430f: ja 43c3 <lexs_std.bigmod.sub+0x133>
+   4315: cmp $0x1,%r10
+   4319: jbe 43c5 <lexs_std.bigmod.sub+0x135>
+   431f: lea (%rdi,%r8,8),%rsi
+   4323: test %rax,%rax
+=> 4326: jle 43a2 <lexs_std.bigmod.sub+0x112>
+   4328: push %rbx
+   4329: lea (%rdi,%rdx,8),%rdx
+--- jne at 4360
+   4348: setb %bl
+   434b: sub %rcx,%r11
+   434e: setb %cl
+   4351: or %bl,%cl
+   4353: movzbl %cl,%ecx
+   4356: mov %r11,(%rsi,%r10,8)
+   435a: inc %r10
+   435d: cmp %r10,%rax
+=> 4360: jne 4340 <lexs_std.bigmod.sub+0xb0>
+   4362: neg %rcx
+   4365: pop %rbx
+--- jle at 4376
+   435d: cmp %r10,%rax
+   4360: jne 4340 <lexs_std.bigmod.sub+0xb0>
+   4362: neg %rcx
+   4365: pop %rbx
+   4366: cmp %r9,%rax
+   4369: jae 43a9 <lexs_std.bigmod.sub+0x119>
+   436b: movq $0x0,(%rsi,%rax,8)
+   4373: test %rax,%rax
+=> 4376: jle 439f <lexs_std.bigmod.sub+0x10f>
+   4378: xor %edx,%edx
+   437a: xor %r8d,%r8d
+--- jne at 439d
+   4380: mov 0x10(%rdi,%r8,8),%r9
+   4385: and %rcx,%r9
+   4388: movzbl %dl,%edx
+   438b: bt $0x0,%edx
+   438f: adc %r9,(%rsi,%r8,8)
+   4393: lea 0x1(%r8),%r8
+   4397: setb %dl
+   439a: cmp %r8,%rax
+=> 439d: jne 4380 <lexs_std.bigmod.sub+0xf0>
+   439f: xor %eax,%eax
+   43a1: ret 
+--- jb at 43a7
+   4393: lea 0x1(%r8),%r8
+   4397: setb %dl
+   439a: cmp %r8,%rax
+   439d: jne 4380 <lexs_std.bigmod.sub+0xf0>
+   439f: xor %eax,%eax
+   43a1: ret 
+   43a2: xor %ecx,%ecx
+   43a4: cmp %r9,%rax
+=> 43a7: jb 436b <lexs_std.bigmod.sub+0xdb>
+   43a9: ud2 
+   43ab: ud2 

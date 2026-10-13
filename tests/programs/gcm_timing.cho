@@ -15,10 +15,11 @@
 // fixed class and `pool` of the random one (the key is the first
 // record's), a newline, and `count` characters `0` or `1`, the class of
 // each measurement in turn. Measurement `i` of class `c` uses record
-// `i mod pool` of that class, so both classes cycle through the same
-// number of distinct buffers and neither is favoured by the cache; a
-// pool, not one record a measurement, is what lets 16 KiB messages be
-// measured a million times.
+// `i mod pool` of that class; a pool, not one record a measurement, is
+// what lets 16 KiB messages be measured a million times. Each
+// measurement's record (nonce, associated data, data) is first copied
+// into the same fixed buffers, outside the time measured, so the call
+// never reads a class's own addresses (`docs/wide-multiply.md` §12.3).
 //
 // `I` (seal) and `J` (open) time `gcm.seal_in_place` and
 // `gcm.open_in_place` under a key prepared once, and `K` and `L`
@@ -138,14 +139,39 @@ fn time_pool[&f, &a, &t](ffi: &f Ffi("tick"), op: int, k: int, n: int, a: int, d
             place = d + 16;
         }
         let buf = alloc_slice[r](place, byte_of(0));
+        // Every measurement's record is copied into these same buffers before it is timed, so
+        // both classes are read from the same addresses: reading each class from its own pool
+        // made a class's time depend on where its records sat, which a control of a class against
+        // itself showed at |t| up to 13.9 (`docs/wide-multiply.md` §12.3; #466 found the same).
+        let key = alloc_slice[r](k, byte_of(0));
+        let nonce = alloc_slice[r](n, byte_of(0));
+        let aad = alloc_slice[r](a, byte_of(0));
+        let data = alloc_slice[r](d, byte_of(0));
+        var j = 0;
+        while j < k {
+            key[j] = all[j];
+            j = j + 1;
+        }
         var i = 0;
         while i < len(times) {
             let at = times[i];
-            let nonce = all[at + k..at + k + n];
-            let aad = all[at + k + n..at + k + n + a];
-            let data = all[at + k + n + a..at + k + n + a + d];
+            j = 0;
+            while j < n {
+                nonce[j] = all[at + k + j];
+                j = j + 1;
+            }
+            j = 0;
+            while j < a {
+                aad[j] = all[at + k + n + j];
+                j = j + 1;
+            }
+            j = 0;
+            while j < d {
+                data[j] = all[at + k + n + a + j];
+                j = j + 1;
+            }
             if op >= 73 && op <= 76 {
-                var j = 0;
+                j = 0;
                 while j < d {
                     buf[j] = data[j];
                     j = j + 1;
@@ -165,11 +191,11 @@ fn time_pool[&f, &a, &t](ffi: &f Ffi("tick"), op: int, k: int, n: int, a: int, d
                 times[i] = cancho_tick(ffi) - t0;
             } else if op == 75 {
                 let t0 = cancho_tick(ffi);
-                chacha20.seal_in_place(all[0..k], nonce, aad, buf);
+                chacha20.seal_in_place(key, nonce, aad, buf);
                 times[i] = cancho_tick(ffi) - t0;
             } else if op == 76 {
                 let t0 = cancho_tick(ffi);
-                chacha20.open_in_place(all[0..k], nonce, aad, buf);
+                chacha20.open_in_place(key, nonce, aad, buf);
                 times[i] = cancho_tick(ffi) - t0;
             } else if op == 80 {
                 let t0 = cancho_tick(ffi);

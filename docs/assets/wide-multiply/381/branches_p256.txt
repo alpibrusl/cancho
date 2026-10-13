@@ -1,0 +1,292 @@
+# commit b2651fea; gram x86-64; LLVM; scripts/chacha20_branches.py (non-trap jumps) and scripts/p256_ctx.py (9 instructions of context) over tests/programs/ecdh_timing.cho (ecdh.o) and ecdsa_sign_timing.cho (sign.o)
+== ecdh.o p256_kernels.mul_p
+1 conditional jumps that are not traps
+--- je at 6701
+   66dd: cmp $0xa,%rax
+   66e1: setge %al
+   66e4: cmp $0xa,%r10
+   66e8: setge %sil
+   66ec: and %al,%sil
+   66ef: cmp $0xa,%r9
+   66f3: setge %r9b
+   66f7: mov $0xffffffffffffffff,%rax
+   66fe: test %r9b,%sil
+=> 6701: je 6d0b <lexs_std.p256_kernels.mul_p+0x68b>
+   6707: push %rbp
+   6708: push %r15
+== ecdh.o p256_kernels.sqr_p
+1 conditional jumps that are not traps
+--- je at 7238
+   720f: ja 76c5 <lexs_std.p256_kernels.sqr_p+0x4e5>
+   7215: sub %rcx,%r8
+   7218: jb 76c7 <lexs_std.p256_kernels.sqr_p+0x4e7>
+   721e: cmp $0xa,%rax
+   7222: setge %sil
+   7226: cmp $0xa,%r8
+   722a: setge %r8b
+   722e: mov $0xffffffffffffffff,%rax
+   7235: test %r8b,%sil
+=> 7238: je 76bc <lexs_std.p256_kernels.sqr_p+0x4dc>
+   723e: push %rbp
+   723f: push %r15
+== ecdh.o p256_kernels.mul_n
+1 conditional jumps that are not traps
+--- je at 7d71
+   7d4d: cmp $0xa,%rax
+   7d51: setge %al
+   7d54: cmp $0xa,%r10
+   7d58: setge %sil
+   7d5c: and %al,%sil
+   7d5f: cmp $0xa,%r9
+   7d63: setge %r9b
+   7d67: mov $0xffffffffffffffff,%rax
+   7d6e: test %r9b,%sil
+=> 7d71: je 84be <lexs_std.p256_kernels.mul_n+0x7ce>
+   7d77: push %rbp
+   7d78: push %r15
+== ecdh.o p256_kernels.sqr_n
+1 conditional jumps that are not traps
+--- je at 7728
+   76ff: ja 7ce7 <lexs_std.p256_kernels.sqr_n+0x617>
+   7705: sub %rcx,%r8
+   7708: jb 7ce9 <lexs_std.p256_kernels.sqr_n+0x619>
+   770e: cmp $0xa,%rax
+   7712: setge %sil
+   7716: cmp $0xa,%r8
+   771a: setge %r8b
+   771e: mov $0xffffffffffffffff,%rax
+   7725: test %r8b,%sil
+=> 7728: je 7cde <lexs_std.p256_kernels.sqr_n+0x60e>
+   772e: push %rbp
+   772f: push %r15
+== ecdh.o p256_kernels.add
+1 conditional jumps that are not traps
+--- je at 9ee1
+   9ebd: cmp $0xa,%rax
+   9ec1: setge %al
+   9ec4: cmp $0xa,%r9
+   9ec8: setge %sil
+   9ecc: and %al,%sil
+   9ecf: cmp $0xa,%r10
+   9ed3: setge %r9b
+   9ed7: mov $0xffffffffffffffff,%rax
+   9ede: test %r9b,%sil
+=> 9ee1: je 9ff0 <lexs_std.p256_kernels.add+0x190>
+   9ee7: mov (%rdi,%rcx,8),%rax
+   9eeb: add (%rdi,%rdx,8),%rax
+== ecdh.o p256_kernels.sub_2
+1 conditional jumps that are not traps
+--- je at 9911
+   98ed: cmp $0xa,%rax
+   98f1: setge %al
+   98f4: cmp $0xa,%r9
+   98f8: setge %sil
+   98fc: and %al,%sil
+   98ff: cmp $0xa,%r10
+   9903: setge %r9b
+   9907: mov $0xffffffffffffffff,%rax
+   990e: test %r9b,%sil
+=> 9911: je 9a5e <lexs_std.p256_kernels.sub_2+0x1ce>
+   9917: mov (%rdi,%rdx,8),%rax
+   991b: sub (%rdi,%rcx,8),%rax
+== ecdh.o p256_kernels.sub_4
+1 conditional jumps that are not traps
+--- je at 9cf1
+   9ccd: cmp $0xa,%rax
+   9cd1: setge %al
+   9cd4: cmp $0xa,%r9
+   9cd8: setge %sil
+   9cdc: and %al,%sil
+   9cdf: cmp $0xa,%r10
+   9ce3: setge %r9b
+   9ce7: mov $0xffffffffffffffff,%rax
+   9cee: test %r9b,%sil
+=> 9cf1: je 9e3e <lexs_std.p256_kernels.sub_4+0x1ce>
+   9cf7: mov (%rdi,%rdx,8),%rax
+   9cfb: sub (%rdi,%rcx,8),%rax
+== ecdh.o p256_kernels.sub_8
+1 conditional jumps that are not traps
+--- je at a3a1
+   a37d: cmp $0xa,%rax
+   a381: setge %al
+   a384: cmp $0xa,%r9
+   a388: setge %sil
+   a38c: and %al,%sil
+   a38f: cmp $0xa,%r10
+   a393: setge %r9b
+   a397: mov $0xffffffffffffffff,%rax
+   a39e: test %r9b,%sil
+=> a3a1: je a4ee <lexs_std.p256_kernels.sub_8+0x1ce>
+   a3a7: mov (%rdi,%rdx,8),%rax
+   a3ab: sub (%rdi,%rcx,8),%rax
+== ecdh.o p256_kernels.sub_16
+1 conditional jumps that are not traps
+--- je at 9b01
+   9add: cmp $0xa,%rax
+   9ae1: setge %al
+   9ae4: cmp $0xa,%r9
+   9ae8: setge %sil
+   9aec: and %al,%sil
+   9aef: cmp $0xa,%r10
+   9af3: setge %r9b
+   9af7: mov $0xffffffffffffffff,%rax
+   9afe: test %r9b,%sil
+=> 9b01: je 9c50 <lexs_std.p256_kernels.sub_16+0x1d0>
+   9b07: mov (%rdi,%rdx,8),%rax
+   9b0b: sub (%rdi,%rcx,8),%rax
+== ecdh.o p256_kernels.sub_32
+1 conditional jumps that are not traps
+--- je at a0a1
+   a07d: cmp $0xa,%rax
+   a081: setge %al
+   a084: cmp $0xa,%r9
+   a088: setge %sil
+   a08c: and %al,%sil
+   a08f: cmp $0xa,%r10
+   a093: setge %r9b
+   a097: mov $0xffffffffffffffff,%rax
+   a09e: test %r9b,%sil
+=> a0a1: je a1f0 <lexs_std.p256_kernels.sub_32+0x1d0>
+   a0a7: mov (%rdi,%rdx,8),%rax
+   a0ab: sub (%rdi,%rcx,8),%rax
+== ecdh.o p256_kernels.canon_p
+0 conditional jumps that are not traps
+== sign.o p256_kernels.mul_p
+1 conditional jumps that are not traps
+--- je at 6de1
+   6dbd: cmp $0xa,%rax
+   6dc1: setge %al
+   6dc4: cmp $0xa,%r10
+   6dc8: setge %sil
+   6dcc: and %al,%sil
+   6dcf: cmp $0xa,%r9
+   6dd3: setge %r9b
+   6dd7: mov $0xffffffffffffffff,%rax
+   6dde: test %r9b,%sil
+=> 6de1: je 73eb <lexs_std.p256_kernels.mul_p+0x68b>
+   6de7: push %rbp
+   6de8: push %r15
+== sign.o p256_kernels.sqr_p
+1 conditional jumps that are not traps
+--- je at 62a8
+   627f: ja 6735 <lexs_std.p256_kernels.sqr_p+0x4e5>
+   6285: sub %rcx,%r8
+   6288: jb 6737 <lexs_std.p256_kernels.sqr_p+0x4e7>
+   628e: cmp $0xa,%rax
+   6292: setge %sil
+   6296: cmp $0xa,%r8
+   629a: setge %r8b
+   629e: mov $0xffffffffffffffff,%rax
+   62a5: test %r8b,%sil
+=> 62a8: je 672c <lexs_std.p256_kernels.sqr_p+0x4dc>
+   62ae: push %rbp
+   62af: push %r15
+== sign.o p256_kernels.mul_n
+1 conditional jumps that are not traps
+--- je at 4f51
+   4f2d: cmp $0xa,%rax
+   4f31: setge %al
+   4f34: cmp $0xa,%r10
+   4f38: setge %sil
+   4f3c: and %al,%sil
+   4f3f: cmp $0xa,%r9
+   4f43: setge %r9b
+   4f47: mov $0xffffffffffffffff,%rax
+   4f4e: test %r9b,%sil
+=> 4f51: je 569e <lexs_std.p256_kernels.mul_n+0x7ce>
+   4f57: push %rbp
+   4f58: push %r15
+== sign.o p256_kernels.sqr_n
+1 conditional jumps that are not traps
+--- je at 6798
+   676f: ja 6d57 <lexs_std.p256_kernels.sqr_n+0x617>
+   6775: sub %rcx,%r8
+   6778: jb 6d59 <lexs_std.p256_kernels.sqr_n+0x619>
+   677e: cmp $0xa,%rax
+   6782: setge %sil
+   6786: cmp $0xa,%r8
+   678a: setge %r8b
+   678e: mov $0xffffffffffffffff,%rax
+   6795: test %r8b,%sil
+=> 6798: je 6d4e <lexs_std.p256_kernels.sqr_n+0x60e>
+   679e: push %rbp
+   679f: push %r15
+== sign.o p256_kernels.add
+1 conditional jumps that are not traps
+--- je at 5c91
+   5c6d: cmp $0xa,%rax
+   5c71: setge %al
+   5c74: cmp $0xa,%r9
+   5c78: setge %sil
+   5c7c: and %al,%sil
+   5c7f: cmp $0xa,%r10
+   5c83: setge %r9b
+   5c87: mov $0xffffffffffffffff,%rax
+   5c8e: test %r9b,%sil
+=> 5c91: je 5da0 <lexs_std.p256_kernels.add+0x190>
+   5c97: mov (%rdi,%rcx,8),%rax
+   5c9b: add (%rdi,%rdx,8),%rax
+== sign.o p256_kernels.sub_2
+1 conditional jumps that are not traps
+--- je at d291
+   d26d: cmp $0xa,%rax
+   d271: setge %al
+   d274: cmp $0xa,%r9
+   d278: setge %sil
+   d27c: and %al,%sil
+   d27f: cmp $0xa,%r10
+   d283: setge %r9b
+   d287: mov $0xffffffffffffffff,%rax
+   d28e: test %r9b,%sil
+=> d291: je d3de <lexs_std.p256_kernels.sub_2+0x1ce>
+   d297: mov (%rdi,%rdx,8),%rax
+   d29b: sub (%rdi,%rcx,8),%rax
+== sign.o p256_kernels.sub_4
+1 conditional jumps that are not traps
+--- je at d0a1
+   d07d: cmp $0xa,%rax
+   d081: setge %al
+   d084: cmp $0xa,%r9
+   d088: setge %sil
+   d08c: and %al,%sil
+   d08f: cmp $0xa,%r10
+   d093: setge %r9b
+   d097: mov $0xffffffffffffffff,%rax
+   d09e: test %r9b,%sil
+=> d0a1: je d1ee <lexs_std.p256_kernels.sub_4+0x1ce>
+   d0a7: mov (%rdi,%rdx,8),%rax
+   d0ab: sub (%rdi,%rcx,8),%rax
+== sign.o p256_kernels.sub_16
+1 conditional jumps that are not traps
+--- je at ccc1
+   cc9d: cmp $0xa,%rax
+   cca1: setge %al
+   cca4: cmp $0xa,%r9
+   cca8: setge %sil
+   ccac: and %al,%sil
+   ccaf: cmp $0xa,%r10
+   ccb3: setge %r9b
+   ccb7: mov $0xffffffffffffffff,%rax
+   ccbe: test %r9b,%sil
+=> ccc1: je ce10 <lexs_std.p256_kernels.sub_16+0x1d0>
+   ccc7: mov (%rdi,%rdx,8),%rax
+   cccb: sub (%rdi,%rcx,8),%rax
+== sign.o p256_kernels.sub_32
+1 conditional jumps that are not traps
+--- je at ceb1
+   ce8d: cmp $0xa,%rax
+   ce91: setge %al
+   ce94: cmp $0xa,%r9
+   ce98: setge %sil
+   ce9c: and %al,%sil
+   ce9f: cmp $0xa,%r10
+   cea3: setge %r9b
+   cea7: mov $0xffffffffffffffff,%rax
+   ceae: test %r9b,%sil
+=> ceb1: je d000 <lexs_std.p256_kernels.sub_32+0x1d0>
+   ceb7: mov (%rdi,%rdx,8),%rax
+   cebb: sub (%rdi,%rcx,8),%rax
+== sign.o p256_kernels.canon_p
+0 conditional jumps that are not traps
+== sign.o p256_kernels.canon_n
+0 conditional jumps that are not traps
