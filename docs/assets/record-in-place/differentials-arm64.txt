@@ -1,0 +1,10 @@
+aarch64
+OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)
+== arm64 llvm
+OpenSSL 3.0.13 30 Jan 2024: (10000 random + 2190 swept cases) x 2 key sizes, 268180 checks, 0 differences
+OpenSSL 3.0.13 30 Jan 2024: 10000 cases, 60000 checks, 0 differences
+records: 3000 sealed and 3000 opened twice (into a buffer and in place), 0 differences
+== arm64 cranelift
+OpenSSL 3.0.13 30 Jan 2024: (10000 random + 2190 swept cases) x 2 key sizes, 268180 checks, 0 differences
+OpenSSL 3.0.13 30 Jan 2024: 10000 cases, 60000 checks, 0 differences
+records: 3000 sealed and 3000 opened twice (into a buffer and in place), 0 differences

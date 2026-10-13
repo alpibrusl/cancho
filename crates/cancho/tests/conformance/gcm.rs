@@ -371,3 +371,79 @@ fn the_hardware_and_software_paths_agree() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `docs/record-in-place.md` §3: in place, on both paths, `seal_in_place` writes what `seal` does and `open_in_place`
+/// opens what `open` does; a tag changed in its last byte is refused and leaves the buffer as it was; a buffer with no
+/// room for a tag is refused with `seal_with`'s and `open_with`'s tags.
+#[test]
+fn in_place_seals_and_opens_what_seal_and_open_do_on_both_paths() {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut cases = Vec::new();
+    for k in 0..300u64 {
+        let key: Vec<u8> = (0..if k % 2 == 0 { 16 } else { 32 }).map(|_| next() as u8).collect();
+        let nonce: Vec<u8> = (0..12).map(|_| next() as u8).collect();
+        let aad: Vec<u8> = (0..next() % 41).map(|_| next() as u8).collect();
+        let text: Vec<u8> = (0..next() % 300).map(|_| next() as u8).collect();
+        let (key, nonce, aad, text) =
+            (hex(&key), hex(&nonce), or_dash(&hex(&aad)), or_dash(&hex(&text)));
+        for op in ["S", "P", "p"] {
+            cases.push(format!("{op} {key} {nonce} {aad} {text}"));
+        }
+    }
+    let (dir, exe) = build_gcm_driver("in-place", "llvm");
+    let sealed = run_cases(&exe, &cases);
+    let mut opens = Vec::new();
+    for (three, case) in sealed.chunks(3).zip(cases.chunks(3)) {
+        assert_eq!(three[0], three[1], "{}", case[1]);
+        assert_eq!(three[0], three[2], "{}", case[2]);
+        let (code, _, out) = answer(&three[0]);
+        assert_eq!(code, 0, "{}", case[0]);
+        let f: Vec<&str> = case[0].split(' ').collect();
+        let mut bad = unhex(&out);
+        let last = bad.len() - 1;
+        bad[last] ^= 1;
+        for op in ["O", "I", "i"] {
+            opens.push(format!("{op} {} {} {} {out}", f[1], f[2], f[3]));
+            opens.push(format!("{op} {} {} {} {}", f[1], f[2], f[3], hex(&bad)));
+        }
+    }
+    let opened = run_cases(&exe, &opens);
+    for ((six, case), asked) in opened.chunks(6).zip(cases.chunks(3)).zip(opens.chunks(6)) {
+        assert_eq!(answer(&six[0]).0, 0, "{}", case[0]);
+        assert_eq!(six[2], six[0], "{}", case[0]);
+        assert_eq!(six[4], six[0], "{}", case[0]);
+        assert_eq!(answer(&six[1]).1, "aead-tag-mismatch", "{}", case[0]);
+        for (line, ask) in [(&six[3], &asked[3]), (&six[5], &asked[5])] {
+            let (code, tag, got) = answer(line);
+            assert_eq!((code, tag.as_str()), (-6, "aead-tag-mismatch"), "{ask}");
+            // Nothing written: the buffer is the sealed message it was given, the last byte changed.
+            assert_eq!(got, ask.rsplit(' ').next().unwrap(), "{ask}");
+        }
+    }
+    let key = hex(&[7u8; 16]);
+    let nonce = hex(&[9u8; 12]);
+    let mut short = Vec::new();
+    for n in 0..16u8 {
+        let b = or_dash(&hex(&(0..n).collect::<Vec<u8>>()));
+        for op in ["Y", "y", "I", "i"] {
+            short.push(format!("{op} {key} {nonce} - {b}"));
+        }
+    }
+    for (case, line) in short.iter().zip(run_cases(&exe, &short)) {
+        let (code, tag, got) = answer(&line);
+        let want = if case.starts_with(['Y', 'y']) {
+            (-3, "gcm-output-length")
+        } else {
+            (-5, "gcm-too-short")
+        };
+        assert_eq!((code, tag.as_str()), want, "{case}");
+        assert_eq!(or_dash(&got), case.rsplit(' ').next().unwrap(), "{case}: the buffer as it was");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -12,6 +12,14 @@
 //     U <key> <nonce> <aad> <plaintext>   gcm.seal_with a context never prepared
 //     s <key> <nonce> <aad> <plaintext>   gcm.seal_software (the software path whatever the CPU)
 //     o <key> <nonce> <aad> <sealed>      gcm.open_software
+//     P <key> <nonce> <aad> <plaintext>   gcm.seal_in_place over the plaintext and 16 bytes after it
+//     p <key> <nonce> <aad> <plaintext>   gcm.seal_in_place_software
+//     I <key> <nonce> <aad> <sealed>      gcm.open_in_place: the plaintext, or on a refusal the whole buffer,
+//                                         which must be the sealed message unchanged
+//     i <key> <nonce> <aad> <sealed>      gcm.open_in_place_software
+//     Y <key> <nonce> <aad> <buffer>      gcm.seal_in_place over exactly the buffer given (its last 16 bytes
+//                                         the tag's room), the buffer after
+//     y <key> <nonce> <aad> <buffer>      the same, gcm.seal_in_place_software
 //
 // and one line out per case: `<code> <tag> <output in hex>`. `open`'s
 // output starts filled with `0xaa`, so a refusal that wrote anything
@@ -166,6 +174,46 @@ fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
                     let hw = alloc_slice[r](gcm.hw_len(), byte_of(0));
                     let code = gcm.seal_with(ctx, hw, second, aad, data, out);
                     report(io, code, gcm.refusal_tag(code), out);
+                } else if op == 80 || op == 112 {
+                    let buf = alloc_slice[r](len(data) + 16, byte_of(0));
+                    var k = 0;
+                    while k < len(data) {
+                        buf[k] = data[k];
+                        k = k + 1;
+                    }
+                    let ctx = alloc_slice[r](gcm.context_len(), 0);
+                    let hw = alloc_slice[r](gcm.hw_len(), byte_of(0));
+                    var code = gcm.prepare(key, ctx, hw);
+                    if code == 0 && op == 80 {
+                        code = gcm.seal_in_place(ctx, hw, second, aad, buf);
+                    } else if code == 0 {
+                        code = gcm.seal_in_place_software(ctx, second, aad, buf);
+                    }
+                    report(io, code, gcm.refusal_tag(code), buf);
+                } else if op == 89 || op == 121 {
+                    let ctx = alloc_slice[r](gcm.context_len(), 0);
+                    let hw = alloc_slice[r](gcm.hw_len(), byte_of(0));
+                    var code = gcm.prepare(key, ctx, hw);
+                    if code == 0 && op == 89 {
+                        code = gcm.seal_in_place(ctx, hw, second, aad, data);
+                    } else if code == 0 {
+                        code = gcm.seal_in_place_software(ctx, second, aad, data);
+                    }
+                    report(io, code, gcm.refusal_tag(code), data);
+                } else if op == 73 || op == 105 {
+                    let ctx = alloc_slice[r](gcm.context_len(), 0);
+                    let hw = alloc_slice[r](gcm.hw_len(), byte_of(0));
+                    var code = gcm.prepare(key, ctx, hw);
+                    if code == 0 && op == 73 {
+                        code = gcm.open_in_place(ctx, hw, second, aad, data);
+                    } else if code == 0 {
+                        code = gcm.open_in_place_software(ctx, second, aad, data);
+                    }
+                    if code == 0 {
+                        report(io, code, gcm.refusal_tag(code), data[0..len(data) - 16]);
+                    } else {
+                        report(io, code, gcm.refusal_tag(code), data);
+                    }
                 } else if op == 115 {
                     let out = alloc_slice[r](len(data) + 16, byte_of(0));
                     let ctx = alloc_slice[r](gcm.context_len(), 0);

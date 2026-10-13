@@ -551,6 +551,139 @@ pub fn open_software[&c, &n, &a, &s, &o](ctx: &c [int], nonce: &n [byte], aad: &
     return ok();
 }
 
+// ---- In place (`docs/record-in-place.md` §3) ----
+//
+// The same AEAD over one buffer: `buf` holds the text and, after it, the
+// 16 bytes of the tag (`len(buf) - 16` bytes of text). `seal_in_place`
+// writes the ciphertext over the plaintext and the tag after it;
+// `open_in_place` checks the tag over every byte first, as `open_with`
+// does, and only when it matches writes the plaintext over the
+// ciphertext: on a mismatch `buf` is not written at all. A TLS record
+// is sealed where it is sent from and opened where it arrived, so the
+// record layer copies nothing to make room for the cipher.
+//
+// The cipher is handed the same slice as its input and its output. Both
+// `aes_ctr32` and `aes.ctr32_with` read each byte of the input before
+// they write the byte of the output at the same offset, and never read an
+// offset after writing it (`docs/record-in-place.md` §3.1): a contract of
+// these two functions that the types do not state, which is why the
+// in-place forms are here, beside them, and not left to callers. The tag
+// is read from, or written to, the 16 bytes after the text, which the
+// cipher does not touch.
+
+// Seals `buf[0..len(buf) - 16]` in place under a prepared key, the tag into
+// the last 16 bytes: the bytes `seal_with` would write to its `out`.
+pub fn seal_in_place[&c, &w, &n, &a, &b](ctx: &c [int], hw: &w [byte], nonce: &n [byte], aad: &a [byte], buf: &!b [byte]) -> [] int {
+    if hw_aes_gcm() && len(hw) >= hw_len() {
+        return seal_in_place_hardware(ctx, hw, nonce, aad, buf);
+    }
+    return seal_in_place_software(ctx, nonce, aad, buf);
+}
+
+// Opens `buf` (ciphertext, then the tag) in place under a prepared key: the
+// plaintext is `buf[0..len(buf) - 16]` when this answers `ok()`.
+pub fn open_in_place[&c, &w, &n, &a, &b](ctx: &c [int], hw: &w [byte], nonce: &n [byte], aad: &a [byte], buf: &!b [byte]) -> [] int {
+    if hw_aes_gcm() && len(hw) >= hw_len() {
+        return open_in_place_hardware(ctx, hw, nonce, aad, buf);
+    }
+    return open_in_place_software(ctx, nonce, aad, buf);
+}
+
+// The text's length in a buffer that ends with a tag, or a refusal: the
+// shape checks of `seal_with` and `open_with`, in their order. A buffer
+// with no room for a tag is `short`: `refused_output_length()` to seal,
+// as `seal_with`'s `out` would be, and `refused_too_short()` to open.
+fn in_place_text[&c, &n, &b](ctx: &c [int], nonce: &n [byte], buf: &b [byte], short: int) -> [] int {
+    if !prepared(ctx) {
+        return refused_key_length();
+    }
+    if len(buf) < 16 {
+        let shape = shape_ok(nonce, 0);
+        if shape != 0 {
+            return shape;
+        }
+        return short;
+    }
+    let checked = shape_ok(nonce, len(buf) - 16);
+    if checked != 0 {
+        return checked;
+    }
+    return len(buf) - 16;
+}
+
+pub fn seal_in_place_software[&c, &n, &a, &b](ctx: &c [int], nonce: &n [byte], aad: &a [byte], buf: &!b [byte]) -> [] int {
+    let text = in_place_text(ctx, nonce, buf, refused_output_length());
+    if text < 0 {
+        return text;
+    }
+    region t {
+        let q = alloc_slice[t](aes.scratch_len(), 0);
+        let w = alloc_slice[t](WORDS(), 0);
+        let blk = alloc_slice[t](16, byte_of(0));
+        aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, buf[0..text], buf[0..text], q);
+        tag_of(ctx, nonce, aad, buf[0..text], buf[text..text + 16], q, w, blk);
+    }
+    return ok();
+}
+
+pub fn open_in_place_software[&c, &n, &a, &b](ctx: &c [int], nonce: &n [byte], aad: &a [byte], buf: &!b [byte]) -> [] int {
+    let text = in_place_text(ctx, nonce, buf, refused_too_short());
+    if text < 0 {
+        return text;
+    }
+    var diff = 0;
+    region t {
+        let q = alloc_slice[t](aes.scratch_len(), 0);
+        let w = alloc_slice[t](WORDS(), 0);
+        let blk = alloc_slice[t](16, byte_of(0));
+        let want = alloc_slice[t](16, byte_of(0));
+        tag_of(ctx, nonce, aad, buf[0..text], want, q, w, blk);
+        // Every byte is compared whatever the earlier ones were.
+        var i = 0;
+        while i < 16 {
+            diff = diff | int_of(want[i]) ^ int_of(buf[text + i]);
+            want[i] = byte_of(0);
+            i = i + 1;
+        }
+        if diff == 0 {
+            aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, buf[0..text], buf[0..text], q);
+        }
+    }
+    if diff != 0 {
+        return refused_tag_mismatch();
+    }
+    return ok();
+}
+
+fn seal_in_place_hardware[&c, &w, &n, &a, &b](ctx: &c [int], hw: &w [byte], nonce: &n [byte], aad: &a [byte], buf: &!b [byte]) -> [] int {
+    let text = in_place_text(ctx, nonce, buf, refused_output_length());
+    if text < 0 {
+        return text;
+    }
+    let nr = ctx[0];
+    let keys = hw[0..(nr + 1) * 16];
+    aes_ctr32(keys, nr, nonce, 2, buf[0..text], buf[0..text]);
+    gcm_tag(keys, nr, hw[hw_table()..hw_table() + hw_table_len()], nonce, aad, buf[0..text], buf[text..text + 16]);
+    return ok();
+}
+
+fn open_in_place_hardware[&c, &w, &n, &a, &b](ctx: &c [int], hw: &w [byte], nonce: &n [byte], aad: &a [byte], buf: &!b [byte]) -> [] int {
+    let text = in_place_text(ctx, nonce, buf, refused_too_short());
+    if text < 0 {
+        return text;
+    }
+    let nr = ctx[0];
+    let keys = hw[0..(nr + 1) * 16];
+    // The tag is compared over every byte, inside the builtin, and `buf` is
+    // written only when it matches.
+    let diff = gcm_tag_diff(keys, nr, hw[hw_table()..hw_table() + hw_table_len()], nonce, aad, buf[0..text], buf[text..text + 16]);
+    if diff != 0 {
+        return refused_tag_mismatch();
+    }
+    aes_ctr32(keys, nr, nonce, 2, buf[0..text], buf[0..text]);
+    return ok();
+}
+
 // ---- The hardware path (`docs/crypto-builtins.md` §6, step 4) ----
 //
 // The same checks and the same bytes as the software path, with the

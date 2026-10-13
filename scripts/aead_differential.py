@@ -11,7 +11,9 @@ For each of `count` (default 10,000) random (key, nonce, aad, message):
 sealed here and opened by OpenSSL; sealed by OpenSSL and opened here (the
 two sealed messages must also be byte-equal, since the AEAD is
 deterministic); and OpenSSL's sealed message with one random bit flipped
-must be refused by both. Message lengths cover 0 to 300 bytes densely,
+must be refused by both; and the same in place (`seal_in_place`,
+`open_in_place`, docs/record-in-place.md §3), a refusal leaving the buffer as
+it was. Message lengths cover 0 to 300 bytes densely,
 with one case in ten up to 4,100 bytes. Exit status 1 on any difference.
 """
 import os
@@ -54,6 +56,13 @@ def main():
         checks.append(("open", key, nonce, aad, msg, theirs))
         cases.append(f"O {h(key)} {h(nonce)} {h(aad)} {h(bytes(flipped))}")
         checks.append(("flip", key, nonce, aad, msg, openssl_refused))
+        # In place (docs/record-in-place.md §3): the same answers, and a refusal leaves the buffer as it was.
+        cases.append(f"T {h(key)} {h(nonce)} {h(aad)} {h(msg)}")
+        checks.append(("seal", key, nonce, aad, msg, theirs))
+        cases.append(f"U {h(key)} {h(nonce)} {h(aad)} {h(theirs)}")
+        checks.append(("open", key, nonce, aad, msg, theirs))
+        cases.append(f"U {h(key)} {h(nonce)} {h(aad)} {h(bytes(flipped))}")
+        checks.append(("flip-in-place", key, nonce, aad, bytes(flipped), openssl_refused))
 
     out = subprocess.run([driver], input=("\n".join(cases) + "\n").encode(), capture_output=True, check=True).stdout
     lines = out.decode().splitlines()
@@ -67,6 +76,8 @@ def main():
                 ok = ChaCha20Poly1305(key).decrypt(nonce, bytes.fromhex(got), aad) == msg
         elif kind == "open":
             ok = code == "0" and got == msg.hex()
+        elif kind == "flip-in-place":
+            ok = extra and code == "-6" and got == msg.hex()
         else:
             ok = extra and code == "-6" and got == "aa" * (len(msg))
         if not ok:

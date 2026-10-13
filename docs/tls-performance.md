@@ -704,6 +704,7 @@ the same form as T1 to T3. As built it is 2.34 and 2.37 times; with glibc not tr
 3. **A kept request no longer touches the allocator** (no `brk` in a 5-second trace on either machine, 1% of the samples),
    so A1 does nothing for it; it is within T3 without it. What it spends instead, beside the sockets, is #395's work areas:
    copying a connection's core into an area and back out and clearing the area is **24% (x86-64) to 27% (arm64) of a request**.
+   *As built (§10.12): 3.6%, and a kept request 0.94 times OpenSSL's cycles on x86-64 (from 1.20).*
 4. **Each primitive is 1.3 to 5.5 times OpenSSL now, not 19 to 71**: X25519 1.40 (x86-64 cycles) and 1.28 (arm64), the ECDSA
    signature 4.6 and 4.3, a verification 3.0 and 3.0, a P-256 ECDH 5.5 and 5.2. AES-128-GCM is below OpenSSL's cost at
    64 bytes and 1 KiB and within 1.15 times at 16 KiB. SHA-256 (4.5 to 11 times) and ChaCha20-Poly1305 (2.6 to 11.5) did
@@ -987,7 +988,7 @@ sequence below the table applies each to what the ones before it leave.
 - **P1 before B2**: it speeds the signature, the check, ECDH and the client's verifications at once, where B2 speeds the check.
   Together they leave the check at about 10% of the handshake.
 - **For a kept connection, L1 is the only lever**; T3 is met without it, and halving the copies would take a request from 1.11 to
-  about 1.0 times OpenSSL's (arithmetic): T3's stretch.
+  about 1.0 times OpenSSL's (arithmetic): T3's stretch. *As built (§10.12): 0.94 times, the stretch met.*
 - **R1 matters to bulk transfer and to macOS**, not to a handshake or a small request on Linux.
 
 ### 10.9 Not done, and what this does not show
@@ -1040,3 +1041,24 @@ least of four rounds; raw output in [`assets/region-chunk-cache/`](assets/region
   inside the cycles' spread (`region-chunk-cache.md` §8.3).
 - **The next lever is now P1** (§10.8's order). With A1 measured, a server's full handshake is 1.844M cycles and the
   arithmetic of §10.8's sequence starts from it.
+
+### 10.12 L1 and R1 as built
+
+[`record-in-place.md`](record-in-place.md) built L1 (#447) and R1 (#448). Measured against `3d7e8e9d` (A1 merged) on `gram`
+(the server on CPU 6, its load on CPU 7), alternating; raw output in [`assets/record-in-place/`](assets/record-in-place/).
+
+- **L1 was the loop, not the bytes.** The 24% of §10.5 was the 296 words of the core copied one at a time through the engine's
+  boxes (the store may alias the boxes, so every word reloaded both and checked both bounds). Block copies took it to 10.3% of a
+  request; an established connection that **rests** in its area until another needs it (at most 32 by default,
+  `tls.set_resting`) took it to 3.6%.
+- **A kept `https_hello` request: 40.0k cycles (72.2k instructions) to 31.4k (45.8k); OpenSSL's `oserv` 33.3k (43.4k): 1.20 to
+  0.94 times. T3's stretch, parity, is met.**
+- **R1:** a record is sealed where it is sent from and opened straight into the received data, with no region and no byte loop.
+  Through both engines with no sockets (`tests/programs/engine_cost.cho`): a 64-byte record 6.6k cycles to 1.15k, 1 KiB 8.4k to
+  2.6k, 16 KiB 39.1k to 26.7k, of which the cipher is about 21k. §10.8 put R1 under 1% of a request: on its own it was about 1%
+  (33.6k to 33.9k cycles with L1's block copies, 33.1k to 33.6k with R1 added), as projected; for a record it is the 5.7 times
+  and 1.5 times above.
+- **Memory:** an idle connection is what it was (17.0 KiB at 10,000); resting keeps at most 33 areas more written per engine,
+  2.1 MiB after a 16 KiB record on each connection (`tls-memory.md` §12); the high-water mark fell 16 KiB a connection.
+- **Not changed:** `/big` (16.0 to 15.7 cycles a byte), which is `packages/http-server`'s and the example's byte loops, 85% of it.
+

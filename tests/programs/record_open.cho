@@ -1,0 +1,259 @@
+edition 9;
+
+// `docs/record-in-place.md` §4.2: `tls_slot.open_record`, the one way the record layer opens a TLS 1.3 record, on a
+// slot's own slices and with no handshake: the read key and IV are set by hand, each record is made here with
+// `std.gcm` or `std.chacha20` (its content, its type, then padding), and what the slot's buffers hold afterwards is
+// read back. A record whose inner plaintext fits the received data's room is opened straight into it; one that does
+// not (padding past the room `feed` keeps) is opened in place in the input buffer and its content moved. Either way the
+// content ends at `b_recv() + i_recv_end()`, nothing else of the plaintext is left (the type byte cleared, the padding
+// zeros, the input buffer cleared after an opening in place), `b_plain()` is not written, and the IV is as it was.
+//
+//     record_open
+//
+// One line a check, `ok ...` or `FAIL ...`; exit status 1 if any failed. Built with `packages/tls` and `packages/x509`.
+import std.chacha20;
+import std.gcm;
+import std.io;
+import tls_client;
+import tls_record;
+import tls_slot;
+
+fn say[&i, &w](io: &!i Io, ok: bool, what: &w [byte], n: int) -> [io_write] int {
+    if ok {
+        io.write_all(io, "ok ");
+    } else {
+        io.write_all(io, "FAIL ");
+    }
+    io.write_all(io, what);
+    io.space(io);
+    io.print_int(io, n);
+    io.newline(io);
+    if ok {
+        return 0;
+    }
+    return 1;
+}
+
+fn all_zero[&b](b: &b [byte]) -> [] bool {
+    var i = 0;
+    while i < len(b) {
+        if int_of(b[i]) != 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn content_byte(i: int, salt: int) -> [] int {
+    return (i * 31 + salt * 7 + i / 255) % 255 + 1;
+}
+
+// One record of `size` bytes of content of type `kind` and `pad` zeros after it, sealed under the slot's read key at its
+// read sequence number into `bytes[b_in()..]`, a bit flipped when `flip`; then `open_record` with `e` bytes of
+// received data before it. Answers what `open_record` answered.
+fn one[&i, &b](ints: &!i [int], bytes: &!b [byte], size: int, kind: int, pad: int, e: int, flip: bool, salt: int) -> [] int {
+    let suite = ints[tls_slot.i_suite()];
+    let text = size + 1 + pad;
+    let n = 5 + text + 16;
+    tls_slot.zero(bytes[tls_slot.b_in()..tls_slot.b_in() + tls_slot.b_hs() - tls_slot.b_in()]);
+    tls_slot.zero(bytes[tls_slot.b_recv()..tls_slot.b_recv() + tls_slot.recv_cap()]);
+    var k = 0;
+    while k < e {
+        bytes[tls_slot.b_recv() + k] = byte_of(200);
+        k = k + 1;
+    }
+    ints[tls_slot.i_recv_end()] = e;
+    bytes[tls_slot.b_in()] = byte_of(23);
+    bytes[tls_slot.b_in() + 1] = byte_of(3);
+    bytes[tls_slot.b_in() + 2] = byte_of(3);
+    bytes[tls_slot.b_in() + 3] = byte_of(text + 16 >> 8);
+    bytes[tls_slot.b_in() + 4] = byte_of(text + 16 & 255);
+    var made = 0;
+    region r {
+        let inner = alloc_slice[r](text, byte_of(0));
+        k = 0;
+        while k < size {
+            inner[k] = byte_of(content_byte(k, salt));
+            k = k + 1;
+        }
+        inner[size] = byte_of(kind);
+        let nonce = alloc_slice[r](12, byte_of(0));
+        tls_record.nonce(bytes[tls_slot.k_read_iv()..tls_slot.k_read_iv() + 12], ints[tls_slot.i_read_seq()], nonce);
+        let key = bytes[tls_slot.k_read_key()..tls_slot.k_read_key() + tls_slot.key_len(ints)];
+        let header = alloc_slice[r](5, byte_of(0));
+        copy_into(header, bytes[tls_slot.b_in()..tls_slot.b_in() + 5]);
+        if suite == 0x1303 {
+            made = chacha20.seal(key, nonce, header, inner, bytes[tls_slot.b_in() + 5..tls_slot.b_in() + n]);
+        } else {
+            made = gcm.seal(key, nonce, header, inner, bytes[tls_slot.b_in() + 5..tls_slot.b_in() + n]);
+        }
+    }
+    if made != 0 {
+        return 0 - 1000;
+    }
+    if flip {
+        bytes[tls_slot.b_in() + 9] = byte_of(int_of(bytes[tls_slot.b_in() + 9]) ^ 4);
+    }
+    return tls_slot.open_record(ints, bytes, n);
+}
+
+// Whether the received data holds the `e` bytes before it and then exactly the content, and nothing after.
+fn landed[&b](bytes: &b [byte], size: int, e: int, salt: int) -> [] bool {
+    var k = 0;
+    while k < e {
+        if int_of(bytes[tls_slot.b_recv() + k]) != 200 {
+            return false;
+        }
+        k = k + 1;
+    }
+    k = 0;
+    while k < size {
+        if int_of(bytes[tls_slot.b_recv() + e + k]) != content_byte(k, salt) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return all_zero(bytes[tls_slot.b_recv() + e + size..tls_slot.b_recv() + tls_slot.recv_cap()]);
+}
+
+fn suite_checks[&i, &n, &b, &v](io: &!i Io, ints: &!n [int], bytes: &!b [byte], suite: int, iv0: &!v [byte]) -> [io_write] int {
+    var failed = 0;
+    tls_slot.zero(bytes);
+    tls_slot.zero_words(ints);
+    ints[tls_slot.i_suite()] = suite;
+    ints[tls_slot.i_read_seq()] = 5;
+    let klen = tls_slot.key_len(ints);
+    var k = 0;
+    while k < klen {
+        bytes[tls_slot.k_read_key() + k] = byte_of(k * 7 + suite & 255);
+        k = k + 1;
+    }
+    k = 0;
+    while k < 12 {
+        bytes[tls_slot.k_read_iv() + k] = byte_of(k * 13 + 1);
+        iv0[k] = bytes[tls_slot.k_read_iv() + k];
+        k = k + 1;
+    }
+    region r {
+        let key = alloc_slice[r](klen, byte_of(0));
+        copy_into(key, bytes[tls_slot.k_read_key()..tls_slot.k_read_key() + klen]);
+        tls_record.prepare(suite, key, ints[tls_slot.i_read_aead()..tls_slot.i_read_aead() + tls_record.context_len()], bytes[tls_slot.k_read_hw()..tls_slot.k_read_hw() + tls_record.hw_len()]);
+    }
+    // Opened straight into the received data: small, padded, a full record, and after data already there.
+    var direct = 0;
+    var c = 0;
+    while c < 5 {
+        var size = 100;
+        var pad = 0;
+        var e = 0;
+        if c == 1 {
+            pad = 50;
+        } else if c == 2 {
+            size = 16384;
+        } else if c == 3 {
+            e = 3000;
+            size = 700;
+            pad = 9;
+        } else if c == 4 {
+            size = 0;
+        }
+        let got = one(ints, bytes, size, 23, pad, e, false, c);
+        // Straight into the received data: the input buffer still holds the record as it arrived.
+        let untouched = size == 0 || !all_zero(bytes[tls_slot.b_in() + 5..tls_slot.b_in() + 5 + size]);
+        if got == size * 256 + 23 && untouched && landed(bytes, size, e, c) && all_zero(bytes[tls_slot.b_plain()..tls_slot.b_plain() + tls_slot.plain_cap()]) && same(bytes[tls_slot.k_read_iv()..tls_slot.k_read_iv() + 12], iv0) {
+            direct = direct + 1;
+        }
+        c = c + 1;
+    }
+    failed = failed + say(io, direct == 5, "opened into the received data, the type byte cleared, the IV as it was, suite", suite);
+    // Padding past the room: opened in place, the content moved, the input buffer cleared.
+    let e = tls_slot.recv_cap() - 16200;
+    let got = one(ints, bytes, 16000, 23, 300, e, false, 7);
+    let text = 16000 + 1 + 300;
+    let cleared = all_zero(bytes[tls_slot.b_in() + 5..tls_slot.b_in() + 5 + text]);
+    failed = failed + say(io, got == 16000 * 256 + 23 && landed(bytes, 16000, e, 7) && cleared && all_zero(bytes[tls_slot.b_plain()..tls_slot.b_plain() + tls_slot.plain_cap()]) && same(bytes[tls_slot.k_read_iv()..tls_slot.k_read_iv() + 12], iv0), "opened in place when its padding does not fit, the input buffer cleared, suite", suite);
+    // A handshake message's content lands where application data would, for the caller to take and clear.
+    let hs = one(ints, bytes, 40, 22, 3, 0, false, 8);
+    var taken = true;
+    region m {
+        let message = alloc_slice[m](40, byte_of(0));
+        let landed_first = landed(bytes, 40, 0, 8);
+        tls_slot.take_opened(ints, bytes, 40, message);
+        var k2 = 0;
+        while k2 < 40 {
+            if int_of(message[k2]) != content_byte(k2, 8) {
+                taken = false;
+            }
+            k2 = k2 + 1;
+        }
+        taken = taken && landed_first && all_zero(bytes[tls_slot.b_recv()..tls_slot.b_recv() + tls_slot.recv_cap()]);
+    }
+    failed = failed + say(io, hs == 40 * 256 + 22 && taken, "a handshake message left at the end of the received data, taken and cleared there, suite", suite);
+    // Refused: a flipped bit (nothing written, either way), and an inner plaintext of zeros only.
+    let bad = one(ints, bytes, 100, 23, 0, 0, true, 9);
+    let bad_in_place = one(ints, bytes, 16000, 23, 300, e, true, 10);
+    let none_left = all_zero(bytes[tls_slot.b_recv() + e..tls_slot.b_recv() + tls_slot.recv_cap()]) && all_zero(bytes[tls_slot.b_in() + 5..tls_slot.b_in() + 5 + text]);
+    failed = failed + say(io, bad == tls_record.bad_record_mac() && bad_in_place == tls_record.bad_record_mac() && none_left && same(bytes[tls_slot.k_read_iv()..tls_slot.k_read_iv() + 12], iv0), "a record that does not authenticate writes nothing, suite", suite);
+    let empty = one(ints, bytes, 0, 0, 20, 0, false, 11);
+    failed = failed + say(io, empty == 0 - 6 && all_zero(bytes[tls_slot.b_recv()..tls_slot.b_recv() + tls_slot.recv_cap()]), "an inner plaintext with no content type is refused, suite", suite);
+    // Content over the limit: opened, refused, and none of it kept, in the received data or the input buffer.
+    let over = one(ints, bytes, 16385, 23, 0, 0, false, 12);
+    let over_clear = all_zero(bytes[tls_slot.b_recv()..tls_slot.b_recv() + tls_slot.recv_cap()]);
+    let over_in_place = one(ints, bytes, 16385, 23, 200, 300, false, 13);
+    let over_in_place_clear = all_zero(bytes[tls_slot.b_recv() + 300..tls_slot.b_recv() + tls_slot.recv_cap()]) && all_zero(bytes[tls_slot.b_in() + 5..tls_slot.b_in() + 5 + 16385 + 201]);
+    failed = failed + say(io, over == 0 - 9 && over_in_place == 0 - 9 && over_clear && over_in_place_clear, "content over the limit is refused and none of it kept, suite", suite);
+    return failed;
+}
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var failed = 0;
+    borrow mut heap as &!h in {
+        var ints = box_slice(h, tls_client.ints_len(), 0);
+        var bytes = box_slice(h, tls_client.bytes_len(), byte_of(0));
+        var iv = box_slice(h, 12, byte_of(0));
+        borrow mut io as &!i in {
+            borrow mut ints as &!n in {
+                borrow mut bytes as &!b in {
+                    borrow mut iv as &!v in {
+                        failed = failed + suite_checks(i, contents(n), contents(b), 0x1301, contents(v));
+                        failed = failed + suite_checks(i, contents(n), contents(b), 0x1302, contents(v));
+                        failed = failed + suite_checks(i, contents(n), contents(b), 0x1303, contents(v));
+                    }
+                }
+            }
+        }
+        unbox_slice(h, ints);
+        unbox_slice(h, bytes);
+        unbox_slice(h, iv);
+    }
+    release(heap);
+    release(io);
+    if failed > 0 {
+        return 1;
+    }
+    return 0;
+}

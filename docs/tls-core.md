@@ -373,3 +373,20 @@ All of it passes the gate, and the parts that need no Python run in `cargo test`
   recording that `cargo test` replays with no Python.
 - **The poller's first loop** did not interleave one-byte reads (§10.1).
 
+
+## 11. The record layer in place (#448)
+
+> Added by #448 ([`record-in-place.md`](record-in-place.md) §4), which this section summarises; the design and the measurements
+> are there. §3's "one incoming and one outgoing record" and §8's "last plaintext" change as follows.
+
+- **Sealing** copies the content once, to where the record is sent from in the output queue, writes the content type after it,
+  and seals that in place (`gcm.seal_in_place`, `chacha20.seal_in_place`). No region: the nonce is made in the write IV itself
+  (XORed with the sequence number, the AEAD run, XORed back), so `tls_record.seal` borrows the IV mutably.
+- **Opening** (`tls_slot.open_record`) decrypts a TLS 1.3 record straight from the input buffer into the received data, where
+  `recv` reads it: application data is not copied at all. A record whose padding does not fit the room there is opened in
+  place in the input buffer and its content moved. A handshake message or an alert is copied out of the received data into a
+  region for the code that handles it, and cleared there.
+- **What holds plaintext** (§8): the received data, as before; the last record opened (`b_plain`) only on a TLS 1.2 connection,
+  which still opens into it; the input buffer never, after a record is opened (an opening in place is cleared).
+- `tls_record.open` is now `open_into` (into a buffer of the caller's) and `open_in_place`, and both answer
+  `size * 256 + type` (`opened_size`, `opened_type`) rather than filling an `info` slice.

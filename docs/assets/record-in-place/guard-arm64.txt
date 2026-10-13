@@ -1,0 +1,2 @@
+x25519_shared                           0      523519.00      525613.00    1.00
+33 of 33 rows within 1.3x either way of the baseline

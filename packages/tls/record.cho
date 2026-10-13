@@ -1,3 +1,4 @@
+edition 5;
 module tls_record;
 import std.chacha20;
 import std.gcm;
@@ -860,11 +861,42 @@ fn aead_open[&k, &c, &w, &n, &a, &s, &o](suite: int, key: &k [byte], ctx: &c [in
     return gcm.open_with(ctx, hw, nonce, aad, sealed, out);
 }
 
+// The same AEADs over one buffer, the text and then the tag (`docs/record-in-place.md` §3).
+fn aead_seal_in_place[&k, &c, &w, &n, &a, &b](suite: int, key: &k [byte], ctx: &c [int], hw: &w [byte], nonce: &n [byte], aad: &a [byte], buf: &!b [byte]) -> [] int {
+    if chacha(suite) {
+        return chacha20.seal_in_place(key, nonce, aad, buf);
+    }
+    return gcm.seal_in_place(ctx, hw, nonce, aad, buf);
+}
+
+fn aead_open_in_place[&k, &c, &w, &n, &a, &b](suite: int, key: &k [byte], ctx: &c [int], hw: &w [byte], nonce: &n [byte], aad: &a [byte], buf: &!b [byte]) -> [] int {
+    if chacha(suite) {
+        return chacha20.open_in_place(key, nonce, aad, buf);
+    }
+    return gcm.open_in_place(ctx, hw, nonce, aad, buf);
+}
+
+// The record's nonce made in `iv` itself (RFC 8446 §5.3: the IV XORed with the
+// sequence number, padded on the left): no buffer is needed for it, and the
+// same call again undoes it, so the IV is as it was once the AEAD has run
+// (`docs/record-in-place.md` §4.1). XOR on the bytes only: nothing branches.
+fn xor_seq[&i](iv: &!i [byte], seq: int) -> [] int {
+    var k = 4;
+    while k < 12 {
+        iv[k] = byte_of(int_of(iv[k]) ^ seq >> 8 * (11 - k) & 255);
+        k = k + 1;
+    }
+    return 0;
+}
+
 // One protected record of `content_type` carrying `plaintext`, into
 // `out`: header, then ciphertext and tag, under `suite`'s AEAD with
 // `key` (`key_len(suite)` bytes). Answers its length, or a refusal.
-// `out` must hold `len(plaintext) + 22` bytes.
-pub fn seal[&k, &c, &w, &i, &p, &o](suite: int, key: &k [byte], ctx: &c [int], hw: &w [byte], iv: &i [byte], seq: int, content_type: int, plaintext: &p [byte], out: &!o [byte]) -> [] int {
+// `out` must hold `len(plaintext) + 22` bytes. The content is copied
+// once, to where it is sent from, with its content type after it, and
+// sealed there (`docs/record-in-place.md` §4.1); `iv` is borrowed to
+// make the nonce in and is given back as it was.
+pub fn seal[&k, &c, &w, &i, &p, &o](suite: int, key: &k [byte], ctx: &c [int], hw: &w [byte], iv: &!i [byte], seq: int, content_type: int, plaintext: &p [byte], out: &!o [byte]) -> [] int {
     let n = len(plaintext);
     if n > max_plaintext() {
         return -9;
@@ -881,33 +913,46 @@ pub fn seal[&k, &c, &w, &i, &p, &o](suite: int, key: &k [byte], ctx: &c [int], h
     out[2] = byte_of(3);
     out[3] = byte_of(body >> 8);
     out[4] = byte_of(body & 255);
-    var code = 0;
-    region r {
-        let inner = alloc_slice[r](n + 1, byte_of(0));
-        let iv_seq = alloc_slice[r](12, byte_of(0));
-        var j = 0;
-        while j < n {
-            inner[j] = plaintext[j];
-            j = j + 1;
-        }
-        inner[n] = byte_of(content_type);
-        nonce(iv, seq, iv_seq);
-        code = aead_seal(suite, key, ctx, hw, iv_seq, out[0..5], inner, out[5..5 + body]);
-        // The inner plaintext is the caller's data; it is not erased here,
-        // as the caller still holds it.
-    }
+    copy_into(out[5..5 + n], plaintext);
+    out[5 + n] = byte_of(content_type);
+    xor_seq(iv, seq);
+    let code = aead_seal_in_place(suite, key, ctx, hw, iv, out[0..5], out[5..5 + body]);
+    xor_seq(iv, seq);
     if code != 0 {
         return -10;
     }
     return 5 + body;
 }
 
-// Opens the protected record `record` (header included) under `suite`'s
-// AEAD into `out`, which must hold `len(record) - 21` bytes. `info[0]` gets the inner
-// content type and `info[1]` the content's length. 0, or -10 for a
-// record that does not authenticate, -9 for content over the limit,
-// -6 for an inner plaintext with no content type.
-pub fn open[&k, &c, &w, &i, &r, &o, &f](suite: int, key: &k [byte], ctx: &c [int], hw: &w [byte], iv: &i [byte], seq: int, record: &r [byte], out: &!o [byte], info: &!f [int]) -> [] int {
+// What an opened record's inner plaintext `text` holds (RFC 8446 §5.4): the
+// content type is the last non-zero byte and the zeros after it are padding.
+// Answers `size * 256 + type` (`opened_size`, `opened_type`), -6 for an inner
+// plaintext with no content type, -9 for content over the limit.
+fn inner_of[&t](text: &t [byte]) -> [] int {
+    var last = len(text) - 1;
+    while last >= 0 && int_of(text[last]) == 0 {
+        last = last - 1;
+    }
+    if last < 0 {
+        return -6;
+    }
+    if last > max_plaintext() {
+        return -9;
+    }
+    return last * 256 + int_of(text[last]);
+}
+
+pub fn opened_size(opened: int) -> [] int {
+    return opened >> 8;
+}
+
+pub fn opened_type(opened: int) -> [] int {
+    return opened & 255;
+}
+
+// The checks before a protected record is opened: the length of its inner
+// plaintext (the ciphertext less the tag), or a refusal.
+fn open_text[&r](seq: int, record: &r [byte]) -> [] int {
     let body = len(record) - 5;
     if body < 17 {
         return -10;
@@ -921,34 +966,49 @@ pub fn open[&k, &c, &w, &i, &r, &o, &f](suite: int, key: &k [byte], ctx: &c [int
     if int_of(record[0]) != 23 {
         return -6;
     }
-    let text = body - 16;
+    return body - 16;
+}
+
+// Opens the protected record `record` (header included) under `suite`'s
+// AEAD into `out`, which must hold `len(record) - 21` bytes: the inner
+// plaintext goes straight to where its content is wanted
+// (`docs/record-in-place.md` §4.2). Answers `size * 256 + type` (the
+// content is `out[0..size]`, its type byte after it, then zeros), or
+// -10 for a record that does not authenticate (nothing is written), -9
+// for content over the limit, -6 for an inner plaintext with no content
+// type. `iv` is borrowed to make the nonce in and given back as it was.
+pub fn open_into[&k, &c, &w, &i, &r, &o](suite: int, key: &k [byte], ctx: &c [int], hw: &w [byte], iv: &!i [byte], seq: int, record: &r [byte], out: &!o [byte]) -> [] int {
+    let text = open_text(seq, record);
+    if text < 0 {
+        return text;
+    }
     if len(out) < text {
         return -9;
     }
-    var code = 0;
-    region s {
-        let iv_seq = alloc_slice[s](12, byte_of(0));
-        nonce(iv, seq, iv_seq);
-        code = aead_open(suite, key, ctx, hw, iv_seq, record[0..5], record[5..5 + body], out[0..text]);
-    }
+    xor_seq(iv, seq);
+    let code = aead_open(suite, key, ctx, hw, iv, record[0..5], record[5..5 + text + 16], out[0..text]);
+    xor_seq(iv, seq);
     if code != 0 {
         return -10;
     }
-    // The content type is the last non-zero byte; zeros after it are
-    // padding (RFC 8446 §5.4).
-    var last = text - 1;
-    while last >= 0 && int_of(out[last]) == 0 {
-        last = last - 1;
+    return inner_of(out[0..text]);
+}
+
+// `open_into` where the record is: the inner plaintext is written over the
+// ciphertext, `record[5..]`, and the content is `record[5..5 + size]`.
+// Nothing is written when it does not authenticate.
+pub fn open_in_place[&k, &c, &w, &i, &r](suite: int, key: &k [byte], ctx: &c [int], hw: &w [byte], iv: &!i [byte], seq: int, record: &!r [byte]) -> [] int {
+    let text = open_text(seq, record);
+    if text < 0 {
+        return text;
     }
-    if last < 0 {
-        return -6;
+    xor_seq(iv, seq);
+    let code = aead_open_in_place(suite, key, ctx, hw, iv, record[0..5], record[5..5 + text + 16]);
+    xor_seq(iv, seq);
+    if code != 0 {
+        return -10;
     }
-    if last > max_plaintext() {
-        return -9;
-    }
-    info[0] = int_of(out[last]);
-    info[1] = last;
-    return 0;
+    return inner_of(record[5..5 + text]);
 }
 
 // ---- TLS 1.2 (RFC 5246 §6.2.3.3, RFC 5288 §3, RFC 7905 §2) ----

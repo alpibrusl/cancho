@@ -48,7 +48,6 @@ fn run[&i, &k](io: &!i Io, clock: &k Clock, target: int, size: int, seal: bool) 
         let content = alloc_slice[r](size, byte_of(42));
         let record = alloc_slice[r](size + 22, byte_of(0));
         let plain = alloc_slice[r](size + 1, byte_of(0));
-        let info = alloc_slice[r](2, 0);
         let ctx = alloc_slice[r](tls_record.context_len(), 0);
         let hw = alloc_slice[r](tls_record.hw_len(), byte_of(0));
         tls_record.prepare(4865, key, ctx, hw);
@@ -64,7 +63,7 @@ fn run[&i, &k](io: &!i Io, clock: &k Clock, target: int, size: int, seal: bool) 
                     if seal {
                         tls_record.seal(4865, key, ctx, hw, iv, 0, 23, content, record);
                     } else {
-                        tls_record.open(4865, key, ctx, hw, iv, 0, record, plain, info);
+                        tls_record.open_into(4865, key, ctx, hw, iv, 0, record, plain);
                     }
                     j = j + 1;
                 }

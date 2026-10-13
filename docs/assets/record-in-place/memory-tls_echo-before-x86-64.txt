@@ -1,0 +1,36 @@
+  cancho n=50     start        VmRSS      2664 KiB
+  cancho n=50     connected    VmRSS      6984 KiB
+  cancho n=50     handshake    VmRSS      8264 KiB
+  cancho n=50     established  VmRSS      3540 KiB
+  cancho n=50     echoed       VmRSS      5392 KiB
+  cancho n=50     partial      VmRSS      6700 KiB
+  cancho n=50     all-echoed   VmRSS      9664 KiB
+  cancho n=100    start        VmRSS      2440 KiB
+  cancho n=100    connected    VmRSS     11080 KiB
+  cancho n=100    handshake    VmRSS     13572 KiB
+  cancho n=100    established  VmRSS      4352 KiB
+  cancho n=100    echoed       VmRSS      8004 KiB
+  cancho n=100    partial      VmRSS     10816 KiB
+  cancho n=100    all-echoed   VmRSS     16812 KiB
+  cancho n=200    start        VmRSS      2448 KiB
+  cancho n=200    connected    VmRSS     19736 KiB
+  cancho n=200    handshake    VmRSS     24568 KiB
+  cancho n=200    established  VmRSS      6024 KiB
+  cancho n=200    echoed       VmRSS     13280 KiB
+  cancho n=200    partial      VmRSS     18940 KiB
+  cancho n=200    all-echoed   VmRSS     30996 KiB
+  cancho n=10000  start        VmRSS      2700 KiB
+  cancho n=10000  connected    VmRSS    869896 KiB
+  cancho n=10000  handshake    VmRSS   1106864 KiB
+  cancho n=10000  established  VmRSS    172956 KiB
+  cancho n=10000  echoed       VmRSS    533008 KiB
+  cancho n=10000  partial      VmRSS    817516 KiB
+  cancho n=10000  all-echoed   VmRSS   1423176 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 86.4 | 112.0 | 17.5 | 54.6 | 80.7 | 140.0 |
+| 100 | 86.4 | 111.3 | 19.1 | 55.6 | 83.8 | 143.7 |
+| 200 | 86.4 | 110.6 | 17.9 | 54.2 | 82.5 | 142.7 |
+| 10000 | 86.7 | 110.4 | 17.0 | 53.0 | 81.5 | 142.0 |

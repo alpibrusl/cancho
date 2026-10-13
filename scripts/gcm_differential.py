@@ -19,7 +19,9 @@ bytes (so every tail of the 128-byte groups of `aes_ctr32` and the 16-byte
 blocks of `gcm_tag`), every associated-data length from 0 to 300, and the
 lengths around 4 KiB and 16 KiB (a region is 64 KiB, which bounds the driver). Every sealed case is also sealed and
 opened on the software path (the driver's `s` and `o`), so both paths of
-`std.gcm` are compared with OpenSSL. Exit status 1 on any difference.
+`std.gcm` are compared with OpenSSL; and in place on both paths (`P`, `I`, `p`,
+`i`: docs/record-in-place.md §3), the flipped message refused with the buffer
+left as it was. Exit status 1 on any difference.
 """
 import os
 import random
@@ -76,6 +78,15 @@ def main():
         checks.append(("seal", key, nonce, aad, msg, theirs))
         cases.append(f"o {h(key)} {h(nonce)} {h(aad)} {h(theirs)}")
         checks.append(("open", key, nonce, aad, msg, theirs))
+        # In place (docs/record-in-place.md §3), on both paths: sealed over the plaintext, opened over the ciphertext,
+        # and the flipped message refused with the buffer left as it was.
+        for seal_op, open_op in (("P", "I"), ("p", "i")):
+            cases.append(f"{seal_op} {h(key)} {h(nonce)} {h(aad)} {h(msg)}")
+            checks.append(("seal", key, nonce, aad, msg, theirs))
+            cases.append(f"{open_op} {h(key)} {h(nonce)} {h(aad)} {h(theirs)}")
+            checks.append(("open", key, nonce, aad, msg, theirs))
+            cases.append(f"{open_op} {h(key)} {h(nonce)} {h(aad)} {h(bytes(flipped))}")
+            checks.append(("flip-in-place", key, nonce, aad, bytes(flipped), openssl_refused))
 
     out = subprocess.run([driver], input=("\n".join(cases) + "\n").encode(), capture_output=True, check=True).stdout
     lines = out.decode().splitlines()
@@ -89,6 +100,8 @@ def main():
                 ok = AESGCM(key).decrypt(nonce, bytes.fromhex(got), aad) == msg
         elif kind == "open":
             ok = code == "0" and got == msg.hex()
+        elif kind == "flip-in-place":
+            ok = extra and code == "-6" and got == msg.hex()
         else:
             ok = extra and code == "-6" and got == "aa" * (len(msg))
         if not ok:

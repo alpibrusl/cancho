@@ -6,7 +6,8 @@ edition 5;
 // Byte strings are lowercase hex (`-` for empty).
 //
 //     S <suite> <key> <iv> <seq> <type> <plaintext>   tls_record.seal: `<code> <tag> <record>`
-//     O <suite> <key> <iv> <seq> <record>             tls_record.open: `<code> <tag> <type> <content>`
+//     O <suite> <key> <iv> <seq> <record>             tls_record.open_into: `<code> <tag> <type> <content>`
+//     J <suite> <key> <iv> <seq> <record>             tls_record.open_in_place, answered as `O`
 //     T <suite> <key> <iv> <seq> <type> <plaintext>   tls_record.seal12 (TLS 1.2), answered as `S`
 //     U <suite> <key> <iv> <seq> <record>             tls_record.open12 (TLS 1.2), answered as `O`
 //     P <hash length> <secret> <label> <seed> <n>     tls_record.prf: `<code> <tag> <n bytes>`
@@ -113,6 +114,16 @@ fn tag_line[&i](io: &!i Io, code: int) -> [io_write] int {
     return 0;
 }
 
+// An `open_into` or `open_in_place` answer as `open12`'s: 0 with the type and the size in `info`, or the refusal.
+fn opened[&f](got: int, info: &!f [int]) -> [] int {
+    if got < 0 {
+        return got;
+    }
+    info[0] = tls_record.opened_type(got);
+    info[1] = tls_record.opened_size(got);
+    return 0;
+}
+
 fn record_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
     let op = int_of(s[at]);
     var f = at + 2;
@@ -162,7 +173,16 @@ fn record_op[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
             let info = alloc_slice[r](2, 0);
             var code = 0;
             if op == 79 {
-                code = tls_record.open(suite, key, ctx, hw, iv, seq, rec, out, info);
+                // `tls_record.open_into`, answered as `open` was: the type and the content.
+                let got = tls_record.open_into(suite, key, ctx, hw, iv, seq, rec, out);
+                code = opened(got, info);
+            } else if op == 74 {
+                // `tls_record.open_in_place`: the content is in the record itself afterwards.
+                let got = tls_record.open_in_place(suite, key, ctx, hw, iv, seq, rec);
+                code = opened(got, info);
+                if code == 0 {
+                    copy_into(out, rec[5..5 + info[1]]);
+                }
             } else {
                 code = tls_record.open12(suite, key, ctx, hw, iv, seq, rec, out, info);
             }
@@ -483,7 +503,7 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
                                 if n > 0 && n <= len(l) {
                                     let s = l[0..n];
                                     let op = int_of(s[0]);
-                                    if op == 83 || op == 79 || op == 84 || op == 85 {
+                                    if op == 83 || op == 79 || op == 84 || op == 85 || op == 74 {
                                         record_op(io, s, 0);
                                     } else if op == 80 {
                                         prf_op(io, s, 0);

@@ -1,0 +1,26 @@
+# engine_cost, arm64 Linux in the Docker VM on the M4 (no PMU: milliseconds), taskset -c 0; columns: mode size conns ms count checksum
+ 07:48:07 up 7 days, 12:57,  0 user,  load average: 3.42, 4.61, 5.12
+before: bulk 64 1 445 200000 50800000
+after:  bulk 64 1 86 200000 50800000
+before: bulk 1024 1 289 100000 115700000
+after:  bulk 1024 1 95 100000 115700000
+before: bulk 16384 1 373 20000 332180000
+after:  bulk 16384 1 259 20000 332180000
+before: kept 9 32 430 2000 6720000
+after:  kept 9 32 85 2000 6720000
+before: kept 9 64 886 2000 13440000
+after:  kept 9 64 445 2000 13440000
+before: kept 16384 32 119 200 106694400
+after:  kept 16384 32 75 200 106694400
+before: bulk 64 1 420 200000 50800000
+after:  bulk 64 1 97 200000 50800000
+before: bulk 1024 1 352 100000 115700000
+after:  bulk 1024 1 115 100000 115700000
+before: bulk 16384 1 290 20000 332180000
+after:  bulk 16384 1 197 20000 332180000
+before: kept 9 32 312 2000 6720000
+after:  kept 9 32 63 2000 6720000
+before: kept 9 64 615 2000 13440000
+after:  kept 9 64 330 2000 13440000
+before: kept 16384 32 161 200 106694400
+after:  kept 16384 32 79 200 106694400

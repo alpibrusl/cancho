@@ -209,3 +209,78 @@ fn one_flipped_bit_anywhere_is_refused() {
     assert_eq!(answers.len(), 1 + 130 * 8 + 12 * 8);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `docs/record-in-place.md` §3: `seal_in_place` writes what `seal` does and `open_in_place` opens what `open` does, on
+/// both backends; a tag changed in its last byte is refused and leaves the buffer as it was; a buffer with no room for a
+/// tag is refused with `seal`'s and `open`'s tags.
+#[test]
+fn in_place_seals_and_opens_what_seal_and_open_do_on_both_backends() {
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut cases = Vec::new();
+    for _ in 0..120 {
+        let key: Vec<u8> = (0..32).map(|_| next() as u8).collect();
+        let nonce: Vec<u8> = (0..12).map(|_| next() as u8).collect();
+        let aad: Vec<u8> = (0..next() % 41).map(|_| next() as u8).collect();
+        let text: Vec<u8> = (0..next() % 300).map(|_| next() as u8).collect();
+        let (key, nonce, aad, text) = (hex(&key), hex(&nonce), hex(&aad), hex(&text));
+        cases.push(format!("S {key} {nonce} {aad} {text}"));
+        cases.push(format!("T {key} {nonce} {aad} {text}"));
+    }
+    for backend in ["cranelift", "llvm"] {
+        let (dir, exe) = build_aead_driver("in-place", backend);
+        let sealed = run_cases(&exe, &cases);
+        let mut opens = Vec::new();
+        for (two, case) in sealed.chunks(2).zip(cases.chunks(2)) {
+            assert_eq!(two[0], two[1], "{} on {backend}", case[1]);
+            let (code, _, out) = answer(&two[0]);
+            assert_eq!(code, 0, "{}", case[0]);
+            let f: Vec<&str> = case[0].split(' ').collect();
+            let mut bad = unhex(&out);
+            let last = bad.len() - 1;
+            bad[last] ^= 1;
+            for op in ["O", "U"] {
+                opens.push(format!("{op} {} {} {} {out}", f[1], f[2], f[3]));
+                opens.push(format!("{op} {} {} {} {}", f[1], f[2], f[3], hex(&bad)));
+            }
+        }
+        let opened = run_cases(&exe, &opens);
+        for (four, asked) in opened.chunks(4).zip(opens.chunks(4)) {
+            assert_eq!(answer(&four[0]).0, 0, "{}", asked[0]);
+            assert_eq!(four[2], four[0], "{} on {backend}", asked[2]);
+            let (code, tag, got) = answer(&four[3]);
+            assert_eq!((code, tag.as_str()), (-6, "aead-tag-mismatch"), "{}", asked[3]);
+            // Nothing written: the buffer is the sealed message it was given, the last byte changed.
+            assert_eq!(got, asked[3].rsplit(' ').next().unwrap(), "{} on {backend}", asked[3]);
+        }
+        let key = hex(&[7u8; 32]);
+        let nonce = hex(&[9u8; 12]);
+        let mut short = Vec::new();
+        for n in 0..16u8 {
+            let b = hex(&(0..n).collect::<Vec<u8>>());
+            short.push(format!("V {key} {nonce} - {b}"));
+            short.push(format!("U {key} {nonce} - {b}"));
+        }
+        for (case, line) in short.iter().zip(run_cases(&exe, &short)) {
+            let (code, tag, got) = answer(&line);
+            let want = if case.starts_with('V') {
+                (-3, "chacha20-output-length")
+            } else {
+                (-5, "aead-too-short")
+            };
+            assert_eq!((code, tag.as_str()), want, "{case} on {backend}");
+            let given = case.rsplit(' ').next().unwrap();
+            assert_eq!(
+                if got.is_empty() { "-" } else { got.as_str() },
+                given,
+                "{case}: the buffer as it was"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

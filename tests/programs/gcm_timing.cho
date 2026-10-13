@@ -20,6 +20,13 @@
 // pool, not one record a measurement, is what lets 16 KiB messages be
 // measured a million times.
 //
+// `I` (seal) and `J` (open) time `gcm.seal_in_place` and
+// `gcm.open_in_place` under a key prepared once, and `K` and `L`
+// `chacha20.seal_in_place` and `open_in_place` under the first record's
+// key (`docs/record-in-place.md` §3.2), pooled as `P` and `Q`. The
+// record's data is copied into one buffer before each call, outside
+// the time measured, since the call writes over it.
+//
 // Everything is read and decoded before anything is timed, so what
 // runs just before each call is the same whatever its input. Each call's time is
 // read with the `tick` library's `cancho_tick` (a cycle counter), so
@@ -125,13 +132,46 @@ fn time_pool[&f, &a, &t](ffi: &f Ffi("tick"), op: int, k: int, n: int, a: int, d
         let ctx = alloc_slice[r](gcm.context_len(), 0);
         let hw = alloc_slice[r](gcm.hw_len(), byte_of(0));
         gcm.prepare(all[0..k], ctx, hw);
+        // In place: the buffer a call writes over, the data (and room for a tag to seal) copied in before it.
+        var place = d;
+        if op == 73 || op == 75 {
+            place = d + 16;
+        }
+        let buf = alloc_slice[r](place, byte_of(0));
         var i = 0;
         while i < len(times) {
             let at = times[i];
             let nonce = all[at + k..at + k + n];
             let aad = all[at + k + n..at + k + n + a];
             let data = all[at + k + n + a..at + k + n + a + d];
-            if op == 80 {
+            if op >= 73 && op <= 76 {
+                var j = 0;
+                while j < d {
+                    buf[j] = data[j];
+                    j = j + 1;
+                }
+                while j < place {
+                    buf[j] = byte_of(0);
+                    j = j + 1;
+                }
+            }
+            if op == 73 {
+                let t0 = cancho_tick(ffi);
+                gcm.seal_in_place(ctx, hw, nonce, aad, buf);
+                times[i] = cancho_tick(ffi) - t0;
+            } else if op == 74 {
+                let t0 = cancho_tick(ffi);
+                gcm.open_in_place(ctx, hw, nonce, aad, buf);
+                times[i] = cancho_tick(ffi) - t0;
+            } else if op == 75 {
+                let t0 = cancho_tick(ffi);
+                chacha20.seal_in_place(all[0..k], nonce, aad, buf);
+                times[i] = cancho_tick(ffi) - t0;
+            } else if op == 76 {
+                let t0 = cancho_tick(ffi);
+                chacha20.open_in_place(all[0..k], nonce, aad, buf);
+                times[i] = cancho_tick(ffi) - t0;
+            } else if op == 80 {
                 let t0 = cancho_tick(ffi);
                 gcm.seal_with(ctx, hw, nonce, aad, data, out);
                 times[i] = cancho_tick(ffi) - t0;
@@ -241,7 +281,7 @@ fn run[&h, &i, &f](heap: &!h Heap, io: &!i Io, ffi: &f Ffi("tick")) -> [heap, io
     text = read_stdin(heap, io, text);
     borrow text as &b in {
         let s = buffer.bytes(b);
-        if int_of(s[0]) == 80 || int_of(s[0]) == 81 {
+        if int_of(s[0]) == 80 || int_of(s[0]) == 81 || int_of(s[0]) >= 73 && int_of(s[0]) <= 76 {
             time_pooled(heap, io, ffi, s);
         } else {
             time_all(heap, io, ffi, s);

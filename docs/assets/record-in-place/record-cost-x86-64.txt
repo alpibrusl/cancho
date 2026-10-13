@@ -1,0 +1,90 @@
+== record_cost base
+seal     64      178    358
+seal   1024      543   1884
+seal  16384     6665   2457
+open     64      158    403
+open   1024      519   1970
+open  16384     5912   2771
+== record_cost new
+seal     64      165    387
+seal   1024      537   1905
+seal  16384     6220   2634
+open     64      148    431
+open   1024      492   2078
+open  16384     5972   2743
+== gcm_cost hw
+seal     64        3  18040
+seal   1024        3 278653
+seal  16384        4 3293003
+open     64        3  18016
+open   1024        4 227822
+open  16384        7 2309219
+total 17836112084992
+== record_cost base
+seal     64      201    317
+seal   1024      606   1689
+seal  16384     7194   2277
+open     64      160    398
+open   1024      531   1927
+open  16384     5847   2801
+== record_cost new
+seal     64      156    410
+seal   1024      484   2112
+seal  16384     6361   2575
+open     64      154    415
+open   1024      504   2031
+open  16384     5948   2754
+== gcm_cost hw
+seal     64        5  11790
+seal   1024        5 173243
+seal  16384        7 2182938
+open     64        5  12365
+open   1024        5 204160
+open  16384        6 2584794
+total 15067337719808
+== openssl speed
+AES-128-GCM     141726.82k
+AES-128-GCM    1397804.03k
+AES-128-GCM    3112124.42k
+== gcm_cost 16 hw
+seal     64       89    713
+seal   1024      419   2441
+seal  16384     5918   2768
+open     64       99    642
+open   1024      437   2342
+open  16384     6023   2720
+== record_cost base
+seal     64      176    363
+seal   1024      377   2709
+seal  16384     4077   4018
+open     64       99    640
+open   1024      333   3069
+open  16384     4002   4093
+== record_cost new
+seal     64      109    583
+seal   1024      352   2901
+seal  16384     4200   3900
+open     64      100    637
+open   1024      413   2475
+open  16384     4979   3290
+== gcm_cost 16 hw
+seal     64       86    736
+seal   1024      369   2768
+seal  16384     5376   3047
+open     64       92    692
+open   1024      395   2592
+open  16384     5584   2933
+== record_cost base
+seal     64      161    397
+seal   1024      519   1969
+seal  16384     6122   2675
+open     64      137    464
+open   1024      459   2230
+open  16384     5307   3087
+== record_cost new
+seal     64      136    467
+seal   1024      456   2245
+seal  16384     5361   3055
+open     64      108    590
+open   1024      362   2822
+open  16384     4321   3791

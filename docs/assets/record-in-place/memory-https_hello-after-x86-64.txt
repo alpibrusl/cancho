@@ -1,0 +1,22 @@
+  https n=50     start        VmRSS      2896 KiB
+  https n=50     connected    VmRSS      7216 KiB
+  https n=50     handshake    VmRSS      8472 KiB
+  https n=50     established  VmRSS      4320 KiB
+  https n=50     echoed       VmRSS      7576 KiB
+  https n=100    start        VmRSS      2728 KiB
+  https n=100    connected    VmRSS     11380 KiB
+  https n=100    handshake    VmRSS     13824 KiB
+  https n=100    established  VmRSS      5780 KiB
+  https n=100    echoed       VmRSS     11036 KiB
+  https n=200    start        VmRSS      2744 KiB
+  https n=200    connected    VmRSS     20032 KiB
+  https n=200    handshake    VmRSS     24776 KiB
+  https n=200    established  VmRSS      8604 KiB
+  https n=200    echoed       VmRSS     17860 KiB
+
+KiB of server RSS per connection, over RSS at start (https ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 50 | 86.4 | 111.5 | 28.5 | 93.6 | - | - |
+| 100 | 86.5 | 111.0 | 30.5 | 83.1 | - | - |
+| 200 | 86.4 | 110.2 | 29.3 | 75.6 | - | - |

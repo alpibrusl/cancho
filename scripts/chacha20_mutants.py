@@ -33,8 +33,17 @@ MUTANTS = [
     ("never reduced below p", "let keep = value_barrier(g4 >> 63);", "let keep = 0;"),
     ("h - p computed as h + 5", "let g4 = wrapping_sub(wrapping_add(h4, c), 0x4000000);", "let g4 = wrapping_add(h4, c);"),
     ("the carry into the tag's second word dropped", "f = wrapping_add(wrapping_add(w1, le32(key, 20)), f >> 32);", "f = wrapping_add(w1, le32(key, 20));"),
-    ("a one-byte-short tag compare", "while i < 16 {\n            diff", "while i < 15 {\n            diff"),
-    ("plaintext released on a bad tag", "if diff != 0 {", "if diff != diff {"),
+    ("a one-byte-short tag compare", "while i < 16 {\n            diff = diff | int_of(want[i]) ^ int_of(sealed[text + i]);", "while i < 15 {\n            diff = diff | int_of(want[i]) ^ int_of(sealed[text + i]);"),
+    ("plaintext released on a bad tag", "    if diff != 0 {\n        return refused_tag_mismatch();\n    }\n    xor(key, 1, nonce, sealed[0..text], out);", "    if diff != diff {\n        return refused_tag_mismatch();\n    }\n    xor(key, 1, nonce, sealed[0..text], out);"),
+    # In place (docs/record-in-place.md §3).
+    ("in place: plaintext released on a bad tag", "    if diff != 0 {\n        return refused_tag_mismatch();\n    }\n    xor(key, 1, nonce, buf[0..text], buf[0..text]);", "    if diff != diff {\n        return refused_tag_mismatch();\n    }\n    xor(key, 1, nonce, buf[0..text], buf[0..text]);"),
+    ("in place: a one-byte-short tag compare", "while i < 16 {\n            diff = diff | int_of(want[i]) ^ int_of(buf[text + i]);", "while i < 15 {\n            diff = diff | int_of(want[i]) ^ int_of(buf[text + i]);"),
+    ("in place: encryption from counter 0", "    xor(key, 1, nonce, buf[0..text], buf[0..text]);\n    aead_tag(", "    xor(key, 0, nonce, buf[0..text], buf[0..text]);\n    aead_tag("),
+    ("in place: the tag written over the start of the text", "    aead_tag(key, nonce, aad, buf[0..text], buf[text..text + 16]);", "    aead_tag(key, nonce, aad, buf[0..text], buf[0..16]);"),
+    ("in place: the tag compared with the start of the text", "            diff = diff | int_of(want[i]) ^ int_of(buf[text + i]);", "            diff = diff | int_of(want[i]) ^ int_of(buf[i]);"),
+    ("in place: a buffer with no room for a tag sealed", "    if len(buf) < 16 {\n        let shape = aead_lengths(key, nonce, 0);\n        if shape != 0 {\n            return shape;\n        }\n        return refused_output_length();", "    if len(buf) < 0 {\n        let shape = aead_lengths(key, nonce, 0);\n        if shape != 0 {\n            return shape;\n        }\n        return refused_output_length();"),
+    ("in place: a buffer with no room for a tag opened", "    if len(buf) < 16 {\n        let shape = aead_lengths(key, nonce, 0);\n        if shape != 0 {\n            return shape;\n        }\n        return refused_too_short();", "    if len(buf) < 0 {\n        let shape = aead_lengths(key, nonce, 0);\n        if shape != 0 {\n            return shape;\n        }\n        return refused_too_short();"),
+    ("in place: the tag taken over the plaintext when sealing", "    xor(key, 1, nonce, buf[0..text], buf[0..text]);\n    aead_tag(key, nonce, aad, buf[0..text], buf[text..text + 16]);", "    aead_tag(key, nonce, aad, buf[0..text], buf[text..text + 16]);\n    xor(key, 1, nonce, buf[0..text], buf[0..text]);"),
     ("the lengths block in the wrong order", "bytes.store_le32(lens, 0, m32(len(aad)));", "bytes.store_le32(lens, 0, m32(len(ct)));"),
     ("encryption from counter 0", "xor(key, 1, nonce, plaintext, out[0..text]);", "xor(key, 0, nonce, plaintext, out[0..text]);"),
     ("the counter allowed to wrap", "blocks > 0x100000000 - counter", "blocks > 0x100000001 - counter"),
@@ -87,6 +96,26 @@ def evidence():
         b[bit // 8] ^= 1 << (bit % 8)
         cases.append(f"O {f[1]} {f[2]} {f[3]} {b.hex()}")
         checks.append(lambda a, n=len(s) - 16: a == f"-6 aead-tag-mismatch {'aa' * n}")
+    # A buffer with no room for a tag, in place: too short to open, and to seal the output's length.
+    for n in range(16):
+        b = h(bytes(range(n)))
+        cases.append(f"V {key} {nonce} - {b}")
+        checks.append(lambda a, b=b: a.rstrip() == f"-3 chacha20-output-length {b if b != '-' else ''}".rstrip())
+        cases.append(f"U {key} {nonce} - {b}")
+        checks.append(lambda a, b=b: a.rstrip() == f"-5 aead-too-short {b if b != '-' else ''}".rstrip())
+    # Every seal and open again in place (docs/record-in-place.md §3): a seal answers what `seal` does, an open what
+    # `open` does, but for a refusal, which leaves the buffer (the sealed message) as it was.
+    for case, check in list(zip(cases, checks)):
+        if case[:2] in ("S ", "O "):
+            cases.append({"S": "T", "O": "U"}[case[0]] + case[1:])
+            if case[0] == "S":
+                checks.append(check)
+            else:
+                sealed = case.split(" ")[4]
+                n = max(len(sealed) // 2 - 16, 0) if sealed != "-" else 0
+                checks.append(lambda a, c=check, s=sealed, n=n: (a.startswith("0 ") and c(a)) or
+                              (a.startswith("-6 ") and a == f"-6 aead-tag-mismatch {s}" and c(f"-6 aead-tag-mismatch {'aa' * n}")) or
+                              (not a.startswith(("0 ", "-6 ")) and c(" ".join(a.split(" ")[:2]) + " " + "aa" * n)))
     return cases, checks
 
 

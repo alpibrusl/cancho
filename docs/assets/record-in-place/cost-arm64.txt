@@ -1,0 +1,18 @@
+ 07:44:52 up 7 days, 12:54,  0 user,  load average: 4.79, 5.68, 5.52
+== base
+cost       `oserv` plain (OpenSSL's server code, no TLS) over kload, GET /hello/42: 152732 153984 163952 requests a second (5 s rounds), 2.83 microseconds of server CPU a request
+cost       `https_hello` over tload (TLS 1.3, keep-alive), GET /hello/42: 111232 94934 74992 requests a second (5 s rounds), 5.51 microseconds of server CPU a request
+cost       `oserv` over tload (OpenSSL, TLS 1.3, keep-alive), GET /hello/42: 106380 110259 88764 requests a second (5 s rounds), 4.96 microseconds of server CPU a request
+== new
+cost       `oserv` plain (OpenSSL's server code, no TLS) over kload, GET /hello/42: 204300 209536 157456 requests a second (5 s rounds), 2.70 microseconds of server CPU a request
+cost       `https_hello` over tload (TLS 1.3, keep-alive), GET /hello/42: 117654 126819 93536 requests a second (5 s rounds), 4.46 microseconds of server CPU a request
+cost       `oserv` over tload (OpenSSL, TLS 1.3, keep-alive), GET /hello/42: 96880 95161 91059 requests a second (5 s rounds), 4.64 microseconds of server CPU a request
+== base
+cost       `oserv` plain (OpenSSL's server code, no TLS) over kload, GET /hello/42: 171782 182742 203465 requests a second (5 s rounds), 2.94 microseconds of server CPU a request
+cost       `https_hello` over tload (TLS 1.3, keep-alive), GET /hello/42: 103228 97369 97625 requests a second (5 s rounds), 5.50 microseconds of server CPU a request
+cost       `oserv` over tload (OpenSSL, TLS 1.3, keep-alive), GET /hello/42: 90454 89904 90268 requests a second (5 s rounds), 4.80 microseconds of server CPU a request
+== new
+cost       `oserv` plain (OpenSSL's server code, no TLS) over kload, GET /hello/42: 142745 149116 171872 requests a second (5 s rounds), 2.83 microseconds of server CPU a request
+cost       `https_hello` over tload (TLS 1.3, keep-alive), GET /hello/42: 138320 134640 136595 requests a second (5 s rounds), 3.91 microseconds of server CPU a request
+cost       `oserv` over tload (OpenSSL, TLS 1.3, keep-alive), GET /hello/42: 106444 78624 99942 requests a second (5 s rounds), 4.35 microseconds of server CPU a request
+ 07:48:01 up 7 days, 12:57,  0 user,  load average: 3.59, 4.69, 5.15

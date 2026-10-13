@@ -656,3 +656,45 @@ fn the_tls12_prf_matches_openssl_on_both_backends() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// The record layer's one way to open a TLS 1.3 record (`docs/record-in-place.md` §4.2), on a slot's own slices under
+/// each suite and on both backends: straight into the received data, or in place when its padding does not fit there,
+/// and either way the content where it is wanted and nothing else of the plaintext left anywhere.
+#[test]
+fn a_record_opens_into_the_received_data_and_leaves_no_plaintext_on_both_backends() {
+    for backend in ["cranelift", "llvm"] {
+        let dir = scratch(&format!("tls-record-open-{backend}"));
+        let exe = dir.join("record_open");
+        let build = Command::new(BIN)
+            .args(["build", "--std", "--backend", backend])
+            .arg(repo_root().join("tests/programs/record_open.cho"))
+            .args(
+                [
+                    "record.cho",
+                    "message.cho",
+                    "slot.cho",
+                    "cident.cho",
+                    "client12.cho",
+                    "client.cho",
+                ]
+                .map(|f| repo_root().join("packages/tls").join(f)),
+            )
+            .args(
+                ["verify.cho", "names.cho", "x509.cho", "key.cho"]
+                    .map(|f| repo_root().join("packages/x509").join(f)),
+            )
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .expect("the compiler runs");
+        assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+        let out = Command::new(&exe).output().expect("the program runs");
+        let lines: Vec<String> =
+            String::from_utf8_lossy(&out.stdout).lines().map(str::to_string).collect();
+        assert!(
+            out.status.success() && lines.len() == 18 && lines.iter().all(|l| l.starts_with("ok ")),
+            "{backend}: {lines:#?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

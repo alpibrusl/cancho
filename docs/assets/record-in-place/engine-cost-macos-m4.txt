@@ -1,0 +1,18 @@
+# engine_cost on the Apple M4 Max, macOS 26.2, 2026-10-13T07:31:33Z, load: 13.82 11.28 10.52
+# columns: mode size conns milliseconds count checksum; before = 3d7e8e9d packages built by this compiler
+before: bulk 64 1 298 200000 50800000
+after:  bulk 64 1 47 200000 50800000
+before: bulk 16384 1 189 20000 332180000
+after:  bulk 16384 1 124 20000 332180000
+before: kept 9 32 223 2000 6720000
+after:  kept 9 32 34 2000 6720000
+before: kept 9 64 447 2000 13440000
+after:  kept 9 64 226 2000 13440000
+before: bulk 64 1 307 200000 50800000
+after:  bulk 64 1 47 200000 50800000
+before: bulk 16384 1 187 20000 332180000
+after:  bulk 16384 1 124 20000 332180000
+before: kept 9 32 219 2000 6720000
+after:  kept 9 32 34 2000 6720000
+before: kept 9 64 444 2000 13440000
+after:  kept 9 64 222 2000 13440000
