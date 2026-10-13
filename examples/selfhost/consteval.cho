@@ -18,6 +18,7 @@ import selfhost.ast;
 import selfhost.kinds;
 import selfhost.pass1;
 import selfhost.exprs;
+import selfhost.fold;
 import selfhost.emit;
 
 // What an expression is worth: whole numbers, booleans and bytes in `a`; a slice as the position of its first
@@ -339,7 +340,7 @@ fn unary[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Val {
     }
     let op = ast.get(st, id, 4);
     if op == 0 {
-        let r = exprs.fold_int(14, 0, v.a);
+        let r = fold.fold_int(14, 0, v.a);
         if r.trapped {
             return gave_up();
         }
@@ -401,7 +402,7 @@ fn binary[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Val {
         return good(0, 0);
     }
     if op >= 8 && op <= 17 {
-        let r = exprs.fold_int(op, left.a, right.a);
+        let r = fold.fold_int(op, left.a, right.a);
         if r.trapped {
             return gave_up();
         }
