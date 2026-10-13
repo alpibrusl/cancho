@@ -25,6 +25,7 @@ pub(super) fn package_files() -> Vec<PathBuf> {
         "ticket.cho",
         "clientauth.cho",
         "server.cho",
+        "saved.cho",
     ];
     let x509 = ["verify.cho", "names.cho", "x509.cho", "key.cho"];
     let mut files: Vec<PathBuf> =

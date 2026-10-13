@@ -1,0 +1,135 @@
+module tls_saved;
+import tls_slot;
+
+// `tls_saved` -- the client's saved tickets (`docs/tls-resumption.md`): the layout of the entries in the engine's
+// `tickets` bytes and of their fields in its `tmeta` words, and the rules over them that need nothing else of the
+// engine (which entries a pool holds, the oldest and the newest, whether one may be offered, wiping one). Moved out
+// of `tls` as it was, behaviour unchanged: `tls.cho` had reached its 2,000-line budget, and this is the piece
+// `docs/record-in-place.md` §8 named. The engine's calls (`save_to`, `forget`, `start_with`, the settings) stay in `tls` and pass the two slices.
+
+// A ticket entry's bytes: the ticket, its PSK, the host name it is for.
+pub fn entry_bytes() -> [] int {
+    return tls_slot.ticket_cap() + 48 + 256;
+}
+
+pub fn e_psk() -> [] int {
+    return tls_slot.ticket_cap();
+}
+
+pub fn e_host() -> [] int {
+    return tls_slot.ticket_cap() + 48;
+}
+
+// `tmeta`: [0] entries, [1] trust generation, [2] the longest a
+// verification is relied on, in seconds, [3] the next entry a full table
+// replaces, [4] 1 if `set_resumption` turned resumption on, [5] the next
+// pool to issue, [6] the most tickets a pool holds, [7] the next save's
+// number; then each entry's fields.
+pub fn t_capacity() -> [] int {
+    return 0;
+}
+
+pub fn t_trust() -> [] int {
+    return 1;
+}
+
+pub fn t_max_age() -> [] int {
+    return 2;
+}
+
+pub fn t_hand() -> [] int {
+    return 3;
+}
+
+pub fn t_resume() -> [] int {
+    return 4;
+}
+
+pub fn t_next_pool() -> [] int {
+    return 5;
+}
+
+pub fn t_per_pool() -> [] int {
+    return 6;
+}
+
+pub fn t_saves() -> [] int {
+    return 7;
+}
+
+pub fn t_entries() -> [] int {
+    return 8;
+}
+
+// An entry's fields: its pool, in use, ticket length, hash length, host
+// length, when received (Unix milliseconds: when its connection started,
+// so an age is never short), lifetime (seconds), ticket_age_add,
+// verified at, the leaf's notAfter, the trust generation it was saved
+// under, and the save's number (larger is newer).
+pub fn t_fields() -> [] int {
+    return 12;
+}
+
+pub fn tf(e: int, field: int) -> [] int {
+    return t_entries() + e * t_fields() + field;
+}
+
+// Whether entry `e` holds a ticket of `pool`.
+pub fn in_pool[&m](tm: &m [int], e: int, pool: int) -> [] bool {
+    return tm[tf(e, 1)] == 1 && tm[tf(e, 0)] == pool;
+}
+
+// Overwrites entry `e` and frees it.
+pub fn wipe[&t, &m](tickets: &!t [byte], tm: &!m [int], e: int) -> [] int {
+    let at = e * entry_bytes();
+    tls_slot.zero(tickets[at..at + entry_bytes()]);
+    return tls_slot.zero_words(tm[tf(e, 0)..tf(e, t_fields())]);
+}
+
+// How many tickets `pool` holds.
+pub fn held[&m](tm: &m [int], pool: int) -> [] int {
+    var n = 0;
+    var e = 0;
+    while e < tm[t_capacity()] {
+        if in_pool(tm, e, pool) {
+            n = n + 1;
+        }
+        e = e + 1;
+    }
+    return n;
+}
+
+// The newest (or the oldest) entry of `pool`, or -1 if it holds none.
+pub fn pick[&m](tm: &m [int], pool: int, newest: bool) -> [] int {
+    var found = 0 - 1;
+    var e = 0;
+    while e < tm[t_capacity()] {
+        if in_pool(tm, e, pool) {
+            if found < 0 || tm[tf(e, 11)] > tm[tf(found, 11)] == newest {
+                found = e;
+            }
+        }
+        e = e + 1;
+    }
+    return found;
+}
+
+// Whether entry `e` may be offered for `host` at `now_ms`
+// (`docs/tls-resumption.md` §3, rules 1 to 4).
+pub fn may_offer[&t, &m, &h](tickets: &t [byte], tm: &m [int], e: int, host: &h [byte], now_ms: int) -> [] bool {
+    let at = e * entry_bytes();
+    if tm[tf(e, 4)] != len(host) || tm[tf(e, 10)] != tm[t_trust()] {
+        return false;
+    }
+    var same = true;
+    var k = 0;
+    while k < len(host) {
+        if tickets[at + e_host() + k] != host[k] {
+            same = false;
+        }
+        k = k + 1;
+    }
+    let received = tm[tf(e, 5)];
+    let now_s = now_ms / 1000;
+    return same && now_s <= tm[tf(e, 9)] && now_s < tm[tf(e, 8)] + tm[t_max_age()] && now_ms < received + tm[tf(e, 6)] * 1000 && now_ms >= received;
+}
