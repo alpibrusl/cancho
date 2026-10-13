@@ -4,7 +4,7 @@
 
     cc -O2 -c tick.c -o tick.o && ar rcs libtick.a tick.o   # tick.c below
     cancho build --std [--backend B] tests/programs/gcm_timing.cho -l tick -L . -o timing
-    python3 scripts/gcm_timing.py ./timing [<samples per test>] [--chacha20] [--size <bytes>] [--prepared [--pool <n>]]
+    python3 scripts/gcm_timing.py ./timing [<samples per test>] [--chacha20] [--size <bytes>] [--prepared | --in-place] [--pool <n>]
 
 `tick.c` is the cycle counter the program reads:
 
@@ -23,6 +23,11 @@ two builtin calls; without it, the one-shot `gcm.seal` and `gcm.open`, where pre
 data", "open, data", "open, tag"), and their inputs come from two pools of `--pool` (default 256)
 records a class, measurement `i` of a class using record `i mod pool`: both classes then cycle
 through as many buffers, and a 16 KiB message can be measured a million times.
+
+With `--in-place` (docs/record-in-place.md §3.2), the same three tests time `gcm.seal_in_place` and
+`gcm.open_in_place` under a key prepared once (with `--chacha20`, `chacha20.seal_in_place` and
+`open_in_place` under one key), pooled as `--prepared` is; each record's data is copied into the one
+buffer the call writes over before the call, outside the time measured.
 
 Every input is generated and read before anything is timed: decoding
 input just before a timed call, with branches on what it decodes, was
@@ -102,7 +107,8 @@ def main():
     global SIZE
     chacha = "--chacha20" in sys.argv
     prepared = "--prepared" in sys.argv
-    args = [a for a in sys.argv[1:] if a not in ("--chacha20", "--prepared")]
+    in_place = "--in-place" in sys.argv
+    args = [a for a in sys.argv[1:] if a not in ("--chacha20", "--prepared", "--in-place")]
     pool = 256
     if "--pool" in args:
         at = args.index("--pool")
@@ -137,6 +143,11 @@ def main():
         assert not chacha, "--prepared is std.gcm's"
         tests = {name: ({"S": "P", "O": "Q"}[op], fixed, rand) for name, (op, fixed, rand) in tests.items() if name != "seal, key"}
         print(f"prepared key, {SIZE}-byte messages, pools of {pool} records a class", flush=True)
+    if in_place:
+        ops = {"S": "I", "O": "J", "s": "K", "o": "L"}
+        tests = {name: (ops[op], fixed, rand) for name, (op, fixed, rand) in tests.items() if name != "seal, key"}
+        print(f"in place, {'ChaCha20-Poly1305' if chacha else 'AES-GCM, a prepared key'}, {SIZE}-byte messages, pools of {pool} records a class", flush=True)
+        prepared = True
 
     leaked = False
     for name, (op, fixed, rand) in tests.items():

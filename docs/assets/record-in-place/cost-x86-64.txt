@@ -1,0 +1,8 @@
+== base
+cost       `oserv` plain (OpenSSL's server code, no TLS) over kload, GET /hello/42: 127052 119958 118358 requests a second (5 s rounds), 8.21 microseconds of server CPU a request
+cost       `https_hello` over tload (TLS 1.3, keep-alive), GET /hello/42: 58489 58134 59142 requests a second (5 s rounds), 17.06 microseconds of server CPU a request
+cost       `oserv` over tload (OpenSSL, TLS 1.3, keep-alive), GET /hello/42: 51241 49440 56704 requests a second (5 s rounds), 18.92 microseconds of server CPU a request
+== new
+cost       `oserv` plain (OpenSSL's server code, no TLS) over kload, GET /hello/42: 99846 98044 98678 requests a second (5 s rounds), 10.12 microseconds of server CPU a request
+cost       `https_hello` over tload (TLS 1.3, keep-alive), GET /hello/42: 61254 52752 61670 requests a second (5 s rounds), 17.07 microseconds of server CPU a request
+cost       `oserv` over tload (OpenSSL, TLS 1.3, keep-alive), GET /hello/42: 60124 59606 55891 requests a second (5 s rounds), 17.01 microseconds of server CPU a request

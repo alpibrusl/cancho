@@ -1,0 +1,17 @@
+     2.64%     1.52%  https_hello  https_hello        [.] lexs_tls.settle
+     2.62%     1.46%  https_hello  https_hello        [.] lexs_tls.take
+     2.46%     1.43%  https_hello  https_hello        [.] lexs_tls.recv
+     1.81%     0.11%  https_hello  https_hello        [.] lexs_tls.feed
+     1.53%     0.10%  https_hello  https_hello        [.] lexs_tls.send
+     1.07%     0.81%  https_hello  https_hello        [.] lexs_tls.rest
+     0.93%     0.22%  https_hello  https_hello        [.] lexs_tls.lease
+     0.89%     0.89%  https_hello  https_hello        [.] cancho_aes_ctr32
+     0.82%     0.82%  https_hello  https_hello        [.] lexs_tls.event
+     0.73%     0.73%  https_hello  https_hello        [.] lexs_tls.unrest
+     0.68%     0.11%  https_hello  https_hello        [.] lexs_tls_server.on_record
+     0.60%     0.15%  https_hello  https_hello        [.] lexs_tls_slot.open_record
+     0.59%     0.12%  https_hello  https_hello        [.] lexs_tls_slot.queue_record
+     0.52%     0.26%  https_hello  https_hello        [.] lexs_tls_record.seal
+     0.50%     0.38%  https_hello  https_hello        [.] lexs_tls_record.open_into
+     0.43%     0.43%  https_hello  libc.so.6          [.] __memmove_avx_unaligned_erms
+     0.31%     0.29%  https_hello  https_hello        [.] cancho_gcm_tag_diff

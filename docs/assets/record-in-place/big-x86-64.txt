@@ -1,0 +1,4 @@
+bin-base /big/16777216 x8: 137 MB/s client-side, server 16.000 cycles/byte, 74.367 instructions/byte
+bin-new /big/16777216 x8: 139 MB/s client-side, server 15.667 cycles/byte, 73.118 instructions/byte
+bin-base /big/16777216 x8: 143 MB/s client-side, server 16.027 cycles/byte, 74.350 instructions/byte
+bin-new /big/16777216 x8: 144 MB/s client-side, server 15.665 cycles/byte, 73.120 instructions/byte

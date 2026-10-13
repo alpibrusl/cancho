@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mutation check of `packages/tls` (docs/tls-core.md §7, §10).
 
-    python3 scripts/tls_mutants.py <cancho binary> [--only <text in a mutant's name>]
+    python3 scripts/tls_mutants.py <cancho binary> [--only <text in a mutant's name>] [--shard <k>/<n>]
 
 Each mutant is one of the package's files with one deliberate bug. The
 package is copied to a scratch directory, the mutant applied there, and
@@ -67,9 +67,9 @@ MUTANTS = [
      "    let n = int_of(buf[at + 3]) * 256 + int_of(buf[at + 4]);\n    if n > max_ciphertext() {",
      "    let n = int_of(buf[at + 3]) * 256 + int_of(buf[at + 4]);\n    if n >= max_ciphertext() {"),
     ("inner-plaintext padding not stripped", "record.cho",
-     "    while last >= 0 && int_of(out[last]) == 0 {", "    while last >= 0 && int_of(out[last]) == 256 {"),
+     "    while last >= 0 && int_of(text[last]) == 0 {", "    while last >= 0 && int_of(text[last]) == 256 {"),
     ("the content type taken from the outer header", "client.cho",
-     "        inner = info[0];", "        inner = kind;"),
+     "    let inner = tls_record.opened_type(got);", "    let inner = kind;"),
     ("the client's keys used for reading", "client.cho",
      "            tls_slot.set_read_keys(ints, bytes, tls_slot.k_server_hs());", "            tls_slot.set_read_keys(ints, bytes, tls_slot.k_client_hs());"),
     ("a KeyUpdate not answered", "client.cho", "        if asked == 1 {", "        if asked == 2 {"),
@@ -89,19 +89,19 @@ MUTANTS = [
      "    if code == 0 && new_key && at < 0 {"),
     ("the engine's DRBG key not replaced", "tls.cho", "                key[i] = stream[i];\n", ""),
     ("an area released without clearing", "tls.cho",
-     "            clear_area(engine, a, contents(engine.meta)[m_reach(engine, slot)]);\n", ""),
-    ("a released area's received data kept", "tls.cho",
-     "    tls_slot.zero(contents(engine.bytes)[ab + tls_slot.b_recv()..ab + tls_slot.b_recv() + recv]);\n", ""),
-    ("a released area's opened record kept", "tls.cho",
-     "    tls_slot.zero(contents(engine.bytes)[ab + tls_slot.b_plain()..ab + tls_slot.b_plain() + plain]);\n", ""),
+     "        clear_area(engine, a, contents(engine.meta)[m_reach(engine, slot)]);\n", ""),
+    ("a released area's received data kept", "slot.cho",
+     "    zero(bytes[b_recv()..b_recv() + recv]);\n", ""),
+    ("a released area's opened record kept", "slot.cho",
+     "        zero(bytes[b_plain()..b_plain() + plain]);\n", ""),
     ("the received data's reach not counted", "tls.cho",
      "    if end > contents(engine.meta)[m_reach(engine, slot)] {", "    if false {"),
-    ("a handshake's scratch not cleared", "tls.cho",
-     "    if reach >= tls_slot.recv_cap() {\n        end = tls_client.ints_len();", "    if false {\n        end = tls_client.ints_len();"),
-    ("a released area's copy of the core kept", "tls.cho",
-     "    tls_slot.zero(contents(engine.bytes)[ab..ab + cover]);\n", ""),
-    ("a server's handshake data past its core kept in a released area", "tls.cho",
-     "    if reach >= tls_slot.recv_cap() {\n        cover = tls_slot.bytes_core_len();", "    if false {\n        cover = tls_slot.bytes_core_len();"),
+    ("a handshake's scratch not cleared", "slot.cho",
+     "    if reach >= recv_cap() {\n        end = ints_len();", "    if false {\n        end = ints_len();"),
+    ("a released area's copy of the core kept", "slot.cho",
+     "    zero(bytes[0..cover]);\n", ""),
+    ("a server's handshake data past its core kept in a released area", "slot.cho",
+     "    if reach >= recv_cap() {\n        cover = bytes_core_len();", "    if false {\n        cover = bytes_core_len();"),
     ("feed with no area free failing the connection", "tls.cho",
      "        // No area free: nothing is taken, as when the engine's buffers are full; the program offers the bytes again.\n        return 0;",
      "        return fail_parked(engine, slot, tls_record.pool());"),
@@ -116,9 +116,9 @@ MUTANTS = [
      "    return slot * core_len(engine);", "    return slot * (core_len(engine) / 2);"),
     # ---- The work areas (docs/tls-memory.md section 7) ----
     ("the core not copied out after a call", "tls.cho",
-     "        contents(engine.cints)[ci + k] = contents(engine.ints)[ai + k];\n", ""),
+     "    tls_slot.copy_words(contents(engine.cints)[ci..ci + m], contents(engine.ints)[ai..ai + m]);\n", ""),
     ("the core not copied in when an area is leased", "tls.cho",
-     "        contents(engine.ints)[ai + k] = contents(engine.cints)[ci + k];\n", ""),
+     "    tls_slot.copy_words(contents(engine.ints)[ai..ai + m], contents(engine.cints)[ci..ci + m]);\n", ""),
     ("the bytes of the core not copied in", "tls.cho",
      "    copy_into(contents(engine.bytes)[ab..ab + n], contents(engine.cbytes)[cb..cb + n]);",
      "    copy_into(contents(engine.bytes)[ab..ab], contents(engine.cbytes)[cb..cb]);"),
@@ -126,31 +126,31 @@ MUTANTS = [
      "    copy_into(contents(engine.cbytes)[cb..cb + n], contents(engine.bytes)[ab..ab + n]);",
      "    copy_into(contents(engine.cbytes)[cb..cb], contents(engine.bytes)[ab..ab]);"),
     ("an idle connection keeping its area", "tls.cho",
-     "    if idle(contents(engine.ints)[ai..ai + tls_client.ints_len()]) {", "    if false {"),
-    ("an area given back while data waits for recv", "tls.cho",
-     " && ints[tls_slot.i_recv_start()] == ints[tls_slot.i_recv_end()] && !tls_slot.keeps_area(ints);",
-     " && !tls_slot.keeps_area(ints);"),
-    ("an area given back while bytes wait for the socket", "tls.cho",
-     " && ints[tls_slot.i_out_start()] == ints[tls_slot.i_out_end()]", ""),
-    ("an area given back with half a record in it", "tls.cho",
-     " && ints[tls_slot.i_in_fill()] == 0 && ints[tls_slot.i_hs_fill()] == 0", ""),
-    ("an area given back in the middle of a handshake", "tls.cho",
-     "    return (s == tls_slot.state_connected() || s == tls_slot.state_closed() || s == tls_slot.state_failed()) &&",
-     "    return (s >= 0) &&"),
+     "    if tls_slot.idle(contents(engine.ints)[ai..ai + tls_client.ints_len()]) {", "    if false {"),
+    ("an area given back while data waits for recv", "slot.cho",
+     " && ints[i_recv_start()] == ints[i_recv_end()] && !keeps_area(ints);", " && !keeps_area(ints);"),
+    ("an area given back while bytes wait for the socket", "slot.cho",
+     " && ints[i_out_start()] == ints[i_out_end()]", ""),
+    ("an area given back with half a record in it", "slot.cho",
+     " && ints[i_in_fill()] == 0 && ints[i_hs_fill()] == 0", ""),
+    ("an area given back in the middle of a handshake", "slot.cho",
+     "    return (s == state_connected() || s == state_closed() || s == state_failed()) &&", "    return (s >= 0) &&"),
     ("a lease when every area is leased", "tls.cho",
-     "    if free == 0 {\n        return tls_record.pool();\n    }", "    if free == 0 {\n        return 0;\n    }"),
+     "        if r < 0 {\n            return tls_record.pool();\n        }", "        if r < 0 {\n            return 0;\n        }"),
     ("a connection with no area not failed", "tls.cho",
      "    contents(engine.cints)[ci + tls_slot.i_state()] = tls_slot.state_failed();\n", ""),
     ("a failed connection's keys kept", "tls.cho",
      "    tls_slot.zero(contents(engine.cbytes)[cb + tls_slot.b_keys()..cb + tls_slot.b_keys() + tls_slot.keys_len()]);\n    return code;",
      "    return code;"),
     ("take on a connection with no area asking for one", "tls.cho",
-     "        // A connection without an area has nothing queued (`idle`).\n        return 0;", "        return tls_record.pool();"),
+     "        // idle when it came to rest, and every call that could queue anything takes it out of its rest first.\n        return 0;",
+     "        return tls_record.pool();"),
     ("a dropped slot keeping its area", "tls.cho",
      "        contents(engine.meta)[m_dirty(engine, slot)] = 0;\n        unlease(engine, slot);\n    }\n    // The core",
      "        contents(engine.meta)[m_dirty(engine, slot)] = 0;\n    }\n    // The core"),
     ("a dropped slot keeping its core", "tls.cho",
-     "    var k = 0;\n    while k < tls_slot.ints_core_len() {\n        contents(engine.cints)[ci + k] = 0;\n        k = k + 1;\n    }\n    let cb = core_bytes(engine, slot);\n    tls_slot.zero(contents(engine.cbytes)[cb..cb + core_len(engine)]);\n    contents(engine.meta)[m_busy(slot)] = 0;",
+     "    tls_slot.zero_words(contents(engine.cints)[ci..ci + tls_slot.ints_core_len()]);\n    let cb = core_bytes(engine, slot);\n"
+     "    tls_slot.zero(contents(engine.cbytes)[cb..cb + core_len(engine)]);\n    contents(engine.meta)[m_busy(slot)] = 0;",
      "    contents(engine.meta)[m_busy(slot)] = 0;"),
     # ---- Suites and HelloRetryRequest (docs/tls-parity.md §3.3) ----
     ("SHA-384's transcript never chosen", "slot.cho",
@@ -460,6 +460,60 @@ MUTANTS = [
      "            if e - p > 255 || n + 1 + e - p > len(out) {", "            if n + 1 + e - p > len(out) {"),
     ("ALPN: the offer copied into the slot truncated", "client.cho",
      "    ints[tls_slot.i_alpn_offer_len()] = len(alpn);", "    ints[tls_slot.i_alpn_offer_len()] = len(alpn) - 1;"),
+    # docs/record-in-place.md §2: resting in a work area, and the copies in bulk.
+    ("area: a resting connection called again left in its rest", "tls.cho",
+     "        if resting(engine, slot) {\n            unrest(engine, slot);\n        }\n        return 0;", "        return 0;"),
+    ("area: a resting connection's area passed on without its core taken out", "tls.cho",
+     "        unrest(engine, r);\n        core_out(engine, r);\n", "        unrest(engine, r);\n"),
+    ("area: a connection comes to rest with its plaintext", "tls.cho",
+     "    clear_plain(engine, contents(engine.meta)[m_lease(engine, slot)] - 1, contents(engine.meta)[m_reach(engine, slot)]);\n", ""),
+    ("area: more connections rest than may", "tls.cho",
+     "    return evict(engine, contents(engine.meta)[r]);", "    return 0;"),
+    ("area: the last to rest given back first", "tls.cho",
+     "        let first = contents(engine.meta)[r + 2] - 1;", "        let first = contents(engine.meta)[r + 3] - 1;"),
+    ("area: a resting connection said to hold its area", "tls.cho",
+     " && contents(engine.meta)[m_lease(engine, slot)] != 0 && !resting(engine, slot);", " && contents(engine.meta)[m_lease(engine, slot)] != 0;"),
+    ("area: resting areas not counted free", "tls.cho",
+     "    return contents(engine.meta)[m_free(engine)] + contents(engine.meta)[m_rest(engine) + 1];", "    return contents(engine.meta)[m_free(engine)];"),
+    ("area: a dropped resting connection left in the order", "tls.cho",
+     "    if resting(engine, slot) {\n        unrest(engine, slot);\n    }\n    if contents(engine.meta)[m_lease(engine, slot)] != 0 {",
+     "    if contents(engine.meta)[m_lease(engine, slot)] != 0 {"),
+    ("area: a resting area passed on while one is free", "tls.cho",
+     "    if free > 0 && !(handshake && r >= 0) {", "    if free > 0 && r < 0 {"),
+    ("area: a handshake writing a free area while one rests", "tls.cho",
+     "    if free > 0 && !(handshake && r >= 0) {", "    if free > 0 {"),
+    ("area: fewer allowed to rest and none given back", "tls.cho",
+     "    evict(engine, n);\n    return n;", "    return n;"),
+    ("area: a connection rests with its handshake's scratch", "tls.cho",
+     "        if contents(engine.meta)[m_dirty(engine, slot)] == 0 && contents(engine.ints)[ai + tls_slot.i_state()] == tls_slot.state_connected() {",
+     "        if contents(engine.ints)[ai + tls_slot.i_state()] == tls_slot.state_connected() {"),
+    ("area: a failed connection rests", "tls.cho",
+     "        if contents(engine.meta)[m_dirty(engine, slot)] == 0 && contents(engine.ints)[ai + tls_slot.i_state()] == tls_slot.state_connected() {",
+     "        if contents(engine.meta)[m_dirty(engine, slot)] == 0 && contents(engine.ints)[ai + tls_slot.i_state()] != tls_slot.state_idle() {"),
+    ("area: the core copied a word short", "slot.cho", "    while k < n {\n        room[k] = from[k];", "    while k < n - 1 {\n        room[k] = from[k];"),
+    ("area: a word left when an area is cleared", "slot.cho", "    return bignum.zero(out);", "    return bignum.zero(out[0..len(out) - 1]);"),
+    # docs/record-in-place.md §4: the record layer sealing in place and opening into the received data.
+    ("record layer: the content type not written after the content", "record.cho", "    out[5 + n] = byte_of(content_type);\n", ""),
+    ("record layer: the content not copied before sealing", "record.cho", "    copy_into(out[5..5 + n], plaintext);\n", ""),
+    ("record layer: the IV left masked after sealing", "record.cho",
+     "    xor_seq(iv, seq);\n    if code != 0 {\n        return -10;\n    }\n    return 5 + body;", "    if code != 0 {\n        return -10;\n    }\n    return 5 + body;"),
+    ("record layer: the IV left masked after opening", "record.cho",
+     "    xor_seq(iv, seq);\n    if code != 0 {\n        return -10;\n    }\n    return inner_of(out[0..text]);", "    if code != 0 {\n        return -10;\n    }\n    return inner_of(out[0..text]);"),
+    ("record layer: the sequence number not in the nonce", "record.cho",
+     "        iv[k] = byte_of(int_of(iv[k]) ^ seq >> 8 * (11 - k) & 255);", "        iv[k] = byte_of(int_of(iv[k]));"),
+    ("record layer: the type byte left in the received data", "slot.cho", "            bytes[b_recv() + e + size] = byte_of(0);\n", ""),
+    ("record layer: content over the limit kept in the received data", "slot.cho",
+     "            zero(bytes[b_recv() + e..b_recv() + e + room]);\n", ""),
+    ("record layer: a record opened in place leaves its plaintext in the input buffer", "slot.cho",
+     "    zero(bytes[b_in() + 5..b_in() + 5 + text]);\n    return got;", "    return got;"),
+    ("record layer: a record opened in place whose content is not moved", "slot.cho",
+     "            copy_within(bytes, b_recv() + e, b_in() + 5, size);\n", ""),
+    ("record layer: every record opened in place", "slot.cho", "    if text <= recv_cap() - e {", "    if false {"),
+    ("record layer: a handshake message's plaintext left in the received data", "slot.cho",
+     "    copy_into(out, bytes[at..at + size]);\n    return zero(bytes[at..at + size]);", "    return copy_into(out, bytes[at..at + size]);"),
+    ("record layer: application data counted in the wrong state", "client.cho",
+     "    if inner == tls_record.type_application_data() && state == tls_slot.state_connected() && ints[tls_slot.i_hs_fill()] == 0 {",
+     "    if inner == tls_record.type_application_data() {"),
 ]
 
 
@@ -493,6 +547,10 @@ def cases():
 # Mutants that change no behaviour the client can reach, each with the argument. Such a mutant must survive;
 # one that is killed was not equivalent, and the run fails.
 EQUIVALENT = {
+    "a released area's opened record kept":
+        "only a TLS 1.2 record is opened into `b_plain` since docs/record-in-place.md §4.2 (a TLS 1.3 record is opened into "
+        "the received data), and no connection here is TLS 1.2 through the engine (docs/tls-memory.md §9, item 3): "
+        "unreachable by these tests, not harmless; `tls.residue` would count it",
     "ALPN: an ALPN answer in EncryptedExtensions accepted when none was offered":
         "the parser then returns the protocol's range, and `tls_client12.take_alpn` refuses it with the same tag "
         "(`tls-unsupported-extension`) because the offer is empty: two checks for one rule, and the first is defence in depth",
@@ -652,6 +710,14 @@ def evidence(cancho, pkg, work, engine):
     found = replay(driver, cases())
     if found:
         return found
+    # The record layer on a slot's own slices (docs/record-in-place.md §4.2).
+    opener = os.path.join(work, "record_open")
+    ok, err = build(cancho, "record_open.cho", pkg, opener)
+    if not ok:
+        return "BUILD " + err.strip().splitlines()[0]
+    r = subprocess.run([opener], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0 or any(not l.startswith("ok ") for l in r.stdout.splitlines()):
+        return "record_open: " + next((l for l in r.stdout.splitlines() if not l.startswith("ok ")), f"exit {r.returncode}")
     tickets = os.path.join(work, "tickets")
     ok, err = build(cancho, "tls_tickets.cho", pkg, tickets, engine=True)
     if not ok:
@@ -682,11 +748,16 @@ def main():
     print("unmutated: passes")
     survived = 0
     run = [m for m in MUTANTS if only is None or any(o in m[0] for o in only)]
+    if "--shard" in sys.argv:
+        # Mutant i runs in shard i mod n, so n processes share the list (each builds its own programs), as
+        # `tls_server_mutants.py --shard` does.
+        k, n = (int(x) for x in sys.argv[sys.argv.index("--shard") + 1].split("/"))
+        run = [m for i, m in enumerate(run) if i % n == k]
     for name, file, old, new in run:
         text = open(os.path.join(src, file)).read()
         assert text.count(old) == 1, f"{name}: the text occurs {text.count(old)} times"
         open(os.path.join(pkg, file), "w").write(text.replace(old, new))
-        found = evidence(cancho, pkg, work, file == "tls.cho" or "end of the socket" in name)
+        found = evidence(cancho, pkg, work, file in ("tls.cho", "slot.cho") or "end of the socket" in name)
         shutil.copy(os.path.join(src, file), os.path.join(pkg, file))
         if name in EQUIVALENT:
             if found is None:

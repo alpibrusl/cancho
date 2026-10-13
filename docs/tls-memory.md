@@ -294,11 +294,14 @@ stack is last in, first out, so the areas that are touched are the few in use at
   `handshakes_in_progress`, `save_to`'s reads) read the current core, the area's or the slot's, and take no area. This is why the core is the
   *front* of the slot: they are handed a shorter slice with the same offsets. *Corrected after review: the first version copied the core out
   after every call so that reads could always use `cints`; measured, that copy was most of the engine's added CPU a request (§10.2).*
+  *Changed by #447 (§12): an established connection that goes idle may rest in its area instead of giving it back, and the copies
+  are block copies.*
 - `take` on a connection with no area answers 0 (it has nothing queued: that is what idle means). `drop` clears the area if there is one, and
   always the core.
 - **An area goes back cleared** (`clear_area`, on every release, in `drop` and in `close`): its copy of the core (the traffic keys, IVs, the
   handshake and application secrets, `k_res_master`, the hardware key schedules, the AEAD contexts), the last record opened and the received
-  data, and, after a handshake, the transcripts and the work area, which hold intermediate values of the key exchange and the signature. No
+  data, and, after a handshake, the transcripts and the work area, which hold intermediate values of the key exchange and the signature
+  (*since #448 the last record opened only on a TLS 1.2 connection: a TLS 1.3 record is opened into the received data, §12*). No
   free area holds a key or plaintext, as on `main` `drop` and the end of a connection left none in a slot. `tls.residue(engine)`, for tests,
   counts what is left in free areas, free slots' cores and failed connections' keys, and `tests/programs/tls_pool.cho` asserts it is 0 after
   every step and drop. *Corrected in review: the first version cleared the scratch and the opened record only, and only after a handshake;
@@ -727,3 +730,45 @@ equivalent, as before.
   `tls_echo`'s ceiling of 1,048,576 connections, resident only where written).
 - Timings: none taken. The copy is one pass over the leaf's bytes a connection, in the call that verified its Finished; a lease
   copies nothing more than before.
+
+## 12. Resting, and the copies in bulk (#447, #448)
+
+> Status: **built, measured** ([`record-in-place.md`](record-in-place.md), which has the design, the invariants and the raw
+> output; this section is what changed in the layout and the engine, for a rebase, and what it costs in memory).
+
+**What it found.** §10.2's cost (about 16% a request on arm64; 24% on x86-64 by `tls-performance.md` §10.5) was the copy of the
+core's 296 words one at a time through the engine's boxes, not the bytes. They are block copies now (`tls_slot.copy_words`,
+`zero_words`), and an established connection that goes idle **rests** in its area: it keeps it, its core in it, until an area is
+wanted and none is free, or more connections rest than `tls.set_resting` allows (32 by default), the longest-resting first. A
+handshake takes a resting connection's area before a free one, so handshakes keep writing the same one or two areas. A kept
+`https_hello` request is 21.5% fewer cycles on x86-64 (0.94 times OpenSSL's `oserv`).
+
+**What changed in the engine, precisely.**
+
+- `meta` is `11 + 8 * slots + areas` words (it was `7 + 5 * slots + areas`): after the reach block, at `7 + 5 * slots + areas`,
+  how many may rest, how many do, the first and the last to rest (slot plus one), then for each slot the next and the one before
+  it in that order (plus one), then 1 for each slot that rests.
+- `holds_area` is false for a resting connection; `areas_free` counts resting areas; `tls.areas_resting(engine)` is new, and
+  so is `tls.set_resting(engine, k)` (0 to the number of areas; 0 is §7's engine exactly).
+- `take` and `recv` on a resting connection answer from its core in the area with no `settle`.
+- `tls.residue` also counts what a resting area holds past its connection's core (§7.2's promise: nothing).
+- The release's slice-level work moved from `tls.cho` to `slot.cho` (`idle`, `clear_area`, `clear_plain`, `clear_leaf`,
+  `plain_left`, `nonzero`, `nonzero_words`), unchanged but for `b_plain`, which is cleared only on a TLS 1.2 connection.
+
+**What did not change:** the slot's layout (every offset, `ints_len`, `bytes_len`, `ints_core_len`, the cores), the API and
+everything it answers, and what a free area holds.
+
+**Memory** (`scripts/tls_memory.py`, `tls_echo`, x86-64, KiB a connection, before / after):
+
+| N | established | echoed | partial | all-echoed |
+|---|---|---|---|---|
+| 50 | 17.5 / 15.5 | 54.6 / 97.4 | 80.7 / 106.9 | 140.0 / 121.9 |
+| 100 | 19.1 / 17.9 | 55.6 / 76.9 | 83.8 / 96.6 | 143.7 / 126.3 |
+| 200 | 17.9 / 17.6 | 54.2 / 65.1 | 82.5 / 89.2 | 142.7 / 126.2 |
+| 10,000 | 17.0 / 17.0 | 53.0 / 53.3 | 81.5 / 81.6 | 142.0 / 125.8 |
+
+The bound: **at most 33 areas' written pages more per engine** (the 32 that may rest and one), measured as 2.1 MiB after a 16 KiB
+record on every connection whatever N is; an idle connection that never carried a record is what it was. The high-water mark fell
+16 KiB a connection: a TLS 1.3 record no longer writes `b_plain`. `https_hello` after a 16 KiB answer each: 1.1 to 1.2 MiB more
+for the engine at 50 to 200 connections.
+

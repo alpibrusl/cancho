@@ -837,28 +837,28 @@ fn on_record[&i, &b, &c, &t](ints: &!i [int], bytes: &!b [byte], n: int, cfg: &c
     if kind != tls_record.type_application_data() {
         return tls_record.unexpected_message();
     }
-    var code = 0;
-    var inner = 0;
-    var size = 0;
-    region q {
-        let info = alloc_slice[q](2, 0);
-        code = tls_record.open(ints[tls_slot.i_suite()], bytes[tls_slot.k_read_key()..tls_slot.k_read_key() + tls_slot.key_len(ints)], tls_slot.read_aead(ints), bytes[tls_slot.k_read_hw()..tls_slot.k_read_hw() + tls_record.hw_len()], bytes[tls_slot.k_read_iv()..tls_slot.k_read_iv() + 12], ints[tls_slot.i_read_seq()], bytes[tls_slot.b_in()..tls_slot.b_in() + n], bytes[tls_slot.b_plain()..tls_slot.b_plain() + tls_slot.plain_cap()], info);
-        inner = info[0];
-        size = info[1];
-    }
-    if code == tls_record.bad_record_mac() && tls_slot.has(ints, tls_slot.f_early()) {
+    // The content is left at the end of the received data, not yet counted in it (`docs/record-in-place.md` §4.2).
+    let got = tls_slot.open_record(ints, bytes, n);
+    if got == tls_record.bad_record_mac() && tls_slot.has(ints, tls_slot.f_early()) {
         // Early data under a key this server never derives: skipped.
         return skip_early(ints, body);
     }
-    if code != 0 {
-        return code;
+    if got < 0 {
+        return got;
     }
     // The first record that opens ends the early data.
     tls_slot.clear_flag(ints, tls_slot.f_early());
     ints[tls_slot.i_read_seq()] = ints[tls_slot.i_read_seq()] + 1;
+    let inner = tls_record.opened_type(got);
+    let size = tls_record.opened_size(got);
+    if inner == tls_record.type_application_data() && state == tls_slot.state_connected() && ints[tls_slot.i_hs_fill()] == 0 {
+        ints[tls_slot.i_recv_end()] = ints[tls_slot.i_recv_end()] + size;
+        return 0;
+    }
+    var code = 0;
     region r {
         let content = alloc_slice[r](size, byte_of(0));
-        tls_slot.copy_bytes(bytes[tls_slot.b_plain()..tls_slot.b_plain() + size], content);
+        tls_slot.take_opened(ints, bytes, size, content);
         if inner == tls_record.type_handshake() {
             if size == 0 {
                 code = tls_record.unexpected_message();
@@ -867,14 +867,6 @@ fn on_record[&i, &b, &c, &t](ints: &!i [int], bytes: &!b [byte], n: int, cfg: &c
             }
         } else if inner == tls_record.type_alert() {
             code = tls_client.on_alert(ints, bytes, content);
-        } else if inner == tls_record.type_application_data() {
-            if state != tls_slot.state_connected() || ints[tls_slot.i_hs_fill()] != 0 {
-                code = tls_record.unexpected_message();
-            } else {
-                let e = ints[tls_slot.i_recv_end()];
-                tls_slot.copy_bytes(content, bytes[tls_slot.b_recv() + e..tls_slot.b_recv() + e + size]);
-                ints[tls_slot.i_recv_end()] = e + size;
-            }
         } else {
             code = tls_record.unexpected_message();
         }

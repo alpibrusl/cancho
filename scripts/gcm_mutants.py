@@ -48,7 +48,7 @@ MUTANTS = [
     # true. The builtins' own code is mutated by `scripts/gcm_wide_mutants.py`.
     ("gcm", "hardware: encryption from counter 1", "aes_ctr32(keys, nr, nonce, 2, plaintext, out[0..text]);", "aes_ctr32(keys, nr, nonce, 1, plaintext, out[0..text]);"),
     ("gcm", "hardware: decryption from counter 1", "aes_ctr32(keys, nr, nonce, 2, sealed[0..text], out);", "aes_ctr32(keys, nr, nonce, 1, sealed[0..text], out);"),
-    ("gcm", "hardware: decrypted before the tag is checked", "    if diff != 0 {\n        return refused_tag_mismatch();\n    }\n    aes_ctr32(", "    if diff == 99 {\n        return refused_tag_mismatch();\n    }\n    aes_ctr32("),
+    ("gcm", "hardware: decrypted before the tag is checked", "    if diff != 0 {\n        return refused_tag_mismatch();\n    }\n    aes_ctr32(keys, nr, nonce, 2, sealed[0..text], out);", "    if diff == 99 {\n        return refused_tag_mismatch();\n    }\n    aes_ctr32(keys, nr, nonce, 2, sealed[0..text], out);"),
     ("gcm", "hardware: the tag taken from the start of the sealed message", "sealed[0..text], sealed[text..text + 16]);", "sealed[0..text], sealed[0..16]);"),
     ("gcm", "hardware: the associated data not hashed when sealing", "nonce, aad, out[0..text], out[text..text + 16]);", "nonce, nonce[0..0], out[0..text], out[text..text + 16]);"),
     ("gcm", "hardware: H made with AES-128's round count", "ghash_powers(hw[0..(nr + 1) * 16], nr, hw[", "ghash_powers(hw[0..176], 10, hw["),
@@ -57,8 +57,18 @@ MUTANTS = [
     # The prepared key (`docs/crypto-builtins.md` §6, step 2).
     ("gcm", "an unprepared context taken as prepared", "&& (ctx[0] == 10 || ctx[0] == 14)", "&& ctx[0] >= 0"),
     ("gcm", "the last partial block not padded with zeros", "        var b = 0;\n        if at + k < len(s) {", "        var b = 255;\n        if at + k < len(s) {"),
-    ("gcm", "a one-byte-short tag compare", "q, w, blk);\n        // Every byte is compared whatever the earlier ones were.\n        var i = 0;\n        while i < 16 {", "q, w, blk);\n        // Every byte is compared whatever the earlier ones were.\n        var i = 0;\n        while i < 15 {"),
-    ("gcm", "plaintext released on a bad tag", "        if diff == 0 {\n            aes.ctr32_with(", "        if diff == diff {\n            aes.ctr32_with("),
+    ("gcm", "a one-byte-short tag compare", "tag_of(ctx, nonce, aad, sealed[0..text], want, q, w, blk);\n        // Every byte is compared whatever the earlier ones were.\n        var i = 0;\n        while i < 16 {", "tag_of(ctx, nonce, aad, sealed[0..text], want, q, w, blk);\n        // Every byte is compared whatever the earlier ones were.\n        var i = 0;\n        while i < 15 {"),
+    ("gcm", "plaintext released on a bad tag", "        if diff == 0 {\n            aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, sealed[0..text], out, q);", "        if diff == diff {\n            aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, sealed[0..text], out, q);"),
+    # In place (docs/record-in-place.md §3).
+    ("gcm", "in place, hardware: decrypted before the tag is checked", "    if diff != 0 {\n        return refused_tag_mismatch();\n    }\n    aes_ctr32(keys, nr, nonce, 2, buf[0..text], buf[0..text]);", "    if diff == 99 {\n        return refused_tag_mismatch();\n    }\n    aes_ctr32(keys, nr, nonce, 2, buf[0..text], buf[0..text]);"),
+    ("gcm", "in place, hardware: the tag written over the start of the text", "gcm_tag(keys, nr, hw[hw_table()..hw_table() + hw_table_len()], nonce, aad, buf[0..text], buf[text..text + 16]);", "gcm_tag(keys, nr, hw[hw_table()..hw_table() + hw_table_len()], nonce, aad, buf[0..text], buf[0..16]);"),
+    ("gcm", "in place, hardware: the tag compared with the start of the text", "gcm_tag_diff(keys, nr, hw[hw_table()..hw_table() + hw_table_len()], nonce, aad, buf[0..text], buf[text..text + 16]);", "gcm_tag_diff(keys, nr, hw[hw_table()..hw_table() + hw_table_len()], nonce, aad, buf[0..text], buf[0..16]);"),
+    ("gcm", "in place, hardware: encryption from counter 1", "    aes_ctr32(keys, nr, nonce, 2, buf[0..text], buf[0..text]);\n    gcm_tag(", "    aes_ctr32(keys, nr, nonce, 1, buf[0..text], buf[0..text]);\n    gcm_tag("),
+    ("gcm", "in place, software: plaintext released on a bad tag", "        if diff == 0 {\n            aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, buf[0..text], buf[0..text], q);", "        if diff == diff {\n            aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, buf[0..text], buf[0..text], q);"),
+    ("gcm", "in place, software: encryption from counter 1", "        aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 2, buf[0..text], buf[0..text], q);\n        tag_of(", "        aes.ctr32_with(ctx[0], ctx[c_skey()..c_h()], nonce, 1, buf[0..text], buf[0..text], q);\n        tag_of("),
+    ("gcm", "in place, software: the tag read from the text", "            diff = diff | int_of(want[i]) ^ int_of(buf[text + i]);", "            diff = diff | int_of(want[i]) ^ int_of(buf[i]);"),
+    ("gcm", "in place: a buffer with no room for a tag taken", "    if len(buf) < 16 {\n        let shape = shape_ok(nonce, 0);", "    if len(buf) < 0 {\n        let shape = shape_ok(nonce, 0);"),
+    ("gcm", "in place: a buffer too short to seal refused as too short to open", "    let text = in_place_text(ctx, nonce, buf, refused_output_length());\n    if text < 0 {\n        return text;\n    }\n    region t {", "    let text = in_place_text(ctx, nonce, buf, refused_too_short());\n    if text < 0 {\n        return text;\n    }\n    region t {"),
     ("gcm", "a long nonce accepted", "if len(nonce) != 12 {", "if len(nonce) < 12 {"),
 ]
 
@@ -143,6 +153,26 @@ def evidence():
         if case[:2] in ("S ", "O "):
             cases.append(case[0].lower() + case[1:])
             checks.append(check)
+    # A buffer with no room for a tag, in place on both paths: too short to open, and to seal the output's length.
+    for n in range(16):
+        b = h(bytes(range(n)))
+        for op, tag in (("Y", "gcm-output-length"), ("y", "gcm-output-length"), ("I", "gcm-too-short"), ("i", "gcm-too-short")):
+            cases.append(f"{op} {key} {nonce} - {b}")
+            checks.append(lambda a, t=tag, b=b: a.rstrip() == f"{'-3' if t == 'gcm-output-length' else '-5'} {t} {b if b != '-' else ''}".rstrip())
+    # And every one in place (docs/record-in-place.md §3), on both paths: a seal answers what `seal` does; an open
+    # what `open` does, but for a refusal, which leaves the buffer (the sealed message) as it was.
+    for case, check in list(zip(cases, checks)):
+        if case[0] in "SsOo" and case[1] == " ":
+            sealed = case.split(" ")[4]
+            op = {"S": "P", "s": "p", "O": "I", "o": "i"}[case[0]]
+            cases.append(op + case[1:])
+            if op in "Pp":
+                checks.append(check)
+            else:
+                n = len(sealed) // 2 - 16 if sealed != "-" else 0
+                checks.append(lambda a, c=check, s=sealed, n=n: (a.startswith("0 ") and c(a)) or
+                              (a.startswith("-6 ") and a == f"-6 aead-tag-mismatch {s}" and c(f"-6 aead-tag-mismatch {'aa' * max(n, 0)}")) or
+                              (not a.startswith(("0 ", "-6 ")) and c(" ".join(a.split(" ")[:2]) + " " + "aa" * max(n, 0))))
     return cases, checks
 
 

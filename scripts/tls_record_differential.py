@@ -8,7 +8,9 @@ each of `count` rounds (default 2,000): a record sealed by `tls_record.seal`
 must equal the RFC 8446 §5.2 record built here with pyca's AEAD for a suite
 picked at random of the three (ChaCha20Poly1305, AESGCM with a 16- or 32-byte
 key; OpenSSL underneath), and a record built here, with random padding after the
-content type, must open to the same content. One in three of those has one bit
+content type, must open to the same content, both into a buffer of its own
+(`tls_record.open_into`) and where it is (`open_in_place`,
+docs/record-in-place.md §4.2). One in three of those has one bit
 flipped and must be refused as `tls-bad-record-mac`. Sequence numbers include 0,
 255, 256 and 2^62 - 1; contents include 0, 1, 15 to 17 bytes and 2^14. Exit
 status 1 on any difference.
@@ -52,9 +54,12 @@ def main():
         else:
             want.append(f"0 ok {kind} {text.hex() or '-'}")
         cases.append(f"O {suite:04x} {key.hex()} {iv.hex()} {seq} {record.hex()}")
+        # The same record opened in place (`tls_record.open_in_place`), with the same answer.
+        want.append(want[-1])
+        cases.append(f"J {suite:04x} {key.hex()} {iv.hex()} {seq} {record.hex()}")
     out = subprocess.run([driver], input="\n".join(cases) + "\n", capture_output=True, text=True, check=True).stdout.splitlines()
     bad = sum(1 for g, w in zip(out, want) if g != w) + abs(len(out) - len(want))
-    print(f"records: {count} sealed and {count} opened, {bad} differences")
+    print(f"records: {count} sealed and {count} opened twice (into a buffer and in place), {bad} differences")
     sys.exit(1 if bad else 0)
 
 

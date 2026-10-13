@@ -517,3 +517,61 @@ pub fn open[&k, &n, &a, &s, &o](key: &k [byte], nonce: &n [byte], aad: &a [byte]
     xor(key, 1, nonce, sealed[0..text], out);
     return ok();
 }
+
+// ---- In place (`docs/record-in-place.md` §3) ----
+//
+// `seal` and `open` over one buffer: the text, then 16 bytes for the tag
+// (`len(buf) - 16` bytes of text), as `std.gcm`'s in-place forms. `xor`
+// reads each input byte before it writes the output byte at the same
+// offset and never reads an offset it has written, so it is handed the
+// same slice twice (`docs/record-in-place.md` §3.1). On a tag mismatch
+// `buf` is not written.
+
+pub fn seal_in_place[&k, &n, &a, &b](key: &k [byte], nonce: &n [byte], aad: &a [byte], buf: &!b [byte]) -> [] int {
+    if len(buf) < 16 {
+        let shape = aead_lengths(key, nonce, 0);
+        if shape != 0 {
+            return shape;
+        }
+        return refused_output_length();
+    }
+    let text = len(buf) - 16;
+    let checked = aead_lengths(key, nonce, text);
+    if checked != 0 {
+        return checked;
+    }
+    xor(key, 1, nonce, buf[0..text], buf[0..text]);
+    aead_tag(key, nonce, aad, buf[0..text], buf[text..text + 16]);
+    return ok();
+}
+
+pub fn open_in_place[&k, &n, &a, &b](key: &k [byte], nonce: &n [byte], aad: &a [byte], buf: &!b [byte]) -> [] int {
+    if len(buf) < 16 {
+        let shape = aead_lengths(key, nonce, 0);
+        if shape != 0 {
+            return shape;
+        }
+        return refused_too_short();
+    }
+    let text = len(buf) - 16;
+    let checked = aead_lengths(key, nonce, text);
+    if checked != 0 {
+        return checked;
+    }
+    var diff = 0;
+    region r {
+        let want = alloc_slice[r](16, byte_of(0));
+        aead_tag(key, nonce, aad, buf[0..text], want);
+        // Every byte is compared whatever the earlier ones were.
+        var i = 0;
+        while i < 16 {
+            diff = diff | int_of(want[i]) ^ int_of(buf[text + i]);
+            i = i + 1;
+        }
+    }
+    if diff != 0 {
+        return refused_tag_mismatch();
+    }
+    xor(key, 1, nonce, buf[0..text], buf[0..text]);
+    return ok();
+}

@@ -1,0 +1,28 @@
+unmutated: passes 3324 cases and the differential
+killed        rotation 16 becomes 15: case 0: B 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c
+killed        rotation 7 becomes 8: case 0: B 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c
+killed        nine double rounds, not ten: case 0: B 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c
+killed        a wrong constant: case 0: B 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c
+killed        the input words not added back: case 0: B 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c
+killed        a skipped Poly1305 carry: case 10: P 85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af41
+killed        r not clamped: case 10: P 85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af41
+killed        pad16 block without its 2^128 bit: case 26: S 808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c
+killed        never reduced below p: case 10: P 85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af41
+killed        h - p computed as h + 5: case 10: P 85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af41
+killed        the carry into the tag's second word dropped: case 14: P 1c9240a5eb55d38af333888604f6b5f0473917c1402b80099dca5cbc20
+killed        a one-byte-short tag compare: case 331: O 202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c
+killed        plaintext released on a bad tag: case 318: O 202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c
+killed        in place: plaintext released on a bad tag: case 1984: U 202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c
+killed        in place: a one-byte-short tag compare: case 1997: U 202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c
+killed        in place: encryption from counter 0: case 1692: T 808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c
+killed        in place: the tag written over the start of the text: case 1692: T 808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c
+killed        in place: the tag compared with the start of the text: case 1693: U 1c9240a5eb55d38af333888604f6b5f0473917c1402b80099dca5cbc20
+killed        in place: a buffer with no room for a tag sealed: the driver failed or stopped early
+killed        in place: a buffer with no room for a tag opened: the driver failed or stopped early
+killed        in place: the tag taken over the plaintext when sealing: case 1692: T 808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c
+killed        the lengths block in the wrong order: case 26: S 808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c
+killed        encryption from counter 0: case 26: S 808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c
+killed        the counter allowed to wrap: case 618: X 0707070707070707070707070707070707070707070707070707070707
+killed        a wrong product in the Poly1305 multiply: case 10: P 85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af41
+killed        a long nonce accepted: case 606: O 202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c
+26 mutants, 26 killed

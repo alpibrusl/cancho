@@ -1,4 +1,6 @@
+edition 5;
 module tls_slot;
+import std.bignum;
 import std.bytes;
 import std.crypto;
 import std.ecdh;
@@ -777,17 +779,34 @@ pub fn k_sign_extra() -> [] int {
 
 // ---- Helpers ----
 
+// `src` to the front of `out`, as one `memmove` (`docs/bulk-copy.md`): it was a loop of one byte a step, and it
+// carries every record's bytes into the input buffer (`docs/record-in-place.md` §2.1). Traps, as the loop did, when `out` is the shorter.
 pub fn copy_bytes[&s, &o](src: &s [byte], out: &!o [byte]) -> [] int {
-    var i = 0;
-    while i < len(src) {
-        out[i] = src[i];
-        i = i + 1;
-    }
-    return len(src);
+    return copy_into(out, src);
 }
 
 pub fn zero[&o](out: &!o [byte]) -> [] int {
     return bytes.zero(out);
+}
+
+// `from` to the front of `into`, a word at a time: the length is checked once, before the loop, so the loop has
+// no bounds check of its own to keep and compiles to a block copy (`docs/record-in-place.md` §2.1: the core of a
+// connection, copied into a work area and back out, was a loop that re-read both boxes for every word). Traps
+// when `into` is the shorter.
+pub fn copy_words[&d, &s](into: &!d [int], from: &s [int]) -> [] int {
+    let n = len(from);
+    let room = into[0..n];
+    var k = 0;
+    while k < n {
+        room[k] = from[k];
+        k = k + 1;
+    }
+    return n;
+}
+
+// Every word of `out` set to 0: `std.bignum`'s loop, which compiles to a block clear (`docs/record-in-place.md` §2.1).
+pub fn zero_words[&o](out: &!o [int]) -> [] int {
+    return bignum.zero(out);
 }
 
 pub fn has[&i](ints: &i [int], flag: int) -> [] bool {
@@ -993,6 +1012,187 @@ pub fn queue_record[&i, &b, &c](ints: &!i [int], bytes: &!b [byte], kind: int, c
     ints[i_write_seq()] = ints[i_write_seq()] + 1;
     ints[i_out_end()] = ints[i_out_end()] + n;
     return 0;
+}
+
+// Opens the TLS 1.3 protected record of `n` bytes at `b_in()` under the read key (`docs/record-in-place.md` §4.2). Its
+// content is left at the end of the received data, `b_recv() + i_recv_end()`, and not counted in it: the caller adds it
+// (application data) or takes it and clears it (a handshake message, an alert). Nothing else of the inner plaintext is
+// left anywhere: the content type byte after it is cleared and the padding is zeros. The record is opened straight into
+// the received data when its inner plaintext fits there, and otherwise (padding that does not fit the room `feed` keeps,
+// which is the largest content and no more) in place in the input buffer and its content moved, the input buffer then
+// cleared. Answers `tls_record.opened_size`/`opened_type`'s packing, or a refusal; the sequence number is the caller's
+// to advance.
+pub fn open_record[&i, &b](ints: &!i [int], bytes: &!b [byte], n: int) -> [] int {
+    let e = ints[i_recv_end()];
+    let text = n - 5 - 16;
+    var got = 0;
+    if text <= recv_cap() - e {
+        var room = text;
+        if room < 0 {
+            room = 0;
+        }
+        got = tls_record.open_into(ints[i_suite()], bytes[k_read_key()..k_read_key() + key_len(ints)], read_aead(ints), bytes[k_read_hw()..k_read_hw() + tls_record.hw_len()], bytes[k_read_iv()..k_read_iv() + 12], ints[i_read_seq()], bytes[b_in()..b_in() + n], bytes[b_recv() + e..b_recv() + e + room]);
+        if got >= 0 {
+            let size = tls_record.opened_size(got);
+            bytes[b_recv() + e + size] = byte_of(0);
+        } else {
+            // Content over the limit is refused after it was opened: none of it is kept.
+            zero(bytes[b_recv() + e..b_recv() + e + room]);
+        }
+        return got;
+    }
+    got = tls_record.open_in_place(ints[i_suite()], bytes[k_read_key()..k_read_key() + key_len(ints)], read_aead(ints), bytes[k_read_hw()..k_read_hw() + tls_record.hw_len()], bytes[k_read_iv()..k_read_iv() + 12], ints[i_read_seq()], bytes[b_in()..b_in() + n]);
+    if got >= 0 {
+        let size = tls_record.opened_size(got);
+        if size > recv_cap() - e {
+            got = tls_record.record_overflow();
+        } else {
+            copy_within(bytes, b_recv() + e, b_in() + 5, size);
+        }
+    }
+    zero(bytes[b_in() + 5..b_in() + 5 + text]);
+    return got;
+}
+
+// The content `open_record` (or `open_record12`) left at the end of the received data, `size` bytes, copied into `out`
+// and cleared there: a handshake message or an alert, handed to code that writes the slot's buffers itself.
+pub fn take_opened[&i, &b, &o](ints: &i [int], bytes: &!b [byte], size: int, out: &!o [byte]) -> [] int {
+    let at = b_recv() + ints[i_recv_end()];
+    copy_into(out, bytes[at..at + size]);
+    return zero(bytes[at..at + size]);
+}
+
+// A TLS 1.2 record (`tls_client12`), opened as before into `b_plain()`, its content then moved to where `open_record`
+// leaves a TLS 1.3 record's, so both are taken from one place.
+pub fn open_record12[&i, &b](ints: &!i [int], bytes: &!b [byte], n: int) -> [] int {
+    var code = 0;
+    var inner = 0;
+    var size = 0;
+    region q {
+        let info = alloc_slice[q](2, 0);
+        code = tls_record.open12(ints[i_suite()], bytes[k_read_key()..k_read_key() + key_len(ints)], read_aead(ints), bytes[k_read_hw()..k_read_hw() + tls_record.hw_len()], bytes[k_read_iv()..k_read_iv() + 12], ints[i_read_seq()], bytes[b_in()..b_in() + n], bytes[b_plain()..b_plain() + plain_cap()], info);
+        inner = info[0];
+        size = info[1];
+    }
+    if code != 0 {
+        return code;
+    }
+    let e = ints[i_recv_end()];
+    if size > recv_cap() - e {
+        return tls_record.record_overflow();
+    }
+    copy_within(bytes, b_recv() + e, b_plain(), size);
+    return size * 256 + inner;
+}
+
+// ---- What a work area holds (`docs/tls-memory.md` §7.2; the engine's `tls.cho` leases them) ----
+
+// Whether a connection can go without an area: it is established or ended, nothing of it is in a buffer (a record
+// half read, a handshake message half reassembled, bytes for the socket, data for `recv`), and the program asked
+// for nothing kept (`keeps_area`). Everything else it holds is in its core.
+pub fn idle[&i](ints: &i [int]) -> [] bool {
+    let s = ints[i_state()];
+    return (s == state_connected() || s == state_closed() || s == state_failed()) && ints[i_in_fill()] == 0 && ints[i_hs_fill()] == 0 && ints[i_out_start()] == ints[i_out_end()] && ints[i_recv_start()] == ints[i_recv_end()] && !keeps_area(ints);
+}
+
+// Overwrites what an area (`ints`, `bytes`: one area's slices) held for the connection that is giving it back: its copy
+// of the core (`core` bytes of it: the keys, IVs, secrets, the hardware key schedules, the AEAD contexts), what
+// `clear_plain` clears, and, after a handshake (`reach` the whole buffer), the transcripts and `std.ecdh`'s work, which
+// hold intermediate values of the key exchange and the signature.
+pub fn clear_area[&i, &b](ints: &!i [int], bytes: &!b [byte], reach: int, core: int, server: bool) -> [] int {
+    clear_plain(ints, bytes, reach, server);
+    var end = ints_core_len();
+    if reach >= recv_cap() {
+        end = ints_len();
+    }
+    zero_words(ints[0..end]);
+    // A server's handshake leaves data past its core (the tickets' randomness, the leaf's fingerprint:
+    // `bytes_core_len_server`), inside the room a client's core takes, so after a handshake that room is cleared
+    // whatever the role.
+    var cover = core;
+    if reach >= recv_cap() {
+        cover = bytes_core_len();
+    }
+    zero(bytes[0..cover]);
+    return 0;
+}
+
+// What a release clears besides the core: the client's leaf a server's area holds, the received data as far as `reach`
+// and, on a TLS 1.2 connection, the last record opened (at least `clean_floor`, for the handshake messages an
+// established connection opens). A TLS 1.3 record is opened into the received data and leaves its plaintext nowhere
+// else (`open_record`, `docs/record-in-place.md` §4.2), so `b_plain` is never written for one. Reads the area's core,
+// so it runs before the core is cleared.
+pub fn clear_plain[&i, &b](ints: &i [int], bytes: &!b [byte], reach: int, server: bool) -> [] int {
+    clear_leaf(ints, bytes, server);
+    if has(ints, f_tls12()) {
+        var plain = reach + 1;
+        if plain < clean_floor() {
+            plain = clean_floor();
+        }
+        if plain > plain_cap() {
+            plain = plain_cap();
+        }
+        zero(bytes[b_plain()..b_plain() + plain]);
+    }
+    var recv = reach;
+    if recv > recv_cap() {
+        recv = recv_cap();
+    }
+    zero(bytes[b_recv()..b_recv() + recv]);
+    return 0;
+}
+
+// A server's area may hold a client's leaf (`docs/tls-server.md` §13.6, `b_leaf`, `i_leaf_len` bytes of it): who
+// the client was goes with the area.
+pub fn clear_leaf[&i, &b](ints: &i [int], bytes: &!b [byte], server: bool) -> [] int {
+    let leaf = ints[i_leaf_len()];
+    if server && leaf > 0 {
+        zero(bytes[b_leaf()..b_leaf() + leaf]);
+    }
+    return 0;
+}
+
+// What a release clears of the last record opened at least: more than a NewSessionTicket the engine keeps
+// (`ticket_cap()` and its fields) or a KeyUpdate.
+fn clean_floor() -> [] int {
+    return ticket_cap() + 1024;
+}
+
+// For `tls.residue`: how many bytes of an area's `bytes` that a free or resting area must not hold are not zero, past
+// its first `from`: the client's core room, the last record opened (TLS 1.2), the received data, and on a server the
+// client's leaf.
+pub fn plain_left[&b](bytes: &b [byte], from: int, server: bool) -> [] int {
+    var n = nonzero(bytes[from..bytes_core_len()]);
+    n = n + nonzero(bytes[b_plain()..b_plain() + plain_cap()]);
+    n = n + nonzero(bytes[b_recv()..b_recv() + recv_cap()]);
+    if server {
+        n = n + nonzero(bytes[b_leaf()..b_leaf() + leaf_cap()]);
+    }
+    return n;
+}
+
+pub fn nonzero[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) {
+        if int_of(b[i]) != 0 {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+pub fn nonzero_words[&w](w: &w [int]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(w) {
+        if w[i] != 0 {
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    return n;
 }
 
 // The alert a refusal sends (RFC 8446 §6.2).

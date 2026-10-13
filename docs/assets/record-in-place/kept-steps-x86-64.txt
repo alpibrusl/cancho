@@ -1,0 +1,45 @@
+# The steps of docs/record-in-place.md §7.1, x86-64 (gram, i7-1260P, server CPU 6, tload on CPU 7), kept.py:
+# perf stat cpu_core/cycles/ and cpu_core/instructions/ of the server over 5 s of tload (32 connections, GET /hello/42),
+# divided by the requests tload counted. Transcribed from the session's output, in the order run (2026-10-13).
+# base = 3d7e8e9d; l1a = the copies in bulk (§2.1); r1 = l1a + the record layer (§4); l1b = r1 + one connection resting (the
+# first design, §7.6); l1k = r1 + resting of up to 32, before take/recv answered a resting connection from its core; new = as built.
+round 0 base         requests   362895 cycles/req     39864 instructions/req     72073
+round 0 l1a          requests   412060 cycles/req     33609 instructions/req     47229
+round 0 oserv        requests   406670 cycles/req     33471 instructions/req     43565
+round 1 base         requests   347900 cycles/req     39830 instructions/req     72022
+round 1 l1a          requests   361805 cycles/req     33661 instructions/req     47285
+round 1 oserv        requests   316175 cycles/req     33269 instructions/req     43411
+round 2 base         requests   295375 cycles/req     40210 instructions/req     72229
+round 2 l1a          requests   368780 cycles/req     33591 instructions/req     47238
+round 2 oserv        requests   348655 cycles/req     33354 instructions/req     43404
+--
+round 0 base         requests   218845 cycles/req     40164 instructions/req     72665
+round 0 l1a          requests   242220 cycles/req     33656 instructions/req     47819
+round 0 r1           requests   227760 cycles/req     33384 instructions/req     47330
+round 0 l1b          requests   267695 cycles/req     33983 instructions/req     49549
+round 0 oserv        requests   373340 cycles/req     33532 instructions/req     43586
+round 1 base         requests   311135 cycles/req     40046 instructions/req     72184
+round 1 l1a          requests   359455 cycles/req     33748 instructions/req     47293
+round 1 r1           requests   350540 cycles/req     33550 instructions/req     46833
+round 1 l1b          requests   345245 cycles/req     33789 instructions/req     49118
+round 1 oserv        requests   305200 cycles/req     33150 instructions/req     43274
+round 2 base         requests   227100 cycles/req     40279 instructions/req     72593
+round 2 l1a          requests   273135 cycles/req     33903 instructions/req     47804
+round 2 r1           requests   275870 cycles/req     33502 instructions/req     47015
+round 2 l1b          requests   288750 cycles/req     33852 instructions/req     49336
+round 2 oserv        requests   306495 cycles/req     33170 instructions/req     43327
+--
+round 0 r1           requests   297260 cycles/req     33513 instructions/req     47002
+round 0 l1k          requests   274975 cycles/req     36006 instructions/req     55276
+round 0 oserv        requests   397550 cycles/req     33246 instructions/req     43287
+round 1 r1           requests   377360 cycles/req     33314 instructions/req     46671
+round 1 l1k          requests   337950 cycles/req     35817 instructions/req     55021
+round 1 oserv        requests   344525 cycles/req     33455 instructions/req     43554
+round 2 r1           requests   252975 cycles/req     33419 instructions/req     47183
+round 2 l1k          requests   244400 cycles/req     36034 instructions/req     55448
+round 2 oserv        requests   270735 cycles/req     33503 instructions/req     43614
+--
+# perf record -F 1999 --call-graph dwarf of the server, inclusive shares:
+# base: tls.lease 8.53, tls.settle 15.51 (tls.core_out 8.40, tls.clear_area 5.58), memmove 1.55, memset 1.27
+# l1a:  tls.lease 3.65, tls.settle 6.63 (core_out 2.82, clear_area 2.15), memmove 2.93, memset 2.10
+# new:  profile-new-x86-64.txt

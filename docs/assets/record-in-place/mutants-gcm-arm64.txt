@@ -1,0 +1,45 @@
+unmutated: passes 9797 cases and the differential
+killed        aes: one round fewer: case 0: E 000102030405060708090a0b0c0d0e0f 00112233445566778899aabbc
+killed        aes: a gate of the S-box's top layer: case 0: E 000102030405060708090a0b0c0d0e0f 00112233445566778899aabbc
+killed        aes: ShiftRows moves one bit pair the wrong way: case 0: E 000102030405060708090a0b0c0d0e0f 00112233445566778899aabbc
+killed        aes: MixColumns misses a term: case 0: E 000102030405060708090a0b0c0d0e0f 00112233445566778899aabbc
+killed        aes: a wrong round constant: case 0: E 000102030405060708090a0b0c0d0e0f 00112233445566778899aabbc
+killed        aes: AES-256's extra SubWord skipped: case 1: E 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c
+killed        aes: round keys: AES-256's extra SubWord skipped: case 377: S b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f249
+killed        aes: the key's odd bits expanded the wrong way: case 0: E 000102030405060708090a0b0c0d0e0f 00112233445566778899aabbc
+killed        aes: an ortho swap left out: case 0: E 000102030405060708090a0b0c0d0e0f 00112233445566778899aabbc
+killed        aes: the counter advanced by one per pair: case 2737: s 594157ec4693202b030f33798b07176d 49b12054082660803a1df3df 
+killed        aes: the second block reuses the first's counter: case 2662: s 9971071059abc009e4f2bd69869db338 07a9a95ea3821e9c13c63251 
+killed        aes: the keystream's second block never used: case 2662: s 9971071059abc009e4f2bd69869db338 07a9a95ea3821e9c13c63251 
+killed        aes: the counter allowed to wrap: case 1897: C 07070707070707070707070707070707 090909090909090909090909 
+killed        gcm: a term of the carry-less multiply dropped: case 2452: s 77be63708971c4e240d1cb79e8d77feb e0e00f19fed7ba0136a797f3 
+killed        gcm: the reduction's x^7 term wrong: case 2452: s 77be63708971c4e240d1cb79e8d77feb e0e00f19fed7ba0136a797f3 
+killed        gcm: a Karatsuba middle product left uncorrected: case 2452: s 77be63708971c4e240d1cb79e8d77feb e0e00f19fed7ba0136a797f3 
+killed        gcm: H not bit-reversed for the reversed products: case 2452: s 77be63708971c4e240d1cb79e8d77feb e0e00f19fed7ba0136a797f3 
+killed        gcm: the ciphertext's length in bytes, not bits: case 2512: s 7fddb57453c241d03efbed3ac44e371c ee283a3fc75575e33efd4887 
+killed        gcm: the associated data and ciphertext hashed in the wrong order: case 2527: s c939cc13397c1d37de6ae0e1cb7c423c b3d8cc017cbb89b39e0f67e2 
+killed        gcm: the tag masked with counter 2, not J0: case 2437: s 11754cd72aec309bf52f7687212e8957 3c819d9a9bed087615030b65 
+killed        gcm: encryption from counter 1: case 2512: s 7fddb57453c241d03efbed3ac44e371c ee283a3fc75575e33efd4887 
+killed        gcm: hardware: encryption from counter 1: case 77: S 7fddb57453c241d03efbed3ac44e371c ee283a3fc75575e33efd4887 
+killed        gcm: hardware: decryption from counter 1: case 827: O e98b72a9881a84ca6b76e0f43e68647a 8b23299fde174053f3d652ba 
+killed        gcm: hardware: decrypted before the tag is checked: case 753: O a49a5e26a2f8cb63d05546c2a62f5343 907763b19b9b4ab6bd4f0281 
+killed        gcm: hardware: the tag taken from the start of the sealed message: case 827: O e98b72a9881a84ca6b76e0f43e68647a 8b23299fde174053f3d652ba 
+killed        gcm: hardware: the associated data not hashed when sealing: case 17: S 77be63708971c4e240d1cb79e8d77feb e0e00f19fed7ba0136a797f3 
+killed        gcm: hardware: H made with AES-128's round count: case 392: S 78dc4e0aaf52d935c3c01eea57428f00ca1fd475f5da86a49c8dd73d68
+killed        gcm: hardware: the powers overlap the round keys: case 377: S b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f249
+killed        gcm: hardware: AES-256's round keys cut to AES-128's: the driver failed or stopped early
+killed        gcm: an unprepared context taken as prepared: the driver failed or stopped early
+killed        gcm: the last partial block not padded with zeros: case 2467: s 2fb45e5b8f993a2bfebc4b15b533e0b4 5b05755f984d2b90f94b8027 
+killed        gcm: a one-byte-short tag compare: case 4032: o 000102030405060708090a0b0c0d0e0f 505152535455565758595a5b 
+killed        gcm: plaintext released on a bad tag: case 3264: o 5164df856f1e9cac04a79b808dc5be39 e76925d5355e0584ce871b2b 
+killed        gcm: in place, hardware: decrypted before the tag is checked: case 5684: I a49a5e26a2f8cb63d05546c2a62f5343 907763b19b9b4ab6bd4f0281 
+killed        gcm: in place, hardware: the tag written over the start of the text: case 5008: P 7fddb57453c241d03efbed3ac44e371c ee283a3fc75575e33efd4887 
+killed        gcm: in place, hardware: the tag compared with the start of the text: case 5758: I e98b72a9881a84ca6b76e0f43e68647a 8b23299fde174053f3d652ba 
+killed        gcm: in place, hardware: encryption from counter 1: case 5008: P 7fddb57453c241d03efbed3ac44e371c ee283a3fc75575e33efd4887 
+killed        gcm: in place, software: plaintext released on a bad tag: case 8192: i 5164df856f1e9cac04a79b808dc5be39 e76925d5355e0584ce871b2b 
+killed        gcm: in place, software: encryption from counter 1: case 7440: p 7fddb57453c241d03efbed3ac44e371c ee283a3fc75575e33efd4887 
+killed        gcm: in place, software: the tag read from the text: case 8190: i e98b72a9881a84ca6b76e0f43e68647a 8b23299fde174053f3d652ba 
+killed        gcm: in place: a buffer with no room for a tag taken: case 4869: Y 07070707070707070707070707070707 090909090909090909090909 
+killed        gcm: in place: a buffer too short to seal refused as too short to open: case 4870: y 07070707070707070707070707070707 090909090909090909090909 
+killed        gcm: a long nonce accepted: the driver failed or stopped early
+43 mutants, 43 killed

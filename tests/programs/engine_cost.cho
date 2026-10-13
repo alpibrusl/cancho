@@ -1,0 +1,244 @@
+edition 5;
+
+// `docs/record-in-place.md` §7: what the engine costs a record and a kept request, with no sockets. A client engine and a
+// server engine in one process, `conns` connections between them, their bytes carried by this program.
+//
+//     engine_cost bulk <size> <records> <conns> < ca.pem NUL chain.pem NUL key.pem
+//     engine_cost kept <size> <requests> <conns> < ...
+//
+// `bulk`: `records` times, on the connections in turn, the client sends `size` bytes (one record up to 16,384) and the
+// server receives them: one record sealed by the client's engine and opened by the server's, with every call around it.
+// `kept`: `requests` rounds of a kept request on every connection, phase by phase as an event loop serves them (every
+// client sends 40 bytes, the server receives every request, then answers each with `size` bytes, then every client
+// receives its answer), so one connection's calls are not consecutive. Prints `<mode> <size> <conns> <ms> <records or
+// requests> <checksum>`; the time is the clock's (milliseconds), for runs of a size that a harness times or counts the
+// instructions of (`perf stat`). The leaf is for `echo.lex-sys.test`.
+import std.buffer;
+import std.io;
+import tls;
+
+fn number[&s](s: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(s) {
+        n = n * 10 + int_of(s[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+// Everything `from` has for the socket, fed to `to`, until neither has more.
+fn carry[&f, &t, &w](from: &!f tls.Engine, to: &!t tls.Engine, wire: &!w [byte], k: int) -> [] int {
+    var total = 0;
+    var n = tls.take(from, k, wire);
+    while n > 0 {
+        var used = 0;
+        while used < n {
+            let c = tls.feed(to, k, wire[used..n]);
+            if c <= 0 {
+                return total;
+            }
+            used = used + c;
+        }
+        total = total + n;
+        n = tls.take(from, k, wire);
+    }
+    return total;
+}
+
+// What is waiting in `engine` for slot `k`, received and summed into a checksum.
+fn drain[&e, &a](engine: &!e tls.Engine, app: &!a [byte], k: int) -> [] int {
+    var sum = 0;
+    var n = tls.recv(engine, k, app);
+    while n > 0 {
+        sum = sum + n + int_of(app[n - 1]);
+        n = tls.recv(engine, k, app);
+    }
+    return sum;
+}
+
+fn handshake[&c, &s, &w](cli: &!c tls.Engine, srv: &!s tls.Engine, wire: &!w [byte], k: int) -> [] bool {
+    let now = 1800000000000;
+    tls.serve(srv, k, now);
+    tls.start(cli, k, "echo.lex-sys.test", now);
+    var moved = 1;
+    while moved > 0 {
+        moved = carry(cli, srv, wire, k) + carry(srv, cli, wire, k);
+    }
+    return tls.event(cli, k) == tls.event_established() && tls.event(srv, k) == tls.event_established();
+}
+
+fn bulk[&c, &s, &w, &a, &m](cli: &!c tls.Engine, srv: &!s tls.Engine, wire: &!w [byte], app: &!a [byte], msg: &m [byte], records: int, conns: int) -> [] int {
+    var sum = 0;
+    var r = 0;
+    while r < records {
+        let k = r % conns;
+        tls.send(cli, k, msg);
+        carry(cli, srv, wire, k);
+        sum = sum + drain(srv, app, k);
+        r = r + 1;
+    }
+    return sum;
+}
+
+fn kept[&c, &s, &w, &a, &m](cli: &!c tls.Engine, srv: &!s tls.Engine, wire: &!w [byte], app: &!a [byte], msg: &m [byte], size: int, requests: int, conns: int) -> [] int {
+    var sum = 0;
+    var r = 0;
+    while r < requests {
+        var k = 0;
+        while k < conns {
+            tls.send(cli, k, msg[0..40]);
+            carry(cli, srv, wire, k);
+            k = k + 1;
+        }
+        k = 0;
+        while k < conns {
+            sum = sum + drain(srv, app, k);
+            k = k + 1;
+        }
+        k = 0;
+        while k < conns {
+            tls.send(srv, k, msg[0..size]);
+            carry(srv, cli, wire, k);
+            k = k + 1;
+        }
+        k = 0;
+        while k < conns {
+            sum = sum + drain(cli, app, k);
+            k = k + 1;
+        }
+        r = r + 1;
+    }
+    return sum;
+}
+
+fn run[&i, &k, &c, &s, &w, &a, &m](io: &!i Io, clock: &k Clock, cli: &!c tls.Engine, srv: &!s tls.Engine, wire: &!w [byte], app: &!a [byte], msg: &!m [byte], is_bulk: bool, size: int, count: int, conns: int) -> [io_write, err_write, clock] int {
+    var j = 0;
+    while j < size {
+        msg[j] = byte_of(j * 7 % 251);
+        j = j + 1;
+    }
+    var k = 0;
+    while k < conns {
+        if !handshake(cli, srv, wire, k) {
+            io.error_all(io, "engine_cost: a handshake failed\n");
+            return 1;
+        }
+        k = k + 1;
+    }
+    let t0 = clock_ms(clock);
+    var sum = 0;
+    if is_bulk {
+        sum = bulk(cli, srv, wire, app, msg[0..size], count, conns);
+    } else {
+        sum = kept(cli, srv, wire, app, msg, size, count, conns);
+    }
+    let ms = clock_ms(clock) - t0;
+    if is_bulk {
+        io.write_all(io, "bulk ");
+    } else {
+        io.write_all(io, "kept ");
+    }
+    io.print_int(io, size);
+    io.space(io);
+    io.print_int(io, conns);
+    io.space(io);
+    io.print_int(io, ms);
+    io.space(io);
+    io.print_int(io, count);
+    io.space(io);
+    io.print_int(io, sum);
+    io.newline(io);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    var status = 2;
+    borrow mut io as &!i in {
+        borrow args as &g in {
+            if arg_count(g) < 5 {
+                io.error_all(i, "usage: engine_cost bulk|kept <size> <count> <conns> < ca NUL chain NUL key\n");
+            } else {
+                let is_bulk = int_of(arg(g, 1)[0]) == 98;
+                let size = number(arg(g, 2));
+                let count = number(arg(g, 3));
+                let conns = number(arg(g, 4));
+                borrow mut heap as &!h in {
+                    var all = buffer.empty(h, 65536);
+                    all = read_stdin(h, i, all);
+                    let wireb = box_slice(h, 65536, byte_of(0));
+                    let appb = box_slice(h, 16640, byte_of(0));
+                    let msgb = box_slice(h, 16384, byte_of(0));
+                    var cli = tls.open(h, conns);
+                    var srv = tls.open_server(h, conns);
+                    region r {
+                        let entropy = alloc_slice[r](32, byte_of(0));
+                        var e = 0;
+                        while e < 32 {
+                            entropy[e] = byte_of(e * 5 + 1);
+                            e = e + 1;
+                        }
+                        borrow all as &ab in {
+                            let text = buffer.bytes(ab);
+                            var cut1 = 0;
+                            while cut1 < len(text) && int_of(text[cut1]) != 0 {
+                                cut1 = cut1 + 1;
+                            }
+                            var cut2 = cut1 + 1;
+                            while cut2 < len(text) && int_of(text[cut2]) != 0 {
+                                cut2 = cut2 + 1;
+                            }
+                            borrow mut cli as &!cw in {
+                                borrow mut srv as &!sw in {
+                                    tls.seed(cw, entropy);
+                                    entropy[0] = byte_of(99);
+                                    tls.seed(sw, entropy);
+                                    let roots = tls.trust(cw, text[0..cut1]);
+                                    let id = tls.add_identity(sw, text[cut1 + 1..cut2], text[cut2 + 1..len(text)], "echo.lex-sys.test", 1800000000000);
+                                    if roots < 1 || id < 0 || size > 16384 || conns < 1 {
+                                        io.error_all(i, "engine_cost: the identity or the root was refused, or a size over 16384\n");
+                                    } else {
+                                        borrow mut wireb as &!ww in {
+                                            borrow mut appb as &!aw in {
+                                                borrow mut msgb as &!mw in {
+                                                    borrow clock as &kk in {
+                                                        status = run(i, kk, cw, sw, contents(ww), contents(aw), contents(mw), is_bulk, size, count, conns);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    unbox_slice(h, wireb);
+                    unbox_slice(h, appb);
+                    unbox_slice(h, msgb);
+                    tls.close(h, cli);
+                    tls.close(h, srv);
+                    buffer.drop(h, all);
+                }
+            }
+        }
+    }
+    release(io);
+    release(args);
+    release(heap);
+    release(clock);
+    return status;
+}

@@ -1,0 +1,220 @@
+unmutated: passes
+killed   the server Finished not checked: tls-bad-finished a wrong Finished (exit 0)
+killed   the read sequence number not incremented: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the downgrade sentinel ignored: tls-protocol-version TLS 1.2, the 1.2 downgrade sentinel (exit 0)
+killed   the HelloRetryRequest random ignored: tlslite_aes128_p256.txt (exit 0)
+killed   inner-plaintext padding not stripped: ok honest, in the hardest legal shape (exit 0)
+killed   a KeyUpdate not answered: ok honest, in the hardest legal shape (exit 0)
+killed   a warning-level alert ignored: tls-alert a warning-level alert in the flight (exit 0)
+killed   an unknown issuer reported as x509-decode: x509-unknown-issuer a certificate from an untrusted CA (exit 0)
+killed   an area released without clearing: tls_pool 8 8 40 1: FAIL rest: three connections in turn, at most two resting, each echoed from its area or its own core, residue 0, resting 2
+killed   the received data's reach not counted: tls_pool 8 8 40 1: FAIL after every step no free area or free core holds a byte, residue 7223632
+killed   a server's handshake data past its core kept in a released area: tls_pool 8 8 40 1: FAIL handshakes, every slot established and holding no area, and the areas cleared, slots 8
+killed   a word read from the core while an area holds the current one: tls_pool 8 8 40 1: FAIL a connection that fails holding an area reads as failed before and after its alert is taken, code -10
+killed   the core not copied out after a call: the same host, in time: offered, and the server resumes (exit 0)
+killed   the bytes of the core not copied out: the same host, in time: offered, and the server resumes (exit 0)
+killed   an area given back while bytes wait for the socket: the same host, in time: offered, and the server resumes (exit 0)
+killed   a lease when every area is leased: tls_pool 8 3 40 2: exit -4
+killed   take on a connection with no area asking for one: streams: ['done ok=0 failed=64']
+killed   SHA-384's transcript never chosen: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit -4)
+killed   AES-128-GCM given a 32-byte key: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   message_hash with the wrong type: tlslite_aes128_p256.txt (exit 0)
+killed   a second HelloRetryRequest accepted: tls-unexpected-message a second HelloRetryRequest (exit 0)
+killed   a retry that changes nothing accepted: tls-hello-retry a HelloRetryRequest that changes nothing (exit 0)
+killed   the end of the socket taken for close_notify: streams cut short: ['done ok=64 failed=0']
+killed   the master secret without the extension's label: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   AES-GCM's explicit nonce not read from the record: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the additional data with the ciphertext's length: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   a TLS 1.2 ServerHello echoing the session id accepted: tls-decode-error TLS 1.2, a ServerHello echoing the client's session id (exit 0)
+killed   the key exchange's randoms not signed: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the server's Finished not compared: tls-bad-finished TLS 1.2, a wrong Finished (exit 0)
+killed   TLS 1.2 after a HelloRetryRequest accepted: tls-protocol-version TLS 1.2 after a HelloRetryRequest (exit 0)
+killed   the binder key under the external label: ok resumption: a ticket, then a second connection offering it, the binder checked; no Certificate (exit 0)
+killed   a suite with another hash accepted for the ticket: tls-illegal-psk resumption: a suite whose hash is not the ticket's (exit 0)
+killed   a ticket's PSK without its nonce: ok resumption: a ticket, then a second connection offering it, the binder checked; no Certificate (exit 0)
+killed   a ticket over the room kept: ok tickets not kept: 3,000 bytes, a lifetime of 0; one over 7 days kept for 7 (exit 0)
+killed   the ticket offered to a name of the same length: another host name: not offered, and the ticket is spent (exit 0)
+killed   the ticket offered past the maximum age: after the maximum age of a verification (60 s): not offered (exit 0)
+killed   a ticket's age counted from a whole second: the age in milliseconds: a ticket saved 999 ms into a second, offered 60 s later, is 60,000 ms old (exit 0)
+killed   a forgotten pool keeping its last ticket: forgotten: not offered (exit 0)
+killed   a ticket the rules refuse kept in its pool: another host name: not offered, and the ticket is spent (exit 0)
+killed   every save a new pool: a pool holds one ticket unless set: the newest replaces the one before (exit 0)
+killed   a write key installed without preparing it: openssl13_mutual_ecdsa.txt (exit 0)
+killed   resumption never advertised by the engine: the same host, in time: offered, and the server resumes (exit 0)
+killed   send admitting 22 bytes over the content whatever the suite (review E-2): ok TLS 1.2, AES-128-GCM, the output queue filled: send answers 0, finish still queues close_notify (exit 0)
+killed   client auth: CertificateVerify under the server's context string: openssl13_mutual_ecdsa.txt (exit 0)
+killed   client auth: the request's context not echoed: ok client auth: a context echoed in Certificate (exit 0)
+killed   client auth: an identity's generation not compared: ok client auth: the identity removed and the same one added again before the request (a new generation): empty Certificate (exit 0)
+killed   client auth: the identity not checked again when the TLS 1.3 flight is sent: ok client auth: the identity removed between the request and Finished: empty Certificate, not a signature by a removed key (exit 0)
+killed   client auth: a request without signature_algorithms accepted: tls-missing-extension client auth: no signature_algorithms at all (RFC 8446 §4.3.2) (exit 0)
+killed   client auth: no identity ever used: openssl12_mutual_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   client auth: the signature scheme not required: ok client auth: no common signature scheme (Ed25519 only): empty Certificate (exit 0)
+killed   client auth: ecdsa_sign not required among TLS 1.2's certificate types: ok TLS 1.2 client auth: ecdsa_sign is not a certificate type: empty Certificate (exit 0)
+killed   client auth: TLS 1.2 chain stops after its first certificate: ok TLS 1.2 client auth: a chain of two certificates (exit 0)
+killed   client auth: an expired leaf accepted: tls-client-cert-expired identity: a leaf that has expired (exit 0)
+killed   client auth: signature_algorithms twice accepted: tls-extension-repeat client auth: signature_algorithms twice (exit 0)
+killed   client auth: a ticket stamped with the trust generation at its save, not the connection's start: an identity added after the connection started and before its ticket came: the ticket is not offered (exit 0)
+killed   client auth: a removed identity leaves saved tickets offerable: an identity removed after a ticket was saved: not offered, and the next connection sends the empty Certificate (exit 0)
+killed   ALPN: a selection when nothing was offered accepted: tls-unsupported-extension TLS 1.2 ALPN: never offered (exit 0)
+killed   ALPN: the answer's list length not checked: tls-decode-error ALPN: the answer's list length does not fit (exit 0)
+killed   ALPN: the answer twice accepted in a TLS 1.2 ServerHello: tls-extension-repeat TLS 1.2 ALPN: the answer twice (exit 0)
+equivalent ALPN: an ALPN answer in EncryptedExtensions accepted when none was offered: the parser then returns the protocol's range, and `tls_client12.take_alpn` refuses it with the same tag (`tls-unsupported-extension`) because the offer is empty: two checks for one rule, and the first is defence in depth
+killed   ALPN: a list over the cap accepted by set_alpn_offer: tls-alpn-list ALPN: a 256-byte offer is refused when set (exit -4)
+killed   area: a resting connection called again left in its rest: the same host, in time: offered, and the server resumes (exit -4)
+killed   area: more connections rest than may: tls_pool 8 8 40 1: FAIL rest: three connections in turn, at most two resting, each echoed from its area or its own core, residue 0, resting 2
+killed   area: resting areas not counted free: tls_pool 8 8 40 1: FAIL steps that left an area leased, leaked 40
+killed   area: a handshake writing a free area while one rests: tls_pool 8 8 40 1: FAIL rest: a handshake takes a resting connection's area
+killed   area: a failed connection rests: tls_pool 8 8 40 1: FAIL rest: a resting connection whose socket ends fails tls-peer-closed and gives its area back, code -1
+killed   record layer: the content type not written after the content: openssl13_mutual_ecdsa.txt (exit 0)
+killed   record layer: the IV left masked after opening: openssl13_mutual_ecdsa.txt (exit 0)
+killed   record layer: content over the limit kept in the received data: record_open: FAIL content over the limit is refused and none of it kept, suite 4865
+killed   record layer: every record opened in place: record_open: FAIL opened into the received data, the type byte cleared, the IV as it was, suite 4865
+69 of 70 mutants killed, 1 equivalent (argued in EQUIVALENT)
+unmutated: passes
+killed   the transcript missing EncryptedExtensions: openssl13_mutual_ecdsa.txt (exit 0)
+killed   the write sequence number not incremented: openssl13_mutual_ecdsa.txt (exit 0)
+killed   server_name allowed in a TLS 1.3 ServerHello: tls-unsupported-extension server_name in a TLS 1.3 ServerHello, not EncryptedExtensions (exit 0)
+killed   an unexpected extension accepted: tls-unsupported-extension ALPN in EncryptedExtensions, never offered (exit 0)
+killed   the content type taken from the outer header: openssl13_mutual_ecdsa.txt (exit 0)
+killed   the CertificateVerify context string misspelled: openssl13_mutual_ecdsa.txt (exit 0)
+killed   the chain not verified: x509-unknown-issuer a certificate from an untrusted CA (exit 0)
+killed   a message allowed to share a record with the next key: tls-unexpected-message a NewSessionTicket in Finished's record (exit 0)
+killed   a released area's received data kept: tls_pool 8 8 40 1: FAIL after every step no free area or free core holds a byte, residue 7223632
+killed   a handshake's scratch not cleared: tls_pool 8 8 40 1: FAIL handshakes, every slot established and holding no area, and the areas cleared, slots 8
+killed   feed with no area free failing the connection: tls_pool 8 1 40 3: FAIL a connection fed with no area free takes nothing and stays established, fed -72
+killed   event read from the core while an area holds the current one: the same host, in time: offered, and the server resumes (exit 0)
+killed   the core not copied in when an area is leased: the same host, in time: offered, and the server resumes (exit 0)
+killed   an idle connection keeping its area: tls_pool 8 8 40 1: FAIL handshakes, every slot established and holding no area, and the areas cleared, slots 8
+killed   an area given back with half a record in it: streams: []
+killed   a connection with no area not failed: tls_pool 8 1 40 3: FAIL the socket's end with no area free fails tls-peer-closed with its keys cleared, code -1
+killed   a dropped slot keeping its area: tls_pool 8 8 40 1: FAIL rest: a handshake takes a resting connection's area
+killed   SHA-384's binder transcript never chosen: ok resumption under AES-256-GCM-SHA384: a 48-byte PSK, the binder under SHA-384 (exit 0)
+killed   every suite sealed with ChaCha20: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the transcript not restarted after a retry: tlslite_aes128_p256.txt (exit 0)
+killed   the suite after a retry not compared: tls-hello-retry after a retry, a ServerHello with another suite (exit 0)
+killed   a change_cipher_spec after a retry refused: tlslite_aes128_p256.txt (exit 0)
+killed   the PRF's A(i) not chained: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the key block's randoms in the wrong order: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the explicit nonce sent as zeros: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   TLS 1.2 ChaCha20's nonce built as AES-GCM's: openssl12_ecdhe_ecdsa_chacha20_poly1305.txt (exit -4)
+killed   a key_share in a TLS 1.2 ServerHello accepted: tls-unsupported-extension TLS 1.2, a key_share in the ServerHello (exit 0)
+killed   the suite's kind of key not checked: tls-bad-certificate-verify TLS 1.2, an RSA suite with an Ed25519 key (exit 0)
+killed   a HelloRequest accepted: tls-renegotiation TLS 1.2, a HelloRequest (exit 0)
+killed   the server's key exchange point never kept: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   a resumption's early secret from zeros, not the PSK: ok resumption: a ticket, then a second connection offering it, the binder checked; no Certificate (exit 0)
+killed   a resumption still waiting for a Certificate: ok resumption: a ticket, then a second connection offering it, the binder checked; no Certificate (exit 0)
+killed   the ticket still offered after a retry to another hash: ok a HelloRetryRequest to a suite with another hash: the second ClientHello offers no ticket (exit 0)
+killed   a selected identity other than 0 accepted: tls-illegal-psk resumption: the ServerHello selects identity 1, of the one offered (exit 0)
+killed   the ticket offered after the trust store changed: the trust store changed: not offered (exit 0)
+killed   the ticket offered past its lifetime: after the ticket's lifetime (100 s): not offered (exit 0)
+killed   the ticket offered twice: used once: the second start with a handle offers nothing (exit 0)
+killed   a pool over its size keeping its oldest: a pool holds one ticket unless set: the newest replaces the one before (exit 0)
+killed   a refused ticket not skipped for an older one: another host name: not offered, and the ticket is spent (exit 0)
+killed   a close_notify before the handshake taken as a clean close (review E-3): tls-peer-closed a close_notify instead of ServerHello (exit 0)
+killed   TLS 1.2's keys not prepared: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the obfuscated age without ticket_age_add: the same host, in time: offered, and the server resumes (exit 0)
+killed   send keeping no room for close_notify (review E-4): ok TLS 1.2, AES-128-GCM, the output queue filled: send answers 0, finish still queues close_notify (exit 0)
+killed   client auth: the client Certificate left out of the transcript: openssl13_mutual_ecdsa.txt (exit 0)
+killed   client auth: the transcript hash signed without the SHA-256 digest: openssl13_mutual_ecdsa.txt (exit 0)
+killed   client auth: the identity not chosen again by the host when used: ok client auth: another identity naming the host added ahead of the chosen one before the request: the choice changed, empty Certificate (exit 0)
+killed   client auth: the identity not checked again when the TLS 1.2 flight is sent: ok TLS 1.2 client auth: the identity removed between the request and ServerHelloDone: empty Certificate (exit 0)
+killed   client auth: a wildcard matching an IP address: ok client auth: an IP address host and an identity for `*.0.0.1`: no wildcard matches an address, empty Certificate (exit 0)
+killed   client auth: the authorities ignored: ok client auth: 2,000 authorities, none ours: the empty Certificate (exit 0)
+killed   client auth: TLS 1.2 digest under the suite's hash: ok TLS 1.2 client auth: AES-256-GCM-SHA384, the signature still over SHA-256 (exit 0)
+killed   client auth: the authorities' names compared by length alone: ok client auth: an authorities name of the issuer's length and other bytes: empty Certificate (exit 0)
+killed   client auth: a wildcard host `*` never matches: openssl12_mutual_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   client auth: a key that is not the leaf's accepted: tls-client-key-mismatch identity: the key is another leaf's (exit 0)
+killed   client auth: an authorities name of length 0 accepted: tls-decode-error client auth: an authorities name of length 0 (exit 0)
+killed   client auth: a new identity leaves saved tickets offerable: an identity added after a ticket was saved: not offered; a ticket saved after it: offered, and resumed (exit 0)
+killed   ALPN: an unoffered selection accepted: tls-alpn-selected ALPN: an unoffered selection (spdy/3) (exit 0)
+killed   ALPN: the selection's start not kept: ok ALPN: offered h2 and http/1.1, the server picks http/1.1 (exit 0)
+killed   ALPN: the answer's name length not checked: tls-decode-error ALPN: the answer names two protocols (exit 0)
+killed   ALPN: the answer twice accepted in EncryptedExtensions: tls-extension-repeat ALPN: the answer twice (exit 0)
+killed   ALPN: the unoffered selection's alert is handshake_failure: tls-extension-repeat client auth: signature_algorithms twice (exit 0)
+equivalent ALPN: a name over 255 bytes accepted: a name over 255 bytes is at least 257 bytes in wire form, which the offer's cap of 256 refuses with the same tag (`tls-alpn-list`) on the next test; the 255 limit keeps `byte_of(e - p)` from trapping should the cap ever grow
+killed   area: a resting connection's area passed on without its core taken out: tls_pool 8 3 40 2: FAIL rest: three connections in turn, at most two resting, each echoed from its area or its own core, residue 0, resting 2
+killed   area: the last to rest given back first: tls_pool 5 2 60 5: FAIL rest: a handshake takes a resting connection's area
+killed   area: a dropped resting connection left in the order: the same host, in time: offered, and the server resumes (exit -4)
+killed   area: fewer allowed to rest and none given back: tls_pool 8 8 40 1: FAIL rest: fewer allowed, the longest resting give their areas back cleared
+killed   area: the core copied a word short: the same host, in time: offered, and the server resumes (exit 0)
+killed   record layer: the content not copied before sealing: openssl13_mutual_ecdsa.txt (exit 0)
+killed   record layer: the sequence number not in the nonce: openssl13_mutual_ecdsa.txt (exit 0)
+killed   record layer: a record opened in place leaves its plaintext in the input buffer: record_open: FAIL opened in place when its padding does not fit, the input buffer cleared, suite 4865
+killed   record layer: a handshake message's plaintext left in the received data: record_open: FAIL a handshake message left at the end of the received data, taken and cleared there, suite 4865
+69 of 70 mutants killed, 1 equivalent (argued in EQUIVALENT)
+unmutated: passes
+killed   the ClientHello hashed with its record header: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the nonce built without the sequence: openssl12_ecdhe_ecdsa_chacha20_poly1305.txt (exit 0)
+killed   server_name allowed twice in a TLS 1.2 ServerHello: tls-decode-error TLS 1.2, server_name twice (exit 0)
+killed   the record limit off by one: ok honest, in the hardest legal shape (exit 0)
+killed   the client's keys used for reading: openssl13_mutual_ecdsa.txt (exit 0)
+killed   a partial message not moved to the front: ok honest, in the hardest legal shape (exit 0)
+killed   the time not given to the verifier: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the engine's DRBG key not replaced: the same host, in time: offered, and the server resumes (exit 0)
+equivalent a released area's opened record kept: only a TLS 1.2 record is opened into `b_plain` since docs/record-in-place.md §4.2 (a TLS 1.3 record is opened into the received data), and no connection here is TLS 1.2 through the engine (docs/tls-memory.md §9, item 3): unreachable by these tests, not harmless; `tls.residue` would count it
+killed   a released area's copy of the core kept: tls_pool 8 8 40 1: FAIL handshakes, every slot established and holding no area, and the areas cleared, slots 8
+killed   recv on a connection with no area taking one: the same host, in time: offered, and the server resumes (exit -4)
+killed   the engine's slots overlapping: streams cut short: ['done ok=0 failed=64']
+killed   the bytes of the core not copied in: the same host, in time: offered, and the server resumes (exit 0)
+killed   an area given back while data waits for recv: the same host, in time: offered, and the server resumes (exit -4)
+killed   an area given back in the middle of a handshake: the same host, in time: offered, and the server resumes (exit 0)
+killed   a failed connection's keys kept: tls_pool 8 1 40 3: FAIL the socket's end with no area free fails tls-peer-closed with its keys cleared, code -1
+killed   a dropped slot keeping its core: tls_pool 8 8 40 1: FAIL rest: a handshake takes a resting connection's area
+killed   AES-256-GCM given SHA-256: openssl12_ecdhe_ecdsa_aes256_gcm_sha384.txt (exit 0)
+killed   the Finished MAC always SHA-256: openssl13_mutual_ecdsa.txt (exit 0)
+killed   the cookie not echoed: tlslite_aes128_p256.txt (exit 0)
+killed   a retry to X25519 accepted: tls-key-share a HelloRetryRequest for X25519, whose share was sent (exit 0)
+killed   the retry's share for the wrong curve: tlslite_aes128_p256.txt (exit 0)
+killed   the PRF's label left out of A(1): openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the client writing with the server's key: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the additional data without the sequence number: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the extended master secret not required: tls-extended-master-secret TLS 1.2, no extended master secret (exit 0)
+killed   a pre_shared_key in a TLS 1.2 ServerHello accepted: tls-unsupported-extension TLS 1.2, a pre_shared_key in the ServerHello (a TLS 1.3 resumption's) (exit 0)
+killed   the server's Finished computed as the client's: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the ClientKeyExchange's point length one short: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   the binder over the whole ClientHello, not the truncated one: ok resumption: a ticket, then a second connection offering it, the binder checked; no Certificate (exit 0)
+killed   a pre_shared_key accepted when none was offered: tls-unsupported-extension pre_shared_key in a ServerHello when no ticket was offered (exit 0)
+killed   the resumption master secret under another label: ok resumption: a ticket, then a second connection offering it, the binder checked; no Certificate (exit 0)
+killed   a lifetime over 7 days kept as given: ok tickets not kept: 3,000 bytes, a lifetime of 0; one over 7 days kept for 7 (exit 0)
+killed   a resumption without a key share not refused as tls-key-share: tls-key-share resumption: pre_shared_key and no key_share (psk_ke, which was not offered) (exit 0)
+killed   the ticket offered after the leaf's notAfter: after the leaf's notAfter: not offered (exit 0)
+killed   the ticket offered with the clock before it was received: a clock before the ticket was received: not offered (exit 0)
+killed   a forgotten pool kept: forgotten: not offered (exit 0)
+killed   a pool offering its oldest ticket first: a pool of three: three connections resume, newest first, then none (exit 0)
+killed   a handle never issued taken as a pool: a handle never issued is a new pool, and names nothing (exit 0)
+killed   a read key installed without preparing it (step 2 of docs/crypto-builtins.md): openssl13_mutual_ecdsa.txt (exit 0)
+killed   psk_key_exchange_modes sent only with a ticket, so no server need send one: ok a HelloRetryRequest to a suite with another hash: the second ClientHello offers no ticket (exit 0)
+killed   a TLS 1.2 record's header version not checked (review E-1): tls-protocol-version TLS 1.2, a protected record whose header says 03 01 (exit 0)
+killed   a KeyUpdate allowed to share a record with the next message (review E-8): tls-unexpected-message a KeyUpdate and a NewSessionTicket in one record (exit 0)
+killed   client auth: CertificateVerify left out of the transcript: openssl13_mutual_ecdsa.txt (exit 0)
+killed   client auth: the nonce's hedge never stored (the engine's randomness unused): openssl12_mutual_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   client auth: TLS 1.2 answered when the engine says not to: ok TLS 1.2 client auth: answering TLS 1.2 turned off, its Certificate being in the clear: empty Certificate (exit 0)
+killed   client auth: missing_extension sent as decode_error: tls-missing-extension client auth: no signature_algorithms at all (RFC 8446 §4.3.2) (exit 0)
+killed   client auth: a ticket not bounded by the client certificate: the client certificate's notAfter bounds the ticket: offered an instant before, not after, with the server's certificate valid for ten years (exit 0)
+killed   client auth: an empty authorities list is a mismatch: tlslite_mutual_ecdsa.txt (exit 0)
+killed   client auth: TLS 1.2 chain with TLS 1.3's extensions: openssl12_mutual_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit 0)
+killed   client auth: only a chain's first certificate considered for the authorities: ok client auth: the authorities name only the second certificate's issuer (exit 0)
+killed   client auth: any identity chosen whatever the host: ok client auth: the identity names another host: empty Certificate (exit 0)
+killed   client auth: a request's authorities list that does not tile accepted: tls-decode-error client auth: an authorities list whose names do not tile it (exit 0)
+killed   client auth: the engine does not choose the identity by host: the same host, in time: offered, and the server resumes (exit 0)
+killed   client auth: a replaced identity leaves saved tickets offerable: an identity replaced after a ticket was saved: not offered (exit 0)
+killed   ALPN: a selection compared by length alone: tls-alpn-selected ALPN: a selection of an offered name's length and other bytes (h3 for h2) (exit 0)
+killed   ALPN: the extension left out of the ClientHello: ok ALPN: offered h2 and http/1.1, the server picks http/1.1 (exit 0)
+killed   ALPN: an empty answer accepted: tls-decode-error ALPN: the answer names an empty protocol (exit 0)
+killed   ALPN: ALPN allowed in a TLS 1.3 ServerHello: tls-unsupported-extension ALPN: in the ServerHello of TLS 1.3, not EncryptedExtensions (exit 0)
+killed   ALPN: the engine's default offer never used: ALPN: tls.start and tls.start_with offer the engine's default (exit 0)
+killed   ALPN: the offer copied into the slot truncated: openssl12_ecdhe_ecdsa_aes128_gcm_sha256.txt (exit -4)
+killed   area: a connection comes to rest with its plaintext: tls_pool 8 8 40 1: FAIL after every step no free area or free core holds a byte, residue 7223632
+killed   area: a resting connection said to hold its area: tls_pool 8 8 40 1: FAIL rest: three connections in turn, at most two resting, each echoed from its area or its own core, residue 0, resting 2
+killed   area: a resting area passed on while one is free: tls_pool 8 8 40 1: FAIL rest: three connections in turn, at most two resting, each echoed from its area or its own core, residue 0, resting 2
+killed   area: a connection rests with its handshake's scratch: tls_pool 8 8 40 1: FAIL handshakes, every slot established and holding no area, and the areas cleared, slots 8
+killed   area: a word left when an area is cleared: tls_pool 8 8 40 1: FAIL rest: a resting connection dropped gives its area back cleared
+killed   record layer: the IV left masked after sealing: openssl13_mutual_ecdsa.txt (exit 0)
+killed   record layer: the type byte left in the received data: record_open: FAIL opened into the received data, the type byte cleared, the IV as it was, suite 4865
+killed   record layer: a record opened in place whose content is not moved: record_open: FAIL opened in place when its padding does not fit, the input buffer cleared, suite 4865
+killed   record layer: application data counted in the wrong state: tls-unexpected-message application data during the handshake (exit 0)
+69 of 70 mutants killed, 1 equivalent (argued in EQUIVALENT)
+unmutated: passes
+killed   area: the core copied a word short: the same host, in time: offered, and the server resumes (exit 0)
+killed   area: a word left when an area is cleared: tls_pool 8 8 40 1: FAIL rest: a resting connection dropped gives its area back cleared
+2 of 2 mutants killed, 0 equivalent (argued in EQUIVALENT)

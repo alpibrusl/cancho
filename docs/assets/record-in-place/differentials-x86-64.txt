@@ -1,0 +1,8 @@
+== x86-64 llvm
+OpenSSL 3.5.5 27 Jan 2026: (10000 random + 2190 swept cases) x 2 key sizes, 268180 checks, 0 differences
+OpenSSL 3.5.5 27 Jan 2026: 10000 cases, 60000 checks, 0 differences
+records: 3000 sealed and 3000 opened twice (into a buffer and in place), 0 differences
+== x86-64 cranelift
+OpenSSL 3.5.5 27 Jan 2026: (10000 random + 2190 swept cases) x 2 key sizes, 268180 checks, 0 differences
+OpenSSL 3.5.5 27 Jan 2026: 10000 cases, 60000 checks, 0 differences
+records: 3000 sealed and 3000 opened twice (into a buffer and in place), 0 differences

@@ -201,6 +201,18 @@ fn settle[&c, &s, &w, &t, &a](cli: &!c tls.Engine, srv: &!s tls.Engine, wire: &!
     return total;
 }
 
+// 300 bytes from slot `k`'s client, echoed and checked.
+fn echo_once[&c, &s, &w, &t, &a, &m](cli: &!c tls.Engine, srv: &!s tls.Engine, wire: &!w [byte], st: &!t [int], app: &!a [byte], msg: &!m [byte], k: int) -> [] int {
+    var j = 0;
+    while j < 300 {
+        msg[j] = byte_of(pattern(k, st[k * 4] + j));
+        j = j + 1;
+    }
+    tls.send(cli, k, msg[0..300]);
+    st[k * 4] = st[k * 4] + 300;
+    return settle(cli, srv, wire, st, app, k, 128);
+}
+
 fn tag_is[&e](engine: &e tls.Engine, k: int, tag: &static [byte]) -> [] bool {
     let have = tls.refusal_tag(tls.failure(engine, k));
     if len(have) != len(tag) {
@@ -368,6 +380,80 @@ fn drive[&i, &c, &s, &w, &a, &m, &t, &k](io: &!i Io, clock: &k Clock, cli: &!c t
         failed = failed + say_n(io, leaked == 0, "steps that left an area leased, leaked", leaked);
         failed = failed + say_n(io, residue == 0, "after every step no free area or free core holds a byte, residue", residue);
         failed = failed + say_n(io, tls.event(srv, 0) == tls.event_established() && tls.event(cli, 0) == tls.event_established(), "still established, bytes echoed", sent_total);
+        // Resting (`docs/record-in-place.md` §2): an established connection gone idle keeps its area, its core in it,
+        // until an area is wanted and none is free or more rest than may; what it holds there is its core alone
+        // (`tls.residue` counts the rest), and a connection whose area passed to another goes on from its own core.
+        if slots >= 3 {
+            let keep = tls.set_resting(srv, 2);
+            var ok = keep == 2 || keep == areas;
+            var round = 0;
+            while round < 3 {
+                var q = 0;
+                while q < 3 {
+                    var j = 0;
+                    while j < 700 {
+                        msg[j] = byte_of(pattern(q, st[q * 4] + j));
+                        j = j + 1;
+                    }
+                    tls.send(cli, q, msg[0..700]);
+                    st[q * 4] = st[q * 4] + 700;
+                    settle(cli, srv, wire, st, app, q, 300);
+                    if st[q * 4 + 1] != st[q * 4] || st[q * 4 + 2] != 0 || tls.areas_resting(srv) != keep || tls.areas_free(srv) != areas || tls.holds_area(srv, q) || tls.event(srv, q) != tls.event_established() || tls.residue(srv) != 0 || tls.residue(cli) != 0 {
+                        ok = false;
+                    }
+                    q = q + 1;
+                }
+                round = round + 1;
+            }
+            failed = failed + say_n(io, ok, "rest: three connections in turn, at most two resting, each echoed from its area or its own core, residue 0, resting", keep);
+            let fewer = tls.set_resting(srv, 1);
+            failed = failed + say(io, fewer == 1 && tls.areas_resting(srv) == 1 && tls.areas_free(srv) == areas && tls.residue(srv) == 0, "rest: fewer allowed, the longest resting give their areas back cleared");
+            // The one given back was the one that rested longest: the last served, slot 2, still rests, so dropping
+            // slot 1 leaves it resting.
+            tls.drop(srv, 1);
+            tls.drop(cli, 1);
+            let longest_first = tls.areas_resting(srv) == 1;
+            // A handshake takes the resting connection's area rather than write a free area's scratch.
+            tls.serve(srv, 1, now);
+            tls.start(cli, 1, host, now);
+            settle(cli, srv, wire, st, app, 1, 900);
+            st[4] = 0;
+            st[4 + 1] = 0;
+            st[4 + 2] = 0;
+            failed = failed + say(io, longest_first && tls.areas_resting(srv) == 0 && tls.event(srv, 1) == tls.event_established() && tls.areas_free(srv) == areas && tls.residue(srv) == 0 && tls.residue(cli) == 0, "rest: a handshake takes a resting connection's area");
+            let r = 0;
+            // The connection rests after a record; dropped, its area comes back cleared.
+            echo_once(cli, srv, wire, st, app, msg, r);
+            let rested = tls.areas_resting(srv) == 1 && !tls.holds_area(srv, r);
+            tls.drop(srv, r);
+            tls.drop(cli, r);
+            failed = failed + say(io, rested && tls.areas_resting(srv) == 0 && tls.areas_free(srv) == areas && tls.residue(srv) == 0 && tls.residue(cli) == 0, "rest: a resting connection dropped gives its area back cleared");
+            tls.serve(srv, r, now);
+            tls.start(cli, r, host, now);
+            settle(cli, srv, wire, st, app, r, 900);
+            st[r * 4] = 0;
+            st[r * 4 + 1] = 0;
+            st[r * 4 + 2] = 0;
+            // A resting connection's socket ends: it fails from its area, which goes back.
+            echo_once(cli, srv, wire, st, app, msg, r);
+            let resting_then = tls.areas_resting(srv);
+            let e = tls.eof(srv, r);
+            failed = failed + say_n(io, resting_then == 1 && tls.areas_resting(srv) == 0 && tls.areas_free(srv) == areas && tls.event(srv, r) == tls.event_failed() && tag_is(srv, r, "tls-peer-closed") && tls.residue(srv) == 0, "rest: a resting connection whose socket ends fails tls-peer-closed and gives its area back, code", e);
+            tls.drop(srv, r);
+            tls.drop(cli, r);
+            tls.serve(srv, r, now);
+            tls.start(cli, r, host, now);
+            settle(cli, srv, wire, st, app, r, 900);
+            st[r * 4] = 0;
+            st[r * 4 + 1] = 0;
+            st[r * 4 + 2] = 0;
+            // None may rest: every idle connection gives its area back at once, as before resting.
+            echo_once(cli, srv, wire, st, app, msg, r);
+            let none = tls.set_resting(srv, 0);
+            echo_once(cli, srv, wire, st, app, msg, 1);
+            failed = failed + say(io, none == 0 && tls.areas_resting(srv) == 0 && tls.areas_free(srv) == areas && tls.residue(srv) == 0 && st[4 + 1] == st[4] && st[4 + 2] == 0, "rest: none allowed, the areas all come back");
+            tls.set_resting(srv, 32);
+        }
         // A connection with data waiting keeps its area while another is served: its record fed and not received,
         // then its echo made and not taken, with a second connection's whole exchange between each.
         if areas >= 2 && slots >= 2 {

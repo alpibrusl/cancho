@@ -1,0 +1,22 @@
+ 09:11:31 up 5 days, 22:30,  8 users,  load average: 4,06, 4,48, 4,06
+in place, AES-GCM, a prepared key, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 227 cycles, max |t| = 3.42
+open, data  1000000 samples, median 345 cycles, max |t| = 2.72
+open, tag   1000000 samples, median 338 cycles, max |t| = 1.99
+in place, AES-GCM, a prepared key, 1000-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1899 cycles, max |t| = 2.17
+open, data  1000000 samples, median 789 cycles, max |t| = 1.27
+open, tag   1000000 samples, median 725 cycles, max |t| = 2.87
+in place, AES-GCM, a prepared key, 16384-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 13364 cycles, max |t| = 3.55
+open, data  1000000 samples, median 7018 cycles, max |t| = 3.92
+open, tag   1000000 samples, median 6015 cycles, max |t| = 5.39
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 3297 cycles, max |t| = 2.41
+open, data  1000000 samples, median 2078 cycles, max |t| = 3.72
+open, tag   1000000 samples, median 1954 cycles, max |t| = 1.60
+in place, AES-GCM, a prepared key, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 22252 cycles, max |t| = 2.15
+open, data  1000000 samples, median 20014 cycles, max |t| = 1.48
+open, tag   1000000 samples, median 20103 cycles, max |t| = 1.01
+ 09:18:59 up 5 days, 22:38,  9 users,  load average: 7,91, 6,54, 5,21

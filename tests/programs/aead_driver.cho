@@ -10,6 +10,10 @@
 //     P <key> <msg>                      chacha20.poly1305
 //     S <key> <nonce> <aad> <plaintext>  chacha20.seal
 //     O <key> <nonce> <aad> <sealed>     chacha20.open
+//     T <key> <nonce> <aad> <plaintext>  chacha20.seal_in_place, over the plaintext and 16 bytes after it
+//     U <key> <nonce> <aad> <sealed>     chacha20.open_in_place: the plaintext, or on a refusal the whole
+//                                        buffer, which must be the sealed message unchanged
+//     V <key> <nonce> <aad> <buffer>     chacha20.seal_in_place over exactly the buffer given, the buffer after
 //
 // and one line out per case: `<code> <tag> <output in hex>`. `open`'s
 // output starts filled with `0xaa`, so a refusal that wrote anything
@@ -137,6 +141,23 @@ fn one[&i, &s](io: &!i Io, s: &s [byte], at: int) -> [io_write] int {
                     if op == 83 {
                         let out = alloc_slice[r](len(data) + 16, byte_of(0));
                         report(io, chacha20.seal(key, nonce, aad, data, out), out);
+                    } else if op == 84 {
+                        let buf = alloc_slice[r](len(data) + 16, byte_of(0));
+                        var k = 0;
+                        while k < len(data) {
+                            buf[k] = data[k];
+                            k = k + 1;
+                        }
+                        report(io, chacha20.seal_in_place(key, nonce, aad, buf), buf);
+                    } else if op == 86 {
+                        report(io, chacha20.seal_in_place(key, nonce, aad, data), data);
+                    } else if op == 85 {
+                        let code = chacha20.open_in_place(key, nonce, aad, data);
+                        if code == 0 {
+                            report(io, code, data[0..len(data) - 16]);
+                        } else {
+                            report(io, code, data);
+                        }
                     } else {
                         var room = len(data) - 16;
                         if room < 0 {

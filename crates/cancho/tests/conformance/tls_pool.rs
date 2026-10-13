@@ -3,6 +3,8 @@
 //! with one. It checks, on both backends, that every connection is established and holding no area once it is idle, that
 //! messages of any size in any pieces come back byte for byte, that a start with no area free is refused `tls-pool` and
 //! starts nothing, that a connection that needs an area and finds none waits rather than fails, that the areas all come back,
+//! that a connection resting in its area (`docs/record-in-place.md` §2) holds its core there and nothing else and goes on
+//! from its own core once the area has passed to another,
 //! and that no free area or free slot keeps a key, a secret or plaintext (`tls.residue`), with server tickets and
 //! resumption, with a client identity, and on a server that requires client certificates.
 
@@ -132,6 +134,20 @@ fn an_engine_with_fewer_work_areas_than_slots_serves_every_connection_on_both_ba
             "after the drops no area or core holds a byte, residue 0",
         ] {
             assert!(one.iter().any(|l| l.contains(want)), "{want}: {one:#?}");
+        }
+        // Resting (`docs/record-in-place.md` §2): an idle connection keeps its area until another needs one, at most as
+        // many as allowed, its core there and nothing else; with every slot an area and with one area for all.
+        for got in [&all, &one] {
+            for want in [
+                "rest: three connections in turn, at most two resting, each echoed from its area or its own core, residue 0",
+                "rest: fewer allowed, the longest resting give their areas back cleared",
+                "rest: a handshake takes a resting connection's area",
+                "rest: a resting connection dropped gives its area back cleared",
+                "rest: a resting connection whose socket ends fails tls-peer-closed and gives its area back",
+                "rest: none allowed, the areas all come back",
+            ] {
+                assert!(got.iter().any(|l| l.contains(want)), "{want}: {got:#?}");
+            }
         }
         // One slot, one area; and other seeds, so the sizes and the pieces differ.
         run(&exe, 1, 1, 30, 4);
