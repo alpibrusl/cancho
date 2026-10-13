@@ -430,15 +430,17 @@ instructions in `mul_p`); §10.6's first item, `mulx` behind a CPU test, is wher
   against OpenSSL 10,000 signed and 10,000 flipped, against RFC 6979 in Python 10,000, keys 600 checks; ECDSA verification 4,000 a
   curve and `registers` 20,000; ECDH 1,000 key pairs a curve (4,200 checks); the P-256 field against Python 444,704 cases (LLVM) and
   69,476 (Cranelift); `pow_mod` against Python 20,000 (LLVM) and 2,000 (Cranelift); RSA against OpenSSL 2,000 and 2,000 flipped;
-  ChaCha20-Poly1305 against OpenSSL 20,000 cases, 60,000 checks (LLVM) and 2,000 (Cranelift); ECDH on Cranelift 100 key pairs a
-  curve. **0 differences in all.**
+  ChaCha20-Poly1305 against OpenSSL 20,000 cases, 60,000 checks (LLVM) and 2,000 (Cranelift), and after the rebase onto #463
+  20,000 cases with its in-place forms, 120,000 checks (`aead_differential_rebased.txt`); ECDH on Cranelift 100 key pairs a curve.
+  **0 differences in all.**
 - **Bounds**: `scripts/p256_gen.py` proves every kernel's accumulators and carries (above); `scripts/p256_bounds.py` closes for every
   formula, unchanged, since the element and §4.3's invariants are.
 - **Mutants**, all killed or argued: `p256_mutants.py`, the 36 its kernel names select (32 on the kernels, the shared accumulator and
   the constants, rewritten for the new code, and four formula mutants whose names share a fragment), 36 killed at the head;
   `rsa_mutants.py` 26 of 26; `ecdh_mutants.py` 17 of 17 (one stale since #397 re-anchored, P-384's encoding check reached again);
-  `chacha20_mutants.py` 20 of 20 at 541a03cc, and one dropped as equivalent with its argument in the script (a single final carry
-  pass: h1 cannot reach 2^44 after one).
+  `chacha20_mutants.py` 28 of 28 after the rebase onto #463 (whose in-place AEAD calls the same `aead_tag`; its eight mutants
+  included), and one dropped as equivalent with its argument in the script (a single final carry pass: h1 cannot reach 2^44 after
+  one).
 - **Constant time**: below.
 
 ### 12.3 Constant time
