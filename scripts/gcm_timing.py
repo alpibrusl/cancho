@@ -4,7 +4,7 @@
 
     cc -O2 -c tick.c -o tick.o && ar rcs libtick.a tick.o   # tick.c below
     cancho build --std [--backend B] tests/programs/gcm_timing.cho -l tick -L . -o timing
-    python3 scripts/gcm_timing.py ./timing [<samples per test>] [--chacha20] [--size <bytes>] [--prepared | --in-place] [--pool <n>]
+    python3 scripts/gcm_timing.py ./timing [<samples per test>] [--chacha20] [--size <bytes>] [--prepared | --in-place] [--pool <n>] [--control]
 
 `tick.c` is the cycle counter the program reads:
 
@@ -28,6 +28,10 @@ With `--in-place` (docs/record-in-place.md §3.2), the same three tests time `gc
 `gcm.open_in_place` under a key prepared once (with `--chacha20`, `chacha20.seal_in_place` and
 `open_in_place` under one key), pooled as `--prepared` is; each record's data is copied into the one
 buffer the call writes over before the call, outside the time measured.
+
+With `--control` each test's second class is timed against itself: both classes draw from its
+generator (random against random; for "open, tag" the same record against itself), so any |t| is the
+harness's, not the code's (docs/wide-multiply.md §12.3).
 
 Every input is generated and read before anything is timed: decoding
 input just before a timed call, with branches on what it decodes, was
@@ -108,7 +112,8 @@ def main():
     chacha = "--chacha20" in sys.argv
     prepared = "--prepared" in sys.argv
     in_place = "--in-place" in sys.argv
-    args = [a for a in sys.argv[1:] if a not in ("--chacha20", "--prepared", "--in-place")]
+    control = "--control" in sys.argv
+    args = [a for a in sys.argv[1:] if a not in ("--chacha20", "--prepared", "--in-place", "--control")]
     pool = 256
     if "--pool" in args:
         at = args.index("--pool")
@@ -139,13 +144,15 @@ def main():
                       lambda: (key, nonce, bytes(AAD), ct + bytes(15) + bytes([1]))),
     }
 
+    if control:
+        tests = {f"{name} (control)": (op, rand, rand) for name, (op, fixed, rand) in tests.items()}
     if prepared:
         assert not chacha, "--prepared is std.gcm's"
-        tests = {name: ({"S": "P", "O": "Q"}[op], fixed, rand) for name, (op, fixed, rand) in tests.items() if name != "seal, key"}
+        tests = {name: ({"S": "P", "O": "Q"}[op], fixed, rand) for name, (op, fixed, rand) in tests.items() if not name.startswith("seal, key")}
         print(f"prepared key, {SIZE}-byte messages, pools of {pool} records a class", flush=True)
     if in_place:
         ops = {"S": "I", "O": "J", "s": "K", "o": "L"}
-        tests = {name: (ops[op], fixed, rand) for name, (op, fixed, rand) in tests.items() if name != "seal, key"}
+        tests = {name: (ops[op], fixed, rand) for name, (op, fixed, rand) in tests.items() if not name.startswith("seal, key")}
         print(f"in place, {'ChaCha20-Poly1305' if chacha else 'AES-GCM, a prepared key'}, {SIZE}-byte messages, pools of {pool} records a class", flush=True)
         prepared = True
 
@@ -162,7 +169,7 @@ def main():
         t = max_t(samples)
         med = sorted(times)[len(times) // 2]
         leaked |= t >= 4.5
-        print(f"{name:11} {n} samples, median {med} cycles, max |t| = {t:.2f}", flush=True)
+        print(f"{name:{21 if control else 11}} {n} samples, median {med} cycles, max |t| = {t:.2f}", flush=True)
     sys.exit(1 if leaked else 0)
 
 
