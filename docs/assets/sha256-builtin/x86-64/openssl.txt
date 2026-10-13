@@ -1,0 +1,19 @@
+machine: {"arch": "x86_64", "kernel": "7.0.0-38-generic", "system": "Linux", "cpu": "12th Gen Intel(R) Core(TM) i7-1260P", "governor": "powersave", "thp": "madvise", "load": [3.39306640625, 4.28662109375, 3.833984375]}
+OpenSSL 3.5.5 27 Jan 2026 (Library: OpenSSL 3.5.5 27 Jan 2026)
+ecdsap256          ecdsap256                                   22758.5 ns         75455 cycles  (3.32 GHz)  | Doing 256 bits sign ecdsa ops for 3s: 130940 256 bits ECDSA sign ops in 2.98s
+ecdsap256          ecdsap256                                   72530.3 ns        240472 cycles  (3.32 GHz)  | Doing 256 bits verify ecdsa ops for 3s: 41362 256 bits ECDSA verify ops in 3.00s
+ecdhx25519         ecdhx25519                                  34612.9 ns        109274 cycles  (3.16 GHz)  | Doing 253 bits  ecdh ops for 3s: 86384 253-bits ECDH ops in 2.99s
+ecdhp256           ecdhp256                                    64273.4 ns        181112 cycles  (2.82 GHz)  | Doing 256 bits  ecdh ops for 3s: 46520 256-bits ECDH ops in 2.99s
+sha256             -evp sha256 -bytes 64                         202.3 ns           562 cycles  (2.78 GHz)  | Doing sha256 ops for 3s on 64 size blocks: 14778421 sha256 ops in 2.99s
+sha256             -evp sha256 -bytes 1024                       872.8 ns          2536 cycles  (2.91 GHz)  | Doing sha256 ops for 3s on 1024 size blocks: 3425884 sha256 ops in 2.99s
+sha256             -evp sha256 -bytes 16384                    11107.8 ns         34001 cycles  (3.06 GHz)  | Doing sha256 ops for 3s on 16384 size blocks: 270080 sha256 ops in 3.00s
+sha384             -evp sha384 -bytes 64                         373.7 ns          1045 cycles  (2.80 GHz)  | Doing sha384 ops for 3s on 64 size blocks: 8028286 sha384 ops in 3.00s
+sha384             -evp sha384 -bytes 1024                      1789.6 ns          5783 cycles  (3.23 GHz)  | Doing sha384 ops for 3s on 1024 size blocks: 1676337 sha384 ops in 3.00s
+sha384             -evp sha384 -bytes 16384                    25013.8 ns         82213 cycles  (3.29 GHz)  | Doing sha384 ops for 3s on 16384 size blocks: 119934 sha384 ops in 3.00s
+hmac-sha256        -hmac sha256 -bytes 64                        236.4 ns           717 cycles  (3.03 GHz)  | Doing hmac(sha256) ops for 3s on 64 size blocks: 12689037 hmac(sha256) ops in 3.00s
+aes-128-gcm        -aead -evp aes-128-gcm -bytes 64              273.1 ns           873 cycles  (3.20 GHz)  | Doing AES-128-GCM ops for 3s on 64 size blocks: 10986148 AES-128-GCM ops in 3.00s
+aes-128-gcm        -aead -evp aes-128-gcm -bytes 1024            447.5 ns          1400 cycles  (3.13 GHz)  | Doing AES-128-GCM ops for 3s on 1024 size blocks: 6704346 AES-128-GCM ops in 3.00s
+aes-128-gcm        -aead -evp aes-128-gcm -bytes 16384          4036.1 ns          9350 cycles  (2.32 GHz)  | Doing AES-128-GCM ops for 3s on 16384 size blocks: 743295 AES-128-GCM ops in 3.00s
+chacha20-poly1305  -aead -evp chacha20-poly1305 -bytes 64        185.6 ns           402 cycles  (2.17 GHz)  | Doing ChaCha20-Poly1305 ops for 3s on 64 size blocks: 16165873 ChaCha20-Poly1305 ops in 3.00s
+chacha20-poly1305  -aead -evp chacha20-poly1305 -bytes 1024        677.5 ns          1760 cycles  (2.60 GHz)  | Doing ChaCha20-Poly1305 ops for 3s on 1024 size blocks: 4427726 ChaCha20-Poly1305 ops in 3.00s
+chacha20-poly1305  -aead -evp chacha20-poly1305 -bytes 16384      10327.7 ns         27511 cycles  (2.66 GHz)  | Doing ChaCha20-Poly1305 ops for 3s on 16384 size blocks: 290480 ChaCha20-Poly1305 ops in 3.00s

@@ -256,6 +256,39 @@ impl Builtin {
                 ],
                 Type::Int,
             ),
+            // `docs/sha256-builtin.md` §3: the eight words of the state, and
+            // the message as bytes or as one block of sixteen words.
+            Builtin::HwSha256 => (Vec::new(), Type::Bool),
+            Builtin::Sha256Blocks => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Int))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
+            Builtin::Sha256BlockWords => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(Type::Slice(Box::new(Type::Int))),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Int))),
+                    },
+                ],
+                Type::Int,
+            ),
             Builtin::Len => (Vec::new(), Type::Int),
             // Both are checked at the call site: the prefix in the
             // capability's type is what decides the row, and a fixed

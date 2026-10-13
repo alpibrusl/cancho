@@ -1,0 +1,36 @@
+unmutated: passes
+killed        a round constant wrong: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::every_cavp_sha2_vector_passes ... FAILED
+killed        the last group's constants wrong: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::every_cavp_sha2_vector_passes ... FAILED
+killed        60 rounds, not 64: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::every_wycheproof_hmac_and_hkdf_case_passes ... FAILED
+killed        no feed-forward of the first half: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::a_message_past_64_kib_hashes_and_pieces_do_not_matter ... FAILED
+killed        no feed-forward of the second half: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::every_wycheproof_hmac_and_hkdf_case_passes ... FAILED
+killed        the schedule's constants added to the wrong group: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::every_cavp_sha2_vector_passes ... FAILED
+killed        the schedule from the wrong group: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::every_wycheproof_hmac_and_hkdf_case_passes ... FAILED
+skipped       x86: msg2 with the wrong group (x86)
+skipped       x86: the middle words one lane off (x86)
+skipped       x86: msg1's sum not taken (x86)
+skipped       x86: the second pair of rounds on the first pair's words (x86)
+skipped       x86: the rounds' state operands swapped (x86)
+skipped       x86: ABEF built with two words swapped (x86)
+skipped       x86: the state written back with two words swapped (x86)
+killed        arm: h2 given the new ABCD: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::every_wycheproof_hmac_and_hkdf_case_passes ... FAILED
+killed        arm: su1 with its words swapped: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::a_message_past_64_kib_hashes_and_pieces_do_not_matter ... FAILED
+killed        arm: su0 not applied: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::every_wycheproof_hmac_and_hkdf_case_passes ... FAILED
+killed        arm: EFGH loaded from the wrong words: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::every_cavp_sha2_vector_passes ... FAILED
+killed        a block read at a stride of 32: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::every_wycheproof_hmac_and_hkdf_case_passes ... FAILED
+killed        the message not swapped to big-endian: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::a_message_past_64_kib_hashes_and_pieces_do_not_matter ... FAILED
+killed        the result sign-extended into its int: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 675 filtered out; finished in 5.27s
+killed        the words' block read a group off: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::every_wycheproof_hmac_and_hkdf_case_passes ... FAILED
+skipped       x86: AVX512CD asked for, not SHA (x86)
+skipped       x86: SSE4.1 not asked for (x86)
+skipped       x86: leaf 7 asked whatever the highest leaf (x86)
+skipped       arm Linux: HWCAP_SVE asked for, not SHA2 (arm-linux)
+killed        arm Darwin: a feature the system does not name: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 675 filtered out; finished in 5.74s
+killed        the answer never cached as yes: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 675 filtered out; finished in 5.62s
+killed        the state's length unchecked in sha256_blocks: test sha256_builtins::a_wrong_length_traps_on_llvm ... FAILED; test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 675 filtered out; finished in 3.69s
+killed        a ragged run of blocks accepted: test sha256_builtins::a_wrong_length_traps_on_llvm ... FAILED; test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 675 filtered out; finished in 4.75s
+killed        only the first block compressed: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::every_cavp_sha2_vector_passes ... FAILED
+killed        the blocks counted as 128 bytes: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test kdf::a_message_past_64_kib_hashes_and_pieces_do_not_matter ... FAILED
+killed        the block's length unchecked in sha256_block_words: test sha256_builtins::a_wrong_length_traps_on_llvm ... FAILED; test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 675 filtered out; finished in 5.07s
+killed        the state's length unchecked in sha256_block_words: test sha256_builtins::a_wrong_length_traps_on_llvm ... FAILED; test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 675 filtered out; finished in 5.13s
+23 mutants run on arm, 23 killed, 0 survived, 11 for the other instruction set

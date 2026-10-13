@@ -165,14 +165,16 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::GhashUpdate
                     | Builtin::GcmTag
                     | Builtin::GcmTagDiff
+                    | Builtin::Sha256Blocks
+                    | Builtin::Sha256BlockWords
                     | Builtin::ConnDetach
                     | Builtin::UdpDetach
                     | Builtin::Trap
                     | Builtin::Release,
                 ) => Ok(LKind::I64),
-                Callee::Builtin(Builtin::IsNan | Builtin::ByteOf | Builtin::HwAesGcm) => {
-                    Ok(LKind::I8)
-                }
+                Callee::Builtin(
+                    Builtin::IsNan | Builtin::ByteOf | Builtin::HwAesGcm | Builtin::HwSha256,
+                ) => Ok(LKind::I8),
                 // `docs/opaque-pointers.md` §3: the one builtin whose
                 // fixed return is `c_ptr` rather than a scalar the
                 // arms above already cover.

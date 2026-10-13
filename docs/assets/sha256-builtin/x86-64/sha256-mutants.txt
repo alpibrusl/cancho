@@ -1,0 +1,36 @@
+unmutated: passes
+skipped       a round constant wrong (both)
+skipped       the last group's constants wrong (both)
+skipped       60 rounds, not 64 (both)
+skipped       no feed-forward of the first half (both)
+skipped       no feed-forward of the second half (both)
+skipped       the schedule's constants added to the wrong group (both)
+skipped       the schedule from the wrong group (both)
+killed        x86: msg2 with the wrong group: test kdf::a_message_past_64_kib_hashes_and_pieces_do_not_matter ... FAILED; test kdf::a_prepared_key_gives_what_the_key_gives_on_both_backends ... FAILED
+killed        x86: the middle words one lane off: test kdf::a_message_past_64_kib_hashes_and_pieces_do_not_matter ... FAILED; test kdf::a_prepared_key_gives_what_the_key_gives_on_both_backends ... FAILED
+killed        x86: msg1's sum not taken: test kdf::a_message_past_64_kib_hashes_and_pieces_do_not_matter ... FAILED; test kdf::a_prepared_key_gives_what_the_key_gives_on_both_backends ... FAILED
+killed        x86: the second pair of rounds on the first pair's words: test kdf::a_message_past_64_kib_hashes_and_pieces_do_not_matter ... FAILED; test kdf::a_prepared_key_gives_what_the_key_gives_on_both_backends ... FAILED
+killed        x86: the rounds' state operands swapped: test kdf::a_message_past_64_kib_hashes_and_pieces_do_not_matter ... FAILED; test kdf::a_prepared_key_gives_what_the_key_gives_on_both_backends ... FAILED
+killed        x86: ABEF built with two words swapped: test kdf::a_message_past_64_kib_hashes_and_pieces_do_not_matter ... FAILED; test kdf::a_prepared_key_gives_what_the_key_gives_on_both_backends ... FAILED
+killed        x86: the state written back with two words swapped: test kdf::a_message_past_64_kib_hashes_and_pieces_do_not_matter ... FAILED; test kdf::a_prepared_key_gives_what_the_key_gives_on_both_backends ... FAILED
+skipped       arm: h2 given the new ABCD (arm)
+skipped       arm: su1 with its words swapped (arm)
+skipped       arm: su0 not applied (arm)
+skipped       arm: EFGH loaded from the wrong words (arm)
+skipped       a block read at a stride of 32 (both)
+skipped       the message not swapped to big-endian (both)
+skipped       the result sign-extended into its int (both)
+skipped       the words' block read a group off (both)
+killed        x86: AVX512CD asked for, not SHA: test sha256_builtins::the_sha256_builtins_agree_with_fips_180_4_and_the_reference_on_llvm ... FAILED; test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 682 filtered out; finished in 16.42s
+EQUIVALENT    x86: SSE4.1 not asked for: every CPU with SHA has SSE4.1 (it came with Goldmont and Zen, both after SSE4.1), so the answer is the same on every machine this can run on; asking is what makes the claim not depend on that
+EQUIVALENT    x86: leaf 7 asked whatever the highest leaf: every CPU with SHA has leaf 7 (Intel's and AMD's manuals), and on every machine this runs on the highest leaf is far above 7, so the guard against a CPU without it never decides
+skipped       arm Linux: HWCAP_SVE asked for, not SHA2 (arm-linux)
+skipped       arm Darwin: a feature the system does not name (arm-darwin)
+skipped       the answer never cached as yes (both)
+skipped       the state's length unchecked in sha256_blocks (both)
+skipped       a ragged run of blocks accepted (both)
+skipped       only the first block compressed (both)
+skipped       the blocks counted as 128 bytes (both)
+skipped       the block's length unchecked in sha256_block_words (both)
+skipped       the state's length unchecked in sha256_block_words (both)
+10 mutants run on x86, 10 killed, 0 survived, 24 for the other instruction set

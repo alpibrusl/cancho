@@ -900,10 +900,18 @@ pub fn transcript_init[&i](ints: &!i [int]) -> [] int {
 }
 
 // The traffic key and IV of `secret` (the suite's hash length) into
-// `key` (the suite's key length) and `iv` (12).
+// `key` (the suite's key length) and `iv` (12): two labels from one
+// secret, so the secret is prepared once (`docs/hkdf.md` §9) and its
+// region, cleared when it ends, holds the prepared words.
 pub fn traffic_keys[&s, &k, &v](secret: &s [byte], key: &!k [byte], iv: &!v [byte]) -> [] int {
-    hkdf.expand_label(len(secret), secret, "key", "", key);
-    hkdf.expand_label(len(secret), secret, "iv", "", iv);
+    let h = len(secret);
+    region r {
+        let prepared = alloc_slice[r](hkdf.prepared_len(h), 0);
+        hkdf.prepare(h, secret, prepared);
+        hkdf.expand_label_prepared(h, prepared, "key", "", key);
+        hkdf.expand_label_prepared(h, prepared, "iv", "", iv);
+        hkdf.forget(prepared);
+    }
     return 0;
 }
 

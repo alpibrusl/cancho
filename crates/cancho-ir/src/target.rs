@@ -187,6 +187,9 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::SubBorrow
         | B::GcmTag
         | B::GcmTagDiff
+        | B::HwSha256
+        | B::Sha256Blocks
+        | B::Sha256BlockWords
         | B::ByteOf
         | B::FloatOf
         | B::Truncate

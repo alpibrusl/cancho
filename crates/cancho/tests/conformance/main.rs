@@ -98,6 +98,7 @@ mod release;
 mod rsa;
 mod satisfy;
 mod selfhost;
+mod sha256_builtins;
 mod signals;
 mod sockets;
 mod stdin_bulk;

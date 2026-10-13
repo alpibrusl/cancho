@@ -7,7 +7,8 @@ use target_lexicon::Triple;
 
 const ALL_CALLS: &str = "@cancho_hw_aes_gcm() @cancho_aes_encrypt_block( @cancho_aes_ctr32( \
                          @cancho_ghash_powers( @cancho_gcm_tag( @cancho_gcm_tag_diff( \
-                         @cancho_ghash_update(";
+                         @cancho_ghash_update( @cancho_hw_sha256() @cancho_sha256_blocks( \
+                         @cancho_sha256_block_words(";
 
 fn triples() -> [Triple; 3] {
     [
@@ -46,8 +47,10 @@ fn each_intrinsic_is_declared_once_and_each_instruction_has_its_features() {
         declared.dedup();
         assert_eq!(declared.len(), total, "{triple}: a declaration is repeated");
         for line in text.lines().filter(|l| l.starts_with("define ")) {
-            if line.contains("@cancho_hw_aes_gcm") {
+            if line.contains("@cancho_hw_aes_gcm") || line.contains("@cancho_hw_sha256") {
                 assert!(!line.contains("target-features"), "{triple}: the probe runs on any CPU");
+            } else if line.contains("@cancho_sha256_") {
+                assert!(line.contains("\"target-features\"=\"+sha"), "{triple}: {line}");
             } else {
                 assert!(line.contains("\"target-features\"=\"+aes"), "{triple}: {line}");
             }
@@ -61,6 +64,8 @@ fn each_intrinsic_is_declared_once_and_each_instruction_has_its_features() {
             "gcm_tag",
             "gcm_tag_diff",
             "ghash_update",
+            "sha256_blocks",
+            "sha256_block_words",
         ] {
             let line = text
                 .lines()
@@ -102,7 +107,8 @@ fn the_builtins_call_no_library_code() {
             if let Some(at) = line.find("call ") {
                 let callee =
                     line[at..].split('@').nth(1).unwrap_or("").split('(').next().unwrap_or("");
-                let probe = function.contains("@cancho_hw_aes_gcm")
+                let probe = (function.contains("@cancho_hw_aes_gcm")
+                    || function.contains("@cancho_hw_sha256"))
                     && (callee == "getauxval" || callee == "sysctlbyname");
                 let asm = line[at..].contains(" asm ");
                 assert!(
@@ -163,5 +169,29 @@ fn the_selfhost_runtime_has_the_text_the_backend_writes() {
             on_disk == expected,
             "{file} is out of date: run UPDATE_SELFHOST_TABLES=1 cargo test -p cancho-codegen-llvm selfhost_runtime"
         );
+/// The SHA-256 functions keep the state and the message in registers: the
+/// only store either makes is the eight words written back to the state, so
+/// no word of a key's hash is left anywhere else (`docs/sha256-builtin.md`
+/// §6). And the AES code is not pulled in by them, nor theirs by it.
+#[test]
+fn sha256_stores_only_the_state_and_comes_alone() {
+    for triple in triples() {
+        let text = definitions(
+            &triple,
+            "call void @cancho_sha256_blocks( call void @cancho_sha256_block_words(",
+        );
+        for name in ["@cancho_sha256_blocks(", "@cancho_sha256_block_words("] {
+            let body = text.split(name).nth(1).expect("defined");
+            let body = body.split("\n}\n").next().expect("ends");
+            let stores: Vec<&str> =
+                body.lines().filter(|l| l.trim_start().starts_with("store ")).collect();
+            assert_eq!(stores, ["  store <8 x i64> %o64, ptr %state, align 8"], "{triple}: {name}");
+        }
+        assert!(!text.contains("@cancho_aes1(") && !text.contains("@cancho_gh_"), "{triple}");
+        let aes = definitions(&triple, "call void @cancho_aes_encrypt_block(");
+        assert!(!aes.contains("sha256"), "{triple}");
+        // One `bswap` declaration when both are in a module.
+        let both = definitions(&triple, ALL_CALLS);
+        assert_eq!(both.matches("declare <4 x i32> @llvm.bswap.v4i32").count(), 1, "{triple}");
     }
 }

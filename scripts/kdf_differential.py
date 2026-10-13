@@ -12,7 +12,9 @@ For each of `count` (default 10,000) rounds, with random sizes: a SHA-256,
 SHA-384 and SHA-512 digest (one-shot, and streamed in random pieces; one round
 in fifty is 64 to 200 KiB, past the arena the old code copied into); an
 HMAC-SHA256 and HMAC-SHA384 with keys of 0 to 300 bytes; a whole HKDF under
-each hash; and an Expand-Label. Exit status 1 on any difference.
+each hash; and an Expand-Label; and the HMAC and the Expand-Label again under a
+prepared key (`hmac.prepare`, `hkdf.prepare`, docs/hkdf.md §9), twelve checks a
+round. Exit status 1 on any difference.
 """
 import hashlib
 import hmac
@@ -73,6 +75,12 @@ def main():
             ctx = rng.randbytes(rng.randrange(0, 256))
             out = rng.randrange(0, 300)
             cases.append(f"L {hl} {h(secret)} {h(label)} {h(ctx)} {out}")
+            want.append(expand_label(hl, secret, label, ctx, out).hex())
+            # The same HMAC and Expand-Label under a prepared key (docs/hkdf.md §9): the driver's `P` streams the
+            # message after `init_prepared` in pieces and checks it against `mac_prepared`, `Q` expands twice.
+            cases.append(f"P {hl} {hl} {rng.randrange(1, 200)} {h(key)} {h(m)}")
+            want.append(hmac.new(key, m, digest).hexdigest())
+            cases.append(f"Q {hl} {h(secret)} {h(label)} {h(ctx)} {out}")
             want.append(expand_label(hl, secret, label, ctx, out).hex())
 
     run = subprocess.run([driver], input=("\n".join(cases) + "\n").encode(), capture_output=True, check=True)
