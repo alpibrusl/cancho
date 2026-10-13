@@ -465,16 +465,23 @@ The P-256 runs timed b2651fea; the kernels' object code at the head is that comm
 (`kernels_object_identity.txt`). `std.bigmod` has not changed since 6b5299e5. P-384's `public_key` tests ran last (stopped once
 to free the core for the other measurements, then run whole). **Not run:** Cranelift; Apple silicon.
 
-**One row fails the bar, and what was done about it.** #463 (the in-place AEAD) merged while this was in review, and its
-`--in-place` test of ChaCha20-Poly1305 on the rebased branch gave 7.52 for "seal, data" in its first run. It was then run
-against `main` with #463 (the old Poly1305), alternating, 64 bytes, 10^6 a test (`dudect_inplace_main_vs_branch.txt`). On CPUs
-0-1 the branch reached 5.11 ("open, tag") and 8.65 ("open, data") in two of six more runs and `main` none in six; pinned to CPU 0
-alone, as #463's own runs were (`record-in-place.md` §7.8), the branch passed four of four (largest 2.98) and `main` failed one
-of four (5.56, "open, tag"). In "open, tag" the two classes give Poly1305 the same key and the same bytes (only the tag
-compared differs), so a failure there is not Poly1305's, and it happened on both builds; #463 recorded 22.26 on an unchanged
-function in the same harness on this machine. I read the failures as the shared core's noise, which the in-place harness (its
-classes on separate pools of buffers) is more exposed to than the one-shot one, which passed all eight tests on the branch.
-That is a reading, not a proof: the table's bar is not met by every run of this row, and a quiet machine was not available.
+**One row fails the bar, and it is not resolved.** #463 (the in-place AEAD) merged while this was in review, and its
+`--in-place` test of ChaCha20-Poly1305 on the rebased branch gave 7.52 for "seal, data" in its first run. It was then run against
+`main` with #463 (the old Poly1305), alternating, 64 bytes, 10^6 a test, three tests a run (`dudect_inplace_main_vs_branch.txt`):
+
+| | runs with a test at 4.5 or more, CPUs 0-1 | the same, CPU 0 alone (as #463's own runs, `record-in-place.md` §7.8) |
+|---|---|---|
+| branch (new Poly1305) | 3 of 7: 7.52 "seal, data", 5.11 "open, tag", 8.65 "open, data" | 1 of 8: **19.58** "open, tag" |
+| `main` (old Poly1305) | 0 of 6 | 1 of 8: 5.56 "open, tag" |
+
+In "open, tag" the two classes give Poly1305 the same key and the same bytes; they differ only in which byte of the tag that
+`open_in_place` compares is wrong, and that comparison is #463's, unchanged. Failures there, on both builds, are not Poly1305's
+data, and #463 recorded 22.26 on an unchanged function in the same harness on this machine. What the harness does differently
+from the one-shot test (which passed all eight tests on the branch) is give each class its own pool of buffers, written just
+before each timed call; an effect of those addresses (a store still draining, 4K aliasing against the new code's 8-byte reads of
+the block) would differ by class without any secret in it. That is a hypothesis, not measured. As it stands the branch fails this
+row more often (4 runs of 15 against 1 of 14), the bar is not met by every run, and a quiet machine was not available. It wants
+a rerun on a quiet core and a variant of the in-place test whose two classes share their buffers.
 
 **The branch audit** (`scripts/chacha20_branches.py` and `p256_ctx.py` over the x86-64 objects; `assets/wide-multiply/381/branches*.txt`):
 every P-256 kernel has exactly one conditional jump that is not to a trap, the `je` after `cmp $0xa` and `setge` on the three slice
