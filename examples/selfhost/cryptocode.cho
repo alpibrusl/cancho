@@ -7,18 +7,13 @@ module selfhost.cryptocode;
 
 import selfhost.emit;
 
-fn operand[&s](st: &!s [int], n: int, k: int) -> [] int {
-    let at = st[51] + 4 * (st[52] - n + k);
-    return emit.operand(st, st[at], st[at + 1] != 0, st[at + 2], st[at + 3]);
-}
-
 // `<flag> = icmp <cond> i64 <operand k>, <what>`, trapping if it holds.
 fn trap_when[&s](st: &!s [int], n: int, cond: &static [byte], k: int, what: int) -> [] int {
     let flag = emit.start(st);
     emit.str(st, "icmp ");
     emit.str(st, cond);
     emit.str(st, " i64 ");
-    operand(st, n, k);
+    emit.last_operand(st, n, k);
     emit.str(st, ", ");
     emit.nat(st, what);
     emit.str(st, "\n");
@@ -33,7 +28,7 @@ fn check_round_keys[&s](st: &!s [int], n: int, keys: int, rounds: int) -> [] int
     while r <= 14 {
         let is = emit.start(st);
         emit.str(st, "icmp eq i64 ");
-        operand(st, n, rounds);
+        emit.last_operand(st, n, rounds);
         emit.str(st, ", ");
         emit.nat(st, r);
         emit.str(st, "\n");
@@ -57,7 +52,7 @@ fn check_round_keys[&s](st: &!s [int], n: int, keys: int, rounds: int) -> [] int
     emit.trap_if(st, unknown);
     let blocks = emit.start(st);
     emit.str(st, "add i64 ");
-    operand(st, n, rounds);
+    emit.last_operand(st, n, rounds);
     emit.str(st, ", 1\n");
     let want = emit.start(st);
     emit.str(st, "mul i64 ");
@@ -65,7 +60,7 @@ fn check_round_keys[&s](st: &!s [int], n: int, keys: int, rounds: int) -> [] int
     emit.str(st, ", 16\n");
     let bad = emit.start(st);
     emit.str(st, "icmp ne i64 ");
-    operand(st, n, keys);
+    emit.last_operand(st, n, keys);
     emit.str(st, ", ");
     emit.temp(st, want);
     emit.str(st, "\n");
@@ -75,12 +70,12 @@ fn check_round_keys[&s](st: &!s [int], n: int, keys: int, rounds: int) -> [] int
 
 fn ptr_arg[&s](st: &!s [int], n: int, k: int) -> [] int {
     emit.str(st, "ptr ");
-    return operand(st, n, k);
+    return emit.last_operand(st, n, k);
 }
 
 fn int_arg[&s](st: &!s [int], n: int, k: int) -> [] int {
     emit.str(st, "i64 ");
-    return operand(st, n, k);
+    return emit.last_operand(st, n, k);
 }
 
 // `hw_aes_gcm()`: whether the processor has the instructions.
@@ -119,9 +114,9 @@ pub fn ctr32[&s](st: &!s [int]) -> [] int {
     trap_when(st, 10, "ugt", 5, 4294967295);
     let unequal = emit.start(st);
     emit.str(st, "icmp ne i64 ");
-    operand(st, 10, 7);
+    emit.last_operand(st, 10, 7);
     emit.str(st, ", ");
-    operand(st, 10, 9);
+    emit.last_operand(st, 10, 9);
     emit.str(st, "\n");
     emit.trap_if(st, unequal);
     emit.str(st, "  call void @cancho_aes_ctr32(");
@@ -149,7 +144,7 @@ pub fn ghash_update[&s](st: &!s [int]) -> [] int {
     trap_when(st, 6, "ne", 3, 16);
     let rest = emit.start(st);
     emit.str(st, "and i64 ");
-    operand(st, 6, 5);
+    emit.last_operand(st, 6, 5);
     emit.str(st, ", 15\n");
     let ragged = emit.start(st);
     emit.str(st, "icmp ne i64 ");
@@ -158,7 +153,7 @@ pub fn ghash_update[&s](st: &!s [int]) -> [] int {
     emit.trap_if(st, ragged);
     let blocks = emit.start(st);
     emit.str(st, "lshr i64 ");
-    operand(st, 6, 5);
+    emit.last_operand(st, 6, 5);
     emit.str(st, ", 4\n");
     emit.str(st, "  call void @cancho_ghash_update(");
     ptr_arg(st, 6, 0);
@@ -239,7 +234,7 @@ pub fn sha_blocks[&s](st: &!s [int]) -> [] int {
     trap_when(st, 4, "ne", 1, 8);
     let rest = emit.start(st);
     emit.str(st, "and i64 ");
-    operand(st, 4, 3);
+    emit.last_operand(st, 4, 3);
     emit.str(st, ", 63\n");
     let ragged = emit.start(st);
     emit.str(st, "icmp ne i64 ");
@@ -248,7 +243,7 @@ pub fn sha_blocks[&s](st: &!s [int]) -> [] int {
     emit.trap_if(st, ragged);
     let blocks = emit.start(st);
     emit.str(st, "lshr i64 ");
-    operand(st, 4, 3);
+    emit.last_operand(st, 4, 3);
     emit.str(st, ", 6\n");
     emit.str(st, "  call void @cancho_sha256_blocks(");
     ptr_arg(st, 4, 0);
