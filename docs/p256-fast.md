@@ -780,7 +780,9 @@ round instead of a chain (slower on the M4, 11 ns against 8 for the pair).
   digit's carry, each special limb of p off, a limb packed at 27 bits, an output limb unmasked, the top limb dropped, the
   accumulator's carry, the column shift at 55 bits and unmasked, the squaring's doubling, a square and a cross term left out, n'
   off by one, a limb of n, the quotient unmasked, the carries of `add` and `sub_4`, and the unchanged `canon_*` and constants
-  mutants): **36 selected, 36 killed** at the head (`assets/wide-multiply/381/p256_mutants.txt`).
+  mutants): **36 selected, 36 killed** at the head (`assets/wide-multiply/381/p256_mutants.txt`); after the rebase onto §11's
+  tables (#465), the whole script: 165, 155 killed, 10 surviving, each one `EQUIVALENT` argues, none on the kernels
+  (`p256_mutants_full_rebased.txt`).
 - **Constant time**: dudect on `gram` at 10^6 measurements a test, the ten tests of §8.3, all below 4.5 (largest 2.29; the table is
   `wide-multiply.md` §12.3). The branch audit of §8.2 repeated over the kernels: each has exactly one conditional jump that is
   not to a trap, the never-taken test of the slices' lengths (`cmp $0xa`, `setge`, `je`), and `canon_*` none

@@ -438,7 +438,9 @@ instructions in `mul_p`); §10.6's first item, `mulx` behind a CPU test, is wher
 - **Bounds**: `scripts/p256_gen.py` proves every kernel's accumulators and carries (above); `scripts/p256_bounds.py` closes for every
   formula, unchanged, since the element and §4.3's invariants are.
 - **Mutants**, all killed or argued: `p256_mutants.py`, the 36 its kernel names select (32 on the kernels, the shared accumulator and
-  the constants, rewritten for the new code, and four formula mutants whose names share a fragment), 36 killed at the head;
+  the constants, rewritten for the new code, and four formula mutants whose names share a fragment), 36 killed at the head, and
+  after the rebase onto #465 the whole script, 165: 155 killed, the 10 that survive the ones `p256_mutants.py`'s `EQUIVALENT` argues
+  (#397's and #465's; none on the kernels) (`p256_mutants_full_rebased.txt`);
   `rsa_mutants.py` 26 of 26; `ecdh_mutants.py` 17 of 17 (one stale since #397 re-anchored, P-384's encoding check reached again);
   `chacha20_mutants.py` 28 of 28 after the rebase onto #463 (whose in-place AEAD calls the same `aead_tag`; its eight mutants
   included), and one dropped as equivalent with its argument in the script (a single final carry pass: h1 cannot reach 2^44 after
@@ -467,25 +469,30 @@ The P-256 runs timed b2651fea; the kernels' object code at the head is that comm
 (`kernels_object_identity.txt`). `std.bigmod` has not changed since 6b5299e5. P-384's `public_key` tests ran last (stopped once
 to free the core for the other measurements, then run whole). **Not run:** Cranelift; Apple silicon.
 
-**One row fails the bar, and it is not resolved.** #463 (the in-place AEAD) merged while this was in review, and its
-`--in-place` test of ChaCha20-Poly1305 on the rebased branch gave 7.52 for "seal, data" in its first run. It was then run against
-`main` with #463 (the old Poly1305), alternating, 64 bytes, 10^6 a test, three tests a run (`dudect_inplace_main_vs_branch.txt`):
+**One row failed the bar, and the harness was the cause.** #463 (the in-place AEAD) merged while this was in review, and its
+`--in-place` test of ChaCha20-Poly1305 on the rebased branch gave 7.52 for "seal, data" in its first run. Alternating with `main`
+(#463, the old Poly1305), 64 bytes, 10^6 a test (`dudect_inplace_main_vs_branch.txt`), the branch then had a test at 4.5 or more in
+4 runs of 15 (up to 19.58) and `main` in 1 of 14 (5.56), several in "open, tag", whose two classes give Poly1305 the same bytes.
 
-| | runs with a test at 4.5 or more, CPUs 0-1 | the same, CPU 0 alone (as #463's own runs, `record-in-place.md` §7.8) |
-|---|---|---|
-| branch (new Poly1305) | 3 of 7: 7.52 "seal, data", 5.11 "open, tag", 8.65 "open, data" | 1 of 8: **19.58** "open, tag" |
-| `main` (old Poly1305) | 0 of 6 | 1 of 8: 5.56 "open, tag" |
+**A control showed it** (`scripts/gcm_timing.py --control`, each test's second class timed against itself, so any |t| is the
+harness's): on the in-place harness as #463 left it, 9.75, 9.10 and 13.89 in three runs of four, with identical records in both
+classes (`dudect_inplace_control.txt`). Each call read its nonce and associated data from its own class's pool of records, so a
+class's time depended on where its records sat, not on what they held (#466 found the same in its HMAC harness). **The fix**
+(`tests/programs/gcm_timing.cho`, this PR): every measurement copies its record into one set of buffers before the call, outside
+the time measured. After it the control is clean on both builds: 24 tests, largest 2.73.
 
-In "open, tag" the two classes give Poly1305 the same key and the same bytes; they differ only in which byte of the tag that
-`open_in_place` compares is wrong, and that comparison is #463's, unchanged. Failures there, on both builds, are not Poly1305's
-data, and #463 recorded 22.26 on an unchanged function in the same harness on this machine. What the harness does differently
-from the one-shot test (which passed all eight tests on the branch) is copy each message byte by byte into the one buffer just
-before the timed call, so the call starts with those stores in flight, and the new code assembles a block from two 64-bit words
-(`le64`) where the old assembled four 32-bit ones; each class also takes its nonce and associated data from its own pool of records. Something in that
-(a load waiting on the stores, the pools' addresses) could move the time with the class and no secret in it. That is a
-hypothesis, not measured. As it stands the branch fails this row more often (4 runs of 15 against 1 of 14), the bar is not met
-by every run, and a quiet machine was not available. It wants a rerun on a quiet core, and a variant of the in-place test that
-fences the copy before the timed call and gives both classes one pool.
+**On the fixed harness, `main` and the branch alternating** (`dudect_inplace_fixed_main_vs_branch.txt`; CPUs 0-1, `powersave`,
+load average 1.0 to 4.4):
+
+| in place, ChaCha20-Poly1305 | runs a build | tests | at 4.5 or more | largest \|t\| |
+|---|---|---|---|---|
+| 64 bytes, `main` (old Poly1305) | 10 | 30 | 0 | 3.01 |
+| 64 bytes, branch | 10 | 30 | **0** | **2.68** |
+| 1 KiB, `main` | 4 | 12 | 0 | 3.13 |
+| 1 KiB, branch | 4 | 12 | **0** | **2.44** |
+
+The branch passes every run. The two rows of the table above for #463's in-place forms were taken on the old harness and are
+kept as what was measured.
 
 **The branch audit** (`scripts/chacha20_branches.py` and `p256_ctx.py` over the x86-64 objects; `assets/wide-multiply/381/branches*.txt`):
 every P-256 kernel has exactly one conditional jump that is not to a trap, the `je` after `cmp $0xa` and `setge` on the three slice

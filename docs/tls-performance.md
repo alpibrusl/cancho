@@ -1159,8 +1159,9 @@ times `s_server` on x86-64 and 1.34 on arm64; T2 1.31 and 1.28.
 682k → 417k (2.92 → **1.78**); RSA-2048 verification 1.05M → 0.15M (17.8 → **2.61**), P-384 ECDH 11.9M → 3.1M (12.1 → **3.10**);
 Poly1305 over 16 KiB 89.6k → 39.0k. ChaCha20-Poly1305 is otherwise ChaCha20's (its rows below moved 7 to 9% in instructions).
 
-**The guard** (§6). `scripts/tls_perf.py check` failed exactly the five P-256 rows as cheaper than 1/1.3 on both machines
-(x86-64 0.58 to 0.66; arm64 0.73 to 0.76; ChaCha20-Poly1305 0.91 to 0.95, inside the guard), so both entries were re-recorded
-on their own machines (`record` on `gram`; in the arm64 VM), keeping their descriptions; `check` then passes 33 of 33 on each and
-`scripts/tls_perf_mutant.py` fails exactly its four rows on each. `aes128gcm_prepare` came back 0.82 of the arm64 entry before
-re-recording, inside the guard and untouched by this change (a change since that entry was recorded).
+**The guard** (§6). After the rebase onto #465 (35 rows, its two tabled rows included), `scripts/tls_perf.py check` failed
+exactly the P-256 rows as cheaper than 1/1.3: on x86-64 all seven (0.58 to 0.66), on arm64 five (0.73 to 0.76; the signature
+0.81 and the tabled check 0.78, inside); ChaCha20-Poly1305 0.91 to 0.95, inside. Both entries were re-recorded on their own
+machines (`record` on `gram`, and in the arm64 VM), keeping their descriptions; `check` then passes 35 of 35 on each and
+`scripts/tls_perf_mutant.py` fails exactly its four rows on each (`assets/wide-multiply/381/tls_perf_*.txt`). The handshakes above
+were measured before #463 and #465 merged.
