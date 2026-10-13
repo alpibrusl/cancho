@@ -1,0 +1,43 @@
+######## base 03:13:25 load 10.19 6.15 4.47
+  cancho n=10000  start        VmRSS      2596 KiB
+  cancho n=10000  connected    VmRSS    869856 KiB
+  cancho n=10000  handshake    VmRSS   1106736 KiB
+  cancho n=10000  established  VmRSS    172824 KiB
+  cancho n=10000  echoed       VmRSS    532876 KiB
+  cancho n=10000  partial      VmRSS    817384 KiB
+  cancho n=10000  all-echoed   VmRSS   1423044 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 10000 | 86.7 | 110.4 | 17.0 | 53.0 | 81.5 | 142.0 |
+######## new 03:21:21 load 1.63 4.36 4.66
+  cancho n=10000  start        VmRSS      2728 KiB
+  cancho n=10000  connected    VmRSS    869924 KiB
+  cancho n=10000  handshake    VmRSS   1106860 KiB
+  cancho n=10000  established  VmRSS    172964 KiB
+  cancho n=10000  echoed       VmRSS    533016 KiB
+  cancho n=10000  partial      VmRSS    817524 KiB
+  cancho n=10000  all-echoed   VmRSS   1423184 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 10000 | 86.7 | 110.4 | 17.0 | 53.0 | 81.5 | 142.0 |
+######## base 03:29:06 load 1.43 2.21 3.48
+  cancho n=10000  start        VmRSS      2612 KiB
+  cancho n=10000  connected    VmRSS    869872 KiB
+  cancho n=10000  handshake    VmRSS   1106728 KiB
+  cancho n=10000  established  VmRSS    172828 KiB
+  cancho n=10000  echoed       VmRSS    532880 KiB
+  cancho n=10000  partial      VmRSS    817388 KiB
+  cancho n=10000  all-echoed   VmRSS   1423048 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 10000 | 86.7 | 110.4 | 17.0 | 53.0 | 81.5 | 142.0 |
+######## new 03:36:59 load 1.27 1.67 2.67
+  cancho n=10000  start        VmRSS      2780 KiB
+  cancho n=10000  connected    VmRSS    869976 KiB
+  cancho n=10000  handshake    VmRSS   1106868 KiB

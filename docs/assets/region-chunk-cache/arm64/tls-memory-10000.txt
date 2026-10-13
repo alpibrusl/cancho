@@ -1,0 +1,29 @@
+######## base 01:25:33 load 2.97 3.10 2.93
+  cancho n=10000  start        VmRSS      1868 KiB
+  cancho n=10000  connected    VmRSS    869132 KiB
+  cancho n=10000  handshake    VmRSS   1082000 KiB
+  cancho n=10000  established  VmRSS    172212 KiB
+  cancho n=10000  echoed       VmRSS    532268 KiB
+  cancho n=10000  partial      VmRSS    816776 KiB
+  cancho n=10000  all-echoed   VmRSS   1422436 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 10000 | 86.7 | 108.0 | 17.0 | 53.0 | 81.5 | 142.1 |
+######## new 01:33:48 load 1.48 1.91 2.40
+  cancho n=10000  start        VmRSS      2124 KiB
+  cancho n=10000  connected    VmRSS    869324 KiB
+  cancho n=10000  handshake    VmRSS   1082144 KiB
+  cancho n=10000  established  VmRSS    172360 KiB
+  cancho n=10000  echoed       VmRSS    532412 KiB
+  cancho n=10000  partial      VmRSS    816920 KiB
+  cancho n=10000  all-echoed   VmRSS   1422580 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 10000 | 86.7 | 108.0 | 17.0 | 53.0 | 81.5 | 142.0 |
+######## base 01:41:56 load 1.41 1.61 2.04
+  cancho n=10000  start        VmRSS      1868 KiB
+  cancho n=10000  connected    VmRSS    869132 KiB

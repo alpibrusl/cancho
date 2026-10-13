@@ -1,13 +1,15 @@
 # Region chunks kept per thread (A1, #375)
 
-> **Status: design, with the measurements it rests on.** Lever A1 of `tls-performance.md` §10.8 and the per-thread chunk
-> cache #375 asks for, one mechanism. Today a `region` is a `malloc` of 64 KiB on the way in and a `free` on the way out
-> (`linearity-and-effects.md` §6), and glibc gives the top of its heap back to the kernel and takes it again for nearly
+> **Status: built, both backends (§8).** Lever A1 of `tls-performance.md` §10.8 and the per-thread chunk
+> cache #375 asks for, one mechanism. A `region` was a `malloc` of 64 KiB on the way in and a `free` on the way out
+> (`linearity-and-effects.md` §6), and glibc gave the top of its heap back to the kernel and took it again for nearly
 > every one: **112 `brk` calls a full TLS server handshake and 136 a resumed one** (§1). The design: each thread keeps the
 > chunks its regions give back, **at most 16 (1 MiB)**, in a last-in-first-out stack; a region takes the last one given
 > back; the bytes a region used are **cleared when it ends**, before the chunk is kept or freed; a thread's chunks are freed
-> when it ends. Same chunk size, same trap, same programs; both backends, the same runtime. §8 is what was built and
-> measured.
+> when it ends. Same chunk size, same trap, same programs; both backends, the same runtime. **As built (§8):** 9 `brk`
+> calls in a whole server run instead of 112 a handshake; the server's full handshake 34.6% cheaper on x86-64 (1.86 times
+> OpenSSL's `s_server` in cycles, from 2.87), a resumed one 55.8% (1.04 times OpenSSL's resumed: T5 as restated, met), the
+> client's 40.5%; on macOS 16 threads each opening 300,000 regions take 0.04 s where they took 8.8.
 
 Related: [`tls-performance.md`](tls-performance.md) §3.5, §7 Q3, §10.3, §10.4, §10.8; [`threads.md`](threads.md) §7 (the
 macOS half, #375); [`linearity-and-effects.md`](linearity-and-effects.md) §6; [`zeroed-slices.md`](zeroed-slices.md) §1;
@@ -196,9 +198,10 @@ touched by this.
   (the shim counts the frees).
 - **The bound**: a recursion 40 regions deep, repeated: the shim sees at most 40 − 16 = 24 chunk `malloc`s a repetition after
   the first and never more than 16 kept.
-- **Clearing**: the function `give` keeps its `memset` in the object `clang -O2` makes (a unit test on the LLVM backend's
-  object); a program that fills a region with a byte, ends it, and opens another reads only its own fill (the language's
-  guarantee, checked on both backends).
+- **Clearing**: the shim checks that every chunk freed (past the bound, or by a thread's end) has its first page cleared,
+  where the program filled it with non-zero values; a program that fills a region, ends it, and opens another reads only its
+  own fill (the language's guarantee, checked on both backends). *As built: the object code was read by hand (§8.3) rather than
+  by a unit test; the shim's check is what fails when the clearing goes (§8.6, the mutants).*
 - **The trap and every existing arena test unchanged.**
 
 ## 7. Not in scope
@@ -208,3 +211,127 @@ touched by this.
 - `box_slice` and `Box`, which use the heap directly and are freed when the program says.
 - Returning cached chunks to the system while a thread lives (a service that once nested 16 deep keeps 1 MiB of address space
   on that thread).
+
+---
+
+## 8. As built, and measured
+
+Built as §3 says: `crates/cancho-ir/src/region_cache.rs` (the bound and the names), `cancho-codegen-llvm/src/region_cache.rs`
+(IR text) and `cancho-codegen/src/region_cache.rs` (Cranelift), with `region_stmt` and the `return` path of each backend calling
+`take` and `give`. Measured at this change's head against `2cb860b3` (its base), each pair alternating on the same machine in
+the same session; raw output in [`assets/region-chunk-cache/`](assets/region-chunk-cache/).
+
+| | x86-64 | arm64 |
+|---|---|---|
+| machine | `gram`, i7-1260P, Linux 7.0.0-38, glibc 2.43, `powersave`; CPUs 0 to 3, the server on 0 and its peer on 1; load average 0.1 to 3.6 (another user's build at 10 during one memory run, §8.5) | Apple M4 Max, Docker Desktop VM (6 vCPUs), image `lexsys-hooks-env`, Ubuntu 24.04, Linux 6.8.0-100, glibc 2.39; VM load average 1.6 to 3.4 |
+| counters | user and kernel cycles through `sudo perf` (`perf_event_paranoid` stayed at 4) | none: CPU time |
+| OpenSSL | 3.5.5 | 3.0.13 |
+
+### 8.1 System calls (gate 1)
+
+`strace -f -c` as §1, the same 5-second runs (the handshake counts differ because tracing every `brk` slowed the old binary):
+
+| | x86-64: before | after | arm64: before | after |
+|---|---|---|---|---|
+| server, full: handshakes; `brk` | 3,001; **336,165 (112.0 a handshake)** | 5,148; **9 in the run** | 4,159; 465,861 (112.0) | 8,637; 9 |
+| server, resumed: handshakes; `brk` | 3,180; **432,665 (136.1)** | 11,362; **9** | 5,209; 708,609 (136.0) | 17,299; 9 |
+| client, `tls_many` 200: `brk` | 39,022 | 9 | 39,825 | 9 |
+| `mmap` / `munmap` in each run | 16 to 17 / 9 to 10 | the same | 14 to 15 / 11 to 12 | the same |
+| 64 KiB `malloc`s (the shim): server full; client | 227 a handshake; 371 a handshake | **10 in the run; 15** | | |
+
+The 9 `brk` calls are start-up's and the heap's first growth; the 10 chunks are the server's deepest nesting, taken once and
+kept. **Gate 1 met** on both machines. The conformance test's program (three nested regions, 20,000 rounds) made 80,003 `brk`
+calls before and 4 after, on both backends (arm64).
+
+### 8.2 Handshakes (gate 2)
+
+`scripts/tls_handshake_cost.py --seconds 8 --rounds 2`, run before, after, before, after: the least of four rounds a row.
+x86-64 in M cycles a handshake (user and kernel), arm64 in ms of CPU. The ratio is to OpenSSL's row in the same runs.
+
+| | x86-64: before | after | **change** | ratio before → **after** | arm64: before | after | **change** | ratio before → **after** |
+|---|---|---|---|---|---|---|---|---|
+| server, full (`s_server`) | 2.821 | **1.844** | **−34.6%** | 2.87 → **1.86** (`oserv` 3.04 → 1.98) | 0.382 | **0.291** | **−23.8%** | 1.93 → **1.50** (`oserv` 2.67 → 2.09) |
+| server, resumed | 2.001 | **0.884** | **−55.8%** | 2.33 → **1.04** | 0.270 | **0.147** | **−45.6%** | 1.99 → **1.12** |
+| client, full (`tconn`, verified) | 4.474 | **2.664** | **−40.5%** | 2.74 → **1.64** | 0.682 | **0.423** | **−38.0%** | 2.44 → **1.51** |
+| client, resumed | 1.901 | **0.994** | −47.7% | 2.32 → 1.21 | 0.284 | 0.159 | −44.0% | 2.35 → 1.33 |
+
+- **As the experiment said** (`tls-performance.md` §10.3: 1.860M, 0.904M, 2.694M cycles with glibc told not to trim): the
+  cache reaches 1.844M, 0.884M and 2.664M, a little below, since it skips `malloc` and `free` as well as `brk`. Instructions
+  fell from 9.68M to 8.09M a full server handshake and from 5.24M to 3.30M a resumed one. OpenSSL's rows did not move
+  (`s_server` 0.984 to 0.997M before, 0.991 to 0.992M after).
+- **Gate 2 met**: the server's full handshake at most 2.0 times `s_server` (1.86 on x86-64, 1.50 on arm64); the resumed one at
+  most 1.2 times OpenSSL's resumed (1.04, 1.12): **T5 as `tls-performance.md` §7 Q9 restates it is met on both machines**;
+  the client's at most 1.8 (1.64, 1.51). The arm64 changes are smaller than the experiment's there (−27.2%, −49.5%, −32.0%) on
+  the server and larger on the client (−38.0% against −32.0%); the VM's figures move by about 10% between rounds.
+
+### 8.3 What clearing costs (§3.1)
+
+A compiler built with the `memset` taken out of `give` (LLVM; everything else the same), alternating with this one, two passes
+of two rounds, x86-64: a full server handshake **1.849M cycles without clearing and 1.844 to 1.850M with it**, 8.081M against
+8.090M instructions (+0.1%); a resumed one 0.882M against 0.883M, 3.293M against 3.303M instructions (+0.3%). The difference in
+cycles is inside the rounds' spread. **The clearing is in the optimised object**: on macOS `cancho_region_give` begins `sub x1, x1, x0; bl _bzero` (the `memset` with a zero byte, which Darwin's libc spells
+`bzero`), before the branch that keeps or frees the chunk; and the shim of §6 finds every freed chunk cleared on both backends
+(§8.6). On Cranelift there is no dead-store elimination to defeat.
+
+### 8.4 macOS: a region per unit of work, by threads (gate 3; #375)
+
+A program spawns T threads; each opens 300,000 regions of 80 `int`s and sums them through a function (`threads.md` §7's
+shape); `cancho build --backend <b>`, M4 Max, macOS 26, load average 7 to 13 (other work on the Mac), the least of three
+passes, wall time:
+
+| backend | T = 1: before → after | T = 8 | T = 16 |
+|---|---|---|---|
+| Cranelift | 0.18 → **0.03 s** | 3.82 s (sys 21.1 s) → **0.03 s** | 8.76 s (sys 99.4 s) → **0.04 s** (user 0.59 s) |
+| LLVM | 0.15 → **0.01 s** | 3.80 s (sys 21.4 s) → **0.01 s** | 8.76 s (sys 100.2 s) → **0.01 s** |
+
+**Flat across threads, and #375's table becomes a row of zeros of system time.** Before, the old binaries' system time grew
+with the threads (each region a large `malloc` and `free` through the VM allocator); after, a thread takes one chunk and keeps
+it. The LLVM build did not delete the `malloc`/`free` pair here before (`threads.md` §7's toy loop did): the sum is a call it
+did not inline away. `threads.md` §7's workaround (one region per batch) is no longer needed for speed.
+
+### 8.5 Memory (gate 4)
+
+`scripts/tls_memory.py cancho <tls_echo> --counts 10000`, before and after, `tls_echo` one thread; KiB of server RSS a
+connection over the RSS at start (`tls-memory.md` §2's phases), and the absolute RSS:
+
+| | connected | handshake | established | echoed | partial | all-echoed | RSS established, absolute |
+|---|---|---|---|---|---|---|---|
+| x86-64, before | 86.7 | 110.4 | 17.0 | 53.0 | 81.5 | 142.0 | 172,824 KiB |
+| x86-64, after | 86.7 | 110.4 | 17.0 | 53.0 | 81.5 | 142.0 | 172,964 KiB (+140) |
+| arm64, before | 86.7 | 108.0 | 17.0 | 53.0 | 81.5 | 142.1 | 172,212 KiB |
+| arm64, after | 86.7 | 108.0 | 17.0 | 53.0 | 81.5 | 142.0 | 172,360 KiB (+148) |
+
+**Gate 4 met: no phase moved by 0.1 KiB a connection.** The server is 68 to 140 KiB larger in every phase on x86-64 and 144 to
+256 KiB on arm64, start included: the pages of the chunks its one thread keeps, against §4's bound of 1 MiB a thread. The
+`tls-memory.md` figures stand as they are.
+
+### 8.6 Tests, mutants, the guard
+
+- `crates/cancho/tests/conformance/region_cache.rs` (§6): every program reads back its own fill on both backends (macOS and
+  Linux); on Linux, nested regions take 3 chunks in 2,000 rounds; eight threads and `main` take 27 and the threads' 24 are
+  freed, cleared, before `join` answers; the recursion 40 deep takes exactly 2,416 and frees exactly 2,400, all cleared;
+  under `strace`, 20,000 rounds make at most 16 `brk` calls (4 measured; 80,003 before). CI's Linux job installs `strace`.
+- `cancho-codegen-llvm`'s `a_region_left_by_return_frees_its_chunk_before_the_ret` now checks that every `ret` out of a region
+  comes straight after a `give`, and counts `take` and `give` where it counted `malloc` and `free`.
+- **Mutants** (`scripts/region_cache_mutants.py`, Linux): **14 of 14 killed** in the arm64 VM: in each backend, no clearing; a stack that keeps 17;
+  `take` that never pops; `give` that never keeps; a thread's chunks not freed when it ends; `main` that makes no key (and, on
+  LLVM, the key stored without its one); and 15 slots in `cancho-ir`. No mutant is argued equivalent.
+- **WASI**: a recursion 40 regions deep, 200 times, built with `--target wasm32-wasip1` and run under `wasmtime`, exits 0.
+- **`scripts/tls_perf.py check`**: 33 of 33 rows within the guard on both entries, and none beyond it, so no baseline is
+  re-recorded. The rows with a region in them got cheaper: on arm64 `aes128gcm_prepare` 0.82 of its recorded count,
+  `hkdf_expand_label_32` 0.94, `chacha20poly1305_open` at 64 bytes 0.94; on x86-64 `aes128gcm_prepare` 0.90 and
+  `chacha20poly1305_open` at 64 bytes 0.96; one row rose, `hkdf_expand_label_48`, to 1.04.
+- The authority report is unchanged: `tls_echo`'s pinned report (`bounded: true`, no foreign symbol) passes, and the pthread
+  names are not `extern fn` declarations.
+
+### 8.7 Not done, and not verified
+
+- **macOS natively, `cargo test --workspace`**: run on this M4 (macOS 26): every test passed except
+  `backends::spawn_and_join_run_concurrently_not_sequentially`, a wall-clock bound of 400 ms that the first run of a freshly
+  built binary misses on this Mac before and after the change alike (0.43 and 0.44 s the first run, 0.20 and 0.21 s after; the
+  program opens no region). **Linux** (the arm64 VM): every test passed except two that need a git checkout the container
+  does not have (`project::a_compiler_other_than_the_one_named_is_refused`,
+  `vcs_remote::a_lock_holds_a_commit_and_never_a_name`); CI runs both.
+- The kept-request rows of `tls-performance.md` §10.5 were not re-measured: they reached no `brk` before this change.
+- Not measured: cancho-hooks under its soak with this compiler; a Linux program with more than a few threads for RSS; musl.
+- Chunks a thread keeps are not given back while it lives (§7).

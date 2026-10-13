@@ -620,7 +620,9 @@ registration, not a weakening of this rule.
 > nothing else. The referent stays invariant.
 >
 > **At runtime** an arena is one `malloc` when the block opens and one
-> `free` when it closes, with a bump pointer in between; a `return` out of a
+> `free` when it closes (*as built since `region-chunk-cache.md`: one
+> chunk taken from the thread's stack of freed ones, or `malloc`ed, and
+> given back, cleared, when it closes*), with a bump pointer in between; a `return` out of a
 > region releases every arena it leaves, innermost first. Release is one
 > call whatever was allocated, which is the O(1) the section is trading
 > expressiveness for — and it is *only* a `free`, because §6.1 kept
