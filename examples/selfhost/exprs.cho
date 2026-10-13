@@ -205,7 +205,7 @@ pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: in
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let count = ast.get(st, id, 8);
-    if !emit.on(st) || nparams > 2 || count > 4 {
+    if !emit.on(st) || nparams > 2 || count > 12 {
         return ex.skip(st, from, to);
     }
     let whole = types.fresh_named(st, item, nparams);
@@ -303,7 +303,7 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] e
     }
     let result = types.make_ref(st, true, home, types.make_slice(st, f.ty));
     if emit.on(st) {
-        if !types.is_plain(f.ty) {
+        if !scope.element_ok(st, f.ty) {
             return ex.skip(st, from, to);
         }
         var p = 0;
@@ -413,11 +413,21 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         let opened = types.make_prelude(st, tables.prelude_opened());
         return ex.in_reg(opened, emit.answer_enum(st, opened, 0, v));
     }
-    if nargs != 7 {
+    var inside = 7;
+    if which == 10 {
+        inside = 8;
+    }
+    if nargs != inside {
         return ex.skip(st, from, to);
     }
     let c = expr(st, text, arg);
     arg = ast.next(st, arg);
+    var dir = ex.nothing();
+    if which == 10 {
+        // `exec_spawn_in(exec, dir, ...)`: the child starts in the directory the handle is of.
+        dir = expr(st, text, arg);
+        arg = ast.next(st, arg);
+    }
     let path = expr(st, text, arg);
     arg = ast.next(st, arg);
     let args = expr(st, text, arg);
@@ -455,6 +465,11 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         emit.push_arg(st, 1, false, 0, emit.extract_field(st, one.ty, one.reg, emit.penum_payload_index(st, stdio, first + 1, 0)));
         emit.push_arg(st, 1, false, 0, emit.extract_field(st, one.ty, one.reg, emit.penum_payload_index(st, stdio, first + 2, 0)));
         k = k + 1;
+    }
+    if which == 10 {
+        emit.push_arg(st, 7, false, 0, dir.reg);
+    } else {
+        emit.push_arg(st, 7, false, 0, 0 - 1);
     }
     let v = emit.spawn_process(st);
     let spawned = types.make_prelude(st, tables.prelude_spawned());
@@ -559,7 +574,7 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
     if !ast.ok(st) {
         return ex.nothing();
     }
-    if !types.is_plain(f.ty) {
+    if !scope.element_ok(st, f.ty) {
         return ex.skip(st, from, to);
     }
     effects.perform_named(st, "heap");
@@ -825,7 +840,7 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
             ast.fail(st, rules.r_duplicate_declaration(), from, to);
         } else if index < previous {
             ast.fail(st, rules.r_field_order(), ast.nstart(st, value), ast.nend(st, value));
-        } else if index > 3 {
+        } else if index > 15 {
             return ex.skip(st, from, to);
         } else {
             previous = index;
@@ -1177,7 +1192,7 @@ pub fn index_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
         scope.expect(st, text, 1, i.ty, ast.nstart(st, index), ast.nend(st, index));
     }
     if emit.on(st) && ast.ok(st) {
-        if !types.is_plain(e) {
+        if !scope.element_ok(st, e) {
             return ex.skip(st, ast.nstart(st, id), ast.nend(st, id));
         }
         let address = emit.element_address(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, i.known, i.value, i.reg);
@@ -1215,7 +1230,7 @@ pub fn subslice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.E
     }
     let narrowed = types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), types.make_slice(st, e));
     if emit.on(st) {
-        if !types.is_plain(e) {
+        if !scope.element_ok(st, e) {
             return ex.skip(st, ast.nstart(st, id), ast.nend(st, id));
         }
         let at = emit.subslice(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, a.known, a.value, a.reg, z.known, z.value, z.reg);
@@ -1518,7 +1533,7 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
         st[55] = st[55] | 1;
     }
     let holds_bound = netcode.holds_bound(which);
-    let leads = holds_bound || which == 46 || which == 47;
+    let leads = netcode.leading(which);
     var cap = 0;
     var arg = ast.get(st, id, 6);
     let first_arg = st[52];
@@ -1677,6 +1692,9 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
         if pass1.is_word(st, text, callee, "exec_spawn") {
             return capability_call(st, text, id, 7);
         }
+        if pass1.is_word(st, text, callee, "exec_spawn_in") {
+            return capability_call(st, text, id, 10);
+        }
         if pass1.is_word(st, text, callee, "fs_read") {
             return capability_call(st, text, id, 8);
         }
@@ -1802,12 +1820,16 @@ pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) ->
     var arg = ast.get(st, id, 6);
     let first_arg = st[52];
     while param >= 0 && ast.ok(st) {
-        if emit.on(st) && tmade > 0 && ast.is_kind(st, arg, kinds.NK::EVariant) && ast.get(st, arg, 8) == 0 {
-            // `Option::None` as an argument waits for the others to say what its type is: a mark for it
-            // is pushed, and the value is written below.
+        if emit.on(st) && tmade > 0 && ast.is_kind(st, arg, kinds.NK::EVariant) && lookup.pure(st, arg) {
+            // `Option::None`, `Result::Err(e)` as an argument waits for the others to say what its type is: a mark
+            // for it is pushed, and the value is written below.
             emit.push_arg(st, 0 - 7, false, param, arg);
         } else {
+            if emit.on(st) && ast.is_kind(st, arg, kinds.NK::EVariant) {
+                types.set_hint(st, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars));
+            }
             let a = expr(st, text, arg);
+            types.set_hint(st, 0);
             if ast.ok(st) {
                 scope.expect(st, text, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
                 if emit.on(st) && !types.is_erased(st, a.ty) {

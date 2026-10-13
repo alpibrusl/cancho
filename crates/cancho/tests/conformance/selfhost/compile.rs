@@ -343,6 +343,12 @@ const CRYPTO: &[&str] = &[
     "edition 9;\nfn run() -> [] int { if !hw_aes_gcm() { trap(); } region a { let keys = alloc_slice[a](100, byte_of(7)); let block = alloc_slice[a](16, byte_of(3)); let out = alloc_slice[a](16, byte_of(0)); aes_encrypt_block(keys, 10, block, out); return 0; } }",
 ];
 
+/// Runs of structs: filled, written and read an element at a time, cut.
+const RUNS: &[&str] = &[
+    "struct P { a: int, b: bool }\nfn run() -> [] int { region r { let ps = alloc_slice[r](3, P { a: 1, b: true }); ps[1] = P { a: 5, b: false }; var s = 0; var i = 0; while i < len(ps) { s = s + ps[i].a; if ps[i].b { s = s + 100; } i = i + 1; } return s; } }",
+    "struct P { a: int, b: bool }\nfn total(ps: &static [P]) -> [] int { var s = 0; var i = 0; while i < len(ps) { s = s + ps[i].a; i = i + 1; } return s; }\nfn run() -> [] int { region r { let ps = alloc_slice[r](4, P { a: 3, b: true }); ps[2] = P { a: 10, b: false }; let part = ps[1..3]; return part[1].a * 10 + len(part); } }",
+];
+
 /// Programs with a `main` of their own, which the cancho compiler calls as the C `main` does.
 const WITH_MAIN: &[&str] = &[
     "fn finish(w: World) -> [] int { release(w); return 3; }\nfn main(world: World) -> [] int { return finish(world); }",
@@ -685,6 +691,7 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         .chain(ENUMS)
         .chain(DEFERS)
         .chain(WORDS)
+        .chain(RUNS)
         .chain(CRYPTO)
         .chain(HELD)
         .chain(GENERICS)
@@ -712,6 +719,12 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         let program = std::fs::read_to_string(&path).expect("a program of tests/accept");
         jobs.push((program.clone(), program));
     }
+    // The poller and a handed-over peer, over a connection made inside the process (each build has a port of its
+    // own, for they run at the same time); standard output flushed and standard input read.
+    let poller = include_str!("poller_probe.cho");
+    jobs.push((poller.replace("PORT", "47133"), poller.replace("PORT", "47134")));
+    let stdio = include_str!("stdio_probe.cho");
+    jobs.push((stdio.to_owned(), stdio.to_owned()));
     for text in DOUBLE_LITERALS {
         let bits = text.replace('_', "").parse::<f64>().expect("a double").to_bits() as i64;
         let program = format!(

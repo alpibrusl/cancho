@@ -105,7 +105,7 @@ pub fn builtin_code[&x](text: &x [byte], from: int, to: int) -> [] int {
 // The sockets and the clock, which `exprs.net_call` writes: 32 `bind`, 33 `connect`, 34 `listen`, 35 `accept`,
 // 36 `tcp_listen`, 37 `tcp_connect`, 38 `tcp_accept`, 39 `conn_read`, 40 `conn_write`, 41 `conn_nonblocking`,
 // 42 `listener_nonblocking`, 43 `conn_nodelay`, 44 `conn_close`, 45 `listener_close`, 46 `clock_ms`,
-// 47 `clock_unix_ms`, 48 `pipe_open`, 49 `pipe_read`, 50 `pipe_write`, 51 `pipe_close`, 52 `child_end_close`,
+// 47 `clock_unix_ms`, 93 to 105 the poller and the hand-over of a connection (see `netcode.cho`), 48 `pipe_open`, 49 `pipe_read`, 50 `pipe_write`, 51 `pipe_close`, 52 `child_end_close`,
 // 53 `pipe_nonblocking`, then the directories: 54 `open_dir`, 55 `dir_enter`, 56 `dir_open_read`, 57 `dir_open_new`,
 // 58 `dir_open_append`, 59 `dir_rename`, 60 `dir_rename_new`, 61 `dir_remove`, 62 `dir_sync`, 63 `dir_close`, 64 `dir_list`,
 // 65 `dir_next`, 66 `dir_list_close`, 67 `dir_stat`, 68 `dir_mode`, 69 `dir_own_mode`; 0 for another name.
@@ -223,6 +223,69 @@ pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     }
     if lc.spells(text, from, to, "dir_own_mode") {
         return 69;
+    }
+    if lc.spells(text, from, to, "poller_new") {
+        return 93;
+    }
+    if lc.spells(text, from, to, "poller_add_listener") {
+        return 94;
+    }
+    if lc.spells(text, from, to, "poller_add_signals") {
+        return 94;
+    }
+    if lc.spells(text, from, to, "poller_add_conn") {
+        return 95;
+    }
+    if lc.spells(text, from, to, "poller_add_udp") {
+        return 95;
+    }
+    if lc.spells(text, from, to, "poller_add_pipe") {
+        return 95;
+    }
+    if lc.spells(text, from, to, "poller_add_tty") {
+        return 95;
+    }
+    if lc.spells(text, from, to, "poller_modify") {
+        return 96;
+    }
+    if lc.spells(text, from, to, "poller_remove") {
+        return 97;
+    }
+    if lc.spells(text, from, to, "poller_wait") {
+        return 98;
+    }
+    if lc.spells(text, from, to, "poller_add_child") {
+        return 99;
+    }
+    if lc.spells(text, from, to, "conn_detach") {
+        return 101;
+    }
+    if lc.spells(text, from, to, "udp_detach") {
+        return 102;
+    }
+    if lc.spells(text, from, to, "conn_attach") {
+        return 103;
+    }
+    if lc.spells(text, from, to, "udp_attach") {
+        return 104;
+    }
+    if lc.spells(text, from, to, "poller_close") {
+        return 105;
+    }
+    if lc.spells(text, from, to, "flush_out") {
+        return 106;
+    }
+    if lc.spells(text, from, to, "read_bytes") {
+        return 107;
+    }
+    if lc.spells(text, from, to, "conn_connect_status") {
+        return 108;
+    }
+    if lc.spells(text, from, to, "conn_peer") {
+        return 109;
+    }
+    if lc.spells(text, from, to, "tcp_connect_start") {
+        return 110;
     }
     return 0;
 }

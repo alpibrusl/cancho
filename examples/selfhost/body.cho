@@ -720,7 +720,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
                 scope.expect(st, text, e, found.ty, ast.nstart(st, value), ast.nend(st, value));
             }
             if emit.on(st) && ast.ok(st) {
-                if !types.is_plain(e) {
+                if !scope.element_ok(st, e) {
                     ex.skip(st, from, to);
                 } else {
                     let address = emit.element_address(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, i.known, i.value, i.reg);
@@ -943,7 +943,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     let ret = scope.lower_type(st, text, ast.get(st, fn_item, 10), st[28], 0 - 1);
     if emit.on(st) {
         // Code is written for functions of whole numbers and booleans, which are not generic.
-        var ok = types.is_plain(ret) || scope.aggregate_codable(st, ret) || scope.slice_codable(st, ret) || types.is_erased(st, ret);
+        var ok = types.is_plain(ret) || types.is_ref(st, ret) || scope.aggregate_codable(st, ret) || scope.slice_codable(st, ret) || types.is_erased(st, ret);
         var k = 0;
         var p = ast.get(st, fn_item, 7);
         while p >= 0 {

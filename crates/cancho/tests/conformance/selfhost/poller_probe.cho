@@ -1,0 +1,77 @@
+edition 5;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    var code = 99;
+    borrow net as &n in {
+        match tcp_listen(n, PORT, 4, 0) {
+            Listening::Ok(l) => {
+                var listener = l;
+                match poller_new() {
+                    Polling::Ok(p) => {
+                        var poller = p;
+                        region a {
+                            let events = alloc_slice[a](8, 0);
+                            borrow mut poller as &!pw in {
+                                borrow listener as &lw in {
+                                    poller_add_listener(pw, lw, 7);
+                                }
+                                let quiet = poller_wait(pw, events, 0);
+                                match tcp_connect(n, "127.0.0.1", PORT) {
+                                    Dialed::Ok(c) => {
+                                        var client = c;
+                                        let ready = poller_wait(pw, events, 2000);
+                                        var accepted = 0;
+                                        borrow mut listener as &!lh in {
+                                            match tcp_accept(lh) {
+                                                Accepted::Ok(s) => {
+                                                    var served = s;
+                                                    let peer = alloc_slice[a](19, byte_of(0));
+                                                    var st = 0 - 1;
+                                                    borrow served as &sh in {
+                                                        st = conn_peer(sh, peer);
+                                                    }
+                                                    borrow mut client as &!ch in {
+                                                        accepted = conn_connect_status(ch);
+                                                    }
+                                                    code = quiet * 1000 + ready * 100 + events[0] * 10 + events[1] + st + accepted + int_of(peer[0]) + int_of(peer[1]) + int_of(peer[2]);
+                                                    conn_close(served);
+                                                }
+                                                Accepted::Again => {
+                                                    code = 1;
+                                                }
+                                                Accepted::Failed(e) => {
+                                                    code = 2;
+                                                }
+                                            }
+                                        }
+                                        conn_close(client);
+                                    }
+                                    Dialed::Failed(e) => {
+                                        code = 3;
+                                    }
+                                }
+                            }
+                        }
+                        poller_close(poller);
+                    }
+                    Polling::Failed(e) => {
+                        code = 4;
+                    }
+                }
+                listener_close(listener);
+            }
+            Listening::Failed(e) => {
+                code = 5;
+            }
+        }
+    }
+    release(net);
+    return code;
+}

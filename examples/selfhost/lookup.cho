@@ -87,3 +87,27 @@ pub fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
     }
     return false;
 }
+
+// Is the expression free of calls, so that it may be written later than where it stands without a difference a
+// program could see? Literals, names, fields and variants of those.
+pub fn pure[&s](st: &!s [int], id: int) -> [] bool {
+    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EFloat) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::EStr) {
+        return true;
+    }
+    if ast.is_kind(st, id, kinds.NK::EField) {
+        return pure(st, ast.get(st, id, 4));
+    }
+    if ast.is_kind(st, id, kinds.NK::EVariant) {
+        var arg = ast.get(st, id, 7);
+        var left = ast.get(st, id, 8);
+        while left > 0 {
+            if !pure(st, arg) {
+                return false;
+            }
+            arg = ast.next(st, arg);
+            left = left - 1;
+        }
+        return true;
+    }
+    return false;
+}
