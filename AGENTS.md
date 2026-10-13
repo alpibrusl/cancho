@@ -591,10 +591,195 @@ when a
 
 ---
 
+### 7.1 `Option`, `Result`, loops and text: what a program that returns an error needs
+
+Four facts a model gets wrong when it brings habits from another language.
+Each is a checked block, so none of this can go stale.
+
+**`Option` and `Result` are enums you import, and you build a value with
+its variant, qualified by the module.** There are no `ok()`, `err()` or
+`some()` functions. The type is written with the module too:
+
+```cancho
+import std.option;
+import std.result;
+
+fn halve(n: int) -> [] result.Result[int, &static [byte]] {
+    if n < 0 {
+        return result.Result::Err("negative");
+    }
+    return result.Result::Ok(n / 2);
+}
+
+fn first_over(a: int, b: int, limit: int) -> [] option.Option[int] {
+    if a > limit {
+        return option.Option::Some(a);
+    }
+    if b > limit {
+        return option.Option::Some(b);
+    }
+    return option.Option::None;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args); release(io); release(heap);
+    return 0;
+}
+```
+
+You take a value apart with `match`, and **every arm returns or assigns**:
+
+```cancho
+import std.option;
+import std.result;
+
+fn halve(n: int) -> [] result.Result[int, &static [byte]] {
+    if n < 0 {
+        return result.Result::Err("negative");
+    }
+    return result.Result::Ok(n / 2);
+}
+
+fn halved_or_zero(n: int) -> [] int {
+    match halve(n) {
+        result.Result::Ok(v) => { return v; }
+        result.Result::Err(_) => { return 0; }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args); release(io); release(heap);
+    return halved_or_zero(10) - 5;
+}
+```
+
+The helper-function spelling is refused, with the rule that says the name
+is not a function:
+
+```cancho-refused
+//~ RULE not-a-function
+import std.result;
+
+fn halve(n: int) -> [] result.Result[int, &static [byte]] {
+    return result.ok(n / 2);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args); release(io); release(heap);
+    return 0;
+}
+```
+
+**There is no `break` and no `continue`.** Put the stop in the loop's
+condition, with a flag:
+
+```cancho
+fn index_of[&r](s: &r [byte], c: int) -> [] int {
+    var i = 0;
+    var found = 0 - 1;
+    while i < len(s) && found < 0 {
+        if int_of(s[i]) == c {
+            found = i;
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args); release(io); release(heap);
+    return index_of("abc", 98) - 1;
+}
+```
+
+```cancho-refused
+//~ RULE unknown-name
+fn first_space[&r](s: &r [byte]) -> [] int {
+    var i = 0;
+    while i < len(s) {
+        if int_of(s[i]) == 32 {
+            break;
+        }
+        i = i + 1;
+    }
+    return i;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args); release(io); release(heap);
+    return 0;
+}
+```
+
+**There is no string type: text is bytes, and a `byte` is not an `int`.**
+`&r [byte]` is a string you read (`len(s)`, `s[i]`); a `Buffer` is text you
+build, and it is a resource, so you return it or drop it. Compare an
+element with `int_of`, and build with `append`, `push` and `push_nat`:
+
+```cancho
+import std.buffer;
+
+fn is_digit(c: int) -> [] bool {
+    return c >= 48 && c <= 57;
+}
+
+fn digits_then_unit[&h, &r](heap: &!h Heap, s: &r [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 16);
+    var i = 0;
+    var n = 0;
+    while i < len(s) && is_digit(int_of(s[i])) {
+        n = n * 10 + (int_of(s[i]) - 48);
+        i = i + 1;
+    }
+    out = buffer.append(heap, out, "n=");
+    out = buffer.push_nat(heap, out, n);
+    out = buffer.push(heap, out, byte_of(10));
+    return out;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args); release(io);
+    var shown = 0;
+    borrow mut heap as &!h in {
+        let text = digits_then_unit(h, "42s");
+        // Read it in a borrow that ends before the drop.
+        borrow text as &t in {
+            shown = buffer.size(t);
+        }
+        buffer.drop(h, text);
+    }
+    release(heap);
+    return shown - 5;
+}
+```
+
+A byte compared with an integer literal is the refusal a model meets first:
+
+```cancho-refused
+//~ RULE type-mismatch
+fn is_zero[&r](s: &r [byte]) -> [] bool {
+    return s[0] == 48;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args); release(io); release(heap);
+    return 0;
+}
+```
+
+---
+
 ## 8. What this language does not have
 
 Saying these plainly saves a cycle: no borrow checker (regions instead),
-no traits, no closures or function values, no `comptime` beyond
+no traits, no closures or function values, no `break` or `continue`, no string type (§7.1), no `comptime` beyond
 `static` and constant folding, no async, no generics over effects, no
 warnings — a diagnostic is a refusal.
 
