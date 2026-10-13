@@ -10,7 +10,7 @@ local modules `ecdh` and `bigmod` beside a copy of
 run against the evidence `conformance/ecdh.rs` and
 `scripts/ecdh_differential.py` use: Wycheproof's P-256 and P-384 cases,
 NIST's KAS validity cases, the scalar's edges and the refusals, modular
-powers at moduli a multiple of 30 bits long against Python's `pow`, then
+powers at moduli a multiple of 30 or 64 bits long against Python's `pow`, then
 100 random key pairs a curve against OpenSSL. A mutant is
 killed when any of them disagrees. The unmutated files are run first and
 must pass. Exit status 1 if a mutant survives or fails to build.
@@ -104,12 +104,16 @@ def evidence():
 
 def powers():
     """a^e mod n at moduli of 30 to 330 bits, each a multiple of 30 and
-    near its top, where the reduction's carry limb is reached."""
+    near its top, where the 30-bit limbs' reduction reached its carry limb;
+    then of 64 to 576 bits, each a multiple of 64, where the 64-bit limbs'
+    does (docs/wide-multiply.md §11), and the top limb's top bit is set."""
     rng = random.Random(30)
     cases, wants = [], []
-    for limbs in range(1, 12):
-        bits = 30 * limbs
+    widths = [30 * limbs for limbs in range(1, 12)] + [64 * limbs for limbs in range(1, 10)]
+    for bits in widths:
         size = (bits + 7) // 8
+        if bits == 64:
+            rng = random.Random(64)
         for _ in range(20):
             n = rng.randrange(2 ** (bits - 1), 2 ** bits) | 1 | (2 ** bits - 2 ** (bits - 8))
             a, e = rng.randrange(n), rng.randrange(1, 2 ** 64)
