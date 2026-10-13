@@ -225,6 +225,45 @@ const GENERICS: &[&str] = &[
     "enum Opt[T] { Nothing, Just(T) }\nfn run() -> [] int { let a: Opt[int] = Opt::Just(9223372036854775807); match a { Opt::Just(v) => { return v + 1; } Opt::Nothing => { return 0; } } }",
 ];
 
+/// Floating point: arithmetic, comparisons (NaN, infinity, minus zero), the conversions and the bit casts, `f32`,
+/// floats in structs, slices, statics and payloads.
+const FLOATS: &[&str] = &[
+    "edition 6;\nfn run() -> [] int { let x = 1.5 + 2.25 * 4.0; return truncate(x * 10.0); }",
+    "edition 6;\nfn run() -> [] int { let a = float_of(7); let b = float_of(2); return truncate(a / b * 100.0); }",
+    "edition 6;\nfn run() -> [] int { let n = 0.0 / 0.0; var k = 0; if is_nan(n) { k = k + 1; } if n == n { k = k + 10; } if n != n { k = k + 100; } return k; }",
+    "edition 6;\nfn run() -> [] int { let inf = 1.0 / 0.0; var k = 0; if inf > 1.0e308 { k = k + 1; } if -inf < -1.0e308 { k = k + 2; } if inf >= inf { k = k + 4; } return k; }",
+    "edition 6;\nfn run() -> [] int { var k = 0; if -0.0 == 0.0 { k = k + 1; } if bits_of(-0.0) < 0 { k = k + 2; } if bits_of(0.0) == 0 { k = k + 4; } return k; }",
+    "edition 6;\nfn run() -> [] int { return truncate(-2.7) + 10; }",
+    "edition 6;\nfn run() -> [] int { return truncate(1.0e30); }",
+    "edition 6;\nfn run() -> [] int { return truncate(0.0 / 0.0); }",
+    "edition 6;\nfn run() -> [] int { return truncate(-9223372036854775808.0); }",
+    "edition 6;\nfn run() -> [] int { return truncate(9223372036854774784.0) % 100; }",
+    "edition 6;\nfn half(x: float) -> [] float { return x / 2.0; }
+fn run() -> [] int { var x = 100.0; var i = 0; while i < 3 { x = half(x); i = i + 1; } return truncate(x * 8.0); }",
+    "edition 6;\nstruct V { x: float, y: float }
+fn dot(a: V, b: V) -> [] float { return a.x * b.x + a.y * b.y; }
+fn run() -> [] int { return truncate(dot(V { x: 1.5, y: 2.0 }, V { x: 4.0, y: 0.25 }) * 4.0); }",
+    "edition 6;\nfn run() -> [] int { region a { var t = alloc_slice[a](4, 0.5); t[1] = 2.5; t[2] = t[0] + t[1]; var s = 0.0; var i = 0; while i < len(t) { s = s + t[i]; i = i + 1; } return truncate(s * 10.0); } }",
+    "edition 6;\nstatic table: [float] {
+    let t = alloc_slice[static](4, 1.0);
+    t[1] = 0.5;
+    t[2] = t[1] / 4.0;
+    return t;
+}
+fn run() -> [] int { return truncate((table[0] + table[1] + table[2]) * 16.0); }",
+    "edition 6;\nfn run() -> [] int { let x = 16777217; let f = f32_of_int(x); return int_of_f32(f); }",
+    "edition 6;\nfn run() -> [] int { let f = f32_of(0.1); let d = float_of32(f); if d == 0.1 { return 1; } return truncate(d * 1000.0); }",
+    "edition 6;\nfn run() -> [] int { let f = f32_of_bits(1069547520); return int_of_f32(sqrt32(f * 4.0f32) * 10.0f32); }",
+    "edition 6;\nfn run() -> [] int { return int_of_f32(1.5f32 + 2.25f32 * 4.0f32); }",
+    "edition 7;\nfn run() -> [] int { var k = 0; if bits_of32(f32_of_bits(2143289345)) == 2143289344 { k = k + 1; } if bits_of32(1.0f32) == 1065353216 { k = k + 2; } if bits_of(float_of_bits(9218868437227405313)) == 9221120237041090560 { k = k + 4; } return k; }",
+    "edition 6;\nfn run() -> [] int { return truncate(sqrt(2.0) * 1000.0) % 256; }",
+    "edition 6;\nfn big() -> [] float { return 1.0e308; }
+fn run() -> [] int { let x = big() * 10.0; if x > big() { return 7; } return 3; }",
+    "edition 6;\nfn run() -> [] int { var s = 0.0; var i = 1; while i <= 10 { s = s + 1.0 / float_of(i); i = i + 1; } return truncate(s * 1000.0) % 256; }",
+    "edition 6;\nfn pick(flag: bool, a: float, b: float) -> [] float { if flag { return a; } return b; }
+fn run() -> [] int { return truncate(pick(true, 3.5, 1.0) + pick(false, 3.5, 1.0)); }",
+];
+
 /// Programs with a `main` of their own, which the cancho compiler calls as the C `main` does.
 const WITH_MAIN: &[&str] = &[
     "fn finish(w: World) -> [] int { release(w); return 3; }\nfn main(world: World) -> [] int { return finish(world); }",
@@ -481,6 +520,64 @@ const ARENAS: &[&str] = &[
     "fn run() -> [] int { let big = 9223372036854775807; let t = (big, 1); return t.0 + t.1; }",
 ];
 
+/// Decimal literals that are hard to round: halfway cases, the edges of the subnormals and of the largest
+/// number, long digit strings, and underscores.
+const DOUBLE_LITERALS: &[&str] = &[
+    "0.1",
+    "0.3",
+    "1.0",
+    "2.5e-3",
+    "1e23",
+    "8.5e-5",
+    "5e-324",
+    "1e-323",
+    "2.4703282292062327e-324",
+    "2.4703282292062328e-324",
+    "2.2250738585072014e-308",
+    "2.2250738585072011e-308",
+    "1.7976931348623157e308",
+    "123456789012345678901234567890e-20",
+    "9007199254740993.0",
+    "9007199254740992.5",
+    "9007199254740993.000000000000000000001",
+    "1_000.5",
+    "0.000001",
+    "4.35",
+    "6.02214076e23",
+    "299792458.0",
+    "3.141592653589793238462643383279",
+    "0.30000000000000004",
+    "1e22",
+    "1e-22",
+    "7.0e-10",
+    "123456789.123456789e-5",
+    "1.5e300",
+    "0.0",
+    "100000000000000000000000.0",
+    "5.551115123125783e-17",
+];
+
+/// The same for `f32`, which rounds once, from the decimal.
+const SINGLE_LITERALS: &[&str] = &[
+    "0.1f32",
+    "0.3f32",
+    "1.0f32",
+    "16777217.0f32",
+    "16777219.0f32",
+    "1.17549435e-38f32",
+    "1.4e-45f32",
+    "7.0e-46f32",
+    "7.1e-46f32",
+    "3.4028235e38f32",
+    "3.4028234e38f32",
+    "1e-5f32",
+    "123456.79f32",
+    "1.0000000596046447753906251f32",
+    "1_0.5f32",
+    "0.0f32",
+    "8.5e-5f32",
+];
+
 #[test]
 fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     let compiler = build("compile", &with_front_end("compile.cho"));
@@ -495,8 +592,32 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     for program in WITH_MAIN.iter().chain(OUTPUT).chain(STRINGS).chain(OWN_MAIN) {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
     }
-    for program in STRUCTS.iter().chain(ENUMS).chain(GENERICS).chain(ARENAS) {
+    for program in STRUCTS.iter().chain(ENUMS).chain(GENERICS).chain(FLOATS).chain(ARENAS) {
         jobs.push((with_main(program), with_main(program)));
+    }
+    for text in DOUBLE_LITERALS {
+        let bits = text.replace('_', "").parse::<f64>().expect("a double").to_bits() as i64;
+        let program = format!(
+            "fn run() -> [] int {{ if bits_of({text}) == {bits} {{ return 0; }} return 1; }}"
+        );
+        jobs.push((with_main(&program), with_main(&program)));
+        let negative = format!(
+            "fn run() -> [] int {{ if bits_of(-{text}) == {} {{ return 0; }} return 1; }}",
+            (-text.replace('_', "").parse::<f64>().expect("a double")).to_bits() as i64
+        );
+        jobs.push((with_main(&negative), with_main(&negative)));
+    }
+    for text in SINGLE_LITERALS {
+        let bits = text
+            .trim_end_matches("f32")
+            .replace('_', "")
+            .parse::<f32>()
+            .expect("a single")
+            .to_bits();
+        let program = format!(
+            "edition 6;\nfn run() -> [] int {{ if bits_of32({text}) == {bits} {{ return 0; }} return 1; }}"
+        );
+        jobs.push((with_main(&program), with_main(&program)));
     }
     let numbered: Vec<(usize, &(String, String))> = jobs.iter().enumerate().collect();
     let results = in_parallel(&numbered, |(index, (rust_text, cancho_text))| {

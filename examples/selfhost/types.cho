@@ -372,7 +372,7 @@ pub fn node_type[&s](st: &!s [int], node: int, ctx: int) -> [] int {
         let arg = ast.get(st, node, 6);
         if ast.is_kind(st, arg, kinds.NK::TSlice) {
             let element = node_type(st, ast.get(st, arg, 6), ctx);
-            if element == 1 || element == 2 || element == 5 {
+            if is_plain(element) {
                 return make_boxslice(st, element);
             }
             return 0;
@@ -481,6 +481,11 @@ pub fn is_penum[&s](st: &!s [int], ty: int) -> [] bool {
 }
 
 // A prelude type that is nothing in the code: a capability, the `World`, a `Split`.
+// A scalar the code has a representation for: `int`, `byte`, `float`, `f32` and `bool`.
+pub fn is_plain(t: int) -> [] bool {
+    return t >= 1 && t <= 5;
+}
+
 pub fn is_erased[&s](st: &!s [int], ty: int) -> [] bool {
     if is_tuple(st, ty) {
         var k = 0;

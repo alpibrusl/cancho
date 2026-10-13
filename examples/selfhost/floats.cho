@@ -1,0 +1,364 @@
+module selfhost.floats;
+
+// floats.cho -- the value of a floating-point literal, to the last bit.
+//
+// The Rust compiler reads a literal with `f64::from_str` (or `f32::from_str` for one with the `f32` suffix),
+// which rounds the decimal once, to nearest, ties to even. The code here does the same with whole numbers only:
+// the digits as a big number, scaled by a power of ten (a power of five and a shift), cut to the width of the
+// type with the bits that were lost kept as a rounding bit and a "sticky" one. The answer is the bits of the
+// `double` the literal is, or of the `double` an `f32` literal widens to, which is how the code writes either.
+//
+// The big numbers are little-endian runs of 30-bit limbs in a scratch region of the state (`ast.float_room`),
+// 64 limbs and their count.
+
+import selfhost.ast;
+import selfhost.lexcore as lc;
+
+fn room[&s](st: &!s [int]) -> [] int {
+    return st[62] + ast.const_region() + 16 + 4096 + 65536;
+}
+
+fn limbs() -> [] int {
+    return 64;
+}
+
+fn mask() -> [] int {
+    return 1073741823;
+}
+
+// How many limbs the number has (the count is kept past the limbs).
+fn count[&s](st: &!s [int], b: int) -> [] int {
+    return st[b + limbs()];
+}
+
+fn set_count[&s](st: &!s [int], b: int, n: int) -> [] int {
+    st[b + limbs()] = n;
+    return 0;
+}
+
+fn trim[&s](st: &!s [int], b: int) -> [] int {
+    var n = count(st, b);
+    while n > 0 && st[b + n - 1] == 0 {
+        n = n - 1;
+    }
+    return set_count(st, b, n);
+}
+
+fn big_set[&s](st: &!s [int], b: int, v: int) -> [] int {
+    var i = 0;
+    while i < limbs() {
+        st[b + i] = 0;
+        i = i + 1;
+    }
+    st[b] = v;
+    set_count(st, b, 1);
+    return trim(st, b);
+}
+
+// Multiply by `m` (less than 2^32) and add `a`; false if there is no room.
+fn mul_add[&s](st: &!s [int], b: int, m: int, a: int) -> [] bool {
+    var carry = a;
+    var i = 0;
+    while i < count(st, b) {
+        let product = st[b + i] * m + carry;
+        st[b + i] = product & mask();
+        carry = product >> 30;
+        i = i + 1;
+    }
+    while carry > 0 {
+        if i >= limbs() {
+            return false;
+        }
+        st[b + i] = carry & mask();
+        carry = carry >> 30;
+        i = i + 1;
+        set_count(st, b, i);
+    }
+    return true;
+}
+
+// Divide by `d` (less than 2^32); the remainder.
+fn div_small[&s](st: &!s [int], b: int, d: int) -> [] int {
+    var rest = 0;
+    var i = count(st, b);
+    while i > 0 {
+        i = i - 1;
+        let value = rest * 1073741824 + st[b + i];
+        st[b + i] = value / d;
+        rest = value % d;
+    }
+    trim(st, b);
+    return rest;
+}
+
+// Shift left by `bits`; false if there is no room.
+fn shift_left[&s](st: &!s [int], b: int, bits: int) -> [] bool {
+    let whole = bits / 30;
+    let part = bits % 30;
+    let n = count(st, b);
+    if n == 0 {
+        return true;
+    }
+    if n + whole + 1 > limbs() {
+        return false;
+    }
+    var i = n + whole;
+    while i >= 0 {
+        var low = 0;
+        var high = 0;
+        if i - whole < n && i - whole >= 0 {
+            low = st[b + i - whole];
+        }
+        if i - whole - 1 < n && i - whole - 1 >= 0 {
+            high = st[b + i - whole - 1];
+        }
+        st[b + i] = low << part & mask() | high >> 30 - part;
+        i = i - 1;
+    }
+    set_count(st, b, n + whole + 1);
+    trim(st, b);
+    return true;
+}
+
+fn bit_length[&s](st: &!s [int], b: int) -> [] int {
+    let n = count(st, b);
+    if n == 0 {
+        return 0;
+    }
+    var top = st[b + n - 1];
+    var length = 0;
+    while top > 0 {
+        length = length + 1;
+        top = top >> 1;
+    }
+    return (n - 1) * 30 + length;
+}
+
+fn bit_at[&s](st: &!s [int], b: int, i: int) -> [] int {
+    if i < 0 || i / 30 >= count(st, b) {
+        return 0;
+    }
+    return st[b + i / 30] >> i % 30 & 1;
+}
+
+// Is any bit below `i` set?
+fn any_below[&s](st: &!s [int], b: int, i: int) -> [] bool {
+    var k = 0;
+    while k * 30 < i && k < count(st, b) {
+        var limb = st[b + k];
+        if (k + 1) * 30 > i {
+            limb = limb & (1 << i - k * 30) - 1;
+        }
+        if limb != 0 {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// The bits from `low` up, at most 55 of them, as a whole number.
+fn extract[&s](st: &!s [int], b: int, low: int, width: int) -> [] int {
+    var value = 0;
+    var i = 0;
+    while i < width {
+        value = value | bit_at(st, b, low + i) << i;
+        i = i + 1;
+    }
+    return value;
+}
+
+// 5^k as a multiplier, for k up to 13.
+fn five_to(k: int) -> [] int {
+    var out = 1;
+    var i = 0;
+    while i < k {
+        out = out * 5;
+        i = i + 1;
+    }
+    return out;
+}
+
+// The bits of the double that is `m * 2^u` exactly, `m` at most 2^53; -1 if it is too large to be finite.
+fn compose(m: int, u: int, negative: bool) -> [] int {
+    var sign = 0;
+    if negative {
+        sign = 1 << 63;
+    }
+    if m == 0 {
+        return sign;
+    }
+    var length = 0;
+    var rest = m;
+    while rest > 0 {
+        length = length + 1;
+        rest = rest >> 1;
+    }
+    if length > 53 {
+        // Rounded up to a power of two just past the width.
+        return compose(m >> 1, u + 1, negative);
+    }
+    let top = length - 1 + u;
+    if top > 1023 {
+        return 0 - 1;
+    }
+    if top >= 0 - 1022 {
+        let field = m << 53 - length & 4503599627370495;
+        return sign | top + 1023 << 52 | field;
+    }
+    return sign | m << u + 1074;
+}
+
+// The value of the literal written at `from` to `to` of the text (a sign may come first, and the suffix
+// `f32` last), as the bits of a double; `ok` says whether there is an answer (false for an infinite literal,
+// more digits than the room holds, or a form this does not read).
+pub fn literal_bits[&s, &x](st: &!s [int], text: &x [byte], from: int, to: int, single: bool) -> [] int {
+    let b = room(st);
+    st[b + limbs() + 1] = 0;
+    big_set(st, b, 0);
+    var negative = false;
+    var j = from;
+    while j < to && !lc.is_digit(lc.at(text, j)) {
+        if lc.at(text, j) == '-' {
+            negative = true;
+        }
+        j = j + 1;
+    }
+    var significant = 0;
+    var fraction = 0;
+    var seen_dot = false;
+    var room_left = true;
+    while j < to && (lc.is_digit(lc.at(text, j)) || lc.at(text, j) == '_' || lc.at(text, j) == '.') {
+        let c = lc.at(text, j);
+        if c == '.' {
+            seen_dot = true;
+        } else if c != '_' {
+            let digit = c - 48;
+            if significant > 0 || digit > 0 {
+                significant = significant + 1;
+            }
+            if significant > 120 {
+                return 0;
+            }
+            room_left = room_left && mul_add(st, b, 10, digit);
+            if seen_dot {
+                fraction = fraction + 1;
+            }
+        }
+        j = j + 1;
+    }
+    var exponent = 0;
+    if j < to && (lc.at(text, j) == 'e' || lc.at(text, j) == 'E') {
+        j = j + 1;
+        var down = false;
+        if lc.at(text, j) == '-' {
+            down = true;
+            j = j + 1;
+        } else if lc.at(text, j) == '+' {
+            j = j + 1;
+        }
+        while j < to && (lc.is_digit(lc.at(text, j)) || lc.at(text, j) == '_') {
+            if lc.at(text, j) != '_' && exponent < 100000 {
+                exponent = exponent * 10 + lc.at(text, j) - 48;
+            }
+            j = j + 1;
+        }
+        if down {
+            exponent = 0 - exponent;
+        }
+    }
+    if !room_left {
+        return 0;
+    }
+    var sign = 0;
+    if negative {
+        sign = 1 << 63;
+    }
+    if count(st, b) == 0 {
+        st[b + limbs() + 1] = 1;
+        return sign;
+    }
+    let e10 = exponent - fraction;
+    if e10 + significant > 310 {
+        return 0;
+    }
+    if e10 + significant < 0 - 330 {
+        st[b + limbs() + 1] = 1;
+        return sign;
+    }
+    var precision = 53;
+    var emin = 0 - 1022;
+    if single {
+        precision = 24;
+        emin = 0 - 126;
+    }
+    var sticky = false;
+    var unit = 0;
+    if e10 >= 0 {
+        var left = e10;
+        while left > 0 && room_left {
+            var step = 13;
+            if left < 13 {
+                step = left;
+            }
+            room_left = mul_add(st, b, five_to(step), 0);
+            left = left - step;
+        }
+        unit = e10;
+    } else {
+        let m = 0 - e10;
+        let wanted = m * 2322 / 1000 + 1 + precision + 2;
+        var shift = wanted - bit_length(st, b);
+        if shift < 0 {
+            shift = 0;
+        }
+        room_left = shift_left(st, b, shift);
+        var left = m;
+        while left > 0 && room_left {
+            var step = 13;
+            if left < 13 {
+                step = left;
+            }
+            if div_small(st, b, five_to(step)) != 0 {
+                sticky = true;
+            }
+            left = left - step;
+        }
+        unit = 0 - m - shift;
+    }
+    if !room_left {
+        return 0;
+    }
+    let length = bit_length(st, b);
+    let top = length - 1 + unit;
+    var keep = precision;
+    if top < emin {
+        keep = precision - (emin - top);
+    }
+    var m = 0;
+    var drop = length - keep;
+    if drop <= 0 {
+        m = extract(st, b, 0, length);
+        drop = 0;
+    } else {
+        if keep > 0 {
+            m = extract(st, b, drop, keep);
+        }
+        let round = bit_at(st, b, drop - 1);
+        let lower = sticky || any_below(st, b, drop - 1);
+        if round == 1 && (lower || m & 1 == 1) {
+            m = m + 1;
+        }
+    }
+    let bits = compose(m, unit + drop, negative);
+    if bits == 0 - 1 {
+        return 0;
+    }
+    st[b + limbs() + 1] = 1;
+    return bits;
+}
+
+// Did the last `literal_bits` have an answer?
+pub fn literal_ok[&s](st: &!s [int]) -> [] bool {
+    return st[room(st) + limbs() + 1] == 1;
+}

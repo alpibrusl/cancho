@@ -316,6 +316,8 @@ fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "runtime.cho",
         "consteval.cho",
         "instances.cho",
+        "floats.cho",
+        "floatcode.cho",
     ]
 }
 

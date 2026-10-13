@@ -137,6 +137,12 @@ pub fn label[&s](st: &!s [int]) -> [] int {
 // ------------------------------------------------------------------ types, operands ---
 
 pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
+    if ty == 3 {
+        return str(st, "double");
+    }
+    if ty == 4 {
+        return str(st, "float");
+    }
     if ty == 5 {
         return str(st, "i1");
     }
@@ -378,19 +384,39 @@ pub fn operand[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) ->
             }
             return str(st, "false");
         }
+        if ty == 3 || ty == 4 {
+            // The bits of the double, which an `f32` constant is widened to.
+            return hex64(st, value);
+        }
         return int(st, value);
     }
     str(st, "%t");
     return nat(st, reg);
 }
 
-fn temp[&s](st: &!s [int], n: int) -> [] int {
+// `0x` and sixteen hexadecimal digits: how LLVM spells a floating-point constant exactly.
+pub fn hex64[&s](st: &!s [int], value: int) -> [] int {
+    str(st, "0x");
+    var k = 15;
+    while k >= 0 {
+        let nibble = value >> 4 * k & 15;
+        if nibble < 10 {
+            put(st, 48 + nibble);
+        } else {
+            put(st, 55 + nibble);
+        }
+        k = k - 1;
+    }
+    return 0;
+}
+
+pub fn temp[&s](st: &!s [int], n: int) -> [] int {
     str(st, "%t");
     return nat(st, n);
 }
 
 // `  %t<n> = ` for a new temporary, which is answered.
-fn start[&s](st: &!s [int]) -> [] int {
+pub fn start[&s](st: &!s [int]) -> [] int {
     let n = fresh(st);
     str(st, "  ");
     temp(st, n);
@@ -480,7 +506,7 @@ pub fn store_dummy_pointer[&s](st: &!s [int], into: int) -> [] int {
 // -------------------------------------------------------------------------- traps ---
 
 // Trap if the `i1` temporary `flag` is set, and go on in a new block otherwise.
-fn trap_if[&s](st: &!s [int], flag: int) -> [] int {
+pub fn trap_if[&s](st: &!s [int], flag: int) -> [] int {
     let n = label(st);
     str(st, "  br i1 ");
     temp(st, flag);

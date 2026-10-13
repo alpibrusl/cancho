@@ -25,7 +25,7 @@ pub fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to:
     if emit.on(st) {
         if types.is_erased(st, ty) {
             // nothing to keep
-        } else if ty != 1 && ty != 2 && ty != 5 && !types.is_ref(st, ty) && !aggregate_codable(st, ty) {
+        } else if !types.is_plain(ty) && !types.is_ref(st, ty) && !aggregate_codable(st, ty) {
             return ast.fail(st, rules.r_skip(), from, to);
         } else if types.is_slice_ref(st, ty) {
             emit.alloca_slice(st, st[39]);
@@ -216,7 +216,7 @@ fn node_codable[&s](st: &!s [int], node: int, ctx: int, depth: int) -> [] bool {
     if t == 0 {
         return false;
     }
-    if t == 1 || t == 2 || t == 5 {
+    if types.is_plain(t) {
         return true;
     }
     if types.is_boxslice(st, t) || types.is_box(st, t) || types.is_handle(st, t) || types.is_penum(st, t) {
@@ -305,7 +305,7 @@ pub fn slice_codable[&s](st: &!s [int], ty: int) -> [] bool {
         return false;
     }
     let e = types.element_of(st, ty);
-    return e == 1 || e == 2 || e == 5;
+    return types.is_plain(e);
 }
 
 // A value of this type has code: a struct or an enum of scalars, one aggregate in the code.
@@ -317,7 +317,7 @@ pub fn tuple_codable[&s](st: &!s [int], ty: int) -> [] bool {
     var k = 0;
     while k < types.tuple_size(st, ty) {
         let p = types.tuple_part(st, ty, k);
-        if p != 1 && p != 2 && p != 5 && !aggregate_codable(st, p) {
+        if !types.is_plain(p) && !aggregate_codable(st, p) {
             return false;
         }
         k = k + 1;
@@ -355,7 +355,7 @@ pub fn aggregate_codable[&s](st: &!s [int], ty: int) -> [] bool {
     }
     if types.is_boxslice(st, ty) {
         let e = types.boxslice_element(st, ty);
-        return e == 1 || e == 2 || e == 5;
+        return types.is_plain(e);
     }
     if types.is_box(st, ty) {
         return true;
