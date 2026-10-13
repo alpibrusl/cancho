@@ -307,6 +307,31 @@ const DEFERS: &[&str] = &[
     "res struct T { fd: int }\nfn open(n: int) -> [] T { return T { fd: n }; }\nfn close(t: T) -> [] int { let T { fd } = t; return fd; }\nfn take(flag: bool) -> [] int {\n    let t = open(7);\n    defer close(t);\n    if flag { return 2; }\n    return 4;\n}\nfn run() -> [] int { return take(true) * 10 + take(false); }",
 ];
 
+/// Words: `load_le64`, `byte_mask64`, the bit counts, `mul_wide`, `add_carry`, `sub_borrow`, `value_barrier`,
+/// `copy_within` and `trap`, with the traps their bounds make.
+const WORDS: &[&str] = &[
+    "edition 9;\nfn run() -> [] int { region a { let t = alloc_slice[a](16, byte_of(0)); t[3] = byte_of(1); t[9] = byte_of(255); return load_le64(t, 0) % 1000 + load_le64(t, 8) % 997; } }",
+    "edition 9;\nfn run() -> [] int { region a { let t = alloc_slice[a](8, byte_of(0)); return load_le64(t, 1); } }",
+    "edition 9;\nfn run() -> [] int { region a { let t = alloc_slice[a](128, byte_of(5)); t[3] = byte_of(9); t[64] = byte_of(9); t[100] = byte_of(9); let m = byte_mask64(t, 0, byte_of(9)); let n = byte_mask64(t, 64, byte_of(9)); return popcount(m) * 100 + trailing_zeros(m) * 10 + popcount(n) + leading_zeros(n) % 7; } }",
+    "edition 9;\nfn run() -> [] int { region a { let t = alloc_slice[a](63, byte_of(5)); return byte_mask64(t, 0, byte_of(5)); } }",
+    "edition 9;\nfn run() -> [] int { return trailing_zeros(0) + leading_zeros(0) + popcount(-1) + trailing_zeros(48) + leading_zeros(1); }",
+    "edition 9;\nfn run() -> [] int { let (h, l) = mul_wide(-1, -1); let (h2, l2) = mul_wide(1000003, 99991); return h % 100 + l % 100 + h2 + l2 % 1000; }",
+    "edition 9;\nfn run() -> [] int { let (s, c) = add_carry(-1, 1, 0); let (s2, c2) = add_carry(-1, -1, 1); let (d, b) = sub_borrow(0, 1, 0); let (d2, b2) = sub_borrow(5, 3, 1); return c * 1000 + c2 * 100 + b * 10 + b2 + s % 7 + s2 % 11 + d % 13 + d2; }",
+    "edition 9;\nfn run() -> [] int { return value_barrier(42) + value_barrier((3 ^ 5) - 1 >> 63); }",
+    "edition 9;\nfn run() -> [] int { region a { let t = alloc_slice[a](10, byte_of(0)); var i = 0; while i < 10 { t[i] = byte_of(i + 1); i = i + 1; } copy_within(t, 2, 0, 5); copy_within(t, 0, 3, 7); return int_of(t[0]) * 1000 + int_of(t[4]) * 100 + int_of(t[9]); } }",
+    "edition 9;\nfn run() -> [] int { region a { let t = alloc_slice[a](10, byte_of(0)); copy_within(t, 6, 0, 5); return 0; } }",
+    "edition 9;\nfn run() -> [] int { if 1 < 2 { trap(); } return 3; }",
+];
+
+/// A run of bytes held in a struct, an enum and a tuple, and taken out again.
+const HELD: &[&str] = &[
+    "struct W { text: &static [byte], n: int }\nfn run() -> [] int { let w = W { text: \"hello\", n: 3 }; return len(w.text) * 10 + w.n + int_of(w.text[1]) % 10; }",
+    "enum Tok { Word(&static [byte]), Num(int), End }\nfn size(t: Tok) -> [] int { match t { Tok::Word(s) => { return len(s) + int_of(s[0]) % 5; } Tok::Num(n) => { return n; } Tok::End => { return 0 - 1; } } }\nfn run() -> [] int { return size(Tok::Word(\"abcd\")) * 100 + size(Tok::Num(7)) + size(Tok::End); }",
+    "fn cut(t: &static [byte], k: int) -> [] (&static [byte], &static [byte]) { return (t[0..k], t[k..len(t)]); }\nfn run() -> [] int { let (a, b) = cut(\"abcdef\", 2); return len(a) * 10 + len(b) + int_of(b[0]) % 7; }",
+    "struct W { text: &static [byte], n: int }\nfn width[&r](w: &r W) -> [] int { return len(w.text) + w.n; }\nfn run() -> [] int { var w = W { text: \"abc\", n: 5 }; var out = 0; borrow w as &r in { out = width(r); } return out; }",
+    "struct W { text: &static [byte], n: int }\nfn run() -> [] int { let w = W { text: \"abc\", n: 5 }; let W { text, n } = w; return len(text) * 10 + n; }",
+];
+
 /// Programs with a `main` of their own, which the cancho compiler calls as the C `main` does.
 const WITH_MAIN: &[&str] = &[
     "fn finish(w: World) -> [] int { release(w); return 3; }\nfn main(world: World) -> [] int { return finish(world); }",
@@ -644,8 +669,15 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
     }
-    for program in
-        STRUCTS.iter().chain(ENUMS).chain(DEFERS).chain(GENERICS).chain(FLOATS).chain(ARENAS)
+    for program in STRUCTS
+        .iter()
+        .chain(ENUMS)
+        .chain(DEFERS)
+        .chain(WORDS)
+        .chain(HELD)
+        .chain(GENERICS)
+        .chain(FLOATS)
+        .chain(ARENAS)
     {
         jobs.push((with_main(program), with_main(program)));
     }
@@ -653,11 +685,21 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     // builds use names of their own, for they run at the same time.
     let probe = include_str!("dirs_probe.cho");
     jobs.push((probe.replace("NAME", "rust"), probe.replace("NAME", "cancho")));
-    // Programs of `tests/accept` that import nothing: what a block defers, run at each of its exits.
-    let defer =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/accept/defer.cho");
-    let program = std::fs::read_to_string(&defer).expect("a program of tests/accept");
-    jobs.push((program.clone(), program));
+    // Programs of `tests/accept` that import nothing: what a block defers, run at each of its exits; a struct that
+    // holds capabilities; capabilities forked.
+    for name in [
+        "defer",
+        "spawn_heap_in_struct",
+        "narrow_many_in_struct",
+        "fork_heap_workers",
+        "fork_clock_workers",
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/accept")
+            .join(format!("{name}.cho"));
+        let program = std::fs::read_to_string(&path).expect("a program of tests/accept");
+        jobs.push((program.clone(), program));
+    }
     for text in DOUBLE_LITERALS {
         let bits = text.replace('_', "").parse::<f64>().expect("a double").to_bits() as i64;
         let program = format!(

@@ -19,6 +19,8 @@ import selfhost.codes;
 import selfhost.threadcode;
 import selfhost.externcode;
 import selfhost.netcode;
+import selfhost.lookup;
+import selfhost.wordcode;
 import selfhost.instances;
 import selfhost.scope;
 import selfhost.prims;
@@ -61,6 +63,47 @@ pub fn in_slice(ty: int, reg: int, reg2: int, length: int) -> [] Ex {
 }
 
 // The operands of a value that has been computed, pushed as arguments of a call: a slice is two.
+// Put the value `v` in place `index` of the aggregate `whole` (the field or payload is of type `fty`): a run of bytes
+// goes in as its pointer and its length.
+pub fn put[&s](st: &!s [int], whole: int, acc: int, index: int, fty: int, v: Ex) -> [] int {
+    if types.is_slice_ref(st, fty) {
+        let packed = emit.pack_slice(st, v.reg, v.reg2 < 0, v.value, v.reg2);
+        return emit.insert_at(st, whole, acc, index, fty, false, 0, packed);
+    }
+    return emit.insert_at(st, whole, acc, index, fty, v.known, v.value, v.reg);
+}
+
+// What `packed`, the value a run of bytes is held as in an aggregate, is.
+pub fn unpacked[&s](st: &!s [int], ty: int, packed: int) -> [] Ex {
+    return in_slice(ty, emit.slice_part(st, packed, 0), emit.slice_part(st, packed, 1), 0);
+}
+
+// Place `index` of the aggregate `agg` in register `reg`, as a value.
+pub fn take[&s](st: &!s [int], agg: int, reg: int, index: int, fty: int) -> [] Ex {
+    let field = emit.extract_field(st, agg, reg, index);
+    if types.is_slice_ref(st, fty) {
+        return unpacked(st, fty, field);
+    }
+    return in_reg(fty, field);
+}
+
+// The value of type `fty` at `address`.
+pub fn take_through[&s](st: &!s [int], fty: int, address: int) -> [] Ex {
+    let loaded = emit.load_through(st, fty, address);
+    if types.is_slice_ref(st, fty) {
+        return unpacked(st, fty, loaded);
+    }
+    return in_reg(fty, loaded);
+}
+
+// Store `v` in the slot of the binding just declared.
+pub fn bind_value[&s](st: &!s [int], ty: int, v: Ex) -> [] int {
+    if types.is_slice_ref(st, ty) {
+        return emit.store_slice(st, st[39] - 1, v.reg, v.reg2 < 0, v.value, v.reg2);
+    }
+    return emit.store(st, ty, v.known, v.value, v.reg, st[39] - 1);
+}
+
 pub fn push_value[&s](st: &!s [int], a: Ex) -> [] int {
     if types.is_slice_ref(st, a.ty) {
         return emit.push_slice(st, a.reg, a.reg2 < 0, a.value, a.reg2);
@@ -79,7 +122,7 @@ pub fn skip[&s](st: &!s [int], from: int, to: int) -> [] Ex {
 pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
-    if emit.on(st) && !writes_code(st, id) {
+    if emit.on(st) && !lookup.writes_code(st, id) {
         return skip(st, from, to);
     }
     if ast.is_kind(st, id, kinds.NK::EInt) {
@@ -187,7 +230,7 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         ast.fail(st, rules.r_not_an_enum(), from, to);
         return nothing();
     }
-    let variant = variant_named(st, text, item, ast.get(st, id, 6));
+    let variant = lookup.variant_named(st, text, item, ast.get(st, id, 6));
     if variant < 0 {
         ast.fail(st, rules.r_unknown_name(), from, to);
         return nothing();
@@ -224,7 +267,7 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         if ast.ok(st) {
             scope.expect(st, text, scope.node_val(st, want, whole), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
             if emit.on(st) && ast.ok(st) {
-                acc = emit.insert_at(st, whole, acc, emit.payload_index(st, item, variant, k), scope.node_val(st, want, whole), v.known, v.value, v.reg);
+                acc = put(st, whole, acc, emit.payload_index(st, item, variant, k), scope.node_val(st, want, whole), v);
             }
         }
         arg = ast.next(st, arg);
@@ -267,6 +310,9 @@ pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: in
         if ast.ok(st) {
             scope.expect(st, text, scope.node_val(st, want, whole), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
             emit.push_arg(st, v.ty, v.known, v.value, v.reg);
+        }
+        if types.is_slice_ref(st, v.ty) {
+            return skip(st, from, to);
         }
         arg = ast.next(st, arg);
         want = ast.next(st, want);
@@ -608,24 +654,11 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
     return in_reg(boxed, emit.make_box(st, boxed, p, c.known, c.value, c.reg));
 }
 
-// The arm of the prelude enum `index` called like token `name`, as its number among all arms, or -1.
-pub fn prelude_arm_named[&s, &x](st: &!s [int], text: &x [byte], index: int, name: int) -> [] int {
-    let first = builtins.prelude_arm_first(index);
-    var k = 0;
-    while k < builtins.prelude_arm_count(index) {
-        if lc.spells(text, ast.tstart(st, name), ast.tend(st, name), builtins.arm_name(first + k)) {
-            return first + k;
-        }
-        k = k + 1;
-    }
-    return 0 - 1;
-}
-
 // `Spawned::Ok(child)`, `Stdio::Null`: a value of a prelude enum, each payload of the type the arm names.
 pub fn prelude_variant[&s, &x](st: &!s [int], text: &x [byte], id: int, index: int) -> [] Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
-    let arm = prelude_arm_named(st, text, index, ast.get(st, id, 6));
+    let arm = lookup.prelude_arm_named(st, text, index, ast.get(st, id, 6));
     if arm < 0 {
         ast.fail(st, rules.r_unknown_name(), from, to);
         return nothing();
@@ -703,10 +736,10 @@ pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if !scope.tuple_codable(st, whole) {
         return skip(st, from, to);
     }
-    var acc = emit.insert_at(st, whole, 0 - 1, 0, a.ty, a.known, a.value, a.reg);
-    acc = emit.insert_at(st, whole, acc, 1, b.ty, b.known, b.value, b.reg);
+    var acc = put(st, whole, 0 - 1, 0, a.ty, a);
+    acc = put(st, whole, acc, 1, b.ty, b);
     if n == 3 {
-        acc = emit.insert_at(st, whole, acc, 2, c.ty, c.known, c.value, c.reg);
+        acc = put(st, whole, acc, 2, c.ty, c);
     }
     return in_reg(whole, acc);
 }
@@ -739,9 +772,9 @@ pub fn tuple_field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] E
         if scope.is_res_type(st, pt) {
             return in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), pt), address);
         }
-        return in_reg(pt, emit.load_through(st, pt, address));
+        return take_through(st, pt, address);
     }
-    return in_reg(pt, emit.extract_field(st, held, b.reg, k));
+    return take(st, held, b.reg, k, pt);
 }
 
 // `alloc[a](v)`: a value stored in the arena `a`, a unique reference to it for as long as the block. The arena
@@ -769,30 +802,6 @@ pub fn alloc_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     let result = types.make_ref(st, true, types.block_region(arena), v.ty);
     return in_reg(result, emit.arena_value(st, arena, v.ty, v.known, v.value, v.reg));
-}
-
-// The Variant node of the enum `item` called like token `name`, or -1.
-pub fn variant_named[&s, &x](st: &!s [int], text: &x [byte], item: int, name: int) -> [] int {
-    var v = ast.get(st, item, 8);
-    while v >= 0 {
-        if ast.same(st, text, ast.get(st, v, 4), name) {
-            return v;
-        }
-        v = ast.next(st, v);
-    }
-    return 0 - 1;
-}
-
-// Is a field called `name` written in the literal's fields before `stop`?
-pub fn given_before[&s, &x](st: &!s [int], text: &x [byte], first: int, stop: int, name: int) -> [] bool {
-    var f = first;
-    while f != stop {
-        if ast.same(st, text, ast.get(st, f, 4), name) {
-            return true;
-        }
-        f = ast.next(st, f);
-    }
-    return false;
 }
 
 // `Name { a: x, b: y }`: every field, once, in declaration order, each of the declared type.
@@ -841,7 +850,7 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         let index = scope.field_index(st, text, item, name);
         if index < 0 {
             ast.fail(st, rules.r_unknown_name(), from, to);
-        } else if given_before(st, text, first, init, name) {
+        } else if lookup.given_before(st, text, first, init, name) {
             ast.fail(st, rules.r_duplicate_declaration(), from, to);
         } else if index < previous {
             ast.fail(st, rules.r_field_order(), ast.nstart(st, value), ast.nend(st, value));
@@ -851,7 +860,7 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             if ast.ok(st) {
                 scope.expect(st, text, scope.field_type(st, types.make_named(st, item), index), v.ty, ast.nstart(st, value), ast.nend(st, value));
                 if emit.on(st) && ast.ok(st) {
-                    acc = emit.insert_field(st, types.make_named(st, item), acc, index, v.known, v.value, v.reg);
+                    acc = put(st, types.make_named(st, item), acc, index, scope.field_type(st, types.make_named(st, item), index), v);
                 }
             }
         }
@@ -859,7 +868,7 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     var decl = ast.get(st, item, 8);
     while decl >= 0 && ast.ok(st) {
-        if !given_before(st, text, first, 0 - 1, ast.get(st, decl, 4)) {
+        if !lookup.given_before(st, text, first, 0 - 1, ast.get(st, decl, 4)) {
             ast.fail(st, rules.r_missing_field(), from, to);
         }
         decl = ast.next(st, decl);
@@ -898,7 +907,7 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
         let index = scope.field_index(st, text, item, name);
         if index < 0 {
             ast.fail(st, rules.r_unknown_name(), from, to);
-        } else if given_before(st, text, first, init, name) {
+        } else if lookup.given_before(st, text, first, init, name) {
             ast.fail(st, rules.r_duplicate_declaration(), from, to);
         } else if index < previous {
             ast.fail(st, rules.r_field_order(), ast.nstart(st, value), ast.nend(st, value));
@@ -910,6 +919,9 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
             if ast.ok(st) {
                 scope.expect(st, text, scope.field_type(st, whole, index), v.ty, ast.nstart(st, value), ast.nend(st, value));
             }
+            if types.is_slice_ref(st, v.ty) {
+                return skip(st, from, to);
+            }
             emit.push_arg(st, v.ty, v.known, v.value, v.reg);
             count = count + 1;
         }
@@ -917,7 +929,7 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
     }
     var decl = ast.get(st, item, 8);
     while decl >= 0 && ast.ok(st) {
-        if !given_before(st, text, first, 0 - 1, ast.get(st, decl, 4)) {
+        if !lookup.given_before(st, text, first, 0 - 1, ast.get(st, decl, 4)) {
             ast.fail(st, rules.r_missing_field(), from, to);
         }
         decl = ast.next(st, decl);
@@ -971,6 +983,13 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     if emit.on(st) {
         let ft = scope.field_type(st, held, index);
+        if types.is_erased(st, ft) {
+            if types.is_ref(st, b.ty) && types.is_prelude(st, ft) {
+                // A capability held by a struct is borrowed through the reference to the struct.
+                return in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), ft), 0 - 1);
+            }
+            return in_reg(ft, 0 - 1);
+        }
         if !scope.struct_codable(st, held) {
             return skip(st, from, to);
         }
@@ -981,26 +1000,11 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
                 // as long as, and as uniquely as, the reference it was reached through.
                 return in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), ft), address);
             }
-            return in_reg(ft, emit.load_through(st, ft, address));
+            return take_through(st, ft, address);
         }
-        return in_reg(ft, emit.extract_field(st, held, b.reg, index));
+        return take(st, held, b.reg, index, ft);
     }
     return plain(scope.field_type(st, held, index));
-}
-
-// The expressions the code can be written for so far: whole numbers and booleans, names, the
-// operators, and calls.
-pub fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
-    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EFloat) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) || ast.is_kind(st, id, kinds.NK::EAllocSlice) || ast.is_kind(st, id, kinds.NK::ESlice) || ast.is_kind(st, id, kinds.NK::EAlloc) || ast.is_kind(st, id, kinds.NK::ETuple) || ast.is_kind(st, id, kinds.NK::ETupleField) {
-        return true;
-    }
-    if ast.is_kind(st, id, kinds.NK::EUnary) {
-        return true;
-    }
-    if ast.is_kind(st, id, kinds.NK::EBinary) {
-        return true;
-    }
-    return false;
 }
 
 pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
@@ -1023,7 +1027,7 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return plain(scope.binding_type(st, i));
     }
     // A `static` of this module declared as a slice of scalars is a shared reference to it.
-    let table = static_named(st, text, name);
+    let table = lookup.static_named(st, text, name);
     if table >= 0 {
         let ty = scope.static_type(st, table);
         if ty == 0 {
@@ -1054,38 +1058,11 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     // A name that is not a local may still be a function used as a value, or a builtin: those are
     // values of types this slice does not check.
-    if names_something(st, text, name) {
+    if lookup.names_something(st, text, name) {
         return skip(st, from, to);
     }
     ast.fail(st, rules.r_unknown_name(), from, to);
     return nothing();
-}
-
-// The `static` item of the current module called like token `name`, or -1.
-pub fn static_named[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] int {
-    var it = st[15];
-    while it >= 0 {
-        if ast.is_kind(st, it, kinds.NK::IStatic) && ast.same(st, text, ast.get(st, it, 4), name) && ast.get(st, it, 13) == st[22] {
-            return it;
-        }
-        it = ast.next(st, it);
-    }
-    return 0 - 1;
-}
-
-// Is `name` a static of the current function's module, a function of any module, or a builtin?
-pub fn names_something[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] bool {
-    var it = st[15];
-    while it >= 0 {
-        if ast.is_kind(st, it, kinds.NK::IStatic) && ast.same(st, text, ast.get(st, it, 4), name) && ast.get(st, it, 13) == st[22] {
-            return true;
-        }
-        if ast.is_kind(st, it, kinds.NK::IFn) && ast.same(st, text, ast.get(st, it, 4), name) {
-            return true;
-        }
-        it = ast.next(st, it);
-    }
-    return pass1.builtin_named(st, text, name);
 }
 
 pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
@@ -1362,6 +1339,34 @@ pub fn len_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
 // call to a function does, its region parameters made variables the arguments solve. A builtin the
 // lowering checks by hand, one that performs an effect (rows are not checked yet) and one with a
 // type the checker cannot hold are `SKIP`; and every builtin is while code is being written.
+// A builtin on words, its arguments pushed.
+fn word_builtin[&s](st: &!s [int], written: int, result: int) -> [] Ex {
+    if written == 70 {
+        wordcode.stop(st);
+        return constant(0);
+    }
+    if written == 71 {
+        wordcode.copy_within(st);
+        return constant(0);
+    }
+    if written == 72 {
+        return in_reg(1, wordcode.barrier(st));
+    }
+    if written == 73 {
+        return in_reg(result, wordcode.mul_wide(st, result));
+    }
+    if written == 74 || written == 75 {
+        return in_reg(result, wordcode.add_carry(st, result, written == 75));
+    }
+    if written == 76 {
+        return in_reg(1, wordcode.load_le64(st));
+    }
+    if written == 77 {
+        return in_reg(1, wordcode.byte_mask64(st));
+    }
+    return in_reg(1, wordcode.count_bits(st, written - 78));
+}
+
 pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> [] Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
@@ -1374,6 +1379,9 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     if emit.on(st) {
         let at = ast.get(st, id, 5);
         written = codes.builtin_code(text, ast.tstart(st, at), ast.tend(st, at));
+        if written == 0 {
+            written = codes.word_code(text, ast.tstart(st, at), ast.tend(st, at));
+        }
         if written == 0 {
             return skip(st, from, to);
         }
@@ -1409,7 +1417,7 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
                 skip(st, from, to);
             } else {
                 scope.expect(st, text, param, a.ty, ast.nstart(st, arg), ast.nend(st, arg));
-                if written != 0 && written != 3 && written != 4 && written < 18 {
+                if written != 0 && written != 3 && written != 4 && (written < 18 || written >= 70) {
                     push_value(st, a);
                 }
                 last = a;
@@ -1421,7 +1429,11 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     if !ast.ok(st) {
         return nothing();
     }
-    let result = prims.decode(st, false, cursor, fresh, false);
+    var result = prims.decode(st, false, cursor, fresh, false);
+    if result == 0 && written >= 73 && written <= 75 {
+        // A pair of words.
+        result = types.make_pair(st, 1, 1);
+    }
     if result == 0 {
         return skip(st, from, to);
     }
@@ -1437,7 +1449,10 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     if written == 4 {
         return in_reg(result, emit.truncate_to_byte(st, last.known, last.value, last.reg));
     }
-    if written >= 18 {
+    if written >= 70 {
+        return word_builtin(st, written, result);
+    }
+    if written >= 18 && written <= 30 {
         return in_reg(result, floatcode.float_builtin(st, written, last.known, last.value, last.reg));
     }
     if written >= 5 && written <= 7 {
@@ -1753,6 +1768,18 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if known >= 0 {
         if emit.on(st) && codes.net_code(text, ast.tstart(st, callee), ast.tend(st, callee)) > 0 {
             return net_call(st, text, id, codes.net_code(text, ast.tstart(st, callee), ast.tend(st, callee)));
+        }
+        if emit.on(st) && ast.get(st, id, 7) == 1 && codes.word_code(text, ast.tstart(st, callee), ast.tend(st, callee)) >= 81 {
+            // `fork_heap(parent)` and `fork_clock(clock)`: a new capability, which is nothing in the code.
+            let parent = expr(st, text, ast.get(st, id, 6));
+            if !ast.ok(st) {
+                return nothing();
+            }
+            var index = scope.heap_index();
+            if codes.word_code(text, ast.tstart(st, callee), ast.tend(st, callee)) == 82 {
+                index = netcode.prelude_named("Clock");
+            }
+            return in_reg(types.make_prelude(st, index), 0 - 1);
         }
         return builtin_call(st, text, id, known);
     }

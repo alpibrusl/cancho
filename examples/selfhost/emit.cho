@@ -137,6 +137,10 @@ pub fn label[&s](st: &!s [int]) -> [] int {
 // ------------------------------------------------------------------ types, operands ---
 
 pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
+    if types.is_erased(st, ty) {
+        // A capability held in a struct has no value, but the aggregate has a place for it.
+        return str(st, "{}");
+    }
     if ty == 3 {
         return str(st, "double");
     }
@@ -148,6 +152,10 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
     }
     if ty == 2 {
         return str(st, "i8");
+    }
+    if types.is_slice_ref(st, ty) {
+        // Held in an aggregate: the pointer and the length.
+        return str(st, "{ ptr, i64 }");
     }
     if ty == 7 || types.is_ref(st, ty) {
         return str(st, "ptr");
@@ -225,6 +233,9 @@ pub fn field_node[&s](st: &!s [int], item: int, index: int) -> [] int {
 // The aggregate value `acc` (or `undef` when it is -1) of type `ty` with element `index` of type
 // `fty` set to the operand.
 pub fn insert_at[&s](st: &!s [int], ty: int, acc: int, index: int, fty: int, known: bool, value: int, reg: int) -> [] int {
+    if types.is_erased(st, fty) {
+        return acc;
+    }
     let n = start(st);
     str(st, "insertvalue ");
     llvm_type(st, ty);
@@ -340,6 +351,32 @@ pub fn payload_index[&s](st: &!s [int], item: int, variant: int, k: int) -> [] i
     return at + k;
 }
 
+// The pointer and the length of a slice reference as the aggregate `{ ptr, i64 }`.
+pub fn pack_slice[&s](st: &!s [int], ptr_reg: int, lk: bool, lv: int, lr: int) -> [] int {
+    let a = start(st);
+    str(st, "insertvalue { ptr, i64 } undef, ptr ");
+    operand(st, 7, false, 0, ptr_reg);
+    str(st, ", 0\n");
+    let b = start(st);
+    str(st, "insertvalue { ptr, i64 } ");
+    temp(st, a);
+    str(st, ", i64 ");
+    operand(st, 1, lk, lv, lr);
+    str(st, ", 1\n");
+    return b;
+}
+
+// Part `k` (0 the pointer, 1 the length) of the packed slice `packed`.
+pub fn slice_part[&s](st: &!s [int], packed: int, k: int) -> [] int {
+    let n = start(st);
+    str(st, "extractvalue { ptr, i64 } ");
+    temp(st, packed);
+    str(st, ", ");
+    nat(st, k);
+    str(st, "\n");
+    return n;
+}
+
 // Field `index` of the struct value in register `reg`.
 pub fn extract_field[&s](st: &!s [int], ty: int, reg: int, index: int) -> [] int {
     let n = start(st);
@@ -376,6 +413,10 @@ pub fn operand[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) ->
         // A string literal's global, `@str.<n>`, kept as `-2 - n`.
         str(st, "@str.");
         return nat(st, 0 - 2 - reg);
+    }
+    if !known && reg == 0 - 1 && types.is_named(st, ty) {
+        // A struct of capabilities has no value to hold.
+        return str(st, "zeroinitializer");
     }
     if known {
         if ty == 5 {

@@ -39,6 +39,7 @@ import selfhost.emit;
 import selfhost.instances;
 import selfhost.scope;
 import selfhost.exprs;
+import selfhost.lookup;
 import selfhost.effects;
 import selfhost.builtins;
 import selfhost.prims;
@@ -144,7 +145,7 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
         ast.fail(st, rules.r_unknown_name(), from, to);
         return 0;
     }
-    let variant = exprs.variant_named(st, text, item, pat_variant(st, tok));
+    let variant = lookup.variant_named(st, text, item, pat_variant(st, tok));
     if variant < 0 {
         ast.fail(st, rules.r_unknown_name(), from, to);
         return 0;
@@ -185,7 +186,7 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
                     if by_ref {
                         emit.store(st, ty, false, 0, emit.field_address(st, held, base, index), st[39] - 1);
                     } else {
-                        emit.store(st, ty, false, 0, emit.extract_field(st, held, base, index), st[39] - 1);
+                        exprs.bind_value(st, ty, exprs.take(st, held, base, index, ty));
                     }
                 }
             }
@@ -214,7 +215,7 @@ fn prelude_match[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int, s: e
         let tok = ast.get(st, arm, 4);
         var number = 0 - 1;
         if !pat_wild(st, tok) {
-            number = exprs.prelude_arm_named(st, text, index, pat_variant(st, tok));
+            number = lookup.prelude_arm_named(st, text, index, pat_variant(st, tok));
         }
         var test = 0 - 1;
         if k + 1 < count && number >= 0 {
@@ -307,7 +308,7 @@ fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] i
         // Every arm but the last tests the tag; the last takes what is left.
         var test = 0 - 1;
         if emit.on(st) && k + 1 < ast.get(st, id, 6) && !pat_wild(st, ast.get(st, arm, 4)) {
-            let variant = exprs.variant_named(st, text, item, pat_variant(st, ast.get(st, arm, 4)));
+            let variant = lookup.variant_named(st, text, item, pat_variant(st, ast.get(st, arm, 4)));
             if variant >= 0 {
                 test = emit.label(st);
                 emit.match_test(st, test, tag, emit.variant_position(st, item, variant));
@@ -402,8 +403,8 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
             } else {
                 let ty = scope.field_type(st, v.ty, index);
                 scope.bind(st, named, ty, false, from, to);
-                if ast.ok(st) {
-                    emit.store(st, ty, false, 0, emit.extract_field(st, v.ty, v.reg, index), st[39] - 1);
+                if ast.ok(st) && !types.is_erased(st, ty) {
+                    exprs.bind_value(st, ty, exprs.take(st, v.ty, v.reg, index, ty));
                 }
             }
             if pass1.is_code(st, q, lc.Tok::Comma) {
@@ -472,7 +473,7 @@ fn destructure_tuple_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> []
         if !pat_wild(st, name) {
             scope.bind(st, name, part, false, from, to);
             if ast.ok(st) && !types.is_erased(st, part) {
-                emit.store(st, part, false, 0, emit.extract_field(st, v.ty, v.reg, k), st[39] - 1);
+                exprs.bind_value(st, part, exprs.take(st, v.ty, v.reg, k, part));
             }
         }
         k = k + 1;

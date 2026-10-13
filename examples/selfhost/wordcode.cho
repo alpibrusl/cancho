@@ -1,0 +1,346 @@
+module selfhost.wordcode;
+
+// wordcode.cho -- the code for the builtins that work on words: `trap`, `copy_within`, `value_barrier`, `mul_wide`,
+// `add_carry`, `sub_borrow`, `load_le64`, `byte_mask64`, `trailing_zeros`, `leading_zeros` and `popcount`. Plain
+// LLVM, as the Rust backend writes it (`docs/word-scan.md`, `docs/wide-multiply.md`, `docs/memory-moves.md`).
+//
+// Every function reads its arguments from the last `n` entries of the argument stack (a slice is two) and drops them.
+
+import selfhost.emit;
+
+// Operand number `k` of the last `n` arguments.
+fn operand[&s](st: &!s [int], n: int, k: int) -> [] int {
+    let at = st[51] + 4 * (st[52] - n + k);
+    return emit.operand(st, st[at], st[at + 1] != 0, st[at + 2], st[at + 3]);
+}
+
+fn line[&s](st: &!s [int], text: &static [byte]) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, text);
+    emit.str(st, "\n");
+    return n;
+}
+
+fn done[&s](st: &!s [int], n: int) -> [] int {
+    st[52] = st[52] - n;
+    return 0;
+}
+
+// Trap unless `0 <= at` and `at + width <= length`, without forming the sum.
+fn room[&s](st: &!s [int], n: int, length: int, at: int, width: int) -> [] int {
+    let space = emit.start(st);
+    emit.str(st, "sub i64 ");
+    operand(st, n, length);
+    emit.str(st, ", ");
+    emit.nat(st, width);
+    emit.str(st, "\n");
+    let past = emit.start(st);
+    emit.str(st, "icmp ugt i64 ");
+    operand(st, n, at);
+    emit.str(st, ", ");
+    emit.temp(st, space);
+    emit.str(st, "\n");
+    let short = emit.start(st);
+    emit.str(st, "icmp slt i64 ");
+    operand(st, n, length);
+    emit.str(st, ", ");
+    emit.nat(st, width);
+    emit.str(st, "\n");
+    let failed = emit.start(st);
+    emit.str(st, "or i1 ");
+    emit.temp(st, past);
+    emit.str(st, ", ");
+    emit.temp(st, short);
+    emit.str(st, "\n");
+    emit.trap_if(st, failed);
+    return 0;
+}
+
+// `trap()`.
+pub fn stop[&s](st: &!s [int]) -> [] int {
+    let always = line(st, "icmp eq i64 0, 0");
+    emit.trap_if(st, always);
+    return 0;
+}
+
+// `value_barrier(x)`: the value comes out of an empty `asm`, so nothing is known about it.
+pub fn barrier[&s](st: &!s [int]) -> [] int {
+    let r = emit.start(st);
+    emit.str(st, "call i64 asm \"\", \"=r,0\"(i64 ");
+    operand(st, 1, 0);
+    emit.str(st, ")\n");
+    done(st, 1);
+    return r;
+}
+
+// `trailing_zeros` (0), `leading_zeros` (1), `popcount` (2).
+pub fn count_bits[&s](st: &!s [int], which: int) -> [] int {
+    let r = emit.start(st);
+    if which == 0 {
+        emit.str(st, "call i64 @llvm.cttz.i64(i64 ");
+    } else if which == 1 {
+        emit.str(st, "call i64 @llvm.ctlz.i64(i64 ");
+    } else {
+        emit.str(st, "call i64 @llvm.ctpop.i64(i64 ");
+    }
+    operand(st, 1, 0);
+    if which < 2 {
+        emit.str(st, ", i1 false)\n");
+    } else {
+        emit.str(st, ")\n");
+    }
+    done(st, 1);
+    return r;
+}
+
+// `load_le64(text, at)`: one unaligned load, after the room is checked.
+pub fn load_le64[&s](st: &!s [int]) -> [] int {
+    room(st, 3, 1, 2, 8);
+    let place = emit.start(st);
+    emit.str(st, "getelementptr i8, ptr ");
+    operand(st, 3, 0);
+    emit.str(st, ", i64 ");
+    operand(st, 3, 2);
+    emit.str(st, "\n");
+    let word = emit.start(st);
+    emit.str(st, "load i64, ptr ");
+    emit.temp(st, place);
+    emit.str(st, ", align 1\n");
+    done(st, 3);
+    return word;
+}
+
+// `byte_mask64(text, at, b)`: bit `i` is set when byte `at + i` is `b`; four 16-byte compares.
+pub fn byte_mask64[&s](st: &!s [int]) -> [] int {
+    room(st, 4, 1, 2, 64);
+    let start = emit.start(st);
+    emit.str(st, "getelementptr i8, ptr ");
+    operand(st, 4, 0);
+    emit.str(st, ", i64 ");
+    operand(st, 4, 2);
+    emit.str(st, "\n");
+    let ins = emit.start(st);
+    emit.str(st, "insertelement <16 x i8> poison, i8 ");
+    operand(st, 4, 3);
+    emit.str(st, ", i64 0\n");
+    let splat = emit.start(st);
+    emit.str(st, "shufflevector <16 x i8> ");
+    emit.temp(st, ins);
+    emit.str(st, ", <16 x i8> poison, <16 x i32> zeroinitializer\n");
+    var acc = 0 - 1;
+    var q = 0;
+    while q < 4 {
+        let p = emit.start(st);
+        emit.str(st, "getelementptr i8, ptr ");
+        emit.temp(st, start);
+        emit.str(st, ", i64 ");
+        emit.nat(st, 16 * q);
+        emit.str(st, "\n");
+        let v = emit.start(st);
+        emit.str(st, "load <16 x i8>, ptr ");
+        emit.temp(st, p);
+        emit.str(st, ", align 1\n");
+        let eq = emit.start(st);
+        emit.str(st, "icmp eq <16 x i8> ");
+        emit.temp(st, v);
+        emit.str(st, ", ");
+        emit.temp(st, splat);
+        emit.str(st, "\n");
+        let bits = emit.start(st);
+        emit.str(st, "bitcast <16 x i1> ");
+        emit.temp(st, eq);
+        emit.str(st, " to i16\n");
+        let wide = emit.start(st);
+        emit.str(st, "zext i16 ");
+        emit.temp(st, bits);
+        emit.str(st, " to i64\n");
+        if q == 0 {
+            acc = wide;
+        } else {
+            let shifted = emit.start(st);
+            emit.str(st, "shl i64 ");
+            emit.temp(st, wide);
+            emit.str(st, ", ");
+            emit.nat(st, 16 * q);
+            emit.str(st, "\n");
+            let joined = emit.start(st);
+            emit.str(st, "or i64 ");
+            emit.temp(st, acc);
+            emit.str(st, ", ");
+            emit.temp(st, shifted);
+            emit.str(st, "\n");
+            acc = joined;
+        }
+        q = q + 1;
+    }
+    done(st, 4);
+    return acc;
+}
+
+// `copy_within(buf, dst, src, n)`: `memmove` inside one slice, after the checks indexing makes.
+pub fn copy_within[&s](st: &!s [int]) -> [] int {
+    // dst < 0 is the first test; src < 0 and n < 0 follow.
+    let below = emit.start(st);
+    emit.str(st, "icmp slt i64 ");
+    operand(st, 5, 2);
+    emit.str(st, ", 0\n");
+    var failed = below;
+    var k = 3;
+    while k <= 4 {
+        let negative = emit.start(st);
+        emit.str(st, "icmp slt i64 ");
+        operand(st, 5, k);
+        emit.str(st, ", 0\n");
+        let joined = emit.start(st);
+        emit.str(st, "or i1 ");
+        emit.temp(st, failed);
+        emit.str(st, ", ");
+        emit.temp(st, negative);
+        emit.str(st, "\n");
+        failed = joined;
+        k = k + 1;
+    }
+    k = 2;
+    while k <= 3 {
+        let space = emit.start(st);
+        emit.str(st, "sub i64 ");
+        operand(st, 5, 1);
+        emit.str(st, ", ");
+        operand(st, 5, k);
+        emit.str(st, "\n");
+        let past = emit.start(st);
+        emit.str(st, "icmp sgt i64 ");
+        operand(st, 5, 4);
+        emit.str(st, ", ");
+        emit.temp(st, space);
+        emit.str(st, "\n");
+        let joined = emit.start(st);
+        emit.str(st, "or i1 ");
+        emit.temp(st, failed);
+        emit.str(st, ", ");
+        emit.temp(st, past);
+        emit.str(st, "\n");
+        failed = joined;
+        k = k + 1;
+    }
+    emit.trap_if(st, failed);
+    let to = emit.start(st);
+    emit.str(st, "getelementptr i8, ptr ");
+    operand(st, 5, 0);
+    emit.str(st, ", i64 ");
+    operand(st, 5, 2);
+    emit.str(st, "\n");
+    let from = emit.start(st);
+    emit.str(st, "getelementptr i8, ptr ");
+    operand(st, 5, 0);
+    emit.str(st, ", i64 ");
+    operand(st, 5, 3);
+    emit.str(st, "\n");
+    emit.str(st, "  call ptr @memmove(ptr ");
+    emit.temp(st, to);
+    emit.str(st, ", ptr ");
+    emit.temp(st, from);
+    emit.str(st, ", i64 ");
+    operand(st, 5, 4);
+    emit.str(st, ")\n");
+    done(st, 5);
+    return 0;
+}
+
+// The pair `(first, second)` as the aggregate `ty` is.
+fn pair[&s](st: &!s [int], ty: int, first: int, second: int) -> [] int {
+    let a = emit.insert_at(st, ty, 0 - 1, 0, 1, false, 0, first);
+    return emit.insert_at(st, ty, a, 1, 1, false, 0, second);
+}
+
+// `mul_wide(a, b)`: `(hi, lo)` of the unsigned product, through a 128-bit multiply.
+pub fn mul_wide[&s](st: &!s [int], ty: int) -> [] int {
+    let wa = emit.start(st);
+    emit.str(st, "zext i64 ");
+    operand(st, 2, 0);
+    emit.str(st, " to i128\n");
+    let wb = emit.start(st);
+    emit.str(st, "zext i64 ");
+    operand(st, 2, 1);
+    emit.str(st, " to i128\n");
+    let p = emit.start(st);
+    emit.str(st, "mul i128 ");
+    emit.temp(st, wa);
+    emit.str(st, ", ");
+    emit.temp(st, wb);
+    emit.str(st, "\n");
+    let lo = emit.start(st);
+    emit.str(st, "trunc i128 ");
+    emit.temp(st, p);
+    emit.str(st, " to i64\n");
+    let top = emit.start(st);
+    emit.str(st, "lshr i128 ");
+    emit.temp(st, p);
+    emit.str(st, ", 64\n");
+    let hi = emit.start(st);
+    emit.str(st, "trunc i128 ");
+    emit.temp(st, top);
+    emit.str(st, " to i64\n");
+    done(st, 2);
+    return pair(st, ty, hi, lo);
+}
+
+// `add_carry(a, b, c)` and, with `sub`, `sub_borrow`: `(sum, carry_out)` of `a + b + (c != 0)`.
+pub fn add_carry[&s](st: &!s [int], ty: int, sub: bool) -> [] int {
+    let nz = emit.start(st);
+    emit.str(st, "icmp ne i64 ");
+    operand(st, 3, 2);
+    emit.str(st, ", 0\n");
+    let cin = emit.start(st);
+    emit.str(st, "zext i1 ");
+    emit.temp(st, nz);
+    emit.str(st, " to i64\n");
+    let first = emit.start(st);
+    if sub {
+        emit.str(st, "call { i64, i1 } @llvm.usub.with.overflow.i64(i64 ");
+    } else {
+        emit.str(st, "call { i64, i1 } @llvm.uadd.with.overflow.i64(i64 ");
+    }
+    operand(st, 3, 0);
+    emit.str(st, ", i64 ");
+    operand(st, 3, 1);
+    emit.str(st, ")\n");
+    let v1 = emit.start(st);
+    emit.str(st, "extractvalue { i64, i1 } ");
+    emit.temp(st, first);
+    emit.str(st, ", 0\n");
+    let o1 = emit.start(st);
+    emit.str(st, "extractvalue { i64, i1 } ");
+    emit.temp(st, first);
+    emit.str(st, ", 1\n");
+    let second = emit.start(st);
+    if sub {
+        emit.str(st, "call { i64, i1 } @llvm.usub.with.overflow.i64(i64 ");
+    } else {
+        emit.str(st, "call { i64, i1 } @llvm.uadd.with.overflow.i64(i64 ");
+    }
+    emit.temp(st, v1);
+    emit.str(st, ", i64 ");
+    emit.temp(st, cin);
+    emit.str(st, ")\n");
+    let v2 = emit.start(st);
+    emit.str(st, "extractvalue { i64, i1 } ");
+    emit.temp(st, second);
+    emit.str(st, ", 0\n");
+    let o2 = emit.start(st);
+    emit.str(st, "extractvalue { i64, i1 } ");
+    emit.temp(st, second);
+    emit.str(st, ", 1\n");
+    let both = emit.start(st);
+    emit.str(st, "or i1 ");
+    emit.temp(st, o1);
+    emit.str(st, ", ");
+    emit.temp(st, o2);
+    emit.str(st, "\n");
+    let out = emit.start(st);
+    emit.str(st, "zext i1 ");
+    emit.temp(st, both);
+    emit.str(st, " to i64\n");
+    done(st, 3);
+    return pair(st, ty, v2, out);
+}
