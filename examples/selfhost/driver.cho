@@ -29,6 +29,7 @@ import selfhost.listing;
 import selfhost.checker;
 import selfhost.body;
 import selfhost.emit;
+import selfhost.externcode;
 import selfhost.instances;
 import selfhost.pass1;
 import selfhost.runtime;
@@ -118,6 +119,61 @@ fn shim[&s](st: &!s [int], entry_item: int) -> [] int {
 // is written after them, in the state's buffers: the declarations of what the code calls, the runtime, and
 // the C `main` that calls the program's `main` (or, failing that, a function called `run`). 0, or 1 for a
 // refusal (`st[3]` to `st[5]`).
+// Does the module's own preamble already declare the C function this declaration names? The lines of the
+// runtime that start with `declare` are read for the name between `@` and `(`; the few the driver declares
+// itself are listed.
+fn runtime_declares[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] bool {
+    let name = ast.get(st, item, 4);
+    if pass1.is_word(st, text, name, "putchar") || pass1.is_word(st, text, name, "malloc") || pass1.is_word(st, text, name, "free") || pass1.is_word(st, text, name, "memmove") || pass1.is_word(st, text, name, "memchr") || pass1.is_word(st, text, name, "getchar") || pass1.is_word(st, text, name, "write") {
+        return true;
+    }
+    let preamble = runtime.text();
+    var i = 0;
+    while i + 8 < len(preamble) {
+        if i == 0 || int_of(preamble[i - 1]) == 10 {
+            if int_of(preamble[i]) == 'd' && int_of(preamble[i + 1]) == 'e' && int_of(preamble[i + 2]) == 'c' && int_of(preamble[i + 3]) == 'l' {
+                var at = i;
+                while at < len(preamble) && int_of(preamble[at]) != '@' && int_of(preamble[at]) != 10 {
+                    at = at + 1;
+                }
+                if at < len(preamble) && int_of(preamble[at]) == '@' {
+                    var end = at + 1;
+                    while end < len(preamble) && int_of(preamble[end]) != '(' {
+                        end = end + 1;
+                    }
+                    if end - at - 1 == ast.tend(st, name) - ast.tstart(st, name) {
+                        var same = true;
+                        var k = 0;
+                        while k < end - at - 1 {
+                            if int_of(preamble[at + 1 + k]) != int_of(text[ast.tstart(st, name) + k]) {
+                                same = false;
+                            }
+                            k = k + 1;
+                        }
+                        if same {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Is there a foreign declaration of the same symbol before this one?
+fn declared_before[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] bool {
+    var other = st[15];
+    while other != item {
+        if ast.is_kind(st, other, kinds.NK::IExtern) && ast.same(st, text, ast.get(st, other, 4), ast.get(st, item, 4)) {
+            return true;
+        }
+        other = ast.next(st, other);
+    }
+    return false;
+}
+
 fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.aim(st, 0);
     emit.str(st, "declare {i64, i1} @llvm.sadd.with.overflow.i64(i64, i64)\n");
@@ -176,6 +232,16 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
                 entry = 1;
                 entry_item = item;
             }
+        }
+        item = ast.next(st, item);
+    }
+    // The foreign functions, each symbol declared once; one the runtime already declares keeps that declaration,
+    // for the call spells its own function type.
+    emit.aim(st, 0);
+    item = st[15];
+    while item >= 0 {
+        if ast.is_kind(st, item, kinds.NK::IExtern) && !runtime_declares(st, text, item) && !declared_before(st, text, item) {
+            externcode.declare(st, text, item);
         }
         item = ast.next(st, item);
     }

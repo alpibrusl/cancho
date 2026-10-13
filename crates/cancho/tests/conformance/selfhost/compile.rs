@@ -277,6 +277,14 @@ const THREADS: &[&str] = &[
     "edition 5;\nfn boom(x: int) -> [] int { return x + 9223372036854775807; }\nfn main(world: World) -> [conc] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    release(net);\n    release(clock);\n    release(io);\n    let f = boom;\n    return join(spawn(2, f));\n}",
 ];
 
+/// Foreign functions: a whole number, a `c_int` result, a byte slice, and an opaque pointer.
+const FOREIGN: &[&str] = &[
+    "extern fn labs[&f](ffi: &f Ffi(\"libc\"), n: int) -> [ffi(\"libc\")] int;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(io);\n    release(fs);\n    release(heap);\n    release(args);\n    let libc = narrow(ffi, \"libc\");\n    var r = 0;\n    borrow libc as &f in { r = labs(f, 0 - 5) + labs(f, 7); }\n    release(libc);\n    return r;\n}",
+    "extern fn access[&f, &p](ffi: &f Ffi(\"libc\"), path: &p [byte], mode: int) -> [ffi(\"libc\")] c_int;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(io);\n    release(fs);\n    release(heap);\n    release(args);\n    let libc = narrow(ffi, \"libc\");\n    var r = 0;\n    borrow libc as &f in {\n        region a {\n            let here = alloc_slice[a](2, byte_of(0));\n            here[0] = byte_of('.');\n            let nope = alloc_slice[a](3, byte_of(0));\n            nope[0] = byte_of('/');\n            nope[1] = byte_of('~');\n            r = access(f, here, 0) * 100 + access(f, nope, 0) + 50;\n        }\n    }\n    release(libc);\n    return r;\n}",
+    "extern fn write[&f, &s](ffi: &f Ffi(\"libc\"), fd: int, buf: &s [byte], n: int) -> [ffi(\"libc\")] int;\nfn say[&f, &s](libc: &f Ffi(\"libc\"), line: &s [byte]) -> [ffi(\"libc\")] int {\n    return write(libc, 1, line, len(line));\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(io);\n    release(fs);\n    release(heap);\n    release(args);\n    let libc = narrow(ffi, \"libc\");\n    var r = 0;\n    borrow libc as &f in { r = say(f, \"straight to fd 1\\n\"); }\n    release(libc);\n    return r;\n}",
+    "edition 3;\nextern fn fdopen[&f, &m](ffi: &f Ffi(\"libc\"), fd: int, mode: &m [byte]) -> [ffi(\"libc\")] c_ptr;\nextern fn fclose[&f](ffi: &f Ffi(\"libc\"), stream: c_ptr) -> [ffi(\"libc\")] int;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net } = split(world);\n    release(io);\n    release(fs);\n    release(heap);\n    release(args);\n    release(net);\n    let libc = narrow(ffi, \"libc\");\n    var r = 0;\n    borrow libc as &f in {\n        region a {\n            let mode = alloc_slice[a](2, byte_of(0));\n            mode[0] = byte_of('r');\n            let good = fdopen(f, 0, mode);\n            let bad = fdopen(f, 999, mode);\n            if good == null_ptr() { r = r + 1; }\n            if bad == null_ptr() { r = r + 10; }\n            if good != bad { r = r + 100 - 90; }\n            if good != null_ptr() { r = r + fclose(f, good); }\n        }\n    }\n    release(libc);\n    return r;\n}",
+];
+
 /// Programs with a `main` of their own, which the cancho compiler calls as the C `main` does.
 const WITH_MAIN: &[&str] = &[
     "fn finish(w: World) -> [] int { release(w); return 3; }\nfn main(world: World) -> [] int { return finish(world); }",
@@ -602,7 +610,9 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
         jobs.push((with_main(program), with_main(program)));
     }
-    for program in WITH_MAIN.iter().chain(OUTPUT).chain(STRINGS).chain(OWN_MAIN).chain(THREADS) {
+    for program in
+        WITH_MAIN.iter().chain(OUTPUT).chain(STRINGS).chain(OWN_MAIN).chain(THREADS).chain(FOREIGN)
+    {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
     }
     for program in STRUCTS.iter().chain(ENUMS).chain(GENERICS).chain(FLOATS).chain(ARENAS) {

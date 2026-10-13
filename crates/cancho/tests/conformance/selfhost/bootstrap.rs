@@ -44,6 +44,8 @@ fn own_source(root_module: &str) -> String {
         "floatcode",
         "fold",
         "threadcode",
+        "codes",
+        "externcode",
         "exprs",
         "body",
         "listing",

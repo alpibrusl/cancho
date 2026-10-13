@@ -25,7 +25,7 @@ pub fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to:
     if emit.on(st) {
         if types.is_erased(st, ty) {
             // nothing to keep
-        } else if !types.is_plain(ty) && !types.is_ref(st, ty) && !aggregate_codable(st, ty) {
+        } else if !types.is_plain(ty) && ty != 7 && !types.is_ref(st, ty) && !aggregate_codable(st, ty) {
             return ast.fail(st, rules.r_skip(), from, to);
         } else if types.is_slice_ref(st, ty) {
             emit.alloca_slice(st, st[39]);
