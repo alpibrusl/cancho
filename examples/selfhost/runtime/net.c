@@ -25,6 +25,9 @@ typedef unsigned char u8;
 #define AI_ADDR 32
 #define AI_CANONNAME 24
 #define CLOCK_MONO 6
+#define SO_ERROR 0x1007
+#define AF_INET6 30
+#define FAMILY_AT 1
 #else
 #define SOL_SOCKET 1
 #define SO_REUSEADDR 2
@@ -38,6 +41,9 @@ typedef unsigned char u8;
 #define AI_ADDR 24
 #define AI_CANONNAME 32
 #define CLOCK_MONO 1
+#define SO_ERROR 4
+#define AF_INET6 10
+#define FAMILY_AT 0
 #endif
 #define F_GETFL 3
 #define F_SETFL 4
@@ -54,6 +60,31 @@ extern int accept(int, void *, void *);
 extern int accept4(int, void *, void *, int);
 extern int connect(int, const void *, int);
 extern int socketpair(int, int, int, int *);
+extern int getsockopt(int, int, int, void *, unsigned *);
+extern int getpeername(int, void *, unsigned *);
+extern int fflush(void *);
+extern int ferror(void *);
+extern void clearerr(void *);
+extern i64 fread(void *, i64, i64, void *);
+#if DARWIN
+extern void *__stdoutp;
+extern void *__stdinp;
+#define STDOUT __stdoutp
+#define STDIN __stdinp
+#else
+extern void *stdout;
+extern void *stdin;
+#define STDOUT stdout
+#define STDIN stdin
+#endif
+#if DARWIN
+extern int kqueue(void);
+extern int kevent(int, const void *, int, void *, int, const void *);
+#else
+extern int epoll_create1(int);
+extern int epoll_ctl(int, int, int, void *);
+extern int epoll_wait(int, void *, int, int);
+#endif
 extern int close(int);
 extern i64 recv(int, void *, i64, int);
 extern i64 send(int, const void *, i64, int);
@@ -315,6 +346,242 @@ void cancho_net_tcp_connect(const u8 *name, i64 len, i64 port, const u8 *bound, 
   i64 fd = netrt_dial(name, len, port, bound, bound_len, 1, 0, &why);
   out[0] = fd < 0 ? 1 : 0;
   out[1] = fd;
+  out[2] = why;
+}
+
+/* ---------------------------------------------------------------------------------------------------- poller ---
+ * `epoll` on Linux, `kqueue` on Darwin, behind one surface of (token, events) pairs, level-triggered. `packed` says
+ * the `epoll_event` is the 12-byte packed one (x86-64); elsewhere it is 16 bytes. */
+#define READABLE 1
+#define WRITABLE 2
+#define BATCH 64
+
+/* `poller_new()`: out = tag (0 Ok, 1 Failed), the descriptor, why. */
+void cancho_poller_new(i64 *out) {
+#if DARWIN
+  int fd = kqueue();
+  i64 why = ERRNO;
+  if (fd >= 0) fcntl(fd, F_SETFD, FD_CLOEXEC);
+#else
+  int fd = epoll_create1(0x80000);
+  i64 why = ERRNO;
+#endif
+  out[0] = fd < 0;
+  out[1] = fd;
+  out[2] = why;
+}
+
+#if DARWIN
+static int netrt_kevent_change(int kq, int fd, i64 filter, int add, i64 token) {
+  u8 kev[32];
+  for (int i = 0; i < 32; i++) kev[i] = 0;
+  *(i64 *)kev = fd;
+  *(short *)(kev + 8) = (short)filter;
+  *(unsigned short *)(kev + 10) = add ? 0x0001 : 0x0002;
+  *(i64 *)(kev + 24) = token;
+  return kevent(kq, kev, 1, 0, 0, 0);
+}
+#else
+static void netrt_ev_put(u8 *ev, i64 packed, int mask, i64 token) {
+  *(unsigned *)ev = (unsigned)mask;
+  *(i64 *)(ev + (packed ? 4 : 8)) = token;
+}
+#endif
+
+/* `poller_add_conn`, `poller_add_listener` and the others like them; `modify` changes what is watched. 0 or the errno. */
+i64 cancho_poller_ctl(const i64 *poller, const i64 *handle, i64 token, i64 events, i64 modify, i64 packed) {
+  int p = (int)*poller, fd = (int)*handle;
+  int wants_read = (events & READABLE) != 0, wants_write = (events & WRITABLE) != 0;
+#if DARWIN
+  int r = netrt_kevent_change(p, fd, -1, wants_read, token);
+  i64 read_why = ERRNO;
+  int w = netrt_kevent_change(p, fd, -2, wants_write, token);
+  i64 write_why = ERRNO;
+  if (r < 0 && wants_read) return read_why;
+  if (w < 0 && wants_write) return write_why;
+  return 0;
+#else
+  u8 ev[16];
+  netrt_ev_put(ev, packed, (wants_read ? 1 : 0) | (wants_write ? 4 : 0), token);
+  int r = epoll_ctl(p, modify ? 3 : 1, fd, ev);
+  return r < 0 ? ERRNO : 0;
+#endif
+}
+
+/* `poller_add_child(&!Poller, &Child, token)`: the child's exit, as readable. */
+i64 cancho_poller_add_child(const i64 *poller, const i64 *child, i64 token, i64 packed) {
+  int p = (int)*poller;
+  i64 word = *child;
+#if DARWIN
+  int pid = (int)word;
+  u8 kev[32];
+  for (int i = 0; i < 32; i++) kev[i] = 0;
+  *(i64 *)kev = pid;
+  *(short *)(kev + 8) = -5;
+  *(unsigned short *)(kev + 10) = 0x0001 | 0x0010;
+  *(unsigned *)(kev + 12) = 0x80000000u;
+  *(i64 *)(kev + 24) = token;
+  int r = kevent(p, kev, 1, 0, 0, 0);
+  i64 answer = r < 0 ? ERRNO : 0;
+  if (answer == 3) {
+    /* The child has exited already, and kqueue will not watch a zombie: a user event, triggered as it is added. */
+    *(short *)(kev + 8) = -10;
+    *(unsigned *)(kev + 12) = 0x01000000u;
+    r = kevent(p, kev, 1, 0, 0, 0);
+    answer = r < 0 ? ERRNO : 0;
+  }
+  return answer;
+#else
+  int pidfd = (int)(word >> 32);
+  u8 ev[16];
+  netrt_ev_put(ev, packed, 1, token);
+  int r = epoll_ctl(p, 1, pidfd, ev);
+  i64 answer = r < 0 ? ERRNO : 0;
+  return pidfd >= 0 ? answer : -(i64)pidfd;
+#endif
+}
+
+i64 cancho_poller_remove(const i64 *poller, const i64 *handle, i64 packed) {
+  int p = (int)*poller, fd = (int)*handle;
+#if DARWIN
+  netrt_kevent_change(p, fd, -1, 0, 0);
+  netrt_kevent_change(p, fd, -2, 0, 0);
+  return 0;
+#else
+  u8 ev[16];
+  int r = epoll_ctl(p, 2, fd, ev);
+  return r < 0 ? ERRNO : 0;
+#endif
+}
+
+/* `poller_wait(&!Poller, &![int], timeout_ms)`: (token, events) pairs into the slice; how many, or -errno. */
+i64 cancho_poller_wait(const i64 *poller, i64 *pairs, i64 length, i64 timeout, i64 packed) {
+  int p = (int)*poller;
+  i64 max = length / 2;
+  if (max > BATCH) max = BATCH;
+  if (max == 0) return -22;
+  u8 buf[32 * BATCH];
+#if DARWIN
+  i64 ts[2];
+  ts[0] = timeout / 1000;
+  ts[1] = (timeout % 1000) * 1000000;
+  int got = kevent(p, 0, 0, buf, (int)max, timeout < 0 ? 0 : ts);
+#else
+  int got = epoll_wait(p, buf, (int)max, (int)timeout);
+#endif
+  if (got < 0) return -(i64)ERRNO;
+  for (int i = 0; i < got; i++) {
+    i64 token, events;
+#if DARWIN
+    u8 *e = buf + 32 * i;
+    short filter = *(short *)(e + 8);
+    unsigned short flags = *(unsigned short *)(e + 10);
+    token = *(i64 *)(e + 24);
+    int reads = filter == -1 || filter == -5 || filter == -10 || (flags & 0x4000) != 0;
+    events = (reads ? READABLE : 0) | (filter == -2 ? WRITABLE : 0);
+#else
+    u8 *e = buf + (packed ? 12 : 16) * i;
+    unsigned mask = *(unsigned *)e;
+    token = *(i64 *)(e + (packed ? 4 : 8));
+    events = ((mask & (1 | 8 | 16)) ? READABLE : 0) | ((mask & 4) ? WRITABLE : 0);
+#endif
+    pairs[2 * i] = token;
+    pairs[2 * i + 1] = events;
+  }
+  return got;
+}
+
+/* ------------------------------------------------------------------------------------------------ hand-over ---
+ * A connection handed from one owner to another is a ticket: the descriptor's epoch (odd) over its number. */
+#define EPOCH_SLOTS 65536
+int lexs_fd_epoch[EPOCH_SLOTS];
+
+/* `conn_detach(Conn)` and `udp_detach`: the descriptor stays open and the handle ends; the ticket, or -1. */
+i64 cancho_conn_detach(i64 fd, i64 udp) {
+  if ((unsigned long)fd >= EPOCH_SLOTS) {
+    close((int)fd);
+    return -1;
+  }
+  int next = lexs_fd_epoch[fd] + 1;
+  lexs_fd_epoch[fd] = next;
+  return ((i64)(next & 2147483647) << 32) | fd | (udp ? (i64)1 << 31 : 0);
+}
+
+/* `conn_attach(ticket)` and `udp_attach`: out = tag (0 Attached, 1 Failed), the descriptor, EBADF. */
+void cancho_conn_attach(i64 ticket, i64 udp, i64 *out) {
+  i64 fd = ticket & (udp ? 2147483647 : 4294967295);
+  i64 epoch = (unsigned long)ticket >> 32;
+  int in_range = (unsigned long)fd < EPOCH_SLOTS;
+  i64 index = in_range ? fd : 0;
+  int current = lexs_fd_epoch[index];
+  int valid = in_range && ((i64)(current & 2147483647) == epoch) && (epoch & 1) && ticket >= 0;
+  if (udp) valid = valid && (((unsigned long)ticket >> 31) & 1);
+  if (valid) lexs_fd_epoch[index] = current + 1;
+  out[0] = valid ? 0 : 1;
+  out[1] = fd;
+  out[2] = 9;
+}
+
+/* `tcp_connect_start(net, host, port)`: as `tcp_connect`, the socket left non-blocking and the connection in progress. */
+void cancho_net_tcp_connect_start(const u8 *name, i64 len, i64 port, const u8 *bound, i64 bound_len, i64 *out) {
+  i64 why;
+  i64 fd = netrt_dial(name, len, port, bound, bound_len, 1, 1, &why);
+  out[0] = fd < 0 ? 1 : 0;
+  out[1] = fd;
+  out[2] = why;
+}
+
+/* `conn_connect_status`: 0 once a non-blocking connect has succeeded, the errno it failed with otherwise. */
+i64 cancho_conn_connect_status(const i64 *conn) {
+  int value = 0;
+  unsigned length = 4;
+  int r = getsockopt((int)*conn, SOL_SOCKET, SO_ERROR, &value, &length);
+  i64 why = ERRNO;
+  return r < 0 ? why : value;
+}
+
+/* `conn_peer(&Conn, &![byte])`: 19 bytes: 4 or 6, sixteen address bytes, the port big-endian. 0, or the errno. */
+i64 cancho_conn_peer(const i64 *conn, u8 *out, i64 room) {
+  if (room < 19) return EINVAL;
+  u8 sa[32];
+  unsigned length = 32;
+  int r = getpeername((int)*conn, sa, &length);
+  if (r < 0) return ERRNO;
+  u8 family = sa[FAMILY_AT];
+  if (family == 2) {
+    out[0] = 4;
+    for (int i = 0; i < 16; i++) out[1 + i] = i < 4 ? sa[4 + i] : 0;
+  } else if (family == AF_INET6) {
+    out[0] = 6;
+    for (int i = 0; i < 16; i++) out[1 + i] = sa[8 + i];
+  } else {
+    return EINVAL;
+  }
+  out[17] = sa[2];
+  out[18] = sa[3];
+  return 0;
+}
+
+/* `flush_out(io)`: out = tag (0 Ok, 1 Failed), 0, why; an earlier failed write the flush did not see is EIO. */
+void cancho_flush_out(i64 *out) {
+  int flushed = fflush(STDOUT);
+  i64 why = ERRNO;
+  int indicator = ferror(STDOUT);
+  int failed = flushed != 0 || indicator != 0;
+  out[0] = failed;
+  out[1] = 0;
+  out[2] = flushed != 0 ? why : 5;
+}
+
+/* `read_bytes(io, into)`: out = tag (0 Got, 1 End, 2 Failed), the count, why. */
+void cancho_read_stdin(u8 *buf, i64 length, i64 *out) {
+  i64 moved = fread(buf, 1, length, STDIN);
+  i64 why = ERRNO;
+  int failed = ferror(STDIN) != 0;
+  clearerr(STDIN);
+  i64 ended = length != 0 ? 1 : 0;
+  out[0] = moved != 0 ? 0 : (failed ? 2 : ended);
+  out[1] = moved;
   out[2] = why;
 }
 

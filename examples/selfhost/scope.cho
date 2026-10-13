@@ -309,7 +309,12 @@ pub fn slice_codable[&s](st: &!s [int], ty: int) -> [] bool {
         return false;
     }
     let e = types.element_of(st, ty);
-    return types.is_plain(e);
+    return element_ok(st, e);
+}
+
+// May a run hold this: a scalar, or a struct, an enum or a tuple, one aggregate in the code?
+pub fn element_ok[&s](st: &!s [int], e: int) -> [] bool {
+    return types.is_plain(e) || aggregate_codable(st, e) && !types.is_slice_ref(st, e);
 }
 
 // A value of this type has code: a struct or an enum of scalars, one aggregate in the code.
@@ -359,7 +364,7 @@ pub fn aggregate_codable[&s](st: &!s [int], ty: int) -> [] bool {
     }
     if types.is_boxslice(st, ty) {
         let e = types.boxslice_element(st, ty);
-        return types.is_plain(e);
+        return element_ok(st, e) || types.is_tvar(st, e);
     }
     if types.is_box(st, ty) {
         return true;
@@ -422,7 +427,7 @@ pub fn element_type[&s](st: &!s [int], ty: int) -> [] int {
     if tag != 0 {
         return tag;
     }
-    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 1 {
+    if ast.is_kind(st, ty, kinds.NK::TName) && (ast.get(st, ty, 8) == 1 || ast.get(st, ty, 8) == 3 && emit.on(st)) {
         return value_type(st, ty);
     }
     return 0;

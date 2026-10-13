@@ -7,6 +7,7 @@ module selfhost.netcode;
 // numbers, which become the leaves of the prelude enum (`Dialed`, `Accepted`, `Received`, `Sent`, `Listening`).
 
 import std.bytes;
+import selfhost.ast;
 import selfhost.emit;
 import selfhost.tables;
 
@@ -109,7 +110,7 @@ pub fn canonical(number: int) -> [] int {
     if number == 49 || number == 50 {
         return number - 10;
     }
-    if number == 51 || number == 52 || number == 63 {
+    if number == 51 || number == 52 || number == 63 || number == 105 {
         return 44;
     }
     if number == 53 {
@@ -120,12 +121,27 @@ pub fn canonical(number: int) -> [] int {
 
 // Does the call need the support for directories?
 pub fn needs_dirs(which: int) -> [] bool {
-    return which >= 54 && which != 63;
+    return which >= 54 && which <= 69 && which != 63;
 }
 
 // The constants a call pushes after its arguments.
 pub fn extras[&s](st: &!s [int], which: int) -> [] int {
-    if which >= 55 && which <= 58 {
+    if which >= 93 && which <= 104 {
+        // The poller's functions are told whether `epoll_event` is the packed one (x86-64); a hand-over whether it is
+        // a datagram socket's; a listener is watched for reading.
+        if which == 94 {
+            emit.push_arg(st, 1, true, 1, 0 - 1);
+        }
+        if which == 94 || which == 95 || which == 96 {
+            emit.push_arg(st, 1, true, ast.flag(which == 96), 0 - 1);
+        }
+        if which >= 94 && which <= 99 {
+            emit.push_arg(st, 1, true, ast.flag(st[61] == 0), 0 - 1);
+        }
+        if which >= 101 && which <= 104 {
+            emit.push_arg(st, 1, true, (which - 101) % 2, 0 - 1);
+        }
+    } else if which >= 55 && which <= 58 {
         emit.push_arg(st, 1, true, which - 55, 0 - 1);
     } else if which == 59 || which == 60 {
         emit.push_arg(st, 1, true, which - 59, 0 - 1);
@@ -143,6 +159,27 @@ pub fn extras[&s](st: &!s [int], which: int) -> [] int {
 
 // How many arguments the builtin numbered `which` (see `codes.net_code`; a pipe's number is made a connection's) takes.
 pub fn arity(which: int) -> [] int {
+    if which == 106 || which == 108 {
+        return 1;
+    }
+    if which == 107 || which == 109 {
+        return 2;
+    }
+    if which == 110 {
+        return 3;
+    }
+    if which == 93 {
+        return 0;
+    }
+    if which == 94 || which == 98 || which == 99 {
+        return 3;
+    }
+    if which == 95 || which == 96 {
+        return 4;
+    }
+    if which == 97 {
+        return 2;
+    }
     if which == 36 {
         return 4;
     }
@@ -160,11 +197,17 @@ pub fn arity(which: int) -> [] int {
 
 // Does the first argument, a capability narrowed to a bound, give the bound the call checks?
 pub fn holds_bound(which: int) -> [] bool {
-    return which == 32 || which == 33 || which == 36 || which == 37 || which == 54;
+    return which == 32 || which == 33 || which == 36 || which == 37 || which == 54 || which == 110;
 }
 
 // How many numbers the function answers in its cell: 0 when it answers one whole number.
 pub fn slots(which: int) -> [] int {
+    if which == 106 || which == 107 || which == 110 {
+        return 3;
+    }
+    if which == 93 || which == 103 || which == 104 {
+        return 3;
+    }
     if which == 48 || which == 65 {
         return 4;
     }
@@ -179,6 +222,21 @@ pub fn slots(which: int) -> [] int {
 
 // The prelude enum the answer is made into.
 pub fn enum_name(which: int) -> [] &static [byte] {
+    if which == 106 {
+        return "Done";
+    }
+    if which == 107 {
+        return "Read";
+    }
+    if which == 110 {
+        return "Dialed";
+    }
+    if which == 93 {
+        return "Polling";
+    }
+    if which == 103 || which == 104 {
+        return "Attached";
+    }
     if which == 54 || which == 55 {
         return "DirOpened";
     }
@@ -217,6 +275,42 @@ pub fn enum_name(which: int) -> [] &static [byte] {
 
 // The function of `runtime/net.c` that does it.
 pub fn function(which: int) -> [] &static [byte] {
+    if which == 106 {
+        return "cancho_flush_out";
+    }
+    if which == 107 {
+        return "cancho_read_stdin";
+    }
+    if which == 108 {
+        return "cancho_conn_connect_status";
+    }
+    if which == 109 {
+        return "cancho_conn_peer";
+    }
+    if which == 110 {
+        return "cancho_net_tcp_connect_start";
+    }
+    if which == 93 {
+        return "cancho_poller_new";
+    }
+    if which == 94 || which == 95 || which == 96 {
+        return "cancho_poller_ctl";
+    }
+    if which == 97 {
+        return "cancho_poller_remove";
+    }
+    if which == 98 {
+        return "cancho_poller_wait";
+    }
+    if which == 99 {
+        return "cancho_poller_add_child";
+    }
+    if which == 101 || which == 102 {
+        return "cancho_conn_detach";
+    }
+    if which == 103 || which == 104 {
+        return "cancho_conn_attach";
+    }
     if which == 54 {
         return "cancho_dir_open";
     }
@@ -287,4 +381,9 @@ pub fn function(which: int) -> [] &static [byte] {
         return "cancho_net_pipe_open";
     }
     return "cancho_clock_ms";
+}
+
+// Does the first argument, a capability or the console, give nothing the call passes on?
+pub fn leading(which: int) -> [] bool {
+    return holds_bound(which) || which == 46 || which == 47 || which == 106 || which == 107;
 }

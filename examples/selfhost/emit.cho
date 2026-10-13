@@ -970,7 +970,7 @@ pub fn subslice[&s](st: &!s [int], element: int, base: int, lk: bool, lv: int, l
     str(st, "mul i64 ");
     operand(st, 1, ak, av, ar);
     str(st, ", ");
-    nat(st, stride(st, element));
+    stride_text(st, element);
     str(st, "\n");
     let at = start(st);
     str(st, "getelementptr i8, ptr ");
@@ -1063,6 +1063,13 @@ fn slice_bytes[&s](st: &!s [int], element: int, ck: bool, cv: int, cr: int) -> [
     operand(st, 1, ck, cv, cr);
     str(st, ", 0\n");
     trap_if(st, negative);
+    if !types.is_plain(element) {
+        let size = start(st);
+        str(st, "add i64 0, ");
+        size_of(st, element);
+        str(st, "\n");
+        return checked(st, 2, ck, cv, cr, false, 0, size);
+    }
     return checked(st, 2, ck, cv, cr, true, stride(st, element), 0 - 1);
 }
 
@@ -1104,7 +1111,7 @@ fn fill_run[&s](st: &!s [int], p: int, element: int, ck: bool, cv: int, cr: int,
     str(st, "mul i64 ");
     temp(st, i);
     str(st, ", ");
-    nat(st, stride(st, element));
+    stride_text(st, element);
     str(st, "\n");
     let at = start(st);
     str(st, "getelementptr i8, ptr ");
@@ -1474,6 +1481,15 @@ pub fn string_constant[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] i
     return n;
 }
 
+// What multiplies an index to give an offset in bytes, as text: the number for a scalar, the size of the type
+// otherwise.
+fn stride_text[&s](st: &!s [int], ty: int) -> [] int {
+    if types.is_plain(ty) {
+        return nat(st, stride(st, ty));
+    }
+    return size_of(st, ty);
+}
+
 // Bytes of a slice are one each and whole numbers eight; the other element types are not written yet.
 fn stride[&s](st: &!s [int], ty: int) -> [] int {
     if ty == 2 {
@@ -1496,7 +1512,7 @@ pub fn element_address[&s](st: &!s [int], element: int, base_reg: int, len_known
     str(st, "mul i64 ");
     operand(st, 1, ik, iv, ir);
     str(st, ", ");
-    nat(st, stride(st, element));
+    stride_text(st, element);
     str(st, "\n");
     let p = start(st);
     str(st, "getelementptr i8, ptr ");
