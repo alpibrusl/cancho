@@ -7,6 +7,9 @@
 //     V <curve> <h> <point> <msg> <sig>   ecdsa.verify_der of the hash of msg: `<code> <tag> -`
 //     R <curve> <h> <point> <msg> <sig>   ecdsa.verify_raw
 //     W <curve> <h> <point> <msg> <sig>   ecdsa.verify_raw with `work` only 10 words
+//     X <curve> <h> <point> <msg> <sig>   ecdsa.verify_der with the point's table in its place (`docs/p256-fast.md` §11)
+//     Y <curve> <h> <point> <msg> <sig>   ecdsa.verify_raw with the point's table in its place
+//                                         (a point `p256_vf.build_table` refuses, and P-384's, keep the point)
 //     D <curve> <point> <digest> <sig>    ecdsa.verify_der of a digest as given
 //     F <n> <op> <a> <b>                  bigmod registers: `<code> <tag> <result>`, op `m` a*b, `a` a+b,
 //                                         `s` a-b, `i` a^-1 (n prime), all mod n; `r` a mod n
@@ -18,6 +21,7 @@ import std.bigmod;
 import std.buffer;
 import std.crypto;
 import std.ecdsa;
+import std.p256_vf;
 import std.io;
 
 fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
@@ -216,8 +220,19 @@ fn case[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, work: &!w [int], show: bo
             } else {
                 let digest = alloc_slice[r](h, byte_of(0));
                 digest_of(h, msg, digest);
-                if op == 86 {
+                // The point's table in its place, as a program that keeps one gives it; P-384 has none, and a
+                // point the table refuses is given as it is.
+                let table = alloc_slice[r](p256_vf.table_len(), byte_of(0));
+                var tabled = false;
+                if (op == 88 || op == 89) && curve == 256 {
+                    tabled = p256_vf.build_table(point, table, work) == 0;
+                }
+                if op == 86 || op == 88 && !tabled {
                     code = ecdsa.verify_der(curve, digest, point, sig, work);
+                } else if op == 88 {
+                    code = ecdsa.verify_der(curve, digest, table, sig, work);
+                } else if op == 89 && tabled {
+                    code = ecdsa.verify_raw(curve, digest, table, sig, work);
                 } else if op == 87 {
                     code = ecdsa.verify_raw(curve, digest, point, sig, work[0..10]);
                 } else {

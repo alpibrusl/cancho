@@ -1,0 +1,57 @@
+# Apple M4 Max, Docker Desktop VM (6 vCPUs), image lexsys-hooks-env (Ubuntu 24.04, OpenSSL 3.0.13), 2026-10-13 (the VM's clock); scripts/tls_handshake_cost.py <bin> server-full client-full --seconds 8 --rounds 2 --cpu 0 --peer-cpu 1 (CPU time); `after` this branch, `before` origin/main 3d7e8e9d; alternating
+=== after pass 1 07:02:54 load 7.63 6.07 5.18
+perf counters: none; load (7.6328125, 6.06640625, 5.17578125)
+-- round 1 of 2, load (7.6328125, 6.06640625, 5.17578125)
+server-full cancho tls_echo                     8788 handshakes     0.249 ms CPU
+server-full openssl s_server                   10977 handshakes     0.202 ms CPU
+server-full openssl oserv                      12281 handshakes     0.157 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.391 ms CPU
+client-full openssl tconn                      10575 handshakes     0.302 ms CPU
+-- round 2 of 2, load (7.17578125, 6.12353515625, 5.228515625)
+server-full cancho tls_echo                     9439 handshakes     0.249 ms CPU
+server-full openssl s_server                   10655 handshakes     0.204 ms CPU
+server-full openssl oserv                      12776 handshakes     0.149 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.381 ms CPU
+client-full openssl tconn                      10693 handshakes     0.303 ms CPU
+=== before pass 1 07:04:04 load 7.86 6.44 5.37
+perf counters: none; load (7.86279296875, 6.4365234375, 5.36962890625)
+-- round 1 of 2, load (7.86279296875, 6.4365234375, 5.36962890625)
+server-full cancho tls_echo                     8802 handshakes     0.306 ms CPU
+server-full openssl s_server                   11330 handshakes     0.210 ms CPU
+server-full openssl oserv                      12002 handshakes     0.152 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.438 ms CPU
+client-full openssl tconn                      11329 handshakes     0.293 ms CPU
+-- round 2 of 2, load (7.84619140625, 6.59423828125, 5.46337890625)
+server-full cancho tls_echo                     8133 handshakes     0.300 ms CPU
+server-full openssl s_server                   11678 handshakes     0.192 ms CPU
+server-full openssl oserv                      13581 handshakes     0.138 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.422 ms CPU
+client-full openssl tconn                      11473 handshakes     0.277 ms CPU
+=== after pass 2 07:05:14 load 7.68 6.70 5.54
+perf counters: none; load (7.68017578125, 6.701171875, 5.54296875)
+-- round 1 of 2, load (7.68017578125, 6.701171875, 5.54296875)
+server-full cancho tls_echo                     8974 handshakes     0.232 ms CPU
+server-full openssl s_server                   11260 handshakes     0.189 ms CPU
+server-full openssl oserv                      13534 handshakes     0.139 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.364 ms CPU
+client-full openssl tconn                      11699 handshakes     0.281 ms CPU
+-- round 2 of 2, load (8.02587890625, 6.9072265625, 5.65673828125)
+server-full cancho tls_echo                     9872 handshakes     0.237 ms CPU
+server-full openssl s_server                   10939 handshakes     0.197 ms CPU
+server-full openssl oserv                      12984 handshakes     0.146 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.381 ms CPU
+client-full openssl tconn                      10140 handshakes     0.278 ms CPU
+=== before pass 2 07:06:24 load 8.10 7.05 5.75
+perf counters: none; load (8.09912109375, 7.04638671875, 5.75048828125)
+-- round 1 of 2, load (8.09912109375, 7.04638671875, 5.75048828125)
+server-full cancho tls_echo                     9290 handshakes     0.292 ms CPU
+server-full openssl s_server                    9399 handshakes     0.203 ms CPU
+server-full openssl oserv                       8736 handshakes     0.177 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.443 ms CPU
+client-full openssl tconn                       7759 handshakes     0.367 ms CPU
+-- round 2 of 2, load (8.1826171875, 7.1845703125, 5.845703125)
+server-full cancho tls_echo                     7156 handshakes     0.351 ms CPU
+server-full openssl s_server                    9442 handshakes     0.200 ms CPU
+server-full openssl oserv                      11659 handshakes     0.144 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.426 ms CPU
+client-full openssl tconn                      10575 handshakes     0.310 ms CPU

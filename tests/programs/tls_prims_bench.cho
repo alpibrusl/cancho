@@ -21,6 +21,7 @@ import std.chacha20;
 import std.crypto;
 import std.ecdh;
 import std.ecdsa;
+import std.p256_vf;
 import std.ecdsa_sign;
 import std.gcm;
 import std.hkdf;
@@ -45,11 +46,13 @@ fn number_of[&s](text: &s [byte]) -> [] int {
 // 13 AES-128-GCM seal        14 AES-128-GCM open        15 ChaCha20-Poly1305 seal   16 ChaCha20-Poly1305 open
 // 17 AES-128-GCM prepare (the key schedule and the hash key, once per traffic key)
 // 18 HKDF-Expand-Label (48, SHA-384)
-// 19 calibration: 1,000 steps of a multiply-add chain, which no change to a primitive can touch. On x86-64 LLVM folds the
+// 19 ECDSA P-256 verify against the key's table, 20 sign + verify-before-send against it (`docs/p256-fast.md` §11): what
+//    a client verifies under a trust anchor, and what a server's check is
+// 21 calibration: 1,000 steps of a multiply-add chain, which no change to a primitive can touch. On x86-64 LLVM folds the
 //    arithmetic out of the loop (the constants are not in the binary): what is left is a counted loop of about one instruction
 //    and one cycle a step, 1,007 instructions a call. That is still independent of every primitive, which is all it is for.
 fn ops() -> [] int {
-    return 19;
+    return 21;
 }
 
 fn name_of(op: int) -> [] &static [byte] {
@@ -107,6 +110,12 @@ fn name_of(op: int) -> [] &static [byte] {
     if op == 18 {
         return "hkdf_expand_label_48";
     }
+    if op == 19 {
+        return "ecdsa_p256_verify_tabled";
+    }
+    if op == 20 {
+        return "ecdsa_p256_sign_checked_tabled";
+    }
     return "calibrate";
 }
 
@@ -142,11 +151,19 @@ fn spin[&k, &s, &w](clock: &k Clock, work: &!w [int], op: int, size: int, rounds
         if op == 2 {
             x25519.public_key(scalar, pub25);
         }
-        if op == 4 || op == 5 || op == 7 {
+        if op == 4 || op == 5 || op == 7 || op == 19 || op == 20 {
             ecdh.public_key(256, scalar, point, work);
         }
+        var table_len = 0;
+        if op == 19 || op == 20 {
+            table_len = p256_vf.table_len();
+        }
+        let table = alloc_slice[r](table_len, byte_of(0));
+        if op == 19 || op == 20 {
+            p256_vf.build_table(point, table, work);
+        }
         var der_len = 0;
-        if op == 5 {
+        if op == 5 || op == 19 {
             ecdsa_sign.sign(digest, scalar, extra, sig, work);
             der_len = ecdsa_sign.to_der(sig, der);
         }
@@ -246,6 +263,19 @@ fn spin[&k, &s, &w](clock: &k Clock, work: &!w [int], op: int, size: int, rounds
             }
         }
         if op == 19 {
+            while n < rounds {
+                acc = acc + ecdsa.verify_der(256, digest, table, der_sig, work);
+                n = n + 1;
+            }
+        }
+        if op == 20 {
+            while n < rounds {
+                ecdsa_sign.sign_checked(digest, scalar, table, extra, sig, work);
+                acc = acc + int_of(sig[0]);
+                n = n + 1;
+            }
+        }
+        if op == 21 {
             var x = 1;
             while n < rounds {
                 var j = 0;

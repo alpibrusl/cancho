@@ -363,18 +363,38 @@ pub fn trust[&e, &p](engine: &!e Engine, pem: &p [byte]) -> [] int {
     // A ticket saved before is not offered after this (`docs/tls-resumption.md` §3, rule 2).
     contents(engine.tmeta)[tls_saved.t_trust()] = contents(engine.tmeta)[tls_saved.t_trust()] + 1;
     var count = 0;
+    // The store before, and its anchors' tables, go first: nothing of a root no longer trusted is left (`residue`).
+    tls_slot.zero(contents(engine.roots)[0..contents(engine.meta)[m_roots_len()]]);
     region r {
         let info = alloc_slice[r](2, 0);
         count = x509_verify.store_load(pem, contents(engine.roots)[0..roots_cap()], info);
         if count < 0 {
+            tls_slot.zero(contents(engine.roots)[0..info[0]]);
             contents(engine.meta)[m_roots_len()] = 0;
             count = tls_record.x509_chain_too_large();
         } else {
-            contents(engine.meta)[m_roots_len()] = info[0];
+            // A table for each P-256 root, up to `most_anchor_tables()` (`docs/x509-verify.md` §11): the chain's last
+            // signature is then verified in about half the time.
+            let work = alloc_slice[r](x509_verify.anchor_work_len(), 0);
+            contents(engine.meta)[m_roots_len()] = x509_verify.store_tables(contents(engine.roots)[0..roots_cap()], info[0], most_anchor_tables(), work);
         }
         contents(engine.meta)[m_skipped()] = info[1];
     }
     return count;
+}
+
+// The most P-256 trust anchors given a table: 16 of about 10 KiB each (`docs/x509-verify.md` §11). The system
+// bundle has 3.
+fn most_anchor_tables() -> [] int {
+    return 16;
+}
+
+// How many roots of the trust store have a table (`trust`; `docs/x509-verify.md` §11): its P-256 roots, at most 16.
+pub fn anchor_tables[&e](engine: &e Engine) -> [] int {
+    if is_server(engine) {
+        return 0;
+    }
+    return x509_verify.anchor_tables(contents(engine.roots)[0..contents(engine.meta)[m_roots_len()]]);
 }
 
 // The blocks the last `trust` skipped.
@@ -695,6 +715,13 @@ pub fn residue[&e](engine: &e Engine) -> [] int {
             n = n + tls_slot.nonzero(contents(engine.cbytes)[cb + tls_slot.b_keys()..cb + tls_slot.b_keys() + tls_slot.keys_len()]);
         }
         s = s + 1;
+    }
+    // A server's tables of identities not in use; a client's roots and anchors' tables past the store
+    // (`docs/p256-fast.md` §11.3).
+    if is_server(engine) {
+        n = n + tls_identity.table_residue(contents(engine.ids));
+    } else {
+        n = n + tls_slot.nonzero(contents(engine.roots)[contents(engine.meta)[m_roots_len()]..roots_cap()]);
     }
     return n;
 }

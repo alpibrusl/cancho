@@ -1,0 +1,63 @@
+# the sources of the commit that adds this file (std/, packages/, tests/, scripts/p256_mutants.py are byte for byte those run; only docs differ); Apple M4 Max, Docker Desktop VM (6 vCPUs), image lexsys-hooks-env, Ubuntu 24.04, Linux 6.8 aarch64, pyca/cryptography 41.0.7, openssl 3.0.13; 2026-10-13
+# python3 scripts/p256_mutants.py table tabled anchors identity: "ecdsa: a P-256" verify: odd:
+scratch copy in /target/mut-tmp/p256-mutants-7yy5uaj1
+unmutated tree passes (53 s)
+  killed   odd: the first point changed   [tests]
+  killed   pow: the table's first multiple wrong   [tests]
+  killed   multiply: the table's multiple 2 skipped   [tests]
+  killed   comb_multiply: position i + 1 of the table   [tests]
+  killed   load_g: the table entry (k - 1)   [tests]
+  killed   verify: s = 0 accepted   [tests]
+  killed   verify: r = 0 accepted   [tests]
+  killed   verify: s not below n accepted   [tests]
+  killed   verify: Q's range not checked   [tests]
+  killed   verify: Q's curve equation not checked   [tests]
+  killed   verify: u2 from s not r   [tests]
+  killed   verify: the 3Q multiple built from Q + Q   [tests]
+  killed   verify: the chain starts a bit low   [tests]
+  SURVIVED verify: u1's digits at width 5
+  killed   verify: a cancelled sum not reported   [tests]
+  killed   verify: infinity result accepted   [tests]
+  killed   verify: the digest truncated to 31 bytes   [tests]
+  killed   table: the point's range not checked   [tests]
+  killed   table: the curve equation not checked   [tests]
+  killed   table: one doubling short between runs   [tests]
+  killed   table: the point's last byte not written   [tests]
+  SURVIVED table: a refusal leaves the entries
+  killed   table: an odd multiple from Q + Q   [tests]
+  killed   table: the running inverse not advanced   [tests]
+  killed   table: y over Z^2, not Z^3   [tests]
+  killed   table: a product of the Z's skipped   [tests]
+  killed   table: an entry left in the Montgomery form of its Montgomery form   [tests]
+  killed   table: a limb's top byte dropped   [tests]
+  killed   table: a limb's top byte not read   [tests]
+  killed   table: a negative digit not negated   [tests]
+  killed   table: the next multiple   [tests]
+  killed   table: the generator's run 0 for every run   [tests]
+  killed   table: the generator's negative digit not negated   [tests]
+  killed   table: the work not wiped   [tests]
+  killed   table: any table taken for any point   [tests]
+  killed   table: a key's table not recognised   [tests]
+  killed   tabled: the chain starts a position low   [tests]
+  killed   tabled: the last run left out   [tests]
+  killed   tabled: u2 against the generator's runs   [tests]
+  SURVIVED tabled: u2's digits at width 5
+  killed   tabled: infinity result accepted   [tests]
+  killed   tabled: a cancelled sum not reported   [tests]
+  killed   ecdsa: a P-256 key's table refused as a point   [tests]
+  killed   anchors: a table entry's length one short   [tests]
+  killed   anchors: the first P-256 root only   [tests]
+  killed   anchors: any table taken for any root   [tests]
+  SURVIVED anchors: a root verified without its table
+  killed   anchors: the old store not cleared   [tests]
+  killed   anchors: no tables built   [tests]
+  killed   identity: no table built   [tests]
+  killed   identity: the check without the table   [tests]
+  killed   identity: a table that is not the point's used   [tests]
+  killed   sign: only the words the table used wiped   [tests]
+
+53 mutants: 49 killed, 4 survived, 0 did not build
+  survivor: verify: u1's digits at width 5: A width-5 wNAF of u1 has digits in +-15, all in the generator's table of +-63: the same sum with more additions.
+  survivor: table: a refusal leaves the entries: The entries are written only once the point is checked; the refusals after that are -40, a multiple at infinity, which no point of the curve (prime order n, multiples below 2^201) reaches. The earlier refusals return before any entry is written, onto the zeros the function starts with.
+  survivor: tabled: u2's digits at width 5: A width-5 wNAF of u2 has digits in +-15, all in the table's +-63 of each run: the same sum with more additions (as `verify: u1's digits at width 5`).
+  survivor: anchors: a root verified without its table: A chain's answer is the same with or without the anchor's table (the tabled replays of every x509 file show it); only the cost changes, measured by the client handshake of §11.

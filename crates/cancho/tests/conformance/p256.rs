@@ -59,7 +59,9 @@ fn check_vectors(backend: &str) {
 /// Multiplication, addition, subtraction, squaring, inversion and a lazy chain modulo p; the same
 /// modulo the group order; load and store; `below_p` and `below_n`; the public key of 100-odd edge
 /// and random scalars (the signed digits' carries, 8 and 9 in every nibble, n - 1, the refusals of
-/// 0, n and 2^256 - 1); the 5- and 7-wide wNAF of edge and random scalars, digit for digit.
+/// 0, n and 2^256 - 1); the 5- and 7-wide wNAF of edge and random scalars, digit for digit; every
+/// verification again with the key's table in the point's place, and the tables of four keys byte
+/// for byte (`docs/p256-fast.md` §11).
 #[test]
 fn the_field_the_table_and_the_wnaf_equal_pythons_on_both_backends() {
     check_vectors("llvm");

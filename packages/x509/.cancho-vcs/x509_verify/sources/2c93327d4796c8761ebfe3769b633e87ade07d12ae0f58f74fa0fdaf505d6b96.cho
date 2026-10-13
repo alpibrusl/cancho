@@ -2,6 +2,7 @@ module x509_verify;
 import std.bytes;
 import std.crypto;
 import std.ecdsa;
+import std.p256_vf;
 import std.ed25519;
 import std.rsa;
 import x509;
@@ -222,6 +223,96 @@ pub fn store_load[&p, &s, &i](pem: &p [byte], store: &!s [byte], info: &!i [int]
     return count;
 }
 
+// ---- Trust anchors' tables (`docs/x509-verify.md` §11) ----
+//
+// A P-256 root verifies the last signature of every chain that ends at it, so a client can keep its key's
+// table (`p256_vf.build_table`, `docs/p256-fast.md` §11) and verify that signature in about half the time. The
+// tables are entries of the store after its roots: the same 7-byte header with the subject's offset and length
+// both zero, which no issuer's name equals (a Name is at least its 2-byte header), so a walk over the roots
+// passes over them; then a kind byte (1: a P-256 key's table) and the table, whose first 65 bytes are the key it
+// is of. Public data, built from the roots' public keys only.
+
+fn table_kind() -> [] int {
+    return 1;
+}
+
+// The bytes one table takes in the store.
+pub fn anchor_table_len() -> [] int {
+    return entry_header() + 1 + p256_vf.table_len();
+}
+
+// The words `store_tables` needs in `work`.
+pub fn anchor_work_len() -> [] int {
+    return p256_vf.table_work_len();
+}
+
+// Appends to the store `store[0..used]` (`store_load`'s) a table for each of its roots whose key is P-256, the
+// first `most` of them in the store's order, as long as `store` has room. The store's new length: `used` and
+// the tables'. A root whose table is not built is verified without one.
+pub fn store_tables[&s, &w](store: &!s [byte], used: int, most: int, work: &!w [int]) -> [] int {
+    if used < 0 || used > len(store) || len(work) < anchor_work_len() {
+        return used;
+    }
+    var end = used;
+    var built = 0;
+    region r {
+        let view = alloc_slice[r](x509.view_len(), 0);
+        var at = 0;
+        while at + entry_header() <= used && built < most {
+            let n = u24_at(store, at);
+            let root = at + entry_header();
+            at = root + n;
+            if at <= used && u16_at(store, root - 2) != 0 && x509.parse(store[root..at], view) == 0 && view[x509.key_algorithm()] == x509.oid_ec_public_key() && view[x509.key_curve()] == x509.oid_p256() && end + anchor_table_len() <= len(store) {
+                let t = p256_vf.table_len();
+                let e = end + entry_header();
+                if p256_vf.build_table(store[root + view[x509.key_start()]..root + view[x509.key_end()]], store[e + 1..e + 1 + t], work) == 0 {
+                    store[end] = byte_of(1 + t >> 16);
+                    store[end + 1] = byte_of(1 + t >> 8 & 255);
+                    store[end + 2] = byte_of(1 + t & 255);
+                    store[end + 3] = byte_of(0);
+                    store[end + 4] = byte_of(0);
+                    store[end + 5] = byte_of(0);
+                    store[end + 6] = byte_of(0);
+                    store[e] = byte_of(table_kind());
+                    end = e + 1 + t;
+                    built = built + 1;
+                }
+            }
+        }
+    }
+    return end;
+}
+
+// How many tables the store holds (`store_tables`).
+pub fn anchor_tables[&s](store: &s [byte]) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at + entry_header() <= len(store) {
+        let size = u24_at(store, at);
+        let body = at + entry_header();
+        at = body + size;
+        if at <= len(store) && u16_at(store, body - 2) == 0 && size == 1 + p256_vf.table_len() && int_of(store[body]) == table_kind() {
+            n = n + 1;
+        }
+    }
+    return n;
+}
+
+// The table of the key `key` among the store's tables, or an empty slice: a table is used only for the key
+// its first 65 bytes are.
+fn anchor_table[&s, &k](store: &s [byte], key: &k [byte]) -> [] &s [byte] {
+    var at = 0;
+    while at + entry_header() <= len(store) {
+        let n = u24_at(store, at);
+        let body = at + entry_header();
+        at = body + n;
+        if at <= len(store) && u16_at(store, body - 2) == 0 && n == 1 + p256_vf.table_len() && int_of(store[body]) == table_kind() && len(key) == 65 && bytes.equal(store[body + 1..body + 66], key) {
+            return store[body + 1..at];
+        }
+    }
+    return store[0..0];
+}
+
 fn u16_at[&s](s: &s [byte], at: int) -> [] int {
     return int_of(s[at]) * 256 + int_of(s[at + 1]);
 }
@@ -426,8 +517,9 @@ fn digest_of[&m, &o](h: int, message: &m [byte], out: &!o [byte]) -> [] int {
     return 0;
 }
 
-// The subject's signature by the issuer's key. 0, or a refusal.
-fn signature_ok[&d, &v, &e, &w](der: &d [byte], view: &v [int], issuer: &e [byte], iview: &w [int]) -> [] int {
+// The subject's signature by the issuer's key, against `table` when it is one of a P-256 key's (an anchor's,
+// `anchor_table`; empty for any other issuer). 0, or a refusal.
+fn signature_ok[&d, &v, &e, &w, &t](der: &d [byte], view: &v [int], issuer: &e [byte], iview: &w [int], table: &t [byte]) -> [] int {
     let k = key_ok(issuer, iview);
     if k != 0 {
         return k;
@@ -511,7 +603,14 @@ fn signature_ok[&d, &v, &e, &w](der: &d [byte], view: &v [int], issuer: &e [byte
                 let digest = alloc_slice[r](h, byte_of(0));
                 digest_of(h, tbs, digest);
                 let work = alloc_slice[r](ecdsa.work_len(), 0);
-                if ecdsa.verify_der(curve, digest, issuer[iview[x509.key_start()]..iview[x509.key_end()]], sig, work) != 0 {
+                // An anchor's table, which begins with its key, in the key's place.
+                var v = 0;
+                if len(table) > 0 {
+                    v = ecdsa.verify_der(curve, digest, table, sig, work);
+                } else {
+                    v = ecdsa.verify_der(curve, digest, issuer[iview[x509.key_start()]..iview[x509.key_end()]], sig, work);
+                }
+                if v != 0 {
                     code = bad_signature();
                 }
             }
@@ -673,7 +772,7 @@ fn extend[&s, &c, &r, &v, &o, &p, &t](store: &s [byte], certs: &c [byte], ranges
                     code = record(st, depth + 1, path_too_long());
                 } else {
                     st[0] = st[0] + 1;
-                    var c = signature_ok(der, view, root, rview);
+                    var c = signature_ok(der, view, root, rview, anchor_table(store, root[rview[x509.key_start()]..rview[x509.key_end()]]));
                     if c == 0 {
                         c = time_ok(rview, now);
                     }
@@ -714,7 +813,7 @@ fn extend[&s, &c, &r, &v, &o, &p, &t](store: &s [byte], certs: &c [byte], ranges
                 record(st, depth + 1, path_too_long());
             } else {
                 st[0] = st[0] + 1;
-                var c = signature_ok(der, view, jder, jview);
+                var c = signature_ok(der, view, jder, jview, jder[0..0]);
                 if c == 0 {
                     c = time_ok(jview, now);
                 }

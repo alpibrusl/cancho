@@ -1,6 +1,7 @@
 //! `std.ecdsa` (`docs/ecdsa.md` §4): every case of seven Wycheproof ECDSA
 //! files on P-256 and P-384 (DER and raw signatures, and digests longer and
-//! shorter than n), the NIST CAVP SigVer cases for those curves, and every
+//! shorter than n), the NIST CAVP SigVer cases for those curves, each also
+//! against the point's table (`docs/p256-fast.md` §11), and every
 //! refusal with its own tag. All through `tests/programs/ecdsa_driver.cho`.
 
 use super::json::feed;
@@ -101,6 +102,14 @@ fn every_wycheproof_ecdsa_case_passes() {
         }
         *counts.entry(format!("{result} {}", tag(&line))).or_insert(0) += 1;
     }
+    // Every case again with the point's table in its place (`docs/p256-fast.md` §11), which must
+    // answer the same, line for line: a P-256 point's table is built first; a P-384 point, and one the
+    // table refuses, are given as they are.
+    let tabled: Vec<String> = cases
+        .iter()
+        .map(|c| format!("{}{}", if c.starts_with('V') { "X" } else { "Y" }, &c[1..]))
+        .collect();
+    assert_eq!(run_cases(&exe, &tabled), run_cases(&exe, &cases));
     let counts: Vec<String> = counts.iter().map(|(k, v)| format!("{k} {v}")).collect();
     assert_eq!(
         counts,
@@ -151,6 +160,9 @@ fn every_nist_ecdsa_sigver_case_passes() {
     }
     assert_eq!(cases.len(), 90);
     let (dir, exe) = build_ecdsa_driver("nist", "cranelift");
+    // The same answers against each point's table (`docs/p256-fast.md` §11).
+    let tabled: Vec<String> = cases.iter().map(|c| format!("Y{}", &c[1..])).collect();
+    assert_eq!(run_cases(&exe, &tabled), run_cases(&exe, &cases));
     let mut pass = 0;
     for (ok, line) in want.iter().zip(run_cases(&exe, &cases)) {
         if *ok {

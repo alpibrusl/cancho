@@ -1,6 +1,6 @@
 # `std.p256`: faster P-256 (#380, part of #378)
 
-> **Status: built; not independently reviewed (#209).** §1 is the profile that came first (the design was committed before the code); §2 to §7 are the design as built, §8 its gates, §9 what it costs, §10 what fell short. The TLS performance
+> **Status: built; not independently reviewed (#209).** §1 is the profile that came first (the design was committed before the code); §2 to §7 are the design as built, §8 its gates, §9 what it costs, §10 what fell short. **§11, a table for a key that verifies many signatures (B2 and B3 of #378: a TLS server's own key, a client's trust anchors), and §12, P-384 measured and decided, came after (#380 reopened).** The TLS performance
 > work (#378) names P-256 as the largest single cost in a server handshake: `std.ecdsa_sign.sign` is 0.80 ms on an M4 and
 > 1.24 ms on the i7 of `gram`, OpenSSL's is 23 µs. `docs/ecdsa.md` §5.4 and `docs/ecdsa-sign.md` §9 said where the time goes
 > without measuring it. §1 measures it; §2 to §7 are the design that follows from the numbers; §8 is how it is checked.
@@ -456,7 +456,9 @@ handshake whose other costs are the TLS engine's, and it is verification alone t
 - **Carry-free addition and subtraction** (§3): at most 10% of the ladder; it needs the bounds script to track limb widths.
 - **P-384** stays on `std.bigmod`: its field would be 15 limbs of 28 bits (225 products) and a table twice the size; the kernels
   are generated, so it is a generator parameter, but no program here signs or exchanges on P-384 in a hot path
-  (`docs/tls-server.md` §6: 6 ms a handshake is the P-384 client's choice, not the server's).
+  (`docs/tls-server.md` §6: 6 ms a handshake is the P-384 client's choice, not the server's). *Measured and decided in §12:
+  P-384 verification is in a client's hot path after all (7 of the 31 signatures of the 14 saved real chains), at 9 to 16 times
+  OpenSSL's cost; it is built on #381's field, not on this one.*
 - **Against OpenSSL**: signing is still about 2.5 times its time (23 µs on the i7 of `docs/ecdsa-sign.md` §7 against §9's figure), and
   the ladder (`shared`) about five times; both are field-multiplication bound at 20 ns, and OpenSSL's are assembly with a 64-bit
   multiply.
@@ -464,3 +466,237 @@ handshake whose other costs are the TLS engine's, and it is verification alone t
   P-384 noisy; P-256 was not re-run on it here).
 - **Not independently reviewed** (#209), and not run: the server interop matrix of `docs/tls-server.md` §10.2 needs the container of
   `scripts/interop/server.Dockerfile` with Go, wolfSSL and mosquitto; CI's `tls-assurance` job runs it (see the PR).
+
+---
+
+## 11. A key's table: the server's own key (B2) and the trust anchors (B3)
+
+> #380 reopened after #397 for what of its scope was left; `docs/tls-performance.md` §10.8 ranked these two levers at about 7.5
+> points of a full server handshake (B2) and 4.7 of a client's (B3). The design was written before the code, its sizes chosen by
+> the measurement of §11.2; §11.4 to §11.7 are as built.
+
+### 11.1 The question
+
+A verification is u1·G + u2·Q. §7 has G's odd multiples in a `static` and builds 1Q, 3Q, …, 15Q on each call, and both share one
+chain of 256 doublings, which is most of the time: a doubling is 8 multiplications, and there are 256 of them against about 37 mixed
+additions for u1 and 43 Jacobian ones for u2. Two keys verify signature after signature:
+
+- **a TLS server's own key** (B2): every signature the server makes is verified under its public point before it is sent
+  (`docs/tls-server.md` §3.3), a quarter of a full server handshake (`docs/tls-performance.md` §10.4);
+- **a trust anchor's key** (B3): the last signature of every chain that ends at a root is verified under the root's key.
+
+For such a key, a table built once can do for Q what `p256_comb.odd` does for G.
+
+### 11.2 The design, and what chose it
+
+**Split each scalar's wNAF into runs.** The 257 width-7 wNAF digits of u2 are cut into `m` runs of `L` positions (L·m ≥ 257). Digit
+d at position L·j + i stands for d·2^i·(2^(L·j)·Q), so with the odd multiples 1 to 63 of each 2^(L·j)·Q in a table, the m runs share
+**one chain of L − 1 doublings**; u1 is split the same way against the generator's runs. The additions do not change in number
+(one in eight positions has a digit, in each scalar); the doublings fall from 256 to L − 1. The table is 32·m affine points.
+
+`docs/tls-performance.md` §10.8 had assumed **two combs** (§6's table, one for G and one for Q: 65 additions each and no doubling)
+and estimated 1.44 times. A comb has a digit at every position of 4 bits, so it adds 61 times where wNAF adds 32, and its table is
+520 points (83 KB). Measured on the M4 (`scripts/p256_bench.py`, the same driver, load average about 4.5), for runs of 2, 4 and 8
+(the generator's runs a `static` of the same shape, the verification otherwise the same):
+
+| runs (m × L) | the key's table | a verification with it | building the table |
+|---|---|---|---|
+| none (§7) | — | 104.9 µs | — |
+| 2 × 129 | 5,185 bytes | 64.4 µs | 78 µs |
+| **4 × 65** | **10,305 bytes** | **44.4 to 48.8 µs** | **151 to 157 µs** |
+| 8 × 33 | 20,545 bytes | 40.8 to 41.0 µs | 276 µs |
+
+**Four runs of 65.** Eight runs save another 4 to 8 µs for twice the memory and twice the build; two runs lose 16 to 20 µs. What
+four runs leave is mostly fixed: the inverse of s modulo n (10 µs), 64 mixed additions and 64 doublings.
+
+- **The key's table** (`std.p256_vf.build_table`): the point it was built from (65 bytes, `04 || x || y`), then entry 32·j + k =
+  (2k + 1)·2^(65·j)·Q for j in 0..3 and k in 0..31, x then y, each in Montgomery form, fully reduced, as ten limbs of four bytes:
+  **10,305 bytes**. Bytes, not words, so that it can live in the byte slices where the engine keeps an identity and a trust store
+  (§11.3), and four bytes a limb rather than 32 big-endian bytes a coordinate so that reading an entry is ten loads, not a
+  conversion and a multiplication (an entry is read about 32 times a verification).
+- **The generator's runs**: `p256_comb.odd` now holds (2k + 1)·2^(65·j)·G for the four runs, 128 points, 2,560 words (20 KB of
+  read-only data where it was 5 KB); run 0 is the table §7 reads, at the same words, so `verify` is unchanged.
+- **Building it** (`run`): each run's base is the last one doubled 65 times; its odd multiples by additions of twice the base, in
+  Jacobian coordinates; then all 32 made affine with one inversion (Montgomery's trick: the running products of the Z's, one
+  inverse, each Z's inverse peeled off it). Four inversions a table. `scripts/p256_bounds.py` checks the new formulas (`run`,
+  `put_limbs`, `load_tab`, `load_gj`, `build_table`) against the kernels' limits as it checks the others.
+- **Verifying against it:** the table is given **in the point's place**, to `p256_vf.verify`, `ecdsa.verify_raw` and `verify_der`
+  (P-256) and `ecdsa_sign.sign_checked`, which recognise it by its length; it begins with the point, so the callers keep their
+  signatures and a table cannot be given for another key. `verify`'s checks (`prepare`, now shared: r, s, the digest, the range and
+  curve equation of the point in the table's first 65 bytes), the two wNAFs at width 7, then one chain of 64 doublings over the eight
+  runs, mixed additions throughout, and §7's final check without an inversion.
+- **Why in the point's place, not beside it.** The first version had `verify_tabled(…, point, table, …)` and `_tabled` twins of
+  `verify_raw`, `verify_der` and `sign_checked`. `scripts/history.py --explain` (the stability plateau) checks every past revision of
+  every `std/` file beside today's others, and a new function of one module that another calls makes the first module's old
+  revisions unreadable: three revisions of `std/ecdsa.cho` and `std/p256_vf.cho` failed `not-a-function`, past the plateau's
+  recorded count. With the table in the point's place, no `std` module calls a function another module did not always have;
+  `build_table`, `table_len` and `table_for` are called by `packages/` and `tests/`, which the plateau does not replay.
+
+**Public data only.** A table is computed from the public point, by doublings and additions of it, never from the private key
+(a server holds the key, and k·(2^(65·j)·G) through the comb would have been the shorter build; it would also have been a secret
+path for nothing). Verification is on public data, variable time, as §7 is; the server's check verifies the signature it is about
+to send, as before. Nothing secret enters `std.p256_vf`.
+
+**A table is never used for another key**, because it *is* the key: its first 65 bytes are the point, checked (range, curve
+equation) on every call as a point given alone is. Its entries are trusted as `build_table` wrote them, as a key's bytes are; a
+refused build leaves zeros, which begin with no point, and a caller that keeps a table beside a key gives it only when
+`table_for(table, point)` says it is that point's (`tls_identity.check_key`). The answers are `verify`'s for every point and every
+table `build_table` made; §11.6 is how that is checked.
+
+### 11.3 Where the tables live, when they are built, and what cleans them
+
+Both are kept **once per engine, per key**, never per slot: a slot's memory (`docs/tls-memory.md`) does not change.
+
+| | the server's identity (B2) | a client's trust anchor (B3) |
+|---|---|---|
+| where | `tls_identity`'s configuration, the engine's `ids` box: each identity's stride grows by the table, at `o_table` after `o_not_after` (`docs/tls-server.md` §3.5) | the trust store, the engine's `roots` box: after the roots, one entry a table (`docs/x509-verify.md` §11) |
+| built by | `tls_identity.load`, so `add_identity` and `replace_identity`, from the public point the key parser derived, after every check has passed | `tls.trust`, for each root whose key is P-256, at most 16 (`x509_verify.store_tables`) |
+| bytes | 10,305 a slot of the 16, in the configuration's address space: `tls_identity.cfg_len()` 314,106 → 478,986; resident only for the identities loaded (a zero-filled box is `calloc`, `docs/tls-memory.md` §1) | 10,313 an anchor (the 7-byte entry header and a kind byte); the system bundle has 3 P-256 roots of 128 (61 RSA-4096, 28 RSA-2048, 35 P-384, 1 P-521): **30,939 bytes**; at most 16 × 10,313 = 165,008, inside the store's 1 MiB room |
+| cost to build | 151 to 159 µs on the M4, 470 µs on `gram` (time, the `powersave` core), once a load | the same, once a root a `trust`: about 0.5 ms for the system bundle on the M4 |
+| replaced | by `replace_identity` with the new key's; a refused replacement leaves the old identity and its table | by the next `trust`, which first zeroes the old store and its tables |
+| cleared | `tls.close` (`tls_identity.wipe` zeroes the configuration) | `tls.close` frees the box (public data; the roots were never cleared either) |
+| `tls.residue` | counts the bytes of the tables of identities not in use | counts every byte of `roots` past the store and its tables |
+
+**Measured** (`docs/tls-memory.md` §13, `gram`): nothing a connection (`scripts/tls_memory.py`, 50 to 1,000 connections, every
+phase within the noise of two runs of one build); a process with one identity and the system bundle trusted holds 44 to 48 KiB more,
+41 KB of it the tables and the rest the larger binary.
+
+**Lazily, for the anchors used, was not built.** The store reaches a connection's `feed` read-only (`tls_client.feed_with(...,
+store, ...)`, a public function of the package that tests and fuzz harnesses call directly); building a table the first time an anchor
+verifies would make it a mutable argument there and in every caller. Building them at `trust` costs about half a millisecond once
+for the system bundle, whose three P-256 roots take 31 KB. A bundle of many P-256 roots gets tables for its first 16 (165 KB); the
+rest verify without one.
+
+### 11.4 Cost, per operation
+
+**`gram`** (Intel Core i7-1260P, performance core 2, `taskset -c 2`; load average 5.5 to 6.9; `kernel.perf_event_paranoid`
+lowered from 4 to 2 for the run and restored): `python3 scripts/tls_perf.py table` (cycles:u, the least of three passes, a pass whose
+IPC is impossible for the core dropped as §2.1 says; instructions exact) and `tls_perf.py openssl` (OpenSSL 3.5.5, cycles a call from
+time and the run's cycles over task-clock), on the same core, minutes apart (raw: `docs/assets/key-tables/primitives-x86-64.txt`):
+
+| operation | instructions | cycles | OpenSSL cycles | ratio | before (§7) |
+|---|---|---|---|---|---|
+| `ecdsa.verify_der` (§7) | 3,488,825 | 688.1k | 252.6k | 2.72 | |
+| **`ecdsa.verify_der`, the key's table** | **1,543,269** | **326.4k** | 252.6k | **1.29** | 2.72 |
+| `ecdsa_sign.sign_checked` | 5,118,709 | 1,014.5k | 338.9k (sign + verify) | 2.99 | |
+| **`ecdsa_sign.sign_checked`, the key's table** | **3,173,192** | **666.5k** | 338.9k | **1.97** | 2.99 |
+| `ecdsa_sign.sign` alone | 1,632,017 | 327.4k | 86.3k | 3.79 | |
+
+The check after a signature (`sign_checked` less `sign`) is 687k cycles without the table and 339k with it: **2.03 times
+cheaper**, 2.26 times fewer instructions. A verification against a table costs 1.29 times OpenSSL's verification of the same key,
+which builds nothing for it. (An earlier pass at load 3.5 to 4.5, whose output was not kept, counted 686.7k and 310.8k cycles for
+the two verifications, 971.4k and 636.8k for the two `sign_checked`, OpenSSL 238.6k and 79.9k.)
+
+**M4** (Apple M4 Max, macOS 26, native arm64; load average 8.6 to 11.7, other jobs building; `scripts/p256_bench.py`, the median of
+three passes): `verify_raw` 101.9 µs, with the key's table **48.4 µs** (2.1 times); `sign_checked` 153.8 µs, with the table
+**95.4 µs**; `sign` 50.2 µs; `build_table` 156.9 µs.
+
+**The regression guard** (`benches/tls_baseline.json`) has two new rows on both entries, recorded on each entry's own machine:
+`ecdsa_p256_verify_tabled` (1,543,233 instructions on `linux-x86_64`, 1,007,877 on `linux-aarch64`) and
+`ecdsa_p256_sign_checked_tabled` (3,183,352 and 2,064,554). The other 33 rows were not re-recorded: on unchanged code they count
+within 0.90 to 1.04 of their baselines on x86-64 and 35 of 35 rows pass on arm64. *The figures of this section and §11.5 were
+measured before the table moved into the point's place (§11.2); the arithmetic is the same, and the final revision counts 1,543,019
+and 3,173,882 instructions for the two rows on x86-64 (1,007,414 and 2,064,993 on arm64), and 6.141M and 8.777M instructions for
+the server's and the client's full handshakes (one round), against 6.127M and 8.767M.*
+
+### 11.5 Cost, per handshake
+
+`scripts/tls_handshake_cost.py <bin> server-full client-full --seconds 8 --rounds 2 --cpu 2 --peer-cpu 3 --sudo-perf` on `gram`, this
+branch (after) and `origin/main` at its base (before, `3d7e8e9d`), alternating, two passes of two rounds each; user and kernel cycles
+and instructions of the process measured, the least of its four rounds; OpenSSL 3.5.5 in the same passes (load average 3.9 to 5.1,
+other agents' benchmarks on cores 0, 1, 4 and 5, so the cycles moved by up to 20% between rounds; the instruction counts by 0.3%):
+
+| | before | after | **change** | OpenSSL (the same passes) | **ratio before → after** |
+|---|---|---|---|---|---|
+| server, full (`tls_echo` under `s_time -new`) | 1.923M cycles, 8.092M instructions | **1.467M, 6.127M** | **−23.7%** cycles, −24.3% instructions | `s_server` 1.039M / 1.003M; `oserv` 0.971M / 0.942M | **1.85 → 1.46** `s_server` (`oserv` 1.98 → 1.56) |
+| client, full (`tls_many`, chain and name verified, under a P-256 test CA) | 2.743M, 10.717M | **2.303M, 8.767M** | **−16.0%** cycles, −18.2% instructions | `tconn` 1.695M / 1.635M | **1.62 → 1.41** |
+
+- **Each saves what its primitive saves:** the server's handshake 1.965M instructions, the check 1.946M (§11.4); the client's 1.950M,
+  one verification of its chain (the CA's signature on the leaf, under the anchor's table; `CertificateVerify` is under the leaf's
+  key, which has none).
+- **Against `docs/tls-performance.md` §10.8's projection:** B2 was "7.5 points" of the handshake before A1 and the check 1.44 times
+  cheaper; as built the check is 2.03 times cheaper and the server's handshake 24% fewer instructions. B3 was "4.7 points"; as built
+  18% of the client's instructions. The split-wNAF table beats the two combs the projection assumed, at an eighth of their memory.
+- **arm64** (the M4's Docker VM, `lexsys-hooks-env`, OpenSSL 3.0.13, CPU time a handshake, CPUs 0 and 1 of the VM, the same
+  script and alternation, the least of four rounds; VM load average 7.2 to 8.2, the Mac busy with other jobs): the server's full
+  handshake **0.292 → 0.232 ms** (−20.5%; `s_server` 0.192 and 0.189 ms in the same passes: **1.52 → 1.23 times**), the client's
+  **0.422 → 0.364 ms** (−13.7%; `tconn` 0.277 and 0.278: **1.52 → 1.31 times**).
+
+### 11.6 Gates
+
+- **Every vector, byte for byte, through both paths.** `tests/vectors/p256.txt` (now 3,536 cases, both backends; the 1,823 before
+  are unchanged and first): every one of its 611 verification cases again against the key's table (`U`), which must answer the same;
+  320 signatures
+  crafted for the four runs, each through both paths, and 299 of them with r + 1 through the table (u1 and u2 at 2^65, 2^130, 2^195
+  and their neighbours, under the keys 1, 2, n − 1 and a random one, so that entries of the generator's and the table's runs are
+  equal or opposite at one position and the sum passes through infinity); four
+  keys' tables against Python's, byte for byte (their SHA-256); the points `build_table` refuses; every new entry point with wrong
+  lengths. Wycheproof's 3,098 ECDSA cases and CAVP's 90 SigVer cases are each run again against the point's table and must give the
+  same line (`conformance/ecdsa.rs`). The x509 files (the limbo subset, 223 stores of which 195 give at least one root a table; the
+  14 saved real chains against the system bundle, whose 3 P-256 roots get one; the OpenSSL matrix; the no-name matrix) are each
+  replayed with the anchors' tables and must give every recorded answer (`conformance/x509_verify.rs`). The TLS suites (the liar
+  clients, the differentials, tickets, the pool, fuzz corpora) pass unchanged: the server's check and the client's chain now go
+  through the tables in all of them. `conformance/key_tables.rs`: an identity's table is its key's when loaded and the new key's
+  when replaced, unchanged by a refused replacement, zeros when wiped; a store's tables follow the store, `tls.residue` 0.
+- **Mutants** (`scripts/p256_mutants.py`, now also over the key tables' users in `packages/x509` and `packages/tls`, its evidence
+  adding the x509 replays and `key_tables`): 53 run, the 35 new ones, the 12 of `verify` (7 of whose code moved into `prepare`) and 6
+  older ones on the generator's tables and the signer's wipe, on arm64 (`lexsys-hooks-env`, pyca/cryptography 41, `openssl` 3.0.13):
+  **49 killed, 4 survived, 0 failed to build, every survivor argued equivalent** in `EQUIVALENT`, each argument printed beside it:
+  u1's and u2's digits at width 5 (all in their tables); a refusal after the entries are written (a multiple at infinity, which no
+  point of the curve gives); and a chain's anchor verified without its table, which changes the cost and not the answer (the tabled
+  replays of every x509 file show the answers are the same; the client handshake of §11.5 measures the cost). Running them found two
+  gaps, both closed before the last run: nothing checked that the check verifies under the identity's table rather than its point
+  (`tls_identity.check_key` is now asserted), and nothing checked that `table_for` refuses a table of another point (asserted with
+  two identities' tables and points). After the rebase onto #463 (resting areas, whose `tls.residue` these additions sit beside),
+  the anchors' and identities' 9 were run again: 8 killed, the ninth the argued anchor
+  (`docs/assets/key-tables/mutants-anchors-identity-rebased-arm64.txt`). The 107 others of §8.4 mutate code this change does not touch and were not re-run. Raw output:
+  `tests/evidence/p256/mutants_tables.txt`.
+- **No timing test is needed, and none was run:** nothing here touches a secret. `sign_checked` with a table is `sign`
+  (unchanged) and then a verification of public data; the tables are built from public points.
+
+### 11.7 Not done
+
+- **The server's store for client certificates** (`tls.trust_clients`, `docs/tls-server.md` §13.3) gets no anchors' tables; a
+  client certificate's chain is verified as before. The same `store_tables` would serve it; it is not in #380's list.
+- **Tables for intermediates**, which a client meets again and again (a CA's issuing certificate), are not kept: an intermediate is
+  sent by the peer and is not known before the handshake.
+- **The public Web PKI gains little from B3 today:** of the 31 signatures in the 14 saved real chains of `docs/x509-verify.md` §8.2,
+  22 are RSA, 7 P-384 and 2 P-256, and no chain ends at a P-256 root. B3 pays for private P-256 CAs (the measured client's, a
+  service mesh's); the larger gain for public sites is P-384 (§12).
+
+## 12. P-384: measured, and decided
+
+**Measured.** `std.ecdsa` and `std.ecdh` on P-384 are still `std.bigmod`'s registers, generic Montgomery multiplication on 30-bit
+limbs with checked arithmetic (the multiplication §1.2 measured for P-256, at 13 limbs instead of 9). `tests/programs/p384_profile.cho`,
+one operation `rounds` times, timed by `scripts/p256_bench.py --p384` (the time of one is the difference of two runs; the raw files
+call it `bench384.py`, the same script before the flag), beside `openssl speed ecdsap384 ecdhp384`:
+
+| P-384 | M4 (macOS 26, native; OpenSSL 4.0.3), time | ratio | `gram` (core 2; OpenSSL 3.5.5), cycles | ratio |
+|---|---|---|---|---|
+| `ecdsa.verify_raw` (SHA-384) | 2,791 µs; OpenSSL 268 µs | **10.4** | 24.0M (68.7M instructions); OpenSSL 1.48M to 2.73M | **8.8 to 16** |
+| `ecdh.shared` | 2,917 µs; OpenSSL 169 µs | **17.3** | 21.6M (60.9M instructions); OpenSSL 2.02M | **10.7** |
+| `ecdh.public_key` | 2,282 µs | | 11.7M to 18.5M (60.9M instructions) | |
+
+On `gram` (`docs/assets/key-tables/p384-cycles-x86-64.txt`, load average 5 to 6): cancho's cycles through `sudo perf stat` of the
+driver at 21 rounds less 1 round, over 20, the least of three; OpenSSL's from `perf stat` of `openssl speed -seconds 2`, its cycles
+over its operations, which for ECDSA mixes the 2 s of signing and the 2 s of verifying, so the verification's share moved with the
+clock between the phases (1,598 to 2,894 verifications in three runs); ECDH's was steady. A first pass in time on the same core gave
+5,273 against 645 µs (8.2) and 4,724 against 456 µs (10.4) (`p384-x86-64.txt` is a later, more loaded pass). A P-256 verification is
+48 µs with a table and 102 without on the M4: P-384's is 27 to 58 times dearer.
+
+**Where it is paid.** Not on the server: its signature is P-256, and it prefers X25519, then P-256, then P-384 for the key exchange
+(`tls_hello.share_group`). Not in the client's key exchange either: the client sends an X25519 share (`tls_client`), and P-384 only
+after a HelloRetryRequest that asks for it. **In the client's chain verification, yes:** of the 31 signatures of the 14 saved real
+chains, 7 are P-384 (4 chains: DigiCert's ECC chain, Apple's and Cloudflare's intermediates under P-384 roots, and a Let's Encrypt
+chain whose three signatures are all P-384). Such a chain costs a client two or three P-384 verifications, **48M to 72M cycles on
+`gram`**, where the whole full client handshake of §11.5 is 2.3M cycles: 20 to 30 times the handshake it is part of.
+
+**Decided.** P-384 **verification** is worth the design of §4 to §7 and §11: it is the largest cost of a client handshake to a P-384
+chain by an order of magnitude. P-384 **ECDH** is not, on the handshakes measured, and there is **no P-384 signing** to make faster.
+It is **not built here**, because its field belongs to #381: that issue's scope is "P-256/P-384 field arithmetic, bigmod" on the
+`mul_wide` builtins, and it is moving P-256's field to four 64-bit limbs now. A P-384 field on this document's 28-bit design would be
+15 limbs (225 products a multiplication against §4's 100, and its own generator and bounds) and would be replaced by #381's six
+64-bit limbs. The rest is this document's and ports unchanged in shape: wNAF
+verification (§7) with the generator's runs, and the key tables (§11) for P-384 anchors, which are 35 of the system bundle's 128.
+#380 stays open for it; #381's `std.bigmod` on `mul_wide` (3 to 3.5 times on `mont_mul`, `docs/tls-performance.md` §10.8, M1) is the
+interim gain. No secret path changed, so there is no P-384 timing test to run.

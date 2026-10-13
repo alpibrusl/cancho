@@ -1,0 +1,48 @@
+# after the rebase onto f067d065 (#463), the sources of 6588698b: python3 scripts/tls_mutants.py <cancho> --only ticket --only pool --only area: --only save; Apple M4 Max, Docker VM, lexsys-hooks-env, openssl 3.0.13
+unmutated: passes
+killed   a suite with another hash accepted for the ticket: tls-illegal-psk resumption: a suite whose hash is not the ticket's (exit 0)
+killed   a ticket's PSK without its nonce: ok resumption: a ticket, then a second connection offering it, the binder checked; no Certificate (exit 0)
+killed   the ticket still offered after a retry to another hash: ok a HelloRetryRequest to a suite with another hash: the second ClientHello offers no ticket (exit 0)
+killed   a ticket over the room kept: ok tickets not kept: 3,000 bytes, a lifetime of 0; one over 7 days kept for 7 (exit 0)
+killed   the ticket offered to a name of the same length: another host name: not offered, and the ticket is spent (exit 0)
+killed   the ticket offered after the trust store changed: the trust store changed: not offered (exit 0)
+killed   the ticket offered after the leaf's notAfter: after the leaf's notAfter: not offered (exit 0)
+killed   the ticket offered past the maximum age: after the maximum age of a verification (60 s): not offered (exit 0)
+killed   the ticket offered past its lifetime: after the ticket's lifetime (100 s): not offered (exit 0)
+killed   the ticket offered with the clock before it was received: a clock before the ticket was received: not offered (exit 0)
+killed   a ticket's age counted from a whole second: the age in milliseconds: a ticket saved 999 ms into a second, offered 60 s later, is 60,000 ms old (exit 0)
+killed   the ticket offered twice: used once: the second start with a handle offers nothing (exit 0)
+killed   a forgotten pool kept: forgotten: not offered (exit 0)
+killed   a forgotten pool keeping its last ticket: forgotten: not offered (exit 0)
+killed   a pool over its size keeping its oldest: a pool holds one ticket unless set: the newest replaces the one before (exit 0)
+killed   a pool offering its oldest ticket first: a pool of three: three connections resume, newest first, then none (exit 0)
+killed   a ticket the rules refuse kept in its pool: another host name: not offered, and the ticket is spent (exit 0)
+killed   a refused ticket not skipped for an older one: another host name: not offered, and the ticket is spent (exit 0)
+killed   a handle never issued taken as a pool: a handle never issued is a new pool, and names nothing (exit 0)
+killed   every save a new pool: a pool holds one ticket unless set: the newest replaces the one before (exit 0)
+killed   psk_key_exchange_modes sent only with a ticket, so no server need send one: ok a HelloRetryRequest to a suite with another hash: the second ClientHello offers no ticket (exit 0)
+killed   the obfuscated age without ticket_age_add: the same host, in time: offered, and the server resumes (exit 0)
+killed   client auth: a ticket not bounded by the client certificate: the client certificate's notAfter bounds the ticket: offered an instant before, not after, with the server's certificate valid for ten years (exit 0)
+killed   client auth: a ticket stamped with the trust generation at its save, not the connection's start: an identity added after the connection started and before its ticket came: the ticket is not offered (exit 0)
+killed   client auth: a new identity leaves saved tickets offerable: an identity added after a ticket was saved: not offered; a ticket saved after it: offered, and resumed (exit 0)
+killed   client auth: a replaced identity leaves saved tickets offerable: an identity replaced after a ticket was saved: not offered (exit 0)
+killed   client auth: a removed identity leaves saved tickets offerable: an identity removed after a ticket was saved: not offered, and the next connection sends the empty Certificate (exit 0)
+killed   area: a resting connection called again left in its rest: the same host, in time: offered, and the server resumes (exit -4)
+killed   area: a resting connection's area passed on without its core taken out: tls_pool 8 3 40 2: FAIL rest: three connections in turn, at most two resting, each echoed from its area or its own core, residue 0, resting 2
+killed   area: a connection comes to rest with its plaintext: tls_pool 8 8 40 1: FAIL after every step no free area or free core holds a byte, residue 7223632
+killed   area: more connections rest than may: tls_pool 8 8 40 1: FAIL rest: three connections in turn, at most two resting, each echoed from its area or its own core, residue 0, resting 2
+killed   area: the last to rest given back first: tls_pool 5 2 60 5: FAIL rest: a handshake takes a resting connection's area
+killed   area: a resting connection said to hold its area: tls_pool 8 8 40 1: FAIL rest: three connections in turn, at most two resting, each echoed from its area or its own core, residue 0, resting 2
+killed   area: resting areas not counted free: tls_pool 8 8 40 1: FAIL steps that left an area leased, leaked 40
+killed   area: a dropped resting connection left in the order: the same host, in time: offered, and the server resumes (exit -4)
+killed   area: a resting area passed on while one is free: tls_pool 8 8 40 1: FAIL rest: three connections in turn, at most two resting, each echoed from its area or its own core, residue 0, resting 2
+killed   area: a handshake writing a free area while one rests: tls_pool 8 8 40 1: FAIL rest: a handshake takes a resting connection's area
+killed   area: fewer allowed to rest and none given back: tls_pool 8 8 40 1: FAIL rest: fewer allowed, the longest resting give their areas back cleared
+killed   area: a connection rests with its handshake's scratch: tls_pool 8 8 40 1: FAIL handshakes, every slot established and holding no area, and the areas cleared, slots 8
+killed   area: a failed connection rests: tls_pool 8 8 40 1: FAIL rest: a resting connection whose socket ends fails tls-peer-closed and gives its area back, code -1
+killed   area: the core copied a word short: the same host, in time: offered, and the server resumes (exit 0)
+killed   area: a word left when an area is cleared: tls_pool 8 8 40 1: FAIL rest: a resting connection dropped gives its area back cleared
+42 of 42 mutants killed, 0 equivalent (argued in EQUIVALENT)
+unmutated: passes
+killed   resumption never advertised by the engine: the same host, in time: offered, and the server resumes (exit 0)
+1 of 1 mutants killed, 0 equivalent (argued in EQUIVALENT)

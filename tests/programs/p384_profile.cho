@@ -1,0 +1,109 @@
+// P-384 on `std.bigmod` (`docs/p256-fast.md` §12): one op, `rounds` times, for `scripts/p256_bench.py --p384`.
+// Standard input is `<op> <rounds>`: g ecdh.public_key, h ecdh.shared, v ecdsa.verify_raw (P-384, SHA-384). The
+// signature is Wycheproof's (`ecdsa_secp384r1_sha384_p1363_test.json`, tcId 1); the driver prints the sum of the
+// answers, so a refusal would show.
+import std.buffer;
+import std.crypto;
+import std.ecdh;
+import std.ecdsa;
+import std.io;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn nibble(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+fn unhex[&s, &o](s: &s [byte], o: &!o [byte]) -> [] int {
+    var i = 0;
+    while i < len(o) {
+        o[i] = byte_of(nibble(int_of(s[2 * i])) * 16 + nibble(int_of(s[2 * i + 1])));
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn work_loop[&w](op: int, rounds: int, w: &!w [int]) -> [] int {
+    var acc = 0;
+    region r {
+        let key = alloc_slice[r](48, byte_of(0x3a));
+        let point = alloc_slice[r](97, byte_of(0));
+        let shared = alloc_slice[r](48, byte_of(0));
+        ecdh.public_key(384, key, point, w);
+        // Wycheproof ecdsa_secp384r1_sha384_p1363_test.json, tcId 1's key, message and signature.
+        let q = alloc_slice[r](97, byte_of(0));
+        unhex("042da57dda1089276a543f9ffdac0bff0d976cad71eb7280e7d9bfd9fee4bdb2f20f47ff888274389772d98cc5752138aa4b6d054d69dcf3e25ec49df870715e34883b1836197d76f8ad962e78f6571bbc7407b0d6091f9e4d88f014274406174f", q);
+        let msg = alloc_slice[r](6, byte_of(0));
+        unhex("313233343030", msg);
+        let digest = alloc_slice[r](48, byte_of(0));
+        crypto.sha384(msg, digest);
+        let sig = alloc_slice[r](96, byte_of(0));
+        unhex("12b30abef6b5476fe6b612ae557c0425661e26b44b1bfe19daf2ca28e3113083ba8e4ae4cc45a0320abd3394f1c548d71840da9fc1d2f8f8900cf485d5413b8c2574ee3a8d4ca03995ca30240e09513805bf6209b58ac7aa9cff54eecd82b9f1", sig);
+        var k = 0;
+        while k < rounds {
+            if op == 103 {
+                ecdh.public_key(384, key, point, w);
+                acc = acc + int_of(point[40]);
+            } else if op == 104 {
+                ecdh.shared(384, key, point, shared, w);
+                acc = acc + int_of(shared[3]);
+            } else if op == 118 {
+                acc = acc + 0 - ecdsa.verify_raw(384, digest, q, sig, w);
+            }
+            k = k + 1;
+        }
+    }
+    return acc;
+}
+
+fn number[&s](s: &s [byte], at: int) -> [] int {
+    var n = 0;
+    var p = at;
+    while p < len(s) && int_of(s[p]) >= 48 && int_of(s[p]) <= 57 {
+        n = n * 10 + int_of(s[p]) - 48;
+        p = p + 1;
+    }
+    return n;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var text = buffer.empty(heap, 64);
+    text = read_stdin(heap, io, text);
+    let work = box_slice(heap, ecdh.work_len(), 0);
+    borrow text as &b in {
+        let s = buffer.bytes(b);
+        borrow mut work as &!w in {
+            io.print_int(io, work_loop(int_of(s[0]), number(s, 2), contents(w)));
+            io.newline(io);
+        }
+    }
+    unbox_slice(heap, work);
+    buffer.drop(heap, text);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(ffi);
+    release(fs);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}

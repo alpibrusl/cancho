@@ -40,6 +40,14 @@ FORMULAS = {
     # operations, not field ones: the accumulator is then either the old sum or the new, both within the bound.
     "comb_multiply": ("std/p256_pt.cho", [], ["z_of(sel)"], {"zero": Fraction(0), "y_of(sel)": Fraction(1), "p256.one_mont()": Fraction(1)}),
     "load_g": ("std/p256_vf.cho", [], ["y_of(pt_ent())", "z_of(pt_ent())"], {"e_zero()": Fraction(0), "y_of(pt_ent())": Fraction(1), "p256.one_mont()": Fraction(1)}),
+    # A key's table (docs/p256-fast.md §11): its entries are loaded below p and negated as `load_g`'s; building it
+    # takes the Jacobian multiples (inputs at the Jacobian group's bound, 64 p assumed, above its 32), their running
+    # products and one inverse, and writes x / Z^2 and y / Z^3 fully reduced (`build`, `run`, `put_limbs`).
+    "load_gj": ("std/p256_vf.cho", [], ["y_of(pt_ent())", "z_of(pt_ent())"], {"e_zero()": Fraction(0), "y_of(pt_ent())": Fraction(1), "p256.one_mont()": Fraction(1)}),
+    "load_tab": ("std/p256_vf.cho", [], ["y_of(pt_ent())", "z_of(pt_ent())"], {"e_zero()": Fraction(0), "y_of(pt_ent())": Fraction(1), "p256.one_mont()": Fraction(1)}),
+    "run": ("std/p256_vf.cho", ["x_of(jtab(k))", "y_of(jtab(k))", "z_of(jtab(k))", "z_of(jtab(0))", "pre(k - 1)", "pre(per_chunk() - 1)"], ["pre(k)", "e_inv()"], {}, 64),
+    "put_limbs": ("std/p256_vf.cho", ["x"], [], {}, 64),
+    "build": ("std/p256_vf.cho", [], ["x_of(b)", "y_of(b)", "z_of(b)"], {"p256.one_mont()": Fraction(1)}),
     # Signing's s = k^-1 (e + r d) modulo n, in units of n (R = 2^280 is 2^24 n too).
     "finish": ("std/ecdsa_sign.cho", [], [], {}),
 }
@@ -177,7 +185,8 @@ def run(path, name, inputs, outputs, consts, b_in, rewrite=None):
 # for which every output is at most B when every input is at most B.
 GROUPS = [
     ["add_points", "mixed_add", "double_point", "comb_multiply"],
-    ["double", "add_jac", "madd", "load_q", "load_g", "matches"],
+    ["double", "add_jac", "madd", "load_q", "load_g", "load_gj", "load_tab", "matches", "build"],
+    ["run", "put_limbs"],
     ["on_curve_xy"],
     ["finish"],
 ]

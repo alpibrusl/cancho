@@ -1,0 +1,16 @@
+# gram, core 2, 2026-10-13T09:21:27+02:00, load 4.76 5.68 5.07; P-384 on std.bigmod (p384_profile.cho, bench384.py: time of one = (T(rounds) - T(1)) / (rounds - 1), best of five), twice; then openssl speed
+g ecdh.public_key P-384                   5606051 ns, 178 per second
+h ecdh.shared P-384                       8938249 ns, 112 per second
+v ecdsa.verify_raw P-384                  6820883 ns, 147 per second
+g ecdh.public_key P-384                   9174603 ns, 109 per second
+h ecdh.shared P-384                       8152898 ns, 123 per second
+v ecdsa.verify_raw P-384                  6185064 ns, 162 per second
+CPUINFO: OPENSSL_ia32cap=0x7ffaf3ffffebffff:0x984007bc239c27eb:0x00400810fc18c410:0x0000000000040000:0x0000000000000000
+                              sign    verify    sign/s verify/s
+ 384 bits ecdsa (nistp384)   0.0003s   0.0006s   2998.3   1630.1
+                              op      op/s
+ 384 bits ecdh (nistp384)   0.0004s   2696.7
+# P-256: verify, against the key table, building the table (p256_bench.py)
+v ecdsa.verify_raw                         328132 ns, 3048 per second
+t ecdsa.verify_raw_tabled                  172531 ns, 5796 per second
+b ecdsa.build_table                        402836 ns, 2482 per second

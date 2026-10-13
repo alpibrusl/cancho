@@ -19,7 +19,12 @@ import std.p256_pt;
 // single representation of zero. Whether the running sum is the point at
 // infinity is a flag, not a test of Z.
 //
-// Every function answers 0, or a code of `std.ecdsa` (-33 to -41).
+// A key that verifies many signatures can have a table (`build_table`,
+// `docs/p256-fast.md` §11), given to `verify` in place of the point: both
+// scalars' digits are then split into four runs over one chain of 64
+// doublings. Public data too.
+//
+// Every function answers 0, or a code of `std.ecdsa` (-31 to -42).
 
 // Temporaries t0..t13.
 fn t(i: int) -> [] int {
@@ -371,11 +376,12 @@ pub fn check_x[&r, &x, &w](r: &r [byte], x: &x [byte], w: &!w [int]) -> [] bool 
     return matches(w, e_r());
 }
 
-// SEC 1 §4.1.4 steps 4 and 5 for P-256 (`docs/p256-fast.md` §7): the point
-// `point` (04 || x || y), the digest, r and s as big-endian bytes of any
-// length up to 35. The code is `std.ecdsa`'s: -38 r, -39 s, -33 and -34 the
-// point, -40 infinity, -41 mismatch.
-pub fn verify[&d, &q, &r, &s, &w](digest: &d [byte], point: &q [byte], r: &r [byte], s: &s [byte], w: &!w [int]) -> [] int {
+// SEC 1 §4.1.4's checks and step 4 for P-256, shared by `verify` and `verify_tabled`: the point
+// `point` (04 || x || y), the digest, r and s as big-endian bytes of any length up to 35. On 0,
+// u1 = e / s and u2 = r / s modulo n are in `e_u1()` and `e_u2()` as plain numbers, r in `e_r()`,
+// zero in `e_zero()`, and Q (Montgomery form, Z = 1) in `qtab(0)`. Else the code of `std.ecdsa`:
+// -42 the work, -31 the point's form, -38 r, -39 s, -33 and -34 the point.
+fn prepare[&d, &q, &r, &s, &w](digest: &d [byte], point: &q [byte], r: &r [byte], s: &s [byte], w: &!w [int]) -> [] int {
     if len(w) < work_len() {
         return -42;
     }
@@ -419,8 +425,6 @@ pub fn verify[&d, &q, &r, &s, &w](digest: &d [byte], point: &q [byte], r: &r [by
     p256.sto_mont(w, t(2), t(2));
     p256.smul(w, t(2), sm, e_u2());
     p256.sfrom_mont(w, e_u2(), e_u2());
-    wnaf(w, e_u1(), dig1(), 7);
-    wnaf(w, e_u2(), dig2(), 5);
     // Q: both coordinates below p, on the curve.
     let q1 = qtab(0);
     p256.load(point[1..33], w, x_of(q1));
@@ -434,8 +438,37 @@ pub fn verify[&d, &q, &r, &s, &w](digest: &d [byte], point: &q [byte], r: &r [by
     if !p256_pt.on_curve_xy(w, x_of(q1), y_of(q1), t(0), t(1), t(2)) {
         return -34;
     }
+    return 0;
+}
+
+// The entry in `pt_ent()` added to the running sum in `pt_acc()`, which is the point at infinity
+// when `inf`: whether the sum is the point at infinity after.
+fn accumulate[&w](w: &!w [int], inf: bool) -> [] bool {
+    if inf {
+        copy_point(w, pt_ent(), pt_acc());
+        return false;
+    }
+    return madd(w, pt_acc(), pt_ent(), pt_acc()) != 0;
+}
+
+// SEC 1 §4.1.4 steps 4 and 5 for P-256 (`docs/p256-fast.md` §7): the point
+// `point` (04 || x || y), the digest, r and s as big-endian bytes of any
+// length up to 35. The code is `std.ecdsa`'s: -38 r, -39 s, -33 and -34 the
+// point, -40 infinity, -41 mismatch. `point` may instead be a key's table
+// (`build_table`, `table_len()` bytes), which begins with the point: the
+// same answer, in about half the time (`docs/p256-fast.md` §11).
+pub fn verify[&d, &q, &r, &s, &w](digest: &d [byte], point: &q [byte], r: &r [byte], s: &s [byte], w: &!w [int]) -> [] int {
+    if len(point) == table_len() {
+        return verify_tabled(digest, point, r, s, w);
+    }
+    let code = prepare(digest, point, r, s, w);
+    if code != 0 {
+        return code;
+    }
+    wnaf(w, e_u1(), dig1(), 7);
+    wnaf(w, e_u2(), dig2(), 5);
     // 1Q, 3Q, ..., 15Q.
-    double(w, q1, pt_q2());
+    double(w, qtab(0), pt_q2());
     var k = 1;
     while k < 8 {
         if add_jac(w, qtab(k - 1), pt_q2(), qtab(k)) != 0 {
@@ -475,7 +508,298 @@ pub fn verify[&d, &q, &r, &s, &w](digest: &d [byte], point: &q [byte], r: &r [by
     if inf {
         return -40;
     }
-    if !matches(w, rr) {
+    if !matches(w, e_r()) {
+        return -41;
+    }
+    return 0;
+}
+
+// ---- A key's table (`docs/p256-fast.md` §11) ----
+//
+// For a public key Q that verifies many signatures -- a TLS server's own, which checks each one it
+// makes (`docs/tls-server.md` §3.3), or a trust anchor's (`docs/x509-verify.md` §11) -- the odd
+// multiples 1 .. 63 of Q, 2^65 Q, 2^130 Q and 2^195 Q, affine, built once. u2's digits then fall
+// into four runs of 65, as u1's do against `p256_comb.odd`, and one chain of 64 doublings serves the
+// eight runs where `verify` doubles 256 times. **Public data only:** a table is computed from the
+// public point, never from a private key, and nothing here is constant time.
+//
+// A table is `table_len()` bytes: the point it was built from (65 bytes, 04 || x || y), then 128
+// entries, entry 32 j + k being (2k + 1) 2^(65 j) Q: x then y, each in Montgomery form and fully
+// reduced, as ten limbs of four bytes, least significant first. It is given to `verify` in place of
+// the point, so it cannot be used for another key; the point in it is checked on every call, as a
+// point given alone is. The entries are trusted as `build_table` wrote them, as the key's bytes are.
+
+// The bits of a run, and the runs: 4 runs of 65 cover the 257 wNAF digits of a number below 2^256.
+pub fn span() -> [] int {
+    return 65;
+}
+
+pub fn chunks() -> [] int {
+    return 4;
+}
+
+fn per_chunk() -> [] int {
+    return 32;
+}
+
+fn entry_bytes() -> [] int {
+    return 80;
+}
+
+pub fn table_len() -> [] int {
+    return 65 + chunks() * per_chunk() * entry_bytes();
+}
+
+// Building: a run's 32 multiples in Jacobian coordinates, their running products, and three
+// elements for the inversions. (`qtab`, which `verify` uses at the same place, is not used here.)
+fn jtab(k: int) -> [] int {
+    return p256.base() + 23 + 3 * k;
+}
+
+fn pre(k: int) -> [] int {
+    return p256.fe(p256.base() + 119 + k);
+}
+
+fn e_inv() -> [] int {
+    return p256.fe(p256.base() + 151);
+}
+
+fn e_zi() -> [] int {
+    return p256.fe(p256.base() + 152);
+}
+
+fn e_zi2() -> [] int {
+    return p256.fe(p256.base() + 153);
+}
+
+// The words `build_table` needs.
+pub fn table_work_len() -> [] int {
+    return p256.words(154);
+}
+
+// The element at `x` (Montgomery form, lazily reduced) fully reduced, as ten limbs of four bytes
+// into `table` at `at`: to_mont then from_mont gives x mod p, still in Montgomery form. `s` is a
+// scratch element.
+fn put_limbs[&w, &t](w: &!w [int], x: int, s: int, table: &!t [byte], at: int) -> [] int {
+    p256.to_mont(w, x, s);
+    p256.from_mont(w, s, s);
+    var i = 0;
+    while i < 10 {
+        let v = w[s + i];
+        table[at + 4 * i] = byte_of(v & 255);
+        table[at + 4 * i + 1] = byte_of(v >> 8 & 255);
+        table[at + 4 * i + 2] = byte_of(v >> 16 & 255);
+        table[at + 4 * i + 3] = byte_of(v >> 24);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Run `j`'s 32 entries from its base, the Jacobian point `b`: the odd multiples by additions of 2b,
+// then all 32 made affine with one inversion (Montgomery's trick: the running products of the Z's,
+// one inverse, and each Z's inverse peeled off it). 0, or -40 when a multiple is the point at
+// infinity, which a point of the curve (prime order n) never gives.
+fn run[&w, &t](w: &!w [int], b: int, table: &!t [byte], j: int) -> [] int {
+    copy_point(w, b, jtab(0));
+    double(w, b, pt_q2());
+    var k = 1;
+    while k < per_chunk() {
+        if add_jac(w, jtab(k - 1), pt_q2(), jtab(k)) != 0 {
+            return -40;
+        }
+        k = k + 1;
+    }
+    p256.copy(w, z_of(jtab(0)), pre(0));
+    k = 1;
+    while k < per_chunk() {
+        p256.mul(w, pre(k - 1), z_of(jtab(k)), pre(k));
+        k = k + 1;
+    }
+    if zero_mod(w, pre(per_chunk() - 1), t(13)) {
+        return -40;
+    }
+    p256.invert(w, pre(per_chunk() - 1), e_inv());
+    k = per_chunk() - 1;
+    while k >= 0 {
+        // e_zi = 1 / Z_k; e_inv becomes 1 / (Z_0 ... Z_(k-1)).
+        if k > 0 {
+            p256.mul(w, e_inv(), pre(k - 1), e_zi());
+            p256.mul(w, e_inv(), z_of(jtab(k)), e_inv());
+        } else {
+            p256.copy(w, e_inv(), e_zi());
+        }
+        p256.sqr(w, e_zi(), e_zi2());
+        p256.mul(w, x_of(jtab(k)), e_zi2(), t(0));
+        p256.mul(w, e_zi2(), e_zi(), e_zi2());
+        p256.mul(w, y_of(jtab(k)), e_zi2(), t(1));
+        let at = 65 + (per_chunk() * j + k) * entry_bytes();
+        put_limbs(w, t(0), t(2), table, at);
+        put_limbs(w, t(1), t(2), table, at + 40);
+        k = k - 1;
+    }
+    return 0;
+}
+
+// The table of the point `point` (04 || x || y) into `table` (`table_len()` bytes; `w` holds
+// `table_work_len()` words, zeroed before the answer). The point is checked as `verify` checks it.
+// Its 65 bytes are written last, so a table cut short by a refusal starts with a zero byte and is
+// never taken for a key (`table_for`). 0, or -42 for the lengths, -31 the point's form, -33 and -34
+// the point (the table is then zeros), -40 (not reached by a point of the curve). Public data: the
+// point's multiples, never the private key.
+pub fn build_table[&q, &t, &w](point: &q [byte], table: &!t [byte], w: &!w [int]) -> [] int {
+    if len(table) < table_len() || len(w) < table_work_len() {
+        return -42;
+    }
+    let code = build(point, table, w);
+    p256.wipe(w, 0, table_work_len());
+    return code;
+}
+
+fn build[&q, &t, &w](point: &q [byte], table: &!t [byte], w: &!w [int]) -> [] int {
+    var i = 0;
+    while i < table_len() {
+        table[i] = byte_of(0);
+        i = i + 1;
+    }
+    if len(point) != 65 || int_of(point[0]) != 4 {
+        return -31;
+    }
+    p256.init(w);
+    let b = pt_acc();
+    p256.load(point[1..33], w, x_of(b));
+    p256.load(point[33..65], w, y_of(b));
+    if !p256.below_p(w, x_of(b)) || !p256.below_p(w, y_of(b)) {
+        return -33;
+    }
+    p256.to_mont(w, x_of(b), x_of(b));
+    p256.to_mont(w, y_of(b), y_of(b));
+    p256.copy(w, p256.one_mont(), z_of(b));
+    if !p256_pt.on_curve_xy(w, x_of(b), y_of(b), t(0), t(1), t(2)) {
+        return -34;
+    }
+    var code = 0;
+    var j = 0;
+    while j < chunks() && code == 0 {
+        if j > 0 {
+            var d = 0;
+            while d < span() {
+                double(w, b, b);
+                d = d + 1;
+            }
+        }
+        code = run(w, b, table, j);
+        j = j + 1;
+    }
+    if code != 0 {
+        i = 0;
+        while i < table_len() {
+            table[i] = byte_of(0);
+            i = i + 1;
+        }
+        return code;
+    }
+    i = 0;
+    while i < 65 {
+        table[i] = point[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Whether `table` is a table of `point`: its length, and its first 65 bytes are the point. A caller
+// that keeps a table beside a key asks this before giving the table to `verify` in its place.
+pub fn table_for[&t, &q](table: &t [byte], point: &q [byte]) -> [] bool {
+    if len(table) != table_len() || len(point) != 65 || int_of(point[0]) != 4 {
+        return false;
+    }
+    var i = 0;
+    while i < 65 {
+        if table[i] != point[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// The generator's entry for digit `d` (odd, nonzero) of run `j` into `pt_ent()`.
+fn load_gj[&w](w: &!w [int], j: int, d: int) -> [] int {
+    var k = d;
+    if d < 0 {
+        k = 0 - d;
+    }
+    let row = p256_comb.odd_row(640 * j + (k - 1) / 2 * 20);
+    let e = w[x_of(pt_ent())..x_of(pt_ent()) + 20];
+    var t = 0;
+    while t < 20 {
+        e[t] = row[t];
+        t = t + 1;
+    }
+    p256.copy(w, p256.one_mont(), z_of(pt_ent()));
+    if d < 0 {
+        p256.sub2(w, e_zero(), y_of(pt_ent()), y_of(pt_ent()));
+    }
+    return 0;
+}
+
+// The table's entry for digit `d` (odd, nonzero) of run `j` into `pt_ent()`.
+fn load_tab[&t, &w](table: &t [byte], w: &!w [int], j: int, d: int) -> [] int {
+    var k = d;
+    if d < 0 {
+        k = 0 - d;
+    }
+    let at = 65 + (per_chunk() * j + (k - 1) / 2) * entry_bytes();
+    let b = table[at..at + 80];
+    let e = w[x_of(pt_ent())..x_of(pt_ent()) + 20];
+    var i = 0;
+    while i < 20 {
+        e[i] = int_of(b[4 * i]) | int_of(b[4 * i + 1]) << 8 | int_of(b[4 * i + 2]) << 16 | int_of(b[4 * i + 3]) << 24;
+        i = i + 1;
+    }
+    p256.copy(w, p256.one_mont(), z_of(pt_ent()));
+    if d < 0 {
+        p256.sub2(w, e_zero(), y_of(pt_ent()), y_of(pt_ent()));
+    }
+    return 0;
+}
+
+// `verify` against the key's table `table` (`build_table`), whose first 65 bytes are the point: u1
+// against the generator's runs and u2 against the table's, both in width-7 wNAF, over one chain of 64
+// doublings. The point is checked as `verify` checks it, and the answer is `verify`'s.
+fn verify_tabled[&d, &t, &r, &s, &w](digest: &d [byte], table: &t [byte], r: &r [byte], s: &s [byte], w: &!w [int]) -> [] int {
+    let code = prepare(digest, table[0..65], r, s, w);
+    if code != 0 {
+        return code;
+    }
+    wnaf(w, e_u1(), dig1(), 7);
+    wnaf(w, e_u2(), dig2(), 7);
+    var inf = true;
+    var i = span() - 1;
+    while i >= 0 {
+        if !inf {
+            double(w, pt_acc(), pt_acc());
+        }
+        var j = 0;
+        while j < chunks() {
+            let at = span() * j + i;
+            let d1 = w[dig1() + at];
+            if d1 != 0 {
+                load_gj(w, j, d1);
+                inf = accumulate(w, inf);
+            }
+            let d2 = w[dig2() + at];
+            if d2 != 0 {
+                load_tab(table, w, j, d2);
+                inf = accumulate(w, inf);
+            }
+            j = j + 1;
+        }
+        i = i - 1;
+    }
+    if inf {
+        return -40;
+    }
+    if !matches(w, e_r()) {
         return -41;
     }
     return 0;

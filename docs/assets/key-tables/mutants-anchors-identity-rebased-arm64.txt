@@ -1,0 +1,15 @@
+# after the rebase onto f067d065 (#463), the sources of 6588698b: python3 scripts/p256_mutants.py anchors identity: ; same container
+scratch copy in /target/mut-tmp/p256-mutants-2mf9_6yb
+unmutated tree passes (49 s)
+  killed   anchors: a table entry's length one short   [tests]
+  killed   anchors: the first P-256 root only   [tests]
+  killed   anchors: any table taken for any root   [tests]
+  SURVIVED anchors: a root verified without its table
+  killed   anchors: the old store not cleared   [tests]
+  killed   anchors: no tables built   [tests]
+  killed   identity: no table built   [tests]
+  killed   identity: the check without the table   [tests]
+  killed   identity: a table that is not the point's used   [tests]
+
+9 mutants: 8 killed, 1 survived, 0 did not build
+  survivor: anchors: a root verified without its table: A chain's answer is the same with or without the anchor's table (the tabled replays of every x509 file show it); only the cost changes, measured by the client handshake of §11.

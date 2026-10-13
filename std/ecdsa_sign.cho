@@ -313,10 +313,11 @@ pub fn sign[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [by
 }
 
 // `sign`, then the signature verified with `std.ecdsa.verify_raw` under
-// `point` (the key's public point, `04 || x || y`) before it is given
-// out (`docs/tls-server.md` §3.3). A fault during signing then hands
-// out nothing; so does a `point` that is not the key's. Refused with
-// `refused_check()`, and `sig` zeroed, when it does not verify.
+// `point` (the key's public point, `04 || x || y`, or its table, which
+// begins with it: `std.p256_vf.build_table`, `docs/tls-server.md` §3.5)
+// before it is given out (`docs/tls-server.md` §3.3). A fault during
+// signing then hands out nothing; so does a `point` that is not the key's.
+// Refused with `refused_check()`, and `sig` zeroed, when it does not verify.
 pub fn sign_checked[&g, &d, &q, &e, &s, &w](digest: &g [byte], key: &d [byte], point: &q [byte], extra: &e [byte], sig: &!s [byte], work: &!w [int]) -> [] int {
     let code = sign(digest, key, extra, sig, work);
     if code != 0 {

@@ -393,7 +393,8 @@ the areas handshakes write stay one or two.
   `pick`, `wipe`, `may_offer`, about 150 lines on the `tickets` and `tmeta` slices alone) is the piece that moves without the
   `Engine` type; it is not done here because it is not this change's concern and its mutants would move with it. *Done in #465 (`packages/tls/saved.cho`, module `tls_saved`): a pure move, the entries' layout and those five
   functions over the two slices, `tls.cho` 1,989 lines to 1,863; the 22 mutants of `scripts/tls_mutants.py` whose text moved or
-  was renamed follow it (seven now name `saved.cho`).*
+  was renamed follow it (seven now name `saved.cho`), and all 22 are killed again, with the 21 other ticket, pool and area
+  mutants (`assets/key-tables/mutants-tls-arm64.txt`).*
 - **`/big` is the HTTP server's bytes, not the record's** (§7.3): `packages/http-server`'s `output` and `stream`, and the
   example's body, copy a byte at a time. Not touched: another package.
 - **TLS 1.2 still opens into `b_plain`**, with its region for the associated data and nonce (`open12`, `seal12`). The engine's

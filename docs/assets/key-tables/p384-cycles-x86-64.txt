@@ -1,0 +1,17 @@
+# gram, core 2, 2026-10-13T09:38:33+02:00, load 5.00 6.08 5.63; sudo perf stat -e cycles,instructions (user and kernel), the least of three
+cancho P-384 v: 24007188 cycles, 68671692 instructions a call
+cancho P-384 v: 24600452 cycles, 68668356 instructions a call
+cancho P-384 v: 24483679 cycles, 68691151 instructions a call
+cancho P-384 h: 21632593 cycles, 60893802 instructions a call
+cancho P-384 h: 21634250 cycles, 60891744 instructions a call
+cancho P-384 h: 22572842 cycles, 60760854 instructions a call
+cancho P-384 g: 11733138 cycles, 60957630 instructions a call
+cancho P-384 g: 18486192 cycles, 60889516 instructions a call
+cancho P-384 g: 17090496 cycles, 60571707 instructions a call
+Doing 384 bits sign ecdsa ops for 2s: 5444 384 bits ECDSA sign ops in 2.00s Doing 384 bits verify ecdsa ops for 2s: 2015 384 bits ECDSA verify ops in 2.00s | cycles 8715063915
+Doing 384 bits sign ecdsa ops for 2s: 4870 384 bits ECDSA sign ops in 2.00s Doing 384 bits verify ecdsa ops for 2s: 2894 384 bits ECDSA verify ops in 2.00s | cycles 8569168133
+Doing 384 bits sign ecdsa ops for 2s: 3716 384 bits ECDSA sign ops in 2.00s Doing 384 bits verify ecdsa ops for 2s: 1598 384 bits ECDSA verify ops in 2.00s | cycles 8737982314
+Doing 384 bits  ecdh ops for 2s: 2224 384-bits ECDH ops in 2.00s | cycles 4503619810
+Doing 384 bits  ecdh ops for 2s: 2168 384-bits ECDH ops in 2.00s | cycles 4394327299
+Doing 384 bits  ecdh ops for 2s: 2684 384-bits ECDH ops in 2.00s | cycles 5423642475
+# end 2026-10-13T09:38:54+02:00, load 5.00 6.01 5.61

@@ -20,7 +20,12 @@
 //     F e d k x  ecdsa_sign.finish (e, d, k, x 32 bytes each): r || s, or the code
 //     T r x    p256_vf.check_x: 1 when a sum of affine x passes the check against r, else 0
 //     C a b    a * b * c mod p, where c is 8 (a*b, add, add, add) -- a chain of lazy sums
+//     U q e sig  ecdsa.verify_raw with q's table in its place (`docs/p256-fast.md` §11): the code, as `V`
+//              (q itself when `p256_vf.build_table` refuses it)
+//     N q      p256_vf.build_table of q: the SHA-256 of the table in hex, or the code of a refusal
+//     O a      the table's entry points given wrong lengths and points: the seven codes, space separated
 import std.buffer;
+import std.crypto;
 import std.io;
 import std.ecdh;
 import std.ecdsa;
@@ -116,6 +121,64 @@ fn case[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, w: &!w [int]) -> [io_writ
             hex_into(s, f2, e);
             hex_into(s, f3, sig);
             io.print_int(io, ecdsa.verify_raw(256, e, q, sig, w));
+            io.newline(io);
+            return 0;
+        } else if op == 85 {
+            let q = alloc_slice[r](65, byte_of(0));
+            let e = alloc_slice[r](32, byte_of(0));
+            let sig = alloc_slice[r](64, byte_of(0));
+            hex_into(s, f1, q);
+            let f3 = field_end(s, f2) + 1;
+            hex_into(s, f2, e);
+            hex_into(s, f3, sig);
+            let table = alloc_slice[r](p256_vf.table_len(), byte_of(0));
+            if p256_vf.build_table(q, table, w) == 0 {
+                io.print_int(io, ecdsa.verify_raw(256, e, table, sig, w));
+            } else {
+                io.print_int(io, ecdsa.verify_raw(256, e, q, sig, w));
+            }
+            io.newline(io);
+            return 0;
+        } else if op == 78 {
+            let q = alloc_slice[r](65, byte_of(0));
+            hex_into(s, f1, q);
+            let table = alloc_slice[r](p256_vf.table_len(), byte_of(0));
+            let code = p256_vf.build_table(q, table, w);
+            if code == 0 {
+                let digest = alloc_slice[r](32, byte_of(0));
+                crypto.sha256(table, digest);
+                print_hex(io, digest);
+            } else {
+                io.print_int(io, code);
+            }
+            io.newline(io);
+            return 0;
+        } else if op == 79 {
+            // The generator's point, a table for it, and the calls that must answer a code, not trap.
+            let g = alloc_slice[r](65, byte_of(0));
+            g[0] = byte_of(4);
+            ecdsa.curve_param(256, 2, g[1..33]);
+            ecdsa.curve_param(256, 3, g[33..65]);
+            let table = alloc_slice[r](p256_vf.table_len() + 1, byte_of(0));
+            let sig = alloc_slice[r](64, byte_of(1));
+            let t = table[0..p256_vf.table_len()];
+            io.print_int(io, p256_vf.build_table(g, t[0..len(t) - 1], w));
+            io.space(io);
+            io.print_int(io, p256_vf.build_table(g, t, w[0..p256_vf.table_work_len() - 1]));
+            io.space(io);
+            io.print_int(io, p256_vf.build_table(g[0..64], t, w));
+            io.space(io);
+            g[64] = byte_of(int_of(g[64]) ^ 1);
+            io.print_int(io, p256_vf.build_table(g, t, w));
+            io.space(io);
+            g[64] = byte_of(int_of(g[64]) ^ 1);
+            p256_vf.build_table(g, t, w);
+            io.print_int(io, ecdsa.verify_raw(256, a, t, sig, w[0..10]));
+            io.space(io);
+            io.print_int(io, p256_vf.verify(a, t, a, a, w[0..p256_vf.work_len() - 1]));
+            io.space(io);
+            // A key one byte longer than a table is neither a point nor a table.
+            io.print_int(io, ecdsa.verify_raw(256, a, table, sig, w));
             io.newline(io);
             return 0;
         } else if op == 80 || op == 82 || op == 68 || op == 69 {

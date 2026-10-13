@@ -1,7 +1,8 @@
 # `packages/x509`: verifying a server's chain
 
 > **Status: built (#206, all three PRs): the verifier (§8), and `packages/tls` verifying with it (§9). §10, a chain
-> verified without a host name (for `verify-ca` and client certificates), is designed there and built in the same PR.** Sub-issue 9 of the self-contained TLS 1.3 client (#197). `docs/tls-pure.md` §5 already
+> verified without a host name (for `verify-ca` and client certificates), is designed there and built in the same PR. §11, a
+> table for each P-256 trust anchor (B3 of #378), came with #380.** Sub-issue 9 of the self-contained TLS 1.3 client (#197). `docs/tls-pure.md` §5 already
 > fixes the rules: the root store, the depth limit, the checks per certificate, the key sizes, name matching, and what is not
 > checked. Its §8 fixes the refusal tags. This document settles what those sections left open for the code:
 > - where the code goes, and its API;
@@ -607,3 +608,57 @@ How the API makes the choice explicit rather than easy to fall into:
 `packages/tls`, asked for by its program. x509-limbo's 10 `CLIENT` cases (§8.2's "a client certificate", 5 of them not
 revocation cases) could now run through `verify_chain`; that needs `limbo.json`, which is fetched rather than committed, and
 was not run for this PR.
+
+## 11. Trust anchors' tables (B3 of #378, #380)
+
+*Designed in `docs/p256-fast.md` §11, which measured the table's shape before it was chosen; this section is how the store
+carries it.* The last signature of a chain is verified under the root's key, the same key for every chain that ends there, so a
+P-256 root's key can have a table built once (`p256_vf.build_table`, 10,305 bytes) and that verification costs about half: 688.1k to
+326.4k cycles on `gram`, and a full client handshake under a P-256 CA 18% fewer instructions (1.62 to 1.41 times OpenSSL's
+`tconn` in cycles; `docs/p256-fast.md` §11.4, §11.5).
+
+### 11.1 In the store
+
+The tables are **entries of the store, after its roots**, so that the store stays one byte slice and every function that takes one
+(`verify`, `verify_chain`, and the `packages/tls` functions that hand it on) keeps its signature:
+
+| bytes | what |
+|---|---|
+| 3 | the entry's length, 1 + 10,305 |
+| 2 + 2 | the subject's offset and length, **both zero** |
+| 1 | the kind: 1, a P-256 key's table |
+| 10,305 | the table (`docs/p256-fast.md` §11.2), whose first 65 bytes are the key it is of |
+
+A root's entry has a subject of at least two bytes (a Name is a SEQUENCE: its tag and length), so **no issuer equals an empty
+subject** and the walk over the roots (`extend`) passes over the tables without reading them as certificates. `store_tables(store,
+used, most, work)` appends one for each of the first `most` roots of `store[0..used]` whose key is P-256 and answers the store's
+new length; `anchor_tables(store)` counts them. When a root is the issuer being tried, `anchor_table` finds the table whose key is
+the root's, byte for byte, and `signature_ok` gives it to `ecdsa.verify_der` in the key's place (a table begins with its key,
+`docs/p256-fast.md` §11.2); a root with no table, any other kind of key, and every intermediate, verify as before.
+
+### 11.2 In `packages/tls`
+
+- **Built by `tls.trust`**, after `store_load`, for at most 16 P-256 roots: `most_anchor_tables()`. The system bundle
+  (`roots.pem`, 128 roots) has 3 (61 RSA-4096, 28 RSA-2048, 35 P-384, 1 P-521): **30,939 bytes** after its 138,350, built in about
+  half a millisecond on the M4. Sixteen take 165,008 bytes, inside the store's 1 MiB room (`roots_cap`), which is zero-filled
+  address space resident only where written.
+- **Engine-wide, not per slot**: the store is the engine's `roots` box, read by every connection.
+- **Replaced with the store**: `trust` now zeroes the old store and its tables before it loads the new one, and a refused bundle
+  leaves zeros, so no table of a root no longer trusted remains. `tls.residue` counts every byte of `roots` past the store and its
+  tables (it counted nothing of the client's store before). `tls.anchor_tables(engine)` says how many roots have one.
+- **Not lazily, for the anchors used**: the store reaches a connection read-only (`tls_client.feed_with`), and building a table on
+  first use would make it mutable there and in every caller; at `trust` it is about 0.5 ms and 31 KB for the system bundle.
+- **Not for the server's store of client CAs** (`trust_clients`, `docs/tls-server.md` §13.3): not in #380's list; `store_tables`
+  would serve it as it is (but `tls_identity.client_authorities`, which reads every entry's subject, would have to skip the tables).
+
+### 11.3 Tests
+
+Every x509 file is replayed a second time with the anchors' tables (`T` for `S` in `tests/programs/x509_verify_driver.cho`) and
+must give every recorded answer: the limbo subset (223 stores, 195 of which give a root a table), the 14 saved real chains against
+the system bundle (its 3 tables, 30,939 bytes, counted), the OpenSSL matrix and the no-name matrix, on both backends where the
+original runs on both. `conformance/key_tables.rs` checks `trust`'s tables and their cleanup through `tls.anchor_tables` and
+`tls.residue`.
+
+**What this does not buy the public Web PKI:** of the 31 signatures in §8.2's 14 real chains, 22 are RSA, 7 P-384 and 2 P-256, and
+none ends at a P-256 root. B3 pays for a private P-256 CA (the measured client's, a service mesh's). For public sites the larger cost
+is P-384 verification, `docs/p256-fast.md` §12.

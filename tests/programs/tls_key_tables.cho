@@ -1,0 +1,196 @@
+edition 5;
+
+// `docs/p256-fast.md` §11: the key tables of `packages/tls`, with no network. A server identity's table
+// (`docs/tls-server.md` §3.5) and a client's trust anchors' tables (`docs/x509-verify.md` §11): built when the
+// identity or the store is loaded, rebuilt when either is replaced, left alone by a refused replacement, and nothing
+// of an old one left behind (`tls.residue`, `tls_identity.table_residue`).
+//
+//     tls_key_tables < ca.pem NUL first/chain.pem NUL first/key.pem NUL renewed/chain.pem NUL renewed/key.pem
+//
+// (`tests/vectors/tls/echo`). It prints one line for each thing it checks, `ok ...` or `FAIL ...`, and exits 1 if
+// any failed.
+import std.buffer;
+import std.crypto;
+import std.io;
+import std.p256_vf;
+import tls;
+import tls_identity;
+import x509_key;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn say[&i, &w](io: &!i Io, ok: bool, what: &w [byte]) -> [io_write] int {
+    if ok {
+        io.write_all(io, "ok ");
+    } else {
+        io.write_all(io, "FAIL ");
+    }
+    io.write_all(io, what);
+    io.newline(io);
+    if ok {
+        return 0;
+    }
+    return 1;
+}
+
+// Where the `k`th NUL byte of `text` is (k from 1), or its length.
+fn nul[&t](text: &t [byte], k: int) -> [] int {
+    var seen = 0;
+    var at = 0;
+    while at < len(text) {
+        if int_of(text[at]) == 0 {
+            seen = seen + 1;
+            if seen == k {
+                return at;
+            }
+        }
+        at = at + 1;
+    }
+    return len(text);
+}
+
+fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    if len(x) != len(y) {
+        return false;
+    }
+    var i = 0;
+    while i < len(x) {
+        if x[i] != y[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn zeros[&a](x: &a [byte]) -> [] bool {
+    var i = 0;
+    while i < len(x) {
+        if int_of(x[i]) != 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// The client: the test CA is a P-256 root, so it has a table; a store of it twice has two; replaced by it once,
+// the second is gone; replaced by a store with no certificate, nothing is left.
+fn client[&h, &i, &c](heap: &!h Heap, io: &!i Io, ca: &c [byte]) -> [heap, io_write] int {
+    var failed = 0;
+    var cli = tls.open(heap, 1);
+    region r {
+        let twice = alloc_slice[r](2 * len(ca), byte_of(0));
+        var k = 0;
+        while k < len(ca) {
+            twice[k] = ca[k];
+            twice[len(ca) + k] = ca[k];
+            k = k + 1;
+        }
+        borrow mut cli as &!cw in {
+            let one = tls.trust(cw, ca);
+            failed = failed + say(io, one == 1 && tls.anchor_tables(cw) == 1 && tls.residue(cw) == 0, "anchors: the P-256 root has a table");
+            let two = tls.trust(cw, twice);
+            failed = failed + say(io, two == 2 && tls.anchor_tables(cw) == 2 && tls.residue(cw) == 0, "anchors: a store of two P-256 roots has two tables");
+            let again = tls.trust(cw, ca);
+            failed = failed + say(io, again == 1 && tls.anchor_tables(cw) == 1 && tls.residue(cw) == 0, "anchors: replaced by a store of one, nothing of the other's table is left, residue 0");
+            let none = tls.trust(cw, "no certificate here");
+            failed = failed + say(io, none == 0 && tls.anchor_tables(cw) == 0 && tls.residue(cw) == 0, "anchors: replaced by a store with no root, nothing is left, residue 0");
+        }
+    }
+    tls.close(heap, cli);
+    return failed;
+}
+
+// The server's identities, through `tls_identity` on a configuration of its own, as the engine holds it.
+fn server[&h, &i, &t](heap: &!h Heap, io: &!i Io, text: &t [byte]) -> [heap, io_write] int {
+    var failed = 0;
+    let c1 = nul(text, 1);
+    let c2 = nul(text, 2);
+    let c3 = nul(text, 3);
+    let c4 = nul(text, 4);
+    let first_chain = text[c1 + 1..c2];
+    let first_key = text[c2 + 1..c3];
+    let renewed_chain = text[c3 + 1..c4];
+    let renewed_key = text[c4 + 1..len(text)];
+    let now = 1780272000;
+    var cfg = box_slice(heap, tls_identity.cfg_len(), byte_of(0));
+    var work = box_slice(heap, x509_key.work_len(), 0);
+    region r {
+        let old = alloc_slice[r](32, byte_of(0));
+        let new = alloc_slice[r](32, byte_of(0));
+        let held = alloc_slice[r](32, byte_of(0));
+        borrow mut cfg as &!cw in {
+            borrow mut work as &!ww in {
+                let c = contents(cw);
+                let w = contents(ww);
+                let loaded = tls_identity.load(c, 0, first_chain, first_key, "echo.lex-sys.test", false, now, w);
+                failed = failed + say(io, loaded == 0 && p256_vf.table_for(tls_identity.table(c, 0), tls_identity.point(c, 0)) && len(tls_identity.check_key(c, 0)) == p256_vf.table_len() && tls_identity.table_residue(c) == 0, "identity: loaded, its table is its point's, and the check verifies under it");
+                crypto.sha256(tls_identity.table(c, 0), old);
+                var dirty = 0;
+                var k = 0;
+                while k < p256_vf.table_work_len() {
+                    if w[k] != 0 {
+                        dirty = dirty + 1;
+                    }
+                    k = k + 1;
+                }
+                failed = failed + say(io, dirty == 0, "identity: building the table leaves nothing in the work it used");
+                let replaced = tls_identity.load(c, 0, renewed_chain, renewed_key, renewed_chain[0..0], true, now, w);
+                crypto.sha256(tls_identity.table(c, 0), new);
+                failed = failed + say(io, replaced == 0 && p256_vf.table_for(tls_identity.table(c, 0), tls_identity.point(c, 0)) && !same(old, new), "identity: replaced, its table is the new key's");
+                let refused = tls_identity.load(c, 0, first_chain, renewed_key, renewed_chain[0..0], true, now, w);
+                crypto.sha256(tls_identity.table(c, 0), held);
+                failed = failed + say(io, refused != 0 && same(new, held) && p256_vf.table_for(tls_identity.table(c, 0), tls_identity.point(c, 0)), "identity: a refused replacement leaves the table as it was");
+                let second = tls_identity.load(c, 1, first_chain, first_key, "other.lex-sys.test", false, now, w);
+                failed = failed + say(io, second == 0 && p256_vf.table_for(tls_identity.table(c, 1), tls_identity.point(c, 1)) && !p256_vf.table_for(tls_identity.table(c, 0), tls_identity.point(c, 1)) && tls_identity.table_residue(c) == 0, "identity: a second identity has its own table, not the first's, and the unused ones none");
+                failed = failed + say(io, len(tls_identity.check_key(c, 2)) == 65, "identity: one whose table is not its point's is checked under the point");
+                tls_identity.wipe(c);
+                failed = failed + say(io, zeros(c), "identity: wiped, every table is zeros");
+            }
+        }
+    }
+    unbox_slice(heap, work);
+    unbox_slice(heap, cfg);
+    return failed;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    var failed = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            var all = buffer.empty(h, 16384);
+            all = read_stdin(h, i, all);
+            borrow all as &ab in {
+                let text = buffer.bytes(ab);
+                if nul(text, 4) >= len(text) {
+                    io.error_all(i, "tls_key_tables: expected five files\n");
+                    failed = 1;
+                } else {
+                    failed = client(h, i, text[0..nul(text, 1)]) + server(h, i, text);
+                }
+            }
+            buffer.drop(h, all);
+        }
+    }
+    release(heap);
+    release(io);
+    if failed > 0 {
+        return 1;
+    }
+    return 0;
+}

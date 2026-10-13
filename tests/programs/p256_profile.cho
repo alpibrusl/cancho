@@ -6,10 +6,13 @@
 //     r  four independent chains of p256.mul (throughput, not latency)
 //     i  p256.invert mod p,  n  p256.sinvert mod n,  o  p256.smul mod n
 //     g  ecdh.public_key,  h  ecdh.shared,  k  ecdsa_sign.sign,  c  sign_checked,  v  ecdsa.verify_raw
+//     t  ecdsa.verify_raw with the key's table,  u  ecdsa_sign.sign_checked with it,  b  p256_vf.build_table
+//     (the key's table, `docs/p256-fast.md` §11)
 import std.p256;
 import std.buffer;
 import std.ecdh;
 import std.ecdsa;
+import std.p256_vf;
 import std.ecdsa_sign;
 import std.io;
 
@@ -59,6 +62,8 @@ fn work_loop[&w, &o](op: int, rounds: int, w: &!w [int], out: &!o [byte]) -> [] 
         let shared = alloc_slice[r](32, byte_of(0));
         ecdh.public_key(256, key, point, w);
         ecdsa_sign.sign(digest, key, extra, sig, w);
+        let table = alloc_slice[r](p256_vf.table_len(), byte_of(0));
+        p256_vf.build_table(point, table, w);
         p256.init(w);
         p256.load(a, w, p256.fe(p256.base()));
         p256.load(b, w, p256.fe(p256.base() + 1));
@@ -102,6 +107,13 @@ fn work_loop[&w, &o](op: int, rounds: int, w: &!w [int], out: &!o [byte]) -> [] 
                 acc = acc + int_of(sig[5]);
             } else if op == 118 {
                 acc = acc + 0 - ecdsa.verify_raw(256, digest, point, sig, w);
+            } else if op == 116 {
+                acc = acc + 0 - ecdsa.verify_raw(256, digest, table, sig, w);
+            } else if op == 117 {
+                ecdsa_sign.sign_checked(digest, key, table, extra, sig, w);
+                acc = acc + int_of(sig[5]);
+            } else if op == 98 {
+                acc = acc + 0 - p256_vf.build_table(point, table, w);
             }
             k = k + 1;
         }

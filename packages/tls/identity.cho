@@ -2,6 +2,7 @@ edition 6;
 module tls_identity;
 import std.bytes;
 import std.crypto;
+import std.p256_vf;
 import tls_message;
 import tls_record;
 import tls_slot;
@@ -24,7 +25,9 @@ import x509_verify;
 // fixed stride: in use (1 byte), the key (32), its public point (65), the
 // names' length (2) and the names, the certificate_list's length (3) and
 // the list, as Certificate sends it, then the leaf certificate's SHA-256 (32) and its notAfter (8, seconds
-// since 1970), which a session ticket binds to (`docs/tls-server.md` §12.3 d). After the identities, the clients' trust
+// since 1970), which a session ticket binds to (`docs/tls-server.md` §12.3 d), then the public point's table
+// (`p256_vf.table_len()` bytes, `docs/tls-server.md` §3.5), which the check after each signature verifies
+// against. After the identities, the clients' trust
 // store and the mode of client authentication (`docs/tls-server.md` §13.3): the mode (1 byte), the generation (4), the
 // store's length (3) and the store, in `x509_verify.store_load`'s format.
 
@@ -83,8 +86,12 @@ fn o_not_after() -> [] int {
     return o_fp() + 32;
 }
 
-fn stride() -> [] int {
+fn o_table() -> [] int {
     return o_not_after() + 8;
+}
+
+fn stride() -> [] int {
+    return o_table() + p256_vf.table_len();
 }
 
 fn at(id: int) -> [] int {
@@ -188,6 +195,42 @@ pub fn not_after[&c](cfg: &c [byte], id: int) -> [] int {
     return tls_message.get(cfg, at(id) + o_not_after(), 8);
 }
 
+// The table of identity `id`'s public point (`p256_vf.build_table`), built when the identity was loaded
+// (`docs/tls-server.md` §3.5). Public data.
+pub fn table[&c](cfg: &c [byte], id: int) -> [] &c [byte] {
+    return cfg[at(id) + o_table()..at(id) + o_table() + p256_vf.table_len()];
+}
+
+// What the check after each signature verifies under: the identity's table, which begins with its point, or
+// the point alone when the table is not the point's (a build that failed leaves zeros).
+pub fn check_key[&c](cfg: &c [byte], id: int) -> [] &c [byte] {
+    if p256_vf.table_for(table(cfg, id), point(cfg, id)) {
+        return table(cfg, id);
+    }
+    return point(cfg, id);
+}
+
+// How many bytes of the tables of identities not in use are not zero: 0 is what `load` and `wipe`
+// promise (`tls.residue`).
+pub fn table_residue[&c](cfg: &c [byte]) -> [] int {
+    var n = 0;
+    var id = 0;
+    while id < max_identities() {
+        if !in_use(cfg, id) {
+            let t = table(cfg, id);
+            var i = 0;
+            while i < len(t) {
+                if int_of(t[i]) != 0 {
+                    n = n + 1;
+                }
+                i = i + 1;
+            }
+        }
+        id = id + 1;
+    }
+    return n;
+}
+
 // A key parser's refusal as this package's (`x509_key.refusal_tag`): a
 // key of another algorithm or curve is `server_key_type`; anything else
 // about the file, `server_key_format`.
@@ -277,6 +320,10 @@ pub fn load[&c, &p, &k, &n, &w](cfg: &!c [byte], id: int, chain_pem: &p [byte], 
             tls_slot.copy_bytes(chain[0..n], cfg[b + o_list()..b + o_list() + n]);
             crypto.sha256(chain[3..3 + tls_message.get(chain, 0, 3)], cfg[b + o_fp()..b + o_fp() + 32]);
             tls_message.put(cfg, b + o_not_after(), leaf_not_after, 8);
+            // The check's table, from the public point alone (`docs/tls-server.md` §3.5). It cannot fail for a point
+            // the key parser derived; if it did, the table would be zeros, which match no point, and the check would
+            // verify without it.
+            p256_vf.build_table(pub_point, cfg[b + o_table()..b + o_table() + p256_vf.table_len()], work);
             if !keep_names {
                 bytes.zero(cfg[b + o_names()..b + o_names() + names_cap()]);
                 tls_message.put(cfg, b + o_names_len(), len(names), 2);

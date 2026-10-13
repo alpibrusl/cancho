@@ -4,6 +4,11 @@
 //     S <PEM bundle in hex>
 //         the store becomes that bundle's roots; answers
 //         `<roots> <skipped> <bytes used>`, or `<code> <tag>`
+//     T <PEM bundle in hex>
+//         `S`, then a table for each P-256 root, at most 16
+//         (`store_tables`, `docs/x509-verify.md` §11); answers as `S`
+//     A
+//         the tables the store holds and the bytes they take: `<tables> <bytes>`
 //     V <now> <max intermediates> <host in hex, or -> <cert hex> ...
 //         the chain, leaf first, against the store; answers `<code> <tag>`
 //     C <now> <max intermediates> <purpose> <cert hex> ...
@@ -227,6 +232,7 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
     text = read_stdin(heap, io, text);
     var store = box_slice(heap, 4194304, byte_of(0));
     var store_used = 0;
+    var roots_used = 0;
     borrow text as &b in {
         let s = buffer.bytes(b);
         var at = 0;
@@ -235,7 +241,7 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
             while e < len(s) && int_of(s[e]) != 10 {
                 e = e + 1;
             }
-            if e - at >= 2 && int_of(s[at]) == 83 {
+            if e - at >= 2 && (int_of(s[at]) == 83 || int_of(s[at]) == 84) {
                 let pem = box_slice(heap, (e - at) / 2 + 1, byte_of(0));
                 var pb = pem;
                 var pn = 0;
@@ -255,6 +261,13 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
                         tag_line(io, roots);
                     } else {
                         store_used = info[0];
+                        roots_used = info[0];
+                        if int_of(s[at]) == 84 {
+                            let work = alloc_slice[r](x509_verify.anchor_work_len(), 0);
+                            borrow mut store as &!sw in {
+                                store_used = x509_verify.store_tables(contents(sw), info[0], 16, work);
+                            }
+                        }
                         io.print_int(io, roots);
                         io.space(io);
                         io.print_int(io, info[1]);
@@ -264,6 +277,11 @@ fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
                     }
                 }
                 unbox_slice(heap, pb);
+            } else if e - at >= 1 && int_of(s[at]) == 65 {
+                io.print_int(io, (store_used - roots_used) / x509_verify.anchor_table_len());
+                io.space(io);
+                io.print_int(io, store_used - roots_used);
+                io.newline(io);
             } else if e - at >= 2 && (int_of(s[at]) == 86 || int_of(s[at]) == 67 || int_of(s[at]) == 78) {
                 borrow store as &sr in {
                     verify_line(heap, io, int_of(s[at]), s, at + 2, e, contents(sr)[0..store_used]);

@@ -1,0 +1,133 @@
+# gram, Intel Core i7-1260P, core 2 (taskset -c 2), 2026-10-13T09:22:00+02:00, load 4.46 5.52 5.04; kernel.perf_event_paranoid lowered 4 -> 2 for this run and restored to 4 after
+# python3 scripts/tls_perf.py table hsbin/tls_prims_bench (this branch), three times; then tls_perf.py openssl
+machine: {"arch": "x86_64", "kernel": "7.0.0-38-generic", "system": "Linux", "cpu": "12th Gen Intel(R) Core(TM) i7-1260P", "governor": "powersave", "thp": "madvise", "load": [4.45556640625, 5.51806640625, 5.037109375]}
+operation                            size    ns/call  cycles/call   instr/call   IPC
+x25519_public                           0      54931     154693.2     693548.1  4.48
+x25519_shared                           0      55053     152186.7     693548.1  4.56
+p256_public                             0      88623     243426.8    1197032.1  4.92
+p256_shared                             0     374023    1083129.6    5002523.5  4.62
+ecdsa_p256_verify                       0     262207     698494.3    3488825.3  4.99
+ecdsa_p256_sign                         0     124023     356694.8    1632017.2  4.58
+ecdsa_p256_sign_checked                 0     424804    1100895.0    5118708.7  4.65
+sha256                                 64        961       2675.1      15040.0  5.62
+sha256                               1024       9155      22026.3     121885.0  5.53
+sha256                              16384     121337     370337.8    1831405.2  4.95
+sha384                                 64        588       1595.7       8462.0   5.3
+sha384                               1024       4013      11220.1      58723.0  5.23
+sha384                              16384      54443     156347.8     823963.1  5.27
+hmac_sha256                            64       2540       6624.8      39759.0   6.0
+hmac_sha256                          1024       9307      23787.0     146604.0  6.16
+hmac_sha256                         16384     129150     311336.2    1856124.1  5.96
+hkdf_expand_label_32                    0       2197       5591.1      33505.0  5.99
+hkdf_extract_32                         0       2136       5498.0      33015.0   6.0
+aes128gcm_seal                         64         70        212.2        739.0  3.48
+aes128gcm_seal                       1024        305       1038.6       3144.0  3.03
+aes128gcm_seal                      16384       3990       9482.2      43464.0  4.58
+aes128gcm_open                         64         63        194.9        742.0  3.81
+aes128gcm_open                       1024        291        746.4       3147.0  4.22
+aes128gcm_open                      16384       4028      11974.6      43467.0  3.63
+chacha20poly1305_seal                  64        865       2581.2      14241.0  5.52
+chacha20poly1305_seal                1024       6607      16196.7     118761.0  7.33
+chacha20poly1305_seal               16384      99121     314307.7    1791081.2   5.7
+chacha20poly1305_open                  64        867       2680.9      14407.0  5.37
+chacha20poly1305_open                1024       7202      20936.1     118927.0  5.68
+chacha20poly1305_open               16384     119628     315537.7    1791247.2  5.68
+aes128gcm_prepare                       0       2105       5961.2      32813.0   5.5
+hkdf_expand_label_48                    0       2357       5296.9      33643.0  6.35
+ecdsa_p256_verify_tabled                0     122802     485556.6    1543269.3  3.18
+ecdsa_p256_sign_checked_tabled          0     241210     666473.5    3173192.4  4.76
+calibrate                               0        346       1000.4       1007.0  1.01
+machine: {"arch": "x86_64", "kernel": "7.0.0-38-generic", "system": "Linux", "cpu": "12th Gen Intel(R) Core(TM) i7-1260P", "governor": "powersave", "thp": "madvise", "load": [5.64208984375, 5.1669921875, 4.9873046875]}
+operation                            size    ns/call  cycles/call   instr/call   IPC
+x25519_public                           0      87402     241111.9     693548.1  2.88
+x25519_shared                           0      85449     243448.2     693548.2  2.85
+p256_public                             0     131591     185320.9    1197032.1  6.46
+p256_shared                             0     560546     978788.0    5002523.7  5.11
+ecdsa_p256_verify                       0     387695     688086.7    3488825.3  5.07
+ecdsa_p256_sign                         0     184082     327379.9    1632017.2  4.99
+ecdsa_p256_sign_checked                 0     554687    1014514.3    5118708.7  5.05
+sha256                                 64       1316       2551.1      15040.0   5.9
+sha256                               1024      11840      21414.1     121885.0  5.69
+sha256                              16384     167480     347059.8    1831405.3  5.28
+sha384                                 64        515       1950.4       8462.0  4.34
+sha384                               1024       4043      15311.7      58723.0  3.84
+sha384                              16384      79101     209876.7     823963.1  3.93
+hmac_sha256                            64       4226       6150.4      39759.0  6.46
+hmac_sha256                          1024      11291      26890.7     146604.0  5.45
+hmac_sha256                         16384     201171     434551.7    1856124.3  4.27
+hkdf_expand_label_32                    0       4028       6146.5      33505.0  5.45
+hkdf_extract_32                         0       2426       5866.2      33015.0  5.63
+aes128gcm_seal                         64         69        194.4        739.0   3.8
+aes128gcm_seal                       1024        388        782.3       3144.0  4.02
+aes128gcm_seal                      16384       6134      13407.9      43464.0  3.24
+aes128gcm_open                         64        103        213.9        742.0  3.47
+aes128gcm_open                       1024        354        766.5       3147.0  4.11
+aes128gcm_open                      16384       4333      12276.3      43467.0  3.54
+chacha20poly1305_seal                  64       1083       3228.3      14241.0  4.41
+chacha20poly1305_seal                1024       8926      31989.1     118761.0  3.71
+chacha20poly1305_seal               16384     142089     215258.5    1791081.1  8.32
+chacha20poly1305_open                  64       1316       3222.0      14407.0  4.47
+chacha20poly1305_open                1024      12145      44988.5     118927.0  2.64
+chacha20poly1305_open               16384     165527     304913.1    1791247.2  5.87
+aes128gcm_prepare                       0       3524       7539.5      32813.0  4.35
+hkdf_expand_label_48                    0       4226       7069.5      33643.0  4.76
+ecdsa_p256_verify_tabled                0     195800     326369.7    1543269.2  4.73
+ecdsa_p256_sign_checked_tabled          0     380859     696672.3    3173192.5  4.55
+calibrate                               0        525       1001.2       1007.0  1.01
+machine: {"arch": "x86_64", "kernel": "7.0.0-38-generic", "system": "Linux", "cpu": "12th Gen Intel(R) Core(TM) i7-1260P", "governor": "powersave", "thp": "madvise", "load": [5.55322265625, 5.72216796875, 5.3017578125]}
+operation                            size    ns/call  cycles/call   instr/call   IPC
+x25519_public                           0      82763     180674.7     693548.1  3.84
+x25519_shared                           0      55419     212897.2     693548.1  3.26
+p256_public                             0      95703     176878.7    1197032.1  6.77
+p256_shared                             0     338867    1058740.0    5002523.5  4.72
+ecdsa_p256_verify                       0     274902     752538.4    3488825.4  4.64
+ecdsa_p256_sign                         0     171875     343366.4    1632017.2  4.75
+ecdsa_p256_sign_checked                 0     443359    1138823.9    5118708.7  4.49
+sha256                                 64        946       2792.5      15040.0  5.39
+sha256                               1024      10406      23605.0     121885.0  5.16
+sha256                              16384     189941     292321.8    1831405.2  6.27
+sha384                                 64        684       1530.0       8462.0  5.53
+sha384                               1024       4516       9827.3      58723.0  5.98
+sha384                              16384      80566     150789.7     823963.1  5.46
+hmac_sha256                            64       2571       9236.1      39759.0   4.3
+hmac_sha256                          1024      13549      33700.7     146604.0  4.35
+hmac_sha256                         16384     124755     437954.9    1856124.2  4.24
+hkdf_expand_label_32                    0       2685      10714.8      33505.0  3.13
+hkdf_extract_32                         0       2548       9890.7      33015.0  3.34
+aes128gcm_seal                         64         80        242.4        739.0  3.05
+aes128gcm_seal                       1024        356        875.6       3144.0  3.59
+aes128gcm_seal                      16384       5065      12478.3      43464.0  3.48
+aes128gcm_open                         64         82        219.2        742.0  3.39
+aes128gcm_open                       1024        333        851.7       3147.0  3.69
+aes128gcm_open                      16384       4158      12579.5      43467.0  3.46
+chacha20poly1305_seal                  64       1264       2336.5      14241.0   6.1
+chacha20poly1305_seal                1024       7965      30698.5     118761.0  3.87
+chacha20poly1305_seal               16384     195800     386578.2    1791081.2  4.63
+chacha20poly1305_open                  64       1346       3535.5      14407.0  4.07
+chacha20poly1305_open                1024      10711      36428.7     118927.0  3.26
+chacha20poly1305_open               16384     167480     550906.3    1791247.3  3.25
+aes128gcm_prepare                       0       2372       5954.3      32813.0  5.51
+hkdf_expand_label_48                    0       2922       7278.3      33643.0  4.62
+ecdsa_p256_verify_tabled                0     112304     356048.3    1543269.1  4.33
+ecdsa_p256_sign_checked_tabled          0     237792     866027.9    3173192.4  3.66
+calibrate                               0        346       1003.0       1007.0   1.0
+machine: {"arch": "x86_64", "kernel": "7.0.0-38-generic", "system": "Linux", "cpu": "12th Gen Intel(R) Core(TM) i7-1260P", "governor": "powersave", "thp": "madvise", "load": [8.7626953125, 6.7216796875, 5.74853515625]}
+OpenSSL 3.5.5 27 Jan 2026 (Library: OpenSSL 3.5.5 27 Jan 2026)
+ecdsap256          ecdsap256                                   32318.4 ns         86257 cycles  (2.67 GHz)  | Doing 256 bits sign ecdsa ops for 3s: 91898 256 bits ECDSA sign ops in 2.97s
+ecdsap256          ecdsap256                                   94632.2 ns        252570 cycles  (2.67 GHz)  | Doing 256 bits verify ecdsa ops for 3s: 31596 256 bits ECDSA verify ops in 2.99s
+ecdhx25519         ecdhx25519                                  49266.0 ns        133519 cycles  (2.71 GHz)  | Doing 253 bits  ecdh ops for 3s: 60488 253-bits ECDH ops in 2.98s
+ecdhp256           ecdhp256                                    86969.1 ns        228136 cycles  (2.62 GHz)  | Doing 256 bits  ecdh ops for 3s: 34495 256-bits ECDH ops in 3.00s
+sha256             -evp sha256 -bytes 64                         327.3 ns           695 cycles  (2.12 GHz)  | Doing sha256 ops for 3s on 64 size blocks: 9165163 sha256 ops in 3.00s
+sha256             -evp sha256 -bytes 1024                      1231.6 ns          2664 cycles  (2.16 GHz)  | Doing sha256 ops for 3s on 1024 size blocks: 2435852 sha256 ops in 3.00s
+sha256             -evp sha256 -bytes 16384                    16105.3 ns         34254 cycles  (2.13 GHz)  | Doing sha256 ops for 3s on 16384 size blocks: 186274 sha256 ops in 3.00s
+sha384             -evp sha384 -bytes 64                         589.0 ns          1196 cycles  (2.03 GHz)  | Doing sha384 ops for 3s on 64 size blocks: 5093353 sha384 ops in 3.00s
+sha384             -evp sha384 -bytes 1024                      3933.6 ns          8129 cycles  (2.07 GHz)  | Doing sha384 ops for 3s on 1024 size blocks: 762651 sha384 ops in 3.00s
+sha384             -evp sha384 -bytes 16384                    51268.0 ns        104162 cycles  (2.03 GHz)  | Doing sha384 ops for 3s on 16384 size blocks: 58516 sha384 ops in 3.00s
+hmac-sha256        -hmac sha256 -bytes 64                        481.1 ns           994 cycles  (2.07 GHz)  | Doing hmac(sha256) ops for 3s on 64 size blocks: 6235315 hmac(sha256) ops in 3.00s
+aes-128-gcm        -aead -evp aes-128-gcm -bytes 64              409.1 ns           860 cycles  (2.10 GHz)  | Doing AES-128-GCM ops for 3s on 64 size blocks: 7333954 AES-128-GCM ops in 3.00s
+aes-128-gcm        -aead -evp aes-128-gcm -bytes 1024            751.6 ns          1560 cycles  (2.08 GHz)  | Doing AES-128-GCM ops for 3s on 1024 size blocks: 3991395 AES-128-GCM ops in 3.00s
+aes-128-gcm        -aead -evp aes-128-gcm -bytes 16384          9231.6 ns         14603 cycles  (1.58 GHz)  | Doing AES-128-GCM ops for 3s on 16384 size blocks: 322806 AES-128-GCM ops in 2.98s
+chacha20-poly1305  -aead -evp chacha20-poly1305 -bytes 64        267.6 ns           475 cycles  (1.77 GHz)  | Doing ChaCha20-Poly1305 ops for 3s on 64 size blocks: 11210184 ChaCha20-Poly1305 ops in 3.00s
+chacha20-poly1305  -aead -evp chacha20-poly1305 -bytes 1024        983.3 ns          2009 cycles  (2.04 GHz)  | Doing ChaCha20-Poly1305 ops for 3s on 1024 size blocks: 3051057 ChaCha20-Poly1305 ops in 3.00s
+chacha20-poly1305  -aead -evp chacha20-poly1305 -bytes 16384      14647.7 ns         29309 cycles  (2.00 GHz)  | Doing ChaCha20-Poly1305 ops for 3s on 16384 size blocks: 204811 ChaCha20-Poly1305 ops in 3.00s
+# end 2026-10-13T09:37:38+02:00, load 6.94 6.54 5.74

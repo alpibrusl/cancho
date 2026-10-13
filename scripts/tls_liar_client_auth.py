@@ -820,16 +820,17 @@ def post_handshake(c):
     c.c.feed(c.write.seal(22, c.certificate_message()))
 
 
-@case("memory: a slot is what it was (10,245 words and 187,703 bytes); the engine's configuration grew by the clients' store (and the tickets' 640)",
+@case("memory: a slot is what it was (10,245 words and 187,703 bytes); the engine's configuration grew by the clients' store (and the tickets' 640), and by each identity's table (16 of 10,305 bytes, docs/tls-server.md §3.5)",
       "ok", None, None)
 def memory(c):
     # A slot's `ints` and `bytes` are the same as on main before client certificates (the client's identity is kept in
     # `b_leaf`, the server's own leaf a client slot keeps and a server slot did not use; main's are 10,245 and 187,703 since
     # the client's own certificates, #396, and the multi-block AES-GCM key schedules, #392). `cfg` was 280,690 bytes on main; the
     # tickets (docs/tls-server.md §12.10) gave each identity a fingerprint and a notAfter, 16 x 40 = 640 bytes; this gained
-    # the mode (1), the generation (4), the store's length (3) and the store (32,768) = 32,776.
+    # the mode (1), the generation (4), the store's length (3) and the store (32,768) = 32,776; the identities' key tables
+    # (docs/tls-server.md §3.5), 16 x 10,305 = 164,880.
     f = c.c.ask("L")
-    assert f == ["0", "ok", "10245", "187703", str(280690 + 640 + 32776)], f
+    assert f == ["0", "ok", "10245", "187703", str(280690 + 640 + 32776 + 164880)], f
 
 
 @case("peer_certificate into a buffer shorter than the certificate", "ok", None, None)
