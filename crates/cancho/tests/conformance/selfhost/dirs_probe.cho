@@ -1,0 +1,115 @@
+edition 7;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var bad = 0;
+    let tmp = narrow(fs, "/tmp");
+    borrow tmp as &f in {
+        match open_dir(f, "/tmp") {
+            DirOpened::Ok(d) => {
+                var root = d;
+                borrow root as &r in {
+                    match dir_open_new(r, "cancho-dirprobe-NAME") {
+                        Opened::Ok(file) => {
+                            var out = file;
+                            region a {
+                                let bytes = alloc_slice[a](5, byte_of(65));
+                                borrow mut out as &!w in {
+                                    file_write(w, bytes);
+                                }
+                            }
+                            file_close(out);
+                        }
+                        Opened::Failed(e) => {
+                            bad = bad + 1;
+                        }
+                    }
+                    match dir_stat(r, "cancho-dirprobe-NAME") {
+                        DirStat::Ok(kind, size, mtime) => {
+                            bad = bad + (size - 5) + (kind - 1);
+                        }
+                        DirStat::Failed(e) => {
+                            bad = bad + 2;
+                        }
+                    }
+                    match dir_rename(r, "cancho-dirprobe-NAME", "cancho-dirprobe-NAME2") {
+                        Done::Ok(n) => {
+                        }
+                        Done::Failed(e) => {
+                            bad = bad + 4;
+                        }
+                    }
+                    match dir_rename_new(r, "cancho-dirprobe-NAME2", "cancho-dirprobe-NAME2") {
+                        Done::Ok(n) => {
+                            bad = bad + 8;
+                        }
+                        Done::Failed(e) => {
+                            bad = bad + 0;
+                        }
+                    }
+                    match dir_open_read(r, "no-such-file-cancho") {
+                        Opened::Ok(x) => {
+                            file_close(x);
+                            bad = bad + 16;
+                        }
+                        Opened::Failed(e) => {
+                            bad = bad + e;
+                        }
+                    }
+                    match dir_enter(r, "..") {
+                        DirOpened::Ok(u) => {
+                            dir_close(u);
+                            bad = bad + 1000;
+                        }
+                        DirOpened::Failed(e) => {
+                            bad = bad + e;
+                        }
+                    }
+                    match dir_mode(r, "cancho-dirprobe-NAME2") {
+                        Done::Ok(bits) => {
+                            bad = bad + bits;
+                        }
+                        Done::Failed(e) => {
+                            bad = bad + 32;
+                        }
+                    }
+                    match dir_remove(r, "cancho-dirprobe-NAME2") {
+                        Done::Ok(n) => {
+                        }
+                        Done::Failed(e) => {
+                            bad = bad + 64;
+                        }
+                    }
+                    match dir_remove(r, "cancho-dirprobe-NAME2") {
+                        Done::Ok(n) => {
+                            bad = bad + 128;
+                        }
+                        Done::Failed(e) => {
+                            bad = bad + e;
+                        }
+                    }
+                    match dir_sync(r) {
+                        Done::Ok(n) => {
+                        }
+                        Done::Failed(e) => {
+                        }
+                    }
+                }
+                dir_close(root);
+            }
+            DirOpened::Failed(e) => {
+                bad = bad + 500;
+            }
+        }
+    }
+    release(tmp);
+    return bad % 256;
+}

@@ -1,0 +1,85 @@
+module selfhost.platform;
+
+// platform.cho -- the constants of the target that the directory support (`runtime/dirs.c`) reads from the array
+// `cancho_plat`, in the order of its `enum`: the open flags the steps use, `AT_FDCWD`, the no-replace rename and
+// what it answers when it cannot, `ENAMETOOLONG`, where `struct dirent` and `struct stat` keep what is read,
+// `d_type`'s values, `AT_SYMLINK_NOFOLLOW`, the mode a created file gets. `target` is 1 for Darwin, 2 for Linux on
+// aarch64, 0 for Linux on x86-64.
+
+import selfhost.emit;
+
+fn value[&s](st: &!s [int], v: int, first: bool) -> [] int {
+    if !first {
+        emit.str(st, ", ");
+    }
+    emit.str(st, "i64 ");
+    return emit.int(st, v);
+}
+
+pub fn print[&s](st: &!s [int]) -> [] int {
+    let target = st[61];
+    let darwin = target == 1;
+    var directory = 65536;
+    var nofollow = 131072;
+    var create = 64;
+    var exclusive = 128;
+    var append = 1024;
+    var cloexec = 524288;
+    var fdcwd = 0 - 100;
+    if darwin {
+        directory = 1048576;
+        nofollow = 256;
+        create = 512;
+        exclusive = 2048;
+        append = 8;
+        cloexec = 16777216;
+        fdcwd = 0 - 2;
+    } else if target == 2 {
+        directory = 16384;
+        nofollow = 32768;
+    }
+    emit.str(st, "@cancho_plat = private constant [21 x i64] [");
+    value(st, directory | cloexec, true);
+    value(st, directory | nofollow | cloexec, false);
+    value(st, nofollow | cloexec, false);
+    value(st, 1 | create | exclusive | nofollow | cloexec, false);
+    value(st, 1 | create | append | nofollow | cloexec, false);
+    value(st, fdcwd, false);
+    if darwin {
+        value(st, 4, false);
+        value(st, 45, false);
+        value(st, 63, false);
+        value(st, 20, false);
+        value(st, 21, false);
+    } else {
+        value(st, 1, false);
+        value(st, 95, false);
+        value(st, 36, false);
+        value(st, 18, false);
+        value(st, 19, false);
+    }
+    value(st, 0, false);
+    value(st, 10, false);
+    value(st, 4, false);
+    value(st, 8, false);
+    if darwin {
+        value(st, 4, false);
+        value(st, 16, false);
+        value(st, 96, false);
+        value(st, 48, false);
+        value(st, 32, false);
+    } else {
+        var mode = 24;
+        if target == 2 {
+            mode = 16;
+        }
+        value(st, mode, false);
+        value(st, 32, false);
+        value(st, 48, false);
+        value(st, 88, false);
+        value(st, 256, false);
+    }
+    value(st, 420, false);
+    emit.str(st, "]\n\n");
+    return 0;
+}

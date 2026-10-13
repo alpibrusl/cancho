@@ -465,16 +465,34 @@ fn render_signatures() -> (String, String) {
 fn render_runtime(dir: &std::path::Path) -> String {
     let source =
         std::fs::read_to_string(dir.join("runtime.ll")).expect("examples/selfhost/runtime.ll");
-    let escaped: String = source
-        .chars()
-        .map(|c| match c {
-            '\\' => "\\\\".to_owned(),
-            '"' => "\\\"".to_owned(),
-            '\n' => "\\n".to_owned(),
-            '\t' => "\\t".to_owned(),
-            other => other.to_string(),
-        })
-        .collect();
+    let escape = |text: &str| -> String {
+        text.chars()
+            .map(|c| match c {
+                '\\' => "\\\\".to_owned(),
+                '"' => "\\\"".to_owned(),
+                '\n' => "\\n".to_owned(),
+                '\t' => "\\t".to_owned(),
+                other => other.to_string(),
+            })
+            .collect()
+    };
+    let escaped = escape(&source);
+    let net_linux = escape(
+        &std::fs::read_to_string(dir.join("runtime/net_linux.ll"))
+            .expect("examples/selfhost/runtime/net_linux.ll"),
+    );
+    let net_darwin = escape(
+        &std::fs::read_to_string(dir.join("runtime/net_darwin.ll"))
+            .expect("examples/selfhost/runtime/net_darwin.ll"),
+    );
+    let dirs_linux = escape(
+        &std::fs::read_to_string(dir.join("runtime/dirs_linux.ll"))
+            .expect("examples/selfhost/runtime/dirs_linux.ll"),
+    );
+    let dirs_darwin = escape(
+        &std::fs::read_to_string(dir.join("runtime/dirs_darwin.ll"))
+            .expect("examples/selfhost/runtime/dirs_darwin.ll"),
+    );
     format!(
         "module selfhost.runtime;\n\n\
          // runtime.cho -- the support the code of a few builtins calls.\n\
@@ -483,6 +501,12 @@ fn render_runtime(dir: &std::path::Path) -> String {
          // fails when this file is not what `runtime.ll` says, and\n\
          // `UPDATE_SELFHOST_TABLES=1 cargo test -p cancho-ir selfhost_tables` rewrites it.\n\n\
          pub fn text() -> [] &static [byte] {{\n    return \"{escaped}\";\n}}\n\n\
+         // The sockets and the clock (`runtime/net.c`, built for each target by `runtime/make.sh`).\n\
+         pub fn net_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{net_darwin}\";\n    }}\n    \
+         return \"{net_linux}\";\n}}\n\n\
+         // The directory handles and listings (`runtime/dirs.c`).\n\
+         pub fn dirs_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{dirs_darwin}\";\n    }}\n    \
+         return \"{dirs_linux}\";\n}}\n\n\
          // The address of `errno`, which each target keeps under its own name.\n\
          pub fn errno_location(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        \
          return \"define ptr @cancho_errno_location() {{\\nentry:\\n  %p = call ptr @__error()\\n  ret ptr %p\\n}}\\ndeclare ptr @__error()\\n\\n\";\n    }}\n    \

@@ -538,8 +538,32 @@ fn terminates[&s](st: &!s [int], head: int, n: int) -> [] bool {
     return false;
 }
 
+// The expressions `defer` has waiting, innermost last (compile mode only): how many, then them. They are written out
+// where the block ends and at every `return`, innermost first, as if they were written there.
+fn defer_base[&s](st: &!s [int]) -> [] int {
+    return st[62] + ast.const_region() + 16 + 4096 + 65536 + 256;
+}
+
+fn defers[&s](st: &!s [int]) -> [] int {
+    if !emit.on(st) {
+        return 0;
+    }
+    return st[defer_base(st)];
+}
+
+// Write out the waiting expressions above the first `low`.
+fn run_defers[&s, &x](st: &!s [int], text: &x [byte], low: int) -> [] int {
+    var k = defers(st);
+    while k > low && ast.ok(st) {
+        k = k - 1;
+        exprs.expr(st, text, st[defer_base(st) + 1 + k]);
+    }
+    return 0;
+}
+
 fn block[&s, &x](st: &!s [int], text: &x [byte], head: int, n: int, ret: int) -> [] int {
     let mark = st[21];
+    let waiting = defers(st);
     var at = head;
     var i = 0;
     while i < n && ast.ok(st) {
@@ -550,6 +574,12 @@ fn block[&s, &x](st: &!s [int], text: &x [byte], head: int, n: int, ret: int) ->
         }
         at = ast.next(st, at);
         i = i + 1;
+    }
+    if emit.on(st) {
+        if ast.ok(st) && !terminates(st, head, n) {
+            run_defers(st, text, waiting);
+        }
+        st[defer_base(st)] = waiting;
     }
     st[21] = mark;
     return 0;
@@ -570,7 +600,7 @@ fn writes_stmt[&s](st: &!s [int], id: int) -> [] bool {
         let place = ast.get(st, id, 4);
         return ast.is_kind(st, place, kinds.NK::EName) || ast.is_kind(st, place, kinds.NK::EIndex) || ast.is_kind(st, place, kinds.NK::EUnary) || ast.is_kind(st, place, kinds.NK::EField);
     }
-    return ast.is_kind(st, id, kinds.NK::SMatch) || ast.is_kind(st, id, kinds.NK::SDestructureTuple) || ast.is_kind(st, id, kinds.NK::SBorrow) || ast.is_kind(st, id, kinds.NK::SRegion) || ast.is_kind(st, id, kinds.NK::SDestructure) || ast.is_kind(st, id, kinds.NK::SLet) || ast.is_kind(st, id, kinds.NK::SExpr) || ast.is_kind(st, id, kinds.NK::SReturn) || ast.is_kind(st, id, kinds.NK::SIf) || ast.is_kind(st, id, kinds.NK::SWhile);
+    return ast.is_kind(st, id, kinds.NK::SMatch) || ast.is_kind(st, id, kinds.NK::SDestructureTuple) || ast.is_kind(st, id, kinds.NK::SBorrow) || ast.is_kind(st, id, kinds.NK::SRegion) || ast.is_kind(st, id, kinds.NK::SDestructure) || ast.is_kind(st, id, kinds.NK::SLet) || ast.is_kind(st, id, kinds.NK::SExpr) || ast.is_kind(st, id, kinds.NK::SReturn) || ast.is_kind(st, id, kinds.NK::SIf) || ast.is_kind(st, id, kinds.NK::SWhile) || ast.is_kind(st, id, kinds.NK::SDefer);
 }
 
 fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
@@ -786,6 +816,17 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         exprs.expr(st, text, ast.get(st, id, 4));
         return 0;
     }
+    if emit.on(st) && ast.is_kind(st, id, kinds.NK::SDefer) {
+        // Nothing is written here: the expression waits for the exits of the block.
+        let top = st[defer_base(st)];
+        if top >= 1024 {
+            exprs.skip(st, from, to);
+            return 0;
+        }
+        st[defer_base(st) + 1 + top] = ast.get(st, id, 4);
+        st[defer_base(st)] = top + 1;
+        return 0;
+    }
     if ast.is_kind(st, id, kinds.NK::SIf) {
         let c = condition(st, text, ast.get(st, id, 4));
         var n = 0 - 1;
@@ -851,6 +892,10 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             }
             scope.expect(st, text, ret, found.ty, ast.nstart(st, value), ast.nend(st, value));
             if emit.on(st) && ast.ok(st) {
+                // The value is read first, then what is deferred runs, then the function returns.
+                run_defers(st, text, 0);
+            }
+            if emit.on(st) && ast.ok(st) {
                 if types.is_slice_ref(st, ret) {
                     emit.ret_slice(st, found.reg, found.reg2 < 0, found.value, found.reg2);
                 } else {
@@ -877,6 +922,9 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     st[39] = 0;
     st[54] = 0;
     st[60] = 0;
+    if emit.on(st) {
+        st[defer_base(st)] = 0;
+    }
     st[22] = ast.get(st, fn_item, 13);
     st[23] = ast.get(st, fn_item, 14);
     let from = ast.nstart(st, fn_item);

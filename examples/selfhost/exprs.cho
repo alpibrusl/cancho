@@ -18,6 +18,7 @@ import selfhost.floatcode;
 import selfhost.codes;
 import selfhost.threadcode;
 import selfhost.externcode;
+import selfhost.netcode;
 import selfhost.instances;
 import selfhost.scope;
 import selfhost.prims;
@@ -256,10 +257,8 @@ pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: in
     if expected != 0 && types.is_named(st, types.shallow(st, expected)) && types.named_item(st, types.shallow(st, expected)) == item {
         scope.expect(st, text, expected, whole, from, to);
     }
-    var e0 = nothing();
-    var e1 = nothing();
-    var e2 = nothing();
-    var e3 = nothing();
+    // The payloads wait on the argument stack until the parameters are solved.
+    let base = st[52];
     var arg = ast.get(st, id, 7);
     var want = ast.get(st, variant, 5);
     var k = 0;
@@ -267,15 +266,7 @@ pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: in
         let v = expr(st, text, arg);
         if ast.ok(st) {
             scope.expect(st, text, scope.node_val(st, want, whole), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
-        }
-        if k == 0 {
-            e0 = v;
-        } else if k == 1 {
-            e1 = v;
-        } else if k == 2 {
-            e2 = v;
-        } else {
-            e3 = v;
+            emit.push_arg(st, v.ty, v.known, v.value, v.reg);
         }
         arg = ast.next(st, arg);
         want = ast.next(st, want);
@@ -291,18 +282,12 @@ pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: in
     want = ast.get(st, variant, 5);
     k = 0;
     while k < count {
-        var v = e0;
-        if k == 1 {
-            v = e1;
-        } else if k == 2 {
-            v = e2;
-        } else if k == 3 {
-            v = e3;
-        }
-        acc = emit.insert_at(st, whole, acc, emit.payload_index(st, item, variant, k), scope.node_val(st, want, whole), v.known, v.value, v.reg);
+        let at = st[51] + 4 * (base + k);
+        acc = emit.insert_at(st, whole, acc, emit.payload_index(st, item, variant, k), scope.node_val(st, want, whole), st[at + 1] != 0, st[at + 2], st[at + 3]);
         want = ast.next(st, want);
         k = k + 1;
     }
+    st[52] = base;
     return in_reg(whole, acc);
 }
 
@@ -906,10 +891,7 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
     var init = first;
     var previous = 0 - 1;
     var count = 0;
-    var e0 = nothing();
-    var e1 = nothing();
-    var e2 = nothing();
-    var e3 = nothing();
+    let base = st[52];
     while init >= 0 && ast.ok(st) {
         let name = ast.get(st, init, 4);
         let value = ast.get(st, init, 5);
@@ -928,15 +910,7 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
             if ast.ok(st) {
                 scope.expect(st, text, scope.field_type(st, whole, index), v.ty, ast.nstart(st, value), ast.nend(st, value));
             }
-            if index == 0 {
-                e0 = v;
-            } else if index == 1 {
-                e1 = v;
-            } else if index == 2 {
-                e2 = v;
-            } else {
-                e3 = v;
-            }
+            emit.push_arg(st, v.ty, v.known, v.value, v.reg);
             count = count + 1;
         }
         init = ast.next(st, init);
@@ -957,17 +931,11 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
     var acc = 0 - 1;
     var index = 0;
     while index < count {
-        var v = e0;
-        if index == 1 {
-            v = e1;
-        } else if index == 2 {
-            v = e2;
-        } else if index == 3 {
-            v = e3;
-        }
-        acc = emit.insert_field(st, whole, acc, index, v.known, v.value, v.reg);
+        let at = st[51] + 4 * (base + index);
+        acc = emit.insert_field(st, whole, acc, index, st[at + 1] != 0, st[at + 2], st[at + 3]);
         index = index + 1;
     }
+    st[52] = base;
     return in_reg(whole, acc);
 }
 
@@ -1570,6 +1538,57 @@ pub fn extern_call[&s, &x](st: &!s [int], text: &x [byte], id: int, it: int) -> 
     return in_reg(1, answer);
 }
 
+// The sockets and the clock (the numbers of `codes.net_code`, the shape of each in `netcode.cho`): the arguments are
+// evaluated and pushed, the capability that was narrowed to a bound is the first of some and is not pushed, and the
+// bound goes after the others.
+pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) -> [] Ex {
+    let which = netcode.canonical(number);
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let nargs = ast.get(st, id, 7);
+    if nargs != netcode.arity(which) {
+        return skip(st, from, to);
+    }
+    if netcode.needs_dirs(which) {
+        st[55] = st[55] | 2;
+    } else if which != 44 {
+        st[55] = st[55] | 1;
+    }
+    let holds_bound = netcode.holds_bound(which);
+    let leads = holds_bound || which == 46 || which == 47;
+    var cap = 0;
+    var arg = ast.get(st, id, 6);
+    let first_arg = st[52];
+    var k = 0;
+    while k < nargs && ast.ok(st) {
+        let a = expr(st, text, arg);
+        if ast.ok(st) && k == 0 && leads {
+            cap = a.ty;
+        } else if ast.ok(st) && !types.is_erased(st, a.ty) {
+            push_value(st, a);
+        }
+        arg = ast.next(st, arg);
+        k = k + 1;
+    }
+    if !ast.ok(st) {
+        return nothing();
+    }
+    if holds_bound {
+        push_prefix(st, text, cap);
+    }
+    netcode.extras(st, which);
+    let n = st[52] - first_arg;
+    if netcode.slots(which) == 0 {
+        return in_reg(1, netcode.call_int(st, netcode.function(which), n));
+    }
+    let index = netcode.prelude_named(netcode.enum_name(which));
+    if index < 0 {
+        return skip(st, from, to);
+    }
+    let ty = types.make_prelude(st, index);
+    return in_reg(ty, netcode.answer(st, ty, netcode.slots(which), netcode.call_out(st, netcode.function(which), n)));
+}
+
 // `spawn(payload, f)` and `join(t)`. The payload and what `f` returns are one value each of no more than one
 // pointer's worth: a whole number, a byte, a boolean, a reference, or a capability (nothing in the code).
 pub fn thread_call[&s, &x](st: &!s [int], text: &x [byte], id: int, spawning: bool) -> [] Ex {
@@ -1732,6 +1751,9 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     // A builtin the file's edition can name comes first, then a foreign function: not checked.
     let known = prims.builtin_at(st, text, callee, st[23]);
     if known >= 0 {
+        if emit.on(st) && codes.net_code(text, ast.tstart(st, callee), ast.tend(st, callee)) > 0 {
+            return net_call(st, text, id, codes.net_code(text, ast.tstart(st, callee), ast.tend(st, callee)));
+        }
         return builtin_call(st, text, id, known);
     }
     var it = st[15];

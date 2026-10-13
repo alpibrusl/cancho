@@ -101,3 +101,128 @@ pub fn builtin_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     }
     return 0;
 }
+
+// The sockets and the clock, which `exprs.net_call` writes: 32 `bind`, 33 `connect`, 34 `listen`, 35 `accept`,
+// 36 `tcp_listen`, 37 `tcp_connect`, 38 `tcp_accept`, 39 `conn_read`, 40 `conn_write`, 41 `conn_nonblocking`,
+// 42 `listener_nonblocking`, 43 `conn_nodelay`, 44 `conn_close`, 45 `listener_close`, 46 `clock_ms`,
+// 47 `clock_unix_ms`, 48 `pipe_open`, 49 `pipe_read`, 50 `pipe_write`, 51 `pipe_close`, 52 `child_end_close`,
+// 53 `pipe_nonblocking`, then the directories: 54 `open_dir`, 55 `dir_enter`, 56 `dir_open_read`, 57 `dir_open_new`,
+// 58 `dir_open_append`, 59 `dir_rename`, 60 `dir_rename_new`, 61 `dir_remove`, 62 `dir_sync`, 63 `dir_close`, 64 `dir_list`,
+// 65 `dir_next`, 66 `dir_list_close`, 67 `dir_stat`, 68 `dir_mode`, 69 `dir_own_mode`; 0 for another name.
+pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
+    if lc.spells(text, from, to, "bind") {
+        return 32;
+    }
+    if lc.spells(text, from, to, "connect") {
+        return 33;
+    }
+    if lc.spells(text, from, to, "listen") {
+        return 34;
+    }
+    if lc.spells(text, from, to, "accept") {
+        return 35;
+    }
+    if lc.spells(text, from, to, "tcp_listen") {
+        return 36;
+    }
+    if lc.spells(text, from, to, "tcp_connect") {
+        return 37;
+    }
+    if lc.spells(text, from, to, "tcp_accept") {
+        return 38;
+    }
+    if lc.spells(text, from, to, "conn_read") {
+        return 39;
+    }
+    if lc.spells(text, from, to, "conn_write") {
+        return 40;
+    }
+    if lc.spells(text, from, to, "conn_nonblocking") {
+        return 41;
+    }
+    if lc.spells(text, from, to, "listener_nonblocking") {
+        return 42;
+    }
+    if lc.spells(text, from, to, "conn_nodelay") {
+        return 43;
+    }
+    if lc.spells(text, from, to, "conn_close") {
+        return 44;
+    }
+    if lc.spells(text, from, to, "listener_close") {
+        return 45;
+    }
+    if lc.spells(text, from, to, "clock_ms") {
+        return 46;
+    }
+    if lc.spells(text, from, to, "clock_unix_ms") {
+        return 47;
+    }
+    if lc.spells(text, from, to, "pipe_open") {
+        return 48;
+    }
+    if lc.spells(text, from, to, "pipe_read") {
+        return 49;
+    }
+    if lc.spells(text, from, to, "pipe_write") {
+        return 50;
+    }
+    if lc.spells(text, from, to, "pipe_close") {
+        return 51;
+    }
+    if lc.spells(text, from, to, "child_end_close") {
+        return 52;
+    }
+    if lc.spells(text, from, to, "pipe_nonblocking") {
+        return 53;
+    }
+    if lc.spells(text, from, to, "open_dir") {
+        return 54;
+    }
+    if lc.spells(text, from, to, "dir_enter") {
+        return 55;
+    }
+    if lc.spells(text, from, to, "dir_open_read") {
+        return 56;
+    }
+    if lc.spells(text, from, to, "dir_open_new") {
+        return 57;
+    }
+    if lc.spells(text, from, to, "dir_open_append") {
+        return 58;
+    }
+    if lc.spells(text, from, to, "dir_rename") {
+        return 59;
+    }
+    if lc.spells(text, from, to, "dir_rename_new") {
+        return 60;
+    }
+    if lc.spells(text, from, to, "dir_remove") {
+        return 61;
+    }
+    if lc.spells(text, from, to, "dir_sync") {
+        return 62;
+    }
+    if lc.spells(text, from, to, "dir_close") {
+        return 63;
+    }
+    if lc.spells(text, from, to, "dir_list") {
+        return 64;
+    }
+    if lc.spells(text, from, to, "dir_next") {
+        return 65;
+    }
+    if lc.spells(text, from, to, "dir_list_close") {
+        return 66;
+    }
+    if lc.spells(text, from, to, "dir_stat") {
+        return 67;
+    }
+    if lc.spells(text, from, to, "dir_mode") {
+        return 68;
+    }
+    if lc.spells(text, from, to, "dir_own_mode") {
+        return 69;
+    }
+    return 0;
+}
