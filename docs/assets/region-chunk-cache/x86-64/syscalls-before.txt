@@ -1,0 +1,24 @@
+== server full: 1272 handshakes
+  brk        142517 calls  112.04 a handshake
+  munmap         10 calls  0.01 a handshake
+  mmap           17 calls  0.01 a handshake
+== server resumed: 1287 handshakes
+  brk        175217 calls  136.14 a handshake
+  munmap         10 calls  0.01 a handshake
+  mmap           17 calls  0.01 a handshake
+== client tls_many 200: failed=0
+  brk         39022 calls
+  munmap          9 calls
+  mmap           16 calls
+== client tls_many 1: failed=0
+  brk           223 calls
+  mmap           10 calls
+  munmap          3 calls
+== server full: 3231 handshakes
+chunk_mallocs 733515 chunk_frees 733515 max_live_per_thread 10
+== server resumed: 8010 handshakes
+chunk_mallocs 2203103 chunk_frees 2203103 max_live_per_thread 10
+== client tls_many 200: failed=0
+chunk_mallocs 74234 chunk_frees 74234 max_live_per_thread 15
+== client tls_many 1: failed=0
+chunk_mallocs 405 chunk_frees 405 max_live_per_thread 15

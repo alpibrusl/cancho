@@ -239,7 +239,8 @@ the same session; raw output in [`assets/region-chunk-cache/`](assets/region-chu
 | `mmap` / `munmap` in each run | 16 to 17 / 9 to 10 | the same | 14 to 15 / 11 to 12 | the same |
 | 64 KiB `malloc`s (the shim): server full; client | 227 a handshake; 371 a handshake | **10 in the run; 15** | | |
 
-The 9 `brk` calls are start-up's and the heap's first growth; the 10 chunks are the server's deepest nesting, taken once and
+The raw files are a second run of the same commands (`sysc.sh`, `chunkcount.c` beside them), on a busier `gram`: fewer
+handshakes, the same rates (112.04 and 136.14 `brk` a handshake before; 9 in a run after). The 9 `brk` calls are start-up's and the heap's first growth; the 10 chunks are the server's deepest nesting, taken once and
 kept. **Gate 1 met** on both machines. The conformance test's program (three nested regions, 20,000 rounds) made 80,003 `brk`
 calls before and 4 after, on both backends (arm64).
 

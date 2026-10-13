@@ -41,3 +41,12 @@ KiB of server RSS per connection, over RSS at start (cancho ):
   cancho n=10000  start        VmRSS      2780 KiB
   cancho n=10000  connected    VmRSS    869976 KiB
   cancho n=10000  handshake    VmRSS   1106868 KiB
+  cancho n=10000  established  VmRSS    172956 KiB
+  cancho n=10000  echoed       VmRSS    533008 KiB
+  cancho n=10000  partial      VmRSS    817516 KiB
+  cancho n=10000  all-echoed   VmRSS   1423176 KiB
+
+KiB of server RSS per connection, over RSS at start (cancho ):
+| N | connected | handshake | established | echoed | partial | all-echoed |
+|---|---|---|---|---|---|---|
+| 10000 | 86.7 | 110.4 | 17.0 | 53.0 | 81.5 | 142.0 |
