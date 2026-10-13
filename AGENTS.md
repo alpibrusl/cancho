@@ -776,6 +776,149 @@ fn main(world: World) -> [] int {
 
 ---
 
+### 7.2 Lists and owned bytes (edition 5 or later)
+
+A collection of strings is a `std.list` of owned byte boxes. Four facts, each
+a checked block. The examples say `edition 7;`, whose `Split` has nine fields;
+`copy_into` needs edition 5 or later, and a file that does not say so does not
+see the name.
+
+**An owned string is a `Box` of bytes.** Make one with `box_slice`, fill it
+through a unique borrow with `copy_into`, read it through a borrow with
+`contents`, and free it with `unbox_slice`:
+
+```cancho
+edition 7;
+fn copy_of[&h, &r](heap: &!h Heap, s: &r [byte]) -> [heap] Box[[byte]] {
+    let b = box_slice(heap, len(s), byte_of(0));
+    borrow mut b as &!w in {
+        copy_into(contents(w), s);
+    }
+    return b;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi); release(fs); release(args); release(io); release(net); release(clock); release(signals); release(exec);
+    var n = 0;
+    borrow mut heap as &!h in {
+        let b = copy_of(h, "abc");
+        borrow b as &r in {
+            n = len(contents(r));
+        }
+        unbox_slice(h, b);
+    }
+    release(heap);
+    return n - 3;
+}
+```
+
+**A list is `list.List::Empty` or `list.List::Cons(head, rest)`, where `rest`
+is a `Box` of the rest.** `list.push` adds to the **front**; `list.length`
+counts; there is no `list.empty()`, `list.nil()` or `list.new()`, and no
+`Nil` variant. You read a list through a reference with `match`, stepping to
+the rest with `contents(rest)`, and you free it with a loop you write
+(`unbox(heap, rest)`), because only the owner of an element knows how to end
+one:
+
+```cancho
+edition 7;
+import std.list;
+
+fn copy_of[&h, &r](heap: &!h Heap, s: &r [byte]) -> [heap] Box[[byte]] {
+    let b = box_slice(heap, len(s), byte_of(0));
+    borrow mut b as &!w in {
+        copy_into(contents(w), s);
+    }
+    return b;
+}
+
+fn free_all[&h](heap: &!h Heap, fields: list.List[Box[Box[[byte]]]]) -> [heap] int {
+    match fields {
+        list.List::Empty => { return 0; }
+        list.List::Cons(field, rest) => {
+            unbox_slice(heap, unbox(heap, field));
+            return 1 + free_all(heap, unbox(heap, rest));
+        }
+    }
+}
+
+fn total_len[&l](fields: &l list.List[Box[Box[[byte]]]]) -> [] int {
+    match fields {
+        list.List::Empty => { return 0; }
+        list.List::Cons(field, rest) => {
+            return len(contents(contents(field))) + total_len(contents(rest));
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi); release(fs); release(args); release(io); release(net); release(clock); release(signals); release(exec);
+    var n = 0;
+    borrow mut heap as &!h in {
+        var fields: list.List[Box[Box[[byte]]]] = list.List::Empty;
+        fields = list.push(h, fields, box(h, copy_of(h, "bc")));
+        fields = list.push(h, fields, box(h, copy_of(h, "a")));
+        borrow fields as &r in {
+            n = total_len(r) + list.length(r);
+        }
+        free_all(h, fields);
+    }
+    release(heap);
+    return n - 5;
+}
+```
+
+**A list of strings is `List[Box[Box[[byte]]]]`, one `Box` more than it looks
+like it needs.** A plain `List[Box[[byte]]]` type-checks and then fails to
+compile once it is walked through a reference (the compiler cannot bind a
+payload wider than one leaf: alpibrusl/cancho#461), so each field is a `Box`
+holding the `Box` of bytes, as in the block above (`box(h, copy_of(h, ..))`
+to wrap, `contents(contents(field))` to read).
+
+The names a model brings from other languages are refused, each with the rule
+that tells it so:
+
+```cancho-refused
+//~ RULE not-a-function
+edition 7;
+import std.list;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi); release(fs); release(args); release(io); release(net); release(clock); release(signals); release(exec);
+    var n = 0;
+    borrow mut heap as &!h in {
+        var fields: list.List[Box[Box[[byte]]]] = list.nil();
+        n = list.length(fields);
+    }
+    release(heap);
+    return n;
+}
+```
+
+```cancho-refused
+//~ RULE unknown-name
+edition 7;
+import std.list;
+
+fn count[&l](fields: &l list.List[int]) -> [] int {
+    match fields {
+        list.List::Nil => { return 0; }
+        list.List::Cons(_, rest) => { return 1 + count(contents(rest)); }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi); release(fs); release(args); release(io); release(net); release(clock); release(signals); release(exec); release(heap);
+    return 0;
+}
+```
+
+---
+
 ## 8. What this language does not have
 
 Saying these plainly saves a cycle: no borrow checker (regions instead),
