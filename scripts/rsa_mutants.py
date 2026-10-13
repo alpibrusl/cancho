@@ -21,15 +21,21 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # (name, file, the text replaced, its replacement). Each `old` must occur exactly once in its file.
 MUTANTS = [
-    ("n' not negated", "bigmod", "return (1 << 30) - inv & mask();", "return inv;"),
+    ("n' not negated", "bigmod", "return wrapping_sub(0, inv);", "return inv;"),
     ("too few Newton steps for n'", "bigmod", "    while i < 5 {\n        inv =", "    while i < 3 {\n        inv ="),
-    # Re-anchored: #264 made the final subtraction `ct_reduce`'s masked one, and this mutant no longer applied.
-    ("the final subtraction only on a carry", "bigmod", "    let m = value_barrier(under - 1);", "    let m = value_barrier(0 - w[x + k]);"),
-    ("the accumulator's carry limb dropped", "bigmod", "w[t + k] = s >> 30;", "w[t + k] = 0;"),
-    # Offsets are p % 30 for p = 8j, always even: `off > 23` would be the same test, so the mutants drop offset 24.
-    ("a byte across two limbs loaded short", "bigmod", "if off > 22 && high != 0 {", "if off > 24 && high != 0 {"),
-    ("a byte across two limbs stored short", "bigmod", "if off > 22 && idx + 1 < k {", "if off > 24 && idx + 1 < k {"),
-    ("R^2 one doubling short", "bigmod", "var d = 30 * k + 1 - (bits - 1);", "var d = 30 * k - (bits - 1);"),
+    # Re-anchored: #264 made the final subtraction `ct_reduce`'s masked one, and this mutant no longer applied; #381's 64-bit limbs
+    # moved it again (the borrow out of the carry limb is `below`).
+    ("the final subtraction only on a carry", "bigmod", "    let m = value_barrier(below - 1);", "    let m = value_barrier(0 - xs[k]);"),
+    ("the accumulator's carry limb dropped", "bigmod", "ts[k] = ka + kb;", "ts[k] = 0;"),
+    # #381: 64-bit limbs hold eight whole bytes, so the two straddling-byte mutants of the 30-bit limbs have nothing to mutate.
+    ("a byte loaded into the wrong place of its limb", "bigmod", "w[at + idx] = w[at + idx] | v << p % 64;", "w[at + idx] = w[at + idx] | v << p % 32;"),
+    ("a byte stored from the wrong place of its limb", "bigmod", "v = w[at + idx] >> 8 * (j % 8);", "v = w[at + idx] >> 8 * (j % 4);"),
+    ("R^2 one doubling short", "bigmod", "var d = 64 * k + 1 - (bits - 1);", "var d = 64 * k - (bits - 1);"),
+    ("the multiplication's carry dropped", "bigmod", "ca = wrapping_add(wrapping_add(h, ka), kb);", "ca = wrapping_add(h, ka);"),
+    ("the reduction's carry dropped", "bigmod", "cm = wrapping_add(wrapping_add(g, kc), kd);", "cm = wrapping_add(g, kc);"),
+    ("limbs compared as signed", "bigmod", "let (d, under) = sub_borrow(a, b, 0);\n            return 1 - 2 * under;",
+     "if a < b {\n                return -1;\n            }\n            return 1;"),
+    ("a modulus with its top bit set measured short", "bigmod", "    if top < 0 {\n", "    if top < 0 && false {\n"),
     ("the exponent's second bit skipped", "bigmod", "var b = eb - 2;", "var b = eb - 3;"),
     ("a = n accepted", "bigmod", "compare_n(work, slot_base(), k) >= 0", "compare_n(work, slot_base(), k) > 0"),
     ("an even modulus accepted", "bigmod", "    if int_of(n[len(n) - 1]) & 1 == 0 {\n        return -1;", "    if int_of(n[len(n) - 1]) & 1 == 2 {\n        return -1;"),
