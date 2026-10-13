@@ -12,8 +12,10 @@ import selfhost.rules;
 import selfhost.pass1;
 import selfhost.types;
 import selfhost.emit;
+import selfhost.fold;
 import selfhost.floats;
 import selfhost.floatcode;
+import selfhost.threadcode;
 import selfhost.instances;
 import selfhost.scope;
 import selfhost.prims;
@@ -67,138 +69,6 @@ pub fn push_value[&s](st: &!s [int], a: Ex) -> [] int {
 pub fn skip[&s](st: &!s [int], from: int, to: int) -> [] Ex {
     ast.fail(st, rules.r_skip(), from, to);
     return nothing();
-}
-
-pub fn largest() -> [] int {
-    return 9223372036854775807;
-}
-
-pub fn smallest() -> [] int {
-    return 0 - 9223372036854775807 - 1;
-}
-
-// ------------------------------------------------------ integer folding ---
-//
-// A literal operation that can only trap is refused, and folds through nested literals; a
-// result that does not trap is itself a literal. Arithmetic here traps on overflow too, so each
-// case is decided before it is taken.
-
-pub fn add_fits(a: int, b: int) -> [] bool {
-    if b > 0 {
-        return a <= largest() - b;
-    }
-    return a >= smallest() - b;
-}
-
-pub fn sub_fits(a: int, b: int) -> [] bool {
-    if b < 0 {
-        return a <= largest() + b;
-    }
-    return a >= smallest() + b;
-}
-
-pub fn mul_fits(a: int, b: int) -> [] bool {
-    if a == 0 || b == 0 {
-        return true;
-    }
-    if a == 0 - 1 {
-        return b != smallest();
-    }
-    if b == 0 - 1 {
-        return a != smallest();
-    }
-    if a > 0 {
-        if b > 0 {
-            return a <= largest() / b;
-        }
-        return b >= smallest() / a;
-    }
-    if b > 0 {
-        return a >= smallest() / b;
-    }
-    return a >= largest() / b;
-}
-
-// 2 to the power `n`, as the 64 bits it is: `n == 63` is the sign bit.
-pub fn bit(n: int) -> [] int {
-    var v = 1;
-    var k = 0;
-    while k < n {
-        v = wrapping_mul(v, 2);
-        k = k + 1;
-    }
-    return v;
-}
-
-// An integer operation over two known integers: the result, or a refusal (`trapped` is the
-// answer's second half).
-pub struct Folded {
-    trapped: bool,
-    value: int,
-}
-
-pub fn folded(value: int) -> [] Folded {
-    return Folded { trapped: false, value: value };
-}
-
-pub fn trapped() -> [] Folded {
-    return Folded { trapped: true, value: 0 };
-}
-
-// `op` is an index of `ast.op_name`.
-pub fn fold_int(op: int, a: int, b: int) -> [] Folded {
-    if op == 13 {
-        if add_fits(a, b) {
-            return folded(a + b);
-        }
-        return trapped();
-    }
-    if op == 14 {
-        if sub_fits(a, b) {
-            return folded(a - b);
-        }
-        return trapped();
-    }
-    if op == 15 {
-        if mul_fits(a, b) {
-            return folded(a * b);
-        }
-        return trapped();
-    }
-    if op == 16 {
-        if b == 0 || a == smallest() && b == 0 - 1 {
-            return trapped();
-        }
-        return folded(a / b);
-    }
-    if op == 17 {
-        if b == 0 {
-            return trapped();
-        }
-        if b == 0 - 1 {
-            return folded(0);
-        }
-        return folded(a % b);
-    }
-    if op == 11 || op == 12 {
-        if b < 0 || b > 63 {
-            return trapped();
-        }
-        if op == 11 {
-            return folded(wrapping_mul(a, bit(b)));
-        }
-        return folded(a >> b);
-    }
-    if op == 10 {
-        return folded(a & b);
-    }
-    if op == 8 {
-        return folded(a | b);
-    }
-    if op == 9 {
-        return folded(a ^ b);
-    }
-    return folded(0);
 }
 
 // ---------------------------------------------------------- expressions ---
@@ -1199,6 +1069,19 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         return plain(ty);
     }
+    // A function of this module used as a value: its address, to be given to `spawn`.
+    if emit.on(st) {
+        var it = st[15];
+        while it >= 0 {
+            if ast.is_kind(st, it, kinds.NK::IFn) && ast.get(st, it, 13) == st[22] && ast.same(st, text, ast.get(st, it, 4), name) {
+                if pass1.count_params(st, ast.get(st, it, 6), false) > 0 || !plain_function(st, text, it) {
+                    return skip(st, from, to);
+                }
+                return in_reg(types.make_fnval(st, it), threadcode.function_pointer(st, it));
+            }
+            it = ast.next(st, it);
+        }
+    }
     // A name that is not a local may still be a function used as a value, or a builtin: those are
     // values of types this slice does not check.
     if names_something(st, text, name) {
@@ -1270,7 +1153,7 @@ pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             return nothing();
         }
         if operand.known && operand.ty == 1 {
-            if operand.value == smallest() {
+            if operand.value == fold.smallest() {
                 ast.fail(st, rules.r_constant_traps(), from, to);
                 return nothing();
             }
@@ -1369,7 +1252,7 @@ pub fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         result = 5;
     }
     if l.known && r.known && operand == 1 {
-        let f = fold_int(op, l.value, r.value);
+        let f = fold.fold_int(op, l.value, r.value);
         if f.trapped {
             ast.fail(st, rules.r_constant_traps(), from, to);
             return nothing();
@@ -1698,6 +1581,51 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     return plain(result);
 }
 
+// `spawn(payload, f)` and `join(t)`. The payload and what `f` returns are one value each of no more than one
+// pointer's worth: a whole number, a byte, a boolean, a reference, or a capability (nothing in the code).
+pub fn thread_call[&s, &x](st: &!s [int], text: &x [byte], id: int, spawning: bool) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    var arg = ast.get(st, id, 6);
+    if !spawning {
+        if ast.get(st, id, 7) != 1 {
+            return skip(st, from, to);
+        }
+        let t = expr(st, text, arg);
+        if !ast.ok(st) {
+            return nothing();
+        }
+        if !types.is_thread(st, t.ty) {
+            return skip(st, from, to);
+        }
+        let result = types.thread_result(st, t.ty);
+        return in_reg(result, threadcode.join_thread(st, result, t.reg));
+    }
+    if ast.get(st, id, 7) != 2 {
+        return skip(st, from, to);
+    }
+    let payload = expr(st, text, arg);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    arg = ast.next(st, arg);
+    let f = expr(st, text, arg);
+    if !ast.ok(st) {
+        return nothing();
+    }
+    if !types.is_fnval(st, f.ty) {
+        return skip(st, from, to);
+    }
+    let item = types.fnval_item(st, f.ty);
+    let result = scope.lower_type(st, text, ast.get(st, item, 10), ast.get(st, item, 6), 0 - 1);
+    let carried = types.is_erased(st, payload.ty) || types.is_ref(st, payload.ty) && !types.is_slice_ref(st, payload.ty) || payload.ty == 1 || payload.ty == 2 || payload.ty == 5 || types.is_handle(st, payload.ty);
+    let returned = types.is_erased(st, result) || types.is_ref(st, result) && !types.is_slice_ref(st, result) || result == 1 || result == 2 || result == 5;
+    if !carried || !returned {
+        return skip(st, from, to);
+    }
+    return in_reg(types.make_thread(st, result), threadcode.spawn_thread(st, payload.ty, payload.known, payload.value, payload.reg, f.reg));
+}
+
 pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
@@ -1708,6 +1636,11 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if qualifier < 0 {
         let local = scope.find(st, text, callee);
         if local >= 0 {
+            if emit.on(st) && types.is_fnval(st, scope.binding_type(st, local)) {
+                // A function held in a name: the call is to the function it holds.
+                scope.use_slot(st, local, from, to);
+                return call_item(st, text, id, types.fnval_item(st, scope.binding_type(st, local)));
+            }
             ast.fail(st, rules.r_not_a_function(), from, to);
             return nothing();
         }
@@ -1780,6 +1713,15 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             return capability_call(st, text, id, 9);
         }
     }
+    // Threads: only the code is written for them, in compile mode.
+    if emit.on(st) && qualifier < 0 {
+        if pass1.is_word(st, text, callee, "spawn") {
+            return thread_call(st, text, id, true);
+        }
+        if pass1.is_word(st, text, callee, "join") {
+            return thread_call(st, text, id, false);
+        }
+    }
     // The heap: only the code is written for it, in compile mode.
     if emit.on(st) && qualifier < 0 {
         if pass1.is_word(st, text, callee, "box_slice") {
@@ -1826,6 +1768,14 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         ast.fail(st, rules.r_not_public(), from, to);
         return nothing();
     }
+    return call_item(st, text, id, found);
+}
+
+// The call `id` to the function `found`: its arguments against the signature, then the code.
+pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) -> [] Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let nargs = ast.get(st, id, 7);
     // A callee that is generic, declares effects, or has a type this slice does not handle.
     if !plain_function(st, text, found) {
         return skip(st, from, to);

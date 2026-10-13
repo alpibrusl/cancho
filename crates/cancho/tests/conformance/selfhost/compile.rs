@@ -264,6 +264,19 @@ fn run() -> [] int { let x = big() * 10.0; if x > big() { return 7; } return 3; 
 fn run() -> [] int { return truncate(pick(true, 3.5, 1.0) + pick(false, 3.5, 1.0)); }",
 ];
 
+/// Threads: `spawn` and `join`, a function held in a name, payloads and results of each kind that fits a pointer.
+const THREADS: &[&str] = &[
+    "edition 5;\nfn worker(x: int) -> [] int { return x * 2; }\nfn main(world: World) -> [conc] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    release(net);\n    release(clock);\n    release(io);\n    let w = worker;\n    let h = spawn(21, w);\n    return join(h);\n}",
+    "edition 5;\nfn one(x: int) -> [] int { return x; }\nfn two(x: int) -> [] int { return x + 1; }\nfn main(world: World) -> [conc] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    release(net);\n    release(clock);\n    release(io);\n    let f = one;\n    let g = two;\n    let a = spawn(1, f);\n    let b = spawn(5, g);\n    return join(a) * 10 + join(b);\n}",
+    "edition 5;\nfn flip(b: bool) -> [] bool { return !b; }\nfn main(world: World) -> [conc] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    release(net);\n    release(clock);\n    release(io);\n    let f = flip;\n    let t = spawn(false, f);\n    if join(t) { return 7; }\n    return 1;\n}",
+    "edition 5;\nfn up(b: byte) -> [] byte { return byte_of(int_of(b) + 1); }\nfn main(world: World) -> [conc] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    release(net);\n    release(clock);\n    release(io);\n    let f = up;\n    let t = spawn(byte_of(65), f);\n    return int_of(join(t));\n}",
+    "edition 5;\nstruct Counter { n: int }\nfn work[&r](c: &!r Counter) -> [] int { c.n = c.n + 5; return 0; }\nfn main(world: World) -> [conc] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    release(net);\n    release(clock);\n    release(io);\n    var c = Counter { n: 1 };\n    borrow mut c as &!r in {\n        let f = work;\n        let a = spawn(r, f);\n        let x = join(a);\n        let b = spawn(r, f);\n        let y = join(b);\n    }\n    return c.n;\n}",
+    "edition 5;\nfn worker(io: Io) -> [] int {\n    borrow mut io as &!i in { putchar(i, 72); putchar(i, 10); }\n    release(io);\n    return 7;\n}\nfn main(world: World) -> [conc] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    release(net);\n    release(clock);\n    let w = worker;\n    let h = spawn(io, w);\n    return join(h) - 7;\n}",
+    "edition 5;\nfn worker(x: int) -> [] int { return x - 1; }\nfn main(world: World) -> [conc] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    release(net);\n    release(clock);\n    release(io);\n    var i = 0;\n    var total = 0;\n    while i < 4 {\n        let w = worker;\n        total = total + join(spawn(i, w));\n        i = i + 1;\n    }\n    return total + 10;\n}",
+    "edition 5;\nfn double(x: int) -> [] int { return x + x; }\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    release(net);\n    release(clock);\n    release(io);\n    let f = double;\n    return f(20) + f(1);\n}",
+    "edition 5;\nfn boom(x: int) -> [] int { return x + 9223372036854775807; }\nfn main(world: World) -> [conc] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    release(net);\n    release(clock);\n    release(io);\n    let f = boom;\n    return join(spawn(2, f));\n}",
+];
+
 /// Programs with a `main` of their own, which the cancho compiler calls as the C `main` does.
 const WITH_MAIN: &[&str] = &[
     "fn finish(w: World) -> [] int { release(w); return 3; }\nfn main(world: World) -> [] int { return finish(world); }",
@@ -589,7 +602,7 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
         jobs.push((with_main(program), with_main(program)));
     }
-    for program in WITH_MAIN.iter().chain(OUTPUT).chain(STRINGS).chain(OWN_MAIN) {
+    for program in WITH_MAIN.iter().chain(OUTPUT).chain(STRINGS).chain(OWN_MAIN).chain(THREADS) {
         jobs.push(((*program).to_owned(), (*program).to_owned()));
     }
     for program in STRUCTS.iter().chain(ENUMS).chain(GENERICS).chain(FLOATS).chain(ARENAS) {

@@ -1,0 +1,135 @@
+module selfhost.fold;
+
+// fold.cho -- whole-number operations over known values: the answer, or the trap the Rust compiler would refuse.
+
+pub fn largest() -> [] int {
+    return 9223372036854775807;
+}
+
+pub fn smallest() -> [] int {
+    return 0 - 9223372036854775807 - 1;
+}
+
+// ------------------------------------------------------ integer folding ---
+//
+// A literal operation that can only trap is refused, and folds through nested literals; a
+// result that does not trap is itself a literal. Arithmetic here traps on overflow too, so each
+// case is decided before it is taken.
+
+pub fn add_fits(a: int, b: int) -> [] bool {
+    if b > 0 {
+        return a <= largest() - b;
+    }
+    return a >= smallest() - b;
+}
+
+pub fn sub_fits(a: int, b: int) -> [] bool {
+    if b < 0 {
+        return a <= largest() + b;
+    }
+    return a >= smallest() + b;
+}
+
+pub fn mul_fits(a: int, b: int) -> [] bool {
+    if a == 0 || b == 0 {
+        return true;
+    }
+    if a == 0 - 1 {
+        return b != smallest();
+    }
+    if b == 0 - 1 {
+        return a != smallest();
+    }
+    if a > 0 {
+        if b > 0 {
+            return a <= largest() / b;
+        }
+        return b >= smallest() / a;
+    }
+    if b > 0 {
+        return a >= smallest() / b;
+    }
+    return a >= largest() / b;
+}
+
+// 2 to the power `n`, as the 64 bits it is: `n == 63` is the sign bit.
+pub fn bit(n: int) -> [] int {
+    var v = 1;
+    var k = 0;
+    while k < n {
+        v = wrapping_mul(v, 2);
+        k = k + 1;
+    }
+    return v;
+}
+
+// An integer operation over two known integers: the result, or a refusal (`trapped` is the
+// answer's second half).
+pub struct Folded {
+    trapped: bool,
+    value: int,
+}
+
+pub fn folded(value: int) -> [] Folded {
+    return Folded { trapped: false, value: value };
+}
+
+pub fn trapped() -> [] Folded {
+    return Folded { trapped: true, value: 0 };
+}
+
+// `op` is an index of `ast.op_name`.
+pub fn fold_int(op: int, a: int, b: int) -> [] Folded {
+    if op == 13 {
+        if add_fits(a, b) {
+            return folded(a + b);
+        }
+        return trapped();
+    }
+    if op == 14 {
+        if sub_fits(a, b) {
+            return folded(a - b);
+        }
+        return trapped();
+    }
+    if op == 15 {
+        if mul_fits(a, b) {
+            return folded(a * b);
+        }
+        return trapped();
+    }
+    if op == 16 {
+        if b == 0 || a == smallest() && b == 0 - 1 {
+            return trapped();
+        }
+        return folded(a / b);
+    }
+    if op == 17 {
+        if b == 0 {
+            return trapped();
+        }
+        if b == 0 - 1 {
+            return folded(0);
+        }
+        return folded(a % b);
+    }
+    if op == 11 || op == 12 {
+        if b < 0 || b > 63 {
+            return trapped();
+        }
+        if op == 11 {
+            return folded(wrapping_mul(a, bit(b)));
+        }
+        return folded(a >> b);
+    }
+    if op == 10 {
+        return folded(a & b);
+    }
+    if op == 8 {
+        return folded(a | b);
+    }
+    if op == 9 {
+        return folded(a ^ b);
+    }
+    return folded(0);
+}

@@ -70,6 +70,14 @@ fn triple_kind() -> [] int {
     return 16;
 }
 
+fn fnval_kind() -> [] int {
+    return 17;
+}
+
+fn thread_kind() -> [] int {
+    return 18;
+}
+
 fn unbound() -> [] int {
     return 0 - 100;
 }
@@ -419,6 +427,33 @@ pub fn set_hint[&s](st: &!s [int], ty: int) -> [] int {
 // Argument `k` of the instance of a generic function being compiled (`instances.cho` keeps them).
 pub fn env_arg[&s](st: &!s [int], k: int) -> [] int {
     return st[st[62] + ast.const_region() + 3 + k];
+}
+
+// A function used as a value (`let w = worker;`), in the code only: the function's item. A pointer.
+pub fn make_fnval[&s](st: &!s [int], item: int) -> [] int {
+    return make(st, fnval_kind(), item, 0, 0);
+}
+
+pub fn is_fnval[&s](st: &!s [int], ty: int) -> [] bool {
+    return ty >= first_table() && slot(st, ty, 0) == fnval_kind();
+}
+
+pub fn fnval_item[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 1);
+}
+
+// `Thread[T, R]` as `spawn` answers it: what the thread returns is all `join` needs. A pointer (the
+// `pthread_t`), a value that must be joined.
+pub fn make_thread[&s](st: &!s [int], result: int) -> [] int {
+    return make(st, thread_kind(), result, 0, 0);
+}
+
+pub fn is_thread[&s](st: &!s [int], ty: int) -> [] bool {
+    return ty >= first_table() && slot(st, ty, 0) == thread_kind();
+}
+
+pub fn thread_result[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 1);
 }
 
 // `Box[T]`, one value of any type on the heap: a pointer in the code.

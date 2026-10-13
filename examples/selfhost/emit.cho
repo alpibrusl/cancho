@@ -155,7 +155,7 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
     if types.is_boxslice(st, ty) {
         return str(st, "{ ptr, i64 }");
     }
-    if types.is_box(st, ty) {
+    if types.is_box(st, ty) || types.is_thread(st, ty) || types.is_fnval(st, ty) {
         return str(st, "ptr");
     }
     if types.is_tuple(st, ty) {

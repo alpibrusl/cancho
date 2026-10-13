@@ -1,0 +1,123 @@
+module selfhost.threadcode;
+
+// threadcode.cho -- the code for `spawn` and `join`, and for a function used as a value.
+//
+// A thread runs the function it is given as `pthread_create`'s start routine directly, with the payload as the
+// one pointer it receives: a whole number or a byte or a boolean is widened and made a pointer, a reference is
+// one already, and a value of no code (a capability) is `null`. What it returns comes back through the cell
+// `pthread_join` writes into. The function is a pointer to `@lexs_<item>`.
+
+import selfhost.emit;
+import selfhost.types;
+
+// A stack slot of a pointer's size, in the entry block; its temporary.
+fn slot[&s](st: &!s [int]) -> [] int {
+    let keep = st[49];
+    st[49] = 2;
+    let n = emit.fresh(st);
+    emit.str(st, "  ");
+    emit.temp(st, n);
+    emit.str(st, " = alloca ptr\n");
+    st[49] = keep;
+    return n;
+}
+
+// The address of the function `item`, as a value.
+pub fn function_pointer[&s](st: &!s [int], item: int) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "getelementptr i8, ptr @lexs_");
+    emit.nat(st, item);
+    emit.str(st, ", i64 0\n");
+    return n;
+}
+
+// `spawn(payload, f)`: a thread running `f` on the payload, of type `ty`; the thread (a `pthread_t`).
+pub fn spawn_thread[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int, routine: int) -> [] int {
+    var pointer = 0 - 1;
+    if !types.is_erased(st, ty) && !types.is_ref(st, ty) {
+        // A whole number, a byte or a boolean, widened to 64 bits.
+        var wide = reg;
+        if ty == 2 || ty == 5 {
+            wide = emit.start(st);
+            emit.str(st, "zext ");
+            emit.llvm_type(st, ty);
+            emit.str(st, " ");
+            emit.operand(st, ty, known, value, reg);
+            emit.str(st, " to i64\n");
+        }
+        pointer = emit.start(st);
+        emit.str(st, "inttoptr i64 ");
+        if ty != 2 && ty != 5 {
+            emit.operand(st, ty, known, value, reg);
+        } else {
+            emit.temp(st, wide);
+        }
+        emit.str(st, " to ptr\n");
+    }
+    let cell = slot(st);
+    let status = emit.start(st);
+    emit.str(st, "call i32 @pthread_create(ptr ");
+    emit.temp(st, cell);
+    emit.str(st, ", ptr null, ptr ");
+    emit.temp(st, routine);
+    emit.str(st, ", ptr ");
+    if types.is_erased(st, ty) {
+        emit.str(st, "null");
+    } else if types.is_ref(st, ty) {
+        emit.operand(st, ty, known, value, reg);
+    } else {
+        emit.temp(st, pointer);
+    }
+    emit.str(st, ")\n");
+    let failed = emit.start(st);
+    emit.str(st, "icmp ne i32 ");
+    emit.temp(st, status);
+    emit.str(st, ", 0\n");
+    emit.trap_if(st, failed);
+    let thread = emit.start(st);
+    emit.str(st, "load ptr, ptr ");
+    emit.temp(st, cell);
+    emit.str(st, "\n");
+    return thread;
+}
+
+// `join(t)`: wait for the thread, and read what it returned (of type `ty`) out of the cell; the temporary of
+// the value, or -1 when it has none.
+pub fn join_thread[&s](st: &!s [int], ty: int, thread: int) -> [] int {
+    let cell = slot(st);
+    let status = emit.start(st);
+    emit.str(st, "call i32 @pthread_join(ptr ");
+    emit.temp(st, thread);
+    emit.str(st, ", ptr ");
+    emit.temp(st, cell);
+    emit.str(st, ")\n");
+    let failed = emit.start(st);
+    emit.str(st, "icmp ne i32 ");
+    emit.temp(st, status);
+    emit.str(st, ", 0\n");
+    emit.trap_if(st, failed);
+    if types.is_erased(st, ty) {
+        return 0 - 1;
+    }
+    if types.is_ref(st, ty) {
+        let p = emit.start(st);
+        emit.str(st, "load ptr, ptr ");
+        emit.temp(st, cell);
+        emit.str(st, "\n");
+        return p;
+    }
+    let wide = emit.start(st);
+    emit.str(st, "load i64, ptr ");
+    emit.temp(st, cell);
+    emit.str(st, "\n");
+    if ty == 1 {
+        return wide;
+    }
+    let narrow = emit.start(st);
+    emit.str(st, "trunc i64 ");
+    emit.temp(st, wide);
+    emit.str(st, " to ");
+    emit.llvm_type(st, ty);
+    emit.str(st, "\n");
+    return narrow;
+}

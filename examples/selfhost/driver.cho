@@ -127,6 +127,7 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "declare i32 @putchar(i32)\n");
     emit.str(st, "declare ptr @malloc(i64)\ndeclare void @free(ptr)\n");
     emit.str(st, "declare ptr @memmove(ptr, ptr, i64)\ndeclare ptr @memchr(ptr, i32, i64)\n");
+    emit.str(st, "declare i32 @pthread_create(ptr, ptr, ptr, ptr)\ndeclare i32 @pthread_join(ptr, ptr)\n");
     emit.str(st, "declare double @llvm.sqrt.f64(double)\ndeclare float @llvm.sqrt.f32(float)\n");
     emit.str(st, "declare i32 @getchar()\ndeclare i64 @write(i32, ptr, i64)\n\n");
     emit.str(st, runtime.errno_location(st[61] != 0));
