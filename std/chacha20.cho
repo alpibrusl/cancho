@@ -1,4 +1,4 @@
-edition 6;
+edition 7;
 module std.chacha20;
 import std.bytes;
 
@@ -205,84 +205,135 @@ pub fn xor[&k, &n, &i, &o](key: &k [byte], counter: int, nonce: &n [byte], input
     return ok();
 }
 
-// Poly1305 (RFC 8439 §2.5) in five 26-bit limbs, the layout of
-// poly1305-donna's 32-bit code. `st` is ten words: `r0..r4`, then the
-// accumulator `h0..h4`. With a message limb added every limb of `h` is
-// under 2^28 and `5 * r` is under 2^29, so a product is under 2^57 and
-// a sum of five under 2^60: nothing overflows, and the arithmetic is
-// `wrapping_*` only so that no overflow check is emitted
-// (`docs/chacha20.md` §2).
+// Poly1305 (RFC 8439 §2.5) in three limbs of 44, 44 and 42 bits, the
+// layout of poly1305-donna's 64-bit code (`docs/wide-multiply.md` §11).
+// `st` is eight words: `r0..r2`, then `s1 = 20 r1` and `s2 = 20 r2` (the
+// reduction's `2^130 = 5` folded into the shift of a limb above the top),
+// then the accumulator `h0..h2`. A product of two limbs is taken whole
+// with `mul_wide` and summed into a two-word accumulator with `add_carry`.
+// Bounds: `r` is clamped below 2^44, 2^44 and 2^40, so `s1` is under
+// 2^48.4 and `s2` under 2^44.4; with a message block added every limb of
+// `h` is under 2^45 (the top one under 2^43), a product under 2^93.4, a
+// column of three under 2^95, and its carry out under 2^51. Nothing can
+// wrap, and the arithmetic is `wrapping_*` and the wide builtins only so
+// that no overflow check, a branch on secret data, is emitted
+// (`docs/chacha20.md` §2, §3).
+fn m44() -> [] int {
+    return 0xfffffffffff;
+}
+
+// Eight bytes from `at`, little-endian, as a word.
+fn le64[&s](s: &s [byte], at: int) -> [] int {
+    return le32(s, at) | le32(s, at + 4) << 32;
+}
+
+// Bits 44.. (or 42..) of the accumulator `hi * 2^64 + lo`, as a word.
+// `lo >> 44` is arithmetic, so its twenty meaningful bits are masked.
+fn shr44(hi: int, lo: int) -> [] int {
+    return lo >> 44 & 0xfffff | hi << 20;
+}
+
+fn shr42(hi: int, lo: int) -> [] int {
+    return lo >> 42 & 0x3fffff | hi << 22;
+}
+
+// `(hi, lo) + w` for a word `w`.
+fn addw(hi: int, lo: int, w: int) -> [] (int, int) {
+    let (s, c) = add_carry(lo, w, 0);
+    return (wrapping_add(hi, c), s);
+}
+
+// `(hi, lo) + a * b`, a two-word accumulator plus the whole product.
+fn mac(hi: int, lo: int, a: int, b: int) -> [] (int, int) {
+    let (h, l) = mul_wide(a, b);
+    let (s, c) = add_carry(lo, l, 0);
+    return (wrapping_add(wrapping_add(hi, h), c), s);
+}
+
 fn poly_init[&s, &k](st: &!s [int], key: &k [byte]) -> [] int {
-    st[0] = le32(key, 0) & 0x3ffffff;
-    st[1] = le32(key, 3) >> 2 & 0x3ffff03;
-    st[2] = le32(key, 6) >> 4 & 0x3ffc0ff;
-    st[3] = le32(key, 9) >> 6 & 0x3f03fff;
-    st[4] = le32(key, 12) >> 8 & 0x00fffff;
-    var i = 5;
-    while i < 10 {
-        st[i] = 0;
-        i = i + 1;
-    }
+    let t0 = le64(key, 0);
+    let t1 = le64(key, 8);
+    let r1 = (t0 >> 44 & 0xfffff | t1 << 20) & 0xfffffc0ffff;
+    let r2 = t1 >> 24 & 0x00ffffffc0f;
+    st[0] = t0 & 0xffc0fffffff;
+    st[1] = r1;
+    st[2] = r2;
+    st[3] = wrapping_mul(r1, 20);
+    st[4] = wrapping_mul(r2, 20);
+    st[5] = 0;
+    st[6] = 0;
+    st[7] = 0;
     return 0;
 }
 
-// `a*b + c*d + e*f + g*h + i*j`, none of which can overflow (the bound
-// above); wrapping so that no overflow check, which would be a branch on
-// secret data, is emitted (`docs/chacha20.md` §3).
-fn dot5(a: int, b: int, c: int, d: int, e: int, f: int, g: int, h: int, i: int, j: int) -> [] int {
-    let ab = wrapping_mul(a, b);
-    let cd = wrapping_mul(c, d);
-    let ef = wrapping_mul(e, f);
-    let gh = wrapping_mul(g, h);
-    let ij = wrapping_mul(i, j);
-    return wrapping_add(wrapping_add(wrapping_add(ab, cd), wrapping_add(ef, gh)), ij);
-}
-
-// One 16-byte block. `hibit` is `1 << 24` for a full block (the 2^128
-// bit) and 0 for the final partial one, which the caller has already
-// padded with its `0x01` byte.
-fn poly_block[&s, &m](st: &!s [int], m: &m [byte], hibit: int) -> [] int {
+// Every whole 16-byte block of `m`, in order, the accumulator kept in
+// registers from one block to the next. `hibit` is `1 << 24` for full
+// blocks and 0 for the final partial one, which the caller has already
+// padded with its `0x01` byte: the 2^128 bit as it falls in the fifth limb
+// of 26 bits, which the callers were written for, moved here to bit 40 of
+// the top limb (bits 88 to 129).
+fn poly_blocks[&s, &m](st: &!s [int], m: &m [byte], hibit: int) -> [] int {
+    // Never true (the state is eight words or more): it lets LLVM drop
+    // the bounds checks of the constant indices (`docs/wide-multiply.md` §11).
+    if len(st) < 8 {
+        return -1;
+    }
     let r0 = st[0];
     let r1 = st[1];
     let r2 = st[2];
-    let r3 = st[3];
-    let r4 = st[4];
-    let s1 = wrapping_mul(r1, 5);
-    let s2 = wrapping_mul(r2, 5);
-    let s3 = wrapping_mul(r3, 5);
-    let s4 = wrapping_mul(r4, 5);
+    let s1 = st[3];
+    let s2 = st[4];
+    let top = hibit << 16;
+    var h0 = st[5];
+    var h1 = st[6];
+    var h2 = st[7];
+    var at = 0;
+    while at + 16 <= len(m) {
+        let blk = m[at..at + 16];
+        // Never true, as above: each of the sixteen reads is then unchecked.
+        if len(blk) < 16 {
+            return -1;
+        }
+        let t0 = le64(blk, 0);
+        let t1 = le64(blk, 8);
+        h0 = wrapping_add(h0, t0 & m44());
+        h1 = wrapping_add(h1, (t0 >> 44 & 0xfffff | t1 << 20) & m44());
+        h2 = wrapping_add(h2, t1 >> 24 & 0xffffffffff | top);
 
-    let h0 = wrapping_add(st[5], le32(m, 0) & 0x3ffffff);
-    let h1 = wrapping_add(st[6], le32(m, 3) >> 2 & 0x3ffffff);
-    let h2 = wrapping_add(st[7], le32(m, 6) >> 4 & 0x3ffffff);
-    let h3 = wrapping_add(st[8], le32(m, 9) >> 6 & 0x3ffffff);
-    let h4 = wrapping_add(st[9], le32(m, 12) >> 8 | hibit);
+        let (a0, b0) = mac(0, 0, h0, r0);
+        let (a0, b0) = mac(a0, b0, h1, s2);
+        let (a0, b0) = mac(a0, b0, h2, s1);
+        let (a1, b1) = mac(0, 0, h0, r1);
+        let (a1, b1) = mac(a1, b1, h1, r0);
+        let (a1, b1) = mac(a1, b1, h2, s2);
+        let (a2, b2) = mac(0, 0, h0, r2);
+        let (a2, b2) = mac(a2, b2, h1, r1);
+        let (a2, b2) = mac(a2, b2, h2, r0);
 
-    let d0 = dot5(h0, r0, h1, s4, h2, s3, h3, s2, h4, s1);
-    var d1 = dot5(h0, r1, h1, r0, h2, s4, h3, s3, h4, s2);
-    var d2 = dot5(h0, r2, h1, r1, h2, r0, h3, s4, h4, s3);
-    var d3 = dot5(h0, r3, h1, r2, h2, r1, h3, r0, h4, s4);
-    var d4 = dot5(h0, r4, h1, r3, h2, r2, h3, r1, h4, r0);
-
-    var c = d0 >> 26;
-    var n0 = d0 & 0x3ffffff;
-    d1 = wrapping_add(d1, c);
-    c = d1 >> 26;
-    let n1 = d1 & 0x3ffffff;
-    d2 = wrapping_add(d2, c);
-    c = d2 >> 26;
-    st[7] = d2 & 0x3ffffff;
-    d3 = wrapping_add(d3, c);
-    c = d3 >> 26;
-    st[8] = d3 & 0x3ffffff;
-    d4 = wrapping_add(d4, c);
-    c = d4 >> 26;
-    st[9] = d4 & 0x3ffffff;
-    n0 = wrapping_add(n0, wrapping_mul(c, 5));
-    c = n0 >> 26;
-    st[5] = n0 & 0x3ffffff;
-    st[6] = wrapping_add(n1, c);
+        var c = shr44(a0, b0);
+        h0 = b0 & m44();
+        let (a1, b1) = addw(a1, b1, c);
+        c = shr44(a1, b1);
+        h1 = b1 & m44();
+        let (a2, b2) = addw(a2, b2, c);
+        c = shr42(a2, b2);
+        h2 = b2 & 0x3ffffffffff;
+        // 2^130 = 5 modulo p.
+        h0 = wrapping_add(h0, wrapping_mul(c, 5));
+        c = h0 >> 44;
+        h0 = h0 & m44();
+        h1 = wrapping_add(h1, c);
+        at = at + 16;
+    }
+    st[5] = h0;
+    st[6] = h1;
+    st[7] = h2;
     return 0;
+}
+
+// One 16-byte block (`hibit` as `poly_blocks`).
+fn poly_block[&s, &m](st: &!s [int], m: &m [byte], hibit: int) -> [] int {
+    return poly_blocks(st, m[0..16], hibit);
 }
 
 // Feeds `data` as full 16-byte blocks, the last one zero-padded: the
@@ -290,11 +341,8 @@ fn poly_block[&s, &m](st: &!s [int], m: &m [byte], hibit: int) -> [] int {
 // Poly1305's own `0x01` padding.
 fn poly_padded[&s, &d, &b](st: &!s [int], data: &d [byte], scratch: &!b [byte]) -> [] int {
     let n = len(data);
-    var at = 0;
-    while at + 16 <= n {
-        poly_block(st, data[at..at + 16], 0x1000000);
-        at = at + 16;
-    }
+    let at = n - n % 16;
+    poly_blocks(st, data[0..at], 0x1000000);
     if at < n {
         var j = 0;
         while j < 16 {
@@ -317,65 +365,55 @@ fn poly_finish[&s, &k, &o](st: &!s [int], key: &k [byte], tag: &!o [byte]) -> []
     var h0 = st[5];
     var h1 = st[6];
     var h2 = st[7];
-    var h3 = st[8];
-    var h4 = st[9];
 
-    var c = h1 >> 26;
-    h1 = h1 & 0x3ffffff;
+    // Two passes: after the first `h1` may hold one bit above 44.
+    var c = h1 >> 44;
+    h1 = h1 & m44();
     h2 = wrapping_add(h2, c);
-    c = h2 >> 26;
-    h2 = h2 & 0x3ffffff;
-    h3 = wrapping_add(h3, c);
-    c = h3 >> 26;
-    h3 = h3 & 0x3ffffff;
-    h4 = wrapping_add(h4, c);
-    c = h4 >> 26;
-    h4 = h4 & 0x3ffffff;
+    c = h2 >> 42;
+    h2 = h2 & 0x3ffffffffff;
     h0 = wrapping_add(h0, wrapping_mul(c, 5));
-    c = h0 >> 26;
-    h0 = h0 & 0x3ffffff;
+    c = h0 >> 44;
+    h0 = h0 & m44();
+    h1 = wrapping_add(h1, c);
+    c = h1 >> 44;
+    h1 = h1 & m44();
+    h2 = wrapping_add(h2, c);
+    c = h2 >> 42;
+    h2 = h2 & 0x3ffffffffff;
+    h0 = wrapping_add(h0, wrapping_mul(c, 5));
+    c = h0 >> 44;
+    h0 = h0 & m44();
     h1 = wrapping_add(h1, c);
 
     // `g = h + 5 - 2^130`: negative exactly when `h < p`.
     var g0 = wrapping_add(h0, 5);
-    c = g0 >> 26;
-    g0 = g0 & 0x3ffffff;
+    c = g0 >> 44;
+    g0 = g0 & m44();
     var g1 = wrapping_add(h1, c);
-    c = g1 >> 26;
-    g1 = g1 & 0x3ffffff;
-    var g2 = wrapping_add(h2, c);
-    c = g2 >> 26;
-    g2 = g2 & 0x3ffffff;
-    var g3 = wrapping_add(h3, c);
-    c = g3 >> 26;
-    g3 = g3 & 0x3ffffff;
-    let g4 = wrapping_sub(wrapping_add(h4, c), 0x4000000);
+    c = g1 >> 44;
+    g1 = g1 & m44();
+    let g2 = wrapping_sub(wrapping_add(h2, c), 0x40000000000);
 
-    // All ones when `g4 < 0` (keep `h`), zero otherwise (take `g`). The
+    // All ones when `g2 < 0` (keep `h`), zero otherwise (take `g`). The
     // mask is secret, so it passes through `value_barrier` where it is
     // made (`docs/value-barrier.md` §4; review finding B-1, #209): LLVM
     // can prove `x >> 63` is 0 or -1 and turn the select into a branch.
-    let keep = value_barrier(g4 >> 63);
+    let keep = value_barrier(g2 >> 63);
     let take = ~keep;
     h0 = h0 & keep | g0 & take;
     h1 = h1 & keep | g1 & take;
     h2 = h2 & keep | g2 & take;
-    h3 = h3 & keep | g3 & take;
-    h4 = h4 & keep | g4 & take;
 
-    let w0 = m32(h0 | h1 << 26);
-    let w1 = m32(h1 >> 6 | h2 << 20);
-    let w2 = m32(h2 >> 12 | h3 << 14);
-    let w3 = m32(h3 >> 18 | h4 << 8);
-
-    var f = wrapping_add(w0, le32(key, 16));
-    bytes.store_le32(tag, 0, m32(f));
-    f = wrapping_add(wrapping_add(w1, le32(key, 20)), f >> 32);
-    bytes.store_le32(tag, 4, m32(f));
-    f = wrapping_add(wrapping_add(w2, le32(key, 24)), f >> 32);
-    bytes.store_le32(tag, 8, m32(f));
-    f = wrapping_add(wrapping_add(w3, le32(key, 28)), f >> 32);
-    bytes.store_le32(tag, 12, m32(f));
+    // h mod 2^128, as two words, plus `s`.
+    let w0 = h0 | h1 << 44;
+    let w1 = h1 >> 20 & 0xffffff | h2 << 24;
+    let (f0, k) = add_carry(w0, le64(key, 16), 0);
+    let f1 = wrapping_add(wrapping_add(w1, le64(key, 24)), k);
+    bytes.store_le32(tag, 0, m32(f0));
+    bytes.store_le32(tag, 4, f0 >> 32 & 0xffffffff);
+    bytes.store_le32(tag, 8, m32(f1));
+    bytes.store_le32(tag, 12, f1 >> 32 & 0xffffffff);
     return 0;
 }
 
@@ -394,11 +432,8 @@ pub fn poly1305[&k, &m, &o](key: &k [byte], msg: &m [byte], tag: &!o [byte]) -> 
         let st = alloc_slice[r](10, 0);
         poly_init(st, key);
         let n = len(msg);
-        var at = 0;
-        while at + 16 <= n {
-            poly_block(st, msg[at..at + 16], 0x1000000);
-            at = at + 16;
-        }
+        let at = n - n % 16;
+        poly_blocks(st, msg[0..at], 0x1000000);
         if at < n {
             let last = alloc_slice[r](16, byte_of(0));
             var j = 0;
