@@ -1,0 +1,207 @@
+module selfhost.externcode;
+
+// externcode.cho -- the code for a call of a foreign function.
+//
+// What crosses to C is what the Rust backend sends: a `c_ptr` as a pointer, an `int` as 64 bits, a `byte` or a
+// `bool` as 8, a `float` as a double, a borrowed `[byte]` as its pointer and then its length; a borrowed
+// capability is nothing. A result is a pointer (`c_ptr`), 64 bits (`int`), 32 bits made 64 by sign (`c_int`) or
+// a byte made a boolean. The call spells its own function type, so a program's `extern fn write` or `memchr`
+// does not have to agree with the declaration the runtime keeps of the same C function.
+
+import selfhost.lexcore as lc;
+import selfhost.ast;
+import selfhost.kinds;
+import selfhost.pass1;
+import selfhost.emit;
+
+fn is_name[&s, &x](st: &!s [int], text: &x [byte], ty: int, spelled: &static [byte]) -> [] bool {
+    return ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 4) < 0 && ast.get(st, ty, 7) == 0 && pass1.is_word(st, text, ast.get(st, ty, 5), spelled);
+}
+
+// How a parameter of this type crosses: 0 not at all, 1 `int`, 2 `byte`, 3 `bool`, 4 `c_ptr`, 5 a `[byte]`
+// slice, 6 `float`, 7 `f32`; -1 for a type that has no code.
+pub fn param_kind[&s, &x](st: &!s [int], text: &x [byte], ty: int) -> [] int {
+    if is_name(st, text, ty, "c_ptr") {
+        return 4;
+    }
+    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 0 {
+        let tag = ast.get(st, ty, 10);
+        if tag == 1 {
+            return 1;
+        }
+        if tag == 2 {
+            return 2;
+        }
+        if tag == 3 {
+            return 6;
+        }
+        if tag == 4 {
+            return 7;
+        }
+        if tag == 5 {
+            return 3;
+        }
+        return 0 - 1;
+    }
+    if ast.is_kind(st, ty, kinds.NK::TRef) {
+        let inner = ast.get(st, ty, 6);
+        if ast.is_kind(st, inner, kinds.NK::TSlice) {
+            let element = ast.get(st, inner, 6);
+            if ast.is_kind(st, element, kinds.NK::TName) && ast.get(st, element, 8) == 0 && ast.get(st, element, 10) == 2 {
+                return 5;
+            }
+            return 0 - 1;
+        }
+        if ast.is_kind(st, inner, kinds.NK::TName) && ast.get(st, inner, 8) == 2 {
+            return 0;
+        }
+    }
+    return 0 - 1;
+}
+
+// How a result of this type comes back: 1 `int`, 2 `c_int`, 3 `c_ptr`, 4 `bool`; 0 for one that has no code.
+pub fn return_kind[&s, &x](st: &!s [int], text: &x [byte], ty: int) -> [] int {
+    if is_name(st, text, ty, "c_int") {
+        return 2;
+    }
+    if is_name(st, text, ty, "c_ptr") {
+        return 3;
+    }
+    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 0 {
+        if ast.get(st, ty, 10) == 1 {
+            return 1;
+        }
+        if ast.get(st, ty, 10) == 5 {
+            return 4;
+        }
+    }
+    return 0;
+}
+
+fn return_type[&s](st: &!s [int], kind: int) -> [] int {
+    if kind == 1 {
+        return emit.str(st, "i64");
+    }
+    if kind == 2 {
+        return emit.str(st, "i32");
+    }
+    if kind == 3 {
+        return emit.str(st, "ptr");
+    }
+    return emit.str(st, "i8");
+}
+
+// The C symbol: the text of the declaration's name.
+fn symbol[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
+    let name = ast.get(st, it, 4);
+    var i = ast.tstart(st, name);
+    while i < ast.tend(st, name) {
+        emit.put(st, int_of(text[i]));
+        i = i + 1;
+    }
+    return 0;
+}
+
+// `declare <result> @name(<parameters>)` for a foreign function whose types have code; false if some have none.
+pub fn declare[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] bool {
+    let rk = return_kind(st, text, ast.get(st, it, 10));
+    if rk == 0 {
+        return false;
+    }
+    var param = ast.get(st, it, 7);
+    while param >= 0 {
+        if param_kind(st, text, ast.get(st, param, 5)) < 0 {
+            return false;
+        }
+        param = ast.next(st, param);
+    }
+    emit.str(st, "declare ");
+    return_type(st, rk);
+    emit.str(st, " @");
+    symbol(st, text, it);
+    emit.str(st, "(");
+    var first = true;
+    param = ast.get(st, it, 7);
+    while param >= 0 {
+        let kind = param_kind(st, text, ast.get(st, param, 5));
+        if kind > 0 {
+            if !first {
+                emit.str(st, ", ");
+            }
+            first = false;
+            if kind == 1 {
+                emit.str(st, "i64");
+            } else if kind == 2 || kind == 3 {
+                emit.str(st, "i8");
+            } else if kind == 4 {
+                emit.str(st, "ptr");
+            } else if kind == 5 {
+                emit.str(st, "ptr, i64");
+            } else if kind == 6 {
+                emit.str(st, "double");
+            } else {
+                emit.str(st, "float");
+            }
+        }
+        param = ast.next(st, param);
+    }
+    emit.str(st, ")\n");
+    return true;
+}
+
+// A `bool` as the byte C is given.
+pub fn byte_of_bool[&s](st: &!s [int], known: bool, value: int, reg: int) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "zext i1 ");
+    emit.operand(st, 5, known, value, reg);
+    emit.str(st, " to i8\n");
+    return n;
+}
+
+// The call of the foreign function `it` to the last `n` arguments pushed; the temporary of the result.
+pub fn call[&s, &x](st: &!s [int], text: &x [byte], it: int, rk: int, n: int) -> [] int {
+    let first = st[52] - n;
+    let result = emit.start(st);
+    emit.str(st, "call ");
+    return_type(st, rk);
+    emit.str(st, " (");
+    var i = 0;
+    while i < n {
+        if i > 0 {
+            emit.str(st, ", ");
+        }
+        emit.llvm_type(st, st[st[51] + 4 * (first + i)]);
+        i = i + 1;
+    }
+    emit.str(st, ") @");
+    symbol(st, text, it);
+    emit.str(st, "(");
+    i = 0;
+    while i < n {
+        let at = st[51] + 4 * (first + i);
+        if i > 0 {
+            emit.str(st, ", ");
+        }
+        emit.llvm_type(st, st[at]);
+        emit.str(st, " ");
+        emit.operand(st, st[at], st[at + 1] != 0, st[at + 2], st[at + 3]);
+        i = i + 1;
+    }
+    emit.str(st, ")\n");
+    st[52] = first;
+    if rk == 2 {
+        let wide = emit.start(st);
+        emit.str(st, "sext i32 ");
+        emit.temp(st, result);
+        emit.str(st, " to i64\n");
+        return wide;
+    }
+    if rk == 4 {
+        let flag = emit.start(st);
+        emit.str(st, "icmp ne i8 ");
+        emit.temp(st, result);
+        emit.str(st, ", 0\n");
+        return flag;
+    }
+    return result;
+}
