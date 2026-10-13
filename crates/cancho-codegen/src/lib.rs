@@ -32,6 +32,7 @@ mod abi;
 mod body;
 mod emit;
 mod layout;
+mod region_cache;
 
 use abi::*;
 use body::*;

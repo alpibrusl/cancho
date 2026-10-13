@@ -114,22 +114,21 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
     /// `region a { .. }` — open an arena, run the body, release it (§6).
     ///
-    /// One `malloc` in, one `free` out. Between them the arena is two
+    /// One chunk in, given back on the way out: the thread's last one, or a
+    /// `malloc` (`docs/region-chunk-cache.md` §3). Between them the arena is two
     /// pointers: where the next allocation goes, and where the chunk ends.
     /// The end is not stored, because it is the base plus a constant.
     ///
-    /// Release is a single `free` whatever was allocated — no traversal and
+    /// Release is a single call whatever was allocated — no traversal and
     /// no per-object bookkeeping, which is the property §6 is trading
     /// expressiveness for. Nothing runs at teardown because nothing *can*:
     /// §6.1 keeps `res` values out, so there is no obligation left inside to
     /// discharge.
     pub(crate) fn region_stmt(&mut self, arena: u32, body: &[Stmt]) -> bool {
         let pointer = self.pointer;
-        let size = self.builder.ins().iconst(pointer, ARENA_CHUNK);
-        let id = self.libc_fn("malloc", &[pointer], &[pointer]);
-        let f = self.module.declare_func_in_func(id, self.builder.func);
-        let call = self.builder.ins().call(f, &[size]);
-        let base = self.builder.inst_results(call)[0];
+        // The thread's last chunk given back, or a fresh `malloc`
+        // (`docs/region-chunk-cache.md` §3).
+        let base = self.region_take();
         // Out of memory is a trap, not a null pointer wandering into a
         // store. The language has no undefined behaviour to fall back on.
         self.builder.ins().trapz(base, TrapCode::HEAP_OUT_OF_BOUNDS);
@@ -153,7 +152,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         // second call in.
         if !returned {
             let held = self.builder.use_var(base_var);
-            self.free(held);
+            let end = self.builder.use_var(bump_var);
+            self.region_give(held, end);
         }
         self.arenas[arena as usize] = None;
         returned

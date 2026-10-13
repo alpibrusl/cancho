@@ -346,6 +346,11 @@ pub(crate) fn emit_module(
     };
     declare_libc_unless_own(&mut text, "malloc", &format!("ptr @malloc({st})"));
     declare_libc_unless_own(&mut text, "free", "void @free(ptr)");
+    // The chunk stack's `pthread` key (`docs/region-chunk-cache.md` §3.2); an
+    // unused `declare` costs nothing, as above.
+    for (symbol, signature) in crate::region_cache::libc_declarations(triple) {
+        declare_libc_unless_own(&mut text, symbol, &signature);
+    }
     // Checked arithmetic (§5's second slice): the three overflow-reporting
     // intrinsics `Expr::Bin`'s `Add`/`Sub`/`Mul` arms call. Declared
     // unconditionally, the same way `putchar` is -- an unused `declare`
@@ -729,6 +734,8 @@ pub(crate) fn emit_module(
     // by a program that reads it. (A C compiler would have renamed `main(argc, argv)`
     // to `__main_argc_argv` for wasi-libc's `__main_void` to call; nothing here uses
     // `__main_void`.)
+    // `docs/region-chunk-cache.md` §3: the chunk stack, only for a program that opens a region.
+    let regions = crate::region_cache::used(&text);
     let wasm = triple.architecture == target_lexicon::Architecture::Wasm32;
     let uses_args = wasm && crate::wasi_entry::reads_args(&text);
     let entry_header = if wasm {
@@ -747,6 +754,10 @@ pub(crate) fn emit_module(
     // `crate::dit`: before any cancho code, on aarch64 Linux and Darwin.
     if crate::dit::applies(triple) {
         text.push_str("  call void @cancho_set_dit()\n");
+    }
+    // The chunk stack's key, before any cancho code and so before any `spawn`.
+    if regions {
+        text.push_str(&crate::region_cache::init_call(triple));
     }
     match ret.first() {
         Some(LKind::I64) => {
@@ -769,6 +780,9 @@ pub(crate) fn emit_module(
     text.push_str("}\n");
     if crate::dit::applies(triple) {
         text.push_str(&crate::dit::definition(triple));
+    }
+    if regions {
+        text.push_str(&crate::region_cache::definitions(triple));
     }
     // `docs/crypto-builtins.md` §4: only the functions this module calls.
     let crypto = crate::crypto::definitions(triple, &text);

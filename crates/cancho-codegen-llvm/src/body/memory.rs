@@ -128,11 +128,12 @@ impl<'a> FuncEmitter<'a> {
         Ok(vec![LValue::Reg(answer)])
     }
 
+    /// `region a { .. }`: the chunk is the thread's last one given back, or a
+    /// fresh `malloc` (`docs/region-chunk-cache.md` §3), and goes back when
+    /// the block ends.
     pub(crate) fn region_stmt(&mut self, arena: u32, body: &[Stmt]) -> Result<bool, String> {
-        let st = self.size_ty();
-        let chunk = self.size_arg(&ARENA_CHUNK.to_string());
         let base = self.fresh();
-        self.out.push_str(&format!("  {base} = call ptr @malloc({st} {chunk})\n"));
+        self.out.push_str(&format!("  {base} = call ptr @{}()\n", cancho_ir::REGION_TAKE));
         // Out of memory is a trap, not a null pointer wandering into a
         // store -- the language has no undefined behaviour to fall back
         // on, the same reasoning `box`/`box_slice` already trap on here.
@@ -162,22 +163,30 @@ impl<'a> FuncEmitter<'a> {
         // this arena on the way out (`release_arenas`), and there is no
         // block left here to put a second call in.
         if !terminated {
-            let held = self.fresh();
-            self.out.push_str(&format!("  {held} = load ptr, ptr {base_cell}\n"));
-            self.out.push_str(&format!("  call void @free(ptr {held})\n"));
+            self.give_back(arena);
         }
         self.arenas[arena as usize] = None;
         Ok(terminated)
     }
 
-    /// `free` the chunk of every arena open at this point, innermost
+    /// Give arena `arena`'s chunk back: `@cancho_region_give` clears the bytes
+    /// its bump pointer handed out and keeps the chunk for this thread's next
+    /// region, or `free`s it (`docs/region-chunk-cache.md` §3).
+    fn give_back(&mut self, arena: u32) {
+        let Some((base_cell, bump_cell)) = self.arenas[arena as usize].clone() else { return };
+        let held = self.fresh();
+        self.out.push_str(&format!("  {held} = load ptr, ptr {base_cell}\n"));
+        let end = self.fresh();
+        self.out.push_str(&format!("  {end} = load ptr, ptr {bump_cell}\n"));
+        self.out
+            .push_str(&format!("  call void @{}(ptr {held}, ptr {end})\n", cancho_ir::REGION_GIVE));
+    }
+
+    /// Give back the chunk of every arena open at this point, innermost
     /// (highest-numbered) first: what a `return` does before its `ret`.
     pub(crate) fn release_arenas(&mut self) {
         for index in (0..self.arenas.len()).rev() {
-            let Some((base_cell, _)) = self.arenas[index].clone() else { continue };
-            let held = self.fresh();
-            self.out.push_str(&format!("  {held} = load ptr, ptr {base_cell}\n"));
-            self.out.push_str(&format!("  call void @free(ptr {held})\n"));
+            self.give_back(index as u32);
         }
     }
 
