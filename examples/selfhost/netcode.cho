@@ -22,14 +22,14 @@ pub fn prelude_named(name: &static [byte]) -> [] int {
     return 0 - 1;
 }
 
-// A cell of three whole numbers, in the entry block; its temporary.
+// A cell of four whole numbers, in the entry block; its temporary.
 fn cell[&s](st: &!s [int]) -> [] int {
     let keep = st[49];
     st[49] = 2;
     let n = emit.fresh(st);
     emit.str(st, "  ");
     emit.temp(st, n);
-    emit.str(st, " = alloca i64, i64 3\n");
+    emit.str(st, " = alloca i64, i64 4\n");
     st[49] = keep;
     return n;
 }
@@ -91,14 +91,111 @@ fn load_out[&s](st: &!s [int], out: int, k: int) -> [] int {
     return v;
 }
 
-// The prelude enum `index` made of the cell's three numbers: the tag, then the payloads of its arms in order.
-pub fn answer[&s](st: &!s [int], ty: int, index: int, out: int) -> [] int {
+// The prelude enum `ty` made of the cell's first `slots` numbers: the tag, then the payloads of its arms in order.
+pub fn answer[&s](st: &!s [int], ty: int, slots: int, out: int) -> [] int {
     var acc = 0 - 1;
     var k = 0;
-    while k < 3 {
+    while k < slots {
         let v = load_out(st, out, k);
         acc = emit.insert_at(st, ty, acc, k, 1, false, 0, v);
         k = k + 1;
     }
     return acc;
+}
+
+// How many arguments the builtin numbered `which` (see `codes.net_code`; a pipe's number is made a connection's) takes.
+pub fn arity(which: int) -> [] int {
+    if which == 36 {
+        return 4;
+    }
+    if which == 33 || which == 37 {
+        return 3;
+    }
+    if which == 32 || which == 34 || which == 39 || which == 40 {
+        return 2;
+    }
+    if which == 48 {
+        return 0;
+    }
+    return 1;
+}
+
+// Does the first argument, a capability narrowed to a bound, give the bound the call checks?
+pub fn holds_bound(which: int) -> [] bool {
+    return which == 32 || which == 33 || which == 36 || which == 37;
+}
+
+// How many numbers the function answers in its cell: 0 when it answers one whole number.
+pub fn slots(which: int) -> [] int {
+    if which == 48 {
+        return 4;
+    }
+    if which >= 36 && which <= 40 {
+        return 3;
+    }
+    return 0;
+}
+
+// The prelude enum the answer is made into.
+pub fn enum_name(which: int) -> [] &static [byte] {
+    if which == 48 {
+        return "Piped";
+    }
+    if which == 37 {
+        return "Dialed";
+    }
+    if which == 38 {
+        return "Accepted";
+    }
+    if which == 39 {
+        return "Received";
+    }
+    if which == 40 {
+        return "Sent";
+    }
+    return "Listening";
+}
+
+// The function of `runtime/net.c` that does it.
+pub fn function(which: int) -> [] &static [byte] {
+    if which == 32 {
+        return "cancho_net_bind";
+    }
+    if which == 33 {
+        return "cancho_net_connect";
+    }
+    if which == 34 {
+        return "cancho_net_listen";
+    }
+    if which == 35 {
+        return "cancho_net_accept";
+    }
+    if which == 36 {
+        return "cancho_net_tcp_listen";
+    }
+    if which == 37 {
+        return "cancho_net_tcp_connect";
+    }
+    if which == 38 {
+        return "cancho_net_tcp_accept";
+    }
+    if which == 39 {
+        return "cancho_net_conn_read";
+    }
+    if which == 40 {
+        return "cancho_net_conn_write";
+    }
+    if which == 41 || which == 42 {
+        return "cancho_net_nonblocking";
+    }
+    if which == 43 {
+        return "cancho_net_nodelay";
+    }
+    if which == 44 || which == 45 {
+        return "cancho_net_close";
+    }
+    if which == 48 {
+        return "cancho_net_pipe_open";
+    }
+    return "cancho_clock_ms";
 }

@@ -651,6 +651,60 @@ cond.end:                                         ; preds = %cond.false, %cond.t
 declare i32 @setsockopt(i32, i32, i32, ptr, i32)
 
 ; Function Attrs: noinline nounwind
+define void @cancho_net_pipe_open(ptr %out) {
+entry:
+  %out.addr = alloca ptr, align 8
+  %fds = alloca [2 x i32], align 4
+  %r = alloca i32, align 4
+  %why = alloca i64, align 8
+  store ptr %out, ptr %out.addr, align 8
+  %arrayidx = getelementptr inbounds [2 x i32], ptr %fds, i64 0, i64 0
+  store i32 -1, ptr %arrayidx, align 4
+  %arrayidx1 = getelementptr inbounds [2 x i32], ptr %fds, i64 0, i64 1
+  store i32 -1, ptr %arrayidx1, align 4
+  %arraydecay = getelementptr inbounds [2 x i32], ptr %fds, i64 0, i64 0
+  %call = call i32 @socketpair(i32 1, i32 524289, i32 0, ptr %arraydecay)
+  store i32 %call, ptr %r, align 4
+  %call2 = call ptr @cancho_errno_location()
+  %0 = load i64, ptr %call2, align 8
+  store i64 %0, ptr %why, align 8
+  %1 = load i32, ptr %r, align 4
+  %cmp = icmp sge i32 %1, 0
+  br i1 %cmp, label %if.then, label %if.end
+
+if.then:                                          ; preds = %entry
+  br label %if.end
+
+if.end:                                           ; preds = %if.then, %entry
+  %2 = load i32, ptr %r, align 4
+  %cmp3 = icmp slt i32 %2, 0
+  %conv = zext i1 %cmp3 to i32
+  %conv4 = sext i32 %conv to i64
+  %3 = load ptr, ptr %out.addr, align 8
+  %arrayidx5 = getelementptr inbounds i64, ptr %3, i64 0
+  store i64 %conv4, ptr %arrayidx5, align 8
+  %arrayidx6 = getelementptr inbounds [2 x i32], ptr %fds, i64 0, i64 0
+  %4 = load i32, ptr %arrayidx6, align 4
+  %conv7 = sext i32 %4 to i64
+  %5 = load ptr, ptr %out.addr, align 8
+  %arrayidx8 = getelementptr inbounds i64, ptr %5, i64 1
+  store i64 %conv7, ptr %arrayidx8, align 8
+  %arrayidx9 = getelementptr inbounds [2 x i32], ptr %fds, i64 0, i64 1
+  %6 = load i32, ptr %arrayidx9, align 4
+  %conv10 = sext i32 %6 to i64
+  %7 = load ptr, ptr %out.addr, align 8
+  %arrayidx11 = getelementptr inbounds i64, ptr %7, i64 2
+  store i64 %conv10, ptr %arrayidx11, align 8
+  %8 = load i64, ptr %why, align 8
+  %9 = load ptr, ptr %out.addr, align 8
+  %arrayidx12 = getelementptr inbounds i64, ptr %9, i64 3
+  store i64 %8, ptr %arrayidx12, align 8
+  ret void
+}
+
+declare i32 @socketpair(i32, i32, i32, ptr)
+
+; Function Attrs: noinline nounwind
 define i64 @cancho_net_close(i64 %fd) {
 entry:
   %fd.addr = alloca i64, align 8

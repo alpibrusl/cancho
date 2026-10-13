@@ -1538,26 +1538,29 @@ pub fn extern_call[&s, &x](st: &!s [int], text: &x [byte], id: int, it: int) -> 
     return in_reg(1, answer);
 }
 
-// The sockets and the clock (the numbers of `codes.net_code`): the arguments are evaluated and pushed, the capability
-// that was narrowed to a bound is the first of some and is not pushed, and the bound goes after the others.
-pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) -> [] Ex {
+// The sockets and the clock (the numbers of `codes.net_code`, the shape of each in `netcode.cho`): the arguments are
+// evaluated and pushed, the capability that was narrowed to a bound is the first of some and is not pushed, and the
+// bound goes after the others.
+pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) -> [] Ex {
+    // A pipe is read and written, closed and made non-blocking as a connection is.
+    var which = number;
+    if number >= 49 {
+        which = number - 10;
+        if number >= 51 {
+            which = 44;
+        }
+        if number == 53 {
+            which = 41;
+        }
+    }
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let nargs = ast.get(st, id, 7);
-    var wanted = 1;
-    if which == 32 || which == 34 || which == 37 || which == 39 || which == 40 || which == 33 {
-        wanted = 2;
-        if which == 33 || which == 37 {
-            wanted = 3;
-        }
-    } else if which == 36 {
-        wanted = 4;
-    }
-    if nargs != wanted {
+    if nargs != netcode.arity(which) {
         return skip(st, from, to);
     }
     st[55] = 1;
-    let holds_bound = which == 32 || which == 33 || which == 36 || which == 37;
+    let holds_bound = netcode.holds_bound(which);
     let leads = holds_bound || which == 46 || which == 47;
     var cap = 0;
     var arg = ast.get(st, id, 6);
@@ -1583,52 +1586,15 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) -> 
         emit.push_arg(st, 1, true, which - 46, 0 - 1);
     }
     let n = st[52] - first_arg;
-    if which == 32 {
-        return in_reg(1, netcode.call_int(st, "cancho_net_bind", n));
+    if netcode.slots(which) == 0 {
+        return in_reg(1, netcode.call_int(st, netcode.function(which), n));
     }
-    if which == 33 {
-        return in_reg(1, netcode.call_int(st, "cancho_net_connect", n));
-    }
-    if which == 34 {
-        return in_reg(1, netcode.call_int(st, "cancho_net_listen", n));
-    }
-    if which == 35 {
-        return in_reg(1, netcode.call_int(st, "cancho_net_accept", n));
-    }
-    if which >= 41 && which <= 43 {
-        var name = "cancho_net_nonblocking";
-        if which == 43 {
-            name = "cancho_net_nodelay";
-        }
-        return in_reg(1, netcode.call_int(st, name, n));
-    }
-    if which == 44 || which == 45 {
-        return in_reg(1, netcode.call_int(st, "cancho_net_close", n));
-    }
-    if which >= 46 {
-        return in_reg(1, netcode.call_int(st, "cancho_clock_ms", n));
-    }
-    var enum_name = "Listening";
-    var function = "cancho_net_tcp_listen";
-    if which == 37 {
-        enum_name = "Dialed";
-        function = "cancho_net_tcp_connect";
-    } else if which == 38 {
-        enum_name = "Accepted";
-        function = "cancho_net_tcp_accept";
-    } else if which == 39 {
-        enum_name = "Received";
-        function = "cancho_net_conn_read";
-    } else if which == 40 {
-        enum_name = "Sent";
-        function = "cancho_net_conn_write";
-    }
-    let index = netcode.prelude_named(enum_name);
+    let index = netcode.prelude_named(netcode.enum_name(which));
     if index < 0 {
         return skip(st, from, to);
     }
     let ty = types.make_prelude(st, index);
-    return in_reg(ty, netcode.answer(st, ty, index, netcode.call_out(st, function, n)));
+    return in_reg(ty, netcode.answer(st, ty, netcode.slots(which), netcode.call_out(st, netcode.function(which), n)));
 }
 
 // `spawn(payload, f)` and `join(t)`. The payload and what `f` returns are one value each of no more than one

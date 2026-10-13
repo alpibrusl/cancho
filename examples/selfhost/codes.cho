@@ -105,7 +105,8 @@ pub fn builtin_code[&x](text: &x [byte], from: int, to: int) -> [] int {
 // The sockets and the clock, which `exprs.net_call` writes: 32 `bind`, 33 `connect`, 34 `listen`, 35 `accept`,
 // 36 `tcp_listen`, 37 `tcp_connect`, 38 `tcp_accept`, 39 `conn_read`, 40 `conn_write`, 41 `conn_nonblocking`,
 // 42 `listener_nonblocking`, 43 `conn_nodelay`, 44 `conn_close`, 45 `listener_close`, 46 `clock_ms`,
-// 47 `clock_unix_ms`; 0 for another name.
+// 47 `clock_unix_ms`, 48 `pipe_open`, 49 `pipe_read`, 50 `pipe_write`, 51 `pipe_close`, 52 `child_end_close`,
+// 53 `pipe_nonblocking`; 0 for another name.
 pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     if lc.spells(text, from, to, "bind") {
         return 32;
@@ -154,6 +155,24 @@ pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     }
     if lc.spells(text, from, to, "clock_unix_ms") {
         return 47;
+    }
+    if lc.spells(text, from, to, "pipe_open") {
+        return 48;
+    }
+    if lc.spells(text, from, to, "pipe_read") {
+        return 49;
+    }
+    if lc.spells(text, from, to, "pipe_write") {
+        return 50;
+    }
+    if lc.spells(text, from, to, "pipe_close") {
+        return 51;
+    }
+    if lc.spells(text, from, to, "child_end_close") {
+        return 52;
+    }
+    if lc.spells(text, from, to, "pipe_nonblocking") {
+        return 53;
     }
     return 0;
 }

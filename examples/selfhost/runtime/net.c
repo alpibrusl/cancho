@@ -53,6 +53,7 @@ extern int listen(int, int);
 extern int accept(int, void *, void *);
 extern int accept4(int, void *, void *, int);
 extern int connect(int, const void *, int);
+extern int socketpair(int, int, int, int *);
 extern int close(int);
 extern i64 recv(int, void *, i64, int);
 extern i64 send(int, const void *, i64, int);
@@ -222,6 +223,27 @@ i64 cancho_net_nodelay(const i64 *handle) {
   int one = 1;
   int r = setsockopt((int)*handle, 6, 1, &one, 4);
   return r < 0 ? ERRNO : 0;
+}
+
+/* `pipe_open()`: a socket pair, close-on-exec. out = tag (0 Ok, 1 Failed), the parent's end, the child's, why. */
+void cancho_net_pipe_open(i64 *out) {
+  int fds[2];
+  fds[0] = -1;
+  fds[1] = -1;
+  int r = socketpair(1, 1 | SOCK_CLOEXEC, 0, fds);
+  i64 why = ERRNO;
+  if (r >= 0) {
+#if DARWIN
+    for (int i = 0; i < 2; i++) {
+      fcntl(fds[i], F_SETFD, FD_CLOEXEC);
+      netrt_int_option(fds[i], SOL_SOCKET, SO_NOSIGPIPE);
+    }
+#endif
+  }
+  out[0] = r < 0;
+  out[1] = fds[0];
+  out[2] = fds[1];
+  out[3] = why;
 }
 
 i64 cancho_net_close(i64 fd) { return close((int)fd); }
