@@ -1,0 +1,17 @@
+# commit 2bc83e35 (rebased onto #465); Linux 6.8.0-100-generic aarch64; OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)
+## python3 scripts/ecdsa_sign_differential.py openssl /tmp/drv/sign /tmp/drv/ecdsa 2000
+openssl: 2000 signatures; 2000 accepted by both OpenSSL and std.ecdsa, 2000 with a bit flipped refused by both; 0 differences
+## python3 scripts/ecdsa_sign_differential.py reference /tmp/drv/sign 2000
+reference: 2000 signatures and their DER against RFC 6979 in Python; 0 differences
+## python3 scripts/ecdsa_differential.py /tmp/drv/ecdsa openssl 1000
+openssl: 1000 signatures a curve and each flipped; openssl accepted 2000 of 4000; 0 differences
+## python3 scripts/ecdsa_differential.py /tmp/drv/ecdsa registers 5000
+registers: 5000 operations, 0 differences
+## python3 scripts/ecdh_differential.py /tmp/drv/ecdh 300
+OpenSSL 3.0.13 30 Jan 2024: 300 key pairs a curve, 1260 checks, 0 differences
+## python3 scripts/p256_field_differential.py /tmp/drv/p256 5000
+152967 cases, 0 differences
+## python3 scripts/rsa_differential.py /tmp/drv/rsa pow 5000
+pow_mod: 5000 cases, 0 differences
+## python3 scripts/aead_differential.py /tmp/drv/aead 5000
+OpenSSL 3.0.13 30 Jan 2024: 5000 cases, 30000 checks, 0 differences

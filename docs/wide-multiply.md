@@ -434,7 +434,9 @@ instructions in `mul_p`); §10.6's first item, `mulx` behind a CPU test, is wher
   69,476 (Cranelift); `pow_mod` against Python 20,000 (LLVM) and 2,000 (Cranelift); RSA against OpenSSL 2,000 and 2,000 flipped;
   ChaCha20-Poly1305 against OpenSSL 20,000 cases, 60,000 checks (LLVM) and 2,000 (Cranelift), and after the rebase onto #463
   20,000 cases with its in-place forms, 120,000 checks (`aead_differential_rebased.txt`); ECDH on Cranelift 100 key pairs a curve.
-  **0 differences in all.**
+  After the rebase onto #465 (`differentials_rebased.txt`): signing 2,000 against OpenSSL and 2,000 against RFC 6979, verification
+  1,000 a curve and `registers` 5,000, ECDH 300 a curve, the P-256 field 152,967 cases, `pow_mod` 5,000, the AEAD 5,000 (30,000
+  checks). **0 differences in all.**
 - **Bounds**: `scripts/p256_gen.py` proves every kernel's accumulators and carries (above); `scripts/p256_bounds.py` closes for every
   formula, unchanged, since the element and §4.3's invariants are.
 - **Mutants**, all killed or argued: `p256_mutants.py`, the 36 its kernel names select (32 on the kernels, the shared accumulator and
