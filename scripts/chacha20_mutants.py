@@ -28,7 +28,7 @@ MUTANTS = [
     ("a wrong constant", "work[0] = 0x61707865", "work[0] = 0x61707866"),
     ("the input words not added back", "m32(wrapping_add(work[16 + i], work[i]))", "m32(work[16 + i])"),
     # #381: Poly1305 on three limbs of 44, 44 and 42 bits (`mul_wide`); its mutants re-anchored on that code.
-    ("a skipped Poly1305 carry", "let (a1, b1) = addw(a1, b1, c);", "let (a1, b1) = addw(a1, b1, 0);"),
+    ("a skipped Poly1305 carry", "let (a1, b1) = field25519_51.addw(a1, b1, c);", "let (a1, b1) = field25519_51.addw(a1, b1, 0);"),
     ("a Poly1305 carry taken at 42 bits", "    c = shr44(a1, b1);\n", "    c = shr42(a1, b1);\n"),
     ("r not clamped", "(t0 >> 44 & 0xfffff | t1 << 20) & 0xfffffc0ffff", "(t0 >> 44 & 0xfffff | t1 << 20) & 0xfffffffffff"),
     ("pad16 block without its 2^128 bit", "poly_block(st, scratch[0..16], 0x1000000)", "poly_block(st, scratch[0..16], 0)"),
@@ -43,8 +43,9 @@ MUTANTS = [
     ("the lengths block in the wrong order", "bytes.store_le32(lens, 0, m32(len(aad)));", "bytes.store_le32(lens, 0, m32(len(ct)));"),
     ("encryption from counter 0", "xor(key, 1, nonce, plaintext, out[0..text]);", "xor(key, 0, nonce, plaintext, out[0..text]);"),
     ("the counter allowed to wrap", "blocks > 0x100000000 - counter", "blocks > 0x100000001 - counter"),
-    ("a wrong product in the Poly1305 multiply", "let (a1, b1) = mac(a1, b1, h2, s2);", "let (a1, b1) = mac(a1, b1, h2, s1);"),
-    ("the multiply's low word without its carry", "return (wrapping_add(wrapping_add(hi, h), c), s);", "return (wrapping_add(hi, h), s);"),
+    ("a wrong product in the Poly1305 multiply", "let (a1, b1) = field25519_51.mac(a1, b1, h2, s2);", "let (a1, b1) = field25519_51.mac(a1, b1, h2, s1);"),
+    # The two-word accumulator itself (`mac`, `addw`) is `std.field25519_51`'s, shared since #381; its mutant is in
+    # scripts/p256_mutants.py, which mutates that file.
     ("a block's 2^128 bit at 2^127", "let top = hibit << 16;", "let top = hibit << 15;"),
     ("a long nonce accepted", "    if len(nonce) != 12 {\n        return refused_nonce_length();\n    }\n    if (text", "    if len(nonce) < 12 {\n        return refused_nonce_length();\n    }\n    if (text"),
 ]
