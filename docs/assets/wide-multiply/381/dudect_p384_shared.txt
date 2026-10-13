@@ -1,0 +1,8 @@
+# commit 6b5299e5 (branch p256-wide-multiply); machine gram, Intel Core i7-1260P, Linux 7.0.0-38-generic, x86-64; LLVM backend
+# taskset -c 0-1 (one physical core, both threads); governor of cpu0/cpu1: powersave/powersave
+# start: 2026-10-13T08:45:58+02:00;  08:45:58 up 5 days, 22:05,  8 users,  load average: 2,71, 3,70, 3,67
+# python3 scripts/ecdh_timing.py ecdh_timing 1000000 --curves=384
+P-384 shared scalar 1     1000000 samples, median 2478068 cycles, max |t| = 1.82
+P-384 shared fixed scalar 1000000 samples, median 3571888 cycles, max |t| = 1.34
+P-384 shared scalar 16^k  1000000 samples, median 3482655 cycles, max |t| = 2.10
+# end: 2026-10-13T09:59:27+02:00;  09:59:27 up 5 days, 23:18, 10 users,  load average: 5,74, 5,41, 5,33

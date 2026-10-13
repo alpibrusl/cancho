@@ -1,0 +1,28 @@
+ecdhp256        75986 ns     176845 cycles (2.33 GHz) | Doing 256 bits  ecdh ops for 3s: 39218 256-bits ECDH ops in 2.98s
+ecdsap256       34568 ns      70906 cycles (2.05 GHz) | Doing 256 bits sign ecdsa ops for 3s: 85917 256 bits ECDSA sign ops in 2.97s
+ecdsap256      113997 ns     233829 cycles (2.05 GHz) | Doing 256 bits verify ecdsa ops for 3s: 26141 256 bits ECDSA verify ops in 2.98s
+ecdhp384       505238 ns     989481 cycles (1.96 GHz) | Doing 384 bits  ecdh ops for 3s: 5918 384-bits ECDH ops in 2.99s
+ecdsap384      254266 ns     652997 cycles (2.57 GHz) | Doing 384 bits sign ecdsa ops for 3s: 11720 384 bits ECDSA sign ops in 2.98s
+ecdsap384      502521 ns    1290556 cycles (2.57 GHz) | Doing 384 bits verify ecdsa ops for 3s: 5950 384 bits ECDSA verify ops in 2.99s
+rsa2048        655521 ns    1928792 cycles (2.94 GHz) | Doing 2048 bits private rsa sign ops for 3s: 4546 2048 bits private RSA sign ops in 2.98s
+rsa2048         20111 ns      59173 cycles (2.94 GHz) | Doing 2048 bits public rsa verify ops for 3s: 147683 2048 bits public RSA verify ops in 2.97s
+rsa2048         20815 ns      61245 cycles (2.94 GHz) | Doing 2048 bits public rsa encrypt ops for 3s: 142687 2048 bits public RSA encrypt ops in 2.97s
+rsa2048        674031 ns    1983253 cycles (2.94 GHz) | Doing 2048 bits private rsa decrypt ops for 3s: 4436 2048 bits private RSA decrypt ops in 2.99s
+rsa2048      54727273 ns  161028349 cycles (2.94 GHz) | Doing rsa2048 keygen ops for 3s: 55 rsa2048 KEM keygen ops in 3.01s
+rsa2048         21703 ns      63858 cycles (2.94 GHz) | Doing rsa2048 encaps ops for 3s: 137309 rsa2048 KEM encaps ops in 2.98s
+rsa2048        649662 ns    1911552 cycles (2.94 GHz) | Doing rsa2048 decaps ops for 3s: 4587 rsa2048 KEM decaps ops in 2.98s
+rsa2048      50847458 ns  149612464 cycles (2.94 GHz) | Doing rsa2048 keygen ops for 3s: 59 rsa2048 signature keygen ops in 3.00s
+rsa2048        626050 ns    1842077 cycles (2.94 GHz) | Doing rsa2048 signs ops for 3s: 4760 rsa2048 signature sign ops in 2.98s
+rsa2048         18980 ns      55847 cycles (2.94 GHz) | Doing rsa2048 verify ops for 3s: 157532 rsa2048 signature verify ops in 2.99s
+rsa4096       4462687 ns   12029277 cycles (2.70 GHz) | Doing 4096 bits private rsa sign ops for 3s: 670 4096 bits private RSA sign ops in 2.99s
+rsa4096         71743 ns     193384 cycles (2.70 GHz) | Doing 4096 bits public rsa verify ops for 3s: 41398 4096 bits public RSA verify ops in 2.97s
+rsa4096         73726 ns     198730 cycles (2.70 GHz) | Doing 4096 bits public rsa encrypt ops for 3s: 40420 4096 bits public RSA encrypt ops in 2.98s
+rsa4096       5068027 ns   13660987 cycles (2.70 GHz) | Doing 4096 bits private rsa decrypt ops for 3s: 588 4096 bits private RSA decrypt ops in 2.98s
+rsa4096     890000000 ns 2399016069 cycles (2.70 GHz) | Doing rsa4096 keygen ops for 3s: 5 rsa4096 KEM keygen ops in 4.45s
+rsa4096         88974 ns     239831 cycles (2.70 GHz) | Doing rsa4096 encaps ops for 3s: 33493 rsa4096 KEM encaps ops in 2.98s
+rsa4096       4746835 ns   12795207 cycles (2.70 GHz) | Doing rsa4096 decaps ops for 3s: 632 rsa4096 KEM decaps ops in 3.00s
+rsa4096     847500000 ns 2284456312 cycles (2.70 GHz) | Doing rsa4096 keygen ops for 3s: 4 rsa4096 signature keygen ops in 3.39s
+rsa4096       5578358 ns   15036597 cycles (2.70 GHz) | Doing rsa4096 signs ops for 3s: 536 rsa4096 signature sign ops in 2.99s
+rsa4096         84475 ns     227705 cycles (2.70 GHz) | Doing rsa4096 verify ops for 3s: 35395 rsa4096 signature verify ops in 2.99s
+OpenSSL 3.5.5 27 Jan 2026 (Library: OpenSSL 3.5.5 27 Jan 2026)
+ 08:43:01 up 5 days, 22:02,  9 users,  load average: 3,64, 4,49, 3,87

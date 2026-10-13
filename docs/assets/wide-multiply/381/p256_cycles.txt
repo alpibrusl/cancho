@@ -1,0 +1,76 @@
+# gram, scripts as run: cyc.py (sudo perf stat, cpu_core cycles/u and instructions/u, CPU 0, least of 5 a driver, alternating); prof_before = tests/programs/p256_profile.cho by main's compiler (3d7e8e9d), prof_s1 by b2651fea's, prof_final by 541a03cc's (their P-256 kernels object-identical, kernels_object_identity.txt)
+ 08:39:03 up 5 days, 21:58,  7 users,  load average: 7,45, 5,28, 3,87
+m   prof_before: 162 cyc 782 ins   prof_s1: 110 cyc 451 ins
+q   prof_before: 138 cyc 573 ins   prof_s1: 91 cyc 345 ins
+o   prof_before: 214 cyc 827 ins   prof_s1: 161 cyc 526 ins
+p   prof_before: 85 cyc 390 ins   prof_s1: 47 cyc 220 ins
+i   prof_before: 40,003 cyc 179,248 ins   prof_s1: 27,380 cyc 106,566 ins
+n   prof_before: 62,946 cyc 212,060 ins   prof_s1: 43,536 cyc 141,395 ins
+g   prof_before: 317,101 cyc 1,197,041 ins   prof_s1: 165,225 cyc 713,529 ins
+k   prof_before: 409,526 cyc 1,632,023 ins   prof_s1: 226,752 cyc 1,075,660 ins
+c   prof_before: 1,119,601 cyc 5,062,738 ins   prof_s1: 682,858 cyc 3,101,308 ins
+v   prof_before: 731,064 cyc 3,431,653 ins   prof_s1: 470,994 cyc 2,026,587 ins
+h   prof_before: 1,018,321 cyc 5,002,518 ins   prof_s1: 621,325 cyc 2,912,470 ins
+ 08:39:15 up 5 days, 21:58,  8 users,  load average: 7,15, 5,29, 3,88
+ 08:39:31 up 5 days, 21:58,  9 users,  load average: 6,31, 5,19, 3,87
+m   prof_before: 158 cyc 782 ins   prof_s1: 99 cyc 451 ins
+q   prof_before: 114 cyc 573 ins   prof_s1: 81 cyc 345 ins
+o   prof_before: 176 cyc 827 ins   prof_s1: 130 cyc 526 ins
+p   prof_before: 75 cyc 390 ins   prof_s1: 35 cyc 220 ins
+i   prof_before: 34,950 cyc 179,248 ins   prof_s1: 24,936 cyc 106,566 ins
+n   prof_before: 49,534 cyc 212,060 ins   prof_s1: 38,764 cyc 141,395 ins
+g   prof_before: 234,290 cyc 1,197,041 ins   prof_s1: 141,568 cyc 713,529 ins
+k   prof_before: 326,959 cyc 1,632,023 ins   prof_s1: 226,595 cyc 1,075,660 ins
+c   prof_before: 1,007,407 cyc 5,062,737 ins   prof_s1: 646,106 cyc 3,101,308 ins
+v   prof_before: 682,396 cyc 3,431,653 ins   prof_s1: 416,921 cyc 2,026,587 ins
+h   prof_before: 980,090 cyc 5,002,518 ins   prof_s1: 567,604 cyc 2,912,470 ins
+ 08:39:39 up 5 days, 21:59,  9 users,  load average: 6,10, 5,19, 3,89
+m   prof_before: 158 cyc 782 ins   prof_s1: 101 cyc 451 ins
+q   prof_before: 115 cyc 573 ins   prof_s1: 82 cyc 345 ins
+o   prof_before: 241 cyc 827 ins   prof_s1: 169 cyc 526 ins
+p   prof_before: 100 cyc 390 ins   prof_s1: 59 cyc 220 ins
+i   prof_before: 51,003 cyc 179,248 ins   prof_s1: 32,471 cyc 106,566 ins
+n   prof_before: 67,378 cyc 212,060 ins   prof_s1: 45,891 cyc 141,395 ins
+g   prof_before: 353,038 cyc 1,197,041 ins   prof_s1: 231,635 cyc 713,529 ins
+k   prof_before: 481,439 cyc 1,632,023 ins   prof_s1: 375,448 cyc 1,075,660 ins
+c   prof_before: 1,706,507 cyc 5,062,738 ins   prof_s1: 1,066,464 cyc 3,101,308 ins
+v   prof_before: 686,491 cyc 3,431,653 ins   prof_s1: 417,536 cyc 2,026,587 ins
+h   prof_before: 981,271 cyc 5,002,518 ins   prof_s1: 567,647 cyc 2,912,470 ins
+ 08:39:51 up 5 days, 21:59,  9 users,  load average: 5,86, 5,16, 3,89
+ 10:01:20 up 5 days, 23:20,  9 users,  load average: 4,57, 5,10, 5,22
+m   prof_before: 201 cyc 782 ins   prof_final: 101 cyc 451 ins
+q   prof_before: 113 cyc 573 ins   prof_final: 96 cyc 345 ins
+o   prof_before: 174 cyc 827 ins   prof_final: 130 cyc 526 ins
+p   prof_before: 75 cyc 390 ins   prof_final: 34 cyc 220 ins
+i   prof_before: 52,200 cyc 179,248 ins   prof_final: 25,037 cyc 106,566 ins
+n   prof_before: 59,841 cyc 212,060 ins   prof_final: 41,930 cyc 141,395 ins
+g   prof_before: 337,846 cyc 1,197,041 ins   prof_final: 141,911 cyc 713,529 ins
+k   prof_before: 360,578 cyc 1,632,023 ins   prof_final: 258,659 cyc 1,075,660 ins
+c   prof_before: 1,422,173 cyc 5,062,738 ins   prof_final: 975,500 cyc 3,101,308 ins
+v   prof_before: 1,072,746 cyc 3,431,653 ins   prof_final: 547,224 cyc 2,026,587 ins
+h   prof_before: 1,384,643 cyc 5,002,519 ins   prof_final: 1,128,957 cyc 2,912,470 ins
+ 10:01:37 up 5 days, 23:21,  9 users,  load average: 5,01, 5,17, 5,25
+m   prof_before: 182 cyc 782 ins   prof_final: 136 cyc 451 ins
+q   prof_before: 165 cyc 573 ins   prof_final: 80 cyc 345 ins
+o   prof_before: 251 cyc 827 ins   prof_final: 146 cyc 526 ins
+p   prof_before: 73 cyc 390 ins   prof_final: 36 cyc 220 ins
+i   prof_before: 58,490 cyc 179,248 ins   prof_final: 25,050 cyc 106,566 ins
+n   prof_before: 55,865 cyc 212,060 ins   prof_final: 46,033 cyc 141,395 ins
+g   prof_before: 233,437 cyc 1,197,041 ins   prof_final: 275,832 cyc 713,529 ins
+k   prof_before: 474,946 cyc 1,632,023 ins   prof_final: 342,909 cyc 1,075,660 ins
+c   prof_before: 1,650,506 cyc 5,062,738 ins   prof_final: 911,886 cyc 3,101,308 ins
+v   prof_before: 811,454 cyc 3,431,653 ins   prof_final: 424,215 cyc 2,026,587 ins
+h   prof_before: 1,181,102 cyc 5,002,519 ins   prof_final: 770,101 cyc 2,912,470 ins
+ 10:01:55 up 5 days, 23:21,  9 users,  load average: 5,58, 5,29, 5,29
+m   prof_before: 194 cyc 782 ins   prof_final: 153 cyc 451 ins
+q   prof_before: 179 cyc 573 ins   prof_final: 105 cyc 345 ins
+o   prof_before: 231 cyc 827 ins   prof_final: 130 cyc 526 ins
+p   prof_before: 90 cyc 390 ins   prof_final: 61 cyc 220 ins
+i   prof_before: 46,630 cyc 179,248 ins   prof_final: 33,166 cyc 106,566 ins
+n   prof_before: 73,272 cyc 212,060 ins   prof_final: 47,483 cyc 141,395 ins
+g   prof_before: 284,942 cyc 1,197,041 ins   prof_final: 185,488 cyc 713,529 ins
+k   prof_before: 378,733 cyc 1,632,023 ins   prof_final: 224,736 cyc 1,075,660 ins
+c   prof_before: 1,438,413 cyc 5,062,738 ins   prof_final: 1,022,290 cyc 3,101,308 ins
+v   prof_before: 1,027,353 cyc 3,431,653 ins   prof_final: 416,757 cyc 2,026,587 ins
+h   prof_before: 1,593,290 cyc 5,002,519 ins   prof_final: 744,732 cyc 2,912,470 ins
+ 10:02:12 up 5 days, 23:21,  9 users,  load average: 5,92, 5,38, 5,31

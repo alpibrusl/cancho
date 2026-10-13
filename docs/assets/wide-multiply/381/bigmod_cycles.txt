@@ -1,0 +1,34 @@
+# gram; scratchpad bigmod_cyc.py: (cycles(rounds) - cycles(1)) / (rounds - 1), sudo perf stat cpu_core cycles/u and instructions/u, CPU 0, least of 5 a driver, the two builds alternating; bm_s1 = conformance drivers built by b2651fea's compiler (bigmod as on main), bm_s2 by 6b5299e5's before its slices, bm_final by 541a03cc's
+ 08:43:35 up 5 days, 22:03,  9 users,  load average: 3,61, 4,37, 3,85
+RSA-2048 verify (PKCS#1 v1.5, e = 65537) bm_s1: 1,031,218 cycles 5,363,155 instructions   bm_s2: 158,463 cycles 821,098 instructions   ratio 6.51   outputs identical
+RSA-4096 verify (PKCS#1 v1.5, e = 65537) bm_s1: 4,035,284 cycles 21,048,901 instructions   bm_s2: 602,093 cycles 3,004,894 instructions   ratio 6.70   outputs identical
+P-384 ECDSA verify                       bm_s1: 13,727,155 cycles 70,831,562 instructions   bm_s2: 3,021,311 cycles 17,084,313 instructions   ratio 4.54   outputs identical
+P-384 ecdh.public_key                    bm_s1: 11,216,517 cycles 60,821,390 instructions   bm_s2: 2,993,715 cycles 16,899,629 instructions   ratio 3.75   outputs identical
+P-384 ecdh.shared                        bm_s1: 11,222,580 cycles 60,836,942 instructions   bm_s2: 2,999,717 cycles 16,908,610 instructions   ratio 3.74   outputs identical
+ 08:43:45 up 5 days, 22:03,  9 users,  load average: 3,51, 4,33, 3,84
+ 10:02:39 up 5 days, 23:22,  9 users,  load average: 5,35, 5,31, 5,29
+RSA-2048 verify (PKCS#1 v1.5, e = 65537) bm_s1: 1,426,327 cycles 5,364,419 instructions   bm_final: 154,940 cycles 793,820 instructions   ratio 9.21   outputs identical
+RSA-4096 verify (PKCS#1 v1.5, e = 65537) bm_s1: 4,162,347 cycles 21,048,807 instructions   bm_final: 571,055 cycles 2,946,370 instructions   ratio 7.29   outputs identical
+P-384 ECDSA verify                       bm_s1: 13,341,161 cycles 68,962,612 instructions   bm_final: 2,707,114 cycles 14,104,211 instructions   ratio 4.93   outputs identical
+P-384 ecdh.public_key                    bm_s1: 12,209,672 cycles 60,821,396 instructions   bm_final: 3,793,428 cycles 14,538,962 instructions   ratio 3.22   outputs identical
+P-384 ecdh.shared                        bm_s1: 11,950,097 cycles 60,836,893 instructions   bm_final: 4,035,948 cycles 14,547,355 instructions   ratio 2.96   outputs identical
+ 10:02:59 up 5 days, 23:22,  9 users,  load average: 5,19, 5,27, 5,28
+RSA-2048 verify (PKCS#1 v1.5, e = 65537) bm_s1: 1,052,321 cycles 5,361,747 instructions   bm_final: 154,232 cycles 793,245 instructions   ratio 6.82   outputs identical
+RSA-4096 verify (PKCS#1 v1.5, e = 65537) bm_s1: 4,096,539 cycles 21,059,323 instructions   bm_final: 570,300 cycles 2,947,498 instructions   ratio 7.18   outputs identical
+P-384 ECDSA verify                       bm_s1: 14,334,195 cycles 67,444,212 instructions   bm_final: 2,608,260 cycles 13,800,469 instructions   ratio 5.50   outputs identical
+P-384 ecdh.public_key                    bm_s1: 14,149,128 cycles 60,821,394 instructions   bm_final: 3,217,849 cycles 14,538,962 instructions   ratio 4.40   outputs identical
+P-384 ecdh.shared                        bm_s1: 13,832,004 cycles 60,836,894 instructions   bm_final: 3,066,688 cycles 14,547,355 instructions   ratio 4.51   outputs identical
+ 10:03:16 up 5 days, 23:22,  9 users,  load average: 4,86, 5,19, 5,25
+ 10:03:29 up 5 days, 23:22,  9 users,  load average: 4,45, 5,08, 5,22
+RSA-2048 verify (PKCS#1 v1.5, e = 65537) bm_s1: 1,273,071 cycles 5,361,703 instructions   bm_final: 232,236 cycles 793,254 instructions   ratio 5.48   outputs identical
+RSA-4096 verify (PKCS#1 v1.5, e = 65537) bm_s1: 5,656,125 cycles 21,056,696 instructions   bm_final: 824,654 cycles 2,946,406 instructions   ratio 6.86   outputs identical
+P-384 ECDSA verify                       bm_s1: 18,501,116 cycles 69,196,236 instructions   bm_final: 3,508,453 cycles 14,150,842 instructions   ratio 5.27   outputs identical
+P-384 ecdh.public_key                    bm_s1: 16,388,608 cycles 60,821,395 instructions   bm_final: 3,298,006 cycles 14,538,962 instructions   ratio 4.97   outputs identical
+P-384 ecdh.shared                        bm_s1: 14,833,901 cycles 60,836,957 instructions   bm_final: 3,823,940 cycles 14,547,365 instructions   ratio 3.88   outputs identical
+ 10:03:50 up 5 days, 23:23,  9 users,  load average: 4,68, 5,10, 5,22
+RSA-2048 verify (PKCS#1 v1.5, e = 65537) bm_s1: 1,427,787 cycles 5,363,159 instructions   bm_final: 166,018 cycles 793,278 instructions   ratio 8.60   outputs identical
+RSA-4096 verify (PKCS#1 v1.5, e = 65537) bm_s1: 5,572,371 cycles 21,059,256 instructions   bm_final: 600,149 cycles 2,947,477 instructions   ratio 9.28   outputs identical
+P-384 ECDSA verify                       bm_s1: 19,229,008 cycles 68,845,919 instructions   bm_final: 3,833,189 cycles 14,080,858 instructions   ratio 5.02   outputs identical
+P-384 ecdh.public_key                    bm_s1: 16,654,552 cycles 60,821,395 instructions   bm_final: 3,896,304 cycles 14,538,963 instructions   ratio 4.27   outputs identical
+P-384 ecdh.shared                        bm_s1: 14,734,808 cycles 60,836,920 instructions   bm_final: 3,526,106 cycles 14,547,355 instructions   ratio 4.18   outputs identical
+ 10:04:12 up 5 days, 23:23,  9 users,  load average: 4,93, 5,12, 5,22

@@ -130,10 +130,12 @@ Every case runs through `tests/programs/ecdh_driver.cho` (`crates/cancho/tests/c
 | NIST CAVP KAS validity (static unified, Z only), P-256 and P-384, both backends | 60 | 36 pass cases give the IUT's public key and Z; each of 24 fail cases caught by the check its reason names |
 | the scalar's edges | 10 | 1 gives G, n − 1 gives −G, 0 and n refused, on both curves |
 | every refusal the driver reaches | 9 | each with its own tag |
-| `std.bigmod.pow_mod` at moduli of 30 to 330 bits, each a multiple of 30 (`tests/vectors/bigmod_powers.txt`), both backends | 220 | equal to Python's `pow`: the one place the reduction's carry limb is reached, which neither curve does |
+| `std.bigmod.pow_mod` at moduli of 30 to 330 bits, each a multiple of 30 (`tests/vectors/bigmod_powers.txt`), both backends | 220 | equal to Python's `pow`: the one place the reduction's carry limb is reached, which neither curve does. *#381: 180 more at 64 to 576 bits, each a multiple of 64, for the 64-bit limbs (400 in all), where P-384 itself now is* |
 | `scripts/ecdh_differential.py` against pyca/cryptography (OpenSSL 4.0.1) | 1,000 key pairs a curve, 4,200 checks | 0 differences |
 
-**Mutants:** `scripts/ecdh_mutants.py` runs 16 mutants, and **16 are killed**.
+**Mutants:** `scripts/ecdh_mutants.py` runs 16 mutants, and **16 are killed**. *#381: 17, all killed, on the 64-bit limbs; the
+select mutant re-anchored (it no longer applied after #397), P-384 points with a wrong first byte added to the evidence (P-256's
+are now refused in `std.p256_pt` and never reached `std.ecdh`'s check), and `modulus_bits`' unsigned top limb added.*
 - **In `ecdh.cho`:** the addition and doubling formulas, the windows, the table, the select, the point at infinity, the curve
   equation and the on-curve check, the scalar's range, the public key's y, and the point's first byte.
 - **In `bigmod.cho`:** the reduction's mask, its carry limb, and the add-back of a negative difference.

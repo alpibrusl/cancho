@@ -1,0 +1,57 @@
+### old round 1 2026-10-13T10:12:41+02:00  10:12:41 up 5 days, 23:32,  7 users,  load average: 3,08, 4,03, 4,75
+perf counters: user and kernel; load (3.0849609375, 4.025390625, 4.7490234375)
+-- round 1 of 2, load (3.0849609375, 4.025390625, 4.7490234375)
+server-full cancho tls_echo                     7208 handshakes     0.617 ms CPU    1.855 M cycles    8.092 M instructions
+server-full openssl s_server                    8846 handshakes     0.339 ms CPU    1.002 M cycles    1.781 M instructions
+server-full openssl oserv                       6803 handshakes     0.423 ms CPU    0.952 M cycles    1.763 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     1.349 ms CPU    3.195 M cycles   10.533 M instructions
+client-full openssl tconn                       8017 handshakes     0.735 ms CPU    1.645 M cycles    3.368 M instructions
+-- round 2 of 2, load (3.171875, 3.92724609375, 4.68505859375)
+server-full cancho tls_echo                     5302 handshakes     0.817 ms CPU    1.857 M cycles    8.090 M instructions
+server-full openssl s_server                    7483 handshakes     0.401 ms CPU    1.002 M cycles    1.779 M instructions
+server-full openssl oserv                       8979 handshakes     0.320 ms CPU    0.943 M cycles    1.762 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.916 ms CPU    2.718 M cycles   10.865 M instructions
+client-full openssl tconn                      10163 handshakes     0.577 ms CPU    1.640 M cycles    3.364 M instructions
+### final round 1 2026-10-13T10:13:53+02:00  10:13:53 up 5 days, 23:33,  7 users,  load average: 3,36, 3,89, 4,64
+perf counters: user and kernel; load (3.3583984375, 3.88818359375, 4.64208984375)
+-- round 1 of 2, load (3.3583984375, 3.88818359375, 4.64208984375)
+server-full cancho tls_echo                     7183 handshakes     0.549 ms CPU    1.485 M cycles    6.106 M instructions
+server-full openssl s_server                    7451 handshakes     0.404 ms CPU    1.004 M cycles    1.780 M instructions
+server-full openssl oserv                       7219 handshakes     0.399 ms CPU    0.951 M cycles    1.764 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.811 ms CPU    2.169 M cycles    7.906 M instructions
+client-full openssl tconn                       8708 handshakes     0.673 ms CPU    1.655 M cycles    3.368 M instructions
+-- round 2 of 2, load (3.2197265625, 3.78955078125, 4.580078125)
+server-full cancho tls_echo                     5364 handshakes     0.731 ms CPU    1.502 M cycles    6.109 M instructions
+server-full openssl s_server                    6464 handshakes     0.466 ms CPU    1.011 M cycles    1.780 M instructions
+server-full openssl oserv                       6965 handshakes     0.413 ms CPU    0.950 M cycles    1.762 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.837 ms CPU    2.130 M cycles    7.951 M instructions
+client-full openssl tconn                      10525 handshakes     0.557 ms CPU    1.627 M cycles    3.366 M instructions
+### old round 2 2026-10-13T10:15:06+02:00  10:15:06 up 5 days, 23:34,  7 users,  load average: 3,44, 3,78, 4,55
+perf counters: user and kernel; load (3.43603515625, 3.78173828125, 4.5458984375)
+-- round 1 of 2, load (3.43603515625, 3.78173828125, 4.5458984375)
+server-full cancho tls_echo                     6904 handshakes     0.637 ms CPU    1.852 M cycles    8.091 M instructions
+server-full openssl s_server                    8873 handshakes     0.337 ms CPU    1.004 M cycles    1.781 M instructions
+server-full openssl oserv                       9087 handshakes     0.316 ms CPU    0.943 M cycles    1.764 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.948 ms CPU    2.742 M cycles   10.915 M instructions
+client-full openssl tconn                      10451 handshakes     0.560 ms CPU    1.640 M cycles    3.365 M instructions
+-- round 2 of 2, load (3.27490234375, 3.708984375, 4.49267578125)
+server-full cancho tls_echo                     6714 handshakes     0.660 ms CPU    1.853 M cycles    8.091 M instructions
+server-full openssl s_server                    8383 handshakes     0.358 ms CPU    0.999 M cycles    1.779 M instructions
+server-full openssl oserv                       6492 handshakes     0.444 ms CPU    0.951 M cycles    1.763 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     1.152 ms CPU    2.673 M cycles   10.853 M instructions
+client-full openssl tconn                       8301 handshakes     0.707 ms CPU    1.638 M cycles    3.368 M instructions
+### final round 2 2026-10-13T10:16:18+02:00  10:16:18 up 5 days, 23:35,  7 users,  load average: 3,60, 3,73, 4,47
+perf counters: user and kernel; load (3.59619140625, 3.72802734375, 4.4677734375)
+-- round 1 of 2, load (3.59619140625, 3.72802734375, 4.4677734375)
+server-full cancho tls_echo                     6320 handshakes     0.619 ms CPU    1.486 M cycles    6.106 M instructions
+server-full openssl s_server                    7126 handshakes     0.421 ms CPU    1.011 M cycles    1.781 M instructions
+server-full openssl oserv                       7314 handshakes     0.392 ms CPU    0.953 M cycles    1.765 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.794 ms CPU    2.167 M cycles    7.938 M instructions
+client-full openssl tconn                      10187 handshakes     0.575 ms CPU    1.644 M cycles    3.366 M instructions
+-- round 2 of 2, load (3.5, 3.6962890625, 4.4248046875)
+server-full cancho tls_echo                     8067 handshakes     0.495 ms CPU    1.483 M cycles    6.107 M instructions
+server-full openssl s_server                    8695 handshakes     0.344 ms CPU    1.002 M cycles    1.781 M instructions
+server-full openssl oserv                       8401 handshakes     0.342 ms CPU    0.944 M cycles    1.765 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.765 ms CPU    2.192 M cycles    7.947 M instructions
+client-full openssl tconn                      10090 handshakes     0.581 ms CPU    1.647 M cycles    3.365 M instructions
+### end 2026-10-13T10:17:29+02:00  10:17:29 up 5 days, 23:36,  7 users,  load average: 3,32, 3,63, 4,38

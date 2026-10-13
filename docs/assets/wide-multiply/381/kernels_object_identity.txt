@@ -1,0 +1,27 @@
+# The P-256 kernels in the x86-64 objects of tests/programs/ecdh_timing.cho and ecdsa_sign_timing.cho, built by the compiler at b2651fea (timed, raw_*.txt) and at 541a03cc (the shared accumulator); objdump, addresses and symbols normalised; gram, 2026-10-13T10:00:45+02:00
+ecdh_timing: p256_kernels.mul_p identical, 443 instructions
+ecdh_timing: p256_kernels.sqr_p identical, 336 instructions
+ecdh_timing: p256_kernels.mul_n identical, 519 instructions
+ecdh_timing: p256_kernels.sqr_n identical, 413 instructions
+ecdh_timing: p256_kernels.add identical, 103 instructions
+ecdh_timing: p256_kernels.sub_2 identical, 113 instructions
+ecdh_timing: p256_kernels.sub_4 identical, 113 instructions
+ecdh_timing: p256_kernels.sub_8 identical, 113 instructions
+ecdh_timing: p256_kernels.sub_16 identical, 113 instructions
+ecdh_timing: p256_kernels.sub_32 identical, 113 instructions
+ecdh_timing: p256_kernels.sub_64 not in this object
+ecdh_timing: p256_kernels.canon_p identical, 319 instructions
+ecdh_timing: p256_kernels.canon_n not in this object
+sign_timing: p256_kernels.mul_p identical, 443 instructions
+sign_timing: p256_kernels.sqr_p identical, 336 instructions
+sign_timing: p256_kernels.mul_n identical, 519 instructions
+sign_timing: p256_kernels.sqr_n identical, 413 instructions
+sign_timing: p256_kernels.add identical, 103 instructions
+sign_timing: p256_kernels.sub_2 identical, 113 instructions
+sign_timing: p256_kernels.sub_4 identical, 113 instructions
+sign_timing: p256_kernels.sub_8 not in this object
+sign_timing: p256_kernels.sub_16 identical, 113 instructions
+sign_timing: p256_kernels.sub_32 identical, 113 instructions
+sign_timing: p256_kernels.sub_64 not in this object
+sign_timing: p256_kernels.canon_p identical, 319 instructions
+sign_timing: p256_kernels.canon_n identical, 337 instructions

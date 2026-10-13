@@ -1,0 +1,10 @@
+# gram; Poly1305 alone over 16 bytes (m), 1 KiB (k), 16 KiB (x): a scratch driver chaining chacha20.poly1305, by main's compiler (pb_old) and 541a03cc's (pb_final); sudo perf stat, CPU 0, least of 5, alternating. The first line: the chain's last tag byte for 1,000 rounds, each op, both builds.
+25 25 249 249 250 250 
+ 10:01:04 up 5 days, 23:20,  9 users,  load average: 4,57, 5,12, 5,23
+m bin/pb_old: 209 cycles 712 instructions   bin/pb_final: 186 cycles 598 instructions
+k bin/pb_old: 5,912 cycles 17,470 instructions   bin/pb_final: 2,577 cycles 7,150 instructions
+x bin/pb_old: 90,234 cycles 272,830 instructions   bin/pb_final: 39,093 cycles 106,990 instructions
+m bin/pb_old: 222 cycles 712 instructions   bin/pb_final: 189 cycles 598 instructions
+k bin/pb_old: 5,810 cycles 17,470 instructions   bin/pb_final: 2,577 cycles 7,150 instructions
+x bin/pb_old: 89,605 cycles 272,830 instructions   bin/pb_final: 39,039 cycles 106,990 instructions
+ 10:01:15 up 5 days, 23:20,  9 users,  load average: 4,71, 5,13, 5,24

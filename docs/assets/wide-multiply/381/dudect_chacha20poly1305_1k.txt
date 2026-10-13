@@ -1,0 +1,9 @@
+# commit 541a03cc (branch p256-wide-multiply); machine gram, Intel Core i7-1260P, Linux 7.0.0-38-generic, x86-64; LLVM backend
+# taskset -c 0-1 (one physical core, both threads); governor of cpu0/cpu1: powersave/powersave
+# start: 2026-10-13T10:08:39+02:00;  10:08:39 up 5 days, 23:28,  7 users,  load average: 3,45, 4,82, 5,14
+# python3 scripts/gcm_timing.py gcm_timing 1000000 --chacha20 --size 1024
+seal, key   1000000 samples, median 19165 cycles, max |t| = 2.11
+seal, data  1000000 samples, median 20022 cycles, max |t| = 2.18
+open, data  1000000 samples, median 3567 cycles, max |t| = 2.31
+open, tag   1000000 samples, median 2433 cycles, max |t| = 2.08
+# end: 2026-10-13T10:11:36+02:00;  10:11:36 up 5 days, 23:31,  7 users,  load average: 3,67, 4,35, 4,90
