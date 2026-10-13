@@ -258,6 +258,27 @@ pub enum Builtin {
     /// earlier ones were (`docs/gcm-wide.md` §5). Only where
     /// `hw_aes_gcm()` is true; elsewhere it traps.
     GcmTagDiff,
+    /// `hw_sha256() -> [] bool` — whether this CPU has the SHA-256
+    /// instructions the two builtins below use (`docs/sha256-builtin.md`
+    /// §3): SHA, SSSE3 and SSE4.1 on x86-64, SHA2 on aarch64. The CPU is
+    /// read once. False on Cranelift and WebAssembly, which have no such
+    /// instructions. Edition 9.
+    HwSha256,
+    /// `sha256_blocks(state: &![int], data: &[byte]) -> [] int` — SHA-256's
+    /// compression function (FIPS 180-4 §6.2.2) over every 64-byte block of
+    /// `data`, in order, into the eight 32-bit words `state` holds (each in
+    /// an `int`, its low 32 bits read, the result written in `0..2^32`).
+    /// `state` is 8 words and `data` a multiple of 64 bytes (none is
+    /// allowed), or it traps. Answers 0. Only where `hw_sha256()` is true;
+    /// elsewhere it traps. Edition 9.
+    Sha256Blocks,
+    /// `sha256_block_words(state: &![int], block: &[int]) -> [] int` — the
+    /// same compression of one block given as its sixteen big-endian
+    /// 32-bit words (the low 32 bits of each `int`), which is how
+    /// `std.crypto` holds a partial block between calls (§3). `state` is 8
+    /// words and `block` 16, or it traps. Answers 0. Only where
+    /// `hw_sha256()` is true; elsewhere it traps. Edition 9.
+    Sha256BlockWords,
     /// `byte_of(n: int) -> [] byte` — narrow an integer to a byte, or trap.
     ///
     /// `docs/strings.md` §2: it traps outside 0..255 rather than
@@ -897,6 +918,9 @@ impl Builtin {
         Builtin::SubBorrow,
         Builtin::GcmTag,
         Builtin::GcmTagDiff,
+        Builtin::HwSha256,
+        Builtin::Sha256Blocks,
+        Builtin::Sha256BlockWords,
         Builtin::Len,
         Builtin::ByteOf,
         Builtin::IntOf,
@@ -1059,6 +1083,9 @@ impl Builtin {
             Builtin::SubBorrow => "sub_borrow",
             Builtin::GcmTag => "gcm_tag",
             Builtin::GcmTagDiff => "gcm_tag_diff",
+            Builtin::HwSha256 => "hw_sha256",
+            Builtin::Sha256Blocks => "sha256_blocks",
+            Builtin::Sha256BlockWords => "sha256_block_words",
             Builtin::Len => "len",
             Builtin::ByteOf => "byte_of",
             Builtin::IntOf => "int_of",
@@ -1333,6 +1360,10 @@ impl Builtin {
             // closed (`docs/editions.md` §6.4), and these are names a program
             // may already declare for itself.
             Builtin::AesCtr32 | Builtin::GhashPowers | Builtin::GcmTag | Builtin::GcmTagDiff => 9,
+            // `docs/sha256-builtin.md` §6: edition 9, the latest open one, for
+            // the same reason -- `sha256_blocks` is a name a program may
+            // already declare for itself.
+            Builtin::HwSha256 | Builtin::Sha256Blocks | Builtin::Sha256BlockWords => 9,
             // `docs/floating-point.md` §4.1: edition 7, the latest -- the
             // first caller was a table reader that decoded doubles through
             // `ldexp`; `float_of_bits` is a name a program may declare.
@@ -1504,6 +1535,8 @@ impl Builtin {
             // The key's, the table's, the nonce's, the associated data's,
             // the text's and the tag's (or the expected tag's).
             Builtin::GcmTag | Builtin::GcmTagDiff => 6,
+            // The state's and the data's (or the block's).
+            Builtin::Sha256Blocks | Builtin::Sha256BlockWords => 2,
             _ => 0,
         }
     }

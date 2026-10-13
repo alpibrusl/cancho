@@ -662,7 +662,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     // never has them here and the two block builtins, which a
                     // program reaches only after `hw_aes_gcm()` answered true,
                     // trap as `trap()` does.
-                    Callee::Builtin(Builtin::HwAesGcm) => {
+                    // `docs/sha256-builtin.md` §5: nor the SHA-256 ones, so
+                    // the same answer for `hw_sha256()` and its two builtins.
+                    Callee::Builtin(Builtin::HwAesGcm | Builtin::HwSha256) => {
                         vec![self.builder.ins().iconst(types::I8, 0)]
                     }
                     Callee::Builtin(
@@ -671,7 +673,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         | Builtin::GhashPowers
                         | Builtin::GhashUpdate
                         | Builtin::GcmTag
-                        | Builtin::GcmTagDiff,
+                        | Builtin::GcmTagDiff
+                        | Builtin::Sha256Blocks
+                        | Builtin::Sha256BlockWords,
                     ) => {
                         self.builder.ins().trap(TrapCode::unwrap_user(1));
                         let dead = self.builder.create_block();

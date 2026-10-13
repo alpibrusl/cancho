@@ -181,4 +181,63 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  call void {call}\n"));
         Ok(vec![LValue::Const(0)])
     }
+
+    /// `docs/sha256-builtin.md` §4: whether the CPU has the SHA-256
+    /// instructions; false on a target without them.
+    pub(crate) fn hw_sha256(&mut self) -> Result<Vec<LValue>, String> {
+        if !crate::crypto::hardware_target(self.triple) {
+            return Ok(vec![LValue::Reg(LKind::I8.zero().to_owned())]);
+        }
+        let answer = self.fresh();
+        self.out.push_str(&format!("  {answer} = call i8 @cancho_hw_sha256()\n"));
+        Ok(vec![LValue::Reg(answer)])
+    }
+
+    /// `[state ptr, len, data ptr, len]`: the state is 8 words and the
+    /// data a whole number of 64-byte blocks, or it traps.
+    pub(crate) fn sha256_blocks(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 4 {
+            return Err(format!("`sha256_blocks` needs 4 leaves but {} were given", args.len()));
+        }
+        if !crate::crypto::hardware_target(self.triple) {
+            self.trap_if("true")?;
+            return Ok(vec![LValue::Const(0)]);
+        }
+        let (state, state_len) = (operand(&args[0]), operand(&args[1]));
+        let (data, data_len) = (operand(&args[2]), operand(&args[3]));
+        self.check_len(&state_len, 8)?;
+        let rest = self.fresh();
+        self.out.push_str(&format!("  {rest} = and i64 {data_len}, 63\n"));
+        let ragged = self.fresh();
+        self.out.push_str(&format!("  {ragged} = icmp ne i64 {rest}, 0\n"));
+        self.trap_if(&ragged)?;
+        let blocks = self.fresh();
+        self.out.push_str(&format!("  {blocks} = lshr i64 {data_len}, 6\n"));
+        self.out.push_str(&format!(
+            "  call void @cancho_sha256_blocks(ptr {state}, ptr {data}, i64 {blocks})\n"
+        ));
+        Ok(vec![LValue::Const(0)])
+    }
+
+    /// `[state ptr, len, block ptr, len]`: 8 words and 16, or it traps.
+    pub(crate) fn sha256_block_words(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 4 {
+            return Err(format!(
+                "`sha256_block_words` needs 4 leaves but {} were given",
+                args.len()
+            ));
+        }
+        if !crate::crypto::hardware_target(self.triple) {
+            self.trap_if("true")?;
+            return Ok(vec![LValue::Const(0)]);
+        }
+        let (state, state_len) = (operand(&args[0]), operand(&args[1]));
+        let (block, block_len) = (operand(&args[2]), operand(&args[3]));
+        self.check_len(&state_len, 8)?;
+        self.check_len(&block_len, 16)?;
+        self.out.push_str(&format!(
+            "  call void @cancho_sha256_block_words(ptr {state}, ptr {block})\n"
+        ));
+        Ok(vec![LValue::Const(0)])
+    }
 }

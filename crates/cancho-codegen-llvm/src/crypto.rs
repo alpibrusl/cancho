@@ -11,13 +11,15 @@
 //!
 //! The AES part is `aes.rs` (one block, and counter mode eight blocks at a
 //! time) and the GHASH part `ghash.rs` (the powers of H, and the tag with
-//! one reduction per eight blocks). Every vector here is `<2 x i64>`, the
+//! one reduction per eight blocks). SHA-256's compression is `sha256.rs`
+//! (`docs/sha256-builtin.md` §4), with its own CPU probe, `hw_sha256`. Every vector here is `<2 x i64>`, the
 //! type the x86 intrinsics take; the aarch64 ones are bitcast around each
 //! call, which costs nothing. Every shift is by a constant, every loop
 //! bound and every branch is on a length, and a length is public.
 
 mod aes;
 mod ghash;
+mod sha256;
 #[cfg(test)]
 mod tests;
 
@@ -131,11 +133,29 @@ pub(crate) fn definitions(triple: &Triple, text: &str) -> String {
     if tag || diff {
         out.push_str(&ghash::tag(isa, tag, diff));
     }
-    out.push_str(&declarations(
-        isa,
-        block || ctr || powers || tag || diff,
-        powers || tag || diff || update,
-    ));
+    // `docs/sha256-builtin.md` §4.
+    let sha = sha256::ShaIsa::of(triple);
+    if text.contains("@cancho_hw_sha256()") {
+        out.push_str(&sha256::hw_sha256(triple));
+    }
+    let sha_blocks = text.contains("@cancho_sha256_blocks(");
+    let sha_words = text.contains("@cancho_sha256_block_words(");
+    if sha_blocks || sha_words {
+        out.push_str(&sha256::rounds(sha));
+        out.push_str(&sha256::declarations(sha));
+    }
+    if sha_blocks {
+        out.push_str(&sha256::blocks(sha));
+    }
+    if sha_words {
+        out.push_str(&sha256::block_words(sha));
+    }
+    let aes = block || ctr || powers || tag || diff;
+    out.push_str(&declarations(isa, aes, powers || tag || diff || update));
+    // Counter mode and SHA-256's byte loads both swap bytes in 32-bit lanes.
+    if aes || sha_blocks {
+        out.push_str("declare <4 x i32> @llvm.bswap.v4i32(<4 x i32>)\n");
+    }
     out
 }
 
@@ -150,7 +170,6 @@ fn declarations(isa: Isa, aes: bool, ghash: bool) -> String {
             out.push_str("declare <16 x i8> @llvm.aarch64.crypto.aese(<16 x i8>, <16 x i8>)\n");
             out.push_str("declare <16 x i8> @llvm.aarch64.crypto.aesmc(<16 x i8>)\n");
         }
-        out.push_str("declare <4 x i32> @llvm.bswap.v4i32(<4 x i32>)\n");
     }
     if ghash {
         if isa.x86 {

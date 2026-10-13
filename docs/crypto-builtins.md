@@ -287,4 +287,5 @@ the LLVM lowering, then the `std` change and the speed measurement against OpenS
   with their lowering, and the `std` change.
 - **ChaCha20 SIMD** (`docs/chacha20.md` §6).
 - **AES-CBC, AES-CCM or any mode but GCM.** The block builtin would serve them; nothing here uses it.
-- **SHA instructions** (`SHA256H`, `SHA256RNDS2`). The same shape. Whether they matter has not been measured.
+- **SHA instructions** (`SHA256H`, `SHA256RNDS2`). The same shape. Whether they matter has not been measured. *Measured and
+  built in #445: [`sha256-builtin.md`](sha256-builtin.md), `hw_sha256`, `sha256_blocks` and `sha256_block_words`.*
