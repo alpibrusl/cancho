@@ -147,9 +147,9 @@ pub fn const_region() -> [] int {
 }
 
 // What the instances of generic functions take in the state (`instances.cho`): a header of 16, four slots for each
-// of 1,024 instances, and the 65,536 slots their type arguments are written in.
+// of 1,024 instances, and the 65,536 slots their type arguments are written in; then 256 slots of scratch for the value of a float literal (`floats.cho`).
 pub fn inst_region() -> [] int {
-    return 16 + 4096 + 65536;
+    return 16 + 4096 + 65536 + 256;
 }
 
 pub fn emit_per() -> [] int {

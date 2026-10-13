@@ -1,0 +1,238 @@
+module selfhost.floatcode;
+
+// floatcode.cho -- the code for the operations on `float` and `f32`: arithmetic, comparison, negation, and the
+// thirteen builtins that convert and reinterpret them.
+
+import selfhost.emit;
+
+// ------------------------------------------------------------------------- floats ---
+//
+// `+ - * /` on `float` and `f32` are the IEEE instructions, never checked; a comparison is the ordered
+// predicate, false when either side is NaN, except `!=`, which is true then. `-x` flips the sign bit.
+
+pub fn float_op[&s](st: &!s [int], op: int, ty: int, ak: bool, av: int, ar: int, bk: bool, bv: int, br: int) -> [] int {
+    let n = emit.start(st);
+    if op == 13 {
+        emit.str(st, "fadd ");
+    } else if op == 14 {
+        emit.str(st, "fsub ");
+    } else if op == 15 {
+        emit.str(st, "fmul ");
+    } else {
+        emit.str(st, "fdiv ");
+    }
+    emit.llvm_type(st, ty);
+    emit.str(st, " ");
+    emit.operand(st, ty, ak, av, ar);
+    emit.str(st, ", ");
+    emit.operand(st, ty, bk, bv, br);
+    emit.str(st, "\n");
+    return n;
+}
+
+pub fn float_compare[&s](st: &!s [int], op: int, ty: int, ak: bool, av: int, ar: int, bk: bool, bv: int, br: int) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "fcmp ");
+    if op == 2 {
+        emit.str(st, "oeq");
+    } else if op == 3 {
+        emit.str(st, "une");
+    } else if op == 4 {
+        emit.str(st, "olt");
+    } else if op == 5 {
+        emit.str(st, "ole");
+    } else if op == 6 {
+        emit.str(st, "ogt");
+    } else {
+        emit.str(st, "oge");
+    }
+    emit.str(st, " ");
+    emit.llvm_type(st, ty);
+    emit.str(st, " ");
+    emit.operand(st, ty, ak, av, ar);
+    emit.str(st, ", ");
+    emit.operand(st, ty, bk, bv, br);
+    emit.str(st, "\n");
+    return n;
+}
+
+pub fn float_negate[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "fneg ");
+    emit.llvm_type(st, ty);
+    emit.str(st, " ");
+    emit.operand(st, ty, known, value, reg);
+    emit.str(st, "\n");
+    return n;
+}
+
+// `fcmp uno` of a float with itself: true for a NaN. `ty` is 3 or 4.
+fn is_unordered[&s](st: &!s [int], ty: int, x: int) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "fcmp uno ");
+    emit.llvm_type(st, ty);
+    emit.str(st, " ");
+    emit.temp(st, x);
+    emit.str(st, ", ");
+    emit.temp(st, x);
+    emit.str(st, "\n");
+    return n;
+}
+
+// `truncate` and `int_of_f32`: toward zero, trapping on NaN and on 2^63 and beyond either way, since `fptosi`
+// is undefined there.
+fn float_to_int[&s](st: &!s [int], ty: int, x: int) -> [] int {
+    emit.trap_if(st, is_unordered(st, ty, x));
+    let high = emit.start(st);
+    emit.str(st, "fcmp oge ");
+    emit.llvm_type(st, ty);
+    emit.str(st, " ");
+    emit.temp(st, x);
+    emit.str(st, ", 0x43E0000000000000\n");
+    emit.trap_if(st, high);
+    let low = emit.start(st);
+    emit.str(st, "fcmp ole ");
+    emit.llvm_type(st, ty);
+    emit.str(st, " ");
+    emit.temp(st, x);
+    emit.str(st, ", 0xC3E0000000000000\n");
+    emit.trap_if(st, low);
+    let n = emit.start(st);
+    emit.str(st, "fptosi ");
+    emit.llvm_type(st, ty);
+    emit.str(st, " ");
+    emit.temp(st, x);
+    emit.str(st, " to i64\n");
+    return n;
+}
+
+// The float builtins by number: 18 `float_of`, 19 `truncate`, 20 `bits_of`, 21 `float_of_bits`, 22 `is_nan`,
+// 23 `sqrt`, 24 `f32_of`, 25 `float_of32`, 26 `bits_of32`, 27 `f32_of_bits`, 28 `sqrt32`, 29 `f32_of_int`,
+// 30 `int_of_f32`. One argument each.
+pub fn float_builtin[&s](st: &!s [int], which: int, known: bool, value: int, reg: int) -> [] int {
+    // The argument is a temporary of its own, so that it is named twice where it must be.
+    var from = 1;
+    if which == 19 || which == 20 || which == 22 || which == 23 || which == 24 {
+        from = 3;
+    } else if which >= 25 && which != 27 && which != 29 {
+        from = 4;
+    }
+    if from == 1 {
+        // An integer in: `float_of`, `float_of_bits`, `f32_of_bits`, `f32_of_int`.
+        let n = emit.start(st);
+        if which == 18 {
+            emit.str(st, "sitofp i64 ");
+            emit.operand(st, 1, known, value, reg);
+            emit.str(st, " to double\n");
+        } else if which == 21 {
+            emit.str(st, "bitcast i64 ");
+            emit.operand(st, 1, known, value, reg);
+            emit.str(st, " to double\n");
+        } else if which == 29 {
+            emit.str(st, "sitofp i64 ");
+            emit.operand(st, 1, known, value, reg);
+            emit.str(st, " to float\n");
+        } else {
+            emit.str(st, "trunc i64 ");
+            emit.operand(st, 1, known, value, reg);
+            emit.str(st, " to i32\n");
+            let r = emit.start(st);
+            emit.str(st, "bitcast i32 ");
+            emit.temp(st, n);
+            emit.str(st, " to float\n");
+            return r;
+        }
+        return n;
+    }
+    // A float in. A constant is taken into a temporary, so that every use below names it the same way.
+    var x = reg;
+    if known {
+        x = emit.start(st);
+        emit.str(st, "bitcast i64 ");
+        emit.int(st, value);
+        if from == 3 {
+            emit.str(st, " to double\n");
+        } else {
+            // The widened bits of an `f32` constant: narrow it again.
+            emit.str(st, " to double\n");
+            let wide = x;
+            x = emit.start(st);
+            emit.str(st, "fptrunc double ");
+            emit.temp(st, wide);
+            emit.str(st, " to float\n");
+        }
+    }
+    if which == 19 {
+        return float_to_int(st, 3, x);
+    }
+    if which == 30 {
+        return float_to_int(st, 4, x);
+    }
+    if which == 20 || which == 26 {
+        var wide = "i64";
+        var canonical = "9221120237041090560";
+        var back = "double";
+        if which == 26 {
+            wide = "i32";
+            canonical = "2143289344";
+            back = "float";
+        }
+        let raw = emit.start(st);
+        emit.str(st, "bitcast ");
+        emit.str(st, back);
+        emit.str(st, " ");
+        emit.temp(st, x);
+        emit.str(st, " to ");
+        emit.str(st, wide);
+        emit.str(st, "\n");
+        let nan = is_unordered(st, from, x);
+        let bits = emit.start(st);
+        emit.str(st, "select i1 ");
+        emit.temp(st, nan);
+        emit.str(st, ", ");
+        emit.str(st, wide);
+        emit.str(st, " ");
+        emit.str(st, canonical);
+        emit.str(st, ", ");
+        emit.str(st, wide);
+        emit.str(st, " ");
+        emit.temp(st, raw);
+        emit.str(st, "\n");
+        if which == 20 {
+            return bits;
+        }
+        let widened = emit.start(st);
+        emit.str(st, "zext i32 ");
+        emit.temp(st, bits);
+        emit.str(st, " to i64\n");
+        return widened;
+    }
+    if which == 22 {
+        let n = emit.start(st);
+        emit.str(st, "fcmp une double ");
+        emit.temp(st, x);
+        emit.str(st, ", ");
+        emit.temp(st, x);
+        emit.str(st, "\n");
+        return n;
+    }
+    let n = emit.start(st);
+    if which == 23 {
+        emit.str(st, "call double @llvm.sqrt.f64(double ");
+        emit.temp(st, x);
+        emit.str(st, ")\n");
+    } else if which == 28 {
+        emit.str(st, "call float @llvm.sqrt.f32(float ");
+        emit.temp(st, x);
+        emit.str(st, ")\n");
+    } else if which == 24 {
+        emit.str(st, "fptrunc double ");
+        emit.temp(st, x);
+        emit.str(st, " to float\n");
+    } else {
+        emit.str(st, "fpext float ");
+        emit.temp(st, x);
+        emit.str(st, " to double\n");
+    }
+    return n;
+}

@@ -40,6 +40,8 @@ fn own_source(root_module: &str) -> String {
         "emit",
         "consteval",
         "instances",
+        "floats",
+        "floatcode",
         "exprs",
         "body",
         "listing",

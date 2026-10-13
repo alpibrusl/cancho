@@ -12,6 +12,8 @@ import selfhost.rules;
 import selfhost.pass1;
 import selfhost.types;
 import selfhost.emit;
+import selfhost.floats;
+import selfhost.floatcode;
 import selfhost.instances;
 import selfhost.scope;
 import selfhost.prims;
@@ -211,16 +213,24 @@ pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         return constant(ast.get(st, id, 4));
     }
     if ast.is_kind(st, id, kinds.NK::EFloat) {
-        if ast.get(st, id, 4) == 0 {
-            return plain(3);
+        var width = 3;
+        if ast.get(st, id, 4) != 0 {
+            width = 4;
         }
         // The `f32` suffix is edition 6's, and refused here and not in the parser, which does not
         // know the edition.
-        if st[23] < 6 {
+        if width == 4 && st[23] < 6 {
             ast.fail(st, rules.r_literal_form(), from, to);
             return nothing();
         }
-        return plain(4);
+        if emit.on(st) {
+            let bits = floats.literal_bits(st, text, from, to, width == 4);
+            if !floats.literal_ok(st) {
+                return skip(st, from, to);
+            }
+            return Ex { ty: width, known: true, value: bits, reg: 0 - 1, reg2: 0 - 1 };
+        }
+        return plain(width);
     }
     if ast.is_kind(st, id, kinds.NK::EBool) {
         if emit.on(st) {
@@ -476,7 +486,7 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] E
     }
     let result = types.make_ref(st, true, home, types.make_slice(st, f.ty));
     if emit.on(st) {
-        if f.ty != 1 && f.ty != 2 && f.ty != 5 {
+        if !types.is_plain(f.ty) {
             return skip(st, from, to);
         }
         var p = 0;
@@ -732,7 +742,7 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
     if !ast.ok(st) {
         return nothing();
     }
-    if f.ty != 1 && f.ty != 2 && f.ty != 5 {
+    if !types.is_plain(f.ty) {
         return skip(st, from, to);
     }
     effects.perform_named(st, "heap");
@@ -1141,7 +1151,7 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
 // The expressions the code can be written for so far: whole numbers and booleans, names, the
 // operators, and calls.
 pub fn writes_code[&s](st: &!s [int], id: int) -> [] bool {
-    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) || ast.is_kind(st, id, kinds.NK::EAllocSlice) || ast.is_kind(st, id, kinds.NK::ESlice) || ast.is_kind(st, id, kinds.NK::EAlloc) || ast.is_kind(st, id, kinds.NK::ETuple) || ast.is_kind(st, id, kinds.NK::ETupleField) {
+    if ast.is_kind(st, id, kinds.NK::EInt) || ast.is_kind(st, id, kinds.NK::EFloat) || ast.is_kind(st, id, kinds.NK::EBool) || ast.is_kind(st, id, kinds.NK::EName) || ast.is_kind(st, id, kinds.NK::ECall) || ast.is_kind(st, id, kinds.NK::EStr) || ast.is_kind(st, id, kinds.NK::EIndex) || ast.is_kind(st, id, kinds.NK::EStructLit) || ast.is_kind(st, id, kinds.NK::EField) || ast.is_kind(st, id, kinds.NK::EVariant) || ast.is_kind(st, id, kinds.NK::EAllocSlice) || ast.is_kind(st, id, kinds.NK::ESlice) || ast.is_kind(st, id, kinds.NK::EAlloc) || ast.is_kind(st, id, kinds.NK::ETuple) || ast.is_kind(st, id, kinds.NK::ETupleField) {
         return true;
     }
     if ast.is_kind(st, id, kinds.NK::EUnary) {
@@ -1181,7 +1191,7 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         if emit.on(st) {
             let element = types.element_of(st, ty);
-            if element != 1 && element != 2 && element != 5 {
+            if !types.is_plain(element) {
                 return skip(st, from, to);
             }
             let p = emit.static_load(st, table);
@@ -1247,7 +1257,7 @@ pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         }
         if emit.on(st) {
             let inner = types.ref_inner(st, operand.ty);
-            if inner != 1 && inner != 2 && inner != 5 && !scope.aggregate_codable(st, inner) {
+            if !types.is_plain(inner) && !scope.aggregate_codable(st, inner) {
                 return skip(st, from, to);
             }
             return in_reg(inner, emit.load_through(st, inner, operand.reg));
@@ -1265,6 +1275,9 @@ pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
                 return nothing();
             }
             return constant(0 - operand.value);
+        }
+        if emit.on(st) && operand.ty != 1 {
+            return in_reg(operand.ty, floatcode.float_negate(st, operand.ty, operand.known, operand.value, operand.reg));
         }
         if emit.on(st) {
             return in_reg(operand.ty, emit.checked(st, 1, true, 0, 0 - 1, operand.known, operand.value, operand.reg));
@@ -1376,6 +1389,12 @@ pub fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
 
 // The code for `l op r` on two operands of type `ty`, answering the temporary of the result.
 pub fn binary_code[&s](st: &!s [int], op: int, ty: int, l: Ex, r: Ex) -> [] int {
+    if ty == 3 || ty == 4 {
+        if op >= 13 {
+            return floatcode.float_op(st, op, ty, l.known, l.value, l.reg, r.known, r.value, r.reg);
+        }
+        return floatcode.float_compare(st, op, ty, l.known, l.value, l.reg, r.known, r.value, r.reg);
+    }
     if op >= 13 && op <= 15 {
         return emit.checked(st, op - 13, l.known, l.value, l.reg, r.known, r.value, r.reg);
     }
@@ -1414,7 +1433,7 @@ pub fn index_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         scope.expect(st, text, 1, i.ty, ast.nstart(st, index), ast.nend(st, index));
     }
     if emit.on(st) && ast.ok(st) {
-        if e != 1 && e != 2 && e != 5 {
+        if !types.is_plain(e) {
             return skip(st, ast.nstart(st, id), ast.nend(st, id));
         }
         let address = emit.element_address(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, i.known, i.value, i.reg);
@@ -1452,7 +1471,7 @@ pub fn subslice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     let narrowed = types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), types.make_slice(st, e));
     if emit.on(st) {
-        if e != 1 && e != 2 && e != 5 {
+        if !types.is_plain(e) {
             return skip(st, ast.nstart(st, id), ast.nend(st, id));
         }
         let at = emit.subslice(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, a.known, a.value, a.reg, z.known, z.value, z.reg);
@@ -1490,6 +1509,50 @@ pub fn len_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
 // call to a function does, its region parameters made variables the arguments solve. A builtin the
 // lowering checks by hand, one that performs an effect (rows are not checked yet) and one with a
 // type the checker cannot hold are `SKIP`; and every builtin is while code is being written.
+// The number of the float builtin spelled at `from` to `to` of the text (18 to 30, see `emit.float_builtin`), or 0.
+fn float_builtin_number[&x](text: &x [byte], from: int, to: int) -> [] int {
+    if lc.spells(text, from, to, "float_of") {
+        return 18;
+    }
+    if lc.spells(text, from, to, "truncate") {
+        return 19;
+    }
+    if lc.spells(text, from, to, "bits_of") {
+        return 20;
+    }
+    if lc.spells(text, from, to, "float_of_bits") {
+        return 21;
+    }
+    if lc.spells(text, from, to, "is_nan") {
+        return 22;
+    }
+    if lc.spells(text, from, to, "sqrt") {
+        return 23;
+    }
+    if lc.spells(text, from, to, "f32_of") {
+        return 24;
+    }
+    if lc.spells(text, from, to, "float_of32") {
+        return 25;
+    }
+    if lc.spells(text, from, to, "bits_of32") {
+        return 26;
+    }
+    if lc.spells(text, from, to, "f32_of_bits") {
+        return 27;
+    }
+    if lc.spells(text, from, to, "sqrt32") {
+        return 28;
+    }
+    if lc.spells(text, from, to, "f32_of_int") {
+        return 29;
+    }
+    if lc.spells(text, from, to, "int_of_f32") {
+        return 30;
+    }
+    return 0;
+}
+
 pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> [] Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
@@ -1535,6 +1598,8 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
             written = 16;
         } else if lc.spells(text, ast.tstart(st, at), ast.tend(st, at), "child_wait") {
             written = 17;
+        } else if float_builtin_number(text, ast.tstart(st, at), ast.tend(st, at)) > 0 {
+            written = float_builtin_number(text, ast.tstart(st, at), ast.tend(st, at));
         } else {
             return skip(st, from, to);
         }
@@ -1566,7 +1631,7 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
                 skip(st, from, to);
             } else {
                 scope.expect(st, text, param, a.ty, ast.nstart(st, arg), ast.nend(st, arg));
-                if written != 0 && written != 3 && written != 4 {
+                if written != 0 && written != 3 && written != 4 && written < 18 {
                     push_value(st, a);
                 }
                 last = a;
@@ -1593,6 +1658,9 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     }
     if written == 4 {
         return in_reg(result, emit.truncate_to_byte(st, last.known, last.value, last.reg));
+    }
+    if written >= 18 {
+        return in_reg(result, floatcode.float_builtin(st, written, last.known, last.value, last.reg));
     }
     if written >= 5 && written <= 7 {
         return in_reg(result, emit.plain_arith(st, written - 5));
@@ -1860,7 +1928,7 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     let result = types.resolve_type(st, callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars));
     if emit.on(st) {
-        if result != 1 && result != 5 && !scope.aggregate_codable(st, result) && !scope.slice_codable(st, result) {
+        if !types.is_plain(result) && !scope.aggregate_codable(st, result) && !scope.slice_codable(st, result) {
             return skip(st, from, to);
         }
         var inst = 0;
