@@ -497,6 +497,14 @@ fn render_runtime(dir: &std::path::Path) -> String {
         &std::fs::read_to_string(dir.join("runtime/crypto_aarch64_darwin.ll"))
             .expect("examples/selfhost/runtime/crypto_aarch64_darwin.ll"),
     );
+    let os_linux = escape(
+        &std::fs::read_to_string(dir.join("runtime/os_linux.ll"))
+            .expect("examples/selfhost/runtime/os_linux.ll"),
+    );
+    let os_darwin = escape(
+        &std::fs::read_to_string(dir.join("runtime/os_darwin.ll"))
+            .expect("examples/selfhost/runtime/os_darwin.ll"),
+    );
     let dirs_linux = escape(
         &std::fs::read_to_string(dir.join("runtime/dirs_linux.ll"))
             .expect("examples/selfhost/runtime/dirs_linux.ll"),
@@ -523,10 +531,9 @@ fn render_runtime(dir: &std::path::Path) -> String {
          // Darwin on aarch64, 2 for Linux on aarch64, 0 for Linux on x86-64.\n\
          pub fn crypto_text(target: int) -> [] &static [byte] {{\n    if target == 1 {{\n        return \"{crypto_arm_darwin}\";\n    }}\n    \
          if target == 2 {{\n        return \"{crypto_arm_linux}\";\n    }}\n    return \"{crypto_x86}\";\n}}\n\n\
-         // The address of `errno`, which each target keeps under its own name.\n\
-         pub fn errno_location(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        \
-         return \"define ptr @cancho_errno_location() {{\\nentry:\\n  %p = call ptr @__error()\\n  ret ptr %p\\n}}\\ndeclare ptr @__error()\\n\\n\";\n    }}\n    \
-         return \"define ptr @cancho_errno_location() {{\\nentry:\\n  %p = call ptr @__errno_location()\\n  ret ptr %p\\n}}\\ndeclare ptr @__errno_location()\\n\\n\";\n}}\n"
+         // What differs between systems: the address of `errno`, how a spawn is set up, a child's word.\n\
+         pub fn errno_location(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{os_darwin}\";\n    }}\n    \
+         return \"{os_linux}\";\n}}\n"
     )
 }
 

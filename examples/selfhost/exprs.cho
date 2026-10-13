@@ -413,11 +413,21 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         let opened = types.make_prelude(st, tables.prelude_opened());
         return ex.in_reg(opened, emit.answer_enum(st, opened, 0, v));
     }
-    if nargs != 7 {
+    var inside = 7;
+    if which == 10 {
+        inside = 8;
+    }
+    if nargs != inside {
         return ex.skip(st, from, to);
     }
     let c = expr(st, text, arg);
     arg = ast.next(st, arg);
+    var dir = ex.nothing();
+    if which == 10 {
+        // `exec_spawn_in(exec, dir, ...)`: the child starts in the directory the handle is of.
+        dir = expr(st, text, arg);
+        arg = ast.next(st, arg);
+    }
     let path = expr(st, text, arg);
     arg = ast.next(st, arg);
     let args = expr(st, text, arg);
@@ -455,6 +465,11 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         emit.push_arg(st, 1, false, 0, emit.extract_field(st, one.ty, one.reg, emit.penum_payload_index(st, stdio, first + 1, 0)));
         emit.push_arg(st, 1, false, 0, emit.extract_field(st, one.ty, one.reg, emit.penum_payload_index(st, stdio, first + 2, 0)));
         k = k + 1;
+    }
+    if which == 10 {
+        emit.push_arg(st, 7, false, 0, dir.reg);
+    } else {
+        emit.push_arg(st, 7, false, 0, 0 - 1);
     }
     let v = emit.spawn_process(st);
     let spawned = types.make_prelude(st, tables.prelude_spawned());
@@ -1677,6 +1692,9 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
         if pass1.is_word(st, text, callee, "exec_spawn") {
             return capability_call(st, text, id, 7);
         }
+        if pass1.is_word(st, text, callee, "exec_spawn_in") {
+            return capability_call(st, text, id, 10);
+        }
         if pass1.is_word(st, text, callee, "fs_read") {
             return capability_call(st, text, id, 8);
         }
@@ -1802,12 +1820,16 @@ pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) ->
     var arg = ast.get(st, id, 6);
     let first_arg = st[52];
     while param >= 0 && ast.ok(st) {
-        if emit.on(st) && tmade > 0 && ast.is_kind(st, arg, kinds.NK::EVariant) && ast.get(st, arg, 8) == 0 {
-            // `Option::None` as an argument waits for the others to say what its type is: a mark for it
-            // is pushed, and the value is written below.
+        if emit.on(st) && tmade > 0 && ast.is_kind(st, arg, kinds.NK::EVariant) && lookup.pure(st, arg) {
+            // `Option::None`, `Result::Err(e)` as an argument waits for the others to say what its type is: a mark
+            // for it is pushed, and the value is written below.
             emit.push_arg(st, 0 - 7, false, param, arg);
         } else {
+            if emit.on(st) && ast.is_kind(st, arg, kinds.NK::EVariant) {
+                types.set_hint(st, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars));
+            }
             let a = expr(st, text, arg);
+            types.set_hint(st, 0);
             if ast.ok(st) {
                 scope.expect(st, text, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
                 if emit.on(st) && !types.is_erased(st, a.ty) {

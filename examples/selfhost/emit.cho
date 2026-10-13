@@ -1840,14 +1840,14 @@ pub fn fs_once[&s](st: &!s [int], writing: bool) -> [] int {
 pub fn spawn_process[&s](st: &!s [int]) -> [] int {
     let n = start(st);
     str(st, "call i64 @cancho_spawn(");
-    var k = 17;
+    var k = 18;
     while k >= 1 {
         let at = st[51] + 4 * (st[52] - k);
-        if k != 17 {
+        if k != 18 {
             str(st, ", ");
         }
         // pointers are the first seven of the first eight; the rest are whole numbers
-        if k == 17 || k == 15 || k == 13 || k == 11 {
+        if k == 18 || k == 16 || k == 14 || k == 12 || k == 1 {
             str(st, "ptr ");
             operand(st, 7, false, 0, st[at + 3]);
         } else {
@@ -1857,7 +1857,7 @@ pub fn spawn_process[&s](st: &!s [int]) -> [] int {
         k = k - 1;
     }
     str(st, ")\n");
-    st[52] = st[52] - 17;
+    st[52] = st[52] - 18;
     return n;
 }
 

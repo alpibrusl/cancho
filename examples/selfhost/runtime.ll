@@ -19,6 +19,8 @@ declare i32 @posix_spawn_file_actions_init(ptr)
 declare i32 @posix_spawn_file_actions_destroy(ptr)
 declare i32 @posix_spawn_file_actions_addopen(ptr, i32, ptr, i32, i32)
 declare i32 @posix_spawn_file_actions_adddup2(ptr, i32, i32)
+declare i32 @posix_spawn_file_actions_addfchdir_np(ptr, i32)
+declare i32 @posix_spawnattr_destroy(ptr)
 
 @cancho_argc = global i64 0
 @cancho_argv = global ptr null
@@ -362,7 +364,7 @@ done:
 }
 
 ; exec_spawn: the pid, or minus the errno. The streams are (tag, child's end, file) each.
-define i64 @cancho_spawn(ptr %src, i64 %len, ptr %prefix, i64 %plen, ptr %args, i64 %alen, ptr %env, i64 %elen, i64 %t0, i64 %e0, i64 %f0, i64 %t1, i64 %e1, i64 %f1, i64 %t2, i64 %e2, i64 %f2) {
+define i64 @cancho_spawn(ptr %src, i64 %len, ptr %prefix, i64 %plen, ptr %args, i64 %alen, ptr %env, i64 %elen, i64 %t0, i64 %e0, i64 %f0, i64 %t1, i64 %e1, i64 %f1, i64 %t2, i64 %e2, i64 %f2, ptr %dir) {
 entry:
   %path = call ptr @cancho_checked_path(ptr %src, i64 %len, ptr %prefix, i64 %plen)
   %argv = call ptr @cancho_pointer_list(ptr %args, i64 %alen, ptr %path, i1 false)
@@ -374,8 +376,23 @@ entry:
   call void @cancho_stream(ptr %actions, i32 0, i64 %t0, i64 %e0, i64 %f0)
   call void @cancho_stream(ptr %actions, i32 1, i64 %t1, i64 %e1, i64 %f1)
   call void @cancho_stream(ptr %actions, i32 2, i64 %t2, i64 %e2, i64 %f2)
-  %err = call i32 @posix_spawn(ptr %pid, ptr %path, ptr %actions, ptr null, ptr %argv, ptr %envp)
+  %hasdir = icmp ne ptr %dir, null
+  br i1 %hasdir, label %chdir, label %attrs
+chdir:
+  %dirfd64 = load i64, ptr %dir
+  %dirfd = trunc i64 %dirfd64 to i32
+  %refused = call i32 @posix_spawn_file_actions_addfchdir_np(ptr %actions, i32 %dirfd)
+  %refusal = icmp ne i32 %refused, 0
+  br i1 %refusal, label %trap, label %attrs
+trap:
+  call void @llvm.trap()
+  unreachable
+attrs:
+  %attr = alloca [512 x i8], align 16
+  call void @cancho_spawn_setup(ptr %actions, ptr %attr)
+  %err = call i32 @posix_spawn(ptr %pid, ptr %path, ptr %actions, ptr %attr, ptr %argv, ptr %envp)
   call i32 @posix_spawn_file_actions_destroy(ptr %actions)
+  call i32 @posix_spawnattr_destroy(ptr %attr)
   call void @free(ptr %argv)
   call void @free(ptr %envp)
   call void @free(ptr %path)
@@ -390,8 +407,8 @@ fail:
   ret i64 %neg
 ok:
   %p = load i32, ptr %pid
-  %p64 = sext i32 %p to i64
-  ret i64 %p64
+  %word = call i64 @cancho_child_word(i32 %p)
+  ret i64 %word
 }
 
 ; child_wait: the exit code (0 to 255), 256 and the signal number if it was killed, or minus the errno.
