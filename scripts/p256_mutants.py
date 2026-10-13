@@ -56,7 +56,7 @@ EA = "std/ecdsa.cho"
 ES = "std/ecdsa_sign.cho"
 
 # ---- the generated kernels ----
-mut(K, "mul_p", "mul_p: a cross product dropped", "    let (h3, l3) = mac(h3, l3, a1, b2);\n", "")
+mut(K, "mul_p", "mul_p: a cross product dropped", "    let (h3, l3) = field25519_51.mac(h3, l3, a1, b2);\n", "")
 mut(K, "mul_p", "mul_p: the quotient digit's carry not added", "c = wrapping_add(shr56(h0, l0), m0);", "c = shr56(h0, l0);")
 mut(K, "mul_p", "mul_p: the 2^24 limb of p doubled", "mac(h3, l3, m0, 16777216)", "mac(h3, l3, m0, 33554432)")
 mut(K, "mul_p", "mul_p: the 2^40 - 1 limb of p off by one", "mac(h1, l1, m0, 1099511627775)", "mac(h1, l1, m0, 1099511627776)")
@@ -69,8 +69,8 @@ mut("std/field25519_51.cho", "mac", "mac: the low word's carry dropped", "return
 mut(K, "shr56", "shr56: a carry taken at 55 bits", "return lo >> 56 & 255 | hi << 8;", "return lo >> 55 & 511 | hi << 9;")
 mut(K, "shr56", "shr56: the low word's bits not masked", "return lo >> 56 & 255 | hi << 8;", "return lo >> 56 | hi << 8;")
 mut(K, "sqr_p", "sqr_p: the doubling of a cross term dropped", "let d2 = a2 << 1;", "let d2 = a2;")
-mut(K, "sqr_p", "sqr_p: a square left out", "    let (h4, l4) = mac(h4, l4, a2, a2);\n", "")
-mut(K, "sqr_p", "sqr_p: a cross term of a column missing", "    let (h5, l5) = mac(h5, l5, a2, d3);\n", "")
+mut(K, "sqr_p", "sqr_p: a square left out", "    let (h4, l4) = field25519_51.mac(h4, l4, a2, a2);\n", "")
+mut(K, "sqr_p", "sqr_p: a cross term of a column missing", "    let (h5, l5) = field25519_51.mac(h5, l5, a2, d3);\n", "")
 mut(K, "mul_n", "mul_n: n' off by one", "wrapping_mul(l0, 59048906595548239)", "wrapping_mul(l0, 59048906595548240)")
 mut(K, "sqr_n", "sqr_n: a limb of n changed", "mac(h0, l0, m0, 52295809498293585)", "mac(h0, l0, m0, 52295809498293586)")
 mut(K, "mul_n", "mul_n: the quotient not masked", "let m1 = wrapping_mul(l1, 59048906595548239) & 72057594037927935;", "let m1 = wrapping_mul(l1, 59048906595548239);")
