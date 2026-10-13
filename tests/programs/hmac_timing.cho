@@ -1,0 +1,223 @@
+// `docs/sha256-builtin.md` §6: the timing of SHA-256, HMAC-SHA256 and a
+// prepared HMAC key, for the dudect-style test `scripts/hmac_timing.py`
+// runs. A key is secret, and so is what is hashed under it.
+//
+// Standard input is one header line, `<op> <key> <msg> <pool> <count>`:
+// the operation, the key's and the message's lengths in bytes, and how
+// many records each class has and how many measurements to make. Then
+// `2 * pool` records, a fixed-class one and a random-class one in turn,
+// each a key and a message back to back, in lowercase hex with no
+// separator, a newline, and `count` characters `0` or `1`, the class of
+// each measurement in turn. Measurement `i` of class `c` uses record
+// `2 * (i mod pool) + c`, copied into the same buffers before it is
+// timed. (With each class read where it lay, a random-against-random
+// control gave |t| up to 11 on x86-64: where a record lies, not what it
+// holds, `docs/sha256-builtin.md` §8.4.)
+//
+//     M   hmac.sha256(key, msg): the key's two pads hashed, then the message
+//     P   hmac.prepare(key): the two pads alone
+//     Q   hmac.mac_prepared(prepared, msg), every record's key prepared
+//         before anything is timed: what a key schedule runs per label
+//     H   crypto.sha256(msg) (the key is not used): a secret message
+//     L   hkdf.expand_label(32, key, "key", "", 16 bytes): a traffic key
+//
+// Everything is read, decoded and prepared before anything is timed, so
+// what runs just before each call is the same whatever its input. Each
+// call's time is read with the `tick` library's `cancho_tick` (a cycle
+// counter: `scripts/gcm_timing.py` gives its source), so this program is
+// built with `-l tick -L <dir>`; the times are printed, one a line, once
+// every call has run.
+import std.buffer;
+import std.crypto;
+import std.hkdf;
+import std.hmac;
+import std.io;
+
+extern fn cancho_tick[&f](ffi: &f Ffi("tick")) -> [ffi("tick")] int;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn number_end[&s](s: &s [byte], at: int) -> [] int {
+    var e = at;
+    while e < len(s) && int_of(s[e]) >= 48 && int_of(s[e]) <= 57 {
+        e = e + 1;
+    }
+    return e;
+}
+
+fn number[&s](s: &s [byte], at: int) -> [] int {
+    var n = 0;
+    var i = at;
+    while i < number_end(s, at) {
+        n = n * 10 + int_of(s[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+fn nibble(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+// `times` holds each measurement's record number on entry, and its time
+// on return. `prepared` holds every record's prepared key, 16 words each.
+// Each measurement's record is first copied into the same three buffers,
+// outside the clock, so every call reads the same addresses whatever its
+// class: where a record lies is then no part of what is timed
+// (`docs/sha256-builtin.md` §8.4).
+fn time_pool[&f, &a, &p, &t](ffi: &f Ffi("tick"), op: int, k: int, m: int, all: &a [byte], prepared: &p [int], times: &!t [int]) -> [ffi("tick")] int {
+    let rec = k + m;
+    region r {
+        let out = alloc_slice[r](32, byte_of(0));
+        let scratch = alloc_slice[r](16, 0);
+        let key = alloc_slice[r](k, byte_of(0));
+        let msg = alloc_slice[r](m, byte_of(0));
+        let pk = alloc_slice[r](16, 0);
+        var i = 0;
+        while i < len(times) {
+            let at = times[i] * rec;
+            var j = 0;
+            while j < k {
+                key[j] = all[at + j];
+                j = j + 1;
+            }
+            j = 0;
+            while j < m {
+                msg[j] = all[at + k + j];
+                j = j + 1;
+            }
+            j = 0;
+            while j < 16 {
+                pk[j] = prepared[times[i] * 16 + j];
+                j = j + 1;
+            }
+            if op == 77 {
+                let t0 = cancho_tick(ffi);
+                hmac.sha256(key, msg, out);
+                times[i] = cancho_tick(ffi) - t0;
+            } else if op == 80 {
+                let t0 = cancho_tick(ffi);
+                hmac.prepare(32, scratch, key);
+                times[i] = cancho_tick(ffi) - t0;
+            } else if op == 81 {
+                let t0 = cancho_tick(ffi);
+                hmac.mac_prepared(32, pk, msg, out);
+                times[i] = cancho_tick(ffi) - t0;
+            } else if op == 72 {
+                let t0 = cancho_tick(ffi);
+                crypto.sha256(msg, out);
+                times[i] = cancho_tick(ffi) - t0;
+            } else {
+                let t0 = cancho_tick(ffi);
+                hkdf.expand_label(32, key, "key", "", out[0..16]);
+                times[i] = cancho_tick(ffi) - t0;
+            }
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+fn time_pooled[&h, &i, &f, &s](heap: &!h Heap, io: &!i Io, ffi: &f Ffi("tick"), s: &s [byte]) -> [heap, io_write, ffi("tick")] int {
+    let op = int_of(s[0]);
+    let f1 = 2;
+    let f2 = number_end(s, f1) + 1;
+    let f3 = number_end(s, f2) + 1;
+    let f4 = number_end(s, f3) + 1;
+    let k = number(s, f1);
+    let m = number(s, f2);
+    let pool = number(s, f3);
+    let count = number(s, f4);
+    let start = number_end(s, f4) + 1;
+    let rec = k + m;
+    let all = box_slice(heap, 2 * pool * rec, byte_of(0));
+    let prepared = box_slice(heap, 2 * pool * 16, 0);
+    let times = box_slice(heap, count, 0);
+    let classes = start + 4 * pool * rec + 1;
+    borrow mut all as &!x in {
+        let bytes = contents(x);
+        var j = 0;
+        while j < len(bytes) {
+            bytes[j] = byte_of(nibble(int_of(s[start + 2 * j])) * 16 + nibble(int_of(s[start + 2 * j + 1])));
+            j = j + 1;
+        }
+    }
+    borrow all as &x in {
+        borrow mut prepared as &!y in {
+            let bytes = contents(x);
+            let words = contents(y);
+            var j = 0;
+            while j < 2 * pool {
+                hmac.prepare(32, words[j * 16..j * 16 + 16], bytes[j * rec..j * rec + k]);
+                j = j + 1;
+            }
+        }
+    }
+    borrow mut times as &!y in {
+        let t = contents(y);
+        var i = 0;
+        while i < count {
+            t[i] = 2 * (i % pool) + int_of(s[classes + i]) - 48;
+            i = i + 1;
+        }
+    }
+    borrow all as &x in {
+        borrow prepared as &p in {
+            borrow mut times as &!y in {
+                time_pool(ffi, op, k, m, contents(x), contents(p), contents(y));
+            }
+        }
+    }
+    borrow times as &y in {
+        let t = contents(y);
+        var i = 0;
+        while i < len(t) {
+            io.print_int(io, t[i]);
+            io.newline(io);
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, all);
+    unbox_slice(heap, prepared);
+    unbox_slice(heap, times);
+    return 0;
+}
+
+fn run[&h, &i, &f](heap: &!h Heap, io: &!i Io, ffi: &f Ffi("tick")) -> [heap, io_read, io_write, ffi("tick")] int {
+    var text = buffer.empty(heap, 1 << 20);
+    text = read_stdin(heap, io, text);
+    borrow text as &b in {
+        time_pooled(heap, io, ffi, buffer.bytes(b));
+    }
+    buffer.drop(heap, text);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(fs);
+    let tick = narrow(ffi, "tick");
+    borrow tick as &f in {
+        borrow mut heap as &!h in {
+            borrow mut io as &!i in {
+                run(h, i, f);
+            }
+        }
+    }
+    release(heap);
+    release(io);
+    release(tick);
+    return 0;
+}

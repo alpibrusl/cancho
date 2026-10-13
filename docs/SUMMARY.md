@@ -119,6 +119,7 @@
 - [Hardware AES and carry-less multiply](crypto-builtins.md)
 - [Wide multiply and add-with-carry](wide-multiply.md)
 - [Multi-block AES-GCM and aggregated GHASH](gcm-wide.md)
+- [SHA-256 on the CPU's instructions, and HMAC with the key's pads kept](sha256-builtin.md)
 
 # Compile time and program identity
 

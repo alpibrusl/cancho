@@ -1,0 +1,191 @@
+edition 9;
+
+// `docs/sha256-builtin.md` §7: the SHA-256 builtins, driven from standard
+// input. One case per line; a word is sixteen hex digits (an `int`'s 64
+// bits, so a word with bits above the 32nd can be sent), a byte string is
+// lowercase hex, `-` for an empty one:
+//
+//     H                        hw_sha256(): 1 or 0
+//     B <state> <data>         sha256_blocks: the eight words after
+//     W <state> <block>        sha256_block_words: the eight words after
+//     b <words> <bytes>        sha256_blocks on a state of <words> words and
+//                              <bytes> bytes of data (decimal): 0, or a trap
+//     w <words> <words>        sha256_block_words likewise
+//
+// `<state>` is eight words run together, `<block>` sixteen. One line out
+// per case. All but `H` are only sent when `H` said 1.
+import std.buffer;
+import std.io;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn nibble(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+fn field_end[&s](s: &s [byte], at: int) -> [] int {
+    var e = at;
+    while e < len(s) && int_of(s[e]) != 32 && int_of(s[e]) != 10 {
+        e = e + 1;
+    }
+    return e;
+}
+
+fn decimal[&s](s: &s [byte], at: int) -> [] int {
+    let end = field_end(s, at);
+    var n = 0;
+    var i = at;
+    while i < end {
+        n = n * 10 + int_of(s[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+// `len(o)` words of sixteen hex digits from `at`, each as an `int`'s 64 bits.
+fn words_into[&s, &o](s: &s [byte], at: int, o: &!o [int]) -> [] int {
+    var i = 0;
+    while i < len(o) {
+        var w = 0;
+        var k = 0;
+        while k < 16 {
+            w = w << 4 | nibble(int_of(s[at + i * 16 + k]));
+            k = k + 1;
+        }
+        o[i] = w;
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn bytes_into[&s, &o](s: &s [byte], at: int, o: &!o [byte]) -> [] int {
+    var i = 0;
+    while i < len(o) {
+        o[i] = byte_of(nibble(int_of(s[at + i * 2])) * 16 + nibble(int_of(s[at + i * 2 + 1])));
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn hex_len[&s](s: &s [byte], at: int) -> [] int {
+    let end = field_end(s, at);
+    if end - at == 1 && int_of(s[at]) == 45 {
+        return 0;
+    }
+    return (end - at) / 2;
+}
+
+fn print_words[&i, &w](io: &!i Io, w: &w [int]) -> [io_write] int {
+    let digits = "0123456789abcdef";
+    var n = 0;
+    while n < len(w) {
+        var k = 60;
+        while k >= 0 {
+            let d = w[n] >> k & 15;
+            io.write_all(io, digits[d..d + 1]);
+            k = k - 4;
+        }
+        n = n + 1;
+    }
+    io.newline(io);
+    return 0;
+}
+
+// One case, the line starting at `at`; answers where the next line starts.
+fn one[&h, &i, &s](heap: &!h Heap, io: &!i Io, s: &s [byte], at: int) -> [heap, io_write] int {
+    let op = int_of(s[at]);
+    let f1 = at + 2;
+    let f2 = field_end(s, f1) + 1;
+    if op == 72 {
+        if hw_sha256() {
+            io.write_all(io, "1");
+        } else {
+            io.write_all(io, "0");
+        }
+        io.newline(io);
+    } else if op == 66 || op == 87 {
+        region r {
+            let state = alloc_slice[r](8, 0);
+            words_into(s, f1, state);
+            if op == 66 {
+                // On the heap: a run of blocks can be larger than an arena.
+                let data = box_slice(heap, hex_len(s, f2), byte_of(0));
+                borrow mut data as &!dw in {
+                    bytes_into(s, f2, contents(dw));
+                }
+                borrow data as &d in {
+                    sha256_blocks(state, contents(d));
+                }
+                unbox_slice(heap, data);
+            } else {
+                let block = alloc_slice[r](16, 0);
+                words_into(s, f2, block);
+                sha256_block_words(state, block);
+            }
+            print_words(io, state);
+        }
+    } else {
+        region r {
+            let state = alloc_slice[r](decimal(s, f1), 0);
+            if op == 98 {
+                let data = alloc_slice[r](decimal(s, f2), byte_of(0));
+                sha256_blocks(state, data);
+            } else {
+                let block = alloc_slice[r](decimal(s, f2), 0);
+                sha256_block_words(state, block);
+            }
+            io.write_all(io, "0");
+            io.newline(io);
+        }
+    }
+    var e = at;
+    while e < len(s) && int_of(s[e]) != 10 {
+        e = e + 1;
+    }
+    return e + 1;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var text = buffer.empty(heap, 4096);
+    text = read_stdin(heap, io, text);
+    borrow text as &b in {
+        let s = buffer.bytes(b);
+        var at = 0;
+        while at < len(s) {
+            at = one(heap, io, s, at);
+        }
+    }
+    buffer.drop(heap, text);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(args);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}

@@ -1,3 +1,4 @@
+edition 9;
 module std.crypto;
 
 // `std.crypto` — SHA-256 and SHA-512 (`docs/crypto.md`, `docs/sha512.md`).
@@ -114,8 +115,9 @@ fn not32(x: int) -> [] int {
     return x ^ 0xffffffff;
 }
 
-// One 64-byte block, already loaded as sixteen words into the schedule
-// (`load256`), folded into `state`'s eight running 32-bit words, held as
+// The software path's compression (`docs/sha256-builtin.md` §5): one
+// 64-byte block, already loaded as sixteen words into the schedule
+// (`load256`, or from the partial block), folded into `state`'s eight running 32-bit words, held as
 // `int`s in `[0, 0xffffffff]`. The schedule lives in the state
 // (`state[74..138]`), not in an arena of its own: an arena is a
 // `malloc`, and one per block was most of the cost of a short message
@@ -175,9 +177,18 @@ fn compress[&st](state: &!st [int]) -> [] int {
 }
 
 // The streaming interface (`docs/hkdf.md` §2). A state is a `[int]` of
-// `sha256_state_len()` words: the eight running words, the number of
-// bytes hashed so far, the number waiting in the buffer, the 64-byte
-// buffer itself (one byte per word), then the 64-word message schedule.
+// `sha256_state_len()` words (`docs/sha256-builtin.md` §5):
+//
+//     0..8     the eight running words
+//     8..24    the partial block, as sixteen big-endian words; every
+//              byte past the ones waiting is zero
+//     24       the number of bytes hashed so far
+//     25       the number waiting in the partial block
+//     26..74   not used, and zero: the length did not move, so neither
+//              did anything laid out around a state (the TLS slot's
+//              transcripts)
+//     74..138  the 64-word message schedule of the software path
+//
 // Nothing the size of the message is ever allocated, which is what lets
 // a message of any length be hashed: the one-shot `sha256` below used to
 // copy the whole padded message into one arena and trapped at 64 KiB
@@ -187,14 +198,54 @@ pub fn sha256_state_len() -> [] int {
     return 138;
 }
 
+fn clear_block[&st](state: &!st [int]) -> [] int {
+    var k = 8;
+    while k < 24 {
+        state[k] = 0;
+        k = k + 1;
+    }
+    return 0;
+}
+
 pub fn sha256_init[&st](state: &!st [int]) -> [] int {
     var i = 0;
     while i < 8 {
         state[i] = sha256_h0[i];
         i = i + 1;
     }
-    state[8] = 0;
-    state[9] = 0;
+    clear_block(state);
+    state[24] = 0;
+    state[25] = 0;
+    return 0;
+}
+
+// The eight running words of a state with no byte waiting, into
+// `words[0..8]`: what `std.hmac` keeps of a key's two padded blocks
+// (`docs/hkdf.md` §9). With bytes waiting the words are not a resumable
+// point, and it answers -1 and writes nothing.
+pub fn sha256_save[&st, &w](state: &st [int], words: &!w [int]) -> [] int {
+    if state[25] != 0 {
+        return -1;
+    }
+    var i = 0;
+    while i < 8 {
+        words[i] = state[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+// A state that goes on from `words` (what `sha256_save` wrote) after
+// `bytes` bytes, a multiple of 64, were hashed.
+pub fn sha256_resume[&st, &w](state: &!st [int], words: &w [int], bytes: int) -> [] int {
+    var i = 0;
+    while i < 8 {
+        state[i] = words[i];
+        i = i + 1;
+    }
+    clear_block(state);
+    state[24] = bytes;
+    state[25] = 0;
     return 0;
 }
 
@@ -209,79 +260,103 @@ fn load256[&st, &b](state: &!st [int], block: &b [byte]) -> [] int {
     return 0;
 }
 
-// The same from the state's own buffer, which is full.
-fn load256_buffer[&st](state: &!st [int]) -> [] int {
-    var t = 0;
-    while t < 16 {
-        let i = 10 + t * 4;
-        state[74 + t] = state[i] << 24 | state[i + 1] << 16 | state[i + 2] << 8 | state[i + 3];
-        t = t + 1;
+// The whole 64-byte blocks of `data`, straight from the caller's bytes:
+// on the CPU's SHA-256 instructions where it has them
+// (`docs/sha256-builtin.md` §5), in software otherwise. Which one is a
+// question about the CPU, not the data, so the branch is public.
+fn compress_bytes[&st, &d](state: &!st [int], data: &d [byte]) -> [] int {
+    if hw_sha256() {
+        return sha256_blocks(state[0..8], data);
     }
-    return 0;
-}
-
-// Feeds `data`. Whole blocks are compressed straight from `data`; only a
-// partial block is copied, into the state's buffer.
-pub fn sha256_update[&st, &d](state: &!st [int], data: &d [byte]) -> [] int {
-    let n = len(data);
-    state[8] = state[8] + n;
-    var have = state[9];
     var at = 0;
-    if have > 0 {
-        while have < 64 && at < n {
-            state[10 + have] = int_of(data[at]);
-            have = have + 1;
-            at = at + 1;
-        }
-        if have == 64 {
-            load256_buffer(state);
-            compress(state);
-            have = 0;
-        }
-    }
-    while at + 64 <= n {
+    while at < len(data) {
         load256(state, data[at..at + 64]);
         compress(state);
         at = at + 64;
     }
+    return 0;
+}
+
+// The partial block, full, compressed the same two ways; then cleared for
+// the next one, which is also what keeps the bytes past the waiting ones
+// zero.
+fn compress_block[&st](state: &!st [int]) -> [] int {
+    if hw_sha256() {
+        sha256_block_words(state[0..8], state[8..24]);
+    } else {
+        var t = 0;
+        while t < 16 {
+            state[74 + t] = state[8 + t];
+            t = t + 1;
+        }
+        compress(state);
+    }
+    return clear_block(state);
+}
+
+// One byte into the partial block, at byte `have` of it.
+fn put_byte[&st](state: &!st [int], have: int, b: int) -> [] int {
+    let w = 8 + (have >> 2);
+    state[w] = state[w] | b << 24 - ((have & 3) << 3);
+    return 0;
+}
+
+// Feeds `data`. Whole blocks are compressed straight from `data`; only a
+// partial block is copied, into the state's.
+pub fn sha256_update[&st, &d](state: &!st [int], data: &d [byte]) -> [] int {
+    let n = len(data);
+    state[24] = state[24] + n;
+    var have = state[25];
+    var at = 0;
+    if have > 0 {
+        while have < 64 && at < n {
+            put_byte(state, have, int_of(data[at]));
+            have = have + 1;
+            at = at + 1;
+        }
+        if have == 64 {
+            compress_block(state);
+            have = 0;
+        }
+    }
+    let whole = n - at >> 6 << 6;
+    if whole > 0 {
+        compress_bytes(state, data[at..at + whole]);
+        at = at + whole;
+    }
     while at < n {
-        state[10 + have] = int_of(data[at]);
+        put_byte(state, have, int_of(data[at]));
         have = have + 1;
         at = at + 1;
     }
-    state[9] = have;
+    state[25] = have;
     return 0;
 }
 
 // The padding (FIPS 180-4 §5.1.1) — `0x80`, zeros, the bit length in
-// the last eight bytes, one block more if there is no room — and the
-// digest, into `digest[0..32]`. The state is spent: `sha256_init` it
-// again to reuse it.
+// the last eight bytes, one block more if there is no room — compressed,
+// leaving the digest as the eight running words. The bytes past the
+// waiting ones are already zero. `std.hmac` feeds those words to its
+// outer hash with `sha256_update_words` and never writes them as bytes
+// (`docs/hkdf.md` §9).
+pub fn sha256_finish[&st](state: &!st [int]) -> [] int {
+    let have = state[25];
+    put_byte(state, have, 0x80);
+    if have >= 56 {
+        compress_block(state);
+    }
+    let bit_len = state[24] * 8;
+    state[22] = bit_len >> 32 & 0xffffffff;
+    state[23] = bit_len & 0xffffffff;
+    compress_block(state);
+    state[25] = 0;
+    return 0;
+}
+
+// `sha256_finish`, and the digest into `digest[0..32]`. The state is
+// spent: `sha256_init` it again to reuse it.
 pub fn sha256_final[&st, &o](state: &!st [int], digest: &!o [byte]) -> [] int {
-    var have = state[9];
-    state[10 + have] = 0x80;
-    have = have + 1;
-    if have > 56 {
-        while have < 64 {
-            state[10 + have] = 0;
-            have = have + 1;
-        }
-        load256_buffer(state);
-        compress(state);
-        have = 0;
-    }
-    while have < 56 {
-        state[10 + have] = 0;
-        have = have + 1;
-    }
-    let bit_len = state[8] * 8;
-    var k = 0;
-    while k < 8 {
-        state[66 + k] = bit_len >> (7 - k) * 8 & 0xff;
-        k = k + 1;
-    }
-    load256_buffer(state);
-    compress(state);
+    sha256_finish(state);
     var w = 0;
     while w < 8 {
         let word = state[w];
@@ -291,6 +366,29 @@ pub fn sha256_final[&st, &o](state: &!st [int], digest: &!o [byte]) -> [] int {
         digest[w * 4 + 3] = byte_of(word & 0xff);
         w = w + 1;
     }
+    return 0;
+}
+
+// Feeds the 32-bit big-endian words `words` (four bytes each), to a state
+// whose waiting bytes are a whole number of words (-1 and nothing fed
+// otherwise): another hash's digest, as `sha256_finish` left it.
+pub fn sha256_update_words[&st, &w](state: &!st [int], words: &w [int]) -> [] int {
+    var have = state[25];
+    if have & 3 != 0 {
+        return -1;
+    }
+    state[24] = state[24] + 4 * len(words);
+    var i = 0;
+    while i < len(words) {
+        state[8 + (have >> 2)] = words[i];
+        have = have + 4;
+        if have == 64 {
+            compress_block(state);
+            have = 0;
+        }
+        i = i + 1;
+    }
+    state[25] = have;
     return 0;
 }
 
@@ -547,6 +645,28 @@ pub fn sha384_init[&st](state: &!st [int]) -> [] int {
     return init512(state, sha384_h0);
 }
 
+// `sha256_save` and `sha256_resume` for a SHA-512 or SHA-384 state: the
+// eight running words of a state with no byte waiting (-1 and nothing
+// written otherwise), and a state that goes on from them after `bytes`
+// bytes, a multiple of 128.
+pub fn sha512_save[&st, &w](state: &st [int], words: &!w [int]) -> [] int {
+    if state[9] != 0 {
+        return -1;
+    }
+    var i = 0;
+    while i < 8 {
+        words[i] = state[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+pub fn sha512_resume[&st, &w](state: &!st [int], words: &w [int], bytes: int) -> [] int {
+    init512(state, words);
+    state[8] = bytes;
+    return 0;
+}
+
 fn load512[&st, &b](state: &!st [int], block: &b [byte]) -> [] int {
     var t = 0;
     while t < 16 {
@@ -611,7 +731,7 @@ pub fn sha384_update[&st, &d](state: &!st [int], data: &d [byte]) -> [] int {
 // need the other 8 bytes traps building the field rather than silently
 // wrapping past it (`docs/sha512.md` §3). `words` is how many of the
 // eight running words make the digest: 8 for SHA-512, 6 for SHA-384.
-fn final512[&st, &o](state: &!st [int], digest: &!o [byte], words: int) -> [] int {
+fn finish512[&st](state: &!st [int]) -> [] int {
     var have = state[9];
     state[10 + have] = 0x80;
     have = have + 1;
@@ -636,6 +756,12 @@ fn final512[&st, &o](state: &!st [int], digest: &!o [byte], words: int) -> [] in
     }
     load512_buffer(state);
     compress512(state);
+    state[9] = 0;
+    return 0;
+}
+
+fn final512[&st, &o](state: &!st [int], digest: &!o [byte], words: int) -> [] int {
+    finish512(state);
     var w = 0;
     while w < words {
         let word = state[w];
@@ -649,6 +775,38 @@ fn final512[&st, &o](state: &!st [int], digest: &!o [byte], words: int) -> [] in
         digest[w * 8 + 7] = byte_of(word & 0xff);
         w = w + 1;
     }
+    return 0;
+}
+
+// `sha256_finish` and `sha256_update_words` for a SHA-512 or SHA-384
+// state, over 64-bit words (eight bytes each, big-endian). A SHA-384
+// digest is the first six words `sha512_finish` leaves.
+pub fn sha512_finish[&st](state: &!st [int]) -> [] int {
+    return finish512(state);
+}
+
+pub fn sha512_update_words[&st, &w](state: &!st [int], words: &w [int]) -> [] int {
+    var i = 0;
+    while i < len(words) {
+        var k = 0;
+        while k < 8 {
+            if state[9] == 128 {
+                load512_buffer(state);
+                compress512(state);
+                state[9] = 0;
+            }
+            state[10 + state[9]] = words[i] >> (7 - k) * 8 & 0xff;
+            state[9] = state[9] + 1;
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    if state[9] == 128 {
+        load512_buffer(state);
+        compress512(state);
+        state[9] = 0;
+    }
+    state[8] = state[8] + 8 * len(words);
     return 0;
 }
 

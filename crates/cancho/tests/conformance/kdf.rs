@@ -122,11 +122,15 @@ fn every_cavp_sha2_vector_passes() {
             ("SHA512Monte", 100),
         ]
     );
-    let (dir, exe) = build_kdf_driver("cavp", "llvm");
-    for ((case, want), line) in cases.iter().zip(&want).zip(run_cases(&exe, &cases)) {
-        assert_eq!(&line, want, "{}", &case[..case.len().min(60)]);
+    // Both backends: LLVM's SHA-256 is the CPU's instructions where it has
+    // them, Cranelift's is always the software path (`docs/sha256-builtin.md` §7).
+    for backend in ["llvm", "cranelift"] {
+        let (dir, exe) = build_kdf_driver("cavp", backend);
+        for ((case, want), line) in cases.iter().zip(&want).zip(run_cases(&exe, &cases)) {
+            assert_eq!(&line, want, "{} on {backend}", &case[..case.len().min(60)]);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// `docs/hkdf.md` §2: the one-shot hashes copied the whole padded message
@@ -197,23 +201,25 @@ fn a_message_past_64_kib_hashes_and_pieces_do_not_matter() {
             }
         }
     }
-    let (dir, exe) = build_kdf_driver("long", "llvm");
-    let answers = run_cases(&exe, &cases);
-    for (i, w) in want.iter().enumerate() {
-        if !w.is_empty() {
-            assert_eq!(&answers[i], w, "{}", cases[i]);
+    for backend in ["llvm", "cranelift"] {
+        let (dir, exe) = build_kdf_driver("long", backend);
+        let answers = run_cases(&exe, &cases);
+        for (i, w) in want.iter().enumerate() {
+            if !w.is_empty() {
+                assert_eq!(&answers[i], w, "{} on {backend}", cases[i]);
+            }
         }
+        for &(one, streamed) in &pairs {
+            assert_eq!(
+                answers[one],
+                answers[streamed],
+                "{} against {} on {backend}",
+                cases[one],
+                &cases[streamed][..12]
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
-    for (one, streamed) in pairs {
-        assert_eq!(
-            answers[one],
-            answers[streamed],
-            "{} against {}",
-            cases[one],
-            &cases[streamed][..12]
-        );
-    }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Wycheproof's HMAC-SHA256/384 and HKDF-SHA256/384 files, every case. A
@@ -330,4 +336,99 @@ fn every_refusal_is_reached_with_its_own_tag() {
         assert_eq!(answer(line).0, 0, "{case}: {line}");
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `docs/hkdf.md` §9: a prepared key gives what the key gives. Every HMAC,
+/// Expand-Label and Derive-Secret row of the vector table, and every
+/// Wycheproof HMAC case, again under `hmac.prepare` and `hkdf.prepare`, on
+/// both backends (the LLVM one on the CPU's SHA-256 instructions where it
+/// has them, Cranelift in software); the driver also checks that a tag
+/// made by `mac_prepared` and one streamed after `init_prepared` in pieces
+/// are equal, and that a prepared secret gives the same label twice. Then
+/// the prepared functions' own refusals.
+#[test]
+fn a_prepared_key_gives_what_the_key_gives_on_both_backends() {
+    let text = std::fs::read_to_string(repo_root().join("tests/vectors/kdf.txt")).unwrap();
+    let mut cases = Vec::new();
+    let mut want = Vec::new();
+    for (n, row) in text
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(|l| l.split(" | ").collect::<Vec<_>>())
+        .enumerate()
+    {
+        let f: Vec<&str> = row[1].split(' ').collect();
+        let case = match f[0] {
+            // M <hl> <out> <key> <msg> -> P <hl> <out> <piece> <key> <msg>
+            "M" => format!("P {} {} {} {} {}", f[1], f[2], 1 + n % 70, f[3], f[4]),
+            "L" => format!("Q {}", f[1..].join(" ")),
+            "D" => format!("R {}", f[1..].join(" ")),
+            _ => continue,
+        };
+        cases.push(case);
+        want.push(format!("0 ok {}", row[2]));
+    }
+    assert_eq!(cases.len(), 12 + 13 + 21, "the M, L and D rows");
+    for (hl, file) in [(32, "hmac_sha256_test"), (48, "hmac_sha384_test")] {
+        let path = repo_root().join(format!("tests/vectors/wycheproof/{file}.json"));
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        for group in v["testGroups"].as_array().unwrap() {
+            for t in group["tests"].as_array().unwrap() {
+                let s = |k: &str| t[k].as_str().unwrap().to_string();
+                let id = t["tcId"].as_u64().unwrap();
+                cases.push(format!(
+                    "P {hl} {hl} {} {} {}",
+                    1 + id % 129,
+                    or_dash(&s("key")),
+                    or_dash(&s("msg"))
+                ));
+                // The full tag, compared with the plain `mac`'s below.
+                want.push(String::new());
+                cases.push(format!("M {hl} {hl} {} {}", or_dash(&s("key")), or_dash(&s("msg"))));
+                want.push(String::new());
+            }
+        }
+    }
+    let k32 = "07".repeat(32);
+    let label = |n: usize| "61".repeat(n);
+    let refusals = [
+        (format!("Q 32 {k32} - - 32"), "hkdf-label-length"),
+        (format!("Q 32 {k32} {} - 32", label(250)), "hkdf-label-length"),
+        (format!("Q 32 {k32} {} {} 32", label(5), "00".repeat(256)), "hkdf-context-length"),
+        (format!("Q 32 {k32} {} - {}", label(5), 255 * 32 + 1), "hkdf-length-too-large"),
+        (format!("Q 32 {} {} - 32", "07".repeat(31), label(5)), "hkdf-prk-length"),
+        (format!("Q 20 {k32} {} - 20", label(5)), "hash-unsupported"),
+        (format!("R 32 32 {k32} {} {}", label(7), "00".repeat(31)), "hkdf-transcript-hash-length"),
+        (format!("R 32 31 {k32} {} {k32}", label(7)), "hash-output-length"),
+        (format!("P 32 31 1 {k32} 00"), "hash-output-length"),
+    ];
+    let first_refusal = cases.len();
+    for (case, _) in &refusals {
+        cases.push(case.clone());
+        want.push(String::new());
+    }
+    for backend in ["cranelift", "llvm"] {
+        let (dir, exe) = build_kdf_driver("prepared", backend);
+        let answers = run_cases(&exe, &cases);
+        let mut i = 0;
+        while i < first_refusal {
+            if want[i].is_empty() {
+                // A Wycheproof pair: the prepared tag and the plain one.
+                assert_eq!(answers[i], answers[i + 1], "{} on {backend}", cases[i]);
+                assert!(answers[i].starts_with("0 ok "), "{} on {backend}", cases[i]);
+                i += 2;
+            } else {
+                assert_eq!(answers[i], want[i], "{} on {backend}", cases[i]);
+                i += 1;
+            }
+        }
+        for ((case, tag), line) in refusals.iter().zip(&answers[first_refusal..]) {
+            let (code, got_tag, got) = answer(line);
+            assert!(code < 0, "{case} on {backend}");
+            assert_eq!(&got_tag, tag, "{case} on {backend}");
+            assert!(got.chars().all(|c| c == '0'), "a refusal wrote its output: {case}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

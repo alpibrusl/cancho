@@ -1,0 +1,295 @@
+== tables
+kernel.perf_event_paranoid = 2
+== base pass 1
+mar 13 oct 2026 10:04:47 CEST
+ 10:04:47 up 5 days, 23:24,  9 users,  load average: 6,04, 5,37, 5,30
+machine: {"arch": "x86_64", "kernel": "7.0.0-38-generic", "system": "Linux", "cpu": "12th Gen Intel(R) Core(TM) i7-1260P", "governor": "powersave", "thp": "madvise", "load": [6.04150390625, 5.36669921875, 5.2998046875]}
+operation                            size    ns/call  cycles/call   instr/call   IPC
+x25519_public                           0      82763     161260.6     693548.0   4.3
+x25519_shared                           0      83496     152018.3     693548.1  4.56
+p256_public                             0      93505     265044.6    1197032.1  4.52
+p256_shared                             0     378906     983071.3    5002522.5  5.09
+ecdsa_p256_verify                       0     313476     691997.8    3487843.4  5.04
+ecdsa_p256_sign                         0     183593     324728.3    1632016.2  5.03
+ecdsa_p256_sign_checked                 0     433593    1101769.8    5117772.7  4.65
+sha256                                 64       1552       2688.6      15039.0  5.59
+sha256                               1024      12725      22115.2     121884.0  5.51
+sha256                              16384     148681     332622.3    1831404.1  5.51
+sha384                                 64        585       1679.2       8462.0  5.04
+sha384                               1024       6805      11455.6      58723.0  5.13
+sha384                              16384      73242     157594.7     823963.1  5.23
+hmac_sha256                            64       4104       6727.2      39759.0  5.91
+hmac_sha256                          1024      13549      37118.9     146604.0  3.95
+hmac_sha256                         16384     186523     450551.2    1856124.3  4.12
+hkdf_expand_label_32                    0       3494      10018.3      33504.0  3.34
+hkdf_extract_32                         0       3234      10152.6      33014.0  3.25
+aes128gcm_seal                         64         68        173.6        739.0  4.26
+aes128gcm_seal                       1024        342        744.3       3144.0  4.22
+aes128gcm_seal                      16384       4653      10688.6      43464.0  4.07
+aes128gcm_open                         64         71        177.0        742.0  4.19
+aes128gcm_open                       1024        336        765.3       3147.0  4.11
+aes128gcm_open                      16384       5249      10974.1      43467.0  3.96
+chacha20poly1305_seal                  64       1407       2385.0      14241.0  5.97
+chacha20poly1305_seal                1024      12847      19346.4     118761.0  6.14
+chacha20poly1305_seal               16384     218750     296577.1    1791081.2  6.04
+chacha20poly1305_open                  64       1621       2338.3      14407.0  6.16
+chacha20poly1305_open                1024      11550      19438.1     118927.0  6.12
+chacha20poly1305_open               16384     200195     290634.1    1791247.2  6.16
+aes128gcm_prepare                       0       2677       5826.4      32813.0  5.63
+hkdf_expand_label_48                    0       3570       6079.4      33643.0  5.53
+calibrate                               0        356       1000.1       1007.0  1.01
+== after pass 1
+mar 13 oct 2026 10:07:32 CEST
+ 10:07:32 up 5 days, 23:26,  7 users,  load average: 4,46, 5,31, 5,31
+machine: {"arch": "x86_64", "kernel": "7.0.0-38-generic", "system": "Linux", "cpu": "12th Gen Intel(R) Core(TM) i7-1260P", "governor": "powersave", "thp": "madvise", "load": [4.46484375, 5.30810546875, 5.31494140625]}
+operation                            size    ns/call  cycles/call   instr/call   IPC
+x25519_public                           0      55541     148945.1     693548.1  4.66
+x25519_shared                           0      55664     150929.8     693548.1   4.6
+p256_public                             0      87402     238922.0    1197032.1  5.01
+p256_shared                             0     371093     976512.6    5002523.6  5.12
+ecdsa_p256_verify                       0     263671     722088.8    3487843.4  4.83
+ecdsa_p256_sign                         0     113037     300905.9    1461814.1  4.86
+ecdsa_p256_sign_checked                 0     444335    1017455.2    4947568.7  4.86
+sha256                                 64        197        442.7        977.0  2.21
+sha256                               1024       1081       2463.0       3437.0   1.4
+sha256                              16384      14862      34338.7      42797.0  1.25
+sha384                                 64        658       1793.4       8471.0  4.72
+sha384                               1024       4684      11883.7      58732.0  4.94
+sha384                              16384      57617     175379.5     823972.1   4.7
+hmac_sha256                            64        435       1308.6       3729.0  2.85
+hmac_sha256                          1024       1209       3208.0       6189.0  1.93
+hmac_sha256                         16384      13671      35463.0      45549.0  1.28
+hkdf_expand_label_32                    0        550       1321.3       4881.0  3.69
+hkdf_extract_32                         0        500       1289.8       4099.0  3.18
+aes128gcm_seal                         64         74        179.7        739.0  4.11
+aes128gcm_seal                       1024        344        785.9       3144.0   4.0
+aes128gcm_seal                      16384       4669      11181.2      43464.0  3.89
+aes128gcm_open                         64         74        168.7        742.0   4.4
+aes128gcm_open                       1024        320        827.8       3147.0   3.8
+aes128gcm_open                      16384       4409      10039.7      43467.0  4.33
+chacha20poly1305_seal                  64        980       2300.7      14241.0  6.19
+chacha20poly1305_seal                1024       6683      20112.3     118761.0   5.9
+chacha20poly1305_seal               16384     100830     293946.1    1791081.2  6.09
+chacha20poly1305_open                  64        844       2344.9      14407.0  6.14
+chacha20poly1305_open                1024       7446      19633.6     118927.0  6.06
+chacha20poly1305_open               16384     112304     295607.9    1791247.2  6.06
+aes128gcm_prepare                       0       2174       5760.4      32813.0   5.7
+hkdf_expand_label_48                    0       2170       5824.5      32178.0  5.52
+hkdf_expand_label_prepared_32           0        250        676.5       2589.0  3.83
+calibrate                               0        336       1000.2       1007.0  1.01
+== base pass 2
+mar 13 oct 2026 10:11:02 CEST
+ 10:11:02 up 5 days, 23:30,  7 users,  load average: 3,77, 4,46, 4,96
+machine: {"arch": "x86_64", "kernel": "7.0.0-38-generic", "system": "Linux", "cpu": "12th Gen Intel(R) Core(TM) i7-1260P", "governor": "powersave", "thp": "madvise", "load": [3.7705078125, 4.4599609375, 4.9580078125]}
+operation                            size    ns/call  cycles/call   instr/call   IPC
+x25519_public                           0      56640     145814.8     693548.1  4.76
+x25519_shared                           0      61889     156351.1     693548.1  4.44
+p256_public                             0      95458     225908.1    1197032.1   5.3
+p256_shared                             0     402343     975270.2    5002522.5  5.13
+ecdsa_p256_verify                       0     294921     733466.5    3487843.4  4.76
+ecdsa_p256_sign                         0     117431     320667.8    1632016.1  5.09
+ecdsa_p256_sign_checked                 0     390625    1018702.5    5117772.6  5.02
+sha256                                 64        831       2565.3      15039.0  5.86
+sha256                               1024       6729      20829.0     121884.0  5.85
+sha256                              16384     100585     340054.0    1831404.2  5.39
+sha384                                 64        487       1638.3       8462.0  5.17
+sha384                               1024       3440      10443.8      58723.0  5.62
+sha384                              16384      48217     150632.3     823963.1  5.47
+hmac_sha256                            64       2254       6627.0      39759.0   6.0
+hmac_sha256                          1024       8010      24660.7     146604.0  5.94
+hmac_sha256                         16384     101806     313834.5    1856124.2  5.91
+hkdf_expand_label_32                    0       1853       5640.6      33504.0  5.94
+hkdf_extract_32                         0       1796       5503.8      33014.0   6.0
+aes128gcm_seal                         64         55        209.9        739.0  3.52
+aes128gcm_seal                       1024        245        720.3       3144.0  4.36
+aes128gcm_seal                      16384       3463      10687.8      43464.0  4.07
+aes128gcm_open                         64         53        169.4        742.0  4.38
+aes128gcm_open                       1024        264        750.2       3147.0  4.19
+aes128gcm_open                      16384       3799      10649.9      43467.0  4.08
+chacha20poly1305_seal                  64        919       2321.8      14241.0  6.13
+chacha20poly1305_seal                1024       7812      19438.7     118761.0  6.11
+chacha20poly1305_seal               16384     117675     293100.8    1791081.1  6.11
+chacha20poly1305_open                  64        936       2352.8      14407.0  6.12
+chacha20poly1305_open                1024       6332      19473.5     118927.0  6.11
+chacha20poly1305_open               16384     104492     292117.8    1791247.1  6.13
+aes128gcm_prepare                       0       2105       9409.8      32813.0  3.49
+hkdf_expand_label_48                    0       2159       6145.5      33643.0  5.47
+calibrate                               0        293       1000.4       1007.0  1.01
+== after pass 2
+mar 13 oct 2026 10:14:20 CEST
+ 10:14:20 up 5 days, 23:33,  7 users,  load average: 3,17, 3,80, 4,59
+machine: {"arch": "x86_64", "kernel": "7.0.0-38-generic", "system": "Linux", "cpu": "12th Gen Intel(R) Core(TM) i7-1260P", "governor": "powersave", "thp": "madvise", "load": [3.1728515625, 3.7998046875, 4.59228515625]}
+operation                            size    ns/call  cycles/call   instr/call   IPC
+x25519_public                           0      49682     148910.9     693548.1  4.66
+x25519_shared                           0      55419     148855.4     693548.1  4.66
+p256_public                             0      85693     231936.4    1197032.1  5.16
+p256_shared                             0     375976     976857.7    5002523.5  5.12
+ecdsa_p256_verify                       0     256835     689849.4    3487843.4  5.06
+ecdsa_p256_sign                         0     107910     297549.2    1461814.1  4.91
+ecdsa_p256_sign_checked                 0     363281     985959.9    4947568.6  5.02
+sha256                                 64        145        440.2        977.0  2.22
+sha256                               1024        774       2405.8       3437.0  1.43
+sha256                              16384      10711      33857.0      42797.0  1.26
+sha384                                 64        497       1504.0       8471.0  5.63
+sha384                               1024       3776      10491.9      58732.0   5.6
+sha384                              16384      53955     151153.3     823972.1  5.45
+hmac_sha256                            64        402       1156.5       3729.0  3.22
+hmac_sha256                          1024       1028       3177.7       6189.0  1.95
+hmac_sha256                         16384       9704      34556.7      45549.0  1.32
+hkdf_expand_label_32                    0        444       1313.8       4881.0  3.72
+hkdf_extract_32                         0        378       1106.8       4099.0   3.7
+aes128gcm_seal                         64         58        165.3        739.0  4.47
+aes128gcm_seal                       1024        258        745.4       3144.0  4.22
+aes128gcm_seal                      16384       3669      11009.8      43464.0  3.95
+aes128gcm_open                         64         58        175.3        742.0  4.23
+aes128gcm_open                       1024        258        742.8       3147.0  4.24
+aes128gcm_open                      16384       3677      10678.6      43467.0  4.07
+chacha20poly1305_seal                  64        885       2566.5      14241.0  5.55
+chacha20poly1305_seal                1024       7598      21351.9     118761.0  5.56
+chacha20poly1305_seal               16384     111816     318709.5    1791081.2  5.62
+chacha20poly1305_open                  64        902       2337.8      14407.0  6.16
+chacha20poly1305_open                1024       6500      20698.4     118927.0  5.75
+chacha20poly1305_open               16384     106933     291485.4    1791247.1  6.15
+aes128gcm_prepare                       0       2174       5783.9      32813.0  5.67
+hkdf_expand_label_48                    0       1930       5836.5      32178.0  5.51
+hkdf_expand_label_prepared_32           0        227        682.2       2589.0   3.8
+calibrate                               0        301       1000.5       1007.0  1.01
+kernel.perf_event_paranoid = 4
+== handshakes
+== hs base pass 1
+mar 13 oct 2026 10:17:38 CEST
+ 10:17:38 up 5 days, 23:37,  6 users,  load average: 3,12, 3,58, 4,35
+perf counters: user and kernel; load (3.11865234375, 3.57861328125, 4.35009765625)
+-- round 1 of 2, load (3.11865234375, 3.57861328125, 4.35009765625)
+server-full cancho tls_echo                     4607 handshakes     0.909 ms CPU    1.983 M cycles    8.099 M instructions
+server-full openssl s_server                    6591 handshakes     0.446 ms CPU    1.074 M cycles    1.787 M instructions
+server-full openssl oserv                       6511 handshakes     0.432 ms CPU    1.030 M cycles    1.771 M instructions
+server-resumed cancho tls_echo --tickets 2     13009 handshakes     0.404 ms CPU    0.978 M cycles    3.310 M instructions
+server-resumed openssl s_server                16508 handshakes     0.329 ms CPU    0.880 M cycles    1.735 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.930 ms CPU    2.714 M cycles   10.703 M instructions
+client-full openssl tconn                       9476 handshakes     0.616 ms CPU    1.658 M cycles    3.367 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.294 ms CPU    0.999 M cycles    3.304 M instructions
+client-resumed openssl tconn                   20374 handshakes     0.258 ms CPU    0.833 M cycles    1.651 M instructions
+-- round 2 of 2, load (3.7724609375, 3.74658203125, 4.3623046875)
+server-full cancho tls_echo                     7163 handshakes     0.592 ms CPU    1.852 M cycles    8.090 M instructions
+server-full openssl s_server                    8202 handshakes     0.367 ms CPU    0.992 M cycles    1.779 M instructions
+server-full openssl oserv                       7594 handshakes     0.381 ms CPU    0.941 M cycles    1.763 M instructions
+server-resumed cancho tls_echo --tickets 2     14255 handshakes     0.390 ms CPU    0.894 M cycles    3.305 M instructions
+server-resumed openssl s_server                14625 handshakes     0.373 ms CPU    0.869 M cycles    1.736 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     1.110 ms CPU    2.735 M cycles   10.853 M instructions
+client-full openssl tconn                       8511 handshakes     0.693 ms CPU    1.644 M cycles    3.367 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.419 ms CPU    1.016 M cycles    3.648 M instructions
+client-resumed openssl tconn                   16290 handshakes     0.324 ms CPU    0.839 M cycles    1.654 M instructions
+== hs after pass 1
+mar 13 oct 2026 10:19:42 CEST
+ 10:19:42 up 5 days, 23:39,  7 users,  load average: 3,54, 3,66, 4,29
+perf counters: user and kernel; load (3.537109375, 3.66064453125, 4.291015625)
+-- round 1 of 2, load (3.537109375, 3.66064453125, 4.291015625)
+server-full cancho tls_echo                     7475 handshakes     0.566 ms CPU    1.636 M cycles    6.968 M instructions
+server-full openssl s_server                    8508 handshakes     0.351 ms CPU    0.993 M cycles    1.781 M instructions
+server-full openssl oserv                       8512 handshakes     0.338 ms CPU    0.934 M cycles    1.764 M instructions
+server-resumed cancho tls_echo --tickets 2     19753 handshakes     0.235 ms CPU    0.648 M cycles    2.140 M instructions
+server-resumed openssl s_server                16611 handshakes     0.324 ms CPU    0.887 M cycles    1.737 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     1.267 ms CPU    3.359 M cycles    9.813 M instructions
+client-full openssl tconn                       7224 handshakes     0.782 ms CPU    1.839 M cycles    3.374 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.346 ms CPU    0.861 M cycles    2.346 M instructions
+client-resumed openssl tconn                   10445 handshakes     0.469 ms CPU    0.984 M cycles    1.662 M instructions
+-- round 2 of 2, load (4.7529296875, 3.87353515625, 4.3154296875)
+server-full cancho tls_echo                     3657 handshakes     1.058 ms CPU    2.031 M cycles    6.981 M instructions
+server-full openssl s_server                    5572 handshakes     0.519 ms CPU    1.137 M cycles    1.790 M instructions
+server-full openssl oserv                       6657 handshakes     0.428 ms CPU    0.967 M cycles    1.765 M instructions
+server-resumed cancho tls_echo --tickets 2     14762 handshakes     0.306 ms CPU    0.674 M cycles    2.141 M instructions
+server-resumed openssl s_server                16942 handshakes     0.322 ms CPU    0.851 M cycles    1.735 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.829 ms CPU    2.540 M cycles    9.995 M instructions
+client-full openssl tconn                      10340 handshakes     0.570 ms CPU    1.633 M cycles    3.364 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.291 ms CPU    0.827 M cycles    2.284 M instructions
+client-resumed openssl tconn                   17307 handshakes     0.305 ms CPU    0.834 M cycles    1.653 M instructions
+== hs base pass 2
+mar 13 oct 2026 10:21:48 CEST
+ 10:21:48 up 5 days, 23:41,  7 users,  load average: 4,27, 3,99, 4,33
+perf counters: user and kernel; load (4.27294921875, 3.99169921875, 4.33154296875)
+-- round 1 of 2, load (4.27294921875, 3.99169921875, 4.33154296875)
+server-full cancho tls_echo                     6099 handshakes     0.680 ms CPU    1.851 M cycles    8.090 M instructions
+server-full openssl s_server                    7372 handshakes     0.407 ms CPU    0.998 M cycles    1.780 M instructions
+server-full openssl oserv                       6988 handshakes     0.412 ms CPU    0.943 M cycles    1.765 M instructions
+server-resumed cancho tls_echo --tickets 2     14420 handshakes     0.386 ms CPU    0.890 M cycles    3.305 M instructions
+server-resumed openssl s_server                13715 handshakes     0.398 ms CPU    0.867 M cycles    1.735 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     1.132 ms CPU    2.660 M cycles   10.797 M instructions
+client-full openssl tconn                       8017 handshakes     0.737 ms CPU    1.642 M cycles    3.368 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.452 ms CPU    0.954 M cycles    3.177 M instructions
+client-resumed openssl tconn                   15778 handshakes     0.335 ms CPU    0.836 M cycles    1.654 M instructions
+-- round 2 of 2, load (3.947265625, 3.95947265625, 4.29833984375)
+server-full cancho tls_echo                     7104 handshakes     0.642 ms CPU    1.848 M cycles    8.090 M instructions
+server-full openssl s_server                    8384 handshakes     0.355 ms CPU    0.993 M cycles    1.781 M instructions
+server-full openssl oserv                       8423 handshakes     0.341 ms CPU    0.937 M cycles    1.764 M instructions
+server-resumed cancho tls_echo --tickets 2     17355 handshakes     0.320 ms CPU    0.889 M cycles    3.305 M instructions
+server-resumed openssl s_server                16855 handshakes     0.323 ms CPU    0.861 M cycles    1.735 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.933 ms CPU    2.728 M cycles   10.868 M instructions
+client-full openssl tconn                       8478 handshakes     0.694 ms CPU    1.621 M cycles    3.367 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.451 ms CPU    0.973 M cycles    3.258 M instructions
+client-resumed openssl tconn                   14740 handshakes     0.357 ms CPU    0.833 M cycles    1.654 M instructions
+== hs after pass 2
+mar 13 oct 2026 10:23:53 CEST
+ 10:23:53 up 5 days, 23:43,  7 users,  load average: 3,72, 3,88, 4,25
+perf counters: user and kernel; load (3.72216796875, 3.87890625, 4.24609375)
+-- round 1 of 2, load (3.72216796875, 3.87890625, 4.24609375)
+server-full cancho tls_echo                     5343 handshakes     0.797 ms CPU    1.643 M cycles    6.969 M instructions
+server-full openssl s_server                    6906 handshakes     0.434 ms CPU    1.003 M cycles    1.781 M instructions
+server-full openssl oserv                       7772 handshakes     0.365 ms CPU    0.959 M cycles    1.765 M instructions
+server-resumed cancho tls_echo --tickets 2     16163 handshakes     0.268 ms CPU    0.745 M cycles    2.146 M instructions
+server-resumed openssl s_server                13996 handshakes     0.367 ms CPU    1.000 M cycles    1.742 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     1.031 ms CPU    2.850 M cycles    9.931 M instructions
+client-full openssl tconn                       7342 handshakes     0.770 ms CPU    1.849 M cycles    3.374 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.577 ms CPU    0.907 M cycles    2.353 M instructions
+client-resumed openssl tconn                   11826 handshakes     0.426 ms CPU    0.935 M cycles    1.659 M instructions
+-- round 2 of 2, load (3.9931640625, 3.89501953125, 4.22412109375)
+server-full cancho tls_echo                     5657 handshakes     0.735 ms CPU    1.703 M cycles    6.971 M instructions
+server-full openssl s_server                    6272 handshakes     0.470 ms CPU    1.038 M cycles    1.782 M instructions
+server-full openssl oserv                       6907 handshakes     0.420 ms CPU    0.943 M cycles    1.763 M instructions
+server-resumed cancho tls_echo --tickets 2     17598 handshakes     0.264 ms CPU    0.644 M cycles    2.138 M instructions
+server-resumed openssl s_server                18077 handshakes     0.302 ms CPU    0.861 M cycles    1.734 M instructions
+client-full cancho tls_many (200 less 1)         199 handshakes     0.920 ms CPU    2.571 M cycles    9.807 M instructions
+client-full openssl tconn                      10008 handshakes     0.590 ms CPU    1.633 M cycles    3.365 M instructions
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.313 ms CPU    0.834 M cycles    2.324 M instructions
+client-resumed openssl tconn                   16854 handshakes     0.312 ms CPU    0.838 M cycles    1.653 M instructions
+== check
+baseline linux-x86_64 (Intel Core i7-1260P (a P-core), Ubuntu 26.04, Linux 7.0.0-38, clang from the system, valgrind 3.26; shared with other work (docs/tls-performance.md §2)); instructions: instructions a call
+operation                            size            now       recorded   ratio
+aes128gcm_open                       1024        3147.00        3149.20    1.00
+aes128gcm_open                      16384       43467.00       43471.00    1.00
+aes128gcm_open                         64         742.00         746.00    0.99
+aes128gcm_prepare                       0       32813.36       36560.40    0.90
+aes128gcm_seal                       1024        3142.20        3141.20    1.00
+aes128gcm_seal                      16384       43464.00       43463.00    1.00
+aes128gcm_seal                         64         739.00         737.80    1.00
+calibrate                               0        1006.64        1007.00    1.00
+chacha20poly1305_open                1024      118925.20      119409.00    1.00
+chacha20poly1305_open               16384     1791247.00     1790529.00    1.00
+chacha20poly1305_open                  64       14407.00       14964.00    0.96
+chacha20poly1305_seal                1024      118761.00      119047.80    1.00
+chacha20poly1305_seal               16384     1791099.00     1790184.00    1.00
+chacha20poly1305_seal                  64       14241.00       14601.20    0.98
+ecdsa_p256_sign                         0     1623612.00     1630478.00    1.00
+ecdsa_p256_sign_checked                 0     5119526.00     5126392.00    1.00
+ecdsa_p256_verify                       0     3487843.00     3488054.00    1.00
+hkdf_expand_label_32                    0       31851.00       34537.00    0.92
+hkdf_expand_label_48                    0       34288.00       37702.00    0.91
+hkdf_extract_32                         0       31068.64       33418.00    0.93
+hmac_sha256                          1024      141563.80      147007.00    0.96
+hmac_sha256                         16384     1807420.00     1856527.00    0.97
+hmac_sha256                            64       37446.82       40162.00    0.93
+p256_public                             0     1197032.00     1197245.00    1.00
+p256_shared                             0     5002559.00     5002771.00    1.00
+sha256                               1024      118578.80      122000.00    0.97
+sha256                              16384     1784435.00     1831538.00    0.97
+sha256                                 64       14462.00       15154.80    0.95
+sha384                               1024       58732.00       58802.20    1.00
+sha384                              16384      823990.00      824062.00    1.00
+sha384                                 64        8471.18        8543.00    0.99
+x25519_public                           0      693512.00      693989.00    1.00
+x25519_shared                           0      693548.00      694025.00    1.00
+hkdf_expand_label_prepared_32           0       16062.64           none  NEW ROW: record it in the baseline
+33 of 34 rows within 1.3x either way of the baseline
+== done
+mar 13 oct 2026 10:26:21 CEST
+4

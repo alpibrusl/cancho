@@ -1122,6 +1122,16 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.gcm_tag(&args, true)
             }
+            // `docs/sha256-builtin.md` §4 (`body/crypto.rs`).
+            Callee::Builtin(Builtin::HwSha256) => self.hw_sha256(),
+            Callee::Builtin(Builtin::Sha256Blocks) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.sha256_blocks(&args)
+            }
+            Callee::Builtin(Builtin::Sha256BlockWords) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.sha256_block_words(&args)
+            }
             // `docs/byte-search.md`: one `memchr`.
             Callee::Builtin(Builtin::IndexOfByte) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();

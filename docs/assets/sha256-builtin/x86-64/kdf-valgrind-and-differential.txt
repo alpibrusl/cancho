@@ -1,0 +1,9 @@
+== valgrind forced-off
+mar 13 oct 2026 09:28:43 CEST
+ 09:28:43 up 5 days, 22:48, 10 users,  load average: 6,15, 5,46, 5,11
+under valgrind: 8373 cases, 0 wrong
+== valgrind differential
+300 rounds, 3600 checks, 0 differences
+== native differential
+100000 rounds, 1200000 checks, 0 differences
+== dudect

@@ -85,9 +85,13 @@ fn handshake_secrets[&i, &b, &s](ints: &!i [int], bytes: &!b [byte], secret: &s 
         hkdf.derive_secret(h, early, "derived", empty_hash, derived);
         hkdf.extract(h, derived, secret, hs);
         tls_slot.transcript_hash(ints, th);
-        hkdf.derive_secret(h, hs, "c hs traffic", th, bytes[tls_slot.k_client_hs()..tls_slot.k_client_hs() + h]);
-        hkdf.derive_secret(h, hs, "s hs traffic", th, bytes[tls_slot.k_server_hs()..tls_slot.k_server_hs() + h]);
-        hkdf.derive_secret(h, hs, "derived", empty_hash, derived);
+        // Three secrets from the handshake secret: prepared once (`docs/hkdf.md` §9).
+        let hs_key = alloc_slice[r](hkdf.prepared_len(h), 0);
+        hkdf.prepare(h, hs, hs_key);
+        hkdf.derive_secret_prepared(h, hs_key, "c hs traffic", th, bytes[tls_slot.k_client_hs()..tls_slot.k_client_hs() + h]);
+        hkdf.derive_secret_prepared(h, hs_key, "s hs traffic", th, bytes[tls_slot.k_server_hs()..tls_slot.k_server_hs() + h]);
+        hkdf.derive_secret_prepared(h, hs_key, "derived", empty_hash, derived);
+        hkdf.forget(hs_key);
         hkdf.extract(h, derived, zeros, bytes[tls_slot.k_master()..tls_slot.k_master() + h]);
         tls_slot.zero(hs);
         tls_slot.zero(early);

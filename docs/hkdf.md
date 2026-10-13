@@ -7,7 +7,9 @@
 > ever added. Building it found that **every hash in `std` trapped on
 > a message of 64 KiB**, and so did `ed25519.sign`; §2 covers that, the
 > fix, and the two documents it corrects. §8 lists what is not done,
-> including the `cancho-hooks` half of #201.
+> including the `cancho-hooks` half of #201. §9 (#446) keeps a key's
+> padded blocks hashed, so an HMAC under a key used again hashes no pad
+> again, and HKDF and the TLS key schedule use it.
 
 ---
 
@@ -50,7 +52,7 @@ caller can act on:
 |---|---|---|
 | -1 | `hash-unsupported` | `hash_len` is not 32 or 48 |
 | -2 | `hash-output-length` | an output that must be one digest long is not |
-| -3 | `hmac-state-length` | a streaming state is not `hmac.state_len(hash_len)` words |
+| -3 | `hmac-state-length` | a streaming state is not `hmac.state_len(hash_len)` words (since #446, §9: or a prepared key not `hmac.prepared_len(hash_len)`, or a state fed since `init` given to `hmac.keep`) |
 | -4 | `hkdf-length-too-large` | more than `255 * hash_len` bytes asked of Expand (RFC 5869 §2.3), or more than 65,535 of Expand-Label |
 | -5 | `hkdf-prk-length` | a PRK shorter than the hash (RFC 5869 §2.3) |
 | -6 | `hkdf-label-length` | a label of 0 or more than 249 bytes (`"tls13 " + label` is `<7..255>`) |
@@ -141,7 +143,10 @@ here too: no branch and no memory index may depend on a secret.
   length (hashed first, or padded) and on the hash's block size. The
   key is padded to a block. The `ipad` block is cleared before its
   arena ends, and the `opad` block stays in the caller's state until
-  `final` clears it. HKDF-Expand clears its last `T(i)`. All of these
+  `final` clears it. *Corrected (#446, §9): the state now keeps the
+  outer hash's eight words after the `opad` block, not the block, and
+  `final` clears them; both padded blocks are cleared before `init`'s
+  region ends.* HKDF-Expand clears its last `T(i)`. All of these
   are best effort, for the reasons in `docs/chacha20.md` §3.2. The
   hash states' own buffers and schedules, which hold key-derived
   words, are not cleared. *Corrected (`region-chunk-cache.md` §3.1):
@@ -339,3 +344,75 @@ reaches it.
 - **CI for the differential and mutant scripts.** Both need Python's
   `cryptography`. Everything else runs in `cargo test`.
 - **An independent review.** That is #209.
+
+---
+
+## 9. A key's pads hashed once (#446)
+
+> **Built**, with the SHA-256 builtin ([`sha256-builtin.md`](sha256-builtin.md)), as lever D4 of
+> [`tls-performance.md`](tls-performance.md) §10.8.
+
+### 9.1 What was asked
+
+`hmac.init` hashed the key's inner padded block on every call, and `final` the outer one, and each opened a `region` for its
+buffers. HKDF-Expand-Label calls HMAC with the same key several times in a key schedule: the handshake secret gives three
+secrets, each traffic secret a key and an IV. `tls-performance.md` §10.4 measured `hmac.init` at 9.9% of a full server handshake
+inclusive, 8.1 points of it the regions' memory, so at most 1.8 points were the two compressions; the regions were A1's to
+remove (§10.11) and the compressions this section's.
+
+### 9.2 What a prepared key is
+
+After `K0 XOR ipad` and `K0 XOR opad` (RFC 2104 §2) each fill exactly one block, the inner and the outer hash are each eight
+words and a count of one block. A **prepared key** is those sixteen words: `hmac.prepared_len(hash_len)` is 16 for SHA-256
+and SHA-384 alike (SHA-384's words are SHA-512's, 64 bits each, in an `int` each).
+
+```
+hmac.prepare(hash_len, prepared, key)            the two pads hashed once (a region, for the scratch state)
+hmac.init_prepared(hash_len, state, prepared)    an HMAC started from it: two copies of eight words, no compression
+hmac.mac_prepared(hash_len, prepared, msg, out)  one tag under it (one region, the state's)
+hmac.keep(hash_len, state, prepared)             the prepared key of a state `init` has just started
+hmac.forget(prepared)                            cleared
+hkdf.prepare(hash_len, secret, prepared)         `hmac.prepare`, with HKDF-Expand's PRK-length refusal
+hkdf.expand_label_prepared(...), hkdf.derive_secret_prepared(...)
+hkdf.prepared_len(hash_len), hkdf.forget(prepared)
+```
+
+`std.crypto` gives the operations this needs, with no other knowledge of its layout leaving it: `sha256_save` (the eight words
+of a state at a block boundary; -1 and nothing written if bytes are waiting), `sha256_resume` (a state that goes on from them
+after a given number of bytes), `sha256_finish` (the padding, the digest left as the running words) and `sha256_update_words`
+(big-endian words fed at a word boundary), and the `sha512_` four.
+
+**The HMAC state changed with it.** It was the hash state and then the outer padded block, `block_len` words kept for `final`
+to hash; it is now the hash state, the outer hash's eight words, and eight words for the inner digest, so `hmac.state_len` is
+the hash state's length plus 16 (154 for SHA-256, 234 for SHA-384, from 202 and 346). `init` hashes both pads, keeping the
+outer words, so a plain HMAC still costs two pad compressions, now both in `init`. **`final` opens no region and writes nothing
+but the tag**: it finishes the inner hash (`sha256_finish`, the padding without the bytes out), keeps its digest words in the
+state, resumes the outer hash from the kept words, feeds it the digest as words (`sha256_update_words`; `sha512_` for SHA-384,
+six 64-bit words), finishes into `out`, and clears the sixteen words. *(The first version wrote the inner digest into the
+caller's `out` and hashed it from there; the timing test found that it made the time depend on whether `out` already held the
+same bytes, [`sha256-builtin.md`](sha256-builtin.md) §8.4.)*
+
+### 9.3 Where a key is used again
+
+- **`hkdf.expand`** prepares its PRK once (from the state its `init` just made, `hmac.keep`) and starts every `T(i)` from it, so
+  an output of `n` digests hashes the pads once, not `n` times. Its regions went from one a call plus two a block (`init`'s and
+  `final`'s) to two a call; `expand_label` from four a call to two.
+- **The TLS key schedule**, kept minimal (`packages/tls`): `tls_slot.traffic_keys` derives a traffic key and an IV from one
+  secret, so it prepares the secret once and expands both labels from it; and the server's and the client's handshake secrets
+  (`handshake_secrets` in `server.cho`, the same block in `client.cho`) prepare the handshake secret once for its three
+  Derive-Secrets. Nothing else in the package changed, and nothing new is kept in a slot: each prepared key lives in the
+  calling function's region and is cleared before it ends (and the region itself is cleared when it ends,
+  `region-chunk-cache.md` §3), so `tls.residue` has nothing new to count, and the pool's checks that it stays 0 pass unchanged.
+- **Not changed**: the master secret's three Derive-Secrets are in three functions that run at different points of the
+  handshake (keeping a prepared master secret would mean keeping it in the slot); the Finished keys and the binder are used
+  once each; TLS 1.2's PRF (`record.cho`, which #447 and #448 are changing) calls `hmac.init` with one secret in a loop and is
+  the next user if it matters.
+
+### 9.4 Tested
+
+`conformance/kdf.rs` runs every HMAC, Expand-Label and Derive-Secret row of `tests/vectors/kdf.txt` and every Wycheproof HMAC
+case again under a prepared key, on both backends; the driver (`tests/programs/kdf_driver.cho`, ops `P`, `Q`, `R`) also checks
+that a tag from `mac_prepared` equals one streamed after `init_prepared` in pieces of 1 to 129 bytes, and that a prepared secret
+gives the same label twice. The prepared functions' refusals each have a row. `scripts/kdf_differential.py` adds a prepared HMAC
+and a prepared Expand-Label to every round, against Python's `hmac`; `scripts/kdf_mutants.py` has mutants of the resume, the
+kept words, the copies and the words fed (`sha256-builtin.md` §8.2). What it cost and saved is `sha256-builtin.md` §8.5.

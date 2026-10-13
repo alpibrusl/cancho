@@ -72,13 +72,24 @@ pub fn check_hash(hash_len: int) -> [] int {
 }
 
 // The length of an HMAC state for `hash_len`: the hash's own state,
-// then the key block XOR `opad`, kept for `final`. 0 for a hash that is
-// not supported.
+// then the eight running words of the outer hash after the key's outer
+// pad, kept for `final`, then eight words where `final` keeps the inner
+// digest (`docs/hkdf.md` §9). 0 for a hash that is not supported.
 pub fn state_len(hash_len: int) -> [] int {
     if check_hash(hash_len) != 0 {
         return 0;
     }
-    return hash_state_len(hash_len) + block_len(hash_len);
+    return hash_state_len(hash_len) + 16;
+}
+
+// The length of a prepared key (`prepare`): the inner and the outer
+// hash's eight running words after the key's two padded blocks. 0 for a
+// hash that is not supported.
+pub fn prepared_len(hash_len: int) -> [] int {
+    if check_hash(hash_len) != 0 {
+        return 0;
+    }
+    return 16;
 }
 
 fn hash_init[&st](hash_len: int, st: &!st [int]) -> [] int {
@@ -102,24 +113,50 @@ fn hash_final[&st, &o](hash_len: int, st: &!st [int], out: &!o [byte]) -> [] int
     return crypto.sha384_final(st, out);
 }
 
-// Starts an HMAC of `key` into `state` (exactly `state_len(hash_len)`
-// words). A key longer than the hash's block is hashed first (RFC 2104
-// §2); a shorter one is padded with zeros.
-pub fn init[&st, &k](hash_len: int, state: &!st [int], key: &k [byte]) -> [] int {
-    if check_hash(hash_len) != 0 {
-        return refused_hash();
+fn hash_save[&st, &w](hash_len: int, st: &st [int], words: &!w [int]) -> [] int {
+    if hash_len == 32 {
+        return crypto.sha256_save(st, words);
     }
-    if len(state) != state_len(hash_len) {
-        return refused_state_length();
+    return crypto.sha512_save(st, words);
+}
+
+fn hash_finish[&st](hash_len: int, st: &!st [int]) -> [] int {
+    if hash_len == 32 {
+        return crypto.sha256_finish(st);
     }
-    let hs = hash_state_len(hash_len);
+    return crypto.sha512_finish(st);
+}
+
+// The digest `hash_finish` left, as words: eight of 32 bits for SHA-256,
+// six of 64 for SHA-384.
+fn hash_update_words[&st, &w](hash_len: int, st: &!st [int], words: &w [int]) -> [] int {
+    if hash_len == 32 {
+        return crypto.sha256_update_words(st, words);
+    }
+    return crypto.sha512_update_words(st, words[0..6]);
+}
+
+fn hash_resume[&st, &w](hash_len: int, st: &!st [int], words: &w [int]) -> [] int {
+    if hash_len == 32 {
+        return crypto.sha256_resume(st, words, 64);
+    }
+    return crypto.sha512_resume(st, words, 128);
+}
+
+// The key's two padded blocks hashed (RFC 2104 §2): the outer one's
+// running words into `outer[0..8]`, and `st` left as the inner hash after
+// its block. A key longer than the hash's block is hashed first; a
+// shorter one is padded with zeros. The branches are on the key's length
+// and the hash, which are public; the padded key and its two pads are
+// cleared before their region ends (best effort, `docs/hkdf.md` §3).
+fn absorb_key[&st, &w, &k](hash_len: int, st: &!st [int], outer: &!w [int], key: &k [byte]) -> [] int {
     let bl = block_len(hash_len);
     region r {
         let k0 = alloc_slice[r](bl, byte_of(0));
         if len(key) > bl {
-            hash_init(hash_len, state[0..hs]);
-            hash_update(hash_len, state[0..hs], key);
-            hash_final(hash_len, state[0..hs], k0);
+            hash_init(hash_len, st);
+            hash_update(hash_len, st, key);
+            hash_final(hash_len, st, k0);
         } else {
             var i = 0;
             while i < len(key) {
@@ -130,20 +167,112 @@ pub fn init[&st, &k](hash_len: int, state: &!st [int], key: &k [byte]) -> [] int
         let pad = alloc_slice[r](bl, byte_of(0));
         var i = 0;
         while i < bl {
-            let b = int_of(k0[i]);
-            state[hs + i] = b ^ 0x5c;
-            pad[i] = byte_of(b ^ 0x36);
+            pad[i] = byte_of(int_of(k0[i]) ^ 0x5c);
+            i = i + 1;
+        }
+        hash_init(hash_len, st);
+        hash_update(hash_len, st, pad);
+        hash_save(hash_len, st, outer);
+        i = 0;
+        while i < bl {
+            pad[i] = byte_of(int_of(k0[i]) ^ 0x36);
             k0[i] = byte_of(0);
             i = i + 1;
         }
-        hash_init(hash_len, state[0..hs]);
-        hash_update(hash_len, state[0..hs], pad);
-        // Best effort (`docs/hkdf.md` §3): the key's pads are secret.
+        hash_init(hash_len, st);
+        hash_update(hash_len, st, pad);
         i = 0;
         while i < bl {
             pad[i] = byte_of(0);
             i = i + 1;
         }
+    }
+    return ok();
+}
+
+// Starts an HMAC of `key` into `state` (exactly `state_len(hash_len)`
+// words).
+pub fn init[&st, &k](hash_len: int, state: &!st [int], key: &k [byte]) -> [] int {
+    if check_hash(hash_len) != 0 {
+        return refused_hash();
+    }
+    if len(state) != state_len(hash_len) {
+        return refused_state_length();
+    }
+    let hs = hash_state_len(hash_len);
+    return absorb_key(hash_len, state[0..hs], state[hs..hs + 8], key);
+}
+
+// A prepared key (`docs/hkdf.md` §9): `key`'s two padded blocks hashed
+// once, into `prepared` (exactly `prepared_len(hash_len)` words), so that
+// each HMAC under it starts with `init_prepared` and hashes no pad again.
+// It is as secret as the key: `forget` clears it.
+pub fn prepare[&p, &k](hash_len: int, prepared: &!p [int], key: &k [byte]) -> [] int {
+    if check_hash(hash_len) != 0 {
+        return refused_hash();
+    }
+    if len(prepared) != prepared_len(hash_len) {
+        return refused_state_length();
+    }
+    var code = 0;
+    region r {
+        let st = alloc_slice[r](state_len(hash_len), 0);
+        init(hash_len, st, key);
+        code = keep(hash_len, st, prepared);
+        forget(st);
+    }
+    return code;
+}
+
+// The prepared key of a state `init` has just started, into `prepared`:
+// for a caller that already holds a state and wants both. A state that
+// has been fed anything since is not a key, and is refused as a state of
+// the wrong shape.
+pub fn keep[&st, &p](hash_len: int, state: &st [int], prepared: &!p [int]) -> [] int {
+    if check_hash(hash_len) != 0 {
+        return refused_hash();
+    }
+    if len(state) != state_len(hash_len) || len(prepared) != prepared_len(hash_len) {
+        return refused_state_length();
+    }
+    let hs = hash_state_len(hash_len);
+    if hash_save(hash_len, state[0..hs], prepared[0..8]) != 0 {
+        return refused_state_length();
+    }
+    var i = 0;
+    while i < 8 {
+        prepared[8 + i] = state[hs + i];
+        i = i + 1;
+    }
+    return ok();
+}
+
+// Starts an HMAC under a prepared key: two copies of eight words, no
+// compression and no region.
+pub fn init_prepared[&st, &p](hash_len: int, state: &!st [int], prepared: &p [int]) -> [] int {
+    if check_hash(hash_len) != 0 {
+        return refused_hash();
+    }
+    if len(state) != state_len(hash_len) || len(prepared) != prepared_len(hash_len) {
+        return refused_state_length();
+    }
+    let hs = hash_state_len(hash_len);
+    hash_resume(hash_len, state[0..hs], prepared[0..8]);
+    var i = 0;
+    while i < 8 {
+        state[hs + i] = prepared[8 + i];
+        i = i + 1;
+    }
+    return ok();
+}
+
+// Clears a prepared key, or an HMAC state: best effort, as every clearing
+// here is (`docs/hkdf.md` §3).
+pub fn forget[&p](prepared: &!p [int]) -> [] int {
+    var i = 0;
+    while i < len(prepared) {
+        prepared[i] = 0;
+        i = i + 1;
     }
     return ok();
 }
@@ -160,7 +289,11 @@ pub fn update[&st, &d](hash_len: int, state: &!st [int], data: &d [byte]) -> [] 
     return ok();
 }
 
-// The tag, into `out[0..hash_len]`. The state is spent.
+// The tag, into `out[0..hash_len]`. The inner digest stays words: kept
+// in the state, then fed to the outer hash as words, so no buffer is
+// needed, no region is opened, and nothing but the tag is written to
+// `out` (`docs/sha256-builtin.md` §8.4 says why that last matters). The
+// state is spent, and its outer words and the inner digest are cleared.
 pub fn final[&st, &o](hash_len: int, state: &!st [int], out: &!o [byte]) -> [] int {
     if check_hash(hash_len) != 0 {
         return refused_hash();
@@ -172,26 +305,15 @@ pub fn final[&st, &o](hash_len: int, state: &!st [int], out: &!o [byte]) -> [] i
         return refused_output_length();
     }
     let hs = hash_state_len(hash_len);
-    let bl = block_len(hash_len);
-    region r {
-        let inner = alloc_slice[r](hash_len, byte_of(0));
-        hash_final(hash_len, state[0..hs], inner);
-        let pad = alloc_slice[r](bl, byte_of(0));
-        var i = 0;
-        while i < bl {
-            pad[i] = byte_of(state[hs + i]);
-            i = i + 1;
-        }
-        hash_init(hash_len, state[0..hs]);
-        hash_update(hash_len, state[0..hs], pad);
-        hash_update(hash_len, state[0..hs], inner);
-        hash_final(hash_len, state[0..hs], out);
-        i = 0;
-        while i < bl {
-            pad[i] = byte_of(0);
-            state[hs + i] = 0;
-            i = i + 1;
-        }
+    hash_finish(hash_len, state[0..hs]);
+    hash_save(hash_len, state[0..hs], state[hs + 8..hs + 16]);
+    hash_resume(hash_len, state[0..hs], state[hs..hs + 8]);
+    hash_update_words(hash_len, state[0..hs], state[hs + 8..hs + 16]);
+    hash_final(hash_len, state[0..hs], out);
+    var i = 0;
+    while i < 16 {
+        state[hs + i] = 0;
+        i = i + 1;
     }
     return ok();
 }
@@ -207,6 +329,26 @@ pub fn mac[&k, &m, &o](hash_len: int, key: &k [byte], msg: &m [byte], out: &!o [
     region r {
         let st = alloc_slice[r](state_len(hash_len), 0);
         init(hash_len, st, key);
+        update(hash_len, st, msg);
+        final(hash_len, st, out);
+    }
+    return ok();
+}
+
+// HMAC of `msg` under a prepared key in one call, into `out[0..hash_len]`.
+pub fn mac_prepared[&p, &m, &o](hash_len: int, prepared: &p [int], msg: &m [byte], out: &!o [byte]) -> [] int {
+    if check_hash(hash_len) != 0 {
+        return refused_hash();
+    }
+    if len(out) < hash_len {
+        return refused_output_length();
+    }
+    if len(prepared) != prepared_len(hash_len) {
+        return refused_state_length();
+    }
+    region r {
+        let st = alloc_slice[r](state_len(hash_len), 0);
+        init_prepared(hash_len, st, prepared);
         update(hash_len, st, msg);
         final(hash_len, st, out);
     }
