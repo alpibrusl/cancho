@@ -18,6 +18,12 @@
 //     L <hl> <secret> <label> <ctx> <out>   hkdf.expand_label
 //     D <hl> <out> <secret> <label> <hash>  hkdf.derive_secret
 //     K <hl> <salt> <ikm> <info> <out>      extract, then expand: all of HKDF
+//     P <hl> <out> <piece> <key> <msg>      hmac.prepare, then the tag twice under it:
+//                                           `mac_prepared`, and `init_prepared` with
+//                                           `<piece>` bytes an update; code 1 if they differ
+//     Q <hl> <secret> <label> <ctx> <out>   hkdf.prepare, then expand_label_prepared twice;
+//                                           code 1 if the two differ
+//     R <hl> <out> <secret> <label> <hash>  hkdf.prepare, then derive_secret_prepared
 //
 // and one line out per case: `<code> <tag> <output in hex>` (for `C`,
 // the checkpoints joined by `,`).
@@ -256,6 +262,94 @@ fn monte[&i, &s](io: &!i Io, alg: int, seed: &s [byte]) -> [io_write] int {
     return 0;
 }
 
+// `P`: a tag under a prepared key, twice, by the two ways in (`docs/hkdf.md` §9).
+fn report_prepared_mac[&i, &s](io: &!i Io, s: &s [byte], at: int, hl: int) -> [io_write] int {
+    region r {
+        let out = alloc_slice[r](decimal(s, field(s, at, 2)), byte_of(0));
+        let again = alloc_slice[r](len(out), byte_of(0));
+        let piece = decimal(s, field(s, at, 3));
+        let kf = field(s, at, 4);
+        let key = alloc_slice[r](hex_len(s, kf), byte_of(0));
+        hex_into(s, kf, key);
+        let mf = field(s, at, 5);
+        let msg = alloc_slice[r](hex_len(s, mf), byte_of(0));
+        hex_into(s, mf, msg);
+        let prepared = alloc_slice[r](hmac.prepared_len(hl), 0);
+        var code = hmac.prepare(hl, prepared, key);
+        if code == 0 {
+            code = hmac.mac_prepared(hl, prepared, msg, out);
+        }
+        if code == 0 {
+            let st = alloc_slice[r](hmac.state_len(hl), 0);
+            code = hmac.init_prepared(hl, st, prepared);
+            var at_m = 0;
+            while code == 0 && at_m < len(msg) {
+                var end = at_m + piece;
+                if end > len(msg) {
+                    end = len(msg);
+                }
+                code = hmac.update(hl, st, msg[at_m..end]);
+                at_m = end;
+            }
+            if code == 0 {
+                code = hmac.final(hl, st, again);
+            }
+            var k = 0;
+            while code == 0 && k < len(out) {
+                if int_of(out[k]) != int_of(again[k]) {
+                    code = 1;
+                }
+                k = k + 1;
+            }
+        }
+        report(io, code, out);
+    }
+    return 0;
+}
+
+// `Q` and `R`: Expand-Label and Derive-Secret under a prepared secret.
+fn report_prepared_label[&i, &s](io: &!i Io, s: &s [byte], at: int, hl: int, derive: bool) -> [io_write] int {
+    region r {
+        var first = 2;
+        var out_at = 5;
+        if derive {
+            first = 3;
+            out_at = 2;
+        }
+        let sf = field(s, at, first);
+        let secret = alloc_slice[r](hex_len(s, sf), byte_of(0));
+        hex_into(s, sf, secret);
+        let lf = field(s, at, first + 1);
+        let label = alloc_slice[r](hex_len(s, lf), byte_of(0));
+        hex_into(s, lf, label);
+        let cf = field(s, at, first + 2);
+        let ctx = alloc_slice[r](hex_len(s, cf), byte_of(0));
+        hex_into(s, cf, ctx);
+        let out = alloc_slice[r](decimal(s, field(s, at, out_at)), byte_of(0));
+        let again = alloc_slice[r](len(out), byte_of(0));
+        let prepared = alloc_slice[r](hmac.prepared_len(hl), 0);
+        var code = hkdf.prepare(hl, secret, prepared);
+        if code == 0 && derive {
+            code = hkdf.derive_secret_prepared(hl, prepared, label, ctx, out);
+        } else if code == 0 {
+            code = hkdf.expand_label_prepared(hl, prepared, label, ctx, out);
+            if code == 0 {
+                hkdf.expand_label_prepared(hl, prepared, label, ctx, again);
+                var k = 0;
+                while k < len(out) {
+                    if int_of(out[k]) != int_of(again[k]) {
+                        code = 1;
+                    }
+                    k = k + 1;
+                }
+            }
+        }
+        hmac.forget(prepared);
+        report(io, code, out);
+    }
+    return 0;
+}
+
 // One case, the line `s[at..]`; answers where the next line starts.
 fn one[&h, &i, &s](heap: &!h Heap, io: &!i Io, s: &s [byte], at: int) -> [heap, io_write] int {
     let op = int_of(s[at]);
@@ -355,6 +449,10 @@ fn one[&h, &i, &s](heap: &!h Heap, io: &!i Io, s: &s [byte], at: int) -> [heap, 
                 code = hkdf.expand(n1, prk, info, out);
             }
             report(io, code, out);
+        } else if op == 80 {
+            report_prepared_mac(io, s, at, n1);
+        } else if op == 81 || op == 82 {
+            report_prepared_label(io, s, at, n1, op == 82);
         } else {
             let out = alloc_slice[r](decimal(s, field(s, at, 2)), byte_of(0));
             let sf = field(s, at, 3);

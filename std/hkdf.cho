@@ -73,18 +73,50 @@ pub fn extract[&s, &i, &o](hash_len: int, salt: &s [byte], ikm: &i [byte], prk: 
     return hmac.mac(hash_len, salt, ikm, prk);
 }
 
+// The loop of HKDF-Expand (RFC 5869 §2.3) under a prepared PRK, in the
+// caller's scratch: `st` an HMAC state, `t` one digest, `counter` one
+// byte. `T(i) = HMAC(prk, T(i-1) || info || i)`, fed to the HMAC in its
+// three pieces rather than concatenated, so `info` may be any length.
+// Each `T(i)` starts from the prepared key: no pad is hashed again
+// (`docs/hkdf.md` §9). The last `T(i)` is cleared.
+fn expand_loop[&p, &i, &o, &s, &t, &c](hash_len: int, prepared: &p [int], info: &i [byte], okm: &!o [byte], st: &!s [int], t: &!t [byte], counter: &!c [byte]) -> [] int {
+    let total = len(okm);
+    var done = 0;
+    var i = 1;
+    while done < total {
+        hmac.init_prepared(hash_len, st, prepared);
+        if i > 1 {
+            hmac.update(hash_len, st, t);
+        }
+        hmac.update(hash_len, st, info);
+        counter[0] = byte_of(i);
+        hmac.update(hash_len, st, counter);
+        hmac.final(hash_len, st, t);
+        var j = 0;
+        while j < hash_len && done < total {
+            okm[done] = t[j];
+            done = done + 1;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    var k = 0;
+    while k < hash_len {
+        t[k] = byte_of(0);
+        k = k + 1;
+    }
+    return 0;
+}
+
 // HKDF-Expand (RFC 5869 §2.3): `len(okm)` bytes of output keying
-// material from `prk` and `info`. `T(i) = HMAC(prk, T(i-1) || info ||
-// i)`, fed to the HMAC in its three pieces rather than concatenated, so
-// `info` may be any length. More than `255 * hash_len` bytes is refused,
-// as the RFC requires; so is a `prk` shorter than the hash.
+// material from `prk` and `info`. More than `255 * hash_len` bytes is
+// refused, as the RFC requires; so is a `prk` shorter than the hash.
 pub fn expand[&p, &i, &o](hash_len: int, prk: &p [byte], info: &i [byte], okm: &!o [byte]) -> [] int {
     let checked = hmac.check_hash(hash_len);
     if checked != 0 {
         return checked;
     }
-    let total = len(okm);
-    if total > 255 * hash_len {
+    if len(okm) > 255 * hash_len {
         return refused_too_long();
     }
     if len(prk) < hash_len {
@@ -92,86 +124,150 @@ pub fn expand[&p, &i, &o](hash_len: int, prk: &p [byte], info: &i [byte], okm: &
     }
     region r {
         let st = alloc_slice[r](hmac.state_len(hash_len), 0);
+        let prepared = alloc_slice[r](hmac.prepared_len(hash_len), 0);
         let t = alloc_slice[r](hash_len, byte_of(0));
         let counter = alloc_slice[r](1, byte_of(0));
-        var done = 0;
-        var i = 1;
-        while done < total {
-            hmac.init(hash_len, st, prk);
-            if i > 1 {
-                hmac.update(hash_len, st, t);
-            }
-            hmac.update(hash_len, st, info);
-            counter[0] = byte_of(i);
-            hmac.update(hash_len, st, counter);
-            hmac.final(hash_len, st, t);
-            var j = 0;
-            while j < hash_len && done < total {
-                okm[done] = t[j];
-                done = done + 1;
-                j = j + 1;
-            }
-            i = i + 1;
-        }
-        var k = 0;
-        while k < hash_len {
-            t[k] = byte_of(0);
-            k = k + 1;
-        }
+        hmac.init(hash_len, st, prk);
+        hmac.keep(hash_len, st, prepared);
+        expand_loop(hash_len, prepared, info, okm, st, t, counter);
+        hmac.forget(prepared);
+    }
+    return 0;
+}
+
+// The length of a prepared secret (`prepare`), `hmac.prepared_len`'s: a
+// caller of this module need not import `std.hmac` to make room for one.
+pub fn prepared_len(hash_len: int) -> [] int {
+    return hmac.prepared_len(hash_len);
+}
+
+// Clears a prepared secret: `hmac.forget`'s, best effort.
+pub fn forget[&p](prepared: &!p [int]) -> [] int {
+    return hmac.forget(prepared);
+}
+
+// A secret prepared once for several Expand-Labels or Derive-Secrets
+// under it (`docs/hkdf.md` §9): `hmac.prepare` with HKDF-Expand's own
+// check that the secret is at least one digest long. `prepared` is
+// `prepared_len(hash_len)` words, as secret as the secret, and `forget`
+// clears it.
+pub fn prepare[&s, &p](hash_len: int, secret: &s [byte], prepared: &!p [int]) -> [] int {
+    let checked = hmac.check_hash(hash_len);
+    if checked != 0 {
+        return checked;
+    }
+    if len(secret) < hash_len {
+        return refused_prk_length();
+    }
+    return hmac.prepare(hash_len, prepared, secret);
+}
+
+// The checks of HKDF-Expand-Label (RFC 8446 §7.1), in its order: 0, or
+// the refusal.
+fn check_label(hash_len: int, ll: int, cl: int, total: int) -> [] int {
+    let checked = hmac.check_hash(hash_len);
+    if checked != 0 {
+        return checked;
+    }
+    if ll < 1 || ll > 249 {
+        return refused_label_length();
+    }
+    if cl > 255 {
+        return refused_context_length();
+    }
+    if total > 65535 {
+        return refused_too_long();
+    }
+    return 0;
+}
+
+// The `HkdfLabel` structure into `info`: the output length as two bytes,
+// then `"tls13 " + label` and `context`, each behind a one-byte length.
+fn hkdf_label[&l, &c, &o](label: &l [byte], context: &c [byte], total: int, info: &!o [byte]) -> [] int {
+    let ll = len(label);
+    let cl = len(context);
+    info[0] = byte_of(total >> 8);
+    info[1] = byte_of(total & 0xff);
+    info[2] = byte_of(6 + ll);
+    let prefix = "tls13 ";
+    var i = 0;
+    while i < 6 {
+        info[3 + i] = prefix[i];
+        i = i + 1;
+    }
+    i = 0;
+    while i < ll {
+        info[9 + i] = label[i];
+        i = i + 1;
+    }
+    info[9 + ll] = byte_of(cl);
+    i = 0;
+    while i < cl {
+        info[10 + ll + i] = context[i];
+        i = i + 1;
     }
     return 0;
 }
 
 // HKDF-Expand-Label (RFC 8446 §7.1): HKDF-Expand with `info` the
-// `HkdfLabel` structure — the output length as two bytes, then
-// `"tls13 " + label` and `context`, each behind a one-byte length.
-// `label` must be 1 to 249 bytes (the structure's `<7..255>` with the
-// six-byte prefix), `context` at most 255, and the output at most
-// 65,535 bytes as well as `255 * hash_len`; each limit is refused with
-// its own tag rather than truncated into a different label.
+// `HkdfLabel` structure. `label` must be 1 to 249 bytes (the structure's
+// `<7..255>` with the six-byte prefix), `context` at most 255, and the
+// output at most 65,535 bytes as well as `255 * hash_len`; each limit is
+// refused with its own tag rather than truncated into a different label.
 pub fn expand_label[&s, &l, &c, &o](hash_len: int, secret: &s [byte], label: &l [byte], context: &c [byte], okm: &!o [byte]) -> [] int {
-    let checked = hmac.check_hash(hash_len);
-    if checked != 0 {
-        return checked;
-    }
     let ll = len(label);
-    if ll < 1 || ll > 249 {
-        return refused_label_length();
-    }
     let cl = len(context);
-    if cl > 255 {
-        return refused_context_length();
-    }
     let total = len(okm);
-    if total > 65535 {
+    let code = check_label(hash_len, ll, cl, total);
+    if code != 0 {
+        return code;
+    }
+    if total > 255 * hash_len {
         return refused_too_long();
     }
-    var code = 0;
+    if len(secret) < hash_len {
+        return refused_prk_length();
+    }
     region r {
         let info = alloc_slice[r](2 + 1 + 6 + ll + 1 + cl, byte_of(0));
-        info[0] = byte_of(total >> 8);
-        info[1] = byte_of(total & 0xff);
-        info[2] = byte_of(6 + ll);
-        let prefix = "tls13 ";
-        var i = 0;
-        while i < 6 {
-            info[3 + i] = prefix[i];
-            i = i + 1;
-        }
-        i = 0;
-        while i < ll {
-            info[9 + i] = label[i];
-            i = i + 1;
-        }
-        info[9 + ll] = byte_of(cl);
-        i = 0;
-        while i < cl {
-            info[10 + ll + i] = context[i];
-            i = i + 1;
-        }
-        code = expand(hash_len, secret, info, okm);
+        let st = alloc_slice[r](hmac.state_len(hash_len), 0);
+        let prepared = alloc_slice[r](hmac.prepared_len(hash_len), 0);
+        let t = alloc_slice[r](hash_len, byte_of(0));
+        let counter = alloc_slice[r](1, byte_of(0));
+        hkdf_label(label, context, total, info);
+        hmac.init(hash_len, st, secret);
+        hmac.keep(hash_len, st, prepared);
+        expand_loop(hash_len, prepared, info, okm, st, t, counter);
+        hmac.forget(prepared);
     }
-    return code;
+    return 0;
+}
+
+// HKDF-Expand-Label under a secret `prepare` made: the same output and
+// the same refusals, and no pad hashed again.
+pub fn expand_label_prepared[&p, &l, &c, &o](hash_len: int, prepared: &p [int], label: &l [byte], context: &c [byte], okm: &!o [byte]) -> [] int {
+    let ll = len(label);
+    let cl = len(context);
+    let total = len(okm);
+    let code = check_label(hash_len, ll, cl, total);
+    if code != 0 {
+        return code;
+    }
+    if total > 255 * hash_len {
+        return refused_too_long();
+    }
+    if len(prepared) != hmac.prepared_len(hash_len) {
+        return hmac.refused_state_length();
+    }
+    region r {
+        let info = alloc_slice[r](2 + 1 + 6 + ll + 1 + cl, byte_of(0));
+        let st = alloc_slice[r](hmac.state_len(hash_len), 0);
+        let t = alloc_slice[r](hash_len, byte_of(0));
+        let counter = alloc_slice[r](1, byte_of(0));
+        hkdf_label(label, context, total, info);
+        expand_loop(hash_len, prepared, info, okm, st, t, counter);
+    }
+    return 0;
 }
 
 // Derive-Secret (RFC 8446 §7.1): `HKDF-Expand-Label(secret, label,
@@ -191,4 +287,19 @@ pub fn derive_secret[&s, &l, &h, &o](hash_len: int, secret: &s [byte], label: &l
         return hmac.refused_output_length();
     }
     return expand_label(hash_len, secret, label, transcript_hash, out);
+}
+
+// Derive-Secret under a secret `prepare` made.
+pub fn derive_secret_prepared[&p, &l, &h, &o](hash_len: int, prepared: &p [int], label: &l [byte], transcript_hash: &h [byte], out: &!o [byte]) -> [] int {
+    let checked = hmac.check_hash(hash_len);
+    if checked != 0 {
+        return checked;
+    }
+    if len(transcript_hash) != hash_len {
+        return refused_transcript_length();
+    }
+    if len(out) != hash_len {
+        return hmac.refused_output_length();
+    }
+    return expand_label_prepared(hash_len, prepared, label, transcript_hash, out);
 }

@@ -1,0 +1,270 @@
+== base pass 1
+Tue Oct 13 06:42:17 UTC 2026
+6.61 4.72 3.32 4/1199 10263
+machine: {"arch": "aarch64", "kernel": "6.8.0-100-generic", "system": "Linux", "thp": "madvise", "load": [6.61083984375, 4.71875, 3.32373046875]}
+operation                            size    ns/call  cycles/call   instr/call   IPC
+x25519_public                           0      32287                                
+x25519_shared                           0      31860                                
+p256_public                             0      32531                                
+p256_shared                             0     140136                                
+ecdsa_p256_verify                       0     105957                                
+ecdsa_p256_sign                         0      52734                                
+ecdsa_p256_sign_checked                 0     160156                                
+sha256                                 64        541                                
+sha256                               1024       4302                                
+sha256                              16384      64819                                
+sha384                                 64        325                                
+sha384                               1024       2296                                
+sha384                              16384      31066                                
+hmac_sha256                            64       1392                                
+hmac_sha256                          1024       5157                                
+hmac_sha256                         16384      65063                                
+hkdf_expand_label_32                    0       1148                                
+hkdf_extract_32                         0       1174                                
+aes128gcm_seal                         64         29                                
+aes128gcm_seal                       1024        179                                
+aes128gcm_seal                      16384       2349                                
+aes128gcm_open                         64         29                                
+aes128gcm_open                       1024        176                                
+aes128gcm_open                      16384       2479                                
+chacha20poly1305_seal                  64        699                                
+chacha20poly1305_seal                1024       5813                                
+chacha20poly1305_seal               16384      92773                                
+chacha20poly1305_open                  64        602                                
+chacha20poly1305_open                1024       5111                                
+chacha20poly1305_open               16384      77636                                
+aes128gcm_prepare                       0       1159                                
+hkdf_expand_label_48                    0       1235                                
+calibrate                               0       1293                                
+== after pass 1
+Tue Oct 13 06:43:39 UTC 2026
+5.73 4.90 3.50 8/1208 10269
+machine: {"arch": "aarch64", "kernel": "6.8.0-100-generic", "system": "Linux", "thp": "madvise", "load": [5.73046875, 4.8984375, 3.50244140625]}
+operation                            size    ns/call  cycles/call   instr/call   IPC
+x25519_public                           0      32592                                
+x25519_shared                           0      32104                                
+p256_public                             0      33630                                
+p256_shared                             0     135253                                
+ecdsa_p256_verify                       0     103515                                
+ecdsa_p256_sign                         0      46875                                
+ecdsa_p256_sign_checked                 0     148437                                
+sha256                                 64        143                                
+sha256                               1024        437                                
+sha256                              16384       6256                                
+sha384                                 64        308                                
+sha384                               1024       2231                                
+sha384                              16384      30822                                
+hmac_sha256                            64        235                                
+hmac_sha256                          1024        619                                
+hmac_sha256                         16384       6500                                
+hkdf_expand_label_32                    0        292                                
+hkdf_extract_32                         0        239                                
+aes128gcm_seal                         64         28                                
+aes128gcm_seal                       1024        183                                
+aes128gcm_seal                      16384       2449                                
+aes128gcm_open                         64         29                                
+aes128gcm_open                       1024        185                                
+aes128gcm_open                      16384       2479                                
+chacha20poly1305_seal                  64        709                                
+chacha20poly1305_seal                1024       6210                                
+chacha20poly1305_seal               16384      93994                                
+chacha20poly1305_open                  64        619                                
+chacha20poly1305_open                1024       5340                                
+chacha20poly1305_open               16384      79589                                
+aes128gcm_prepare                       0       1117                                
+hkdf_expand_label_48                    0       1171                                
+hkdf_expand_label_prepared_32           0        199                                
+calibrate                               0       1285                                
+== base pass 2
+Tue Oct 13 06:45:04 UTC 2026
+5.49 5.02 3.67 9/1208 10275
+machine: {"arch": "aarch64", "kernel": "6.8.0-100-generic", "system": "Linux", "thp": "madvise", "load": [5.490234375, 5.0234375, 3.669921875]}
+operation                            size    ns/call  cycles/call   instr/call   IPC
+x25519_public                           0      32165                                
+x25519_shared                           0      32287                                
+p256_public                             0      32897                                
+p256_shared                             0     134765                                
+ecdsa_p256_verify                       0     104980                                
+ecdsa_p256_sign                         0      50781                                
+ecdsa_p256_sign_checked                 0     151855                                
+sha256                                 64        547                                
+sha256                               1024       4623                                
+sha256                              16384      66406                                
+sha384                                 64        308                                
+sha384                               1024       2296                                
+sha384                              16384      32165                                
+hmac_sha256                            64       1422                                
+hmac_sha256                          1024       5203                                
+hmac_sha256                         16384      66528                                
+hkdf_expand_label_32                    0       1182                                
+hkdf_extract_32                         0       1167                                
+aes128gcm_seal                         64         29                                
+aes128gcm_seal                       1024        178                                
+aes128gcm_seal                      16384       2388                                
+aes128gcm_open                         64         29                                
+aes128gcm_open                       1024        170                                
+aes128gcm_open                      16384       2418                                
+chacha20poly1305_seal                  64        684                                
+chacha20poly1305_seal                1024       6088                                
+chacha20poly1305_seal               16384      93017                                
+chacha20poly1305_open                  64        617                                
+chacha20poly1305_open                1024       5294                                
+chacha20poly1305_open               16384      79833                                
+aes128gcm_prepare                       0       1134                                
+hkdf_expand_label_48                    0       1266                                
+calibrate                               0       1247                                
+== after pass 2
+Tue Oct 13 06:46:27 UTC 2026
+5.71 5.32 3.90 9/1212 10290
+machine: {"arch": "aarch64", "kernel": "6.8.0-100-generic", "system": "Linux", "thp": "madvise", "load": [5.7109375, 5.32177734375, 3.90234375]}
+operation                            size    ns/call  cycles/call   instr/call   IPC
+x25519_public                           0      32592                                
+x25519_shared                           0      32348                                
+p256_public                             0      33996                                
+p256_shared                             0     147460                                
+ecdsa_p256_verify                       0     106689                                
+ecdsa_p256_sign                         0      46997                                
+ecdsa_p256_sign_checked                 0     152832                                
+sha256                                 64        139                                
+sha256                               1024        452                                
+sha256                              16384       6378                                
+sha384                                 64        321                                
+sha384                               1024       2288                                
+sha384                              16384      31738                                
+hmac_sha256                            64        252                                
+hmac_sha256                          1024        623                                
+hmac_sha256                         16384       6240                                
+hkdf_expand_label_32                    0        286                                
+hkdf_extract_32                         0        257                                
+aes128gcm_seal                         64         29                                
+aes128gcm_seal                       1024        181                                
+aes128gcm_seal                      16384       2456                                
+aes128gcm_open                         64         29                                
+aes128gcm_open                       1024        175                                
+aes128gcm_open                      16384       2464                                
+chacha20poly1305_seal                  64        699                                
+chacha20poly1305_seal                1024       6057                                
+chacha20poly1305_seal               16384      94726                                
+chacha20poly1305_open                  64        614                                
+chacha20poly1305_open                1024       5340                                
+chacha20poly1305_open               16384      80078                                
+aes128gcm_prepare                       0       1144                                
+hkdf_expand_label_48                    0       1197                                
+hkdf_expand_label_prepared_32           0        198                                
+calibrate                               0       1300                                
+== openssl
+machine: {"arch": "aarch64", "kernel": "6.8.0-100-generic", "system": "Linux", "thp": "madvise", "load": [7.0986328125, 5.84912109375, 4.21142578125]}
+OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)
+ecdsap256          ecdsap256                                   11440.4 ns    | Doing 256 bits sign ecdsa's for 3s: 257859 256 bits ECDSA signs in 2.95s
+ecdsap256          ecdsap256                                   33804.0 ns    | Doing 256 bits verify ecdsa's for 3s: 88451 256 bits ECDSA verify in 2.99s
+ecdhx25519         ecdhx25519                                  19218.6 ns    | Doing 253 bits  ecdh's for 3s: 151416 253-bits ECDH ops in 2.91s
+ecdhp256           ecdhp256                                    27229.2 ns    | Doing 256 bits  ecdh's for 3s: 107238 256-bits ECDH ops in 2.92s
+sha256             -evp sha256 -bytes 64                          96.3 ns    | Doing sha256 for 3s on 64 size blocks: 29790647 sha256's in 2.87s
+sha256             -evp sha256 -bytes 1024                       480.5 ns    | Doing sha256 for 3s on 1024 size blocks: 5952249 sha256's in 2.86s
+sha256             -evp sha256 -bytes 16384                     5526.1 ns    | Doing sha256 for 3s on 16384 size blocks: 539255 sha256's in 2.98s
+sha384             -evp sha384 -bytes 64                         119.4 ns    | Doing sha384 for 3s on 64 size blocks: 25043648 sha384's in 2.99s
+sha384             -evp sha384 -bytes 1024                       705.5 ns    | Doing sha384 for 3s on 1024 size blocks: 4238316 sha384's in 2.99s
+sha384             -evp sha384 -bytes 16384                    10042.7 ns    | Doing sha384 for 3s on 16384 size blocks: 297730 sha384's in 2.99s
+hmac-sha256        -hmac sha256 -bytes 64                        125.3 ns    | Doing hmac(sha256) for 3s on 64 size blocks: 23856332 hmac(sha256)'s in 2.99s
+aes-128-gcm        -aead -evp aes-128-gcm -bytes 64               97.9 ns    | Doing AES-128-GCM for 3s on 64 size blocks: 29937200 AES-128-GCM's in 2.93s
+aes-128-gcm        -aead -evp aes-128-gcm -bytes 1024            245.9 ns    | Doing AES-128-GCM for 3s on 1024 size blocks: 10249424 AES-128-GCM's in 2.52s
+aes-128-gcm        -aead -evp aes-128-gcm -bytes 16384          2407.8 ns    | Doing AES-128-GCM for 3s on 16384 size blocks: 996774 AES-128-GCM's in 2.40s
+chacha20-poly1305  -aead -evp chacha20-poly1305 -bytes 64        242.0 ns    | Doing ChaCha20-Poly1305 for 3s on 64 size blocks: 11942047 ChaCha20-Poly1305's in 2.89s
+chacha20-poly1305  -aead -evp chacha20-poly1305 -bytes 1024        682.3 ns    | Doing ChaCha20-Poly1305 for 3s on 1024 size blocks: 4220798 ChaCha20-Poly1305's in 2.88s
+chacha20-poly1305  -aead -evp chacha20-poly1305 -bytes 16384       7780.0 ns    | Doing ChaCha20-Poly1305 for 3s on 16384 size blocks: 380462 ChaCha20-Poly1305's in 2.96s
+== hs base pass 1
+Tue Oct 13 06:48:43 UTC 2026
+6.74 5.89 4.31 8/1229 10314
+perf counters: none; load (6.74462890625, 5.8876953125, 4.30615234375)
+-- round 1 of 2, load (6.74462890625, 5.8876953125, 4.30615234375)
+server-full cancho tls_echo                    12012 handshakes     0.295 ms CPU
+server-full openssl s_server                   17851 handshakes     0.185 ms CPU
+server-full openssl oserv                      19775 handshakes     0.138 ms CPU
+server-resumed cancho tls_echo --tickets 2     28217 handshakes     0.153 ms CPU
+server-resumed openssl s_server                28675 handshakes     0.139 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.429 ms CPU
+client-full openssl tconn                      15617 handshakes     0.278 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.178 ms CPU
+client-resumed openssl tconn                   28667 handshakes     0.131 ms CPU
+-- round 2 of 2, load (5.568359375, 5.6962890625, 4.33935546875)
+server-full cancho tls_echo                    12975 handshakes     0.292 ms CPU
+server-full openssl s_server                   16526 handshakes     0.189 ms CPU
+server-full openssl oserv                      18889 handshakes     0.142 ms CPU
+server-resumed cancho tls_echo --tickets 2     32413 handshakes     0.150 ms CPU
+server-resumed openssl s_server                34907 handshakes     0.138 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.431 ms CPU
+client-full openssl tconn                      17773 handshakes     0.275 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.174 ms CPU
+client-resumed openssl tconn                   31907 handshakes     0.128 ms CPU
+== hs after pass 1
+Tue Oct 13 06:50:45 UTC 2026
+4.35 5.33 4.30 2/1205 10353
+perf counters: none; load (4.34765625, 5.3349609375, 4.30078125)
+-- round 1 of 2, load (4.34765625, 5.3349609375, 4.30078125)
+server-full cancho tls_echo                    12096 handshakes     0.293 ms CPU
+server-full openssl s_server                   17554 handshakes     0.188 ms CPU
+server-full openssl oserv                      19819 handshakes     0.138 ms CPU
+server-resumed cancho tls_echo --tickets 2     36835 handshakes     0.112 ms CPU
+server-resumed openssl s_server                35303 handshakes     0.137 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.399 ms CPU
+client-full openssl tconn                      17808 handshakes     0.275 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.159 ms CPU
+client-resumed openssl tconn                   29973 handshakes     0.129 ms CPU
+-- round 2 of 2, load (3.83642578125, 4.98193359375, 4.2470703125)
+server-full cancho tls_echo                    13218 handshakes     0.260 ms CPU
+server-full openssl s_server                   17428 handshakes     0.186 ms CPU
+server-full openssl oserv                      19847 handshakes     0.138 ms CPU
+server-resumed cancho tls_echo --tickets 2     37322 handshakes     0.111 ms CPU
+server-resumed openssl s_server                35519 handshakes     0.137 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.397 ms CPU
+client-full openssl tconn                      17557 handshakes     0.279 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.138 ms CPU
+client-resumed openssl tconn                   35217 handshakes     0.121 ms CPU
+== hs base pass 2
+Tue Oct 13 06:52:47 UTC 2026
+3.77 4.80 4.23 2/1204 10392
+perf counters: none; load (3.77392578125, 4.8037109375, 4.23388671875)
+-- round 1 of 2, load (3.77392578125, 4.8037109375, 4.23388671875)
+server-full cancho tls_echo                    14812 handshakes     0.292 ms CPU
+server-full openssl s_server                   15160 handshakes     0.192 ms CPU
+server-full openssl oserv                      16325 handshakes     0.142 ms CPU
+server-resumed cancho tls_echo --tickets 2     28724 handshakes     0.152 ms CPU
+server-resumed openssl s_server                35007 handshakes     0.139 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.423 ms CPU
+client-full openssl tconn                      15456 handshakes     0.285 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.167 ms CPU
+client-resumed openssl tconn                   29247 handshakes     0.129 ms CPU
+-- round 2 of 2, load (4.32421875, 4.7412109375, 4.24560546875)
+server-full cancho tls_echo                    10708 handshakes     0.306 ms CPU
+server-full openssl s_server                   12390 handshakes     0.201 ms CPU
+server-full openssl oserv                      12642 handshakes     0.144 ms CPU
+server-resumed cancho tls_echo --tickets 2     18164 handshakes     0.153 ms CPU
+server-resumed openssl s_server                20639 handshakes     0.144 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.429 ms CPU
+client-full openssl tconn                       9730 handshakes     0.307 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.167 ms CPU
+client-resumed openssl tconn                   21131 handshakes     0.130 ms CPU
+== hs after pass 2
+Tue Oct 13 06:54:49 UTC 2026
+6.74 5.37 4.49 5/1225 10431
+perf counters: none; load (6.74169921875, 5.3662109375, 4.4931640625)
+-- round 1 of 2, load (6.74169921875, 5.3662109375, 4.4931640625)
+server-full cancho tls_echo                     8184 handshakes     0.270 ms CPU
+server-full openssl s_server                   12429 handshakes     0.202 ms CPU
+server-full openssl oserv                      13274 handshakes     0.146 ms CPU
+server-resumed cancho tls_echo --tickets 2     22606 handshakes     0.118 ms CPU
+server-resumed openssl s_server                20980 handshakes     0.145 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.404 ms CPU
+client-full openssl tconn                      10196 handshakes     0.299 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.143 ms CPU
+client-resumed openssl tconn                   20995 handshakes     0.128 ms CPU
+-- round 2 of 2, load (7.77880859375, 5.89794921875, 4.73193359375)
+server-full cancho tls_echo                     8430 handshakes     0.273 ms CPU
+server-full openssl s_server                    9838 handshakes     0.222 ms CPU
+server-full openssl oserv                      14671 handshakes     0.156 ms CPU
+server-resumed cancho tls_echo --tickets 2     26046 handshakes     0.119 ms CPU
+server-resumed openssl s_server                16726 handshakes     0.176 ms CPU
+client-full cancho tls_many (200 less 1)         199 handshakes     0.747 ms CPU
+client-full openssl tconn                      10305 handshakes     0.332 ms CPU
+client-resumed cancho tls_many (resume less full)     200 handshakes     0.145 ms CPU
+client-resumed openssl tconn                   21679 handshakes     0.136 ms CPU

@@ -52,7 +52,7 @@ fn number_of[&s](text: &s [byte]) -> [] int {
 //    arithmetic out of the loop (the constants are not in the binary): what is left is a counted loop of about one instruction
 //    and one cycle a step, 1,007 instructions a call. That is still independent of every primitive, which is all it is for.
 fn ops() -> [] int {
-    return 21;
+    return 22;
 }
 
 fn name_of(op: int) -> [] &static [byte] {
@@ -115,6 +115,9 @@ fn name_of(op: int) -> [] &static [byte] {
     }
     if op == 20 {
         return "ecdsa_p256_sign_checked_tabled";
+    }
+    if op == 21 {
+        return "hkdf_expand_label_prepared_32";
     }
     return "calibrate";
 }
@@ -276,6 +279,17 @@ fn spin[&k, &s, &w](clock: &k Clock, work: &!w [int], op: int, size: int, rounds
             }
         }
         if op == 21 {
+            // `docs/hkdf.md` §9: the secret prepared once, outside the clock, as the key schedule prepares a secret it
+            // expands more than one label from.
+            let prepared = alloc_slice[r](hkdf.prepared_len(32), 0);
+            hkdf.prepare(32, key32, prepared);
+            while n < rounds {
+                hkdf.expand_label_prepared(32, prepared, "key", digest[0..0], out32[0..16]);
+                acc = acc + int_of(out32[0]);
+                n = n + 1;
+            }
+        }
+        if op == 22 {
             var x = 1;
             while n < rounds {
                 var j = 0;

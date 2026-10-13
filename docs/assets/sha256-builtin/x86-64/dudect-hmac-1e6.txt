@@ -1,0 +1,33 @@
+mar 13 oct 2026 09:55:06 CEST
+ 09:55:06 up 5 days, 23:14,  8 users,  load average: 4,84, 5,12, 5,23
+32-byte keys, 64-byte messages, pools of 256 records a class
+hmac, key             1000000 samples, median 1956 cycles, max |t| = 1.93
+hmac, message         1000000 samples, median 2397 cycles, max |t| = 1.24
+prepare, key          1000000 samples, median 1296 cycles, max |t| = 2.67
+prepared, key         1000000 samples, median 829 cycles, max |t| = 1.76
+prepared, message     1000000 samples, median 533 cycles, max |t| = 1.92
+sha256, message       1000000 samples, median 532 cycles, max |t| = 3.24
+expand-label, secret  1000000 samples, median 1473 cycles, max |t| = 2.54
+exit 0
+mar 13 oct 2026 09:58:18 CEST
+ 09:58:18 up 5 days, 23:17,  9 users,  load average: 5,21, 5,25, 5,27
+32-byte keys, 64-byte messages, pools of 256 records a class
+hmac, key (control)   1000000 samples, median 2484 cycles, max |t| = 1.29
+hmac, message (control) 1000000 samples, median 2531 cycles, max |t| = 1.49
+prepare, key (control) 1000000 samples, median 1294 cycles, max |t| = 1.77
+prepared, key (control) 1000000 samples, median 826 cycles, max |t| = 1.43
+prepared, message (control) 1000000 samples, median 920 cycles, max |t| = 1.82
+sha256, message (control) 1000000 samples, median 499 cycles, max |t| = 1.86
+expand-label, secret (control) 1000000 samples, median 2688 cycles, max |t| = 2.22
+exit 0
+mar 13 oct 2026 10:01:33 CEST
+ 10:01:33 up 5 days, 23:20,  9 users,  load average: 5,01, 5,17, 5,25
+32-byte keys, 64-byte messages, pools of 256 records a class
+hmac, key             1000000 samples, median 2145 cycles, max |t| = 2.12
+hmac, message         1000000 samples, median 1989 cycles, max |t| = 1.98
+prepare, key          1000000 samples, median 780 cycles, max |t| = 1.92
+prepared, key         1000000 samples, median 788 cycles, max |t| = 1.64
+prepared, message     1000000 samples, median 792 cycles, max |t| = 2.83
+sha256, message       1000000 samples, median 589 cycles, max |t| = 1.88
+expand-label, secret  1000000 samples, median 2614 cycles, max |t| = 1.75
+exit 0

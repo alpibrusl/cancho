@@ -1,0 +1,36 @@
+unmutated: passes 8181 cases and the differential
+killed        crypto: SHA-384 started from SHA-512's words: llvm: case 88: M 48 48 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b 4
+killed        crypto: a wrong SHA-384 initial word: llvm: case 88: M 48 48 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b 4
+killed        crypto: SHA-256 length in bytes, not bits: llvm: case 0: E 32 32 - 0000000000000000000000000000000000000000
+killed        crypto: SHA-512 length field one byte early: llvm: case 88: M 48 48 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b 4
+killed        crypto: SHA-256 padding room off by one: llvm: case 164: H 256 2d52447d1244d2ebc28650e7b05654bad35b3a68eedc
+killed        crypto: SHA-256 round adds temp1 twice: cranelift: case 0: E 32 32 - 0000000000000000000000000000000000000000
+killed        crypto: a buffered SHA-512 byte dropped: llvm: the driver stopped (status -4) after 5011 of 8181 cases
+killed        crypto: a buffered SHA-256 byte in the wrong place of its word: llvm: case 1: D 32 32 33ad0a1c607ec03b09e6cd9893680ce210adf300aa
+killed        crypto: the partial block not cleared after a compression: llvm: case 87: P 32 32 48 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+killed        crypto: the partial block's words not copied to the schedule: cranelift: case 0: E 32 32 - 0000000000000000000000000000000000000000
+killed        crypto: the whole blocks of an update not compressed: llvm: case 0: E 32 32 - 0000000000000000000000000000000000000000
+killed        crypto: a SHA-256 state resumed with no bytes counted: llvm: case 0: E 32 32 - 0000000000000000000000000000000000000000
+killed        crypto: a SHA-512 state resumed with no bytes counted: llvm: case 88: M 48 48 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b 4
+killed        hmac: the wrong inner pad: llvm: case 0: E 32 32 - 0000000000000000000000000000000000000000
+killed        hmac: the wrong outer pad: llvm: case 0: E 32 32 - 0000000000000000000000000000000000000000
+killed        hmac: a block-length key hashed first: llvm: case 803: K 32 1e7ec49981fd4b0b7c20dd4dd5bdfbf2195e707f4d035
+killed        hmac: SHA-384's block taken as 64 bytes: llvm: case 88: M 48 48 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b 4
+killed        hmac: the inner digest left out of the outer hash: llvm: case 0: E 32 32 - 0000000000000000000000000000000000000000
+killed        hmac: SHA-384's inner digest fed as eight words: llvm: case 88: M 48 48 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b 4
+killed        crypto: a fed word one place on in the partial block: llvm: case 0: E 32 32 - 0000000000000000000000000000000000000000
+killed        crypto: a fed 64-bit word's bytes in the wrong order: llvm: case 88: M 48 48 0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b 4
+killed        hmac: the outer hash not resumed from the outer words: llvm: case 0: E 32 32 - 0000000000000000000000000000000000000000
+killed        hmac: a prepared key started from its outer words: llvm: case 1: D 32 32 33ad0a1c607ec03b09e6cd9893680ce210adf300aa
+killed        hmac: a prepared key's outer words kept from the inner hash: llvm: case 1: D 32 32 33ad0a1c607ec03b09e6cd9893680ce210adf300aa
+killed        hmac: a prepared key's outer words not copied in: llvm: case 1: D 32 32 33ad0a1c607ec03b09e6cd9893680ce210adf300aa
+killed        hkdf: a prepared secret shorter than the hash accepted: llvm: case 8179: Q 32 070707070707070707070707070707070707070707070
+killed        hkdf: the expand counter off by one: llvm: the driver stopped (status -4) after 771 of 8181 cases
+killed        hkdf: T(i-1) not chained: llvm: case 101: X 32 077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9
+killed        hkdf: 255 * HashLen allowed past: llvm: the driver stopped (status -4) after 806 of 8181 cases
+killed        hkdf: the label prefix misspelt: llvm: case 1: D 32 32 33ad0a1c607ec03b09e6cd9893680ce210adf300aa
+killed        hkdf: the output length's high byte dropped: llvm: the differential
+killed        hkdf: a 250-byte label accepted: llvm: the driver stopped (status -4) after 8157 of 8181 cases
+killed        hkdf: a transcript hash of any length accepted: llvm: case 8177: D 32 32 070707070707070707070707070707070707070707
+killed        hkdf: a prepared Derive-Secret's transcript hash of any length accepted: llvm: case 8180: R 32 32 070707070707070707070707070707070707070707
+34 mutants, 34 killed

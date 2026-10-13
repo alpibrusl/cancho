@@ -1,0 +1,28 @@
+== liar
+the output queue filled: send answers 0, finish still queues close_notify: ok
+a KeyUpdate and a NewSessionTicket in one record: tls-unexpected-message
+84 cases, 0 failed
+== liar streams
+done ok=64 failed=0
+/scratch/sha-tls-suites/liar_streams.txt: 64 streams; the root to trust beside it, .pem
+== tickets
+a pool refilled after it was emptied: ok
+a handle never issued is a new pool, and names nothing: ok
+20 cases, 0 failed
+== differential (lying server vs openssl s_client)
+agree  | the output queue filled: send answers 0, finish still queues close_notify | packages/tls: accepted (ok) | openssl: accepted | stopped at: AssertionError: 16384 bytes not taken, nothing failed: ['16384', 'ok', '3']
+agree  | a KeyUpdate and a NewSessionTicket in one record | packages/tls: refused 10 (tls-unexpected-message) | openssl: refused 10
+differential: 59 agree, 17 differ in the alert only, 8 differ as documented, 0 differ otherwise
+== server differential
+agree  midway: the clock moved two lifetimes after the ClientHello: the tickets are dated at the Finished: packages/tls ok accepted; openssl accepted
+agree  midway: the client's ticket calls on the server engine between the ClientHello and the Finished change nothing: the name is still answered and both tickets are sent: packages/tls ok accepted; openssl accepted
+agree 65, alert 7, known 6
+== server interop openssl
+openssl ALPN http/1.1 agreed: ok
+openssl ALPN h3 only: refused, no_application_protocol: ok
+23 rows, 23 ok, 0 failed
+== server tickets interop openssl
+the same ticket at process C (another key): a full handshake, `unknown`: ok
+a ticket of 2 s lifetime, 3.5 s later: a full handshake (the client does not offer it): ok
+9 rows, 9 ok, 0 failed
+== done
