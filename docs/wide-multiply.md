@@ -458,10 +458,23 @@ governor and load at start and end are in [`assets/wide-multiply/381/`](assets/w
 | P-384 `ecdh.public_key` (the same) | scalar 1 / fixed / 0x88..88 / n − 1 / 16^95 | 2,085,241 to 2,593,354 | 1.79 / 1.46 / 2.50 / 1.72 / 2.43 |
 | ChaCha20-Poly1305, 64 bytes and 13 of associated data (541a03cc) | seal: a fixed key / fixed data; open: fixed data / a tag wrong first or last, each against random (`gcm_timing.py --chacha20`) | 1,154 to 2,622 | 2.45 / 2.02 / 1.55 / 1.69 |
 | the same at 1 KiB (`--size 1024`) | the same four | 2,433 to 20,022 | 2.11 / 2.18 / 2.31 / 2.08 |
+| #463's in-place forms (`--chacha20 --in-place`), after the rebase (ed51aed6), 64 bytes, CPUs 0-1 | seal: fixed data; open: fixed data / a tag wrong first or last | 1,461 / 862 / 883 | **7.52** / 2.86 / 1.77 |
+| the same, 1 KiB | the same three | 1,917 to 13,053 | 2.08 / 1.54 / 1.35 |
 
 The P-256 runs timed b2651fea; the kernels' object code at the head is that commit's, instruction for instruction
 (`kernels_object_identity.txt`). `std.bigmod` has not changed since 6b5299e5. P-384's `public_key` tests ran last (stopped once
 to free the core for the other measurements, then run whole). **Not run:** Cranelift; Apple silicon.
+
+**One row fails the bar, and what was done about it.** #463 (the in-place AEAD) merged while this was in review, and its
+`--in-place` test of ChaCha20-Poly1305 on the rebased branch gave 7.52 for "seal, data" in its first run. It was then run
+against `main` with #463 (the old Poly1305), alternating, 64 bytes, 10^6 a test (`dudect_inplace_main_vs_branch.txt`). On CPUs
+0-1 the branch reached 5.11 ("open, tag") and 8.65 ("open, data") in two of six more runs and `main` none in six; pinned to CPU 0
+alone, as #463's own runs were (`record-in-place.md` §7.8), the branch passed four of four (largest 2.98) and `main` failed one
+of four (5.56, "open, tag"). In "open, tag" the two classes give Poly1305 the same key and the same bytes (only the tag
+compared differs), so a failure there is not Poly1305's, and it happened on both builds; #463 recorded 22.26 on an unchanged
+function in the same harness on this machine. I read the failures as the shared core's noise, which the in-place harness (its
+classes on separate pools of buffers) is more exposed to than the one-shot one, which passed all eight tests on the branch.
+That is a reading, not a proof: the table's bar is not met by every run of this row, and a quiet machine was not available.
 
 **The branch audit** (`scripts/chacha20_branches.py` and `p256_ctx.py` over the x86-64 objects; `assets/wide-multiply/381/branches*.txt`):
 every P-256 kernel has exactly one conditional jump that is not to a trap, the `je` after `cmp $0xa` and `setge` on the three slice

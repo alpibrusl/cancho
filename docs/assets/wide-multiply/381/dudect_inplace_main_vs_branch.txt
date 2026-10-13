@@ -1,0 +1,93 @@
+# gram, x86-64, LLVM; python3 scripts/gcm_timing.py <timing> 1000000 --chacha20 --in-place --size 64, alternating main at f067d065 (#463, the in-place AEAD, old Poly1305: gcm_timing_main463) and the branch rebased onto it at ed51aed6 (gcm_timing_rb); rounds 1 to 6 on CPUs 0-1 (taskset -c 0-1, the script and the program on one core's two threads), the 'cpu0-only' rounds on CPU 0 alone (taskset -c 0), as docs/record-in-place.md §7.8 pinned to one CPU; governor powersave; other agents' jobs on the machine (nice 10), some scheduled on CPU 1
+## gcm_timing_main463 round 1 2026-10-13T11:45:05+02:00 load average: 1,03, 1,00, 1,59
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1578 cycles, max |t| = 1.50
+open, data  1000000 samples, median 955 cycles, max |t| = 2.12
+open, tag   1000000 samples, median 975 cycles, max |t| = 1.20
+## gcm_timing_rb round 1 2026-10-13T11:45:40+02:00 load average: 1,02, 1,00, 1,56
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1644 cycles, max |t| = 1.91
+open, data  1000000 samples, median 925 cycles, max |t| = 2.34
+open, tag   1000000 samples, median 930 cycles, max |t| = 5.11
+## gcm_timing_main463 round 2 2026-10-13T11:46:16+02:00 load average: 1,01, 1,00, 1,54
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1748 cycles, max |t| = 2.01
+open, data  1000000 samples, median 1010 cycles, max |t| = 2.04
+open, tag   1000000 samples, median 1009 cycles, max |t| = 2.41
+## gcm_timing_rb round 2 2026-10-13T11:46:52+02:00 load average: 1,00, 1,00, 1,52
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1697 cycles, max |t| = 1.68
+open, data  1000000 samples, median 959 cycles, max |t| = 2.62
+open, tag   1000000 samples, median 936 cycles, max |t| = 1.43
+## gcm_timing_main463 round 3 2026-10-13T11:47:44+02:00 load average: 0,82, 0,96, 1,48
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1580 cycles, max |t| = 1.35
+open, data  1000000 samples, median 961 cycles, max |t| = 1.70
+open, tag   1000000 samples, median 990 cycles, max |t| = 1.04
+## gcm_timing_rb round 3 2026-10-13T11:48:20+02:00 load average: 1,04, 1,00, 1,47
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1676 cycles, max |t| = 1.65
+open, data  1000000 samples, median 939 cycles, max |t| = 2.02
+open, tag   1000000 samples, median 935 cycles, max |t| = 2.08
+## gcm_timing_main463 round 4 2026-10-13T11:48:56+02:00 load average: 1,20, 1,05, 1,47
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1769 cycles, max |t| = 1.74
+open, data  1000000 samples, median 1016 cycles, max |t| = 2.66
+open, tag   1000000 samples, median 1023 cycles, max |t| = 0.95
+## gcm_timing_rb round 4 2026-10-13T11:49:33+02:00 load average: 1,11, 1,04, 1,45
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1720 cycles, max |t| = 1.99
+open, data  1000000 samples, median 961 cycles, max |t| = 8.65
+open, tag   1000000 samples, median 957 cycles, max |t| = 2.40
+## gcm_timing_main463 round 5 2026-10-13T11:50:11+02:00 load average: 1,05, 1,03, 1,43
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1810 cycles, max |t| = 1.70
+open, data  1000000 samples, median 1080 cycles, max |t| = 1.49
+open, tag   1000000 samples, median 1042 cycles, max |t| = 2.20
+## gcm_timing_rb round 5 2026-10-13T11:50:50+02:00 load average: 1,51, 1,16, 1,45
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1729 cycles, max |t| = 2.09
+open, data  1000000 samples, median 931 cycles, max |t| = 1.73
+open, tag   1000000 samples, median 934 cycles, max |t| = 1.12
+## gcm_timing_main463 round 6 2026-10-13T11:51:28+02:00 load average: 1,28, 1,14, 1,44
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1784 cycles, max |t| = 2.78
+open, data  1000000 samples, median 1062 cycles, max |t| = 1.42
+open, tag   1000000 samples, median 1042 cycles, max |t| = 2.87
+## gcm_timing_rb round 6 2026-10-13T11:52:07+02:00 load average: 1,22, 1,14, 1,42
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1725 cycles, max |t| = 2.59
+open, data  1000000 samples, median 935 cycles, max |t| = 2.41
+open, tag   1000000 samples, median 957 cycles, max |t| = 2.13
+## cpu0-only gcm_timing_main463 round 1 2026-10-13T11:53:15+02:00 load average: 1,48, 1,22, 1,43
+seal, data  1000000 samples, median 2152 cycles, max |t| = 1.61
+open, data  1000000 samples, median 1920 cycles, max |t| = 2.52
+open, tag   1000000 samples, median 1696 cycles, max |t| = 2.78
+## cpu0-only gcm_timing_rb round 1 2026-10-13T11:54:22+02:00 load average: 3,59, 1,81, 1,62
+seal, data  1000000 samples, median 2854 cycles, max |t| = 2.98
+open, data  1000000 samples, median 1515 cycles, max |t| = 1.41
+open, tag   1000000 samples, median 1594 cycles, max |t| = 1.97
+## cpu0-only gcm_timing_main463 round 2 2026-10-13T11:55:33+02:00 load average: 3,77, 2,26, 1,79
+seal, data  1000000 samples, median 2919 cycles, max |t| = 2.71
+open, data  1000000 samples, median 1339 cycles, max |t| = 1.67
+open, tag   1000000 samples, median 2243 cycles, max |t| = 5.56
+## cpu0-only gcm_timing_rb round 2 2026-10-13T11:56:39+02:00 load average: 3,59, 2,50, 1,91
+seal, data  1000000 samples, median 2866 cycles, max |t| = 2.71
+open, data  1000000 samples, median 1243 cycles, max |t| = 2.06
+open, tag   1000000 samples, median 1249 cycles, max |t| = 2.92
+## cpu0-only gcm_timing_main463 round 3 2026-10-13T11:57:37+02:00 load average: 2,91, 2,51, 1,95
+seal, data  1000000 samples, median 2819 cycles, max |t| = 2.18
+open, data  1000000 samples, median 1172 cycles, max |t| = 2.47
+open, tag   1000000 samples, median 1193 cycles, max |t| = 1.51
+## cpu0-only gcm_timing_rb round 3 2026-10-13T11:58:32+02:00 load average: 2,46, 2,45, 1,97
+seal, data  1000000 samples, median 2500 cycles, max |t| = 2.49
+open, data  1000000 samples, median 1330 cycles, max |t| = 1.92
+open, tag   1000000 samples, median 1241 cycles, max |t| = 1.03
+## cpu0-only gcm_timing_main463 round 4 2026-10-13T11:59:31+02:00 load average: 2,49, 2,48, 2,01
+seal, data  1000000 samples, median 2302 cycles, max |t| = 1.36
+open, data  1000000 samples, median 1099 cycles, max |t| = 1.95
+open, tag   1000000 samples, median 1365 cycles, max |t| = 2.19
+## cpu0-only gcm_timing_rb round 4 2026-10-13T12:00:26+02:00 load average: 3,26, 2,67, 2,09
+seal, data  1000000 samples, median 2279 cycles, max |t| = 2.35
+open, data  1000000 samples, median 1241 cycles, max |t| = 2.46
+open, tag   1000000 samples, median 2178 cycles, max |t| = 2.24
