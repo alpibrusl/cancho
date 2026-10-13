@@ -1436,7 +1436,178 @@ entry:
   %o = or i64 %lo, %hi
   ret i64 %o
 }
+@cancho_hw_sha_cache = internal global i8 0
+@cancho_sha256_name = private unnamed_addr constant [28 x i8] c"hw.optional.arm.FEAT_SHA256\00"
+define internal i8 @cancho_hw_sha256() {
+entry:
+%cached = load atomic i8, ptr @cancho_hw_sha_cache monotonic, align 1
+%known = icmp ne i8 %cached, 0
+br i1 %known, label %answer, label %ask
+ask:
+%sha = alloca i32
+  %size = alloca i64
+  store i32 0, ptr %sha
+  store i64 4, ptr %size
+  %s1 = call i32 @sysctlbyname(ptr @cancho_sha256_name, ptr %sha, ptr %size, ptr null, i64 0)
+  %v = load i32, ptr %sha
+  %r1 = icmp eq i32 %s1, 0
+  %h1 = icmp ne i32 %v, 0
+  %has = and i1 %r1, %h1
+%fresh = select i1 %has, i8 2, i8 1
+store atomic i8 %fresh, ptr @cancho_hw_sha_cache monotonic, align 1
+br label %answer
+answer:
+%value = phi i8 [ %cached, %entry ], [ %fresh, %ask ]
+%yes = icmp eq i8 %value, 2
+%result = zext i1 %yes to i8
+ret i8 %result
+}
+define internal { <4 x i32>, <4 x i32> } @cancho_sha256_rounds(<4 x i32> %s0, <4 x i32> %s1, <4 x i32> %w0, <4 x i32> %w1, <4 x i32> %w2, <4 x i32> %w3) alwaysinline "target-features"="+sha2,+neon" {
+entry:
+  %t1 = add <4 x i32> %w0, <i32 1116352408, i32 1899447441, i32 -1245643825, i32 -373957723>
+  %t2 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %s0, <4 x i32> %s1, <4 x i32> %t1)
+  %t3 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %s1, <4 x i32> %s0, <4 x i32> %t1)
+  %t4 = add <4 x i32> %w1, <i32 961987163, i32 1508970993, i32 -1841331548, i32 -1424204075>
+  %t5 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t2, <4 x i32> %t3, <4 x i32> %t4)
+  %t6 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t3, <4 x i32> %t2, <4 x i32> %t4)
+  %t7 = add <4 x i32> %w2, <i32 -670586216, i32 310598401, i32 607225278, i32 1426881987>
+  %t8 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t5, <4 x i32> %t6, <4 x i32> %t7)
+  %t9 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t6, <4 x i32> %t5, <4 x i32> %t7)
+  %t10 = add <4 x i32> %w3, <i32 1925078388, i32 -2132889090, i32 -1680079193, i32 -1046744716>
+  %t11 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t8, <4 x i32> %t9, <4 x i32> %t10)
+  %t12 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t9, <4 x i32> %t8, <4 x i32> %t10)
+  %t13 = call <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32> %w0, <4 x i32> %w1)
+  %t14 = call <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32> %t13, <4 x i32> %w2, <4 x i32> %w3)
+  %t15 = add <4 x i32> %t14, <i32 -459576895, i32 -272742522, i32 264347078, i32 604807628>
+  %t16 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t11, <4 x i32> %t12, <4 x i32> %t15)
+  %t17 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t12, <4 x i32> %t11, <4 x i32> %t15)
+  %t18 = call <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32> %w1, <4 x i32> %w2)
+  %t19 = call <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32> %t18, <4 x i32> %w3, <4 x i32> %t14)
+  %t20 = add <4 x i32> %t19, <i32 770255983, i32 1249150122, i32 1555081692, i32 1996064986>
+  %t21 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t16, <4 x i32> %t17, <4 x i32> %t20)
+  %t22 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t17, <4 x i32> %t16, <4 x i32> %t20)
+  %t23 = call <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32> %w2, <4 x i32> %w3)
+  %t24 = call <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32> %t23, <4 x i32> %t14, <4 x i32> %t19)
+  %t25 = add <4 x i32> %t24, <i32 -1740746414, i32 -1473132947, i32 -1341970488, i32 -1084653625>
+  %t26 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t21, <4 x i32> %t22, <4 x i32> %t25)
+  %t27 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t22, <4 x i32> %t21, <4 x i32> %t25)
+  %t28 = call <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32> %w3, <4 x i32> %t14)
+  %t29 = call <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32> %t28, <4 x i32> %t19, <4 x i32> %t24)
+  %t30 = add <4 x i32> %t29, <i32 -958395405, i32 -710438585, i32 113926993, i32 338241895>
+  %t31 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t26, <4 x i32> %t27, <4 x i32> %t30)
+  %t32 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t27, <4 x i32> %t26, <4 x i32> %t30)
+  %t33 = call <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32> %t14, <4 x i32> %t19)
+  %t34 = call <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32> %t33, <4 x i32> %t24, <4 x i32> %t29)
+  %t35 = add <4 x i32> %t34, <i32 666307205, i32 773529912, i32 1294757372, i32 1396182291>
+  %t36 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t31, <4 x i32> %t32, <4 x i32> %t35)
+  %t37 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t32, <4 x i32> %t31, <4 x i32> %t35)
+  %t38 = call <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32> %t19, <4 x i32> %t24)
+  %t39 = call <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32> %t38, <4 x i32> %t29, <4 x i32> %t34)
+  %t40 = add <4 x i32> %t39, <i32 1695183700, i32 1986661051, i32 -2117940946, i32 -1838011259>
+  %t41 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t36, <4 x i32> %t37, <4 x i32> %t40)
+  %t42 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t37, <4 x i32> %t36, <4 x i32> %t40)
+  %t43 = call <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32> %t24, <4 x i32> %t29)
+  %t44 = call <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32> %t43, <4 x i32> %t34, <4 x i32> %t39)
+  %t45 = add <4 x i32> %t44, <i32 -1564481375, i32 -1474664885, i32 -1035236496, i32 -949202525>
+  %t46 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t41, <4 x i32> %t42, <4 x i32> %t45)
+  %t47 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t42, <4 x i32> %t41, <4 x i32> %t45)
+  %t48 = call <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32> %t29, <4 x i32> %t34)
+  %t49 = call <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32> %t48, <4 x i32> %t39, <4 x i32> %t44)
+  %t50 = add <4 x i32> %t49, <i32 -778901479, i32 -694614492, i32 -200395387, i32 275423344>
+  %t51 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t46, <4 x i32> %t47, <4 x i32> %t50)
+  %t52 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t47, <4 x i32> %t46, <4 x i32> %t50)
+  %t53 = call <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32> %t34, <4 x i32> %t39)
+  %t54 = call <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32> %t53, <4 x i32> %t44, <4 x i32> %t49)
+  %t55 = add <4 x i32> %t54, <i32 430227734, i32 506948616, i32 659060556, i32 883997877>
+  %t56 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t51, <4 x i32> %t52, <4 x i32> %t55)
+  %t57 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t52, <4 x i32> %t51, <4 x i32> %t55)
+  %t58 = call <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32> %t39, <4 x i32> %t44)
+  %t59 = call <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32> %t58, <4 x i32> %t49, <4 x i32> %t54)
+  %t60 = add <4 x i32> %t59, <i32 958139571, i32 1322822218, i32 1537002063, i32 1747873779>
+  %t61 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t56, <4 x i32> %t57, <4 x i32> %t60)
+  %t62 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t57, <4 x i32> %t56, <4 x i32> %t60)
+  %t63 = call <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32> %t44, <4 x i32> %t49)
+  %t64 = call <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32> %t63, <4 x i32> %t54, <4 x i32> %t59)
+  %t65 = add <4 x i32> %t64, <i32 1955562222, i32 2024104815, i32 -2067236844, i32 -1933114872>
+  %t66 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t61, <4 x i32> %t62, <4 x i32> %t65)
+  %t67 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t62, <4 x i32> %t61, <4 x i32> %t65)
+  %t68 = call <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32> %t49, <4 x i32> %t54)
+  %t69 = call <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32> %t68, <4 x i32> %t59, <4 x i32> %t64)
+  %t70 = add <4 x i32> %t69, <i32 -1866530822, i32 -1538233109, i32 -1090935817, i32 -965641998>
+  %t71 = call <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32> %t66, <4 x i32> %t67, <4 x i32> %t70)
+  %t72 = call <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32> %t67, <4 x i32> %t66, <4 x i32> %t70)
+  %t73 = add <4 x i32> %t71, %s0
+  %t74 = add <4 x i32> %t72, %s1
+  %t75 = insertvalue { <4 x i32>, <4 x i32> } undef, <4 x i32> %t73, 0
+  %t76 = insertvalue { <4 x i32>, <4 x i32> } %t75, <4 x i32> %t74, 1
+  ret { <4 x i32>, <4 x i32> } %t76
+}
+declare <4 x i32> @llvm.aarch64.crypto.sha256h(<4 x i32>, <4 x i32>, <4 x i32>)
+declare <4 x i32> @llvm.aarch64.crypto.sha256h2(<4 x i32>, <4 x i32>, <4 x i32>)
+declare <4 x i32> @llvm.aarch64.crypto.sha256su0(<4 x i32>, <4 x i32>)
+declare <4 x i32> @llvm.aarch64.crypto.sha256su1(<4 x i32>, <4 x i32>, <4 x i32>)
+define internal void @cancho_sha256_blocks(ptr %state, ptr %data, i64 %n) noinline "target-features"="+sha2,+neon" {
+entry:
+  %h64 = load <8 x i64>, ptr %state, align 8
+  %h32 = trunc <8 x i64> %h64 to <8 x i32>
+  %s0init = shufflevector <8 x i32> %h32, <8 x i32> poison, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
+  %s1init = shufflevector <8 x i32> %h32, <8 x i32> poison, <4 x i32> <i32 4, i32 5, i32 6, i32 7>
+  br label %head
+head:
+  %i = phi i64 [ 0, %entry ], [ %i1, %body ]
+  %s0 = phi <4 x i32> [ %s0init, %entry ], [ %n0, %body ]
+  %s1 = phi <4 x i32> [ %s1init, %entry ], [ %n1, %body ]
+  %more = icmp ult i64 %i, %n
+  br i1 %more, label %body, label %done
+body:
+  %off = shl i64 %i, 6
+  %p = getelementptr i8, ptr %data, i64 %off
+  %q0 = getelementptr i8, ptr %p, i64 0
+  %b0 = load <4 x i32>, ptr %q0, align 1
+  %m0 = call <4 x i32> @llvm.bswap.v4i32(<4 x i32> %b0)
+  %q1 = getelementptr i8, ptr %p, i64 16
+  %b1 = load <4 x i32>, ptr %q1, align 1
+  %m1 = call <4 x i32> @llvm.bswap.v4i32(<4 x i32> %b1)
+  %q2 = getelementptr i8, ptr %p, i64 32
+  %b2 = load <4 x i32>, ptr %q2, align 1
+  %m2 = call <4 x i32> @llvm.bswap.v4i32(<4 x i32> %b2)
+  %q3 = getelementptr i8, ptr %p, i64 48
+  %b3 = load <4 x i32>, ptr %q3, align 1
+  %m3 = call <4 x i32> @llvm.bswap.v4i32(<4 x i32> %b3)
+  %r = call { <4 x i32>, <4 x i32> } @cancho_sha256_rounds(<4 x i32> %s0, <4 x i32> %s1, <4 x i32> %m0, <4 x i32> %m1, <4 x i32> %m2, <4 x i32> %m3)
+  %n0 = extractvalue { <4 x i32>, <4 x i32> } %r, 0
+  %n1 = extractvalue { <4 x i32>, <4 x i32> } %r, 1
+  %i1 = add i64 %i, 1
+  br label %head
+done:
+  %f0 = phi <4 x i32> [ %s0, %head ]
+  %f1 = phi <4 x i32> [ %s1, %head ]
+  %o32 = shufflevector <4 x i32> %f0, <4 x i32> %f1, <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7>
+  %o64 = zext <8 x i32> %o32 to <8 x i64>
+  store <8 x i64> %o64, ptr %state, align 8
+  ret void
+}
+define internal void @cancho_sha256_block_words(ptr %state, ptr %block) noinline "target-features"="+sha2,+neon" {
+entry:
+  %h64 = load <8 x i64>, ptr %state, align 8
+  %h32 = trunc <8 x i64> %h64 to <8 x i32>
+  %s0init = shufflevector <8 x i32> %h32, <8 x i32> poison, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
+  %s1init = shufflevector <8 x i32> %h32, <8 x i32> poison, <4 x i32> <i32 4, i32 5, i32 6, i32 7>
+  %m64 = load <16 x i64>, ptr %block, align 8
+  %m32 = trunc <16 x i64> %m64 to <16 x i32>
+  %m0 = shufflevector <16 x i32> %m32, <16 x i32> poison, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
+  %m1 = shufflevector <16 x i32> %m32, <16 x i32> poison, <4 x i32> <i32 4, i32 5, i32 6, i32 7>
+  %m2 = shufflevector <16 x i32> %m32, <16 x i32> poison, <4 x i32> <i32 8, i32 9, i32 10, i32 11>
+  %m3 = shufflevector <16 x i32> %m32, <16 x i32> poison, <4 x i32> <i32 12, i32 13, i32 14, i32 15>
+  %r = call { <4 x i32>, <4 x i32> } @cancho_sha256_rounds(<4 x i32> %s0init, <4 x i32> %s1init, <4 x i32> %m0, <4 x i32> %m1, <4 x i32> %m2, <4 x i32> %m3)
+  %f0 = extractvalue { <4 x i32>, <4 x i32> } %r, 0
+  %f1 = extractvalue { <4 x i32>, <4 x i32> } %r, 1
+  %o32 = shufflevector <4 x i32> %f0, <4 x i32> %f1, <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7>
+  %o64 = zext <8 x i32> %o32 to <8 x i64>
+  store <8 x i64> %o64, ptr %state, align 8
+  ret void
+}
 declare <16 x i8> @llvm.aarch64.crypto.aese(<16 x i8>, <16 x i8>)
 declare <16 x i8> @llvm.aarch64.crypto.aesmc(<16 x i8>)
-declare <4 x i32> @llvm.bswap.v4i32(<4 x i32>)
 declare <16 x i8> @llvm.aarch64.neon.pmull64(i64, i64)
+declare <4 x i32> @llvm.bswap.v4i32(<4 x i32>)

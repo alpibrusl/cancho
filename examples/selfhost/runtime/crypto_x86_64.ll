@@ -1076,7 +1076,221 @@ entry:
   %o = or i64 %lo, %hi
   ret i64 %o
 }
+@cancho_hw_sha_cache = internal global i8 0
+define internal i8 @cancho_hw_sha256() {
+entry:
+%cached = load atomic i8, ptr @cancho_hw_sha_cache monotonic, align 1
+%known = icmp ne i8 %cached, 0
+br i1 %known, label %answer, label %ask
+ask:
+%l0 = call { i32, i32, i32, i32 } asm sideeffect "cpuid", "={ax},={bx},={cx},={dx},{ax},{cx}"(i32 0, i32 0)
+  %max = extractvalue { i32, i32, i32, i32 } %l0, 0
+  %l1 = call { i32, i32, i32, i32 } asm sideeffect "cpuid", "={ax},={bx},={cx},={dx},{ax},{cx}"(i32 1, i32 0)
+  %ecx = extractvalue { i32, i32, i32, i32 } %l1, 2
+  %want1 = and i32 %ecx, 524800
+  %has1 = icmp eq i32 %want1, 524800
+  %leaf7 = icmp uge i32 %max, 7
+  %ask7 = select i1 %leaf7, i32 7, i32 0
+  %l7 = call { i32, i32, i32, i32 } asm sideeffect "cpuid", "={ax},={bx},={cx},={dx},{ax},{cx}"(i32 %ask7, i32 0)
+  %ebx = extractvalue { i32, i32, i32, i32 } %l7, 1
+  %sha = and i32 %ebx, 536870912
+  %has7 = icmp ne i32 %sha, 0
+  %has7b = and i1 %has7, %leaf7
+  %has = and i1 %has1, %has7b
+%fresh = select i1 %has, i8 2, i8 1
+store atomic i8 %fresh, ptr @cancho_hw_sha_cache monotonic, align 1
+br label %answer
+answer:
+%value = phi i8 [ %cached, %entry ], [ %fresh, %ask ]
+%yes = icmp eq i8 %value, 2
+%result = zext i1 %yes to i8
+ret i8 %result
+}
+define internal { <4 x i32>, <4 x i32> } @cancho_sha256_rounds(<4 x i32> %s0, <4 x i32> %s1, <4 x i32> %w0, <4 x i32> %w1, <4 x i32> %w2, <4 x i32> %w3) alwaysinline "target-features"="+sha,+sse2,+ssse3,+sse4.1" {
+entry:
+  %t1 = add <4 x i32> %w0, <i32 1116352408, i32 1899447441, i32 -1245643825, i32 -373957723>
+  %t2 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %s1, <4 x i32> %s0, <4 x i32> %t1)
+  %t3 = shufflevector <4 x i32> %t1, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t4 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %s0, <4 x i32> %t2, <4 x i32> %t3)
+  %t5 = add <4 x i32> %w1, <i32 961987163, i32 1508970993, i32 -1841331548, i32 -1424204075>
+  %t6 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t2, <4 x i32> %t4, <4 x i32> %t5)
+  %t7 = shufflevector <4 x i32> %t5, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t8 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t4, <4 x i32> %t6, <4 x i32> %t7)
+  %t9 = add <4 x i32> %w2, <i32 -670586216, i32 310598401, i32 607225278, i32 1426881987>
+  %t10 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t6, <4 x i32> %t8, <4 x i32> %t9)
+  %t11 = shufflevector <4 x i32> %t9, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t12 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t8, <4 x i32> %t10, <4 x i32> %t11)
+  %t13 = add <4 x i32> %w3, <i32 1925078388, i32 -2132889090, i32 -1680079193, i32 -1046744716>
+  %t14 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t10, <4 x i32> %t12, <4 x i32> %t13)
+  %t15 = shufflevector <4 x i32> %t13, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t16 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t12, <4 x i32> %t14, <4 x i32> %t15)
+  %t17 = call <4 x i32> @llvm.x86.sha256msg1(<4 x i32> %w0, <4 x i32> %w1)
+  %t18 = shufflevector <4 x i32> %w2, <4 x i32> %w3, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  %t19 = add <4 x i32> %t17, %t18
+  %t20 = call <4 x i32> @llvm.x86.sha256msg2(<4 x i32> %t19, <4 x i32> %w3)
+  %t21 = add <4 x i32> %t20, <i32 -459576895, i32 -272742522, i32 264347078, i32 604807628>
+  %t22 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t14, <4 x i32> %t16, <4 x i32> %t21)
+  %t23 = shufflevector <4 x i32> %t21, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t24 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t16, <4 x i32> %t22, <4 x i32> %t23)
+  %t25 = call <4 x i32> @llvm.x86.sha256msg1(<4 x i32> %w1, <4 x i32> %w2)
+  %t26 = shufflevector <4 x i32> %w3, <4 x i32> %t20, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  %t27 = add <4 x i32> %t25, %t26
+  %t28 = call <4 x i32> @llvm.x86.sha256msg2(<4 x i32> %t27, <4 x i32> %t20)
+  %t29 = add <4 x i32> %t28, <i32 770255983, i32 1249150122, i32 1555081692, i32 1996064986>
+  %t30 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t22, <4 x i32> %t24, <4 x i32> %t29)
+  %t31 = shufflevector <4 x i32> %t29, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t32 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t24, <4 x i32> %t30, <4 x i32> %t31)
+  %t33 = call <4 x i32> @llvm.x86.sha256msg1(<4 x i32> %w2, <4 x i32> %w3)
+  %t34 = shufflevector <4 x i32> %t20, <4 x i32> %t28, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  %t35 = add <4 x i32> %t33, %t34
+  %t36 = call <4 x i32> @llvm.x86.sha256msg2(<4 x i32> %t35, <4 x i32> %t28)
+  %t37 = add <4 x i32> %t36, <i32 -1740746414, i32 -1473132947, i32 -1341970488, i32 -1084653625>
+  %t38 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t30, <4 x i32> %t32, <4 x i32> %t37)
+  %t39 = shufflevector <4 x i32> %t37, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t40 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t32, <4 x i32> %t38, <4 x i32> %t39)
+  %t41 = call <4 x i32> @llvm.x86.sha256msg1(<4 x i32> %w3, <4 x i32> %t20)
+  %t42 = shufflevector <4 x i32> %t28, <4 x i32> %t36, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  %t43 = add <4 x i32> %t41, %t42
+  %t44 = call <4 x i32> @llvm.x86.sha256msg2(<4 x i32> %t43, <4 x i32> %t36)
+  %t45 = add <4 x i32> %t44, <i32 -958395405, i32 -710438585, i32 113926993, i32 338241895>
+  %t46 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t38, <4 x i32> %t40, <4 x i32> %t45)
+  %t47 = shufflevector <4 x i32> %t45, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t48 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t40, <4 x i32> %t46, <4 x i32> %t47)
+  %t49 = call <4 x i32> @llvm.x86.sha256msg1(<4 x i32> %t20, <4 x i32> %t28)
+  %t50 = shufflevector <4 x i32> %t36, <4 x i32> %t44, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  %t51 = add <4 x i32> %t49, %t50
+  %t52 = call <4 x i32> @llvm.x86.sha256msg2(<4 x i32> %t51, <4 x i32> %t44)
+  %t53 = add <4 x i32> %t52, <i32 666307205, i32 773529912, i32 1294757372, i32 1396182291>
+  %t54 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t46, <4 x i32> %t48, <4 x i32> %t53)
+  %t55 = shufflevector <4 x i32> %t53, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t56 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t48, <4 x i32> %t54, <4 x i32> %t55)
+  %t57 = call <4 x i32> @llvm.x86.sha256msg1(<4 x i32> %t28, <4 x i32> %t36)
+  %t58 = shufflevector <4 x i32> %t44, <4 x i32> %t52, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  %t59 = add <4 x i32> %t57, %t58
+  %t60 = call <4 x i32> @llvm.x86.sha256msg2(<4 x i32> %t59, <4 x i32> %t52)
+  %t61 = add <4 x i32> %t60, <i32 1695183700, i32 1986661051, i32 -2117940946, i32 -1838011259>
+  %t62 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t54, <4 x i32> %t56, <4 x i32> %t61)
+  %t63 = shufflevector <4 x i32> %t61, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t64 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t56, <4 x i32> %t62, <4 x i32> %t63)
+  %t65 = call <4 x i32> @llvm.x86.sha256msg1(<4 x i32> %t36, <4 x i32> %t44)
+  %t66 = shufflevector <4 x i32> %t52, <4 x i32> %t60, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  %t67 = add <4 x i32> %t65, %t66
+  %t68 = call <4 x i32> @llvm.x86.sha256msg2(<4 x i32> %t67, <4 x i32> %t60)
+  %t69 = add <4 x i32> %t68, <i32 -1564481375, i32 -1474664885, i32 -1035236496, i32 -949202525>
+  %t70 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t62, <4 x i32> %t64, <4 x i32> %t69)
+  %t71 = shufflevector <4 x i32> %t69, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t72 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t64, <4 x i32> %t70, <4 x i32> %t71)
+  %t73 = call <4 x i32> @llvm.x86.sha256msg1(<4 x i32> %t44, <4 x i32> %t52)
+  %t74 = shufflevector <4 x i32> %t60, <4 x i32> %t68, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  %t75 = add <4 x i32> %t73, %t74
+  %t76 = call <4 x i32> @llvm.x86.sha256msg2(<4 x i32> %t75, <4 x i32> %t68)
+  %t77 = add <4 x i32> %t76, <i32 -778901479, i32 -694614492, i32 -200395387, i32 275423344>
+  %t78 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t70, <4 x i32> %t72, <4 x i32> %t77)
+  %t79 = shufflevector <4 x i32> %t77, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t80 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t72, <4 x i32> %t78, <4 x i32> %t79)
+  %t81 = call <4 x i32> @llvm.x86.sha256msg1(<4 x i32> %t52, <4 x i32> %t60)
+  %t82 = shufflevector <4 x i32> %t68, <4 x i32> %t76, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  %t83 = add <4 x i32> %t81, %t82
+  %t84 = call <4 x i32> @llvm.x86.sha256msg2(<4 x i32> %t83, <4 x i32> %t76)
+  %t85 = add <4 x i32> %t84, <i32 430227734, i32 506948616, i32 659060556, i32 883997877>
+  %t86 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t78, <4 x i32> %t80, <4 x i32> %t85)
+  %t87 = shufflevector <4 x i32> %t85, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t88 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t80, <4 x i32> %t86, <4 x i32> %t87)
+  %t89 = call <4 x i32> @llvm.x86.sha256msg1(<4 x i32> %t60, <4 x i32> %t68)
+  %t90 = shufflevector <4 x i32> %t76, <4 x i32> %t84, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  %t91 = add <4 x i32> %t89, %t90
+  %t92 = call <4 x i32> @llvm.x86.sha256msg2(<4 x i32> %t91, <4 x i32> %t84)
+  %t93 = add <4 x i32> %t92, <i32 958139571, i32 1322822218, i32 1537002063, i32 1747873779>
+  %t94 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t86, <4 x i32> %t88, <4 x i32> %t93)
+  %t95 = shufflevector <4 x i32> %t93, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t96 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t88, <4 x i32> %t94, <4 x i32> %t95)
+  %t97 = call <4 x i32> @llvm.x86.sha256msg1(<4 x i32> %t68, <4 x i32> %t76)
+  %t98 = shufflevector <4 x i32> %t84, <4 x i32> %t92, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  %t99 = add <4 x i32> %t97, %t98
+  %t100 = call <4 x i32> @llvm.x86.sha256msg2(<4 x i32> %t99, <4 x i32> %t92)
+  %t101 = add <4 x i32> %t100, <i32 1955562222, i32 2024104815, i32 -2067236844, i32 -1933114872>
+  %t102 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t94, <4 x i32> %t96, <4 x i32> %t101)
+  %t103 = shufflevector <4 x i32> %t101, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t104 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t96, <4 x i32> %t102, <4 x i32> %t103)
+  %t105 = call <4 x i32> @llvm.x86.sha256msg1(<4 x i32> %t76, <4 x i32> %t84)
+  %t106 = shufflevector <4 x i32> %t92, <4 x i32> %t100, <4 x i32> <i32 1, i32 2, i32 3, i32 4>
+  %t107 = add <4 x i32> %t105, %t106
+  %t108 = call <4 x i32> @llvm.x86.sha256msg2(<4 x i32> %t107, <4 x i32> %t100)
+  %t109 = add <4 x i32> %t108, <i32 -1866530822, i32 -1538233109, i32 -1090935817, i32 -965641998>
+  %t110 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t102, <4 x i32> %t104, <4 x i32> %t109)
+  %t111 = shufflevector <4 x i32> %t109, <4 x i32> poison, <4 x i32> <i32 2, i32 3, i32 0, i32 0>
+  %t112 = call <4 x i32> @llvm.x86.sha256rnds2(<4 x i32> %t104, <4 x i32> %t110, <4 x i32> %t111)
+  %t113 = add <4 x i32> %t112, %s0
+  %t114 = add <4 x i32> %t110, %s1
+  %t115 = insertvalue { <4 x i32>, <4 x i32> } undef, <4 x i32> %t113, 0
+  %t116 = insertvalue { <4 x i32>, <4 x i32> } %t115, <4 x i32> %t114, 1
+  ret { <4 x i32>, <4 x i32> } %t116
+}
+declare <4 x i32> @llvm.x86.sha256rnds2(<4 x i32>, <4 x i32>, <4 x i32>)
+declare <4 x i32> @llvm.x86.sha256msg1(<4 x i32>, <4 x i32>)
+declare <4 x i32> @llvm.x86.sha256msg2(<4 x i32>, <4 x i32>)
+define internal void @cancho_sha256_blocks(ptr %state, ptr %data, i64 %n) noinline "target-features"="+sha,+sse2,+ssse3,+sse4.1" {
+entry:
+  %h64 = load <8 x i64>, ptr %state, align 8
+  %h32 = trunc <8 x i64> %h64 to <8 x i32>
+  %s0init = shufflevector <8 x i32> %h32, <8 x i32> poison, <4 x i32> <i32 5, i32 4, i32 1, i32 0>
+  %s1init = shufflevector <8 x i32> %h32, <8 x i32> poison, <4 x i32> <i32 7, i32 6, i32 3, i32 2>
+  br label %head
+head:
+  %i = phi i64 [ 0, %entry ], [ %i1, %body ]
+  %s0 = phi <4 x i32> [ %s0init, %entry ], [ %n0, %body ]
+  %s1 = phi <4 x i32> [ %s1init, %entry ], [ %n1, %body ]
+  %more = icmp ult i64 %i, %n
+  br i1 %more, label %body, label %done
+body:
+  %off = shl i64 %i, 6
+  %p = getelementptr i8, ptr %data, i64 %off
+  %q0 = getelementptr i8, ptr %p, i64 0
+  %b0 = load <4 x i32>, ptr %q0, align 1
+  %m0 = call <4 x i32> @llvm.bswap.v4i32(<4 x i32> %b0)
+  %q1 = getelementptr i8, ptr %p, i64 16
+  %b1 = load <4 x i32>, ptr %q1, align 1
+  %m1 = call <4 x i32> @llvm.bswap.v4i32(<4 x i32> %b1)
+  %q2 = getelementptr i8, ptr %p, i64 32
+  %b2 = load <4 x i32>, ptr %q2, align 1
+  %m2 = call <4 x i32> @llvm.bswap.v4i32(<4 x i32> %b2)
+  %q3 = getelementptr i8, ptr %p, i64 48
+  %b3 = load <4 x i32>, ptr %q3, align 1
+  %m3 = call <4 x i32> @llvm.bswap.v4i32(<4 x i32> %b3)
+  %r = call { <4 x i32>, <4 x i32> } @cancho_sha256_rounds(<4 x i32> %s0, <4 x i32> %s1, <4 x i32> %m0, <4 x i32> %m1, <4 x i32> %m2, <4 x i32> %m3)
+  %n0 = extractvalue { <4 x i32>, <4 x i32> } %r, 0
+  %n1 = extractvalue { <4 x i32>, <4 x i32> } %r, 1
+  %i1 = add i64 %i, 1
+  br label %head
+done:
+  %f0 = phi <4 x i32> [ %s0, %head ]
+  %f1 = phi <4 x i32> [ %s1, %head ]
+  %o32 = shufflevector <4 x i32> %f0, <4 x i32> %f1, <8 x i32> <i32 3, i32 2, i32 7, i32 6, i32 1, i32 0, i32 5, i32 4>
+  %o64 = zext <8 x i32> %o32 to <8 x i64>
+  store <8 x i64> %o64, ptr %state, align 8
+  ret void
+}
+define internal void @cancho_sha256_block_words(ptr %state, ptr %block) noinline "target-features"="+sha,+sse2,+ssse3,+sse4.1" {
+entry:
+  %h64 = load <8 x i64>, ptr %state, align 8
+  %h32 = trunc <8 x i64> %h64 to <8 x i32>
+  %s0init = shufflevector <8 x i32> %h32, <8 x i32> poison, <4 x i32> <i32 5, i32 4, i32 1, i32 0>
+  %s1init = shufflevector <8 x i32> %h32, <8 x i32> poison, <4 x i32> <i32 7, i32 6, i32 3, i32 2>
+  %m64 = load <16 x i64>, ptr %block, align 8
+  %m32 = trunc <16 x i64> %m64 to <16 x i32>
+  %m0 = shufflevector <16 x i32> %m32, <16 x i32> poison, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
+  %m1 = shufflevector <16 x i32> %m32, <16 x i32> poison, <4 x i32> <i32 4, i32 5, i32 6, i32 7>
+  %m2 = shufflevector <16 x i32> %m32, <16 x i32> poison, <4 x i32> <i32 8, i32 9, i32 10, i32 11>
+  %m3 = shufflevector <16 x i32> %m32, <16 x i32> poison, <4 x i32> <i32 12, i32 13, i32 14, i32 15>
+  %r = call { <4 x i32>, <4 x i32> } @cancho_sha256_rounds(<4 x i32> %s0init, <4 x i32> %s1init, <4 x i32> %m0, <4 x i32> %m1, <4 x i32> %m2, <4 x i32> %m3)
+  %f0 = extractvalue { <4 x i32>, <4 x i32> } %r, 0
+  %f1 = extractvalue { <4 x i32>, <4 x i32> } %r, 1
+  %o32 = shufflevector <4 x i32> %f0, <4 x i32> %f1, <8 x i32> <i32 3, i32 2, i32 7, i32 6, i32 1, i32 0, i32 5, i32 4>
+  %o64 = zext <8 x i32> %o32 to <8 x i64>
+  store <8 x i64> %o64, ptr %state, align 8
+  ret void
+}
 declare <2 x i64> @llvm.x86.aesni.aesenc(<2 x i64>, <2 x i64>)
 declare <2 x i64> @llvm.x86.aesni.aesenclast(<2 x i64>, <2 x i64>)
-declare <4 x i32> @llvm.bswap.v4i32(<4 x i32>)
 declare <2 x i64> @llvm.x86.pclmulqdq(<2 x i64>, <2 x i64>, i8)
+declare <4 x i32> @llvm.bswap.v4i32(<4 x i32>)

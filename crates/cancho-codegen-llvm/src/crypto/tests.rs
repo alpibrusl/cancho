@@ -169,6 +169,9 @@ fn the_selfhost_runtime_has_the_text_the_backend_writes() {
             on_disk == expected,
             "{file} is out of date: run UPDATE_SELFHOST_TABLES=1 cargo test -p cancho-codegen-llvm selfhost_runtime"
         );
+    }
+}
+
 /// The SHA-256 functions keep the state and the message in registers: the
 /// only store either makes is the eight words written back to the state, so
 /// no word of a key's hash is left anywhere else (`docs/sha256-builtin.md`

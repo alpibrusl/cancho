@@ -1334,7 +1334,7 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
                 ex.skip(st, from, to);
             } else {
                 scope.expect(st, text, param, a.ty, ast.nstart(st, arg), ast.nend(st, arg));
-                if written != 0 && written != 3 && written != 4 && (written < 18 || written >= 70) && written != 83 {
+                if written != 0 && written != 3 && written != 4 && (written < 18 || written >= 70) && written != 83 && written != 90 {
                     ex.push_value(st, a);
                 }
                 last = a;
@@ -1373,6 +1373,15 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
         }
         if written == 89 {
             return ex.in_reg(1, cryptocode.tag(st, true));
+        }
+        if written == 90 {
+            return ex.in_reg(5, cryptocode.hardware_sha(st));
+        }
+        if written == 91 || written == 92 {
+            if written == 92 {
+                return ex.constant(cryptocode.sha_block_words(st));
+            }
+            return ex.constant(cryptocode.sha_blocks(st));
         }
         var done = 0;
         if written == 84 {

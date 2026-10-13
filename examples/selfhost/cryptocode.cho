@@ -222,3 +222,54 @@ pub fn tag[&s](st: &!s [int], diff: bool) -> [] int {
     st[52] = st[52] - 13;
     return result;
 }
+
+// `hw_sha256()`: whether the processor has the SHA-256 instructions.
+pub fn hardware_sha[&s](st: &!s [int]) -> [] int {
+    let raw = emit.start(st);
+    emit.str(st, "call i8 @cancho_hw_sha256()\n");
+    let yes = emit.start(st);
+    emit.str(st, "icmp ne i8 ");
+    emit.temp(st, raw);
+    emit.str(st, ", 0\n");
+    return yes;
+}
+
+// `sha256_blocks(state, data)`: whole 64-byte blocks only.
+pub fn sha_blocks[&s](st: &!s [int]) -> [] int {
+    trap_when(st, 4, "ne", 1, 8);
+    let rest = emit.start(st);
+    emit.str(st, "and i64 ");
+    operand(st, 4, 3);
+    emit.str(st, ", 63\n");
+    let ragged = emit.start(st);
+    emit.str(st, "icmp ne i64 ");
+    emit.temp(st, rest);
+    emit.str(st, ", 0\n");
+    emit.trap_if(st, ragged);
+    let blocks = emit.start(st);
+    emit.str(st, "lshr i64 ");
+    operand(st, 4, 3);
+    emit.str(st, ", 6\n");
+    emit.str(st, "  call void @cancho_sha256_blocks(");
+    ptr_arg(st, 4, 0);
+    emit.str(st, ", ");
+    ptr_arg(st, 4, 2);
+    emit.str(st, ", i64 ");
+    emit.temp(st, blocks);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 4;
+    return 0;
+}
+
+// `sha256_block_words(state, block)`: 8 words and 16.
+pub fn sha_block_words[&s](st: &!s [int]) -> [] int {
+    trap_when(st, 4, "ne", 1, 8);
+    trap_when(st, 4, "ne", 3, 16);
+    emit.str(st, "  call void @cancho_sha256_block_words(");
+    ptr_arg(st, 4, 0);
+    emit.str(st, ", ");
+    ptr_arg(st, 4, 2);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 4;
+    return 0;
+}
