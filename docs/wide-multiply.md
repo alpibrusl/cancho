@@ -453,13 +453,13 @@ governor and load at start and end are in [`assets/wide-multiply/381/`](assets/w
 | P-256 `ecdh.shared` | scalar 1 / fixed / 16^63 | 486,934 to 565,173 | 2.14 / 1.59 / 1.98 |
 | P-256 `ecdsa_sign.sign` | a fixed key / the key 1 | 213,032 / 215,300 | 1.61 / 2.29 |
 | P-384 `ecdh.shared` (`std.bigmod`, 6b5299e5) | scalar 1 / fixed / 16^95 | 2,478,068 to 3,571,888 | 1.82 / 1.34 / 2.10 |
+| P-384 `ecdh.public_key` (the same) | scalar 1 / fixed / 0x88..88 / n − 1 / 16^95 | 2,085,241 to 2,593,354 | 1.79 / 1.46 / 2.50 / 1.72 / 2.43 |
 | ChaCha20-Poly1305, 64 bytes and 13 of associated data (541a03cc) | seal: a fixed key / fixed data; open: fixed data / a tag wrong first or last, each against random (`gcm_timing.py --chacha20`) | 1,154 to 2,622 | 2.45 / 2.02 / 1.55 / 1.69 |
 | the same at 1 KiB (`--size 1024`) | the same four | 2,433 to 20,022 | 2.11 / 2.18 / 2.31 / 2.08 |
 
 The P-256 runs timed b2651fea; the kernels' object code at the head is that commit's, instruction for instruction
-(`kernels_object_identity.txt`). `std.bigmod` has not changed since 6b5299e5. **Not run:** P-384's `public_key` (the same ladder as
-`shared` with G as the point), whose five tests were stopped to free the core for the measurements above and restarted after them,
-so this table does not yet have them; Cranelift; Apple silicon.
+(`kernels_object_identity.txt`). `std.bigmod` has not changed since 6b5299e5. P-384's `public_key` tests ran last (stopped once
+to free the core for the other measurements, then run whole). **Not run:** Cranelift; Apple silicon.
 
 **The branch audit** (`scripts/chacha20_branches.py` and `p256_ctx.py` over the x86-64 objects; `assets/wide-multiply/381/branches*.txt`):
 every P-256 kernel has exactly one conditional jump that is not to a trap, the `je` after `cmp $0xa` and `setge` on the three slice
