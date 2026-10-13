@@ -1,88 +1,52 @@
-# commit ea27e1b5 (rebased onto #465); Linux 6.8.0-100-generic aarch64; valgrind-3.22.0; load 5.64 2.36 1.63 2/1207 1793
+# commit ff6d7958 (rebased onto #466); Linux 6.8.0-100-generic aarch64; valgrind-3.22.0; load 2.64 2.27 1.87 1/1180 1795
 ## check (before re-recording)
 baseline linux-aarch64 (Apple M4 Max under Docker Desktop (6-vCPU VM), Ubuntu 24.04, Linux 6.8.0-100 aarch64, valgrind 3.22 (docs/tls-performance.md §2, §10)); instructions: instructions a call
 operation                            size            now       recorded   ratio
 aes128gcm_open                       1024        3460.00        3459.00    1.00
 aes128gcm_open                      16384       48460.00       48459.00    1.00
-aes128gcm_open                         64         772.00         771.00    1.00
+aes128gcm_open                         64         771.82         771.00    1.00
 aes128gcm_prepare                       0       27043.37       33152.40    0.82
-aes128gcm_seal                       1024        3454.00        3461.30    1.00
-aes128gcm_seal                      16384       48545.25       48545.20    1.00
+aes128gcm_seal                       1024        3461.30        3461.30    1.00
+aes128gcm_seal                      16384       48454.00       48545.20    1.00
 aes128gcm_seal                         64         766.00         766.00    1.00
 calibrate                               0        4006.00        4006.00    1.00
 chacha20poly1305_open                1024      113154.00      119795.00    0.94
-chacha20poly1305_open               16384     1698575.75     1790656.80    0.95
+chacha20poly1305_open               16384     1698594.00     1790656.80    0.95
 chacha20poly1305_open                  64       14064.00       15365.00    0.92
 chacha20poly1305_seal                1024      112992.82      119341.80    0.95
 chacha20poly1305_seal               16384     1698449.25     1790238.20    0.95
 chacha20poly1305_seal                  64       13901.18       14910.20    0.93
-ecdsa_p256_sign                         0      859559.50     1061089.50    0.81
-ecdsa_p256_sign_checked                 0     2537551.50     3357172.00    0.76  CHEAPER THAN 1/1.3: re-record the baseline
-ecdsa_p256_sign_checked_tabled          0     1619347.50     2064554.00    0.78
-ecdsa_p256_verify                       0     1678103.00     2297414.00    0.73  CHEAPER THAN 1/1.3: re-record the baseline
+ecdsa_p256_sign                         0      729572.50     1061089.50    0.69  CHEAPER THAN 1/1.3: re-record the baseline
+ecdsa_p256_sign_checked                 0     2407567.50     3357172.00    0.72  CHEAPER THAN 1/1.3: re-record the baseline
+ecdsa_p256_sign_checked_tabled          0     1489361.50     2064554.00    0.72  CHEAPER THAN 1/1.3: re-record the baseline
+ecdsa_p256_verify                       0     1678102.00     2297414.00    0.73  CHEAPER THAN 1/1.3: re-record the baseline
 ecdsa_p256_verify_tabled                0      759899.00     1007877.00    0.75  CHEAPER THAN 1/1.3: re-record the baseline
-hkdf_expand_label_32                    0       25979.63       27502.60    0.94
-hkdf_expand_label_48                    0       28689.63       30284.60    0.95
-hkdf_extract_32                         0       25492.00       26209.00    0.97
-hmac_sha256                          1024      110788.82      111504.80    0.99
-hmac_sha256                         16384     1395045.25     1395761.20    1.00
-hmac_sha256                            64       30522.00       31238.00    0.98
+hkdf_expand_label_32                    0        4176.00        4175.00    1.00
+hkdf_expand_label_48                    0       27105.00       27104.60    1.00
+hkdf_extract_32                         0        3526.00        3526.00    1.00
+hmac_sha256                          1024        4522.00        4522.80    1.00
+hmac_sha256                         16384       28282.00       28281.00    1.00
+hmac_sha256                            64        3037.00        3036.00    1.00
 p256_public                             0      573946.00      758208.50    0.76  CHEAPER THAN 1/1.3: re-record the baseline
 p256_shared                             0     2377531.50     3226691.50    0.74  CHEAPER THAN 1/1.3: re-record the baseline
-sha256                               1024       91667.82       91858.80    1.00
-sha256                              16384     1375924.25     1376115.20    1.00
-sha256                                 64       11401.00       11592.00    0.98
-sha384                               1024       49210.00       49361.00    1.00
-sha384                              16384      690388.25      690539.20    1.00
-sha384                                 64        7108.18        7259.20    0.98
+sha256                               1024        2354.00        2354.00    1.00
+sha256                              16384       26114.00       26114.00    1.00
+sha256                                 64         868.82         868.80    1.00
+sha384                               1024       49218.18       49361.00    1.00
+sha384                              16384      690398.25      690539.20    1.00
+sha384                                 64        7118.18        7259.20    0.98
 x25519_public                           0      523519.00      525613.00    1.00
-x25519_shared                           0      523482.50      525613.00    1.00
-30 of 35 rows within 1.3x either way of the baseline
+x25519_shared                           0      523519.00      525613.00    1.00
+hkdf_expand_label_prepared_32           0        2407.00        2407.00    1.00
+29 of 36 rows within 1.3x either way of the baseline
 ## exit 1
 ## record
-recorded 35 quotients and 35 instruction counts for linux-aarch64 in /src/scripts/../benches/tls_baseline.json
+recorded 36 quotients and 36 instruction counts for linux-aarch64 in /src/scripts/../benches/tls_baseline.json
 ## exit 0
 ## check (after)
-baseline linux-aarch64 (aarch64, Linux 6.8.0-100-generic); instructions: instructions a call
-operation                            size            now       recorded   ratio
-aes128gcm_open                       1024        3460.00        3460.00    1.00
-aes128gcm_open                      16384       48460.00       48460.00    1.00
-aes128gcm_open                         64         772.00         772.00    1.00
-aes128gcm_prepare                       0       27043.37       27043.40    1.00
-aes128gcm_seal                       1024        3454.00        3454.00    1.00
-aes128gcm_seal                      16384       48454.00       48454.00    1.00
-aes128gcm_seal                         64         766.00         766.00    1.00
-calibrate                               0        4006.00        4006.00    1.00
-chacha20poly1305_open                1024      113154.00      113154.00    1.00
-chacha20poly1305_open               16384     1698594.00     1698575.80    1.00
-chacha20poly1305_open                  64       14064.00       14064.00    1.00
-chacha20poly1305_seal                1024      112992.82      112992.80    1.00
-chacha20poly1305_seal               16384     1698449.25     1698449.20    1.00
-chacha20poly1305_seal                  64       13901.18       13901.20    1.00
-ecdsa_p256_sign                         0      859559.50      859559.50    1.00
-ecdsa_p256_sign_checked                 0     2537551.50     2537588.00    1.00
-ecdsa_p256_sign_checked_tabled          0     1619347.50     1619347.50    1.00
-ecdsa_p256_verify                       0     1678103.00     1678103.00    1.00
-ecdsa_p256_verify_tabled                0      759899.00      759899.00    1.00
-hkdf_expand_label_32                    0       25980.00       25980.00    1.00
-hkdf_expand_label_48                    0       28690.00       28689.60    1.00
-hkdf_extract_32                         0       25492.00       25492.00    1.00
-hmac_sha256                          1024      110788.82      110788.80    1.00
-hmac_sha256                         16384     1395045.25     1395045.20    1.00
-hmac_sha256                            64       30522.00       30522.00    1.00
-p256_public                             0      573946.00      573946.00    1.00
-p256_shared                             0     2377531.50     2377531.50    1.00
-sha256                               1024       91667.82       91667.80    1.00
-sha256                              16384     1375924.25     1375924.20    1.00
-sha256                                 64       11401.00       11401.00    1.00
-sha384                               1024       49210.00       49208.20    1.00
-sha384                              16384      690388.25      690388.20    1.00
-sha384                                 64        7108.18        7108.20    1.00
-x25519_public                           0      523519.00      523519.00    1.00
-x25519_shared                           0      523519.00      523519.00    1.00
-35 of 35 rows within 1.3x either way of the baseline
+36 of 36 rows within 1.3x either way of the baseline
 ## exit 0
 ## mutant guard
-31 of 35 rows within 1.3x either way of the baseline
+32 of 36 rows within 1.3x either way of the baseline
 ok: the guard failed exactly the 4 mutated rows
 ## exit 0
