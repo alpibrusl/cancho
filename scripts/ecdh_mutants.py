@@ -45,6 +45,8 @@ MUTANTS = [
     ("ecdh", "a point's first byte not checked", "if len(peer) != 1 + 2 * size || int_of(peer[0]) != 4 {", "if len(peer) != 1 + 2 * size {"),
     ("bigmod", "the reduction's mask inverted", "let m = value_barrier(below - 1);", "let m = value_barrier(0 - below);"),
     ("bigmod", "the reduction blind to the carry limb", "let (top, below) = sub_borrow(xs[k], 0, under);", "let (top, below) = sub_borrow(0, 0, under);"),
+    # #381: P-384's n and p fill their top 64-bit limb, so `modulus_bits` must read it as unsigned; `inverse` uses it.
+    ("bigmod", "a modulus with its top bit set measured short", "    if top < 0 {\n", "    if top < 0 && false {\n"),
     ("bigmod", "a negative difference left unreduced", "let m = value_barrier(0 - under);\n    var carry", "let m = 0;\n    var carry"),
 ]
 
@@ -99,6 +101,13 @@ def evidence():
     g = "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"
     for first in ("00", "02", "03", "05"):
         cases.append(f"S 256 {'07' * 32} {first}{g}")
+        checks.append(lambda a: a.startswith("-54 "))
+    # P-384's own check of the encoding (#381): since #397 P-256's `shared` checks it in `std.p256_pt`, so the cases above no
+    # longer reach `std.ecdh`'s.
+    g384 = ("aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7"
+            "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f")
+    for first in ("00", "02", "03", "05"):
+        cases.append(f"S 384 {'07' * 48} {first}{g384}")
         checks.append(lambda a: a.startswith("-54 "))
     return cases, checks
 

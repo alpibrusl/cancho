@@ -35,7 +35,7 @@ MUTANTS = [
     ("the reduction's carry dropped", "bigmod", "cm = wrapping_add(wrapping_add(g, kc), kd);", "cm = wrapping_add(g, kc);"),
     ("limbs compared as signed", "bigmod", "let (d, under) = sub_borrow(a, b, 0);\n            return 1 - 2 * under;",
      "if a < b {\n                return -1;\n            }\n            return 1;"),
-    ("a modulus with its top bit set measured short", "bigmod", "    if top < 0 {\n", "    if top < 0 && false {\n"),
+    # `modulus_bits` serves only `inverse`, which RSA does not call: its mutant is in scripts/ecdh_mutants.py (P-384).
     ("the exponent's second bit skipped", "bigmod", "var b = eb - 2;", "var b = eb - 3;"),
     ("a = n accepted", "bigmod", "compare_n(work, slot_base(), k) >= 0", "compare_n(work, slot_base(), k) > 0"),
     ("an even modulus accepted", "bigmod", "    if int_of(n[len(n) - 1]) & 1 == 0 {\n        return -1;", "    if int_of(n[len(n) - 1]) & 1 == 2 {\n        return -1;"),
