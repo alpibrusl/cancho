@@ -222,6 +222,10 @@ fn node_codable[&s](st: &!s [int], node: int, ctx: int, depth: int) -> [] bool {
     if types.is_boxslice(st, t) || types.is_box(st, t) || types.is_handle(st, t) || types.is_penum(st, t) {
         return true;
     }
+    if types.is_ref(st, t) {
+        // A reference is a pointer, a run of bytes a pointer and a length; what it points at is not looked into.
+        return true;
+    }
     if types.is_tuple(st, t) {
         return tuple_codable(st, t);
     }
@@ -317,7 +321,7 @@ pub fn tuple_codable[&s](st: &!s [int], ty: int) -> [] bool {
     var k = 0;
     while k < types.tuple_size(st, ty) {
         let p = types.tuple_part(st, ty, k);
-        if !types.is_plain(p) && !aggregate_codable(st, p) {
+        if !types.is_plain(p) && !types.is_ref(st, p) && !aggregate_codable(st, p) {
             return false;
         }
         k = k + 1;

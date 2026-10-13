@@ -186,7 +186,7 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
                     if by_ref {
                         emit.store(st, ty, false, 0, emit.field_address(st, held, base, index), st[39] - 1);
                     } else {
-                        emit.store(st, ty, false, 0, emit.extract_field(st, held, base, index), st[39] - 1);
+                        exprs.bind_value(st, ty, exprs.take(st, held, base, index, ty));
                     }
                 }
             }
@@ -404,7 +404,7 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
                 let ty = scope.field_type(st, v.ty, index);
                 scope.bind(st, named, ty, false, from, to);
                 if ast.ok(st) && !types.is_erased(st, ty) {
-                    emit.store(st, ty, false, 0, emit.extract_field(st, v.ty, v.reg, index), st[39] - 1);
+                    exprs.bind_value(st, ty, exprs.take(st, v.ty, v.reg, index, ty));
                 }
             }
             if pass1.is_code(st, q, lc.Tok::Comma) {
@@ -473,7 +473,7 @@ fn destructure_tuple_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> []
         if !pat_wild(st, name) {
             scope.bind(st, name, part, false, from, to);
             if ast.ok(st) && !types.is_erased(st, part) {
-                emit.store(st, part, false, 0, emit.extract_field(st, v.ty, v.reg, k), st[39] - 1);
+                exprs.bind_value(st, part, exprs.take(st, v.ty, v.reg, k, part));
             }
         }
         k = k + 1;

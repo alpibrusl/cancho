@@ -323,6 +323,15 @@ const WORDS: &[&str] = &[
     "edition 9;\nfn run() -> [] int { if 1 < 2 { trap(); } return 3; }",
 ];
 
+/// A run of bytes held in a struct, an enum and a tuple, and taken out again.
+const HELD: &[&str] = &[
+    "struct W { text: &static [byte], n: int }\nfn run() -> [] int { let w = W { text: \"hello\", n: 3 }; return len(w.text) * 10 + w.n + int_of(w.text[1]) % 10; }",
+    "enum Tok { Word(&static [byte]), Num(int), End }\nfn size(t: Tok) -> [] int { match t { Tok::Word(s) => { return len(s) + int_of(s[0]) % 5; } Tok::Num(n) => { return n; } Tok::End => { return 0 - 1; } } }\nfn run() -> [] int { return size(Tok::Word(\"abcd\")) * 100 + size(Tok::Num(7)) + size(Tok::End); }",
+    "fn cut(t: &static [byte], k: int) -> [] (&static [byte], &static [byte]) { return (t[0..k], t[k..len(t)]); }\nfn run() -> [] int { let (a, b) = cut(\"abcdef\", 2); return len(a) * 10 + len(b) + int_of(b[0]) % 7; }",
+    "struct W { text: &static [byte], n: int }\nfn width[&r](w: &r W) -> [] int { return len(w.text) + w.n; }\nfn run() -> [] int { var w = W { text: \"abc\", n: 5 }; var out = 0; borrow w as &r in { out = width(r); } return out; }",
+    "struct W { text: &static [byte], n: int }\nfn run() -> [] int { let w = W { text: \"abc\", n: 5 }; let W { text, n } = w; return len(text) * 10 + n; }",
+];
+
 /// Programs with a `main` of their own, which the cancho compiler calls as the C `main` does.
 const WITH_MAIN: &[&str] = &[
     "fn finish(w: World) -> [] int { release(w); return 3; }\nfn main(world: World) -> [] int { return finish(world); }",
@@ -665,6 +674,7 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         .chain(ENUMS)
         .chain(DEFERS)
         .chain(WORDS)
+        .chain(HELD)
         .chain(GENERICS)
         .chain(FLOATS)
         .chain(ARENAS)

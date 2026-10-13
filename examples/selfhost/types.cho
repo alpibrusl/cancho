@@ -112,6 +112,12 @@ pub fn static_region() -> [] int {
     return 0 - 1;
 }
 
+// The region of a reference held by a struct or an enum: the code is written for programs the Rust compiler has
+// accepted, so what a declaration says of regions is not followed, and this one outlives and is outlived by all.
+pub fn any_region() -> [] int {
+    return 500000;
+}
+
 fn var_base() -> [] int {
     return 1000000;
 }
@@ -323,6 +329,24 @@ pub fn node_type[&s](st: &!s [int], node: int, ctx: int) -> [] int {
             return 0;
         }
         return make_tuple(st, n, a, b, c);
+    }
+    if ast.is_kind(st, node, kinds.NK::TRef) {
+        // A reference held in a declaration: to a whole number, a byte, a boolean or a struct, or to a run of
+        // those.
+        let inner = ast.get(st, node, 6);
+        var referent = 0;
+        if ast.is_kind(st, inner, kinds.NK::TSlice) {
+            let element = node_type(st, ast.get(st, inner, 6), ctx);
+            if is_plain(element) {
+                referent = make_slice(st, element);
+            }
+        } else {
+            referent = node_type(st, inner, ctx);
+        }
+        if referent == 0 {
+            return 0;
+        }
+        return make_ref(st, ast.get(st, node, 4) != 0, any_region(), referent);
     }
     if !ast.is_kind(st, node, kinds.NK::TName) {
         return 0;
@@ -644,7 +668,7 @@ pub fn resolve_region[&s](st: &!s [int], area: int) -> [] int {
 pub fn unify_regions[&s](st: &!s [int], expected: int, found: int) -> [] bool {
     let a = resolve_region(st, expected);
     let b = resolve_region(st, found);
-    if a == b {
+    if a == b || a == any_region() || b == any_region() {
         return true;
     }
     if is_var(a) {
@@ -685,7 +709,7 @@ fn reaches[&s, &x](st: &!s [int], text: &x [byte], from: int, target: int, fuel:
 // as the declaration's `where` clauses say, reflexively and transitively; `static` outlives all;
 // a variable that is still free outlives nothing but itself.
 pub fn outlives[&s, &x](st: &!s [int], text: &x [byte], outer: int, inner: int) -> [] bool {
-    if outer == inner {
+    if outer == inner || outer == any_region() || inner == any_region() {
         return true;
     }
     if outer == static_region() {
