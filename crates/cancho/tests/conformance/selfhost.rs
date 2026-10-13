@@ -322,6 +322,7 @@ fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "threadcode.cho",
         "codes.cho",
         "externcode.cho",
+        "netcode.cho",
     ]
 }
 

@@ -127,7 +127,11 @@ fn runtime_declares[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] boo
     if pass1.is_word(st, text, name, "putchar") || pass1.is_word(st, text, name, "malloc") || pass1.is_word(st, text, name, "free") || pass1.is_word(st, text, name, "memmove") || pass1.is_word(st, text, name, "memchr") || pass1.is_word(st, text, name, "getchar") || pass1.is_word(st, text, name, "write") {
         return true;
     }
-    let preamble = runtime.text();
+    return preamble_declares(st, text, name, runtime.text()) || st[55] != 0 && preamble_declares(st, text, name, runtime.net_text(st[61] != 0));
+}
+
+// Does a line of this preamble that starts with `declare` name the function `name`?
+fn preamble_declares[&s, &x](st: &!s [int], text: &x [byte], name: int, preamble: &static [byte]) -> [] bool {
     var i = 0;
     while i + 8 < len(preamble) {
         if i == 0 || int_of(preamble[i - 1]) == 10 {
@@ -272,6 +276,10 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.aim(st, 0);
     if entry != 0 {
         shim(st, entry_item);
+    }
+    if st[55] != 0 {
+        // A program that opens a socket or reads the clock has the support for them.
+        emit.str(st, runtime.net_text(st[61] != 0));
     }
     emit.str(st, "; left out: ");
     emit.nat(st, left_out);

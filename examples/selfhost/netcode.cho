@@ -1,0 +1,104 @@
+module selfhost.netcode;
+
+// netcode.cho -- the code for the sockets and the clock: calls of the functions of `runtime/net.c`, whose
+// arguments are on the argument stack, and the answers made into the values of the language.
+//
+// A function that answers a tag, a handle or a count, and a reason writes the three to a cell of three whole
+// numbers, which become the leaves of the prelude enum (`Dialed`, `Accepted`, `Received`, `Sent`, `Listening`).
+
+import std.bytes;
+import selfhost.emit;
+import selfhost.tables;
+
+// The index of the prelude type called `name`, or -1.
+pub fn prelude_named(name: &static [byte]) -> [] int {
+    var i = 0;
+    while i < tables.prelude_count() {
+        if bytes.equal(tables.prelude_name(i), name) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// A cell of three whole numbers, in the entry block; its temporary.
+fn cell[&s](st: &!s [int]) -> [] int {
+    let keep = st[49];
+    st[49] = 2;
+    let n = emit.fresh(st);
+    emit.str(st, "  ");
+    emit.temp(st, n);
+    emit.str(st, " = alloca i64, i64 3\n");
+    st[49] = keep;
+    return n;
+}
+
+fn arguments[&s](st: &!s [int], n: int) -> [] int {
+    let first = st[52] - n;
+    var i = 0;
+    while i < n {
+        let at = st[51] + 4 * (first + i);
+        if i > 0 {
+            emit.str(st, ", ");
+        }
+        emit.llvm_type(st, st[at]);
+        emit.str(st, " ");
+        emit.operand(st, st[at], st[at + 1] != 0, st[at + 2], st[at + 3]);
+        i = i + 1;
+    }
+    return first;
+}
+
+// `@name` called with the last `n` arguments pushed; the temporary of the whole number it answers.
+pub fn call_int[&s](st: &!s [int], name: &static [byte], n: int) -> [] int {
+    let result = emit.start(st);
+    emit.str(st, "call i64 @");
+    emit.str(st, name);
+    emit.str(st, "(");
+    st[52] = arguments(st, n);
+    emit.str(st, ")\n");
+    return result;
+}
+
+// The same for a function that writes three whole numbers to the cell it is given last; the cell.
+pub fn call_out[&s](st: &!s [int], name: &static [byte], n: int) -> [] int {
+    let out = cell(st);
+    emit.str(st, "  call void @");
+    emit.str(st, name);
+    emit.str(st, "(");
+    st[52] = arguments(st, n);
+    if n > 0 {
+        emit.str(st, ", ");
+    }
+    emit.str(st, "ptr ");
+    emit.temp(st, out);
+    emit.str(st, ")\n");
+    return out;
+}
+
+fn load_out[&s](st: &!s [int], out: int, k: int) -> [] int {
+    let at = emit.start(st);
+    emit.str(st, "getelementptr i64, ptr ");
+    emit.temp(st, out);
+    emit.str(st, ", i64 ");
+    emit.nat(st, k);
+    emit.str(st, "\n");
+    let v = emit.start(st);
+    emit.str(st, "load i64, ptr ");
+    emit.temp(st, at);
+    emit.str(st, "\n");
+    return v;
+}
+
+// The prelude enum `index` made of the cell's three numbers: the tag, then the payloads of its arms in order.
+pub fn answer[&s](st: &!s [int], ty: int, index: int, out: int) -> [] int {
+    var acc = 0 - 1;
+    var k = 0;
+    while k < 3 {
+        let v = load_out(st, out, k);
+        acc = emit.insert_at(st, ty, acc, k, 1, false, 0, v);
+        k = k + 1;
+    }
+    return acc;
+}

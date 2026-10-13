@@ -158,7 +158,7 @@ pub fn emit_per() -> [] int {
 
 // What each buffer has however small the program is: the runtime alone is more than 14,000 bytes.
 pub fn emit_floor() -> [] int {
-    return 40000;
+    return 120000;
 }
 
 pub fn layout_emit[&s](st: &!s [int], tokens: int, files: int) -> [] int {
