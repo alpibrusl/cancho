@@ -1,0 +1,97 @@
+module selfhost.ex;
+
+// ex.cho -- what an expression came to, and the small things done with it: put in an aggregate, taken out of one,
+// pushed as the argument of a call.
+
+import selfhost.ast;
+import selfhost.rules;
+import selfhost.types;
+import selfhost.emit;
+
+// What an expression came to: its type, and whether it is a known integer (a literal, or a
+// literal operation that folded) and which.
+pub struct Ex {
+    ty: int,
+    known: bool,
+    value: int,
+    reg: int,
+    reg2: int,
+}
+
+pub fn plain(ty: int) -> [] Ex {
+    return Ex { ty: ty, known: false, value: 0, reg: 0 - 1, reg2: 0 - 1 };
+}
+
+pub fn constant(value: int) -> [] Ex {
+    return Ex { ty: 1, known: true, value: value, reg: 0 - 1, reg2: 0 - 1 };
+}
+
+pub fn nothing() -> [] Ex {
+    return Ex { ty: 0, known: false, value: 0, reg: 0 - 1, reg2: 0 - 1 };
+}
+
+// A value in the temporary `reg` of the code being written.
+pub fn in_reg(ty: int, reg: int) -> [] Ex {
+    return Ex { ty: ty, known: false, value: 0, reg: reg, reg2: 0 - 1 };
+}
+
+// A reference to a slice in the code: the pointer (a temporary, or `-2 - n` for the global of a
+// string literal) and the length, a temporary or, if `reg2` is -1, the constant `length`.
+pub fn in_slice(ty: int, reg: int, reg2: int, length: int) -> [] Ex {
+    return Ex { ty: ty, known: false, value: length, reg: reg, reg2: reg2 };
+}
+
+pub fn push_value[&s](st: &!s [int], a: Ex) -> [] int {
+    if types.is_slice_ref(st, a.ty) {
+        return emit.push_slice(st, a.reg, a.reg2 < 0, a.value, a.reg2);
+    }
+    return emit.push_arg(st, a.ty, a.known, a.value, a.reg);
+}
+
+// Something the port does not check yet: the function's answer is `SKIP`.
+pub fn skip[&s](st: &!s [int], from: int, to: int) -> [] Ex {
+    ast.fail(st, rules.r_skip(), from, to);
+    return nothing();
+}
+
+// The operands of a value that has been computed, pushed as arguments of a call: a slice is two.
+// Put the value `v` in place `index` of the aggregate `whole` (the field or payload is of type `fty`): a run of bytes
+// goes in as its pointer and its length.
+pub fn put[&s](st: &!s [int], whole: int, acc: int, index: int, fty: int, v: Ex) -> [] int {
+    if types.is_slice_ref(st, fty) {
+        let packed = emit.pack_slice(st, v.reg, v.reg2 < 0, v.value, v.reg2);
+        return emit.insert_at(st, whole, acc, index, fty, false, 0, packed);
+    }
+    return emit.insert_at(st, whole, acc, index, fty, v.known, v.value, v.reg);
+}
+
+// What `packed`, the value a run of bytes is held as in an aggregate, is.
+pub fn unpacked[&s](st: &!s [int], ty: int, packed: int) -> [] Ex {
+    return in_slice(ty, emit.slice_part(st, packed, 0), emit.slice_part(st, packed, 1), 0);
+}
+
+// Place `index` of the aggregate `agg` in register `reg`, as a value.
+pub fn take[&s](st: &!s [int], agg: int, reg: int, index: int, fty: int) -> [] Ex {
+    let field = emit.extract_field(st, agg, reg, index);
+    if types.is_slice_ref(st, fty) {
+        return unpacked(st, fty, field);
+    }
+    return in_reg(fty, field);
+}
+
+// The value of type `fty` at `address`.
+pub fn take_through[&s](st: &!s [int], fty: int, address: int) -> [] Ex {
+    let loaded = emit.load_through(st, fty, address);
+    if types.is_slice_ref(st, fty) {
+        return unpacked(st, fty, loaded);
+    }
+    return in_reg(fty, loaded);
+}
+
+// Store `v` in the slot of the binding just declared.
+pub fn bind_value[&s](st: &!s [int], ty: int, v: Ex) -> [] int {
+    if types.is_slice_ref(st, ty) {
+        return emit.store_slice(st, st[39] - 1, v.reg, v.reg2 < 0, v.value, v.reg2);
+    }
+    return emit.store(st, ty, v.known, v.value, v.reg, st[39] - 1);
+}

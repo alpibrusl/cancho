@@ -39,6 +39,7 @@ import selfhost.emit;
 import selfhost.instances;
 import selfhost.scope;
 import selfhost.exprs;
+import selfhost.ex;
 import selfhost.lookup;
 import selfhost.effects;
 import selfhost.builtins;
@@ -186,7 +187,7 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
                     if by_ref {
                         emit.store(st, ty, false, 0, emit.field_address(st, held, base, index), st[39] - 1);
                     } else {
-                        exprs.bind_value(st, ty, exprs.take(st, held, base, index, ty));
+                        ex.bind_value(st, ty, ex.take(st, held, base, index, ty));
                     }
                 }
             }
@@ -203,7 +204,7 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
 
 // `match` on a value of a prelude enum (`Spawned`, `Exited`, `Read`): in compile mode only, and the arms
 // are taken to be what Rust has checked: a flat chain of tests of the tag, as for an enum of the file.
-fn prelude_match[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int, s: exprs.Ex) -> [] int {
+fn prelude_match[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int, s: ex.Ex) -> [] int {
     let index = types.prelude_index(st, s.ty);
     let first = builtins.prelude_arm_first(index);
     let tag = emit.extract_field(st, s.ty, s.reg, 0);
@@ -232,7 +233,7 @@ fn prelude_match[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int, s: e
                 cursor = st[53];
                 let name = pat_binding(st, tok, i);
                 if t == 0 {
-                    exprs.skip(st, ast.nstart(st, id), ast.nend(st, id));
+                    ex.skip(st, ast.nstart(st, id), ast.nend(st, id));
                 } else if !pat_wild(st, name) {
                     scope.bind(st, name, t, false, ast.nstart(st, id), ast.nend(st, id));
                     if ast.ok(st) && !types.is_erased(st, t) {
@@ -282,7 +283,7 @@ fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] i
         return prelude_match(st, text, id, ret, s);
     }
     if types.is_prelude(st, held) {
-        exprs.skip(st, from, to);
+        ex.skip(st, from, to);
         return 0;
     }
     if !types.is_named(st, held) || !ast.is_kind(st, types.named_item(st, held), kinds.NK::IEnum) {
@@ -294,7 +295,7 @@ fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] i
     var end = 0 - 1;
     if emit.on(st) {
         if !scope.enum_codable(st, held) {
-            exprs.skip(st, from, to);
+            ex.skip(st, from, to);
             return 0;
         }
         tag = emit.tag_of(st, held, by_ref, s.reg);
@@ -365,7 +366,7 @@ fn borrow_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] 
         } else if types.is_plain(referent) || scope.aggregate_codable(st, referent) {
             emit.store_slot_address(st, st[39] - 1, scope.slot_of(st, i));
         } else {
-            exprs.skip(st, from, to);
+            ex.skip(st, from, to);
         }
     }
     block(st, text, ast.get(st, id, 7), ast.get(st, id, 8), ret);
@@ -399,12 +400,12 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
             }
             let index = scope.field_index(st, text, item, field);
             if index < 0 {
-                exprs.skip(st, from, to);
+                ex.skip(st, from, to);
             } else {
                 let ty = scope.field_type(st, v.ty, index);
                 scope.bind(st, named, ty, false, from, to);
                 if ast.ok(st) && !types.is_erased(st, ty) {
-                    exprs.bind_value(st, ty, exprs.take(st, v.ty, v.reg, index, ty));
+                    ex.bind_value(st, ty, ex.take(st, v.ty, v.reg, index, ty));
                 }
             }
             if pass1.is_code(st, q, lc.Tok::Comma) {
@@ -414,7 +415,7 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
         return 0;
     }
     if !types.is_prelude(st, v.ty) {
-        exprs.skip(st, from, to);
+        ex.skip(st, from, to);
         return 0;
     }
     let first = builtins.prelude_field_first(types.prelude_index(st, v.ty));
@@ -437,7 +438,7 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
             j = j + 1;
         }
         if found < 0 {
-            exprs.skip(st, from, to);
+            ex.skip(st, from, to);
         } else {
             let ty = types.make_prelude(st, builtins.field_type(builtins.field_type_start(first + found) + 1));
             scope.bind(st, named, ty, false, from, to);
@@ -458,7 +459,7 @@ fn destructure_tuple_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> []
         return 0;
     }
     if !emit.on(st) || !types.is_tuple(st, v.ty) {
-        exprs.skip(st, from, to);
+        ex.skip(st, from, to);
         return 0;
     }
     var q = ast.get(st, id, 4) + 1;
@@ -473,7 +474,7 @@ fn destructure_tuple_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> []
         if !pat_wild(st, name) {
             scope.bind(st, name, part, false, from, to);
             if ast.ok(st) && !types.is_erased(st, part) {
-                exprs.bind_value(st, part, exprs.take(st, v.ty, v.reg, k, part));
+                ex.bind_value(st, part, ex.take(st, v.ty, v.reg, k, part));
             }
         }
         k = k + 1;
@@ -586,7 +587,7 @@ fn block[&s, &x](st: &!s [int], text: &x [byte], head: int, n: int, ret: int) ->
     return 0;
 }
 
-fn condition[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] exprs.Ex {
+fn condition[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let found = exprs.expr(st, text, id);
     if ast.ok(st) {
         scope.expect(st, text, 5, found.ty, ast.nstart(st, id), ast.nend(st, id));
@@ -608,7 +609,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     if emit.on(st) && !writes_stmt(st, id) {
-        exprs.skip(st, from, to);
+        ex.skip(st, from, to);
         return 0;
     }
     if ast.is_kind(st, id, kinds.NK::SLet) {
@@ -630,7 +631,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         let written = ast.get(st, id, 6);
         if written >= 0 && st[37] >= 0 && scope.names_region(st, text, written) {
             // A region named in an annotation inside a block may be the block's own.
-            exprs.skip(st, from, to);
+            ex.skip(st, from, to);
             return 0;
         }
         if written >= 0 {
@@ -640,7 +641,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             }
             declared = scope.lower_type(st, text, written, st[28], 0 - 1);
             if declared == 0 {
-                exprs.skip(st, from, to);
+                ex.skip(st, from, to);
                 return 0;
             }
             scope.expect(st, text, declared, found.ty, ast.nstart(st, value), ast.nend(st, value));
@@ -681,13 +682,13 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             }
             let referent = types.ref_inner(st, o.ty);
             if types.is_slice(st, referent) || types.is_prelude(st, referent) {
-                exprs.skip(st, from, to);
+                ex.skip(st, from, to);
                 return 0;
             }
             scope.expect(st, text, referent, found.ty, ast.nstart(st, value), ast.nend(st, value));
             if emit.on(st) && ast.ok(st) {
                 if !types.is_plain(referent) && !scope.aggregate_codable(st, referent) {
-                    exprs.skip(st, from, to);
+                    ex.skip(st, from, to);
                 } else {
                     emit.store_through(st, referent, found.known, found.value, found.reg, o.reg);
                 }
@@ -720,7 +721,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             }
             if emit.on(st) && ast.ok(st) {
                 if !types.is_plain(e) {
-                    exprs.skip(st, from, to);
+                    ex.skip(st, from, to);
                 } else {
                     let address = emit.element_address(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, i.known, i.value, i.reg);
                     emit.store_through(st, e, found.known, found.value, found.reg, address);
@@ -745,7 +746,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             }
             let referent = types.ref_inner(st, b.ty);
             if types.is_prelude(st, referent) {
-                exprs.skip(st, from, to);
+                ex.skip(st, from, to);
                 return 0;
             }
             if !types.is_named(st, referent) {
@@ -765,7 +766,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             scope.expect(st, text, scope.field_type(st, referent, index), found.ty, ast.nstart(st, value), ast.nend(st, value));
             if emit.on(st) && ast.ok(st) {
                 if !scope.struct_codable(st, referent) {
-                    exprs.skip(st, from, to);
+                    ex.skip(st, from, to);
                 } else {
                     let ft = scope.field_type(st, referent, index);
                     let address = emit.field_address(st, referent, b.reg, index);
@@ -775,7 +776,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             return 0;
         }
         if !ast.is_kind(st, place, kinds.NK::EName) {
-            exprs.skip(st, from, to);
+            ex.skip(st, from, to);
             return 0;
         }
         let i = scope.find(st, text, ast.get(st, place, 4));
@@ -821,7 +822,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         // Nothing is written here: the expression waits for the exits of the block.
         let top = st[defer_base(st)];
         if top >= 1024 {
-            exprs.skip(st, from, to);
+            ex.skip(st, from, to);
             return 0;
         }
         st[defer_base(st) + 1 + top] = ast.get(st, id, 4);
@@ -906,7 +907,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         }
         return 0;
     }
-    exprs.skip(st, from, to);
+    ex.skip(st, from, to);
     return 0;
 }
 

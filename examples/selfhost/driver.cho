@@ -290,6 +290,10 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     if entry != 0 {
         shim(st, entry_item);
     }
+    if st[55] & 4 != 0 {
+        // A program that asks for the hardware AES has the functions for its target.
+        emit.str(st, runtime.crypto_text(st[61]));
+    }
     if st[55] & 2 != 0 {
         // A program that opens a directory has the support for them, and the constants of its target.
         emit.str(st, runtime.dirs_text(st[61] == 1));
