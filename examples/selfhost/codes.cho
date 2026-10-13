@@ -272,3 +272,40 @@ pub fn word_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     }
     return 0;
 }
+
+// The hardware AES and GHASH builtins, which `exprs.builtin_call` writes through `cryptocode.cho`: 83 `hw_aes_gcm`,
+// 84 `aes_encrypt_block`, 85 `aes_ctr32`, 86 `ghash_update`, 87 `ghash_powers`, 88 `gcm_tag`, 89 `gcm_tag_diff`, 90 `hw_sha256`, 91 `sha256_blocks`, 92 `sha256_block_words`; 0 for
+// another name.
+pub fn crypto_code[&x](text: &x [byte], from: int, to: int) -> [] int {
+    if lc.spells(text, from, to, "hw_aes_gcm") {
+        return 83;
+    }
+    if lc.spells(text, from, to, "aes_encrypt_block") {
+        return 84;
+    }
+    if lc.spells(text, from, to, "aes_ctr32") {
+        return 85;
+    }
+    if lc.spells(text, from, to, "ghash_update") {
+        return 86;
+    }
+    if lc.spells(text, from, to, "ghash_powers") {
+        return 87;
+    }
+    if lc.spells(text, from, to, "gcm_tag") {
+        return 88;
+    }
+    if lc.spells(text, from, to, "gcm_tag_diff") {
+        return 89;
+    }
+    if lc.spells(text, from, to, "hw_sha256") {
+        return 90;
+    }
+    if lc.spells(text, from, to, "sha256_blocks") {
+        return 91;
+    }
+    if lc.spells(text, from, to, "sha256_block_words") {
+        return 92;
+    }
+    return 0;
+}

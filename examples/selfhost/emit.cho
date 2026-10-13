@@ -403,6 +403,12 @@ pub fn field_address[&s](st: &!s [int], ty: int, ptr_reg: int, index: int) -> []
     return n;
 }
 
+// Operand number `k` of the last `n` arguments pushed (a slice is two): a constant or a temporary.
+pub fn last_operand[&s](st: &!s [int], n: int, k: int) -> [] int {
+    let at = st[51] + 4 * (st[52] - n + k);
+    return operand(st, st[at], st[at + 1] != 0, st[at + 2], st[at + 3]);
+}
+
 // An operand: a constant or a temporary.
 pub fn operand[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -> [] int {
     if ty == 7 && !known && reg == 0 - 1 {

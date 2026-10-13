@@ -8,12 +8,6 @@ module selfhost.wordcode;
 
 import selfhost.emit;
 
-// Operand number `k` of the last `n` arguments.
-fn operand[&s](st: &!s [int], n: int, k: int) -> [] int {
-    let at = st[51] + 4 * (st[52] - n + k);
-    return emit.operand(st, st[at], st[at + 1] != 0, st[at + 2], st[at + 3]);
-}
-
 fn line[&s](st: &!s [int], text: &static [byte]) -> [] int {
     let n = emit.start(st);
     emit.str(st, text);
@@ -30,19 +24,19 @@ fn done[&s](st: &!s [int], n: int) -> [] int {
 fn room[&s](st: &!s [int], n: int, length: int, at: int, width: int) -> [] int {
     let space = emit.start(st);
     emit.str(st, "sub i64 ");
-    operand(st, n, length);
+    emit.last_operand(st, n, length);
     emit.str(st, ", ");
     emit.nat(st, width);
     emit.str(st, "\n");
     let past = emit.start(st);
     emit.str(st, "icmp ugt i64 ");
-    operand(st, n, at);
+    emit.last_operand(st, n, at);
     emit.str(st, ", ");
     emit.temp(st, space);
     emit.str(st, "\n");
     let short = emit.start(st);
     emit.str(st, "icmp slt i64 ");
-    operand(st, n, length);
+    emit.last_operand(st, n, length);
     emit.str(st, ", ");
     emit.nat(st, width);
     emit.str(st, "\n");
@@ -67,7 +61,7 @@ pub fn stop[&s](st: &!s [int]) -> [] int {
 pub fn barrier[&s](st: &!s [int]) -> [] int {
     let r = emit.start(st);
     emit.str(st, "call i64 asm \"\", \"=r,0\"(i64 ");
-    operand(st, 1, 0);
+    emit.last_operand(st, 1, 0);
     emit.str(st, ")\n");
     done(st, 1);
     return r;
@@ -83,7 +77,7 @@ pub fn count_bits[&s](st: &!s [int], which: int) -> [] int {
     } else {
         emit.str(st, "call i64 @llvm.ctpop.i64(i64 ");
     }
-    operand(st, 1, 0);
+    emit.last_operand(st, 1, 0);
     if which < 2 {
         emit.str(st, ", i1 false)\n");
     } else {
@@ -98,9 +92,9 @@ pub fn load_le64[&s](st: &!s [int]) -> [] int {
     room(st, 3, 1, 2, 8);
     let place = emit.start(st);
     emit.str(st, "getelementptr i8, ptr ");
-    operand(st, 3, 0);
+    emit.last_operand(st, 3, 0);
     emit.str(st, ", i64 ");
-    operand(st, 3, 2);
+    emit.last_operand(st, 3, 2);
     emit.str(st, "\n");
     let word = emit.start(st);
     emit.str(st, "load i64, ptr ");
@@ -115,13 +109,13 @@ pub fn byte_mask64[&s](st: &!s [int]) -> [] int {
     room(st, 4, 1, 2, 64);
     let start = emit.start(st);
     emit.str(st, "getelementptr i8, ptr ");
-    operand(st, 4, 0);
+    emit.last_operand(st, 4, 0);
     emit.str(st, ", i64 ");
-    operand(st, 4, 2);
+    emit.last_operand(st, 4, 2);
     emit.str(st, "\n");
     let ins = emit.start(st);
     emit.str(st, "insertelement <16 x i8> poison, i8 ");
-    operand(st, 4, 3);
+    emit.last_operand(st, 4, 3);
     emit.str(st, ", i64 0\n");
     let splat = emit.start(st);
     emit.str(st, "shufflevector <16 x i8> ");
@@ -182,14 +176,14 @@ pub fn copy_within[&s](st: &!s [int]) -> [] int {
     // dst < 0 is the first test; src < 0 and n < 0 follow.
     let below = emit.start(st);
     emit.str(st, "icmp slt i64 ");
-    operand(st, 5, 2);
+    emit.last_operand(st, 5, 2);
     emit.str(st, ", 0\n");
     var failed = below;
     var k = 3;
     while k <= 4 {
         let negative = emit.start(st);
         emit.str(st, "icmp slt i64 ");
-        operand(st, 5, k);
+        emit.last_operand(st, 5, k);
         emit.str(st, ", 0\n");
         let joined = emit.start(st);
         emit.str(st, "or i1 ");
@@ -204,13 +198,13 @@ pub fn copy_within[&s](st: &!s [int]) -> [] int {
     while k <= 3 {
         let space = emit.start(st);
         emit.str(st, "sub i64 ");
-        operand(st, 5, 1);
+        emit.last_operand(st, 5, 1);
         emit.str(st, ", ");
-        operand(st, 5, k);
+        emit.last_operand(st, 5, k);
         emit.str(st, "\n");
         let past = emit.start(st);
         emit.str(st, "icmp sgt i64 ");
-        operand(st, 5, 4);
+        emit.last_operand(st, 5, 4);
         emit.str(st, ", ");
         emit.temp(st, space);
         emit.str(st, "\n");
@@ -226,22 +220,22 @@ pub fn copy_within[&s](st: &!s [int]) -> [] int {
     emit.trap_if(st, failed);
     let to = emit.start(st);
     emit.str(st, "getelementptr i8, ptr ");
-    operand(st, 5, 0);
+    emit.last_operand(st, 5, 0);
     emit.str(st, ", i64 ");
-    operand(st, 5, 2);
+    emit.last_operand(st, 5, 2);
     emit.str(st, "\n");
     let from = emit.start(st);
     emit.str(st, "getelementptr i8, ptr ");
-    operand(st, 5, 0);
+    emit.last_operand(st, 5, 0);
     emit.str(st, ", i64 ");
-    operand(st, 5, 3);
+    emit.last_operand(st, 5, 3);
     emit.str(st, "\n");
     emit.str(st, "  call ptr @memmove(ptr ");
     emit.temp(st, to);
     emit.str(st, ", ptr ");
     emit.temp(st, from);
     emit.str(st, ", i64 ");
-    operand(st, 5, 4);
+    emit.last_operand(st, 5, 4);
     emit.str(st, ")\n");
     done(st, 5);
     return 0;
@@ -257,11 +251,11 @@ fn pair[&s](st: &!s [int], ty: int, first: int, second: int) -> [] int {
 pub fn mul_wide[&s](st: &!s [int], ty: int) -> [] int {
     let wa = emit.start(st);
     emit.str(st, "zext i64 ");
-    operand(st, 2, 0);
+    emit.last_operand(st, 2, 0);
     emit.str(st, " to i128\n");
     let wb = emit.start(st);
     emit.str(st, "zext i64 ");
-    operand(st, 2, 1);
+    emit.last_operand(st, 2, 1);
     emit.str(st, " to i128\n");
     let p = emit.start(st);
     emit.str(st, "mul i128 ");
@@ -289,7 +283,7 @@ pub fn mul_wide[&s](st: &!s [int], ty: int) -> [] int {
 pub fn add_carry[&s](st: &!s [int], ty: int, sub: bool) -> [] int {
     let nz = emit.start(st);
     emit.str(st, "icmp ne i64 ");
-    operand(st, 3, 2);
+    emit.last_operand(st, 3, 2);
     emit.str(st, ", 0\n");
     let cin = emit.start(st);
     emit.str(st, "zext i1 ");
@@ -301,9 +295,9 @@ pub fn add_carry[&s](st: &!s [int], ty: int, sub: bool) -> [] int {
     } else {
         emit.str(st, "call { i64, i1 } @llvm.uadd.with.overflow.i64(i64 ");
     }
-    operand(st, 3, 0);
+    emit.last_operand(st, 3, 0);
     emit.str(st, ", i64 ");
-    operand(st, 3, 1);
+    emit.last_operand(st, 3, 1);
     emit.str(st, ")\n");
     let v1 = emit.start(st);
     emit.str(st, "extractvalue { i64, i1 } ");

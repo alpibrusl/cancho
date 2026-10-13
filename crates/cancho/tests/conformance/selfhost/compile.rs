@@ -332,6 +332,17 @@ const HELD: &[&str] = &[
     "struct W { text: &static [byte], n: int }\nfn run() -> [] int { let w = W { text: \"abc\", n: 5 }; let W { text, n } = w; return len(text) * 10 + n; }",
 ];
 
+/// The hardware AES and GHASH builtins: one block, counter mode, the powers of H, the tag and its verdict, and the
+/// length check that traps.
+const CRYPTO: &[&str] = &[
+    "edition 9;\nfn run() -> [] int { if !hw_sha256() { return 0; } region a { let state = alloc_slice[a](8, 0); let block = alloc_slice[a](16, 7); sha256_block_words(state, block); let data = alloc_slice[a](128, byte_of(1)); sha256_blocks(state, data); return state[0] % 251 + state[7] % 17; } }",
+    "edition 9;\nfn run() -> [] int { if !hw_sha256() { trap(); } region a { let state = alloc_slice[a](8, 0); let data = alloc_slice[a](100, byte_of(1)); sha256_blocks(state, data); return 0; } }",
+    "edition 9;\nfn run() -> [] int { if !hw_aes_gcm() { return 0; } region a { let keys = alloc_slice[a](176, byte_of(7)); let block = alloc_slice[a](16, byte_of(3)); let out = alloc_slice[a](16, byte_of(0)); aes_encrypt_block(keys, 10, block, out); var s = 0; var i = 0; while i < 16 { s = s + int_of(out[i]) * (i + 1); i = i + 1; } return s % 251; } }",
+    "edition 9;\nfn run() -> [] int { if !hw_aes_gcm() { return 0; } region a { let keys = alloc_slice[a](240, byte_of(9)); let nonce = alloc_slice[a](12, byte_of(1)); let input = alloc_slice[a](100, byte_of(5)); let out = alloc_slice[a](100, byte_of(0)); aes_ctr32(keys, 14, nonce, 7, input, out); var s = 0; var i = 0; while i < 100 { s = s + int_of(out[i]) * (i + 1); i = i + 1; } return s % 251; } }",
+    "edition 9;\nfn run() -> [] int { if !hw_aes_gcm() { return 0; } region a { let keys = alloc_slice[a](192, byte_of(2)); let table = alloc_slice[a](128, byte_of(0)); ghash_powers(keys, 11, table); let nonce = alloc_slice[a](12, byte_of(4)); let aad = alloc_slice[a](20, byte_of(6)); let text = alloc_slice[a](50, byte_of(8)); let tag = alloc_slice[a](16, byte_of(0)); gcm_tag(keys, 11, table, nonce, aad, text, tag); let d = gcm_tag_diff(keys, 11, table, nonce, aad, text, tag); var s = d; var i = 0; while i < 16 { s = s * 3 + int_of(tag[i]); s = s % 100003; i = i + 1; } return s % 251; } }",
+    "edition 9;\nfn run() -> [] int { if !hw_aes_gcm() { trap(); } region a { let keys = alloc_slice[a](100, byte_of(7)); let block = alloc_slice[a](16, byte_of(3)); let out = alloc_slice[a](16, byte_of(0)); aes_encrypt_block(keys, 10, block, out); return 0; } }",
+];
+
 /// Programs with a `main` of their own, which the cancho compiler calls as the C `main` does.
 const WITH_MAIN: &[&str] = &[
     "fn finish(w: World) -> [] int { release(w); return 3; }\nfn main(world: World) -> [] int { return finish(world); }",
@@ -674,6 +685,7 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         .chain(ENUMS)
         .chain(DEFERS)
         .chain(WORDS)
+        .chain(CRYPTO)
         .chain(HELD)
         .chain(GENERICS)
         .chain(FLOATS)

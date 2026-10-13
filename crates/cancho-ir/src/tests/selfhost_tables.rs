@@ -485,6 +485,18 @@ fn render_runtime(dir: &std::path::Path) -> String {
         &std::fs::read_to_string(dir.join("runtime/net_darwin.ll"))
             .expect("examples/selfhost/runtime/net_darwin.ll"),
     );
+    let crypto_x86 = escape(
+        &std::fs::read_to_string(dir.join("runtime/crypto_x86_64.ll"))
+            .expect("examples/selfhost/runtime/crypto_x86_64.ll"),
+    );
+    let crypto_arm_linux = escape(
+        &std::fs::read_to_string(dir.join("runtime/crypto_aarch64_linux.ll"))
+            .expect("examples/selfhost/runtime/crypto_aarch64_linux.ll"),
+    );
+    let crypto_arm_darwin = escape(
+        &std::fs::read_to_string(dir.join("runtime/crypto_aarch64_darwin.ll"))
+            .expect("examples/selfhost/runtime/crypto_aarch64_darwin.ll"),
+    );
     let dirs_linux = escape(
         &std::fs::read_to_string(dir.join("runtime/dirs_linux.ll"))
             .expect("examples/selfhost/runtime/dirs_linux.ll"),
@@ -507,6 +519,10 @@ fn render_runtime(dir: &std::path::Path) -> String {
          // The directory handles and listings (`runtime/dirs.c`).\n\
          pub fn dirs_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{dirs_darwin}\";\n    }}\n    \
          return \"{dirs_linux}\";\n}}\n\n\
+         // The hardware AES and GHASH functions, written by `cancho-codegen-llvm` for each target: `target` is 1 for\n\
+         // Darwin on aarch64, 2 for Linux on aarch64, 0 for Linux on x86-64.\n\
+         pub fn crypto_text(target: int) -> [] &static [byte] {{\n    if target == 1 {{\n        return \"{crypto_arm_darwin}\";\n    }}\n    \
+         if target == 2 {{\n        return \"{crypto_arm_linux}\";\n    }}\n    return \"{crypto_x86}\";\n}}\n\n\
          // The address of `errno`, which each target keeps under its own name.\n\
          pub fn errno_location(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        \
          return \"define ptr @cancho_errno_location() {{\\nentry:\\n  %p = call ptr @__error()\\n  ret ptr %p\\n}}\\ndeclare ptr @__error()\\n\\n\";\n    }}\n    \

@@ -1,0 +1,270 @@
+module selfhost.cryptocode;
+
+// cryptocode.cho -- the call sites of the hardware AES and carry-less-multiply builtins (`docs/crypto-builtins.md`
+// §3, §4; `docs/gcm-wide.md` §4): each checks its lengths, trapping as an index out of bounds does, then calls the
+// function the module carries (`runtime/crypto_*.ll`, written by `cancho-codegen-llvm`). Arguments are the last `n`
+// entries of the argument stack, a slice being a pointer and a length.
+
+import selfhost.emit;
+
+// `<flag> = icmp <cond> i64 <operand k>, <what>`, trapping if it holds.
+fn trap_when[&s](st: &!s [int], n: int, cond: &static [byte], k: int, what: int) -> [] int {
+    let flag = emit.start(st);
+    emit.str(st, "icmp ");
+    emit.str(st, cond);
+    emit.str(st, " i64 ");
+    emit.last_operand(st, n, k);
+    emit.str(st, ", ");
+    emit.nat(st, what);
+    emit.str(st, "\n");
+    emit.trap_if(st, flag);
+    return 0;
+}
+
+// Traps unless the rounds (operand `rounds`) are 10, 12 or 14 and the keys (length operand `keys`) are 16 * (rounds + 1).
+fn check_round_keys[&s](st: &!s [int], n: int, keys: int, rounds: int) -> [] int {
+    var flags = 0 - 1;
+    var r = 10;
+    while r <= 14 {
+        let is = emit.start(st);
+        emit.str(st, "icmp eq i64 ");
+        emit.last_operand(st, n, rounds);
+        emit.str(st, ", ");
+        emit.nat(st, r);
+        emit.str(st, "\n");
+        if flags < 0 {
+            flags = is;
+        } else {
+            let joined = emit.start(st);
+            emit.str(st, "or i1 ");
+            emit.temp(st, flags);
+            emit.str(st, ", ");
+            emit.temp(st, is);
+            emit.str(st, "\n");
+            flags = joined;
+        }
+        r = r + 2;
+    }
+    let unknown = emit.start(st);
+    emit.str(st, "xor i1 ");
+    emit.temp(st, flags);
+    emit.str(st, ", true\n");
+    emit.trap_if(st, unknown);
+    let blocks = emit.start(st);
+    emit.str(st, "add i64 ");
+    emit.last_operand(st, n, rounds);
+    emit.str(st, ", 1\n");
+    let want = emit.start(st);
+    emit.str(st, "mul i64 ");
+    emit.temp(st, blocks);
+    emit.str(st, ", 16\n");
+    let bad = emit.start(st);
+    emit.str(st, "icmp ne i64 ");
+    emit.last_operand(st, n, keys);
+    emit.str(st, ", ");
+    emit.temp(st, want);
+    emit.str(st, "\n");
+    emit.trap_if(st, bad);
+    return 0;
+}
+
+fn ptr_arg[&s](st: &!s [int], n: int, k: int) -> [] int {
+    emit.str(st, "ptr ");
+    return emit.last_operand(st, n, k);
+}
+
+fn int_arg[&s](st: &!s [int], n: int, k: int) -> [] int {
+    emit.str(st, "i64 ");
+    return emit.last_operand(st, n, k);
+}
+
+// `hw_aes_gcm()`: whether the processor has the instructions.
+pub fn hardware[&s](st: &!s [int]) -> [] int {
+    let raw = emit.start(st);
+    emit.str(st, "call i8 @cancho_hw_aes_gcm()\n");
+    let yes = emit.start(st);
+    emit.str(st, "icmp ne i8 ");
+    emit.temp(st, raw);
+    emit.str(st, ", 0\n");
+    return yes;
+}
+
+// `aes_encrypt_block(keys, rounds, block, out)`.
+pub fn encrypt_block[&s](st: &!s [int]) -> [] int {
+    check_round_keys(st, 7, 1, 2);
+    trap_when(st, 7, "ne", 4, 16);
+    trap_when(st, 7, "ne", 6, 16);
+    emit.str(st, "  call void @cancho_aes_encrypt_block(");
+    ptr_arg(st, 7, 0);
+    emit.str(st, ", ");
+    int_arg(st, 7, 2);
+    emit.str(st, ", ");
+    ptr_arg(st, 7, 3);
+    emit.str(st, ", ");
+    ptr_arg(st, 7, 5);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 7;
+    return 0;
+}
+
+// `aes_ctr32(keys, rounds, nonce, counter, input, out)`.
+pub fn ctr32[&s](st: &!s [int]) -> [] int {
+    check_round_keys(st, 10, 1, 2);
+    trap_when(st, 10, "ne", 4, 12);
+    trap_when(st, 10, "ugt", 5, 4294967295);
+    let unequal = emit.start(st);
+    emit.str(st, "icmp ne i64 ");
+    emit.last_operand(st, 10, 7);
+    emit.str(st, ", ");
+    emit.last_operand(st, 10, 9);
+    emit.str(st, "\n");
+    emit.trap_if(st, unequal);
+    emit.str(st, "  call void @cancho_aes_ctr32(");
+    ptr_arg(st, 10, 0);
+    emit.str(st, ", ");
+    int_arg(st, 10, 2);
+    emit.str(st, ", ");
+    ptr_arg(st, 10, 3);
+    emit.str(st, ", ");
+    int_arg(st, 10, 5);
+    emit.str(st, ", ");
+    ptr_arg(st, 10, 6);
+    emit.str(st, ", ");
+    ptr_arg(st, 10, 8);
+    emit.str(st, ", ");
+    int_arg(st, 10, 7);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 10;
+    return 0;
+}
+
+// `ghash_update(h, y, data)`: whole blocks only.
+pub fn ghash_update[&s](st: &!s [int]) -> [] int {
+    trap_when(st, 6, "ne", 1, 16);
+    trap_when(st, 6, "ne", 3, 16);
+    let rest = emit.start(st);
+    emit.str(st, "and i64 ");
+    emit.last_operand(st, 6, 5);
+    emit.str(st, ", 15\n");
+    let ragged = emit.start(st);
+    emit.str(st, "icmp ne i64 ");
+    emit.temp(st, rest);
+    emit.str(st, ", 0\n");
+    emit.trap_if(st, ragged);
+    let blocks = emit.start(st);
+    emit.str(st, "lshr i64 ");
+    emit.last_operand(st, 6, 5);
+    emit.str(st, ", 4\n");
+    emit.str(st, "  call void @cancho_ghash_update(");
+    ptr_arg(st, 6, 0);
+    emit.str(st, ", ");
+    ptr_arg(st, 6, 2);
+    emit.str(st, ", ");
+    ptr_arg(st, 6, 4);
+    emit.str(st, ", i64 ");
+    emit.temp(st, blocks);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 6;
+    return 0;
+}
+
+// `ghash_powers(keys, rounds, table)`.
+pub fn ghash_powers[&s](st: &!s [int]) -> [] int {
+    check_round_keys(st, 5, 1, 2);
+    trap_when(st, 5, "ne", 4, 128);
+    emit.str(st, "  call void @cancho_ghash_powers(");
+    ptr_arg(st, 5, 0);
+    emit.str(st, ", ");
+    int_arg(st, 5, 2);
+    emit.str(st, ", ");
+    ptr_arg(st, 5, 3);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 5;
+    return 0;
+}
+
+// `gcm_tag(keys, rounds, table, nonce, aad, text, tag)` and, with `diff`, `gcm_tag_diff`, which answers the verdict.
+pub fn tag[&s](st: &!s [int], diff: bool) -> [] int {
+    check_round_keys(st, 13, 1, 2);
+    trap_when(st, 13, "ne", 4, 128);
+    trap_when(st, 13, "ne", 6, 12);
+    trap_when(st, 13, "ne", 12, 16);
+    var result = 0 - 1;
+    if diff {
+        result = emit.start(st);
+        emit.str(st, "call i64 @cancho_gcm_tag_diff(");
+    } else {
+        emit.str(st, "  call void @cancho_gcm_tag(");
+    }
+    ptr_arg(st, 13, 0);
+    emit.str(st, ", ");
+    int_arg(st, 13, 2);
+    emit.str(st, ", ");
+    ptr_arg(st, 13, 3);
+    emit.str(st, ", ");
+    ptr_arg(st, 13, 5);
+    emit.str(st, ", ");
+    ptr_arg(st, 13, 7);
+    emit.str(st, ", ");
+    int_arg(st, 13, 8);
+    emit.str(st, ", ");
+    ptr_arg(st, 13, 9);
+    emit.str(st, ", ");
+    int_arg(st, 13, 10);
+    emit.str(st, ", ");
+    ptr_arg(st, 13, 11);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 13;
+    return result;
+}
+
+// `hw_sha256()`: whether the processor has the SHA-256 instructions.
+pub fn hardware_sha[&s](st: &!s [int]) -> [] int {
+    let raw = emit.start(st);
+    emit.str(st, "call i8 @cancho_hw_sha256()\n");
+    let yes = emit.start(st);
+    emit.str(st, "icmp ne i8 ");
+    emit.temp(st, raw);
+    emit.str(st, ", 0\n");
+    return yes;
+}
+
+// `sha256_blocks(state, data)`: whole 64-byte blocks only.
+pub fn sha_blocks[&s](st: &!s [int]) -> [] int {
+    trap_when(st, 4, "ne", 1, 8);
+    let rest = emit.start(st);
+    emit.str(st, "and i64 ");
+    emit.last_operand(st, 4, 3);
+    emit.str(st, ", 63\n");
+    let ragged = emit.start(st);
+    emit.str(st, "icmp ne i64 ");
+    emit.temp(st, rest);
+    emit.str(st, ", 0\n");
+    emit.trap_if(st, ragged);
+    let blocks = emit.start(st);
+    emit.str(st, "lshr i64 ");
+    emit.last_operand(st, 4, 3);
+    emit.str(st, ", 6\n");
+    emit.str(st, "  call void @cancho_sha256_blocks(");
+    ptr_arg(st, 4, 0);
+    emit.str(st, ", ");
+    ptr_arg(st, 4, 2);
+    emit.str(st, ", i64 ");
+    emit.temp(st, blocks);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 4;
+    return 0;
+}
+
+// `sha256_block_words(state, block)`: 8 words and 16.
+pub fn sha_block_words[&s](st: &!s [int]) -> [] int {
+    trap_when(st, 4, "ne", 1, 8);
+    trap_when(st, 4, "ne", 3, 16);
+    emit.str(st, "  call void @cancho_sha256_block_words(");
+    ptr_arg(st, 4, 0);
+    emit.str(st, ", ");
+    ptr_arg(st, 4, 2);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 4;
+    return 0;
+}

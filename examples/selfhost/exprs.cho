@@ -20,7 +20,9 @@ import selfhost.threadcode;
 import selfhost.externcode;
 import selfhost.netcode;
 import selfhost.lookup;
+import selfhost.ex;
 import selfhost.wordcode;
+import selfhost.cryptocode;
 import selfhost.instances;
 import selfhost.scope;
 import selfhost.prims;
@@ -29,104 +31,16 @@ import selfhost.signatures;
 import selfhost.effects;
 import selfhost.tables;
 
-// What an expression came to: its type, and whether it is a known integer (a literal, or a
-// literal operation that folded) and which.
-pub struct Ex {
-    ty: int,
-    known: bool,
-    value: int,
-    reg: int,
-    reg2: int,
-}
-
-pub fn plain(ty: int) -> [] Ex {
-    return Ex { ty: ty, known: false, value: 0, reg: 0 - 1, reg2: 0 - 1 };
-}
-
-pub fn constant(value: int) -> [] Ex {
-    return Ex { ty: 1, known: true, value: value, reg: 0 - 1, reg2: 0 - 1 };
-}
-
-pub fn nothing() -> [] Ex {
-    return Ex { ty: 0, known: false, value: 0, reg: 0 - 1, reg2: 0 - 1 };
-}
-
-// A value in the temporary `reg` of the code being written.
-pub fn in_reg(ty: int, reg: int) -> [] Ex {
-    return Ex { ty: ty, known: false, value: 0, reg: reg, reg2: 0 - 1 };
-}
-
-// A reference to a slice in the code: the pointer (a temporary, or `-2 - n` for the global of a
-// string literal) and the length, a temporary or, if `reg2` is -1, the constant `length`.
-pub fn in_slice(ty: int, reg: int, reg2: int, length: int) -> [] Ex {
-    return Ex { ty: ty, known: false, value: length, reg: reg, reg2: reg2 };
-}
-
-// The operands of a value that has been computed, pushed as arguments of a call: a slice is two.
-// Put the value `v` in place `index` of the aggregate `whole` (the field or payload is of type `fty`): a run of bytes
-// goes in as its pointer and its length.
-pub fn put[&s](st: &!s [int], whole: int, acc: int, index: int, fty: int, v: Ex) -> [] int {
-    if types.is_slice_ref(st, fty) {
-        let packed = emit.pack_slice(st, v.reg, v.reg2 < 0, v.value, v.reg2);
-        return emit.insert_at(st, whole, acc, index, fty, false, 0, packed);
-    }
-    return emit.insert_at(st, whole, acc, index, fty, v.known, v.value, v.reg);
-}
-
-// What `packed`, the value a run of bytes is held as in an aggregate, is.
-pub fn unpacked[&s](st: &!s [int], ty: int, packed: int) -> [] Ex {
-    return in_slice(ty, emit.slice_part(st, packed, 0), emit.slice_part(st, packed, 1), 0);
-}
-
-// Place `index` of the aggregate `agg` in register `reg`, as a value.
-pub fn take[&s](st: &!s [int], agg: int, reg: int, index: int, fty: int) -> [] Ex {
-    let field = emit.extract_field(st, agg, reg, index);
-    if types.is_slice_ref(st, fty) {
-        return unpacked(st, fty, field);
-    }
-    return in_reg(fty, field);
-}
-
-// The value of type `fty` at `address`.
-pub fn take_through[&s](st: &!s [int], fty: int, address: int) -> [] Ex {
-    let loaded = emit.load_through(st, fty, address);
-    if types.is_slice_ref(st, fty) {
-        return unpacked(st, fty, loaded);
-    }
-    return in_reg(fty, loaded);
-}
-
-// Store `v` in the slot of the binding just declared.
-pub fn bind_value[&s](st: &!s [int], ty: int, v: Ex) -> [] int {
-    if types.is_slice_ref(st, ty) {
-        return emit.store_slice(st, st[39] - 1, v.reg, v.reg2 < 0, v.value, v.reg2);
-    }
-    return emit.store(st, ty, v.known, v.value, v.reg, st[39] - 1);
-}
-
-pub fn push_value[&s](st: &!s [int], a: Ex) -> [] int {
-    if types.is_slice_ref(st, a.ty) {
-        return emit.push_slice(st, a.reg, a.reg2 < 0, a.value, a.reg2);
-    }
-    return emit.push_arg(st, a.ty, a.known, a.value, a.reg);
-}
-
-// Something the port does not check yet: the function's answer is `SKIP`.
-pub fn skip[&s](st: &!s [int], from: int, to: int) -> [] Ex {
-    ast.fail(st, rules.r_skip(), from, to);
-    return nothing();
-}
-
 // ---------------------------------------------------------- expressions ---
 
-pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     if emit.on(st) && !lookup.writes_code(st, id) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     if ast.is_kind(st, id, kinds.NK::EInt) {
-        return constant(ast.get(st, id, 4));
+        return ex.constant(ast.get(st, id, 4));
     }
     if ast.is_kind(st, id, kinds.NK::EFloat) {
         var width = 3;
@@ -137,31 +51,31 @@ pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         // know the edition.
         if width == 4 && st[23] < 6 {
             ast.fail(st, rules.r_literal_form(), from, to);
-            return nothing();
+            return ex.nothing();
         }
         if emit.on(st) {
             let bits = floats.literal_bits(st, text, from, to, width == 4);
             if !floats.literal_ok(st) {
-                return skip(st, from, to);
+                return ex.skip(st, from, to);
             }
-            return Ex { ty: width, known: true, value: bits, reg: 0 - 1, reg2: 0 - 1 };
+            return ex.Ex { ty: width, known: true, value: bits, reg: 0 - 1, reg2: 0 - 1 };
         }
-        return plain(width);
+        return ex.plain(width);
     }
     if ast.is_kind(st, id, kinds.NK::EBool) {
         if emit.on(st) {
-            return Ex { ty: 5, known: true, value: ast.get(st, id, 4), reg: 0 - 1, reg2: 0 - 1 };
+            return ex.Ex { ty: 5, known: true, value: ast.get(st, id, 4), reg: 0 - 1, reg2: 0 - 1 };
         }
-        return plain(5);
+        return ex.plain(5);
     }
     if ast.is_kind(st, id, kinds.NK::EStr) {
         // A literal is a shared slice of bytes in the `static` region.
         let literal = types.make_ref(st, false, types.static_region(), types.make_slice(st, 2));
         if emit.on(st) {
             let n = emit.string_constant(st, text, ast.get(st, id, 4));
-            return in_slice(literal, 0 - 2 - n, 0 - 1, st[59]);
+            return ex.in_slice(literal, 0 - 2 - n, 0 - 1, st[59]);
         }
-        return plain(literal);
+        return ex.plain(literal);
     }
     if ast.is_kind(st, id, kinds.NK::EName) {
         return name_expr(st, text, id);
@@ -202,49 +116,49 @@ pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if ast.is_kind(st, id, kinds.NK::ETupleField) && emit.on(st) {
         return tuple_field_expr(st, text, id);
     }
-    return skip(st, from, to);
+    return ex.skip(st, from, to);
 }
 
 // `Enum::Variant(a, b)`: a value of a plain enum, each payload of the declared type.
-pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let target = pass1.resolve_module(st, text, st[22], ast.get(st, id, 4));
     if target < 0 {
         ast.fail(st, rules.r_module_not_imported(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     let found = pass1.lookup(st, text, ast.get(st, id, 5), target, st[23]);
     if found < 0 {
         ast.fail(st, rules.r_not_an_enum(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     if found < pass1.user_base() {
         if emit.on(st) && builtins.prelude_arm_count(found) > 0 {
             return prelude_variant(st, text, id, found);
         }
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     let item = found - pass1.user_base();
     if !ast.is_kind(st, item, kinds.NK::IEnum) {
         ast.fail(st, rules.r_not_an_enum(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     let variant = lookup.variant_named(st, text, item, ast.get(st, id, 6));
     if variant < 0 {
         ast.fail(st, rules.r_unknown_name(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     if target != st[22] && !pass1.def_public(st, found) {
         ast.fail(st, rules.r_not_public(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     if !emit.on(st) && !scope.enum_plain(st, item) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     if ast.get(st, id, 8) != ast.get(st, variant, 6) {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     let nparams = pass1.count_params(st, ast.get(st, item, 7), false);
     if nparams > 0 {
@@ -252,7 +166,7 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     let whole = types.make_named(st, item);
     if emit.on(st) && !scope.enum_codable(st, whole) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     var acc = 0 - 1;
     if emit.on(st) {
@@ -267,7 +181,7 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         if ast.ok(st) {
             scope.expect(st, text, scope.node_val(st, want, whole), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
             if emit.on(st) && ast.ok(st) {
-                acc = put(st, whole, acc, emit.payload_index(st, item, variant, k), scope.node_val(st, want, whole), v);
+                acc = ex.put(st, whole, acc, emit.payload_index(st, item, variant, k), scope.node_val(st, want, whole), v);
             }
         }
         arg = ast.next(st, arg);
@@ -276,23 +190,23 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         k = k + 1;
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     if emit.on(st) {
-        return in_reg(whole, acc);
+        return ex.in_reg(whole, acc);
     }
-    return plain(whole);
+    return ex.plain(whole);
 }
 
 // `Option::Some(5)`, `Option::None`: a value of a declaration with type parameters. The parameters are variables
 // that the payloads, or the type the context expects, solve; the code is written once they are, so up to four
 // payloads are evaluated first. Only the code is written for it.
-pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int, variant: int, nparams: int) -> [] Ex {
+pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int, variant: int, nparams: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let count = ast.get(st, id, 8);
     if !emit.on(st) || nparams > 2 || count > 4 {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     let whole = types.fresh_named(st, item, nparams);
     let expected = types.hint(st);
@@ -312,17 +226,17 @@ pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: in
             emit.push_arg(st, v.ty, v.known, v.value, v.reg);
         }
         if types.is_slice_ref(st, v.ty) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         arg = ast.next(st, arg);
         want = ast.next(st, want);
         k = k + 1;
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     if !scope.enum_codable(st, whole) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     var acc = emit.insert_at(st, whole, 0 - 1, 0, 1, true, emit.variant_position(st, item, variant), 0 - 1);
     want = ast.get(st, variant, 5);
@@ -334,13 +248,13 @@ pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: in
         k = k + 1;
     }
     st[52] = base;
-    return in_reg(whole, acc);
+    return ex.in_reg(whole, acc);
 }
 
 // `alloc_slice[a](count, fill)`: `count` copies of `fill` in the arena `a`, a unique reference to a slice
 // of them for as long as the block. The arena first, then the count, then the fill, which must be
 // a value that copies: an arena frees memory and runs nothing.
-pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let area = ast.get(st, id, 4);
@@ -350,7 +264,7 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] E
     if pass1.is_word(st, text, area, "static") {
         if st[60] == 0 {
             ast.fail(st, rules.r_reference_escapes_region(), from, to);
-            return nothing();
+            return ex.nothing();
         }
         in_static = true;
     }
@@ -360,28 +274,28 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] E
     }
     if arena < 0 && !in_static {
         ast.fail(st, rules.r_region_not_in_scope(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     let c = expr(st, text, count);
     if ast.ok(st) {
         scope.expect(st, text, 1, c.ty, ast.nstart(st, count), ast.nend(st, count));
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     let f = expr(st, text, fill);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     if types.is_prelude(st, f.ty) {
         if tables.prelude_res(types.prelude_index(st, f.ty)) != 0 {
             ast.fail(st, rules.r_mode_bound_violated(), ast.nstart(st, fill), ast.nend(st, fill));
-            return nothing();
+            return ex.nothing();
         }
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     if f.ty < 1 || f.ty > 6 && !types.is_named(st, f.ty) && !types.is_ref(st, f.ty) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     var home = types.static_region();
     if !in_static {
@@ -390,7 +304,7 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] E
     let result = types.make_ref(st, true, home, types.make_slice(st, f.ty));
     if emit.on(st) {
         if !types.is_plain(f.ty) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         var p = 0;
         if in_static {
@@ -399,11 +313,11 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] E
             p = emit.alloc_slice(st, arena, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
         }
         if c.known {
-            return in_slice(result, p, 0 - 1, c.value);
+            return ex.in_slice(result, p, 0 - 1, c.value);
         }
-        return in_slice(result, p, c.reg, 0);
+        return ex.in_slice(result, p, c.reg, 0);
     }
-    return plain(result);
+    return ex.plain(result);
 }
 
 // The prefix a capability was narrowed to, as the pointer and the length of its literal pushed on the stack
@@ -428,41 +342,41 @@ fn push_prefix[&s, &x](st: &!s [int], text: &x [byte], cap: int) -> [] int {
 // `narrow(cap, "prefix")` (1), `open_read` (2), `open_write` (3), `open_append` (4), `open_new` (5),
 // `open_rw` (6) and `exec_spawn` (7): the builtins whose type or whose check is in the literal a capability
 // was narrowed to. In compile mode only.
-pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) -> [] Ex {
+pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let nargs = ast.get(st, id, 7);
     var arg = ast.get(st, id, 6);
     if which == 1 {
         if nargs < 2 || nargs > 4 {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         let c = expr(st, text, arg);
         if !ast.ok(st) {
-            return nothing();
+            return ex.nothing();
         }
         let lit = ast.next(st, arg);
         if !types.is_prelude(st, c.ty) || !ast.is_kind(st, lit, kinds.NK::EStr) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         let index = types.prelude_index(st, c.ty);
         let first = types.make_prelude_lit(st, index, ast.get(st, lit, 4));
         if nargs == 2 {
-            return in_reg(first, 0 - 1);
+            return ex.in_reg(first, 0 - 1);
         }
         // Several literals: a tuple of the capabilities narrowed to each, which are nothing in the code.
         let second_lit = ast.next(st, lit);
         let second = types.make_prelude_lit(st, index, ast.get(st, second_lit, 4));
         if nargs == 3 {
-            return in_reg(types.make_pair(st, first, second), 0 - 1);
+            return ex.in_reg(types.make_pair(st, first, second), 0 - 1);
         }
         let third = types.make_prelude_lit(st, index, ast.get(st, ast.next(st, second_lit), 4));
-        return in_reg(types.make_triple(st, first, second, third), 0 - 1);
+        return ex.in_reg(types.make_triple(st, first, second, third), 0 - 1);
     }
     if which == 8 || which == 9 {
         // `fs_read(fs, path, into)` and `fs_write(fs, path, bytes)`: a file opened, read or written once and closed.
         if nargs != 3 {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         let c = expr(st, text, arg);
         arg = ast.next(st, arg);
@@ -470,37 +384,37 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         arg = ast.next(st, arg);
         let bytes = expr(st, text, arg);
         if !ast.ok(st) {
-            return nothing();
+            return ex.nothing();
         }
         if !scope.slice_codable(st, path.ty) || !scope.slice_codable(st, bytes.ty) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
-        push_value(st, path);
+        ex.push_value(st, path);
         push_prefix(st, text, c.ty);
-        push_value(st, bytes);
-        return in_reg(1, emit.fs_once(st, which == 9));
+        ex.push_value(st, bytes);
+        return ex.in_reg(1, emit.fs_once(st, which == 9));
     }
     if which <= 6 {
         if nargs != 2 {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         let c = expr(st, text, arg);
         arg = ast.next(st, arg);
         let path = expr(st, text, arg);
         if !ast.ok(st) {
-            return nothing();
+            return ex.nothing();
         }
         if !scope.slice_codable(st, path.ty) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
-        push_value(st, path);
+        ex.push_value(st, path);
         push_prefix(st, text, c.ty);
         let v = emit.open_path(st, which - 2);
         let opened = types.make_prelude(st, tables.prelude_opened());
-        return in_reg(opened, emit.answer_enum(st, opened, 0, v));
+        return ex.in_reg(opened, emit.answer_enum(st, opened, 0, v));
     }
     if nargs != 7 {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     let c = expr(st, text, arg);
     arg = ast.next(st, arg);
@@ -516,15 +430,15 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
     arg = ast.next(st, arg);
     let s2 = expr(st, text, arg);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     if !scope.slice_codable(st, path.ty) || !scope.slice_codable(st, args.ty) || !scope.slice_codable(st, env.ty) || !types.is_penum(st, s0.ty) || !types.is_penum(st, s1.ty) || !types.is_penum(st, s2.ty) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
-    push_value(st, path);
+    ex.push_value(st, path);
     push_prefix(st, text, c.ty);
-    push_value(st, args);
-    push_value(st, env);
+    ex.push_value(st, args);
+    ex.push_value(st, env);
     // Each stream: its tag, the end of a channel the child is given and the file it is given.
     let stdio = tables.prelude_stdio();
     let first = builtins.prelude_arm_first(stdio);
@@ -544,7 +458,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
     }
     let v = emit.spawn_process(st);
     let spawned = types.make_prelude(st, tables.prelude_spawned());
-    return in_reg(spawned, emit.answer_enum(st, spawned, 0, v));
+    return ex.in_reg(spawned, emit.answer_enum(st, spawned, 0, v));
 }
 
 // Is this the `&!x Heap` a heap operation is reached through?
@@ -554,7 +468,7 @@ fn is_heap_ref[&s](st: &!s [int], ty: int) -> [] bool {
 
 // `box_slice(heap, count, fill)` (1), `unbox_slice(heap, box)` (2) and `contents(box_ref)` (3), of
 // whole numbers, bytes and booleans: compile mode only, so a function that has one is not checked.
-pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) -> [] Ex {
+pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     var wanted = 3;
@@ -565,72 +479,72 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
         wanted = 1;
     }
     if ast.get(st, id, 7) != wanted {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     var arg = ast.get(st, id, 6);
     if which == 3 {
         let r = expr(st, text, arg);
         if !ast.ok(st) {
-            return nothing();
+            return ex.nothing();
         }
         if types.is_ref(st, r.ty) && types.is_box(st, types.ref_inner(st, r.ty)) {
             // One value on the heap: the box is a pointer in the slot the reference points at, and
             // the reference to what it holds is that pointer.
             let held = types.box_inner(st, types.ref_inner(st, r.ty));
             let p = emit.load_through(st, 7, r.reg);
-            return in_reg(types.make_ref(st, types.ref_unique(st, r.ty), types.ref_region(st, r.ty), held), p);
+            return ex.in_reg(types.make_ref(st, types.ref_unique(st, r.ty), types.ref_region(st, r.ty), held), p);
         }
         if !types.is_ref(st, r.ty) || !types.is_boxslice(st, types.ref_inner(st, r.ty)) || !scope.aggregate_codable(st, types.ref_inner(st, r.ty)) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         let boxed = types.ref_inner(st, r.ty);
         let p = emit.heap_view(st, boxed, r.reg);
         let slice = types.make_ref(st, types.ref_unique(st, r.ty), types.ref_region(st, r.ty), types.make_slice(st, types.boxslice_element(st, boxed)));
-        return in_slice(slice, p, st[59], 0);
+        return ex.in_slice(slice, p, st[59], 0);
     }
     let h = expr(st, text, arg);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     if !is_heap_ref(st, h.ty) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     arg = ast.next(st, arg);
     if which == 4 {
         // `box(heap, v)`: the value on the heap.
         let v = expr(st, text, arg);
         if !ast.ok(st) {
-            return nothing();
+            return ex.nothing();
         }
         if types.is_erased(st, v.ty) || v.ty < 1 || !(v.ty <= 6 || scope.aggregate_codable(st, v.ty) || types.is_ref(st, v.ty)) || types.is_slice_ref(st, v.ty) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         effects.perform_named(st, "heap");
-        return in_reg(types.make_box(st, v.ty), emit.box_value(st, v.ty, v.known, v.value, v.reg));
+        return ex.in_reg(types.make_box(st, v.ty), emit.box_value(st, v.ty, v.known, v.value, v.reg));
     }
     if which == 5 {
         // `unbox(heap, b)`: the value the box holds, which is freed.
         let b = expr(st, text, arg);
         if !ast.ok(st) {
-            return nothing();
+            return ex.nothing();
         }
         if !types.is_box(st, b.ty) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         effects.perform_named(st, "heap");
         let held = types.box_inner(st, b.ty);
-        return in_reg(held, emit.unbox_value(st, held, b.reg));
+        return ex.in_reg(held, emit.unbox_value(st, held, b.reg));
     }
     if which == 2 {
         let b = expr(st, text, arg);
         if !ast.ok(st) {
-            return nothing();
+            return ex.nothing();
         }
         if !types.is_boxslice(st, b.ty) || !scope.aggregate_codable(st, b.ty) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         effects.perform_named(st, "heap");
-        return in_reg(1, emit.heap_free(st, b.ty, b.reg));
+        return ex.in_reg(1, emit.heap_free(st, b.ty, b.reg));
     }
     let count = arg;
     let fill = ast.next(st, arg);
@@ -639,35 +553,35 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
         scope.expect(st, text, 1, c.ty, ast.nstart(st, count), ast.nend(st, count));
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     let f = expr(st, text, fill);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     if !types.is_plain(f.ty) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     effects.perform_named(st, "heap");
     let boxed = types.make_boxslice(st, f.ty);
     let p = emit.heap_run(st, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
-    return in_reg(boxed, emit.make_box(st, boxed, p, c.known, c.value, c.reg));
+    return ex.in_reg(boxed, emit.make_box(st, boxed, p, c.known, c.value, c.reg));
 }
 
 // `Spawned::Ok(child)`, `Stdio::Null`: a value of a prelude enum, each payload of the type the arm names.
-pub fn prelude_variant[&s, &x](st: &!s [int], text: &x [byte], id: int, index: int) -> [] Ex {
+pub fn prelude_variant[&s, &x](st: &!s [int], text: &x [byte], id: int, index: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let arm = lookup.prelude_arm_named(st, text, index, ast.get(st, id, 6));
     if arm < 0 {
         ast.fail(st, rules.r_unknown_name(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     let whole = types.make_prelude(st, index);
     let at = builtins.arm_type_start(arm);
     if ast.get(st, id, 8) != builtins.field_type(at) {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     var acc = emit.insert_at(st, whole, 0 - 1, 0, 1, true, arm - builtins.prelude_arm_first(index), 0 - 1);
     var cursor = at + 1;
@@ -679,7 +593,7 @@ pub fn prelude_variant[&s, &x](st: &!s [int], text: &x [byte], id: int, index: i
         let v = expr(st, text, arg);
         if ast.ok(st) {
             if param == 0 {
-                return skip(st, from, to);
+                return ex.skip(st, from, to);
             }
             scope.expect(st, text, param, v.ty, ast.nstart(st, arg), ast.nend(st, arg));
             if ast.ok(st) && !types.is_erased(st, param) {
@@ -690,24 +604,24 @@ pub fn prelude_variant[&s, &x](st: &!s [int], text: &x [byte], id: int, index: i
         j = j + 1;
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
-    return in_reg(whole, acc);
+    return ex.in_reg(whole, acc);
 }
 
 // `(a, b)` and `(a, b, c)`: an aggregate of the parts, in the code. Larger tuples, and parts that are
 // slices or have nothing in the code beside others that have, have no code.
-pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let n = ast.get(st, id, 5);
     if n != 2 && n != 3 {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
-    var vals = nothing();
-    var a = nothing();
-    var b = nothing();
-    var c = nothing();
+    var vals = ex.nothing();
+    var a = ex.nothing();
+    var b = ex.nothing();
+    var c = ex.nothing();
     var arg = ast.get(st, id, 4);
     var k = 0;
     while k < n && ast.ok(st) {
@@ -723,7 +637,7 @@ pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         k = k + 1;
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     var tc = 0;
     if n == 3 {
@@ -731,26 +645,26 @@ pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     let whole = types.make_tuple(st, n, a.ty, b.ty, tc);
     if types.is_erased(st, whole) {
-        return in_reg(whole, 0 - 1);
+        return ex.in_reg(whole, 0 - 1);
     }
     if !scope.tuple_codable(st, whole) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
-    var acc = put(st, whole, 0 - 1, 0, a.ty, a);
-    acc = put(st, whole, acc, 1, b.ty, b);
+    var acc = ex.put(st, whole, 0 - 1, 0, a.ty, a);
+    acc = ex.put(st, whole, acc, 1, b.ty, b);
     if n == 3 {
-        acc = put(st, whole, acc, 2, c.ty, c);
+        acc = ex.put(st, whole, acc, 2, c.ty, c);
     }
-    return in_reg(whole, acc);
+    return ex.in_reg(whole, acc);
 }
 
 // `t.0`: a part of a tuple; through a reference, a `val` one is copied out and a `res` one is borrowed.
-pub fn tuple_field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn tuple_field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let b = expr(st, text, ast.get(st, id, 4));
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     var held = b.ty;
     if types.is_ref(st, held) {
@@ -758,87 +672,87 @@ pub fn tuple_field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] E
     }
     let k = ast.get(st, id, 5);
     if !types.is_tuple(st, held) || k >= types.tuple_size(st, held) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     let pt = types.tuple_part(st, held, k);
     if types.is_erased(st, held) {
-        return in_reg(pt, 0 - 1);
+        return ex.in_reg(pt, 0 - 1);
     }
     if !scope.tuple_codable(st, held) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     if types.is_ref(st, b.ty) {
         let address = emit.field_address(st, held, b.reg, k);
         if scope.is_res_type(st, pt) {
-            return in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), pt), address);
+            return ex.in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), pt), address);
         }
-        return take_through(st, pt, address);
+        return ex.take_through(st, pt, address);
     }
-    return take(st, held, b.reg, k, pt);
+    return ex.take(st, held, b.reg, k, pt);
 }
 
 // `alloc[a](v)`: a value stored in the arena `a`, a unique reference to it for as long as the block. The arena
 // first, then the value, which must be one that copies.
-pub fn alloc_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn alloc_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let area = ast.get(st, id, 4);
     let value = ast.get(st, id, 5);
     // Only the code is written for it: in the other modes it is, as it was, `SKIP`.
     if !emit.on(st) || pass1.is_word(st, text, area, "static") {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     let arena = scope.arena_block(st, text, area);
     if arena < 0 {
         ast.fail(st, rules.r_region_not_in_scope(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     let v = expr(st, text, value);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     if types.is_erased(st, v.ty) || v.ty < 1 || types.is_slice_ref(st, v.ty) || !(v.ty <= 6 || scope.aggregate_codable(st, v.ty) || types.is_ref(st, v.ty)) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     let result = types.make_ref(st, true, types.block_region(arena), v.ty);
-    return in_reg(result, emit.arena_value(st, arena, v.ty, v.known, v.value, v.reg));
+    return ex.in_reg(result, emit.arena_value(st, arena, v.ty, v.known, v.value, v.reg));
 }
 
 // `Name { a: x, b: y }`: every field, once, in declaration order, each of the declared type.
-pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let target = pass1.resolve_module(st, text, st[22], ast.get(st, id, 4));
     if target < 0 {
         ast.fail(st, rules.r_module_not_imported(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     let found = pass1.lookup(st, text, ast.get(st, id, 5), target, st[23]);
     if found < 0 {
         ast.fail(st, rules.r_not_a_struct(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     if found < pass1.user_base() {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     let item = found - pass1.user_base();
     if !ast.is_kind(st, item, kinds.NK::IStruct) {
         ast.fail(st, rules.r_not_a_struct(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     if target != st[22] && !pass1.def_public(st, found) {
         ast.fail(st, rules.r_not_public(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     let nparams = pass1.count_params(st, ast.get(st, item, 7), false);
     if nparams > 0 {
         return struct_generic(st, text, id, item, nparams);
     }
     if !emit.on(st) && !scope.struct_plain(st, item) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     if emit.on(st) && !scope.struct_codable(st, types.make_named(st, item)) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     let first = ast.get(st, id, 6);
     var init = first;
@@ -860,7 +774,7 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             if ast.ok(st) {
                 scope.expect(st, text, scope.field_type(st, types.make_named(st, item), index), v.ty, ast.nstart(st, value), ast.nend(st, value));
                 if emit.on(st) && ast.ok(st) {
-                    acc = put(st, types.make_named(st, item), acc, index, scope.field_type(st, types.make_named(st, item), index), v);
+                    acc = ex.put(st, types.make_named(st, item), acc, index, scope.field_type(st, types.make_named(st, item), index), v);
                 }
             }
         }
@@ -874,21 +788,21 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         decl = ast.next(st, decl);
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     if emit.on(st) {
-        return in_reg(types.make_named(st, item), acc);
+        return ex.in_reg(types.make_named(st, item), acc);
     }
-    return plain(types.make_named(st, item));
+    return ex.plain(types.make_named(st, item));
 }
 
 // A struct literal of a declaration with type parameters, in the code only: the parameters are variables the
 // values, or the type expected, solve; up to four fields, all given, in the order declared.
-pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int, nparams: int) -> [] Ex {
+pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int, nparams: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     if !emit.on(st) || nparams > 2 {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     let whole = types.fresh_named(st, item, nparams);
     let expected = types.hint(st);
@@ -912,7 +826,7 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
         } else if index < previous {
             ast.fail(st, rules.r_field_order(), ast.nstart(st, value), ast.nend(st, value));
         } else if index > 3 {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         } else {
             previous = index;
             let v = expr(st, text, value);
@@ -920,7 +834,7 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
                 scope.expect(st, text, scope.field_type(st, whole, index), v.ty, ast.nstart(st, value), ast.nend(st, value));
             }
             if types.is_slice_ref(st, v.ty) {
-                return skip(st, from, to);
+                return ex.skip(st, from, to);
             }
             emit.push_arg(st, v.ty, v.known, v.value, v.reg);
             count = count + 1;
@@ -935,10 +849,10 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
         decl = ast.next(st, decl);
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     if !scope.struct_codable(st, whole) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     var acc = 0 - 1;
     var index = 0;
@@ -948,66 +862,66 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
         index = index + 1;
     }
     st[52] = base;
-    return in_reg(whole, acc);
+    return ex.in_reg(whole, acc);
 }
 
 // `base.name`: a field of a struct, or of a reference to one, copied out.
-pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let base = ast.get(st, id, 4);
     let b = expr(st, text, base);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     var held = b.ty;
     if types.is_ref(st, held) {
         held = types.ref_inner(st, held);
     }
     if types.is_prelude(st, held) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     if !types.is_named(st, held) {
         ast.fail(st, rules.r_unknown_name(), ast.nstart(st, base), ast.nend(st, base));
-        return nothing();
+        return ex.nothing();
     }
     let item = types.named_item(st, held);
     if !ast.is_kind(st, item, kinds.NK::IStruct) {
         ast.fail(st, rules.r_match_on_a_non_enum(), ast.nstart(st, base), ast.nend(st, base));
-        return nothing();
+        return ex.nothing();
     }
     let index = scope.field_index(st, text, item, ast.get(st, id, 5));
     if index < 0 {
         ast.fail(st, rules.r_unknown_name(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     if emit.on(st) {
         let ft = scope.field_type(st, held, index);
         if types.is_erased(st, ft) {
             if types.is_ref(st, b.ty) && types.is_prelude(st, ft) {
                 // A capability held by a struct is borrowed through the reference to the struct.
-                return in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), ft), 0 - 1);
+                return ex.in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), ft), 0 - 1);
             }
-            return in_reg(ft, 0 - 1);
+            return ex.in_reg(ft, 0 - 1);
         }
         if !scope.struct_codable(st, held) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         if types.is_ref(st, b.ty) {
             let address = emit.field_address(st, held, b.reg, index);
             if scope.is_res_type(st, ft) {
                 // A field that must be consumed is not copied out of a reference: it is borrowed, for
                 // as long as, and as uniquely as, the reference it was reached through.
-                return in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), ft), address);
+                return ex.in_reg(types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), ft), address);
             }
-            return take_through(st, ft, address);
+            return ex.take_through(st, ft, address);
         }
-        return take(st, held, b.reg, index, ft);
+        return ex.take(st, held, b.reg, index, ft);
     }
-    return plain(scope.field_type(st, held, index));
+    return ex.plain(scope.field_type(st, held, index));
 }
 
-pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let name = ast.get(st, id, 4);
@@ -1016,32 +930,32 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         scope.use_slot(st, i, from, to);
         if emit.on(st) {
             if types.is_erased(st, scope.binding_type(st, i)) {
-                return in_reg(scope.binding_type(st, i), 0 - 1);
+                return ex.in_reg(scope.binding_type(st, i), 0 - 1);
             }
             if types.is_slice_ref(st, scope.binding_type(st, i)) {
                 let p = emit.load_slice(st, scope.slot_of(st, i));
-                return in_slice(scope.binding_type(st, i), p, st[59], 0);
+                return ex.in_slice(scope.binding_type(st, i), p, st[59], 0);
             }
-            return in_reg(scope.binding_type(st, i), emit.load(st, scope.binding_type(st, i), scope.slot_of(st, i)));
+            return ex.in_reg(scope.binding_type(st, i), emit.load(st, scope.binding_type(st, i), scope.slot_of(st, i)));
         }
-        return plain(scope.binding_type(st, i));
+        return ex.plain(scope.binding_type(st, i));
     }
     // A `static` of this module declared as a slice of scalars is a shared reference to it.
     let table = lookup.static_named(st, text, name);
     if table >= 0 {
         let ty = scope.static_type(st, table);
         if ty == 0 {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         if emit.on(st) {
             let element = types.element_of(st, ty);
             if !types.is_plain(element) {
-                return skip(st, from, to);
+                return ex.skip(st, from, to);
             }
             let p = emit.static_load(st, table);
-            return in_slice(ty, p, st[59], 0);
+            return ex.in_slice(ty, p, st[59], 0);
         }
-        return plain(ty);
+        return ex.plain(ty);
     }
     // A function of this module used as a value: its address, to be given to `spawn`.
     if emit.on(st) {
@@ -1049,9 +963,9 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         while it >= 0 {
             if ast.is_kind(st, it, kinds.NK::IFn) && ast.get(st, it, 13) == st[22] && ast.same(st, text, ast.get(st, it, 4), name) {
                 if pass1.count_params(st, ast.get(st, it, 6), false) > 0 || !plain_function(st, text, it) {
-                    return skip(st, from, to);
+                    return ex.skip(st, from, to);
                 }
-                return in_reg(types.make_fnval(st, it), threadcode.function_pointer(st, it));
+                return ex.in_reg(types.make_fnval(st, it), threadcode.function_pointer(st, it));
             }
             it = ast.next(st, it);
         }
@@ -1059,20 +973,20 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     // A name that is not a local may still be a function used as a value, or a builtin: those are
     // values of types this slice does not check.
     if lookup.names_something(st, text, name) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     ast.fail(st, rules.r_unknown_name(), from, to);
-    return nothing();
+    return ex.nothing();
 }
 
-pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let op = ast.get(st, id, 4);
     let operand_id = ast.get(st, id, 5);
     let operand = expr(st, text, operand_id);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     let of = ast.nstart(st, operand_id);
     let ot = ast.nend(st, operand_id);
@@ -1080,58 +994,58 @@ pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         // `*r`: what a reference points at, copied. A slice is not a value to copy.
         if !types.is_ref(st, operand.ty) {
             ast.fail(st, rules.r_not_a_reference(), of, ot);
-            return nothing();
+            return ex.nothing();
         }
         if types.is_slice(st, types.ref_inner(st, operand.ty)) || types.is_prelude(st, types.ref_inner(st, operand.ty)) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         if emit.on(st) {
             let inner = types.ref_inner(st, operand.ty);
             if !types.is_plain(inner) && !scope.aggregate_codable(st, inner) {
-                return skip(st, from, to);
+                return ex.skip(st, from, to);
             }
-            return in_reg(inner, emit.load_through(st, inner, operand.reg));
+            return ex.in_reg(inner, emit.load_through(st, inner, operand.reg));
         }
-        return plain(types.ref_inner(st, operand.ty));
+        return ex.plain(types.ref_inner(st, operand.ty));
     }
     if op == 0 {
         if operand.ty != 1 && operand.ty != 3 && operand.ty != 4 {
             ast.fail(st, rules.r_operator_type_mismatch(), of, ot);
-            return nothing();
+            return ex.nothing();
         }
         if operand.known && operand.ty == 1 {
             if operand.value == fold.smallest() {
                 ast.fail(st, rules.r_constant_traps(), from, to);
-                return nothing();
+                return ex.nothing();
             }
-            return constant(0 - operand.value);
+            return ex.constant(0 - operand.value);
         }
         if emit.on(st) && operand.ty != 1 {
-            return in_reg(operand.ty, floatcode.float_negate(st, operand.ty, operand.known, operand.value, operand.reg));
+            return ex.in_reg(operand.ty, floatcode.float_negate(st, operand.ty, operand.known, operand.value, operand.reg));
         }
         if emit.on(st) {
-            return in_reg(operand.ty, emit.checked(st, 1, true, 0, 0 - 1, operand.known, operand.value, operand.reg));
+            return ex.in_reg(operand.ty, emit.checked(st, 1, true, 0, 0 - 1, operand.known, operand.value, operand.reg));
         }
-        return plain(operand.ty);
+        return ex.plain(operand.ty);
     }
     if op == 1 {
         scope.expect(st, text, 5, operand.ty, of, ot);
         if emit.on(st) && ast.ok(st) {
-            return in_reg(5, emit.not(st, operand.known, operand.value, operand.reg));
+            return ex.in_reg(5, emit.not(st, operand.known, operand.value, operand.reg));
         }
-        return plain(5);
+        return ex.plain(5);
     }
     scope.expect(st, text, 1, operand.ty, of, ot);
     if operand.known {
-        return constant(~operand.value);
+        return ex.constant(~operand.value);
     }
     if emit.on(st) && ast.ok(st) {
-        return in_reg(1, emit.bit_not(st, operand.known, operand.value, operand.reg));
+        return ex.in_reg(1, emit.bit_not(st, operand.known, operand.value, operand.reg));
     }
-    return plain(1);
+    return ex.plain(1);
 }
 
-pub fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let op = ast.get(st, id, 4);
@@ -1141,7 +1055,7 @@ pub fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     let lt = ast.nend(st, lhs_id);
     let l = expr(st, text, lhs_id);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     // `&&` and `||` do not compute their right side when the left has decided: its code is written
     // between the two, in blocks of its own.
@@ -1152,7 +1066,7 @@ pub fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     let r = expr(st, text, rhs_id);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     var short_reg = 0 - 1;
     if short >= 0 {
@@ -1161,14 +1075,14 @@ pub fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     // Both sides agree first, then the operator says what it accepts.
     scope.expect(st, text, l.ty, r.ty, ast.nstart(st, rhs_id), ast.nend(st, rhs_id));
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     let operand = l.ty;
     let arithmetic = operand == 1 || operand == 3 || operand == 4;
     if op >= 13 && op <= 16 {
         if !arithmetic {
             ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
-            return nothing();
+            return ex.nothing();
         }
     }
     if op == 17 || op >= 8 && op <= 12 {
@@ -1180,18 +1094,18 @@ pub fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     if op >= 4 && op <= 7 {
         if !arithmetic {
             ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
-            return nothing();
+            return ex.nothing();
         }
     }
     // `==` and `!=` compare two scalars, and nothing else.
     if op == 2 || op == 3 {
         if (operand < 1 || operand > 5) && operand != 7 {
             ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
-            return nothing();
+            return ex.nothing();
         }
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     // A comparison and a short-circuit answer a `bool`; the rest answer their operand.
     var result = operand;
@@ -1202,23 +1116,23 @@ pub fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         let f = fold.fold_int(op, l.value, r.value);
         if f.trapped {
             ast.fail(st, rules.r_constant_traps(), from, to);
-            return nothing();
+            return ex.nothing();
         }
         if result == 1 {
-            return constant(f.value);
+            return ex.constant(f.value);
         }
     }
     if short_reg >= 0 {
-        return in_reg(5, short_reg);
+        return ex.in_reg(5, short_reg);
     }
     if emit.on(st) {
-        return in_reg(result, binary_code(st, op, operand, l, r));
+        return ex.in_reg(result, binary_code(st, op, operand, l, r));
     }
-    return plain(result);
+    return ex.plain(result);
 }
 
 // The code for `l op r` on two operands of type `ty`, answering the temporary of the result.
-pub fn binary_code[&s](st: &!s [int], op: int, ty: int, l: Ex, r: Ex) -> [] int {
+pub fn binary_code[&s](st: &!s [int], op: int, ty: int, l: ex.Ex, r: ex.Ex) -> [] int {
     if ty == 3 || ty == 4 {
         if op >= 13 {
             return floatcode.float_op(st, op, ty, l.known, l.value, l.reg, r.known, r.value, r.reg);
@@ -1247,16 +1161,16 @@ pub fn binary_code[&s](st: &!s [int], op: int, ty: int, l: Ex, r: Ex) -> [] int 
 }
 
 // `s[i]`: one element of a slice. The base is checked first, then the index.
-pub fn index_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn index_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let base = ast.get(st, id, 4);
     let index = ast.get(st, id, 5);
     let b = expr(st, text, base);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     let e = scope.element(st, b.ty, ast.nstart(st, base), ast.nend(st, base));
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     let i = expr(st, text, index);
     if ast.ok(st) {
@@ -1264,59 +1178,59 @@ pub fn index_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     if emit.on(st) && ast.ok(st) {
         if !types.is_plain(e) {
-            return skip(st, ast.nstart(st, id), ast.nend(st, id));
+            return ex.skip(st, ast.nstart(st, id), ast.nend(st, id));
         }
         let address = emit.element_address(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, i.known, i.value, i.reg);
-        return in_reg(e, emit.load_through(st, e, address));
+        return ex.in_reg(e, emit.load_through(st, e, address));
     }
-    return plain(e);
+    return ex.plain(e);
 }
 
 // `s[a..b]`: a shorter run of the same slice, in the same region and as unique or shared.
-pub fn subslice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn subslice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let base = ast.get(st, id, 4);
     let start = ast.get(st, id, 5);
     let end = ast.get(st, id, 6);
     let b = expr(st, text, base);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     let e = scope.element(st, b.ty, ast.nstart(st, base), ast.nend(st, base));
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     let a = expr(st, text, start);
     if ast.ok(st) {
         scope.expect(st, text, 1, a.ty, ast.nstart(st, start), ast.nend(st, start));
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     let z = expr(st, text, end);
     if ast.ok(st) {
         scope.expect(st, text, 1, z.ty, ast.nstart(st, end), ast.nend(st, end));
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     let narrowed = types.make_ref(st, types.ref_unique(st, b.ty), types.ref_region(st, b.ty), types.make_slice(st, e));
     if emit.on(st) {
         if !types.is_plain(e) {
-            return skip(st, ast.nstart(st, id), ast.nend(st, id));
+            return ex.skip(st, ast.nstart(st, id), ast.nend(st, id));
         }
         let at = emit.subslice(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, a.known, a.value, a.reg, z.known, z.value, z.reg);
-        return in_slice(narrowed, at, st[59], 0);
+        return ex.in_slice(narrowed, at, st[59], 0);
     }
-    return plain(narrowed);
+    return ex.plain(narrowed);
 }
 
 // `len(s)`: how many elements a slice has.
-pub fn len_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn len_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     if ast.get(st, id, 7) != 1 {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     let arg = ast.get(st, id, 6);
     let a = expr(st, text, arg);
@@ -1324,15 +1238,15 @@ pub fn len_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
         scope.element(st, a.ty, ast.nstart(st, arg), ast.nend(st, arg));
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     if emit.on(st) {
         if a.reg2 >= 0 {
-            return in_reg(1, a.reg2);
+            return ex.in_reg(1, a.reg2);
         }
-        return constant(a.value);
+        return ex.constant(a.value);
     }
-    return plain(1);
+    return ex.plain(1);
 }
 
 // A call to a builtin the table says everything about: it takes what its signature says, as a
@@ -1340,39 +1254,39 @@ pub fn len_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
 // lowering checks by hand, one that performs an effect (rows are not checked yet) and one with a
 // type the checker cannot hold are `SKIP`; and every builtin is while code is being written.
 // A builtin on words, its arguments pushed.
-fn word_builtin[&s](st: &!s [int], written: int, result: int) -> [] Ex {
+fn word_builtin[&s](st: &!s [int], written: int, result: int) -> [] ex.Ex {
     if written == 70 {
         wordcode.stop(st);
-        return constant(0);
+        return ex.constant(0);
     }
     if written == 71 {
         wordcode.copy_within(st);
-        return constant(0);
+        return ex.constant(0);
     }
     if written == 72 {
-        return in_reg(1, wordcode.barrier(st));
+        return ex.in_reg(1, wordcode.barrier(st));
     }
     if written == 73 {
-        return in_reg(result, wordcode.mul_wide(st, result));
+        return ex.in_reg(result, wordcode.mul_wide(st, result));
     }
     if written == 74 || written == 75 {
-        return in_reg(result, wordcode.add_carry(st, result, written == 75));
+        return ex.in_reg(result, wordcode.add_carry(st, result, written == 75));
     }
     if written == 76 {
-        return in_reg(1, wordcode.load_le64(st));
+        return ex.in_reg(1, wordcode.load_le64(st));
     }
     if written == 77 {
-        return in_reg(1, wordcode.byte_mask64(st));
+        return ex.in_reg(1, wordcode.byte_mask64(st));
     }
-    return in_reg(1, wordcode.count_bits(st, written - 78));
+    return ex.in_reg(1, wordcode.count_bits(st, written - 78));
 }
 
-pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> [] Ex {
+pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let start = signatures.builtin_sig_start(b);
     if signatures.builtin_sig(start) != 0 || !effects.perform(st, b) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     // The builtins code is written for so far: 1 `putchar`, 2 `write_bytes`, 3 `int_of`, 4 `byte_of`.
     var written = 0;
@@ -1383,14 +1297,17 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
             written = codes.word_code(text, ast.tstart(st, at), ast.tend(st, at));
         }
         if written == 0 {
-            return skip(st, from, to);
+            written = codes.crypto_code(text, ast.tstart(st, at), ast.tend(st, at));
+        }
+        if written == 0 {
+            return ex.skip(st, from, to);
         }
         if written == 31 {
             // The null handle: a pointer that is not anywhere.
-            return in_reg(7, 0 - 1);
+            return ex.in_reg(7, 0 - 1);
         }
     }
-    var last = nothing();
+    var last = ex.nothing();
     var fresh = 0 - 1;
     var made = 0;
     while made < builtins.builtin_regions(b) {
@@ -1403,7 +1320,7 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     let wanted = signatures.builtin_sig(start + 1);
     if wanted != ast.get(st, id, 7) {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     var cursor = start + 2;
     var arg = ast.get(st, id, 6);
@@ -1414,11 +1331,11 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
         let a = expr(st, text, arg);
         if ast.ok(st) {
             if param == 0 {
-                skip(st, from, to);
+                ex.skip(st, from, to);
             } else {
                 scope.expect(st, text, param, a.ty, ast.nstart(st, arg), ast.nend(st, arg));
-                if written != 0 && written != 3 && written != 4 && (written < 18 || written >= 70) {
-                    push_value(st, a);
+                if written != 0 && written != 3 && written != 4 && (written < 18 || written >= 70) && written != 83 && written != 90 {
+                    ex.push_value(st, a);
                 }
                 last = a;
             }
@@ -1427,7 +1344,7 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
         k = k + 1;
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     var result = prims.decode(st, false, cursor, fresh, false);
     if result == 0 && written >= 73 && written <= 75 {
@@ -1435,73 +1352,104 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
         result = types.make_pair(st, 1, 1);
     }
     if result == 0 {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     if written == 1 {
-        return in_reg(result, emit.put_char(st));
+        return ex.in_reg(result, emit.put_char(st));
     }
     if written == 2 {
-        return in_reg(result, emit.write_slice(st));
+        return ex.in_reg(result, emit.write_slice(st));
     }
     if written == 3 {
-        return in_reg(result, emit.widen(st, last.known, last.value, last.reg));
+        return ex.in_reg(result, emit.widen(st, last.known, last.value, last.reg));
     }
     if written == 4 {
-        return in_reg(result, emit.truncate_to_byte(st, last.known, last.value, last.reg));
+        return ex.in_reg(result, emit.truncate_to_byte(st, last.known, last.value, last.reg));
+    }
+    if written >= 83 {
+        st[55] = st[55] | 4;
+        if written == 83 {
+            return ex.in_reg(5, cryptocode.hardware(st));
+        }
+        if written == 89 {
+            return ex.in_reg(1, cryptocode.tag(st, true));
+        }
+        if written == 90 {
+            return ex.in_reg(5, cryptocode.hardware_sha(st));
+        }
+        if written == 91 || written == 92 {
+            if written == 92 {
+                return ex.constant(cryptocode.sha_block_words(st));
+            }
+            return ex.constant(cryptocode.sha_blocks(st));
+        }
+        var done = 0;
+        if written == 84 {
+            done = cryptocode.encrypt_block(st);
+        } else if written == 85 {
+            done = cryptocode.ctr32(st);
+        } else if written == 86 {
+            done = cryptocode.ghash_update(st);
+        } else if written == 87 {
+            done = cryptocode.ghash_powers(st);
+        } else {
+            done = cryptocode.tag(st, false);
+        }
+        return ex.constant(done);
     }
     if written >= 70 {
         return word_builtin(st, written, result);
     }
     if written >= 18 && written <= 30 {
-        return in_reg(result, floatcode.float_builtin(st, written, last.known, last.value, last.reg));
+        return ex.in_reg(result, floatcode.float_builtin(st, written, last.known, last.value, last.reg));
     }
     if written >= 5 && written <= 7 {
-        return in_reg(result, emit.plain_arith(st, written - 5));
+        return ex.in_reg(result, emit.plain_arith(st, written - 5));
     }
     if written == 8 {
-        return in_reg(result, emit.bulk_copy(st));
+        return ex.in_reg(result, emit.bulk_copy(st));
     }
     if written == 9 {
-        return in_reg(result, emit.find_byte(st));
+        return ex.in_reg(result, emit.find_byte(st));
     }
     if written == 10 {
-        return in_reg(result, emit.stdin_char(st));
+        return ex.in_reg(result, emit.stdin_char(st));
     }
     if written == 11 {
-        return in_reg(result, emit.stderr_write(st));
+        return ex.in_reg(result, emit.stderr_write(st));
     }
     if written == 12 {
-        return in_reg(result, emit.command_count(st));
+        return ex.in_reg(result, emit.command_count(st));
     }
     if written == 13 {
         let p = emit.command_arg(st);
-        return in_slice(result, p, st[59], 0);
+        return ex.in_slice(result, p, st[59], 0);
     }
     if written == 14 || written == 15 {
         let v = emit.fd_transfer(st, written == 15);
-        return in_reg(result, emit.answer_enum(st, result, written - 14, v));
+        return ex.in_reg(result, emit.answer_enum(st, result, written - 14, v));
     }
     if written == 16 {
-        return in_reg(result, emit.fd_close(st));
+        return ex.in_reg(result, emit.fd_close(st));
     }
     if written == 17 {
         let v = emit.wait_child(st);
-        return in_reg(result, emit.answer_enum(st, result, 2, v));
+        return ex.in_reg(result, emit.answer_enum(st, result, 2, v));
     }
-    return plain(result);
+    return ex.plain(result);
 }
 
 // A call of a foreign function, in compile mode: its arguments against the declaration, then the call.
-pub fn extern_call[&s, &x](st: &!s [int], text: &x [byte], id: int, it: int) -> [] Ex {
+pub fn extern_call[&s, &x](st: &!s [int], text: &x [byte], id: int, it: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let rk = externcode.return_kind(st, text, ast.get(st, it, 10));
     if rk == 0 {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     if ast.get(st, it, 8) != ast.get(st, id, 7) {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     let dp = ast.get(st, it, 6);
     var fresh = 0 - 1;
@@ -1520,7 +1468,7 @@ pub fn extern_call[&s, &x](st: &!s [int], text: &x [byte], id: int, it: int) -> 
         let ty = ast.get(st, param, 5);
         let kind = externcode.param_kind(st, text, ty);
         if kind < 0 {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         let a = expr(st, text, arg);
         if ast.ok(st) {
@@ -1533,7 +1481,7 @@ pub fn extern_call[&s, &x](st: &!s [int], text: &x [byte], id: int, it: int) -> 
         if ast.ok(st) && kind == 3 {
             emit.push_arg(st, 2, false, 0, externcode.byte_of_bool(st, a.known, a.value, a.reg));
         } else if ast.ok(st) && kind == 5 {
-            push_value(st, a);
+            ex.push_value(st, a);
         } else if ast.ok(st) && kind > 0 {
             emit.push_arg(st, a.ty, a.known, a.value, a.reg);
         }
@@ -1541,28 +1489,28 @@ pub fn extern_call[&s, &x](st: &!s [int], text: &x [byte], id: int, it: int) -> 
         arg = ast.next(st, arg);
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     let answer = externcode.call(st, text, it, rk, st[52] - first_arg);
     if rk == 3 {
-        return in_reg(7, answer);
+        return ex.in_reg(7, answer);
     }
     if rk == 4 {
-        return in_reg(5, answer);
+        return ex.in_reg(5, answer);
     }
-    return in_reg(1, answer);
+    return ex.in_reg(1, answer);
 }
 
 // The sockets and the clock (the numbers of `codes.net_code`, the shape of each in `netcode.cho`): the arguments are
 // evaluated and pushed, the capability that was narrowed to a bound is the first of some and is not pushed, and the
 // bound goes after the others.
-pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) -> [] Ex {
+pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) -> [] ex.Ex {
     let which = netcode.canonical(number);
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let nargs = ast.get(st, id, 7);
     if nargs != netcode.arity(which) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     if netcode.needs_dirs(which) {
         st[55] = st[55] | 2;
@@ -1580,13 +1528,13 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
         if ast.ok(st) && k == 0 && leads {
             cap = a.ty;
         } else if ast.ok(st) && !types.is_erased(st, a.ty) {
-            push_value(st, a);
+            ex.push_value(st, a);
         }
         arg = ast.next(st, arg);
         k = k + 1;
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     if holds_bound {
         push_prefix(st, text, cap);
@@ -1594,62 +1542,62 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
     netcode.extras(st, which);
     let n = st[52] - first_arg;
     if netcode.slots(which) == 0 {
-        return in_reg(1, netcode.call_int(st, netcode.function(which), n));
+        return ex.in_reg(1, netcode.call_int(st, netcode.function(which), n));
     }
     let index = netcode.prelude_named(netcode.enum_name(which));
     if index < 0 {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     let ty = types.make_prelude(st, index);
-    return in_reg(ty, netcode.answer(st, ty, netcode.slots(which), netcode.call_out(st, netcode.function(which), n)));
+    return ex.in_reg(ty, netcode.answer(st, ty, netcode.slots(which), netcode.call_out(st, netcode.function(which), n)));
 }
 
 // `spawn(payload, f)` and `join(t)`. The payload and what `f` returns are one value each of no more than one
 // pointer's worth: a whole number, a byte, a boolean, a reference, or a capability (nothing in the code).
-pub fn thread_call[&s, &x](st: &!s [int], text: &x [byte], id: int, spawning: bool) -> [] Ex {
+pub fn thread_call[&s, &x](st: &!s [int], text: &x [byte], id: int, spawning: bool) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     var arg = ast.get(st, id, 6);
     if !spawning {
         if ast.get(st, id, 7) != 1 {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         let t = expr(st, text, arg);
         if !ast.ok(st) {
-            return nothing();
+            return ex.nothing();
         }
         if !types.is_thread(st, t.ty) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         let result = types.thread_result(st, t.ty);
-        return in_reg(result, threadcode.join_thread(st, result, t.reg));
+        return ex.in_reg(result, threadcode.join_thread(st, result, t.reg));
     }
     if ast.get(st, id, 7) != 2 {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     let payload = expr(st, text, arg);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     arg = ast.next(st, arg);
     let f = expr(st, text, arg);
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     if !types.is_fnval(st, f.ty) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     let item = types.fnval_item(st, f.ty);
     let result = scope.lower_type(st, text, ast.get(st, item, 10), ast.get(st, item, 6), 0 - 1);
     let carried = types.is_erased(st, payload.ty) || types.is_ref(st, payload.ty) && !types.is_slice_ref(st, payload.ty) || payload.ty == 1 || payload.ty == 2 || payload.ty == 5 || types.is_handle(st, payload.ty);
     let returned = types.is_erased(st, result) || types.is_ref(st, result) && !types.is_slice_ref(st, result) || result == 1 || result == 2 || result == 5;
     if !carried || !returned {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
-    return in_reg(types.make_thread(st, result), threadcode.spawn_thread(st, payload.ty, payload.known, payload.value, payload.reg, f.reg));
+    return ex.in_reg(types.make_thread(st, result), threadcode.spawn_thread(st, payload.ty, payload.known, payload.value, payload.reg, f.reg));
 }
 
-pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
+pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let qualifier = ast.get(st, id, 4);
@@ -1665,14 +1613,14 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
                 return call_item(st, text, id, types.fnval_item(st, scope.binding_type(st, local)));
             }
             ast.fail(st, rules.r_not_a_function(), from, to);
-            return nothing();
+            return ex.nothing();
         }
     }
     let unit_of = st[22];
     let target = pass1.resolve_module(st, text, unit_of, qualifier);
     if target < 0 {
         ast.fail(st, rules.r_module_not_imported(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     // `len` is a builtin of every edition, and is checked before anything else is looked up.
     if pass1.is_word(st, text, callee, "len") {
@@ -1681,30 +1629,30 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     // `release(world)` ends a capability: no code, and `0` if the answer is wanted.
     if emit.on(st) && qualifier < 0 && pass1.is_word(st, text, callee, "release") {
         if nargs != 1 {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         let given = expr(st, text, ast.get(st, id, 6));
         if !ast.ok(st) {
-            return nothing();
+            return ex.nothing();
         }
         if !types.is_prelude(st, given.ty) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
-        return constant(0);
+        return ex.constant(0);
     }
     // `split(world)`: the parts of the `World`, which are nothing in the code.
     if emit.on(st) && qualifier < 0 && pass1.is_word(st, text, callee, "split") {
         if nargs != 1 {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         let given = expr(st, text, ast.get(st, id, 6));
         if !ast.ok(st) {
-            return nothing();
+            return ex.nothing();
         }
         if !types.is_prelude(st, given.ty) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
-        return in_reg(types.make_prelude(st, builtins.split_for(st[23])), 0 - 1);
+        return ex.in_reg(types.make_prelude(st, builtins.split_for(st[23])), 0 - 1);
     }
     // Capabilities narrowed by a literal, files and processes: only the code is written for them.
     if emit.on(st) && qualifier < 0 {
@@ -1773,13 +1721,13 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             // `fork_heap(parent)` and `fork_clock(clock)`: a new capability, which is nothing in the code.
             let parent = expr(st, text, ast.get(st, id, 6));
             if !ast.ok(st) {
-                return nothing();
+                return ex.nothing();
             }
             var index = scope.heap_index();
             if codes.word_code(text, ast.tstart(st, callee), ast.tend(st, callee)) == 82 {
                 index = netcode.prelude_named("Clock");
             }
-            return in_reg(types.make_prelude(st, index), 0 - 1);
+            return ex.in_reg(types.make_prelude(st, index), 0 - 1);
         }
         return builtin_call(st, text, id, known);
     }
@@ -1789,7 +1737,7 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
             if emit.on(st) {
                 return extern_call(st, text, id, it);
             }
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         it = ast.next(st, it);
     }
@@ -1803,26 +1751,26 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Ex {
     }
     if found < 0 {
         ast.fail(st, rules.r_not_a_function(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     if target != unit_of && ast.get(st, found, 5) == 0 {
         ast.fail(st, rules.r_not_public(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     return call_item(st, text, id, found);
 }
 
 // The call `id` to the function `found`: its arguments against the signature, then the code.
-pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) -> [] Ex {
+pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let nargs = ast.get(st, id, 7);
     // A callee that is generic, declares effects, or has a type this slice does not handle.
     if !plain_function(st, text, found) {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     if emit.on(st) && pass1.count_params(st, ast.get(st, found, 6), false) > 2 {
-        return skip(st, from, to);
+        return ex.skip(st, from, to);
     }
     // What the callee's row says it performs, the caller performs.
     effects.perform_row(st, effects.row_mask(st, text, found));
@@ -1848,7 +1796,7 @@ pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) ->
     }
     if ast.get(st, found, 8) != nargs {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
-        return nothing();
+        return ex.nothing();
     }
     var param = ast.get(st, found, 7);
     var arg = ast.get(st, id, 6);
@@ -1863,7 +1811,7 @@ pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) ->
             if ast.ok(st) {
                 scope.expect(st, text, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
                 if emit.on(st) && !types.is_erased(st, a.ty) {
-                    push_value(st, a);
+                    ex.push_value(st, a);
                 }
             }
         }
@@ -1915,28 +1863,28 @@ pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) ->
         position = position + 1;
     }
     if !ast.ok(st) {
-        return nothing();
+        return ex.nothing();
     }
     let result = types.resolve_type(st, callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars));
     if emit.on(st) {
         if !types.is_plain(result) && !scope.aggregate_codable(st, result) && !scope.slice_codable(st, result) {
-            return skip(st, from, to);
+            return ex.skip(st, from, to);
         }
         var inst = 0;
         if tmade > 0 {
             let made_at = instances.request(st, found, tvars, tmade);
             if made_at < 0 {
-                return skip(st, from, to);
+                return ex.skip(st, from, to);
             }
             inst = made_at + 1;
         }
         let answer = emit.call(st, found, inst, result, st[52] - first_arg);
         if types.is_slice_ref(st, result) {
-            return in_slice(result, answer, st[59], 0);
+            return ex.in_slice(result, answer, st[59], 0);
         }
-        return in_reg(result, answer);
+        return ex.in_reg(result, answer);
     }
-    return plain(result);
+    return ex.plain(result);
 }
 
 // A type written in a callee's declaration, at one call: its type parameters are the variables made
