@@ -33,6 +33,12 @@ an `int` with checked arithmetic and no `wrapping_*`. With 31-bit limbs it would
 even one product would. Checked arithmetic is kept on purpose: an overflow here would be a bug, and a trap shows it, where
 wrapping would give a wrong answer silently.
 
+*Superseded (#381, [`wide-multiply.md`](wide-multiply.md) §12): a number is now **64-bit limbs**, each an `int` read as an
+unsigned word, 64 for 4,096 bits. The CIOS step is two `mul_wide`s and four `add_carry`s, one carry chain for `a_i·b[j]` and
+one for `m·n[j]`, so no sum can exceed two words and no limb arithmetic can trap; comparisons of limbs are borrows. `R = 2^(64k)`,
+`n' = -n^-1 mod 2^64` (Newton, five steps from 3 bits), and §2.2's doubling runs to `64k` bits. The register slot stays 139
+words. Measured on x86-64: RSA-2048 verification 6.7 times fewer cycles, RSA-4096 7.1 times.*
+
 ### 2.2 Montgomery multiplication
 
 `R = 2^(30k)` for a `k`-limb modulus. `mont_mul(a, b) = a·b·R^-1 mod n`, for `a, b < n`.

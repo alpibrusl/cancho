@@ -10,7 +10,7 @@ local modules `ecdh` and `bigmod` beside a copy of
 run against the evidence `conformance/ecdh.rs` and
 `scripts/ecdh_differential.py` use: Wycheproof's P-256 and P-384 cases,
 NIST's KAS validity cases, the scalar's edges and the refusals, modular
-powers at moduli a multiple of 30 bits long against Python's `pow`, then
+powers at moduli a multiple of 30 or 64 bits long against Python's `pow`, then
 100 random key pairs a curve against OpenSSL. A mutant is
 killed when any of them disagrees. The unmutated files are run first and
 must pass. Exit status 1 if a mutant survives or fails to build.
@@ -33,7 +33,8 @@ MUTANTS = [
     ("ecdh", "the doubling's Z one factor of 2 short", "    bigmod.add(w, z3, z3, z3);\n    bigmod.add(w, z3, z3, z3);\n    return", "    bigmod.add(w, z3, z3, z3);\n    return"),
     ("ecdh", "three doublings a window, not four", DOUBLE * 4, DOUBLE * 3),
     ("ecdh", "the windows of a byte in the wrong order", "let shift = 4 - 4 * (at % 2);", "let shift = 4 * (at % 2);"),
-    ("ecdh", "a select that matches two indices", "(a ^ b) - 1 >> 63", "(a ^ b) - 2 >> 63"),
+    # Re-anchored (#381): #397 moved `eq_mask` to `std.p256_pt`, and this mutant no longer applied to `std/ecdh.cho`.
+    ("ecdh", "a select that matches two indices", "value_barrier(p256_pt.eq_mask(i, idx))", "value_barrier(p256_pt.eq_mask(i >> 1, idx >> 1))"),
     ("ecdh", "the table doubled, not stepped", "add_points(w, pt_table(i - 1), pt_table(1), pt_table(i));", "add_points(w, pt_table(i - 1), pt_table(i - 1), pt_table(i));"),
     ("ecdh", "infinity with Y = 0", "bigmod.set_small(w, y_of(pt_table(0)), 1);", "bigmod.set_small(w, y_of(pt_table(0)), 0);"),
     ("ecdh", "the on-curve check skipped", "if !on_curve(work) {", "if !on_curve(work) && false {"),
@@ -42,8 +43,10 @@ MUTANTS = [
     ("ecdh", "the scalar compared the wrong way", "int_of(s[i]) - int_of(n[i]) - under", "int_of(n[i]) - int_of(s[i]) - under"),
     ("ecdh", "the public key's y from X", "bigmod.mul(w, y_of(a), t(0), t(1));", "bigmod.mul(w, x_of(a), t(0), t(1));"),
     ("ecdh", "a point's first byte not checked", "if len(peer) != 1 + 2 * size || int_of(peer[0]) != 4 {", "if len(peer) != 1 + 2 * size {"),
-    ("bigmod", "the reduction's mask inverted", "let m = value_barrier(under - 1);", "let m = value_barrier(0 - under);"),
-    ("bigmod", "the reduction blind to the carry limb", "under = w[x + k] - under >> 63 & 1;", "under = 0 - under >> 63 & 1;"),
+    ("bigmod", "the reduction's mask inverted", "let m = value_barrier(below - 1);", "let m = value_barrier(0 - below);"),
+    ("bigmod", "the reduction blind to the carry limb", "let (top, below) = sub_borrow(xs[k], 0, under);", "let (top, below) = sub_borrow(0, 0, under);"),
+    # #381: P-384's n and p fill their top 64-bit limb, so `modulus_bits` must read it as unsigned; `inverse` uses it.
+    ("bigmod", "a modulus with its top bit set measured short", "    if top < 0 {\n", "    if top < 0 && false {\n"),
     ("bigmod", "a negative difference left unreduced", "let m = value_barrier(0 - under);\n    var carry", "let m = 0;\n    var carry"),
 ]
 
@@ -99,17 +102,28 @@ def evidence():
     for first in ("00", "02", "03", "05"):
         cases.append(f"S 256 {'07' * 32} {first}{g}")
         checks.append(lambda a: a.startswith("-54 "))
+    # P-384's own check of the encoding (#381): since #397 P-256's `shared` checks it in `std.p256_pt`, so the cases above no
+    # longer reach `std.ecdh`'s.
+    g384 = ("aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7"
+            "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f")
+    for first in ("00", "02", "03", "05"):
+        cases.append(f"S 384 {'07' * 48} {first}{g384}")
+        checks.append(lambda a: a.startswith("-54 "))
     return cases, checks
 
 
 def powers():
     """a^e mod n at moduli of 30 to 330 bits, each a multiple of 30 and
-    near its top, where the reduction's carry limb is reached."""
+    near its top, where the 30-bit limbs' reduction reached its carry limb;
+    then of 64 to 576 bits, each a multiple of 64, where the 64-bit limbs'
+    does (docs/wide-multiply.md §11), and the top limb's top bit is set."""
     rng = random.Random(30)
     cases, wants = [], []
-    for limbs in range(1, 12):
-        bits = 30 * limbs
+    widths = [30 * limbs for limbs in range(1, 12)] + [64 * limbs for limbs in range(1, 10)]
+    for bits in widths:
         size = (bits + 7) // 8
+        if bits == 64:
+            rng = random.Random(64)
         for _ in range(20):
             n = rng.randrange(2 ** (bits - 1), 2 ** bits) | 1 | (2 ** bits - 2 ** (bits - 8))
             a, e = rng.randrange(n), rng.randrange(1, 2 ** 64)

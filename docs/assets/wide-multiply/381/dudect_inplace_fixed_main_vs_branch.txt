@@ -1,0 +1,143 @@
+# in-place ChaCha20-Poly1305 dudect, fixed harness (each record copied into one set of buffers before timing); gram, Intel Core i7-1260P, Linux 7.0.0-38-generic, x86-64, LLVM; taskset -c 0-1 (one physical core); governor cpu0/cpu1 powersave/powersave
+# main = the compiler of origin/main at 8920be5d (#463 and #467 merged; old Poly1305), branch = the compiler of p256-wide-multiply at cf02de1d (new Poly1305; its std/chacha20.cho and std/field25519_51.cho are the PR head's); the same fixed tests/programs/gcm_timing.cho (this PR) built by each
+## main size 64 round 1 start 2026-10-13T13:37:56+02:00 load average: 1,16, 1,12, 0,91
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1599 cycles, max |t| = 1.50
+open, data  1000000 samples, median 979 cycles, max |t| = 2.17
+open, tag   1000000 samples, median 991 cycles, max |t| = 1.98
+## branch size 64 round 1 start 2026-10-13T13:38:32+02:00 load average: 1,17, 1,13, 0,92
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1681 cycles, max |t| = 1.37
+open, data  1000000 samples, median 934 cycles, max |t| = 2.51
+open, tag   1000000 samples, median 931 cycles, max |t| = 1.92
+## main size 64 round 2 start 2026-10-13T13:39:09+02:00 load average: 1,14, 1,13, 0,93
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1757 cycles, max |t| = 2.48
+open, data  1000000 samples, median 1020 cycles, max |t| = 1.90
+open, tag   1000000 samples, median 1028 cycles, max |t| = 1.74
+## branch size 64 round 2 start 2026-10-13T13:39:46+02:00 load average: 1,14, 1,12, 0,93
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1700 cycles, max |t| = 1.35
+open, data  1000000 samples, median 930 cycles, max |t| = 1.47
+open, tag   1000000 samples, median 932 cycles, max |t| = 1.75
+## main size 64 round 3 start 2026-10-13T13:40:24+02:00 load average: 1,08, 1,11, 0,94
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1775 cycles, max |t| = 1.52
+open, data  1000000 samples, median 1031 cycles, max |t| = 1.44
+open, tag   1000000 samples, median 997 cycles, max |t| = 1.59
+## branch size 64 round 3 start 2026-10-13T13:41:07+02:00 load average: 1,18, 1,14, 0,96
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1692 cycles, max |t| = 1.18
+open, data  1000000 samples, median 949 cycles, max |t| = 2.29
+open, tag   1000000 samples, median 937 cycles, max |t| = 1.73
+## main size 64 round 4 start 2026-10-13T13:41:45+02:00 load average: 1,41, 1,19, 0,98
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1775 cycles, max |t| = 1.40
+open, data  1000000 samples, median 1011 cycles, max |t| = 1.40
+open, tag   1000000 samples, median 1105 cycles, max |t| = 1.55
+## branch size 64 round 4 start 2026-10-13T13:42:24+02:00 load average: 1,27, 1,18, 0,99
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1767 cycles, max |t| = 2.11
+open, data  1000000 samples, median 958 cycles, max |t| = 1.87
+open, tag   1000000 samples, median 932 cycles, max |t| = 1.33
+## main size 64 round 5 start 2026-10-13T13:43:01+02:00 load average: 1,21, 1,17, 1,00
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1757 cycles, max |t| = 2.03
+open, data  1000000 samples, median 1014 cycles, max |t| = 3.01
+open, tag   1000000 samples, median 1030 cycles, max |t| = 1.63
+## branch size 64 round 5 start 2026-10-13T13:43:39+02:00 load average: 1,40, 1,22, 1,02
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 2338 cycles, max |t| = 2.02
+open, data  1000000 samples, median 1009 cycles, max |t| = 1.60
+open, tag   1000000 samples, median 959 cycles, max |t| = 2.05
+## main size 64 round 6 start 2026-10-13T13:44:19+02:00 load average: 1,44, 1,25, 1,04
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1749 cycles, max |t| = 1.92
+open, data  1000000 samples, median 1028 cycles, max |t| = 1.90
+open, tag   1000000 samples, median 1058 cycles, max |t| = 1.58
+## branch size 64 round 6 start 2026-10-13T13:44:57+02:00 load average: 1,22, 1,22, 1,04
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1682 cycles, max |t| = 1.96
+open, data  1000000 samples, median 929 cycles, max |t| = 2.68
+open, tag   1000000 samples, median 952 cycles, max |t| = 1.55
+## main size 64 round 7 start 2026-10-13T13:45:35+02:00 load average: 1,12, 1,19, 1,03
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1805 cycles, max |t| = 1.88
+open, data  1000000 samples, median 1078 cycles, max |t| = 1.40
+open, tag   1000000 samples, median 1065 cycles, max |t| = 1.34
+## branch size 64 round 7 start 2026-10-13T13:46:14+02:00 load average: 1,06, 1,17, 1,03
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1694 cycles, max |t| = 1.25
+open, data  1000000 samples, median 952 cycles, max |t| = 1.36
+open, tag   1000000 samples, median 951 cycles, max |t| = 2.22
+## main size 64 round 8 start 2026-10-13T13:46:51+02:00 load average: 1,03, 1,14, 1,02
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1779 cycles, max |t| = 1.37
+open, data  1000000 samples, median 1070 cycles, max |t| = 0.93
+open, tag   1000000 samples, median 1044 cycles, max |t| = 1.72
+## branch size 64 round 8 start 2026-10-13T13:47:30+02:00 load average: 1,11, 1,15, 1,03
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1707 cycles, max |t| = 1.25
+open, data  1000000 samples, median 988 cycles, max |t| = 1.65
+open, tag   1000000 samples, median 930 cycles, max |t| = 1.50
+## main size 64 round 9 start 2026-10-13T13:48:09+02:00 load average: 1,11, 1,15, 1,03
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1769 cycles, max |t| = 1.69
+open, data  1000000 samples, median 1021 cycles, max |t| = 1.94
+open, tag   1000000 samples, median 1068 cycles, max |t| = 1.97
+## branch size 64 round 9 start 2026-10-13T13:48:48+02:00 load average: 1,29, 1,20, 1,06
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1715 cycles, max |t| = 1.90
+open, data  1000000 samples, median 928 cycles, max |t| = 2.48
+open, tag   1000000 samples, median 949 cycles, max |t| = 2.45
+## main size 64 round 10 start 2026-10-13T13:49:25+02:00 load average: 1,29, 1,22, 1,07
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1763 cycles, max |t| = 2.19
+open, data  1000000 samples, median 1036 cycles, max |t| = 1.59
+open, tag   1000000 samples, median 1030 cycles, max |t| = 2.39
+## branch size 64 round 10 start 2026-10-13T13:50:06+02:00 load average: 1,44, 1,27, 1,09
+in place, ChaCha20-Poly1305, 64-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 1714 cycles, max |t| = 1.67
+open, data  1000000 samples, median 928 cycles, max |t| = 2.68
+open, tag   1000000 samples, median 957 cycles, max |t| = 0.87
+## main size 1024 round 1 start 2026-10-13T13:50:43+02:00 load average: 1,24, 1,24, 1,09
+in place, ChaCha20-Poly1305, 1024-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 14887 cycles, max |t| = 1.15
+open, data  1000000 samples, median 2879 cycles, max |t| = 3.13
+open, tag   1000000 samples, median 2941 cycles, max |t| = 1.05
+## branch size 1024 round 1 start 2026-10-13T13:51:29+02:00 load average: 1,26, 1,24, 1,10
+in place, ChaCha20-Poly1305, 1024-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 13924 cycles, max |t| = 2.31
+open, data  1000000 samples, median 2054 cycles, max |t| = 1.83
+open, tag   1000000 samples, median 2169 cycles, max |t| = 2.41
+## main size 1024 round 2 start 2026-10-13T13:52:16+02:00 load average: 1,11, 1,20, 1,09
+in place, ChaCha20-Poly1305, 1024-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 14598 cycles, max |t| = 2.16
+open, data  1000000 samples, median 2878 cycles, max |t| = 1.09
+open, tag   1000000 samples, median 3311 cycles, max |t| = 1.28
+## branch size 1024 round 2 start 2026-10-13T13:53:02+02:00 load average: 1,20, 1,20, 1,10
+in place, ChaCha20-Poly1305, 1024-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 14030 cycles, max |t| = 2.08
+open, data  1000000 samples, median 2042 cycles, max |t| = 1.44
+open, tag   1000000 samples, median 2050 cycles, max |t| = 1.52
+## main size 1024 round 3 start 2026-10-13T13:53:49+02:00 load average: 1,30, 1,25, 1,11
+in place, ChaCha20-Poly1305, 1024-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 14820 cycles, max |t| = 2.13
+open, data  1000000 samples, median 2935 cycles, max |t| = 1.37
+open, tag   1000000 samples, median 2883 cycles, max |t| = 2.74
+## branch size 1024 round 3 start 2026-10-13T13:54:36+02:00 load average: 1,20, 1,22, 1,11
+in place, ChaCha20-Poly1305, 1024-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 14069 cycles, max |t| = 1.55
+open, data  1000000 samples, median 2006 cycles, max |t| = 1.81
+open, tag   1000000 samples, median 2042 cycles, max |t| = 1.17
+## main size 1024 round 4 start 2026-10-13T13:55:21+02:00 load average: 1,09, 1,19, 1,10
+in place, ChaCha20-Poly1305, 1024-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 15060 cycles, max |t| = 2.70
+open, data  1000000 samples, median 2941 cycles, max |t| = 1.75
+open, tag   1000000 samples, median 3630 cycles, max |t| = 1.50
+## branch size 1024 round 4 start 2026-10-13T13:56:18+02:00 load average: 4,32, 1,89, 1,33
+in place, ChaCha20-Poly1305, 1024-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 31506 cycles, max |t| = 2.44
+open, data  1000000 samples, median 2118 cycles, max |t| = 2.14
+open, tag   1000000 samples, median 3392 cycles, max |t| = 1.97
+# end 2026-10-13T13:57:30+02:00 load average: 4,43, 2,60, 1,64

@@ -1,0 +1,9 @@
+# commit ed51aed6 (rebased onto #463) (branch p256-wide-multiply); machine gram, Intel Core i7-1260P, Linux 7.0.0-38-generic, x86-64; LLVM backend
+# taskset -c 0-1 (one physical core, both threads); governor of cpu0/cpu1: powersave/powersave
+# start: 2026-10-13T11:43:20+02:00;  11:43:20 up 6 days,  1:02,  5 users,  load average: 0,68, 0,94, 1,64
+# python3 scripts/gcm_timing.py gcm_timing 1000000 --chacha20 --in-place --size 1024
+in place, ChaCha20-Poly1305, 1024-byte messages, pools of 256 records a class
+seal, data  1000000 samples, median 13053 cycles, max |t| = 2.08
+open, data  1000000 samples, median 1917 cycles, max |t| = 1.54
+open, tag   1000000 samples, median 1950 cycles, max |t| = 1.35
+# end: 2026-10-13T11:44:01+02:00;  11:44:01 up 6 days,  1:03,  5 users,  load average: 1,14, 1,02, 1,64

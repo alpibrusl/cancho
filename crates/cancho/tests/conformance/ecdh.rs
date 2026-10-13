@@ -268,9 +268,10 @@ fn every_refusal_is_reached_with_its_own_tag() {
 }
 
 /// `std.bigmod`'s constant-time reduction (`docs/ecdh.md` §2), through
-/// `pow_mod` at moduli whose length is a multiple of 30 bits, where a sum
-/// or a Montgomery product reaches the carry limb. P-256 and P-384 never
-/// do, so the cases above cannot show it.
+/// `pow_mod` at moduli whose length is a multiple of 30 or 64 bits, where a sum
+/// or a Montgomery product reaches the carry limb. On the 30-bit limbs P-256
+/// and P-384 never did, so the cases above could not show it; on the 64-bit
+/// limbs (`docs/wide-multiply.md` §11) P-384 is such a modulus itself.
 #[test]
 fn bigmod_powers_at_every_limb_boundary_pass_on_both_backends() {
     let text =
@@ -283,7 +284,7 @@ fn bigmod_powers_at_every_limb_boundary_pass_on_both_backends() {
             (case.to_string(), want.to_string())
         })
         .collect();
-    assert_eq!(rows.len(), 220);
+    assert_eq!(rows.len(), 400);
     let cases: Vec<String> = rows.iter().map(|r| r.0.clone()).collect();
     for backend in ["llvm", "cranelift"] {
         let dir = scratch(&format!("bigmod-powers-{backend}"));

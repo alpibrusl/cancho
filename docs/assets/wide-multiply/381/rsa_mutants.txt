@@ -1,0 +1,30 @@
+# commit 8a596168 (std.bigmod as at the head); lexsys-hooks-env, arm64 Linux on the M4 (Docker), pyca/cryptography 41.0.7, OpenSSL 3.0.13; python3 scripts/rsa_mutants.py <cancho>
+unmutated: passes 3819 cases and the differential
+killed        bigmod: n' not negated: case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -19 rsa-pss-trailer -
+killed        bigmod: too few Newton steps for n': case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -19 rsa-pss-trailer -
+killed        bigmod: the final subtraction only on a carry: the pow_mod differential
+killed        bigmod: the accumulator's carry limb dropped: case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -19 rsa-pss-trailer -
+killed        bigmod: a byte loaded into the wrong place of its limb: case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -19 rsa-pss-trailer -
+killed        bigmod: a byte stored from the wrong place of its limb: case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -21 rsa-pss-padding -
+killed        bigmod: R^2 one doubling short: case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -19 rsa-pss-trailer -
+killed        bigmod: the multiplication's carry dropped: case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -19 rsa-pss-trailer -
+killed        bigmod: the reduction's carry dropped: case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -19 rsa-pss-trailer -
+killed        bigmod: limbs compared as signed: case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -16 rsa-signature-range -
+killed        bigmod: the exponent's second bit skipped: case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -19 rsa-pss-trailer -
+killed        bigmod: a = n accepted: case 3813: M 0b 03 0b...: 0 ok 00
+killed        bigmod: an even modulus accepted: case 3812: M 10 03 01...: 0 ok 00
+killed        bigmod: a^0 as 0: case 3814: M 0b 00 05...: 0 ok 00
+killed        rsa: the DigestInfo's OID arc fixed at SHA-256: case 1201: P 48 00cda6fa5ca76bfe0492ec57e...: -17 rsa-pkcs1-mismatch -
+killed        rsa: one FF short: case 942: P 32 00a2b451a07d0aa5f96e45567...: -17 rsa-pkcs1-mismatch -
+killed        rsa: the block's last byte not compared: case 1153: P 32 00a2b451a07d0aa5f96e45567...: 0 ok -
+killed        rsa: an exponent over 64 bits (#317): case 3816: P 32 00a2b451a07d0aa5f96e45567...: -17 rsa-pkcs1-mismatch -
+killed        rsa: a short signature accepted: the driver stopped (status -4) after 1140 of 3819 cases
+killed        rsa: the PSS trailer misread: case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -19 rsa-pss-trailer -
+killed        rsa: the PSS top bits not checked: case 445: S 32 32 32 00c6fe23792566023c2...: 0 ok -
+killed        rsa: the PSS separator may be 0: case 85: S 32 32 0 00a2b451a07d0aa5f96e...: 0 ok -
+killed        rsa: MGF1's counter from 1: case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -21 rsa-pss-padding -
+killed        rsa: M' with 7 zero bytes: case 0: S 32 32 0 00a2b451a07d0aa5f96e...: -22 rsa-pss-mismatch -
+killed        rsa: the salt read one byte early: case 103: S 32 32 32 00a2b451a07d0aa5f96...: -22 rsa-pss-mismatch -
+killed        rsa: emLen one byte short allowed: case 3818: S 32 32 223 00a2b451a07d0aa5f9...: -19 rsa-pss-trailer -
+26 mutants, 26 killed
+exit 0

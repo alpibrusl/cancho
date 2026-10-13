@@ -1,0 +1,49 @@
+# commit b2651fea (branch p256-wide-multiply); machine gram, Intel Core i7-1260P, Linux 7.0.0-38-generic, x86-64; LLVM backend
+# taskset -c 0-1 (one physical core, both threads); governor of cpu0/cpu1: powersave/powersave
+# start: 2026-10-13T08:34:15+02:00;  08:34:15 up 5 days, 21:53,  5 users,  load average: 4,62, 4,62, 3,31
+# python3 scripts/ecdsa_sign_timing.py sign_timing 1000000
+  fixed key: 49900 samples, 4 s
+  fixed key: 99800 samples, 8 s
+  fixed key: 149700 samples, 12 s
+  fixed key: 199600 samples, 15 s
+  fixed key: 249500 samples, 20 s
+  fixed key: 299400 samples, 24 s
+  fixed key: 349300 samples, 29 s
+  fixed key: 399200 samples, 34 s
+  fixed key: 449100 samples, 40 s
+  fixed key: 499000 samples, 44 s
+  fixed key: 548900 samples, 48 s
+  fixed key: 598800 samples, 52 s
+  fixed key: 648700 samples, 57 s
+  fixed key: 698600 samples, 61 s
+  fixed key: 748500 samples, 65 s
+  fixed key: 798400 samples, 72 s
+  fixed key: 848300 samples, 80 s
+  fixed key: 898200 samples, 90 s
+  fixed key: 948100 samples, 98 s
+  fixed key: 998000 samples, 104 s
+  fixed key: 1000000 samples, 105 s
+P-256 sign, fixed key 1000000 samples, median 213032 cycles, max |t| = 1.61
+  key 1: 49900 samples, 6 s
+  key 1: 99800 samples, 10 s
+  key 1: 149700 samples, 14 s
+  key 1: 199600 samples, 18 s
+  key 1: 249500 samples, 23 s
+  key 1: 299400 samples, 28 s
+  key 1: 349300 samples, 32 s
+  key 1: 399200 samples, 37 s
+  key 1: 449100 samples, 42 s
+  key 1: 499000 samples, 46 s
+  key 1: 548900 samples, 51 s
+  key 1: 598800 samples, 55 s
+  key 1: 648700 samples, 61 s
+  key 1: 698600 samples, 67 s
+  key 1: 748500 samples, 74 s
+  key 1: 798400 samples, 81 s
+  key 1: 848300 samples, 88 s
+  key 1: 898200 samples, 94 s
+  key 1: 948100 samples, 99 s
+  key 1: 998000 samples, 104 s
+  key 1: 1000000 samples, 104 s
+P-256 sign, key 1     1000000 samples, median 215300 cycles, max |t| = 2.29
+# end: 2026-10-13T08:38:25+02:00;  08:38:25 up 5 days, 21:57,  8 users,  load average: 6,32, 4,82, 3,66

@@ -1,0 +1,45 @@
+# commit d4436b62b0649a557730b563bb567c43816daf70; Linux 6.8.0-100-generic aarch64; pyca/cryptography 41.0.7; OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)
+# start 2026-10-13T06:54:00+00:00
+## python3 scripts/ecdsa_sign_differential.py openssl /tmp/drv/sign_llvm /tmp/drv/ecdsa_llvm 10000
+openssl: 10000 signatures; 10000 accepted by both OpenSSL and std.ecdsa, 10000 with a bit flipped refused by both; 0 differences
+## exit 0
+## python3 scripts/ecdsa_sign_differential.py reference /tmp/drv/sign_llvm 10000
+reference: 10000 signatures and their DER against RFC 6979 in Python; 0 differences
+## exit 0
+## python3 scripts/ecdsa_sign_differential.py keys /tmp/drv/sign_llvm 100
+keys: 100 keys (67 PKCS#8, 33 after an EC PARAMETERS block), each also as SEC 1: 600 checks, 0 differences
+## exit 0
+## python3 scripts/ecdsa_differential.py /tmp/drv/ecdsa_llvm openssl 4000
+openssl: 4000 signatures a curve and each flipped; openssl accepted 8000 of 16000; 0 differences
+## exit 0
+## python3 scripts/ecdsa_differential.py /tmp/drv/ecdsa_llvm registers 20000
+registers: 20000 operations, 0 differences
+## exit 0
+## python3 scripts/ecdh_differential.py /tmp/drv/ecdh_llvm 1000
+OpenSSL 3.0.13 30 Jan 2024: 1000 key pairs a curve, 4200 checks, 0 differences
+## exit 0
+## python3 scripts/p256_field_differential.py /tmp/drv/p256_llvm 20000
+444704 cases, 0 differences
+## exit 0
+## python3 scripts/p256_field_differential.py /tmp/drv/p256_cranelift 3000
+69476 cases, 0 differences
+## exit 0
+## python3 scripts/rsa_differential.py /tmp/drv/rsa_llvm pow 20000
+pow_mod: 20000 cases, 0 differences
+## exit 0
+## python3 scripts/rsa_differential.py /tmp/drv/rsa_llvm openssl 2000
+openssl: 2000 signatures, 2000 flipped; openssl accepted 2000, refused 2000; 0 differences
+## exit 0
+## python3 scripts/rsa_differential.py /tmp/drv/rsa_cranelift pow 2000
+pow_mod: 2000 cases, 0 differences
+## exit 0
+## python3 scripts/aead_differential.py /tmp/drv/aead_llvm 20000
+OpenSSL 3.0.13 30 Jan 2024: 20000 cases, 60000 checks, 0 differences
+## exit 0
+## python3 scripts/aead_differential.py /tmp/drv/aead_cranelift 2000
+OpenSSL 3.0.13 30 Jan 2024: 2000 cases, 6000 checks, 0 differences
+## exit 0
+## python3 scripts/ecdh_differential.py /tmp/drv/ecdh_cranelift 100
+OpenSSL 3.0.13 30 Jan 2024: 100 key pairs a curve, 420 checks, 0 differences
+## exit 0
+# end 2026-10-13T07:08:21+00:00

@@ -36,15 +36,16 @@ fn shr51(hi: int, lo: int) -> [] int {
     return lo >> 51 & 0x1fff | hi << 13;
 }
 
-// `(hi, lo) + a * b` as a 128-bit accumulator.
-fn mac(hi: int, lo: int, a: int, b: int) -> [] (int, int) {
+// `(hi, lo) + a * b` as a 128-bit accumulator. Public: `std.p256_kernels`
+// and `std.chacha20`'s Poly1305 sum their columns with it too (#381).
+pub fn mac(hi: int, lo: int, a: int, b: int) -> [] (int, int) {
     let (h, l) = mul_wide(a, b);
     let (s, c) = add_carry(lo, l, 0);
     return (wrapping_add(wrapping_add(hi, h), c), s);
 }
 
-// `(hi, lo) + w` for a word `w`.
-fn addw(hi: int, lo: int, w: int) -> [] (int, int) {
+// `(hi, lo) + w` for a word `w`. Public, as `mac`.
+pub fn addw(hi: int, lo: int, w: int) -> [] (int, int) {
     let (s, c) = add_carry(lo, w, 0);
     return (wrapping_add(hi, c), s);
 }
