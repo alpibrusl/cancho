@@ -257,7 +257,7 @@ All under 4.5. **Two findings on the way, both in this change:**
    cycle in 780, with a sign that changed from run to run. Interleaving the classes did not cure it (control |t| 6 to 8.7);
    copying each measurement's record into the same three buffers before the clock starts did (control 1.3 to 2.6). Every
    figure in the table is from that harness. `scripts/gcm_timing.py`'s pooled mode lays its classes out the old way; its
-   results were not re-examined here.
+   results were not re-examined here (#468).
 
 **Not measured:** a timing test on aarch64 at 10^6 (a run of 2 x 10^4 a test on the M4 under macOS, with the first harness,
 gave max |t| 1.1 to 2.4), the Cranelift build, and anything under DOITM (Intel's data-operand-independent-timing mode, which this
