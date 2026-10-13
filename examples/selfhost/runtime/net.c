@@ -61,7 +61,7 @@ extern int fcntl(int, int, ...);
 extern int getaddrinfo(const char *, const char *, const void *, void **);
 extern void freeaddrinfo(void *);
 extern int clock_gettime(int, void *);
-extern i64 *cancho_errno_location(void);
+extern int *cancho_errno_location(void);
 #define ERRNO (*cancho_errno_location())
 
 static int netrt_tcp_socket(int kind) {

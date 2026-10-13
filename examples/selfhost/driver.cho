@@ -30,6 +30,7 @@ import selfhost.checker;
 import selfhost.body;
 import selfhost.emit;
 import selfhost.externcode;
+import selfhost.platform;
 import selfhost.instances;
 import selfhost.pass1;
 import selfhost.runtime;
@@ -127,7 +128,7 @@ fn runtime_declares[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] boo
     if pass1.is_word(st, text, name, "putchar") || pass1.is_word(st, text, name, "malloc") || pass1.is_word(st, text, name, "free") || pass1.is_word(st, text, name, "memmove") || pass1.is_word(st, text, name, "memchr") || pass1.is_word(st, text, name, "getchar") || pass1.is_word(st, text, name, "write") {
         return true;
     }
-    return preamble_declares(st, text, name, runtime.text()) || st[55] != 0 && preamble_declares(st, text, name, runtime.net_text(st[61] != 0));
+    return preamble_declares(st, text, name, runtime.text()) || st[55] & 1 != 0 && preamble_declares(st, text, name, runtime.net_text(st[61] == 1)) || st[55] & 2 != 0 && preamble_declares(st, text, name, runtime.dirs_text(st[61] == 1));
 }
 
 // Does a line of this preamble that starts with `declare` name the function `name`?
@@ -190,7 +191,7 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "declare i32 @pthread_create(ptr, ptr, ptr, ptr)\ndeclare i32 @pthread_join(ptr, ptr)\n");
     emit.str(st, "declare double @llvm.sqrt.f64(double)\ndeclare float @llvm.sqrt.f32(float)\n");
     emit.str(st, "declare i32 @getchar()\ndeclare i64 @write(i32, ptr, i64)\n\n");
-    emit.str(st, runtime.errno_location(st[61] != 0));
+    emit.str(st, runtime.errno_location(st[61] == 1));
     emit.str(st, runtime.text());
     emit.str(st, "define i64 @cancho_write_bytes(ptr %p, i64 %n) {\nentry:\n  br label %head\nhead:\n");
     emit.str(st, "  %i = phi i64 [ 0, %entry ], [ %next, %body ]\n  %more = icmp slt i64 %i, %n\n  br i1 %more, label %body, label %done\n");
@@ -277,9 +278,14 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     if entry != 0 {
         shim(st, entry_item);
     }
-    if st[55] != 0 {
+    if st[55] & 2 != 0 {
+        // A program that opens a directory has the support for them, and the constants of its target.
+        emit.str(st, runtime.dirs_text(st[61] == 1));
+        platform.print(st);
+    }
+    if st[55] & 1 != 0 {
         // A program that opens a socket or reads the clock has the support for them.
-        emit.str(st, runtime.net_text(st[61] != 0));
+        emit.str(st, runtime.net_text(st[61] == 1));
     }
     emit.str(st, "; left out: ");
     emit.nat(st, left_out);
@@ -511,11 +517,15 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
     return Built { ir: written, status: status, rule: rule, from: from, to: to };
 }
 
-// A line `TARGET darwin` or `TARGET linux` in front of the input says what the code is for (which libc names
-// differ): 1 for darwin, 0 for linux, and 0 if there is no such line.
+// A line `TARGET darwin`, `TARGET linux` or `TARGET linux aarch64` in front of the input says what the code is for
+// (which libc names and which constants differ): 1 for darwin, 2 for Linux on aarch64, 0 for Linux otherwise, and 0
+// if there is no such line.
 pub fn target_of[&r](raw: &r [byte]) -> [] int {
     if len(raw) >= 14 && lc.spells(raw, 0, 14, "TARGET darwin\n") {
         return 1;
+    }
+    if len(raw) >= 21 && lc.spells(raw, 0, 21, "TARGET linux aarch64\n") {
+        return 2;
     }
     return 0;
 }
@@ -524,6 +534,9 @@ pub fn target_of[&r](raw: &r [byte]) -> [] int {
 pub fn target_skip[&r](raw: &r [byte]) -> [] int {
     if len(raw) >= 14 && lc.spells(raw, 0, 14, "TARGET darwin\n") {
         return 14;
+    }
+    if len(raw) >= 21 && lc.spells(raw, 0, 21, "TARGET linux aarch64\n") {
+        return 21;
     }
     if len(raw) >= 13 && lc.spells(raw, 0, 13, "TARGET linux\n") {
         return 13;

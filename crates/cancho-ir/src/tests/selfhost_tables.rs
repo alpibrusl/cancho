@@ -485,6 +485,14 @@ fn render_runtime(dir: &std::path::Path) -> String {
         &std::fs::read_to_string(dir.join("runtime/net_darwin.ll"))
             .expect("examples/selfhost/runtime/net_darwin.ll"),
     );
+    let dirs_linux = escape(
+        &std::fs::read_to_string(dir.join("runtime/dirs_linux.ll"))
+            .expect("examples/selfhost/runtime/dirs_linux.ll"),
+    );
+    let dirs_darwin = escape(
+        &std::fs::read_to_string(dir.join("runtime/dirs_darwin.ll"))
+            .expect("examples/selfhost/runtime/dirs_darwin.ll"),
+    );
     format!(
         "module selfhost.runtime;\n\n\
          // runtime.cho -- the support the code of a few builtins calls.\n\
@@ -496,6 +504,9 @@ fn render_runtime(dir: &std::path::Path) -> String {
          // The sockets and the clock (`runtime/net.c`, built for each target by `runtime/make.sh`).\n\
          pub fn net_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{net_darwin}\";\n    }}\n    \
          return \"{net_linux}\";\n}}\n\n\
+         // The directory handles and listings (`runtime/dirs.c`).\n\
+         pub fn dirs_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{dirs_darwin}\";\n    }}\n    \
+         return \"{dirs_linux}\";\n}}\n\n\
          // The address of `errno`, which each target keeps under its own name.\n\
          pub fn errno_location(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        \
          return \"define ptr @cancho_errno_location() {{\\nentry:\\n  %p = call ptr @__error()\\n  ret ptr %p\\n}}\\ndeclare ptr @__error()\\n\\n\";\n    }}\n    \

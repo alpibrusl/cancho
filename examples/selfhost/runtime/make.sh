@@ -1,5 +1,5 @@
 #!/bin/sh
-# Rebuilds net_linux.ll and net_darwin.ll from net.c: no target, no attributes, nothing that is not portable.
+# Rebuilds net_linux.ll and net_darwin.ll from net.c, and dirs.ll from dirs.c: no target, no attributes, nothing that is not portable.
 cd "$(dirname "$0")" || exit 1
 for os in linux:0 darwin:1; do
   name=${os%%:*}; flag=${os##*:}
@@ -10,3 +10,13 @@ for os in linux:0 darwin:1; do
         -e 's/ noalias//g' -e 's/ nsw//g' -e 's/ nuw//g' -e 's/ dso_local//g' -e 's/ signext//g' -e 's/ zeroext//g' -e 's/ captures([a-z, ]*)//g' \
         -e 's/ memory([a-z: ,]*)//g' -e 's/ nofree//g' -e 's/ willreturn//g' -e 's/ initializes([^)]*)//g' > net_$name.ll
 done
+
+# The directory support differs by system only in the call that renames without replacing; the rest of what
+# differs (flags, offsets, errno values) is the array the compiler writes for the target.
+for os in linux:0 darwin:1; do
+  name=${os%%:*}; flag=${os##*:}
+  clang -S -emit-llvm -O0 -Xclang -disable-O0-optnone -DDARWIN=$flag -Wno-incompatible-library-redeclaration -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-discard-value-names -target arm64-apple-macos dirs.c -o - |
+    grep -v '^target \|^source_filename\|^!\|^attributes #\|^; ModuleID\|^declare i32 @close(\|^declare ptr @cancho_errno_location\|^declare void @llvm.trap\|^@cancho_plat\|^declare ptr @cancho_checked_path\|^declare void @free(\|^declare ptr @memchr(\|^declare ptr @memmove(\|^declare i64 @strlen(' |
+    sed -e 's/ #[0-9]* {/ {/' -e 's/ #[0-9]*$//' -e 's/, !llvm.loop ![0-9]*//' -e 's/ noundef//g' -e 's/ dso_local//g' -e 's/ signext//g' -e 's/ zeroext//g' > dirs_$name.ll
+done
+rm -f dirs.ll

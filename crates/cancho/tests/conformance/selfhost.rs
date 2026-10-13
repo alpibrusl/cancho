@@ -323,6 +323,7 @@ fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "codes.cho",
         "externcode.cho",
         "netcode.cho",
+        "platform.cho",
     ]
 }
 
@@ -682,4 +683,15 @@ fn the_lexer_in_cancho_agrees_with_the_rust_lexer() {
 #[test]
 fn the_parser_in_cancho_agrees_with_the_rust_parser() {
     agree("parser", &with_front_end("parser.cho"), ast_oracle::listing);
+}
+
+/// The first line of the input of the compiler in cancho: the system, and the architecture where Linux has two.
+pub(crate) fn target_line() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "darwin"
+    } else if cfg!(target_arch = "aarch64") {
+        "linux aarch64"
+    } else {
+        "linux"
+    }
 }

@@ -47,6 +47,7 @@ fn own_source(root_module: &str) -> String {
         "codes",
         "externcode",
         "netcode",
+        "platform",
         "exprs",
         "body",
         "listing",
@@ -56,7 +57,7 @@ fn own_source(root_module: &str) -> String {
         files.push(own.join(format!("{module}.cho")));
     }
     files.push(own.join(format!("{root_module}.cho")));
-    let target = if cfg!(target_os = "macos") { "darwin" } else { "linux" };
+    let target = super::target_line();
     let mut stream = format!("TARGET {target}\n");
     for file in files {
         let text = std::fs::read_to_string(&file).expect("a source file");
@@ -162,7 +163,7 @@ fn the_builder_in_cancho_builds_itself_with_no_help() {
 
     // And what it builds runs: a program of its own.
     let program = "fn main(world: World) -> [] int { release(world); return 42; }";
-    let target = if cfg!(target_os = "macos") { "darwin" } else { "linux" };
+    let target = super::target_line();
     let stream = format!("TARGET {target}\nFILE {}\n{program}", program.len());
     let made = dir.join("made");
     let mut child = Command::new(&third)

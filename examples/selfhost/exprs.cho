@@ -1542,24 +1542,18 @@ pub fn extern_call[&s, &x](st: &!s [int], text: &x [byte], id: int, it: int) -> 
 // evaluated and pushed, the capability that was narrowed to a bound is the first of some and is not pushed, and the
 // bound goes after the others.
 pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) -> [] Ex {
-    // A pipe is read and written, closed and made non-blocking as a connection is.
-    var which = number;
-    if number >= 49 {
-        which = number - 10;
-        if number >= 51 {
-            which = 44;
-        }
-        if number == 53 {
-            which = 41;
-        }
-    }
+    let which = netcode.canonical(number);
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let nargs = ast.get(st, id, 7);
     if nargs != netcode.arity(which) {
         return skip(st, from, to);
     }
-    st[55] = 1;
+    if netcode.needs_dirs(which) {
+        st[55] = st[55] | 2;
+    } else if which != 44 {
+        st[55] = st[55] | 1;
+    }
     let holds_bound = netcode.holds_bound(which);
     let leads = holds_bound || which == 46 || which == 47;
     var cap = 0;
@@ -1582,9 +1576,7 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
     if holds_bound {
         push_prefix(st, text, cap);
     }
-    if which == 46 || which == 47 {
-        emit.push_arg(st, 1, true, which - 46, 0 - 1);
-    }
+    netcode.extras(st, which);
     let n = st[52] - first_arg;
     if netcode.slots(which) == 0 {
         return in_reg(1, netcode.call_int(st, netcode.function(which), n));
