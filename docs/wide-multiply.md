@@ -479,11 +479,13 @@ to free the core for the other measurements, then run whole). **Not run:** Crane
 In "open, tag" the two classes give Poly1305 the same key and the same bytes; they differ only in which byte of the tag that
 `open_in_place` compares is wrong, and that comparison is #463's, unchanged. Failures there, on both builds, are not Poly1305's
 data, and #463 recorded 22.26 on an unchanged function in the same harness on this machine. What the harness does differently
-from the one-shot test (which passed all eight tests on the branch) is give each class its own pool of buffers, written just
-before each timed call; an effect of those addresses (a store still draining, 4K aliasing against the new code's 8-byte reads of
-the block) would differ by class without any secret in it. That is a hypothesis, not measured. As it stands the branch fails this
-row more often (4 runs of 15 against 1 of 14), the bar is not met by every run, and a quiet machine was not available. It wants
-a rerun on a quiet core and a variant of the in-place test whose two classes share their buffers.
+from the one-shot test (which passed all eight tests on the branch) is copy each message byte by byte into the one buffer just
+before the timed call, so the call starts with those stores in flight, and the new code assembles a block from two 64-bit words
+(`le64`) where the old assembled four 32-bit ones; each class also takes its nonce and associated data from its own pool of records. Something in that
+(a load waiting on the stores, the pools' addresses) could move the time with the class and no secret in it. That is a
+hypothesis, not measured. As it stands the branch fails this row more often (4 runs of 15 against 1 of 14), the bar is not met
+by every run, and a quiet machine was not available. It wants a rerun on a quiet core, and a variant of the in-place test that
+fences the copy before the timed call and gives both classes one pool.
 
 **The branch audit** (`scripts/chacha20_branches.py` and `p256_ctx.py` over the x86-64 objects; `assets/wide-multiply/381/branches*.txt`):
 every P-256 kernel has exactly one conditional jump that is not to a trap, the `je` after `cmp $0xa` and `setge` on the three slice
