@@ -41,11 +41,11 @@ FILES = {
     "hello": ["packages/tls/record.cho", "packages/tls/message.cho", "packages/tls/hello.cho", "packages/x509/x509.cho"],
     "server": ["tests/programs/fuzz_server_fixture.cho", "tests/programs/fuzz_clientauth_fixture.cho"]
     + [f"packages/tls/{f}.cho" for f in ("tls", "record", "message", "slot", "cident", "client12", "client", "hello", "identity",
-                                        "clientauth", "ticket", "server")]
+                                        "clientauth", "ticket", "server", "saved")]
     + [f"packages/x509/{f}.cho" for f in ("verify", "names", "x509", "key")],
     "clientauth": ["tests/programs/fuzz_clientauth_fixture.cho"]
     + [f"packages/tls/{f}.cho" for f in ("tls", "record", "message", "slot", "cident", "client12", "client", "hello", "identity",
-                                        "clientauth", "ticket", "server")]
+                                        "clientauth", "ticket", "server", "saved")]
     + [f"packages/x509/{f}.cho" for f in ("verify", "names", "x509", "key")],
 }
 ENV = dict(os.environ, AFL_SKIP_CPUFREQ="1", AFL_NO_UI="1",

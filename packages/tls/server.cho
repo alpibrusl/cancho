@@ -101,7 +101,7 @@ fn handshake_secrets[&i, &b, &s](ints: &!i [int], bytes: &!b [byte], secret: &s 
 // The one place the signer is called: `digest` (SHA-256 of
 // CertificateVerify's content) signed with identity `id`'s key, hedged
 // with the slot's randomness, verified under the identity's public point
-// before it is used (§3.3), and written into `der` as DER. Answers the
+// before it is used (§3.3; against the point's table, §3.5), and written into `der` as DER. Answers the
 // DER's length, or `server_sign_check`.
 fn sign[&i, &b, &c, &d, &o](ints: &!i [int], bytes: &b [byte], cfg: &c [byte], id: int, digest: &d [byte], der: &!o [byte]) -> [] int {
     var n = tls_record.server_sign_check();
@@ -109,7 +109,8 @@ fn sign[&i, &b, &c, &d, &o](ints: &!i [int], bytes: &b [byte], cfg: &c [byte], i
         let sig = alloc_slice[r](64, byte_of(0));
         // `std.ecdh`'s work, which the key exchange has finished with, is
         // the signer's (`ecdsa_sign.work_len()` is the same).
-        let code = ecdsa_sign.sign_checked(digest, tls_identity.key(cfg, id), tls_identity.point(cfg, id), bytes[tls_slot.k_sign_extra()..tls_slot.k_sign_extra() + 32], sig, ints[tls_slot.i_ecdh_work()..tls_slot.i_ecdh_work() + ecdh.work_len()]);
+        // The check verifies under the identity's table, which begins with its point (`docs/tls-server.md` §3.5).
+        let code = ecdsa_sign.sign_checked(digest, tls_identity.key(cfg, id), tls_identity.check_key(cfg, id), bytes[tls_slot.k_sign_extra()..tls_slot.k_sign_extra() + 32], sig, ints[tls_slot.i_ecdh_work()..tls_slot.i_ecdh_work() + ecdh.work_len()]);
         if code == 0 {
             n = ecdsa_sign.to_der(sig, der);
             if n < 0 {

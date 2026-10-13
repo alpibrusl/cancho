@@ -3,6 +3,7 @@
 
     cancho build --std --backend llvm tests/programs/p256_profile.cho -o p256_profile
     python3 scripts/p256_bench.py ./p256_profile [--vs ./p256_profile_before] [op ...]
+    python3 scripts/p256_bench.py --p384 ./p384_profile        # tests/programs/p384_profile.cho (docs/p256-fast.md §12)
 
 The driver reads `<op> <rounds>` and runs the operation `rounds` times (its
 header lists the ops). The time of one is (T(rounds) - T(1)) / (rounds - 1),
@@ -33,8 +34,17 @@ OPS = {
     "k": ("ecdsa_sign.sign", 300),
     "c": ("ecdsa_sign.sign_checked", 300),
     "v": ("ecdsa.verify_raw", 300),
+    "t": ("ecdsa.verify_raw_tabled", 300),
+    "u": ("ecdsa_sign.sign_checked_tabled", 300),
+    "b": ("ecdsa.build_table", 100),
 }
-END_TO_END = "ghkcv"
+END_TO_END = "ghkcvtub"
+# P-384 on `std.bigmod` (tests/programs/p384_profile.cho), measured and decided in docs/p256-fast.md §12.
+OPS_P384 = {
+    "g": ("ecdh.public_key P-384", 30),
+    "h": ("ecdh.shared P-384", 30),
+    "v": ("ecdsa.verify_raw P-384", 30),
+}
 
 
 def once(driver, op, rounds):
@@ -56,7 +66,11 @@ def per_op(drivers, op, rounds):
 
 
 def main():
+    global OPS
     args = sys.argv[1:]
+    if "--p384" in args:
+        args.remove("--p384")
+        OPS = OPS_P384
     drivers = [args.pop(0)]
     if "--vs" in args:
         i = args.index("--vs")

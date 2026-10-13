@@ -117,6 +117,28 @@ recover the key. §9's question 3 asks whether that cost stays.
 signatures are also compared byte for byte with RFC 6979 written in Python (`docs/ecdsa-sign.md` §5.2). Results:
 `docs/ecdsa-sign.md` §5 and §6.*
 
+### 3.5 The check against the identity's table (B2 of #378, #380)
+
+*Added after #397, when the check of §3.3 had become a quarter of a full handshake (`docs/tls-performance.md` §10.4): the
+design is `docs/p256-fast.md` §11, measured before it was chosen.* The key that verifies every signature the server makes is
+always the same, its identity's, so each identity keeps a table of its public point, built once, and the check verifies against
+it: **2.03 times cheaper** (687k to 339k cycles on `gram`), the full server handshake **24% fewer instructions** and 1.85 to 1.46
+times `s_server`'s cycles (`docs/p256-fast.md` §11.4, §11.5).
+
+- **Where:** in the identity's stride of the configuration (`tls_identity`, the engine's `ids`), after the leaf's notAfter:
+  `o_table`, `p256_vf.table_len()` = 10,305 bytes. One per identity, engine-wide; no slot holds one. The configuration grows from
+  314,106 to 478,986 bytes of address space for its 16 identities; an identity never loaded is never written, so it is not resident.
+- **When:** `tls_identity.load`, the body of `add_identity` and `replace_identity`, builds it from the public point the key parser
+  derived (`p256_vf.build_table`), once every check has passed and while the identity is written. 151 to 159 µs on the M4.
+  A replacement builds the new key's; a refused one changes nothing, the table included. A build that failed (it cannot, for a point
+  the parser derived) would leave zeros, which match no point, and the check would verify without a table.
+- **What it is:** public data, the multiples of the public point; the private key is not read to build it. The check is the same
+  verification of the same signature as §3.3, on public data, with the same answers: `sign_checked` is given the table in the
+  point's place (it begins with the point, `docs/p256-fast.md` §11.2), by `tls_identity.check_key`, which gives the point instead
+  when the table is not the point's.
+- **Cleanup:** `tls.close` wipes the whole configuration (`tls_identity.wipe`), tables included. `tls.residue` counts the bytes of the
+  tables of identities not in use, which nothing may write.
+
 ## 4. Keys and certificates
 
 - **Formats.** A chain as PEM certificates, leaf first. A key as PEM `PRIVATE KEY` (PKCS#8, unencrypted) or `EC PRIVATE KEY`

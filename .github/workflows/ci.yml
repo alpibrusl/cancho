@@ -102,7 +102,7 @@ jobs:
         run: |
           cargo build --release -p cancho
           ./target/release/cancho build --std tests/programs/tls_many.cho \
-            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server}.cho \
+            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server,saved}.cho \
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_many"
       - name: The committed package stores are current (docs/package-system.md §7.4)
@@ -134,11 +134,11 @@ jobs:
           cargo build --release -p cancho
           echo "127.0.0.1 srv.example other.example a.wild.example" | sudo tee -a /etc/hosts
           ./target/release/cancho build --std tests/programs/tls_serve.cho \
-            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server}.cho \
+            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server,saved}.cho \
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_serve"
           ./target/release/cancho build --std tests/programs/tls_many.cho \
-            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server}.cho \
+            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server,saved}.cho \
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_many"
       - name: The server's interop matrix (docs/tls-server.md §10.2)
@@ -162,7 +162,7 @@ jobs:
           python3 scripts/tls_server_clientauth_interop.py "$RUNNER_TEMP/tls_serve"
           python3 scripts/tls_server_clientauth_differential.py "$RUNNER_TEMP/tls_serve"
           ./target/release/cancho build --std tests/programs/tls_server_driver.cho \
-            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server}.cho \
+            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server,saved}.cho \
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_server_driver"
           python3 scripts/tls_liar_client_auth.py "$RUNNER_TEMP/tls_server_driver" "$RUNNER_TEMP/liar_client_auth.txt"
@@ -192,7 +192,7 @@ jobs:
       - name: The TLS echo example (docs/tls-server.md §11)
         run: |
           ./target/release/cancho build --std examples/tls_echo/{tls_echo,echo,front,identity}.cho \
-            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server}.cho \
+            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server,saved}.cho \
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/tls_echo"
           python3 scripts/tls_echo_test.py "$RUNNER_TEMP/tls_echo" --cost 20
@@ -205,7 +205,7 @@ jobs:
         run: |
           ./target/release/cancho build --std examples/https_hello/{hello,loop,app}.cho \
             examples/tls_echo/{front,identity}.cho packages/http-server/server.cho \
-            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server}.cho \
+            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server,saved}.cho \
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/https_hello"
           python3 scripts/https_hello_test.py "$RUNNER_TEMP/https_hello"
@@ -224,7 +224,7 @@ jobs:
         run: |
           ./target/release/cancho build --std examples/http_fetch_nb/{fetch,fetch_io}.cho \
             packages/http-client/{slot,wire,client}.cho \
-            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server}.cho \
+            packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server,saved}.cho \
             packages/x509/{verify,names,x509,key}.cho \
             -o "$RUNNER_TEMP/http_fetch_nb"
           python3 scripts/http_client_test.py "$RUNNER_TEMP/http_fetch_nb" --https-hello "$RUNNER_TEMP/https_hello"

@@ -82,6 +82,7 @@ mod ingest;
 mod io;
 mod json;
 mod kdf;
+mod key_tables;
 mod mathfn;
 mod memory;
 mod modules;

@@ -21,7 +21,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TLS = ["tls.cho", "record.cho", "message.cho", "slot.cho", "cident.cho", "client12.cho", "client.cho", "hello.cho", "identity.cho",
-       "clientauth.cho", "ticket.cho", "server.cho"]
+       "clientauth.cho", "ticket.cho", "server.cho", "saved.cho"]
 X509 = ["verify.cho", "names.cho", "x509.cho", "key.cho"]
 
 # (name, file, the text replaced, its replacement). Each `old` must occur exactly once in its file.

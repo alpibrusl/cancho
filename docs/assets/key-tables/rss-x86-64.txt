@@ -1,0 +1,41 @@
+# gram, 2026-10-13T09:32:58+02:00; tests/programs/key_tables_rss.cho built by this branch (hsbin) and by origin/main 3d7e8e9d (base, without its two anchor_tables lines); VmRSS in KiB; /etc/ssl/certs/ca-certificates.crt has 124 roots here
+== hsbin
+server engine open 1976
+identity added (code) 0
+after add_identity 2184
+client engine open 2184
+roots trusted (the test CA) 1
+after trust 2204
+anchor tables 1
+roots trusted (the system bundle) 124
+after trust 2536
+anchor tables 3
+== ../cancho-ecc-tables-base/hsbin
+server engine open 2000
+identity added (code) 0
+after add_identity 2176
+client engine open 2176
+roots trusted (the test CA) 1
+after trust 2184
+roots trusted (the system bundle) 124
+after trust 2492
+== hsbin
+server engine open 2044
+identity added (code) 0
+after add_identity 2192
+client engine open 2192
+roots trusted (the test CA) 1
+after trust 2208
+anchor tables 1
+roots trusted (the system bundle) 124
+after trust 2540
+anchor tables 3
+== ../cancho-ecc-tables-base/hsbin
+server engine open 2028
+identity added (code) 0
+after add_identity 2176
+client engine open 2176
+roots trusted (the test CA) 1
+after trust 2184
+roots trusted (the system bundle) 124
+after trust 2492

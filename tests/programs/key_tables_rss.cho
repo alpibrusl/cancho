@@ -1,0 +1,138 @@
+edition 5;
+
+// `docs/p256-fast.md` §11.5: what the key tables add to a process's resident memory, read from `/proc/self/status`
+// (Linux) around the calls that build them, with nothing else in the process. Not a test; a measurement.
+//
+//     key_tables_rss < ca.pem NUL chain.pem NUL key.pem
+//
+// It prints `VmRSS` in KiB before and after each step: a server engine opened, its identity added (with this change, the
+// identity's table built), a client engine opened, the CA trusted (with this change, the anchor's table built), and the
+// system bundle given as the trust store when `/etc/ssl/certs/ca-certificates.crt` can be read.
+import std.buffer;
+import std.io;
+import tls;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn nul[&t](text: &t [byte], k: int) -> [] int {
+    var seen = 0;
+    var at = 0;
+    while at < len(text) {
+        if int_of(text[at]) == 0 {
+            seen = seen + 1;
+            if seen == k {
+                return at;
+            }
+        }
+        at = at + 1;
+    }
+    return len(text);
+}
+
+// VmRSS in KiB, or -1.
+fn rss[&f](fs: &f Fs("/proc/self/status")) -> [fs_read("/proc/self/status")] int {
+    var kib = 0 - 1;
+    region r {
+        let buf = alloc_slice[r](4096, byte_of(0));
+        let n = fs_read(fs, "/proc/self/status", buf);
+        let key = "VmRSS:";
+        var at = 0;
+        while kib < 0 && at + 6 < n {
+            var same = true;
+            var k = 0;
+            while same && k < 6 {
+                if buf[at + k] != key[k] {
+                    same = false;
+                }
+                k = k + 1;
+            }
+            if same {
+                var p = at + 6;
+                while p < n && (int_of(buf[p]) < 48 || int_of(buf[p]) > 57) {
+                    p = p + 1;
+                }
+                kib = 0;
+                while p < n && int_of(buf[p]) >= 48 && int_of(buf[p]) <= 57 {
+                    kib = kib * 10 + int_of(buf[p]) - 48;
+                    p = p + 1;
+                }
+            }
+            at = at + 1;
+        }
+    }
+    return kib;
+}
+
+fn say[&i, &w](io: &!i Io, what: &w [byte], kib: int) -> [io_write] int {
+    io.write_all(io, what);
+    io.space(io);
+    io.print_int(io, kib);
+    io.newline(io);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(args);
+    release(net);
+    release(clock);
+    let (st, bundle) = narrow(fs, "/proc/self/status", "/etc/ssl/certs/ca-certificates.crt");
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow st as &s in {
+                var all = buffer.empty(h, 16384);
+                all = read_stdin(h, i, all);
+                var srv = tls.open_server(h, 1);
+                var cli = tls.open(h, 1);
+                let big = box_slice(h, 262144, byte_of(0));
+                borrow all as &ab in {
+                    let text = buffer.bytes(ab);
+                    let c1 = nul(text, 1);
+                    let c2 = nul(text, 2);
+                    borrow mut srv as &!sw in {
+                        say(i, "server engine open", rss(s));
+                        let id = tls.add_identity(sw, text[c1 + 1..c2], text[c2 + 1..len(text)], "echo.lex-sys.test", 1780272000000);
+                        say(i, "identity added (code)", id);
+                        say(i, "after add_identity", rss(s));
+                    }
+                    borrow mut cli as &!cw in {
+                        say(i, "client engine open", rss(s));
+                        say(i, "roots trusted (the test CA)", tls.trust(cw, text[0..c1]));
+                        say(i, "after trust", rss(s));
+                        say(i, "anchor tables", tls.anchor_tables(cw));
+                        var b = big;
+                        var n = 0;
+                        borrow mut b as &!bw in {
+                            borrow bundle as &bf in {
+                                n = fs_read(bf, "/etc/ssl/certs/ca-certificates.crt", contents(bw));
+                            }
+                            if n > 0 {
+                                say(i, "roots trusted (the system bundle)", tls.trust(cw, contents(bw)[0..n]));
+                                say(i, "after trust", rss(s));
+                                say(i, "anchor tables", tls.anchor_tables(cw));
+                            }
+                        }
+                        unbox_slice(h, b);
+                    }
+                }
+                tls.close(h, srv);
+                tls.close(h, cli);
+                buffer.drop(h, all);
+            }
+        }
+    }
+    release(st);
+    release(bundle);
+    release(heap);
+    release(io);
+    return 0;
+}

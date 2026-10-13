@@ -12,6 +12,10 @@ import std.p256_vf;
 // scalars (`docs/ecdsa.md` §2). P-256 verification is `std.p256_vf`'s
 // (`docs/p256-fast.md` §7); the codes are the same. Every function answers 0
 // for a valid signature or a negative code whose name is `refusal_tag(code)`.
+//
+// For P-256, `point` may be a key's table (`std.p256_vf.build_table`,
+// `docs/p256-fast.md` §11) in place of the point it begins with: a key that
+// verifies many signatures keeps one, and each verification costs about half.
 
 pub fn ok() -> [] int {
     return 0;
@@ -451,7 +455,9 @@ fn verify[&d, &q, &r, &s, &w](curve: int, digest: &d [byte], point: &q [byte], r
     if len(point) == 1 && int_of(point[0]) == 0 {
         return -32;
     }
-    if len(point) != 1 + 2 * size || int_of(point[0]) != 4 {
+    // P-256 checks the point's form itself, and takes a key's table in its place
+    // (`docs/p256-fast.md` §11).
+    if curve != 256 && (len(point) != 1 + 2 * size || int_of(point[0]) != 4) {
         return -31;
     }
     if curve == 256 {

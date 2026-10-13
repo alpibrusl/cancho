@@ -772,3 +772,26 @@ record on every connection whatever N is; an idle connection that never carried 
 16 KiB a connection: a TLS 1.3 record no longer writes `b_plain`. `https_hello` after a 16 KiB answer each: 1.1 to 1.2 MiB more
 for the engine at 50 to 200 connections.
 
+
+## 13. The key tables (#380): an engine's, not a slot's
+
+`docs/p256-fast.md` §11 keeps a table of 10,305 bytes for each P-256 key that verifies many signatures: one in each server identity's
+stride of the configuration (`docs/tls-server.md` §3.5), and one after the trust store for each of a client's P-256 roots, at most 16
+(`docs/x509-verify.md` §11). **No slot, core or work area changes size**: `tls_slot` is 10,245 words and 187,703 bytes as before
+(`tests/vectors/tls/liar_client_auth.txt` pins them), and the server's configuration, the engine's `ids` box, grows from 314,106 to
+478,986 bytes of address space, zero-filled, resident only for the identities loaded.
+
+Measured on `gram` (x86-64, Linux 7.0, cores 2 and 3; raw output in `assets/key-tables/`), this branch against `origin/main` at
+`3d7e8e9d`, alternating:
+
+- **Per connection, nothing.** `scripts/tls_memory.py cancho tls_echo --counts 50,200,1000`, twice each: at 1,000 connections the
+  phases are 86.7 (connected), 110.4 (handshake), 17.1 (established), 53.1 to 53.2 (echoed), 81.5 (partial) and 142.0 to 142.1 KiB
+  (all echoed) a connection on both; at 50 and 200 the two builds differ by at most 2.2 KiB, as runs of one build do.
+  `tls_memory.py engine tls_pool --counts 50,200` likewise: 15.3 to 15.9 KiB a pair of slots at 200 on both.
+- **Per engine, the tables.** `tests/programs/key_tables_rss.cho` reads `VmRSS` around the calls in one process, twice for each build:
+  after a server engine has added the test identity and a client engine has trusted the test CA and then the system bundle (124 roots
+  on `gram`, 3 of them P-256), the process holds **2,536 and 2,540 KiB against 2,492 and 2,492**: +44 to 48 KiB, of which the
+  tables are 41 KB (one identity, three anchors) and the rest the larger binary (the generator's runs in `p256_comb.odd`, 15 KB
+  more, and the new code). The steps, after and before: trusting the test CA +16 to 20 and +8 KiB; trusting the system bundle after
+  it +332 and +308 KiB (its 3 tables, 31 KB, in the difference). (`assets/key-tables/rss-x86-64.txt`; an earlier pass, not
+  kept, gave 2,540 against 2,484 and 2,488.)

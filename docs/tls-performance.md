@@ -964,7 +964,7 @@ sequence below the table applies each to what the ones before it leave.
 |---|---|---|---|---|---|---|---|
 | **A1** | **keep freed region chunks per thread** (a small stack of them: the key schedule nests regions three deep, `hmac.init` in `hkdf.expand` in `hkdf.expand_label`), so `free` never trims and `malloc` never grows the heap. Compiler change, both backends | #375 | **measured**: glibc told not to trim, alternating (§10.3); *built (§10.11): 34.6% (arm64 23.8), 55.8% (45.6), 40.5% (38.0)* | **34.4%** (arm64 27.2) | **54.9%** (49.5) | **40.3%** (32.0) | 0 (no `brk` now) |
 | **P1** | **P-256's field on `mul_wide`**: four 64-bit limbs in place of ten of 28 bits (`wide-multiply.md` §11) | #381 | the multiplication kernels (`p256_kernels.mul_p`, `sqr_p`, `sqr_n`) are 24.7% of the server's handshake and 22.2% of the client's by the profile (self time; all kernels 33.0%); assumed **2.5 times** on them, the low end of `wide-multiply.md` §11's 3 to 3.5 for `bigmod` | 14.8 points | 0 | 13.3 | 0 |
-| **B2** | **a fixed-base table for the server's own key** (the check as two combs) | #380 | the check is 24.4%; two combs are about 1.44 times cheaper than a wNAF verification: 2 × `public_key` less one inversion mod p plus one mod n, against `verify_raw`, from `p256-fast.md` §9's M4 parts (34.6, 5.8, 10.0 against 105.8 µs) | 7.5 points | 0 | (B3, per trust anchor: 4.7 on the chain's 15.4%) | 0 |
+| **B2** | **a fixed-base table for the server's own key** (the check as two combs) | #380 | the check is 24.4%; two combs are about 1.44 times cheaper than a wNAF verification: 2 × `public_key` less one inversion mod p plus one mod n, against `verify_raw`, from `p256-fast.md` §9's M4 parts (34.6, 5.8, 10.0 against 105.8 µs); *built (§10.13) as a split-wNAF table, not two combs: the check 2.03 times cheaper, the full server handshake 24% fewer instructions, the client's 18% (B3)* | 7.5 points | 0 | (B3, per trust anchor: 4.7 on the chain's 15.4%) | 0 |
 | **D3** | **a SHA-256 builtin** (SHA-NI, ARMv8 SHA-2) | #445 | `crypto.compress` is 7.3% of the server's handshake, 11.6% of a resumed one, 3.8% of the client's (self time); assumed OpenSSL's speed a block (9.4 times on x86-64 at 16 KiB, 11.3 on arm64) | 6.5 points | 10.3 | 3.4 | 0 |
 | **D4** | **HMAC with the key pads kept** (HKDF reuses a keyed state) | #446 | `hmac.init`'s two compressions, outside its regions: at most 9.9 − 8.1 = 1.8% of the server's handshake, 16.5 − 12.8 = 3.7% of a resumed one, 1.8% of the client's | at most 1.8 | 3.7 | 1.8 | 0 |
 | **L1** | **#395's work areas without the copy a call**: keep a busy connection's lease across calls, or copy only what the call changed | #447 | `tls.lease` + `tls.settle` are 23.6% of a kept request inclusive (arm64 26.6%); the measured upper bound | 0 | 0 | 0 | **up to 23.6%** (26.6) |
@@ -979,7 +979,7 @@ sequence below the table applies each to what the ones before it leave.
 | as built | 100% | 2.83 | 2.86 times |
 | + A1 (measured; *as built, §10.11: 65.4%, 1.844M, 1.86 times*) | 65.6% | 1.86 | 1.87 |
 | + P1 (2.5 times on the kernels: 24.7 × 0.6) | 50.8% | 1.44 | 1.45 |
-| + B2 (1.44 times on what is left of the check, about 14.2%) | 46.5% | 1.32 | 1.33 |
+| + B2 (1.44 times on what is left of the check, about 14.2%; *as built, 2.03 times on the check, §10.13*) | 46.5% | 1.32 | 1.33 |
 | + D4 (1.8) then D3 (on the 5.5 points of compression left: × 0.89) | 39.8% | 1.13 | **1.14** |
 
 - **A1 first, by twice the next lever, on every kind of handshake**, and for the resumed one it is most of what there is: with A1
@@ -1062,3 +1062,39 @@ least of four rounds; raw output in [`assets/region-chunk-cache/`](assets/region
   2.1 MiB after a 16 KiB record on each connection (`tls-memory.md` §12); the high-water mark fell 16 KiB a connection.
 - **Not changed:** `/big` (16.0 to 15.7 cycles a byte), which is `packages/http-server`'s and the example's byte loops, 85% of it.
 
+
+### 10.13 B2 and B3 as built
+
+[`p256-fast.md`](p256-fast.md) §11 built both (#380): a table for a P-256 key that verifies many signatures, kept once per engine
+and per key, never per slot. Not two combs, as §10.8 assumed: the 257 width-7 wNAF digits of each scalar are cut into four runs of
+65, and a table holds the odd multiples 1 to 63 of Q, 2^65 Q, 2^130 Q and 2^195 Q (128 affine points, **10,305 bytes**), so the
+two scalars share one chain of 64 doublings where `p256-fast.md` §7's verification has 256. Two combs would have added 61 times a scalar and
+taken 83 KB a key; this adds 32 times and takes an eighth of that. The server keeps one per identity (built by `add_identity` and
+`replace_identity`, `tls-server.md` §3.5); the client one per P-256 trust anchor, at most 16 (built by `trust`; the system bundle has
+3, 30,939 bytes; `x509-verify.md` §11).
+
+Measured on `gram` (core 2 and its sibling, load average 3.5 to 5.1, other agents' benchmarks on cores 0, 1, 4 and 5), against
+`origin/main` at `3d7e8e9d` (A1 included), alternating; raw figures and conditions in `p256-fast.md` §11.4 and §11.5:
+
+| | before | after | change | ratio to OpenSSL, before → after |
+|---|---|---|---|---|
+| a verification (`tls_prims_bench`, cycles) | 688.1k | **326.4k** with the key's table | −53% (instructions 3.49M → 1.54M) | 2.72 → **1.29** |
+| the check after a signature (`sign_checked` less `sign`) | 687k | **339k** | −51% | |
+| sign and check (`sign_checked`) | 1,014.5k | **666.5k** | −34% | 2.99 → **1.97** (OpenSSL's sign + verify) |
+| **server, full handshake** | 1.923M cycles, 8.092M instructions | **1.467M, 6.127M** | **−23.7%**, −24.3% | `s_server` **1.85 → 1.46**, `oserv` 1.98 → 1.56 |
+| **client, full handshake** (under a P-256 CA) | 2.743M, 10.717M | **2.303M, 8.767M** | **−16.0%**, −18.2% | `tconn` **1.62 → 1.41** |
+
+arm64 (the M4's Docker VM, CPU time, the least of four rounds, VM load average 7.2 to 8.2): the server's full handshake 0.292 →
+**0.232 ms** (−20.5%; 1.52 → **1.23** times `s_server`), the client's 0.422 → **0.364 ms** (−13.7%; 1.52 → **1.31** times `tconn`).
+
+- **Against §10.8:** B2 was 7.5 points of the pre-A1 handshake, the check 1.44 times cheaper; as built the check is 2.03 times
+  cheaper and saves 24% of the instructions of the A1-era handshake (1.965M of 8.092M; the check's own saving is 1.946M). B3 was 4.7
+  points; as built 18% of the client's instructions, one verification of its chain (the leaf's CertificateVerify has no table).
+- **T1** (at most 5 times `s_server`, stretch 3) is now 1.46 on x86-64, and **T2** 1.41.
+- **What B3 does not reach:** the measured client verifies under a private P-256 CA. Of the 31 signatures of `x509-verify.md` §8.2's
+  14 real chains, 22 are RSA, 7 P-384 and 2 P-256, and none ends at a P-256 root; for public sites the next cost is P-384
+  verification, 9 to 16 times OpenSSL's cost (`p256-fast.md` §12, which decides it is worth building, on #381's field).
+- **The guard** has two new rows on both entries, `ecdsa_p256_verify_tabled` and `ecdsa_p256_sign_checked_tabled`, recorded on each
+  entry's own machine; the other 33 were not re-recorded and pass, 35 of 35 on both.
+- **The next levers**, by §10.8's order: P1 (P-256's field on `mul_wide`, #381), now on a check half the size it was; D3 and D4
+  (#445, #446).

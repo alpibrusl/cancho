@@ -10,8 +10,10 @@ limb as seven hex digits:
 
 - `comb`: (j + 1) * 16^i * G for i in 0..64 and j in 0..7 (65 positions of a
   signed four-bit digit, eight multiples at each): 520 points, 10,400 words.
-- `odd`: (2k + 1) * G for k in 0..31: the odd multiples to 63 G that wNAF
-  verification of width 7 reads: 32 points, 640 words.
+- `odd`: (2k + 1) * 2^(65 j) * G for j in 0..3 and k in 0..31: the odd
+  multiples to 63 G that wNAF verification of width 7 reads (j = 0), and the
+  same of 2^65 G, 2^130 G and 2^195 G, which the verification against a key's
+  table reads (docs/p256-fast.md §11): 128 points, 2,560 words.
 
 The points are computed here with Python's integers (affine addition) and, when
 `cryptography` is installed, every one is checked against OpenSSL's scalar
@@ -27,6 +29,10 @@ N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 GX = 0x6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296
 GY = 0x4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5
 BITS, LIMBS = 28, 10
+# The verification against a key's table splits a scalar's 257 wNAF digits into CHUNKS runs of SPAN
+# (docs/p256-fast.md §11); `std.p256_vf.span()` and `chunks()` say the same.
+CHUNKS, SPAN = 4, 65
+ODD_WORDS = CHUNKS * 32 * 20
 R = 1 << (BITS * LIMBS)
 
 
@@ -77,13 +83,14 @@ def tables():
         comb.append("".join(point_hex(p) for p in row))
         for _ in range(4):
             base = add(base, base)
-    g = (GX, GY)
-    g2 = add(g, g)
-    cur = g
-    for k in range(32):
-        odd.append(point_hex(cur))
-        pts.append(cur)
-        cur = add(cur, g2)
+    for j in range(CHUNKS):
+        g = mul(1 << (SPAN * j), (GX, GY))
+        g2 = add(g, g)
+        cur = g
+        for k in range(32):
+            odd.append(point_hex(cur))
+            pts.append(cur)
+            cur = add(cur, g2)
     return "".join(comb), "".join(odd), pts
 
 
@@ -103,10 +110,11 @@ def check_openssl():
             got = mul((j + 1) * 16**i, (GX, GY))
             assert got == want, (i, j)
             n += 1
-    for k in range(32):
-        pub = ec.derive_private_key(2 * k + 1, ec.SECP256R1()).public_key().public_numbers()
-        assert (pub.x, pub.y) == mul(2 * k + 1, (GX, GY)), k
-        n += 1
+    for j in range(CHUNKS):
+        for k in range(32):
+            pub = ec.derive_private_key((2 * k + 1) << (SPAN * j), ec.SECP256R1()).public_key().public_numbers()
+            assert (pub.x, pub.y) == mul((2 * k + 1) << (SPAN * j), (GX, GY)), (j, k)
+            n += 1
     print(f"{n} table points equal OpenSSL's", file=sys.stderr)
 
 
@@ -124,7 +132,9 @@ def render():
 //
 // - `comb`: (j + 1) * 16^i * G, i in 0..64, j in 0..7, at word (8 i + j) * 20: the multiples a
 //   signed four-bit digit selects, 65 positions of 8.
-// - `odd`: (2k + 1) * G, k in 0..31, at word 20 k: the odd multiples to 63 G.
+// - `odd`: (2k + 1) * 2^(65 j) * G, j in 0..3, k in 0..31, at word 640 j + 20 k: the odd multiples
+//   to 63 G (j = 0), and of 2^65 G, 2^130 G and 2^195 G for the verification against a key's
+//   table (`docs/p256-fast.md` §11).
 
 // The static bodies hold their own literal and decode it inline: a function they called would be
 // emitted into every program built with `--std` (`modules::std_declarations_cost_nothing_unless_called`).
@@ -148,10 +158,10 @@ pub static comb: [int] {{
 }}
 
 pub static odd: [int] {{
-    let t = alloc_slice[static](640, 0);
+    let t = alloc_slice[static]({ODD_WORDS}, 0);
     let s = "{odd}";
     var i = 0;
-    while i < 640 {{
+    while i < {ODD_WORDS} {{
         var v = 0;
         var j = 0;
         while j < 7 {{

@@ -4,14 +4,18 @@
     python3 scripts/p256_mutants.py [--list] [<name fragment> ...]
 
 Each mutant is one of `std/p256*.cho`, `std/ecdh.cho`, `std/ecdsa.cho` or
-`std/ecdsa_sign.cho` with one deliberate bug. The repository is copied to a
+`std/ecdsa_sign.cho`, or of the key tables' users in `packages/x509` and
+`packages/tls` (docs/p256-fast.md §11), with one deliberate bug. The repository is copied to a
 scratch directory (the worktree is never touched), the compiler is rebuilt
 there with the mutant embedded, and the evidence is run:
 
-1. `cargo test -p cancho --test conformance -- p256 ecdh ecdsa`: the field,
-   the table and the wNAF against Python (`tests/vectors/p256.txt`), the
-   Wycheproof and CAVP cases of `std.ecdh`, Wycheproof and NIST for
-   `std.ecdsa`, RFC 6979 A.2.5 and the key files of `std.ecdsa_sign`;
+1. `cargo test -p cancho --test conformance -- p256 ecdh ecdsa x509_verify
+   key_tables`: the field, the table and the wNAF against Python
+   (`tests/vectors/p256.txt`, with every verification also against the key's
+   table), the Wycheproof and CAVP cases of `std.ecdh`, Wycheproof and NIST
+   for `std.ecdsa` (each also against the key's table), RFC 6979 A.2.5 and
+   the key files of `std.ecdsa_sign`, the x509 files replayed with and
+   without the anchors' tables, and the tables of `packages/tls`;
 2. if those pass, the differentials: RFC 6979 in Python byte for byte
    (`ecdsa_sign_differential.py reference`, 300), OpenSSL on signatures
    (`openssl`, 100) and on verification (`ecdsa_differential.py openssl`,
@@ -79,7 +83,7 @@ mut(K, "", "consts: a limb of p - 2 changed", "    // 7: p_minus_2\n    t[70] = 
 mut(K, "", "consts: a limb of n - 2 changed", "    // 8: n_minus_2\n    t[80] =", "    // 8: n_minus_2\n    t[80] = 1 +")
 mut(K, "", "consts: R mod p changed", "    // 2: one_mont\n    t[20] = 16777216;", "    // 2: one_mont\n    t[20] = 16777217;")
 mut(CB, "", "comb: the first point's x changed", 'let s = "', 'let s = "1')
-mut(CB, "", "odd: the first point changed", "pub static odd: [int] {\n    let t = alloc_slice[static](640, 0);\n    let s = \"", "pub static odd: [int] {\n    let t = alloc_slice[static](640, 0);\n    let s = \"1")
+mut(CB, "", "odd: the first point changed", "pub static odd: [int] {\n    let t = alloc_slice[static](2560, 0);\n    let s = \"", "pub static odd: [int] {\n    let t = alloc_slice[static](2560, 0);\n    let s = \"1")
 # ---- std.p256 ----
 mut(F, "load", "load: no straddle at offset 24", "if off > 20 {", "if off > 24 {")
 mut(F, "load", "load: a byte not masked to its limb", "w[d + idx] = w[d + idx] | v << off & mask();", "w[d + idx] = w[d + idx] | v << off;")
@@ -161,18 +165,59 @@ mut(VF, "load_q", "load_q: the wrong multiple", "copy_point(w, qtab((k - 1) / 2)
 mut(VF, "matches", "matches: r + n never tried", "if p256.below_p(w, t(3)) {", "if false {")
 mut(VF, "matches", "matches: r + n tried when it is not below p", "if p256.below_p(w, t(3)) {", "if true {")
 mut(VF, "matches", "matches: Z^2 forgotten", "p256.mul(w, t(1), t(0), t(1));\n    p256.sub", "p256.copy(w, t(1), t(1));\n    p256.sub")
-mut(VF, "verify", "verify: s = 0 accepted", "if !p256.below_n(w, sm) || p256.is_zero(w, sm) {", "if !p256.below_n(w, sm) {")
-mut(VF, "verify", "verify: r = 0 accepted", "if !p256.below_n(w, rr) || p256.is_zero(w, rr) {", "if !p256.below_n(w, rr) {")
-mut(VF, "verify", "verify: s not below n accepted", "if !p256.below_n(w, sm) || p256.is_zero(w, sm) {", "if p256.is_zero(w, sm) {")
-mut(VF, "verify", "verify: Q's range not checked", "if !p256.below_p(w, x_of(q1)) || !p256.below_p(w, y_of(q1)) {", "if false {")
-mut(VF, "verify", "verify: Q's curve equation not checked", "if !p256_pt.on_curve_xy(w, x_of(q1), y_of(q1), t(0), t(1), t(2)) {", "if false {")
-mut(VF, "verify", "verify: u2 from s not r", "p256.copy(w, rr, t(2));", "p256.copy(w, sm, t(2));")
+mut(VF, "prepare", "verify: s = 0 accepted", "if !p256.below_n(w, sm) || p256.is_zero(w, sm) {", "if !p256.below_n(w, sm) {")
+mut(VF, "prepare", "verify: r = 0 accepted", "if !p256.below_n(w, rr) || p256.is_zero(w, rr) {", "if !p256.below_n(w, rr) {")
+mut(VF, "prepare", "verify: s not below n accepted", "if !p256.below_n(w, sm) || p256.is_zero(w, sm) {", "if p256.is_zero(w, sm) {")
+mut(VF, "prepare", "verify: Q's range not checked", "if !p256.below_p(w, x_of(q1)) || !p256.below_p(w, y_of(q1)) {", "if false {")
+mut(VF, "prepare", "verify: Q's curve equation not checked", "if !p256_pt.on_curve_xy(w, x_of(q1), y_of(q1), t(0), t(1), t(2)) {", "if false {")
+mut(VF, "prepare", "verify: u2 from s not r", "p256.copy(w, rr, t(2));", "p256.copy(w, sm, t(2));")
 mut(VF, "verify", "verify: the 3Q multiple built from Q + Q", "if add_jac(w, qtab(k - 1), pt_q2(), qtab(k)) != 0 {", "if add_jac(w, qtab(k - 1), qtab(0), qtab(k)) != 0 {")
 mut(VF, "verify", "verify: the chain starts a bit low", "var i = 256;", "var i = 255;")
 mut(VF, "verify", "verify: u1's digits at width 5", "wnaf(w, e_u1(), dig1(), 7);", "wnaf(w, e_u1(), dig1(), 5);")
 mut(VF, "verify", "verify: a cancelled sum not reported", "} else if madd(w, pt_acc(), pt_ent(), pt_acc()) != 0 {\n                inf = true;\n            }", "} else {\n                madd(w, pt_acc(), pt_ent(), pt_acc());\n            }")
 mut(VF, "verify", "verify: infinity result accepted", "if inf {\n        return -40;\n    }", "")
-mut(VF, "verify", "verify: the digest truncated to 31 bytes", "if m > 32 {\n        m = 32;\n    }", "if m > 31 {\n        m = 31;\n    }")
+mut(VF, "prepare", "verify: the digest truncated to 31 bytes", "if m > 32 {\n        m = 32;\n    }", "if m > 31 {\n        m = 31;\n    }")
+
+# ---- a key's table (docs/p256-fast.md §11): building, verifying against it, and its users ----
+TL = "packages/x509/verify.cho"
+TT = "packages/tls/tls.cho"
+TI = "packages/tls/identity.cho"
+TS = "packages/tls/server.cho"
+mut(VF, "build", "table: the point's range not checked", "if !p256.below_p(w, x_of(b)) || !p256.below_p(w, y_of(b)) {", "if false {")
+mut(VF, "build", "table: the curve equation not checked", "if !p256_pt.on_curve_xy(w, x_of(b), y_of(b), t(0), t(1), t(2)) {", "if false {")
+mut(VF, "build", "table: one doubling short between runs", "while d < span() {", "while d < span() - 1 {")
+mut(VF, "build", "table: the point's last byte not written", "while i < 65 {\n        table[i] = point[i];", "while i < 64 {\n        table[i] = point[i];")
+mut(VF, "build", "table: a refusal leaves the entries", "    if code != 0 {\n        i = 0;", "    if code != 0 {\n        i = table_len();")
+mut(VF, "run", "table: an odd multiple from Q + Q", "if add_jac(w, jtab(k - 1), pt_q2(), jtab(k)) != 0 {", "if add_jac(w, jtab(k - 1), jtab(0), jtab(k)) != 0 {")
+mut(VF, "run", "table: the running inverse not advanced", "            p256.mul(w, e_inv(), z_of(jtab(k)), e_inv());\n", "")
+mut(VF, "run", "table: y over Z^2, not Z^3", "        p256.mul(w, e_zi2(), e_zi(), e_zi2());\n", "")
+mut(VF, "run", "table: a product of the Z's skipped", "p256.mul(w, pre(k - 1), z_of(jtab(k)), pre(k));", "p256.copy(w, pre(k - 1), pre(k));")
+mut(VF, "put_limbs", "table: an entry left in the Montgomery form of its Montgomery form", "    p256.from_mont(w, s, s);\n", "")
+mut(VF, "put_limbs", "table: a limb's top byte dropped", "table[at + 4 * i + 3] = byte_of(v >> 24);", "table[at + 4 * i + 3] = byte_of(0);")
+mut(VF, "load_tab", "table: a limb's top byte not read", "| int_of(b[4 * i + 3]) << 24;", ";")
+mut(VF, "load_tab", "table: a negative digit not negated", "if d < 0 {\n        p256.sub2(", "if d < -1000 {\n        p256.sub2(")
+mut(VF, "load_tab", "table: the next multiple", "let at = 65 + (per_chunk() * j + (k - 1) / 2) * entry_bytes();", "let at = 65 + (per_chunk() * j + (k + 1) / 2) * entry_bytes();")
+mut(VF, "load_gj", "table: the generator's run 0 for every run", "let row = p256_comb.odd_row(640 * j + (k - 1) / 2 * 20);", "let row = p256_comb.odd_row((k - 1) / 2 * 20);")
+mut(VF, "load_gj", "table: the generator's negative digit not negated", "if d < 0 {\n        p256.sub2(", "if d < -1000 {\n        p256.sub2(")
+mut(VF, "build_table", "table: the work not wiped", "    p256.wipe(w, 0, table_work_len());\n", "")
+mut(VF, "table_for", "table: any table taken for any point", "if table[i] != point[i] {\n            return false;", "if table[i] != point[i] && i < 0 {\n            return false;")
+mut(VF, "verify", "table: a key's table not recognised", "if len(point) == table_len() {", "if len(point) == table_len() + 1 {")
+mut(VF, "verify_tabled", "tabled: the chain starts a position low", "var i = span() - 1;", "var i = span() - 2;")
+mut(VF, "verify_tabled", "tabled: the last run left out", "while j < chunks() {", "while j < chunks() - 1 {")
+mut(VF, "verify_tabled", "tabled: u2 against the generator's runs", "load_tab(table, w, j, d2);", "load_gj(w, j, d2);")
+mut(VF, "verify_tabled", "tabled: u2's digits at width 5", "wnaf(w, e_u2(), dig2(), 7);", "wnaf(w, e_u2(), dig2(), 5);")
+mut(VF, "verify_tabled", "tabled: infinity result accepted", "if inf {\n        return -40;\n    }\n    if !matches", "if !matches")
+mut(VF, "accumulate", "tabled: a cancelled sum not reported", "return madd(w, pt_acc(), pt_ent(), pt_acc()) != 0;", "madd(w, pt_acc(), pt_ent(), pt_acc());\n    return false;")
+mut(EA, "verify", "ecdsa: a P-256 key's table refused as a point", "if curve != 256 && (len(point) != 1 + 2 * size || int_of(point[0]) != 4) {", "if len(point) != 1 + 2 * size || int_of(point[0]) != 4 {")
+mut(TL, "store_tables", "anchors: a table entry's length one short", "store[end + 2] = byte_of(1 + t & 255);", "store[end + 2] = byte_of(t & 255);")
+mut(TL, "store_tables", "anchors: the first P-256 root only", "built = built + 1;", "built = built + most;")
+mut(TL, "anchor_table", "anchors: any table taken for any root", "&& bytes.equal(store[body + 1..body + 66], key)", "")
+mut(TL, "extend", "anchors: a root verified without its table", "anchor_table(store, root[rview[x509.key_start()]..rview[x509.key_end()]])", "root[0..0]")
+mut(TT, "trust", "anchors: the old store not cleared", "    tls_slot.zero(contents(engine.roots)[0..contents(engine.meta)[m_roots_len()]]);\n", "")
+mut(TT, "trust", "anchors: no tables built", "contents(engine.meta)[m_roots_len()] = x509_verify.store_tables(contents(engine.roots)[0..roots_cap()], info[0], most_anchor_tables(), work);", "contents(engine.meta)[m_roots_len()] = info[0];")
+mut(TI, "load", "identity: no table built", "            p256_vf.build_table(pub_point, cfg[b + o_table()..b + o_table() + p256_vf.table_len()], work);\n", "")
+mut(TI, "check_key", "identity: the check without the table", "        return table(cfg, id);\n    }", "        return point(cfg, id);\n    }")
+mut(TI, "check_key", "identity: a table that is not the point's used", "if p256_vf.table_for(table(cfg, id), point(cfg, id)) {", "if true {")
 
 # ---- the callers ----
 mut(EH, "public_key_p256", "ecdh P-256 public key: x and y swapped", "p256_pt.base_multiply(scalar, out[1..33], out[33..65], work)", "p256_pt.base_multiply(scalar, out[33..65], out[1..33], work)")
@@ -196,6 +241,13 @@ EQUIVALENT = {
     "load_q: the wrong multiple": "k is odd, so (k - 1) / 2 and k / 2 are the same integer division.",
     "verify: u1's digits at width 5": "A width-5 wNAF of u1 has digits in +-15, all in the generator's table of +-63: the same sum with more additions.",
     "ecdsa P-256: the fast path skipped for the wrong curve": "The generic bigmod path is still there and correct for P-256, so the answers are the same; the mutant shows the two paths agree on every case run.",
+    # The key tables (docs/p256-fast.md §11.6). A table is an optimisation with the same answers, so a mutant that
+    # makes a caller verify without it changes the cost and nothing else; the cost is what the guard's
+    # `ecdsa_p256_verify_tabled` and `ecdsa_p256_sign_checked_tabled` rows and §11's handshakes measure.
+    "tabled: u2's digits at width 5": "A width-5 wNAF of u2 has digits in +-15, all in the table's +-63 of each run: the same sum with more additions (as `verify: u1's digits at width 5`).",
+    "anchors: a root verified without its table": "A chain's answer is the same with or without the anchor's table (the tabled replays of every x509 file show it); only the cost changes, measured by the client handshake of §11.",
+    "identity: the check without the table": "The server's check gives the same answer under the point as under its table; only its cost changes, which the guard's `ecdsa_p256_sign_checked_tabled` row (3.18M instructions against 5.13M) and the server handshake of §11 measure.",
+    "table: a refusal leaves the entries": "The entries are written only once the point is checked; the refusals after that are -40, a multiple at infinity, which no point of the curve (prime order n, multiples below 2^201) reaches. The earlier refusals return before any entry is written, onto the zeros the function starts with.",
 }
 
 
@@ -244,7 +296,7 @@ def evidence(scratch, out):
     code, text = run(["cargo", "build", "--release", "-p", "cancho"], scratch)
     if code != 0:
         return "BUILD", text[-600:]
-    code, text = run(["cargo", "test", "--release", "-p", "cancho", "--test", "conformance", "--", "p256", "ecdh", "ecdsa"], scratch)
+    code, text = run(["cargo", "test", "--release", "-p", "cancho", "--test", "conformance", "--", "p256", "ecdh", "ecdsa", "x509_verify", "key_tables"], scratch)
     if code != 0:
         failed = re.findall(r"^test (\S+) \.\.\. FAILED", text, re.M)
         if not failed and "error[" in text:

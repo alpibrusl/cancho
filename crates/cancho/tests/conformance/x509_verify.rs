@@ -70,6 +70,32 @@ fn replay(exe: &Path, name: &str) -> Vec<(String, String)> {
     answered
 }
 
+/// `replay`, with each store given its P-256 roots' tables (`T` for `S`, `docs/x509-verify.md`
+/// §11): every answer must be the one recorded without them. Then the tables the last store
+/// holds and the bytes they take.
+fn replay_tabled(exe: &Path, name: &str) -> String {
+    let (asked, answered) = recorded(name);
+    let mut input: Vec<String> = asked
+        .iter()
+        .map(|l| match l.strip_prefix("S ") {
+            Some(rest) => format!("T {rest}"),
+            None => l.clone(),
+        })
+        .collect();
+    input.push("A".to_string());
+    let mut text = input.join("\n");
+    text.push('\n');
+    let out = feed(exe, text.as_bytes());
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let got: Vec<String> =
+        String::from_utf8_lossy(&out.stdout).lines().map(str::to_string).collect();
+    assert_eq!(got.len(), answered.len() + 1, "{name}: one answer per line");
+    for (g, (case, want)) in got.iter().zip(&answered) {
+        assert_eq!(g, want, "{name}, with tables: {case}");
+    }
+    got[answered.len()].clone()
+}
+
 fn tag(answer: &str) -> &str {
     answer.split(' ').nth(1).unwrap_or("")
 }
@@ -91,6 +117,7 @@ fn x509_limbo_cases_replay_and_pass_where_recorded() {
         }
     }
     assert!(passes > 400, "{passes} passing cases replayed");
+    replay_tabled(&exe, "limbo_subset.txt");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -112,6 +139,8 @@ fn saved_real_chains_against_the_system_roots_on_both_backends() {
                     [k % 6];
             assert_eq!(*t, want, "check {k} on {backend}");
         }
+        // The system bundle's three P-256 roots get a table each, 10,313 bytes apiece.
+        assert_eq!(replay_tabled(&exe, "online.txt"), "3 30939");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -131,6 +160,7 @@ fn the_openssl_matrix_gets_each_tag_and_accepts_nothing_openssl_refused() {
             }
         }
         assert_eq!(answered.len(), 36);
+        replay_tabled(&exe, "matrix.txt");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -163,6 +193,7 @@ fn chains_without_a_name_get_each_tag_and_accept_nothing_openssl_refused() {
         }
         assert_eq!(answered.len(), 57);
         assert_eq!(accepted, 17, "every accepted chain carries its subject and SANs");
+        replay_tabled(&exe, "chain_matrix.txt");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

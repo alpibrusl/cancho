@@ -214,6 +214,55 @@ def edge_signatures(rng, count):
     return out
 
 
+def table_digest(q):
+    """The SHA-256 of `p256_vf.build_table`'s table of q (docs/p256-fast.md §11): the point, then (2k + 1) 2^(65 j) q
+    for j in 0..3 and k in 0..31, x then y, each x R mod p as ten limbs of four bytes, least significant first."""
+    import hashlib
+    out = bytearray(b"\x04" + q[0].to_bytes(32, "big") + q[1].to_bytes(32, "big"))
+    for j in range(4):
+        base = ec_mul(1 << (65 * j), q)
+        two = ec_add(base, base)
+        pt = base
+        for _ in range(32):
+            for v in pt:
+                m = v * R280 % P
+                out += b"".join((m >> (28 * i) & M28).to_bytes(4, "little") for i in range(10))
+            pt = ec_add(pt, two)
+    return hashlib.sha256(bytes(out)).hexdigest()
+
+
+def tabled_cases(rng, cases):
+    """The verification against a key's table (docs/p256-fast.md §11), the table given in the point's place. Every
+    `V` case again as `U`, which must answer the same; signatures crafted for its four runs of 65 digits, whose u1 and u2 sit at the runs' edges under
+    the keys 1, 2, n - 1 and a random one, so that the generator's and the table's entries at one position are equal
+    or opposite and the running sum passes through the point at infinity; the tables of four points, byte for byte
+    (their SHA-256), and the points `build_table` refuses."""
+    out = [("U" + line[1:], want) for line, want in cases if line.startswith("V ")]
+    g = "04" + h(GX) + h(GY)
+    edges_ = [1 << 65, 1 << 130, 1 << 195, (1 << 65) - 1, (1 << 130) - 1, (1 << 195) + (1 << 130) + (1 << 65) + 1, ((1 << 65) - 1) << 65, 63 << 192, (1 << 256) - (1 << 195)]
+    for d in [1, 2, N - 1, rng.randrange(1, N)]:
+        for u in edges_ + [rng.randrange(1, N)]:
+            u %= N
+            for u1, u2 in [(u, u), (u, N - u), (u, 2 * u % N), (u, 1), (1, u), (0, u), (u, (u + (1 << 65)) % N), ((1 << 130) % N, u)]:
+                if u2 % N == 0:
+                    continue
+                c = crafted(d, u1 % N, u2 % N)
+                if c is None:
+                    continue
+                q, e, r, sv, infinity = c
+                pt = "04" + h(q[0]) + h(q[1])
+                want = "-40" if infinity else "0"
+                out += [(f"V {pt} {h(e)} {h(r)}{h(sv)}", want), (f"U {pt} {h(e)} {h(r)}{h(sv)}", want)]
+                if not infinity:
+                    out += [(f"U {pt} {h(e)} {h((r + 1) % N)}{h(sv)}", "-41")]
+    for d in [1, 2, N - 1, rng.randrange(1, N)]:
+        q = ec_mul(d, (GX, GY))
+        out.append((f"N 04{h(q[0])}{h(q[1])}", table_digest(q)))
+    out += [(f"N 04{h(P)}{h(GY)}", "-33"), (f"N 04{h(GX)}{h(P + 1)}", "-33"), (f"N 04{h(GX)}{h(GY ^ 1)}", "-34"), (f"N 02{g[2:]}", "-31")]
+    out.append((f"O {h(1)}", "-42 -42 -31 -34 -42 -42 -31"))
+    return out
+
+
 def run(driver, lines):
     out = subprocess.run([driver], input="\n".join(lines) + "\n", capture_output=True, text=True, check=True).stdout.split("\n")
     assert out[-1] == "" and len(out) == len(lines) + 1
@@ -274,6 +323,7 @@ def main():
         for x in sorted({r, r + 1, r - 1, r + N, r + N - 1, r + N + 1, N - r, (r + N) % P, P - 1 - r % 7}):
             if 0 <= x < P and 0 < r < N:
                 cases.append((f"T {h(r)} {h(x)}", str(int(x % N == r))))
+    cases += tabled_cases(rng, cases)
     cases = [c for c in cases if c[1] is not None]
     if vectors:
         Path(sys.argv[2]).write_text("".join(f"{line} | {want}\n" for line, want in cases))
