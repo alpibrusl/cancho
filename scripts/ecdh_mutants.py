@@ -33,7 +33,8 @@ MUTANTS = [
     ("ecdh", "the doubling's Z one factor of 2 short", "    bigmod.add(w, z3, z3, z3);\n    bigmod.add(w, z3, z3, z3);\n    return", "    bigmod.add(w, z3, z3, z3);\n    return"),
     ("ecdh", "three doublings a window, not four", DOUBLE * 4, DOUBLE * 3),
     ("ecdh", "the windows of a byte in the wrong order", "let shift = 4 - 4 * (at % 2);", "let shift = 4 * (at % 2);"),
-    ("ecdh", "a select that matches two indices", "(a ^ b) - 1 >> 63", "(a ^ b) - 2 >> 63"),
+    # Re-anchored (#381): #397 moved `eq_mask` to `std.p256_pt`, and this mutant no longer applied to `std/ecdh.cho`.
+    ("ecdh", "a select that matches two indices", "value_barrier(p256_pt.eq_mask(i, idx))", "value_barrier(p256_pt.eq_mask(i >> 1, idx >> 1))"),
     ("ecdh", "the table doubled, not stepped", "add_points(w, pt_table(i - 1), pt_table(1), pt_table(i));", "add_points(w, pt_table(i - 1), pt_table(i - 1), pt_table(i));"),
     ("ecdh", "infinity with Y = 0", "bigmod.set_small(w, y_of(pt_table(0)), 1);", "bigmod.set_small(w, y_of(pt_table(0)), 0);"),
     ("ecdh", "the on-curve check skipped", "if !on_curve(work) {", "if !on_curve(work) && false {"),
@@ -42,8 +43,8 @@ MUTANTS = [
     ("ecdh", "the scalar compared the wrong way", "int_of(s[i]) - int_of(n[i]) - under", "int_of(n[i]) - int_of(s[i]) - under"),
     ("ecdh", "the public key's y from X", "bigmod.mul(w, y_of(a), t(0), t(1));", "bigmod.mul(w, x_of(a), t(0), t(1));"),
     ("ecdh", "a point's first byte not checked", "if len(peer) != 1 + 2 * size || int_of(peer[0]) != 4 {", "if len(peer) != 1 + 2 * size {"),
-    ("bigmod", "the reduction's mask inverted", "let m = value_barrier(under - 1);", "let m = value_barrier(0 - under);"),
-    ("bigmod", "the reduction blind to the carry limb", "under = w[x + k] - under >> 63 & 1;", "under = 0 - under >> 63 & 1;"),
+    ("bigmod", "the reduction's mask inverted", "let m = value_barrier(below - 1);", "let m = value_barrier(0 - below);"),
+    ("bigmod", "the reduction blind to the carry limb", "let (top, below) = sub_borrow(xs[k], 0, under);", "let (top, below) = sub_borrow(0, 0, under);"),
     ("bigmod", "a negative difference left unreduced", "let m = value_barrier(0 - under);\n    var carry", "let m = 0;\n    var carry"),
 ]
 
