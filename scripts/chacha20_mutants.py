@@ -35,7 +35,9 @@ MUTANTS = [
     ("never reduced below p", "let keep = value_barrier(g2 >> 63);", "let keep = 0;"),
     ("h - p computed as h + 5", "let g2 = wrapping_sub(wrapping_add(h2, c), 0x40000000000);", "let g2 = wrapping_add(h2, c);"),
     ("the carry into the tag's second word dropped", "let f1 = wrapping_add(wrapping_add(w1, le64(key, 24)), k);", "let f1 = wrapping_add(w1, le64(key, 24));"),
-    ("the final carry pass made once", "    c = h1 >> 44;\n    h1 = h1 & m44();\n    h2 = wrapping_add(h2, c);\n    c = h2 >> 42;\n    h2 = h2 & 0x3ffffffffff;\n    h0 = wrapping_add(h0, wrapping_mul(c, 5));\n    c = h0 >> 44;\n    h0 = h0 & m44();\n    h1 = wrapping_add(h1, c);\n\n", "\n"),
+    # "The final carry pass made once" was here: it is equivalent. `poly_blocks` leaves h0 under 2^44, h2 under 2^42 and h1
+    # under 2^44 + 48, so in `poly_finish`'s first pass a carry out of h1 leaves h1 under 48 and one out of h0 lands there;
+    # without one, h2 and h0 cannot carry. h1 is below 2^44 after one pass. The second stays, as in poly1305-donna-64.
     ("a one-byte-short tag compare", "while i < 16 {\n            diff", "while i < 15 {\n            diff"),
     ("plaintext released on a bad tag", "if diff != 0 {", "if diff != diff {"),
     ("the lengths block in the wrong order", "bytes.store_le32(lens, 0, m32(len(aad)));", "bytes.store_le32(lens, 0, m32(len(ct)));"),
