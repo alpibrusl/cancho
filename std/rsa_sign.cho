@@ -1,0 +1,85 @@
+edition 7;
+module std.rsa_sign;
+import std.bigmod;
+import std.rsa;
+
+// Copyright (c) 2026 Alpibru S.L. Licensed under the EUPL-1.2.
+//
+// STUB. The gates of `docs/rsa-sign.md` §11 are committed and run against
+// this file first, so that each is seen to fail (`docs/assets/rsa-sign/red/`).
+// Every function that would sign or check a key answers `not_built()`. The
+// implementation replaces this file in the commit after the red run.
+
+pub fn ok() -> [] int {
+    return 0;
+}
+
+pub fn not_built() -> [] int {
+    return -139;
+}
+
+pub fn refusal_tag(code: int) -> [] &static [byte] {
+    if code == 0 {
+        return "ok";
+    }
+    if code == -139 {
+        return "rsa-sign-not-built";
+    }
+    return rsa.refusal_tag(code);
+}
+
+pub fn work_len() -> [] int {
+    return 2 * bigmod.registers_len(20);
+}
+
+pub fn key_len(modulus_len: int) -> [] int {
+    return 7 * (modulus_len / 2) + 8;
+}
+
+pub fn mode_unchecked() -> [] int {
+    return 1;
+}
+
+pub fn mode_fault_p() -> [] int {
+    return 2;
+}
+
+pub fn mode_fault_q() -> [] int {
+    return 4;
+}
+
+pub fn mode_fault_result() -> [] int {
+    return 8;
+}
+
+pub fn mode_unblinded() -> [] int {
+    return 16;
+}
+
+pub fn mode_fault_qinv() -> [] int {
+    return 32;
+}
+
+pub fn mode_report_p() -> [] int {
+    return 64;
+}
+
+pub fn mode_report_q() -> [] int {
+    return 128;
+}
+
+pub fn emsa_pkcs1[&d, &o](hash_len: int, digest: &d [byte], out: &!o [byte]) -> [] int {
+    return -139;
+}
+
+pub fn check_key[&k, &d, &w](key: &k [byte], d: &d [byte], work: &!w [int]) -> [] int {
+    return -139;
+}
+
+pub fn pkcs1_sign_test[&k, &d, &e, &s, &w](hash_len: int, key: &k [byte], digest: &d [byte], entropy: &e [byte], mode: int, sig: &!s [byte], work: &!w [int]) -> [] int {
+    return -139;
+}
+
+pub fn pkcs1_sign[&k, &d, &e, &s, &w](hash_len: int, key: &k [byte], digest: &d [byte], entropy: &e [byte], sig: &!s [byte], work: &!w [int]) -> [] int {
+    return -139;
+}

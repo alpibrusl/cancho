@@ -1,0 +1,45 @@
+edition 7;
+module x509_rsa_key;
+import std.rsa_sign;
+
+// Copyright (c) 2026 Alpibru S.L. Licensed under the EUPL-1.2.
+//
+// STUB. See `std/rsa_sign.cho`: the gates are run against this first.
+
+pub fn not_built() -> [] int {
+    return -139;
+}
+
+pub fn refusal_tag(code: int) -> [] &static [byte] {
+    if code == 0 {
+        return "ok";
+    }
+    if code == -139 {
+        return "rsa-key-not-built";
+    }
+    return rsa_sign.refusal_tag(code);
+}
+
+pub fn max_key_len() -> [] int {
+    return 1800;
+}
+
+pub fn work_len() -> [] int {
+    return rsa_sign.work_len();
+}
+
+pub fn format_pkcs8() -> [] int {
+    return 8;
+}
+
+pub fn format_pkcs1() -> [] int {
+    return 2;
+}
+
+pub fn parse_pem[&p, &k, &w](pem: &p [byte], key: &!k [byte], work: &!w [int]) -> [] int {
+    return -139;
+}
+
+pub fn parse_der[&d, &k, &w](format: int, der: &d [byte], key: &!k [byte], work: &!w [int]) -> [] int {
+    return -139;
+}

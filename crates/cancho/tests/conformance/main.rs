@@ -96,6 +96,7 @@ mod refusals;
 mod region_cache;
 mod release;
 mod rsa;
+mod rsa_sign;
 mod satisfy;
 mod selfhost;
 mod sha256_builtins;

@@ -1,0 +1,43 @@
+# red: gates against the STUB (std/rsa_sign.cho, x509_rsa_key and bigmod's five functions answer -139). 2026-10-14T13:44:16Z Darwin 25.2.0 arm64; commit 6a0314d5
+$ python3 scripts/rsa_sign_differential.py <driver> sign ../keys 4
+sign: 152 cases, 152 failures
+FAIL k2048_e17_0 sha256: signer answered -139 rsa-sign-not-built -
+FAIL k2048_e17_0 sha256: signer answered -139 rsa-sign-not-built -
+FAIL k2048_e17_0 sha256: signer answered -139 rsa-sign-not-built -
+FAIL k2048_e17_0 sha256: signer answered -139 rsa-sign-not-built -
+exit=1
+$ python3 scripts/rsa_sign_differential.py <driver> parse ../keys
+parse: 126 cases, 84 failures
+FAIL k2048_e17_0 PRIVATE KEY: block differs: -139 rsa-sign-not-built - / -139 rsa-sign-not-built -
+FAIL k2048_e17_0 PRIVATE KEY: parse-then-sign differs: -139 rsa-sign-not-built -
+FAIL k2048_e17_0 RSA PRIVATE KEY: block differs: -139 rsa-sign-not-built - / -139 rsa-sign-not-built -
+FAIL k2048_e17_0 RSA PRIVATE KEY: parse-then-sign differs: -139 rsa-sign-not-built -
+exit=1
+$ python3 scripts/rsa_sign_differential.py <driver> blinding ../keys
+blinding: 189 cases, 189 failures
+FAIL k2048_e17_0: exponent of the p-half: -139 rsa-sign-not-built -
+FAIL k2048_e17_0: exponent of the q-half: -139 rsa-sign-not-built -
+FAIL k2048_e17_0: exponent of the p-half: -139 rsa-sign-not-built -
+FAIL k2048_e17_0: exponent of the q-half: -139 rsa-sign-not-built -
+exit=1
+$ python3 scripts/rsa_sign_differential.py <driver> bigmod 400
+bigmod: 400 cases, 400 failures
+FAIL case 0: Z ecef36938e0758781b5cc2b1508c...: got -139 rsa-sign-not-built - want 0 ok e01fcd94ffa86ff92e1d03c004a8c7b63cb
+FAIL case 1: Y 8000000000000000000000000000...: got -139 rsa-sign-not-built - want 0 ok 00000000000000004594d21219db01ab357
+FAIL case 2: Y ecd372ae669a7969161647577b22...: got -139 rsa-sign-not-built - want 0 ok 0000000000000000c68aef8be096b5e7f20
+FAIL case 3: R ffffffffffffffffffffffffffff...: got -139 rsa-sign-not-built - want 0 ok 00000000000000000000000000000001
+exit=1
+$ python3 scripts/rsa_sign_fault.py <driver> ../keys
+fault gate: 0 unchecked faulty signatures revealed a prime factor; failures 17
+FAIL k2048_e65537_0: the fault-free call did not sign: -139 rsa-sign-not-built -
+FAIL k2048_e65537_1: the fault-free call did not sign: -139 rsa-sign-not-built -
+FAIL k2048_e65537_2: the fault-free call did not sign: -139 rsa-sign-not-built -
+FAIL k2048_e65537_swapped: the fault-free call did not sign: -139 rsa-sign-not-built -
+exit=1
+$ python3 scripts/rsa_sign_fuzz.py <driver> tests/vectors/rsa_sign/malformed.txt 200
+fuzz: 600 answers to 200 mutations x (G, B 8, B 2); tags seen: rsa-sign-not-built 600
+failures 600
+FAIL unknown tag in -139 rsa-sign-not-built -
+FAIL unknown tag in -139 rsa-sign-not-built -
+FAIL unknown tag in -139 rsa-sign-not-built -
+exit=1

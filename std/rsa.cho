@@ -185,7 +185,7 @@ fn open[&n, &e, &s, &m, &w](n: &n [byte], e: &e [byte], sig: &s [byte], m: &!m [
 // `out[at..at + 19]`. The three differ only in the outer length, the
 // OID's last arc and the digest's length:
 //     30 (17 + h) 30 0d 06 09 60 86 48 01 65 03 04 02 (h - 16) / 16 05 00 04 h
-fn digest_info[&o](hash_len: int, out: &!o [byte], at: int) -> [] int {
+pub fn digest_info[&o](hash_len: int, out: &!o [byte], at: int) -> [] int {
     out[at] = byte_of(0x30);
     out[at + 1] = byte_of(17 + hash_len);
     out[at + 2] = byte_of(0x30);

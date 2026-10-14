@@ -667,3 +667,27 @@ pub fn inverse[&w](w: &!w [int], a: int, dst: int) -> [] int {
     }
     return 0;
 }
+
+// ---- Secret moduli and exponents (`docs/rsa-sign.md` §3.1) ----
+//
+// STUBS: committed with the gates and run against first. Each answers -139.
+
+pub fn setup_secret[&n, &w](n: &n [byte], w: &!w [int]) -> [] int {
+    return -139;
+}
+
+pub fn reduce_once[&w](w: &!w [int], a: int) -> [] int {
+    return -139;
+}
+
+pub fn select[&w](w: &!w [int], table: int, count: int, idx: int, dst: int) -> [] int {
+    return -139;
+}
+
+pub fn pow_secret[&w](w: &!w [int], base: int, exp: int, nwin: int, dst: int, table: int) -> [] int {
+    return -139;
+}
+
+pub fn blind_exponent[&w](w: &!w [int], d: int, kappa: int, dst: int) -> [] int {
+    return -139;
+}

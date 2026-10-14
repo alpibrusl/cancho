@@ -38,3 +38,15 @@ Apache License 2.0 in `LICENSE` beside them.
 | `ecdsa_secp384r1_sha384_p1363_test.json` | 280 | `conformance/ecdsa.rs` (`docs/ecdsa.md` §5.1) |
 | `ecdsa_secp384r1_sha256_test.json` | 472 | `conformance/ecdsa.rs` (`docs/ecdsa.md` §5.1) |
 | `ecdsa_secp384r1_sha512_test.json` | 542 | `conformance/ecdsa.rs` (`docs/ecdsa.md` §5.1) |
+
+## RSA PKCS#1 v1.5 signature generation (`std.rsa_sign`)
+
+`rsa_pkcs1_{1024,1536,2048,3072,4096}_sig_gen_test.json` are Wycheproof's
+`RsassaPkcs1Generate` files (schema `rsassa_pkcs1_generate_schema_v1.json`):
+a private key as PKCS#1 and PKCS#8 and RSASSA-PKCS1-v1_5 signatures to
+reproduce. Copied unchanged from <https://github.com/C2SP/wycheproof>
+`testvectors_v1/` at commit `7a325932231bd7a724c791c8b0d65ea4d6d2f435`
+(2026-10-12), retrieved 2026-10-14, under the same Apache License 2.0 in
+`LICENSE` (byte-identical to the one fetched at that commit). They are test
+keys published by Wycheproof. Run by `conformance/rsa_sign.rs`
+(`docs/rsa-sign.md` §11 G1); `THIRD_PARTY.md` has each file's SHA-256.

@@ -1,0 +1,45 @@
+# red: cargo test -p cancho --test conformance rsa_sign, against the STUBS, 2026-10-14, Darwin 25.2.0 arm64, commit 6a0314d5 + the gate files (long hex answers cut to 240 columns)
+# (after this run the Wycheproof test's case counts, which it never reached, were corrected to the files' real 16 groups / 77 supported cases / 16 unsupported / 5 acceptable.)
+test rsa_sign::a_fault_is_caught_and_its_signature_is_not_given_out ... FAILED
+test rsa_sign::blinding_changes_the_exponent_and_not_the_signature ... FAILED
+test rsa_sign::bigmod_secret_functions_on_64_bit_moduli ... FAILED
+test rsa_sign::emsa_pkcs1_encoding ... FAILED
+test rsa_sign::every_signing_refusal_has_its_own_tag ... FAILED
+test rsa_sign::nist_siggen15_known_answers ... FAILED
+test rsa_sign::the_signer_reaches_no_authority ... ok
+test rsa_sign::our_own_known_answers ... FAILED
+test rsa_sign::the_malformed_key_corpus_is_refused_with_its_own_rules ... FAILED
+test rsa_sign::wycheproof_signature_generation ... FAILED
+failures:
+thread 'rsa_sign::a_fault_is_caught_and_its_signature_is_not_given_out' (513183455) panicked at crates/cancho/tests/conformance/rsa_sign.rs:387:45:
+thread 'rsa_sign::blinding_changes_the_exponent_and_not_the_signature' (513183457) panicked at crates/cancho/tests/conformance/rsa_sign.rs:427:5:
+thread 'rsa_sign::bigmod_secret_functions_on_64_bit_moduli' (513183456) panicked at crates/cancho/tests/conformance/rsa_sign.rs:520:9:
+  left: "-139 rsa-sign-not-built -"
+ right: "0 ok 8d7e77fd19560378"
+thread 'rsa_sign::emsa_pkcs1_encoding' (513185218) panicked at crates/cancho/tests/conformance/rsa_sign.rs:471:9:
+  left: "-139 rsa-sign-not-built -"
+ right: "0 ok 0001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+thread 'rsa_sign::every_signing_refusal_has_its_own_tag' (513185355) panicked at crates/cancho/tests/conformance/rsa_sign.rs:358:9:
+  left: (-139, "rsa-sign-not-built")
+ right: (0, "ok")
+thread 'rsa_sign::nist_siggen15_known_answers' (513185493) panicked at crates/cancho/tests/conformance/rsa_sign.rs:101:13:
+  left: "-139 rsa-sign-not-built -"
+ right: "0 ok 6b8be97d9e518a2ede746ff4a7d91a84a1fc665b52f154a927650db6e7348c69f8c8881f7bcf9b1a6d3366eed30c3aed4e93c203c43f5528a45de791895747ade9c5fa5eee81427edee02082147aa311712a6ad5fb1732e93b3d6cd23ffd46a0b3caf62a8b69957cc68ae39f9993c1a779
+thread 'rsa_sign::our_own_known_answers' (513186159) panicked at crates/cancho/tests/conformance/rsa_sign.rs:196:13:
+  left: "-139 rsa-sign-not-built -"
+ right: "0 ok 22a5e1e5275f957758d01825bc2fc8794e060f97486a3cf0eb4f8f524937d1232f9359646361cca0a35bb55e544e43be4869d1be2aef6167da259a0987fcd9f0dea6709acc95829e39c28003aa13353481004776ece329575acc91eb5b7fda424a55964580adec47cc703f36664ead1d67
+thread 'rsa_sign::the_malformed_key_corpus_is_refused_with_its_own_rules' (513186310) panicked at crates/cancho/tests/conformance/rsa_sign.rs:222:17:
+thread 'rsa_sign::wycheproof_signature_generation' (513186734) panicked at crates/cancho/tests/conformance/rsa_sign.rs:143:9:
+  left: "-139 rsa-sign-not-built -"
+ right: "0 ok 840f5dac53106dd1f9c57219224cf51289290c42f20466875ba8e830ac5690e541536fcc8ab03b731f82bf66d83f194e7e180b3963ec7a2f3f7904a7ce49aed47da4d4b79421eaf937d301b3e696169297b797c32c076a12be4de0b58e003c5123051a84a10c62f8dac2f42a8640008eb3
+failures:
+    rsa_sign::a_fault_is_caught_and_its_signature_is_not_given_out
+    rsa_sign::bigmod_secret_functions_on_64_bit_moduli
+    rsa_sign::blinding_changes_the_exponent_and_not_the_signature
+    rsa_sign::emsa_pkcs1_encoding
+    rsa_sign::every_signing_refusal_has_its_own_tag
+    rsa_sign::nist_siggen15_known_answers
+    rsa_sign::our_own_known_answers
+    rsa_sign::the_malformed_key_corpus_is_refused_with_its_own_rules
+    rsa_sign::wycheproof_signature_generation
+test result: FAILED. 1 passed; 9 failed; 0 ignored; 0 measured; 690 filtered out; finished in 3.10s
