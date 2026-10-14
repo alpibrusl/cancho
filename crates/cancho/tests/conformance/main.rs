@@ -49,6 +49,7 @@ mod close_on_exec;
 mod compile_time;
 mod conn_peer;
 mod corpus;
+mod course;
 mod crypto_builtins;
 mod differential;
 mod directory_handles;

@@ -1,0 +1,8 @@
+// A `main` that does nothing, so a candidate that is only functions can be
+// checked: `cancho check candidate.cho stub_main.cho --std`. `satisfy` brings
+// its own `main` and must NOT be given this file.
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args);
+    return 0;
+}

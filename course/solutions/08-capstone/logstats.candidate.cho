@@ -1,0 +1,49 @@
+//~ SATISFIES logstats.contract.cho
+//~ SATISFIES ../../exercises/08-capstone/logstats.contract.cho
+import std.bytes;
+
+// Every function walks the text once, line by line: a line is the bytes
+// from `start` up to (not including) the next newline, or the end.
+fn line_end[&t](text: &t [byte], start: int) -> [] int {
+    var k = start;
+    while k < len(text) && int_of(text[k]) != 10 {
+        k = k + 1;
+    }
+    return k;
+}
+
+pub fn count_lines[&t](text: &t [byte]) -> [] int {
+    var lines = 0;
+    var start = 0;
+    while start < len(text) {
+        lines = lines + 1;
+        start = line_end(text, start) + 1;
+    }
+    return lines;
+}
+
+pub fn count_matching[&t, &n](text: &t [byte], needle: &n [byte]) -> [] int {
+    var hits = 0;
+    var start = 0;
+    while start < len(text) {
+        let end = line_end(text, start);
+        if bytes.find(text[start..end], needle) >= 0 {
+            hits = hits + 1;
+        }
+        start = end + 1;
+    }
+    return hits;
+}
+
+pub fn longest_line[&t](text: &t [byte]) -> [] int {
+    var best = 0;
+    var start = 0;
+    while start < len(text) {
+        let end = line_end(text, start);
+        if end - start > best {
+            best = end - start;
+        }
+        start = end + 1;
+    }
+    return best;
+}

@@ -1,0 +1,45 @@
+// The decisions the brief left open, made and written down as tests.
+import std.test as t;
+
+fn test_lines() -> [] int {
+    return t.assert_eq(count_lines("a\nb\n"), 2);
+}
+
+fn test_matching() -> [] int {
+    return t.assert_eq(count_matching("ok\nERROR x\nok\nERROR y\n", "ERROR"), 2);
+}
+
+fn test_longest() -> [] int {
+    return t.assert_eq(longest_line("ab\nabcd\nabc\n"), 4);
+}
+
+// What is a line? Decision: the text after the last newline is a line
+// too, if there is any of it. An empty log has none.
+fn test_a_log_with_no_final_newline() -> [] int {
+    t.assert_eq(count_lines("a\nb"), 2);
+    t.assert_eq(count_lines("abc"), 1);
+    return t.assert_eq(count_lines(""), 0);
+}
+
+// An empty line is still a line.
+fn test_empty_lines_count() -> [] int {
+    t.assert_eq(count_lines("\n"), 1);
+    return t.assert_eq(count_lines("a\n\nb\n"), 3);
+}
+
+// Decision: a line counts once however many times it matches, and a match
+// may not straddle a newline.
+fn test_matching_counts_lines_not_occurrences() -> [] int {
+    t.assert_eq(count_matching("ERROR ERROR\nok\n", "ERROR"), 1);
+    t.assert_eq(count_matching("ERR\nOR\n", "ERROR"), 0);
+    return t.assert_eq(count_matching("ok\nERROR", "ERROR"), 1);
+}
+
+// Decision: the length of a line is its bytes before the newline. Its
+// carriage return, if it has one, is a byte (until somebody says otherwise).
+fn test_longest_edges() -> [] int {
+    t.assert_eq(longest_line(""), 0);
+    t.assert_eq(longest_line("abc"), 3);
+    t.assert_eq(longest_line("\n\n"), 0);
+    return t.assert_eq(longest_line("ab\r\n"), 3);
+}

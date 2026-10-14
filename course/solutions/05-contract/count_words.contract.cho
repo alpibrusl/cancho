@@ -1,0 +1,32 @@
+// A contract strong enough that the obvious wrong answer cannot pass it.
+import std.test as t;
+
+fn test_two_words() -> [] int {
+    return t.assert_eq(count_words("hello world"), 2);
+}
+
+fn test_one_word() -> [] int {
+    return t.assert_eq(count_words("one"), 1);
+}
+
+// The silent decision: nothing in the brief says what no text counts as.
+fn test_empty_has_no_words() -> [] int {
+    return t.assert_eq(count_words(""), 0);
+}
+
+fn test_only_blanks_has_no_words() -> [] int {
+    t.assert_eq(count_words("   "), 0);
+    return t.assert_eq(count_words(" \t\n "), 0);
+}
+
+// "A run of bytes that are not blank": a run, not a blank plus one.
+fn test_runs_of_blanks_are_one_gap() -> [] int {
+    t.assert_eq(count_words("a  b"), 2);
+    t.assert_eq(count_words("  lead"), 1);
+    t.assert_eq(count_words("trail  "), 1);
+    return t.assert_eq(count_words(" a   b   c "), 3);
+}
+
+fn test_tab_and_newline_are_blanks() -> [] int {
+    return t.assert_eq(count_words("tab\tsep\nnl"), 3);
+}

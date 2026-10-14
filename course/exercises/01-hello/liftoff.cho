@@ -1,0 +1,26 @@
+// Exercise 1 -- make it say what the header says.
+//
+//   course/check.py exercises/01-hello/liftoff.cho
+//
+// Copy this file into work/ first and edit the copy.
+//~ STDOUT Hello, cancho!
+//~ STDOUT 1
+//~ STDOUT 2
+//~ STDOUT 3
+//~ STDOUT 4
+//~ STDOUT 5
+//~ STDOUT liftoff
+//~ EXIT 0
+import std.io;
+
+fn say[&i](io: &!i Io) -> [io_write] int {
+    return io.write_all(io, "Hello, world!\n");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(heap); release(args);
+    borrow mut io as &!i in { say(i); }
+    release(io);
+    return 0;
+}

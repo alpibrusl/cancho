@@ -1,0 +1,45 @@
+// The counter an agent writes for the thin contract: count the newlines.
+// It is right for every log that ends in one -- which is every log in the
+// first draft of the contract. A log cut off mid-line (a crash, a tail, a
+// `head -c`) loses its last line, and `lines` is off by one.
+//~ SATISFIES ../../exercises/08-capstone/logstats.contract.cho
+//~ UNSATISFIED ../../solutions/08-capstone/logstats.contract.cho
+import std.bytes;
+
+pub fn count_lines[&t](text: &t [byte]) -> [] int {
+    return bytes.count_byte(text, 10);
+}
+
+fn line_end[&t](text: &t [byte], start: int) -> [] int {
+    var k = start;
+    while k < len(text) && int_of(text[k]) != 10 {
+        k = k + 1;
+    }
+    return k;
+}
+
+pub fn count_matching[&t, &n](text: &t [byte], needle: &n [byte]) -> [] int {
+    var hits = 0;
+    var start = 0;
+    while start < len(text) {
+        let end = line_end(text, start);
+        if bytes.find(text[start..end], needle) >= 0 {
+            hits = hits + 1;
+        }
+        start = end + 1;
+    }
+    return hits;
+}
+
+pub fn longest_line[&t](text: &t [byte]) -> [] int {
+    var best = 0;
+    var start = 0;
+    while start < len(text) {
+        let end = line_end(text, start);
+        if end - start > best {
+            best = end - start;
+        }
+        start = end + 1;
+    }
+    return best;
+}

@@ -1,0 +1,14 @@
+// Lesson 1: delete the `io` parameter, and the function has nothing to print with.
+//~ RULE unknown-name
+import std.io;
+
+fn say() -> [io_write] int {
+    return io.write_all(io, "Hello, cancho!\n");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(heap); release(args);
+    release(io);
+    return 0;
+}

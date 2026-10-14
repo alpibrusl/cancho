@@ -1,0 +1,17 @@
+// What an agent hands back when the contract is two examples: the
+// shortest function that passes them. It is not wrong about "hello world"
+// or "one". It is wrong about everything the contract did not say.
+//~ SATISFIES ../../exercises/05-contract/count_words.contract.cho
+//~ UNSATISFIED ../../solutions/05-contract/count_words.contract.cho
+
+pub fn count_words[&r](text: &r [byte]) -> [] int {
+    var gaps = 0;
+    var k = 0;
+    while k < len(text) {
+        if int_of(text[k]) == 32 {
+            gaps = gaps + 1;
+        }
+        k = k + 1;
+    }
+    return gaps + 1;
+}

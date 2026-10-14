@@ -1,0 +1,18 @@
+// Exercise 8 -- yours to write, and the hard part. This is the first
+// draft; it passes for a log that looks the way you imagined it. Make it
+// pass only for a counter that is right about the logs you did not imagine.
+//
+//   cancho satisfy work/08-capstone/logstats.contract.cho work/08-capstone/logstats.candidate.cho --std
+import std.test as t;
+
+fn test_lines() -> [] int {
+    return t.assert_eq(count_lines("a\nb\n"), 2);
+}
+
+fn test_matching() -> [] int {
+    return t.assert_eq(count_matching("ok\nERROR x\nok\nERROR y\n", "ERROR"), 2);
+}
+
+fn test_longest() -> [] int {
+    return t.assert_eq(longest_line("ab\nabcd\nabc\n"), 4);
+}

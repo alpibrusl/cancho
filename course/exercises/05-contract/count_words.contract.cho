@@ -1,0 +1,25 @@
+// Exercise 5 -- the contract is the specification, and it is yours.
+//
+// The brief (exercises/05-contract/brief.md) says what `count_words` is
+// for. Below is the contract a first draft usually has: two examples.
+// Two examples are a *hint*, not a contract, and the point of this
+// exercise is to find out how much of the gap an agent will fill with a
+// guess. Add the tests that make a wrong answer impossible -- BEFORE you
+// show it to the agent.
+//
+//   cancho satisfy work/05-contract/count_words.contract.cho work/05-contract/candidate.cho --std
+//
+// A contract has no `main`; a candidate lives in another file, and
+// `satisfy` runs this file's tests against it. The two are checked as
+// ONE program, so an import in both under the same name is refused --
+// which is why a contract imports `as` a name of its own (`t` below)
+// and never fights the candidate for `test` or `result`.
+import std.test as t;
+
+fn test_two_words() -> [] int {
+    return t.assert_eq(count_words("hello world"), 2);
+}
+
+fn test_one_word() -> [] int {
+    return t.assert_eq(count_words("one"), 1);
+}

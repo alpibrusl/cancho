@@ -1,0 +1,15 @@
+// Lesson 3: a buffer dropped twice. The second drop has nothing left to drop.
+//~ RULE linear-use-after-move
+import std.buffer;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(fs); release(args);
+    borrow mut heap as &!h in {
+        let b = buffer.empty(h, 8);
+        buffer.drop(h, b);
+        buffer.drop(h, b);
+    }
+    release(heap);
+    return 0;
+}

@@ -166,6 +166,15 @@ as `scope:symbol` (`docs/foreign-authority.md`). Exit codes are semantic through
 a located diagnostic, `2` the command line was wrong, `3` the
 environment failed, and (`test` only) `4` a test failed.
 
+## Learning it
+
+[`course/`](course/README.md) is a course in eight lessons: the first four
+you write by hand, and from the fifth an AI agent writes the code while you
+write the contract it is held to, the authority budget it must stay inside,
+and the account of what you did not check. It is built on the method of
+[Prompt to Academy](https://github.com/alpibrusl/prompt-to-academy), and every
+solution, planted example and code block in it is run by the test suite.
+
 ## Docs
 
 **[alpibrusl.github.io/cancho](https://alpibrusl.github.io/cancho/)** —

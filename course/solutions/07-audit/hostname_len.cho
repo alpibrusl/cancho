@@ -1,0 +1,28 @@
+//~ AUTHORITY fs_read("/etc/hostname"); io_write
+import std.io;
+
+// The capability is narrowed to the one file the brief names, so the
+// signature says so, the report says so, and a read of any other path
+// stops the program instead of succeeding. The fallback is gone: the
+// brief said "that one file", and the agent had decided otherwise.
+fn length_of[&f, &o](fs: &f Fs("/etc/hostname"), buf: &!o [byte]) -> [fs_read("/etc/hostname")] int {
+    return fs_read(fs, "/etc/hostname", buf);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(heap); release(args);
+    let only = narrow(fs, "/etc/hostname");
+    var n = 0;
+    region r {
+        let buf = alloc_slice[r](4096, byte_of(0));
+        borrow only as &f in { n = length_of(f, buf); }
+    }
+    release(only);
+    borrow mut io as &!i in {
+        io.print_nat(i, n);
+        io.newline(i);
+    }
+    release(io);
+    return 0;
+}

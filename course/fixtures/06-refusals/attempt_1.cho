@@ -1,0 +1,42 @@
+// An agent's first attempt at the brief, given nothing about cancho: every
+// habit below is a good habit somewhere else. Three kinds of mistake in
+// three functions, so `check` reports all three at once -- it reports
+// every independent refusal, not the first.
+//~ RULE type-mismatch
+//~ RULE unknown-name
+//~ RULE not-a-function
+import std.result;
+
+// A byte is not an int.
+fn is_digit_at[&r](text: &r [byte], i: int) -> [] bool {
+    return text[i] >= 48 && text[i] <= 57;
+}
+
+// There is no `break`.
+fn digits_end[&r](text: &r [byte]) -> [] int {
+    var i = 0;
+    while i < len(text) {
+        if !is_digit_at(text, i) {
+            break;
+        }
+        i = i + 1;
+    }
+    return i;
+}
+
+// `Ok` and `Err` are variants you name, not functions.
+pub fn parse_nat[&r](text: &r [byte]) -> [] result.Result[int, &static [byte]] {
+    if len(text) == 0 {
+        return result.err("empty");
+    }
+    if digits_end(text) < len(text) {
+        return result.err("not a digit");
+    }
+    return result.ok(0);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args);
+    return 0;
+}

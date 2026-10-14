@@ -1,0 +1,41 @@
+// Exercise 4 -- the output is right. The authority is not.
+//
+//   course/check.py exercises/04-authority/shrink.cho
+//
+// This prints HELLO, and it can: it reaches the heap to do it. It does
+// not need the heap. Change the program -- not the header -- until it
+// reaches the console and nothing else. (`std.bytes.to_upper` is the one
+// library function you need; `region` and `alloc_slice` are the other
+// place bytes can live.)
+//~ STDOUT HELLO
+//~ EXIT 0
+//~ AUTHORITY io_write
+import std.buffer;
+import std.bytes;
+import std.io;
+
+fn shout[&h, &i, &w](heap: &!h Heap, io: &!i Io, word: &w [byte]) -> [heap, io_write] int {
+    var out = buffer.empty(heap, 16);
+    var k = 0;
+    while k < len(word) {
+        out = buffer.push(heap, out, byte_of(bytes.to_upper(int_of(word[k]))));
+        k = k + 1;
+    }
+    var n = 0;
+    borrow out as &t in {
+        n = buffer.write(io, t);
+    }
+    buffer.drop(heap, out);
+    return n + io.newline(io);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in { shout(h, i, "hello"); }
+    }
+    release(io);
+    release(heap);
+    return 0;
+}

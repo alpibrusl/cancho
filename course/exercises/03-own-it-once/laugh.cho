@@ -1,0 +1,35 @@
+// Exercise 3 -- a buffer is a resource: made once, ended once.
+//
+//   course/check.py exercises/03-own-it-once/laugh.cho
+//
+// Two things are wrong with this file. The compiler will tell you the
+// first one; the second one only your reading will find. Fix them in
+// that order -- and before you run it, write down what you expect the
+// compiler to say.
+//~ STDOUT hahaha
+//~ EXIT 0
+import std.buffer;
+import std.io;
+
+// repeat("ha", 3) is "hahaha". Build it by appending, and hand the buffer back.
+fn repeat[&h, &r](heap: &!h Heap, s: &r [byte], n: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 16);
+    return out;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args);
+    borrow mut heap as &!h in {
+        let text = repeat(h, "ha", 3);
+        borrow mut io as &!i in {
+            borrow text as &t in {
+                buffer.write(i, t);
+                io.newline(i);
+            }
+        }
+    }
+    release(io);
+    release(heap);
+    return 0;
+}
