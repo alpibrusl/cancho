@@ -18,6 +18,7 @@ Generating takes a few minutes the first time (pure-Python primes); `RSA_SIGN_CA
 """
 import hashlib
 import json
+import math
 import os
 import random
 import sys
@@ -178,6 +179,7 @@ def corpus():
     add("rsa-key-parameters", "pkcs8-parameters-null-with-content", P(pk8(good1, alg=L.tlv(0x30, L.tlv(0x06, L.OID_RSA) + L.tlv(0x05, b"\x00"))), "PRIVATE KEY"))
     add("rsa-key-parameters", "pkcs8-parameters-octet-string", P(pk8(good1, alg=L.tlv(0x30, L.tlv(0x06, L.OID_RSA) + L.tlv(0x04, b""))), "PRIVATE KEY"))
     add("rsa-key-parameters", "pkcs8-parameters-null-with-bad-length-byte", P(pk8(good1, alg=L.tlv(0x30, L.tlv(0x06, L.OID_RSA) + b"\x05\x01")), "PRIVATE KEY"))
+    add("rsa-key-parameters", "pkcs8-parameters-null-then-an-extra-null", P(pk8(good1, alg=L.tlv(0x30, L.tlv(0x06, L.OID_RSA) + b"\x05\x00\x05\x00")), "PRIVATE KEY"))
     add("rsa-key-version", "pkcs8-version-1", P(pk8(good1, version=1), "PRIVATE KEY"))
     add("rsa-key-der", "pkcs8-trailing-element", P(pk8(good1, tail=L.tlv(0xa0, b"")), "PRIVATE KEY"))
     add("rsa-key-der", "pkcs8-key-not-octet-string", P(L.tlv(0x30, L.der_int(0) + L.ALG_RSA + L.tlv(0x03, b"\x00" + good1)), "PRIVATE KEY"))
@@ -196,6 +198,7 @@ def corpus():
     add("rsa-key-der", "der-indefinite-length", P(b"\x30\x80" + good1[4:] + b"\x00\x00"))
     add("rsa-key-der", "der-long-form-for-short-length", P(L.tlv(0x30, L.der_int(0))[:1] + b"\x81\x03" + L.der_int(0)))
     add("rsa-key-der", "integer-non-minimal-n", P(pk1(over={"n": L.tlv(0x02, b"\x00\x00" + n.to_bytes(256, "big"))})))
+    add("rsa-key-der", "integer-non-minimal-negative-e", P(pk1(over={"e": L.tlv(0x02, b"\xff\xff")})))
     add("rsa-key-der", "integer-empty-e", P(pk1(over={"e": L.tlv(0x02, b"")})))
     add("rsa-key-der", "integer-wrong-tag-d", P(pk1(over={"d": L.tlv(0x04, d.to_bytes(256, "big"))})))
     add("rsa-key-der", "extra-element", P(pk1(extra=[L.der_int(5)])))
@@ -264,6 +267,13 @@ def corpus():
     add("rsa-key-crt-coefficient", "qinv-plus-p", P(with_key(dict(B, qinv=qinv + p))))
     add("rsa-key-crt-coefficient", "qinv-zero", P(with_key(dict(B, qinv=0))))
     add("rsa-key-crt-coefficient", "qinv-is-pinv-of-wrong-prime", P(with_key(dict(B, qinv=pow(p, -1, q)))))
+    lam = (p - 1) * (q - 1) // math.gcd(p - 1, q - 1)
+    d_big = d + ((n - d + lam - 1) // lam) * lam   # congruent to d modulo lcm(p - 1, q - 1), so to dp and dq, and not below n
+    assert n <= d_big < 1 << 2048
+    add("rsa-key-private-exponent", "d-congruent-to-d-but-not-below-n", P(with_key(dict(B, d=d_big))))
+    d_huge = d + ((1 << 2048) // lam + 1) * lam   # congruent too, and 257 bytes long
+    assert 1 << 2048 <= d_huge < 1 << 2056
+    add("rsa-key-private-exponent", "d-congruent-to-d-and-longer-than-n", P(with_key(dict(B, d=d_huge))))
     add("rsa-key-private-exponent", "d-matches-dp-only", P(with_key(dict(B, d=d + p - 1))))
     add("rsa-key-private-exponent", "d-matches-dq-only", P(with_key(dict(B, d=d + q - 1))))
     add("rsa-key-private-exponent", "d-wrong-but-crt-right", P(with_key(dict(B, d=d ^ 4))))

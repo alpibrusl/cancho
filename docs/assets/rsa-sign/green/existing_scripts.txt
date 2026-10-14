@@ -1,0 +1,7 @@
+# existing scripts re-run on this branch (blast radius of r_squared's ct_reduce), 2026-10-14T14:40:55Z, Darwin 25.2.0 arm64, LLVM; scripts/rsa_mutants.py needed a one-line fix (it globbed the new signing vectors)
+$ python3 scripts/rsa_differential.py rsa_driver pow 100000
+pow_mod: 100000 cases, 0 differences
+(openssl mode of rsa_differential.py needs pyca/cryptography, which is not installed here: not run; std.rsa verification of OpenSSL signatures is exercised by scripts/rsa_sign_differential.py instead)
+$ python3 scripts/rsa_mutants.py target/release/cancho   (after the one-line fix above and a second: its 'even modulus accepted' mutant's text now also occurs in setup_secret, so it is given more context)
+26 mutants, 26 killed
+$ python3 scripts/ecdh_mutants.py   NOT RUN: its OpenSSL differential imports pyca/cryptography, which is not installed on this Mac (not caused by this change; the unmutated files fail it at import)

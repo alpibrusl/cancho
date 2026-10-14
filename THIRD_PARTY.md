@@ -1,12 +1,12 @@
 # Third-party material
 
 Everything in the repository that was not written for it, with where it
-came from and under what terms. The rest of the repository is
-Copyright (c) 2026 lex-lang contributors (as `LICENSE` names the holder; EUPL-1.2); the code and
-documents of `std.rsa_sign` and its gates (`docs/rsa-sign.md`) are Copyright
-(c) 2026 Alpibru S.L., also EUPL-1.2. Per-directory notes, which predate this
-file, are in `tests/vectors/cavp/README.md` and `tests/vectors/wycheproof/README.md`
-and still apply to the files they list.
+came from and under what terms. The repository's own code and documents are
+under the notice in `LICENSE` and `NOTICE` (EUPL-1.2); the code and documents
+of `std.rsa_sign` and its gates (`docs/rsa-sign.md`) are Copyright (c) 2026
+Alpibru S.L., also EUPL-1.2. Per-directory notes, which predate this file, are
+in `tests/vectors/cavp/README.md` and `tests/vectors/wycheproof/README.md` and
+still apply to the files they list.
 
 **All keys in the repository are throwaway test keys.** The RSA keys of the
 files below are published test keys; the others are generated from a fixed

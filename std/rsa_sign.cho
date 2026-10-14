@@ -387,17 +387,6 @@ fn cmp_limbs[&a, &b](a: &a [int], b: &b [int], n: int) -> [] int {
     return 0;
 }
 
-fn is_zero_limbs[&a](a: &a [int], n: int) -> [] bool {
-    var i = 0;
-    while i < n {
-        if a[i] != 0 {
-            return false;
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
 // x mod dv, in place, for `nx` limbs of x, `nd` of dv (nd <= nx) and dv with
 // its top bit set: shift-and-subtract, one step for each of the
 // 64 (nx - nd) + 1 bits of the quotient, every step a borrow chain over all nx
@@ -475,6 +464,8 @@ fn times_is_one[&x, &d](e: int, x: &x [int], dv: &d [int], k: int) -> [] bool {
             }
             i = i + 1;
         }
+        bignum.zero(t);
+        bignum.zero(ds);
     }
     return ok;
 }
@@ -497,7 +488,9 @@ fn crt_exponent_ok[&x, &p](e: int, x: &x [int], p: &p [int], k: int) -> [] bool 
     region r {
         let pm1 = alloc_slice[r](k, 0);
         minus_one(p, k, pm1);
-        ok = !is_zero_limbs(x, k) && cmp_limbs(x, pm1, k) < 0 && times_is_one(e, x, pm1, k);
+        // x = 0 needs no test of its own: e * 0 mod (p - 1) is 0, not 1.
+        ok = cmp_limbs(x, pm1, k) < 0 && times_is_one(e, x, pm1, k);
+        bignum.zero(pm1);
     }
     return ok;
 }
@@ -524,6 +517,9 @@ fn d_matches[&d, &x, &p](d: &d [int], nd: int, x: &x [int], p: &p [int], k: int)
             }
             i = i + 1;
         }
+        bignum.zero(pm1);
+        bignum.zero(rem);
+        bignum.zero(ds);
     }
     return ok;
 }
@@ -588,7 +584,7 @@ pub fn check_key[&k, &d, &w](key: &k [byte], d: &d [byte], work: &!w [int]) -> [
             code = -154;
         } else if !crt_exponent_ok(e, dpl, pl, k8) || !crt_exponent_ok(e, dql, ql, k8) {
             code = -155;
-        } else if is_zero_limbs(qil, k8) || cmp_limbs(qil, pl, k8) >= 0 {
+        } else if cmp_limbs(qil, pl, k8) >= 0 {
             code = -156;
         } else {
             code = qinv_ok(p, q, qib, work);
@@ -596,7 +592,8 @@ pub fn check_key[&k, &d, &w](key: &k [byte], d: &d [byte], work: &!w [int]) -> [
         if code == 0 {
             // d: 1 <= d < n, and d = dp (mod p - 1), d = dq (mod q - 1).
             let dl = alloc_slice[r](2 * k8, 0);
-            if len(d) > l || bigmod.bit_length(d) == 0 {
+            // d = 0 needs no test of its own: 0 mod (p - 1) is not dp, which is not 0.
+            if len(d) > l {
                 code = -157;
             } else {
                 limbs_from(d, dl);

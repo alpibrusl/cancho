@@ -39,6 +39,8 @@ def keys_of(keydir):
     for f in sorted(os.listdir(keydir)):
         if f.endswith(".json"):
             k = L.load_json(os.path.join(keydir, f))
+            if os.environ.get("RSA_SIGN_ONLY_2048") and k["bits"] != 2048:
+                continue
             k["name"] = f[:-5]
             k["pem"] = os.path.join(keydir, f[:-5] + ".pem")
             out.append(k)

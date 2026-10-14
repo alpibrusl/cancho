@@ -1,0 +1,15 @@
+# scripts/rsa_sign_timing.py, process granularity, 2026-10-14T14:04:49Z, Darwin 25.2.0 arm64, Apple M4 Max, commit 54152c8c + working tree, load average at start: 11.03 11.31 11.11
+# class 0 / class 1: control: low-weight d / random d; exp*: dp,dq of 64 set bits / random; key*: key 0 / a random other valid key of the same size
+control RSA-2048 rounds/run 20 samples/class 800: class 0 mean 1.6320 ms/sign, class 1 2.3572 ms/sign (diff -30.76%), Welch t = -422.53 (all), -638.19 (slowest 10% cropped); 64 s
+exp RSA-2048 rounds/run 20 samples/class 1500: class 0 mean 0.7617 ms/sign, class 1 0.7620 ms/sign (diff -0.04%), Welch t = -0.65 (all), -0.90 (slowest 10% cropped); 46 s
+exp-unblinded RSA-2048 rounds/run 20 samples/class 1500: class 0 mean 0.7310 ms/sign, class 1 0.7311 ms/sign (diff -0.02%), Welch t = -0.21 (all), -0.05 (slowest 10% cropped); 44 s
+key RSA-2048 rounds/run 20 samples/class 1500: class 0 mean 0.7930 ms/sign, class 1 0.7928 ms/sign (diff +0.02%), Welch t = 0.24 (all), 0.74 (slowest 10% cropped); 48 s
+key-unblinded RSA-2048 rounds/run 20 samples/class 1500: class 0 mean 0.7565 ms/sign, class 1 0.7558 ms/sign (diff +0.08%), Welch t = 1.14 (all), 1.83 (slowest 10% cropped); 45 s
+control RSA-4096 rounds/run 5 samples/class 300: class 0 mean 11.9827 ms/sign, class 1 17.7180 ms/sign (diff -32.37%), Welch t = -263.83 (all), -504.93 (slowest 10% cropped); 45 s
+exp RSA-4096 rounds/run 5 samples/class 800: class 0 mean 4.7078 ms/sign, class 1 4.7107 ms/sign (diff -0.06%), Welch t = -0.98 (all), -1.79 (slowest 10% cropped); 38 s
+key RSA-4096 rounds/run 5 samples/class 800: class 0 mean 4.7914 ms/sign, class 1 4.7934 ms/sign (diff -0.04%), Welch t = -0.60 (all), -1.78 (slowest 10% cropped); 38 s
+# Cranelift backend (the control and the signer, fewer samples: it is slower)
+control RSA-2048 rounds/run 5 samples/class 300: class 0 mean 4.7130 ms/sign, class 1 6.7327 ms/sign (diff -30.00%), Welch t = -312.53 (all), -351.22 (slowest 10% cropped); 17 s
+exp RSA-2048 rounds/run 3 samples/class 500: class 0 mean 2.6024 ms/sign, class 1 2.6160 ms/sign (diff -0.52%), Welch t = -0.99 (all), -1.78 (slowest 10% cropped); 8 s
+key RSA-2048 rounds/run 3 samples/class 500: class 0 mean 2.6867 ms/sign, class 1 2.6875 ms/sign (diff -0.03%), Welch t = -0.19 (all), -0.16 (slowest 10% cropped); 8 s
+# done 2026-10-14T14:11:33Z, load average at end: 10.50 10.31 10.60

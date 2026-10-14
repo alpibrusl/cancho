@@ -303,7 +303,8 @@ fn case[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, work: &!w [int], show: bo
             if op == 78 {
                 room = number(s, next_field(s, f));
             }
-            let out = alloc_slice[r](room, byte_of(0));
+            // Filled with 0xa5, not 0: a slot the parser forgot to write then shows.
+            let out = alloc_slice[r](room, byte_of(0xa5));
             var code = 0;
             if op == 66 {
                 let format = number(s, f);

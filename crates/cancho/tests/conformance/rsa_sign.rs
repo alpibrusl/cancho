@@ -230,7 +230,7 @@ fn the_malformed_key_corpus_is_refused_with_its_own_rules() {
     let text = root_file("tests/vectors/rsa_sign/malformed.txt");
     let rows: Vec<Vec<&str>> =
         text.lines().filter(|l| !l.starts_with('#')).map(|l| l.split(' ').collect()).collect();
-    assert_eq!(rows.len(), 101, "the corpus changed");
+    assert_eq!(rows.len(), 105, "the corpus changed");
     for backend in ["llvm", "cranelift"] {
         let (dir, exe) = build_driver("malformed", backend);
         let parse: Vec<String> = rows.iter().map(|r| format!("P {}", r[4])).collect();
@@ -356,6 +356,8 @@ fn every_signing_refusal_has_its_own_tag() {
         format!("S 32 {} {d} {ENTROPY}", hex(&vec![0x80u8; 7 * 120 + 8])),
         format!("S 32 {} {d} {ENTROPY}", hex(&vec![0x80u8; 7 * 64 + 8])),
         format!("S 32 {} {d} {ENTROPY}", hex(&vec![0x80u8; 7 * 264 + 8])),
+        // h = 132: in range, but not a multiple of 8 (a 2,112-bit modulus).
+        format!("S 32 {} {d} {ENTROPY}", hex(&vec![0x80u8; 7 * 132 + 8])),
         format!("S 32 - {d} {ENTROPY}"),
         format!("S 32 {key} {d} {}", hex(&[7u8; 15])),
         format!("S 32 {key} {d} {}", hex(&[7u8; 17])),
@@ -368,6 +370,7 @@ fn every_signing_refusal_has_its_own_tag() {
         (0, "ok"),
         (-140, "rsa-sign-hash"),
         (-141, "rsa-sign-digest-length"),
+        (-142, "rsa-sign-key-layout"),
         (-142, "rsa-sign-key-layout"),
         (-142, "rsa-sign-key-layout"),
         (-142, "rsa-sign-key-layout"),

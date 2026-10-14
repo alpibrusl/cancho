@@ -43,7 +43,7 @@ def mutate(rng, data, pool):
         at = rng.randrange(len(d))
         d[at:at + rng.randrange(1, 64)] = bytes([rng.randrange(256)]) * rng.randrange(1, 64)
     elif kind == 6:
-        other = rng.choice(pool)
+        other = rng.choice([x for x in pool if x])
         d = d[:rng.randrange(len(d))] + other[rng.randrange(len(other)):]
     elif kind == 7:
         at = rng.randrange(len(d))
