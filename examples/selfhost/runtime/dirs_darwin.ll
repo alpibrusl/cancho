@@ -44,7 +44,6 @@ entry:
 }
 
 
-declare i32 @openat(i32, ptr, i32, ...)
 
 
 
