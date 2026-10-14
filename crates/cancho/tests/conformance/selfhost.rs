@@ -328,6 +328,7 @@ fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "cryptocode.cho",
         "ex.cho",
         "lookup.cho",
+        "atoms.cho",
     ]
 }
 

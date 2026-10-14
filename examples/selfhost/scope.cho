@@ -359,7 +359,7 @@ pub fn aggregate_codable[&s](st: &!s [int], ty: int) -> [] bool {
     if types.is_tuple(st, ty) {
         return tuple_codable(st, ty);
     }
-    if types.is_handle(st, ty) || types.is_penum(st, ty) || types.is_thread(st, ty) || types.is_fnval(st, ty) {
+    if types.is_handle(st, ty) || types.is_penum(st, ty) || types.is_thread(st, ty) || types.is_fnval(st, ty) || types.is_fnptr(st, ty) {
         return true;
     }
     if types.is_boxslice(st, ty) {
@@ -520,6 +520,9 @@ pub fn field_type[&s](st: &!s [int], ty: int, index: int) -> [] int {
 // parameters are what the regions are; for a callee it is the first of the variables made for
 // its region parameters, which stand in for them at this call.
 pub fn lower_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: int) -> [] int {
+    if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TFn) {
+        return fn_type(st, text, ty, dp, fresh);
+    }
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TTuple) {
         return types.node_type(st, ty, 0 - 1);
     }
@@ -551,6 +554,39 @@ pub fn lower_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fres
         return 0;
     }
     return types.make_ref(st, ast.get(st, ty, 4) != 0, area, referent);
+}
+
+// `fn(A, B) -> R` written for a function without type parameters: up to three parameters.
+fn fn_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: int) -> [] int {
+    let n = ast.get(st, ty, 6);
+    if st[31] >= 0 || n > 3 {
+        return 0;
+    }
+    var parts = 0;
+    var a = 0;
+    var b = 0;
+    var c = 0;
+    var node = ast.get(st, ty, 5);
+    while parts < n {
+        let t = lower_type(st, text, node, dp, fresh);
+        if t == 0 {
+            return 0;
+        }
+        if parts == 0 {
+            a = t;
+        } else if parts == 1 {
+            b = t;
+        } else {
+            c = t;
+        }
+        node = ast.next(st, node);
+        parts = parts + 1;
+    }
+    let ret = lower_type(st, text, ast.get(st, ty, 7), dp, fresh);
+    if ret == 0 {
+        return 0;
+    }
+    return types.make_fnptr(st, ret, n, a, b, c);
 }
 
 // `expect_type`: `found` is usable where `expected` is wanted, or a refusal at the span.

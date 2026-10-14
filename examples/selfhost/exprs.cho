@@ -30,6 +30,7 @@ import selfhost.builtins;
 import selfhost.signatures;
 import selfhost.effects;
 import selfhost.tables;
+import selfhost.atoms;
 
 // ---------------------------------------------------------- expressions ---
 
@@ -78,7 +79,7 @@ pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
         return ex.plain(literal);
     }
     if ast.is_kind(st, id, kinds.NK::EName) {
-        return name_expr(st, text, id);
+        return atoms.name_expr(st, text, id);
     }
     if ast.is_kind(st, id, kinds.NK::EIndex) {
         return index_expr(st, text, id);
@@ -320,25 +321,6 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] e
     return ex.plain(result);
 }
 
-// The prefix a capability was narrowed to, as the pointer and the length of its literal pushed on the stack
-// of arguments; a capability that was not narrowed is a null and 0, which every path is under.
-fn push_prefix[&s, &x](st: &!s [int], text: &x [byte], cap: int) -> [] int {
-    var inner = cap;
-    if types.is_ref(st, inner) {
-        inner = types.ref_inner(st, inner);
-    }
-    let tok = types.prelude_lit_tok(st, inner);
-    if tok < 0 {
-        emit.push_arg(st, 7, false, 0, 0 - 1);
-        emit.push_arg(st, 1, true, 0, 0 - 1);
-        return 0;
-    }
-    let n = emit.string_constant(st, text, tok);
-    emit.push_arg(st, 7, false, 0, 0 - 2 - n);
-    emit.push_arg(st, 1, true, st[59], 0 - 1);
-    return 0;
-}
-
 // `narrow(cap, "prefix")` (1), `open_read` (2), `open_write` (3), `open_append` (4), `open_new` (5),
 // `open_rw` (6) and `exec_spawn` (7): the builtins whose type or whose check is in the literal a capability
 // was narrowed to. In compile mode only.
@@ -390,7 +372,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
             return ex.skip(st, from, to);
         }
         ex.push_value(st, path);
-        push_prefix(st, text, c.ty);
+        atoms.push_prefix(st, text, c.ty);
         ex.push_value(st, bytes);
         return ex.in_reg(1, emit.fs_once(st, which == 9));
     }
@@ -408,7 +390,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
             return ex.skip(st, from, to);
         }
         ex.push_value(st, path);
-        push_prefix(st, text, c.ty);
+        atoms.push_prefix(st, text, c.ty);
         let v = emit.open_path(st, which - 2);
         let opened = types.make_prelude(st, tables.prelude_opened());
         return ex.in_reg(opened, emit.answer_enum(st, opened, 0, v));
@@ -446,7 +428,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         return ex.skip(st, from, to);
     }
     ex.push_value(st, path);
-    push_prefix(st, text, c.ty);
+    atoms.push_prefix(st, text, c.ty);
     ex.push_value(st, args);
     ex.push_value(st, env);
     // Each stream: its tag, the end of a channel the child is given and the file it is given.
@@ -474,11 +456,6 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
     let v = emit.spawn_process(st);
     let spawned = types.make_prelude(st, tables.prelude_spawned());
     return ex.in_reg(spawned, emit.answer_enum(st, spawned, 0, v));
-}
-
-// Is this the `&!x Heap` a heap operation is reached through?
-fn is_heap_ref[&s](st: &!s [int], ty: int) -> [] bool {
-    return types.is_ref(st, ty) && types.ref_unique(st, ty) && types.is_prelude(st, types.ref_inner(st, ty)) && types.prelude_index(st, types.ref_inner(st, ty)) == scope.heap_index();
 }
 
 // `box_slice(heap, count, fill)` (1), `unbox_slice(heap, box)` (2) and `contents(box_ref)` (3), of
@@ -521,7 +498,7 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
     if !ast.ok(st) {
         return ex.nothing();
     }
-    if !is_heap_ref(st, h.ty) {
+    if !atoms.is_heap_ref(st, h.ty) {
         return ex.skip(st, from, to);
     }
     arg = ast.next(st, arg);
@@ -936,64 +913,6 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     return ex.plain(scope.field_type(st, held, index));
 }
 
-pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
-    let from = ast.nstart(st, id);
-    let to = ast.nend(st, id);
-    let name = ast.get(st, id, 4);
-    let i = scope.find(st, text, name);
-    if i >= 0 {
-        scope.use_slot(st, i, from, to);
-        if emit.on(st) {
-            if types.is_erased(st, scope.binding_type(st, i)) {
-                return ex.in_reg(scope.binding_type(st, i), 0 - 1);
-            }
-            if types.is_slice_ref(st, scope.binding_type(st, i)) {
-                let p = emit.load_slice(st, scope.slot_of(st, i));
-                return ex.in_slice(scope.binding_type(st, i), p, st[59], 0);
-            }
-            return ex.in_reg(scope.binding_type(st, i), emit.load(st, scope.binding_type(st, i), scope.slot_of(st, i)));
-        }
-        return ex.plain(scope.binding_type(st, i));
-    }
-    // A `static` of this module declared as a slice of scalars is a shared reference to it.
-    let table = lookup.static_named(st, text, name);
-    if table >= 0 {
-        let ty = scope.static_type(st, table);
-        if ty == 0 {
-            return ex.skip(st, from, to);
-        }
-        if emit.on(st) {
-            let element = types.element_of(st, ty);
-            if !types.is_plain(element) {
-                return ex.skip(st, from, to);
-            }
-            let p = emit.static_load(st, table);
-            return ex.in_slice(ty, p, st[59], 0);
-        }
-        return ex.plain(ty);
-    }
-    // A function of this module used as a value: its address, to be given to `spawn`.
-    if emit.on(st) {
-        var it = st[15];
-        while it >= 0 {
-            if ast.is_kind(st, it, kinds.NK::IFn) && ast.get(st, it, 13) == st[22] && ast.same(st, text, ast.get(st, it, 4), name) {
-                if pass1.count_params(st, ast.get(st, it, 6), false) > 0 || !plain_function(st, text, it) {
-                    return ex.skip(st, from, to);
-                }
-                return ex.in_reg(types.make_fnval(st, it), threadcode.function_pointer(st, it));
-            }
-            it = ast.next(st, it);
-        }
-    }
-    // A name that is not a local may still be a function used as a value, or a builtin: those are
-    // values of types this slice does not check.
-    if lookup.names_something(st, text, name) {
-        return ex.skip(st, from, to);
-    }
-    ast.fail(st, rules.r_unknown_name(), from, to);
-    return ex.nothing();
-}
-
 pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
@@ -1141,38 +1060,9 @@ pub fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex 
         return ex.in_reg(5, short_reg);
     }
     if emit.on(st) {
-        return ex.in_reg(result, binary_code(st, op, operand, l, r));
+        return ex.in_reg(result, atoms.binary_code(st, op, operand, l, r));
     }
     return ex.plain(result);
-}
-
-// The code for `l op r` on two operands of type `ty`, answering the temporary of the result.
-pub fn binary_code[&s](st: &!s [int], op: int, ty: int, l: ex.Ex, r: ex.Ex) -> [] int {
-    if ty == 3 || ty == 4 {
-        if op >= 13 {
-            return floatcode.float_op(st, op, ty, l.known, l.value, l.reg, r.known, r.value, r.reg);
-        }
-        return floatcode.float_compare(st, op, ty, l.known, l.value, l.reg, r.known, r.value, r.reg);
-    }
-    if op >= 13 && op <= 15 {
-        return emit.checked(st, op - 13, l.known, l.value, l.reg, r.known, r.value, r.reg);
-    }
-    if op == 16 || op == 17 {
-        return emit.divide(st, op == 17, l.known, l.value, l.reg, r.known, r.value, r.reg);
-    }
-    if op == 11 || op == 12 {
-        return emit.shift(st, op == 11, l.known, l.value, l.reg, r.known, r.value, r.reg);
-    }
-    if op >= 8 && op <= 10 {
-        var kind = 2;
-        if op == 10 {
-            kind = 0;
-        } else if op == 8 {
-            kind = 1;
-        }
-        return emit.bitwise(st, kind, l.known, l.value, l.reg, r.known, r.value, r.reg);
-    }
-    return emit.compare(st, op, ty, l.known, l.value, l.reg, r.known, r.value, r.reg);
 }
 
 // `s[i]`: one element of a slice. The base is checked first, then the index.
@@ -1262,38 +1152,6 @@ pub fn len_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
         return ex.constant(a.value);
     }
     return ex.plain(1);
-}
-
-// A call to a builtin the table says everything about: it takes what its signature says, as a
-// call to a function does, its region parameters made variables the arguments solve. A builtin the
-// lowering checks by hand, one that performs an effect (rows are not checked yet) and one with a
-// type the checker cannot hold are `SKIP`; and every builtin is while code is being written.
-// A builtin on words, its arguments pushed.
-fn word_builtin[&s](st: &!s [int], written: int, result: int) -> [] ex.Ex {
-    if written == 70 {
-        wordcode.stop(st);
-        return ex.constant(0);
-    }
-    if written == 71 {
-        wordcode.copy_within(st);
-        return ex.constant(0);
-    }
-    if written == 72 {
-        return ex.in_reg(1, wordcode.barrier(st));
-    }
-    if written == 73 {
-        return ex.in_reg(result, wordcode.mul_wide(st, result));
-    }
-    if written == 74 || written == 75 {
-        return ex.in_reg(result, wordcode.add_carry(st, result, written == 75));
-    }
-    if written == 76 {
-        return ex.in_reg(1, wordcode.load_le64(st));
-    }
-    if written == 77 {
-        return ex.in_reg(1, wordcode.byte_mask64(st));
-    }
-    return ex.in_reg(1, wordcode.count_bits(st, written - 78));
 }
 
 pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> [] ex.Ex {
@@ -1413,7 +1271,7 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
         return ex.constant(done);
     }
     if written >= 70 {
-        return word_builtin(st, written, result);
+        return atoms.word_builtin(st, written, result);
     }
     if written >= 18 && written <= 30 {
         return ex.in_reg(result, floatcode.float_builtin(st, written, last.known, last.value, last.reg));
@@ -1489,7 +1347,7 @@ pub fn extern_call[&s, &x](st: &!s [int], text: &x [byte], id: int, it: int) -> 
         if ast.ok(st) {
             var expected = 7;
             if kind != 4 {
-                expected = callee_type(st, text, ty, dp, fresh, 0 - 1);
+                expected = atoms.callee_type(st, text, ty, dp, fresh, 0 - 1);
             }
             scope.expect(st, text, expected, a.ty, ast.nstart(st, arg), ast.nend(st, arg));
         }
@@ -1552,7 +1410,7 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
         return ex.nothing();
     }
     if holds_bound {
-        push_prefix(st, text, cap);
+        atoms.push_prefix(st, text, cap);
     }
     netcode.extras(st, which);
     let n = st[52] - first_arg;
@@ -1626,6 +1484,11 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
                 // A function held in a name: the call is to the function it holds.
                 scope.use_slot(st, local, from, to);
                 return call_item(st, text, id, types.fnval_item(st, scope.binding_type(st, local)));
+            }
+            if emit.on(st) && types.is_fnptr(st, scope.binding_type(st, local)) {
+                // A function held by its type: the call is through the pointer.
+                scope.use_slot(st, local, from, to);
+                return call_pointer(st, text, id, local);
             }
             ast.fail(st, rules.r_not_a_function(), from, to);
             return ex.nothing();
@@ -1779,12 +1642,51 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
 }
 
 // The call `id` to the function `found`: its arguments against the signature, then the code.
+// A call of the function in the name `local`, of type `fn(A, B) -> R`.
+fn call_pointer[&s, &x](st: &!s [int], text: &x [byte], id: int, local: int) -> [] ex.Ex {
+    let from = ast.nstart(st, id);
+    let to = ast.nend(st, id);
+    let ty = scope.binding_type(st, local);
+    let n = types.fnptr_count(st, ty);
+    if ast.get(st, id, 7) != n {
+        ast.fail(st, rules.r_arity_mismatch(), from, to);
+        return ex.nothing();
+    }
+    let first_arg = st[52];
+    var arg = ast.get(st, id, 6);
+    var k = 0;
+    while k < n && ast.ok(st) {
+        let a = expr(st, text, arg);
+        if ast.ok(st) {
+            scope.expect(st, text, types.fnptr_param(st, ty, k), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
+            if ast.ok(st) && !types.is_erased(st, a.ty) {
+                ex.push_value(st, a);
+            }
+        }
+        arg = ast.next(st, arg);
+        k = k + 1;
+    }
+    if !ast.ok(st) {
+        return ex.nothing();
+    }
+    let result = types.fnptr_ret(st, ty);
+    if !types.is_plain(result) && !scope.aggregate_codable(st, result) && !scope.slice_codable(st, result) {
+        return ex.skip(st, from, to);
+    }
+    let pointer = emit.load(st, ty, scope.slot_of(st, local));
+    let answer = emit.call_pointer(st, pointer, result, st[52] - first_arg);
+    if types.is_slice_ref(st, result) {
+        return ex.in_slice(result, answer, st[59], 0);
+    }
+    return ex.in_reg(result, answer);
+}
+
 pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let nargs = ast.get(st, id, 7);
     // A callee that is generic, declares effects, or has a type this slice does not handle.
-    if !plain_function(st, text, found) {
+    if !atoms.plain_function(st, text, found) {
         return ex.skip(st, from, to);
     }
     if emit.on(st) && pass1.count_params(st, ast.get(st, found, 6), false) > 2 {
@@ -1826,12 +1728,12 @@ pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) ->
             emit.push_arg(st, 0 - 7, false, param, arg);
         } else {
             if emit.on(st) && ast.is_kind(st, arg, kinds.NK::EVariant) {
-                types.set_hint(st, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars));
+                types.set_hint(st, atoms.callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars));
             }
             let a = expr(st, text, arg);
             types.set_hint(st, 0);
             if ast.ok(st) {
-                scope.expect(st, text, callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
+                scope.expect(st, text, atoms.callee_type(st, text, ast.get(st, param, 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, arg), ast.nend(st, arg));
                 if emit.on(st) && !types.is_erased(st, a.ty) {
                     ex.push_value(st, a);
                 }
@@ -1845,11 +1747,11 @@ pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) ->
         let at = st[51] + 4 * slot;
         if st[at] == 0 - 7 {
             let waiting = st[at + 3];
-            types.set_hint(st, callee_type(st, text, ast.get(st, st[at + 2], 5), callee_dp, fresh, tvars));
+            types.set_hint(st, atoms.callee_type(st, text, ast.get(st, st[at + 2], 5), callee_dp, fresh, tvars));
             let a = expr(st, text, waiting);
             types.set_hint(st, 0);
             if ast.ok(st) {
-                scope.expect(st, text, callee_type(st, text, ast.get(st, st[at + 2], 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, waiting), ast.nend(st, waiting));
+                scope.expect(st, text, atoms.callee_type(st, text, ast.get(st, st[at + 2], 5), callee_dp, fresh, tvars), a.ty, ast.nstart(st, waiting), ast.nend(st, waiting));
             }
             if ast.ok(st) && !types.is_erased(st, a.ty) {
                 st[at] = a.ty;
@@ -1887,7 +1789,7 @@ pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) ->
     if !ast.ok(st) {
         return ex.nothing();
     }
-    let result = types.resolve_type(st, callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars));
+    let result = types.resolve_type(st, atoms.callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars));
     if emit.on(st) {
         if !types.is_plain(result) && !scope.aggregate_codable(st, result) && !scope.slice_codable(st, result) {
             return ex.skip(st, from, to);
@@ -1907,46 +1809,4 @@ pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) ->
         return ex.in_reg(result, answer);
     }
     return ex.plain(result);
-}
-
-// A type written in a callee's declaration, at one call: its type parameters are the variables made
-// for the call (the first is `tvars`) and its region parameters the region variables.
-pub fn callee_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: int, tvars: int) -> [] int {
-    st[31] = tvars;
-    let out = scope.lower_type(st, text, ty, dp, fresh);
-    st[31] = 0 - 1;
-    return out;
-}
-
-// A function whose row is plain labels and only types this slice handles: the callees it can call.
-// Regions and type parameters are fine.
-pub fn plain_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] bool {
-    let dp = ast.get(st, fn_item, 6);
-    if !emit.on(st) && !effects.plain_row(st, effects.row_mask(st, text, fn_item)) {
-        return false;
-    }
-    // The type parameters stand for variables that are not used again, to see that the types can be written.
-    var scratch = 0 - 1;
-    var made = 0;
-    while emit.on(st) && made < pass1.count_params(st, dp, false) {
-        let v = types.fresh_tvar(st);
-        if made == 0 {
-            scratch = v;
-        }
-        made = made + 1;
-    }
-    st[31] = scratch;
-    var good = true;
-    var param = ast.get(st, fn_item, 7);
-    while param >= 0 {
-        if scope.lower_type(st, text, ast.get(st, param, 5), dp, 0 - 1) == 0 {
-            good = false;
-        }
-        param = ast.next(st, param);
-    }
-    if scope.lower_type(st, text, ast.get(st, fn_item, 10), dp, 0 - 1) == 0 {
-        good = false;
-    }
-    st[31] = 0 - 1;
-    return good;
 }

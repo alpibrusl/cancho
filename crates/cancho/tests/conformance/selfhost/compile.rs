@@ -663,6 +663,21 @@ const SINGLE_LITERALS: &[&str] = &[
     "8.5e-5f32",
 ];
 
+/// Functions held by their type in a parameter or a name, and called through it.
+const FNPTRS: &[&str] = &[r#"struct P { a: int, b: int }
+fn double(x: int) -> [] int { return x + x; }
+fn add(x: int, y: int) -> [] int { return x + y; }
+fn gt(x: int, y: int) -> [] bool { return x > y; }
+fn mk(x: int, y: int) -> [] P { return P { a: x, b: y }; }
+fn apply(f: fn(int) -> [] int, x: int) -> [] int { return f(x); }
+fn twice(f: fn(int) -> [] int, x: int) -> [] int { return apply(f, apply(f, x)); }
+fn fold2(f: fn(int, int) -> [] int, a: int, b: int) -> [] int { let g = f; return g(a, b) + f(b, a); }
+fn pick(f: fn(int, int) -> [] bool, a: int, b: int) -> [] int { if f(a, b) { return 1; } return 0; }
+fn build(f: fn(int, int) -> [] P, a: int) -> [] int { let p = f(a, 2 * a); return p.a * 10 + p.b; }
+fn run() -> [] int {
+    return twice(double, 3) + fold2(add, 4, 5) * 100 + pick(gt, 5, 2) * 10000 + build(mk, 7) * 100000;
+}"#];
+
 #[test]
 fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     let compiler = build("compile", &with_front_end("compile.cho"));
@@ -697,6 +712,7 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         .chain(GENERICS)
         .chain(FLOATS)
         .chain(ARENAS)
+        .chain(FNPTRS)
     {
         jobs.push((with_main(program), with_main(program)));
     }
@@ -786,16 +802,16 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
 fn a_function_the_compiler_cannot_write_is_a_refusal_when_the_program_reaches_it() {
     let compiler = build("compile-refusal", &with_front_end("compile.cho"));
     let target = super::target_line();
-    let apply = "fn apply(f: fn(int) -> [] int, x: int) -> [] int { return f(x); }\n\
-                 fn inc(x: int) -> [] int { return x + 1; }\n";
+    let apply = "fn apply(f: fn(int, int, int, int) -> [] int, x: int) -> [] int { return f(x, x, x, x); }\n\
+                 fn sum(a: int, b: int, c: int, d: int) -> [] int { return a + b + c + d; }\n";
     let reached = format!(
-        "{apply}fn main(world: World) -> [] int {{ release(world); return apply(inc, 1); }}\n"
+        "{apply}fn main(world: World) -> [] int {{ release(world); return apply(sum, 1); }}\n"
     );
     let answer_reached = answer(&compiler, &format!("TARGET {target}\n{reached}"));
-    let call = reached.find("apply(inc, 1)").expect("the call");
+    let call = reached.find("apply(sum, 1)").expect("the call");
     assert_eq!(
         answer_reached.trim_end(),
-        format!("ERR SKIP {call} {}", call + "apply(inc, 1)".len()),
+        format!("ERR SKIP {call} {}", call + "apply(sum, 1)".len()),
         "a call to a function left out is refused at the call"
     );
     let unreached =

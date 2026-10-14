@@ -163,7 +163,7 @@ pub fn llvm_type[&s](st: &!s [int], ty: int) -> [] int {
     if types.is_boxslice(st, ty) {
         return str(st, "{ ptr, i64 }");
     }
-    if types.is_box(st, ty) || types.is_thread(st, ty) || types.is_fnval(st, ty) {
+    if types.is_box(st, ty) || types.is_thread(st, ty) || types.is_fnval(st, ty) || types.is_fnptr(st, ty) {
         return str(st, "ptr");
     }
     if types.is_tuple(st, ty) {
@@ -894,13 +894,28 @@ pub fn push_arg[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -
 // The call of `name`, the identifier at token `name` of `text`, to the last `n` arguments pushed,
 // returning `ret`; answers the temporary of the result.
 pub fn call[&s](st: &!s [int], callee: int, inst: int, ret: int, n: int) -> [] int {
-    let first = st[52] - n;
     let result = start(st);
     str(st, "call ");
     ret_type(st, ret);
     str(st, " @lexs_");
     nat(st, callee);
     instance_suffix(st, inst);
+    return call_tail(st, result, ret, n);
+}
+
+// The call of the function whose address is in the temporary `pointer`.
+pub fn call_pointer[&s](st: &!s [int], pointer: int, ret: int, n: int) -> [] int {
+    let result = start(st);
+    str(st, "call ");
+    ret_type(st, ret);
+    str(st, " ");
+    temp(st, pointer);
+    return call_tail(st, result, ret, n);
+}
+
+// The arguments of a call, the last `n` pushed, and what comes back.
+fn call_tail[&s](st: &!s [int], result: int, ret: int, n: int) -> [] int {
+    let first = st[52] - n;
     str(st, "(");
     var i = 0;
     while i < n {

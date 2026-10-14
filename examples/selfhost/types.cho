@@ -78,6 +78,10 @@ fn thread_kind() -> [] int {
     return 18;
 }
 
+fn fnptr_kind() -> [] int {
+    return 19;
+}
+
 fn unbound() -> [] int {
     return 0 - 100;
 }
@@ -466,6 +470,36 @@ pub fn fnval_item[&s](st: &!s [int], ty: int) -> [] int {
     return slot(st, ty, 1);
 }
 
+// A function held in a parameter or a name by its type, `fn(A, B) -> R`: a pointer. Its result, how many
+// parameters it has (up to three), and the parameters (the one, or a tuple of them). Only the code is written
+// for it, in a function that has no type parameters.
+pub fn make_fnptr[&s](st: &!s [int], ret: int, n: int, a: int, b: int, c: int) -> [] int {
+    var packed = a;
+    if n > 1 {
+        packed = make_tuple(st, n, a, b, c);
+    }
+    return make(st, fnptr_kind(), ret, n, packed);
+}
+
+pub fn is_fnptr[&s](st: &!s [int], ty: int) -> [] bool {
+    return ty >= first_table() && slot(st, ty, 0) == fnptr_kind();
+}
+
+pub fn fnptr_ret[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 1);
+}
+
+pub fn fnptr_count[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 2);
+}
+
+pub fn fnptr_param[&s](st: &!s [int], ty: int, k: int) -> [] int {
+    if slot(st, ty, 2) == 1 {
+        return slot(st, ty, 3);
+    }
+    return tuple_part(st, slot(st, ty, 3), k);
+}
+
 // `Thread[T, R]` as `spawn` answers it: what the thread returns is all `join` needs. A pointer (the
 // `pthread_t`), a value that must be joined.
 pub fn make_thread[&s](st: &!s [int], result: int) -> [] int {
@@ -807,6 +841,22 @@ pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
         return 0;
     }
     if is_param(st, expected) && is_param(st, found) && slot(st, expected, 1) == slot(st, found, 1) {
+        return 0;
+    }
+    if is_fnptr(st, expected) && (is_fnval(st, found) || is_fnptr(st, found) && fnptr_count(st, expected) == fnptr_count(st, found)) {
+        // A function named where a function of a type is wanted: the code is written for programs the Rust
+        // compiler has accepted, so the signatures are not compared.
+        if is_fnptr(st, found) {
+            var k = 0;
+            while k < fnptr_count(st, expected) {
+                let r = unify(st, fnptr_param(st, expected, k), fnptr_param(st, found, k));
+                if r != 0 {
+                    return r;
+                }
+                k = k + 1;
+            }
+            return unify(st, fnptr_ret(st, expected), fnptr_ret(st, found));
+        }
         return 0;
     }
     if is_prelude(st, expected) && is_prelude(st, found) && slot(st, expected, 1) == slot(st, found, 1) {
