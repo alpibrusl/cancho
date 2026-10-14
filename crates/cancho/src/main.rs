@@ -32,6 +32,7 @@ mod fmt_cli;
 mod foreign_report;
 mod project;
 mod satisfy_cli;
+mod selfhost_build;
 mod test_cli;
 mod vcs_cli;
 mod vcs_dir;
@@ -42,7 +43,7 @@ const USAGE: &str = "\
 cancho — the bootstrap compiler for the cancho systems dialect
 
 usage:
-    cancho build <file.cho>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm] [--target <triple>] [-l <name>]... [-L <path>]...
+    cancho build <file.cho>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm] [--target <triple>] [-l <name>]... [-L <path>]... [--compiler <exe>]
     cancho check <file.cho>... [--std] [--output json] [--backend cranelift|llvm] [--target <triple>]
     cancho run   <file.cho>... [--std] [--backend cranelift|llvm] [--target <triple>] [-l <name>]... [-L <path>]...
     cancho test  <file.cho>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
@@ -73,6 +74,7 @@ options:
     -o <output>     where to write the result (default: the first input's stem)
     --emit exe|obj  emit a linked executable (default) or a bare object file
     --std           make the standard library's source available
+    --compiler <exe>  (build) build with the compiler written in cancho, `examples/selfhost/compiler.cho` built once
     --output json   `check` and `authority` as data rather than prose
     --backend cranelift|llvm
                     which backend generates code (default: llvm, since #127).
@@ -442,9 +444,23 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
                 target,
                 link_libs,
                 link_paths,
+                compiler,
                 ..
             } = parse_args(&args[1..], true, true)?;
             let output = output.unwrap_or_else(|| default_output(&inputs[0], emit));
+            if let Some(compiler) = compiler {
+                selfhost_build::build(selfhost_build::Job {
+                    compiler: &compiler,
+                    inputs: &inputs,
+                    output: &output,
+                    emit,
+                    with_std,
+                    target: target.as_ref(),
+                    link_libs: &link_libs,
+                    link_paths: &link_paths,
+                })?;
+                return Ok(ExitCode::SUCCESS);
+            }
             build(
                 &inputs,
                 &output,
@@ -595,6 +611,8 @@ struct Invocation {
     /// `-L <path>` (`docs/foreign-linking.md` §3): search paths for the
     /// above, same order, same treatment.
     link_paths: Vec<String>,
+    /// `--compiler <exe>` (`docs/self-hosting.md`): build with the compiler written in cancho.
+    compiler: Option<PathBuf>,
 }
 
 fn parse_args(
@@ -611,6 +629,7 @@ fn parse_args(
     let mut target: Option<Triple> = None;
     let mut link_libs = Vec::new();
     let mut link_paths = Vec::new();
+    let mut compiler: Option<PathBuf> = None;
     let mut it = args.iter();
 
     while let Some(arg) = it.next() {
@@ -653,6 +672,10 @@ fn parse_args(
                         .map_err(|e| usage(format!("unknown target `{value}`: {e}")))?,
                 );
             }
+            "--compiler" if allow_output => {
+                let value = it.next().ok_or_else(|| usage("`--compiler` needs a path"))?;
+                compiler = Some(PathBuf::from(value));
+            }
             "-l" if allow_link => {
                 let value = it.next().ok_or_else(|| usage("`-l` needs a library name"))?;
                 link_libs.push(value.clone());
@@ -676,7 +699,18 @@ fn parse_args(
     if target.is_some() && backend == Backend::Cranelift {
         return Err(usage("`--target` needs `--backend llvm`: Cranelift emits for the host only"));
     }
-    Ok(Invocation { inputs, output, emit, with_std, json, backend, target, link_libs, link_paths })
+    Ok(Invocation {
+        inputs,
+        output,
+        emit,
+        with_std,
+        json,
+        backend,
+        target,
+        link_libs,
+        link_paths,
+        compiler,
+    })
 }
 
 fn default_output(input: &Path, emit: Emit) -> PathBuf {

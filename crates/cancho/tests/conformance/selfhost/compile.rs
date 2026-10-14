@@ -807,3 +807,55 @@ fn a_function_the_compiler_cannot_write_is_a_refusal_when_the_program_reaches_it
     );
     let _ = std::fs::remove_dir_all(compiler.parent().expect("a scratch directory"));
 }
+
+/// `cancho build --compiler <exe>` builds with the compiler in cancho: the program, with the standard
+/// library it imports, runs as the Rust build does, and a refusal is an exit status 1 that says where.
+#[test]
+fn build_with_the_compiler_in_cancho_from_the_command_line() {
+    let compiler = build("compile-cli", &with_front_end("compiler.cho"));
+    let dir = compiler.parent().expect("a scratch directory").to_path_buf();
+    let program = dir.join("program.cho");
+    std::fs::write(
+        &program,
+        "import std.io;\nfn say[&i](con: &!i Io) -> [io_write] int {\n    return io.write_all(con, \"from the compiler in cancho\\n\");\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(ffi);\n    release(fs);\n    release(heap);\n    release(args);\n    borrow mut io as &!i in {\n        say(i);\n    }\n    release(io);\n    return 3;\n}\n",
+    )
+    .expect("the scratch directory is writable");
+    let built = |extra: &[&str], out: &str| {
+        let exe = dir.join(out);
+        let ended = Command::new(BIN)
+            .arg("build")
+            .arg(&program)
+            .args(["--std", "-o"])
+            .arg(&exe)
+            .args(extra)
+            .output()
+            .expect("cancho runs");
+        (ended, exe)
+    };
+    let (rust, rust_exe) = built(&[], "by-rust");
+    assert!(rust.status.success(), "{}", String::from_utf8_lossy(&rust.stderr));
+    let (ours, our_exe) = built(&["--compiler", compiler.to_str().expect("a path")], "by-cancho");
+    assert!(ours.status.success(), "{}", String::from_utf8_lossy(&ours.stderr));
+    assert_eq!(run_it(&rust_exe), run_it(&our_exe));
+    let refused = dir.join("refused.cho");
+    std::fs::write(
+        &refused,
+        "fn main(world: World) -> [] int {\n    release(world);\n    return true;\n}\n",
+    )
+    .expect("the scratch directory is writable");
+    let ended = Command::new(BIN)
+        .arg("build")
+        .arg(&refused)
+        .args([
+            "-o".as_ref(),
+            dir.join("refused").as_os_str(),
+            "--compiler".as_ref(),
+            compiler.as_os_str(),
+        ])
+        .output()
+        .expect("cancho runs");
+    assert_eq!(ended.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&ended.stderr);
+    assert!(said.contains("refused.cho:3") && said.contains("type-mismatch"), "{said}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
