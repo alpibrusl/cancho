@@ -687,6 +687,42 @@ fn run() -> [] int {
 }"#,
 ];
 
+/// A variable whose type is what a later statement makes it: `var x = List::Empty;`.
+const LATE: &[&str] = &[
+    r#"enum List[T] { Empty, Cons(T, int) }
+fn length(l: List[int]) -> [] int {
+    match l {
+        List::Empty => { return 0; }
+        List::Cons(v, n) => { return v + n; }
+    }
+}
+fn run() -> [] int {
+    var x = List::Empty;
+    var total = length(x);
+    x = List::Cons(5, 7);
+    return total + length(x);
+}"#,
+    r#"enum Maybe[T] { Nothing, Just(T) }
+fn unwrap(m: Maybe[int], fallback: int) -> [] int {
+    match m {
+        Maybe::Nothing => { return fallback; }
+        Maybe::Just(v) => { return v; }
+    }
+}
+fn first_even(limit: int) -> [] int {
+    var found = Maybe::Nothing;
+    var i = 1;
+    while i < limit {
+        if i % 2 == 0 && unwrap(found, 0 - 1) < 0 {
+            found = Maybe::Just(i * 10);
+        }
+        i = i + 1;
+    }
+    return unwrap(found, 0 - 1);
+}
+fn run() -> [] int { return first_even(9) + first_even(2) * 1000; }"#,
+];
+
 /// Functions held by their type in a parameter or a name, and called through it.
 const FNPTRS: &[&str] = &[r#"struct P { a: int, b: int }
 fn double(x: int) -> [] int { return x + x; }
@@ -737,6 +773,7 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         .chain(FLOATS)
         .chain(ARENAS)
         .chain(FNPTRS)
+        .chain(LATE)
         .chain(QUADS)
     {
         jobs.push((with_main(program), with_main(program)));

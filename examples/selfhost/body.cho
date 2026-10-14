@@ -622,10 +622,23 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
                 types.set_hint(st, scope.lower_type(st, text, note, st[28], 0 - 1));
             }
         }
+        var learn = false;
+        if emit.on(st) && note < 0 && ast.is_kind(st, value, kinds.NK::EVariant) {
+            // A literal of a declaration with parameters, and nothing written to say what they are: what the
+            // function does with the variable may.
+            learn = true;
+            types.set_hint(st, instances.var_hint(st, id));
+            if types.hint(st) == 0 && !instances.inferring(st) {
+                instances.want_inference(st);
+            }
+        }
         let found = exprs.expr(st, text, value);
         types.set_hint(st, 0);
         if !ast.ok(st) {
             return 0;
+        }
+        if learn && instances.inferring(st) {
+            instances.note_var(st, id, found.ty);
         }
         var declared = found.ty;
         let written = ast.get(st, id, 6);

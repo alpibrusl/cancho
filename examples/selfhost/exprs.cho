@@ -237,7 +237,7 @@ pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: in
     if !ast.ok(st) {
         return ex.nothing();
     }
-    if !scope.enum_codable(st, whole) {
+    if !scope.enum_codable(st, whole) && !instances.inferring(st) {
         return ex.skip(st, from, to);
     }
     var acc = emit.insert_at(st, whole, 0 - 1, 0, 1, true, emit.variant_position(st, item, variant), 0 - 1);

@@ -238,3 +238,84 @@ pub fn load_env[&s](st: &!s [int]) -> [] int {
     }
     return 0;
 }
+
+// ------------------------------------------------------------------- types of variables ---
+//
+// `var x = list.List::Empty;` has the type of what comes after it. A function with one is compiled twice: the first
+// time only to learn the types (`infer`), when a literal that is still unsolved is let be and the types it comes to
+// are written down after the function (`settle`); the second time they are the type the literal is expected to be
+// (`var_hint`). They are rows of the table with a negative declaration: `-(node * 4096 + instance) - 1`.
+
+fn key_of[&s](st: &!s [int], node: int) -> [] int {
+    return 0 - (node * 4096 + st[63]) - 1;
+}
+
+// Is the function being compiled one with a literal whose type was not known where it stands?
+pub fn wants_inference[&s](st: &!s [int]) -> [] bool {
+    return st[base(st) + 14] != 0;
+}
+
+pub fn want_inference[&s](st: &!s [int]) -> [] int {
+    st[base(st) + 14] = 1;
+    return 0;
+}
+
+// Start (1) or end (0) the pass that only learns the types; the flag asking for it is cleared at either.
+pub fn infer[&s](st: &!s [int], on: int) -> [] int {
+    st[base(st) + 13] = on;
+    st[base(st) + 14] = 0;
+    return 0;
+}
+
+pub fn inferring[&s](st: &!s [int]) -> [] bool {
+    return st[base(st) + 13] != 0;
+}
+
+// The variable declared at `node` has the type `ty`, which is written down when the function is done.
+pub fn note_var[&s](st: &!s [int], node: int, ty: int) -> [] int {
+    let made = st[base(st)];
+    if made >= 1024 {
+        return 0;
+    }
+    let row = table_at(st) + 4 * made;
+    st[row] = key_of(st, node);
+    st[row + 1] = 0 - 1;
+    st[row + 2] = 0;
+    st[row + 3] = ty;
+    st[base(st)] = made + 1;
+    return 0;
+}
+
+// The types noted in the pass that learned them, as codes; one that is not known all the way down is dropped.
+pub fn settle[&s](st: &!s [int]) -> [] int {
+    var j = 0;
+    while j < st[base(st)] {
+        let row = table_at(st) + 4 * j;
+        if st[row] < 0 && st[row + 1] == 0 - 1 {
+            let start = st[base(st) + 1];
+            if encode(st, st[row + 3]) {
+                st[row + 1] = start;
+                st[row + 2] = st[base(st) + 1] - start;
+            } else {
+                st[base(st) + 1] = start;
+                st[row + 1] = 0;
+                st[row + 2] = 0;
+            }
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// The type the variable declared at `node` came to in the pass that learned it, or 0.
+pub fn var_hint[&s](st: &!s [int], node: int) -> [] int {
+    var j = 0;
+    while j < st[base(st)] {
+        let row = table_at(st) + 4 * j;
+        if st[row] == key_of(st, node) && st[row + 2] > 0 {
+            return decode(st, st[row + 1]);
+        }
+        j = j + 1;
+    }
+    return 0;
+}
