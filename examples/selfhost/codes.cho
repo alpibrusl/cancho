@@ -54,6 +54,24 @@ pub fn builtin_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     if lc.spells(text, from, to, "file_close") {
         return 16;
     }
+    if lc.spells(text, from, to, "file_pwrite") {
+        return 111;
+    }
+    if lc.spells(text, from, to, "file_pread") {
+        return 112;
+    }
+    if lc.spells(text, from, to, "file_sync") {
+        return 113;
+    }
+    if lc.spells(text, from, to, "file_truncate") {
+        return 114;
+    }
+    if lc.spells(text, from, to, "file_size") {
+        return 115;
+    }
+    if lc.spells(text, from, to, "file_lock") {
+        return 116;
+    }
     if lc.spells(text, from, to, "child_wait") {
         return 17;
     }
@@ -223,6 +241,15 @@ pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     }
     if lc.spells(text, from, to, "dir_own_mode") {
         return 69;
+    }
+    if lc.spells(text, from, to, "signals_watch") {
+        return 119;
+    }
+    if lc.spells(text, from, to, "signals_pending") {
+        return 120;
+    }
+    if lc.spells(text, from, to, "signals_close") {
+        return 121;
     }
     if lc.spells(text, from, to, "poller_new") {
         return 93;

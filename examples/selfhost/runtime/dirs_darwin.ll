@@ -423,7 +423,6 @@ entry:
   ret void
 }
 
-declare i32 @fsync(i32)
 
 ; Function Attrs: noinline nounwind
 define void @cancho_dir_list(ptr %dir, ptr %out) {

@@ -1,0 +1,101 @@
+edition 7;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var bad = 0;
+    let tmp = narrow(fs, "/tmp");
+    borrow tmp as &f in {
+        match open_new(f, "/tmp/cancho-fileprobe-NAME") {
+            Opened::Ok(file) => {
+                var out = file;
+                region a {
+                    let bytes = alloc_slice[a](5, byte_of(65));
+                    let more = alloc_slice[a](3, byte_of(66));
+                    borrow mut out as &!w in {
+                        match file_write(w, bytes) {
+                            Done::Ok(n) => { bad = bad + (n - 5); }
+                            Done::Failed(e) => { bad = bad + 1; }
+                        }
+                        match file_pwrite(w, 5, more) {
+                            Done::Ok(n) => { bad = bad + (n - 3); }
+                            Done::Failed(e) => { bad = bad + 2; }
+                        }
+                        match file_size(w) {
+                            Done::Ok(n) => { bad = bad + (n - 8); }
+                            Done::Failed(e) => { bad = bad + 4; }
+                        }
+                        match file_sync(w) {
+                            Done::Ok(n) => { }
+                            Done::Failed(e) => { bad = bad + 512; }
+                        }
+                    }
+                }
+                file_close(out);
+            }
+            Opened::Failed(e) => {
+                bad = bad + 2048;
+            }
+        }
+        match open_rw(f, "/tmp/cancho-fileprobe-NAME") {
+            Opened::Ok(file) => {
+                var rw = file;
+                region a {
+                    let into = alloc_slice[a](8, byte_of(0));
+                    borrow mut rw as &!w in {
+                        match file_pread(w, 3, into) {
+                            Read::Got(n) => { bad = bad + (n - 5) + (int_of(into[0]) - 65) + (int_of(into[2]) - 66); }
+                            Read::End => { bad = bad + 8; }
+                            Read::Failed(e) => { bad = bad + 16; }
+                        }
+                        match file_pread(w, 100, into) {
+                            Read::Got(n) => { bad = bad + 32; }
+                            Read::End => { }
+                            Read::Failed(e) => { bad = bad + 64; }
+                        }
+                        match file_truncate(w, 4) {
+                            Done::Ok(n) => { }
+                            Done::Failed(e) => { bad = bad + 128; }
+                        }
+                        match file_size(w) {
+                            Done::Ok(n) => { bad = bad + (n - 4); }
+                            Done::Failed(e) => { bad = bad + 256; }
+                        }
+                        match file_lock(w) {
+                            Done::Ok(n) => { }
+                            Done::Failed(e) => { bad = bad + 1024; }
+                        }
+                    }
+                }
+                file_close(rw);
+            }
+            Opened::Failed(e) => {
+                bad = bad + 32768;
+            }
+        }
+        match fs_rename(f, "/tmp/cancho-fileprobe-NAME", "/tmp/cancho-fileprobe-NAME2") {
+            Done::Ok(n) => { }
+            Done::Failed(e) => { bad = bad + 4096; }
+        }
+        match fs_remove(f, "/tmp/cancho-fileprobe-NAME2") {
+            Done::Ok(n) => { }
+            Done::Failed(e) => { bad = bad + 8192; }
+        }
+        match fs_remove(f, "/tmp/cancho-fileprobe-NAME2") {
+            Done::Ok(n) => { bad = bad + 16384; }
+            Done::Failed(e) => { }
+        }
+    }
+    release(tmp);
+    if bad == 0 {
+        return 0;
+    }
+    return 1;
+}

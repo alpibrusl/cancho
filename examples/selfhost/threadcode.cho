@@ -74,11 +74,26 @@ pub fn spawn_thread[&s](st: &!s [int], ty: int, known: bool, value: int, reg: in
     emit.temp(st, status);
     emit.str(st, ", 0\n");
     emit.trap_if(st, failed);
+    count_thread(st, 1);
     let thread = emit.start(st);
     emit.str(st, "load ptr, ptr ");
     emit.temp(st, cell);
     emit.str(st, "\n");
     return thread;
+}
+
+// A thread more or fewer running, which a signal claim looks at: it may not be made while one is
+// (`cancho_signal_state`, the module's second word).
+fn count_thread[&s](st: &!s [int], delta: int) -> [] int {
+    let at = emit.start(st);
+    emit.str(st, "getelementptr i64, ptr @cancho_signal_state, i64 1\n");
+    let old = emit.start(st);
+    emit.str(st, "atomicrmw add ptr ");
+    emit.temp(st, at);
+    emit.str(st, ", i64 ");
+    emit.int(st, delta);
+    emit.str(st, " seq_cst\n");
+    return old;
 }
 
 // `join(t)`: wait for the thread, and read what it returned (of type `ty`) out of the cell; the temporary of
@@ -96,6 +111,7 @@ pub fn join_thread[&s](st: &!s [int], ty: int, thread: int) -> [] int {
     emit.temp(st, status);
     emit.str(st, ", 0\n");
     emit.trap_if(st, failed);
+    count_thread(st, 0 - 1);
     if types.is_erased(st, ty) {
         return 0 - 1;
     }

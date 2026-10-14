@@ -95,3 +95,9 @@ pub fn bind_value[&s](st: &!s [int], ty: int, v: Ex) -> [] int {
     }
     return emit.store(st, ty, v.known, v.value, v.reg, st[39] - 1);
 }
+
+// The value pushed `k` from the top of the stack of arguments, as it was.
+pub fn pushed[&s](st: &!s [int], k: int) -> [] Ex {
+    let at = st[51] + 4 * (st[52] - k);
+    return Ex { ty: st[at], known: st[at + 1] != 0, value: st[at + 2], reg: st[at + 3], reg2: 0 - 1 };
+}

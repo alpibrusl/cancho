@@ -90,7 +90,7 @@ fn encode[&s](st: &!s [int], ty: int) -> [] bool {
     }
     if types.is_tuple(st, t) {
         let n = types.tuple_size(st, t);
-        if !put_code(st, 21 + n) {
+        if n > 3 || !put_code(st, 21 + n) {
             return false;
         }
         var k = 0;

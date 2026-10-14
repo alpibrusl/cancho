@@ -1111,7 +1111,6 @@ if.end:                                           ; preds = %if.then, %entry
   ret void
 }
 
-declare i32 @kqueue()
 
 ; Function Attrs: noinline nounwind
 define i64 @cancho_poller_ctl(ptr %poller, ptr %handle, i64 %token, i64 %events, i64 %modify, i64 %packed) {
@@ -1402,7 +1401,6 @@ if.end:                                           ; preds = %cond.end29, %cond.e
   ret i64 %17
 }
 
-declare i32 @kevent(i32, ptr, i32, ptr, i32, ptr)
 
 ; Function Attrs: noinline nounwind
 define i64 @cancho_poller_remove(ptr %poller, ptr %handle, i64 %packed) {

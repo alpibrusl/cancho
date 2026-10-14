@@ -663,6 +663,30 @@ const SINGLE_LITERALS: &[&str] = &[
     "8.5e-5f32",
 ];
 
+/// Tuples of four to six, made, passed, returned and taken apart.
+const QUADS: &[&str] = &[
+    r#"fn make(a: int, b: int) -> [] (int, int, int, bool) { return (a, b, a + b, a > b); }
+fn total(q: (int, int, int, bool)) -> [] int {
+    let (x, y, z, w) = q;
+    if w { return x * 1000 + y * 100 + z; }
+    return x + y * 2 + z * 3;
+}
+fn five(p: int) -> [] (int, int, int, int, int) { return (p + 4, 1, p + 2, 3, p + p); }
+fn six(p: int, ok: bool) -> [] (int, bool, byte, int, int, int) { return (p, ok, byte_of(p), p * 2, p * 3, p * 4); }
+fn run() -> [] int {
+    let q = make(3, 2);
+    let r = make(1, 5);
+    let (a, b, c, d) = (7, 8, 9, 10);
+    let f = five(10);
+    let (f0, f1, f2, f3, f4) = f;
+    let s = six(5, true);
+    let (s0, s1, s2, s3, s4, s5) = s;
+    var extra = 0;
+    if s1 { extra = int_of(s2) + s5; }
+    return total(q) + total(r) + q.2 + r.1 + a + b + c + d + f0 + f2 * 10 + f4 * 100 + f.3 + s3 + s4 + extra;
+}"#,
+];
+
 /// Functions held by their type in a parameter or a name, and called through it.
 const FNPTRS: &[&str] = &[r#"struct P { a: int, b: int }
 fn double(x: int) -> [] int { return x + x; }
@@ -713,6 +737,7 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         .chain(FLOATS)
         .chain(ARENAS)
         .chain(FNPTRS)
+        .chain(QUADS)
     {
         jobs.push((with_main(program), with_main(program)));
     }
@@ -720,6 +745,10 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     // builds use names of their own, for they run at the same time.
     let probe = include_str!("dirs_probe.cho");
     jobs.push((probe.replace("NAME", "rust"), probe.replace("NAME", "cancho")));
+    // The operations on an open file (a read and a write at an offset, the size, the truncation, the sync, the lock) and
+    // on a path (rename, remove), in `/tmp`.
+    let files = include_str!("files_probe.cho");
+    jobs.push((files.replace("NAME", "rust"), files.replace("NAME", "cancho")));
     // Programs of `tests/accept` that import nothing: what a block defers, run at each of its exits; a struct that
     // holds capabilities; capabilities forked.
     for name in [
