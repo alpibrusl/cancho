@@ -7,7 +7,9 @@ module selfhost.netcode;
 // numbers, which become the leaves of the prelude enum (`Dialed`, `Accepted`, `Received`, `Sent`, `Listening`).
 
 import std.bytes;
+import selfhost.lexcore as lc;
 import selfhost.ast;
+import selfhost.types;
 import selfhost.emit;
 import selfhost.tables;
 
@@ -202,6 +204,9 @@ pub fn holds_bound(which: int) -> [] bool {
 
 // How many numbers the function answers in its cell: 0 when it answers one whole number.
 pub fn slots(which: int) -> [] int {
+    if which == 119 {
+        return 3;
+    }
     if which == 106 || which == 107 || which == 110 {
         return 3;
     }
@@ -222,6 +227,9 @@ pub fn slots(which: int) -> [] int {
 
 // The prelude enum the answer is made into.
 pub fn enum_name(which: int) -> [] &static [byte] {
+    if which == 119 {
+        return "Watching";
+    }
     if which == 106 {
         return "Done";
     }
@@ -275,6 +283,15 @@ pub fn enum_name(which: int) -> [] &static [byte] {
 
 // The function of `runtime/net.c` that does it.
 pub fn function(which: int) -> [] &static [byte] {
+    if which == 119 {
+        return "cancho_signals_watch";
+    }
+    if which == 120 {
+        return "cancho_signals_pending";
+    }
+    if which == 121 {
+        return "cancho_signals_close";
+    }
     if which == 106 {
         return "cancho_flush_out";
     }
@@ -385,5 +402,58 @@ pub fn function(which: int) -> [] &static [byte] {
 
 // Does the first argument, a capability or the console, give nothing the call passes on?
 pub fn leading(which: int) -> [] bool {
-    return holds_bound(which) || which == 46 || which == 47 || which == 106 || which == 107;
+    return holds_bound(which) || which == 46 || which == 47 || which == 106 || which == 107 || which == 119;
+}
+
+// The bit of a signal named in the literal a `Signals` capability was narrowed to.
+fn signal_bit[&x](text: &x [byte], from: int, to: int) -> [] int {
+    if lc.spells(text, from, to, "ALRM") {
+        return 64;
+    }
+    if lc.spells(text, from, to, "HUP") {
+        return 1;
+    }
+    if lc.spells(text, from, to, "INT") {
+        return 2;
+    }
+    if lc.spells(text, from, to, "QUIT") {
+        return 4;
+    }
+    if lc.spells(text, from, to, "TERM") {
+        return 8;
+    }
+    if lc.spells(text, from, to, "USR1") {
+        return 16;
+    }
+    if lc.spells(text, from, to, "USR2") {
+        return 32;
+    }
+    if lc.spells(text, from, to, "WINCH") {
+        return 128;
+    }
+    return 0;
+}
+
+// The signals of a capability narrowed to `"INT,TERM"` as their bits; 0 if it was not narrowed.
+pub fn signal_bits[&s, &x](st: &!s [int], text: &x [byte], cap: int) -> [] int {
+    var inner = cap;
+    if types.is_ref(st, inner) {
+        inner = types.ref_inner(st, inner);
+    }
+    let tok = types.prelude_lit_tok(st, inner);
+    if tok < 0 {
+        return 0;
+    }
+    let stop = ast.tend(st, tok) - 1;
+    var at = ast.tstart(st, tok) + 1;
+    var first = at;
+    var bits = 0;
+    while at <= stop {
+        if at == stop || int_of(text[at]) == ',' {
+            bits = bits | signal_bit(text, first, at);
+            first = at + 1;
+        }
+        at = at + 1;
+    }
+    return bits;
 }

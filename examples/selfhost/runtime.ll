@@ -13,6 +13,16 @@ declare i32 @close(i32)
 declare i32 @fcntl(i32, i32, ...)
 declare i64 @read(i32, ptr, i64)
 declare i64 @strlen(ptr)
+declare i32 @kqueue()
+declare i32 @kevent(i32, ptr, i32, ptr, i32, ptr)
+declare i64 @pread(i32, ptr, i64, i64)
+declare i64 @pwrite(i32, ptr, i64, i64)
+declare i32 @fsync(i32)
+declare i32 @ftruncate(i32, i64)
+declare i64 @lseek(i32, i64, i32)
+declare i32 @flock(i32, i32)
+declare i32 @unlink(ptr)
+declare i32 @rename(ptr, ptr)
 declare i32 @waitpid(i32, ptr, i32)
 declare i32 @posix_spawn(ptr, ptr, ptr, ptr, ptr, ptr)
 declare i32 @posix_spawn_file_actions_init(ptr)
@@ -22,6 +32,7 @@ declare i32 @posix_spawn_file_actions_adddup2(ptr, i32, i32)
 declare i32 @posix_spawn_file_actions_addfchdir_np(ptr, i32)
 declare i32 @posix_spawnattr_destroy(ptr)
 
+@cancho_signal_state = global [2 x i64] zeroinitializer
 @cancho_argc = global i64 0
 @cancho_argv = global ptr null
 @cancho_dev_null = private constant [10 x i8] c"/dev/null\00"
@@ -219,6 +230,129 @@ entry:
   %r = call i32 @close(i32 %f)
   %w = sext i32 %r to i64
   ret i64 %w
+}
+
+; file_pwrite and file_pread: one pwrite(2) or pread(2) at an offset; the count, or minus the errno.
+define i64 @cancho_fd_pwrite(i64 %fd, ptr %p, i64 %n, i64 %at) {
+entry:
+  %f = trunc i64 %fd to i32
+  %r = call i64 @pwrite(i32 %f, ptr %p, i64 %n, i64 %at)
+  %bad = icmp slt i64 %r, 0
+  br i1 %bad, label %fail, label %ok
+fail:
+  %e = call i64 @cancho_errno()
+  %neg = sub i64 0, %e
+  ret i64 %neg
+ok:
+  ret i64 %r
+}
+
+define i64 @cancho_fd_pread(i64 %fd, ptr %p, i64 %n, i64 %at) {
+entry:
+  %f = trunc i64 %fd to i32
+  %r = call i64 @pread(i32 %f, ptr %p, i64 %n, i64 %at)
+  %bad = icmp slt i64 %r, 0
+  br i1 %bad, label %fail, label %ok
+fail:
+  %e = call i64 @cancho_errno()
+  %neg = sub i64 0, %e
+  ret i64 %neg
+ok:
+  ret i64 %r
+}
+
+; file_sync, file_truncate, file_lock: 0, or minus the errno.
+define i64 @cancho_fd_sync(i64 %fd) {
+entry:
+  %f = trunc i64 %fd to i32
+  %r = call i32 @fsync(i32 %f)
+  %bad = icmp slt i32 %r, 0
+  br i1 %bad, label %fail, label %ok
+fail:
+  %e = call i64 @cancho_errno()
+  %neg = sub i64 0, %e
+  ret i64 %neg
+ok:
+  ret i64 0
+}
+
+define i64 @cancho_fd_truncate(i64 %fd, i64 %len) {
+entry:
+  %f = trunc i64 %fd to i32
+  %r = call i32 @ftruncate(i32 %f, i64 %len)
+  %bad = icmp slt i32 %r, 0
+  br i1 %bad, label %fail, label %ok
+fail:
+  %e = call i64 @cancho_errno()
+  %neg = sub i64 0, %e
+  ret i64 %neg
+ok:
+  ret i64 0
+}
+
+define i64 @cancho_fd_lock(i64 %fd) {
+entry:
+  %f = trunc i64 %fd to i32
+  %r = call i32 @flock(i32 %f, i32 6)
+  %bad = icmp slt i32 %r, 0
+  br i1 %bad, label %fail, label %ok
+fail:
+  %e = call i64 @cancho_errno()
+  %neg = sub i64 0, %e
+  ret i64 %neg
+ok:
+  ret i64 0
+}
+
+; file_size: the end by lseek, the cursor put back; the size, or minus the errno.
+define i64 @cancho_fd_size(i64 %fd) {
+entry:
+  %f = trunc i64 %fd to i32
+  %here = call i64 @lseek(i32 %f, i64 0, i32 1)
+  %hbad = icmp slt i64 %here, 0
+  br i1 %hbad, label %fail, label %end
+end:
+  %size = call i64 @lseek(i32 %f, i64 0, i32 2)
+  %e = call i64 @cancho_errno()
+  %back = call i64 @lseek(i32 %f, i64 %here, i32 0)
+  %sbad = icmp slt i64 %size, 0
+  br i1 %sbad, label %fail2, label %ok
+ok:
+  ret i64 %size
+fail:
+  %he = call i64 @cancho_errno()
+  %hneg = sub i64 0, %he
+  ret i64 %hneg
+fail2:
+  %neg = sub i64 0, %e
+  ret i64 %neg
+}
+
+; fs_remove and fs_rename: the paths checked against the prefix, then one unlink(2) or rename(2); 0, or minus the errno.
+define i64 @cancho_fs_unlink(ptr %src, i64 %len, ptr %prefix, i64 %plen) {
+entry:
+  %path = call ptr @cancho_checked_path(ptr %src, i64 %len, ptr %prefix, i64 %plen)
+  %r = call i32 @unlink(ptr %path)
+  %e = call i64 @cancho_errno()
+  call void @free(ptr %path)
+  %bad = icmp slt i32 %r, 0
+  %neg = sub i64 0, %e
+  %out = select i1 %bad, i64 %neg, i64 0
+  ret i64 %out
+}
+
+define i64 @cancho_fs_rename(ptr %src, i64 %len, ptr %src2, i64 %len2, ptr %prefix, i64 %plen) {
+entry:
+  %path = call ptr @cancho_checked_path(ptr %src, i64 %len, ptr %prefix, i64 %plen)
+  %path2 = call ptr @cancho_checked_path(ptr %src2, i64 %len2, ptr %prefix, i64 %plen)
+  %r = call i32 @rename(ptr %path, ptr %path2)
+  %e = call i64 @cancho_errno()
+  call void @free(ptr %path)
+  call void @free(ptr %path2)
+  %bad = icmp slt i32 %r, 0
+  %neg = sub i64 0, %e
+  %out = select i1 %bad, i64 %neg, i64 0
+  ret i64 %out
 }
 
 ; Does the NUL-terminated string at %s begin with the %n bytes at %lit?

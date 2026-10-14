@@ -31,6 +31,7 @@ import selfhost.signatures;
 import selfhost.effects;
 import selfhost.tables;
 import selfhost.atoms;
+import selfhost.filecode;
 
 // ---------------------------------------------------------- expressions ---
 
@@ -355,6 +356,33 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         let third = types.make_prelude_lit(st, index, ast.get(st, ast.next(st, second_lit), 4));
         return ex.in_reg(types.make_triple(st, first, second, third), 0 - 1);
     }
+    if which == 11 || which == 12 {
+        // `fs_remove(fs, path)` and `fs_rename(fs, from, to)`: the paths under the prefix of the capability.
+        if nargs != which - 9 {
+            return ex.skip(st, from, to);
+        }
+        let c = expr(st, text, arg);
+        arg = ast.next(st, arg);
+        let first = expr(st, text, arg);
+        var second = ex.nothing();
+        if which == 12 {
+            second = expr(st, text, ast.next(st, arg));
+        }
+        if !ast.ok(st) {
+            return ex.nothing();
+        }
+        if !scope.slice_codable(st, first.ty) || which == 12 && !scope.slice_codable(st, second.ty) {
+            return ex.skip(st, from, to);
+        }
+        ex.push_value(st, first);
+        if which == 12 {
+            ex.push_value(st, second);
+        }
+        atoms.push_prefix(st, text, c.ty);
+        let v = filecode.on_path(st, which == 12);
+        let done = types.make_prelude(st, netcode.prelude_named("Done"));
+        return ex.in_reg(done, filecode.answer_enum(st, done, 0, v));
+    }
     if which == 8 || which == 9 {
         // `fs_read(fs, path, into)` and `fs_write(fs, path, bytes)`: a file opened, read or written once and closed.
         if nargs != 3 {
@@ -374,7 +402,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         ex.push_value(st, path);
         atoms.push_prefix(st, text, c.ty);
         ex.push_value(st, bytes);
-        return ex.in_reg(1, emit.fs_once(st, which == 9));
+        return ex.in_reg(1, filecode.fs_once(st, which == 9));
     }
     if which <= 6 {
         if nargs != 2 {
@@ -391,9 +419,9 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         }
         ex.push_value(st, path);
         atoms.push_prefix(st, text, c.ty);
-        let v = emit.open_path(st, which - 2);
+        let v = filecode.open_path(st, which - 2);
         let opened = types.make_prelude(st, tables.prelude_opened());
-        return ex.in_reg(opened, emit.answer_enum(st, opened, 0, v));
+        return ex.in_reg(opened, filecode.answer_enum(st, opened, 0, v));
     }
     var inside = 7;
     if which == 10 {
@@ -453,9 +481,9 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
     } else {
         emit.push_arg(st, 7, false, 0, 0 - 1);
     }
-    let v = emit.spawn_process(st);
+    let v = filecode.spawn_process(st);
     let spawned = types.make_prelude(st, tables.prelude_spawned());
-    return ex.in_reg(spawned, emit.answer_enum(st, spawned, 0, v));
+    return ex.in_reg(spawned, filecode.answer_enum(st, spawned, 0, v));
 }
 
 // `box_slice(heap, count, fill)` (1), `unbox_slice(heap, box)` (2) and `contents(box_ref)` (3), of
@@ -601,48 +629,78 @@ pub fn prelude_variant[&s, &x](st: &!s [int], text: &x [byte], id: int, index: i
     return ex.in_reg(whole, acc);
 }
 
-// `(a, b)` and `(a, b, c)`: an aggregate of the parts, in the code. Larger tuples, and parts that are
-// slices or have nothing in the code beside others that have, have no code.
+// `(a, b)`, `(a, b, c)` and tuples of up to eight parts: an aggregate of the parts, in the code. Parts that are slices
+// of a tuple of more than three, or that have nothing in the code beside others that have, have no code.
 pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let n = ast.get(st, id, 5);
-    if n != 2 && n != 3 {
+    if n < 2 || n > 8 {
         return ex.skip(st, from, to);
     }
-    var vals = ex.nothing();
     var a = ex.nothing();
     var b = ex.nothing();
     var c = ex.nothing();
+    let first = st[52];
     var arg = ast.get(st, id, 4);
     var k = 0;
     while k < n && ast.ok(st) {
         let one = expr(st, text, arg);
+        if n > 3 && ast.ok(st) {
+            if types.is_slice_ref(st, one.ty) {
+                return ex.skip(st, from, to);
+            }
+            emit.push_arg(st, one.ty, one.known, one.value, one.reg);
+        }
         if k == 0 {
             a = one;
         } else if k == 1 {
             b = one;
-        } else {
+        } else if k == 2 {
             c = one;
         }
         arg = ast.next(st, arg);
         k = k + 1;
     }
     if !ast.ok(st) {
+        st[52] = first;
         return ex.nothing();
     }
-    var tc = 0;
-    if n == 3 {
-        tc = c.ty;
+    var whole = 0;
+    if n > 3 {
+        whole = types.make_many(st, n);
+        k = 0;
+        while k < n {
+            types.set_part(st, whole, k, ex.pushed(st, n - k).ty);
+            k = k + 1;
+        }
+    } else {
+        var tc = 0;
+        if n == 3 {
+            tc = c.ty;
+        }
+        whole = types.make_tuple(st, n, a.ty, b.ty, tc);
     }
-    let whole = types.make_tuple(st, n, a.ty, b.ty, tc);
     if types.is_erased(st, whole) {
+        st[52] = first;
         return ex.in_reg(whole, 0 - 1);
     }
     if !scope.tuple_codable(st, whole) {
+        st[52] = first;
         return ex.skip(st, from, to);
     }
-    var acc = ex.put(st, whole, 0 - 1, 0, a.ty, a);
+    var acc = 0 - 1;
+    if n > 3 {
+        k = 0;
+        while k < n {
+            let part = ex.pushed(st, n - k);
+            acc = ex.put(st, whole, acc, k, part.ty, part);
+            k = k + 1;
+        }
+        st[52] = first;
+        return ex.in_reg(whole, acc);
+    }
+    acc = ex.put(st, whole, acc, 0, a.ty, a);
     acc = ex.put(st, whole, acc, 1, b.ty, b);
     if n == 3 {
         acc = ex.put(st, whole, acc, 2, c.ty, c);
@@ -1239,6 +1297,11 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     if written == 4 {
         return ex.in_reg(result, emit.truncate_to_byte(st, last.known, last.value, last.reg));
     }
+    if written >= 111 {
+        // An operation on an open file: the count, or minus the errno, made into the enum the signature says.
+        let v = filecode.on_handle(st, written);
+        return ex.in_reg(result, filecode.answer_enum(st, result, ast.flag(written == 112), v));
+    }
     if written >= 83 {
         st[55] = st[55] | 4;
         if written == 83 {
@@ -1292,22 +1355,22 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
         return ex.in_reg(result, emit.stderr_write(st));
     }
     if written == 12 {
-        return ex.in_reg(result, emit.command_count(st));
+        return ex.in_reg(result, filecode.command_count(st));
     }
     if written == 13 {
-        let p = emit.command_arg(st);
+        let p = filecode.command_arg(st);
         return ex.in_slice(result, p, st[59], 0);
     }
     if written == 14 || written == 15 {
-        let v = emit.fd_transfer(st, written == 15);
-        return ex.in_reg(result, emit.answer_enum(st, result, written - 14, v));
+        let v = filecode.fd_transfer(st, written == 15);
+        return ex.in_reg(result, filecode.answer_enum(st, result, written - 14, v));
     }
     if written == 16 {
-        return ex.in_reg(result, emit.fd_close(st));
+        return ex.in_reg(result, filecode.fd_close(st));
     }
     if written == 17 {
-        let v = emit.wait_child(st);
-        return ex.in_reg(result, emit.answer_enum(st, result, 2, v));
+        let v = filecode.wait_child(st);
+        return ex.in_reg(result, filecode.answer_enum(st, result, 2, v));
     }
     return ex.plain(result);
 }
@@ -1387,6 +1450,8 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
     }
     if netcode.needs_dirs(which) {
         st[55] = st[55] | 2;
+    } else if which >= 119 {
+        st[55] = st[55] | 8;
     } else if which != 44 {
         st[55] = st[55] | 1;
     }
@@ -1411,6 +1476,9 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
     }
     if holds_bound {
         atoms.push_prefix(st, text, cap);
+    }
+    if which == 119 {
+        emit.push_arg(st, 1, true, netcode.signal_bits(st, text, cap), 0 - 1);
     }
     netcode.extras(st, which);
     let n = st[52] - first_arg;
@@ -1564,6 +1632,12 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
         if pass1.is_word(st, text, callee, "fs_write") {
             return capability_call(st, text, id, 9);
         }
+        if pass1.is_word(st, text, callee, "fs_remove") {
+            return capability_call(st, text, id, 11);
+        }
+        if pass1.is_word(st, text, callee, "fs_rename") {
+            return capability_call(st, text, id, 12);
+        }
     }
     // Threads: only the code is written for them, in compile mode.
     if emit.on(st) && qualifier < 0 {
@@ -1642,6 +1716,12 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
 }
 
 // The call `id` to the function `found`: its arguments against the signature, then the code.
+// A reference a function lends, to a capability (a pointer to nothing in the code) or to a handle or another value
+// it holds: a pointer.
+fn lent[&s](st: &!s [int], ty: int) -> [] bool {
+    return types.is_ref(st, ty) && !types.is_slice_ref(st, ty) && (types.is_erased(st, types.ref_inner(st, ty)) || types.is_handle(st, types.ref_inner(st, ty)));
+}
+
 // A call of the function in the name `local`, of type `fn(A, B) -> R`.
 fn call_pointer[&s, &x](st: &!s [int], text: &x [byte], id: int, local: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
@@ -1791,7 +1871,7 @@ pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) ->
     }
     let result = types.resolve_type(st, atoms.callee_type(st, text, ast.get(st, found, 10), callee_dp, fresh, tvars));
     if emit.on(st) {
-        if !types.is_plain(result) && !scope.aggregate_codable(st, result) && !scope.slice_codable(st, result) {
+        if !types.is_plain(result) && !scope.aggregate_codable(st, result) && !scope.slice_codable(st, result) && !lent(st, result) && !types.is_erased(st, result) {
             return ex.skip(st, from, to);
         }
         var inst = 0;

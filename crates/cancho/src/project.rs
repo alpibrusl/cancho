@@ -242,8 +242,8 @@ fn short(rev: &str) -> &str {
     &rev[..rev.len().min(12)]
 }
 
-/// Whether `cancho build <args>` is a project build: no files, only `--bin <name>` and `--ignore-compiler-rev`, and a
-/// project file to build.
+/// Whether `cancho build <args>` is a project build: no files, only `--bin <name>`, `--compiler <exe>` and
+/// `--ignore-compiler-rev`, and a project file to build.
 pub fn wants_project(args: &[String]) -> bool {
     only_flags(args, "--bin")
 }
@@ -258,7 +258,7 @@ fn only_flags(args: &[String], value_flag: &str) -> bool {
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--ignore-compiler-rev" => {}
-            flag if flag == value_flag => {
+            flag if flag == value_flag || flag == "--compiler" && value_flag == "--bin" => {
                 it.next();
             }
             _ => return false,
@@ -289,12 +289,18 @@ pub fn cmd_install(args: &[String]) -> Result<ExitCode, Failure> {
 pub fn cmd_build(args: &[String]) -> Result<ExitCode, Failure> {
     let mut ignore = false;
     let mut only: Option<String> = None;
+    let mut compiler: Option<PathBuf> = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--ignore-compiler-rev" => ignore = true,
             "--bin" => {
                 only = Some(it.next().ok_or_else(|| usage("`--bin` needs a name"))?.clone());
+            }
+            "--compiler" => {
+                compiler = Some(PathBuf::from(
+                    it.next().ok_or_else(|| usage("`--compiler` needs a path"))?,
+                ));
             }
             other => return Err(usage(format!("unexpected `{other}`"))),
         }
@@ -319,15 +325,28 @@ pub fn cmd_build(args: &[String]) -> Result<ExitCode, Failure> {
             std::fs::create_dir_all(parent)
                 .map_err(|e| environment(format!("cannot create `{}`: {e}", parent.display())))?;
         }
-        crate::build(
-            &inputs,
-            &out,
-            Emit::Exe,
-            bin.std,
-            crate::Codegen { backend: Backend::Llvm, target: None },
-            &[],
-            &[],
-        )?;
+        if let Some(compiler) = &compiler {
+            crate::selfhost_build::build(crate::selfhost_build::Job {
+                compiler,
+                inputs: &inputs,
+                output: &out,
+                emit: Emit::Exe,
+                with_std: bin.std,
+                target: None,
+                link_libs: &[],
+                link_paths: &[],
+            })?;
+        } else {
+            crate::build(
+                &inputs,
+                &out,
+                Emit::Exe,
+                bin.std,
+                crate::Codegen { backend: Backend::Llvm, target: None },
+                &[],
+                &[],
+            )?;
+        }
         println!("built {}", out.display());
     }
     Ok(ExitCode::SUCCESS)

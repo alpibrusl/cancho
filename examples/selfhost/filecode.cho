@@ -1,0 +1,303 @@
+module selfhost.filecode;
+
+// filecode.cho -- the code for the operations on an open file that `runtime.ll` has the functions of: a read or a
+// write at an offset, the sync, the truncation, the size, the lock, and the removal and renaming of a path under a
+// prefix. The arguments are on the argument stack; each call answers one whole number, the count or minus the errno.
+
+import selfhost.emit;
+
+// `file_pwrite(file, at, bytes)` (111), `file_pread(file, at, into)` (112), `file_sync(file)` (113),
+// `file_truncate(file, len)` (114), `file_size(file)` (115) and `file_lock(file)` (116). The file is borrowed, so the
+// argument is the address of its slot.
+pub fn on_handle[&s](st: &!s [int], which: int) -> [] int {
+    var n = 1;
+    if which == 111 || which == 112 {
+        n = 4;
+    } else if which == 114 {
+        n = 2;
+    }
+    let fd = emit.start(st);
+    emit.str(st, "load i64, ptr ");
+    arg_operand(st, n, 7);
+    emit.str(st, "\n");
+    let r = emit.start(st);
+    emit.str(st, "call i64 @cancho_fd_");
+    if which == 111 {
+        emit.str(st, "pwrite");
+    } else if which == 112 {
+        emit.str(st, "pread");
+    } else if which == 113 {
+        emit.str(st, "sync");
+    } else if which == 114 {
+        emit.str(st, "truncate");
+    } else if which == 115 {
+        emit.str(st, "size");
+    } else {
+        emit.str(st, "lock");
+    }
+    emit.str(st, "(i64 ");
+    emit.temp(st, fd);
+    if which == 111 || which == 112 {
+        emit.str(st, ", ptr ");
+        arg_operand(st, 2, 7);
+        emit.str(st, ", i64 ");
+        arg_operand(st, 1, 1);
+        emit.str(st, ", i64 ");
+        arg_operand(st, 3, 1);
+    } else if which == 114 {
+        emit.str(st, ", i64 ");
+        arg_operand(st, 1, 1);
+    }
+    emit.str(st, ")\n");
+    st[52] = st[52] - n;
+    return r;
+}
+
+// `fs_remove(fs, path)` (the path and the prefix, a pointer and a length each) and `fs_rename(fs, from, to)` (the
+// two paths, then the prefix).
+pub fn on_path[&s](st: &!s [int], renaming: bool) -> [] int {
+    let r = emit.start(st);
+    if renaming {
+        emit.str(st, "call i64 @cancho_fs_rename(ptr ");
+        arg_operand(st, 6, 7);
+        emit.str(st, ", i64 ");
+        arg_operand(st, 5, 1);
+        emit.str(st, ", ptr ");
+        arg_operand(st, 4, 7);
+        emit.str(st, ", i64 ");
+        arg_operand(st, 3, 1);
+        emit.str(st, ", ptr ");
+        arg_operand(st, 2, 7);
+        emit.str(st, ", i64 ");
+        arg_operand(st, 1, 1);
+        emit.str(st, ")\n");
+        st[52] = st[52] - 6;
+        return r;
+    }
+    emit.str(st, "call i64 @cancho_fs_unlink(ptr ");
+    arg_operand(st, 4, 7);
+    emit.str(st, ", i64 ");
+    arg_operand(st, 3, 1);
+    emit.str(st, ", ptr ");
+    arg_operand(st, 2, 7);
+    emit.str(st, ", i64 ");
+    arg_operand(st, 1, 1);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 4;
+    return r;
+}
+
+// -------------------------------------------------------------- files, processes, arguments ---
+//
+// What these builtins do is in `runtime.ll`; here is the call and the answer. A call pops the arguments
+// the walk pushed (`push_value`): a slice is two, a handle borrowed one (the address of its slot), a
+// handle given one.
+
+// The argument `k` from the top of the stack of arguments, printed as an operand of type `ty`.
+pub fn arg_operand[&s](st: &!s [int], k: int, ty: int) -> [] int {
+    let at = st[51] + 4 * (st[52] - k);
+    return emit.operand(st, ty, st[at + 1] != 0, st[at + 2], st[at + 3]);
+}
+
+// `arg_count(args)`: argc.
+pub fn command_count[&s](st: &!s [int]) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "load i64, ptr @cancho_argc\n");
+    st[52] = st[52] - 1;
+    return n;
+}
+
+// `arg(args, n)`: argument n of the command line; the pointer, its length left in `st[59]`.
+pub fn command_arg[&s](st: &!s [int]) -> [] int {
+    let p = emit.start(st);
+    emit.str(st, "call ptr @cancho_arg(i64 ");
+    arg_operand(st, 1, 1);
+    emit.str(st, ")\n");
+    let n = emit.start(st);
+    emit.str(st, "call i64 @strlen(ptr ");
+    emit.temp(st, p);
+    emit.str(st, ")\n");
+    st[59] = n;
+    st[52] = st[52] - 2;
+    return p;
+}
+
+// `file_write(file, bytes)` (0) and `file_read(file, into)` (1): the count or minus the errno. The
+// handle is borrowed, so the argument is the address of its slot.
+pub fn fd_transfer[&s](st: &!s [int], reading: bool) -> [] int {
+    let fd = emit.start(st);
+    emit.str(st, "load i64, ptr ");
+    arg_operand(st, 3, 7);
+    emit.str(st, "\n");
+    let n = emit.start(st);
+    if reading {
+        emit.str(st, "call i64 @cancho_fd_read(i64 ");
+    } else {
+        emit.str(st, "call i64 @cancho_fd_write(i64 ");
+    }
+    emit.temp(st, fd);
+    emit.str(st, ", ptr ");
+    arg_operand(st, 2, 7);
+    emit.str(st, ", i64 ");
+    arg_operand(st, 1, 1);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 3;
+    return n;
+}
+
+// `file_close(file)`: what `close(2)` answered.
+pub fn fd_close[&s](st: &!s [int]) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "call i64 @cancho_fd_close(i64 ");
+    arg_operand(st, 1, 1);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 1;
+    return n;
+}
+
+// `child_wait(child)`: the exit code, 256 and the signal, or minus the errno.
+pub fn wait_child[&s](st: &!s [int]) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "call i64 @cancho_wait(i64 ");
+    arg_operand(st, 1, 1);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 1;
+    return n;
+}
+
+// `open_read` (0), `open_write` (1), `open_append` (2), `open_new` (3) and `open_rw` (4): a descriptor or minus the
+// errno. The arguments are the path (a pointer and a length) and the prefix (the same).
+pub fn open_path[&s](st: &!s [int], mode: int) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "call i64 @cancho_open(ptr ");
+    arg_operand(st, 4, 7);
+    emit.str(st, ", i64 ");
+    arg_operand(st, 3, 1);
+    emit.str(st, ", ptr ");
+    arg_operand(st, 2, 7);
+    emit.str(st, ", i64 ");
+    arg_operand(st, 1, 1);
+    emit.str(st, ", i64 ");
+    emit.nat(st, mode);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 4;
+    return n;
+}
+
+// `fs_read` (0) and `fs_write` (1): the path and the prefix (a pointer and a length each) and the bytes.
+pub fn fs_once[&s](st: &!s [int], writing: bool) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "call i64 @cancho_fs_once(ptr ");
+    arg_operand(st, 6, 7);
+    emit.str(st, ", i64 ");
+    arg_operand(st, 5, 1);
+    emit.str(st, ", ptr ");
+    arg_operand(st, 4, 7);
+    emit.str(st, ", i64 ");
+    arg_operand(st, 3, 1);
+    emit.str(st, ", ptr ");
+    arg_operand(st, 2, 7);
+    emit.str(st, ", i64 ");
+    arg_operand(st, 1, 1);
+    emit.str(st, ", i64 ");
+    if writing {
+        emit.str(st, "1");
+    } else {
+        emit.str(st, "0");
+    }
+    emit.str(st, ")\n");
+    st[52] = st[52] - 6;
+    return n;
+}
+
+// `exec_spawn`: the path, the prefix, the arguments and the environment (a pointer and a length each), then the
+// three streams as (tag, the child's end, the file) each: the pid or minus the errno.
+pub fn spawn_process[&s](st: &!s [int]) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "call i64 @cancho_spawn(");
+    var k = 18;
+    while k >= 1 {
+        let at = st[51] + 4 * (st[52] - k);
+        if k != 18 {
+            emit.str(st, ", ");
+        }
+        // pointers are the first seven of the first eight; the rest are whole numbers
+        if k == 18 || k == 16 || k == 14 || k == 12 || k == 1 {
+            emit.str(st, "ptr ");
+            emit.operand(st, 7, false, 0, st[at + 3]);
+        } else {
+            emit.str(st, "i64 ");
+            emit.operand(st, 1, st[at + 1] != 0, st[at + 2], st[at + 3]);
+        }
+        k = k - 1;
+    }
+    emit.str(st, ")\n");
+    st[52] = st[52] - 18;
+    return n;
+}
+
+// The answer of a builtin as the value of the prelude enum `ty`, from the raw result `v` (a count, a
+// descriptor, a pid... or minus the errno): `kind` 0 is `Ok(v)` or `Failed(errno)` (`Opened`, `Done`,
+// `Spawned`), 1 a read (`Data(v)` for more than 0, `End` at 0, else `Failed`), 2 an exit status (`Code(v)` below
+// 256, `Signaled(v - 256)`, else `Failed`).
+pub fn answer_enum[&s](st: &!s [int], ty: int, kind: int, v: int) -> [] int {
+    let negative = emit.start(st);
+    emit.str(st, "icmp slt i64 ");
+    emit.temp(st, v);
+    emit.str(st, ", 0\n");
+    let flipped = emit.start(st);
+    emit.str(st, "sub i64 0, ");
+    emit.temp(st, v);
+    emit.str(st, "\n");
+    var tag = 0;
+    var third = 0 - 1;
+    if kind == 0 {
+        tag = emit.start(st);
+        emit.str(st, "select i1 ");
+        emit.temp(st, negative);
+        emit.str(st, ", i64 1, i64 0\n");
+    } else if kind == 1 {
+        let empty = emit.start(st);
+        emit.str(st, "icmp eq i64 ");
+        emit.temp(st, v);
+        emit.str(st, ", 0\n");
+        let middle = emit.start(st);
+        emit.str(st, "select i1 ");
+        emit.temp(st, empty);
+        emit.str(st, ", i64 1, i64 0\n");
+        tag = emit.start(st);
+        emit.str(st, "select i1 ");
+        emit.temp(st, negative);
+        emit.str(st, ", i64 2, i64 ");
+        emit.temp(st, middle);
+        emit.str(st, "\n");
+    } else {
+        let killed = emit.start(st);
+        emit.str(st, "icmp sge i64 ");
+        emit.temp(st, v);
+        emit.str(st, ", 256\n");
+        let middle = emit.start(st);
+        emit.str(st, "select i1 ");
+        emit.temp(st, killed);
+        emit.str(st, ", i64 1, i64 0\n");
+        tag = emit.start(st);
+        emit.str(st, "select i1 ");
+        emit.temp(st, negative);
+        emit.str(st, ", i64 2, i64 ");
+        emit.temp(st, middle);
+        emit.str(st, "\n");
+        third = emit.start(st);
+        emit.str(st, "sub i64 ");
+        emit.temp(st, v);
+        emit.str(st, ", 256\n");
+    }
+    var acc = emit.insert_at(st, ty, 0 - 1, 0, 1, false, 0, tag);
+    acc = emit.insert_at(st, ty, acc, 1, 1, false, 0, v);
+    if kind == 2 {
+        acc = emit.insert_at(st, ty, acc, 2, 1, false, 0, third);
+        acc = emit.insert_at(st, ty, acc, 3, 1, false, 0, flipped);
+    } else {
+        acc = emit.insert_at(st, ty, acc, 2, 1, false, 0, flipped);
+    }
+    return acc;
+}

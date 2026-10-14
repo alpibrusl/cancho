@@ -291,7 +291,7 @@ fn sources() -> Vec<(String, String)> {
 
 /// The files of `parser.cho` and `check.cho`: the root, which says what to print, and the modules
 /// the two share.
-fn with_front_end(root: &'static str) -> Vec<&'static str> {
+pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
     vec![
         root,
         "driver.cho",
@@ -329,10 +329,11 @@ fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "ex.cho",
         "lookup.cho",
         "atoms.cho",
+        "filecode.cho",
     ]
 }
 
-fn build(tag: &str, files: &[&str]) -> PathBuf {
+pub(crate) fn build(tag: &str, files: &[&str]) -> PathBuf {
     let dir = scratch(&format!("selfhost-{tag}"));
     let exe = dir.join(tag);
     let root = repo_root().join("examples/selfhost");

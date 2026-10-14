@@ -61,7 +61,7 @@ fn module_name(text: &str) -> Option<&str> {
 fn imports(text: &str) -> Vec<&str> {
     text.lines()
         .filter_map(|l| l.trim().strip_prefix("import ")?.strip_suffix(';'))
-        .map(str::trim)
+        .filter_map(|names| names.split_whitespace().next())
         .collect()
 }
 
@@ -86,21 +86,42 @@ fn add_imported(files: &mut Vec<(String, String)>) {
     }
 }
 
+/// The text of a span of the laid-out files, shortened to its first line.
+fn quote(files: &[(String, String)], from: usize, to: usize) -> String {
+    let mut base = 0;
+    for (_, text) in files {
+        if from >= base && from <= base + text.len() {
+            let start = from - base;
+            let end = (to - base).min(text.len()).max(start);
+            let first = text[start..end].lines().next().unwrap_or("");
+            let mut shown: String = first.chars().take(80).collect();
+            if shown.len() < first.len() || text[start..end].lines().count() > 1 {
+                shown.push_str(" ...");
+            }
+            return shown;
+        }
+        base += text.len() + 1;
+    }
+    String::new()
+}
+
 /// A refusal as the compiler in cancho gives it: `ERR <rule> <from> <to>`.
 fn refusal(answer: &str, files: &[(String, String)]) -> Failure {
     let mut words = answer.split_whitespace().skip(1);
     let rule = words.next().unwrap_or("unknown");
     let from: Option<usize> = words.next().and_then(|w| w.parse().ok());
+    let to: usize = words.next().and_then(|w| w.parse().ok()).unwrap_or(0);
     let at = from.map(|offset| place(files, offset)).unwrap_or_else(|| "the program".to_owned());
+    let near = from.map(|offset| quote(files, offset, to)).unwrap_or_default();
     if rule == "SKIP" {
         return refused(format!(
-            "{at}: the compiler in cancho has no code for this construct yet (`cancho build` without \
+            "{at}: the compiler in cancho has no code for this construct yet: `{near}` (`cancho build` without \
              `--compiler` builds the program)"
         ));
     }
     refused(format!(
-        "{at}: refused by the rule `{rule}` (the compiler in cancho gives the rule and the place, not the sentence; \
-         `cancho check` gives the sentence)"
+        "{at}: refused by the rule `{rule}`: `{near}` (the compiler in cancho gives the rule and the place, not the \
+         sentence; `cancho check` gives the sentence)"
     ))
 }
 
@@ -139,6 +160,10 @@ pub fn build(job: Job<'_>) -> Result<(), Failure> {
         })?;
     let mut input = child.stdin.take().expect("a piped stdin");
     let bytes = stream(line, &files);
+    if let Some(path) = std::env::var_os("CANCHO_COMPILER_DUMP") {
+        // For finding out why the compiler stops: the stream it is sent, to be given to the census build of it.
+        let _ = std::fs::write(path, &bytes);
+    }
     // The compiler reads all of its input before it answers, so writing it all first cannot deadlock.
     let writer = std::thread::spawn(move || input.write_all(&bytes));
     let ended = child

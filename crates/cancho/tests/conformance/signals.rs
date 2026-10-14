@@ -19,7 +19,16 @@ unsafe extern "C" {
     fn kill(pid: i32, signal: i32) -> i32;
 }
 
-const BACKENDS: [&str; 2] = ["cranelift", "llvm"];
+/// The two backends of the Rust compiler, and the compiler written in cancho (`docs/self-hosting.md`).
+const BACKENDS: [&str; 3] = ["cranelift", "llvm", "selfhost"];
+
+/// The compiler written in cancho, built once by the Rust one.
+fn selfhost_compiler() -> &'static Path {
+    static COMPILER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    COMPILER.get_or_init(|| {
+        super::selfhost::build("signals-compiler", &super::selfhost::with_front_end("compiler.cho"))
+    })
+}
 
 /// The signal numbers of the machine the test runs on, by name.
 fn host_number(name: &str) -> i32 {
@@ -70,18 +79,14 @@ fn build(dir: &Path, name: &str, source: &str, backend: &str) -> PathBuf {
     let file = dir.join(format!("{name}.cho"));
     std::fs::write(&file, source).expect("a writable fixture");
     let exe = dir.join(format!("{name}-{backend}"));
-    let build = Command::new(BIN)
-        .args([
-            "build".as_ref(),
-            file.as_os_str(),
-            "--std".as_ref(),
-            "--backend".as_ref(),
-            backend.as_ref(),
-            "-o".as_ref(),
-            exe.as_os_str(),
-        ])
-        .output()
-        .expect("the compiler runs");
+    let mut command = Command::new(BIN);
+    command.args(["build".as_ref(), file.as_os_str(), "--std".as_ref()]);
+    if backend == "selfhost" {
+        command.args(["--compiler".as_ref(), selfhost_compiler().as_os_str()]);
+    } else {
+        command.args(["--backend", backend]);
+    }
+    let build = command.args(["-o".as_ref(), exe.as_os_str()]).output().expect("the compiler runs");
     assert!(
         build.status.success(),
         "`--backend {backend}` should build `{name}`, but said:\n{}",

@@ -513,6 +513,14 @@ fn render_runtime(dir: &std::path::Path) -> String {
         &std::fs::read_to_string(dir.join("runtime/dirs_darwin.ll"))
             .expect("examples/selfhost/runtime/dirs_darwin.ll"),
     );
+    let signals_linux = escape(
+        &std::fs::read_to_string(dir.join("runtime/signals_linux.ll"))
+            .expect("examples/selfhost/runtime/signals_linux.ll"),
+    );
+    let signals_darwin = escape(
+        &std::fs::read_to_string(dir.join("runtime/signals_darwin.ll"))
+            .expect("examples/selfhost/runtime/signals_darwin.ll"),
+    );
     format!(
         "module selfhost.runtime;\n\n\
          // runtime.cho -- the support the code of a few builtins calls.\n\
@@ -527,6 +535,9 @@ fn render_runtime(dir: &std::path::Path) -> String {
          // The directory handles and listings (`runtime/dirs.c`).\n\
          pub fn dirs_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{dirs_darwin}\";\n    }}\n    \
          return \"{dirs_linux}\";\n}}\n\n\
+         // The signal claim (`runtime/signals.c`).\n\
+         pub fn signals_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{signals_darwin}\";\n    }}\n    \
+         return \"{signals_linux}\";\n}}\n\n\
          // The hardware AES and GHASH functions, written by `cancho-codegen-llvm` for each target: `target` is 1 for\n\
          // Darwin on aarch64, 2 for Linux on aarch64, 0 for Linux on x86-64.\n\
          pub fn crypto_text(target: int) -> [] &static [byte] {{\n    if target == 1 {{\n        return \"{crypto_arm_darwin}\";\n    }}\n    \

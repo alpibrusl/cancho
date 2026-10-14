@@ -82,6 +82,14 @@ fn fnptr_kind() -> [] int {
     return 19;
 }
 
+fn many_kind() -> [] int {
+    return 20;
+}
+
+fn ext_kind() -> [] int {
+    return 21;
+}
+
 fn unbound() -> [] int {
     return 0 - 100;
 }
@@ -267,6 +275,15 @@ pub fn resolve_type[&s](st: &!s [int], ty: int) -> [] int {
         }
         return make_named_args(st, named_item(st, t), resolve_type(st, named_arg(st, t, 0)), b);
     }
+    if is_tuple(st, t) && tuple_size(st, t) > 3 {
+        let many = make_many(st, tuple_size(st, t));
+        var k = 0;
+        while k < tuple_size(st, t) {
+            set_part(st, many, k, resolve_type(st, tuple_part(st, t, k)));
+            k = k + 1;
+        }
+        return many;
+    }
     if is_tuple(st, t) {
         let c = tuple_size(st, t) == 3;
         if c {
@@ -319,18 +336,37 @@ pub fn boxslice_element[&s](st: &!s [int], ty: int) -> [] int {
 pub fn node_type[&s](st: &!s [int], node: int, ctx: int) -> [] int {
     if ast.is_kind(st, node, kinds.NK::TTuple) {
         let n = ast.get(st, node, 7);
-        if n != 2 && n != 3 {
+        if n < 2 || n > 8 {
             return 0;
         }
-        let first = ast.get(st, node, 6);
-        let a = node_type(st, first, ctx);
-        let b = node_type(st, ast.next(st, first), ctx);
+        var many = 0;
+        if n > 3 {
+            many = make_many(st, n);
+        }
+        var part = ast.get(st, node, 6);
+        var k = 0;
+        var a = 0;
+        var b = 0;
         var c = 0;
-        if n == 3 {
-            c = node_type(st, ast.next(st, ast.next(st, first)), ctx);
+        while k < n {
+            let t = node_type(st, part, ctx);
+            if t == 0 {
+                return 0;
+            }
+            if n > 3 {
+                set_part(st, many, k, t);
+            } else if k == 0 {
+                a = t;
+            } else if k == 1 {
+                b = t;
+            } else {
+                c = t;
+            }
+            part = ast.next(st, part);
+            k = k + 1;
         }
-        if a == 0 || b == 0 || n == 3 && c == 0 {
-            return 0;
+        if n > 3 {
+            return many;
         }
         return make_tuple(st, n, a, b, c);
     }
@@ -537,19 +573,52 @@ pub fn make_triple[&s](st: &!s [int], a: int, b: int, c: int) -> [] int {
 }
 
 pub fn is_tuple[&s](st: &!s [int], ty: int) -> [] bool {
-    return ty >= first_table() && (slot(st, ty, 0) == pair_kind() || slot(st, ty, 0) == triple_kind());
+    return ty >= first_table() && (slot(st, ty, 0) == pair_kind() || slot(st, ty, 0) == triple_kind() || slot(st, ty, 0) == many_kind());
 }
 
 pub fn tuple_size[&s](st: &!s [int], ty: int) -> [] int {
+    if slot(st, ty, 0) == many_kind() {
+        return slot(st, ty + 1, 1);
+    }
     if slot(st, ty, 0) == triple_kind() {
         return 3;
     }
     return 2;
 }
 
-// Part `k` of a tuple.
+// Part `k` of a tuple. A tuple of more than three has its first three in its entry, and the others in the entries
+// that follow, three to an entry after the number of parts.
 pub fn tuple_part[&s](st: &!s [int], ty: int, k: int) -> [] int {
+    if k >= 3 {
+        return slot(st, ty + 1 + (k - 2) / 3, 1 + (k - 2) % 3);
+    }
     return slot(st, ty, 1 + k);
+}
+
+// A tuple of `n` parts, from four to eight, whose parts are put with `set_part`.
+pub fn make_many[&s](st: &!s [int], n: int) -> [] int {
+    let id = make(st, many_kind(), 0, 0, 0);
+    var j = 0;
+    while j < n / 3 {
+        var count = 0;
+        if j == 0 {
+            count = n;
+        }
+        make(st, ext_kind(), count, 0, 0);
+        j = j + 1;
+    }
+    return id;
+}
+
+pub fn set_part[&s](st: &!s [int], ty: int, k: int, part: int) -> [] int {
+    var entry = ty;
+    var at = 1 + k;
+    if k >= 3 {
+        entry = ty + 1 + (k - 2) / 3;
+        at = 1 + (k - 2) % 3;
+    }
+    st[st[25] + 4 * (entry - first_table()) + at] = part;
+    return 0;
 }
 
 // A tuple made of the parts, or 0 if it has none the code is written for.
