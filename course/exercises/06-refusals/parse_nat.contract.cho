@@ -1,0 +1,38 @@
+// Exercise 6 -- the contract you hand the agent. It is deliberately
+// the first draft: read it, decide what it does not say, and keep that
+// list. You will need it at the end of the lesson.
+//
+//   cancho satisfy work/06-refusals/parse_nat.contract.cho work/06-refusals/candidate.cho --std
+import std.result as outcome;
+import std.test as t;
+
+fn ok_with(r: outcome.Result[int, &static [byte]], want: int) -> [] bool {
+    match r {
+        outcome.Result::Ok(n) => { return n == want; }
+        outcome.Result::Err(_) => { return false; }
+    }
+}
+
+fn is_err(r: outcome.Result[int, &static [byte]]) -> [] bool {
+    match r {
+        outcome.Result::Ok(_) => { return false; }
+        outcome.Result::Err(_) => { return true; }
+    }
+}
+
+fn test_digits_parse() -> [] int {
+    t.assert(ok_with(parse_nat("42"), 42));
+    t.assert(ok_with(parse_nat("0"), 0));
+    return t.assert(ok_with(parse_nat("1234567"), 1234567));
+}
+
+fn test_leading_zeros_are_digits() -> [] int {
+    return t.assert(ok_with(parse_nat("007"), 7));
+}
+
+fn test_not_digits_is_an_error() -> [] int {
+    t.assert(is_err(parse_nat("")));
+    t.assert(is_err(parse_nat("4x2")));
+    t.assert(is_err(parse_nat("-1")));
+    return t.assert(is_err(parse_nat(" 5")));
+}

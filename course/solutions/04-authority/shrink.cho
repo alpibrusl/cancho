@@ -1,0 +1,30 @@
+//~ STDOUT HELLO
+//~ EXIT 0
+//~ AUTHORITY io_write
+import std.bytes;
+import std.io;
+
+// The word is copied into an arena the caller owns the lifetime of; no
+// heap, so nothing to allocate and nothing to drop.
+fn shout[&i, &w, &r](io: &!i Io, word: &w [byte], room: &!r [byte]) -> [io_write] int {
+    var k = 0;
+    while k < len(word) {
+        room[k] = byte_of(bytes.to_upper(int_of(word[k])));
+        k = k + 1;
+    }
+    io.write_all(io, room[0..len(word)]);
+    return io.newline(io);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(heap); release(args);
+    borrow mut io as &!i in {
+        region a {
+            let room = alloc_slice[a](16, byte_of(0));
+            shout(i, "hello", room);
+        }
+    }
+    release(io);
+    return 0;
+}

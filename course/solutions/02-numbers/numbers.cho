@@ -1,0 +1,72 @@
+// Exercise 2, worked solution. Read it after yours passes, not before.
+import std.test;
+
+// 1 + 2 + ... + n. Done for you, so you can see the shape.
+fn triangle(n: int) -> [] int {
+    var total = 0;
+    var k = 1;
+    while k <= n {
+        total = total + k;
+        k = k + 1;
+    }
+    return total;
+}
+
+// Is n prime? 0 and 1 are not; 2 is.
+fn is_prime(n: int) -> [] bool {
+    if n < 2 {
+        return false;
+    }
+    var d = 2;
+    var prime = true;
+    while d * d <= n && prime {
+        if n % d == 0 {
+            prime = false;
+        }
+        d = d + 1;
+    }
+    return prime;
+}
+
+// How many steps until n reaches 1? Even: halve it. Odd: triple it and add 1.
+// collatz_steps(1) is 0 steps.
+fn collatz_steps(n: int) -> [] int {
+    var x = n;
+    var steps = 0;
+    while x != 1 {
+        if x % 2 == 0 {
+            x = x / 2;
+        } else {
+            x = 3 * x + 1;
+        }
+        steps = steps + 1;
+    }
+    return steps;
+}
+
+fn test_triangle() -> [] int {
+    test.assert_eq(triangle(0), 0);
+    test.assert_eq(triangle(4), 10);
+    return test.assert_eq(triangle(100), 5050);
+}
+
+fn test_small_primes() -> [] int {
+    test.assert(is_prime(2));
+    test.assert(is_prime(3));
+    test.assert(is_prime(13));
+    return test.assert(is_prime(97));
+}
+
+fn test_not_primes() -> [] int {
+    test.assert(!is_prime(0));
+    test.assert(!is_prime(1));
+    test.assert(!is_prime(9));
+    return test.assert(!is_prime(100));
+}
+
+fn test_collatz() -> [] int {
+    test.assert_eq(collatz_steps(1), 0);
+    test.assert_eq(collatz_steps(2), 1);
+    test.assert_eq(collatz_steps(6), 8);
+    return test.assert_eq(collatz_steps(27), 111);
+}

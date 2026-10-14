@@ -1,0 +1,43 @@
+// Exercise 7 -- the agent's program passes its tests. Read what it can reach.
+//
+//   cancho authority exercises/07-audit/hostname_len.cho --std
+//   course/check.py exercises/07-audit/hostname_len.cho
+//
+// The brief the agent was given:
+//
+//   Print the length in bytes of /etc/hostname, then a newline.
+//   Authority: it may read that one file and write to the console.
+//   Nothing else.
+//
+// What it handed back works. Whether it did what the brief *allowed* is
+// a different question, and `cancho authority` is the only honest answer
+// to it. Your job is to make the report match the budget in the header,
+// by changing the program, not the header.
+//~ AUTHORITY fs_read("/etc/hostname"); io_write
+import std.io;
+
+fn length_of[&f, &o](fs: &f Fs(""), buf: &!o [byte]) -> [fs_read("")] int {
+    let n = fs_read(fs, "/etc/hostname", buf);
+    if n > 0 {
+        return n;
+    }
+    // A hostname file can be empty on some machines; fall back to the id.
+    return fs_read(fs, "/etc/machine-id", buf);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(heap); release(args);
+    var n = 0;
+    region r {
+        let buf = alloc_slice[r](4096, byte_of(0));
+        borrow fs as &f in { n = length_of(f, buf); }
+    }
+    release(fs);
+    borrow mut io as &!i in {
+        io.print_nat(i, n);
+        io.newline(i);
+    }
+    release(io);
+    return 0;
+}

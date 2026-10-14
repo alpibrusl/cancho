@@ -1,0 +1,16 @@
+// Program C. Before you run `cancho authority`, write down what it will say.
+fn square_sum(n: int) -> [] int {
+    var total = 0;
+    var k = 1;
+    while k <= n {
+        total = total + k * k;
+        k = k + 1;
+    }
+    return total;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args);
+    return square_sum(3) - 14;
+}

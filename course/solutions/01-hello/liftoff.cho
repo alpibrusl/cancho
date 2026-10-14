@@ -1,0 +1,28 @@
+//~ STDOUT Hello, cancho!
+//~ STDOUT 1
+//~ STDOUT 2
+//~ STDOUT 3
+//~ STDOUT 4
+//~ STDOUT 5
+//~ STDOUT liftoff
+//~ EXIT 0
+import std.io;
+
+fn say[&i](io: &!i Io) -> [io_write] int {
+    io.write_all(io, "Hello, cancho!\n");
+    var n = 1;
+    while n <= 5 {
+        io.print_nat(io, n);
+        io.newline(io);
+        n = n + 1;
+    }
+    return io.write_all(io, "liftoff\n");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(heap); release(args);
+    borrow mut io as &!i in { say(i); }
+    release(io);
+    return 0;
+}

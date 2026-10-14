@@ -1,0 +1,14 @@
+// Lesson 1: authority is a resource. Receiving it and never ending it is an error.
+//~ RULE linear-value-unconsumed
+import std.io;
+
+fn say[&i](io: &!i Io) -> [io_write] int {
+    return io.write_all(io, "Hello, cancho!\n");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(heap); release(args);
+    borrow mut io as &!i in { say(i); }
+    return 0;
+}

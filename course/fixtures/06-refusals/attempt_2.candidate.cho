@@ -1,0 +1,31 @@
+// What the same agent hands back once it has read AGENTS.md: it compiles,
+// and it passes the first-draft contract. It also traps -- SIGILL, no
+// message -- on a number too long to fit, because `n * 10` overflows and
+// an `int` does not wrap. The brief never said what to do about that, so
+// nobody was wrong; the contract was short.
+//~ SATISFIES ../../exercises/06-refusals/parse_nat.contract.cho
+//~ UNSATISFIED ../../solutions/06-refusals/parse_nat.contract.cho
+import std.bytes;
+import std.result;
+
+pub fn parse_nat[&r](text: &r [byte]) -> [] result.Result[int, &static [byte]] {
+    if len(text) == 0 {
+        return result.Result::Err("empty");
+    }
+    var n = 0;
+    var i = 0;
+    var bad = false;
+    while i < len(text) && !bad {
+        let c = int_of(text[i]);
+        if bytes.is_digit(c) {
+            n = n * 10 + bytes.digit_of(c);
+        } else {
+            bad = true;
+        }
+        i = i + 1;
+    }
+    if bad {
+        return result.Result::Err("not a digit");
+    }
+    return result.Result::Ok(n);
+}

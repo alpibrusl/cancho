@@ -1,0 +1,18 @@
+// Program B. Before you run `cancho authority`, write down what it will say.
+import std.io;
+
+fn echo_first[&i](io: &!i Io) -> [io_read, io_write] int {
+    let c = getchar(io);
+    if c >= 0 {
+        return putchar(io, c);
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(heap); release(args);
+    borrow mut io as &!i in { echo_first(i); }
+    release(io);
+    return 0;
+}

@@ -1,0 +1,26 @@
+// Program D. Before you run `cancho authority`, write down what it will say.
+import std.buffer;
+import std.io;
+
+fn show[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    var out = buffer.empty(heap, 16);
+    out = buffer.append(heap, out, "total: ");
+    out = buffer.push_nat(heap, out, 42);
+    var n = 0;
+    borrow out as &t in {
+        n = buffer.write(io, t);
+    }
+    buffer.drop(heap, out);
+    return n;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in { show(h, i); }
+    }
+    release(io);
+    release(heap);
+    return 0;
+}

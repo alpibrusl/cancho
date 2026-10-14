@@ -1,0 +1,56 @@
+// The authority half of `loglens`: given, and not the agent's to change.
+// The counting lives in logstats.candidate.cho (the agent's) and is held
+// to logstats.contract.cho (yours).
+//
+//   cancho run work/08-capstone/main.cho work/08-capstone/logstats.candidate.cho --std < some.log
+//   course/check.py work/08-capstone/main.cho
+//~ WITH logstats.candidate.cho
+//~ STDIN 2024-01-01 boot ok
+//~ STDIN 2024-01-01 ERROR disk full
+//~ STDIN 2024-01-02 login ok
+//~ STDIN 2024-01-02 ERROR timeout while waiting
+//~ STDIN 2024-01-03 shutdown
+//~ STDOUT lines 5
+//~ STDOUT errors 2
+//~ STDOUT longest 38
+//~ EXIT 0
+//~ AUTHORITY heap; io_read; io_write
+import std.buffer;
+import std.io;
+
+// Everything on standard input, in a buffer the caller must drop.
+fn collect[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn line[&i, &l](io: &!i Io, label: &l [byte], n: int) -> [io_write] int {
+    io.write_all(io, label);
+    io.print_nat(io, n);
+    return io.newline(io);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            let log = collect(h, i);
+            borrow log as &t in {
+                let text = buffer.bytes(t);
+                line(i, "lines ", count_lines(text));
+                line(i, "errors ", count_matching(text, "ERROR"));
+                line(i, "longest ", longest_line(text));
+            }
+            buffer.drop(h, log);
+        }
+    }
+    release(io);
+    release(heap);
+    return 0;
+}

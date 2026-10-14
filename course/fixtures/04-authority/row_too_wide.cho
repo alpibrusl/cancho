@@ -1,0 +1,15 @@
+// Lesson 4: the other direction. A row is exact: declaring `heap` without using it is as refused as using it undeclared.
+//~ RULE effect-declared-not-performed
+import std.io;
+
+fn greet[&i](io: &!i Io) -> [io_write, heap] int {
+    return io.write_all(io, "hello\n");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(heap); release(args);
+    borrow mut io as &!i in { greet(i); }
+    release(io);
+    return 0;
+}

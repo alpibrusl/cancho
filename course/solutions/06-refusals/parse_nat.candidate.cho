@@ -1,0 +1,36 @@
+//~ SATISFIES parse_nat.contract.cho
+//~ SATISFIES ../../exercises/06-refusals/parse_nat.contract.cho
+import std.bytes;
+import std.result;
+
+// 922337203685477580 * 10 + 7 is the largest int. Check before multiplying:
+// the multiplication is the thing that traps.
+pub fn parse_nat[&r](text: &r [byte]) -> [] result.Result[int, &static [byte]] {
+    if len(text) == 0 {
+        return result.Result::Err("empty");
+    }
+    var n = 0;
+    var i = 0;
+    var failure = 0;
+    while i < len(text) && failure == 0 {
+        let c = int_of(text[i]);
+        if !bytes.is_digit(c) {
+            failure = 1;
+        } else {
+            let d = bytes.digit_of(c);
+            if n > 922337203685477580 || (n == 922337203685477580 && d > 7) {
+                failure = 2;
+            } else {
+                n = n * 10 + d;
+            }
+        }
+        i = i + 1;
+    }
+    if failure == 1 {
+        return result.Result::Err("not a digit");
+    }
+    if failure == 2 {
+        return result.Result::Err("too big");
+    }
+    return result.Result::Ok(n);
+}
