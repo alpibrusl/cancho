@@ -269,6 +269,27 @@ fn left_out_reached[&s](st: &!s [int]) -> [] int {
     return 0 - 1;
 }
 
+// The function checked and written. One with a variable whose type comes from what follows it is gone over twice: once
+// to learn the types of such variables, and then for the code.
+fn check_learning[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int {
+    instances.infer(st, 0);
+    let mark = st[44];
+    let status = body.check_function(st, text, item);
+    if status != 2 || !instances.wants_inference(st) {
+        return status;
+    }
+    instances.infer(st, 1);
+    st[44] = mark;
+    let learned = body.check_function(st, text, item);
+    instances.infer(st, 0);
+    st[44] = mark;
+    if learned != 0 {
+        return 2;
+    }
+    instances.settle(st);
+    return body.check_function(st, text, item);
+}
+
 fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.aim(st, 0);
     emit.str(st, "declare {i64, i1} @llvm.sadd.with.overflow.i64(i64, i64)\n");
@@ -313,7 +334,7 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         }
         if ast.is_kind(st, item, kinds.NK::IFn) {
             let mark = st[44];
-            let status = body.check_function(st, text, item);
+            let status = check_learning(st, text, item);
             if status == 1 {
                 return 1;
             }
@@ -350,17 +371,19 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     // The generic functions called, each at the types it was asked for; a call from one can ask for more.
     var instance = 0;
     while instance < instances.count(st) {
-        let mark = st[44];
-        instances.begin(st, instance);
-        let status = body.check_function(st, text, instances.item_of(st, instance));
-        instances.end(st);
-        if status == 1 {
-            return 1;
-        }
-        if status == 2 {
-            st[44] = mark;
-            left_out = left_out + 1;
-            note_left_out(st, instances.item_of(st, instance), instance);
+        if instances.item_of(st, instance) >= 0 {
+            let mark = st[44];
+            instances.begin(st, instance);
+            let status = check_learning(st, text, instances.item_of(st, instance));
+            instances.end(st);
+            if status == 1 {
+                return 1;
+            }
+            if status == 2 {
+                st[44] = mark;
+                left_out = left_out + 1;
+                note_left_out(st, instances.item_of(st, instance), instance);
+            }
         }
         instance = instance + 1;
     }
