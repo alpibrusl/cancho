@@ -181,20 +181,92 @@ fn declared_before[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] bool
 
 // A comment in the module saying which function (or which instance of a generic one) was not written, and the
 // first construct it stopped at, as a span of the input.
-fn note_left_out[&s](st: &!s [int], instance: int) -> [] int {
+fn note_left_out[&s](st: &!s [int], item: int, instance: int) -> [] int {
     emit.aim(st, 0);
-    if instance < 0 {
-        emit.str(st, "; function left out at ");
-    } else {
-        emit.str(st, "; instance ");
-        emit.nat(st, instance);
-        emit.str(st, " left out at ");
-    }
+    emit.str(st, "; left out @lexs_");
+    emit.nat(st, item);
+    emit.instance_suffix(st, instance + 1);
+    emit.str(st, " at ");
     emit.nat(st, st[4]);
     emit.str(st, " ");
     emit.nat(st, st[5]);
     emit.str(st, "\n");
     return 0;
+}
+
+fn out_byte[&s](st: &!s [int], at: int) -> [] int {
+    return st[st[43] + at];
+}
+
+fn out_spells[&s](st: &!s [int], at: int, word: &static [byte]) -> [] bool {
+    var k = 0;
+    while k < len(word) {
+        if at + k >= st[44] || out_byte(st, at + k) != int_of(word[k]) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+fn out_word_char[&s](st: &!s [int], at: int) -> [] bool {
+    if at >= st[44] {
+        return false;
+    }
+    let c = out_byte(st, at);
+    return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_';
+}
+
+// Is the symbol written at `sym` (up to its end `stop`) named anywhere else in the module?
+fn symbol_used[&s](st: &!s [int], sym: int, stop: int) -> [] bool {
+    var at = 0;
+    while at < st[44] {
+        if at != sym && out_byte(st, at) == '@' && out_spells(st, at, "@lexs_") {
+            var k = 0;
+            while sym + k < stop && out_byte(st, at + k) == out_byte(st, sym + k) {
+                k = k + 1;
+            }
+            if sym + k == stop && !out_word_char(st, at + k) {
+                return true;
+            }
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// A function left out that the module still names, a call to it that would not link: the span of its first
+// construct that was not written, or a negative number if there is none.
+fn left_out_reached[&s](st: &!s [int]) -> [] int {
+    var at = 0;
+    while at < st[44] {
+        if out_byte(st, at) == ';' && out_spells(st, at, "; left out @lexs_") {
+            let sym = at + 11;
+            var stop = sym;
+            while out_word_char(st, stop) || out_byte(st, stop) == '@' {
+                stop = stop + 1;
+            }
+            var from = 0;
+            var to = 0;
+            var p = stop + 4;
+            while out_word_char(st, p) {
+                from = from * 10 + out_byte(st, p) - '0';
+                p = p + 1;
+            }
+            p = p + 1;
+            while out_word_char(st, p) {
+                to = to * 10 + out_byte(st, p) - '0';
+                p = p + 1;
+            }
+            if symbol_used(st, sym, stop) {
+                st[4] = from;
+                st[5] = to;
+                return 0;
+            }
+        }
+        at = at + 1;
+    }
+    return 0 - 1;
 }
 
 fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
@@ -248,7 +320,13 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             if status == 2 {
                 st[44] = mark;
                 left_out = left_out + 1;
-                note_left_out(st, 0 - 1);
+                note_left_out(st, item, 0 - 1);
+                if pass1.is_word(st, text, ast.get(st, item, 4), "main") || entry == 0 && pass1.is_word(st, text, ast.get(st, item, 4), "run") {
+                    // The program starts there: it is reached.
+                    emit.str(st, "; entry @lexs_");
+                    emit.nat(st, item);
+                    emit.str(st, "\n");
+                }
             } else if pass1.is_word(st, text, ast.get(st, item, 4), "main") {
                 entry = 2;
                 entry_item = item;
@@ -282,7 +360,7 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         if status == 2 {
             st[44] = mark;
             left_out = left_out + 1;
-            note_left_out(st, instance);
+            note_left_out(st, instances.item_of(st, instance), instance);
         }
         instance = instance + 1;
     }
@@ -306,6 +384,12 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "; left out: ");
     emit.nat(st, left_out);
     emit.str(st, "\n");
+    if left_out > 0 && left_out_reached(st) >= 0 {
+        // A call to a function that was not written would not link: say so, at the construct that stopped it.
+        st[2] = 0;
+        ast.fail(st, rules.r_skip(), st[4], st[5]);
+        return 1;
+    }
     if emit.overflowed(st) {
         // The code outgrew its room: what was written is not to be trusted.
         ast.fail(st, rules.r_skip(), 0, 0);

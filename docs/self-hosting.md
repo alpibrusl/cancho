@@ -694,7 +694,7 @@ modules may share (`ast.get` and `lexcore.get` would both be `@lexs_get`); it is
 node in the tree, `@lexs_<n>`, which nothing else shares, and a call names the node it resolved to. A
 function the code is not written for is no longer a refusal of the program: it is left out, with its body
 rolled back from the output and a comment at the end of the module (`; left out: 55`) saying how many, and a
-call to it does not link, which is how a program learns. A static that is left out gets a stub.
+call to it, or the program's `main`, being left out, is a refusal (`SKIP`, at the construct the compiler stopped at); a function nothing names is left out in silence. A static that is left out gets a stub.
 `compiler.cho` is the compiler for a program of several files (`drive(world, 3, true)`), and the first try
 was to give it its own source and the `std` modules it imports, in the stream `driver.cho` reads:
 

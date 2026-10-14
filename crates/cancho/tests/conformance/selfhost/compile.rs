@@ -779,3 +779,31 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
     assert!(trapped >= 40, "{trapped} of the programs trap; the test is about them too");
     let _ = std::fs::remove_dir_all(compiler.parent().expect("a scratch directory"));
 }
+
+/// A function the compiler in cancho has no code for stops a build only when the program reaches it, and then
+/// the answer says where the compiler stopped, not that a symbol is missing at link time.
+#[test]
+fn a_function_the_compiler_cannot_write_is_a_refusal_when_the_program_reaches_it() {
+    let compiler = build("compile-refusal", &with_front_end("compile.cho"));
+    let target = super::target_line();
+    let apply = "fn apply(f: fn(int) -> [] int, x: int) -> [] int { return f(x); }\n\
+                 fn inc(x: int) -> [] int { return x + 1; }\n";
+    let reached = format!(
+        "{apply}fn main(world: World) -> [] int {{ release(world); return apply(inc, 1); }}\n"
+    );
+    let answer_reached = answer(&compiler, &format!("TARGET {target}\n{reached}"));
+    let call = reached.find("apply(inc, 1)").expect("the call");
+    assert_eq!(
+        answer_reached.trim_end(),
+        format!("ERR SKIP {call} {}", call + "apply(inc, 1)".len()),
+        "a call to a function left out is refused at the call"
+    );
+    let unreached =
+        format!("{apply}fn main(world: World) -> [] int {{ release(world); return 0; }}\n");
+    let answer_unreached = answer(&compiler, &format!("TARGET {target}\n{unreached}"));
+    assert!(
+        !answer_unreached.starts_with("ERR"),
+        "a function nobody calls is left out without a word:\n{answer_unreached}"
+    );
+    let _ = std::fs::remove_dir_all(compiler.parent().expect("a scratch directory"));
+}
