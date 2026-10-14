@@ -16,7 +16,7 @@ done
 for os in linux:0 darwin:1; do
   name=${os%%:*}; flag=${os##*:}
   clang -S -emit-llvm -O0 -Xclang -disable-O0-optnone -DDARWIN=$flag -Wno-incompatible-library-redeclaration -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-discard-value-names -target arm64-apple-macos dirs.c -o - |
-    grep -v '^target \|^source_filename\|^!\|^attributes #\|^; ModuleID\|^declare i32 @close(\|^declare i32 @fsync(\|^declare ptr @cancho_errno_location\|^declare void @llvm.trap\|^@cancho_plat\|^declare ptr @cancho_checked_path\|^declare void @free(\|^declare ptr @memchr(\|^declare ptr @memmove(\|^declare i64 @strlen(' |
+    grep -v '^target \|^source_filename\|^!\|^attributes #\|^; ModuleID\|^declare i32 @close(\|^declare i32 @fsync(\|^declare i32 @openat(\|^declare ptr @cancho_errno_location\|^declare void @llvm.trap\|^@cancho_plat\|^declare ptr @cancho_checked_path\|^declare void @free(\|^declare ptr @memchr(\|^declare ptr @memmove(\|^declare i64 @strlen(' |
     sed -e 's/ #[0-9]* {/ {/' -e 's/ #[0-9]*$//' -e 's/, !llvm.loop ![0-9]*//' -e 's/ noundef//g' -e 's/ dso_local//g' -e 's/ signext//g' -e 's/ zeroext//g' > dirs_$name.ll
 done
 
@@ -26,5 +26,13 @@ for os in linux:0 darwin:1; do
   clang -S -emit-llvm -O0 -Xclang -disable-O0-optnone -DDARWIN=$flag -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-discard-value-names -target arm64-apple-macos signals.c -o - |
     grep -v '^target \|^source_filename\|^!\|^attributes #\|^; ModuleID\|^declare i32 @close(\|^declare i32 @fcntl(\|^declare i64 @read(\|^declare i32 @kqueue(\|^declare i32 @kevent(\|^declare ptr @cancho_errno_location\|^@cancho_signal_state\|^declare void @llvm.' |
     sed -e 's/ #[0-9]* {/ {/' -e 's/ #[0-9]*$//' -e 's/, !tbaa ![0-9]*//' -e 's/, !llvm.loop ![0-9]*//' -e 's/ noundef//g' -e 's/ dso_local//g' -e 's/ signext//g' -e 's/ zeroext//g' -e 's/ local_unnamed_addr//g' > signals_$name.ll
+done
+
+# The serial-port verbs.
+for os in linux:0 darwin:1; do
+  name=${os%%:*}; flag=${os##*:}
+  clang -S -emit-llvm -O0 -Xclang -disable-O0-optnone -DDARWIN=$flag -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-discard-value-names -target arm64-apple-macos tty.c -o - |
+    grep -v '^target \|^source_filename\|^!\|^attributes #\|^; ModuleID\|^declare i32 @openat(\|^declare i64 @read(\|^declare i64 @write(\|^declare void @free(\|^declare ptr @cancho_checked_path\|^declare ptr @cancho_errno_location\|^declare void @llvm.' |
+    sed -e 's/ #[0-9]* {/ {/' -e 's/ #[0-9]*$//' -e 's/, !tbaa ![0-9]*//' -e 's/, !llvm.loop ![0-9]*//' -e 's/ noundef//g' -e 's/ dso_local//g' -e 's/ signext//g' -e 's/ zeroext//g' -e 's/ local_unnamed_addr//g' > tty_$name.ll
 done
 rm -f dirs.ll

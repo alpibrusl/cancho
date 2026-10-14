@@ -161,6 +161,9 @@ pub fn extras[&s](st: &!s [int], which: int) -> [] int {
 
 // How many arguments the builtin numbered `which` (see `codes.net_code`; a pipe's number is made a connection's) takes.
 pub fn arity(which: int) -> [] int {
+    if which >= 122 && which <= 125 {
+        return 2;
+    }
     if which == 106 || which == 108 {
         return 1;
     }
@@ -199,12 +202,12 @@ pub fn arity(which: int) -> [] int {
 
 // Does the first argument, a capability narrowed to a bound, give the bound the call checks?
 pub fn holds_bound(which: int) -> [] bool {
-    return which == 32 || which == 33 || which == 36 || which == 37 || which == 54 || which == 110;
+    return which == 32 || which == 33 || which == 36 || which == 37 || which == 54 || which == 110 || which == 122;
 }
 
 // How many numbers the function answers in its cell: 0 when it answers one whole number.
 pub fn slots(which: int) -> [] int {
-    if which == 119 {
+    if which == 119 || which == 122 {
         return 3;
     }
     if which == 106 || which == 107 || which == 110 {
@@ -227,6 +230,9 @@ pub fn slots(which: int) -> [] int {
 
 // The prelude enum the answer is made into.
 pub fn enum_name(which: int) -> [] &static [byte] {
+    if which == 122 {
+        return "TtyOpened";
+    }
     if which == 119 {
         return "Watching";
     }
@@ -283,6 +289,21 @@ pub fn enum_name(which: int) -> [] &static [byte] {
 
 // The function of `runtime/net.c` that does it.
 pub fn function(which: int) -> [] &static [byte] {
+    if which == 122 {
+        return "cancho_tty_open";
+    }
+    if which == 123 {
+        return "cancho_tty_configure";
+    }
+    if which == 124 {
+        return "cancho_tty_read";
+    }
+    if which == 125 {
+        return "cancho_tty_write";
+    }
+    if which == 126 {
+        return "cancho_tty_flush";
+    }
     if which == 119 {
         return "cancho_signals_watch";
     }

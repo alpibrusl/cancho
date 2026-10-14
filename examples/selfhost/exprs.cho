@@ -1450,6 +1450,8 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
     }
     if netcode.needs_dirs(which) {
         st[55] = st[55] | 2;
+    } else if which >= 122 {
+        st[55] = st[55] | 16;
     } else if which >= 119 {
         st[55] = st[55] | 8;
     } else if which != 44 {

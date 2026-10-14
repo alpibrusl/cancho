@@ -400,6 +400,10 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         emit.str(st, runtime.dirs_text(st[61] == 1));
         platform.print(st);
     }
+    if st[55] & 16 != 0 {
+        // A program that opens a serial port has the verbs for it.
+        emit.str(st, runtime.tty_text(st[61] == 1));
+    }
     if st[55] & 8 != 0 {
         // A program that claims signals has the support for them.
         emit.str(st, runtime.signals_text(st[61] == 1));

@@ -242,6 +242,24 @@ pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     if lc.spells(text, from, to, "dir_own_mode") {
         return 69;
     }
+    if lc.spells(text, from, to, "tty_open") {
+        return 122;
+    }
+    if lc.spells(text, from, to, "tty_configure") {
+        return 123;
+    }
+    if lc.spells(text, from, to, "tty_read") {
+        return 124;
+    }
+    if lc.spells(text, from, to, "tty_write") {
+        return 125;
+    }
+    if lc.spells(text, from, to, "tty_flush_input") {
+        return 126;
+    }
+    if lc.spells(text, from, to, "tty_close") {
+        return 44;
+    }
     if lc.spells(text, from, to, "signals_watch") {
         return 119;
     }
