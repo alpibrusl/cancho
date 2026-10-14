@@ -914,3 +914,12 @@ stage 3, the checker (`cancho-ir`, 12 thousand lines), which is the real test: i
 stage with enough shape (resolution, linearity, regions, effect rows) to tell whether
 the language is comfortable writing its own compiler. §5's decision does not change.
 
+
+## Building with it from the command line
+
+`cancho build --compiler <exe> <file.cho>... [--std]` builds the program with the compiler in cancho: `<exe>` is
+`examples/selfhost/compiler.cho` and its modules built once (`cancho build ... --std`). The command reads the files (and the
+standard-library modules they import), sends the target and the files to it, takes the LLVM IR, and has `clang` and the
+usual link finish the build. A refusal is exit status 1 with the rule and `file:line`, not the sentence, and a program
+the compiler has no code for yet says so. Targets: aarch64 macOS, x86-64 and aarch64 Linux. It is a way to try the
+compiler on real programs; `cancho build` without the flag is unchanged.
