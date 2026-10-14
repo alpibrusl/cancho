@@ -1,45 +1,172 @@
 edition 7;
 module std.rsa_sign;
 import std.bigmod;
+import std.bignum;
+import std.bytes;
 import std.rsa;
 
 // Copyright (c) 2026 Alpibru S.L. Licensed under the EUPL-1.2.
 //
-// STUB. The gates of `docs/rsa-sign.md` §11 are committed and run against
-// this file first, so that each is seen to fail (`docs/assets/rsa-sign/red/`).
-// Every function that would sign or check a key answers `not_built()`. The
-// implementation replaces this file in the commit after the red run.
+// `std.rsa_sign` -- RSASSA-PKCS1-v1_5 signing (RFC 8017 §8.2.1) with
+// SHA-256, SHA-384 and SHA-512, for keys of 2,048 to 4,096 bits
+// (`docs/rsa-sign.md`). NOT APPROVED FOR PRODUCTION USE until an external
+// cryptographic review and the hardening `docs/rsa-sign.md` §14 lists as open
+// are done. Not independently reviewed (#209). Makes no claim of constant
+// time beyond what `docs/rsa-sign.md` §7 and §13 report as measured, with the
+// conditions of the measurement.
+//
+// A signature is made with the Chinese remainder theorem on `std.bigmod`'s
+// registers modulo each prime (`setup_secret`, `pow_secret`: no branch and no
+// index on a secret value), the exponent blinded with the caller's entropy
+// (§8), the halves recombined by Garner's formula as plain integers, and the
+// result verified with `std.rsa.pkcs1_verify` before it is given out (§9).
+//
+// A key is one block of bytes (§3.2), big-endian, fixed width:
+//     n (L) || e (8) || p (h) || q (h) || dp (h) || dq (h) || qinv (h)
+// with h = len(p), a multiple of 8 from 128 to 256, and L = 2h. `x509_rsa_key`
+// makes it from a PEM or DER file; `check_key` is the algebra a loaded key must
+// satisfy. Every function answers 0 or a negative code whose name is
+// `refusal_tag(code)`. All have the empty effect row: randomness is a
+// parameter (`entropy`), as in `std.ecdsa_sign`.
 
 pub fn ok() -> [] int {
     return 0;
 }
 
-pub fn not_built() -> [] int {
-    return -139;
+// ---- Refusals: -140 to -147 signing, -150 to -157 a key ----
+
+pub fn refused_hash() -> [] int {
+    return -140;
+}
+
+pub fn refused_digest_length() -> [] int {
+    return -141;
+}
+
+// `len(key)` is not the length of a block for any h.
+pub fn refused_key_layout() -> [] int {
+    return -142;
+}
+
+pub fn refused_entropy() -> [] int {
+    return -143;
+}
+
+pub fn refused_output_length() -> [] int {
+    return -144;
+}
+
+pub fn refused_work_length() -> [] int {
+    return -145;
+}
+
+// A prime whose top bit is clear or that is even, or n whose top bit is clear:
+// not a key this signer reads (`setup_secret`'s refusals).
+pub fn refused_key_shape() -> [] int {
+    return -146;
+}
+
+// The signature did not verify under (n, e) before it was given out: a fault,
+// or a key that no `check_key` has passed.
+pub fn refused_check() -> [] int {
+    return -147;
+}
+
+pub fn refused_key_size() -> [] int {
+    return -150;
+}
+
+pub fn refused_key_modulus() -> [] int {
+    return -151;
+}
+
+pub fn refused_key_exponent() -> [] int {
+    return -152;
+}
+
+pub fn refused_key_prime() -> [] int {
+    return -153;
+}
+
+pub fn refused_key_product() -> [] int {
+    return -154;
+}
+
+pub fn refused_key_crt_exponent() -> [] int {
+    return -155;
+}
+
+pub fn refused_key_crt_coefficient() -> [] int {
+    return -156;
+}
+
+pub fn refused_key_private_exponent() -> [] int {
+    return -157;
 }
 
 pub fn refusal_tag(code: int) -> [] &static [byte] {
     if code == 0 {
         return "ok";
     }
-    if code == -139 {
-        return "rsa-sign-not-built";
+    if code == -140 {
+        return "rsa-sign-hash";
+    }
+    if code == -141 {
+        return "rsa-sign-digest-length";
+    }
+    if code == -142 {
+        return "rsa-sign-key-layout";
+    }
+    if code == -143 {
+        return "rsa-sign-entropy";
+    }
+    if code == -144 {
+        return "rsa-sign-output-length";
+    }
+    if code == -145 {
+        return "rsa-sign-work-length";
+    }
+    if code == -146 {
+        return "rsa-sign-key-shape";
+    }
+    if code == -147 {
+        return "rsa-sign-check";
+    }
+    if code == -150 {
+        return "rsa-key-size";
+    }
+    if code == -151 {
+        return "rsa-key-modulus";
+    }
+    if code == -152 {
+        return "rsa-key-exponent";
+    }
+    if code == -153 {
+        return "rsa-key-prime";
+    }
+    if code == -154 {
+        return "rsa-key-product";
+    }
+    if code == -155 {
+        return "rsa-key-crt-exponent";
+    }
+    if code == -156 {
+        return "rsa-key-crt-coefficient";
+    }
+    if code == -157 {
+        return "rsa-key-private-exponent";
     }
     return rsa.refusal_tag(code);
 }
 
-pub fn work_len() -> [] int {
-    return 2 * bigmod.registers_len(20);
-}
+// ---- The test hook's modes (`pkcs1_sign_test`) ----
 
-pub fn key_len(modulus_len: int) -> [] int {
-    return 7 * (modulus_len / 2) + 8;
-}
-
+// No verify-after-sign.
 pub fn mode_unchecked() -> [] int {
     return 1;
 }
 
+// A bit of the p-half's result flipped before the recombination.
 pub fn mode_fault_p() -> [] int {
     return 2;
 }
@@ -48,18 +175,23 @@ pub fn mode_fault_q() -> [] int {
     return 4;
 }
 
+// A bit of the recombined signature flipped before the check.
 pub fn mode_fault_result() -> [] int {
     return 8;
 }
 
+// No exponent blinding; `entropy` may then be any length.
 pub fn mode_unblinded() -> [] int {
     return 16;
 }
 
+// A bit of qinv flipped.
 pub fn mode_fault_qinv() -> [] int {
     return 32;
 }
 
+// Instead of the signature, the exponent the p-half (or the q-half) was raised
+// to, k + 2 limbs as big-endian bytes at the start of `sig`.
 pub fn mode_report_p() -> [] int {
     return 64;
 }
@@ -68,18 +200,675 @@ pub fn mode_report_q() -> [] int {
     return 128;
 }
 
+// ---- Layout (§3.2) ----
+
+// The `std.bigmod` registers one half needs: base, exponent, result, and 17
+// for the window table and the selection.
+fn regs() -> [] int {
+    return 20;
+}
+
+fn half_work() -> [] int {
+    return bigmod.registers_len(regs());
+}
+
+// The words `work` must hold: one register file for p and one for q.
+pub fn work_len() -> [] int {
+    return 2 * half_work();
+}
+
+// The block's length for a modulus of `modulus_len` bytes (L).
+pub fn key_len(modulus_len: int) -> [] int {
+    return 7 * (modulus_len / 2) + 8;
+}
+
+// h for a block of `n` bytes, or -1 when no h gives that length.
+fn half_of(n: int) -> [] int {
+    if n < 8 || (n - 8) % 7 != 0 {
+        return -1;
+    }
+    let h = (n - 8) / 7;
+    if h < 128 || h > 256 || h % 8 != 0 {
+        return -1;
+    }
+    return h;
+}
+
+// The modulus length L of a block, or -1.
+pub fn key_modulus_len[&k](key: &k [byte]) -> [] int {
+    let h = half_of(len(key));
+    if h < 0 {
+        return -1;
+    }
+    return 2 * h;
+}
+
+fn hash_ok(hash_len: int) -> [] bool {
+    return hash_len == 32 || hash_len == 48 || hash_len == 64;
+}
+
+// ---- EMSA-PKCS1-v1_5 (RFC 8017 §9.2) ----
+
+// `00 01 FF..FF 00 || DigestInfo || digest` into `out`, `len(out)` bytes,
+// which must hold the 11 bytes of framing besides the DigestInfo and the
+// digest. The digest and the hash are public.
 pub fn emsa_pkcs1[&d, &o](hash_len: int, digest: &d [byte], out: &!o [byte]) -> [] int {
-    return -139;
+    if !hash_ok(hash_len) {
+        return -140;
+    }
+    if len(digest) != hash_len {
+        return -141;
+    }
+    if len(out) < hash_len + 19 + 11 {
+        return -144;
+    }
+    let t = len(out) - hash_len - 19;
+    var i = 0;
+    while i < len(out) {
+        out[i] = byte_of(0xff);
+        i = i + 1;
+    }
+    out[0] = byte_of(0);
+    out[1] = byte_of(1);
+    out[t - 1] = byte_of(0);
+    rsa.digest_info(hash_len, out, t);
+    i = 0;
+    while i < hash_len {
+        out[t + 19 + i] = digest[i];
+        i = i + 1;
+    }
+    return 0;
 }
 
+// ---- Plain limb arithmetic (little-endian words, each an unsigned int) ----
+//
+// For the recombination (a product of two secrets) and the load-time checks.
+// No modulus, no table: every loop runs over a count the layout fixes.
+
+// Big-endian `b` into the limbs `out`, which `b` fits (8 bytes a limb, a
+// byte's limb decided by its position only, as `bigmod.load_secret`).
+fn limbs_from[&b, &o](b: &b [byte], out: &!o [int]) -> [] int {
+    var i = 0;
+    while i < len(out) {
+        out[i] = 0;
+        i = i + 1;
+    }
+    var p = 0;
+    var j = len(b) - 1;
+    while j >= 0 {
+        out[p / 64] = out[p / 64] | int_of(b[j]) << p % 64;
+        p = p + 8;
+        j = j - 1;
+    }
+    return 0;
+}
+
+// The limbs as `len(out)` big-endian bytes (the high limbs beyond them dropped).
+fn limbs_to[&l, &o](limbs: &l [int], out: &!o [byte]) -> [] int {
+    var j = 0;
+    while j < len(out) {
+        let idx = j / 8;
+        var v = 0;
+        if idx < len(limbs) {
+            v = limbs[idx] >> 8 * (j % 8);
+        }
+        out[len(out) - 1 - j] = byte_of(v & 255);
+        j = j + 1;
+    }
+    return 0;
+}
+
+// c = a * b, a and b of k limbs, c of 2k limbs and zero on entry.
+fn mul_limbs[&a, &b, &c](a: &a [int], b: &b [int], k: int, c: &!c [int]) -> [] int {
+    var i = 0;
+    while i < k {
+        var carry = 0;
+        var j = 0;
+        while j < k {
+            let (hi, lo) = mul_wide(a[i], b[j]);
+            let (s1, c1) = add_carry(c[i + j], lo, 0);
+            let (s2, c2) = add_carry(s1, carry, 0);
+            c[i + j] = s2;
+            // (2^64 - 1)^2 + 2 (2^64 - 1) is below 2^128: one word carries.
+            carry = wrapping_add(wrapping_add(hi, c1), c2);
+            j = j + 1;
+        }
+        c[i + k] = carry;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// s = sq + q h as `len(out)` = 2 len(q) big-endian bytes: Garner's last step.
+// h < p, so the sum is below n and needs no modulus.
+fn recombine[&q, &h, &s, &o](q: &q [byte], h: &h [byte], sq: &s [byte], out: &!o [byte]) -> [] int {
+    let k = len(q) / 8;
+    region r {
+        let a = alloc_slice[r](k, 0);
+        let b = alloc_slice[r](k, 0);
+        let d = alloc_slice[r](k, 0);
+        let c = alloc_slice[r](2 * k, 0);
+        limbs_from(q, a);
+        limbs_from(h, b);
+        limbs_from(sq, d);
+        mul_limbs(a, b, k, c);
+        var carry = 0;
+        var i = 0;
+        while i < 2 * k {
+            var add = 0;
+            if i < k {
+                add = d[i];
+            }
+            let (v, cc) = add_carry(c[i], add, carry);
+            c[i] = v;
+            carry = cc;
+            i = i + 1;
+        }
+        limbs_to(c, out);
+        bignum.zero(a);
+        bignum.zero(b);
+        bignum.zero(d);
+        bignum.zero(c);
+    }
+    return 0;
+}
+
+// -1, 0 or 1 as the `n` limbs of a compare with those of b. Variable time: for
+// the load-time checks, whose answer is whether a key is valid.
+fn cmp_limbs[&a, &b](a: &a [int], b: &b [int], n: int) -> [] int {
+    var i = n - 1;
+    while i >= 0 {
+        if a[i] != b[i] {
+            let (d, under) = sub_borrow(a[i], b[i], 0);
+            return 1 - 2 * under;
+        }
+        i = i - 1;
+    }
+    return 0;
+}
+
+fn is_zero_limbs[&a](a: &a [int], n: int) -> [] bool {
+    var i = 0;
+    while i < n {
+        if a[i] != 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// x mod dv, in place, for `nx` limbs of x, `nd` of dv (nd <= nx) and dv with
+// its top bit set: shift-and-subtract, one step for each of the
+// 64 (nx - nd) + 1 bits of the quotient, every step a borrow chain over all nx
+// limbs and a masked subtraction. `ds` is nx limbs of scratch.
+fn mod_limbs[&x, &v, &s](x: &!x [int], nx: int, dv: &v [int], nd: int, ds: &!s [int]) -> [] int {
+    var i = 0;
+    while i < nx {
+        ds[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while i < nd {
+        ds[nx - nd + i] = dv[i];
+        i = i + 1;
+    }
+    var steps = 64 * (nx - nd) + 1;
+    while steps > 0 {
+        var under = 0;
+        i = 0;
+        while i < nx {
+            let (d, b) = sub_borrow(x[i], ds[i], under);
+            under = b;
+            i = i + 1;
+        }
+        // All ones when x >= ds (no borrow), through the barrier.
+        let m = value_barrier(under - 1);
+        under = 0;
+        i = 0;
+        while i < nx {
+            let (d, b) = sub_borrow(x[i], ds[i] & m, under);
+            x[i] = d;
+            under = b;
+            i = i + 1;
+        }
+        i = 0;
+        while i < nx {
+            var hi = 0;
+            if i + 1 < nx {
+                hi = (ds[i + 1] & 1) << 63;
+            }
+            ds[i] = ds[i] >> 1 & 9223372036854775807 | hi;
+            i = i + 1;
+        }
+        steps = steps - 1;
+    }
+    return 0;
+}
+
+// ---- A key's algebra (§6) ----
+
+// 1 when the `k` limbs of a, a product e * x of a 64-bit word and k limbs, taken
+// modulo `dv` (k limbs, top bit set), leave 1: e x = 1 (mod dv). `t` is k + 1
+// limbs and `ds` k + 1 more of scratch.
+fn times_is_one[&x, &d](e: int, x: &x [int], dv: &d [int], k: int) -> [] bool {
+    var ok = false;
+    region r {
+        let t = alloc_slice[r](k + 1, 0);
+        let ds = alloc_slice[r](k + 1, 0);
+        var carry = 0;
+        var i = 0;
+        while i < k {
+            let (hi, lo) = mul_wide(e, x[i]);
+            let (s1, c1) = add_carry(lo, carry, 0);
+            t[i] = s1;
+            carry = wrapping_add(hi, c1);
+            i = i + 1;
+        }
+        t[k] = carry;
+        mod_limbs(t, k + 1, dv, k, ds);
+        ok = t[0] == 1;
+        i = 1;
+        while i < k + 1 {
+            if t[i] != 0 {
+                ok = false;
+            }
+            i = i + 1;
+        }
+    }
+    return ok;
+}
+
+// dv = p - 1 as limbs (p odd: clears the low bit).
+fn minus_one[&p, &o](p: &p [int], k: int, out: &!o [int]) -> [] int {
+    var i = 0;
+    while i < k {
+        out[i] = p[i];
+        i = i + 1;
+    }
+    out[0] = out[0] & -1 << 1;
+    return 0;
+}
+
+// 0, or the refusal, for the exponent `x` (dp or dq) of prime `p` and the
+// exponent e: x in [1, p - 2] and e x = 1 (mod p - 1).
+fn crt_exponent_ok[&x, &p](e: int, x: &x [int], p: &p [int], k: int) -> [] bool {
+    var ok = false;
+    region r {
+        let pm1 = alloc_slice[r](k, 0);
+        minus_one(p, k, pm1);
+        ok = !is_zero_limbs(x, k) && cmp_limbs(x, pm1, k) < 0 && times_is_one(e, x, pm1, k);
+    }
+    return ok;
+}
+
+// d mod (p - 1) = dp.
+fn d_matches[&d, &x, &p](d: &d [int], nd: int, x: &x [int], p: &p [int], k: int) -> [] bool {
+    var ok = false;
+    region r {
+        let pm1 = alloc_slice[r](k, 0);
+        let rem = alloc_slice[r](nd, 0);
+        let ds = alloc_slice[r](nd, 0);
+        minus_one(p, k, pm1);
+        var i = 0;
+        while i < nd {
+            rem[i] = d[i];
+            i = i + 1;
+        }
+        mod_limbs(rem, nd, pm1, k, ds);
+        ok = cmp_limbs(rem, x, k) == 0;
+        i = k;
+        while i < nd {
+            if rem[i] != 0 {
+                ok = false;
+            }
+            i = i + 1;
+        }
+    }
+    return ok;
+}
+
+// The algebra a key must satisfy (`docs/rsa-sign.md` §6), in the order its
+// rules are listed: 0, or the first refusal. `d` is the private exponent as
+// big-endian bytes (leading zeros allowed, at most L), which is not in the block
+// and not used to sign; it is checked here against dp and dq and then dropped.
+// Run when a key is loaded, not per signature: it branches on whether the key is
+// valid, which for a valid key is the same for every key. `work` is `work_len()`
+// words and is zeroed before the answer.
 pub fn check_key[&k, &d, &w](key: &k [byte], d: &d [byte], work: &!w [int]) -> [] int {
-    return -139;
+    let h = half_of(len(key));
+    if h < 0 {
+        return -142;
+    }
+    if len(work) < work_len() {
+        return -145;
+    }
+    let l = 2 * h;
+    var code = 0;
+    if int_of(key[0]) < 128 {
+        return -150;
+    }
+    if int_of(key[l - 1]) & 1 == 0 {
+        return -151;
+    }
+    if int_of(key[l + 7]) & 1 == 0 || bigmod.bit_length(key[l..l + 8]) < 2 {
+        return -152;
+    }
+    let p = key[l + 8..l + 8 + h];
+    let q = key[l + 8 + h..l + 8 + 2 * h];
+    let dpb = key[l + 8 + 2 * h..l + 8 + 3 * h];
+    let dqb = key[l + 8 + 3 * h..l + 8 + 4 * h];
+    let qib = key[l + 8 + 4 * h..l + 8 + 5 * h];
+    if int_of(p[0]) < 128 || int_of(q[0]) < 128 || int_of(p[h - 1]) & 1 == 0 || int_of(q[h - 1]) & 1 == 0 || bytes.equal(p, q) {
+        return -153;
+    }
+    let k8 = h / 8;
+    region r {
+        let n = alloc_slice[r](2 * k8, 0);
+        let pl = alloc_slice[r](k8, 0);
+        let ql = alloc_slice[r](k8, 0);
+        let dpl = alloc_slice[r](k8, 0);
+        let dql = alloc_slice[r](k8, 0);
+        let qil = alloc_slice[r](k8, 0);
+        let prod = alloc_slice[r](2 * k8, 0);
+        limbs_from(key[0..l], n);
+        limbs_from(p, pl);
+        limbs_from(q, ql);
+        limbs_from(dpb, dpl);
+        limbs_from(dqb, dql);
+        limbs_from(qib, qil);
+        mul_limbs(pl, ql, k8, prod);
+        var e = 0;
+        var i = 0;
+        while i < 8 {
+            e = e << 8 | int_of(key[l + i]);
+            i = i + 1;
+        }
+        if cmp_limbs(prod, n, 2 * k8) != 0 {
+            code = -154;
+        } else if !crt_exponent_ok(e, dpl, pl, k8) || !crt_exponent_ok(e, dql, ql, k8) {
+            code = -155;
+        } else if is_zero_limbs(qil, k8) || cmp_limbs(qil, pl, k8) >= 0 {
+            code = -156;
+        } else {
+            code = qinv_ok(p, q, qib, work);
+        }
+        if code == 0 {
+            // d: 1 <= d < n, and d = dp (mod p - 1), d = dq (mod q - 1).
+            let dl = alloc_slice[r](2 * k8, 0);
+            if len(d) > l || bigmod.bit_length(d) == 0 {
+                code = -157;
+            } else {
+                limbs_from(d, dl);
+                if cmp_limbs(dl, n, 2 * k8) >= 0 || !d_matches(dl, 2 * k8, dpl, pl, k8) || !d_matches(dl, 2 * k8, dql, ql, k8) {
+                    code = -157;
+                }
+            }
+            bignum.zero(dl);
+        }
+        bignum.zero(n);
+        bignum.zero(pl);
+        bignum.zero(ql);
+        bignum.zero(dpl);
+        bignum.zero(dql);
+        bignum.zero(qil);
+        bignum.zero(prod);
+    }
+    bignum.zero(work);
+    return code;
 }
 
-pub fn pkcs1_sign_test[&k, &d, &e, &s, &w](hash_len: int, key: &k [byte], digest: &d [byte], entropy: &e [byte], mode: int, sig: &!s [byte], work: &!w [int]) -> [] int {
-    return -139;
+// q qinv = 1 (mod p), in p's Montgomery arithmetic: -156 when it is not.
+fn qinv_ok[&p, &q, &v, &w](p: &p [byte], q: &q [byte], qinv: &v [byte], work: &!w [int]) -> [] int {
+    var code = bigmod.setup_secret(p, work[0..half_work()]);
+    if code != 0 {
+        return -153;
+    }
+    let w = work[0..half_work()];
+    bigmod.load_secret(q, w, bigmod.reg(0));
+    bigmod.reduce_once(w, bigmod.reg(0));
+    bigmod.load_secret(qinv, w, bigmod.reg(1));
+    bigmod.to_mont(w, bigmod.reg(1), bigmod.reg(1));
+    bigmod.mul(w, bigmod.reg(1), bigmod.reg(0), bigmod.reg(2));
+    bigmod.set_small(w, bigmod.reg(3), 1);
+    if !bigmod.equal(w, bigmod.reg(2), bigmod.reg(3)) {
+        code = -156;
+    }
+    return code;
 }
 
+// ---- The private operation ----
+
+fn r_base() -> [] int {
+    return bigmod.reg(0);
+}
+
+fn r_exp() -> [] int {
+    return bigmod.reg(1);
+}
+
+fn r_acc() -> [] int {
+    return bigmod.reg(2);
+}
+
+// Scratch for the recombination, which uses p's registers after its power is
+// done: the window table's first registers (3 to 6).
+fn r_sp() -> [] int {
+    return bigmod.reg(3);
+}
+
+fn r_sq() -> [] int {
+    return bigmod.reg(4);
+}
+
+fn r_diff() -> [] int {
+    return bigmod.reg(5);
+}
+
+fn r_qi() -> [] int {
+    return bigmod.reg(6);
+}
+
+fn r_h() -> [] int {
+    return bigmod.reg(7);
+}
+
+// The 8 bytes of entropy at `at` as a word with its top bit forced: a
+// blinding multiple of 63 bits whose exponent has a fixed length (§8).
+fn kappa_at[&e](entropy: &e [byte], at: int) -> [] int {
+    var v = 0;
+    var i = 0;
+    while i < 8 {
+        v = v << 8 | int_of(entropy[at + i]);
+        i = i + 1;
+    }
+    return v | 1 << 63;
+}
+
+// out = em^(d + kappa (r - 1)) mod r for a prime r (`modulus`, h bytes, secret) and
+// its exponent d (h bytes, secret), as h bytes. `em` is the public encoded block
+// (2h bytes), reduced by splitting it as hi R + lo, R = 2^(8h) < 2r. With
+// `blind` false the exponent is d itself. `w` is a register file of `half_work()`
+// words, left set up for r. -146 for a modulus `setup_secret` refuses.
+fn crt_half[&m, &x, &e, &o, &w](modulus: &m [byte], em: &x [byte], d: &e [byte], blind: bool, kappa: int, out: &!o [byte], w: &!w [int]) -> [] int {
+    if bigmod.setup_secret(modulus, w) != 0 {
+        return -146;
+    }
+    let l = len(modulus);
+    let k = w[0];
+    if bigmod.load_reduced(em[0..len(em) - l], w, bigmod.reg(3)) != 0 || bigmod.load_reduced(em[len(em) - l..len(em)], w, bigmod.reg(4)) != 0 {
+        return -146;
+    }
+    // hi R + lo: to_mont(hi) is hi R mod r.
+    bigmod.to_mont(w, bigmod.reg(3), bigmod.reg(3));
+    bigmod.add(w, bigmod.reg(3), bigmod.reg(4), bigmod.reg(3));
+    bigmod.to_mont(w, bigmod.reg(3), r_base());
+    if bigmod.load_secret(d, w, r_exp()) != 0 {
+        return -146;
+    }
+    var nwin = 16 * k;
+    if blind {
+        bigmod.blind_exponent(w, r_exp(), kappa, r_exp());
+        // d + kappa (r - 1) < 2^(64 (k + 1)): d < 2^(64 k) and kappa (r - 1) <
+        // (2^64 - 1) (2^(64 k) - 1), so no extra window for a carry.
+        nwin = 16 * (k + 1);
+    }
+    bigmod.pow_secret(w, r_base(), r_exp(), nwin, r_acc(), 3);
+    bigmod.from_mont(w, r_acc(), r_acc());
+    bigmod.store_reg(w, r_acc(), out);
+    return 0;
+}
+
+// Garner (`docs/rsa-sign.md` §4.1): sig = sq + q (qinv (sp - sq mod p) mod p), in
+// p's register file `w`, which `crt_half` left set up. sq (h bytes, below q, so
+// below 2p) is reduced into p with the masked `reduce_once`.
+fn garner[&q, &v, &a, &b, &o, &w](q: &q [byte], qinv: &v [byte], sp: &a [byte], sq: &b [byte], sig: &!o [byte], w: &!w [int]) -> [] int {
+    var code = 0;
+    if bigmod.load_secret(sp, w, r_sp()) != 0 || bigmod.load_secret(sq, w, r_sq()) != 0 || bigmod.load_secret(qinv, w, r_qi()) != 0 {
+        code = -146;
+    }
+    bigmod.reduce_once(w, r_sq());
+    bigmod.sub(w, r_sp(), r_sq(), r_diff());
+    bigmod.to_mont(w, r_qi(), r_qi());
+    bigmod.mul(w, r_qi(), r_diff(), r_h());
+    region r {
+        let hb = alloc_slice[r](len(q), byte_of(0));
+        bigmod.store_reg(w, r_h(), hb);
+        recombine(q, hb, sq, sig);
+        bytes.zero(hb);
+    }
+    return code;
+}
+
+fn flip[&o](b: &!o [byte]) -> [] int {
+    b[len(b) - 1] = byte_of(int_of(b[len(b) - 1]) ^ 1);
+    return 0;
+}
+
+// The core of `pkcs1_sign` and `pkcs1_sign_test`; `mode` is the sum of the
+// `mode_*` bits, 0 for the signer as it is meant to be used.
+fn sign_core[&k, &d, &e, &s, &w](hash_len: int, key: &k [byte], digest: &d [byte], entropy: &e [byte], mode: int, sig: &!s [byte], work: &!w [int]) -> [] int {
+    if !hash_ok(hash_len) {
+        return -140;
+    }
+    if len(digest) != hash_len {
+        return -141;
+    }
+    let h = half_of(len(key));
+    if h < 0 {
+        return -142;
+    }
+    let blinded = mode & 16 == 0;
+    if blinded && len(entropy) != 16 {
+        return -143;
+    }
+    let l = 2 * h;
+    if len(sig) != l {
+        return -144;
+    }
+    if len(work) < work_len() {
+        return -145;
+    }
+    if int_of(key[0]) < 128 {
+        return -146;
+    }
+    var kp = 0;
+    var kq = 0;
+    if blinded {
+        kp = kappa_at(entropy, 0);
+        kq = kappa_at(entropy, 8);
+    }
+    let n = key[0..l];
+    let p = key[l + 8..l + 8 + h];
+    let q = key[l + 8 + h..l + 8 + 2 * h];
+    let dp = key[l + 8 + 2 * h..l + 8 + 3 * h];
+    let dq = key[l + 8 + 3 * h..l + 8 + 4 * h];
+    let wp = work[0..half_work()];
+    let wq = work[half_work()..2 * half_work()];
+    var code = 0;
+    region r {
+        let em = alloc_slice[r](l, byte_of(0));
+        let sp = alloc_slice[r](h, byte_of(0));
+        let sq = alloc_slice[r](h, byte_of(0));
+        let qi = alloc_slice[r](h, byte_of(0));
+        var i = 0;
+        while i < h {
+            qi[i] = key[l + 8 + 4 * h + i];
+            i = i + 1;
+        }
+        emsa_pkcs1(hash_len, digest, em);
+        code = crt_half(p, em, dp, blinded, kp, sp, wp);
+        if code == 0 && mode & 64 != 0 {
+            wide_out(wp, r_exp(), sig);
+            code = 1;
+        }
+        if code == 0 {
+            code = crt_half(q, em, dq, blinded, kq, sq, wq);
+        }
+        if code == 0 && mode & 128 != 0 {
+            wide_out(wq, r_exp(), sig);
+            code = 1;
+        }
+        if code == 0 {
+            if mode & 2 != 0 {
+                flip(sp);
+            }
+            if mode & 4 != 0 {
+                flip(sq);
+            }
+            if mode & 32 != 0 {
+                flip(qi);
+            }
+            code = garner(q, qi, sp, sq, sig, wp);
+        }
+        if code == 0 && mode & 8 != 0 {
+            flip(sig);
+        }
+        if code == 0 && mode & 1 == 0 {
+            // Verify-after-sign (§9) with `std.rsa`'s public operation, in the q-half's
+            // words, which are free now.
+            if rsa.pkcs1_verify(hash_len, n, key[l..l + 8], digest, sig, wq[0..rsa.work_len()]) != 0 {
+                code = -147;
+            }
+        }
+        if code == 1 {
+            code = 0;
+        } else if code != 0 {
+            bytes.zero(sig);
+        }
+        bytes.zero(sp);
+        bytes.zero(sq);
+        bytes.zero(qi);
+    }
+    bignum.zero(work);
+    return code;
+}
+
+// The limbs of register `at` (k + 2 of them) as big-endian bytes at the start of
+// `sig`, zeros after them: the test hook's report of a blinded exponent.
+fn wide_out[&w, &o](w: &w [int], at: int, sig: &!o [byte]) -> [] int {
+    bytes.zero(sig);
+    let nb = (w[0] + 2) * 8;
+    limbs_to(w[at..at + w[0] + 2], sig[0..nb]);
+    return 0;
+}
+
+// RSASSA-PKCS1-v1_5 signature of `digest` (the `hash_len`-byte hash of the
+// message) under `key` (§3.2), into `sig` (L bytes). `entropy` is exactly 16 bytes
+// of fresh randomness, from the caller, for the exponent blinding (§8): the
+// signature does not depend on it. `work` is `work_len()` words, zeroed before the
+// answer, as are the temporaries. The signature is verified before it is given
+// out (§9); a fault gives `-147` and zeros in `sig`. 0, or the refusal. The
+// key is not checked here (`check_key` is for loading it).
 pub fn pkcs1_sign[&k, &d, &e, &s, &w](hash_len: int, key: &k [byte], digest: &d [byte], entropy: &e [byte], sig: &!s [byte], work: &!w [int]) -> [] int {
-    return -139;
+    return sign_core(hash_len, key, digest, entropy, 0, sig, work);
+}
+
+// NOT PART OF THE API: `pkcs1_sign` with a fault injected, or its check or its
+// blinding switched off, or a blinded exponent reported instead of the
+// signature, by the `mode_*` bits. For the fault gate, the blinding tests and the
+// timing test (`docs/rsa-sign.md` §11), as `std.ecdsa_sign.finish` is public for
+// its tests. Never call it with a real key and a mode other than 0.
+pub fn pkcs1_sign_test[&k, &d, &e, &s, &w](hash_len: int, key: &k [byte], digest: &d [byte], entropy: &e [byte], mode: int, sig: &!s [byte], work: &!w [int]) -> [] int {
+    return sign_core(hash_len, key, digest, entropy, mode, sig, work);
 }

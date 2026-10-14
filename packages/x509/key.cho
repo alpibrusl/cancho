@@ -124,7 +124,7 @@ fn base64_value(c: int) -> [] int {
 // `text[from..to]` base64-decoded into `out`: the length, -80 for a
 // character outside base64 and space, or bad padding, -89 when it
 // decodes to more than `out` holds.
-fn base64_decode[&t, &o](text: &t [byte], from: int, to: int, out: &!o [byte]) -> [] int {
+pub fn base64_decode[&t, &o](text: &t [byte], from: int, to: int, out: &!o [byte]) -> [] int {
     var n = 0;
     var acc = 0;
     var bits = 0;
@@ -162,7 +162,7 @@ fn base64_decode[&t, &o](text: &t [byte], from: int, to: int, out: &!o [byte]) -
 }
 
 // Where `needle` first occurs in `text` at or after `from`, or -1.
-fn find_from[&t, &n](text: &t [byte], from: int, needle: &n [byte]) -> [] int {
+pub fn find_from[&t, &n](text: &t [byte], from: int, needle: &n [byte]) -> [] int {
     let at = bytes.find(text[from..len(text)], needle);
     if at < 0 {
         return at;

@@ -65,6 +65,11 @@ def ossl_verify(pub, h, msg, sig, tmp):
     return subprocess.run(["openssl", "dgst", f"-{L.HASH[h]}", "-verify", pub, "-signature", s, m], capture_output=True).returncode == 0
 
 
+def ehex(e):
+    h = f"{e:x}"
+    return h if len(h) % 2 == 0 else "0" + h
+
+
 def flip(sig, rng):
     b = bytearray(sig)
     b[rng.randrange(len(b))] ^= 1 << rng.randrange(8)
@@ -103,9 +108,9 @@ def check_sign(driver, keydir, per_key):
             elif sig != ossl_sign(key["pem"], h, msg, tmp):
                 fails.append(f"{key['name']} {L.HASH[h]}: differs from openssl dgst -sign")
             else:
-                v = L.run_driver(driver, [f"D {h} {key['n']:0{2 * k}x} {key['e']:x} {digest.hex()} {sig.hex()}"])[0][0]
+                v = L.run_driver(driver, [f"D {h} {key['n']:0{2 * k}x} {ehex(key['e'])} {digest.hex()} {sig.hex()}"])[0][0]
                 bad = flip(sig, rng)
-                v2 = L.run_driver(driver, [f"D {h} {key['n']:0{2 * k}x} {key['e']:x} {digest.hex()} {bad.hex()}"])[0][0]
+                v2 = L.run_driver(driver, [f"D {h} {key['n']:0{2 * k}x} {ehex(key['e'])} {digest.hex()} {bad.hex()}"])[0][0]
                 if not v.startswith("0 ok"):
                     fails.append(f"{key['name']} {L.HASH[h]}: std.rsa refused the signature: {v[:50]}")
                 elif not ossl_verify(pub, h, msg, sig, tmp):
@@ -145,6 +150,7 @@ def check_blinding(driver, keydir):
     for key in keys_of(keydir):
         blk = L.block(key).hex()
         d32 = L.digest_of(32, b"b")
+        h = (key["p"].bit_length() + 7) // 8  # the exponent is h + 16 bytes (k + 2 limbs), at the start of the signature's L
         for _ in range(4):
             ent = rng.randbytes(16)
             kp = int.from_bytes(ent[:8], "big") | 1 << 63
@@ -157,11 +163,11 @@ def check_blinding(driver, keydir):
                 parts = got.split()
                 if parts[0] != "0":
                     fails.append(f"{key['name']}: exponent of the {name}-half: {got[:50]}")
-                elif int(parts[2], 16) != want:
+                elif int(parts[2][:2 * (h + 16)], 16) != want:
                     fails.append(f"{key['name']}: the {name}-half exponent is not d + kappa (r - 1)")
         un = L.run_driver(driver, [f"U 32 {blk} {d32.hex()} - {64 | 16}"])[0][0].split()
         total += 1
-        if un[0] != "0" or int(un[2], 16) != key["dp"]:
+        if un[0] != "0" or int(un[2][:2 * (h + 16)], 16) != key["dp"]:
             fails.append(f"{key['name']}: unblinded exponent is not dp")
     return fails, total
 

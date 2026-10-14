@@ -349,9 +349,10 @@ fn r_squared[&w](w: &!w [int], bits: int) -> [] int {
             i = i + 1;
         }
         w[two + k] = carry;
-        if compare_n(w, two, k) >= 0 {
-            subtract_n(w, two, k);
-        }
+        // x is below n before the doubling, so below 2n after it: the masked
+        // reduction does what the compare-and-subtract did, with no branch on
+        // n (`docs/rsa-sign.md` §3.1: this is what lets n be a secret).
+        ct_reduce(w, two, k);
         d = d - 1;
     }
     // (2R)^(64k) in Montgomery form is 2^(64k) R = R^2 mod n.
@@ -670,24 +671,134 @@ pub fn inverse[&w](w: &!w [int], a: int, dst: int) -> [] int {
 
 // ---- Secret moduli and exponents (`docs/rsa-sign.md` §3.1) ----
 //
-// STUBS: committed with the gates and run against first. Each answers -139.
+// `setup` and `pow_mod` are for public values. These are for an RSA prime
+// and its exponent, which are secrets: no branch and no index depends on
+// their value, only on the lengths, the limb counts and the loop counters.
+// What does branch on a secret is the refusal of a modulus that is even or
+// whose top bit is clear; for a valid prime its outcome is fixed, so the path
+// taken does not vary across valid keys. Argued, audited
+// (`scripts/rsa_sign_branches.py`) and timing-tested
+// (`scripts/rsa_sign_timing.py`), not proved; `docs/rsa-sign.md` §7 says what
+// each of those did and did not cover. Not independently reviewed (#209).
 
+// `setup` for a SECRET odd modulus of 8 to 512 bytes, a multiple of 8, whose
+// top bit is set (a balanced RSA prime): the limb count is the length, so
+// `R = 2^(8 len(n))` and 2^(bits - 1) is below n, which is all
+// `r_squared` needs. 0, or -6 (`w`), -2 (the length, or the top bit) or -1
+// (even).
 pub fn setup_secret[&n, &w](n: &n [byte], w: &!w [int]) -> [] int {
-    return -139;
+    if len(w) < work_len() {
+        return -6;
+    }
+    if len(n) < 8 || len(n) > max_bits() / 8 || len(n) % 8 != 0 {
+        return -2;
+    }
+    if int_of(n[0]) < 128 {
+        return -2;
+    }
+    if int_of(n[len(n) - 1]) & 1 == 0 {
+        return -1;
+    }
+    let k = len(n) / 8;
+    w[0] = k;
+    load_secret(n, w, slot_n());
+    w[1] = neg_inverse(w[slot_n()]);
+    r_squared(w, 64 * k);
+    return 0;
 }
 
+// Register `a` (below 2n) reduced into [0, n) under a mask.
 pub fn reduce_once[&w](w: &!w [int], a: int) -> [] int {
-    return -139;
+    return ct_reduce(w, a, w[0]);
 }
 
+// `dst` (a register's offset) = register `table + idx`, for idx below `count`
+// (`table` and the registers after it are register NUMBERS, as `reg` takes).
+// Every one of the `count` registers is read and masked in, so the index is
+// in no branch and no address (the shape of `std.ecdh`'s select). The mask is
+// made through `value_barrier` so that the optimiser cannot make the AND a
+// branch on it (`docs/value-barrier.md`).
 pub fn select[&w](w: &!w [int], table: int, count: int, idx: int, dst: int) -> [] int {
-    return -139;
+    let k = w[0];
+    var j = 0;
+    while j < k + 2 {
+        w[dst + j] = 0;
+        j = j + 1;
+    }
+    var i = 0;
+    while i < count {
+        // All ones when i == idx: (i ^ idx) - 1 is negative only for 0.
+        let m = value_barrier((i ^ idx) - 1 >> 63);
+        let from = reg(table + i);
+        j = 0;
+        while j < k + 2 {
+            w[dst + j] = w[dst + j] | w[from + j] & m;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
 }
 
+// `dst` = `base`^`exp` for a SECRET exponent: `nwin` fixed 4-bit windows of
+// the register `exp`, the most significant first, each four squarings and one
+// multiplication whatever its value. `base` and `dst` are in Montgomery form
+// (`dst` may be `base`). `table` is the number of 17 consecutive scratch
+// registers: 16 powers of `base` and one to select into. The time depends on
+// `nwin` and the limb count, not on the exponent's bits.
 pub fn pow_secret[&w](w: &!w [int], base: int, exp: int, nwin: int, dst: int, table: int) -> [] int {
-    return -139;
+    let sel = reg(table + 16);
+    set_small(w, reg(table), 1);
+    to_mont(w, reg(table), reg(table));
+    copy(w, base, reg(table + 1), w[0]);
+    var i = 2;
+    while i < 16 {
+        mont_mul(w, reg(table + i - 1), base, reg(table + i));
+        i = i + 1;
+    }
+    copy(w, reg(table), dst, w[0]);
+    var wi = nwin - 1;
+    while wi >= 0 {
+        mont_mul(w, dst, dst, dst);
+        mont_mul(w, dst, dst, dst);
+        mont_mul(w, dst, dst, dst);
+        mont_mul(w, dst, dst, dst);
+        let at = 4 * wi;
+        let v = bit(w, exp, at) | bit(w, exp, at + 1) << 1 | bit(w, exp, at + 2) << 2 | bit(w, exp, at + 3) << 3;
+        select(w, table, 16, v, sel);
+        mont_mul(w, dst, sel, dst);
+        wi = wi - 1;
+    }
+    return 0;
 }
 
+// `dst` = `d` + `kappa` (n - 1), for the (prime, odd) modulus n of `w` and a
+// 64-bit word `kappa` read as unsigned: an exponent blinded by a random
+// multiple of the group's order, which changes no power of an element
+// (`docs/rsa-sign.md` §8). `d` is below n; `dst` has k + 2 limbs, the
+// register's own width, and holds a number below 2^(64 (k + 1)): d is below
+// 2^(64 k) and kappa (n - 1) below (2^64 - 1) 2^(64 k), whose sum cannot reach it.
 pub fn blind_exponent[&w](w: &!w [int], d: int, kappa: int, dst: int) -> [] int {
-    return -139;
+    let k = w[0];
+    let ns = w[slot_n()..slot_n() + k];
+    let ds = w[d..d + k];
+    let out = w[dst..dst + k + 2];
+    var carry = 0;
+    var i = 0;
+    while i < k {
+        var nm = ns[i];
+        if i == 0 {
+            // n is odd, so n - 1 only clears the low bit: no borrow.
+            nm = wrapping_sub(nm, 1);
+        }
+        let (hi, lo) = mul_wide(kappa, nm);
+        let (s1, c1) = add_carry(ds[i], lo, 0);
+        let (s2, c2) = add_carry(s1, carry, 0);
+        out[i] = s2;
+        carry = wrapping_add(wrapping_add(hi, c1), c2);
+        i = i + 1;
+    }
+    out[k] = carry;
+    out[k + 1] = 0;
+    return 0;
 }

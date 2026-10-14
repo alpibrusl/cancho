@@ -19,6 +19,8 @@
 //     K <key> <d>                             rsa_sign.check_key
 //     P <pem>                                 x509_rsa_key.parse_pem: the key block
 //     B <format> <der>                        x509_rsa_key.parse_der, format 8 or 2
+//     N <pem> <len>                           parse_pem into a key buffer of `len` (decimal) bytes
+//     Q <pem>                                 parse_pem with `work` 10 words short
 //     G <pem> <h> <msg> <entropy>             parse_pem, then as M: the signature
 //     D <h> <n> <e> <digest> <sig>            std.rsa.pkcs1_verify of a digest
 //     L <n> <d> <em>                          the LEAKY control: bigmod.pow_mod(n, d, em)
@@ -295,9 +297,13 @@ fn case[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, work: &!w [int], show: bo
             hex_into(s, f, d);
             let code = rsa_sign.check_key(key, d, work);
             report(io, code, d[0..0], show);
-        } else if op == 80 || op == 66 || op == 71 {
-            // P: pem. B: format der. G: pem h msg entropy.
-            let out = alloc_slice[r](x509_rsa_key.max_key_len(), byte_of(0));
+        } else if op == 80 || op == 66 || op == 71 || op == 78 || op == 81 {
+            // P: pem. B: format der. G: pem h msg entropy. N: pem len. Q: pem.
+            var room = x509_rsa_key.max_key_len();
+            if op == 78 {
+                room = number(s, next_field(s, f));
+            }
+            let out = alloc_slice[r](room, byte_of(0));
             var code = 0;
             if op == 66 {
                 let format = number(s, f);
@@ -309,7 +315,11 @@ fn case[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, work: &!w [int], show: bo
                 let pem = alloc_slice[r](hex_len(s, f), byte_of(0));
                 hex_into(s, f, pem);
                 f = next_field(s, f);
-                code = x509_rsa_key.parse_pem(pem, out, work);
+                if op == 81 {
+                    code = x509_rsa_key.parse_pem(pem, out, work[0..len(work) - 10]);
+                } else {
+                    code = x509_rsa_key.parse_pem(pem, out, work);
+                }
             }
             if op == 71 && code > 0 {
                 let h = number(s, f);

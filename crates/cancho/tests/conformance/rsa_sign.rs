@@ -106,7 +106,8 @@ fn nist_siggen15_known_answers() {
 
 /// Wycheproof's `RsassaPkcs1Generate` files: every valid case of 2,048, 3,072
 /// and 4,096 bits with a supported hash is reproduced byte for byte from the
-/// file's PKCS#1 PEM; the PKCS#8 form of the same key parses to the same block;
+/// file's PKCS#1 PEM (72 cases; the 5 `SmallPublicKey` ones use unbalanced primes
+/// and are refused as `rsa-key-prime`); the PKCS#8 form of the same key parses to the same block;
 /// the 1,024- and 1,536-bit keys are refused for their size. Cases over SHA-1
 /// and SHA-224 are counted.
 #[test]
@@ -129,15 +130,20 @@ fn wycheproof_signature_generation() {
             };
             for t in g["tests"].as_array().unwrap() {
                 let result = t["result"].as_str().unwrap();
-                if result == "acceptable" {
-                    acceptable += 1;
-                }
                 let msg = hex(&unhex(t["msg"].as_str().unwrap_or("")));
                 cases.push(format!(
                     "G {pem} {h} {} {ENTROPY}",
                     if msg.is_empty() { "-" } else { &msg }
                 ));
-                want.push(format!("0 ok {}", t["sig"].as_str().unwrap()));
+                if result == "acceptable" {
+                    // Wycheproof's `SmallPublicKey` groups: e = 3 with primes of 1,364
+                    // and 684 bits (or 2,047 and 1,025): outside the balanced-prime
+                    // policy of `docs/rsa-sign.md` §3.2, so refused, not signed.
+                    acceptable += 1;
+                    want.push("-153 rsa-key-prime -".to_string());
+                } else {
+                    want.push(format!("0 ok {}", t["sig"].as_str().unwrap()));
+                }
             }
         }
     }
@@ -145,16 +151,19 @@ fn wycheproof_signature_generation() {
     for (i, (g, w)) in got.iter().zip(&want).enumerate() {
         assert_eq!(g, w, "Wycheproof case {i}");
     }
-    // The PKCS#8 and PKCS#1 forms of one key are the same block.
+    // The PKCS#8 and PKCS#1 forms of one key are the same block (or the same
+    // refusal: 5 of the 16 groups have unbalanced primes).
     let blocks = run_cases(&exe, &twins);
+    let mut refused = 0;
     for pair in blocks.chunks(2) {
-        assert!(
-            pair[0].contains(" ok ") && pair[0].starts_with(|c: char| c.is_ascii_digit()),
-            "{}",
-            pair[0]
-        );
         assert_eq!(pair[0].split_once(' ').unwrap().1, pair[1].split_once(' ').unwrap().1);
+        if pair[0] == "-153 rsa-key-prime -" {
+            refused += 1;
+        } else {
+            assert!(pair[0].contains(" ok ") && !pair[0].starts_with('-'), "{}", pair[0]);
+        }
     }
+    assert_eq!(refused, 5);
     assert_eq!(
         (groups, cases.len(), unsupported, acceptable),
         (16, 77, 16, 5),
@@ -221,7 +230,7 @@ fn the_malformed_key_corpus_is_refused_with_its_own_rules() {
     let text = root_file("tests/vectors/rsa_sign/malformed.txt");
     let rows: Vec<Vec<&str>> =
         text.lines().filter(|l| !l.starts_with('#')).map(|l| l.split(' ').collect()).collect();
-    assert_eq!(rows.len(), 88, "the corpus changed");
+    assert_eq!(rows.len(), 101, "the corpus changed");
     for backend in ["llvm", "cranelift"] {
         let (dir, exe) = build_driver("malformed", backend);
         let parse: Vec<String> = rows.iter().map(|r| format!("P {}", r[4])).collect();
@@ -286,6 +295,31 @@ fn the_malformed_key_corpus_is_refused_with_its_own_rules() {
 
 // ---- the signer's own refusals, the fault gate, blinding and the encoding ----
 
+/// The two refusals of `x509_rsa_key` that are about the caller's buffers.
+#[test]
+fn the_key_reader_refuses_buffers_that_are_too_short() {
+    let (dir, exe) = build_driver("buffers", "llvm");
+    let text = root_file("tests/vectors/rsa_sign/malformed.txt");
+    let pem =
+        text.lines().find(|l| l.contains(" valid-pkcs1 ")).unwrap().rsplit(' ').next().unwrap();
+    let got = run_cases(
+        &exe,
+        &[
+            format!("N {pem} 1800"),
+            format!("N {pem} 1799"),
+            format!("N {pem} 0"),
+            format!("Q {pem}"),
+        ],
+    );
+    assert!(got[0].starts_with("904 ok "), "{}", got[0]);
+    assert_eq!(got[1], "-177 rsa-key-buffer-length -");
+    assert_eq!(got[2], "-177 rsa-key-buffer-length -");
+    assert_eq!(got[3], "-177 rsa-key-buffer-length -");
+    // A format that is neither PKCS#1 nor PKCS#8.
+    assert_eq!(run_cases(&exe, &["B 7 3000".to_string()])[0], "-172 rsa-key-algorithm -");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A valid 2,048-bit block (h = 128): n 0..256, e 256..264, p 264..392, q 392..520,
 /// dp 520..648, dq 648..776, qinv 776..904.
 fn first_block() -> Vec<u8> {
@@ -318,6 +352,10 @@ fn every_signing_refusal_has_its_own_tag() {
         format!("S 32 {key} {} {ENTROPY}", hex(&[1u8; 31])),
         format!("S 32 {} {d} {ENTROPY}", hex(&block[..903])),
         format!("S 32 {} {d} {ENTROPY}", hex(&[block.clone(), vec![0]].concat())),
+        // h = 120 (not a multiple of 8), h = 64 (a 1,024-bit key), h = 264 (a 4,224-bit one).
+        format!("S 32 {} {d} {ENTROPY}", hex(&vec![0x80u8; 7 * 120 + 8])),
+        format!("S 32 {} {d} {ENTROPY}", hex(&vec![0x80u8; 7 * 64 + 8])),
+        format!("S 32 {} {d} {ENTROPY}", hex(&vec![0x80u8; 7 * 264 + 8])),
         format!("S 32 - {d} {ENTROPY}"),
         format!("S 32 {key} {d} {}", hex(&[7u8; 15])),
         format!("S 32 {key} {d} {}", hex(&[7u8; 17])),
@@ -330,6 +368,9 @@ fn every_signing_refusal_has_its_own_tag() {
         (0, "ok"),
         (-140, "rsa-sign-hash"),
         (-141, "rsa-sign-digest-length"),
+        (-142, "rsa-sign-key-layout"),
+        (-142, "rsa-sign-key-layout"),
+        (-142, "rsa-sign-key-layout"),
         (-142, "rsa-sign-key-layout"),
         (-142, "rsa-sign-key-layout"),
         (-142, "rsa-sign-key-layout"),

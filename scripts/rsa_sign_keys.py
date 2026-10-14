@@ -176,6 +176,8 @@ def corpus():
     add("rsa-key-parameters", "pkcs8-parameters-absent", P(pk8(good1, alg=L.tlv(0x30, L.tlv(0x06, L.OID_RSA))), "PRIVATE KEY"))
     add("rsa-key-parameters", "pkcs8-parameters-not-null", P(pk8(good1, alg=L.tlv(0x30, L.tlv(0x06, L.OID_RSA) + L.der_int(0))), "PRIVATE KEY"))
     add("rsa-key-parameters", "pkcs8-parameters-null-with-content", P(pk8(good1, alg=L.tlv(0x30, L.tlv(0x06, L.OID_RSA) + L.tlv(0x05, b"\x00"))), "PRIVATE KEY"))
+    add("rsa-key-parameters", "pkcs8-parameters-octet-string", P(pk8(good1, alg=L.tlv(0x30, L.tlv(0x06, L.OID_RSA) + L.tlv(0x04, b""))), "PRIVATE KEY"))
+    add("rsa-key-parameters", "pkcs8-parameters-null-with-bad-length-byte", P(pk8(good1, alg=L.tlv(0x30, L.tlv(0x06, L.OID_RSA) + b"\x05\x01")), "PRIVATE KEY"))
     add("rsa-key-version", "pkcs8-version-1", P(pk8(good1, version=1), "PRIVATE KEY"))
     add("rsa-key-der", "pkcs8-trailing-element", P(pk8(good1, tail=L.tlv(0xa0, b"")), "PRIVATE KEY"))
     add("rsa-key-der", "pkcs8-key-not-octet-string", P(L.tlv(0x30, L.der_int(0) + L.ALG_RSA + L.tlv(0x03, b"\x00" + good1)), "PRIVATE KEY"))
@@ -211,11 +213,13 @@ def corpus():
     k2047 = L.make_key(p47, q47, 65537)
     assert k2047["n"].bit_length() == 2047
     add("rsa-key-size", "modulus-2047-bits-top-bit-clear", P(with_key(k2047)))
+    k2112 = balanced(2112, "h132", 0)
+    add("rsa-key-size", "modulus-2112-bits-half-not-a-multiple-of-8-bytes", P(with_key(k2112)))
     add("rsa-key-exponent", "e-even", P(pk1(over={"e": L.der_int(65536)})))
     add("rsa-key-exponent", "e-one", P(pk1(over={"e": L.der_int(1)})))
     add("rsa-key-exponent", "e-zero", P(pk1(over={"e": L.der_int(0)})))
     add("rsa-key-exponent", "e-65-bits", P(pk1(over={"e": L.der_int((1 << 64) + 13)})))
-    add("rsa-key-exponent", "e-negative", P(pk1(over={"e": L.tlv(0x02, b"\xff\xff")})))
+    add("rsa-key-exponent", "e-negative", P(pk1(over={"e": L.tlv(0x02, b"\xff\x01")})))
     add("rsa-key-prime", "p-even", P(with_key(dict(B, p=p + 1))))
     add("rsa-key-prime", "q-even", P(with_key(dict(B, q=q + 1))))
     add("rsa-key-prime", "p-equals-q", P(with_key(dict(B, q=p, n=p * p))))
@@ -238,10 +242,30 @@ def corpus():
     add("rsa-key-crt-exponent", "dp-zero", P(with_key(dict(B, dp=0))))
     add("rsa-key-crt-exponent", "dp-plus-p-minus-1", P(with_key(dict(B, dp=dp + p - 1))))
     add("rsa-key-crt-exponent", "dq-is-d", P(with_key(dict(B, dq=d))))
+    # In range of the slot but not of the prime: congruent to the right value, so only the range rule can refuse them
+    # (a key with p about 1.04 x 2^1023: dp + p - 1 and qinv + p fit in 128 bytes for about 90% of keys; the first that does).
+    ubk = None
+    for i in range(64):
+        a = pool(1024, "fit-p", i, 65537, lo=(1 << 1023) * 103 // 100, hi=(1 << 1023) * 105 // 100)
+        b = pool(1024, "fit-q", i, 65537, lo=(1 << 1023) * 197 // 100, hi=(1 << 1023) * 199 // 100)
+        cand = L.make_key(a, b, 65537)
+        if cand["n"].bit_length() == 2048 and (cand["dp"] + a - 1).bit_length() <= 1024 and (cand["qinv"] + a).bit_length() <= 1024:
+            ubk = cand
+            break
+    assert ubk is not None
+    add("rsa-key-crt-exponent", "dp-plus-p-minus-1-fits-the-slot", P(with_key(dict(ubk, dp=ubk["dp"] + ubk["p"] - 1))))
+    add("rsa-key-crt-coefficient", "qinv-plus-p-fits-the-slot", P(with_key(dict(ubk, qinv=ubk["qinv"] + ubk["p"]))))
+    # a negative INTEGER in each field: the top bit set and no 00 before it
+    for field, tag in (("p", "rsa-key-prime"), ("q", "rsa-key-prime"), ("dp", "rsa-key-crt-exponent"), ("dq", "rsa-key-crt-exponent"),
+                       ("qinv", "rsa-key-crt-coefficient"), ("d", "rsa-key-private-exponent")):
+        raw = B[field].to_bytes(256 if field == "d" else 128, "big")
+        add(tag, f"{field}-negative", P(pk1(over={field: L.tlv(0x02, bytes([raw[0] | 0x80]) + raw[1:])})))
     add("rsa-key-crt-coefficient", "qinv-wrong", P(with_key(dict(B, qinv=qinv ^ 2))))
     add("rsa-key-crt-coefficient", "qinv-plus-p", P(with_key(dict(B, qinv=qinv + p))))
     add("rsa-key-crt-coefficient", "qinv-zero", P(with_key(dict(B, qinv=0))))
     add("rsa-key-crt-coefficient", "qinv-is-pinv-of-wrong-prime", P(with_key(dict(B, qinv=pow(p, -1, q)))))
+    add("rsa-key-private-exponent", "d-matches-dp-only", P(with_key(dict(B, d=d + p - 1))))
+    add("rsa-key-private-exponent", "d-matches-dq-only", P(with_key(dict(B, d=d + q - 1))))
     add("rsa-key-private-exponent", "d-wrong-but-crt-right", P(with_key(dict(B, d=d ^ 4))))
     add("rsa-key-private-exponent", "d-plus-n", P(with_key(dict(B, d=d + n))))
     add("rsa-key-private-exponent", "d-zero", P(with_key(dict(B, d=0))))

@@ -138,7 +138,7 @@ Per prime r in {p, q} with exponent `d_r` and half-length h (R = 2^(8h), balance
 1. `setup_secret(r)`.
 2. EM (L bytes, public) = `hi·R + lo`; both halves are below R < 2r, so `load_reduced`; `base = hi·R + lo mod r` as
    `to_mont(hi)` plus `lo`, then `to_mont` again (the spike's shape, B2 `rsa_spike.cho` `crt_half`).
-3. `e' = d_r + kappa_r·(r - 1)` (§8), `s_r = base^e' mod r` by `pow_secret`: `nwin = 16(k + 1) + 1` windows for k limbs, whatever
+3. `e' = d_r + kappa_r·(r - 1)` (§8), `s_r = base^e' mod r` by `pow_secret`: `nwin = 16(k + 1)` windows for k limbs, whatever
    the value of `kappa` or `d_r`.
 
 Then Garner: `h = qinv·(s_p - s_q mod p) mod p` (with `s_q < q < 2p`, one `reduce_once`), and `s = s_q + q·h` as a **plain integer**
@@ -320,7 +320,12 @@ commit, the sample size and the conditions, **in the PR and here**; a number wit
 
 ## 14. Corrections made while working
 
-*(none yet; each is added here, dated, with the commit that made it.)*
+*(each is added here, dated, with the commit that made it.)*
+
+- *2026-10-14, §4.1 step 3.* The design said the blinded exponent needs `16(k + 1) + 1` windows (64 (k + 1) + 1 bits). It is below
+  `2^(64 (k + 1))` (d < 2^(64k), kappa (r - 1) < (2^64 - 1) 2^(64k)), so `16(k + 1)` windows are enough and the extra one only
+  multiplied by the table's first entry. Found by asking whether the mutant that drops that window was equivalent. The code uses
+  `16(k + 1)`.
 
 **Open, not done in this slice (hardening the review is expected to ask about):** message blinding; a per-call cycle-counter timing
 test; timing on Cranelift and on x86-64; a probable-prime check; shrinking the register stride; PSS; the external signer interface;
