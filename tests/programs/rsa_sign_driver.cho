@@ -1,0 +1,469 @@
+// Copyright (c) 2026 Alpibru S.L. Licensed under the EUPL-1.2.
+//
+// `docs/rsa-sign.md` §11: `std.rsa_sign`, `x509_rsa_key` and `std.bigmod`'s
+// secret-modulus functions, driven from standard input, so the known-answer
+// vectors, OpenSSL, Python's `pow`, the malformed-key corpus, the fault gate
+// and the timing test all go through one program. Built with
+// `packages/x509/x509.cho`, `key.cho` and `rsa_key.cho`.
+//
+// One case per line, byte strings in lowercase hex (`-` for empty), numbers in
+// decimal. Each is answered `<code> <tag> <hex or ->`; the tag is
+// `x509_rsa_key`'s for codes -170 and below, `std.rsa_sign`'s otherwise.
+//
+//     S <h> <key> <digest> <entropy>          rsa_sign.pkcs1_sign: the signature
+//     M <h> <key> <msg> <entropy>             the same of the hash of `msg`
+//     U <h> <key> <digest> <entropy> <mode>   rsa_sign.pkcs1_sign_test: the signature (also a faulty one)
+//     W <h> <key> <digest> <entropy>          sign with `work` 10 words short
+//     O <h> <key> <digest> <entropy> <len>    sign into `len` (decimal) bytes
+//     E <h> <digest> <len>                    rsa_sign.emsa_pkcs1 into `len` bytes
+//     K <key> <d>                             rsa_sign.check_key
+//     P <pem>                                 x509_rsa_key.parse_pem: the key block
+//     B <format> <der>                        x509_rsa_key.parse_der, format 8 or 2
+//     N <pem> <len>                           parse_pem into a key buffer of `len` (decimal) bytes
+//     Q <pem>                                 parse_pem with `work` 10 words short
+//     G <pem> <h> <msg> <entropy>             parse_pem, then as M: the signature
+//     D <h> <n> <e> <digest> <sig>            std.rsa.pkcs1_verify of a digest
+//     L <n> <d> <em>                          the LEAKY control: bigmod.pow_mod(n, d, em)
+//     Z <n> <e> <a>                           bigmod.setup_secret + pow_secret: a^e mod n
+//     Y <n> <d> <kappa>                       bigmod.blind_exponent: d + kappa (n - 1)
+//     R <n> <a>                               bigmod.setup_secret + reduce_once: a mod n, a < 2n
+//     T <rounds> <case>                       the case `rounds` times, answered once (timing)
+import std.bigmod;
+import std.buffer;
+import std.crypto;
+import std.io;
+import std.rsa;
+import std.rsa_sign;
+import x509_rsa_key;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn nibble(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+fn field_end[&s](s: &s [byte], at: int) -> [] int {
+    var e = at;
+    while e < len(s) && int_of(s[e]) != 32 && int_of(s[e]) != 10 {
+        e = e + 1;
+    }
+    return e;
+}
+
+fn next_field[&s](s: &s [byte], at: int) -> [] int {
+    return field_end(s, at) + 1;
+}
+
+fn hex_len[&s](s: &s [byte], at: int) -> [] int {
+    if at >= len(s) {
+        return 0;
+    }
+    if field_end(s, at) - at == 1 && int_of(s[at]) == 45 {
+        return 0;
+    }
+    return (field_end(s, at) - at) / 2;
+}
+
+fn hex_into[&s, &o](s: &s [byte], at: int, o: &!o [byte]) -> [] int {
+    let n = hex_len(s, at);
+    var i = 0;
+    while i < len(o) && i < n {
+        o[i] = byte_of(nibble(int_of(s[at + i * 2])) * 16 + nibble(int_of(s[at + i * 2 + 1])));
+        i = i + 1;
+    }
+    return n;
+}
+
+fn number[&s](s: &s [byte], at: int) -> [] int {
+    let e = field_end(s, at);
+    var n = 0;
+    var p = at;
+    while p < e {
+        n = n * 10 + int_of(s[p]) - 48;
+        p = p + 1;
+    }
+    return n;
+}
+
+fn print_hex[&i, &d](io: &!i Io, d: &d [byte]) -> [io_write] int {
+    let digits = "0123456789abcdef";
+    var n = 0;
+    while n < len(d) {
+        let b = int_of(d[n]);
+        io.write_all(io, digits[b >> 4..(b >> 4) + 1]);
+        io.write_all(io, digits[b & 15..(b & 15) + 1]);
+        n = n + 1;
+    }
+    if len(d) == 0 {
+        io.write_all(io, "-");
+    }
+    return 0;
+}
+
+fn tag(code: int) -> [] &static [byte] {
+    if code <= -170 {
+        return x509_rsa_key.refusal_tag(code);
+    }
+    if code > 0 {
+        return "ok";
+    }
+    return rsa_sign.refusal_tag(code);
+}
+
+// A refusal prints no bytes; an answer of 0 or a length prints `d`.
+fn report[&i, &d](io: &!i Io, code: int, d: &d [byte], show: bool) -> [io_write] int {
+    if !show {
+        return 0;
+    }
+    io.print_int(io, code);
+    io.space(io);
+    io.write_all(io, tag(code));
+    io.space(io);
+    if code < 0 {
+        print_hex(io, d[0..0]);
+    } else {
+        print_hex(io, d);
+    }
+    io.newline(io);
+    return 0;
+}
+
+fn digest_of[&m, &o](h: int, msg: &m [byte], out: &!o [byte]) -> [] int {
+    if h == 32 {
+        return crypto.sha256(msg, out);
+    }
+    if h == 48 {
+        return crypto.sha384(msg, out);
+    }
+    if h == 64 {
+        return crypto.sha512(msg, out);
+    }
+    return 0;
+}
+
+// The hash length the driver may hash with (it falls back to 32 for a
+// refused one: the refusal is the signer's to give, with the digest as it is).
+fn hashable(h: int) -> [] int {
+    if h == 32 || h == 48 || h == 64 {
+        return h;
+    }
+    return 32;
+}
+
+// ---- std.bigmod's secret-modulus functions ----
+
+fn reg_base() -> [] int {
+    return bigmod.reg(0);
+}
+
+fn reg_exp() -> [] int {
+    return bigmod.reg(1);
+}
+
+fn reg_out() -> [] int {
+    return bigmod.reg(2);
+}
+
+fn bigmod_pow[&n, &e, &a, &o, &w](n: &n [byte], e: &e [byte], a: &a [byte], out: &!o [byte], w: &!w [int]) -> [] int {
+    var code = bigmod.setup_secret(n, w);
+    if code != 0 {
+        return code;
+    }
+    code = bigmod.load_secret(a, w, reg_base());
+    if code != 0 {
+        return code;
+    }
+    code = bigmod.load_secret(e, w, reg_exp());
+    if code != 0 {
+        return code;
+    }
+    bigmod.to_mont(w, reg_base(), reg_base());
+    bigmod.pow_secret(w, reg_base(), reg_exp(), 2 * len(e), reg_out(), 3);
+    bigmod.from_mont(w, reg_out(), reg_out());
+    bigmod.store_reg(w, reg_out(), out);
+    return 0;
+}
+
+fn bigmod_blind[&n, &d, &o, &w](n: &n [byte], d: &d [byte], kappa: int, out: &!o [byte], w: &!w [int]) -> [] int {
+    var code = bigmod.setup_secret(n, w);
+    if code != 0 {
+        return code;
+    }
+    code = bigmod.load_secret(d, w, reg_exp());
+    if code != 0 {
+        return code;
+    }
+    bigmod.blind_exponent(w, reg_exp(), kappa, reg_out());
+    // k + 2 limbs, the register's own width: `store_reg` writes only k.
+    wide_bytes(w, reg_out(), out);
+    return 0;
+}
+
+// The limbs at `at` as big-endian `out`, least significant byte last.
+fn wide_bytes[&w, &o](w: &w [int], at: int, out: &!o [byte]) -> [] int {
+    var j = 0;
+    while j < len(out) {
+        out[len(out) - 1 - j] = byte_of(w[at + j / 8] >> 8 * (j % 8) & 255);
+        j = j + 1;
+    }
+    return 0;
+}
+
+fn bigmod_reduce[&n, &a, &o, &w](n: &n [byte], a: &a [byte], out: &!o [byte], w: &!w [int]) -> [] int {
+    var code = bigmod.setup_secret(n, w);
+    if code != 0 {
+        return code;
+    }
+    code = bigmod.load_secret(a, w, reg_base());
+    if code != 0 {
+        return code;
+    }
+    bigmod.reduce_once(w, reg_base());
+    bigmod.store_reg(w, reg_base(), out);
+    return 0;
+}
+
+fn case[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, work: &!w [int], show: bool) -> [io_write] int {
+    let op = int_of(s[at]);
+    var f = at + 2;
+    region r {
+        if op == 83 || op == 77 || op == 85 || op == 87 || op == 79 {
+            // S, M, U, W, O: h key digest-or-msg entropy [mode | len].
+            let h = number(s, f);
+            f = next_field(s, f);
+            let key = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, key);
+            f = next_field(s, f);
+            let a = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, a);
+            f = next_field(s, f);
+            let entropy = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, entropy);
+            f = next_field(s, f);
+            var size = 0;
+            if len(key) > 8 {
+                size = (len(key) - 8) / 7 * 2;
+            }
+            var mode = 0;
+            if op == 85 {
+                mode = number(s, f);
+            }
+            if op == 79 {
+                size = number(s, f);
+            }
+            let sig = alloc_slice[r](size, byte_of(0));
+            var digest = a;
+            let hashed = alloc_slice[r](64, byte_of(0));
+            if op == 77 {
+                digest_of(hashable(h), a, hashed);
+                digest = hashed[0..hashable(h)];
+            }
+            var code = 0;
+            if op == 85 {
+                code = rsa_sign.pkcs1_sign_test(h, key, digest, entropy, mode, sig, work);
+            } else if op == 87 {
+                code = rsa_sign.pkcs1_sign(h, key, digest, entropy, sig, work[0..len(work) - 10]);
+            } else {
+                code = rsa_sign.pkcs1_sign(h, key, digest, entropy, sig, work);
+            }
+            report(io, code, sig, show);
+        } else if op == 69 {
+            // E: h digest len.
+            let h = number(s, f);
+            f = next_field(s, f);
+            let digest = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, digest);
+            f = next_field(s, f);
+            let out = alloc_slice[r](number(s, f), byte_of(0));
+            let code = rsa_sign.emsa_pkcs1(h, digest, out);
+            report(io, code, out, show);
+        } else if op == 75 {
+            // K: key d.
+            let key = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, key);
+            f = next_field(s, f);
+            let d = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, d);
+            let code = rsa_sign.check_key(key, d, work);
+            report(io, code, d[0..0], show);
+        } else if op == 80 || op == 66 || op == 71 || op == 78 || op == 81 {
+            // P: pem. B: format der. G: pem h msg entropy. N: pem len. Q: pem.
+            var room = x509_rsa_key.max_key_len();
+            if op == 78 {
+                room = number(s, next_field(s, f));
+            }
+            // Filled with 0xa5, not 0: a slot the parser forgot to write then shows.
+            let out = alloc_slice[r](room, byte_of(0xa5));
+            var code = 0;
+            if op == 66 {
+                let format = number(s, f);
+                f = next_field(s, f);
+                let der = alloc_slice[r](hex_len(s, f), byte_of(0));
+                hex_into(s, f, der);
+                code = x509_rsa_key.parse_der(format, der, out, work);
+            } else {
+                let pem = alloc_slice[r](hex_len(s, f), byte_of(0));
+                hex_into(s, f, pem);
+                f = next_field(s, f);
+                if op == 81 {
+                    code = x509_rsa_key.parse_pem(pem, out, work[0..len(work) - 10]);
+                } else {
+                    code = x509_rsa_key.parse_pem(pem, out, work);
+                }
+            }
+            if op == 71 && code > 0 {
+                let h = number(s, f);
+                f = next_field(s, f);
+                let msg = alloc_slice[r](hex_len(s, f), byte_of(0));
+                hex_into(s, f, msg);
+                f = next_field(s, f);
+                let entropy = alloc_slice[r](hex_len(s, f), byte_of(0));
+                hex_into(s, f, entropy);
+                let key = out[0..code];
+                let sig = alloc_slice[r]((code - 8) / 7 * 2, byte_of(0));
+                let hashed = alloc_slice[r](64, byte_of(0));
+                digest_of(hashable(h), msg, hashed);
+                let sc = rsa_sign.pkcs1_sign(h, key, hashed[0..hashable(h)], entropy, sig, work);
+                report(io, sc, sig, show);
+            } else if code > 0 {
+                report(io, code, out[0..code], show);
+            } else {
+                report(io, code, out[0..0], show);
+            }
+        } else if op == 68 {
+            // D: h n e digest sig.
+            let h = number(s, f);
+            f = next_field(s, f);
+            let n = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, n);
+            f = next_field(s, f);
+            let e = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, e);
+            f = next_field(s, f);
+            let digest = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, digest);
+            f = next_field(s, f);
+            let sig = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, sig);
+            let code = rsa.pkcs1_verify(h, n, e, digest, sig, work);
+            report(io, code, sig[0..0], show);
+        } else if op == 76 {
+            // L: n d em.
+            let n = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, n);
+            f = next_field(s, f);
+            let d = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, d);
+            f = next_field(s, f);
+            let em = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, em);
+            let out = alloc_slice[r](len(n), byte_of(0));
+            let code = bigmod.pow_mod(n, d, em, out, work);
+            report(io, code, out, show);
+        } else if op == 90 || op == 82 {
+            // Z: n e a. R: n a.
+            let n = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, n);
+            f = next_field(s, f);
+            let b = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, b);
+            f = next_field(s, f);
+            let out = alloc_slice[r](len(n), byte_of(0));
+            var code = 0;
+            if op == 90 {
+                let a = alloc_slice[r](hex_len(s, f), byte_of(0));
+                hex_into(s, f, a);
+                code = bigmod_pow(n, b, a, out, work);
+            } else {
+                code = bigmod_reduce(n, b, out, work);
+            }
+            report(io, code, out, show);
+        } else if op == 89 {
+            // Y: n d kappa.
+            let n = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, n);
+            f = next_field(s, f);
+            let d = alloc_slice[r](hex_len(s, f), byte_of(0));
+            hex_into(s, f, d);
+            f = next_field(s, f);
+            let kb = alloc_slice[r](8, byte_of(0));
+            hex_into(s, f, kb);
+            var kappa = 0;
+            var j = 0;
+            while j < 8 {
+                kappa = kappa << 8 | int_of(kb[j]);
+                j = j + 1;
+            }
+            let wide = alloc_slice[r](len(n) + 16, byte_of(0));
+            let code = bigmod_blind(n, d, kappa, wide, work);
+            report(io, code, wide, show);
+        } else {
+            io.write_all(io, "-1 unknown-op -\n");
+        }
+    }
+    return 0;
+}
+
+fn one[&i, &s, &w](io: &!i Io, s: &s [byte], at: int, work: &!w [int]) -> [io_write] int {
+    if int_of(s[at]) == 84 {
+        let rounds = number(s, at + 2);
+        let rest = next_field(s, at + 2);
+        var k = 1;
+        while k < rounds {
+            case(io, s, rest, work, false);
+            k = k + 1;
+        }
+        return case(io, s, rest, work, true);
+    }
+    return case(io, s, at, work, true);
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var text = buffer.empty(heap, 4096);
+    text = read_stdin(heap, io, text);
+    let work = box_slice(heap, rsa_sign.work_len(), 0);
+    borrow text as &b in {
+        let s = buffer.bytes(b);
+        borrow mut work as &!w in {
+            var at = 0;
+            while at < len(s) {
+                if int_of(s[at]) != 10 {
+                    one(io, s, at, contents(w));
+                }
+                while at < len(s) && int_of(s[at]) != 10 {
+                    at = at + 1;
+                }
+                at = at + 1;
+            }
+        }
+    }
+    unbox_slice(heap, work);
+    buffer.drop(heap, text);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(ffi);
+    release(fs);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}

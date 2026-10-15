@@ -38,7 +38,7 @@ MUTANTS = [
     # `modulus_bits` serves only `inverse`, which RSA does not call: its mutant is in scripts/ecdh_mutants.py (P-384).
     ("the exponent's second bit skipped", "bigmod", "var b = eb - 2;", "var b = eb - 3;"),
     ("a = n accepted", "bigmod", "compare_n(work, slot_base(), k) >= 0", "compare_n(work, slot_base(), k) > 0"),
-    ("an even modulus accepted", "bigmod", "    if int_of(n[len(n) - 1]) & 1 == 0 {\n        return -1;", "    if int_of(n[len(n) - 1]) & 1 == 2 {\n        return -1;"),
+    ("an even modulus accepted", "bigmod", "    if int_of(n[len(n) - 1]) & 1 == 0 {\n        return -1;\n    }\n    let k = (bits", "    if int_of(n[len(n) - 1]) & 1 == 2 {\n        return -1;\n    }\n    let k = (bits"),
     ("a^0 as 0", "bigmod", "        set_small(work, acc, 1);", "        set_small(work, acc, 0);"),
     ("the DigestInfo's OID arc fixed at SHA-256", "rsa", "out[at + 14] = byte_of((hash_len - 16) / 16);", "out[at + 14] = byte_of(1);"),
     ("one FF short", "rsa", "while i < t - 1 {", "while i < t - 2 {"),
@@ -74,7 +74,8 @@ def evidence():
 
     wy = os.path.join(ROOT, "tests/vectors/wycheproof")
     for f in sorted(os.listdir(wy)):
-        if not f.startswith("rsa_"):
+        # `rsa_pkcs1_*_sig_gen_test.json` are signing vectors (docs/rsa-sign.md), judged by scripts/rsa_sign_mutants.py
+        if not f.startswith("rsa_") or "_sig_gen_" in f:
             continue
         for g in json.load(open(os.path.join(wy, f)))["testGroups"]:
             n, e = g["publicKey"]["modulus"], g["publicKey"]["publicExponent"]

@@ -1,0 +1,459 @@
+edition 7;
+module x509_rsa_key;
+import std.bytes;
+import std.rsa_sign;
+import x509;
+import x509_key;
+
+// Copyright (c) 2026 Alpibru S.L. Licensed under the EUPL-1.2.
+//
+// `x509_rsa_key` -- RSA private keys from PEM or DER, for `std.rsa_sign`
+// (`docs/rsa-sign.md` §3.3 and §6). NOT APPROVED FOR PRODUCTION USE until the
+// review and hardening of that document are done. Not independently reviewed
+// (#209).
+//
+// Two formats, both unencrypted, both two-prime:
+// - `RSA PRIVATE KEY`: PKCS#1's RSAPrivateKey (RFC 8017 appendix A.1.2),
+//   version 0;
+// - `PRIVATE KEY`: PKCS#8's PrivateKeyInfo (RFC 5208), version 0, algorithm
+//   rsaEncryption with NULL parameters (RFC 8017 appendix A.1), holding that.
+// The DER is read with `x509.tlv`, the certificate parser's strict reader, and
+// each INTEGER must be minimal. The block `std.rsa_sign` takes is built from
+// the integers and `rsa_sign.check_key` is run on it, so a key that comes out
+// of here has satisfied every rule of `docs/rsa-sign.md` §6.
+//
+// Unlike the rest of this package this reads a secret, as `x509_key` does, and
+// for the same reasons (`docs/ecdsa-sign.md` §4.3): the base64 is
+// `x509_key.base64_decode`, which does not branch on a key character; the DER's
+// tags and lengths are the file's structure, not the key's; the decoded DER is
+// zeroed before the answer. What does branch is whether the key is valid, and a
+// leading 00 byte that marks the top bit of an INTEGER, which the file's length
+// shows to anyone who has it. This runs once, when a program loads its key, and
+// nothing a peer sends reaches it. It is audited, not timing-tested.
+//
+// Every function answers a positive length or 0, or a negative code whose name
+// is `refusal_tag(code)`; the codes of `std.rsa_sign` (-140 to -157) pass through.
+
+pub fn ok() -> [] int {
+    return 0;
+}
+
+pub fn refused_pem() -> [] int {
+    return -170;
+}
+
+pub fn refused_encrypted() -> [] int {
+    return -171;
+}
+
+pub fn refused_algorithm() -> [] int {
+    return -172;
+}
+
+pub fn refused_der() -> [] int {
+    return -173;
+}
+
+pub fn refused_version() -> [] int {
+    return -174;
+}
+
+pub fn refused_multiprime() -> [] int {
+    return -175;
+}
+
+pub fn refused_parameters() -> [] int {
+    return -176;
+}
+
+pub fn refused_buffer_length() -> [] int {
+    return -177;
+}
+
+pub fn refused_block_size() -> [] int {
+    return -178;
+}
+
+pub fn refusal_tag(code: int) -> [] &static [byte] {
+    if code == 0 {
+        return "ok";
+    }
+    if code == -170 {
+        return "rsa-key-pem";
+    }
+    if code == -171 {
+        return "rsa-key-encrypted";
+    }
+    if code == -172 {
+        return "rsa-key-algorithm";
+    }
+    if code == -173 {
+        return "rsa-key-der";
+    }
+    if code == -174 {
+        return "rsa-key-version";
+    }
+    if code == -175 {
+        return "rsa-key-multiprime";
+    }
+    if code == -176 {
+        return "rsa-key-parameters";
+    }
+    if code == -177 {
+        return "rsa-key-buffer-length";
+    }
+    if code == -178 {
+        return "rsa-key-block-size";
+    }
+    return rsa_sign.refusal_tag(code);
+}
+
+// The longest block `std.rsa_sign` reads (L = 512, h = 256): 7 h + 8.
+pub fn max_key_len() -> [] int {
+    return 1800;
+}
+
+// The words `work` must hold: `std.rsa_sign`'s.
+pub fn work_len() -> [] int {
+    return rsa_sign.work_len();
+}
+
+// The largest DER block read. A 4,096-bit key is about 2.4 KB; a block that
+// decodes to more is refused as `rsa-key-block-size`.
+pub fn max_der() -> [] int {
+    return 8192;
+}
+
+pub fn format_pkcs8() -> [] int {
+    return 8;
+}
+
+pub fn format_pkcs1() -> [] int {
+    return 2;
+}
+
+// ---- PEM ----
+
+// What a block's label says: a format, 0 for a block that is not a private key
+// (a certificate, `EC PARAMETERS`), or a refusal.
+fn label_kind[&l](label: &l [byte]) -> [] int {
+    if bytes.equal(label, "PRIVATE KEY") {
+        return 8;
+    }
+    if bytes.equal(label, "RSA PRIVATE KEY") {
+        return 2;
+    }
+    if bytes.equal(label, "ENCRYPTED PRIVATE KEY") {
+        return -171;
+    }
+    if bytes.ends_with(label, "PRIVATE KEY") {
+        // EC, DSA, OPENSSH, ...: a key, but not an RSA one in a format read here.
+        return -172;
+    }
+    return 0;
+}
+
+// The first private-key block of `pem`: `info[0]` its format, `info[1]` and
+// `info[2]` where its body starts and ends. 0, or a refusal. Blocks that are not
+// keys are skipped; the END line must name the BEGIN line's label.
+fn find_block[&p, &i](pem: &p [byte], info: &!i [int]) -> [] int {
+    var at = 0;
+    while at < len(pem) {
+        let begin = x509_key.find_from(pem, at, "-----BEGIN ");
+        if begin < 0 {
+            return -170;
+        }
+        let label = begin + 11;
+        let close = x509_key.find_from(pem, label, "-----");
+        if close < 0 {
+            return -170;
+        }
+        let kind = label_kind(pem[label..close]);
+        let body = close + 5;
+        let end = x509_key.find_from(pem, body, "-----END ");
+        if end < 0 {
+            return -170;
+        }
+        let end_label = end + 9;
+        let width = close - label;
+        if end_label + width + 5 > len(pem) || !bytes.equal(pem[end_label..end_label + width], pem[label..close]) || !bytes.equal(pem[end_label + width..end_label + width + 5], "-----") {
+            return -170;
+        }
+        if kind < 0 {
+            return kind;
+        }
+        if kind > 0 {
+            // RFC 1421's headers: a traditional encrypted key says so.
+            if x509_key.find_from(pem[0..end], body, "ENCRYPTED") >= 0 {
+                return -171;
+            }
+            info[0] = kind;
+            info[1] = body;
+            info[2] = end;
+            return 0;
+        }
+        at = end_label;
+    }
+    return -170;
+}
+
+// The first private key in `pem` into `key` (at least `max_key_len()` bytes),
+// as `parse_der` answers it.
+pub fn parse_pem[&p, &k, &w](pem: &p [byte], key: &!k [byte], work: &!w [int]) -> [] int {
+    if len(key) < max_key_len() || len(work) < work_len() {
+        return -177;
+    }
+    var code = 0;
+    region r {
+        let info = alloc_slice[r](3, 0);
+        code = find_block(pem, info);
+        if code == 0 {
+            let der = alloc_slice[r](max_der(), byte_of(0));
+            let n = x509_key.base64_decode(pem, info[1], info[2], der);
+            if n == -80 {
+                code = -170;
+            } else if n == -89 {
+                code = -178;
+            } else if n < 0 {
+                code = n;
+            } else {
+                code = parse_der(info[0], der[0..n], key, work);
+            }
+            bytes.zero(der);
+        }
+    }
+    return code;
+}
+
+// ---- DER ----
+
+// The TLV at `at` (`x509.tlv`) with tag `want`, ending by `end`: -173 for
+// anything else.
+fn expect[&d, &t](der: &d [byte], at: int, end: int, want: int, t: &!t [int]) -> [] int {
+    if x509.tlv(der, at, end, t) != 0 || t[0] != want {
+        return -173;
+    }
+    return 0;
+}
+
+// The INTEGER at `at`, strict DER: not empty, minimal (no leading 00 before a
+// byte below 0x80, no leading FF before one at or above it). Its content, less
+// a leading 00 that only marks a high bit, is recorded in `info[slot]` and
+// `info[slot + 1]`. The next position, or -173 for a malformed one, or `negative`
+// (the field's own refusal) for a negative one.
+fn read_integer[&d, &t, &i](der: &d [byte], at: int, end: int, negative: int, t: &!t [int], info: &!i [int], slot: int) -> [] int {
+    if expect(der, at, end, 0x02, t) != 0 {
+        return -173;
+    }
+    var s = t[1];
+    let e = t[2];
+    let next = e;
+    if e == s {
+        return -173;
+    }
+    let first = int_of(der[s]);
+    if e - s > 1 {
+        let second = int_of(der[s + 1]);
+        if first == 0 && second < 128 || first == 255 && second >= 128 {
+            return -173;
+        }
+    }
+    if first >= 128 {
+        return negative;
+    }
+    if first == 0 && e - s > 1 {
+        s = s + 1;
+    }
+    info[slot] = s;
+    info[slot + 1] = e;
+    return next;
+}
+
+// `der[s..e]` right-aligned in `out`, zeros before it; -1 when it is longer.
+fn put[&d, &o](der: &d [byte], s: int, e: int, out: &!o [byte]) -> [] int {
+    if e - s > len(out) {
+        return -1;
+    }
+    var i = 0;
+    while i < len(out) {
+        out[i] = byte_of(0);
+        i = i + 1;
+    }
+    i = 0;
+    while i < e - s {
+        out[len(out) - (e - s) + i] = der[s + i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+// The block of `docs/rsa-sign.md` §3.2 from the integers `info` locates in
+// `der` (n, e, d, p, q, dp, dq, qinv as start and end pairs), into `key`, then
+// `rsa_sign.check_key` on it: the block's length, or a refusal. Each integer longer
+// than its slot is refused with its own field's rule.
+fn build_block[&d, &i, &k, &w](der: &d [byte], info: &i [int], key: &!k [byte], work: &!w [int]) -> [] int {
+    let nlen = info[1] - info[0];
+    if nlen == 1 && int_of(der[info[0]]) == 0 {
+        return -151;
+    }
+    if nlen < 256 || nlen > 512 || nlen % 16 != 0 {
+        return -150;
+    }
+    let l = nlen;
+    let h = l / 2;
+    let blen = 7 * h + 8;
+    if put(der, info[0], info[1], key[0..l]) != 0 || put(der, info[2], info[3], key[l..l + 8]) != 0 {
+        return -152;
+    }
+    // d is not in the block: `check_key` takes it from the file.
+    if put(der, info[6], info[7], key[l + 8..l + 8 + h]) != 0 || put(der, info[8], info[9], key[l + 8 + h..l + 8 + 2 * h]) != 0 {
+        return -153;
+    }
+    if put(der, info[10], info[11], key[l + 8 + 2 * h..l + 8 + 3 * h]) != 0 || put(der, info[12], info[13], key[l + 8 + 3 * h..l + 8 + 4 * h]) != 0 {
+        return -155;
+    }
+    if put(der, info[14], info[15], key[l + 8 + 4 * h..blen]) != 0 {
+        return -156;
+    }
+    let code = rsa_sign.check_key(key[0..blen], der[info[4]..info[5]], work);
+    if code != 0 {
+        return code;
+    }
+    return blen;
+}
+
+// PKCS#1's RSAPrivateKey filling `der[at..end]` into `key`: the block's length,
+// or a refusal.
+fn rsa_private_key[&d, &k, &w](der: &d [byte], at: int, end: int, key: &!k [byte], work: &!w [int]) -> [] int {
+    var code = 0;
+    region r {
+        let t = alloc_slice[r](3, 0);
+        // info: the content of n, e, d, p, q, dp, dq, qinv as (start, end) pairs.
+        let info = alloc_slice[r](16, 0);
+        code = expect(der, at, end, 0x30, t);
+        if code == 0 && t[2] != end {
+            code = -173;
+        }
+        var p = t[1];
+        let stop = t[2];
+        if code == 0 {
+            if expect(der, p, stop, 0x02, t) != 0 {
+                code = -173;
+            } else if t[2] - t[1] != 1 {
+                code = -174;
+            } else if int_of(der[t[1]]) == 1 {
+                code = -175;
+            } else if int_of(der[t[1]]) != 0 {
+                code = -174;
+            }
+            p = t[2];
+        }
+        // Each integer with the refusal a negative one gets: n, e, d, p and q,
+        // dp and dq, qinv.
+        var f = 0;
+        while code == 0 && f < 8 {
+            var negative = -156;
+            if f == 0 {
+                negative = -151;
+            } else if f == 1 {
+                negative = -152;
+            } else if f == 2 {
+                negative = -157;
+            } else if f == 3 || f == 4 {
+                negative = -153;
+            } else if f == 5 || f == 6 {
+                negative = -155;
+            }
+            let next = read_integer(der, p, stop, negative, t, info, 2 * f);
+            if next < 0 {
+                code = next;
+            } else {
+                p = next;
+            }
+            f = f + 1;
+        }
+        if code == 0 && p != stop {
+            code = -173;
+        }
+        if code == 0 {
+            code = build_block(der, info, key, work);
+        }
+    }
+    return code;
+}
+
+// PKCS#8's PrivateKeyInfo filling `der` (RFC 5208 §5): version 0, the algorithm
+// rsaEncryption with NULL parameters, the key as an OCTET STRING, and nothing
+// after it.
+fn private_key_info[&d, &k, &w](der: &d [byte], key: &!k [byte], work: &!w [int]) -> [] int {
+    let end = len(der);
+    var code = 0;
+    region r {
+        let t = alloc_slice[r](3, 0);
+        code = expect(der, 0, end, 0x30, t);
+        if code == 0 && t[2] != end {
+            code = -173;
+        }
+        var p = t[1];
+        if code == 0 {
+            code = expect(der, p, end, 0x02, t);
+            if code == 0 && (t[2] - t[1] != 1 || int_of(der[t[1]]) != 0) {
+                code = -174;
+            }
+            p = t[2];
+        }
+        // AlgorithmIdentifier { rsaEncryption, NULL }.
+        if code == 0 {
+            code = expect(der, p, end, 0x30, t);
+        }
+        if code == 0 {
+            let alg_end = t[2];
+            p = alg_end;
+            code = expect(der, t[1], alg_end, 0x06, t);
+            if code == 0 && x509.oid_code(der, t[1], t[2]) != x509.oid_rsa_encryption() {
+                code = -172;
+            }
+            if code == 0 {
+                // The parameters: exactly 05 00, filling the rest.
+                if t[2] + 2 != alg_end || int_of(der[t[2]]) != 0x05 || int_of(der[t[2] + 1]) != 0 {
+                    code = -176;
+                }
+            }
+        }
+        if code == 0 {
+            code = expect(der, p, end, 0x04, t);
+        }
+        if code == 0 {
+            let inner_end = t[2];
+            let inner_start = t[1];
+            if inner_end != end {
+                code = -173;
+            } else {
+                code = rsa_private_key(der, inner_start, inner_end, key, work);
+            }
+        }
+    }
+    return code;
+}
+
+// The private key in `der`, in `format` (`format_pkcs8()` or `format_pkcs1()`),
+// into `key` (at least `max_key_len()` bytes) as the block `std.rsa_sign` takes,
+// every rule of `docs/rsa-sign.md` §6 passed: the block's length, or a refusal.
+// `work` is `work_len()` words. `key` is zeroed on a refusal.
+pub fn parse_der[&d, &k, &w](format: int, der: &d [byte], key: &!k [byte], work: &!w [int]) -> [] int {
+    if len(key) < max_key_len() || len(work) < work_len() {
+        return -177;
+    }
+    var code = 0;
+    if format == 8 {
+        code = private_key_info(der, key, work);
+    } else if format == 2 {
+        code = rsa_private_key(der, 0, len(der), key, work);
+    } else {
+        code = -172;
+    }
+    if code < 0 {
+        bytes.zero(key);
+    }
+    return code;
+}

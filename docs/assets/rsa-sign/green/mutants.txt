@@ -1,0 +1,80 @@
+# scripts/rsa_sign_mutants.py: 2026-10-14T14:13:34Z Darwin 25.2.0 arm64; commit 54152c8c + working tree; LLVM backend; OpenSSL 4.0.3
+unmutated: passes 366 exact cases and the OpenSSL differential
+killed        bigmod: setup_secret accepts an even modulus: S 32 e79461a000745d0344e6b4e8f...: -147 rsa-sign-check -
+killed        bigmod: setup_secret accepts a clear top bit: Z 7fffffffffffffff 03 02...: 0 ok 0000000000000008
+killed        bigmod: setup_secret accepts a length that is not a multiple of 8: Z ffffffffffffffffff 03 02...: 0 ok 000000000000000008
+killed        bigmod: r_squared's doubling is not reduced: G 2d2d2d2d2d424547494e20525341...: -156 rsa-key-crt-coefficient -
+killed        bigmod: r_squared doubles once too few: G 2d2d2d2d2d424547494e20525341...: -156 rsa-key-crt-coefficient -
+killed        bigmod: reduce_once does nothing: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        bigmod: select's index off by one: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        bigmod: select never reads the last entry: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        bigmod: pow_secret's table stops at 15: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        bigmod: pow_secret squares 3 times a window: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        bigmod: pow_secret drops the top window: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        bigmod: pow_secret reads a window's bits in the wrong order: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        bigmod: blind_exponent uses n, not n - 1: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        bigmod: blind_exponent drops the carry limb: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        rsa_sign: EMSA: 01 for 00 before the DigestInfo: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        rsa_sign: EMSA: block type 02: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        rsa_sign: SHA-1's length accepted: E 20 0000000000000000000000000...: 0 ok 0001fffffffffffffffffffffffffffffffffffffffffffffffffff
+killed        rsa_sign: EMSA does not check the digest's length: the driver failed or stopped early
+killed        rsa_sign: 17 bytes of entropy accepted: S 32 e79461a000745d0344e6b4e8f...: 0 ok 35cb76f0f09c6f3ba8a5b41716846b49dd7089c6729ed6226f0f6e7
+killed        rsa_sign: the exponent is not blinded: U 32 e79461a000745d0344e6b4e8f...: 0 ok 00000000000000000000000000000000a691e690db7fee8a3de9308
+killed        rsa_sign: kappa's top bit not forced: U 32 e79461a000745d0344e6b4e8f...: 0 ok 000000000000000033647dbece5157d2e7f1c52c5c183a34ce062c8
+killed        rsa_sign: the q-half blinded with the p-half's entropy: U 32 e79461a000745d0344e6b4e8f...: 0 ok 0000000000000000ddd8c1edb935449e628dcf4972f8e73ef0f9c32
+killed        rsa_sign: the blinded exponent loses its top window: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        rsa_sign: verify-after-sign never runs: G 2d2d2d2d2d424547494e20525341...: 0 ok 4a3e2cafc075f5904b0d6985ebdd0201c6e93a98ec4bb0a98c91ed8
+killed        rsa_sign: the verdict of the check is ignored: G 2d2d2d2d2d424547494e20525341...: 0 ok 4a3e2cafc075f5904b0d6985ebdd0201c6e93a98ec4bb0a98c91ed8
+killed        rsa_sign: the check is made under e shifted right by a byte: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        rsa_sign: Garner: sq not reduced mod p: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        rsa_sign: Garner: sq - sp, not sp - sq: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        rsa_sign: Garner: qinv not in Montgomery form: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        rsa_sign: recombination drops sq: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        rsa_sign: the hi half of EM loses its last byte: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        rsa_sign: the lo half of EM never added: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        rsa_sign: the q-half uses dp: G 2d2d2d2d2d424547494e20525341...: -147 rsa-sign-check -
+killed        rsa_sign: the modulus's top bit not checked: S 32 679461a000745d0344e6b4e8f...: -147 rsa-sign-check -
+killed        rsa_sign: any h from 64 accepted: S 32 3030303030303030303030303...: -146 rsa-sign-key-shape -
+killed        rsa_sign: h need not be a multiple of 8: S 32 3030303030303030303030303...: -146 rsa-sign-key-shape -
+killed        rsa_sign: check_key: the product is not checked: P 2d2d2d2d2d424547494e20525341...: -155 rsa-key-crt-exponent -
+killed        rsa_sign: check_key: e dp = 1 mod p - 1 not checked: P 2d2d2d2d2d424547494e20525341...: -157 rsa-key-private-exponent -
+killed        rsa_sign: check_key: dp's range not checked: P 2d2d2d2d2d424547494e20525341...: -157 rsa-key-private-exponent -
+killed        rsa_sign: check_key: dq not checked against d: P 2d2d2d2d2d424547494e20525341...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_sign: check_key: dp not checked against d: P 2d2d2d2d2d424547494e20525341...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_sign: check_key: d not below n: P 2d2d2d2d2d424547494e20525341...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_sign: check_key: d may be longer than n: the driver failed or stopped early
+killed        rsa_sign: check_key: q qinv = 1 not checked: P 2d2d2d2d2d424547494e20525341...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_sign: check_key: qinv's range not checked: P 2d2d2d2d2d424547494e20525341...: 904 ok 84f2dbcf4102310330edf8e357b09ace473f3675b744727b94a0e
+killed        rsa_sign: check_key: p may equal q: P 2d2d2d2d2d424547494e20525341...: -155 rsa-key-crt-exponent -
+killed        rsa_sign: check_key: e = 1 allowed: P 2d2d2d2d2d424547494e20525341...: -155 rsa-key-crt-exponent -
+killed        rsa_sign: check_key: an even e allowed: P 2d2d2d2d2d424547494e20525341...: -155 rsa-key-crt-exponent -
+killed        rsa_sign: check_key: an even n allowed: P 2d2d2d2d2d424547494e20525341...: -154 rsa-key-product -
+killed        rsa_sign: mod_limbs stops one step early: G 2d2d2d2d2d424547494e20525341...: -155 rsa-key-crt-exponent -
+killed        rsa_key: a negative INTEGER read as positive: P 2d2d2d2d2d424547494e20525341...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_key: a non-minimal INTEGER accepted: P 2d2d2d2d2d424547494e20525341...: -150 rsa-key-size -
+killed        rsa_key: 00 00 accepted (FF FF still refused): P 2d2d2d2d2d424547494e20525341...: -150 rsa-key-size -
+killed        rsa_key: FF FF accepted (00 00 still refused): P 2d2d2d2d2d424547494e20525341...: -152 rsa-key-exponent -
+killed        rsa_key: trailing bytes after the PKCS#1 key accepted: P 2d2d2d2d2d424547494e20505249...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_key: an element after the last integer accepted: P 2d2d2d2d2d424547494e20525341...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_key: another PRIVATE KEY label skipped: P 2d2d2d2d2d424547494e20454320...: -170 rsa-key-pem -
+killed        rsa_key: a traditional encrypted key not recognised: P 2d2d2d2d2d424547494e20525341...: -170 rsa-key-pem -
+killed        rsa_key: the END label not compared: P 2d2d2d2d2d424547494e2052532a...: -172 rsa-key-algorithm -
+killed        rsa_key: version 1 is a bad version, not multi-prime: P 2d2d2d2d2d424547494e20525341...: -174 rsa-key-version -
+killed        rsa_key: PKCS#1 version 2 accepted: P 2d2d2d2d2d424547494e20525341...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_key: PKCS#8 version not checked: P 2d2d2d2d2d424547494e20505249...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_key: PKCS#8's NULL may be followed by another element: P 2d2d2d2d2d424547494e20505249...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_key: PKCS#8's parameters need not be a NULL tag: P 2d2d2d2d2d424547494e20505249...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_key: PKCS#8's NULL may have a length: P 2d2d2d2d2d424547494e20505249...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_key: PKCS#8's algorithm not checked: P 2d2d2d2d2d424547494e20505249...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_key: an element after PKCS#8's key accepted: P 2d2d2d2d2d424547494e20505249...: 904 ok ca68b4cf27b24d4593280d90965284982db74234b4cc293ad11c1
+killed        rsa_key: an over-long block is another rule: P 2d2d2d2d2d424547494e20525341...: -170 rsa-key-pem -
+killed        rsa_key: bad base64 is not rsa-key-pem: P 2d2d2d2d2d424547494e20525341...: -173 rsa-key-der -
+killed        rsa_key: n of 264 bytes accepted: P 2d2d2d2d2d424547494e20525341...: -142 rsa-sign-key-layout -
+killed        rsa_key: n of 128 bytes accepted: P 2d2d2d2d2d424547494e20525341...: -142 rsa-sign-key-layout -
+killed        rsa_key: e of 9 bytes accepted: P 2d2d2d2d2d424547494e20525341...: -155 rsa-key-crt-exponent -
+killed        rsa_key: a negative p is another rule: P 2d2d2d2d2d424547494e20525341...: -154 rsa-key-product -
+killed        rsa_key: a negative dp is another rule: P 2d2d2d2d2d424547494e20525341...: -156 rsa-key-crt-coefficient -
+killed        rsa_key: a negative d is another rule: P 2d2d2d2d2d424547494e20525341...: -155 rsa-key-crt-exponent -
+killed        rsa_key: a negative qinv is another rule: P 2d2d2d2d2d424547494e20525341...: -155 rsa-key-crt-exponent -
+killed        rsa_key: a format other than 8 or 2 read as PKCS#1: B 7 3000...: -173 rsa-key-der -
+77 mutants, 77 killed

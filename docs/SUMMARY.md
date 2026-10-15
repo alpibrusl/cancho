@@ -115,6 +115,7 @@
 - [TLS memory per connection](tls-memory.md)
 - [Region chunks kept per thread](region-chunk-cache.md)
 - [`std.ecdsa_sign`: ECDSA P-256 signing in constant time](ecdsa-sign.md)
+- [`std.rsa_sign`: RSASSA-PKCS1-v1_5 signing and RSA private keys](rsa-sign.md)
 - [`std.p256`: faster P-256](p256-fast.md)
 - [Hardware AES and carry-less multiply](crypto-builtins.md)
 - [Wide multiply and add-with-carry](wide-multiply.md)

@@ -1,0 +1,20 @@
+# scripts/rsa_sign_fault.py
+# 2026-10-14T14:13:16Z Darwin 25.2.0 arm64; commit 54152c8c + working tree; OpenSSL OpenSSL 4.0.3; LLVM backend
+k2048_e65537_0           faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k2048_e65537_1           faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k2048_e65537_2           faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k2048_e65537_swapped     faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k2048_e65537_upq         faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k2048_e65537_uqp         faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k2176_e65537_0           faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k3072_e65537_0           faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k3072_e65537_1           faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k3072_e65537_swapped     faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k3072_e65537_upq         faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k3072_e65537_uqp         faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k4096_e65537_0           faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k4096_e65537_1           faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k4096_e65537_swapped     faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k4096_e65537_upq         faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+k4096_e65537_uqp         faults refused with the check; unchecked, the prime factor falls out of modes 2, 4 and 32
+fault gate: 51 unchecked faulty signatures revealed a prime factor; failures 0

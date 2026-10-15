@@ -1,0 +1,4 @@
+ bits  OpenSSL sign   rsa_sign  x OpenSSL   no check  check costs  no blinding  blinding costs  no CRT (pow_mod)  (ms per signature)
+ 2048         0.334      0.655       1.96      0.644         1.7%        0.623            4.9%             2.219
+ 3072         0.968      1.929       1.99      1.890         2.0%        1.880            2.5%             7.382
+ 4096         2.121      4.277       2.02      4.212         1.5%        4.162            2.7%            17.096

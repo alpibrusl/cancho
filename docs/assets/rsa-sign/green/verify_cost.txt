@@ -1,0 +1,4 @@
+# std.rsa verification (rsa_driver op D, T 5000), base 4e619793 vs this branch, interleaved, best of 9 each, us per verification; one shared Mac, load ~9; 2026-10-14T14:39:29Z
+k2048_e65537_0: base 25.25  new 25.24  (-0.1%)
+k3072_e65537_0: base 54.33  new 54.27  (-0.1%)
+k4096_e65537_0: base 92.62  new 93.45  (+0.9%)

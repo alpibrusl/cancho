@@ -1,0 +1,125 @@
+# the same on the Cranelift backend
+std.bigmod.load_secret: 119 instructions, 16 conditional branches to a trap, 3 elsewhere (0 back, 3 forward), 16 conditional selects
+    6214: b.gt fwd  0x6358    <- cmp x11, x14
+    6234: b.lt fwd  0x6318    <- cmp x12, x5
+    6254: b.ge fwd  0x6260    <- cmp x7, #0x0
+std.bigmod.setup_secret: 131 instructions, 7 conditional branches to a trap, 6 elsewhere (1 back, 5 forward), 10 conditional selects
+    5fe4: b.lt fwd  0x6184    <- cmp x25, x0
+    5ff8: b.lt fwd  0x6010    <- cmp x24, #0x8
+    6014: cbnz fwd  x13, 0x602c    <- cbnz x13; x13 last set by: (argument or earlier)
+    6030: cbnz fwd  x1, 0x6168    <- cbnz x1; x1 last set by: msub x1, x15, x13, x24
+    6050: b.lt fwd  0x614c    <- cmp x5, #0x80   [LOADED OPERAND: x5<=ldrb w5, [x26]]
+    607c: tbz back w11, #0x0, 0x6130    <- tbz w11; w11 last set by: ldrb w11, [x26, x7]   [LOADED OPERAND: w11<=ldrb w11, [x26, x7]]
+std.bigmod.r_squared: 262 instructions, 29 conditional branches to a trap, 6 elsewhere (0 back, 6 forward), 29 conditional selects
+    6858: b.lt fwd  0x6b40    <- cmp x26, x15
+    6930: b.gt fwd  0x6a64    <- cmp x23, #0x0
+    6984: b.le fwd  0x6a4c    <- cmp x9, x26
+    69c0: b.ge fwd  0x69e4    <- cmp x28, #0x0
+    6a18: b.ne fwd  0x6a34    <- cmp x2, #0x1
+    6a78: b.lt fwd  0x6ad0    <- cmp x0, x4
+std.bigmod.neg_inverse: 16 instructions, 1 conditional branches to a trap, 1 elsewhere (0 back, 1 forward), 1 conditional selects
+    67bc: b.lt fwd  0x67c8    <- cmp x2, #0x5
+std.bigmod.mont_mul: 328 instructions, 35 conditional branches to a trap, 3 elsewhere (0 back, 3 forward), 43 conditional selects
+    714c: b.lt fwd  0x7408    <- cmp x28, x11
+    7158: b.lt fwd  0x71e0    <- cmp x4, x24   [LOADED OPERAND: x4<=mov x4, #0x0                ; =0; x24<=ldr x24, [x0]]
+    72ac: b.lt fwd  0x7340    <- cmp x20, x24   [LOADED OPERAND: x20<=mov x20, #0x1               ; =1; x24<=ldr x24, [x0]]
+std.bigmod.ct_reduce: 158 instructions, 15 conditional branches to a trap, 2 elsewhere (0 back, 2 forward), 23 conditional selects
+    6ccc: b.lt fwd  0x6dcc    <- cmp x4, x3
+    6d2c: b.lt fwd  0x6d54    <- cmp x1, x3
+std.bigmod.reduce_once: 11 instructions, 1 conditional branches to a trap, 0 elsewhere (0 back, 0 forward), 1 conditional selects
+std.bigmod.add: 123 instructions, 16 conditional branches to a trap, 1 elsewhere (0 back, 1 forward), 19 conditional selects
+    ed88: b.lt fwd  0xedbc    <- cmp x6, x3   [LOADED OPERAND: x6<=mov x6, #0x0                ; =0; x3<=ldr x3, [x0]]
+std.bigmod.sub: 200 instructions, 23 conditional branches to a trap, 2 elsewhere (0 back, 2 forward), 29 conditional selects
+    e420: b.lt fwd  0xe504    <- cmp x26, x23   [LOADED OPERAND: x26<=mov x26, #0x0               ; =0; x23<=ldr x23, [x0]]
+    e464: b.lt fwd  0xe48c    <- cmp x13, x23   [LOADED OPERAND: x13<=mov x13, #0x0               ; =0; x23<=ldr x23, [x0]]
+std.bigmod.mul: 5 instructions, 0 conditional branches to a trap, 0 elsewhere (0 back, 0 forward), 0 conditional selects
+std.bigmod.to_mont: 19 instructions, 0 conditional branches to a trap, 0 elsewhere (0 back, 0 forward), 0 conditional selects
+std.bigmod.from_mont: 27 instructions, 0 conditional branches to a trap, 0 elsewhere (0 back, 0 forward), 0 conditional selects
+std.bigmod.copy: 75 instructions, 12 conditional branches to a trap, 1 elsewhere (0 back, 1 forward), 12 conditional selects
+    6f30: b.lt fwd  0x6f3c    <- cmp x7, x10
+std.bigmod.set_small: 42 instructions, 6 conditional branches to a trap, 1 elsewhere (0 back, 1 forward), 6 conditional selects
+    7aa8: b.lt fwd  0x7ac8    <- cmp x5, x12
+std.bigmod.store: 68 instructions, 9 conditional branches to a trap, 2 elsewhere (0 back, 2 forward), 9 conditional selects
+    7558: b.lt fwd  0x7564    <- cmp x7, x5
+    7570: b.lt fwd  0x757c    <- cmp x6, x3
+std.bigmod.store_reg: 14 instructions, 1 conditional branches to a trap, 0 elsewhere (0 back, 0 forward), 1 conditional selects
+std.bigmod.bit: 24 instructions, 3 conditional branches to a trap, 0 elsewhere (0 back, 0 forward), 3 conditional selects
+std.bigmod.select: 143 instructions, 16 conditional branches to a trap, 3 elsewhere (0 back, 3 forward), 16 conditional selects
+    7bdc: b.lt fwd  0x7d20    <- cmp x7, x9
+    7bec: b.lt fwd  0x7c10    <- cmp x26, x22
+    7c60: b.lt fwd  0x7c84    <- cmp x8, x3
+std.bigmod.pow_secret: 216 instructions, 13 conditional branches to a trap, 2 elsewhere (0 back, 2 forward), 13 conditional selects
+    779c: b.lt fwd  0x7968    <- cmp x20, #0x10
+    77dc: b.ge fwd  0x7804    <- cmp x19, #0x0
+std.bigmod.blind_exponent: 153 instructions, 18 conditional branches to a trap, 2 elsewhere (0 back, 2 forward), 20 conditional selects
+    64b4: b.lt fwd  0x651c    <- cmp x26, x28   [LOADED OPERAND: x26<=mov x26, #0x0               ; =0; x28<=ldr x28, [x0]]
+    6540: b.ne fwd  0x6548    <- cmp x26, #0x0
+std.rsa_sign.sign_core: 809 instructions, 57 conditional branches to a trap, 30 elsewhere (2 back, 28 forward), 69 conditional selects
+    ce9c: cbnz fwd  x2, 0xd9c8    <- cbnz x2; x2 last set by: stur x2, [sp, #0x30]
+    ceac: b.ne fwd  0xd9a4    <- cmp x1, x0   [LOADED OPERAND: x1<=ldur x1, [sp, #0x40]; x0<=ldur x0, [sp, #0x20]]
+    cec8: b.lt fwd  0xd980    <- cmp x0, #0x0   [LOADED OPERAND: x0<=ldur x0, [sp, #0x30]]
+    cee0: tbz back w23, #0x4, 0xcef0    <- tbz w23; w23 last set by: (argument or earlier)
+    cf00: cbnz fwd  x1, 0xd95c    <- cbnz x1; x1 last set by: ldur x1, [sp, #0x40]
+    cf30: b.ne fwd  0xd938    <- cmp x1, x2   [LOADED OPERAND: x1<=ldur x1, [sp, #0x50]; x2<=mul x2, x3, x0]
+    cf40: b.lt fwd  0xd914    <- cmp x1, x0   [LOADED OPERAND: x1<=ldur x1, [sp, #0x60]; x0<=ldur x0, [sp, #0x30]]
+    cf64: b.lt fwd  0xd8f0    <- cmp x12, #0x80   [LOADED OPERAND: x12<=ldrb w12, [x1]]
+    cf68: tbz back w23, #0x4, 0xcf88    <- tbz w23; w23 last set by: tbz w23, #0x4, 0xcef0 <_lexs_std.rsa_sign.sign_core+0xc4>
+    d2c0: b.lt fwd  0xd8b8    <- cmp x8, x2   [LOADED OPERAND: x8<=mov x8, #0x0                ; =0; x2<=ldur x2, [sp, #0xc8]]
+    d324: b.lt fwd  0xd888    <- cmp x0, x21
+    d384: b.lt fwd  0xd854    <- cmp x8, x21
+    d3e4: b.lt fwd  0xd820    <- cmp x12, x21
+    d3f0: b.lt fwd  0xd764    <- cmp x0, x21
+    d468: b.ne fwd  0xd478    <- cmp x0, #0x0
+    d47c: cbz fwd  x6, 0xd4a0    <- cbz x6; x6 last set by: ldur x6, [sp, #0xd0]
+    d4a4: b.ne fwd  0xd4f8    <- cmp x0, #0x0
+    d504: b.ne fwd  0xd514    <- cmp x0, #0x0
+    d518: cbz fwd  x7, 0xd540    <- cbz x7; x7 last set by: ldur x7, [sp, #0x70]
+    d544: b.ne fwd  0xd5e0    <- cmp x0, #0x0
+    d550: b.eq fwd  0xd560    <- cmp x13, #0x0
+    d568: b.eq fwd  0xd578    <- cmp x1, #0x0
+    d580: b.ne fwd  0xd58c    <- cmp x5, #0x0
+    d5f0: b.eq fwd  0xd5fc    <- cmp x0, #0x0
+    d60c: cbz fwd  x4, 0xd61c    <- cbz x4; x4 last set by: ldur x4, [sp, #0x90]
+    d620: b.ne fwd  0xd630    <- cmp x25, #0x0
+    d634: cbz fwd  x12, 0xd6d8    <- cbz x12; x12 last set by: stur x12, [sp, #0x10]
+    d6d0: b.eq fwd  0xd6d8    <- cmp x0, #0x0   [LOADED OPERAND: x0<=ldur x0, [sp, #0x20]]
+    d6dc: b.eq fwd  0xd6fc    <- cmp x25, #0x1
+    d6e4: b.eq fwd  0xd6f4    <- cmp x25, #0x0
+std.rsa_sign.crt_half: 197 instructions, 8 conditional branches to a trap, 5 elsewhere (0 back, 5 forward), 10 conditional selects
+    db94: b.ne fwd  0xde08    <- cmp x0, #0x0
+    dbec: b.ne fwd  0xdc30    <- cmp x0, #0x0
+    dc34: cbnz fwd  x2, 0xdde4    <- cbnz x2; x2 last set by: mov x2, x23
+    dca0: b.ne fwd  0xddc0    <- cmp x0, #0x0   [LOADED OPERAND: x0<=ldur x0, [sp]]
+    dcc8: cbnz fwd  x9, 0xdcd4    <- cbnz x9; x9 last set by: (argument or earlier)
+std.rsa_sign.garner: 173 instructions, 4 conditional branches to a trap, 4 elsewhere (0 back, 4 forward), 7 conditional selects
+    e084: b.ne fwd  0xe0ac    <- cmp x0, #0x0   [LOADED OPERAND: x0<=ldur x0, [sp, #0x8]]
+    e0b0: cbnz fwd  x9, 0xe0d8    <- cbnz x9; x9 last set by: (argument or earlier)
+    e0dc: cbnz fwd  x13, 0xe0ec    <- cbnz x13; x13 last set by: (argument or earlier)
+    e1f0: b.lt fwd  0xe270    <- cmp x13, x1
+std.rsa_sign.recombine: 306 instructions, 16 conditional branches to a trap, 6 elsewhere (0 back, 6 forward), 22 conditional selects
+    e6c8: b.lt fwd  0xea70    <- cmp x14, x1
+    e72c: b.lt fwd  0xea4c    <- cmp x6, x1
+    e798: b.lt fwd  0xea24    <- cmp x12, x1
+    e838: b.lt fwd  0xe9f8    <- cmp x8, x1   [LOADED OPERAND: x8<=mov x8, #0x0                ; =0; x1<=ldur x1, [sp, #0x28]]
+    e8c8: b.lt fwd  0xe940    <- cmp x6, x1
+    e954: b.lt fwd  0xe964    <- cmp x6, x15
+std.rsa_sign.limbs_from: 67 instructions, 8 conditional branches to a trap, 2 elsewhere (0 back, 2 forward), 8 conditional selects
+    b318: b.lt fwd  0xb3cc    <- cmp x5, x3
+    b338: b.ge fwd  0xb344    <- cmp x11, #0x0
+std.rsa_sign.limbs_to: 63 instructions, 8 conditional branches to a trap, 2 elsewhere (0 back, 2 forward), 8 conditional selects
+    eadc: b.lt fwd  0xeae8    <- cmp x5, x3
+    eaf4: b.lt fwd  0xeb00    <- cmp x13, x1
+std.rsa_sign.mul_limbs: 77 instructions, 10 conditional branches to a trap, 2 elsewhere (0 back, 2 forward), 12 conditional selects
+    b424: b.lt fwd  0xb430    <- cmp x8, x4
+    b43c: b.lt fwd  0xb47c    <- cmp x15, x4
+std.rsa_sign.kappa_at: 26 instructions, 3 conditional branches to a trap, 1 elsewhere (0 back, 1 forward), 3 conditional selects
+    dadc: b.lt fwd  0xdae8    <- cmp x4, #0x8
+std.rsa_sign.flip: 33 instructions, 5 conditional branches to a trap, 0 elsewhere (0 back, 0 forward), 5 conditional selects
+std.rsa_sign.wide_out: 73 instructions, 8 conditional branches to a trap, 0 elsewhere (0 back, 0 forward), 8 conditional selects
+std.rsa_sign.emsa_pkcs1: 154 instructions, 15 conditional branches to a trap, 5 elsewhere (0 back, 5 forward), 15 conditional selects
+    3cf8: cbnz fwd  x3, 0x3ed0    <- cbnz x3; x3 last set by: (argument or earlier)
+    3d04: b.ne fwd  0x3eb4    <- cmp x27, x26
+    3d34: b.lt fwd  0x3e98    <- cmp x28, x8
+    3d64: b.lt fwd  0x3e64    <- cmp x4, x28
+    3ddc: b.lt fwd  0x3dfc    <- cmp x20, x26
+TOTAL conditional branches not to a trap: 92 (3 back, 89 forward)

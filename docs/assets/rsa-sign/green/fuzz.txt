@@ -1,0 +1,4 @@
+# scripts/rsa_sign_fuzz.py 20000 mutations x (G, B 8, B 2)
+# 2026-10-14T14:13:26Z Darwin 25.2.0 arm64; commit 54152c8c + working tree; LLVM backend
+fuzz: 60000 answers to 20000 mutations x (G, B 8, B 2); tags seen: ok 476, rsa-key-algorithm 598, rsa-key-block-size 73, rsa-key-crt-coefficient 358, rsa-key-crt-exponent 686, rsa-key-der 37294, rsa-key-encrypted 312, rsa-key-exponent 283, rsa-key-modulus 189, rsa-key-multiprime 89, rsa-key-parameters 391, rsa-key-pem 16773, rsa-key-prime 497, rsa-key-private-exponent 429, rsa-key-product 936, rsa-key-size 260, rsa-key-version 355, rsa-sign-check 1
+failures 0
