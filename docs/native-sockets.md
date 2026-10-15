@@ -523,3 +523,185 @@ It is one way: nothing turns it off, because nothing here has asked to. `SO_KEEP
 
 The test (`conn_nodelay_turns_the_option_on_for_an_accepted_connection`) runs on both backends and, where `strace` is installed, reads the `setsockopt` the program made and
 its answer, since a status of 0 alone cannot tell a call that set the option from one that did nothing; a mutant that sets `TCP_MAXSEG` instead is killed on each backend.
+
+## 12. `tcp_listen_on`: listening on one address (#498)
+
+> **Status: design, written before the code.** Every number in §12.7 is
+> filled in by the gates in §12.6, and a claim below that a gate shows to
+> be false is corrected in place.
+
+### 12.1 What is wrong
+
+`tcp_listen(net, port, backlog, flags)` binds `INADDR_ANY`
+(`crates/cancho-codegen/src/body/sockets.rs`, `tcp_listen`: family byte,
+the port, and twelve zero bytes), so **every listener this language can
+make is reachable from every interface the machine has**. The capability's
+bound for the inbound half is the port alone (`listen.md` §6.1), so
+`cancho authority` prints `net_in("8080")`, which names no address: the
+report cannot tell a server meant for a local proxy from one open to the
+network, and no program can say which it is. `cancho-ml`'s `ml-serve`
+(#498, last comment) measured the cost: a connection through the
+machine's non-loopback address succeeds, so it cannot default to
+loopback and refuses to start without a bearer token or `--no-token`.
+
+### 12.2 The surface
+
+One new builtin, **edition 9**, and nothing else changes:
+
+```
+tcp_listen_on(net, host, port, backlog, flags) -> [net_in(bound)] Listening
+```
+
+It is `tcp_listen` with a second argument: `host`, **a string literal
+holding an IPv4 address in dotted-quad text** (`"127.0.0.1"`,
+`"0.0.0.0"`). It answers the same `Listening`, consumes nothing the old
+call does not, and the handle it makes is the same `Listener`:
+`tcp_accept`, `listener_nonblocking`, `poller_add_listener` and
+`listener_close` neither know nor care which call made it.
+
+It is a *new name* rather than a fifth argument on `tcp_listen` for the
+reason every addition here is (`editions.md` §6.4): edition 5 is closed,
+a five-argument `tcp_listen` would be new surface in a closed edition,
+and the checker would have to choose between two meanings of one name by
+counting arguments. Edition 9 is the latest, `tcp_listen_on` is a name a
+program may declare for itself, and an earlier file keeps its own
+(`tests/reject/tcp_listen_on_is_edition_nine.cho`).
+
+**The host is a literal because the row has to be exact.** A host read at
+run time cannot appear in a report written at compile time, and the point
+of the issue is the report. A program that takes the address from its
+command line chooses between literals, which is also the program a
+reviewer can read:
+
+```cancho
+if everywhere { tcp_listen_on(n, "0.0.0.0", port, 8, 0) } else { tcp_listen_on(n, "127.0.0.1", port, 8, 0) }
+```
+
+(Not an address the operator types: that is what is not done, §12.8.)
+
+### 12.3 The bound names the host and the port
+
+A `Net`'s bound is one string. For the inbound half it was a port, and
+it now has three shapes, read the way `net.md` §4 already reads the
+outbound `host:port`:
+
+| bound | what a listener may be | `tcp_listen` | `tcp_listen_on` |
+|---|---|---|---|
+| `""` (unnarrowed) | any address, any port | yes | yes |
+| `"8080"` | port 8080 on **every** interface | yes, as today | yes: any host, port 8080 (a subset of what the bound grants) |
+| `"127.0.0.1:8080"` | port 8080 on 127.0.0.1 and nowhere else | **refused** | host `"127.0.0.1"`, port 8080 |
+| `"127.0.0.1:"` or `"127.0.0.1"` | any port on 127.0.0.1 | **refused** | host `"127.0.0.1"` |
+| `"0.0.0.0:8080"` | port 8080 on every interface, said out loud | **refused** (use the bare port) | any host, port 8080 |
+
+The host half compares **exactly**, not as a prefix (`net-bounds.md`
+§2.3 is the argument: `127.0.0.1` as a prefix admits `127.0.0.10`).
+`0.0.0.0` in a bound is the wildcard and covers every host, loopback
+included; an address in a bound covers only itself. A bound whose host
+half is not an IPv4 literal (`localhost:80`, `::1`, a name) covers no
+`tcp_listen_on` host at all: there is no resolution (§12.8), so it
+cannot be matched, and the call is refused rather than guessed.
+
+**The row is the capability's bound, as it is for every other `net_in`.**
+A program that listens only on loopback narrows to
+`"127.0.0.1:8080"`, and `cancho authority` prints
+`net_in("127.0.0.1:8080")`; a program that listens everywhere narrows to
+`"8080"` or `"0.0.0.0:8080"` and its row says that. A program that never
+narrows has `net_in("")` whichever form it calls, which is what the
+report already says about every unnarrowed capability (`net-bounds.md`
+§2.4: an empty bound is the root, not a bound). The host is therefore
+*enforced* where it can be checked, at the call, and *reported* where
+the program wrote it down, at the `narrow`. The old call's row is what it
+was.
+
+### 12.4 Refusals (one new rule)
+
+Every refusal below is the new rule **`listen-host`**, at the host
+literal (or at the call, for the old form), with the reason in the
+message, and has a fixture under `tests/reject/`:
+
+1. `host` is not a string literal (a variable, a call, a concatenation).
+2. `host` is not a dotted-quad IPv4 literal: a name, `"localhost"`, an
+   IPv6 text, a short form such as `"127.1"`, a leading zero (`"010.0.0.1"`,
+   ambiguous between octal and decimal in C's parsers), an octet over 255,
+   a trailing dot, whitespace, the empty string.
+3. `host` is not covered by the `Net`'s bound (§12.3).
+4. The *old* form, `tcp_listen`, on a `Net` whose bound has a host half:
+   it would bind every interface, which that bound does not grant. Today
+   such a call compiles and **traps at run time on every execution**
+   (the bound parses as no port, so it reads as port `-1`); making it a
+   refusal turns a program that could never work into one that says why.
+   An unnarrowed or port-only bound is untouched.
+
+The port is still checked at run time against the bound's port half
+(`HEAP_OUT_OF_BOUNDS` on a mismatch, exactly as `tcp_listen`'s). Nothing
+here can reach a panic: the host is parsed by `Ipv4Addr`-style code over
+a `&str` with no indexing, and a value the backend does not understand
+is the checker/backend invariant every other node already states.
+
+### 12.5 Compatibility
+
+**Every program that calls `tcp_listen(net, port, backlog, flags)` keeps
+its behaviour and its authority row.** The old call is not rewritten,
+re-routed or re-parsed: it binds `INADDR_ANY`, listens on **every
+interface**, and its row is the bound of its `Net`, `net_in("8080")`.
+That is the existing behaviour and this change does not alter it; the
+default is not changed to loopback. The one observable difference is
+§12.4 item 4, which touches only a program that was already trapping.
+`packages/http-server`, `cancho-web`, `cancho-gateway`, `cancho-hooks`,
+`cancho-mqtt` and `examples/` call the old form and are not edited
+(§12.7 lists the ones run). The new node is a separate `Expr::TcpListen`
+argument that the old lowering never produces, so the code the old call
+generates is byte-identical: the identity hashes (`cancho ids`) of the
+existing programs do not move (checked in §12.7).
+
+`udp_bind` has the same all-interfaces behaviour and is not changed (§12.8).
+
+### 12.6 Gates (each must be able to fail)
+
+1. **Reachability, real sockets, both backends.** A program listening
+   with `"127.0.0.1"` accepts a connection to `127.0.0.1` and **refuses**
+   a connection to the machine's non-loopback IPv4 address (found by
+   asking the OS which source address routes to a public address, without
+   sending anything; the test is skipped, with a message, on a machine
+   that has none). A program listening with `"0.0.0.0"` and one using the
+   old form accept on both.
+2. **Authority report.** The JSON report of a loopback server carries
+   `net_in` `"127.0.0.1:PORT"`, the everywhere server's `net_in` carries
+   the bare port, and the old form's report is unchanged.
+3. **Narrowing.** A `Net` narrowed to `"127.0.0.1:PORT"` refuses
+   `tcp_listen` and `tcp_listen_on(.., "0.0.0.0", ..)` and `"127.0.0.2"`,
+   and accepts `"127.0.0.1"`.
+4. **Refusals** of §12.4 each with the tag, and a generated set of
+   hostile host texts (octets, signs, unicode, lengths) that must refuse
+   or accept per an independent parser and never panic.
+5. **Edition.** The name is absent before edition 9.
+6. **Mutants**, each of which must fail a gate above: the bound check
+   removed; loopback bound when everywhere was asked, and the reverse;
+   the report row naming the wrong host; the host compared as a prefix;
+   the old form made to bind loopback.
+7. The repository's full gate (`fmt`, `clippy -D warnings`,
+   `cargo test --workspace`, which includes the file budget, the rule
+   fixtures, the fuzzer and the differential tests).
+
+### 12.7 Measured
+
+*(Filled in when the gates ran.)*
+
+### 12.8 Not done
+
+* **IPv6.** The listener is `AF_INET`. `::1` is refused (§12.4 item 2).
+  Symmetric in principle (`sockaddr_in6`, `IPV6_V6ONLY`), but a second
+  socket family reaches `tcp_accept`, the peer address (`conn_peer`) and
+  the poller, and nobody has asked.
+* **Names.** No DNS, no `"localhost"`: a listener's address must not
+  depend on a resolver (`net-bounds.md` §2.3), and a name can resolve to
+  an address that is not loopback.
+* **A host chosen at run time.** Only literals, for §12.2's reason. A
+  service that lets its operator pick any address needs a different
+  capability shape; the choice between a fixed set of literals is
+  expressible today.
+* **Changing the default** of `tcp_listen` to loopback. That is the
+  compatibility question the issue left open and this answers it "no":
+  it would change the behaviour of every deployed server.
+* **`udp_bind`** and `Net`'s outbound bound (still a prefix, `net-bounds.md`).
+* **TLS** is orthogonal and untouched.
