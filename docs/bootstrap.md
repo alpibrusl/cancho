@@ -15,12 +15,17 @@ stage-by-stage record and the measurements, and the plan to finish is epic
   and on Linux aarch64 (a Raspberry Pi 5), it writes byte-identical IR for its own source
   (7,510,798 bytes, the same SHA-256 on all three).
 - **It builds real programs.** With every plain `cancho build` of the test suite going
-  through it, 695 of 702 conformance tests pass on macOS aarch64 and 700 of 709 on Linux
+  through it, 695 of 702 conformance tests pass on macOS aarch64 and 701 of 709 on Linux
   x86-64; the rest are differences from the Rust compiler, not missing features (the object
   bytes it writes, the layout of a struct of bytes, tests of the Rust backends themselves).
   The projects `cancho-cache`, `cancho-oci`, `cancho-robot`, `cancho-gpu` and `cancho-hooks`
   build with it, and the webhook service built with it passes the tests that the Rust-built
   one passes.
+- **It does not yet check what the language refuses.** Of the 333 programs in `tests/reject/`
+  (effects not declared, a linear value not consumed, a capability not narrowed, a borrow
+  conflict), 127 build with it; the Rust `cancho check` refuses all of them. Until the
+  checks are in its build path ([#512](https://github.com/alpibrusl/cancho/issues/512)), run
+  `cancho check` on a program before trusting a build made with it.
 - **Only `build` goes through it.** `check`, `authority`, `ids`, `fmt`, `vcs`, `test` and the
   wasm and Cranelift backends are still the Rust compiler's, and the sentence of a refusal
   still comes from the Rust front end (the compiler in cancho answers a rule and a place).
