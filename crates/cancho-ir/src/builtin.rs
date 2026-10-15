@@ -565,6 +565,12 @@ pub enum Builtin {
     /// call site, like [`Builtin::Bind`], because the row it performs is
     /// the bound its `Net` was narrowed to.
     TcpListen,
+    /// `tcp_listen_on(net, host, port, backlog, flags) -> [net_in(bound)] Listening`
+    /// -- `docs/native-sockets.md` §12, edition 9 only: `tcp_listen` bound to
+    /// one IPv4 address, written as a string literal so the checker can read it
+    /// against the capability's bound. Lowered as `Expr::TcpListen` with the
+    /// address as a fifth argument, so no backend gains a node.
+    TcpListenOn,
     /// `tcp_connect(net, host, port) -> [net_out(bound)] Dialed` --
     /// `docs/native-sockets.md` §3, edition 5 only: `connect`, answering a
     /// `Conn` handle (or the reason) rather than a descriptor.
@@ -1046,6 +1052,9 @@ impl Builtin {
         Builtin::Spawn,
         Builtin::Join,
         Builtin::Trap,
+        // Last, so the positions the self-hosted tables index by do not move
+        // (`docs/self-hosting.md`).
+        Builtin::TcpListenOn,
     ];
 
     pub fn name(self) -> &'static str {
@@ -1132,6 +1141,7 @@ impl Builtin {
             Builtin::Listen => "listen",
             Builtin::Accept => "accept",
             Builtin::TcpListen => "tcp_listen",
+            Builtin::TcpListenOn => "tcp_listen_on",
             Builtin::TcpConnect => "tcp_connect",
             Builtin::TcpConnectStart => "tcp_connect_start",
             Builtin::TcpAccept => "tcp_accept",
@@ -1349,6 +1359,10 @@ impl Builtin {
             // `docs/standard-input.md` §7: edition 9 -- `read_bytes` is
             // a name a program may already declare.
             Builtin::ReadBytes => 9,
+            // `docs/native-sockets.md` §12: edition 9, the latest -- edition 5
+            // is closed (`docs/editions.md` §6.4) and `tcp_listen_on` is a
+            // name a program may declare for itself.
+            Builtin::TcpListenOn => 9,
             // `docs/crypto-builtins.md` §3: the latest edition, as
             // `value_barrier` was, since a program may already declare
             // these names.

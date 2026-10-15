@@ -167,7 +167,19 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {low8} = trunc i32 {port32} to i8\n"));
         self.store_byte(&addr, 2, &high8);
         self.store_byte(&addr, 3, &low8);
-        for offset in 4..16 {
+        // `INADDR_ANY` (every byte zero) unless `tcp_listen_on` appended the
+        // address it read at compile time (`docs/native-sockets.md` section
+        // 12): the four octets, most significant first, which is network order.
+        let host = match args.get(4) {
+            None => 0u32,
+            Some(Expr::Int(address)) => u32::try_from(*address)
+                .map_err(|_| "`tcp_listen_on`'s address is not an IPv4 address".to_owned())?,
+            Some(_) => return Err("`tcp_listen_on`'s address must be a constant".to_owned()),
+        };
+        for (i, octet) in host.to_be_bytes().iter().enumerate() {
+            self.store_byte(&addr, 4 + i as i32, &octet.to_string());
+        }
+        for offset in 8..16 {
             self.store_byte(&addr, offset, "0");
         }
 

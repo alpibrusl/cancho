@@ -98,6 +98,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::ListenerClose
         | B::ListenerNonblocking
         | B::TcpListen
+        | B::TcpListenOn
         | B::TcpConnect
         | B::TcpConnectStart
         | B::TcpAccept

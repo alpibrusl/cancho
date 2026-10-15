@@ -83,6 +83,7 @@ mod io;
 mod json;
 mod kdf;
 mod key_tables;
+mod listen_host;
 mod mathfn;
 mod memory;
 mod modules;

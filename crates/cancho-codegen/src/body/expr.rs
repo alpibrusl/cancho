@@ -756,7 +756,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::Bind) => {
                         unreachable!("`bind` is lowered as `Expr::Bind`")
                     }
-                    Callee::Builtin(Builtin::TcpListen) => {
+                    Callee::Builtin(Builtin::TcpListen | Builtin::TcpListenOn) => {
                         unreachable!("`tcp_listen` is lowered as `Expr::TcpListen`")
                     }
                     Callee::Builtin(Builtin::TcpConnect | Builtin::TcpConnectStart) => {

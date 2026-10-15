@@ -162,6 +162,18 @@ impl<'a> FnLowering<'a> {
         let capability_span = self.ast.expr_span(*capability);
         let (net_value, net_ty) = self.expr(*capability)?;
         let bound = self.granted_net_bound(&net_ty, capability_span)?;
+        // `docs/native-sockets.md` section 12.4: this call binds every
+        // interface, which a bound naming one host does not grant.
+        if !parse_listen_bound(&bound).plain_port {
+            return Err(Diagnostic::new(
+                Rule::ListenHost,
+                format!(
+                    "`{}` binds every interface, but this `Net` is narrowed to `{bound}`, which names a host; use `tcp_listen_on` with an address that bound covers, or narrow to the bare port to say \"every interface\"",
+                    if datagram { "udp_bind" } else { "tcp_listen" }
+                ),
+                capability_span,
+            ));
+        }
 
         let mut lowered = vec![net_value];
         for arg in [Some(port), backlog, Some(flags)] {
@@ -186,6 +198,70 @@ impl<'a> FnLowering<'a> {
                 self.prelude()[if datagram { PRELUDE_UDP_OPENED } else { PRELUDE_LISTENING }],
                 Vec::new(),
             ),
+        ))
+    }
+
+    /// `tcp_listen_on(net, host, port, backlog, flags)` --
+    /// `docs/native-sockets.md` section 12, edition 9: [`Self::tcp_listen`]
+    /// bound to one IPv4 address. The host is a literal read here, against
+    /// the capability's bound, so the authority row and the refusal are both
+    /// compile-time facts; the backend receives the address as a fifth
+    /// argument and the bound's port half as the `bound` it already checks.
+    pub(crate) fn tcp_listen_on(
+        &mut self,
+        args: &[ExprId],
+        span: Span,
+    ) -> Result<(Expr, Type), Diagnostic> {
+        let [capability, host, port, backlog, flags] = args else {
+            return Err(Diagnostic::new(
+                Rule::ArityMismatch,
+                format!(
+                    "`tcp_listen_on` takes 5 arguments -- the capability, an address, a port, a backlog and flags -- but {} were given",
+                    args.len()
+                ),
+                span,
+            ));
+        };
+        let capability_span = self.ast.expr_span(*capability);
+        let (net_value, net_ty) = self.expr(*capability)?;
+        let bound = self.granted_net_bound(&net_ty, capability_span)?;
+
+        let host_span = self.ast.expr_span(*host);
+        let AstExpr::Str(text) = self.ast.expr(*host) else {
+            return Err(Diagnostic::new(
+                Rule::ListenHost,
+                "`tcp_listen_on` takes the address as a string literal, so the authority report can say which one; choose between literals instead of computing it",
+                host_span,
+            ));
+        };
+        let address =
+            parse_ipv4(text).map_err(|why| Diagnostic::new(Rule::ListenHost, why, host_span))?;
+        let granted = parse_listen_bound(&bound);
+        if !granted.covers(address) {
+            return Err(Diagnostic::new(
+                Rule::ListenHost,
+                format!(
+                    "this `Net` is narrowed to `{bound}`, which does not grant listening on `{text}`; a bound names one address exactly, and `0.0.0.0` in a bound grants every address"
+                ),
+                host_span,
+            ));
+        }
+
+        let mut lowered = vec![net_value];
+        for arg in [port, backlog, flags] {
+            let arg_span = self.ast.expr_span(*arg);
+            let (value, found) = self.expr(*arg)?;
+            self.expect_type(&Type::Int, &found, arg_span)?;
+            lowered.push(value);
+        }
+        lowered.push(Expr::Int(i64::from(address)));
+
+        self.performed
+            .union(&Effects::new([Label { name: "net_in".to_owned(), argument: Some(bound) }]));
+
+        Ok((
+            Expr::TcpListen { bound: granted.port, args: lowered, datagram: false },
+            Type::Named(self.prelude()[PRELUDE_LISTENING], Vec::new()),
         ))
     }
 

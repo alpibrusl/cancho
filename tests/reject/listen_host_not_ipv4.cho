@@ -1,0 +1,27 @@
+//~ ERROR `localhost` is not an IPv4 address
+//~ RULE listen-host
+
+// `docs/native-sockets.md` §12.4 item 2: a listener's address is an IPv4 literal. A name would need a resolver,
+// and the address would then depend on it.
+
+edition 9;
+
+fn run(bound: Net("127.0.0.1:8080")) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match tcp_listen_on(n, "localhost", 8080, 8, 0) {
+            Listening::Ok(l) => { listener_close(l); status = 0; }
+            Listening::Failed(e) => { }
+        }
+    }
+    release(bound);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(clock);
+    release(signals); release(exec); release(tty);
+    let bound = narrow(net, "127.0.0.1:8080");
+    return run(bound);
+}
