@@ -127,6 +127,17 @@ impl Pty {
         if slave.starts_with("/dev/") { Some(Pty { child, slave }) } else { None }
     }
 
+    /// The line's speed, read from `stty -a` (`speed 9600 baud;`): GNU `stty` also takes `speed`, but
+    /// uutils' (Ubuntu 26.04's `coreutils`) does not.
+    fn speed(&self) -> String {
+        let all = self.stty(&["-a"]);
+        all.split("speed ")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .unwrap_or("")
+            .to_owned()
+    }
+
     fn stty(&self, args: &[&str]) -> String {
         let flag = if cfg!(target_os = "macos") { "-f" } else { "-F" };
         let out = Command::new("stty").arg(flag).arg(&self.slave).args(args).output().unwrap();
@@ -153,7 +164,7 @@ fn the_speed_and_the_raw_flags_land_on_the_line() {
     for (speed, wanted) in [(9_600, "9600"), (115_200, "115200"), (1_000_000, "1000000")] {
         for (backend, code) in answers(&format!("line-{speed}"), &pty.slave, speed) {
             assert_eq!(code, Some(0), "{backend}: configure at {speed}");
-            assert_eq!(pty.stty(&["speed"]).trim(), wanted, "{backend}: the speed at {speed}");
+            assert_eq!(pty.speed(), wanted, "{backend}: the speed at {speed}");
             let all = pty.stty(&["-a"]);
             for flag in ["cs8", "-parenb", "-icanon", "-echo", "min = 0", "time = 0"] {
                 assert!(all.contains(flag), "{backend}/{speed}: expected `{flag}` in\n{all}");

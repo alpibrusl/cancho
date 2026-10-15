@@ -53,10 +53,11 @@ fn store[&f, &p, &b](fs: &f Fs(""), path: &p [byte], bytes: &b [byte]) -> [fs_wr
     }
 }
 
-// `clang` started on the arguments in `list` (each followed by a NUL) and waited for: its exit status, 128 and the signal if
+// `clang` started on the arguments in `list` (each followed by a NUL), with a `PATH` for it to find the linker by (a clang
+// given no environment cannot, on Ubuntu 26.04's clang 21), and waited for: its exit status, 128 and the signal if
 // it was killed, or 255 if it did not run.
 fn run_clang[&x, &c, &l](exec: &x Exec(""), clang: &c [byte], list: &l [byte]) -> [exec("")] int {
-    match exec_spawn(exec, clang, list, "", Stdio::Null, Stdio::Null, Stdio::Null) {
+    match exec_spawn(exec, clang, list, "PATH=/usr/bin:/bin\0", Stdio::Null, Stdio::Null, Stdio::Null) {
         Spawned::Ok(child) => {
             match child_wait(child) {
                 Exited::Code(n) => {

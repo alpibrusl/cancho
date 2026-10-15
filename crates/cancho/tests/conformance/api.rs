@@ -38,28 +38,46 @@ impl Drop for Server {
     }
 }
 
+/// Start the server on a free port. The port is found by binding and dropping a listener, so another test can take it
+/// before the server does (the server then exits, having found it busy); a server that has exited is started again on a
+/// new port, up to five times. A slow start on a loaded host gets 30 seconds.
 fn start(tag: &str, extra: &[&str]) -> Server {
     let (dir, exe) = build_example_paths(tag, &api_paths(tag), "api");
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let child = Command::new(&exe)
-        .arg(port.to_string())
-        .args(extra)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("the compiled server runs");
-    let server = Server { child, port, dir };
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        match TcpStream::connect(("127.0.0.1", port)) {
-            Ok(_) => return server,
-            Err(e) if Instant::now() < deadline => {
-                let _ = e;
-                std::thread::sleep(Duration::from_millis(20));
+    for attempt in 1..=5 {
+        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let child = Command::new(&exe)
+            .arg(port.to_string())
+            .args(extra)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("the compiled server runs");
+        let mut server = Server { child, port, dir: dir.clone() };
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let exited = server.child.try_wait().unwrap().is_some();
+            if !exited && TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                // Still running after the connection: it is this server that is listening.
+                if server.child.try_wait().unwrap().is_none() {
+                    return server;
+                }
             }
-            Err(e) => panic!("the server never listened on {port}: {e}"),
+            if exited || Instant::now() >= deadline {
+                if attempt == 5 {
+                    panic!(
+                        "the server never listened on {port} (attempt {attempt}, exited: {exited})"
+                    );
+                }
+                // Keep the directory for the next attempt: `Server`'s drop would remove it.
+                let _ = server.child.kill();
+                let _ = server.child.wait();
+                server.dir = std::env::temp_dir().join(format!("cancho-api-retry-{tag}-{attempt}"));
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
+    unreachable!("the loop above returns or panics")
 }
 
 fn connect(server: &Server) -> TcpStream {
