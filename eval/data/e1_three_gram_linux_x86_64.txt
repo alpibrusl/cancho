@@ -1,0 +1,30 @@
+
+mandelbrot (compute, Q16.16 fixed point)
+--------------------------------------------------------
+cancho      traps      0.0813s    0.99x C
+C     -O2    traps     0.0821s    1.00x C
+Rust  -O     traps     0.0835s    1.02x C
+C     -O2    wraps     0.0641s    0.78x C
+Rust  -O     wraps     0.0735s    0.90x C
+                                checksum 39690297
+
+mandelbrot (compute, f64 — cancho cannot enter)
+--------------------------------------------------------
+C     -O2    f64       0.0893s    1.00x C
+Rust  -O     f64       0.0947s    1.06x C
+                                checksum 39684084
+
+purity (a pure call, twice, across a compilation boundary)
+----------------------------------------------------------
+cancho      knows      0.0003s     400x faster
+C     -O2    blind     0.1351s    1.00x C
+Rust  -O     mute      0.1197s    0.89x C
+C     -O2    told      0.0003s     395x faster
+                                checksum -7463529374017724416
+
+sieve (memory-bound, all trapping)
+--------------------------------------------------------
+cancho      traps      0.1132s    1.00x C
+C     -O2    traps     0.1129s    1.00x C
+Rust  -O     traps     0.1007s    0.89x C
+                                checksum 6057
