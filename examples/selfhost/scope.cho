@@ -20,8 +20,8 @@ import selfhost.tables;
 // ------------------------------------------------------------- bindings ---
 
 // A new binding. The span is where Rust says it was declared (a parameter's type, a statement),
-// and the log of every binding ever declared (`st[38]`, four ints each: type, the block open then,
-// that span) is what the escape check reads once the body is done. A binding starts owned.
+// and the log of every binding ever declared (`st[38]`, five ints each: type, the block open then,
+// that span, whether it holds something to end) is what the escape check reads once the body is done. A binding starts owned.
 pub fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to: int) -> [] int {
     if emit.on(st) {
         if types.is_erased(st, ty) {
@@ -41,11 +41,15 @@ pub fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to:
     st[at + 3] = 0;
     st[at + 4] = st[39];
     st[21] = st[21] + 1;
-    let log = st[38] + 4 * st[39];
+    let log = st[38] + 5 * st[39];
     st[log] = ty;
     st[log + 1] = st[37];
     st[log + 2] = from;
     st[log + 3] = to;
+    st[log + 4] = 0;
+    if emit.on(st) && is_res_type(st, ty) {
+        st[log + 4] = 1;
+    }
     st[39] = st[39] + 1;
     return 0;
 }
@@ -86,6 +90,229 @@ pub fn note[&s](st: &!s [int], rule: int, from: int, to: int) -> [] int {
     return 0;
 }
 
+// ----------------------------------------------------------- linearity ---
+//
+// `docs/linearity-and-effects.md` section 4 as `linear.rs` replays it, here at the walk and while code is written (the
+// Rust oracle of the checker alone does not run it): a binding is 0 holding nothing to end, 1 holding a `res` value, 2
+// having had it consumed (the fifth int of its entry in the log of bindings). A branch saves the states and walks each
+// arm from them, and the arms that go on must agree; a loop must leave them as it found them. The first refusal is kept
+// like the borrow conflicts (`note`). After the log come sixteen ints, the stack pointer and the first binding of the
+// block being walked, and the stack of what the branches and loops being walked have saved: a frame is its width, how
+// many arms went on, the states before, the states the arms that went on agreed on, and its size.
+
+fn lin_head[&s](st: &!s [int]) -> [] int {
+    return st[38] + 5 * ((st[19] - 64) / 3 + 16);
+}
+
+pub fn lin_reset[&s](st: &!s [int]) -> [] int {
+    let h = lin_head(st);
+    st[h] = 0;
+    st[h + 1] = 0;
+    return 0;
+}
+
+pub fn lin_get[&s](st: &!s [int], slot: int) -> [] int {
+    return st[st[38] + 5 * slot + 4];
+}
+
+pub fn lin_put[&s](st: &!s [int], slot: int, state: int) -> [] int {
+    st[st[38] + 5 * slot + 4] = state;
+    return 0;
+}
+
+// The first binding of the block being walked, which shadowing is looked for from.
+pub fn lin_block[&s](st: &!s [int]) -> [] int {
+    return st[lin_head(st) + 1];
+}
+
+pub fn lin_enter[&s](st: &!s [int], mark: int) -> [] int {
+    st[lin_head(st) + 1] = mark;
+    return 0;
+}
+
+// A `let` of a name this block has already bound, over a value it still holds, would put the value out of reach.
+pub fn lin_shadow[&s, &x](st: &!s [int], text: &x [byte], name: int, from: int, to: int) -> [] int {
+    if !emit.on(st) {
+        return 0;
+    }
+    var j = st[21] - 1;
+    while j >= lin_block(st) {
+        if ast.same(st, text, st[st[20] + 5 * j], name) {
+            if lin_get(st, slot_of(st, j)) == 1 {
+                note(st, rules.r_linear_value_unconsumed(), from, to);
+            }
+            return 0;
+        }
+        j = j - 1;
+    }
+    return 0;
+}
+
+// A block closes over the bindings from `mark`: any still holding a value nothing consumed is a refusal, unless the
+// block ended in a `return` on every path (which asked the same). They are gone either way.
+pub fn lin_close[&s](st: &!s [int], mark: int, diverged: bool) -> [] int {
+    if !emit.on(st) {
+        return 0;
+    }
+    var j = mark;
+    while j < st[21] {
+        let slot = slot_of(st, j);
+        if lin_get(st, slot) == 1 && !diverged {
+            let log = st[38] + 5 * slot;
+            note(st, rules.r_linear_value_unconsumed(), st[log + 2], st[log + 3]);
+        }
+        lin_put(st, slot, 0);
+        j = j + 1;
+    }
+    return 0;
+}
+
+// A `return`: nothing may still hold a value.
+pub fn lin_return[&s](st: &!s [int], from: int, to: int) -> [] int {
+    if !emit.on(st) {
+        return 0;
+    }
+    var k = 0;
+    while k < st[39] {
+        if lin_get(st, k) == 1 {
+            note(st, rules.r_linear_value_unconsumed(), from, to);
+            return 0;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// The frame on top of the stack: where it begins.
+fn lin_top[&s](st: &!s [int]) -> [] int {
+    let h = lin_head(st);
+    return h + 16 + st[h] - st[h + 16 + st[h] - 1];
+}
+
+// A branch or a loop is entered: the states of the bindings so far are saved.
+pub fn lin_open[&s](st: &!s [int], from: int, to: int) -> [] int {
+    if !emit.on(st) {
+        return 0;
+    }
+    let h = lin_head(st);
+    let n = st[39];
+    let size = 3 + 2 * n;
+    if st[h] + size > 262144 {
+        ast.fail(st, rules.r_skip(), from, to);
+        return 0;
+    }
+    let at = h + 16 + st[h];
+    st[at] = n;
+    st[at + 1] = 0;
+    var k = 0;
+    while k < n {
+        st[at + 2 + k] = lin_get(st, k);
+        k = k + 1;
+    }
+    st[at + 2 + 2 * n] = size;
+    st[h] = st[h] + size;
+    return 0;
+}
+
+// An arm begins from the states the branch was entered with.
+pub fn lin_arm[&s](st: &!s [int]) -> [] int {
+    if !emit.on(st) || !ast.ok(st) {
+        return 0;
+    }
+    let at = lin_top(st);
+    var k = 0;
+    while k < st[at] {
+        lin_put(st, k, st[at + 2 + k]);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// An arm ends: what it declared is gone, and an arm that goes on must leave what the others that go on left.
+pub fn lin_arm_end[&s](st: &!s [int], diverged: bool, from: int, to: int) -> [] int {
+    if !emit.on(st) || !ast.ok(st) {
+        return 0;
+    }
+    let at = lin_top(st);
+    let n = st[at];
+    var k = n;
+    while k < st[39] {
+        lin_put(st, k, 0);
+        k = k + 1;
+    }
+    if diverged {
+        return 0;
+    }
+    if st[at + 1] == 0 {
+        k = 0;
+        while k < n {
+            st[at + 2 + n + k] = lin_get(st, k);
+            k = k + 1;
+        }
+        st[at + 1] = 1;
+        return 0;
+    }
+    k = 0;
+    while k < n {
+        if lin_get(st, k) != st[at + 2 + n + k] {
+            note(st, rules.r_linear_value_unconsumed(), from, to);
+            return 0;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// The branch is over: the states are what the arms that went on agreed on, or what they were if none did.
+pub fn lin_join[&s](st: &!s [int]) -> [] int {
+    if !emit.on(st) || !ast.ok(st) {
+        return 0;
+    }
+    let at = lin_top(st);
+    let n = st[at];
+    var k = 0;
+    while k < n {
+        if st[at + 1] == 1 {
+            lin_put(st, k, st[at + 2 + n + k]);
+        } else {
+            lin_put(st, k, st[at + 2 + k]);
+        }
+        k = k + 1;
+    }
+    let h = lin_head(st);
+    st[h] = st[h] - st[h + 16 + st[h] - 1];
+    return 0;
+}
+
+// The loop is over: a body that goes on must have left the states as it found them, and they are those either way.
+pub fn lin_loop_end[&s](st: &!s [int], diverged: bool, from: int, to: int) -> [] int {
+    if !emit.on(st) || !ast.ok(st) {
+        return 0;
+    }
+    let at = lin_top(st);
+    let n = st[at];
+    var k = n;
+    while k < st[39] {
+        lin_put(st, k, 0);
+        k = k + 1;
+    }
+    k = 0;
+    var differs = false;
+    while k < n {
+        if lin_get(st, k) != st[at + 2 + k] {
+            differs = true;
+        }
+        lin_put(st, k, st[at + 2 + k]);
+        k = k + 1;
+    }
+    if differs && !diverged {
+        note(st, rules.r_linear_value_unconsumed(), from, to);
+    }
+    let h = lin_head(st);
+    st[h] = st[h] - st[h + 16 + st[h] - 1];
+    return 0;
+}
+
 // The number this binding was declared as, which names its stack slot in the code.
 pub fn slot_of[&s](st: &!s [int], i: int) -> [] int {
     return st[st[20] + 5 * i + 4];
@@ -95,18 +322,42 @@ pub fn borrowed[&s](st: &!s [int], i: int) -> [] int {
     return st[st[20] + 5 * i + 3];
 }
 
-// A name was read.
+// A name was read. A `res` value is moved by it (there is no read of an owned name that leaves it), so it is not
+// there for a second read, and not at all while a `borrow` has it frozen.
 pub fn use_slot[&s](st: &!s [int], i: int, from: int, to: int) -> [] int {
     if borrowed(st, i) < 0 {
         note(st, rules.r_borrow_conflict(), from, to);
+        return 0;
+    }
+    if emit.on(st) {
+        let slot = slot_of(st, i);
+        let held = lin_get(st, slot);
+        if held == 1 {
+            if borrowed(st, i) != 0 {
+                note(st, rules.r_borrow_conflict(), from, to);
+            } else {
+                lin_put(st, slot, 2);
+            }
+        } else if held == 2 {
+            note(st, rules.r_linear_use_after_move(), from, to);
+        }
     }
     return 0;
 }
 
-// A binding was assigned to.
+// A binding was assigned to: not while it is borrowed, and not over a `res` value it still holds.
 pub fn assign_slot[&s](st: &!s [int], i: int, from: int, to: int) -> [] int {
     if borrowed(st, i) != 0 {
         note(st, rules.r_borrow_conflict(), from, to);
+    }
+    if emit.on(st) {
+        let slot = slot_of(st, i);
+        if borrowed(st, i) == 0 && lin_get(st, slot) == 1 {
+            note(st, rules.r_linear_value_unconsumed(), from, to);
+        }
+        if is_res_type(st, binding_type(st, i)) {
+            lin_put(st, slot, 1);
+        }
     }
     return 0;
 }
@@ -114,6 +365,11 @@ pub fn assign_slot[&s](st: &!s [int], i: int, from: int, to: int) -> [] int {
 // A `borrow` block opens over a binding: one unique borrow at a time and never beside a shared
 // one, and shared ones nest.
 pub fn freeze[&s](st: &!s [int], i: int, unique: bool, from: int, to: int) -> [] int {
+    if emit.on(st) && lin_get(st, slot_of(st, i)) == 2 {
+        // Consumed already: nothing is left to borrow.
+        note(st, rules.r_linear_use_after_move(), from, to);
+        return 0;
+    }
     let held = borrowed(st, i);
     if held < 0 || held > 0 && unique {
         note(st, rules.r_borrow_conflict(), from, to);
@@ -341,8 +597,40 @@ pub fn is_res_type[&s](st: &!s [int], ty: int) -> [] bool {
     if types.is_boxslice(st, ty) || types.is_box(st, ty) || types.is_handle(st, ty) || types.is_thread(st, ty) || is_res_item(st, ty) {
         return true;
     }
+    if types.is_prelude(st, ty) && tables.prelude_res(types.prelude_index(st, ty)) % 2 == 1 {
+        // A capability, a handle: `res` whatever its arguments are.
+        return true;
+    }
     if types.is_penum(st, ty) {
         return tables.prelude_res(types.prelude_index(st, ty)) != 0;
+    }
+    if emit.on(st) && types.is_named(st, ty) {
+        // A struct or an enum is `res` if any member is, whatever it is declared (the type graph has no cycles).
+        let item = types.named_item(st, ty);
+        if ast.is_kind(st, item, kinds.NK::IStruct) {
+            var f = ast.get(st, item, 8);
+            while f >= 0 {
+                if is_res_type(st, node_val(st, ast.get(st, f, 5), ty)) {
+                    return true;
+                }
+                f = ast.next(st, f);
+            }
+        }
+        if ast.is_kind(st, item, kinds.NK::IEnum) {
+            var v = ast.get(st, item, 8);
+            while v >= 0 {
+                var p = ast.get(st, v, 5);
+                var n = ast.get(st, v, 6);
+                while n > 0 {
+                    if is_res_type(st, node_val(st, p, ty)) {
+                        return true;
+                    }
+                    p = ast.next(st, p);
+                    n = n - 1;
+                }
+                v = ast.next(st, v);
+            }
+        }
     }
     if types.is_tuple(st, ty) {
         var k = 0;
