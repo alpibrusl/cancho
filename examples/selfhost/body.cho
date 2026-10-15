@@ -1046,9 +1046,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
             }
             owned = ast.next(st, owned);
         }
-        if !emit.on(st) {
-            effects.check(st, text, fn_item, from, to, authority);
-        }
+        effects.check(st, text, fn_item, from, to, authority, !emit.on(st));
     }
     if ast.ok(st) && !terminates(st, ast.get(st, fn_item, 11), ast.get(st, fn_item, 12)) {
         ast.fail(st, rules.r_missing_return(), from, to);

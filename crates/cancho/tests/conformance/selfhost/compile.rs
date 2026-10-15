@@ -1020,3 +1020,82 @@ fn build_with_the_compiler_in_cancho_from_the_command_line() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The rule the Rust front end refuses `program` by (`cancho check --output json`), or `None` if it accepts it.
+fn rust_rule(program: &Path) -> Option<String> {
+    let ended = Command::new(BIN)
+        .args(["check", "--output", "json"])
+        .arg(program)
+        .output()
+        .expect("cancho runs");
+    let json: serde_json::Value = serde_json::from_slice(&ended.stdout).ok()?;
+    json["refused"][0]["rule"].as_str().map(str::to_owned)
+}
+
+/// The rule the compiler in cancho refuses `program` by (the message names it after the Rust front end's sentence),
+/// `"accepted"` if it builds it, or what it said if it stopped otherwise.
+fn cancho_rule(compiler: &Path, program: &Path, out: &Path) -> String {
+    let ended = Command::new(BIN)
+        .arg("build")
+        .arg(program)
+        .arg("-o")
+        .arg(out)
+        .arg("--compiler")
+        .arg(compiler)
+        .output()
+        .expect("cancho runs");
+    let said = String::from_utf8_lossy(&ended.stderr);
+    if let Some(at) = said.find("by the rule `") {
+        let rest = &said[at + "by the rule `".len()..];
+        return rest[..rest.find('`').unwrap_or(rest.len())].to_owned();
+    }
+    if ended.status.success() {
+        return "accepted".to_owned();
+    }
+    format!("stopped: {}", said.lines().next().unwrap_or(""))
+}
+
+/// Every program the language refuses (`tests/reject/`) is refused by the compiler in cancho with the same rule as by
+/// the Rust front end. Not yet: `reject_gaps.txt` lists the ones that are not (#512), each of which must still differ,
+/// so that the list shrinks and the programs that agree go on agreeing.
+#[test]
+fn refusals_agree_with_the_rust_front_end() {
+    let compiler = build("compile-refusals", &with_front_end("compiler.cho"));
+    let dir = compiler.parent().expect("a scratch directory").to_path_buf();
+    let gaps: std::collections::BTreeSet<&str> = include_str!("reject_gaps.txt")
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .collect();
+    let mut fixtures: Vec<PathBuf> =
+        std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/reject"))
+            .expect("tests/reject")
+            .map(|e| e.expect("an entry").path())
+            .filter(|p| p.extension().is_some_and(|e| e == "cho"))
+            .collect();
+    fixtures.sort();
+    let wrong = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for (lane, chunk) in fixtures.chunks(fixtures.len().div_ceil(8)).enumerate() {
+            let (compiler, dir, gaps, wrong) = (&compiler, &dir, &gaps, &wrong);
+            scope.spawn(move || {
+                for (i, program) in chunk.iter().enumerate() {
+                    let name = program.file_name().and_then(|n| n.to_str()).expect("a name");
+                    let theirs = rust_rule(program);
+                    let ours = cancho_rule(compiler, program, &dir.join(format!("r{lane}-{i}")));
+                    let agree = theirs.as_deref() == Some(ours.as_str());
+                    let listed = gaps.contains(name);
+                    if agree == listed {
+                        let what = if listed {
+                            format!("{name}: now refused by the right rule `{ours}`; take it out of reject_gaps.txt")
+                        } else {
+                            format!("{name}: the Rust front end says {theirs:?}, the compiler in cancho {ours:?}")
+                        };
+                        wrong.lock().expect("a lock").push(what);
+                    }
+                }
+            });
+        }
+    });
+    let wrong = wrong.into_inner().expect("a lock");
+    assert!(wrong.is_empty(), "{} programs:\n{}", wrong.len(), wrong.join("\n"));
+}
