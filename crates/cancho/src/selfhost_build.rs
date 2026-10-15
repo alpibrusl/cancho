@@ -186,18 +186,36 @@ pub fn ensure_compiler() -> Result<PathBuf, Failure> {
     if exe.exists() {
         return Ok(exe);
     }
-    std::fs::create_dir_all(&cache)
-        .map_err(|e| environment(format!("cannot create `{}`: {e}", cache.display())))?;
+    // Several builds can start together with nothing cached: each builds in a directory of its own (the object file and
+    // the IR are named after the executable) and moves the finished compiler into place, which is atomic, so no build
+    // sees another's half-written files and whichever lands last leaves the same bytes.
+    let scratch = cache.join(format!(
+        "building-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    std::fs::create_dir_all(&scratch)
+        .map_err(|e| environment(format!("cannot create `{}`: {e}", scratch.display())))?;
     eprintln!("building the compiler in cancho (once) into {}", exe.display());
-    crate::build(
+    let built = scratch.join("compiler");
+    let made = crate::build(
         &files,
-        &exe,
+        &built,
         Emit::Exe,
         true,
         crate::Codegen { backend: crate::Backend::Llvm, target: None },
         &[],
         &[],
-    )?;
+    );
+    let moved = made.and_then(|()| {
+        std::fs::rename(&built, &exe).map_err(|e| {
+            environment(format!("cannot place the compiler at `{}`: {e}", exe.display()))
+        })
+    });
+    let _ = std::fs::remove_dir_all(&scratch);
+    moved?;
     Ok(exe)
 }
 

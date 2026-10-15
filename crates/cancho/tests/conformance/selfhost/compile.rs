@@ -905,6 +905,48 @@ fn a_function_the_compiler_cannot_write_is_a_refusal_when_the_program_reaches_it
     let _ = std::fs::remove_dir_all(compiler.parent().expect("a scratch directory"));
 }
 
+/// Builds that start together with nothing cached (`cargo test` runs many at once, and so do people with two
+/// terminals) each build the compiler in cancho, and none of them may see another's half-written files.
+#[test]
+fn builds_that_start_together_with_an_empty_cache_all_succeed() {
+    let dir = scratch("compile-race");
+    let program = dir.join("program.cho");
+    std::fs::write(
+        &program,
+        "fn main(world: World) -> [] int {\n    release(world);\n    return 5;\n}\n",
+    )
+    .expect("the scratch directory is writable");
+    let cache = dir.join("cache");
+    let children: Vec<_> = (0..8)
+        .map(|i| {
+            Command::new(BIN)
+                .arg("build")
+                .arg(&program)
+                .args(["--compiler", "auto", "-o"])
+                .arg(dir.join(format!("out{i}")))
+                .env("CANCHO_CACHE", &cache)
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("cancho runs")
+        })
+        .collect();
+    for (i, child) in children.into_iter().enumerate() {
+        let ended = child.wait_with_output().expect("cancho ends");
+        assert!(ended.status.success(), "build {i}: {}", String::from_utf8_lossy(&ended.stderr));
+        assert_eq!(run_it(&dir.join(format!("out{i}"))), Ended::Status(5, String::new()));
+    }
+    let kept: Vec<_> = std::fs::read_dir(&cache)
+        .expect("the cache was made")
+        .map(|e| e.expect("an entry").file_name())
+        .collect();
+    assert_eq!(kept.len(), 1, "one directory in the cache: {kept:?}");
+    let left: Vec<_> = std::fs::read_dir(cache.join(&kept[0]))
+        .expect("the compiler's directory")
+        .map(|e| e.expect("an entry").file_name())
+        .collect();
+    assert_eq!(left, vec![std::ffi::OsString::from("compiler")], "no scratch left behind");
+}
+
 /// `cancho build --compiler <exe>` builds with the compiler in cancho: the program, with the standard
 /// library it imports, runs as the Rust build does, and a refusal is an exit status 1 that says where.
 #[test]
