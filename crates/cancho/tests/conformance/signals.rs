@@ -695,7 +695,7 @@ fn main(world: World) -> [conc] int {{
             r#"match signals_watch(s) {
                 Watching::Ok(w) => {
                     var watch = w;
-                    let t = spawn(900, body);
+                    let t = spawn(2500, body);
                     say(i, "ready\n");
                     join(t);
                     borrow mut watch as &!wh in {
@@ -717,7 +717,8 @@ fn a_thread_spawned_after_the_claim_does_not_take_the_signal() {
         let exe = build(&dir, "inherit", &inherit_program(false), backend);
         let mut run = Run::start(&exe);
         run.expect("ready");
-        // The thread is napping; the signal must wait for the program.
+        // The thread is napping (2.5 s: a loaded host can be slow to send the signal); the signal must wait for the
+        // program.
         std::thread::sleep(Duration::from_millis(200));
         run.signal("TERM");
         run.expect("mask=8");
