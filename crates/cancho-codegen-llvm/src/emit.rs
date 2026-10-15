@@ -30,7 +30,7 @@ use crate::*;
 /// header) size their allocation against this constant, so a mismatched
 /// chunk size would trap where the Cranelift build does not, or the
 /// reverse.
-pub(crate) const ARENA_CHUNK: i64 = 64 * 1024;
+pub(crate) const ARENA_CHUNK: i64 = cancho_ir::REGION_CHUNK_BYTES;
 
 /// Every NaN's canonical `bits_of` answer, matching `cancho-codegen`'s
 /// own `abi::CANONICAL_NAN` exactly (§7.17): x86-64 and aarch64 disagree

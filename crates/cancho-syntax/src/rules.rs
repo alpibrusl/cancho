@@ -83,6 +83,9 @@ pub enum Rule {
     PatternShape,
     ProgramShape,
     ReferenceEscapesRegion,
+    /// A constant-size allocation in a region that cannot fit in one
+    /// chunk (`docs/region-limit.md` §2).
+    RegionChunkExceeded,
     RegionMismatch,
     RegionNotInScope,
     SharedReferenceWritten,
@@ -102,7 +105,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, in tag order. The catalogue as data.
-    pub const ALL: [Rule; 62] = [
+    pub const ALL: [Rule; 63] = [
         Rule::AmbiguousType,
         Rule::ArityMismatch,
         Rule::AssignToImmutable,
@@ -150,6 +153,7 @@ impl Rule {
         Rule::PatternShape,
         Rule::ProgramShape,
         Rule::ReferenceEscapesRegion,
+        Rule::RegionChunkExceeded,
         Rule::RegionMismatch,
         Rule::RegionNotInScope,
         Rule::SharedReferenceWritten,
@@ -217,6 +221,7 @@ impl Rule {
             Rule::PatternShape => "pattern-shape",
             Rule::ProgramShape => "program-shape",
             Rule::ReferenceEscapesRegion => "reference-escapes-region",
+            Rule::RegionChunkExceeded => "region-chunk-exceeded",
             Rule::RegionMismatch => "region-mismatch",
             Rule::RegionNotInScope => "region-not-in-scope",
             Rule::SharedReferenceWritten => "shared-reference-written",
@@ -433,6 +438,10 @@ impl Rule {
             Rule::ReferenceEscapesRegion => {
                 "A reference may not outlive the region it points into — an arena, a `borrow` \
                  block, or a caller's region parameter."
+            }
+            Rule::RegionChunkExceeded => {
+                "A region is one 65,536-byte chunk, so one allocation whose size is known to be \
+                 larger cannot be made in it; data that big belongs on the heap, in a `box_slice`."
             }
             Rule::RegionMismatch => {
                 "Two regions are the same one or they are not, and a `where` clause is how a \

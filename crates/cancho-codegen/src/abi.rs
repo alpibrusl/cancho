@@ -239,7 +239,7 @@ pub(crate) const RETURN_SLOT_STRIDE: i32 = 8;
 /// undefined behaviour, which the language does not have. Growth without
 /// giving up either property is an M3 question, and the trap is what keeps
 /// the answer honest until then.
-pub(crate) const ARENA_CHUNK: i64 = 64 * 1024;
+pub(crate) const ARENA_CHUNK: i64 = cancho_ir::REGION_CHUNK_BYTES;
 
 /// What `bits_of` answers for every NaN: the positive quiet NaN with an
 /// empty payload, which is aarch64's default NaN and RISC-V's canonical

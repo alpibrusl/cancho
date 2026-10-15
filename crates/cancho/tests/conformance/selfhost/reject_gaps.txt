@@ -89,6 +89,9 @@ no_main.cho
 one_tuple.cho
 rc_cloned_twice.cho
 reference_escapes_via_inference.cho
+region_byte_slice_over_chunk.cho
+region_slice_over_chunk.cho
+region_slice_over_chunk_folded.cho
 res_copied.cho
 res_discarded.cho
 res_field_read.cho

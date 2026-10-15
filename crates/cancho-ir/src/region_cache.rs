@@ -25,3 +25,14 @@ pub const REGION_TAKE: &str = "cancho_region_take";
 pub const REGION_GIVE: &str = "cancho_region_give";
 /// The key's destructor: a thread that ends frees its chunks and its stack.
 pub const REGION_DROP: &str = "cancho_region_drop";
+
+/// The bytes one region holds, in all (`docs/region-limit.md` §1): a region
+/// is one chunk, the bump pointer starts at its base, and an allocation
+/// that ends at or before the chunk's end fits. Both backends and the
+/// checker read this one number, so they cannot disagree on the boundary.
+pub const REGION_CHUNK_BYTES: i64 = 64 * 1024;
+
+/// What a program writes to standard error (fd 2) just before it traps on
+/// an allocation the chunk cannot hold (`docs/region-limit.md` §3). One
+/// text for both backends, so a run says the same on either.
+pub const REGION_EXHAUSTED_MESSAGE: &str = "cancho: trap: region chunk exhausted: a region holds 65536 bytes in all; allocate big data on the heap with box_slice (AGENTS.md)\n";

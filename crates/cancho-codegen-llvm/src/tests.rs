@@ -607,21 +607,29 @@ fn indexing_before_a_slice_traps_with_sigill() {
 /// `docs/llvm-backend.md` §7.5: `region`/`alloc_slice` -- exhausting the
 /// arena's chunk traps rather than handing back a slice past the end,
 /// matching `cancho-codegen`'s own `bump`. 9000 `int`s is 72000 bytes,
-/// past `ARENA_CHUNK`'s 65536.
+/// past `ARENA_CHUNK`'s 65536; the count is computed so that the compiler
+/// cannot refuse it first (`docs/region-limit.md` §2), and the trap says
+/// why on standard error (§3).
 #[test]
 fn allocating_past_an_arenas_chunk_traps_with_sigill() {
     let source = "\
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);
     release(args); release(fs); release(ffi); release(io); release(heap);
+    var n = 0;
+    while n < 9000 { n = n + 1; }
     region a {
-        let s = alloc_slice[a](9000, 0);
+        let s = alloc_slice[a](n, 0);
         return s[0];
     }
 }
 ";
     let object = compiled(source, "main");
     let output = run(&object, "arena-exhausted");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("region chunk exhausted"),
+        "the trap should name its cause"
+    );
     assert_eq!(output.status.code(), None, "an exhausted arena should be killed by a signal");
     assert_eq!(
         output.status.signal(),

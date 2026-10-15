@@ -596,6 +596,24 @@ impl<'a> FnLowering<'a> {
             ));
         }
 
+        // `docs/region-limit.md` §2: a size known now is refused now, not
+        // learned from a trap. The compile-time arena has no chunk.
+        if id != STATIC_ARENA
+            && let (Expr::Int(n), Some(stride)) = (&count_expr, min_stride(&element))
+            && let Some(bytes) = n.checked_mul(stride).filter(|_| *n >= 0)
+            && bytes > REGION_CHUNK_BYTES
+        {
+            return Err(Diagnostic::new(
+                Rule::RegionChunkExceeded,
+                format!(
+                    "`alloc_slice` of {n} `{}` is {bytes} bytes, and a region holds {REGION_CHUNK_BYTES} bytes in all (one chunk); \
+                     allocate data this big on the heap with `box_slice` instead (AGENTS.md)",
+                    self.unifier.display(&element)
+                ),
+                span,
+            ));
+        }
+
         let slice = Type::Slice(Box::new(element.clone()));
         // The compile-time arena is not a block and has no number the
         // backend will ever ask for: a `static` body is evaluated, never
@@ -752,5 +770,27 @@ impl<'a> FnLowering<'a> {
     /// Which arena number a block id was given.
     pub(crate) fn arena_of(&self, block: u32) -> u32 {
         self.arenas.iter().position(|id| *id == block).expect("an arena block") as u32
+    }
+}
+
+/// The bytes one element of a slice takes, when the type says so without a
+/// lookup (`docs/region-limit.md` §2): the figure the backends' `stride`
+/// gives (`byte` 1, `f32` 4, any other leaf 8, a tuple its leaves' sum),
+/// and `None` for a type whose leaves are counted from a declaration, which
+/// is left to the run-time trap. It is never larger than the backend's, so a
+/// refusal is never wrong.
+fn min_stride(element: &Type) -> Option<i64> {
+    match element {
+        Type::Byte => Some(1),
+        Type::F32 => Some(4),
+        Type::Int | Type::Bool | Type::Float => Some(8),
+        Type::Tuple(parts)
+            if parts.iter().all(|p| {
+                matches!(p, Type::Int | Type::Bool | Type::Float | Type::Byte | Type::F32)
+            }) =>
+        {
+            Some(8 * parts.len() as i64)
+        }
+        _ => None,
     }
 }

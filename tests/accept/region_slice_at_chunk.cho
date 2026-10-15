@@ -1,0 +1,34 @@
+// `docs/region-limit.md` §1: the largest allocation a region holds is the
+// whole chunk, 65,536 bytes: 8192 ints, or 65,536 bytes. One element more
+// is refused (`tests/reject/region_slice_over_chunk.cho`).
+//~ STDOUT 8192
+//~ STDOUT 65536
+//~ EXIT 0
+
+import std.io;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(ffi);
+    release(fs);
+    release(heap);
+    var ints = 0;
+    var bytes = 0;
+    region r {
+        let t = alloc_slice[r](8192, 0);
+        ints = len(t);
+    }
+    region q {
+        let u = alloc_slice[q](65536, byte_of(0));
+        bytes = len(u);
+    }
+    borrow mut io as &!i in {
+        io.print_int(i, ints);
+        io.newline(i);
+        io.print_int(i, bytes);
+        io.newline(i);
+    }
+    release(io);
+    return 0;
+}

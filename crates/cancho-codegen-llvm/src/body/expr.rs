@@ -380,6 +380,41 @@ impl<'a> FuncEmitter<'a> {
         // was quietly throwing away.
     }
 
+    /// `write_bytes`/`write_err`'s call, and the region trap's message
+    /// (`docs/region-limit.md` §3): the whole slice in one `fwrite` through
+    /// the stream the module header declared, or `fd_write` alone on WASI.
+    pub(crate) fn console_write(&mut self, stderr: bool, start: &LValue, len: &LValue) -> LValue {
+        if crate::wasi_console::applies(self.triple) {
+            // The console without libc's stdio (`wasi_console`): the same
+            // bytes, through `fd_write` alone.
+            let write = if stderr { "cancho_stderr_write" } else { "cancho_stdout_write" };
+            let st = self.size_ty();
+            let size = self.size_arg(&operand(len));
+            let raw = self.fresh();
+            self.out.push_str(&format!(
+                "  {raw} = call {st} @{write}(ptr {}, {st} {size})\n",
+                operand(start)
+            ));
+            return LValue::Reg(self.size_result(&raw, false));
+        }
+        let symbol = match (stderr, self.triple.operating_system) {
+            (true, target_lexicon::OperatingSystem::Darwin(_)) => "__stderrp",
+            (true, _) => "stderr",
+            (false, target_lexicon::OperatingSystem::Darwin(_)) => "__stdoutp",
+            (false, _) => "stdout",
+        };
+        let stream = self.fresh();
+        self.out.push_str(&format!("  {stream} = load ptr, ptr @{symbol}\n"));
+        let st = self.size_ty();
+        let size = self.size_arg(&operand(len));
+        let raw = self.fresh();
+        self.out.push_str(&format!(
+            "  {raw} = call {st} @fwrite(ptr {}, {st} 1, {st} {size}, ptr {stream})\n",
+            operand(start)
+        ));
+        LValue::Reg(self.size_result(&raw, false))
+    }
+
     /// A string literal's bytes (§5's fourth slice): one read-only global
     /// per occurrence, and no instruction needed to get its address --
     /// unlike Cranelift's `global_value`, an LLVM global symbol is
@@ -553,44 +588,8 @@ impl<'a> FuncEmitter<'a> {
                 let [start, len] = flat.as_slice() else {
                     return Err("`write_bytes`/`write_err` need a byte slice argument".to_owned());
                 };
-                if crate::wasi_console::applies(self.triple) {
-                    // The console without libc's stdio (`wasi_console`): the same
-                    // bytes, through `fd_write` alone.
-                    let write = if matches!(callee, Callee::Builtin(Builtin::WriteErr)) {
-                        "cancho_stderr_write"
-                    } else {
-                        "cancho_stdout_write"
-                    };
-                    let st = self.size_ty();
-                    let size = self.size_arg(&operand(len));
-                    let raw = self.fresh();
-                    self.out.push_str(&format!(
-                        "  {raw} = call {st} @{write}(ptr {}, {st} {size})\n",
-                        operand(start)
-                    ));
-                    let result = self.size_result(&raw, false);
-                    return Ok(vec![LValue::Reg(result)]);
-                }
-                let symbol = match (callee, self.triple.operating_system) {
-                    (
-                        Callee::Builtin(Builtin::WriteErr),
-                        target_lexicon::OperatingSystem::Darwin(_),
-                    ) => "__stderrp",
-                    (Callee::Builtin(Builtin::WriteErr), _) => "stderr",
-                    (_, target_lexicon::OperatingSystem::Darwin(_)) => "__stdoutp",
-                    (_, _) => "stdout",
-                };
-                let stream = self.fresh();
-                self.out.push_str(&format!("  {stream} = load ptr, ptr @{symbol}\n"));
-                let st = self.size_ty();
-                let size = self.size_arg(&operand(len));
-                let raw = self.fresh();
-                self.out.push_str(&format!(
-                    "  {raw} = call {st} @fwrite(ptr {}, {st} 1, {st} {size}, ptr {stream})\n",
-                    operand(start)
-                ));
-                let result = self.size_result(&raw, false);
-                Ok(vec![LValue::Reg(result)])
+                let stderr = matches!(callee, Callee::Builtin(Builtin::WriteErr));
+                Ok(vec![self.console_write(stderr, start, len)])
             }
             // `docs/checked-output.md`: the stream the arm above writes
             // into, flushed and asked whether any of it failed.
