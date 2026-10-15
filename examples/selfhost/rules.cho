@@ -189,6 +189,14 @@ pub fn r_borrow_conflict() -> [] int {
     return 46;
 }
 
+pub fn r_linear_use_after_move() -> [] int {
+    return 47;
+}
+
+pub fn r_linear_value_unconsumed() -> [] int {
+    return 48;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -324,6 +332,12 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 46 {
         return "borrow-conflict";
+    }
+    if r == 47 {
+        return "linear-use-after-move";
+    }
+    if r == 48 {
+        return "linear-value-unconsumed";
     }
     return "unknown-name";
 }

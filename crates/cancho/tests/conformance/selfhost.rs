@@ -19,6 +19,7 @@ use super::*;
 mod bootstrap;
 mod cases;
 mod compile;
+mod parity;
 use cases::BODY_EDGE;
 
 #[allow(dead_code)]

@@ -52,6 +52,36 @@ jobs:
           ./hello
           test "$(./hello)" = "Hello, world!"
 
+  # docs/self-hosting.md, epic #491: the whole conformance suite with every plain `cancho build` going through the compiler
+  # written in cancho (`examples/selfhost`), so that a change to the language, the runtime or a rule that the compiler in
+  # cancho does not follow fails here and not in someone's `--compiler auto`. The differences that are known are in
+  # `.github/selfhost-known-differences.txt`; any other failure is new.
+  selfhost:
+    name: selfhost (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: macos-latest
+            target: darwin-aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: strace (Linux)
+        if: runner.os == 'Linux'
+        run: command -v strace || (sudo apt-get update && sudo apt-get install -y strace)
+
+      - name: The conformance suite through the compiler in cancho
+        env:
+          CANCHO_COMPILER: auto
+          CANCHO_CACHE: ${{ runner.temp }}/cancho-cache
+        run: |
+          skips=$(sed 's/#.*//' .github/selfhost-known-differences.txt | awk 'NF {print "--skip " $1}' | tr '\n' ' ')
+          cargo test -p cancho --test conformance -- $skips
+
   # docs/tls-performance.md §6: the cost of each primitive the TLS stack is made of, against the baseline recorded in
   # `benches/tls_baseline.json`. A change that makes a primitive 1.3 times dearer in instructions (counted under valgrind, so the
   # runner's clock and load do not matter) fails here. A short job: the compiler, then about a minute.
