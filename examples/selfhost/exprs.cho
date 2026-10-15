@@ -1594,6 +1594,14 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     if pass1.is_word(st, text, callee, "len") {
         return len_expr(st, text, id);
     }
+    // A builtin performs its labels whichever way the code for it is written below (the general path records them too,
+    // and a label recorded twice is one).
+    if emit.on(st) && qualifier < 0 {
+        let named = prims.builtin_at(st, text, callee, st[23]);
+        if named >= 0 {
+            effects.perform(st, named);
+        }
+    }
     // `release(world)` ends a capability: no code, and `0` if the answer is wanted.
     if emit.on(st) && qualifier < 0 && pass1.is_word(st, text, callee, "release") {
         if nargs != 1 {

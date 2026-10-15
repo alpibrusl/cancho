@@ -20,8 +20,6 @@ capability_used_after_release.cho
 child_end_kept.cho
 child_taken_apart.cho
 child_unwaited.cho
-clock_not_declared.cho
-conn_read_not_declared.cho
 consume_in_loop.cho
 defer_consumes_twice.cho
 defer_leaks_its_value.cho
@@ -33,14 +31,8 @@ dir_handle_taken_apart.cho
 dir_handle_unclosed.cho
 dir_list_taken_apart.cho
 dir_list_unclosed.cho
-dir_mode_not_declared.cho
 dir_mode_on_wasi.cho
-dir_next_not_declared.cho
-dir_read_not_declared.cho
-dir_rename_new_not_declared.cho
 dir_rename_new_on_wasi.cho
-dir_stat_not_declared.cho
-dir_write_not_declared.cho
 effect_declared_not_performed.cho
 effect_widened.cho
 exec_effect_undeclared.cho
@@ -95,7 +87,6 @@ narrow_without_a_literal.cho
 no_ambient_capability.cho
 no_main.cho
 one_tuple.cho
-poller_add_child_effect_undeclared.cho
 rc_cloned_twice.cho
 reference_escapes_via_inference.cho
 res_copied.cho
@@ -131,8 +122,6 @@ tuple_leaked.cho
 udp_handle_forged.cho
 udp_handle_taken_apart.cho
 udp_handle_unclosed.cho
-udp_recv_not_declared.cho
-udp_send_to_not_declared.cho
 unbounded_generic_drops_its_parameter.cho
 unbox_a_boxed_slice_wrongly.cho
 unconsumed_at_scope_end.cho
