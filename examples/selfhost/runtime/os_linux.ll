@@ -69,3 +69,27 @@ entry:
   %n8 = select i1 %is8, i64 9, i64 %n7
   ret i64 %n8
 }
+
+; The bit (std.signals', 256 for KILL) of the system's number of a signal that ended a child; 0 for another.
+define i64 @cancho_signal_bit(i64 %native) {
+entry:
+  %is0 = icmp eq i64 %native, 14
+  %b0 = select i1 %is0, i64 64, i64 0
+  %is1 = icmp eq i64 %native, 1
+  %b1 = select i1 %is1, i64 1, i64 %b0
+  %is2 = icmp eq i64 %native, 2
+  %b2 = select i1 %is2, i64 2, i64 %b1
+  %is3 = icmp eq i64 %native, 3
+  %b3 = select i1 %is3, i64 4, i64 %b2
+  %is4 = icmp eq i64 %native, 15
+  %b4 = select i1 %is4, i64 8, i64 %b3
+  %is5 = icmp eq i64 %native, 10
+  %b5 = select i1 %is5, i64 16, i64 %b4
+  %is6 = icmp eq i64 %native, 12
+  %b6 = select i1 %is6, i64 32, i64 %b5
+  %is7 = icmp eq i64 %native, 28
+  %b7 = select i1 %is7, i64 128, i64 %b6
+  %is8 = icmp eq i64 %native, 9
+  %b8 = select i1 %is8, i64 256, i64 %b7
+  ret i64 %b8
+}

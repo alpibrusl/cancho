@@ -109,6 +109,9 @@ pub fn answer[&s](st: &!s [int], ty: int, slots: int, out: int) -> [] int {
 // The builtin as the code treats it: a pipe is read, written, closed and made non-blocking as a connection is,
 // and a directory is closed as a file.
 pub fn canonical(number: int) -> [] int {
+    if number == 128 {
+        return 36;
+    }
     if number == 49 || number == 50 {
         return number - 10;
     }
@@ -161,6 +164,12 @@ pub fn extras[&s](st: &!s [int], which: int) -> [] int {
 
 // How many arguments the builtin numbered `which` (see `codes.net_code`; a pipe's number is made a connection's) takes.
 pub fn arity(which: int) -> [] int {
+    if which == 131 {
+        return 2;
+    }
+    if which == 129 || which == 130 || which == 132 || which == 133 || which == 134 {
+        return 3;
+    }
     if which >= 122 && which <= 125 || which == 127 {
         return 2;
     }
@@ -202,13 +211,16 @@ pub fn arity(which: int) -> [] int {
 
 // Does the first argument, a capability narrowed to a bound, give the bound the call checks?
 pub fn holds_bound(which: int) -> [] bool {
-    return which == 32 || which == 33 || which == 36 || which == 37 || which == 54 || which == 110 || which == 122;
+    return which == 32 || which == 33 || which == 36 || which == 37 || which == 54 || which == 110 || which == 122 || which == 129 || which == 130;
 }
 
 // How many numbers the function answers in its cell: 0 when it answers one whole number.
 pub fn slots(which: int) -> [] int {
-    if which == 119 || which == 122 {
+    if which == 119 || which == 122 || which == 129 || which == 130 || which == 133 {
         return 3;
+    }
+    if which == 131 || which == 132 {
+        return 4;
     }
     if which == 106 || which == 107 || which == 110 {
         return 3;
@@ -230,6 +242,15 @@ pub fn slots(which: int) -> [] int {
 
 // The prelude enum the answer is made into.
 pub fn enum_name(which: int) -> [] &static [byte] {
+    if which == 129 || which == 130 {
+        return "UdpOpened";
+    }
+    if which == 131 || which == 132 {
+        return "Datagram";
+    }
+    if which == 133 {
+        return "Sent";
+    }
     if which == 122 {
         return "TtyOpened";
     }
@@ -248,7 +269,10 @@ pub fn enum_name(which: int) -> [] &static [byte] {
     if which == 93 {
         return "Polling";
     }
-    if which == 103 || which == 104 {
+    if which == 104 {
+        return "UdpOpened";
+    }
+    if which == 103 {
         return "Attached";
     }
     if which == 54 || which == 55 {
@@ -289,6 +313,27 @@ pub fn enum_name(which: int) -> [] &static [byte] {
 
 // The function of `runtime/net.c` that does it.
 pub fn function(which: int) -> [] &static [byte] {
+    if which == 129 {
+        return "cancho_net_udp_connect";
+    }
+    if which == 130 {
+        return "cancho_net_udp_bind";
+    }
+    if which == 131 {
+        return "cancho_udp_recv";
+    }
+    if which == 132 {
+        return "cancho_udp_recv_from";
+    }
+    if which == 133 {
+        return "cancho_udp_send_to";
+    }
+    if which == 134 {
+        return "cancho_udp_peer";
+    }
+    if which == 135 {
+        return "cancho_udp_local_port";
+    }
     if which == 127 {
         return "cancho_child_kill";
     }
@@ -480,4 +525,35 @@ pub fn signal_bits[&s, &x](st: &!s [int], text: &x [byte], cap: int) -> [] int {
         at = at + 1;
     }
     return bits;
+}
+
+// The IPv4 address a string literal spells (`"127.0.0.1"`) as a whole number, or -1 if it is not one.
+pub fn ipv4[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] int {
+    let stop = ast.tend(st, tok) - 1;
+    var at = ast.tstart(st, tok) + 1;
+    var value = 0;
+    var parts = 0;
+    var octet = 0;
+    var digits = 0;
+    while at <= stop {
+        if at == stop || int_of(text[at]) == '.' {
+            if digits == 0 || octet > 255 {
+                return 0 - 1;
+            }
+            value = value * 256 + octet;
+            parts = parts + 1;
+            octet = 0;
+            digits = 0;
+        } else if int_of(text[at]) >= '0' && int_of(text[at]) <= '9' {
+            octet = octet * 10 + int_of(text[at]) - '0';
+            digits = digits + 1;
+        } else {
+            return 0 - 1;
+        }
+        at = at + 1;
+    }
+    if parts != 4 {
+        return 0 - 1;
+    }
+    return value;
 }

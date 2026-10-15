@@ -74,7 +74,8 @@ options:
     -o <output>     where to write the result (default: the first input's stem)
     --emit exe|obj  emit a linked executable (default) or a bare object file
     --std           make the standard library's source available
-    --compiler <exe>  (build) build with the compiler written in cancho, `examples/selfhost/compiler.cho` built once
+    --compiler <exe>  (build) build with the compiler written in cancho: `<exe>` is `examples/selfhost/compiler.cho` built once, or `auto` to have
+                      it built from this repository and cached; `CANCHO_COMPILER` names it for every build
     --output json   `check` and `authority` as data rather than prose
     --backend cranelift|llvm
                     which backend generates code (default: llvm, since #127).
@@ -448,6 +449,8 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
                 ..
             } = parse_args(&args[1..], true, true)?;
             let output = output.unwrap_or_else(|| default_output(&inputs[0], emit));
+            let compiler =
+                compiler.or_else(|| std::env::var_os("CANCHO_COMPILER").map(PathBuf::from));
             if let Some(compiler) = compiler {
                 selfhost_build::build(selfhost_build::Job {
                     compiler: &compiler,

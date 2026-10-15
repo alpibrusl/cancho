@@ -6,8 +6,10 @@
 //! laid end to end, one byte between them. `clang` turns the module into an object, and the link is the
 //! one every other build uses.
 
+use std::collections::BTreeSet;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use target_lexicon::{Architecture, OperatingSystem, Triple};
@@ -125,6 +127,113 @@ fn refusal(answer: &str, files: &[(String, String)]) -> Failure {
     ))
 }
 
+/// The files of `compiler.cho` and the modules of `examples/selfhost` it imports, in the order they are built.
+fn compiler_sources(dir: &Path) -> Result<Vec<PathBuf>, Failure> {
+    fn walk(
+        dir: &Path,
+        file: &Path,
+        seen: &mut BTreeSet<PathBuf>,
+        order: &mut Vec<PathBuf>,
+    ) -> Result<(), Failure> {
+        let text = std::fs::read_to_string(file)
+            .map_err(|e| environment(format!("cannot read `{}`: {e}", file.display())))?;
+        for names in text
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("import selfhost.")?.strip_suffix(';'))
+        {
+            let Some(name) = names.split_whitespace().next() else { continue };
+            let path = dir.join(format!("{name}.cho"));
+            if path.exists() && seen.insert(path.clone()) {
+                walk(dir, &path, seen, order)?;
+                order.push(path);
+            }
+        }
+        Ok(())
+    }
+    let root = dir.join("compiler.cho");
+    let (mut seen, mut order) = (BTreeSet::new(), Vec::new());
+    walk(dir, &root, &mut seen, &mut order)?;
+    order.push(root);
+    Ok(order)
+}
+
+/// `--compiler auto`: the compiler written in cancho, built from this repository's `examples/selfhost` by the Rust
+/// compiler the first time and kept in the cache by a hash of its sources (`$CANCHO_CACHE`, or `~/.cache/cancho`). A
+/// compiler installed without the repository next to it cannot build it: it says so.
+pub fn ensure_compiler() -> Result<PathBuf, Failure> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/selfhost");
+    if !dir.join("compiler.cho").exists() {
+        return Err(environment(
+            "`--compiler auto` builds the compiler in cancho from `examples/selfhost`, which is not next to this \
+             binary; build it once and name it with `--compiler <exe>`"
+                .to_owned(),
+        ));
+    }
+    let files = compiler_sources(&dir)?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    env!("CARGO_PKG_VERSION").hash(&mut hasher);
+    for file in &files {
+        std::fs::read(file)
+            .map_err(|e| environment(format!("cannot read `{}`: {e}", file.display())))?
+            .hash(&mut hasher);
+    }
+    let base = std::env::var_os("CANCHO_CACHE")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".cache/cancho")))
+        .ok_or_else(|| environment("no cache directory: set CANCHO_CACHE or HOME".to_owned()))?;
+    let cache = base.join(format!("selfhost-{:016x}", hasher.finish()));
+    let exe = cache.join("compiler");
+    if exe.exists() {
+        return Ok(exe);
+    }
+    std::fs::create_dir_all(&cache)
+        .map_err(|e| environment(format!("cannot create `{}`: {e}", cache.display())))?;
+    eprintln!("building the compiler in cancho (once) into {}", exe.display());
+    crate::build(
+        &files,
+        &exe,
+        Emit::Exe,
+        true,
+        crate::Codegen { backend: crate::Backend::Llvm, target: None },
+        &[],
+        &[],
+    )?;
+    Ok(exe)
+}
+
+/// A refusal of the compiler in cancho as a sentence. It gives the rule and the place; the sentence is the Rust front end's
+/// for the same files, which refuses the same program with the same rule (`SKIP`, the compiler having no code yet, is not a
+/// refusal of the program and stays as it is). If the Rust front end accepts what the compiler in cancho refused, the two
+/// disagree, and that is said.
+fn explained(
+    answer: &str,
+    files: &[(String, String)],
+    inputs: &[PathBuf],
+    with_std: bool,
+) -> Failure {
+    let short = refusal(answer, files);
+    if answer.split_whitespace().nth(1) == Some("SKIP") {
+        return short;
+    }
+    match crate::compile_to_ir(inputs, with_std) {
+        Err(rendered) => Failure {
+            message: format!(
+                "{}\n(the compiler in cancho refused it too, by the rule `{}`)",
+                rendered.message,
+                answer.split_whitespace().nth(1).unwrap_or("unknown")
+            ),
+            code: rendered.code,
+        },
+        Ok(_) => Failure {
+            message: format!(
+                "{}\nthe Rust compiler accepts this program: the two disagree, please report it",
+                short.message
+            ),
+            code: short.code,
+        },
+    }
+}
+
 /// What to build and how: the compiler, the program's files, and what `cancho build` was given.
 pub struct Job<'a> {
     pub compiler: &'a Path,
@@ -140,6 +249,13 @@ pub struct Job<'a> {
 /// Build the program of `job` (and the standard library, with `with_std`) with its compiler.
 pub fn build(job: Job<'_>) -> Result<(), Failure> {
     let Job { compiler, inputs, output, emit, with_std, target, link_libs, link_paths } = job;
+    let built;
+    let compiler = if compiler == Path::new("auto") {
+        built = ensure_compiler()?;
+        built.as_path()
+    } else {
+        compiler
+    };
     let line = target_line(target)?;
     let mut files: Vec<(String, String)> = Vec::new();
     for input in inputs {
@@ -172,7 +288,7 @@ pub fn build(job: Job<'_>) -> Result<(), Failure> {
     let _ = writer.join();
     let answer = String::from_utf8_lossy(&ended.stdout).into_owned();
     if answer.starts_with("ERR") {
-        return Err(refusal(&answer, &files));
+        return Err(explained(&answer, &files, inputs, with_std));
     }
     if !ended.status.success() || answer.is_empty() {
         return Err(environment(format!(

@@ -305,6 +305,7 @@ pub fn cmd_build(args: &[String]) -> Result<ExitCode, Failure> {
             other => return Err(usage(format!("unexpected `{other}`"))),
         }
     }
+    let compiler = compiler.or_else(|| std::env::var_os("CANCHO_COMPILER").map(PathBuf::from));
     let root = current_root()?;
     let project = load(&root)?;
     check_compiler(&project, ignore)?;

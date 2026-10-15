@@ -547,7 +547,7 @@ ok:
   ret i64 %word
 }
 
-; child_wait: the exit code (0 to 255), 256 and the signal number if it was killed, or minus the errno.
+; child_wait: the exit code (0 to 255), 256 and the signal's bit (0 for a signal that has none) if it was killed, or minus the errno.
 define i64 @cancho_wait(i64 %pid) {
 entry:
   %cell = alloca i32
@@ -576,7 +576,8 @@ code:
   ret i64 %cz
 sig:
   %sz = zext i32 %low to i64
-  %v = add i64 %sz, 256
+  %bit = call i64 @cancho_signal_bit(i64 %sz)
+  %v = add i64 %bit, 256
   ret i64 %v
 }
 
