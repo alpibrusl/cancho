@@ -1321,15 +1321,26 @@ pub fn arena_value[&s](st: &!s [int], arena: int, ty: int, known: bool, value: i
 pub fn heap_run[&s](st: &!s [int], element: int, ck: bool, cv: int, cr: int, fk: bool, fv: int, fr: int) -> [] int {
     let bytes = slice_bytes(st, element, ck, cv, cr);
     let p = start(st);
-    str(st, "call ptr @malloc(i64 ");
-    temp(st, bytes);
-    str(st, ")\n");
+    // A fill that is zero in the text is `calloc` and no loop: the memory is not touched, so a large run is not made
+    // resident (`docs/zeroed-slices.md`); a zero worked out when the program runs, and `-0.0`, are filled.
+    let zeroed = fk && fv == 0 && element >= 1 && element <= 5;
+    if zeroed {
+        str(st, "call ptr @calloc(i64 ");
+        temp(st, bytes);
+        str(st, ", i64 1)\n");
+    } else {
+        str(st, "call ptr @malloc(i64 ");
+        temp(st, bytes);
+        str(st, ")\n");
+    }
     let none = start(st);
     str(st, "icmp eq ptr ");
     temp(st, p);
     str(st, ", null\n");
     trap_if(st, none);
-    fill_run(st, p, element, ck, cv, cr, fk, fv, fr);
+    if !zeroed {
+        fill_run(st, p, element, ck, cv, cr, fk, fv, fr);
+    }
     return p;
 }
 

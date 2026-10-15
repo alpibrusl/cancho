@@ -129,7 +129,7 @@ fn shim[&s](st: &!s [int], entry_item: int) -> [] int {
 // itself are listed.
 fn runtime_declares[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] bool {
     let name = ast.get(st, item, 4);
-    if pass1.is_word(st, text, name, "putchar") || pass1.is_word(st, text, name, "malloc") || pass1.is_word(st, text, name, "free") || pass1.is_word(st, text, name, "memmove") || pass1.is_word(st, text, name, "memchr") || pass1.is_word(st, text, name, "getchar") || pass1.is_word(st, text, name, "write") {
+    if pass1.is_word(st, text, name, "putchar") || pass1.is_word(st, text, name, "malloc") || pass1.is_word(st, text, name, "calloc") || pass1.is_word(st, text, name, "free") || pass1.is_word(st, text, name, "memmove") || pass1.is_word(st, text, name, "memchr") || pass1.is_word(st, text, name, "getchar") || pass1.is_word(st, text, name, "write") {
         return true;
     }
     return preamble_declares(st, text, name, runtime.text()) || st[55] & 1 != 0 && preamble_declares(st, text, name, runtime.net_text(st[61] == 1)) || st[55] & 2 != 0 && preamble_declares(st, text, name, runtime.dirs_text(st[61] == 1));
@@ -301,7 +301,7 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
     emit.str(st, "declare void @llvm.trap()\n");
     emit.str(st, "declare i32 @putchar(i32)\n");
-    emit.str(st, "declare ptr @malloc(i64)\ndeclare void @free(ptr)\n");
+    emit.str(st, "declare ptr @malloc(i64)\ndeclare ptr @calloc(i64, i64)\ndeclare void @free(ptr)\n");
     emit.str(st, "declare ptr @memmove(ptr, ptr, i64)\ndeclare ptr @memchr(ptr, i32, i64)\n");
     emit.str(st, "declare i32 @pthread_create(ptr, ptr, ptr, ptr)\ndeclare i32 @pthread_join(ptr, ptr)\n");
     emit.str(st, "declare double @llvm.sqrt.f64(double)\ndeclare float @llvm.sqrt.f32(float)\n");
