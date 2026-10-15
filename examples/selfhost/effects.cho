@@ -170,8 +170,10 @@ pub fn union[&s](st: &!s [int], a: int, b: int) -> [] int {
 
 // The row is exact: what the body performed against what `fn_item` declares. The first
 // disagreement is a refusal at the function, `effect-not-declared` when the body does more than the
-// row says and `effect-declared-not-performed` when the row says more.
-pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to: int, authority: int) -> [] int {
+// row says and `effect-declared-not-performed` when the row says more. `both` is false while code is
+// written: not every builtin records what it performs there yet, so a row that says more may be right,
+// and only the refusal that cannot be wrong is made.
+pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to: int, authority: int, both: bool) -> [] int {
     let declared = row_mask(st, text, fn_item);
     // A function that owns a capability needs no label for what the capability allows (section 8.2
     // of the same document): what the parameters discharge is not performed as far as the row goes.
@@ -184,6 +186,9 @@ pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to
         m = m + 1;
     }
     if has(st, declared, 60) {
+        if !both {
+            return 0;
+        }
         // A label with an argument is a different label from the plain one a builtin performs, and
         // from every other: nothing performed can be compared with it yet.
         if performed != 0 {
@@ -200,6 +205,9 @@ pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to
             return 0;
         }
         n = n + 1;
+    }
+    if !both {
+        return 0;
     }
     n = 0;
     while n < builtins.effect_count() {
