@@ -1092,6 +1092,17 @@ fn the_two_backends_agree_on_a_function_value_as_an_operand() {
     );
 }
 
+/// A variant's float payload that the value built does not use is zero, and a float's zero is not an integer
+/// constant: LLVM was given `double 0`, Cranelift an `iconst` of a float type.
+#[test]
+fn the_two_backends_agree_on_the_float_payload_a_variant_does_not_use() {
+    assert_backends_agree(
+        "backends-enum-float-payload",
+        "tests/accept/enum_float_payload.cho",
+        "10\n",
+    );
+}
+
 /// `docs/threads.md` §2/§5 step 2: `spawn`/`join`, the single-leaf slice,
 /// checked on both backends. Cranelift passes `body`'s address and the
 /// payload straight to a `pthread_create` it declares on demand
@@ -1128,10 +1139,13 @@ fn the_two_backends_agree_on_spawn_thread_ids() {
 /// rather than merely suggestive -- four *simultaneous* sleeps are only
 /// possible with genuine OS-level parallelism, not with `spawn`
 /// secretly running `body` on the calling thread before returning a
-/// handle. A sequential implementation would take about four times a
-/// single sleep; this asserts comfortably under twice one sleep,
-/// leaving generous headroom for process startup and scheduler jitter
-/// on a loaded CI host.
+/// handle. A sequential implementation cannot finish in less than four
+/// sleeps (800 ms), however fast the host is; a concurrent one takes about
+/// one (200 ms) plus whatever the host's load adds. So the test runs the
+/// program up to three times and asks that the quickest run be under 700 ms:
+/// a bound a sequential build can never meet, and one a loaded host (a
+/// load average of 14 made single runs take 435 and 530 ms against the
+/// 400 ms this used to ask) has room for.
 #[test]
 fn spawn_and_join_run_concurrently_not_sequentially() {
     use std::time::{Duration, Instant};
@@ -1157,21 +1171,28 @@ fn spawn_and_join_run_concurrently_not_sequentially() {
             String::from_utf8_lossy(&build.stderr)
         );
 
-        let start = Instant::now();
-        let run = Command::new(&exe).output().expect("the program runs");
-        let elapsed = start.elapsed();
+        let mut elapsed = Duration::MAX;
+        for _ in 0..3 {
+            let start = Instant::now();
+            let ended = Command::new(&exe).output().expect("the program runs");
+            let took = start.elapsed();
+            assert_eq!(
+                ended.status.code(),
+                Some(0),
+                "`--backend {backend}` should exit 0, but said:\n{}",
+                String::from_utf8_lossy(&ended.stderr)
+            );
+            elapsed = elapsed.min(took);
+            if elapsed < Duration::from_millis(400) {
+                break;
+            }
+        }
         let _ = std::fs::remove_dir_all(&dir);
 
-        assert_eq!(
-            run.status.code(),
-            Some(0),
-            "`--backend {backend}` should exit 0, but said:\n{}",
-            String::from_utf8_lossy(&run.stderr)
-        );
         assert!(
-            elapsed < Duration::from_millis(400),
-            "`--backend {backend}`: four 200ms sleeps took {elapsed:?} -- that looks \
-             sequential, not concurrent"
+            elapsed < Duration::from_millis(700),
+            "`--backend {backend}`: four 200ms sleeps took {elapsed:?} at best -- a sequential \
+             build needs 800 ms, so this looks sequential"
         );
     }
 }

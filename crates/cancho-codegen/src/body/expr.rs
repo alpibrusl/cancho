@@ -285,7 +285,12 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let mut out = Vec::with_capacity(total as usize);
                 out.push(self.builder.ins().iconst(types::I64, i64::from(*variant)));
                 for index in 1..total {
-                    out.push(self.builder.ins().iconst(all[index as usize], 0));
+                    // A float leaf has no `iconst`: its zero is `f64const`/`f32const`.
+                    out.push(match all[index as usize] {
+                        types::F64 => self.builder.ins().f64const(0.0),
+                        types::F32 => self.builder.ins().f32const(0.0),
+                        other => self.builder.ins().iconst(other, 0),
+                    });
                 }
                 let mut at = offset as usize;
                 for (values, width) in payload.into_iter().zip(widths) {
