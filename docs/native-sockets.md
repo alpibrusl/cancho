@@ -526,9 +526,9 @@ its answer, since a status of 0 alone cannot tell a call that set the option fro
 
 ## 12. `tcp_listen_on`: listening on one address (#498)
 
-> **Status: design, written before the code.** Every number in §12.7 is
-> filled in by the gates in §12.6, and a claim below that a gate shows to
-> be false is corrected in place.
+> **Status: built (edition 9).** §12.1-§12.6 were written before the code;
+> §12.7 records what the gates measured. A claim a gate showed false is
+> corrected in place.
 
 ### 12.1 What is wrong
 
@@ -685,7 +685,37 @@ existing programs do not move (checked in §12.7).
 
 ### 12.7 Measured
 
-*(Filled in when the gates ran.)*
+Measured on macOS (darwin-aarch64), where the machine's other IPv4 address
+was its LAN address; the Linux half of CI runs the same tests.
+
+* **Reachability (§12.6 gate 1), both backends.** A `tcp_listen_on(.., "127.0.0.1", ..)`
+  listener answered 127.0.0.1 and was **refused (`ConnectionRefused`)** on the
+  LAN address; `"0.0.0.0"` and the old `tcp_listen` answered both. A bare-port
+  bound with the loopback literal also bound loopback only. The non-loopback
+  half was run, not skipped, here; on a machine with no such address the test
+  prints `SKIPPED` and checks loopback only.
+* **Tests added:** 12 conformance tests (`listen_host.rs`, each on both backends
+  where it opens a socket), 7 unit tests (`cancho-ir/src/tests/listen.rs`,
+  including 3,000+ generated dotted quads checked against `std::net::Ipv4Addr`),
+  5 `tests/reject` fixtures (all under `listen-host`, plus the edition gate).
+  The 16-row narrowing table (`the_bound_decides_which_calls_are_allowed`) is the
+  statement of §12.3.
+* **Mutants, 15, all killed** (each run against the unit and conformance tests):
+  host check always true; host compared as a prefix; wildcard covering nothing;
+  each backend ignoring the address (everywhere when loopback is asked); each
+  backend's old form binding loopback; each backend's byte order; the row
+  dropping the host; the row naming `0.0.0.0`; the old form allowed on a host
+  bound; the port check dropped; the parser accepting a leading zero and 256.
+  **Corrected in place:** the first run reported the dropped port check as
+  surviving, because the test waited on a server that never exits and the run
+  killed it; the test now has a deadline and fails if the program is still
+  listening.
+* **Differential / existing gates.** `cargo test --workspace` including the
+  rule-fixture, file-budget (`files.rs`), fuzz and self-hosting table tests.
+  Adding the builtin moved three generated self-hosting tables and the WASI
+  refused-set count (69 to 70, `wasm.md`); the variant is appended to
+  `Builtin::ALL` so no existing position moved.
+
 
 ### 12.8 Not done
 

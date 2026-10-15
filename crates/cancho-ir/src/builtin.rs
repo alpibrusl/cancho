@@ -973,7 +973,6 @@ impl Builtin {
         Builtin::Listen,
         Builtin::Accept,
         Builtin::TcpListen,
-        Builtin::TcpListenOn,
         Builtin::TcpConnect,
         Builtin::TcpConnectStart,
         Builtin::TcpAccept,
@@ -1053,6 +1052,9 @@ impl Builtin {
         Builtin::Spawn,
         Builtin::Join,
         Builtin::Trap,
+        // Last, so the positions the self-hosted tables index by do not move
+        // (`docs/self-hosting.md`).
+        Builtin::TcpListenOn,
     ];
 
     pub fn name(self) -> &'static str {

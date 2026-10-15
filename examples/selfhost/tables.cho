@@ -551,15 +551,15 @@ pub fn prelude_bound(i: int) -> [] int {
 }
 
 pub fn builtin_count() -> [] int {
-    return 161;
+    return 162;
 }
 
 fn builtin_chars() -> [] &static [byte] {
-    return "putcharwrite_byteswrite_errflush_outgetcharread_bytessplitreleasenarrowfork_heapfork_clockcopy_withincopy_intoindex_of_byteload_le64byte_mask64trailing_zerosleading_zerospopcountwrapping_addwrapping_subwrapping_mulvalue_barrierhw_aes_gcmaes_encrypt_blockaes_ctr32ghash_powersghash_updatemul_wideadd_carrysub_borrowgcm_taggcm_tag_diffhw_sha256sha256_blockssha256_block_wordslenbyte_ofint_offloat_oftruncateis_nansqrtbits_offloat_of_bitsf32_offloat_of32bits_of32f32_of_bitssqrt32f32_of_intint_of_f32fs_readfs_writeopen_readfile_readfile_closeopen_appendopen_writeopen_newopen_rwfile_writefile_pwritefile_preadfile_syncfile_truncatefile_sizefs_renamefs_removefile_lockboxunboxcontentsarg_countargbox_sliceunbox_sliceconnectbindlistenaccepttcp_listentcp_connecttcp_connect_starttcp_acceptpoller_newpoller_add_listenerpoller_add_connpoller_modifypoller_removepoller_waitpoller_closeclock_msclock_unix_msconn_detachconn_attachconn_readconn_writeconn_nonblockingconn_nodelayconn_peerconn_connect_statuslistener_nonblockingconn_closelistener_closeudp_connectudp_bindudp_recv_fromudp_send_toudp_recvudp_sendudp_local_portudp_peerudp_nonblockingudp_closeudp_detachudp_attachpoller_add_udptty_opentty_configuretty_readtty_writetty_flush_inputtty_closepoller_add_ttysignals_watchsignals_pendingpoller_add_signalssignals_closeopen_dirdir_enterdir_open_readdir_closedir_open_newdir_open_appenddir_renamedir_rename_newdir_removedir_syncdir_listdir_nextdir_list_closedir_statdir_modedir_own_modepipe_openexec_spawnexec_spawn_inchild_waitchild_killpipe_readpipe_writepipe_nonblockingpipe_closechild_end_closepoller_add_pipepoller_add_childnull_ptrspawnjointrap";
+    return "putcharwrite_byteswrite_errflush_outgetcharread_bytessplitreleasenarrowfork_heapfork_clockcopy_withincopy_intoindex_of_byteload_le64byte_mask64trailing_zerosleading_zerospopcountwrapping_addwrapping_subwrapping_mulvalue_barrierhw_aes_gcmaes_encrypt_blockaes_ctr32ghash_powersghash_updatemul_wideadd_carrysub_borrowgcm_taggcm_tag_diffhw_sha256sha256_blockssha256_block_wordslenbyte_ofint_offloat_oftruncateis_nansqrtbits_offloat_of_bitsf32_offloat_of32bits_of32f32_of_bitssqrt32f32_of_intint_of_f32fs_readfs_writeopen_readfile_readfile_closeopen_appendopen_writeopen_newopen_rwfile_writefile_pwritefile_preadfile_syncfile_truncatefile_sizefs_renamefs_removefile_lockboxunboxcontentsarg_countargbox_sliceunbox_sliceconnectbindlistenaccepttcp_listentcp_connecttcp_connect_starttcp_acceptpoller_newpoller_add_listenerpoller_add_connpoller_modifypoller_removepoller_waitpoller_closeclock_msclock_unix_msconn_detachconn_attachconn_readconn_writeconn_nonblockingconn_nodelayconn_peerconn_connect_statuslistener_nonblockingconn_closelistener_closeudp_connectudp_bindudp_recv_fromudp_send_toudp_recvudp_sendudp_local_portudp_peerudp_nonblockingudp_closeudp_detachudp_attachpoller_add_udptty_opentty_configuretty_readtty_writetty_flush_inputtty_closepoller_add_ttysignals_watchsignals_pendingpoller_add_signalssignals_closeopen_dirdir_enterdir_open_readdir_closedir_open_newdir_open_appenddir_renamedir_rename_newdir_removedir_syncdir_listdir_nextdir_list_closedir_statdir_modedir_own_modepipe_openexec_spawnexec_spawn_inchild_waitchild_killpipe_readpipe_writepipe_nonblockingpipe_closechild_end_closepoller_add_pipepoller_add_childnull_ptrspawnjointraptcp_listen_on";
 }
 
 static builtin_starts: [int] {
-    let t = alloc_slice[static](161, 0);
+    let t = alloc_slice[static](162, 0);
     t[1] = 7;
     t[2] = 18;
     t[3] = 27;
@@ -720,11 +720,12 @@ static builtin_starts: [int] {
     t[158] = 1630;
     t[159] = 1635;
     t[160] = 1639;
+    t[161] = 1643;
     return t;
 }
 
 static builtin_lens: [int] {
-    let t = alloc_slice[static](161, 0);
+    let t = alloc_slice[static](162, 0);
     t[0] = 7;
     t[1] = 11;
     t[2] = 9;
@@ -886,11 +887,12 @@ static builtin_lens: [int] {
     t[158] = 5;
     t[159] = 4;
     t[160] = 4;
+    t[161] = 13;
     return t;
 }
 
 static builtin_sinces: [int] {
-    let t = alloc_slice[static](161, 0);
+    let t = alloc_slice[static](162, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -1052,6 +1054,7 @@ static builtin_sinces: [int] {
     t[158] = 4;
     t[159] = 4;
     t[160] = 1;
+    t[161] = 9;
     return t;
 }
 
