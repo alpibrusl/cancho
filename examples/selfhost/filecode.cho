@@ -241,17 +241,29 @@ pub fn spawn_process[&s](st: &!s [int]) -> [] int {
 // `Spawned`), 1 a read (`Data(v)` for more than 0, `End` at 0, else `Failed`), 2 an exit status (`Code(v)` below
 // 256, `Signaled(v - 256)`, else `Failed`).
 pub fn answer_enum[&s](st: &!s [int], ty: int, kind: int, v: int) -> [] int {
-    let negative = emit.start(st);
+    var negative = emit.start(st);
     emit.str(st, "icmp slt i64 ");
     emit.temp(st, v);
     emit.str(st, ", 0\n");
+    if kind == 3 {
+        // A spawn: a refusal is minus the errno (all ones in the high half); a child whose `pidfd` was refused is a
+        // word with the negated errno in the high half, which is a child all the same.
+        let high = emit.start(st);
+        emit.str(st, "ashr i64 ");
+        emit.temp(st, v);
+        emit.str(st, ", 32\n");
+        negative = emit.start(st);
+        emit.str(st, "icmp eq i64 ");
+        emit.temp(st, high);
+        emit.str(st, ", -1\n");
+    }
     let flipped = emit.start(st);
     emit.str(st, "sub i64 0, ");
     emit.temp(st, v);
     emit.str(st, "\n");
     var tag = 0;
     var third = 0 - 1;
-    if kind == 0 {
+    if kind == 0 || kind == 3 {
         tag = emit.start(st);
         emit.str(st, "select i1 ");
         emit.temp(st, negative);
