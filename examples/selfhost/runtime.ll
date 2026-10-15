@@ -565,6 +565,7 @@ fail:
   %neg = sub i64 0, %e
   ret i64 %neg
 done:
+  call void @cancho_child_release(i64 %pid)
   %status = load i32, ptr %cell
   %low = and i32 %status, 127
   %exited = icmp eq i32 %low, 0

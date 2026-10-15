@@ -1057,12 +1057,13 @@ pub fn ret[&s](st: &!s [int], ty: int, known: bool, value: int, reg: int) -> [] 
 
 // -------------------------------------------------------------------------- arenas ---
 //
-// A `region a { .. }` is a cell `%ar<n>` (the number of its block) holding the head of a list of the
-// allocations made in it; each is a `malloc` with a header that links to the one before, and the end
-// of the block frees them all. Both are the two helpers the driver writes, `@cancho_arena_alloc`
-// and `@cancho_arena_free`. A `return` inside the block gives the chunk back first (`body.cho`).
+// A `region a { .. }` is a cell `%ar<n>` holding a chunk of 64 KiB that the thread's stack of chunks gave
+// (`@cancho_region_take`; `runtime/region_*.ll` is what the Rust backend writes for it): the first 8 bytes say how
+// much is used, and `@cancho_arena_alloc` (the driver writes it) bumps that and traps past the chunk. The end of
+// the block, and a `return` inside it, give the chunk back (`@cancho_region_give`), which clears what was used.
 
 pub fn arena_open[&s](st: &!s [int], id: int) -> [] int {
+    st[55] = st[55] | 32;
     let keep = st[49];
     st[49] = 2;
     str(st, "  %ar");
@@ -1070,7 +1071,15 @@ pub fn arena_open[&s](st: &!s [int], id: int) -> [] int {
     str(st, " = alloca ptr\n");
     st[49] = keep;
     let chunk = start(st);
-    str(st, "call ptr @cancho_arena_new()\n  store ptr ");
+    str(st, "call ptr @cancho_region_take()\n");
+    let none = start(st);
+    str(st, "icmp eq ptr ");
+    temp(st, chunk);
+    str(st, ", null\n");
+    trap_if(st, none);
+    str(st, "  store i64 0, ptr ");
+    temp(st, chunk);
+    str(st, "\n  store ptr ");
     temp(st, chunk);
     str(st, ", ptr %ar");
     nat(st, id);
@@ -1079,11 +1088,27 @@ pub fn arena_open[&s](st: &!s [int], id: int) -> [] int {
 }
 
 pub fn arena_close[&s](st: &!s [int], id: int) -> [] int {
-    let head = start(st);
+    let chunk = start(st);
     str(st, "load ptr, ptr %ar");
     nat(st, id);
-    str(st, "\n  call void @cancho_arena_free(ptr ");
-    temp(st, head);
+    str(st, "\n");
+    let used = start(st);
+    str(st, "load i64, ptr ");
+    temp(st, chunk);
+    str(st, "\n");
+    let upto = start(st);
+    str(st, "add i64 ");
+    temp(st, used);
+    str(st, ", 16\n");
+    let end = start(st);
+    str(st, "getelementptr i8, ptr ");
+    temp(st, chunk);
+    str(st, ", i64 ");
+    temp(st, upto);
+    str(st, "\n  call void @cancho_region_give(ptr ");
+    temp(st, chunk);
+    str(st, ", ptr ");
+    temp(st, end);
     str(st, ")\n");
     return 0;
 }
@@ -1296,15 +1321,26 @@ pub fn arena_value[&s](st: &!s [int], arena: int, ty: int, known: bool, value: i
 pub fn heap_run[&s](st: &!s [int], element: int, ck: bool, cv: int, cr: int, fk: bool, fv: int, fr: int) -> [] int {
     let bytes = slice_bytes(st, element, ck, cv, cr);
     let p = start(st);
-    str(st, "call ptr @malloc(i64 ");
-    temp(st, bytes);
-    str(st, ")\n");
+    // A fill that is zero in the text is `calloc` and no loop: the memory is not touched, so a large run is not made
+    // resident (`docs/zeroed-slices.md`); a zero worked out when the program runs, and `-0.0`, are filled.
+    let zeroed = fk && fv == 0 && element >= 1 && element <= 5;
+    if zeroed {
+        str(st, "call ptr @calloc(i64 ");
+        temp(st, bytes);
+        str(st, ", i64 1)\n");
+    } else {
+        str(st, "call ptr @malloc(i64 ");
+        temp(st, bytes);
+        str(st, ")\n");
+    }
     let none = start(st);
     str(st, "icmp eq ptr ");
     temp(st, p);
     str(st, ", null\n");
     trap_if(st, none);
-    fill_run(st, p, element, ck, cv, cr, fk, fv, fr);
+    if !zeroed {
+        fill_run(st, p, element, ck, cv, cr, fk, fv, fr);
+    }
     return p;
 }
 

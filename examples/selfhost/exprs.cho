@@ -483,7 +483,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
     }
     let v = filecode.spawn_process(st);
     let spawned = types.make_prelude(st, tables.prelude_spawned());
-    return ex.in_reg(spawned, filecode.answer_enum(st, spawned, 0, v));
+    return ex.in_reg(spawned, filecode.answer_enum(st, spawned, 3, v));
 }
 
 // `box_slice(heap, count, fill)` (1), `unbox_slice(heap, box)` (2) and `contents(box_ref)` (3), of

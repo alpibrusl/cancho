@@ -80,3 +80,9 @@ entry:
   %b8 = select i1 %is8, i64 256, i64 %b7
   ret i64 %b8
 }
+
+; Once a child is reaped, its pidfd (the high half of its word) has done its work.
+define void @cancho_child_release(i64 %word) {
+entry:
+  ret void
+}
