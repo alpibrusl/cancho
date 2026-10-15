@@ -1,35 +1,83 @@
-# The v0 compiler
+# Bootstrap and self-hosting
+
+cancho's compiler started in Rust, because Cranelift is a Rust library and the first
+milestone had to prove a code generator. It is now being written in cancho, stage by
+stage, with the Rust compiler as the check each stage is held to. This page says where
+that stands (2026-10-15) and how to use it; [`self-hosting.md`](self-hosting.md) has the
+stage-by-stage record and the measurements, and the plan to finish is epic
+[#491](https://github.com/alpibrusl/cancho/issues/491).
+
+## Where it stands
+
+- **The compiler in cancho** is `examples/selfhost/`: about 21,000 lines of cancho. It reads
+  a program and writes LLVM IR; `clang` finishes the build.
+- **It compiles itself to a fixed point**, on three systems: built on macOS, on Linux x86-64
+  and on Linux aarch64 (a Raspberry Pi 5), it writes byte-identical IR for its own source
+  (7,510,798 bytes, the same SHA-256 on all three).
+- **It builds real programs.** With every plain `cancho build` of the test suite going
+  through it, 695 of 702 conformance tests pass on macOS aarch64 and 700 of 709 on Linux
+  x86-64; the rest are differences from the Rust compiler, not missing features (the object
+  bytes it writes, the layout of a struct of bytes, tests of the Rust backends themselves).
+  The projects `cancho-cache`, `cancho-oci`, `cancho-robot`, `cancho-gpu` and `cancho-hooks`
+  build with it, and the webhook service built with it passes the tests that the Rust-built
+  one passes.
+- **Only `build` goes through it.** `check`, `authority`, `ids`, `fmt`, `vcs`, `test` and the
+  wasm and Cranelift backends are still the Rust compiler's, and the sentence of a refusal
+  still comes from the Rust front end (the compiler in cancho answers a rule and a place).
+  Windows is not a target of either compiler.
+
+## Using it
+
+```sh
+# build the compiler in cancho once (with the Rust compiler), cache it, and use it:
+cancho build --compiler auto program.cho --std -o program
+
+# or name it for every build:
+CANCHO_COMPILER=auto cancho build program.cho --std -o program
+
+# or build it yourself and point at it:
+cancho build examples/selfhost/compiler.cho <its modules> --std -o selfhost-compiler
+cancho build --compiler ./selfhost-compiler program.cho --std -o program
+```
+
+The first `--compiler auto` takes a few seconds (it builds the compiler); the cache is keyed
+by a hash of the compiler's sources (`$CANCHO_CACHE`, or `~/.cache/cancho`). A refusal prints
+the Rust front end's sentence for the same files, with the rule the compiler in cancho
+refused it by; if the Rust front end accepts what it refused, the message says the two
+disagree. A construct it has no code for yet is a refusal that says so, at that construct.
+
+## What is left
+
+Tracked in [#491](https://github.com/alpibrusl/cancho/issues/491): the default, and a seed
+binary for people with no Rust; the same checks in CI on Linux; diagnostics that do not need
+the Rust front end; the other commands; the runtime text that is still generated from the
+Rust crates; keeping golden outputs for when the Rust compiler is gone; compile time and
+code quality, measured; and whether Windows is a target.
+
+# History: the v0 compiler
 
 Decisions M0 had to settle to exist, recorded here so they are not re-litigated
 by accident. Each was an open question in [#1](https://github.com/alpibrusl/cancho/issues/1).
 
-## Bootstrap host language: Rust
+
+### Bootstrap host language: Rust
 
 The v0 compiler is written in Rust. The alternative was hosting it in current
 Lex.
 
 Rust wins for one reason that outweighs the rest: **Cranelift is a Rust
 library.** Hosting in Lex means reaching a code generator through FFI on day
-one, which is the part of the pipeline M0 exists to prove. Rust also gives the
-bootstrap compiler the same build and test story as `lex-os`, so nobody has to
-learn a second one.
+one, which is the part of the pipeline M0 exists to prove. 
 
-This is a bootstrap decision, not a permanent one. Self-hosting was *a spike
-before it is a plan* (#1), and the spike has run: [`self-hosting.md`](self-hosting.md).
-The cheap experiment — porting `lex-ast`'s canonical forms and checking
-byte-identical `SigId`/`StageId` — came back clean (168/168, on the real corpus
-this sandbox has), and nothing structural blocks it, this Cranelift dependency
-included (`self-hosting.md` §4 names the way around it). The decision for now
-is **not yet**, for scale and lack of an asker, not for any reason this
-compiler's design would need to change. Nothing in this compiler's design
-assumes it stays in Rust.
+This was a bootstrap decision, not a permanent one: the compiler is now being written in
+cancho itself (above), and the Rust one is the check it is held to.
 
-## File extension: `.cho`
+### File extension: `.cho`
 
 `.cho` over `.lxs`. Shorter, and the collision risk (LiveScript) is not one this
 ecosystem will meet in practice. `cancho build hello.cho`.
 
-## Layout
+### Layout of the Rust compiler
 
 ```
 crates/cancho-syntax    lexer, canonical-shaped AST, parser
@@ -45,7 +93,7 @@ Everything the compiler can refuse, it refuses in `cancho-ir`. The backend
 takes IR that has already been proven well-formed, so Cranelift lowering has no
 error path for a *program* — only for the environment.
 
-## The M0 surface
+### The M0 surface
 
 > Historical: this is what M0 shipped. M1 adds `bool`, `&&`, `||` and `!`, and
 > the rules below are unchanged by it.
@@ -65,7 +113,7 @@ Rules M0 already enforces, because they were cheaper to write than to retrofit:
 - Functions are not values. M0 has no closures and no function pointers, so a
   bare function name is an error rather than a mystery.
 
-## Things that are scaffolding, and what replaces them
+### Things that are scaffolding, and what replaces them
 
 | Scaffold | Why it exists | Replaced by |
 |---|---|---|
@@ -84,7 +132,7 @@ on `int::MIN / -1`. A trap is defined behaviour; C's answer here is not, and
 that difference is the whole point (#1). `tests/` has a fixture that runs the
 trap and asserts the process dies rather than continuing with nonsense.
 
-## What the AST already does for canonicalisation
+### What the AST already does for canonicalisation
 
 Nothing hashes the AST yet — per-unit identity is M3 work and
 `docs/canonical-ast.md` is unwritten. But an AST retrofitted for hashing is an
@@ -101,7 +149,7 @@ AST whose hashes are already wrong, so the shape is settled now:
 - Every list is a `Vec` in source order. No set, no map, no iteration order
   that depends on an address or a hash seed reaches any output.
 
-## Exit codes
+### Exit codes
 
 | code | meaning |
 |---|---|
