@@ -260,6 +260,9 @@ pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     if lc.spells(text, from, to, "tty_close") {
         return 44;
     }
+    if lc.spells(text, from, to, "child_kill") {
+        return 127;
+    }
     if lc.spells(text, from, to, "signals_watch") {
         return 119;
     }

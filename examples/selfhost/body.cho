@@ -673,11 +673,19 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     }
     if ast.is_kind(st, id, kinds.NK::SAssign) {
         let value = ast.get(st, id, 5);
+        let place = ast.get(st, id, 4);
+        if emit.on(st) && ast.is_kind(st, value, kinds.NK::EVariant) && ast.is_kind(st, place, kinds.NK::EName) {
+            // `x = Option::None;`: the literal is of the type `x` has.
+            let target = scope.find(st, text, ast.get(st, place, 4));
+            if target >= 0 {
+                types.set_hint(st, scope.binding_type(st, target));
+            }
+        }
         let found = exprs.expr(st, text, value);
+        types.set_hint(st, 0);
         if !ast.ok(st) {
             return 0;
         }
-        let place = ast.get(st, id, 4);
         if ast.is_kind(st, place, kinds.NK::EUnary) && ast.get(st, place, 4) == 3 {
             // `*r = v`: through a unique reference to a scalar.
             let operand = ast.get(st, place, 5);

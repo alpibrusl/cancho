@@ -1450,11 +1450,12 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
     }
     if netcode.needs_dirs(which) {
         st[55] = st[55] | 2;
-    } else if which >= 122 {
+    } else if which >= 122 && which <= 126 {
         st[55] = st[55] | 16;
-    } else if which >= 119 {
+    } else if which >= 119 && which <= 121 {
         st[55] = st[55] | 8;
-    } else if which != 44 {
+    } else if which != 44 && which != 127 {
+        // (`child_kill`, 127, is in the runtime every module has.)
         st[55] = st[55] | 1;
     }
     let holds_bound = netcode.holds_bound(which);
