@@ -109,6 +109,10 @@ fn init_calls[&s](st: &!s [int]) -> [] int {
 fn shim[&s](st: &!s [int], entry_item: int) -> [] int {
     emit.str(st, "define i32 @main(i32 %argc, ptr %argv) {\nentry:\n");
     emit.str(st, "  %count = sext i32 %argc to i64\n  store i64 %count, ptr @cancho_argc\n  store ptr %argv, ptr @cancho_argv\n");
+    if st[55] & 32 != 0 {
+        // The key of the stack of chunks a thread keeps for its regions.
+        emit.str(st, "  call void @cancho_region_init()\n");
+    }
     init_calls(st);
     emit.str(st, "  %r = call i64 @lexs_");
     emit.nat(st, entry_item);
@@ -125,7 +129,7 @@ fn shim[&s](st: &!s [int], entry_item: int) -> [] int {
 // itself are listed.
 fn runtime_declares[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] bool {
     let name = ast.get(st, item, 4);
-    if pass1.is_word(st, text, name, "putchar") || pass1.is_word(st, text, name, "malloc") || pass1.is_word(st, text, name, "free") || pass1.is_word(st, text, name, "memmove") || pass1.is_word(st, text, name, "memchr") || pass1.is_word(st, text, name, "getchar") || pass1.is_word(st, text, name, "write") {
+    if pass1.is_word(st, text, name, "putchar") || pass1.is_word(st, text, name, "malloc") || pass1.is_word(st, text, name, "calloc") || pass1.is_word(st, text, name, "free") || pass1.is_word(st, text, name, "memmove") || pass1.is_word(st, text, name, "memchr") || pass1.is_word(st, text, name, "getchar") || pass1.is_word(st, text, name, "write") {
         return true;
     }
     return preamble_declares(st, text, name, runtime.text()) || st[55] & 1 != 0 && preamble_declares(st, text, name, runtime.net_text(st[61] == 1)) || st[55] & 2 != 0 && preamble_declares(st, text, name, runtime.dirs_text(st[61] == 1));
@@ -297,7 +301,7 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
     emit.str(st, "declare void @llvm.trap()\n");
     emit.str(st, "declare i32 @putchar(i32)\n");
-    emit.str(st, "declare ptr @malloc(i64)\ndeclare void @free(ptr)\n");
+    emit.str(st, "declare ptr @malloc(i64)\ndeclare ptr @calloc(i64, i64)\ndeclare void @free(ptr)\n");
     emit.str(st, "declare ptr @memmove(ptr, ptr, i64)\ndeclare ptr @memchr(ptr, i32, i64)\n");
     emit.str(st, "declare i32 @pthread_create(ptr, ptr, ptr, ptr)\ndeclare i32 @pthread_join(ptr, ptr)\n");
     emit.str(st, "declare double @llvm.sqrt.f64(double)\ndeclare float @llvm.sqrt.f32(float)\n");
@@ -308,11 +312,14 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "  %i = phi i64 [ 0, %entry ], [ %next, %body ]\n  %more = icmp slt i64 %i, %n\n  br i1 %more, label %body, label %done\n");
     emit.str(st, "body:\n  %addr = getelementptr i8, ptr %p, i64 %i\n  %b = load i8, ptr %addr\n  %c = zext i8 %b to i32\n");
     emit.str(st, "  %r = call i32 @putchar(i32 %c)\n  %next = add i64 %i, 1\n  br label %head\ndone:\n  ret i64 %n\n}\n\n");
-    emit.str(st, "define ptr @cancho_arena_alloc(ptr %head, i64 %bytes) {\nentry:\n  %size = add i64 %bytes, 16\n  %node = call ptr @malloc(i64 %size)\n");
-    emit.str(st, "  %none = icmp eq ptr %node, null\n  br i1 %none, label %fail, label %ok\nfail:\n  call void @llvm.trap()\n  unreachable\nok:\n");
-    emit.str(st, "  %old = load ptr, ptr %head\n  store ptr %old, ptr %node\n  store ptr %node, ptr %head\n  %data = getelementptr i8, ptr %node, i64 16\n  ret ptr %data\n}\n\n");
-    emit.str(st, "define void @cancho_arena_free(ptr %first) {\nentry:\n  br label %loop\nloop:\n  %node = phi ptr [ %first, %entry ], [ %next, %body ]\n");
-    emit.str(st, "  %done = icmp eq ptr %node, null\n  br i1 %done, label %out, label %body\nbody:\n  %next = load ptr, ptr %node\n  call void @free(ptr %node)\n  br label %loop\nout:\n  ret void\n}\n\n");
+    // An arena is one chunk of 64 KiB (after a header of 16 bytes holding how much is used), taken from the thread's
+    // stack of chunks (`region_text`) and given back to it whole; a request past the chunk traps, as the Rust compiler's
+    // does.
+    emit.str(st, "define ptr @cancho_arena_alloc(ptr %head, i64 %bytes) {\nentry:\n  %chunk = load ptr, ptr %head\n  %used = load i64, ptr %chunk\n");
+    emit.str(st, "  %up = add i64 %bytes, 7\n  %rounded = and i64 %up, -8\n  %next = add i64 %used, %rounded\n");
+    emit.str(st, "  %wrapped = icmp ult i64 %next, %used\n  %over = icmp ugt i64 %next, 65536\n  %bad = or i1 %wrapped, %over\n");
+    emit.str(st, "  br i1 %bad, label %fail, label %ok\nfail:\n  call void @llvm.trap()\n  unreachable\nok:\n");
+    emit.str(st, "  store i64 %next, ptr %chunk\n  %data = getelementptr i8, ptr %chunk, i64 16\n  %at = getelementptr i8, ptr %data, i64 %used\n  ret ptr %at\n}\n\n");
     var item = st[15];
     var entry = 0;
     var entry_item = 0 - 1;
@@ -399,6 +406,10 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         // A program that opens a directory has the support for them, and the constants of its target.
         emit.str(st, runtime.dirs_text(st[61] == 1));
         platform.print(st);
+    }
+    if st[55] & 32 != 0 {
+        // A program that opens a region has the stack of chunks its thread keeps for them.
+        emit.str(st, runtime.region_text(st[61] == 1));
     }
     if st[55] & 16 != 0 {
         // A program that opens a serial port has the verbs for it.

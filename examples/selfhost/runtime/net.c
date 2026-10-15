@@ -92,6 +92,9 @@ extern int fcntl(int, int, ...);
 extern int getaddrinfo(const char *, const char *, const void *, void **);
 extern void freeaddrinfo(void *);
 extern int clock_gettime(int, void *);
+extern i64 recvfrom(int, void *, i64, int, void *, void *);
+extern i64 sendto(int, const void *, i64, int, const void *, int);
+extern int getsockname(int, void *, void *);
 extern int *cancho_errno_location(void);
 #define ERRNO (*cancho_errno_location())
 
@@ -172,11 +175,23 @@ i64 cancho_net_bind(i64 port, const u8 *bound, i64 bound_len) {
 i64 cancho_net_listen(i64 fd, i64 backlog) { return listen((int)fd, (int)backlog); }
 i64 cancho_net_accept(i64 fd) { return netrt_accept_cloexec((int)fd); }
 
-/* `tcp_listen(net, port, backlog, flags)`: out = tag (0 Ok, 1 Failed), the descriptor, why. */
-void cancho_net_tcp_listen(i64 port, i64 backlog, i64 flags, const u8 *bound, i64 bound_len, i64 *out) {
-  netrt_check_port(port, netrt_port_of(bound, 0, bound_len));
+/* The port a bound names for a listener: a bare port, or the one after the last `:` of `host:port`. */
+static i64 netrt_listen_port(const u8 *bound, i64 len) {
+  for (i64 i = len; i > 0; i--)
+    if (bound[i - 1] == 58) return netrt_port_of(bound, i, len);
+  return netrt_port_of(bound, 0, len);
+}
+
+/* `tcp_listen(net, port, backlog, flags)` and `tcp_listen_on(net, host, port, backlog, flags)`: `host` is the IPv4
+ * address as a whole number (0 for every interface). out = tag (0 Ok, 1 Failed), the descriptor, why. */
+void cancho_net_tcp_listen(i64 port, i64 backlog, i64 flags, const u8 *bound, i64 bound_len, i64 host, i64 *out) {
+  netrt_check_port(port, netrt_listen_port(bound, bound_len));
   u8 a[16];
   netrt_sockaddr_any(a, port);
+  a[4] = (u8)(host >> 24);
+  a[5] = (u8)(host >> 16);
+  a[6] = (u8)(host >> 8);
+  a[7] = (u8)host;
   out[0] = 1;
   out[1] = -1;
   out[2] = 0;
@@ -291,14 +306,14 @@ static void netrt_checked_host(const u8 *name, i64 len, const u8 *bound, i64 hos
 
 /* The descriptor of a connection to `name`:`port`, or -1 with `*why` the reason (-1 when the name did not
  * resolve). `conn` makes it a `Conn` (no `SIGPIPE` on Darwin), `start` leaves it non-blocking and in progress. */
-static i64 netrt_dial(const u8 *name, i64 len, i64 port, const u8 *bound, i64 bound_len, i64 conn, i64 start, i64 *why) {
+static i64 netrt_dial(const u8 *name, i64 len, i64 port, const u8 *bound, i64 bound_len, i64 conn, i64 start, int kind, i64 *why) {
   netrt_check_port(port, netrt_dial_port(bound, bound_len));
   u8 host[256];
   netrt_checked_host(name, len, bound, netrt_host_length(bound, bound_len), host);
   u8 hints[48];
   for (int i = 0; i < 48; i++) hints[i] = 0;
   *(int *)(hints + 4) = 2;
-  *(int *)(hints + 8) = 1;
+  *(int *)(hints + 8) = kind;
   void *res = 0;
   *why = 0;
   if (getaddrinfo((const char *)host, 0, hints, &res) != 0) {
@@ -309,7 +324,7 @@ static i64 netrt_dial(const u8 *name, i64 len, i64 port, const u8 *bound, i64 bo
   int addrlen = *(int *)((u8 *)res + 16);
   addr[2] = (u8)(port >> 8);
   addr[3] = (u8)port;
-  int fd = netrt_tcp_socket(1);
+  int fd = netrt_tcp_socket(kind);
   if (fd < 0) {
     *why = ERRNO;
     freeaddrinfo(res);
@@ -337,16 +352,159 @@ static i64 netrt_dial(const u8 *name, i64 len, i64 port, const u8 *bound, i64 bo
 /* `connect(net, host, port)`: the descriptor or -1. */
 i64 cancho_net_connect(const u8 *name, i64 len, i64 port, const u8 *bound, i64 bound_len) {
   i64 why;
-  return netrt_dial(name, len, port, bound, bound_len, 0, 0, &why);
+  return netrt_dial(name, len, port, bound, bound_len, 0, 0, 1, &why);
 }
 
 /* `tcp_connect(net, host, port)`: out = tag (0 Ok, 1 Failed), the connection, why. */
 void cancho_net_tcp_connect(const u8 *name, i64 len, i64 port, const u8 *bound, i64 bound_len, i64 *out) {
   i64 why;
-  i64 fd = netrt_dial(name, len, port, bound, bound_len, 1, 0, &why);
+  i64 fd = netrt_dial(name, len, port, bound, bound_len, 1, 0, 1, &why);
   out[0] = fd < 0 ? 1 : 0;
   out[1] = fd;
   out[2] = why;
+}
+
+/* ---------------------------------------------------------------------------------------------------- UDP ---
+ * Datagram sockets (`docs/udp.md`). `lexs_udp_peers` is the ring of senders a bound socket has heard from, 65,536
+ * entries of 32 bytes (the address at 0, the ticket at 16, the descriptor it was heard on at 24), then the count of
+ * tickets issued. A ticket names an entry by its low sixteen bits, and is good while the entry still holds it and for
+ * the socket that heard it. */
+#define PEER_SLOTS 65536
+#define PEER_STRIDE 32
+#define PEER_TICKET_AT 16
+#define PEER_FD_AT 24
+#define EBADF 9
+#if DARWIN
+#define MSG_TRUNC_FLAG 0
+#else
+#define MSG_TRUNC_FLAG 0x20
+#endif
+u8 lexs_udp_peers[PEER_SLOTS * PEER_STRIDE + 8];
+
+/* `udp_connect(net, host, port)`: out = tag (0 Ok, 1 Failed), the socket, why. */
+void cancho_net_udp_connect(const u8 *name, i64 len, i64 port, const u8 *bound, i64 bound_len, i64 *out) {
+  i64 why;
+  i64 fd = netrt_dial(name, len, port, bound, bound_len, 0, 0, 2, &why);
+  out[0] = fd < 0 ? 1 : 0;
+  out[1] = fd;
+  out[2] = why;
+}
+
+/* `udp_bind(net, port, flags)`: a datagram socket bound to every interface; `flags` bit 1 is `SO_REUSEPORT`. */
+void cancho_net_udp_bind(i64 port, i64 flags, const u8 *bound, i64 bound_len, i64 *out) {
+  netrt_check_port(port, netrt_listen_port(bound, bound_len));
+  u8 a[16];
+  netrt_sockaddr_any(a, port);
+  out[0] = 1;
+  out[1] = -1;
+  out[2] = 0;
+  int fd = netrt_tcp_socket(2);
+  if (fd < 0) {
+    out[2] = ERRNO;
+    return;
+  }
+  netrt_int_option(fd, SOL_SOCKET, SO_REUSEADDR);
+  if (flags & 1) netrt_int_option(fd, SOL_SOCKET, SO_REUSEPORT);
+  if (bind(fd, a, 16) != 0) {
+    out[2] = ERRNO;
+    close(fd);
+    return;
+  }
+  out[0] = 0;
+  out[1] = fd;
+}
+
+/* `Datagram`'s leaves: Got 0, Truncated 1, Again 2, Failed 3, then what `recv` answered twice and why. */
+static void netrt_datagram(i64 moved, i64 reason, i64 room, i64 *out) {
+  i64 tag;
+  if (moved < 0)
+    tag = reason == EAGAIN ? 2 : 3;
+  else
+#if DARWIN
+    tag = moved >= room ? 1 : 0;
+#else
+    tag = moved > room ? 1 : 0;
+#endif
+  out[0] = tag;
+  out[1] = moved;
+  out[2] = moved;
+  out[3] = reason;
+}
+
+/* `udp_recv(&!Udp, &![byte])`: an empty buffer is `Failed(EINVAL)` and never reaches the kernel. */
+void cancho_udp_recv(const i64 *udp, u8 *p, i64 room, i64 *out) {
+  i64 moved = -1;
+  i64 reason = EINVAL;
+  if (room != 0) {
+    moved = recv((int)*udp, p, room, MSG_TRUNC_FLAG);
+    reason = ERRNO;
+  }
+  netrt_datagram(moved, reason, room, out);
+}
+
+/* `udp_recv_from(&!Udp, &![byte], &![int])`: the datagram, and a ticket for its sender in the first cell. */
+void cancho_udp_recv_from(const i64 *udp, u8 *p, i64 room, i64 *cells, i64 ncells, i64 *out) {
+  int fd = (int)*udp;
+  i64 ticket = *(i64 *)(lexs_udp_peers + PEER_SLOTS * PEER_STRIDE) + 1;
+  u8 *entry = lexs_udp_peers + (ticket & (PEER_SLOTS - 1)) * PEER_STRIDE;
+  i64 moved = -1;
+  i64 reason = EINVAL;
+  if (room != 0 && ncells != 0) {
+    int len = 16;
+    moved = recvfrom(fd, p, room, MSG_TRUNC_FLAG, entry, &len);
+    reason = ERRNO;
+  }
+  if (moved >= 0) {
+    *(i64 *)(entry + PEER_TICKET_AT) = ticket;
+    *(int *)(entry + PEER_FD_AT) = fd;
+    *(i64 *)(lexs_udp_peers + PEER_SLOTS * PEER_STRIDE) = ticket;
+    cells[0] = ticket;
+  }
+  netrt_datagram(moved, reason, room, out);
+}
+
+/* Does the ticket name an entry that still holds it, heard on this socket? */
+static int netrt_ticket_ok(int fd, i64 ticket, u8 *entry) {
+  return ticket > 0 && *(i64 *)(entry + PEER_TICKET_AT) == ticket && *(int *)(entry + PEER_FD_AT) == fd;
+}
+
+/* `udp_send_to(&!Udp, &[byte], ticket)`: out = Sent's tag (Wrote 0, Again 1, Failed 2), the count, why. */
+void cancho_udp_send_to(const i64 *udp, const u8 *p, i64 n, i64 ticket, i64 *out) {
+  int fd = (int)*udp;
+  u8 *entry = lexs_udp_peers + (ticket & (PEER_SLOTS - 1)) * PEER_STRIDE;
+  i64 moved = -1;
+  i64 reason = EBADF;
+  if (netrt_ticket_ok(fd, ticket, entry)) {
+    moved = sendto(fd, p, n, MSG_NOSIGNAL, entry, 16);
+    reason = ERRNO;
+  }
+  out[0] = moved < 0 ? (reason == EAGAIN ? 1 : 2) : 0;
+  out[1] = moved;
+  out[2] = reason;
+}
+
+/* `udp_peer(&Udp, ticket, &![byte])`: who a ticket names, in the 19 bytes `conn_peer` writes; 0, `EBADF` for a ticket
+ * that fails the checks, `EINVAL` for a buffer under 19 bytes. */
+i64 cancho_udp_peer(const i64 *udp, i64 ticket, u8 *out, i64 room) {
+  u8 *entry = lexs_udp_peers + (ticket & (PEER_SLOTS - 1)) * PEER_STRIDE;
+  if (!netrt_ticket_ok((int)*udp, ticket, entry)) return EBADF;
+  if (room < 19) return EINVAL;
+  out[0] = 4;
+  for (int i = 0; i < 4; i++) out[1 + i] = entry[4 + i];
+  for (int i = 5; i < 17; i++) out[i] = 0;
+  out[17] = entry[2];
+  out[18] = entry[3];
+  return 0;
+}
+
+/* `udp_local_port(&Udp)`: the port the kernel chose, or minus the errno. */
+i64 cancho_udp_local_port(const i64 *udp) {
+  u8 a[16];
+  int len = 16;
+  int r = getsockname((int)*udp, a, &len);
+  i64 why = ERRNO;
+  if (r < 0) return -why;
+  return ((i64)a[2] << 8) | a[3];
 }
 
 /* ---------------------------------------------------------------------------------------------------- poller ---
@@ -525,7 +683,7 @@ void cancho_conn_attach(i64 ticket, i64 udp, i64 *out) {
 /* `tcp_connect_start(net, host, port)`: as `tcp_connect`, the socket left non-blocking and the connection in progress. */
 void cancho_net_tcp_connect_start(const u8 *name, i64 len, i64 port, const u8 *bound, i64 bound_len, i64 *out) {
   i64 why;
-  i64 fd = netrt_dial(name, len, port, bound, bound_len, 1, 1, &why);
+  i64 fd = netrt_dial(name, len, port, bound, bound_len, 1, 1, 1, &why);
   out[0] = fd < 0 ? 1 : 0;
   out[1] = fd;
   out[2] = why;

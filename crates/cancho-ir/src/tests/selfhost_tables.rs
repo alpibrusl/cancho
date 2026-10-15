@@ -529,6 +529,10 @@ fn render_runtime(dir: &std::path::Path) -> String {
         &std::fs::read_to_string(dir.join("runtime/tty_darwin.ll"))
             .expect("examples/selfhost/runtime/tty_darwin.ll"),
     );
+    let region_linux =
+        escape(&std::fs::read_to_string(dir.join("runtime/region_linux.ll")).unwrap_or_default());
+    let region_darwin =
+        escape(&std::fs::read_to_string(dir.join("runtime/region_darwin.ll")).unwrap_or_default());
     format!(
         "module selfhost.runtime;\n\n\
          // runtime.cho -- the support the code of a few builtins calls.\n\
@@ -549,6 +553,9 @@ fn render_runtime(dir: &std::path::Path) -> String {
          // The serial-port verbs (`runtime/tty.c`).\n\
          pub fn tty_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{tty_darwin}\";\n    }}\n    \
          return \"{tty_linux}\";\n}}\n\n\
+         // The per-thread stack of region chunks (`cancho-codegen-llvm`'s `region_cache`).\n\
+         pub fn region_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{region_darwin}\";\n    }}\n    \
+         return \"{region_linux}\";\n}}\n\n\
          // The hardware AES and GHASH functions, written by `cancho-codegen-llvm` for each target: `target` is 1 for\n\
          // Darwin on aarch64, 2 for Linux on aarch64, 0 for Linux on x86-64.\n\
          pub fn crypto_text(target: int) -> [] &static [byte] {{\n    if target == 1 {{\n        return \"{crypto_arm_darwin}\";\n    }}\n    \

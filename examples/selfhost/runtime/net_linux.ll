@@ -1,4 +1,5 @@
 
+@lexs_udp_peers = common global [2097160 x i8] zeroinitializer, align 1
 @lexs_fd_epoch = common global [65536 x i32] zeroinitializer, align 4
 @stdout = external global ptr, align 8
 @stdin = external global ptr, align 8
@@ -293,13 +294,14 @@ entry:
 }
 
 ; Function Attrs: noinline nounwind
-define void @cancho_net_tcp_listen(i64 %port, i64 %backlog, i64 %flags, ptr %bound, i64 %bound_len, ptr %out) {
+define void @cancho_net_tcp_listen(i64 %port, i64 %backlog, i64 %flags, ptr %bound, i64 %bound_len, i64 %host, ptr %out) {
 entry:
   %port.addr = alloca i64, align 8
   %backlog.addr = alloca i64, align 8
   %flags.addr = alloca i64, align 8
   %bound.addr = alloca ptr, align 8
   %bound_len.addr = alloca i64, align 8
+  %host.addr = alloca i64, align 8
   %out.addr = alloca ptr, align 8
   %a = alloca [16 x i8], align 1
   %fd = alloca i32, align 4
@@ -308,102 +310,179 @@ entry:
   store i64 %flags, ptr %flags.addr, align 8
   store ptr %bound, ptr %bound.addr, align 8
   store i64 %bound_len, ptr %bound_len.addr, align 8
+  store i64 %host, ptr %host.addr, align 8
   store ptr %out, ptr %out.addr, align 8
   %0 = load i64, ptr %port.addr, align 8
   %1 = load ptr, ptr %bound.addr, align 8
   %2 = load i64, ptr %bound_len.addr, align 8
-  %call = call i64 @netrt_port_of(ptr %1, i64 0, i64 %2)
+  %call = call i64 @netrt_listen_port(ptr %1, i64 %2)
   call void @netrt_check_port(i64 %0, i64 %call)
   %arraydecay = getelementptr inbounds [16 x i8], ptr %a, i64 0, i64 0
   %3 = load i64, ptr %port.addr, align 8
   call void @netrt_sockaddr_any(ptr %arraydecay, i64 %3)
-  %4 = load ptr, ptr %out.addr, align 8
-  %arrayidx = getelementptr inbounds i64, ptr %4, i64 0
-  store i64 1, ptr %arrayidx, align 8
-  %5 = load ptr, ptr %out.addr, align 8
-  %arrayidx1 = getelementptr inbounds i64, ptr %5, i64 1
-  store i64 -1, ptr %arrayidx1, align 8
-  %6 = load ptr, ptr %out.addr, align 8
-  %arrayidx2 = getelementptr inbounds i64, ptr %6, i64 2
-  store i64 0, ptr %arrayidx2, align 8
-  %call3 = call i32 @netrt_tcp_socket(i32 1)
-  store i32 %call3, ptr %fd, align 4
-  %7 = load i32, ptr %fd, align 4
-  %cmp = icmp slt i32 %7, 0
+  %4 = load i64, ptr %host.addr, align 8
+  %shr = ashr i64 %4, 24
+  %conv = trunc i64 %shr to i8
+  %arrayidx = getelementptr inbounds [16 x i8], ptr %a, i64 0, i64 4
+  store i8 %conv, ptr %arrayidx, align 1
+  %5 = load i64, ptr %host.addr, align 8
+  %shr1 = ashr i64 %5, 16
+  %conv2 = trunc i64 %shr1 to i8
+  %arrayidx3 = getelementptr inbounds [16 x i8], ptr %a, i64 0, i64 5
+  store i8 %conv2, ptr %arrayidx3, align 1
+  %6 = load i64, ptr %host.addr, align 8
+  %shr4 = ashr i64 %6, 8
+  %conv5 = trunc i64 %shr4 to i8
+  %arrayidx6 = getelementptr inbounds [16 x i8], ptr %a, i64 0, i64 6
+  store i8 %conv5, ptr %arrayidx6, align 1
+  %7 = load i64, ptr %host.addr, align 8
+  %conv7 = trunc i64 %7 to i8
+  %arrayidx8 = getelementptr inbounds [16 x i8], ptr %a, i64 0, i64 7
+  store i8 %conv7, ptr %arrayidx8, align 1
+  %8 = load ptr, ptr %out.addr, align 8
+  %arrayidx9 = getelementptr inbounds i64, ptr %8, i64 0
+  store i64 1, ptr %arrayidx9, align 8
+  %9 = load ptr, ptr %out.addr, align 8
+  %arrayidx10 = getelementptr inbounds i64, ptr %9, i64 1
+  store i64 -1, ptr %arrayidx10, align 8
+  %10 = load ptr, ptr %out.addr, align 8
+  %arrayidx11 = getelementptr inbounds i64, ptr %10, i64 2
+  store i64 0, ptr %arrayidx11, align 8
+  %call12 = call i32 @netrt_tcp_socket(i32 1)
+  store i32 %call12, ptr %fd, align 4
+  %11 = load i32, ptr %fd, align 4
+  %cmp = icmp slt i32 %11, 0
   br i1 %cmp, label %if.then, label %if.end
 
 if.then:                                          ; preds = %entry
-  %call4 = call ptr @cancho_errno_location()
-  %8 = load i32, ptr %call4, align 4
-  %conv = sext i32 %8 to i64
-  %9 = load ptr, ptr %out.addr, align 8
-  %arrayidx5 = getelementptr inbounds i64, ptr %9, i64 2
-  store i64 %conv, ptr %arrayidx5, align 8
+  %call14 = call ptr @cancho_errno_location()
+  %12 = load i32, ptr %call14, align 4
+  %conv15 = sext i32 %12 to i64
+  %13 = load ptr, ptr %out.addr, align 8
+  %arrayidx16 = getelementptr inbounds i64, ptr %13, i64 2
+  store i64 %conv15, ptr %arrayidx16, align 8
   br label %return
 
 if.end:                                           ; preds = %entry
-  %10 = load i32, ptr %fd, align 4
-  call void @netrt_int_option(i32 %10, i32 1, i32 2)
-  %11 = load i64, ptr %flags.addr, align 8
-  %and = and i64 %11, 1
+  %14 = load i32, ptr %fd, align 4
+  call void @netrt_int_option(i32 %14, i32 1, i32 2)
+  %15 = load i64, ptr %flags.addr, align 8
+  %and = and i64 %15, 1
   %tobool = icmp ne i64 %and, 0
-  br i1 %tobool, label %if.then6, label %if.end7
+  br i1 %tobool, label %if.then17, label %if.end18
 
-if.then6:                                         ; preds = %if.end
-  %12 = load i32, ptr %fd, align 4
-  call void @netrt_int_option(i32 %12, i32 1, i32 15)
-  br label %if.end7
-
-if.end7:                                          ; preds = %if.then6, %if.end
-  %13 = load i32, ptr %fd, align 4
-  %arraydecay8 = getelementptr inbounds [16 x i8], ptr %a, i64 0, i64 0
-  %call9 = call i32 @bind(i32 %13, ptr %arraydecay8, i32 16)
-  %cmp10 = icmp ne i32 %call9, 0
-  br i1 %cmp10, label %if.then12, label %if.end17
-
-if.then12:                                        ; preds = %if.end7
-  %call13 = call ptr @cancho_errno_location()
-  %14 = load i32, ptr %call13, align 4
-  %conv14 = sext i32 %14 to i64
-  %15 = load ptr, ptr %out.addr, align 8
-  %arrayidx15 = getelementptr inbounds i64, ptr %15, i64 2
-  store i64 %conv14, ptr %arrayidx15, align 8
+if.then17:                                        ; preds = %if.end
   %16 = load i32, ptr %fd, align 4
-  %call16 = call i32 @close(i32 %16)
-  br label %return
+  call void @netrt_int_option(i32 %16, i32 1, i32 15)
+  br label %if.end18
 
-if.end17:                                         ; preds = %if.end7
+if.end18:                                         ; preds = %if.then17, %if.end
   %17 = load i32, ptr %fd, align 4
-  %18 = load i64, ptr %backlog.addr, align 8
-  %conv18 = trunc i64 %18 to i32
-  %call19 = call i32 @listen(i32 %17, i32 %conv18)
-  %cmp20 = icmp ne i32 %call19, 0
-  br i1 %cmp20, label %if.then22, label %if.end27
+  %arraydecay19 = getelementptr inbounds [16 x i8], ptr %a, i64 0, i64 0
+  %call20 = call i32 @bind(i32 %17, ptr %arraydecay19, i32 16)
+  %cmp21 = icmp ne i32 %call20, 0
+  br i1 %cmp21, label %if.then23, label %if.end28
 
-if.then22:                                        ; preds = %if.end17
-  %call23 = call ptr @cancho_errno_location()
-  %19 = load i32, ptr %call23, align 4
-  %conv24 = sext i32 %19 to i64
-  %20 = load ptr, ptr %out.addr, align 8
-  %arrayidx25 = getelementptr inbounds i64, ptr %20, i64 2
-  store i64 %conv24, ptr %arrayidx25, align 8
+if.then23:                                        ; preds = %if.end18
+  %call24 = call ptr @cancho_errno_location()
+  %18 = load i32, ptr %call24, align 4
+  %conv25 = sext i32 %18 to i64
+  %19 = load ptr, ptr %out.addr, align 8
+  %arrayidx26 = getelementptr inbounds i64, ptr %19, i64 2
+  store i64 %conv25, ptr %arrayidx26, align 8
+  %20 = load i32, ptr %fd, align 4
+  %call27 = call i32 @close(i32 %20)
+  br label %return
+
+if.end28:                                         ; preds = %if.end18
   %21 = load i32, ptr %fd, align 4
-  %call26 = call i32 @close(i32 %21)
-  br label %return
+  %22 = load i64, ptr %backlog.addr, align 8
+  %conv29 = trunc i64 %22 to i32
+  %call30 = call i32 @listen(i32 %21, i32 %conv29)
+  %cmp31 = icmp ne i32 %call30, 0
+  br i1 %cmp31, label %if.then33, label %if.end38
 
-if.end27:                                         ; preds = %if.end17
-  %22 = load ptr, ptr %out.addr, align 8
-  %arrayidx28 = getelementptr inbounds i64, ptr %22, i64 0
-  store i64 0, ptr %arrayidx28, align 8
-  %23 = load i32, ptr %fd, align 4
-  %conv29 = sext i32 %23 to i64
+if.then33:                                        ; preds = %if.end28
+  %call34 = call ptr @cancho_errno_location()
+  %23 = load i32, ptr %call34, align 4
+  %conv35 = sext i32 %23 to i64
   %24 = load ptr, ptr %out.addr, align 8
-  %arrayidx30 = getelementptr inbounds i64, ptr %24, i64 1
-  store i64 %conv29, ptr %arrayidx30, align 8
+  %arrayidx36 = getelementptr inbounds i64, ptr %24, i64 2
+  store i64 %conv35, ptr %arrayidx36, align 8
+  %25 = load i32, ptr %fd, align 4
+  %call37 = call i32 @close(i32 %25)
   br label %return
 
-return:                                           ; preds = %if.end27, %if.then22, %if.then12, %if.then
+if.end38:                                         ; preds = %if.end28
+  %26 = load ptr, ptr %out.addr, align 8
+  %arrayidx39 = getelementptr inbounds i64, ptr %26, i64 0
+  store i64 0, ptr %arrayidx39, align 8
+  %27 = load i32, ptr %fd, align 4
+  %conv40 = sext i32 %27 to i64
+  %28 = load ptr, ptr %out.addr, align 8
+  %arrayidx41 = getelementptr inbounds i64, ptr %28, i64 1
+  store i64 %conv40, ptr %arrayidx41, align 8
+  br label %return
+
+return:                                           ; preds = %if.end38, %if.then33, %if.then23, %if.then
   ret void
+}
+
+; Function Attrs: noinline nounwind
+define internal i64 @netrt_listen_port(ptr %bound, i64 %len) {
+entry:
+  %retval = alloca i64, align 8
+  %bound.addr = alloca ptr, align 8
+  %len.addr = alloca i64, align 8
+  %i = alloca i64, align 8
+  store ptr %bound, ptr %bound.addr, align 8
+  store i64 %len, ptr %len.addr, align 8
+  %0 = load i64, ptr %len.addr, align 8
+  store i64 %0, ptr %i, align 8
+  br label %for.cond
+
+for.cond:                                         ; preds = %for.inc, %entry
+  %1 = load i64, ptr %i, align 8
+  %cmp = icmp sgt i64 %1, 0
+  br i1 %cmp, label %for.body, label %for.end
+
+for.body:                                         ; preds = %for.cond
+  %2 = load ptr, ptr %bound.addr, align 8
+  %3 = load i64, ptr %i, align 8
+  %sub = sub i64 %3, 1
+  %arrayidx = getelementptr inbounds i8, ptr %2, i64 %sub
+  %4 = load i8, ptr %arrayidx, align 1
+  %conv = zext i8 %4 to i32
+  %cmp1 = icmp eq i32 %conv, 58
+  br i1 %cmp1, label %if.then, label %if.end
+
+if.then:                                          ; preds = %for.body
+  %5 = load ptr, ptr %bound.addr, align 8
+  %6 = load i64, ptr %i, align 8
+  %7 = load i64, ptr %len.addr, align 8
+  %call = call i64 @netrt_port_of(ptr %5, i64 %6, i64 %7)
+  store i64 %call, ptr %retval, align 8
+  br label %return
+
+if.end:                                           ; preds = %for.body
+  br label %for.inc
+
+for.inc:                                          ; preds = %if.end
+  %8 = load i64, ptr %i, align 8
+  %dec = add i64 %8, -1
+  store i64 %dec, ptr %i, align 8
+  br label %for.cond
+
+for.end:                                          ; preds = %for.cond
+  %9 = load ptr, ptr %bound.addr, align 8
+  %10 = load i64, ptr %len.addr, align 8
+  %call3 = call i64 @netrt_port_of(ptr %9, i64 0, i64 %10)
+  store i64 %call3, ptr %retval, align 8
+  br label %return
+
+return:                                           ; preds = %for.end, %if.then
+  %11 = load i64, ptr %retval, align 8
+  ret i64 %11
 }
 
 
@@ -748,12 +827,12 @@ entry:
   %2 = load i64, ptr %port.addr, align 8
   %3 = load ptr, ptr %bound.addr, align 8
   %4 = load i64, ptr %bound_len.addr, align 8
-  %call = call i64 @netrt_dial(ptr %0, i64 %1, i64 %2, ptr %3, i64 %4, i64 0, i64 0, ptr %why)
+  %call = call i64 @netrt_dial(ptr %0, i64 %1, i64 %2, ptr %3, i64 %4, i64 0, i64 0, i32 1, ptr %why)
   ret i64 %call
 }
 
 ; Function Attrs: noinline nounwind
-define internal i64 @netrt_dial(ptr %name, i64 %len, i64 %port, ptr %bound, i64 %bound_len, i64 %conn, i64 %start, ptr %why) {
+define internal i64 @netrt_dial(ptr %name, i64 %len, i64 %port, ptr %bound, i64 %bound_len, i64 %conn, i64 %start, i32 %kind, ptr %why) {
 entry:
   %retval = alloca i64, align 8
   %name.addr = alloca ptr, align 8
@@ -763,6 +842,7 @@ entry:
   %bound_len.addr = alloca i64, align 8
   %conn.addr = alloca i64, align 8
   %start.addr = alloca i64, align 8
+  %kind.addr = alloca i32, align 4
   %why.addr = alloca ptr, align 8
   %host = alloca [256 x i8], align 1
   %hints = alloca [48 x i8], align 1
@@ -782,6 +862,7 @@ entry:
   store i64 %bound_len, ptr %bound_len.addr, align 8
   store i64 %conn, ptr %conn.addr, align 8
   store i64 %start, ptr %start.addr, align 8
+  store i32 %kind, ptr %kind.addr, align 4
   store ptr %why, ptr %why.addr, align 8
   %0 = load i64, ptr %port.addr, align 8
   %1 = load ptr, ptr %bound.addr, align 8
@@ -821,12 +902,13 @@ for.end:                                          ; preds = %for.cond
   %arraydecay2 = getelementptr inbounds [48 x i8], ptr %hints, i64 0, i64 0
   %add.ptr = getelementptr inbounds i8, ptr %arraydecay2, i64 4
   store i32 2, ptr %add.ptr, align 4
+  %11 = load i32, ptr %kind.addr, align 4
   %arraydecay3 = getelementptr inbounds [48 x i8], ptr %hints, i64 0, i64 0
   %add.ptr4 = getelementptr inbounds i8, ptr %arraydecay3, i64 8
-  store i32 1, ptr %add.ptr4, align 4
+  store i32 %11, ptr %add.ptr4, align 4
   store ptr null, ptr %res, align 8
-  %11 = load ptr, ptr %why.addr, align 8
-  store i64 0, ptr %11, align 8
+  %12 = load ptr, ptr %why.addr, align 8
+  store i64 0, ptr %12, align 8
   %arraydecay5 = getelementptr inbounds [256 x i8], ptr %host, i64 0, i64 0
   %arraydecay6 = getelementptr inbounds [48 x i8], ptr %hints, i64 0, i64 0
   %call7 = call i32 @getaddrinfo(ptr %arraydecay5, ptr null, ptr %arraydecay6, ptr %res)
@@ -834,124 +916,125 @@ for.end:                                          ; preds = %for.cond
   br i1 %cmp8, label %if.then, label %if.end
 
 if.then:                                          ; preds = %for.end
-  %12 = load ptr, ptr %why.addr, align 8
-  store i64 -1, ptr %12, align 8
+  %13 = load ptr, ptr %why.addr, align 8
+  store i64 -1, ptr %13, align 8
   store i64 -1, ptr %retval, align 8
   br label %return
 
 if.end:                                           ; preds = %for.end
-  %13 = load ptr, ptr %res, align 8
-  %add.ptr9 = getelementptr inbounds i8, ptr %13, i64 24
-  %14 = load ptr, ptr %add.ptr9, align 8
-  store ptr %14, ptr %addr, align 8
-  %15 = load ptr, ptr %res, align 8
-  %add.ptr10 = getelementptr inbounds i8, ptr %15, i64 16
-  %16 = load i32, ptr %add.ptr10, align 4
-  store i32 %16, ptr %addrlen, align 4
-  %17 = load i64, ptr %port.addr, align 8
-  %shr = ashr i64 %17, 8
+  %14 = load ptr, ptr %res, align 8
+  %add.ptr9 = getelementptr inbounds i8, ptr %14, i64 24
+  %15 = load ptr, ptr %add.ptr9, align 8
+  store ptr %15, ptr %addr, align 8
+  %16 = load ptr, ptr %res, align 8
+  %add.ptr10 = getelementptr inbounds i8, ptr %16, i64 16
+  %17 = load i32, ptr %add.ptr10, align 4
+  store i32 %17, ptr %addrlen, align 4
+  %18 = load i64, ptr %port.addr, align 8
+  %shr = ashr i64 %18, 8
   %conv = trunc i64 %shr to i8
-  %18 = load ptr, ptr %addr, align 8
-  %arrayidx11 = getelementptr inbounds i8, ptr %18, i64 2
+  %19 = load ptr, ptr %addr, align 8
+  %arrayidx11 = getelementptr inbounds i8, ptr %19, i64 2
   store i8 %conv, ptr %arrayidx11, align 1
-  %19 = load i64, ptr %port.addr, align 8
-  %conv12 = trunc i64 %19 to i8
-  %20 = load ptr, ptr %addr, align 8
-  %arrayidx13 = getelementptr inbounds i8, ptr %20, i64 3
+  %20 = load i64, ptr %port.addr, align 8
+  %conv12 = trunc i64 %20 to i8
+  %21 = load ptr, ptr %addr, align 8
+  %arrayidx13 = getelementptr inbounds i8, ptr %21, i64 3
   store i8 %conv12, ptr %arrayidx13, align 1
-  %call14 = call i32 @netrt_tcp_socket(i32 1)
+  %22 = load i32, ptr %kind.addr, align 4
+  %call14 = call i32 @netrt_tcp_socket(i32 %22)
   store i32 %call14, ptr %fd, align 4
-  %21 = load i32, ptr %fd, align 4
-  %cmp15 = icmp slt i32 %21, 0
+  %23 = load i32, ptr %fd, align 4
+  %cmp15 = icmp slt i32 %23, 0
   br i1 %cmp15, label %if.then17, label %if.end20
 
 if.then17:                                        ; preds = %if.end
   %call18 = call ptr @cancho_errno_location()
-  %22 = load i32, ptr %call18, align 4
-  %conv19 = sext i32 %22 to i64
-  %23 = load ptr, ptr %why.addr, align 8
-  store i64 %conv19, ptr %23, align 8
-  %24 = load ptr, ptr %res, align 8
-  call void @freeaddrinfo(ptr %24)
+  %24 = load i32, ptr %call18, align 4
+  %conv19 = sext i32 %24 to i64
+  %25 = load ptr, ptr %why.addr, align 8
+  store i64 %conv19, ptr %25, align 8
+  %26 = load ptr, ptr %res, align 8
+  call void @freeaddrinfo(ptr %26)
   store i64 -1, ptr %retval, align 8
   br label %return
 
 if.end20:                                         ; preds = %if.end
-  %25 = load i64, ptr %start.addr, align 8
-  %tobool = icmp ne i64 %25, 0
+  %27 = load i64, ptr %start.addr, align 8
+  %tobool = icmp ne i64 %27, 0
   br i1 %tobool, label %if.then21, label %if.end24
 
 if.then21:                                        ; preds = %if.end20
-  %26 = load i32, ptr %fd, align 4
-  %call22 = call i32 (i32, i32, ...) @fcntl(i32 %26, i32 3)
+  %28 = load i32, ptr %fd, align 4
+  %call22 = call i32 (i32, i32, ...) @fcntl(i32 %28, i32 3)
   store i32 %call22, ptr %flags, align 4
-  %27 = load i32, ptr %fd, align 4
-  %28 = load i32, ptr %flags, align 4
-  %or = or i32 %28, 2048
-  %call23 = call i32 (i32, i32, ...) @fcntl(i32 %27, i32 4, i32 %or)
+  %29 = load i32, ptr %fd, align 4
+  %30 = load i32, ptr %flags, align 4
+  %or = or i32 %30, 2048
+  %call23 = call i32 (i32, i32, ...) @fcntl(i32 %29, i32 4, i32 %or)
   br label %if.end24
 
 if.end24:                                         ; preds = %if.then21, %if.end20
-  %29 = load i32, ptr %fd, align 4
-  %30 = load ptr, ptr %addr, align 8
-  %31 = load i32, ptr %addrlen, align 4
-  %call25 = call i32 @connect(i32 %29, ptr %30, i32 %31)
+  %31 = load i32, ptr %fd, align 4
+  %32 = load ptr, ptr %addr, align 8
+  %33 = load i32, ptr %addrlen, align 4
+  %call25 = call i32 @connect(i32 %31, ptr %32, i32 %33)
   store i32 %call25, ptr %r, align 4
   %call26 = call ptr @cancho_errno_location()
-  %32 = load i32, ptr %call26, align 4
-  %conv27 = sext i32 %32 to i64
+  %34 = load i32, ptr %call26, align 4
+  %conv27 = sext i32 %34 to i64
   store i64 %conv27, ptr %reason, align 8
-  %33 = load i32, ptr %r, align 4
-  %cmp28 = icmp eq i32 %33, 0
+  %35 = load i32, ptr %r, align 4
+  %cmp28 = icmp eq i32 %35, 0
   br i1 %cmp28, label %lor.end, label %lor.rhs
 
 lor.rhs:                                          ; preds = %if.end24
-  %34 = load i64, ptr %start.addr, align 8
-  %tobool30 = icmp ne i64 %34, 0
+  %36 = load i64, ptr %start.addr, align 8
+  %tobool30 = icmp ne i64 %36, 0
   br i1 %tobool30, label %land.lhs.true, label %land.end
 
 land.lhs.true:                                    ; preds = %lor.rhs
-  %35 = load i32, ptr %r, align 4
-  %cmp31 = icmp slt i32 %35, 0
+  %37 = load i32, ptr %r, align 4
+  %cmp31 = icmp slt i32 %37, 0
   br i1 %cmp31, label %land.rhs, label %land.end
 
 land.rhs:                                         ; preds = %land.lhs.true
-  %36 = load i64, ptr %reason, align 8
-  %cmp33 = icmp eq i64 %36, 115
+  %38 = load i64, ptr %reason, align 8
+  %cmp33 = icmp eq i64 %38, 115
   br label %land.end
 
 land.end:                                         ; preds = %land.rhs, %land.lhs.true, %lor.rhs
-  %37 = phi i1 [ false, %land.lhs.true ], [ false, %lor.rhs ], [ %cmp33, %land.rhs ]
+  %39 = phi i1 [ false, %land.lhs.true ], [ false, %lor.rhs ], [ %cmp33, %land.rhs ]
   br label %lor.end
 
 lor.end:                                          ; preds = %land.end, %if.end24
-  %38 = phi i1 [ true, %if.end24 ], [ %37, %land.end ]
-  %lor.ext = zext i1 %38 to i32
+  %40 = phi i1 [ true, %if.end24 ], [ %39, %land.end ]
+  %lor.ext = zext i1 %40 to i32
   store i32 %lor.ext, ptr %ok, align 4
-  %39 = load ptr, ptr %res, align 8
-  call void @freeaddrinfo(ptr %39)
-  %40 = load i32, ptr %ok, align 4
-  %tobool35 = icmp ne i32 %40, 0
+  %41 = load ptr, ptr %res, align 8
+  call void @freeaddrinfo(ptr %41)
+  %42 = load i32, ptr %ok, align 4
+  %tobool35 = icmp ne i32 %42, 0
   br i1 %tobool35, label %if.then36, label %if.end38
 
 if.then36:                                        ; preds = %lor.end
-  %41 = load i32, ptr %fd, align 4
-  %conv37 = sext i32 %41 to i64
+  %43 = load i32, ptr %fd, align 4
+  %conv37 = sext i32 %43 to i64
   store i64 %conv37, ptr %retval, align 8
   br label %return
 
 if.end38:                                         ; preds = %lor.end
-  %42 = load i64, ptr %reason, align 8
-  %43 = load ptr, ptr %why.addr, align 8
-  store i64 %42, ptr %43, align 8
-  %44 = load i32, ptr %fd, align 4
-  %call39 = call i32 @close(i32 %44)
+  %44 = load i64, ptr %reason, align 8
+  %45 = load ptr, ptr %why.addr, align 8
+  store i64 %44, ptr %45, align 8
+  %46 = load i32, ptr %fd, align 4
+  %call39 = call i32 @close(i32 %46)
   store i64 -1, ptr %retval, align 8
   br label %return
 
 return:                                           ; preds = %if.end38, %if.then36, %if.then17, %if.then
-  %45 = load i64, ptr %retval, align 8
-  ret i64 %45
+  %47 = load i64, ptr %retval, align 8
+  ret i64 %47
 }
 
 ; Function Attrs: noinline nounwind
@@ -976,7 +1059,7 @@ entry:
   %2 = load i64, ptr %port.addr, align 8
   %3 = load ptr, ptr %bound.addr, align 8
   %4 = load i64, ptr %bound_len.addr, align 8
-  %call = call i64 @netrt_dial(ptr %0, i64 %1, i64 %2, ptr %3, i64 %4, i64 1, i64 0, ptr %why)
+  %call = call i64 @netrt_dial(ptr %0, i64 %1, i64 %2, ptr %3, i64 %4, i64 1, i64 0, i32 1, ptr %why)
   store i64 %call, ptr %fd, align 8
   %5 = load i64, ptr %fd, align 8
   %cmp = icmp slt i64 %5, 0
@@ -996,6 +1079,616 @@ entry:
   store i64 %10, ptr %arrayidx2, align 8
   ret void
 }
+
+; Function Attrs: noinline nounwind
+define void @cancho_net_udp_connect(ptr %name, i64 %len, i64 %port, ptr %bound, i64 %bound_len, ptr %out) {
+entry:
+  %name.addr = alloca ptr, align 8
+  %len.addr = alloca i64, align 8
+  %port.addr = alloca i64, align 8
+  %bound.addr = alloca ptr, align 8
+  %bound_len.addr = alloca i64, align 8
+  %out.addr = alloca ptr, align 8
+  %why = alloca i64, align 8
+  %fd = alloca i64, align 8
+  store ptr %name, ptr %name.addr, align 8
+  store i64 %len, ptr %len.addr, align 8
+  store i64 %port, ptr %port.addr, align 8
+  store ptr %bound, ptr %bound.addr, align 8
+  store i64 %bound_len, ptr %bound_len.addr, align 8
+  store ptr %out, ptr %out.addr, align 8
+  %0 = load ptr, ptr %name.addr, align 8
+  %1 = load i64, ptr %len.addr, align 8
+  %2 = load i64, ptr %port.addr, align 8
+  %3 = load ptr, ptr %bound.addr, align 8
+  %4 = load i64, ptr %bound_len.addr, align 8
+  %call = call i64 @netrt_dial(ptr %0, i64 %1, i64 %2, ptr %3, i64 %4, i64 0, i64 0, i32 2, ptr %why)
+  store i64 %call, ptr %fd, align 8
+  %5 = load i64, ptr %fd, align 8
+  %cmp = icmp slt i64 %5, 0
+  %6 = zext i1 %cmp to i64
+  %cond = select i1 %cmp, i32 1, i32 0
+  %conv = sext i32 %cond to i64
+  %7 = load ptr, ptr %out.addr, align 8
+  %arrayidx = getelementptr inbounds i64, ptr %7, i64 0
+  store i64 %conv, ptr %arrayidx, align 8
+  %8 = load i64, ptr %fd, align 8
+  %9 = load ptr, ptr %out.addr, align 8
+  %arrayidx1 = getelementptr inbounds i64, ptr %9, i64 1
+  store i64 %8, ptr %arrayidx1, align 8
+  %10 = load i64, ptr %why, align 8
+  %11 = load ptr, ptr %out.addr, align 8
+  %arrayidx2 = getelementptr inbounds i64, ptr %11, i64 2
+  store i64 %10, ptr %arrayidx2, align 8
+  ret void
+}
+
+; Function Attrs: noinline nounwind
+define void @cancho_net_udp_bind(i64 %port, i64 %flags, ptr %bound, i64 %bound_len, ptr %out) {
+entry:
+  %port.addr = alloca i64, align 8
+  %flags.addr = alloca i64, align 8
+  %bound.addr = alloca ptr, align 8
+  %bound_len.addr = alloca i64, align 8
+  %out.addr = alloca ptr, align 8
+  %a = alloca [16 x i8], align 1
+  %fd = alloca i32, align 4
+  store i64 %port, ptr %port.addr, align 8
+  store i64 %flags, ptr %flags.addr, align 8
+  store ptr %bound, ptr %bound.addr, align 8
+  store i64 %bound_len, ptr %bound_len.addr, align 8
+  store ptr %out, ptr %out.addr, align 8
+  %0 = load i64, ptr %port.addr, align 8
+  %1 = load ptr, ptr %bound.addr, align 8
+  %2 = load i64, ptr %bound_len.addr, align 8
+  %call = call i64 @netrt_listen_port(ptr %1, i64 %2)
+  call void @netrt_check_port(i64 %0, i64 %call)
+  %arraydecay = getelementptr inbounds [16 x i8], ptr %a, i64 0, i64 0
+  %3 = load i64, ptr %port.addr, align 8
+  call void @netrt_sockaddr_any(ptr %arraydecay, i64 %3)
+  %4 = load ptr, ptr %out.addr, align 8
+  %arrayidx = getelementptr inbounds i64, ptr %4, i64 0
+  store i64 1, ptr %arrayidx, align 8
+  %5 = load ptr, ptr %out.addr, align 8
+  %arrayidx1 = getelementptr inbounds i64, ptr %5, i64 1
+  store i64 -1, ptr %arrayidx1, align 8
+  %6 = load ptr, ptr %out.addr, align 8
+  %arrayidx2 = getelementptr inbounds i64, ptr %6, i64 2
+  store i64 0, ptr %arrayidx2, align 8
+  %call3 = call i32 @netrt_tcp_socket(i32 2)
+  store i32 %call3, ptr %fd, align 4
+  %7 = load i32, ptr %fd, align 4
+  %cmp = icmp slt i32 %7, 0
+  br i1 %cmp, label %if.then, label %if.end
+
+if.then:                                          ; preds = %entry
+  %call4 = call ptr @cancho_errno_location()
+  %8 = load i32, ptr %call4, align 4
+  %conv = sext i32 %8 to i64
+  %9 = load ptr, ptr %out.addr, align 8
+  %arrayidx5 = getelementptr inbounds i64, ptr %9, i64 2
+  store i64 %conv, ptr %arrayidx5, align 8
+  br label %return
+
+if.end:                                           ; preds = %entry
+  %10 = load i32, ptr %fd, align 4
+  call void @netrt_int_option(i32 %10, i32 1, i32 2)
+  %11 = load i64, ptr %flags.addr, align 8
+  %and = and i64 %11, 1
+  %tobool = icmp ne i64 %and, 0
+  br i1 %tobool, label %if.then6, label %if.end7
+
+if.then6:                                         ; preds = %if.end
+  %12 = load i32, ptr %fd, align 4
+  call void @netrt_int_option(i32 %12, i32 1, i32 15)
+  br label %if.end7
+
+if.end7:                                          ; preds = %if.then6, %if.end
+  %13 = load i32, ptr %fd, align 4
+  %arraydecay8 = getelementptr inbounds [16 x i8], ptr %a, i64 0, i64 0
+  %call9 = call i32 @bind(i32 %13, ptr %arraydecay8, i32 16)
+  %cmp10 = icmp ne i32 %call9, 0
+  br i1 %cmp10, label %if.then12, label %if.end17
+
+if.then12:                                        ; preds = %if.end7
+  %call13 = call ptr @cancho_errno_location()
+  %14 = load i32, ptr %call13, align 4
+  %conv14 = sext i32 %14 to i64
+  %15 = load ptr, ptr %out.addr, align 8
+  %arrayidx15 = getelementptr inbounds i64, ptr %15, i64 2
+  store i64 %conv14, ptr %arrayidx15, align 8
+  %16 = load i32, ptr %fd, align 4
+  %call16 = call i32 @close(i32 %16)
+  br label %return
+
+if.end17:                                         ; preds = %if.end7
+  %17 = load ptr, ptr %out.addr, align 8
+  %arrayidx18 = getelementptr inbounds i64, ptr %17, i64 0
+  store i64 0, ptr %arrayidx18, align 8
+  %18 = load i32, ptr %fd, align 4
+  %conv19 = sext i32 %18 to i64
+  %19 = load ptr, ptr %out.addr, align 8
+  %arrayidx20 = getelementptr inbounds i64, ptr %19, i64 1
+  store i64 %conv19, ptr %arrayidx20, align 8
+  br label %return
+
+return:                                           ; preds = %if.end17, %if.then12, %if.then
+  ret void
+}
+
+; Function Attrs: noinline nounwind
+define void @cancho_udp_recv(ptr %udp, ptr %p, i64 %room, ptr %out) {
+entry:
+  %udp.addr = alloca ptr, align 8
+  %p.addr = alloca ptr, align 8
+  %room.addr = alloca i64, align 8
+  %out.addr = alloca ptr, align 8
+  %moved = alloca i64, align 8
+  %reason = alloca i64, align 8
+  store ptr %udp, ptr %udp.addr, align 8
+  store ptr %p, ptr %p.addr, align 8
+  store i64 %room, ptr %room.addr, align 8
+  store ptr %out, ptr %out.addr, align 8
+  store i64 -1, ptr %moved, align 8
+  store i64 22, ptr %reason, align 8
+  %0 = load i64, ptr %room.addr, align 8
+  %cmp = icmp ne i64 %0, 0
+  br i1 %cmp, label %if.then, label %if.end
+
+if.then:                                          ; preds = %entry
+  %1 = load ptr, ptr %udp.addr, align 8
+  %2 = load i64, ptr %1, align 8
+  %conv = trunc i64 %2 to i32
+  %3 = load ptr, ptr %p.addr, align 8
+  %4 = load i64, ptr %room.addr, align 8
+  %call = call i64 @recv(i32 %conv, ptr %3, i64 %4, i32 32)
+  store i64 %call, ptr %moved, align 8
+  %call1 = call ptr @cancho_errno_location()
+  %5 = load i32, ptr %call1, align 4
+  %conv2 = sext i32 %5 to i64
+  store i64 %conv2, ptr %reason, align 8
+  br label %if.end
+
+if.end:                                           ; preds = %if.then, %entry
+  %6 = load i64, ptr %moved, align 8
+  %7 = load i64, ptr %reason, align 8
+  %8 = load i64, ptr %room.addr, align 8
+  %9 = load ptr, ptr %out.addr, align 8
+  call void @netrt_datagram(i64 %6, i64 %7, i64 %8, ptr %9)
+  ret void
+}
+
+; Function Attrs: noinline nounwind
+define internal void @netrt_datagram(i64 %moved, i64 %reason, i64 %room, ptr %out) {
+entry:
+  %moved.addr = alloca i64, align 8
+  %reason.addr = alloca i64, align 8
+  %room.addr = alloca i64, align 8
+  %out.addr = alloca ptr, align 8
+  %tag = alloca i64, align 8
+  store i64 %moved, ptr %moved.addr, align 8
+  store i64 %reason, ptr %reason.addr, align 8
+  store i64 %room, ptr %room.addr, align 8
+  store ptr %out, ptr %out.addr, align 8
+  %0 = load i64, ptr %moved.addr, align 8
+  %cmp = icmp slt i64 %0, 0
+  br i1 %cmp, label %if.then, label %if.else
+
+if.then:                                          ; preds = %entry
+  %1 = load i64, ptr %reason.addr, align 8
+  %cmp1 = icmp eq i64 %1, 11
+  %2 = zext i1 %cmp1 to i64
+  %cond = select i1 %cmp1, i32 2, i32 3
+  %conv = sext i32 %cond to i64
+  store i64 %conv, ptr %tag, align 8
+  br label %if.end
+
+if.else:                                          ; preds = %entry
+  %3 = load i64, ptr %moved.addr, align 8
+  %4 = load i64, ptr %room.addr, align 8
+  %cmp2 = icmp sgt i64 %3, %4
+  %5 = zext i1 %cmp2 to i64
+  %cond4 = select i1 %cmp2, i32 1, i32 0
+  %conv5 = sext i32 %cond4 to i64
+  store i64 %conv5, ptr %tag, align 8
+  br label %if.end
+
+if.end:                                           ; preds = %if.else, %if.then
+  %6 = load i64, ptr %tag, align 8
+  %7 = load ptr, ptr %out.addr, align 8
+  %arrayidx = getelementptr inbounds i64, ptr %7, i64 0
+  store i64 %6, ptr %arrayidx, align 8
+  %8 = load i64, ptr %moved.addr, align 8
+  %9 = load ptr, ptr %out.addr, align 8
+  %arrayidx6 = getelementptr inbounds i64, ptr %9, i64 1
+  store i64 %8, ptr %arrayidx6, align 8
+  %10 = load i64, ptr %moved.addr, align 8
+  %11 = load ptr, ptr %out.addr, align 8
+  %arrayidx7 = getelementptr inbounds i64, ptr %11, i64 2
+  store i64 %10, ptr %arrayidx7, align 8
+  %12 = load i64, ptr %reason.addr, align 8
+  %13 = load ptr, ptr %out.addr, align 8
+  %arrayidx8 = getelementptr inbounds i64, ptr %13, i64 3
+  store i64 %12, ptr %arrayidx8, align 8
+  ret void
+}
+
+; Function Attrs: noinline nounwind
+define void @cancho_udp_recv_from(ptr %udp, ptr %p, i64 %room, ptr %cells, i64 %ncells, ptr %out) {
+entry:
+  %udp.addr = alloca ptr, align 8
+  %p.addr = alloca ptr, align 8
+  %room.addr = alloca i64, align 8
+  %cells.addr = alloca ptr, align 8
+  %ncells.addr = alloca i64, align 8
+  %out.addr = alloca ptr, align 8
+  %fd = alloca i32, align 4
+  %ticket = alloca i64, align 8
+  %entry1 = alloca ptr, align 8
+  %moved = alloca i64, align 8
+  %reason = alloca i64, align 8
+  %len = alloca i32, align 4
+  store ptr %udp, ptr %udp.addr, align 8
+  store ptr %p, ptr %p.addr, align 8
+  store i64 %room, ptr %room.addr, align 8
+  store ptr %cells, ptr %cells.addr, align 8
+  store i64 %ncells, ptr %ncells.addr, align 8
+  store ptr %out, ptr %out.addr, align 8
+  %0 = load ptr, ptr %udp.addr, align 8
+  %1 = load i64, ptr %0, align 8
+  %conv = trunc i64 %1 to i32
+  store i32 %conv, ptr %fd, align 4
+  %2 = load i64, ptr getelementptr inbounds (i8, ptr @lexs_udp_peers, i64 2097152), align 8
+  %add = add i64 %2, 1
+  store i64 %add, ptr %ticket, align 8
+  %3 = load i64, ptr %ticket, align 8
+  %and = and i64 %3, 65535
+  %mul = mul i64 %and, 32
+  %add.ptr = getelementptr inbounds i8, ptr @lexs_udp_peers, i64 %mul
+  store ptr %add.ptr, ptr %entry1, align 8
+  store i64 -1, ptr %moved, align 8
+  store i64 22, ptr %reason, align 8
+  %4 = load i64, ptr %room.addr, align 8
+  %cmp = icmp ne i64 %4, 0
+  br i1 %cmp, label %land.lhs.true, label %if.end
+
+land.lhs.true:                                    ; preds = %entry
+  %5 = load i64, ptr %ncells.addr, align 8
+  %cmp3 = icmp ne i64 %5, 0
+  br i1 %cmp3, label %if.then, label %if.end
+
+if.then:                                          ; preds = %land.lhs.true
+  store i32 16, ptr %len, align 4
+  %6 = load i32, ptr %fd, align 4
+  %7 = load ptr, ptr %p.addr, align 8
+  %8 = load i64, ptr %room.addr, align 8
+  %9 = load ptr, ptr %entry1, align 8
+  %call = call i64 @recvfrom(i32 %6, ptr %7, i64 %8, i32 32, ptr %9, ptr %len)
+  store i64 %call, ptr %moved, align 8
+  %call5 = call ptr @cancho_errno_location()
+  %10 = load i32, ptr %call5, align 4
+  %conv6 = sext i32 %10 to i64
+  store i64 %conv6, ptr %reason, align 8
+  br label %if.end
+
+if.end:                                           ; preds = %if.then, %land.lhs.true, %entry
+  %11 = load i64, ptr %moved, align 8
+  %cmp7 = icmp sge i64 %11, 0
+  br i1 %cmp7, label %if.then9, label %if.end12
+
+if.then9:                                         ; preds = %if.end
+  %12 = load i64, ptr %ticket, align 8
+  %13 = load ptr, ptr %entry1, align 8
+  %add.ptr10 = getelementptr inbounds i8, ptr %13, i64 16
+  store i64 %12, ptr %add.ptr10, align 8
+  %14 = load i32, ptr %fd, align 4
+  %15 = load ptr, ptr %entry1, align 8
+  %add.ptr11 = getelementptr inbounds i8, ptr %15, i64 24
+  store i32 %14, ptr %add.ptr11, align 4
+  %16 = load i64, ptr %ticket, align 8
+  store i64 %16, ptr getelementptr inbounds (i8, ptr @lexs_udp_peers, i64 2097152), align 8
+  %17 = load i64, ptr %ticket, align 8
+  %18 = load ptr, ptr %cells.addr, align 8
+  %arrayidx = getelementptr inbounds i64, ptr %18, i64 0
+  store i64 %17, ptr %arrayidx, align 8
+  br label %if.end12
+
+if.end12:                                         ; preds = %if.then9, %if.end
+  %19 = load i64, ptr %moved, align 8
+  %20 = load i64, ptr %reason, align 8
+  %21 = load i64, ptr %room.addr, align 8
+  %22 = load ptr, ptr %out.addr, align 8
+  call void @netrt_datagram(i64 %19, i64 %20, i64 %21, ptr %22)
+  ret void
+}
+
+declare i64 @recvfrom(i32, ptr, i64, i32, ptr, ptr)
+
+; Function Attrs: noinline nounwind
+define void @cancho_udp_send_to(ptr %udp, ptr %p, i64 %n, i64 %ticket, ptr %out) {
+entry:
+  %udp.addr = alloca ptr, align 8
+  %p.addr = alloca ptr, align 8
+  %n.addr = alloca i64, align 8
+  %ticket.addr = alloca i64, align 8
+  %out.addr = alloca ptr, align 8
+  %fd = alloca i32, align 4
+  %entry1 = alloca ptr, align 8
+  %moved = alloca i64, align 8
+  %reason = alloca i64, align 8
+  store ptr %udp, ptr %udp.addr, align 8
+  store ptr %p, ptr %p.addr, align 8
+  store i64 %n, ptr %n.addr, align 8
+  store i64 %ticket, ptr %ticket.addr, align 8
+  store ptr %out, ptr %out.addr, align 8
+  %0 = load ptr, ptr %udp.addr, align 8
+  %1 = load i64, ptr %0, align 8
+  %conv = trunc i64 %1 to i32
+  store i32 %conv, ptr %fd, align 4
+  %2 = load i64, ptr %ticket.addr, align 8
+  %and = and i64 %2, 65535
+  %mul = mul i64 %and, 32
+  %add.ptr = getelementptr inbounds i8, ptr @lexs_udp_peers, i64 %mul
+  store ptr %add.ptr, ptr %entry1, align 8
+  store i64 -1, ptr %moved, align 8
+  store i64 9, ptr %reason, align 8
+  %3 = load i32, ptr %fd, align 4
+  %4 = load i64, ptr %ticket.addr, align 8
+  %5 = load ptr, ptr %entry1, align 8
+  %call = call i32 @netrt_ticket_ok(i32 %3, i64 %4, ptr %5)
+  %tobool = icmp ne i32 %call, 0
+  br i1 %tobool, label %if.then, label %if.end
+
+if.then:                                          ; preds = %entry
+  %6 = load i32, ptr %fd, align 4
+  %7 = load ptr, ptr %p.addr, align 8
+  %8 = load i64, ptr %n.addr, align 8
+  %9 = load ptr, ptr %entry1, align 8
+  %call2 = call i64 @sendto(i32 %6, ptr %7, i64 %8, i32 16384, ptr %9, i32 16)
+  store i64 %call2, ptr %moved, align 8
+  %call3 = call ptr @cancho_errno_location()
+  %10 = load i32, ptr %call3, align 4
+  %conv4 = sext i32 %10 to i64
+  store i64 %conv4, ptr %reason, align 8
+  br label %if.end
+
+if.end:                                           ; preds = %if.then, %entry
+  %11 = load i64, ptr %moved, align 8
+  %cmp = icmp slt i64 %11, 0
+  br i1 %cmp, label %cond.true, label %cond.false
+
+cond.true:                                        ; preds = %if.end
+  %12 = load i64, ptr %reason, align 8
+  %cmp6 = icmp eq i64 %12, 11
+  %13 = zext i1 %cmp6 to i64
+  %cond = select i1 %cmp6, i32 1, i32 2
+  br label %cond.end
+
+cond.false:                                       ; preds = %if.end
+  br label %cond.end
+
+cond.end:                                         ; preds = %cond.false, %cond.true
+  %cond8 = phi i32 [ %cond, %cond.true ], [ 0, %cond.false ]
+  %conv9 = sext i32 %cond8 to i64
+  %14 = load ptr, ptr %out.addr, align 8
+  %arrayidx = getelementptr inbounds i64, ptr %14, i64 0
+  store i64 %conv9, ptr %arrayidx, align 8
+  %15 = load i64, ptr %moved, align 8
+  %16 = load ptr, ptr %out.addr, align 8
+  %arrayidx10 = getelementptr inbounds i64, ptr %16, i64 1
+  store i64 %15, ptr %arrayidx10, align 8
+  %17 = load i64, ptr %reason, align 8
+  %18 = load ptr, ptr %out.addr, align 8
+  %arrayidx11 = getelementptr inbounds i64, ptr %18, i64 2
+  store i64 %17, ptr %arrayidx11, align 8
+  ret void
+}
+
+; Function Attrs: noinline nounwind
+define internal i32 @netrt_ticket_ok(i32 %fd, i64 %ticket, ptr %entry1) {
+entry:
+  %fd.addr = alloca i32, align 4
+  %ticket.addr = alloca i64, align 8
+  %entry.addr = alloca ptr, align 8
+  store i32 %fd, ptr %fd.addr, align 4
+  store i64 %ticket, ptr %ticket.addr, align 8
+  store ptr %entry1, ptr %entry.addr, align 8
+  %0 = load i64, ptr %ticket.addr, align 8
+  %cmp = icmp sgt i64 %0, 0
+  br i1 %cmp, label %land.lhs.true, label %land.end
+
+land.lhs.true:                                    ; preds = %entry
+  %1 = load ptr, ptr %entry.addr, align 8
+  %add.ptr = getelementptr inbounds i8, ptr %1, i64 16
+  %2 = load i64, ptr %add.ptr, align 8
+  %3 = load i64, ptr %ticket.addr, align 8
+  %cmp2 = icmp eq i64 %2, %3
+  br i1 %cmp2, label %land.rhs, label %land.end
+
+land.rhs:                                         ; preds = %land.lhs.true
+  %4 = load ptr, ptr %entry.addr, align 8
+  %add.ptr3 = getelementptr inbounds i8, ptr %4, i64 24
+  %5 = load i32, ptr %add.ptr3, align 4
+  %6 = load i32, ptr %fd.addr, align 4
+  %cmp4 = icmp eq i32 %5, %6
+  br label %land.end
+
+land.end:                                         ; preds = %land.rhs, %land.lhs.true, %entry
+  %7 = phi i1 [ false, %land.lhs.true ], [ false, %entry ], [ %cmp4, %land.rhs ]
+  %land.ext = zext i1 %7 to i32
+  ret i32 %land.ext
+}
+
+declare i64 @sendto(i32, ptr, i64, i32, ptr, i32)
+
+; Function Attrs: noinline nounwind
+define i64 @cancho_udp_peer(ptr %udp, i64 %ticket, ptr %out, i64 %room) {
+entry:
+  %retval = alloca i64, align 8
+  %udp.addr = alloca ptr, align 8
+  %ticket.addr = alloca i64, align 8
+  %out.addr = alloca ptr, align 8
+  %room.addr = alloca i64, align 8
+  %entry1 = alloca ptr, align 8
+  %i = alloca i32, align 4
+  %i11 = alloca i32, align 4
+  store ptr %udp, ptr %udp.addr, align 8
+  store i64 %ticket, ptr %ticket.addr, align 8
+  store ptr %out, ptr %out.addr, align 8
+  store i64 %room, ptr %room.addr, align 8
+  %0 = load i64, ptr %ticket.addr, align 8
+  %and = and i64 %0, 65535
+  %mul = mul i64 %and, 32
+  %add.ptr = getelementptr inbounds i8, ptr @lexs_udp_peers, i64 %mul
+  store ptr %add.ptr, ptr %entry1, align 8
+  %1 = load ptr, ptr %udp.addr, align 8
+  %2 = load i64, ptr %1, align 8
+  %conv = trunc i64 %2 to i32
+  %3 = load i64, ptr %ticket.addr, align 8
+  %4 = load ptr, ptr %entry1, align 8
+  %call = call i32 @netrt_ticket_ok(i32 %conv, i64 %3, ptr %4)
+  %tobool = icmp ne i32 %call, 0
+  br i1 %tobool, label %if.end, label %if.then
+
+if.then:                                          ; preds = %entry
+  store i64 9, ptr %retval, align 8
+  br label %return
+
+if.end:                                           ; preds = %entry
+  %5 = load i64, ptr %room.addr, align 8
+  %cmp = icmp slt i64 %5, 19
+  br i1 %cmp, label %if.then3, label %if.end4
+
+if.then3:                                         ; preds = %if.end
+  store i64 22, ptr %retval, align 8
+  br label %return
+
+if.end4:                                          ; preds = %if.end
+  %6 = load ptr, ptr %out.addr, align 8
+  %arrayidx = getelementptr inbounds i8, ptr %6, i64 0
+  store i8 4, ptr %arrayidx, align 1
+  store i32 0, ptr %i, align 4
+  br label %for.cond
+
+for.cond:                                         ; preds = %for.inc, %if.end4
+  %7 = load i32, ptr %i, align 4
+  %cmp5 = icmp slt i32 %7, 4
+  br i1 %cmp5, label %for.body, label %for.end
+
+for.body:                                         ; preds = %for.cond
+  %8 = load ptr, ptr %entry1, align 8
+  %9 = load i32, ptr %i, align 4
+  %add = add i32 4, %9
+  %idxprom = sext i32 %add to i64
+  %arrayidx7 = getelementptr inbounds i8, ptr %8, i64 %idxprom
+  %10 = load i8, ptr %arrayidx7, align 1
+  %11 = load ptr, ptr %out.addr, align 8
+  %12 = load i32, ptr %i, align 4
+  %add8 = add i32 1, %12
+  %idxprom9 = sext i32 %add8 to i64
+  %arrayidx10 = getelementptr inbounds i8, ptr %11, i64 %idxprom9
+  store i8 %10, ptr %arrayidx10, align 1
+  br label %for.inc
+
+for.inc:                                          ; preds = %for.body
+  %13 = load i32, ptr %i, align 4
+  %inc = add i32 %13, 1
+  store i32 %inc, ptr %i, align 4
+  br label %for.cond
+
+for.end:                                          ; preds = %for.cond
+  store i32 5, ptr %i11, align 4
+  br label %for.cond12
+
+for.cond12:                                       ; preds = %for.inc18, %for.end
+  %14 = load i32, ptr %i11, align 4
+  %cmp13 = icmp slt i32 %14, 17
+  br i1 %cmp13, label %for.body15, label %for.end20
+
+for.body15:                                       ; preds = %for.cond12
+  %15 = load ptr, ptr %out.addr, align 8
+  %16 = load i32, ptr %i11, align 4
+  %idxprom16 = sext i32 %16 to i64
+  %arrayidx17 = getelementptr inbounds i8, ptr %15, i64 %idxprom16
+  store i8 0, ptr %arrayidx17, align 1
+  br label %for.inc18
+
+for.inc18:                                        ; preds = %for.body15
+  %17 = load i32, ptr %i11, align 4
+  %inc19 = add i32 %17, 1
+  store i32 %inc19, ptr %i11, align 4
+  br label %for.cond12
+
+for.end20:                                        ; preds = %for.cond12
+  %18 = load ptr, ptr %entry1, align 8
+  %arrayidx21 = getelementptr inbounds i8, ptr %18, i64 2
+  %19 = load i8, ptr %arrayidx21, align 1
+  %20 = load ptr, ptr %out.addr, align 8
+  %arrayidx22 = getelementptr inbounds i8, ptr %20, i64 17
+  store i8 %19, ptr %arrayidx22, align 1
+  %21 = load ptr, ptr %entry1, align 8
+  %arrayidx23 = getelementptr inbounds i8, ptr %21, i64 3
+  %22 = load i8, ptr %arrayidx23, align 1
+  %23 = load ptr, ptr %out.addr, align 8
+  %arrayidx24 = getelementptr inbounds i8, ptr %23, i64 18
+  store i8 %22, ptr %arrayidx24, align 1
+  store i64 0, ptr %retval, align 8
+  br label %return
+
+return:                                           ; preds = %for.end20, %if.then3, %if.then
+  %24 = load i64, ptr %retval, align 8
+  ret i64 %24
+}
+
+; Function Attrs: noinline nounwind
+define i64 @cancho_udp_local_port(ptr %udp) {
+entry:
+  %retval = alloca i64, align 8
+  %udp.addr = alloca ptr, align 8
+  %a = alloca [16 x i8], align 1
+  %len = alloca i32, align 4
+  %r = alloca i32, align 4
+  %why = alloca i64, align 8
+  store ptr %udp, ptr %udp.addr, align 8
+  store i32 16, ptr %len, align 4
+  %0 = load ptr, ptr %udp.addr, align 8
+  %1 = load i64, ptr %0, align 8
+  %conv = trunc i64 %1 to i32
+  %arraydecay = getelementptr inbounds [16 x i8], ptr %a, i64 0, i64 0
+  %call = call i32 @getsockname(i32 %conv, ptr %arraydecay, ptr %len)
+  store i32 %call, ptr %r, align 4
+  %call1 = call ptr @cancho_errno_location()
+  %2 = load i32, ptr %call1, align 4
+  %conv2 = sext i32 %2 to i64
+  store i64 %conv2, ptr %why, align 8
+  %3 = load i32, ptr %r, align 4
+  %cmp = icmp slt i32 %3, 0
+  br i1 %cmp, label %if.then, label %if.end
+
+if.then:                                          ; preds = %entry
+  %4 = load i64, ptr %why, align 8
+  %sub = sub i64 0, %4
+  store i64 %sub, ptr %retval, align 8
+  br label %return
+
+if.end:                                           ; preds = %entry
+  %arrayidx = getelementptr inbounds [16 x i8], ptr %a, i64 0, i64 2
+  %5 = load i8, ptr %arrayidx, align 1
+  %conv4 = zext i8 %5 to i64
+  %shl = shl i64 %conv4, 8
+  %arrayidx5 = getelementptr inbounds [16 x i8], ptr %a, i64 0, i64 3
+  %6 = load i8, ptr %arrayidx5, align 1
+  %conv6 = zext i8 %6 to i64
+  %or = or i64 %shl, %conv6
+  store i64 %or, ptr %retval, align 8
+  br label %return
+
+return:                                           ; preds = %if.end, %if.then
+  %7 = load i64, ptr %retval, align 8
+  ret i64 %7
+}
+
+declare i32 @getsockname(i32, ptr, ptr)
 
 ; Function Attrs: noinline nounwind
 define void @cancho_poller_new(ptr %out) {
@@ -1603,7 +2296,7 @@ entry:
   %2 = load i64, ptr %port.addr, align 8
   %3 = load ptr, ptr %bound.addr, align 8
   %4 = load i64, ptr %bound_len.addr, align 8
-  %call = call i64 @netrt_dial(ptr %0, i64 %1, i64 %2, ptr %3, i64 %4, i64 1, i64 1, ptr %why)
+  %call = call i64 @netrt_dial(ptr %0, i64 %1, i64 %2, ptr %3, i64 %4, i64 1, i64 1, i32 1, ptr %why)
   store i64 %call, ptr %fd, align 8
   %5 = load i64, ptr %fd, align 8
   %cmp = icmp slt i64 %5, 0

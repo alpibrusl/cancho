@@ -140,6 +140,9 @@ pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     if lc.spells(text, from, to, "accept") {
         return 35;
     }
+    if lc.spells(text, from, to, "tcp_listen_on") {
+        return 128;
+    }
     if lc.spells(text, from, to, "tcp_listen") {
         return 36;
     }
@@ -258,6 +261,36 @@ pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
         return 126;
     }
     if lc.spells(text, from, to, "tty_close") {
+        return 44;
+    }
+    if lc.spells(text, from, to, "udp_connect") {
+        return 129;
+    }
+    if lc.spells(text, from, to, "udp_bind") {
+        return 130;
+    }
+    if lc.spells(text, from, to, "udp_recv_from") {
+        return 132;
+    }
+    if lc.spells(text, from, to, "udp_recv") {
+        return 131;
+    }
+    if lc.spells(text, from, to, "udp_send_to") {
+        return 133;
+    }
+    if lc.spells(text, from, to, "udp_peer") {
+        return 134;
+    }
+    if lc.spells(text, from, to, "udp_local_port") {
+        return 135;
+    }
+    if lc.spells(text, from, to, "udp_send") {
+        return 40;
+    }
+    if lc.spells(text, from, to, "udp_nonblocking") {
+        return 41;
+    }
+    if lc.spells(text, from, to, "udp_close") {
         return 44;
     }
     if lc.spells(text, from, to, "child_kill") {

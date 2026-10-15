@@ -483,7 +483,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
     }
     let v = filecode.spawn_process(st);
     let spawned = types.make_prelude(st, tables.prelude_spawned());
-    return ex.in_reg(spawned, filecode.answer_enum(st, spawned, 0, v));
+    return ex.in_reg(spawned, filecode.answer_enum(st, spawned, 3, v));
 }
 
 // `box_slice(heap, count, fill)` (1), `unbox_slice(heap, box)` (2) and `contents(box_ref)` (3), of
@@ -1445,9 +1445,16 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let nargs = ast.get(st, id, 7);
-    if nargs != netcode.arity(which) {
+    // `tcp_listen_on(net, host, port, backlog, flags)` is `tcp_listen` with the address of its literal.
+    let listen_on = number == 128;
+    var expected = netcode.arity(which);
+    if listen_on {
+        expected = expected + 1;
+    }
+    if nargs != expected {
         return ex.skip(st, from, to);
     }
+    var host = 0;
     if netcode.needs_dirs(which) {
         st[55] = st[55] | 2;
     } else if which >= 122 && which <= 126 {
@@ -1468,6 +1475,14 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
         let a = expr(st, text, arg);
         if ast.ok(st) && k == 0 && leads {
             cap = a.ty;
+        } else if ast.ok(st) && listen_on && k == 1 {
+            if !ast.is_kind(st, arg, kinds.NK::EStr) {
+                return ex.skip(st, from, to);
+            }
+            host = netcode.ipv4(st, text, ast.get(st, arg, 4));
+            if host < 0 {
+                return ex.skip(st, from, to);
+            }
         } else if ast.ok(st) && !types.is_erased(st, a.ty) {
             ex.push_value(st, a);
         }
@@ -1482,6 +1497,10 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
     }
     if which == 119 {
         emit.push_arg(st, 1, true, netcode.signal_bits(st, text, cap), 0 - 1);
+    }
+    if which == 36 {
+        // The address a listener binds (0, every interface, for `tcp_listen`).
+        emit.push_arg(st, 1, true, host, 0 - 1);
     }
     netcode.extras(st, which);
     let n = st[52] - first_arg;
