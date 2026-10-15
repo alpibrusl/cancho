@@ -249,8 +249,22 @@ fn a_port_outside_the_bound_traps() {
         );
         let dir = scratch(&format!("listen-host-trap-{backend}"));
         let exe = build(&dir, "server", &source, backend);
-        let run = Command::new(&exe).output().expect("the program runs");
-        assert_eq!(run.status.code(), None, "{backend}: killed by the trap, not a normal exit");
+        // Without the check the program would listen and wait for a client
+        // forever, so it is given a deadline rather than waited for.
+        let mut child = Command::new(&exe).stderr(Stdio::null()).spawn().expect("the program runs");
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if std::time::Instant::now() > deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("{backend}: a port outside the bound did not trap; the program is listening");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(status.code(), None, "{backend}: killed by the trap, not a normal exit");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

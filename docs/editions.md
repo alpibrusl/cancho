@@ -366,6 +366,11 @@ before merge: the first version of #382 removed it within the edition, and `scri
 recorded count. Keeping it costs one small function, emitted only in a module that calls it.)* A retired builtin is
 documented as such where it is declared, and nothing in this repository calls it.
 
+Edition 9 also has **`tcp_listen_on`** ([`native-sockets.md`](native-sockets.md) §12, #498): `tcp_listen` bound to one IPv4 address named by a
+string literal, under the existing `net_in` label, with the inbound bound reading as a port, a `host:port` or a host. A builtin under an existing label
+and a name a program may declare for itself, so it is absent before edition 9 (`tests/reject/tcp_listen_on_is_edition_nine.cho`). It adds no type, no label
+and no `Split` field, and `tcp_listen` is unchanged.
+
 Edition 9 also has **`hw_sha256`, `sha256_blocks` and `sha256_block_words`** ([`sha256-builtin.md`](sha256-builtin.md) §3,
 #445), for the same reason as #382's: edition 7 is closed and these are names a program may declare for itself. `std/crypto.cho`
 declares `edition 9` to call them, which moves its own hashes and no other file's (§6.3).
