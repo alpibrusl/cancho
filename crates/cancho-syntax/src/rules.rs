@@ -60,6 +60,7 @@ pub enum Rule {
     LinearUseAfterMove,
     LinearValueTakenApart,
     LinearValueUnconsumed,
+    ListenHost,
     LiteralForm,
     LiteralOutOfRange,
     MatchArmUnreachable,
@@ -101,7 +102,7 @@ pub enum Rule {
 
 impl Rule {
     /// Every rule, in tag order. The catalogue as data.
-    pub const ALL: [Rule; 61] = [
+    pub const ALL: [Rule; 62] = [
         Rule::AmbiguousType,
         Rule::ArityMismatch,
         Rule::AssignToImmutable,
@@ -126,6 +127,7 @@ impl Rule {
         Rule::LinearUseAfterMove,
         Rule::LinearValueTakenApart,
         Rule::LinearValueUnconsumed,
+        Rule::ListenHost,
         Rule::LiteralForm,
         Rule::LiteralOutOfRange,
         Rule::MatchArmUnreachable,
@@ -192,6 +194,7 @@ impl Rule {
             Rule::LinearUseAfterMove => "linear-use-after-move",
             Rule::LinearValueTakenApart => "linear-value-taken-apart",
             Rule::LinearValueUnconsumed => "linear-value-unconsumed",
+            Rule::ListenHost => "listen-host",
             Rule::LiteralForm => "literal-form",
             Rule::LiteralOutOfRange => "literal-out-of-range",
             Rule::MatchArmUnreachable => "match-arm-unreachable",
@@ -341,6 +344,12 @@ impl Rule {
                 "A `res` value is consumed exactly once on every path: not dropped at the end of a \
                  block, not discarded by an assignment or a statement, and not left to differ \
                  between branches."
+            }
+            Rule::ListenHost => {
+                "`tcp_listen_on` names the address to listen on as a string literal holding a \
+                 dotted-quad IPv4 address, and that address must be inside what the `Net` was \
+                 narrowed to; the all-interfaces `tcp_listen` is refused on a `Net` narrowed to \
+                 one host. No names, no IPv6, no host read at run time."
             }
             Rule::LiteralForm => {
                 "A literal has one spelling — a string that does not span lines, a `0x` with digits \

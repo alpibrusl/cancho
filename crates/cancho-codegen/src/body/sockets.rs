@@ -212,7 +212,20 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let low = self.builder.ins().ireduce(types::I8, port32);
         self.builder.ins().store(MemFlags::trusted(), high, addr, 2);
         self.builder.ins().store(MemFlags::trusted(), low, addr, 3);
-        for i in 4..16i32 {
+        // `INADDR_ANY` (every byte zero) unless `tcp_listen_on` appended the
+        // address it read at compile time (`docs/native-sockets.md` section
+        // 12): the four octets, most significant first, which is network order.
+        let host = match args.get(4) {
+            None => 0u32,
+            Some(Expr::Int(address)) => u32::try_from(*address)
+                .expect("the checker lowers `tcp_listen_on`'s address from a parsed IPv4 literal"),
+            Some(_) => unreachable!("`tcp_listen_on`'s address is lowered as an `Expr::Int`"),
+        };
+        for (i, octet) in host.to_be_bytes().iter().enumerate() {
+            let octet = self.builder.ins().iconst(types::I8, i64::from(*octet));
+            self.builder.ins().store(MemFlags::trusted(), octet, addr, 4 + i as i32);
+        }
+        for i in 8..16i32 {
             self.builder.ins().store(MemFlags::trusted(), zero8, addr, i);
         }
 

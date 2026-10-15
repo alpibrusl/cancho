@@ -573,7 +573,7 @@ of the issue is the report. A program that takes the address from its
 command line chooses between literals, which is also the program a
 reviewer can read:
 
-```cancho
+```text
 if everywhere { tcp_listen_on(n, "0.0.0.0", port, 8, 0) } else { tcp_listen_on(n, "127.0.0.1", port, 8, 0) }
 ```
 
