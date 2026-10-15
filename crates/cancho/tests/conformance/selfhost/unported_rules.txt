@@ -1,0 +1,17 @@
+# The refusals of the Rust front end that `examples/selfhost` has no number or name for yet, with why. A rule the Rust
+# crates gain is not in `rules.cho`, so `parity::every_rule_of_the_rust_front_end_is_known_to_the_compiler_in_cancho` fails until
+# the compiler in cancho knows it or the rule is listed here with the issue that will. Take a line out when the rule is
+# ported (the test insists). Tracked in #512 unless it says otherwise.
+capability-misused                # narrowing and what a capability may be used for
+capability-not-narrowable         # the narrowed literal has to live in the capability's type
+ingest-arity                      # `cancho ingest` is not part of the compiler (#485)
+ingest-json                       # as above
+ingest-node                       # as above
+internal                          # the Rust compiler's own failure (docs/internal-errors.md); the compiler in cancho has its own (#479)
+listen-host                       # a literal host bound by the program's authority
+no-function-values                # function values the code is not written for
+not-a-place                       # assignment targets the checker does not model
+not-a-tuple                       # tuple patterns on other types
+signal-not-claimable              # the signals a program may claim
+thread-payload-type               # what a thread may be given
+unsupported-on-target             # targets the compiler in cancho does not write code for (WebAssembly, #486)
