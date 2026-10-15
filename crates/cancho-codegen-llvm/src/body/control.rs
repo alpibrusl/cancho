@@ -172,10 +172,11 @@ impl<'a> FuncEmitter<'a> {
         let mut out: Vec<LValue> = Vec::with_capacity(all_kinds.len());
         out.push(LValue::Const(i64::from(variant)));
         for kind in &all_kinds[1..] {
-            out.push(if *kind == LKind::Ptr {
-                LValue::Reg("null".to_owned())
-            } else {
-                LValue::Const(0)
+            out.push(match kind {
+                LKind::Ptr => LValue::Reg("null".to_owned()),
+                // `double 0` is not LLVM: a float's zero is spelled `0.0`.
+                LKind::F64 | LKind::F32 => LValue::Reg(kind.zero().to_owned()),
+                _ => LValue::Const(0),
             });
         }
         let mut at = offset;
