@@ -201,6 +201,39 @@ pub fn ensure_compiler() -> Result<PathBuf, Failure> {
     Ok(exe)
 }
 
+/// A refusal of the compiler in cancho as a sentence. It gives the rule and the place; the sentence is the Rust front end's
+/// for the same files, which refuses the same program with the same rule (`SKIP`, the compiler having no code yet, is not a
+/// refusal of the program and stays as it is). If the Rust front end accepts what the compiler in cancho refused, the two
+/// disagree, and that is said.
+fn explained(
+    answer: &str,
+    files: &[(String, String)],
+    inputs: &[PathBuf],
+    with_std: bool,
+) -> Failure {
+    let short = refusal(answer, files);
+    if answer.split_whitespace().nth(1) == Some("SKIP") {
+        return short;
+    }
+    match crate::compile_to_ir(inputs, with_std) {
+        Err(rendered) => Failure {
+            message: format!(
+                "{}\n(the compiler in cancho refused it too, by the rule `{}`)",
+                rendered.message,
+                answer.split_whitespace().nth(1).unwrap_or("unknown")
+            ),
+            code: rendered.code,
+        },
+        Ok(_) => Failure {
+            message: format!(
+                "{}\nthe Rust compiler accepts this program: the two disagree, please report it",
+                short.message
+            ),
+            code: short.code,
+        },
+    }
+}
+
 /// What to build and how: the compiler, the program's files, and what `cancho build` was given.
 pub struct Job<'a> {
     pub compiler: &'a Path,
@@ -255,7 +288,7 @@ pub fn build(job: Job<'_>) -> Result<(), Failure> {
     let _ = writer.join();
     let answer = String::from_utf8_lossy(&ended.stdout).into_owned();
     if answer.starts_with("ERR") {
-        return Err(refusal(&answer, &files));
+        return Err(explained(&answer, &files, inputs, with_std));
     }
     if !ended.status.success() || answer.is_empty() {
         return Err(environment(format!(

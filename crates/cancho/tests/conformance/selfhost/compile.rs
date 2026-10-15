@@ -970,6 +970,11 @@ fn build_with_the_compiler_in_cancho_from_the_command_line() {
         .expect("cancho runs");
     assert_eq!(ended.status.code(), Some(1));
     let said = String::from_utf8_lossy(&ended.stderr);
-    assert!(said.contains("refused.cho:3") && said.contains("type-mismatch"), "{said}");
+    assert!(
+        said.contains("refused.cho:3")
+            && said.contains("expected `int`, found `bool`")
+            && said.contains("type-mismatch"),
+        "the sentence of the Rust front end, and the rule the compiler in cancho refused it by:\n{said}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
