@@ -1,0 +1,41 @@
+// A variant's float payload that the value being built does not use is zero, and the zero of a float is not an
+// integer constant: `Shape::Dot` and `Shape::Circle` carry the `float` leaves of `Shape::Rect` as zeros. The LLVM
+// backend once wrote `double 0` for them (which `clang` refuses) and Cranelift an `iconst` of a float type (which it
+// cannot make); both now write the float zero.
+//~ STDOUT 10
+//~ EXIT 0
+import std.io;
+
+enum Shape {
+    Dot,
+    Circle(float),
+    Rect(float, int),
+}
+
+fn area(s: Shape) -> [] int {
+    match s {
+        Shape::Dot => {
+            return 0;
+        }
+        Shape::Circle(r) => {
+            return truncate(r * 3.0);
+        }
+        Shape::Rect(w, h) => {
+            return truncate(w) * h;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    borrow mut io as &!i in {
+        io.print_nat(i, area(Shape::Dot) + area(Shape::Circle(2.0)) + area(Shape::Rect(1.5, 4)));
+        io.newline(i);
+    }
+    release(io);
+    return 0;
+}
