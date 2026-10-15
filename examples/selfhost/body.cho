@@ -160,10 +160,16 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
         return 0;
     }
     let mark = st[21];
+    let outer = scope.lin_block(st);
+    scope.lin_enter(st, mark);
     var want = ast.get(st, variant, 5);
     var i = 0;
     while i < ast.get(st, variant, 6) && ast.ok(st) {
         let at = pat_binding(st, tok, i);
+        if pat_wild(st, at) && emit.on(st) && !by_ref && scope.is_res_type(st, scope.node_val(st, want, held)) {
+            // A payload that must be ended, dropped by `_`.
+            scope.note(st, rules.r_linear_value_unconsumed(), from, to);
+        }
         if !pat_wild(st, at) {
             var j = mark;
             var again = false;
@@ -198,6 +204,8 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
     if ast.ok(st) {
         block(st, text, ast.get(st, arm, 5), ast.get(st, arm, 6), ret);
     }
+    scope.lin_close(st, mark, terminates(st, ast.get(st, arm, 5), ast.get(st, arm, 6)));
+    scope.lin_enter(st, outer);
     st[21] = mark;
     return 0;
 }
@@ -212,7 +220,9 @@ fn prelude_match[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int, s: e
     let count = ast.get(st, id, 6);
     var arm = ast.get(st, id, 5);
     var k = 0;
+    scope.lin_open(st, ast.nstart(st, id), ast.nend(st, id));
     while k < count && ast.ok(st) {
+        scope.lin_arm(st);
         let tok = ast.get(st, arm, 4);
         var number = 0 - 1;
         if !pat_wild(st, tok) {
@@ -224,6 +234,8 @@ fn prelude_match[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int, s: e
             emit.match_test(st, test, tag, number - first);
         }
         let mark = st[21];
+        let outer = scope.lin_block(st);
+        scope.lin_enter(st, mark);
         if number >= 0 {
             let at = builtins.arm_type_start(number);
             var cursor = at + 1;
@@ -246,13 +258,18 @@ fn prelude_match[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int, s: e
         if ast.ok(st) {
             block(st, text, ast.get(st, arm, 5), ast.get(st, arm, 6), ret);
         }
+        let gone = terminates(st, ast.get(st, arm, 5), ast.get(st, arm, 6));
+        scope.lin_close(st, mark, gone);
+        scope.lin_enter(st, outer);
         st[21] = mark;
+        scope.lin_arm_end(st, gone, ast.nstart(st, id), ast.nend(st, id));
         if test >= 0 {
             emit.match_next(st, test, end);
         }
         arm = ast.next(st, arm);
         k = k + 1;
     }
+    scope.lin_join(st);
     if ast.ok(st) {
         emit.match_end(st, end);
     }
@@ -305,7 +322,9 @@ fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] i
     var arm = first;
     var k = 0;
     var wildcard = false;
+    scope.lin_open(st, from, to);
     while k < ast.get(st, id, 6) && ast.ok(st) {
+        scope.lin_arm(st);
         // Every arm but the last tests the tag; the last takes what is left.
         var test = 0 - 1;
         if emit.on(st) && k + 1 < ast.get(st, id, 6) && !pat_wild(st, ast.get(st, arm, 4)) {
@@ -322,17 +341,23 @@ fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] i
                 ast.fail(st, rules.r_match_arm_unreachable(), from, to);
             } else {
                 wildcard = true;
+                if emit.on(st) && !by_ref && scope.is_res_type(st, held) {
+                    // `_` consumes the value and never names its parts: the silent drop linearity forbids.
+                    scope.note(st, rules.r_linear_value_unconsumed(), ast.nstart(st, scrutinee), ast.nend(st, scrutinee));
+                }
                 block(st, text, ast.get(st, arm, 5), ast.get(st, arm, 6), ret);
             }
         } else {
             variant_arm(st, text, item, first, k, arm, by_ref, unique, area, ret, from, to, held, s.reg);
         }
+        scope.lin_arm_end(st, terminates(st, ast.get(st, arm, 5), ast.get(st, arm, 6)), from, to);
         if test >= 0 {
             emit.match_next(st, test, end);
         }
         arm = ast.next(st, arm);
         k = k + 1;
     }
+    scope.lin_join(st);
     if emit.on(st) && ast.ok(st) {
         emit.match_end(st, end);
     }
@@ -412,6 +437,11 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
                 q = q + 1;
             }
         }
+        return 0;
+    }
+    if types.is_handle(st, v.ty) || types.is_box(st, v.ty) || types.is_boxslice(st, v.ty) {
+        // It owns a descriptor, a process or an allocation, and is ended by the function that knows how, not by a pattern.
+        ast.fail(st, rules.r_linear_value_taken_apart(), from, to);
         return 0;
     }
     if !types.is_prelude(st, v.ty) {
@@ -558,7 +588,11 @@ fn run_defers[&s, &x](st: &!s [int], text: &x [byte], low: int) -> [] int {
     var k = defers(st);
     while k > low && ast.ok(st) {
         k = k - 1;
-        exprs.expr(st, text, st[defer_base(st) + 1 + k]);
+        let id = st[defer_base(st) + 1 + k];
+        let done = exprs.expr(st, text, id);
+        if ast.ok(st) && scope.is_res_type(st, done.ty) {
+            scope.note(st, rules.r_linear_value_unconsumed(), ast.nstart(st, id), ast.nend(st, id));
+        }
     }
     return 0;
 }
@@ -566,6 +600,8 @@ fn run_defers[&s, &x](st: &!s [int], text: &x [byte], low: int) -> [] int {
 fn block[&s, &x](st: &!s [int], text: &x [byte], head: int, n: int, ret: int) -> [] int {
     let mark = st[21];
     let waiting = defers(st);
+    let outer = scope.lin_block(st);
+    scope.lin_enter(st, mark);
     var at = head;
     var i = 0;
     while i < n && ast.ok(st) {
@@ -583,6 +619,8 @@ fn block[&s, &x](st: &!s [int], text: &x [byte], head: int, n: int, ret: int) ->
         }
         st[defer_base(st)] = waiting;
     }
+    scope.lin_close(st, mark, terminates(st, head, n));
+    scope.lin_enter(st, outer);
     st[21] = mark;
     return 0;
 }
@@ -672,6 +710,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             scope.expect(st, text, declared, found.ty, ast.nstart(st, value), ast.nend(st, value));
         }
         if ast.ok(st) {
+            scope.lin_shadow(st, text, ast.get(st, id, 5), from, to);
             scope.bind(st, ast.get(st, id, 5), declared, ast.get(st, id, 4) != 0, from, to);
             if emit.on(st) && ast.ok(st) && !types.is_erased(st, declared) {
                 if types.is_slice_ref(st, declared) {
@@ -848,7 +887,11 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         return region_stmt(st, text, id, ret);
     }
     if ast.is_kind(st, id, kinds.NK::SExpr) {
-        exprs.expr(st, text, ast.get(st, id, 4));
+        let done = exprs.expr(st, text, ast.get(st, id, 4));
+        if emit.on(st) && ast.ok(st) && scope.is_res_type(st, done.ty) {
+            // A value that must be ended, produced and thrown away.
+            scope.note(st, rules.r_linear_value_unconsumed(), ast.nstart(st, ast.get(st, id, 4)), ast.nend(st, ast.get(st, id, 4)));
+        }
         return 0;
     }
     if emit.on(st) && ast.is_kind(st, id, kinds.NK::SDefer) {
@@ -869,15 +912,21 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             n = emit.label(st);
             emit.if_begin(st, n, c.known, c.value, c.reg);
         }
+        scope.lin_open(st, from, to);
+        scope.lin_arm(st);
         if ast.ok(st) {
             block(st, text, ast.get(st, id, 5), ast.get(st, id, 6), ret);
         }
+        scope.lin_arm_end(st, terminates(st, ast.get(st, id, 5), ast.get(st, id, 6)), from, to);
         if n >= 0 {
             emit.if_else(st, n);
         }
+        scope.lin_arm(st);
         if ast.ok(st) && ast.get(st, id, 8) >= 0 {
             block(st, text, ast.get(st, id, 7), ast.get(st, id, 8), ret);
         }
+        scope.lin_arm_end(st, ast.get(st, id, 8) > 0 && terminates(st, ast.get(st, id, 7), ast.get(st, id, 8)), from, to);
+        scope.lin_join(st);
         if n >= 0 {
             emit.if_end(st, n);
         }
@@ -889,6 +938,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             n = emit.label(st);
             emit.while_head(st, n);
         }
+        scope.lin_open(st, from, to);
         let c = condition(st, text, ast.get(st, id, 4));
         if n >= 0 && ast.ok(st) {
             emit.while_cond(st, n, c.known, c.value, c.reg);
@@ -896,6 +946,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         if ast.ok(st) {
             block(st, text, ast.get(st, id, 5), ast.get(st, id, 6), ret);
         }
+        scope.lin_loop_end(st, terminates(st, ast.get(st, id, 5), ast.get(st, id, 6)), from, to);
         if n >= 0 {
             emit.while_end(st, n);
         }
@@ -930,6 +981,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
                 // The value is read first, then what is deferred runs, then the function returns.
                 run_defers(st, text, 0);
                 close_arenas(st);
+                scope.lin_return(st, from, to);
             }
             if emit.on(st) && ast.ok(st) {
                 if types.is_slice_ref(st, ret) {
@@ -957,6 +1009,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     st[37] = 0 - 1;
     st[39] = 0;
     st[54] = 0;
+    scope.lin_reset(st);
     st[60] = 0;
     if emit.on(st) {
         st[defer_base(st)] = 0;
@@ -1026,7 +1079,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     // outlives, then the borrow conflicts the walk found.
     var slot = 0;
     while ast.ok(st) && slot < st[39] {
-        let log = st[38] + 4 * slot;
+        let log = st[38] + 5 * slot;
         if types.escaping_block(st, st[log], st[log + 1]) >= 0 {
             ast.fail(st, rules.r_reference_escapes_region(), st[log + 2], st[log + 3]);
         }
@@ -1098,7 +1151,7 @@ pub fn check_static[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int
     block(st, text, ast.get(st, item, 7), ast.get(st, item, 8), ret);
     var slot = 0;
     while ast.ok(st) && slot < st[39] {
-        let log = st[38] + 4 * slot;
+        let log = st[38] + 5 * slot;
         if types.escaping_block(st, st[log], st[log + 1]) >= 0 {
             ast.fail(st, rules.r_reference_escapes_region(), st[log + 2], st[log + 3]);
         }

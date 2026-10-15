@@ -719,6 +719,9 @@ pub fn tuple_field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] e
     var held = b.ty;
     if types.is_ref(st, held) {
         held = types.ref_inner(st, held);
+    } else if emit.on(st) && scope.is_res_type(st, held) {
+        // A component cannot be read out of a value that must be ended.
+        scope.note(st, rules.r_linear_value_taken_apart(), ast.nstart(st, ast.get(st, id, 4)), ast.nend(st, ast.get(st, id, 4)));
     }
     let k = ast.get(st, id, 5);
     if !types.is_tuple(st, held) || k >= types.tuple_size(st, held) {
@@ -927,6 +930,9 @@ pub fn field_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     var held = b.ty;
     if types.is_ref(st, held) {
         held = types.ref_inner(st, held);
+    } else if emit.on(st) && scope.is_res_type(st, held) {
+        // A field cannot be read out of a value that must be ended.
+        scope.note(st, rules.r_linear_value_taken_apart(), ast.nstart(st, base), ast.nend(st, base));
     }
     if types.is_prelude(st, held) {
         return ex.skip(st, from, to);
@@ -986,6 +992,11 @@ pub fn unary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
         // `*r`: what a reference points at, copied. A slice is not a value to copy.
         if !types.is_ref(st, operand.ty) {
             ast.fail(st, rules.r_not_a_reference(), of, ot);
+            return ex.nothing();
+        }
+        if scope.is_res_type(st, types.ref_inner(st, operand.ty)) {
+            // `*` would copy it and leave two values where one obligation is owed.
+            ast.fail(st, rules.r_linear_value_taken_apart(), of, ot);
             return ex.nothing();
         }
         if types.is_slice(st, types.ref_inner(st, operand.ty)) || types.is_prelude(st, types.ref_inner(st, operand.ty)) {
