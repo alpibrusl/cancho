@@ -308,11 +308,17 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "  %i = phi i64 [ 0, %entry ], [ %next, %body ]\n  %more = icmp slt i64 %i, %n\n  br i1 %more, label %body, label %done\n");
     emit.str(st, "body:\n  %addr = getelementptr i8, ptr %p, i64 %i\n  %b = load i8, ptr %addr\n  %c = zext i8 %b to i32\n");
     emit.str(st, "  %r = call i32 @putchar(i32 %c)\n  %next = add i64 %i, 1\n  br label %head\ndone:\n  ret i64 %n\n}\n\n");
-    emit.str(st, "define ptr @cancho_arena_alloc(ptr %head, i64 %bytes) {\nentry:\n  %size = add i64 %bytes, 16\n  %node = call ptr @malloc(i64 %size)\n");
-    emit.str(st, "  %none = icmp eq ptr %node, null\n  br i1 %none, label %fail, label %ok\nfail:\n  call void @llvm.trap()\n  unreachable\nok:\n");
-    emit.str(st, "  %old = load ptr, ptr %head\n  store ptr %old, ptr %node\n  store ptr %node, ptr %head\n  %data = getelementptr i8, ptr %node, i64 16\n  ret ptr %data\n}\n\n");
-    emit.str(st, "define void @cancho_arena_free(ptr %first) {\nentry:\n  br label %loop\nloop:\n  %node = phi ptr [ %first, %entry ], [ %next, %body ]\n");
-    emit.str(st, "  %done = icmp eq ptr %node, null\n  br i1 %done, label %out, label %body\nbody:\n  %next = load ptr, ptr %node\n  call void @free(ptr %node)\n  br label %loop\nout:\n  ret void\n}\n\n");
+    // An arena is one chunk of 64 KiB (after a header of 16 bytes holding how much is used), bumped from and given
+    // back whole; a request past the chunk traps, as the Rust compiler's does.
+    emit.str(st, "declare ptr @calloc(i64, i64)\n\n");
+    emit.str(st, "define ptr @cancho_arena_new() {\nentry:\n  %chunk = call ptr @calloc(i64 1, i64 65552)\n  %none = icmp eq ptr %chunk, null\n");
+    emit.str(st, "  br i1 %none, label %fail, label %ok\nfail:\n  call void @llvm.trap()\n  unreachable\nok:\n  ret ptr %chunk\n}\n\n");
+    emit.str(st, "define ptr @cancho_arena_alloc(ptr %head, i64 %bytes) {\nentry:\n  %chunk = load ptr, ptr %head\n  %used = load i64, ptr %chunk\n");
+    emit.str(st, "  %up = add i64 %bytes, 7\n  %rounded = and i64 %up, -8\n  %next = add i64 %used, %rounded\n");
+    emit.str(st, "  %wrapped = icmp ult i64 %next, %used\n  %over = icmp ugt i64 %next, 65536\n  %bad = or i1 %wrapped, %over\n");
+    emit.str(st, "  br i1 %bad, label %fail, label %ok\nfail:\n  call void @llvm.trap()\n  unreachable\nok:\n");
+    emit.str(st, "  store i64 %next, ptr %chunk\n  %data = getelementptr i8, ptr %chunk, i64 16\n  %at = getelementptr i8, ptr %data, i64 %used\n  ret ptr %at\n}\n\n");
+    emit.str(st, "define void @cancho_arena_free(ptr %chunk) {\nentry:\n  call void @free(ptr %chunk)\n  ret void\n}\n\n");
     var item = st[15];
     var entry = 0;
     var entry_item = 0 - 1;

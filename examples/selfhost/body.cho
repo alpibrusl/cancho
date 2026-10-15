@@ -605,6 +605,18 @@ fn writes_stmt[&s](st: &!s [int], id: int) -> [] bool {
     return ast.is_kind(st, id, kinds.NK::SMatch) || ast.is_kind(st, id, kinds.NK::SDestructureTuple) || ast.is_kind(st, id, kinds.NK::SBorrow) || ast.is_kind(st, id, kinds.NK::SRegion) || ast.is_kind(st, id, kinds.NK::SDestructure) || ast.is_kind(st, id, kinds.NK::SLet) || ast.is_kind(st, id, kinds.NK::SExpr) || ast.is_kind(st, id, kinds.NK::SReturn) || ast.is_kind(st, id, kinds.NK::SIf) || ast.is_kind(st, id, kinds.NK::SWhile) || ast.is_kind(st, id, kinds.NK::SDefer);
 }
 
+// A `return` leaves every arena that is open: the chunk of each goes back, the innermost first.
+fn close_arenas[&s](st: &!s [int]) -> [] int {
+    var id = st[37];
+    while id >= 0 {
+        if st[st[36] + 2 * id + 1] >= 0 {
+            emit.arena_close(st, id);
+        }
+        id = st[st[36] + 2 * id];
+    }
+    return 0;
+}
+
 fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
@@ -917,6 +929,7 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             if emit.on(st) && ast.ok(st) {
                 // The value is read first, then what is deferred runs, then the function returns.
                 run_defers(st, text, 0);
+                close_arenas(st);
             }
             if emit.on(st) && ast.ok(st) {
                 if types.is_slice_ref(st, ret) {
