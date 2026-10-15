@@ -14,49 +14,22 @@ edited — `ROADMAP.md` says which.
 
 ---
 
-## Where this sits
+## Where this came from
 
-Three repositories share one idea. **Two of them are wired together, and
-this is the third.**
+cancho began as the lower-level sibling of **Lex**, a high-level, interpreted
+language, and took its worldview from it: ownership and authority as one
+system, defined behaviour, a canonical content-addressable syntax tree. That
+is history. cancho stands on its own now: it has its own compiler, its own
+standard library, its own packages and its own tools (`cancho authority`,
+`cancho-vcs`, the products listed in the repositories of this organisation),
+and it depends on nothing from Lex or from `lex-os`, the agent runtime Lex had.
+If a runtime that confines a program to what its authority report says is
+needed, it is built in cancho, from the report the compiler already writes.
 
-```
-                    lex-lang
-             the high-level language
-       16 crates: syntax, ast, types, store,
-          vcs, jit, lsp, bytecode, trace
-                       │
-                       │  Grant, and the real Lex front end
-                       ▼
-                    lex-os
-           the autonomous-agent runtime
-     manifest + grant → static check → perimeter
-            → supervisor → audit chain
-
-
-                    cancho
-                    this repo
-       a second, native language, same worldview
-```
-
-**`lex-lang`** is the high-level, functional, GC'd, interpreted language
-the ecosystem's libraries are written in.
-
-**`lex-os`** is the runtime that takes an agent's goal, seals it in a
-microVM, and mediates everything it does against **one** declaration —
-the trust `Grant`, enforced twice: statically by `lex-os-check` before
-the program loads, and at run time by a supervisor the agent cannot
-reach.
-
-**`cancho`** — this repository — is a *second, lower-level language*
-sharing that worldview, targeting the work Lex cannot do: native
-binaries, manual and region memory, syscalls, embedding, FFI. It shares
-the idea and **no code**: `lex-os` takes its grant from `lex-lang` and
-does not depend on this repository at all.
-
-| Join | State |
-|---|---|
-| cancho code in `lex-vcs` | Most of that crate is already language-agnostic; gated on a plateau in the effect vocabulary rather than on a feature — [`vcs.md`](vcs.md) |
-| cancho code under a lex-os grant | Not a compiler integration: `authority --output json` is already the interface a supervisor reads, and its filesystem dimension is already enforceable through it. `network` and `exec` are not, because both are libc — [`under-a-grant.md`](under-a-grant.md). *Corrected for `network` ([`agent-toolbox.md`](agent-toolbox.md) §2.5): a program built on the `Net` builtins reports `net_out("host:port")` and `bounded: true`, and only a program that reaches the network through `Ffi` is still opaque; `exec` is still libc. But "enforceable through it" does not yet hold for either dimension: `lex-os` reads Lex effect names, and fed a cancho label verbatim it derives `network: none` for a program that dials a host (measured), so the join needs a bridge that fails closed.* |
+The documents that compared the two ([`vcs.md`](vcs.md),
+[`under-a-grant.md`](under-a-grant.md), [`related-work.md`](related-work.md))
+are kept as the record of what was measured and decided; they are not a plan
+to integrate with Lex.
 
 ---
 
@@ -253,7 +226,7 @@ there first.
   `val` means something different from this one.
 - **The object-capability model** (E, *Robust Composition*) and
   **Capsicum** — no ambient authority.
-- **Lex** — the parent language, and the worldview.
+- **Lex** — where the worldview came from (history; cancho no longer depends on it).
 
 **The competitor is WASI, not Rust.** For running code you did not write,
 WebAssembly with WASI enforces authority at run time, by trying. cancho
@@ -277,7 +250,7 @@ cost. What each project contributed, traced to the document that used it:
 | FFI | Explicit, capability-gated | C's effects must not be invisible |
 | Backend | LLVM by default, Cranelift for fast dev builds | Reuse; own backend only if zero-C becomes a goal |
 
-Carried over from Lex: examples-as-tests, `[budget]`, effect declarations as
+Taken from Lex's design, long ago: examples-as-tests, `[budget]`, effect declarations as
 the function's contract.
 
 ### Explicit non-goals
@@ -286,9 +259,10 @@ the function's contract.
   specialisation, no borrow checker. Chasing Rust's *power* means inheriting
   Rust's implementation cost and abandoning totality — the failure mode this
   design exists to avoid.
-- **Not self-hosting-first.** Porting the lex-lang toolchain is a possible
-  end-state, not a starting point.
-- **Not a replacement for Lex.** Different layer, different job.
+- **Not self-hosting-first.** The compiler started in Rust, as a starting
+  point, not an end-state; it is now being written in cancho itself, stage by
+  stage, with the Rust compiler as the check at each one
+  ([`self-hosting.md`](self-hosting.md)).
 
 ---
 
@@ -349,7 +323,7 @@ not repeated here; a doc's own header carries its own detail.
 | Doc | Purpose | Status |
 |---|---|---|
 | [`linearity-and-effects.md`](linearity-and-effects.md) | Core type-system rules: linear/affine ownership, capability-typed effects, how they unify | settled and built ([#2](https://github.com/alpibrusl/cancho/issues/2)) |
-| [`bootstrap.md`](bootstrap.md) | What M0 settled: host language, file extension, the M0 surface | written ([#3](https://github.com/alpibrusl/cancho/issues/3)) |
+| [`bootstrap.md`](bootstrap.md) | Where self-hosting stands and how to use the compiler in cancho; below it, what M0 settled (host language, file extension, the M0 surface) | current; history below |
 | [`canonical-ast.md`](canonical-ast.md) | AST shape, canonicalisation, per-unit identity (`cancho ids`) | written and built |
 | `memory-model.md` | Regions/arenas, escape, the escape hatches | not written — settled piecemeal by `heap.md`/`sharing.md`; nothing left to write on its own |
 | [`strings.md`](strings.md) | A string is bytes, not an encoding; `byte` as storage | settled and built |

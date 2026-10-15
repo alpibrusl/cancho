@@ -5,7 +5,7 @@
 # Foundations
 
 - [Linear types and effects](linearity-and-effects.md)
-- [What M0 settled](bootstrap.md)
+- [Bootstrap and self-hosting](bootstrap.md)
 - [Canonical AST and per-unit identity](canonical-ast.md)
 - [Defined behaviour](defined-behaviour.md)
 
