@@ -934,6 +934,23 @@ fn build_with_the_compiler_in_cancho_from_the_command_line() {
     let (ours, our_exe) = built(&["--compiler", compiler.to_str().expect("a path")], "by-cancho");
     assert!(ours.status.success(), "{}", String::from_utf8_lossy(&ours.stderr));
     assert_eq!(run_it(&rust_exe), run_it(&our_exe));
+    // `--compiler auto` builds the compiler from the repository once, into a cache, and uses it.
+    let cache = dir.join("cache");
+    let auto = dir.join("by-auto");
+    let ended = Command::new(BIN)
+        .arg("build")
+        .arg(&program)
+        .args(["--std", "--compiler", "auto", "-o"])
+        .arg(&auto)
+        .env("CANCHO_CACHE", &cache)
+        .output()
+        .expect("cancho runs");
+    assert!(ended.status.success(), "{}", String::from_utf8_lossy(&ended.stderr));
+    assert_eq!(run_it(&rust_exe), run_it(&auto));
+    assert!(
+        std::fs::read_dir(&cache).expect("the cache was made").count() == 1,
+        "one compiler was cached"
+    );
     let refused = dir.join("refused.cho");
     std::fs::write(
         &refused,

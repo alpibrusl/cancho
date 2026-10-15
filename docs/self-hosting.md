@@ -926,5 +926,5 @@ the language is comfortable writing its own compiler. §5's decision does not ch
 `examples/selfhost/compiler.cho` and its modules built once (`cancho build ... --std`). The command reads the files (and the
 standard-library modules they import), sends the target and the files to it, takes the LLVM IR, and has `clang` and the
 usual link finish the build. A refusal is exit status 1 with the rule and `file:line`, not the sentence, and a program
-the compiler has no code for yet says so. Targets: aarch64 macOS, x86-64 and aarch64 Linux. It is a way to try the
+the compiler has no code for yet says so. `--compiler auto` (or `CANCHO_COMPILER=auto`, or `CANCHO_COMPILER=<exe>`) has the compiler built from this repository's `examples/selfhost` by the Rust compiler the first time, and kept in `$CANCHO_CACHE` or `~/.cache/cancho` under a hash of its sources (a binary installed without the repository next to it says so). Targets: aarch64 macOS, x86-64 and aarch64 Linux. It is a way to try the
 compiler on real programs; `cancho build` without the flag is unchanged.
