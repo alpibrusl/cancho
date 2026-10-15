@@ -41,6 +41,35 @@ programs, the documentation link check, and the file budget below.
 
 ---
 
+## The compiler in cancho
+
+The compiler is also being written in cancho (`examples/selfhost`, epic #491, `docs/self-hosting.md`), and the Rust
+compiler is its oracle. **A change to what the compiler accepts, refuses or emits is not done until the compiler in cancho
+follows it** or the gap is written down. That means a new or changed:
+
+- **rule** (`crates/cancho-syntax/src/rules.rs`): a number and a name in `examples/selfhost/rules.cho`, numbers
+  sequential, and the check that raises it;
+- **builtin, prelude type or effect label**: the tables regenerate with
+  `UPDATE_SELFHOST_TABLES=1 cargo test -p cancho-ir selfhost_tables`, and the code for it goes in `examples/selfhost`;
+- **runtime support or code generation** (`crates/cancho-codegen-llvm`): the same text in `examples/selfhost/runtime*`
+  and `runtime/` (`runtime/make.sh`), and the backend's behaviour in `emit.cho`;
+- **fixture** in `tests/reject/` or `tests/accept/`: it is built through the compiler in cancho by the conformance suite.
+
+What checks this, in order of how early it fails:
+
+1. `selfhost::parity` fails when Rust has a rule or a builtin that no source of `examples/selfhost` names. List it in
+   `tests/conformance/selfhost/unported_rules.txt` (or `unported_builtins.txt`) with the issue that will port it, or port it.
+2. `refusals_agree_with_the_rust_front_end` fails when a program of `tests/reject/` is refused by another rule than Rust's
+   by the compiler in cancho, unless it is in `reject_gaps.txt`; a listed one that now agrees fails until the line is
+   taken out, so the list only shrinks.
+3. The `selfhost` job of CI runs the whole conformance suite with `CANCHO_COMPILER=auto`. A failure that is not in
+   `.github/selfhost-known-differences.txt` is a difference you introduced.
+
+Run 3 locally with `CANCHO_COMPILER=auto cargo test -p cancho --test conformance`. A PR that adds to any of the three lists
+says why, in its description, and links the issue.
+
+---
+
 ## Files
 
 **No source file over 2,000 lines.** `crates/cancho/tests/files.rs`
