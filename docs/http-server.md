@@ -744,7 +744,7 @@ The socket path and the byte-fed path differ in where bytes cross a boundary (§
 * **`piece` is not clipped to `size`**: a larger one is the same, because the buffer holds no more. *Corrected* in §12.2. The clipping line was equivalent under every test.
 * **The timers' scan is at most every 50 ms**, so a timer fires up to 50 ms after it is due (`test_a_head_has_a_deadline_that_trickling_does_not_extend...` pins it). *Corrected:* §12.8 said "at most every 50 ms" already; the tests are what made the consequence a sentence.
 * **Not built:** a switch that refuses chunk extensions; draining or lingering on an early answer; a per-route `max_body` (the application answers `413` itself); a counter of discarded trailer lines (word 28 is spare).
-* **`packages/http-server/server.cho` is 1,990 lines of the 2,000 allowed**, in `cancho fmt`'s form (`formatting::the_repository_is_formatted` holds it to that). The streaming code is about 640 of them. To fit, the refusal table is one string (`rule`), trailer lines are checked for control bytes but not for `name: value`
+* **`packages/http-server/server.cho` was 1,990 lines of the 2,000 allowed** when this was written (1,999 after §13: *corrected*), in `cancho fmt`'s form (`formatting::the_repository_is_formatted` holds it to that). The streaming code is about 640 of them. To fit, the refusal table is one string (`rule`), trailer lines are checked for control bytes but not for `name: value`
   syntax, and the chunk machine's fixed-byte states share one function (`want`); `std.http.hex_value` is now `pub` so the server does not carry a copy (the duplication check found it). The next addition to this file needs the package split into two modules (`Core` and the loop in one, the streaming in another importing it): a change to how
   the package is published (its store is flat, and the locks of `examples/api` and `tests/programs` pin it), not to this one.
 * **Found in `examples/https_hello`, not fixed here:** a client that keeps sending bytes after the server has ended its connection makes the server reset a different, healthy connection (reproduced on `main` at #360: a `Connection: close` request, then bytes on the same socket, while another client is served). Its cause is not known; a task to find and fix it was filed. The new cases avoid triggering it (a stalled client stops sending when it is answered `408`).
@@ -808,6 +808,62 @@ What the gateway can build on now, and what it still lacks, in the order it will
 4. **No lingering close, no drain** (§12.9): a request answered while its body is in flight closes the connection once the answer is sent; the client may see a reset before it has read it. A gateway that wants to keep the connection after refusing a body in flight takes the pieces and drops them before answering, up to its own bound.
 5. **No readiness list.** The application asks each ticket it holds (`body_state`/`body_part`) in the loop that already gives streams their room; with thousands of idle uploads that is thousands of calls a turn, each a few loads. A "tickets with news" list like `foreign` would be the change; nothing has asked.
 6. **Chunked responses, the peer's address, upstream connections in the same loop, `Upgrade`, ALPN, more than 1,024 connections, the second set of effect names**: §11.8's items 2, 3, 4, 5, 7, 8 and 9, unchanged. `packages/http-request` is being made non-blocking by another change.
-7. **`packages/http-server/server.cho` has 10 lines left** (§12.12). The next thing added to it splits the package.
+7. **`packages/http-server/server.cho` has 1 line left** (was 10 in §12.12; §13 took nine). The next thing added to it splits the package.
 8. **`examples/https_hello` has a bug that predates this change** (a client that keeps sending after its connection was ended resets another connection, §12.12) which a gateway on the same loop would inherit: filed.
 
+## 13. An `extra` header without its CRLF, and what a refused one answers
+
+**The bug.** `failure_with(.., 405, .., "Allow: GET")` -- the header written as one writes a
+header, with no CRLF -- died with SIGILL, and with it every connection (found building services with
+a model, `cancho-code#58`; two models wrote it that way, `cancho#515`). `reply_with`, `reply_as`,
+`failure_with` and `reply_empty` hand `extra` to `std.http.respond_head_with` /
+`respond_no_content`, which trap unless `valid_extra(extra)`; the doc comments said the lines look
+like `Allow: GET\r\n`, and a missing terminator was a trap, not an error.
+
+**What `valid_extra` accepted** (read before changing it): zero or more `name: value` lines, a name of
+token characters, a value of the characters a value may hold or spaces and tabs, each line ended by
+CRLF, and nothing else. `conformance/http.rs::a_misused_router_or_response_traps_instead_of_going_on`
+pinned five refusals: a bare LF in a line, a bare CR, a line with no colon, a blank line, and
+(`extra-without-its-line-ending`) a missing final CRLF.
+
+**The decision, two rules.**
+
+1. **The final CRLF is optional**, in `std.http` itself: `"Allow: GET"` and `"Allow: GET\r\n"` give the same
+   bytes, as do `"A: 1\r\nB: 2"` and `"A: 1\r\nB: 2\r\n"`. A missing terminator is not a safety
+   question -- the writer supplies the one it needs -- so it is the one case that moved from refused to
+   accepted, and it moved for every caller, not only the server's: one rule is easier to hold than
+   "complete in the package, trap in the library". A *lone* CR or LF at the end (`"X: a\n"`,
+   `"X: a\r"`) is still a bare one and still refused, as are a NUL, a line without `name: value` and a
+   blank line. `extra-without-its-line-ending` was removed from the trap list because its claim was
+   what changed; the guard tests now include the trailing-bare-LF and trailing-bare-CR forms.
+2. **What is still refused answers 500 in the server's `reply*`, and the server keeps serving.**
+   `reply_as` (so `reply_with`, `failure_with`) and `reply_empty` test `std.http.valid_extra` (now `pub`) first
+   and, on a refusal, answer `500 Internal Server Error`, `{"error":"internal error"}`
+   (`std.http.respond_internal_error`), no extra headers, on the keep-alive setting the caller gave. A
+   header string is an application bug; it must not kill the process. `std.http.respond_head_with`
+   and `respond_no_content` themselves **keep trapping** on a refused `extra`: they are the lower layer
+   with a documented precondition, a direct caller who has not checked has the bug the trap is
+   there to find, and the one caller that must not die (this package) checks first. A trap in the
+   library and a 500 in the package are the same rule at two altitudes.
+
+`reply_empty` with a status other than 204 or 304 and `reply_as` with a content type holding a CR, LF
+or NUL or a status outside 100-999 still trap: they are not header strings an application builds from a
+route, and this change did not widen to them (nothing has asked).
+
+**Tests.** `tests/lex/http_test.cho` (both backends, through `json.rs`): the same bytes with and without the
+CRLF, on `respond_head_with` and `respond_no_content`; `valid_extra` against 16 inputs including a NUL;
+the fixed 500. `conformance/http.rs`: the trap list above, now with the trailing bare LF/CR.
+`conformance/http_server.rs::an_extra_header_without_its_crlf_is_sent_and_a_refused_one_answers_500` runs a
+server with `/bare` (`failure_with` 405 `Allow: GET`), and a refused `extra` to `reply_with`, `failure_with`
+and `reply_empty`, pipelined on one connection followed by an ordinary request: exact bytes, and the
+process alive. Against `origin/main` it failed (empty read: the process died on the first request); the
+three mutations below each turned a gate red. The store was republished (`scripts/publish_packages.py`) and the locks of
+`examples/api` and `tests/programs/server_hold.lock` re-pinned.
+
+**Mutations** (each applied alone, the gate run, then undone):
+
+| mutation | red |
+|---|---|
+| the CRLF completion removed (`extra_open` always false) | `test_a_missing_final_crlf_on_extra_is_supplied`; the server test (the 405 head runs into the body) |
+| the 500 fallback removed from `reply_as` and `reply_empty` (store republished, locks re-pinned) | the server test: the `/bare` answer arrives, then the process traps on `/bad` and the connection closes |
+| the guard loosened to take a bare LF as a line end | `test_valid_extra_refuses_everything_unsafe`, `a_misused_router_or_response_traps_instead_of_going_on` (`extra-bare-line-feed`), the server test |

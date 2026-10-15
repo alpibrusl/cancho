@@ -10,6 +10,9 @@ edition 5;
 // Answers every request with its own path, so a misplaced answer shows -- except
 // `/empty`, a `204` with no `Content-Length`, and `/typed`, a `text/plain` answer
 // with an extra header, which are `server.reply_empty` and `server.reply_as`.
+// `/bare` writes an extra header without its CRLF (`failure_with`, 405), and the
+// `/bad*` paths pass `extra` text a head must not carry, to each of the four
+// `reply*` functions that take it: the answer is a 500, never a dead process.
 
 import std.buffer;
 import std.bytes;
@@ -45,6 +48,14 @@ fn run[&h, &k, &l](heap: &!h Heap, clock: &k Clock, listener: &!l Listener) -> [
                         let path = http.path(server.head(sr), server.parsed(sr));
                         if bytes.equal(path, "/empty") {
                             out = server.reply_empty(heap, out, 204, true, "");
+                        } else if bytes.equal(path, "/bare") {
+                            out = server.failure_with(heap, out, 405, "method not allowed", true, "Allow: GET");
+                        } else if bytes.equal(path, "/bad") {
+                            out = server.reply_with(heap, out, 200, path, true, "X: a\nSet-Cookie: b\r\n");
+                        } else if bytes.equal(path, "/badfailure") {
+                            out = server.failure_with(heap, out, 405, "no", true, "Allow GET");
+                        } else if bytes.equal(path, "/badempty") {
+                            out = server.reply_empty(heap, out, 204, true, "X: a\rY: b\r\n");
                         } else if bytes.equal(path, "/typed") {
                             out = server.reply_as(heap, out, 200, "text/plain; charset=utf-8", "hi", true, "X-Test: 1\r\n");
                         } else {

@@ -485,9 +485,19 @@ fn a_misused_router_or_response_traps_instead_of_going_on() {
             "extra-without-a-colon",
             "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"not a header\\r\\n\");",
         ),
+        // Only the final CRLF may be left out; a lone CR or LF at the end is
+        // still a bare one.
         (
-            "extra-without-its-line-ending",
-            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"X: a\");",
+            "extra-ends-in-a-bare-line-feed",
+            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"X: a\\n\");",
+        ),
+        (
+            "extra-ends-in-a-bare-carriage-return",
+            "out = http.respond_head_with(heap, out, 200, \"text/plain\", 0, true, \"X: a\\r\");",
+        ),
+        (
+            "no-content-extra-ends-in-a-bare-line-feed",
+            "out = http.respond_no_content(heap, out, 204, true, \"X: a\\n\");",
         ),
         (
             "extra-a-blank-line",

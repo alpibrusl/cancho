@@ -257,6 +257,79 @@ fn test_extra_header_lines_go_before_the_blank_line[&h](heap: &!h Heap) -> [heap
     return 0;
 }
 
+// The last extra line's CRLF is supplied when left out, so `"Allow: GET"` and
+// `"Allow: GET\r\n"` are the same bytes (`docs/http.md`, the 405 row).
+fn test_a_missing_final_crlf_on_extra_is_supplied[&h](heap: &!h Heap) -> [heap] int {
+    var a = buffer.empty(heap, 16);
+    a = http.respond_head_with(heap, a, 405, "application/json", 2, true, "Allow: GET");
+    var b = buffer.empty(heap, 16);
+    b = http.respond_head_with(heap, b, 405, "application/json", 2, true, "Allow: GET\r\n");
+    var c = buffer.empty(heap, 16);
+    c = http.respond_head_with(heap, c, 405, "application/json", 2, true, "A: 1\r\nB: 2");
+    borrow a as &ab in {
+        borrow b as &bb in {
+            test.assert(bytes.equal(buffer.bytes(ab), buffer.bytes(bb)));
+        }
+        let want = "HTTP/1.1 405 Method Not Allowed\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: keep-alive\r\nAllow: GET\r\n\r\n";
+        test.assert(bytes.equal(buffer.bytes(ab), want));
+    }
+    borrow c as &cb in {
+        let want = "HTTP/1.1 405 Method Not Allowed\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: keep-alive\r\nA: 1\r\nB: 2\r\n\r\n";
+        test.assert(bytes.equal(buffer.bytes(cb), want));
+    }
+    buffer.drop(heap, a);
+    buffer.drop(heap, b);
+    buffer.drop(heap, c);
+    var n = buffer.empty(heap, 16);
+    n = http.respond_no_content(heap, n, 304, false, "ETag: \"v1\"");
+    borrow n as &nb in {
+        let want = "HTTP/1.1 304 Not Modified\r\nConnection: close\r\nETag: \"v1\"\r\n\r\n";
+        test.assert(bytes.equal(buffer.bytes(nb), want));
+    }
+    buffer.drop(heap, n);
+    return 0;
+}
+
+// What `valid_extra` accepts and what it still refuses: the final CRLF is the
+// only thing that became optional.
+fn test_valid_extra_refuses_everything_unsafe[&h](heap: &!h Heap) -> [heap] int {
+    test.assert(http.valid_extra(""));
+    test.assert(http.valid_extra("A: b"));
+    test.assert(http.valid_extra("A: b\r\n"));
+    test.assert(http.valid_extra("A: b\r\nC: d"));
+    test.assert(http.valid_extra("A:"));
+    test.assert(!http.valid_extra("A: b\r"));
+    test.assert(!http.valid_extra("A: b\n"));
+    test.assert(!http.valid_extra("A: b\r\n\r\n"));
+    test.assert(!http.valid_extra("\r\n"));
+    test.assert(!http.valid_extra("A: b\nC: d"));
+    test.assert(!http.valid_extra("A: b\rC: d\r\n"));
+    test.assert(!http.valid_extra("A: b\n\r\n"));
+    test.assert(!http.valid_extra("no colon"));
+    test.assert(!http.valid_extra(": b"));
+    test.assert(!http.valid_extra("A b: c"));
+    var z = buffer.empty(heap, 16);
+    z = buffer.append(heap, z, "A: b");
+    z = buffer.push(heap, z, byte_of(0));
+    borrow z as &zb in {
+        test.assert(!http.valid_extra(buffer.bytes(zb)));
+    }
+    buffer.drop(heap, z);
+    return 0;
+}
+
+// The 500 the server answers instead of a trap.
+fn test_the_internal_error_answer_is_fixed[&h](heap: &!h Heap) -> [heap] int {
+    var out = buffer.empty(heap, 16);
+    out = http.respond_internal_error(heap, out, false);
+    borrow out as &b in {
+        let want = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: 26\r\nConnection: close\r\n\r\n{\"error\":\"internal error\"}";
+        test.assert(bytes.equal(buffer.bytes(b), want));
+    }
+    buffer.drop(heap, out);
+    return 0;
+}
+
 fn test_a_chunked_body_is_decoded[&h](heap: &!h Heap) -> [heap] int {
     let scratch = box_slice(heap, 64, byte_of(0));
     borrow mut scratch as &!sw in {
