@@ -161,7 +161,7 @@ pub fn extras[&s](st: &!s [int], which: int) -> [] int {
 
 // How many arguments the builtin numbered `which` (see `codes.net_code`; a pipe's number is made a connection's) takes.
 pub fn arity(which: int) -> [] int {
-    if which >= 122 && which <= 125 {
+    if which >= 122 && which <= 125 || which == 127 {
         return 2;
     }
     if which == 106 || which == 108 {
@@ -289,6 +289,9 @@ pub fn enum_name(which: int) -> [] &static [byte] {
 
 // The function of `runtime/net.c` that does it.
 pub fn function(which: int) -> [] &static [byte] {
+    if which == 127 {
+        return "cancho_child_kill";
+    }
     if which == 122 {
         return "cancho_tty_open";
     }

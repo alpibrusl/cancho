@@ -13,6 +13,7 @@ declare i32 @close(i32)
 declare i32 @fcntl(i32, i32, ...)
 declare i64 @read(i32, ptr, i64)
 declare i64 @strlen(ptr)
+declare i32 @kill(i32, i32)
 declare i32 @openat(i32, ptr, i32, ...)
 declare i32 @kqueue()
 declare i32 @kevent(i32, ptr, i32, ptr, i32, ptr)
@@ -576,6 +577,25 @@ code:
 sig:
   %sz = zext i32 %low to i64
   %v = add i64 %sz, 256
+  ret i64 %v
+}
+
+; child_kill: one of the signals by its bit, to the child whose word is in the slot; 0, or the errno (EINVAL, with no call, for a bit that is none).
+define i64 @cancho_child_kill(ptr %child, i64 %bit) {
+entry:
+  %word = load i64, ptr %child
+  %pid = trunc i64 %word to i32
+  %native = call i64 @cancho_native_signal(i64 %bit)
+  %known = icmp ne i64 %native, 0
+  br i1 %known, label %send, label %bad
+bad:
+  ret i64 22
+send:
+  %sig = trunc i64 %native to i32
+  %r = call i32 @kill(i32 %pid, i32 %sig)
+  %e = call i64 @cancho_errno()
+  %failed = icmp slt i32 %r, 0
+  %v = select i1 %failed, i64 %e, i64 0
   ret i64 %v
 }
 

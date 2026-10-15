@@ -721,6 +721,21 @@ fn first_even(limit: int) -> [] int {
     return unwrap(found, 0 - 1);
 }
 fn run() -> [] int { return first_even(9) + first_even(2) * 1000; }"#,
+    r#"enum Maybe[T] { Nothing, Just(T) }
+fn unwrap(m: Maybe[int], fallback: int) -> [] int {
+    match m {
+        Maybe::Nothing => { return fallback; }
+        Maybe::Just(v) => { return v; }
+    }
+}
+fn run() -> [] int {
+    var slot = Maybe::Just(41);
+    let before = unwrap(slot, 0);
+    slot = Maybe::Nothing;
+    let after = unwrap(slot, 7);
+    slot = Maybe::Just(before + after);
+    return unwrap(slot, 0);
+}"#,
 ];
 
 /// Functions held by their type in a parameter or a name, and called through it.

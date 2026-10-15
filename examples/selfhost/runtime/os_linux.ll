@@ -46,3 +46,26 @@ entry:
 }
 declare i64 @syscall(i64, ...)
 
+; The system's number for a signal of `child_kill`: by its bit (std.signals', and 256 for KILL); 0 for another.
+define i64 @cancho_native_signal(i64 %bit) {
+entry:
+  %is0 = icmp eq i64 %bit, 64
+  %n0 = select i1 %is0, i64 14, i64 0
+  %is1 = icmp eq i64 %bit, 1
+  %n1 = select i1 %is1, i64 1, i64 %n0
+  %is2 = icmp eq i64 %bit, 2
+  %n2 = select i1 %is2, i64 2, i64 %n1
+  %is3 = icmp eq i64 %bit, 4
+  %n3 = select i1 %is3, i64 3, i64 %n2
+  %is4 = icmp eq i64 %bit, 8
+  %n4 = select i1 %is4, i64 15, i64 %n3
+  %is5 = icmp eq i64 %bit, 16
+  %n5 = select i1 %is5, i64 10, i64 %n4
+  %is6 = icmp eq i64 %bit, 32
+  %n6 = select i1 %is6, i64 12, i64 %n5
+  %is7 = icmp eq i64 %bit, 128
+  %n7 = select i1 %is7, i64 28, i64 %n6
+  %is8 = icmp eq i64 %bit, 256
+  %n8 = select i1 %is8, i64 9, i64 %n7
+  ret i64 %n8
+}
