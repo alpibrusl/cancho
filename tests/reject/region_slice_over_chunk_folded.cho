@@ -1,0 +1,20 @@
+//~ ERROR a region holds 65536 bytes
+//~ RULE region-chunk-exceeded
+
+// `docs/region-limit.md` §2: a count the compiler folds is a constant too.
+// `8000 + 193` is 8193 before any code is generated.
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(io);
+    var n = 0;
+    region r {
+        let t = alloc_slice[r](8000 + 193, 0);
+        n = len(t);
+    }
+    return n;
+}

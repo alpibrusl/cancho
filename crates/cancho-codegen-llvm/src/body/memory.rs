@@ -223,7 +223,20 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {wrapped} = icmp ult ptr {next}, {at}\n"));
         let bad = self.fresh();
         self.out.push_str(&format!("  {bad} = or i1 {over}, {wrapped}\n"));
-        self.trap_if(&bad)?;
+
+        // The trap says why first (`docs/region-limit.md` §3): one write
+        // to standard error on the failing path, then `trap_if`'s own trap.
+        let n = self.blocks;
+        self.blocks += 1;
+        let (full, fits) = (format!("regionfull{n}"), format!("regionfits{n}"));
+        self.out.push_str(&format!("  br i1 {bad}, label %{full}, label %{fits}\n"));
+        self.out.push_str(&format!("{full}:\n"));
+        let message = self.bytes_lit(cancho_ir::REGION_EXHAUSTED_MESSAGE);
+        self.console_write(true, &message[0], &message[1]);
+        self.out
+            .push_str(&format!("  call void asm sideeffect \"{}\", \"\"()\n", self.trap_asm()?));
+        self.out.push_str("  unreachable\n");
+        self.out.push_str(&format!("{fits}:\n"));
 
         self.out.push_str(&format!("  store ptr {next}, ptr {bump_cell}\n"));
         Ok(LValue::Reg(at))

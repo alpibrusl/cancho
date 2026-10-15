@@ -178,10 +178,44 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let over = self.builder.ins().icmp(IntCC::UnsignedGreaterThan, next, end);
         let wrapped = self.builder.ins().icmp(IntCC::UnsignedLessThan, next, at);
         let bad = self.builder.ins().bor(over, wrapped);
-        self.builder.ins().trapnz(bad, TrapCode::HEAP_OUT_OF_BOUNDS);
+
+        // The trap says why first (`docs/region-limit.md` §3): one `write`
+        // to standard error on the failing path, then the same trap every
+        // check ends with. The common path is the one branch it was.
+        let failed = self.builder.create_block();
+        let fits = self.builder.create_block();
+        self.builder.set_cold_block(failed);
+        self.builder.ins().brif(bad, failed, &[], fits, &[]);
+        self.builder.switch_to_block(failed);
+        self.builder.seal_block(failed);
+        let message = self.bytes(cancho_ir::REGION_EXHAUSTED_MESSAGE);
+        // Through the console's `stderr` stream, as `write_err` is, and not
+        // a `write` import of our own: a program's `extern fn write` gives
+        // that symbol another signature, and a module refuses two.
+        self.console_write(true, message[0], message[1]);
+        self.builder.ins().trap(TrapCode::HEAP_OUT_OF_BOUNDS);
+        self.builder.switch_to_block(fits);
+        self.builder.seal_block(fits);
 
         self.builder.def_var(bump_var, next);
         at
+    }
+
+    /// `fwrite(start, 1, len, stdout | stderr)`: the one call `write_bytes`
+    /// and `write_err` make (`docs/bulk-io.md` §3), and the region trap's
+    /// message (`docs/region-limit.md` §3).
+    pub(crate) fn console_write(&mut self, stderr: bool, start: Value, len: Value) -> Value {
+        let pointer = self.pointer;
+        let target = if stderr { self.console.stderr } else { self.console.stdout };
+        let stream = self.module.declare_data_in_func(target, self.builder.func);
+        let stream = self.builder.ins().global_value(pointer, stream);
+        // `stdout` and `stderr` are `FILE *` *variables*, so the symbol is
+        // the address of the pointer and the stream is one load away.
+        let stream = self.builder.ins().load(pointer, MemFlags::trusted(), stream, 0);
+        let one = self.builder.ins().iconst(pointer, 1);
+        let f = self.module.declare_func_in_func(self.console.fwrite, self.builder.func);
+        let call = self.builder.ins().call(f, &[start, one, len, stream]);
+        self.builder.inst_results(call)[0]
     }
 
     /// The longest path a file operation will build, including the NUL.

@@ -141,7 +141,9 @@ fn a_loop_body_does_not_grow_the_stack_on_either_backend() {
 /// because the data is in the file rather than in a chunk.
 ///
 /// Both halves are checked here, because the claim is a comparison: the
-/// `region` version must trap and the `static` version must work.
+/// `region` version must be refused (it trapped at run time until #514,
+/// `docs/region-limit.md` §2: the size is a constant) and the `static`
+/// version must work.
 #[test]
 fn a_static_outgrows_what_an_arena_could_hold() {
     let body = "\
@@ -188,25 +190,22 @@ fn a_static_outgrows_what_an_arena_could_hold() {
             .args(["build".as_ref(), path.as_os_str(), "-o".as_ref(), exe.as_os_str()])
             .output()
             .expect("the compiler runs");
-        assert!(
-            build.status.success(),
-            "`{name}` should compile — the arena's limit is a run-time one:\n{}",
-            String::from_utf8_lossy(&build.stderr)
-        );
-        let run = Command::new(&exe).output().expect("the program runs");
-        if should_run {
-            assert_eq!(
-                run.status.code(),
-                Some(0),
-                "a 512 KB `static` is data in the binary, so there is no chunk to exhaust"
+        if !should_run {
+            assert!(!build.status.success(), "512 KB in a 64 KiB arena must be refused");
+            let said = String::from_utf8_lossy(&build.stderr);
+            assert!(
+                said.contains("a region holds 65536 bytes"),
+                "§1.1's second row is the chunk limit, named at check time:\n{said}"
             );
-        } else {
-            assert_eq!(
-                run.status.code(),
-                None,
-                "512 KB in a 64 KiB arena traps, which is the whole of §1.1's second row"
-            );
+            continue;
         }
+        assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+        let run = Command::new(&exe).output().expect("the program runs");
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "a 512 KB `static` is data in the binary, so there is no chunk to exhaust"
+        );
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

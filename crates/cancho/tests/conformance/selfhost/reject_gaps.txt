@@ -58,6 +58,9 @@ no_ambient_capability.cho
 no_main.cho
 one_tuple.cho
 reference_escapes_via_inference.cho
+region_byte_slice_over_chunk.cho
+region_slice_over_chunk.cho
+region_slice_over_chunk_folded.cho
 res_field_read_through_reference.cho
 res_tuple_component_through_reference.cho
 signal_not_claimable.cho

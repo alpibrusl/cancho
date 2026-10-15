@@ -986,25 +986,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     // the other stream, one label apart in the type
                     // system and one symbol apart here.
                     Callee::Builtin(Builtin::Write | Builtin::WriteErr) => {
-                        let pointer = self.pointer;
-                        let (start, len) = (args[0], args[1]);
-                        let target = match callee {
-                            Callee::Builtin(Builtin::WriteErr) => self.console.stderr,
-                            _ => self.console.stdout,
-                        };
-                        let stream = self.module.declare_data_in_func(target, self.builder.func);
-                        let stream = self.builder.ins().global_value(pointer, stream);
-                        // `stdout` and `stderr` are `FILE *` *variables*,
-                        // so the symbol is the address of the pointer and
-                        // the stream is one load away.
-                        let stream =
-                            self.builder.ins().load(pointer, MemFlags::trusted(), stream, 0);
-                        let one = self.builder.ins().iconst(pointer, 1);
-                        let f = self
-                            .module
-                            .declare_func_in_func(self.console.fwrite, self.builder.func);
-                        let call = self.builder.ins().call(f, &[start, one, len, stream]);
-                        vec![self.builder.inst_results(call)[0]]
+                        let stderr = matches!(callee, Callee::Builtin(Builtin::WriteErr));
+                        vec![self.console_write(stderr, args[0], args[1])]
                     }
                     // `docs/checked-output.md`: the stream the two arms
                     // above write into, flushed and asked whether any of it
