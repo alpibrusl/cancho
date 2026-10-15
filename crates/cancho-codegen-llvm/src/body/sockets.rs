@@ -177,7 +177,7 @@ impl<'a> FuncEmitter<'a> {
             Some(_) => return Err("`tcp_listen_on`'s address must be a constant".to_owned()),
         };
         for (i, octet) in host.to_be_bytes().iter().enumerate() {
-            self.store_byte(&addr, 4 + i as i64, &octet.to_string());
+            self.store_byte(&addr, 4 + i as i32, &octet.to_string());
         }
         for offset in 8..16 {
             self.store_byte(&addr, offset, "0");
