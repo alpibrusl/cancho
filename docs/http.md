@@ -105,7 +105,7 @@ which may not carry a `Content-Length` (RFC 9110 §8.6, §15.3.5) and have no us
 for the `Content-Type` that `respond_head` always writes. It writes the status
 line, `Connection`, the `extra` lines and the blank line. It traps on any other
 status (a `200` with no length on a keep-alive connection has no end a client can
-find) and on a bad `extra`, like `respond_head_with`. *Found by building a
+find) and on a bad `extra`, like `respond_head_with` (the final CRLF of `extra` is optional: `http-server.md` §13). *Found by building a
 service whose `DELETE` wanted a `204`: `respond_head` could only say
 `Content-Length: 0` with a type, and the example answered `200` with the deleted
 record instead.*
@@ -256,7 +256,7 @@ this work; a router-backed server is the next thing to build.
 | ~~A server loop that reads, parses, routes and writes~~ | **Built**: `examples/api`, [`server.md`](server.md), with the requests-a-second figures. Chunked decoding and a configurable buffer are built (§5.1); still missing: streaming a body larger than the buffer to a handler |
 | ~~Chunked decoding~~ | **Built** (§5.1): `http.dechunk`. Still not: `Expect: 100-continue`, trailers (refused), chunk extensions (refused) |
 | Refusing a malformed head before its blank line arrives | §3, last paragraph |
-| ~~`Allow` on a 405~~ | **Built**: `route.allowed(heap, router, path, params, out)` appends `GET, POST` -- registration order, each once -- and `http.respond_head_with` writes whole header lines it was handed (anything but `name: value` + CRLF traps, for the reason a header injection does). `examples/api` answers `Allow:` on its 405s |
+| ~~`Allow` on a 405~~ | **Built**: `route.allowed(heap, router, path, params, out)` appends `GET, POST` -- registration order, each once -- and `http.respond_head_with` writes the header lines it was handed (anything but `name: value` lines traps, for the reason a header injection does; the last line's CRLF may be left out, `http-server.md` §13, and the server's `reply*` answer a 500 instead of trapping). `examples/api` answers `Allow:` on its 405s |
 | Typed parameters (`:id:int`), regex constraints | **Half built, without the grammar**: the handler asks for the type -- `route.param_nat(path, params, i)` (a non-negative decimal of at most 17 digits, else -1), `route.param(path, params, i)` (the matched text), `route.param_decoded(path, params, i, out)` (percent-decoded). A router that refuses a non-number itself still adds a grammar, and nothing has asked |
 | Many routes under one prefix | linear within the prefix (§7); a trie would fix it, and nothing has that many |
 | Query string into a map | `query_value` is a scan; a map is a few lines for a caller who wants one |

@@ -150,6 +150,59 @@ fn replies_of_any_type_and_bodiless_ones_keep_the_connection_framed() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn an_extra_header_without_its_crlf_is_sent_and_a_refused_one_answers_500() {
+    // `docs/http-server.md` §13. `failure_with(.., "Allow: GET")` is the 405 two
+    // models wrote and that killed the process with SIGILL: it is now the same
+    // bytes as `"Allow: GET\r\n"`. An `extra` that is still refused (a bare LF
+    // that would end the head early, a bare CR, a line without a colon) is an
+    // application bug in a header string; it answers a 500 with a fixed body and no
+    // extra headers on all four `reply*` functions, and the next request on the
+    // same connection is answered, so the process is alive.
+    let (dir, exe) = one_per_round("hs-extra-header");
+    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let mut child = Command::new(&exe)
+        .arg(port.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the compiled server runs");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut s = loop {
+        match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(s) => break s,
+            Err(e) => {
+                assert!(Instant::now() < deadline, "never listened: {e}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
+    s.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+    let get = |p: &str| format!("GET {p} HTTP/1.1\r\nHost: t\r\n\r\n");
+    let paths = ["/bare", "/bad", "/badfailure", "/badempty", "/after"];
+    s.write_all(paths.iter().map(|p| get(p)).collect::<String>().as_bytes()).unwrap();
+    let failure = r#"{"error":"method not allowed"}"#;
+    let fixed = r#"{"error":"internal error"}"#;
+    let head = |status: &str, len: usize, extra: &str| {
+        format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: keep-alive\r\n{extra}\r\n"
+        )
+    };
+    let want = format!(
+        "{}{failure}{}{fixed}{}{fixed}{}{fixed}{}/after",
+        head("405 Method Not Allowed", failure.len(), "Allow: GET\r\n"),
+        head("500 Internal Server Error", fixed.len(), ""),
+        head("500 Internal Server Error", fixed.len(), ""),
+        head("500 Internal Server Error", fixed.len(), ""),
+        head("200 OK", "/after".len(), ""),
+    );
+    assert_eq!(read_until(&mut s, want.len()), want);
+    assert!(child.try_wait().unwrap().is_none(), "the server died");
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `tests/programs/server_hold.cho`, running: a server on a port of its own that has
 /// connected to the returned peer (the test's end of a connection the server watches in its
 /// own poller), and the connection to write to.

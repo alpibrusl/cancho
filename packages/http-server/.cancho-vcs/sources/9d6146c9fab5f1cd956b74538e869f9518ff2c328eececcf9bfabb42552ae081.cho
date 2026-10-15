@@ -178,15 +178,24 @@ pub fn reply_with[&h, &b, &x](heap: &!h Heap, out: buffer.Buffer, status: int, b
 }
 
 // A whole response of any content type -- `application/problem+json`,
-// `text/plain` -- with extra header lines (`Location: /users/7\r\n`) in the head.
+// `text/plain` -- with extra header lines (`Location: /users/7`, the final CRLF
+// optional) in the head. An `extra` that `std.http.valid_extra` refuses is not
+// sent: the answer is a `500` with a fixed body and no extra headers.
 pub fn reply_as[&h, &c, &b, &x](heap: &!h Heap, out: buffer.Buffer, status: int, content_type: &c [byte], body: &b [byte], keep: bool, extra: &x [byte]) -> [heap] buffer.Buffer {
+    if !http.valid_extra(extra) {
+        return http.respond_internal_error(heap, out, keep);
+    }
     let head = http.respond_head_with(heap, out, status, content_type, len(body), keep, extra);
     return buffer.append(heap, head, body);
 }
 
 // A response with no body: `204 No Content` or `304 Not Modified`, which carry
 // no `Content-Length` and no `Content-Type` (`std.http.respond_no_content`).
+// A refused `extra` answers as `reply_as` does.
 pub fn reply_empty[&h, &x](heap: &!h Heap, out: buffer.Buffer, status: int, keep: bool, extra: &x [byte]) -> [heap] buffer.Buffer {
+    if !http.valid_extra(extra) {
+        return http.respond_internal_error(heap, out, keep);
+    }
     return http.respond_no_content(heap, out, status, keep, extra);
 }
 
@@ -195,7 +204,7 @@ pub fn failure[&h, &m](heap: &!h Heap, out: buffer.Buffer, status: int, message:
     return failure_with(heap, out, status, message, keep, "");
 }
 
-// `failure`, with extra header lines (`Allow: GET\r\n`) in the head.
+// `failure`, with extra header lines (`Allow: GET`) in the head, as `reply_as`.
 pub fn failure_with[&h, &m, &x](heap: &!h Heap, out: buffer.Buffer, status: int, message: &m [byte], keep: bool, extra: &x [byte]) -> [heap] buffer.Buffer {
     var w = json.writer(heap, 64);
     w = json.begin_object(heap, w);
