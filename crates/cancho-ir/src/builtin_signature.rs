@@ -469,9 +469,10 @@ impl Builtin {
             Builtin::Accept => (vec![Type::Int], Type::Int),
             // Checked at the call site, like `bind`: the port is spent
             // against the bound in the capability's type.
-            Builtin::TcpListen | Builtin::TcpListenOn | Builtin::TcpConnect | Builtin::TcpConnectStart => {
-                (Vec::new(), Type::Unit)
-            }
+            Builtin::TcpListen
+            | Builtin::TcpListenOn
+            | Builtin::TcpConnect
+            | Builtin::TcpConnectStart => (Vec::new(), Type::Unit),
             Builtin::TcpAccept => (
                 vec![Type::Ref {
                     unique: true,

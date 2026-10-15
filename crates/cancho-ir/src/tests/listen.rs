@@ -16,10 +16,34 @@ fn a_dotted_quad_reads_as_its_address() {
 #[test]
 fn everything_that_is_not_a_strict_dotted_quad_is_refused() {
     for text in [
-        "", " ", "localhost", "::1", "127.1", "127.0.1", "127.0.0.1.1", "127.0.0.1.", ".127.0.0.1",
-        "127..0.1", "256.0.0.1", "1.2.3.256", "010.0.0.1", "00.0.0.1", "+1.0.0.1", "-1.0.0.1",
-        "1.2.3.4 ", " 1.2.3.4", "1.2.3.4\n", "0x7f.0.0.1", "1.2.3.0x4", "1e2.0.0.1", "１.2.3.4",
-        "1.2.3.4:80", "1.2.3.", "1.2.3.-4", "999.999.999.999", "1.2.3.0004",
+        "",
+        " ",
+        "localhost",
+        "::1",
+        "127.1",
+        "127.0.1",
+        "127.0.0.1.1",
+        "127.0.0.1.",
+        ".127.0.0.1",
+        "127..0.1",
+        "256.0.0.1",
+        "1.2.3.256",
+        "010.0.0.1",
+        "00.0.0.1",
+        "+1.0.0.1",
+        "-1.0.0.1",
+        "1.2.3.4 ",
+        " 1.2.3.4",
+        "1.2.3.4\n",
+        "0x7f.0.0.1",
+        "1.2.3.0x4",
+        "1e2.0.0.1",
+        "１.2.3.4",
+        "1.2.3.4:80",
+        "1.2.3.",
+        "1.2.3.-4",
+        "999.999.999.999",
+        "1.2.3.0004",
     ] {
         let why = parse_ipv4(text).expect_err(text);
         assert!(why.contains("not an IPv4 address"), "{text:?}: {why}");
@@ -32,7 +56,8 @@ fn the_parser_agrees_with_the_standard_library_on_every_octet_quad_it_accepts() 
     // them too since 1.7x), so every accepted text must be one it accepts
     // with the same value; and a sample of generated texts must agree on
     // accept/refuse.
-    let pieces = ["0", "1", "9", "10", "99", "100", "255", "256", "01", "001", "", "a", "-1", "1000"];
+    let pieces =
+        ["0", "1", "9", "10", "99", "100", "255", "256", "01", "001", "", "a", "-1", "1000"];
     let mut checked = 0;
     for a in pieces {
         for b in pieces {
@@ -71,7 +96,9 @@ fn a_bound_reads_as_the_hosts_and_the_port_it_grants() {
 
 #[test]
 fn a_host_that_is_a_name_or_ipv6_matches_no_address() {
-    for bound in ["localhost:80", "localhost", "::1", "[::1]:80", "example.com:443", "127.0.0.01:80"] {
+    for bound in
+        ["localhost:80", "localhost", "::1", "[::1]:80", "example.com:443", "127.0.0.01:80"]
+    {
         let parsed = parse_listen_bound(bound);
         assert_eq!(parsed.host, HostBound::Unmatchable, "{bound}");
         assert!(!parsed.covers(LOOPBACK) && !parsed.covers(0), "{bound}");
@@ -94,7 +121,9 @@ fn an_address_in_a_bound_covers_only_itself_and_the_wildcard_covers_all() {
 
 #[test]
 fn no_text_reaches_a_panic() {
-    for text in ["", ":", "::", ":::", "a:b:c", "999999999999999999999:1", "\u{0}", "é:é", "1.2.3.4:"] {
+    for text in
+        ["", ":", "::", ":::", "a:b:c", "999999999999999999999:1", "\u{0}", "é:é", "1.2.3.4:"]
+    {
         let _ = parse_listen_bound(text);
         let _ = parse_ipv4(text);
     }

@@ -234,8 +234,8 @@ impl<'a> FnLowering<'a> {
                 host_span,
             ));
         };
-        let address = parse_ipv4(text)
-            .map_err(|why| Diagnostic::new(Rule::ListenHost, why, host_span))?;
+        let address =
+            parse_ipv4(text).map_err(|why| Diagnostic::new(Rule::ListenHost, why, host_span))?;
         let granted = parse_listen_bound(&bound);
         if !granted.covers(address) {
             return Err(Diagnostic::new(
@@ -256,10 +256,8 @@ impl<'a> FnLowering<'a> {
         }
         lowered.push(Expr::Int(i64::from(address)));
 
-        self.performed.union(&Effects::new([Label {
-            name: "net_in".to_owned(),
-            argument: Some(bound),
-        }]));
+        self.performed
+            .union(&Effects::new([Label { name: "net_in".to_owned(), argument: Some(bound) }]));
 
         Ok((
             Expr::TcpListen { bound: granted.port, args: lowered, datagram: false },

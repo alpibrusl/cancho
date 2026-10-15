@@ -162,7 +162,9 @@ fn reach(source: &str, port: u16, backend: &str, tag: &str) -> Reach {
 
 fn say_skipped(reach: &Reach, test: &str) {
     if reach.other.is_none() {
-        eprintln!("{test}: SKIPPED the non-loopback half -- this machine has no non-loopback IPv4 address");
+        eprintln!(
+            "{test}: SKIPPED the non-loopback half -- this machine has no non-loopback IPv4 address"
+        );
     }
 }
 
@@ -180,7 +182,11 @@ fn a_loopback_listener_refuses_the_machines_other_address() {
         let got = reach(&source, port, backend, "loopback");
         say_skipped(&got, "a_loopback_listener_refuses_the_machines_other_address");
         assert!(got.loopback, "{backend}: loopback must reach a loopback listener");
-        assert_ne!(got.other, Some(true), "{backend}: a loopback listener answered a non-loopback address");
+        assert_ne!(
+            got.other,
+            Some(true),
+            "{backend}: a loopback listener answered a non-loopback address"
+        );
     }
 }
 
@@ -197,7 +203,11 @@ fn an_all_interfaces_listener_by_address_accepts_both() {
         let got = reach(&source, port, backend, "everywhere");
         say_skipped(&got, "an_all_interfaces_listener_by_address_accepts_both");
         assert!(got.loopback, "{backend}");
-        assert_ne!(got.other, Some(false), "{backend}: `0.0.0.0` must be reachable on the other address");
+        assert_ne!(
+            got.other,
+            Some(false),
+            "{backend}: `0.0.0.0` must be reachable on the other address"
+        );
     }
 }
 
@@ -216,7 +226,11 @@ fn the_old_form_still_listens_on_every_interface() {
         let got = reach(&source, port, backend, "old");
         say_skipped(&got, "the_old_form_still_listens_on_every_interface");
         assert!(got.loopback, "{backend}");
-        assert_ne!(got.other, Some(false), "{backend}: `tcp_listen` must stay reachable on the other address");
+        assert_ne!(
+            got.other,
+            Some(false),
+            "{backend}: `tcp_listen` must stay reachable on the other address"
+        );
     }
 }
 
@@ -260,7 +274,9 @@ fn a_port_outside_the_bound_traps() {
             if std::time::Instant::now() > deadline {
                 let _ = child.kill();
                 let _ = child.wait();
-                panic!("{backend}: a port outside the bound did not trap; the program is listening");
+                panic!(
+                    "{backend}: a port outside the bound did not trap; the program is listening"
+                );
             }
             std::thread::sleep(Duration::from_millis(20));
         };
@@ -380,7 +396,9 @@ fn the_bound_decides_which_calls_are_allowed() {
             }
             (false, None) => panic!("`{call}` under `{bound}` should be refused"),
         }
-        if !allowed && let Some((rule, message)) = refusal(&call_under(bound, call), "listen-host-tag") {
+        if !allowed
+            && let Some((rule, message)) = refusal(&call_under(bound, call), "listen-host-tag")
+        {
             assert_eq!(rule, "listen-host", "{bound} {call}: {message}");
         }
     }
@@ -393,9 +411,28 @@ fn the_bound_decides_which_calls_are_allowed() {
 fn a_host_that_is_not_an_ipv4_literal_is_refused_with_its_rule() {
     let long = "1".repeat(5000);
     let hosts = [
-        "", "localhost", "::1", "[::1]", "127.1", "127.0.1", "127.0.0.1.1", "127.0.0.1.", "256.0.0.1",
-        "010.0.0.1", "+1.0.0.1", "1.2.3.4 ", " 1.2.3.4", "0x7f.0.0.1", "1.2.3", "１.2.3.4", "a.b.c.d",
-        "1.2.3.4/8", "1.2.3.4:80", "0.0.0", "example.com", &long,
+        "",
+        "localhost",
+        "::1",
+        "[::1]",
+        "127.1",
+        "127.0.1",
+        "127.0.0.1.1",
+        "127.0.0.1.",
+        "256.0.0.1",
+        "010.0.0.1",
+        "+1.0.0.1",
+        "1.2.3.4 ",
+        " 1.2.3.4",
+        "0x7f.0.0.1",
+        "1.2.3",
+        "１.2.3.4",
+        "a.b.c.d",
+        "1.2.3.4/8",
+        "1.2.3.4:80",
+        "0.0.0",
+        "example.com",
+        &long,
     ];
     for host in hosts {
         let call = format!("tcp_listen_on(n, \"{host}\", 8080, 8, 0)");
@@ -424,9 +461,11 @@ fn the_other_arguments_are_checked_like_tcp_listens() {
     let (rule, _) = refusal(&call_under("8080", r#"tcp_listen_on(n, 8080, 8, 0)"#), "listen-arity")
         .expect("refused");
     assert_eq!(rule, "arity-mismatch");
-    let (rule, _) =
-        refusal(&call_under("8080", r#"tcp_listen_on(n, "127.0.0.1", "8080", 8, 0)"#), "listen-type")
-            .expect("refused");
+    let (rule, _) = refusal(
+        &call_under("8080", r#"tcp_listen_on(n, "127.0.0.1", "8080", 8, 0)"#),
+        "listen-type",
+    )
+    .expect("refused");
     assert_eq!(rule, "type-mismatch");
 }
 
@@ -482,7 +521,9 @@ fn main(world: World) -> [] int {
 /// old form's row is what it was.
 #[test]
 fn the_authority_report_names_the_host() {
-    let row = |bound: &str| format!("{{ \"name\": \"net_in\", \"argument\": \"{bound}\", \"bounded\": true }}");
+    let row = |bound: &str| {
+        format!("{{ \"name\": \"net_in\", \"argument\": \"{bound}\", \"bounded\": true }}")
+    };
     let loopback = authority_json(
         &call_under("127.0.0.1:8080", r#"tcp_listen_on(n, "127.0.0.1", 8080, 8, 0)"#),
         "listen-authority-loopback",
@@ -497,7 +538,8 @@ fn the_authority_report_names_the_host() {
     assert!(everywhere.contains(&row("8080")), "{everywhere}");
     assert!(!everywhere.contains("127.0.0.1"), "{everywhere}");
 
-    let old = authority_json(&call_under("8080", "tcp_listen(n, 8080, 8, 0)"), "listen-authority-old");
+    let old =
+        authority_json(&call_under("8080", "tcp_listen(n, 8080, 8, 0)"), "listen-authority-old");
     assert!(old.contains(&row("8080")), "{old}");
     // The same row as the explicit everywhere form: they say the same thing.
     assert_eq!(
