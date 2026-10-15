@@ -774,6 +774,59 @@ fn main(world: World) -> [] int {
 }
 ```
 
+The second refusal is the one that repeats: a function wants text to read
+(`&r [byte]`) and you hold a `Buffer`. A `Buffer` is not a slice, so
+passing it is `expected [byte], found Buffer`, and writing it again the
+same way is refused again. Borrow the buffer, take its contents with
+`buffer.bytes`, and pass that:
+
+```cancho-refused
+//~ RULE type-mismatch
+import std.buffer;
+
+fn first[&r](s: &r [byte]) -> [] int {
+    return int_of(s[0]);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args); release(io);
+    var got = 0;
+    borrow mut heap as &!h in {
+        var b = buffer.empty(h, 4);
+        b = buffer.push(h, b, byte_of(7));
+        got = first(b);
+        buffer.drop(h, b);
+    }
+    release(heap);
+    return got;
+}
+```
+
+```cancho
+import std.buffer;
+
+fn first[&r](s: &r [byte]) -> [] int {
+    return int_of(s[0]);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi); release(fs); release(args); release(io);
+    var got = 0;
+    borrow mut heap as &!h in {
+        var b = buffer.empty(h, 4);
+        b = buffer.push(h, b, byte_of(7));
+        borrow b as &t in {
+            got = first(buffer.bytes(t));
+        }
+        buffer.drop(h, b);
+    }
+    release(heap);
+    return got - 7;
+}
+```
+
 ---
 
 ### 7.2 Lists and owned bytes (edition 5 or later)
