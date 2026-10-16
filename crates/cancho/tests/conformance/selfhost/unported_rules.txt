@@ -3,7 +3,6 @@
 # the compiler in cancho knows it or the rule is listed here with the issue that will. Take a line out when the rule is
 # ported (the test insists). Tracked in #512 unless it says otherwise.
 capability-misused                # narrowing and what a capability may be used for
-capability-not-narrowable         # the narrowed literal has to live in the capability's type
 ingest-arity                      # `cancho ingest` is not part of the compiler (#485)
 ingest-json                       # as above
 ingest-node                       # as above

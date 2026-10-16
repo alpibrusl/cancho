@@ -5,11 +5,8 @@
 # without an issue: a new difference is a bug in `examples/selfhost` or in the Rust compiler. Tracked in #491.
 checked_output::an_earlier_failure_is_still_reported_and_keeps_being_reported   # the Cranelift backend's error text; the test builds with it
 corpus::accepted_programs_build_and_run                                        # compares the object bytes the Rust backends write
-crypto_builtins::on_cranelift_the_hardware_is_absent_and_a_block_builtin_traps # a test of the Cranelift backend
-identity::a_tuple_emits_the_same_object_as_the_struct_it_replaces              # the object bytes depend on the node numbers
 memory::the_layout_report_says_what_a_type_costs                               # a struct of bytes has another stride
 modules::std_declarations_cost_nothing_unless_called                           # Linux only: the size of the module
-sha256_builtins::on_cranelift_the_instructions_are_absent_and_the_builtins_trap # a test of the Cranelift backend
 wasm_target::build_refuses_too_not_only_check                                  # the WebAssembly target is the Rust compiler's (#486)
 process_release::a_child_that_has_already_ended_is_released_cleanly            # exec_spawn_detached, child_release, child_pid are not ported (unported_builtins.txt, #512)
 process_release::a_detached_child_outlives_its_parent_in_a_session_of_its_own  # as above
