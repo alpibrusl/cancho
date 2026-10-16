@@ -1,0 +1,192 @@
+module selfhost.narrowing;
+
+// narrowing.cho -- what `narrow(cap, "a", ...)` must satisfy (`lower/mod.rs` `narrow` and `lower/narrow.rs`, section 5 of
+// `docs/narrowing-into-several.md`): a literal is inside what the capability was narrowed to, at a separator for the
+// capabilities that name paths, and not equal to it; several literals are unrelated paths of `Fs` or `Exec`. A literal
+// is a string token; the capability's own is `types.prelude_lit_tok`, or none, which is the empty string.
+//
+// The bytes of a literal are compared as written, so one with an escape is left alone (the Rust compiler compares what
+// it means): a refusal is only made when it cannot be wrong.
+
+import selfhost.ast;
+import selfhost.rules;
+import selfhost.types;
+import selfhost.netcode;
+
+// Where the bytes of the literal in token `tok` start and end, between its quotes; none is the empty string.
+fn first[&s](st: &!s [int], tok: int) -> [] int {
+    if tok < 0 {
+        return 0;
+    }
+    return ast.tstart(st, tok) + 1;
+}
+
+fn last[&s](st: &!s [int], tok: int) -> [] int {
+    if tok < 0 {
+        return 0;
+    }
+    return ast.tend(st, tok) - 1;
+}
+
+// Does the literal hold an escape?
+fn escaped[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] bool {
+    var i = first(st, tok);
+    while i < last(st, tok) {
+        if int_of(text[i]) == 92 {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+fn size[&s](st: &!s [int], tok: int) -> [] int {
+    return last(st, tok) - first(st, tok);
+}
+
+// Does `target` start with `current`?
+fn starts_with[&s, &x](st: &!s [int], text: &x [byte], current: int, target: int) -> [] bool {
+    let n = size(st, current);
+    if size(st, target) < n {
+        return false;
+    }
+    var i = 0;
+    while i < n {
+        if int_of(text[first(st, current) + i]) != int_of(text[first(st, target) + i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `extends_path`: `target` is inside `prefix` at a separator, or is it.
+fn extends[&s, &x](st: &!s [int], text: &x [byte], prefix: int, target: int) -> [] bool {
+    if !starts_with(st, text, prefix, target) {
+        return false;
+    }
+    let n = size(st, prefix);
+    if n == 0 || int_of(text[last(st, prefix) - 1]) == 47 || size(st, target) == n {
+        return true;
+    }
+    return int_of(text[first(st, target) + n]) == 47;
+}
+
+fn equal[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int) -> [] bool {
+    return size(st, a) == size(st, b) && starts_with(st, text, a, b);
+}
+
+// One literal narrowing `current` (`check_narrowing`): inside it, at a separator when `path`, and not equal. True if
+// it was refused.
+pub fn refused_one[&s, &x](st: &!s [int], text: &x [byte], path: bool, current: int, target: int, from: int, to: int) -> [] bool {
+    if escaped(st, text, current) || escaped(st, text, target) {
+        return false;
+    }
+    if !starts_with(st, text, current, target) || path && !extends(st, text, current, target) || equal(st, text, current, target) {
+        ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+        return true;
+    }
+    return false;
+}
+
+// Two literals of one `narrow` into several: no two the same path, and none inside another. True if refused.
+pub fn refused_pair[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int, from: int, to: int) -> [] bool {
+    if escaped(st, text, a) || escaped(st, text, b) {
+        return false;
+    }
+    if equal(st, text, a, b) || extends(st, text, a, b) || extends(st, text, b, a) {
+        ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+        return true;
+    }
+    return false;
+}
+
+// The capabilities `narrow` accepts, by the name of their prelude type; and the two that narrow into several.
+pub fn narrows[&s](st: &!s [int], index: int) -> [] bool {
+    return index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Net") || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || index == netcode.prelude_named("Tty");
+}
+
+pub fn narrows_many[&s](st: &!s [int], index: int) -> [] bool {
+    return index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Exec");
+}
+
+// A path capability: the separator rule applies to the literals (`Fs`, `Exec`, `Tty`); `Net` is a plain prefix.
+pub fn is_path[&s](st: &!s [int], index: int) -> [] bool {
+    return index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Exec") || index == netcode.prelude_named("Tty");
+}
+
+// A capability whose literal is checked here: the paths and `Net`. `Ffi` and `Signals` name a set, and narrow as one.
+pub fn checked[&s](st: &!s [int], index: int) -> [] bool {
+    return is_path(st, index) || index == netcode.prelude_named("Net");
+}
+
+// Is the library written in text[ts..te] one of those of the set `held` (names separated by commas)?
+fn in_set[&s, &x](st: &!s [int], text: &x [byte], held: int, ts: int, te: int) -> [] bool {
+    let end = last(st, held);
+    var i = first(st, held);
+    while i <= end {
+        var j = i;
+        while j < end && int_of(text[j]) != 44 {
+            j = j + 1;
+        }
+        if j - i == te - ts {
+            var k = 0;
+            var same = true;
+            while k < te - ts {
+                if int_of(text[i + k]) != int_of(text[ts + k]) {
+                    same = false;
+                }
+                k = k + 1;
+            }
+            if same {
+                return true;
+            }
+        }
+        i = j + 1;
+    }
+    return false;
+}
+
+// `narrow_ffi`: a set of libraries narrows as a set: every library wanted is one held (held nothing: any), and not the
+// same set. True if refused. A set that is not well formed is left to `foreign-scope`.
+pub fn refused_set[&s, &x](st: &!s [int], text: &x [byte], current: int, target: int, from: int, to: int) -> [] bool {
+    if escaped(st, text, current) || escaped(st, text, target) {
+        return false;
+    }
+    if size(st, target) == 0 {
+        if size(st, current) == 0 {
+            ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+            return true;
+        }
+        // Nothing wanted is not covered by something held.
+        ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+        return true;
+    }
+    if size(st, current) > 0 {
+        let end = last(st, target);
+        var i = first(st, target);
+        while i <= end {
+            var j = i;
+            while j < end && int_of(text[j]) != 44 {
+                j = j + 1;
+            }
+            if j == i {
+                return false;
+            }
+            if !in_set(st, text, current, i, j) {
+                ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+                return true;
+            }
+            i = j + 1;
+        }
+        if equal(st, text, current, target) {
+            ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+            return true;
+        }
+    }
+    return false;
+}
+
+pub fn is_ffi[&s](st: &!s [int], index: int) -> [] bool {
+    return index == netcode.prelude_named("Ffi");
+}

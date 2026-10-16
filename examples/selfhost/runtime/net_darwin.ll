@@ -78,10 +78,10 @@ land.lhs.true:                                    ; preds = %entry
   br i1 %cmp1, label %if.then, label %if.end
 
 if.then:                                          ; preds = %land.lhs.true
-  call void @llvm.trap()
-  br label %if.end
+  call void @cancho_trap()
+  unreachable
 
-if.end:                                           ; preds = %if.then, %land.lhs.true, %entry
+if.end:                                           ; preds = %land.lhs.true, %entry
   ret void
 }
 
@@ -2912,7 +2912,7 @@ entry:
 
 declare i32 @clock_gettime(i32, ptr)
 
-; Function Attrs: cold noreturn nounwind
+; Function Attrs: noreturn
 
 declare i32 @socket(i32, i32, i32)
 
@@ -2997,10 +2997,10 @@ lor.lhs.false:                                    ; preds = %entry
   br i1 %cmp1, label %if.then, label %if.end
 
 if.then:                                          ; preds = %lor.lhs.false, %entry
-  call void @llvm.trap()
-  br label %if.end
+  call void @cancho_trap()
+  unreachable
 
-if.end:                                           ; preds = %if.then, %lor.lhs.false
+if.end:                                           ; preds = %lor.lhs.false
   store i64 0, ptr %i, align 8
   br label %for.cond
 
@@ -3039,10 +3039,10 @@ land.lhs.true:                                    ; preds = %for.body
   br i1 %cmp8, label %if.then10, label %if.end11
 
 if.then10:                                        ; preds = %land.lhs.true
-  call void @llvm.trap()
-  br label %if.end11
+  call void @cancho_trap()
+  unreachable
 
-if.end11:                                         ; preds = %if.then10, %land.lhs.true, %for.body
+if.end11:                                         ; preds = %land.lhs.true, %for.body
   br label %for.inc
 
 for.inc:                                          ; preds = %if.end11

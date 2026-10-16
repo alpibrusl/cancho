@@ -12,6 +12,9 @@
 typedef long i64;
 typedef unsigned char u8;
 
+/* Every trap is the Rust backend's instruction (SIGILL), written once in the module by `driver.cho`. */
+void cancho_trap(void) __attribute__((noreturn));
+
 #if DARWIN
 #define SOL_SOCKET 0xffff
 #define SO_REUSEADDR 4
@@ -147,7 +150,7 @@ static i64 netrt_host_length(const u8 *bound, i64 len) {
 
 /* The port a bound names, or NONE. */
 static void netrt_check_port(i64 port, i64 bound) {
-  if (bound != NONE && port != bound) __builtin_trap();
+  if (bound != NONE && port != bound) cancho_trap();
 }
 
 static void netrt_sockaddr_any(u8 *a, i64 port) {
@@ -296,10 +299,10 @@ i64 cancho_net_close(i64 fd) { return close((int)fd); }
 
 /* The host of a dial, checked against the bound's host and made a C string; traps when it is not the bound's. */
 static void netrt_checked_host(const u8 *name, i64 len, const u8 *bound, i64 host_len, u8 *buffer) {
-  if (len >= 256 || len < host_len) __builtin_trap();
+  if (len >= 256 || len < host_len) cancho_trap();
   for (i64 i = 0; i < len; i++) {
     buffer[i] = name[i];
-    if (i < host_len && name[i] != bound[i]) __builtin_trap();
+    if (i < host_len && name[i] != bound[i]) cancho_trap();
   }
   buffer[len] = 0;
 }

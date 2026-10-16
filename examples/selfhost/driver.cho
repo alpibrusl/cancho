@@ -300,6 +300,15 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "declare {i64, i1} @llvm.ssub.with.overflow.i64(i64, i64)\n");
     emit.str(st, "declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
     emit.str(st, "declare void @llvm.trap()\n");
+    // Every trap is one instruction on each target, as the Rust backend writes it, so that a program stops with the same
+    // signal (SIGILL) whichever compiler built it: `llvm.trap` is `brk` on arm64, which is SIGTRAP.
+    emit.str(st, "define void @cancho_trap() noreturn {\nentry:\n  call void asm sideeffect \"");
+    if st[61] == 0 {
+        emit.str(st, "ud2");
+    } else {
+        emit.str(st, "udf #0xc11f");
+    }
+    emit.str(st, "\", \"\"()\n  unreachable\n}\n");
     emit.str(st, "declare i32 @putchar(i32)\n");
     emit.str(st, "declare ptr @malloc(i64)\ndeclare ptr @calloc(i64, i64)\ndeclare void @free(ptr)\n");
     emit.str(st, "declare ptr @memmove(ptr, ptr, i64)\ndeclare ptr @memchr(ptr, i32, i64)\n");
@@ -315,10 +324,11 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     // An arena is one chunk of 64 KiB (after a header of 16 bytes holding how much is used), taken from the thread's
     // stack of chunks (`region_text`) and given back to it whole; a request past the chunk traps, as the Rust compiler's
     // does.
+    emit.str(st, "@cancho_region_msg = private constant [130 x i8] c\"cancho: trap: region chunk exhausted: a region holds 65536 bytes in all; allocate big data on the heap with box_slice (AGENTS.md)\\0A\"\n");
     emit.str(st, "define ptr @cancho_arena_alloc(ptr %head, i64 %bytes) {\nentry:\n  %chunk = load ptr, ptr %head\n  %used = load i64, ptr %chunk\n");
     emit.str(st, "  %up = add i64 %bytes, 7\n  %rounded = and i64 %up, -8\n  %next = add i64 %used, %rounded\n");
     emit.str(st, "  %wrapped = icmp ult i64 %next, %used\n  %over = icmp ugt i64 %next, 65536\n  %bad = or i1 %wrapped, %over\n");
-    emit.str(st, "  br i1 %bad, label %fail, label %ok\nfail:\n  call void @llvm.trap()\n  unreachable\nok:\n");
+    emit.str(st, "  br i1 %bad, label %fail, label %ok\nfail:\n  %said = call i64 @write(i32 2, ptr @cancho_region_msg, i64 130)\n  call void @cancho_trap()\n  unreachable\nok:\n");
     emit.str(st, "  store i64 %next, ptr %chunk\n  %data = getelementptr i8, ptr %chunk, i64 16\n  %at = getelementptr i8, ptr %data, i64 %used\n  ret ptr %at\n}\n\n");
     var item = st[15];
     var entry = 0;

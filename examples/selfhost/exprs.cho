@@ -32,6 +32,7 @@ import selfhost.effects;
 import selfhost.tables;
 import selfhost.atoms;
 import selfhost.filecode;
+import selfhost.narrowing;
 
 // ---------------------------------------------------------- expressions ---
 
@@ -366,7 +367,21 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
     let nargs = ast.get(st, id, 7);
     var arg = ast.get(st, id, 6);
     if which == 1 {
-        if nargs < 2 || nargs > 4 {
+        if nargs < 2 {
+            return ex.skip(st, from, to);
+        }
+        // Every literal must be written as one, so that the refinement can be checked where it is written.
+        var each = ast.next(st, arg);
+        var left = nargs - 1;
+        while left > 0 {
+            if !ast.is_kind(st, each, kinds.NK::EStr) {
+                ast.fail(st, rules.r_capability_not_narrowable(), ast.nstart(st, each), ast.nend(st, each));
+                return ex.nothing();
+            }
+            each = ast.next(st, each);
+            left = left - 1;
+        }
+        if nargs > 4 {
             return ex.skip(st, from, to);
         }
         let c = expr(st, text, arg);
@@ -374,7 +389,54 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
             return ex.nothing();
         }
         let lit = ast.next(st, arg);
-        if !types.is_prelude(st, c.ty) || !ast.is_kind(st, lit, kinds.NK::EStr) {
+        if types.is_ref(st, c.ty) {
+            // Narrowing consumes what it attenuates: a borrow is the promise to give it back.
+            ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+            return ex.nothing();
+        }
+        if !types.is_prelude(st, c.ty) {
+            return ex.skip(st, from, to);
+        }
+        if !narrowing.narrows(st, types.prelude_index(st, c.ty)) {
+            // It carries no value to narrow.
+            ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+            return ex.nothing();
+        }
+        if nargs > 2 && !narrowing.narrows_many(st, types.prelude_index(st, c.ty)) {
+            ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+            return ex.nothing();
+        }
+        if narrowing.checked(st, types.prelude_index(st, c.ty)) {
+            let now = types.prelude_lit_tok(st, c.ty);
+            var at = lit;
+            var seen = 0;
+            while seen < nargs - 1 {
+                if narrowing.refused_one(st, text, narrowing.is_path(st, types.prelude_index(st, c.ty)), now, ast.get(st, at, 4), ast.nstart(st, at), ast.nend(st, at)) {
+                    return ex.nothing();
+                }
+                seen = seen + 1;
+                at = ast.next(st, at);
+            }
+            var x = lit;
+            var i = 0;
+            while i < nargs - 1 {
+                var y = ast.next(st, x);
+                var j = i + 1;
+                while j < nargs - 1 {
+                    if narrowing.refused_pair(st, text, ast.get(st, x, 4), ast.get(st, y, 4), ast.nstart(st, y), ast.nend(st, y)) {
+                        return ex.nothing();
+                    }
+                    y = ast.next(st, y);
+                    j = j + 1;
+                }
+                x = ast.next(st, x);
+                i = i + 1;
+            }
+        }
+        if narrowing.is_ffi(st, types.prelude_index(st, c.ty)) && narrowing.refused_set(st, text, types.prelude_lit_tok(st, c.ty), ast.get(st, lit, 4), from, to) {
+            return ex.nothing();
+        }
+        if !ast.is_kind(st, lit, kinds.NK::EStr) {
             return ex.skip(st, from, to);
         }
         let index = types.prelude_index(st, c.ty);

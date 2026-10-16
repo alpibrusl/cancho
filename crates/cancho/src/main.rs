@@ -449,8 +449,19 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
                 ..
             } = parse_args(&args[1..], true, true)?;
             let output = output.unwrap_or_else(|| default_output(&inputs[0], emit));
-            let compiler =
-                compiler.or_else(|| std::env::var_os("CANCHO_COMPILER").map(PathBuf::from));
+            if compiler.is_some() && backend == Backend::Cranelift {
+                return Err(usage(
+                    "`--compiler` names a compiler that writes LLVM IR; it cannot be combined with `--backend cranelift`",
+                ));
+            }
+            // `CANCHO_COMPILER` names the compiler for the builds that go through LLVM: a build that asks for the
+            // Cranelift backend by name is that backend's, and is not sent anywhere else.
+            let compiler = compiler.or_else(|| {
+                if backend == Backend::Cranelift {
+                    return None;
+                }
+                std::env::var_os("CANCHO_COMPILER").map(PathBuf::from)
+            });
             if let Some(compiler) = compiler {
                 selfhost_build::build(selfhost_build::Job {
                     compiler: &compiler,

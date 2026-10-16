@@ -567,7 +567,7 @@ pub fn trap_if[&s](st: &!s [int], flag: int) -> [] int {
     nat(st, n);
     str(st, "\ntrap");
     nat(st, n);
-    str(st, ":\n  call void @llvm.trap()\n  unreachable\nok");
+    str(st, ":\n  call void @cancho_trap()\n  unreachable\nok");
     nat(st, n);
     str(st, ":\n");
     return 0;
