@@ -25,12 +25,12 @@ stage-by-stage record and the measurements, and the plan to finish is epic
   Linux aarch64, minus the few differences listed in `.github/selfhost-known-differences.txt`.
   The projects `cancho-cache`, `cancho-oci`, `cancho-robot`, `cancho-gpu` and `cancho-hooks`
   build with it.
-- **It nearly refuses what the language refuses.** Of the 336 programs in `tests/reject/`, it
-  refuses 329 with the rule the Rust compiler gives (the three that are a property of a target are
-  not compared); the 7 left are listed in `reject_gaps.txt` and need a check of a generic definition
-  with its parameters unknown, a row in the type of a function value, what an owned capability
-  discharges by path, and a region settled by inference
-  ([#512](https://github.com/alpibrusl/cancho/issues/512)). That is why the default still lets the Rust front end
+- **It nearly refuses what the language refuses.** Of the 337 programs in `tests/reject/` that are not a
+  property of a target (marked `//~ TARGET`), it refuses 327 with the rule the Rust compiler gives; the 10 left
+  are listed in `reject_gaps.txt`: the check of a generic definition with its parameters unknown, a row in the
+  type of a function value, what an owned capability discharges by path, a region settled by inference
+  ([#512](https://github.com/alpibrusl/cancho/issues/512)), and the three programs of `child_release`,
+  `child_pid` and `exec_spawn_detached` (the process builtins it has no code for yet). That is why the default still lets the Rust front end
   check first, and it stops when the list is empty (a test says so).
 - **A refusal says why without the Rust front end** when the compiler in cancho is named alone:
   where (`file:line:column`), the sentence of the rule (`Rule::explanation`, generated into the
@@ -55,10 +55,20 @@ says so, at that construct.
 
 ## What is left
 
-Tracked in [#491](https://github.com/alpibrusl/cancho/issues/491): the last seven refusals; the other commands
+Tracked in [#491](https://github.com/alpibrusl/cancho/issues/491): the last ten refusals and the three process builtins; the other commands
 (`check`, `fmt`, ...); the Cranelift and WebAssembly backends; the runtime text that is still generated from the
 Rust crates; keeping golden outputs for when the Rust compiler is gone, and a seed that needs no Rust; compile time
-and code quality, measured; and whether Windows is a target.
+and whether Windows is a target.
+
+**Code quality, measured once** (Linux x86-64, `tests/programs/tls_prims_bench.cho` built with `--std`, instructions
+a call under valgrind as `scripts/tls_perf.py check` counts them, against the baseline recorded for the Rust
+compiler): the Rust compiler is within 1.06 of the baseline on all 36 rows; the compiler in cancho is 1.26 to 1.32
+times it on the P-256 rows (`p256_shared` 1.32, `p256_public` 1.30, ECDSA 1.26 to 1.28), about the same on the
+AES-GCM, ChaCha20-Poly1305, HKDF, HMAC, SHA-2 and X25519 rows (0.97 to 1.13) and 4.97 on `calibrate` (a loop of a
+single instruction a step for the Rust compiler, 5,007 instructions a call against 1,008). The binary is 360,208
+bytes against 318,656. So the `tls-perf` job builds with `CANCHO_COMPILER=rust`: its baseline is the Rust compiler's
+code, and it guards that. Closing this gap, or recording a baseline of the compiler in cancho, is code quality's
+share of #491.
 
 # History: the v0 compiler
 
