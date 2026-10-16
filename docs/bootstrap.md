@@ -9,55 +9,66 @@ stage-by-stage record and the measurements, and the plan to finish is epic
 
 ## Where it stands
 
-- **The compiler in cancho** is `examples/selfhost/`: about 21,000 lines of cancho. It reads
+- **The compiler in cancho** is `examples/selfhost/`: about 22,000 lines of cancho. It reads
   a program and writes LLVM IR; `clang` finishes the build.
+- **It is the default.** `cancho build`, `run` and `test` write the code with it on macOS and
+  Linux (x86-64 and aarch64), after the Rust front end has checked the program (see below). It is built once, from sources
+  compiled into the `cancho` binary, and cached; nothing has to be next to the binary. A build it
+  cannot do (it has no code for a construct, or it fails) is done by the Rust compiler, and the
+  Cranelift backend and WebAssembly stay the Rust compiler's. `CANCHO_COMPILER=rust` asks for the Rust
+  compiler alone.
 - **It compiles itself to a fixed point**, on three systems: built on macOS, on Linux x86-64
-  and on Linux aarch64 (a Raspberry Pi 5), it writes byte-identical IR for its own source
-  (7,510,798 bytes, the same SHA-256 on all three).
-- **It builds real programs.** With every plain `cancho build` of the test suite going
-  through it, 695 of 702 conformance tests pass on macOS aarch64 and 701 of 709 on Linux
-  x86-64; the rest are differences from the Rust compiler, not missing features (the object
-  bytes it writes, the layout of a struct of bytes, tests of the Rust backends themselves).
+  and on Linux aarch64 (a Raspberry Pi 5), it writes byte-identical IR for its own source.
+- **It builds real programs.** The whole conformance suite passes with every build going
+  through the default (710 tests on macOS aarch64), and CI runs the suite through the compiler in
+  cancho alone, with no Rust check and no fallback (`CANCHO_COMPILER=auto`), on macOS, Linux x86-64 and
+  Linux aarch64, minus the few differences listed in `.github/selfhost-known-differences.txt`.
   The projects `cancho-cache`, `cancho-oci`, `cancho-robot`, `cancho-gpu` and `cancho-hooks`
-  build with it, and the webhook service built with it passes the tests that the Rust-built
-  one passes.
-- **It does not yet check what the language refuses.** Of the 333 programs in `tests/reject/`
-  (effects not declared, a linear value not consumed, a capability not narrowed, a borrow
-  conflict), 127 build with it; the Rust `cancho check` refuses all of them. Until the
-  checks are in its build path ([#512](https://github.com/alpibrusl/cancho/issues/512)), run
-  `cancho check` on a program before trusting a build made with it.
-- **Only `build` goes through it.** `check`, `authority`, `ids`, `fmt`, `vcs`, `test` and the
-  wasm and Cranelift backends are still the Rust compiler's, and the sentence of a refusal
-  still comes from the Rust front end (the compiler in cancho answers a rule and a place).
-  Windows is not a target of either compiler.
+  build with it.
+- **It nearly refuses what the language refuses.** Of the 337 programs in `tests/reject/` that are not a
+  property of a target (marked `//~ TARGET`), it refuses 327 with the rule the Rust compiler gives; the 10 left
+  are listed in `reject_gaps.txt`: the check of a generic definition with its parameters unknown, a row in the
+  type of a function value, what an owned capability discharges by path, a region settled by inference
+  ([#512](https://github.com/alpibrusl/cancho/issues/512)), and the three programs of `child_release`,
+  `child_pid` and `exec_spawn_detached` (the process builtins it has no code for yet). That is why the default still lets the Rust front end
+  check first, and it stops when the list is empty (a test says so).
+- **A refusal says why without the Rust front end** when the compiler in cancho is named alone:
+  where (`file:line:column`), the sentence of the rule (`Rule::explanation`, generated into the
+  compiler's tables), the rule, the line and what of it. The sentence is the rule's, the same for every
+  program it refuses; the names and types in the Rust compiler's messages are a later stage.
+- **Only code generation goes through it.** `check`, `authority`, `ids`, `fmt`, `vcs` and the
+  Cranelift and WebAssembly backends are still the Rust compiler's. Windows is not a target of either compiler.
 
 ## Using it
 
 ```sh
-# build the compiler in cancho once (with the Rust compiler), cache it, and use it:
-cancho build --compiler auto program.cho --std -o program
-
-# or name it for every build:
-CANCHO_COMPILER=auto cancho build program.cho --std -o program
-
-# or build it yourself and point at it:
-cancho build examples/selfhost/compiler.cho <its modules> --std -o selfhost-compiler
-cancho build --compiler ./selfhost-compiler program.cho --std -o program
+cancho build program.cho --std -o program               # the default
+CANCHO_COMPILER=rust cancho build program.cho -o program  # the Rust compiler alone
+CANCHO_COMPILER=auto cancho build program.cho -o program  # the one in cancho alone: what it refuses, no fallback
+cancho build --compiler ./some-compiler program.cho       # a compiler you built yourself
 ```
 
-The first `--compiler auto` takes a few seconds (it builds the compiler); the cache is keyed
-by a hash of the compiler's sources (`$CANCHO_CACHE`, or `~/.cache/cancho`). A refusal prints
-the Rust front end's sentence for the same files, with the rule the compiler in cancho
-refused it by; if the Rust front end accepts what it refused, the message says the two
-disagree. A construct it has no code for yet is a refusal that says so, at that construct.
+The first build takes a few seconds more: it builds the compiler in cancho (with the Rust one) into the cache,
+keyed by a hash of its sources (`$CANCHO_CACHE`, or `~/.cache/cancho`). `CANCHO_SELFHOST_SOURCES=<dir>` builds
+it from a directory instead, for working on it. Named alone, a construct it has no code for yet is a refusal that
+says so, at that construct.
 
 ## What is left
 
-Tracked in [#491](https://github.com/alpibrusl/cancho/issues/491): the default, and a seed
-binary for people with no Rust; the same checks in CI on Linux; diagnostics that do not need
-the Rust front end; the other commands; the runtime text that is still generated from the
-Rust crates; keeping golden outputs for when the Rust compiler is gone; compile time and
-code quality, measured; and whether Windows is a target.
+Tracked in [#491](https://github.com/alpibrusl/cancho/issues/491): the last ten refusals and the three process builtins; the other commands
+(`check`, `fmt`, ...); the Cranelift and WebAssembly backends; the runtime text that is still generated from the
+Rust crates; keeping golden outputs for when the Rust compiler is gone, and a seed that needs no Rust; compile time
+and whether Windows is a target.
+
+**Code quality, measured once** (Linux x86-64, `tests/programs/tls_prims_bench.cho` built with `--std`, instructions
+a call under valgrind as `scripts/tls_perf.py check` counts them, against the baseline recorded for the Rust
+compiler): the Rust compiler is within 1.06 of the baseline on all 36 rows; the compiler in cancho is 1.26 to 1.32
+times it on the P-256 rows (`p256_shared` 1.32, `p256_public` 1.30, ECDSA 1.26 to 1.28), about the same on the
+AES-GCM, ChaCha20-Poly1305, HKDF, HMAC, SHA-2 and X25519 rows (0.97 to 1.13) and 4.97 on `calibrate` (a loop of a
+single instruction a step for the Rust compiler, 5,007 instructions a call against 1,008). The binary is 360,208
+bytes against 318,656. So the `tls-perf` job builds with `CANCHO_COMPILER=rust`: its baseline is the Rust compiler's
+code, and it guards that. Closing this gap, or recording a baseline of the compiler in cancho, is code quality's
+share of #491.
 
 # History: the v0 compiler
 

@@ -1115,3 +1115,78 @@ fn refusals_agree_with_the_rust_front_end() {
     let wrong = wrong.into_inner().expect("a lock");
     assert!(wrong.is_empty(), "{} programs:\n{}", wrong.len(), wrong.join("\n"));
 }
+
+/// The default build, named by nothing: the compiler written in cancho writes the code. The Rust front end checks first while
+/// `reject_gaps.txt` lists a program the compiler in cancho does not refuse as the Rust one does (#512), so the default refuses
+/// at least what the Rust compiler does and in its words; when the list is empty the check goes (`RUST_CHECKS_FIRST`) and a
+/// refusal is the compiler's own, in the sentence of its rule.
+#[test]
+fn the_default_build_checks_with_rust_only_while_a_gap_is_listed() {
+    let gaps = include_str!("reject_gaps.txt")
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .count();
+    let dir = scratch("default-refusal");
+    let program = dir.join("refused.cho");
+    std::fs::write(
+        &program,
+        "fn main(world: World) -> [] int {\n    release(world);\n    return true;\n}\n",
+    )
+    .expect("the scratch directory is writable");
+    let ended = Command::new(BIN)
+        .arg("build")
+        .arg(&program)
+        .arg("-o")
+        .arg(dir.join("refused"))
+        .env_remove("CANCHO_COMPILER")
+        .env("CANCHO_CACHE", dir.join("cache"))
+        .output()
+        .expect("cancho runs");
+    assert_eq!(ended.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&ended.stderr);
+    if gaps > 0 {
+        assert!(
+            said.contains("expected `int`, found `bool`"),
+            "while a gap is listed the Rust front end checks:\n{said}"
+        );
+    } else {
+        assert!(
+            said.contains("(rule `type-mismatch`)")
+                && !said.contains("expected `int`, found `bool`"),
+            "with no gap listed the refusal is the compiler in cancho's own; set `RUST_CHECKS_FIRST` to false:\n{said}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What the compiler in cancho has no code for is built by the Rust compiler when nothing was named, and is a refusal that says
+/// so when the compiler in cancho was asked for.
+#[test]
+fn a_default_build_falls_back_to_the_rust_compiler_for_what_the_other_has_no_code_for() {
+    let program = repo_root().join("tests/accept/aliasing_in_a_slice_of_references.cho");
+    let dir = scratch("default-fallback");
+    let built = |named: Option<&str>| {
+        let mut command = Command::new(BIN);
+        command
+            .arg("build")
+            .arg(&program)
+            .args(["--std", "-o"])
+            .arg(dir.join("out"))
+            .env("CANCHO_CACHE", dir.join("cache"))
+            .env_remove("CANCHO_COMPILER");
+        if let Some(name) = named {
+            command.env("CANCHO_COMPILER", name);
+        }
+        command.output().expect("cancho runs")
+    };
+    let default = built(None);
+    assert!(default.status.success(), "{}", String::from_utf8_lossy(&default.stderr));
+    let asked = built(Some("auto"));
+    assert_eq!(asked.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&asked.stderr).contains("has no code for this construct yet"),
+        "{}",
+        String::from_utf8_lossy(&asked.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
