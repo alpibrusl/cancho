@@ -475,7 +475,7 @@ pub fn leading(which: int) -> [] bool {
 }
 
 // The bit of a signal named in the literal a `Signals` capability was narrowed to.
-fn signal_bit[&x](text: &x [byte], from: int, to: int) -> [] int {
+pub fn signal_bit[&x](text: &x [byte], from: int, to: int) -> [] int {
     if lc.spells(text, from, to, "ALRM") {
         return 64;
     }

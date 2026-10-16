@@ -1,0 +1,140 @@
+module selfhost.allocs;
+
+// allocs.cho -- the end of `alloc_slice[a](count, fill)` once its count and its fill are evaluated: what a region may hold
+// and the code for it. Split from `exprs.cho` for its length.
+
+import selfhost.ast;
+import selfhost.rules;
+import selfhost.types;
+import selfhost.scope;
+import selfhost.emit;
+import selfhost.ex;
+import selfhost.tables;
+import selfhost.effects;
+
+// The bytes one element of a slice takes when the type says so without a lookup: `byte` 1, `f32` 4, any other scalar 8,
+// a tuple of scalars 8 for each; 0 for any other type, which is left to the trap at run time.
+fn region_stride[&s](st: &!s [int], ty: int) -> [] int {
+    if ty == 2 {
+        return 1;
+    }
+    if ty == 4 {
+        return 4;
+    }
+    if ty == 1 || ty == 3 || ty == 5 {
+        return 8;
+    }
+    if types.is_tuple(st, ty) {
+        var k = 0;
+        while k < types.tuple_size(st, ty) {
+            let p = types.tuple_part(st, ty, k);
+            if p < 1 || p > 5 {
+                return 0;
+            }
+            k = k + 1;
+        }
+        return 8 * types.tuple_size(st, ty);
+    }
+    return 0;
+}
+
+pub fn finish_slice[&s, &x](st: &!s [int], text: &x [byte], from: int, to: int, fill: int, arena: int, in_static: bool, c: ex.Ex, f: ex.Ex) -> [] ex.Ex {
+    if scope.is_res_type(st, f.ty) {
+        ast.fail(st, rules.r_mode_bound_violated(), ast.nstart(st, fill), ast.nend(st, fill));
+        return ex.nothing();
+    }
+    if types.is_prelude(st, f.ty) {
+        if tables.prelude_res(types.prelude_index(st, f.ty)) != 0 {
+            ast.fail(st, rules.r_mode_bound_violated(), ast.nstart(st, fill), ast.nend(st, fill));
+            return ex.nothing();
+        }
+        return ex.skip(st, from, to);
+    }
+    if f.ty < 1 || f.ty > 6 && !types.is_named(st, f.ty) && !types.is_ref(st, f.ty) {
+        return ex.skip(st, from, to);
+    }
+    if emit.on(st) && !in_static && c.known && c.value > 0 {
+        // A region is one chunk of 65,536 bytes: a count known now whose bytes do not fit is refused now, not learned
+        // from a trap (`docs/region-limit.md` section 2). The stride is the least a backend gives, so it is never wrong.
+        let stride = region_stride(st, f.ty);
+        if stride > 0 && c.value > 65536 / stride {
+            ast.fail(st, rules.r_region_chunk_exceeded(), from, to);
+            return ex.nothing();
+        }
+    }
+    var home = types.static_region();
+    if !in_static {
+        home = types.block_region(arena);
+    }
+    let result = types.make_ref(st, true, home, types.make_slice(st, f.ty));
+    if emit.on(st) {
+        if !scope.element_ok(st, f.ty) {
+            return ex.skip(st, from, to);
+        }
+        var p = 0;
+        if in_static {
+            p = emit.heap_run(st, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+        } else {
+            p = emit.alloc_slice(st, arena, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+        }
+        if c.known {
+            return ex.in_slice(result, p, 0 - 1, c.value);
+        }
+        return ex.in_slice(result, p, c.reg, 0);
+    }
+    return ex.plain(result);
+}
+
+// The end of `box(heap, v)`, once `v` is evaluated: the value on the heap.
+pub fn finish_box[&s](st: &!s [int], from: int, to: int, v: ex.Ex) -> [] ex.Ex {
+    if types.is_erased(st, v.ty) || v.ty < 1 || !(v.ty <= 6 || scope.aggregate_codable(st, v.ty) || types.is_ref(st, v.ty)) || types.is_slice_ref(st, v.ty) {
+        return ex.skip(st, from, to);
+    }
+    effects.perform_named(st, "heap");
+    return ex.in_reg(types.make_box(st, v.ty), emit.box_value(st, v.ty, v.known, v.value, v.reg));
+}
+
+// The end of `unbox(heap, b)`, once `b` (the node `arg`) is evaluated: the value the box holds, which is freed.
+pub fn finish_unbox[&s](st: &!s [int], from: int, to: int, arg: int, b: ex.Ex) -> [] ex.Ex {
+    if types.is_boxslice(st, b.ty) {
+        // What a boxed slice holds comes back out of `unbox_slice`: `unbox` is for one value of a size.
+        ast.fail(st, rules.r_unsized_type(), from, to);
+        return ex.nothing();
+    }
+    if types.is_ref(st, b.ty) && types.is_box(st, types.ref_inner(st, b.ty)) {
+        // `unbox` ends a `Box`; this is a reference to one.
+        ast.fail(st, rules.r_type_mismatch(), ast.nstart(st, arg), ast.nend(st, arg));
+        return ex.nothing();
+    }
+    if !types.is_box(st, b.ty) {
+        return ex.skip(st, from, to);
+    }
+    effects.perform_named(st, "heap");
+    let held = types.box_inner(st, b.ty);
+    return ex.in_reg(held, emit.unbox_value(st, held, b.reg));
+}
+
+// The end of `unbox_slice(heap, b)`: a boxed slice freed.
+pub fn finish_free[&s](st: &!s [int], from: int, to: int, b: ex.Ex) -> [] ex.Ex {
+    if !types.is_boxslice(st, b.ty) || !scope.aggregate_codable(st, b.ty) {
+        return ex.skip(st, from, to);
+    }
+    effects.perform_named(st, "heap");
+    return ex.in_reg(1, emit.heap_free(st, b.ty, b.reg));
+}
+
+// The end of `box_slice(heap, count, fill)`, once both are evaluated.
+pub fn finish_box_slice[&s](st: &!s [int], from: int, to: int, fill: int, c: ex.Ex, f: ex.Ex) -> [] ex.Ex {
+    if scope.is_res_type(st, f.ty) {
+        // The fill is copied into every element, which a linear value cannot be; and ending a boxed slice runs nothing.
+        ast.fail(st, rules.r_mode_bound_violated(), ast.nstart(st, fill), ast.nend(st, fill));
+        return ex.nothing();
+    }
+    if !scope.element_ok(st, f.ty) {
+        return ex.skip(st, from, to);
+    }
+    effects.perform_named(st, "heap");
+    let boxed = types.make_boxslice(st, f.ty);
+    let p = emit.heap_run(st, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+    return ex.in_reg(boxed, emit.make_box(st, boxed, p, c.known, c.value, c.reg));
+}

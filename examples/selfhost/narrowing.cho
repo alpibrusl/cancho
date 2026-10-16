@@ -148,11 +148,59 @@ fn in_set[&s, &x](st: &!s [int], text: &x [byte], held: int, ts: int, te: int) -
     return false;
 }
 
+// Are the members of the set of libraries written in the literal well formed (`parse_scope`): names of letters, digits, `_`,
+// `.`, `+` and `-`, none empty, none twice?
+fn library_names[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] bool {
+    let end = last(st, tok);
+    var i = first(st, tok);
+    while i <= end {
+        var j = i;
+        while j < end && int_of(text[j]) != 44 {
+            let c = int_of(text[j]);
+            let fine = c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122 || c == 95 || c == 46 || c == 43 || c == 45;
+            if !fine {
+                return false;
+            }
+            j = j + 1;
+        }
+        if j == i {
+            return false;
+        }
+        var k = first(st, tok);
+        while k < i {
+            var l = k;
+            while l < i - 1 && int_of(text[l]) != 44 {
+                l = l + 1;
+            }
+            if l - k == j - i {
+                var same = true;
+                var m = 0;
+                while m < j - i {
+                    if int_of(text[k + m]) != int_of(text[i + m]) {
+                        same = false;
+                    }
+                    m = m + 1;
+                }
+                if same {
+                    return false;
+                }
+            }
+            k = l + 1;
+        }
+        i = j + 1;
+    }
+    return true;
+}
+
 // `narrow_ffi`: a set of libraries narrows as a set: every library wanted is one held (held nothing: any), and not the
 // same set. True if refused. A set that is not well formed is left to `foreign-scope`.
 pub fn refused_set[&s, &x](st: &!s [int], text: &x [byte], current: int, target: int, from: int, to: int) -> [] bool {
     if escaped(st, text, current) || escaped(st, text, target) {
         return false;
+    }
+    if size(st, target) > 0 && !library_names(st, text, target) {
+        ast.fail(st, rules.r_foreign_scope(), from, to);
+        return true;
     }
     if size(st, target) == 0 {
         if size(st, current) == 0 {
@@ -255,5 +303,173 @@ pub fn refused[&s, &x](st: &!s [int], text: &x [byte], cty: int, lit: int, nargs
     if is_ffi(st, index) && refused_set(st, text, now, ast.get(st, lit, 4), from, to) {
         return 1;
     }
+    if is_signals(st, index) && refused_signals(st, text, now, ast.get(st, lit, 4), from, to) {
+        return 1;
+    }
     return 0;
+}
+
+// A capability whose only consumer is `release`: the root authorities, which are not taken apart and not destroyed by
+// anything else (`released_only`).
+pub fn released_only[&s](st: &!s [int], index: int) -> [] bool {
+    return index == netcode.prelude_named("World") || index == netcode.prelude_named("Io") || index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Heap") || index == netcode.prelude_named("Args") || index == netcode.prelude_named("Net") || index == netcode.prelude_named("Clock") || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || index == netcode.prelude_named("Tty");
+}
+
+// ---------------------------------------------------------------- listeners ---
+//
+// `listen.rs`: what a `Net` narrowed to a bound grants a listener. A bound of nothing or of digits is a bare port, which
+// says "every interface"; otherwise it is `host:port` (or a host), and the host is one address, `0.0.0.0` (every address),
+// or not an address at all, which matches nothing.
+
+// The IPv4 address written in text[a..b], strictly (four decimal octets of one to three digits, none over 255, none with a
+// leading zero), or -1.
+fn dotted[&x](text: &x [byte], a: int, b: int) -> [] int {
+    var value = 0;
+    var parts = 0;
+    var at = a;
+    while at <= b {
+        var octet = 0;
+        var digits = 0;
+        var first = 0 - 1;
+        while at < b && int_of(text[at]) != 46 {
+            let c = int_of(text[at]);
+            if c < 48 || c > 57 {
+                return 0 - 1;
+            }
+            if digits == 0 {
+                first = c;
+            }
+            octet = octet * 10 + c - 48;
+            digits = digits + 1;
+            at = at + 1;
+        }
+        if digits == 0 || digits > 3 || octet > 255 || digits > 1 && first == 48 {
+            return 0 - 1;
+        }
+        value = value * 256 + octet;
+        parts = parts + 1;
+        at = at + 1;
+    }
+    if parts != 4 {
+        return 0 - 1;
+    }
+    return value;
+}
+
+// Is the bound a bare port (or nothing)?
+fn plain_port[&s, &x](st: &!s [int], text: &x [byte], bound: int) -> [] bool {
+    var i = first(st, bound);
+    while i < last(st, bound) {
+        let c = int_of(text[i]);
+        if c < 48 || c > 57 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// May a listener bind `address` under the bound? A bare port grants every address; `host:port` that host; `0.0.0.0`
+// any; a host that is not an address, none.
+fn covers[&s, &x](st: &!s [int], text: &x [byte], bound: int, address: int) -> [] bool {
+    if plain_port(st, text, bound) {
+        return true;
+    }
+    var colon = last(st, bound);
+    var i = last(st, bound) - 1;
+    var found = false;
+    while i >= first(st, bound) && !found {
+        if int_of(text[i]) == 58 {
+            colon = i;
+            found = true;
+        }
+        i = i - 1;
+    }
+    if colon == first(st, bound) {
+        return true;
+    }
+    let only = dotted(text, first(st, bound), colon);
+    if only < 0 {
+        return false;
+    }
+    return only == 0 || only == address;
+}
+
+// A listener (`tcp_listen`, `tcp_listen_on`, `udp_bind`) through the `Net` that was handed over: it must be a borrowed `Net`,
+// and what it was narrowed to must grant the interface the call binds: every one for `tcp_listen` and `udp_bind`, the address
+// of the literal for `tcp_listen_on`. True if refused.
+pub fn listen_refused[&s, &x](st: &!s [int], text: &x [byte], which: int, on: bool, cap: int, address: int, from: int, to: int) -> [] bool {
+    if which != 36 && which != 130 {
+        return false;
+    }
+    if !types.is_ref(st, cap) || !types.is_prelude(st, types.ref_inner(st, cap)) || types.prelude_index(st, types.ref_inner(st, cap)) != netcode.prelude_named("Net") {
+        ast.fail(st, rules.r_capability_misused(), from, to);
+        return true;
+    }
+    let bound = types.prelude_lit_tok(st, types.ref_inner(st, cap));
+    if escaped(st, text, bound) {
+        return false;
+    }
+    if on && !covers(st, text, bound, address) || !on && !plain_port(st, text, bound) {
+        ast.fail(st, rules.r_listen_host(), from, to);
+        return true;
+    }
+    return false;
+}
+
+// A set of signals (`signals.rs`): each name one a program may claim, none twice, strictly inside what is held (nothing held:
+// every claimable one). True if refused.
+pub fn refused_signals[&s, &x](st: &!s [int], text: &x [byte], current: int, target: int, from: int, to: int) -> [] bool {
+    if escaped(st, text, current) || escaped(st, text, target) {
+        return false;
+    }
+    var wanted = 0;
+    let end = last(st, target);
+    var i = first(st, target);
+    if size(st, target) == 0 {
+        ast.fail(st, rules.r_signal_not_claimable(), from, to);
+        return true;
+    }
+    while i <= end {
+        var j = i;
+        while j < end && int_of(text[j]) != 44 {
+            j = j + 1;
+        }
+        let bit = netcode.signal_bit(text, i, j);
+        if bit == 0 || wanted & bit != 0 {
+            ast.fail(st, rules.r_signal_not_claimable(), from, to);
+            return true;
+        }
+        wanted = wanted | bit;
+        i = j + 1;
+    }
+    var held = 255;
+    if size(st, current) > 0 {
+        held = 0;
+        let stop = last(st, current);
+        var at = first(st, current);
+        while at <= stop {
+            var j = at;
+            while j < stop && int_of(text[j]) != 44 {
+                j = j + 1;
+            }
+            held = held | netcode.signal_bit(text, at, j);
+            at = j + 1;
+        }
+    }
+    if wanted | held != held || size(st, current) > 0 && wanted == held {
+        ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+        return true;
+    }
+    return false;
+}
+
+pub fn is_signals[&s](st: &!s [int], index: int) -> [] bool {
+    return index == netcode.prelude_named("Signals");
+}
+
+// A value of this type is certainly too big to be given to a thread or to come back from one: more than one leaf (an
+// aggregate, a float, a slice). Other types it may carry are left to the code that is written for them.
+pub fn cannot_cross[&s](st: &!s [int], ty: int) -> [] bool {
+    return types.is_named(st, ty) || types.is_tuple(st, ty) || ty == 3 || ty == 4 || types.is_slice_ref(st, ty);
 }
