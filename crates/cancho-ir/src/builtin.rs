@@ -814,6 +814,19 @@ pub enum Builtin {
     /// the `Dir` holds (`docs/processes.md` §4.10). Lowered as
     /// `Expr::ExecSpawn { in_dir: true, .. }`.
     ExecSpawnIn,
+    /// `exec_spawn_detached(&Exec(p), path, args, env, stdin, stdout, stderr)
+    /// -> [exec(p), exec_detached] Spawned` -- `docs/processes.md` §4.11,
+    /// edition 9: `exec_spawn` whose child starts in a session of its own, so
+    /// it outlives the program's terminal and its process group. Lowered as
+    /// `Expr::ExecSpawn { detached: true, .. }`.
+    ExecSpawnDetached,
+    /// `child_release(Child) -> [exec_detached] int` -- §4.11, edition 9: let go of a
+    /// child that keeps running. Consumes the handle; a thread of the runtime
+    /// reaps the child when it ends. `0`, or the `errno` of the thread.
+    ChildRelease,
+    /// `child_pid(&Child) -> [] int` -- §4.11, edition 9: the child's process
+    /// id, read before the handle is consumed.
+    ChildPid,
     /// `child_wait(Child) -> [] Exited`: wait for the child to end and reap it;
     /// the only consumer of a `Child` (§4.7).
     ChildWait,
@@ -1055,6 +1068,9 @@ impl Builtin {
         // Last, so the positions the self-hosted tables index by do not move
         // (`docs/self-hosting.md`).
         Builtin::TcpListenOn,
+        Builtin::ExecSpawnDetached,
+        Builtin::ChildRelease,
+        Builtin::ChildPid,
     ];
 
     pub fn name(self) -> &'static str {
@@ -1208,6 +1224,9 @@ impl Builtin {
             Builtin::PipeOpen => "pipe_open",
             Builtin::ExecSpawn => "exec_spawn",
             Builtin::ExecSpawnIn => "exec_spawn_in",
+            Builtin::ExecSpawnDetached => "exec_spawn_detached",
+            Builtin::ChildRelease => "child_release",
+            Builtin::ChildPid => "child_pid",
             Builtin::ChildWait => "child_wait",
             Builtin::ChildKill => "child_kill",
             Builtin::PipeRead => "pipe_read",
@@ -1363,6 +1382,10 @@ impl Builtin {
             // is closed (`docs/editions.md` §6.4) and `tcp_listen_on` is a
             // name a program may declare for itself.
             Builtin::TcpListenOn => 9,
+            // `docs/processes.md` §4.11: edition 9, the latest open one --
+            // `child_release` and `child_pid` are names a program may
+            // already declare, and edition 7 is closed.
+            Builtin::ExecSpawnDetached | Builtin::ChildRelease | Builtin::ChildPid => 9,
             // `docs/crypto-builtins.md` §3: the latest edition, as
             // `value_barrier` was, since a program may already declare
             // these names.
@@ -1519,7 +1542,7 @@ impl Builtin {
             Builtin::DirOwnMode => 1,
             // The handle's region, and for a read or a write the buffer's.
             Builtin::PipeRead | Builtin::PipeWrite => 2,
-            Builtin::ChildKill | Builtin::PipeNonblocking => 1,
+            Builtin::ChildKill | Builtin::ChildPid | Builtin::PipeNonblocking => 1,
             // The poller's region and the handle's.
             Builtin::PollerAddPipe | Builtin::PollerAddChild => 2,
             Builtin::TcpAccept
@@ -1660,6 +1683,11 @@ impl Builtin {
             // `conn_close` does not; `exec_spawn`'s row comes from the prefix
             // at the call site.
             Builtin::ChildKill => Effects::plain(["child_signal"]),
+            // `docs/processes.md` §4.11: letting a child go is the act after
+            // which it can outlive the program, so it is the one place the
+            // report must say so. `exec_spawn_detached` says it as well, at
+            // its call site.
+            Builtin::ChildRelease => Effects::plain(["exec_detached"]),
             Builtin::PipeRead => Effects::plain(["pipe_read"]),
             Builtin::PipeWrite => Effects::plain(["pipe_write"]),
             // Moving authority around is not an effect. Splitting a `World`

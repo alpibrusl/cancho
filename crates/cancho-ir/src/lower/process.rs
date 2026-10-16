@@ -1,4 +1,4 @@
-//! `exec_spawn` and `exec_spawn_in` (`docs/processes.md` §3.2, §4.10): the
+//! `exec_spawn`, `exec_spawn_in` and `exec_spawn_detached` (`docs/processes.md` §3.2, §4.10, §4.11): the
 //! process builtins whose row is read off a type.
 
 use crate::*;
@@ -14,8 +14,13 @@ impl<'a> FnLowering<'a> {
         args: &[ExprId],
         span: Span,
         in_dir: bool,
+        detached: bool,
     ) -> Result<(Expr, Type), Diagnostic> {
-        let (name, wanted) = if in_dir { ("exec_spawn_in", 8) } else { ("exec_spawn", 7) };
+        let (name, wanted) = match (in_dir, detached) {
+            (true, _) => ("exec_spawn_in", 8),
+            (_, true) => ("exec_spawn_detached", 7),
+            _ => ("exec_spawn", 7),
+        };
         let arity = || {
             Diagnostic::new(
                 Rule::ArityMismatch,
@@ -101,8 +106,12 @@ impl<'a> FnLowering<'a> {
             name: "exec".to_owned(),
             argument: Some(prefix.clone()),
         }]));
+        // §4.11: a child that outlives the program is more than `exec` says.
+        if detached {
+            self.performed.union(&Effects::plain(["exec_detached"]));
+        }
         Ok((
-            Expr::ExecSpawn { prefix, in_dir, args: lowered },
+            Expr::ExecSpawn { prefix, in_dir, detached, args: lowered },
             Type::Named(self.prelude()[PRELUDE_SPAWNED], Vec::new()),
         ))
     }

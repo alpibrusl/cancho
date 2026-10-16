@@ -9,7 +9,7 @@
 
 use super::*;
 
-const BACKENDS: [&str; 2] = ["cranelift", "llvm"];
+pub(super) const BACKENDS: [&str; 2] = ["cranelift", "llvm"];
 
 const PROBE: &str = r##"edition 7;
 
@@ -502,7 +502,7 @@ fn main(world: World) -> [] int {
 "##;
 
 /// Build `source` with each backend, answering `(backend, executable)`.
-fn build_both(tag: &str, source: &str) -> (PathBuf, Vec<(&'static str, PathBuf)>) {
+pub(super) fn build_both(tag: &str, source: &str) -> (PathBuf, Vec<(&'static str, PathBuf)>) {
     let dir = scratch(tag);
     let file = dir.join(format!("{tag}.cho"));
     std::fs::write(&file, source).expect("the program is written");

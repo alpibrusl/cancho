@@ -11,3 +11,8 @@ memory::the_layout_report_says_what_a_type_costs                               #
 modules::std_declarations_cost_nothing_unless_called                           # Linux only: the size of the module
 sha256_builtins::on_cranelift_the_instructions_are_absent_and_the_builtins_trap # a test of the Cranelift backend
 wasm_target::build_refuses_too_not_only_check                                  # the WebAssembly target is the Rust compiler's (#486)
+process_release::a_child_that_has_already_ended_is_released_cleanly            # exec_spawn_detached, child_release, child_pid are not ported (unported_builtins.txt, #512)
+process_release::a_detached_child_outlives_its_parent_in_a_session_of_its_own  # as above
+process_release::a_detached_start_stays_inside_the_prefix_it_was_narrowed_to   # as above
+process_release::only_the_detached_child_survives_its_parents_group            # as above
+process_release::released_children_do_not_become_zombies                       # as above

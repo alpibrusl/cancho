@@ -135,6 +135,8 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::PipeClose
                     | Builtin::ChildEndClose
                     | Builtin::ChildKill
+                    | Builtin::ChildRelease
+                    | Builtin::ChildPid
                     | Builtin::PollerAddListener
                     | Builtin::PollerAddConn
                     | Builtin::PollerModify

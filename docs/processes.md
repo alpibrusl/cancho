@@ -1,6 +1,6 @@
 # Processes: running a program, with an authority that says which
 
-> **Status: slices 0 to 2 built (§4.5, §4.8, §8); slices 3 and 4 designed, not built.**
+> **Status: slices 0 to 2 built (§4.5, §4.8, §8); slices 3 and 4 designed, not built. Letting go of a child (§4.11, #524) is built.**
 > Written before the code, the way
 > [`filesystem.md`](filesystem.md), [`net.md`](net.md) and
 > [`signals.md`](signals.md) were. When building it disagrees with this
@@ -101,7 +101,7 @@ earlier file changes.
 | type | what it is | consumed by |
 |---|---|---|
 | `Exec("prefix")` | a capability carrying a path prefix, like `Fs`; borrowed shared | `release` |
-| `Child` | a started process, not yet reaped: `res`, one leaf (the pid) | `child_wait` |
+| `Child` | a started process, not yet reaped: `res`, one leaf (the pid) | `child_wait`, or `child_release` (§4.11) |
 | `Pipe` | the parent's end of a channel to a child: `res`, one descriptor | `pipe_close` |
 | `ChildEnd` | the child's end of the same channel, before it is handed over: `res` | `exec_spawn` (as a `Stdio`), or `child_end_close` |
 | `Stdio` | `enum { Null, Pipe(ChildEnd), File(File) }`: what one of the child's three streams is | `exec_spawn` |
@@ -117,7 +117,10 @@ earlier file changes.
 | `pipe_open` | `() -> Piped` | none (an unnamed channel inside this process reaches nothing) |
 | `exec_spawn` | `(&Exec("p"), path: &[byte], args: &[byte], env: &[byte], stdin: Stdio, stdout: Stdio, stderr: Stdio) -> Spawned` | `exec("p")` |
 | `exec_spawn_in` | `(&Exec("p"), &Dir, path: &[byte], args: &[byte], env: &[byte], stdin: Stdio, stdout: Stdio, stderr: Stdio) -> Spawned` | `exec("p")`; `exec_spawn` whose child starts in the `Dir` (§4.10) |
+| `exec_spawn_detached` (edition 9) | as `exec_spawn` | `exec("p")`, `exec_detached`; the child leads a session of its own (§4.11) |
 | `child_wait` | `(Child) -> Exited` | none (ending a handle is not using one) |
+| `child_release` (edition 9) | `(Child) -> int` | `exec_detached`; the child runs on and is reaped by the runtime (§4.11) |
+| `child_pid` (edition 9) | `(&Child) -> int` | none |
 | `child_kill` | `(&Child, signal: int) -> int` | `child_signal` |
 | `pipe_read` | `(&!Pipe, &![byte]) -> Received` | `pipe_read` |
 | `pipe_write` | `(&!Pipe, &[byte]) -> Sent` | `pipe_write` |
@@ -387,6 +390,10 @@ reported in `std.signals`' bits, `0` for one with no bit), or
 `Exited::Failed(errno)`. It waits for **its** pid only, never `-1`, so a
 thread waiting for one child cannot reap another thread's.
 
+**Letting go (§4.11).** `child_release` is the third way to consume a
+`Child`: the process keeps running and the runtime reaps it, so the sentence
+above holds for it too.
+
 **What linearity cannot do.** If the parent traps or is killed, its
 children are not killed with it. Linux could ask for that
 (`PR_SET_PDEATHSIG`), macOS cannot, and `posix_spawn` cannot ask on
@@ -526,6 +533,133 @@ that is not an outcome is the allocator refusing the file action
 (`ENOMEM`), which traps as a failed `malloc` for the argument list does; a
 dropped `chdir` would start the child in the wrong place, and nothing the
 program can arrange reaches that path, so it has no mutant (§8).
+
+### 4.11 Letting go: `child_release`, and a child in a session of its own
+
+[#524](https://github.com/alpibrusl/cancho/issues/524). A server that starts
+a job (cancho-code's MCP server starts a build that takes minutes, answers
+with a run id at once, and lets a client poll) cannot be written with §4.7
+alone. A `Child` has to be waited for, which blocks, or killed, which stops
+the job, and a program that does neither does not compile. The server worked
+around it with four constant `sh -c` scripts, `ps`, and a heuristic for
+whether a pid is still the run's. Three builtins, edition 9, replace that:
+
+```
+exec_spawn_detached(&Exec("p"), path, args, env, stdin, stdout, stderr) -> Spawned   // [exec("p"), exec_detached]
+child_pid(&Child) -> int                                                            // []
+child_release(Child) -> int                                                         // [exec_detached]
+```
+
+```cancho
+fn start[&x](exec: &x Exec("/opt/builds/bin")) -> [exec("/opt/builds/bin"), exec_detached] int {
+    match exec_spawn_detached(exec, "/opt/builds/bin/build", "--all\0", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            var pid = 0;
+            borrow child as &c in { pid = child_pid(c); }
+            child_release(child);       // the job runs on; nothing is owed
+            return pid;                 // the run id the client polls with
+        }
+        Spawned::Failed(e) => { return 0 - e; }
+    }
+}
+```
+
+* *What each does.* `exec_spawn_detached` is `exec_spawn` whose child leads a
+  new session and process group of its own. `child_pid` reads the pid out of
+  the `Child`, which is read-only and must come before the release because the
+  release ends the handle. `child_release` consumes the `Child`: the job keeps
+  running, the parent holds no handle and owes no wait. It answers `0`.
+* *Two builtins and a reader, not a changed signature.* `exec_spawn` has
+  callers, as §4.10 found, so the detached start is a second builtin that
+  lowers to the same IR node (`Expr::ExecSpawn`, with a `detached` flag) and
+  the same function in each backend. A detached start with a working
+  directory (`exec_spawn_detached_in`) is not built: no program has asked.
+* *Release works on any child.* A child from plain `exec_spawn` can be
+  released too, and runs on in its parent's session. The two are independent:
+  *detached* is about where the child lives, *released* is about whether the
+  parent owes it a wait. A server wants both; a test that starts a service and
+  lets the harness's end clean up wants release alone.
+
+**A released child is not the parent's zombie.** The weak point of "just let
+go" is the process table: a child that ends is a zombie until its parent
+reaps it, and a server that releases thousands of jobs over its life would
+fill the table. Three mechanisms were considered:
+
+| Mechanism | Why not |
+|---|---|
+| Ignore `SIGCHLD` (or `SA_NOCLDWAIT`), so the kernel reaps | It is a per-process setting. With it set, `waitpid` for a child the program *did* keep fails with `ECHILD`, so `child_wait` stops working for every other child (measured, Python's `os.waitpid` after `SIGCHLD = SIG_IGN`: `No child processes`, on macOS 26.2 and Linux 7.0) |
+| Start the child through a double fork, so init adopts it at once | The started process is then not the parent's child: `child_wait` and `poller_add_child` cannot work on it, and §4.7's guarantee that a pid is not reused while its `Child` exists is gone. A `fork` in a program with threads (§4.9) may call only async-signal-safe functions before the exec |
+| **A thread of the runtime reaps it** | Chosen. `child_release` closes the `pidfd` (§4.8) and starts a detached thread whose only work is `waitpid` on **that pid**, then ends. It never waits for `-1`, so it cannot take the status of a child the program kept, and nothing about `child_wait` changes |
+
+Its costs, measured on macOS 26.2 (Cranelift): 200 released children still
+running are 200 threads and 3.3 MB more resident memory than none (1.3 MB to
+4.6 MB, about 16 KB each); 50 that ended leave no thread and no process
+(`ps` finds nothing of any of them while the parent lives, on both backends).
+The thread has a 64 KiB stack, since it makes one call. If `pthread_create`
+fails (`EAGAIN`), `child_release` answers its error number instead of `0`: the
+child still runs, but it is a zombie when it ends until the parent ends. When
+the parent ends the threads go with it and the kernel hands the children to
+init. The thread inherits the parent's signal mask, so a claimed signal
+(`signals.md`) stays blocked in it too, and it installs no handler, so
+nothing interrupts its `waitpid`.
+
+**The session.** `exec_spawn_detached` adds `POSIX_SPAWN_SETSID` to the flags
+of §4.6 (`0x80` in glibc, `0x400` in macOS's `spawn.h`, both read from the
+header). The child is its own session leader and group leader (`pgid` and, on
+Linux, `sid` equal to its pid) and has no controlling terminal. That is what
+the use needs: a hangup of the parent's terminal, or a `kill -- -pgid` of the
+parent's group by a shell or a supervisor, does not reach it. The tests start
+two released children and kill the parent's group: the plain one dies with it
+and the detached one lives. What it does not do: a container's or a service
+manager's own kill (a `cgroup`, a launchd job) takes every process it holds,
+session or not; and nothing here keeps a plain child alive when the parent's
+group is killed, which is the point of the second builtin.
+
+**What the caller can do with the pid.** `child_pid` answers a number, and
+nothing in cancho signals a number: `child_kill` takes a `&Child`, and the
+`Signals` capability is about the signals a program claims for itself. That
+is deliberate and stays so. A `kill(pid, s)` taking any pid would give a
+program holding only `child_signal` a way to signal every process of its user,
+which is far more than the label says. The same effect is available today
+under the authority it really is: start `/bin/kill` through an `Exec` narrowed
+to it (`exec("/bin/kill")` in the report). Because the child leads its own
+group, `kill -TERM -- -<pid>` stops the job and everything it started, and
+`kill -0 <pid>` asks whether it is there. What a server must remember: a pid
+is only a name. After the process is gone and reaped, the number can belong
+to another one, and §4.7's guarantee ended with the handle. A server that
+polls by pid should record the pid with something that tells runs apart (a
+start time, a run directory the job writes into) and not trust the number
+alone. A kill-by-pid builtin, with a capability of its own, is §9's open
+question, not part of this slice.
+
+**The authority report.** A new plain label, `exec_detached`, performed by
+`exec_spawn_detached` and by `child_release`, never by `child_pid`. It is
+path-free: *which* programs may be started is still `exec("p")`, and
+`narrow` bounds the detached start exactly as any other (the checked path is
+the same code, and a test starts one outside the prefix and sees the trap).
+So a report that says
+
+```
+performs
+    exec("/opt/builds/bin")
+    exec_detached
+```
+
+tells a reader: this program starts only what is under that directory, and
+what it starts may be left running when the program ends. The label sits on
+the release as well as on the detached start because the release is the act
+after which *any* child outlives the program; a program that starts a child
+in its own session and waits for it is reported as well, which is the
+conservative side. Owning an `Exec` discharges it, as it does `child_signal`
+(§3.2), and so does a `World`. It is edition 9 like the three builtins:
+nothing an older file can write reaches it ([`editions.md`](editions.md) §5,
+an addition is absent from older editions), and a file that already declares
+a function called `child_release` is unchanged. `cancho authority`'s
+"never touches" list counts it with `exec`: a program with neither still
+reports "other programs" as untouched.
+
+WebAssembly has no processes, so the three are refused there like the other
+process builtins (`unsupported-on-target`, `tests/reject/exec_spawn_detached_on_wasi.cho`).
 
 ---
 
@@ -857,6 +991,22 @@ slice 2's, and is checked there.
   promised order, and about 1 run in 10 wrote to a channel the child still
   held. The case now reaps the child before it writes, since reaping comes
   after every descriptor is released. It passed 60 runs in a row.
+* **Letting go (§4.11).** Fixtures: `tests/accept/process_release.cho`;
+  `tests/reject/child_released_then_used.cho` (`linear-use-after-move`),
+  `child_release_undeclared.cho` and `exec_spawn_detached_undeclared.cho`
+  (`effect-not-declared`), `child_release_is_edition_nine.cho`
+  (`unknown-name`), `exec_spawn_detached_on_wasi.cho`
+  (`unsupported-on-target`). Conformance tests over real processes, both
+  backends (`tests/conformance/process_release.rs`, driver
+  `tests/programs/process_release.cho`): a detached child is alive after its
+  parent exited, leads its group and session, and a group signal reaches it;
+  of a plain and a detached child released together only the detached one
+  survives its parent's group being killed; fifty released children leave no
+  zombie while the parent lives, and a child it kept is still waited for;
+  releasing one that has already ended answers `0`; fifty releases leave the
+  descriptor count as it was (Linux); a detached start outside the prefix
+  traps; the report carries `exec_detached`, and `tests/accept/process_spawn.cho`'s
+  does not. Mutants: `scripts/process_release_mutants.py`.
 * **The bound check under `-O2`.** The first `Exec` program built with the
   LLVM backend exited through the wrong arm: `checked_path` loaded a
   byte past the bound for every index of the path, and the optimiser used
@@ -1061,5 +1211,8 @@ the x86-64 host, the macOS tests on the Mac.
 | ~~The working directory~~ | **Built (§4.10):** `exec_spawn_in`. Open still: a working directory that is not a `Dir` (a path), which needs the `Fs` rule's check and has no asker |
 | `Stdio::Merge` | §5. Needs an edition; `capture_both` serves the asker who wanted standard error |
 | A bound chosen at deployment | `narrow` takes a literal, so a server whose tools' directory is chosen when it is installed holds `Exec("")` or a literal it was built with. `Fs` has the same question (`authority.md` §2.3, `lines.cho`), and it should be answered for both at once |
-| Children of a parent that dies | §4.7. `PR_SET_PDEATHSIG` exists on Linux only |
+| Children of a parent that dies | §4.7. `PR_SET_PDEATHSIG` exists on Linux only. §4.11 is the opposite request, and a detached child is meant to outlive its parent |
+| Signalling a pid the program holds only as a number | §4.11. A `kill(pid)` builtin needs a capability of its own, since `child_signal` is about a `Child`; today `/bin/kill` through a narrowed `Exec` does it, and says so in the report. The asker (cancho-code's MCP server) can use that |
+| `exec_spawn_detached` with a working directory | §4.11. No program has asked: `exec_spawn_in` does not detach, and the combination is the same node with two flags |
+| One reaper thread for all released children | §4.11. A thread per running released child costs about 16 KB (measured); a single reaper needs a table shared between threads, which no program needs yet |
 | Mapping `exec("p")` onto `lex-os`'s `exec` level | The same bridge `agent-toolbox.md` §2.5 found missing for `net_out`. The report carries what the bridge needs |

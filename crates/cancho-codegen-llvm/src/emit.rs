@@ -19,7 +19,7 @@
 //! `run_clang` always passes `-O2` for exactly this reason -- without it,
 //! every leaf here stays a real stack slot.
 
-use cancho_ir::Program;
+use cancho_ir::{CHILD_REAPER, Program};
 use cancho_types::Type;
 use target_lexicon::Triple;
 
@@ -427,6 +427,11 @@ pub(crate) fn emit_module(
         ("sigemptyset", "i32 @sigemptyset(ptr)"),
         ("sigfillset", "i32 @sigfillset(ptr)"),
         ("waitpid", "i32 @waitpid(i32, ptr, i32)"),
+        // `docs/processes.md` §4.11: `child_release`'s reaper thread.
+        ("pthread_attr_init", "i32 @pthread_attr_init(ptr)"),
+        ("pthread_attr_destroy", "i32 @pthread_attr_destroy(ptr)"),
+        ("pthread_attr_setstacksize", &format!("i32 @pthread_attr_setstacksize(ptr, {st})")),
+        ("pthread_detach", "i32 @pthread_detach(ptr)"),
         ("syscall", "i64 @syscall(i64, ...)"),
         ("kill", "i32 @kill(i32, i32)"),
         ("strncmp", &format!("i32 @strncmp(ptr, ptr, {st})")),
@@ -783,6 +788,12 @@ pub(crate) fn emit_module(
     }
     if regions {
         text.push_str(&crate::region_cache::definitions(triple));
+    }
+    // `docs/processes.md` §4.11: the function `child_release` starts a thread on.
+    if text.contains(&format!("@{CHILD_REAPER}")) {
+        text.push_str(&format!(
+            "define internal ptr @{CHILD_REAPER}(ptr %pid) {{\nentry:\n  %status = alloca i64, align 8\n  %n = ptrtoint ptr %pid to i64\n  %p = trunc i64 %n to i32\n  %r = call i32 @waitpid(i32 %p, ptr %status, i32 0)\n  ret ptr null\n}}\n"
+        ));
     }
     // `docs/crypto-builtins.md` §4: only the functions this module calls.
     let crypto = crate::crypto::definitions(triple, &text);

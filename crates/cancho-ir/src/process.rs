@@ -20,13 +20,16 @@ pub const O_RDWR: i64 = 2;
 pub const AF_UNIX: i64 = 1;
 pub const SOCK_STREAM: i64 = 1;
 
-/// `posix_spawnattr_setflags`'s flags: `POSIX_SPAWN_SETSIGDEF` and
+/// `posix_spawnattr_setflags`'s flags (with `detached`, `exec_spawn_detached`'s session): `POSIX_SPAWN_SETSIGDEF` and
 /// `POSIX_SPAWN_SETSIGMASK` (4 and 8 on both), and on Darwin
 /// `POSIX_SPAWN_CLOEXEC_DEFAULT` (0x4000), which closes every descriptor the
 /// file actions do not name -- the window slice 0 leaves on Darwin (§4.5).
-pub fn spawn_flags(darwin: bool) -> i64 {
+pub fn spawn_flags(darwin: bool, detached: bool) -> i64 {
     let both = 0x4 | 0x8;
-    if darwin { both | 0x4000 } else { both }
+    let base = if darwin { both | 0x4000 } else { both };
+    // `POSIX_SPAWN_SETSID` (`docs/processes.md` §4.11): glibc's 0x80 and
+    // Darwin's 0x400 (measured on both, see the section).
+    if detached { base | if darwin { 0x400 } else { 0x80 } } else { base }
 }
 
 /// The signals `child_kill` can send, as `(bit, native number)`: every
@@ -57,3 +60,15 @@ pub const CHILD_PIDFD_SHIFT: i64 = 32;
 /// still owns its pid (§4.7), it can mean nothing else
 /// (`docs/processes.md` §4.8).
 pub const ESRCH: i64 = 3;
+
+/// The function `child_release` starts a thread on (`docs/processes.md`
+/// §4.11): `void *reap(void *pid)` waits for that one child and ends. Both
+/// backends define it, only in a program that releases a child.
+pub const CHILD_REAPER: &str = "cancho_child_reaper";
+
+/// The reaper thread's stack: it makes one `waitpid` and nothing else, and
+/// the lazy binding of that call needs a few kilobytes at most.
+pub const CHILD_REAPER_STACK_BYTES: i64 = 64 * 1024;
+
+/// Room for a `pthread_attr_t`: 56 bytes on glibc, 64 on Darwin.
+pub const PTHREAD_ATTR_BYTES: i64 = 128;
