@@ -766,6 +766,10 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         if ast.ok(st) {
             scope.lin_shadow(st, text, ast.get(st, id, 5), from, to);
             scope.bind(st, ast.get(st, id, 5), declared, ast.get(st, id, 4) != 0, from, to);
+            if emit.on(st) && ast.ok(st) && types.is_ref(st, declared) && types.ref_unique(st, declared) && ast.is_kind(st, value, kinds.NK::EName) && scope.find(st, text, ast.get(st, value, 4)) >= 0 {
+                // A `&!` copied from another reaches what that one reaches.
+                scope.lease_alias(st, st[21] - 1, scope.find(st, text, ast.get(st, value, 4)));
+            }
             if emit.on(st) && ast.ok(st) && !types.is_erased(st, declared) {
                 if types.is_slice_ref(st, declared) {
                     emit.store_slice(st, st[39] - 1, found.reg, found.reg2 < 0, found.value, found.reg2);
@@ -1155,7 +1159,7 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     // outlives, then the borrow conflicts the walk found.
     var slot = 0;
     while ast.ok(st) && slot < st[39] {
-        let log = st[38] + 5 * slot;
+        let log = st[38] + 6 * slot;
         if types.escaping_block(st, st[log], st[log + 1]) >= 0 {
             ast.fail(st, rules.r_reference_escapes_region(), st[log + 2], st[log + 3]);
         }
@@ -1234,7 +1238,7 @@ pub fn check_static[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int
     block(st, text, ast.get(st, item, 7), ast.get(st, item, 8), ret);
     var slot = 0;
     while ast.ok(st) && slot < st[39] {
-        let log = st[38] + 5 * slot;
+        let log = st[38] + 6 * slot;
         if types.escaping_block(st, st[log], st[log + 1]) >= 0 {
             ast.fail(st, rules.r_reference_escapes_region(), st[log + 2], st[log + 3]);
         }
@@ -1260,6 +1264,10 @@ pub fn check_static[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int
             if !consteval.emit_data(st, item) {
                 st[44] = kept;
             }
+        } else if consteval.trapped(st) {
+            // The body, run when the program is built, traps.
+            ast.fail(st, rules.r_constant_traps(), from, to);
+            return 1;
         }
         return 0;
     }

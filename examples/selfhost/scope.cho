@@ -20,8 +20,8 @@ import selfhost.tables;
 // ------------------------------------------------------------- bindings ---
 
 // A new binding. The span is where Rust says it was declared (a parameter's type, a statement),
-// and the log of every binding ever declared (`st[38]`, five ints each: type, the block open then,
-// that span, whether it holds something to end) is what the escape check reads once the body is done. A binding starts owned.
+// and the log of every binding ever declared (`st[38]`, six ints each: type, the block open then,
+// that span, whether it holds something to end, the binding of the `&!` it was copied from) is what the escape check reads once the body is done. A binding starts owned.
 pub fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to: int) -> [] int {
     if emit.on(st) {
         if types.is_erased(st, ty) {
@@ -41,14 +41,18 @@ pub fn bind[&s](st: &!s [int], name: int, ty: int, mutable: bool, from: int, to:
     st[at + 3] = 0;
     st[at + 4] = st[39];
     st[21] = st[21] + 1;
-    let log = st[38] + 5 * st[39];
+    let log = st[38] + 6 * st[39];
     st[log] = ty;
     st[log + 1] = st[37];
     st[log + 2] = from;
     st[log + 3] = to;
     st[log + 4] = 0;
+    st[log + 5] = 0;
     if emit.on(st) && is_res_type(st, ty) {
         st[log + 4] = 1;
+    }
+    if emit.on(st) && types.is_thread(st, ty) {
+        lease_bind(st, st[39]);
     }
     st[39] = st[39] + 1;
     return 0;
@@ -101,7 +105,165 @@ pub fn note[&s](st: &!s [int], rule: int, from: int, to: int) -> [] int {
 // many arms went on, the states before, the states the arms that went on agreed on, and its size.
 
 fn lin_head[&s](st: &!s [int]) -> [] int {
-    return st[38] + 5 * ((st[19] - 64) / 3 + 16);
+    return st[38] + 6 * ((st[19] - 64) / 3 + 16);
+}
+
+// ------------------------------------------------------------------ leases ---
+//
+// `docs/aliasing.md` section 6.1 and `linear.rs`: a `&!` given to a thread is lent to it until the handle is joined, and
+// until then no copy of that reference may be read or lent again. A reference is a copy of the one it was bound from (the
+// sixth int of its entry in the log: that binding's slot, plus one); a lease is the root it lends and the handle that holds
+// it. Words 3 to 14 of the header after the log: whether a `spawn` waits for its handle to be bound, how many leases, and
+// five of them (root, handle, -1 for none yet). Branches and loops save and compare them as they do the states.
+
+fn lease_at[&s](st: &!s [int], k: int) -> [] int {
+    return lin_head(st) + 5 + 2 * k;
+}
+
+pub fn lease_root[&s](st: &!s [int], i: int) -> [] int {
+    let slot = slot_of(st, i);
+    let r = st[st[38] + 6 * slot + 5];
+    if r == 0 {
+        return slot;
+    }
+    return r - 1;
+}
+
+pub fn lease_alias[&s](st: &!s [int], now: int, source: int) -> [] int {
+    st[st[38] + 6 * slot_of(st, now) + 5] = lease_root(st, source) + 1;
+    return 0;
+}
+
+fn lease_count[&s](st: &!s [int]) -> [] int {
+    return st[lin_head(st) + 4];
+}
+
+pub fn lease_held[&s](st: &!s [int], root: int) -> [] bool {
+    var k = 0;
+    while k < lease_count(st) {
+        if st[lease_at(st, k)] == root {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// A `spawn` given the `&!` bound at `i`: refused if that reference is lent already, and lent from here until the handle is
+// joined. (One lent where a function-valued payload or a copy through a call hides it is not followed, as in Rust.)
+pub fn lease_spawn[&s](st: &!s [int], i: int, from: int, to: int) -> [] int {
+    if !emit.on(st) {
+        return 0;
+    }
+    let root = lease_root(st, i);
+    if lease_held(st, root) {
+        note(st, rules.r_borrow_conflict(), from, to);
+    }
+    let h = lin_head(st);
+    if st[h + 4] >= 5 {
+        ast.fail(st, rules.r_skip(), from, to);
+        return 0;
+    }
+    st[lease_at(st, st[h + 4])] = root;
+    st[lease_at(st, st[h + 4]) + 1] = 0 - 1;
+    st[h + 4] = st[h + 4] + 1;
+    st[h + 3] = 1;
+    return 0;
+}
+
+// The handle just bound is the one the last `spawn` is waiting for.
+pub fn lease_bind[&s](st: &!s [int], slot: int) -> [] int {
+    let h = lin_head(st);
+    if st[h + 3] == 1 {
+        var k = st[h + 4] - 1;
+        while k >= 0 {
+            if st[lease_at(st, k) + 1] < 0 {
+                st[lease_at(st, k) + 1] = slot;
+                st[h + 3] = 0;
+                return 0;
+            }
+            k = k - 1;
+        }
+        st[h + 3] = 0;
+    }
+    return 0;
+}
+
+fn lease_drop[&s](st: &!s [int], k: int) -> [] int {
+    let h = lin_head(st);
+    var j = k;
+    while j + 1 < st[h + 4] {
+        st[lease_at(st, j)] = st[lease_at(st, j + 1)];
+        st[lease_at(st, j) + 1] = st[lease_at(st, j + 1) + 1];
+        j = j + 1;
+    }
+    st[h + 4] = st[h + 4] - 1;
+    return 0;
+}
+
+// `join(t)` of the handle bound at slot `slot`: its lease ends.
+pub fn lease_join[&s](st: &!s [int], slot: int) -> [] int {
+    var k = 0;
+    while k < lease_count(st) {
+        if st[lease_at(st, k) + 1] == slot {
+            lease_drop(st, k);
+        } else {
+            k = k + 1;
+        }
+    }
+    return 0;
+}
+
+// `join(spawn(..))`: the lease the `spawn` just made ends where it was made.
+pub fn lease_join_now[&s](st: &!s [int]) -> [] int {
+    let h = lin_head(st);
+    if st[h + 3] == 1 {
+        var k = st[h + 4] - 1;
+        while k >= 0 {
+            if st[lease_at(st, k) + 1] < 0 {
+                lease_drop(st, k);
+                st[h + 3] = 0;
+                return 0;
+            }
+            k = k - 1;
+        }
+        st[h + 3] = 0;
+    }
+    return 0;
+}
+
+// The leases as they are, copied to the words from `to` (eleven: how many, then five pairs) and back.
+fn lease_save[&s](st: &!s [int], to: int) -> [] int {
+    var k = 0;
+    while k < 11 {
+        st[to + k] = st[lin_head(st) + 4 + k];
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn lease_load[&s](st: &!s [int], from: int) -> [] int {
+    var k = 0;
+    while k < 11 {
+        st[lin_head(st) + 4 + k] = st[from + k];
+        k = k + 1;
+    }
+    return 0;
+}
+
+// Are the leases as they are those saved at `at`?
+fn lease_same[&s](st: &!s [int], at: int) -> [] bool {
+    if st[lin_head(st) + 4] != st[at] {
+        return false;
+    }
+    var k = 0;
+    while k < st[at] {
+        if st[lease_at(st, k)] != st[at + 1 + 2 * k] || st[lease_at(st, k) + 1] != st[at + 2 + 2 * k] {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
 }
 
 // Whether the program's `main` has the wrong shape, which is said once every function has been checked (word 2 of the
@@ -124,15 +286,17 @@ pub fn lin_reset[&s](st: &!s [int]) -> [] int {
     let h = lin_head(st);
     st[h] = 0;
     st[h + 1] = 0;
+    st[h + 3] = 0;
+    st[h + 4] = 0;
     return 0;
 }
 
 pub fn lin_get[&s](st: &!s [int], slot: int) -> [] int {
-    return st[st[38] + 5 * slot + 4];
+    return st[st[38] + 6 * slot + 4];
 }
 
 pub fn lin_put[&s](st: &!s [int], slot: int, state: int) -> [] int {
-    st[st[38] + 5 * slot + 4] = state;
+    st[st[38] + 6 * slot + 4] = state;
     return 0;
 }
 
@@ -174,7 +338,7 @@ pub fn lin_close[&s](st: &!s [int], mark: int, diverged: bool) -> [] int {
     while j < st[21] {
         let slot = slot_of(st, j);
         if lin_get(st, slot) == 1 && !diverged {
-            let log = st[38] + 5 * slot;
+            let log = st[38] + 6 * slot;
             note(st, rules.r_linear_value_unconsumed(), st[log + 2], st[log + 3]);
         }
         lin_put(st, slot, 0);
@@ -212,7 +376,7 @@ pub fn lin_open[&s](st: &!s [int], from: int, to: int) -> [] int {
     }
     let h = lin_head(st);
     let n = st[39];
-    let size = 3 + 2 * n;
+    let size = 25 + 2 * n;
     if st[h] + size > 262144 {
         ast.fail(st, rules.r_skip(), from, to);
         return 0;
@@ -225,7 +389,8 @@ pub fn lin_open[&s](st: &!s [int], from: int, to: int) -> [] int {
         st[at + 2 + k] = lin_get(st, k);
         k = k + 1;
     }
-    st[at + 2 + 2 * n] = size;
+    lease_save(st, at + 2 + 2 * n);
+    st[at + 2 + 2 * n + 22] = size;
     st[h] = st[h] + size;
     return 0;
 }
@@ -241,6 +406,7 @@ pub fn lin_arm[&s](st: &!s [int]) -> [] int {
         lin_put(st, k, st[at + 2 + k]);
         k = k + 1;
     }
+    lease_load(st, at + 2 + 2 * st[at]);
     return 0;
 }
 
@@ -265,8 +431,13 @@ pub fn lin_arm_end[&s](st: &!s [int], diverged: bool, from: int, to: int) -> [] 
             st[at + 2 + n + k] = lin_get(st, k);
             k = k + 1;
         }
+        lease_save(st, at + 13 + 2 * n);
         st[at + 1] = 1;
         return 0;
+    }
+    if !lease_same(st, at + 13 + 2 * n) {
+        // One arm joined the thread that holds a `&!` and another did not.
+        note(st, rules.r_borrow_conflict(), from, to);
     }
     k = 0;
     while k < n {
@@ -294,6 +465,11 @@ pub fn lin_join[&s](st: &!s [int]) -> [] int {
             lin_put(st, k, st[at + 2 + k]);
         }
         k = k + 1;
+    }
+    if st[at + 1] == 1 {
+        lease_load(st, at + 13 + 2 * n);
+    } else {
+        lease_load(st, at + 2 + 2 * n);
     }
     let h = lin_head(st);
     st[h] = st[h] - st[h + 16 + st[h] - 1];
@@ -324,6 +500,11 @@ pub fn lin_loop_end[&s](st: &!s [int], diverged: bool, from: int, to: int) -> []
     if differs && !diverged {
         note(st, rules.r_linear_value_unconsumed(), from, to);
     }
+    if !diverged && !lease_same(st, at + 2 + 2 * n) {
+        // A thread spawned in the loop still holds a `&!` when the next iteration starts.
+        note(st, rules.r_borrow_conflict(), from, to);
+    }
+    lease_load(st, at + 2 + 2 * n);
     let h = lin_head(st);
     st[h] = st[h] - st[h + 16 + st[h] - 1];
     return 0;
@@ -348,6 +529,10 @@ pub fn use_slot[&s](st: &!s [int], i: int, from: int, to: int) -> [] int {
     if emit.on(st) {
         let slot = slot_of(st, i);
         let held = lin_get(st, slot);
+        if types.is_ref(st, binding_type(st, i)) && types.ref_unique(st, binding_type(st, i)) && lease_held(st, lease_root(st, i)) {
+            // A `&!` lent to a thread is its alone until the handle is joined.
+            note(st, rules.r_borrow_conflict(), from, to);
+        }
         if held == 1 {
             if borrowed(st, i) != 0 {
                 note(st, rules.r_borrow_conflict(), from, to);
@@ -774,6 +959,10 @@ pub fn value_type[&s](st: &!s [int], ty: int) -> [] int {
     }
     // `Box[T]` written in a signature: one value on the heap, in the code.
     if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 9) == tables.prelude_box() && ast.get(st, ty, 7) == 1 {
+        return types.node_type(st, ty, 0 - 1);
+    }
+    // `Thread[T, R]` written in a signature: a handle to join.
+    if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 9) == tables.prelude_thread() && ast.get(st, ty, 7) == 2 {
         return types.node_type(st, ty, 0 - 1);
     }
     // A capability narrowed to a literal, in the code: `Fs("/tmp")`, `Exec("/bin")`.

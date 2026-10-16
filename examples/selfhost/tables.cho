@@ -19,6 +19,10 @@ pub fn prelude_box() -> [] int {
     return 5;
 }
 
+pub fn prelude_thread() -> [] int {
+    return 13;
+}
+
 pub fn prelude_ffi() -> [] int {
     return 2;
 }
