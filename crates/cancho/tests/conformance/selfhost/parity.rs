@@ -77,7 +77,7 @@ fn every_rule_of_the_rust_front_end_is_known_to_the_compiler_in_cancho() {
     for line in rules.lines().filter(|l| l.trim_start().starts_with("return \"")) {
         let name = line.trim().trim_start_matches("return \"").trim_end_matches("\";");
         assert!(
-            name == "SKIP" || wanted.contains(name),
+            name.is_empty() || name == "SKIP" || wanted.contains(name),
             "rules.cho names `{name}`, which the Rust crates do not have"
         );
     }

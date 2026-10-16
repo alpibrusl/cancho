@@ -45,6 +45,11 @@ fn refusal[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
     console.space(io);
     console.print_nat(io, st[5]);
     console.newline(io);
+    if emit.on(st) && st[3] != rules.r_skip() {
+        // The code is being written, so a person is reading: say why, on a line of its own.
+        console.write_all(io, rules.sentence(rules.rule_tag(st[3])));
+        console.newline(io);
+    }
     return 1;
 }
 

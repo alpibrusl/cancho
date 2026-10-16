@@ -267,6 +267,38 @@ fn render() -> String {
          pub fn builtin_since(i: int) -> [] int {\n    return builtin_sinces[i];\n}\n",
     );
 
+    // The sentence each rule gives (`Rule::explanation`), so that a refusal of the compiler in cancho says why without
+    // the Rust front end: the tags, then the sentences, each a run of the same blob.
+    let all = cancho_syntax::Rule::ALL;
+    let escaped = |text: &str| text.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut blob = String::new();
+    let mut at = 0u64;
+    let (mut tag_starts, mut tag_lens, mut text_starts, mut text_lens) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for rule in all {
+        let (tag, text) = (rule.tag(), rule.explanation());
+        tag_starts.push(at);
+        tag_lens.push(tag.len() as u64);
+        blob.push_str(&escaped(tag));
+        at += tag.len() as u64;
+        text_starts.push(at);
+        text_lens.push(text.len() as u64);
+        blob.push_str(&escaped(text));
+        at += text.len() as u64;
+    }
+    let _ = writeln!(out, "\npub fn rule_count() -> [] int {{\n    return {};\n}}\n", all.len());
+    let _ = writeln!(out, "fn rule_chars() -> [] &static [byte] {{\n    return \"{blob}\";\n}}\n");
+    table(&mut out, "rule_tag_starts", tag_starts);
+    table(&mut out, "rule_tag_lens", tag_lens);
+    table(&mut out, "rule_text_starts", text_starts);
+    table(&mut out, "rule_text_lens", text_lens);
+    out.push_str(
+        "pub fn rule_tag_at(i: int) -> [] &static [byte] {\n    let start = rule_tag_starts[i];\n    \
+         return rule_chars()[start..start + rule_tag_lens[i]];\n}\n\n\
+         pub fn rule_explanation_at(i: int) -> [] &static [byte] {\n    let start = rule_text_starts[i];\n    \
+         return rule_chars()[start..start + rule_text_lens[i]];\n}\n",
+    );
+
     out
 }
 
