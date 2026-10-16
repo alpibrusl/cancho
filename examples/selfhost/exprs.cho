@@ -253,6 +253,32 @@ pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: in
     return ex.in_reg(whole, acc);
 }
 
+// The bytes one element of a slice takes when the type says so without a lookup: `byte` 1, `f32` 4, any other scalar 8,
+// a tuple of scalars 8 for each; 0 for any other type, which is left to the trap at run time.
+fn region_stride[&s](st: &!s [int], ty: int) -> [] int {
+    if ty == 2 {
+        return 1;
+    }
+    if ty == 4 {
+        return 4;
+    }
+    if ty == 1 || ty == 3 || ty == 5 {
+        return 8;
+    }
+    if types.is_tuple(st, ty) {
+        var k = 0;
+        while k < types.tuple_size(st, ty) {
+            let p = types.tuple_part(st, ty, k);
+            if p < 1 || p > 5 {
+                return 0;
+            }
+            k = k + 1;
+        }
+        return 8 * types.tuple_size(st, ty);
+    }
+    return 0;
+}
+
 // `alloc_slice[a](count, fill)`: `count` copies of `fill` in the arena `a`, a unique reference to a slice
 // of them for as long as the block. The arena first, then the count, then the fill, which must be
 // a value that copies: an arena frees memory and runs nothing.
@@ -298,6 +324,15 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] e
     }
     if f.ty < 1 || f.ty > 6 && !types.is_named(st, f.ty) && !types.is_ref(st, f.ty) {
         return ex.skip(st, from, to);
+    }
+    if emit.on(st) && !in_static && c.known && c.value > 0 {
+        // A region is one chunk of 65,536 bytes: a count known now whose bytes do not fit is refused now, not learned
+        // from a trap (`docs/region-limit.md` section 2). The stride is the least a backend gives, so it is never wrong.
+        let stride = region_stride(st, f.ty);
+        if stride > 0 && c.value > 65536 / stride {
+            ast.fail(st, rules.r_region_chunk_exceeded(), from, to);
+            return ex.nothing();
+        }
     }
     var home = types.static_region();
     if !in_static {

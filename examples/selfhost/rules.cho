@@ -197,6 +197,10 @@ pub fn r_linear_value_unconsumed() -> [] int {
     return 48;
 }
 
+pub fn r_region_chunk_exceeded() -> [] int {
+    return 49;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -338,6 +342,9 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 48 {
         return "linear-value-unconsumed";
+    }
+    if r == 49 {
+        return "region-chunk-exceeded";
     }
     return "unknown-name";
 }
