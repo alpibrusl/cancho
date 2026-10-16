@@ -67,6 +67,10 @@ jobs:
             target: linux-x86_64
           - os: macos-latest
             target: darwin-aarch64
+          # The compiler in cancho writes code for Linux on aarch64 too (#481); GitHub's arm runners are free for public
+          # repositories.
+          - os: ubuntu-24.04-arm
+            target: linux-aarch64
     steps:
       - uses: actions/checkout@v4
 

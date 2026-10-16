@@ -179,9 +179,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let (op, prefix, args) = (*op, prefix.clone(), args.clone());
                 self.path_op(op, &prefix, &args)
             }
-            Expr::ExecSpawn { prefix, in_dir, args } => {
-                let (prefix, in_dir, args) = (prefix.clone(), *in_dir, args.clone());
-                self.exec_spawn(&prefix, in_dir, &args)
+            Expr::ExecSpawn { prefix, in_dir, detached, args } => {
+                let (prefix, in_dir, detached, args) =
+                    (prefix.clone(), *in_dir, *detached, args.clone());
+                self.exec_spawn(&prefix, in_dir, detached, &args)
             }
             Expr::Connect { bound, args } => {
                 let (bound, args) = (bound.clone(), args.clone());
@@ -792,7 +793,11 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::PipeOpen) => self.pipe_open(),
                     Callee::Builtin(Builtin::ChildWait) => self.child_wait(&args),
                     Callee::Builtin(Builtin::ChildKill) => self.child_kill(&args),
-                    Callee::Builtin(Builtin::ExecSpawn | Builtin::ExecSpawnIn) => {
+                    Callee::Builtin(Builtin::ChildRelease) => self.child_release(&args),
+                    Callee::Builtin(Builtin::ChildPid) => self.child_pid(&args),
+                    Callee::Builtin(
+                        Builtin::ExecSpawn | Builtin::ExecSpawnIn | Builtin::ExecSpawnDetached,
+                    ) => {
                         unreachable!("`exec_spawn` is lowered as `Expr::ExecSpawn`")
                     }
                     // `docs/memory-moves.md`: a bounds-checked `memmove` inside one slice.

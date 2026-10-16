@@ -3,7 +3,10 @@
 # rest to the Rust rule and every program listed here to still differing, so the list only shrinks.
 # See #512. Remove a line when its program is refused by the right rule.
 arithmetic_on_a_type_parameter.cho
+child_release_undeclared.cho
+child_released_then_used.cho
 exec_owned_prefix_covers_sibling.cho
+exec_spawn_detached_undeclared.cho
 fs_owned_prefix_covers_sibling.cho
 function_value_row_undeclared.cho
 generic_array_over_a_resource.cho

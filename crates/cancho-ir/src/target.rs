@@ -149,6 +149,9 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         B::DirRenameNew => Some(Gap::NoReplaceRename),
         B::ExecSpawn
         | B::ExecSpawnIn
+        | B::ExecSpawnDetached
+        | B::ChildRelease
+        | B::ChildPid
         | B::ChildEndClose
         | B::ChildKill
         | B::ChildWait

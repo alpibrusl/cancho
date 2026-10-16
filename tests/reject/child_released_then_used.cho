@@ -1,0 +1,22 @@
+//~ ERROR `child` has already been consumed
+//~ RULE linear-use-after-move
+
+// `docs/processes.md` §4.11: `child_release` consumes the `Child`, so the
+// handle is not there to wait for afterwards.
+
+edition 9;
+fn main(world: World) -> [exec_detached] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals); release(tty);
+    borrow exec as &x in {
+        match exec_spawn(x, "/bin/true", "", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+            Spawned::Ok(child) => {
+                child_release(child);
+                child_wait(child);
+            }
+            Spawned::Failed(e) => { }
+        }
+    }
+    release(exec);
+    return 0;
+}

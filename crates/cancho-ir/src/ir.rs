@@ -522,6 +522,8 @@ pub enum Expr {
     ExecSpawn {
         prefix: String,
         in_dir: bool,
+        /// `exec_spawn_detached` (§4.11): the child is started in a session of its own.
+        detached: bool,
         args: Vec<Expr>,
     },
     /// `tty_open(tty, path)` (`docs/tty.md` §3, edition 8). Its own node

@@ -1,0 +1,53 @@
+//~ STDOUT started
+//~ STDOUT released 0
+//~ EXIT 0
+
+// `docs/processes.md` §4.11: start a child in a session of its own, take its
+// pid, and let it go. The program returns with nothing owed; the report says
+// `exec_detached` beside `exec("/bin")`.
+
+edition 9;
+
+fn start[&x, &i](exec: &x Exec("/bin"), io: &!i Io) -> [exec("/bin"), exec_detached, io_write] int {
+    match exec_spawn_detached(exec, "/bin/sh", "-c\0exit 0\0", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            var pid = 0;
+            borrow child as &c in {
+                pid = child_pid(c);
+            }
+            if pid > 0 {
+                write_bytes(io, "started\n");
+            }
+            if child_release(child) == 0 {
+                write_bytes(io, "released 0\n");
+            }
+            return 0;
+        }
+        Spawned::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    let bin = narrow(exec, "/bin");
+    var status = 0;
+    var console = io;
+    borrow bin as &x in {
+        borrow mut console as &!i in {
+            status = start(x, i);
+        }
+    }
+    release(bin);
+    release(console);
+    return status;
+}

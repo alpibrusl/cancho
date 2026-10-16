@@ -1,0 +1,190 @@
+edition 9;
+
+// `docs/processes.md` §4.11: starting a child and letting go of it. argv: a
+// mode and a number.
+//   `d N`  `exec_spawn_detached` of `sleep 30`, `child_pid`, `child_release`,
+//          then exit 0 at once: the child outlives this program
+//   `b`    one detached and one plain `sleep 30`, both released; then wait for
+//          a byte on standard input, so the test can signal this program's group
+//   `c N`  N short children, each released, then eight slow ones; a held child is
+//          still waited for beside their reapers;
+//          then wait for a byte on standard input, with no zombie to be found
+//   `e`    a child that has already ended is released; then as `c`
+// Lines: `pid N` for a released child, `released R` for what the release
+// answered, `held N` for the held child's exit code, `ready` before the wait.
+
+fn digits[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        digits(io, n / 10);
+    }
+    putchar(io, '0' + n % 10);
+    return 0;
+}
+
+fn say[&i, &t](io: &!i Io, text: &t [byte], n: int) -> [io_write] int {
+    write_bytes(io, text);
+    digits(io, n);
+    putchar(io, 10);
+    return 0;
+}
+
+fn number[&t](text: &t [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+// A short-lived program: `sh -c 'exit 0'` exists at the same path on both kernels.
+fn quick[&x, &i](exec: &x Exec("/bin"), io: &!i Io) -> [exec("/bin"), exec_detached, io_write] int {
+    match exec_spawn(exec, "/bin/sh", "-c\0exit 0\0", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            borrow child as &c in {
+                say(io, "pid ", child_pid(c));
+            }
+            return child_release(child);
+        }
+        Spawned::Failed(e) => {
+            say(io, "spawn ", e);
+            return 0 - 1;
+        }
+    }
+}
+
+// A child that is still running when the held one ends, released at once: its
+// reaper is waiting while `child_wait` is, and must take nothing that is not its own.
+fn slow[&x](exec: &x Exec("/bin")) -> [exec("/bin"), exec_detached] int {
+    match exec_spawn(exec, "/bin/sleep", "2\0", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            return child_release(child);
+        }
+        Spawned::Failed(e) => {
+            return 0 - 1;
+        }
+    }
+}
+
+fn held[&x, &i](exec: &x Exec("/bin"), io: &!i Io) -> [exec("/bin"), io_write] int {
+    match exec_spawn(exec, "/bin/sh", "-c\0sleep 1; exit 7\0", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            match child_wait(child) {
+                Exited::Code(n) => {
+                    say(io, "held ", n);
+                }
+                Exited::Signaled(s) => {
+                    say(io, "held signal ", s);
+                }
+                Exited::Failed(e) => {
+                    say(io, "held failed ", e);
+                }
+            }
+        }
+        Spawned::Failed(e) => {
+            say(io, "spawn ", e);
+        }
+    }
+    return 0;
+}
+
+fn let_go[&i](io: &!i Io, child: Child) -> [exec_detached, io_write] int {
+    borrow child as &c in {
+        say(io, "pid ", child_pid(c));
+    }
+    say(io, "released ", child_release(child));
+    return 0;
+}
+
+fn long_one[&x, &i](exec: &x Exec("/bin"), io: &!i Io, detached: bool) -> [exec("/bin"), exec_detached, io_write] int {
+    if detached {
+        match exec_spawn_detached(exec, "/bin/sleep", "30\0", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+            Spawned::Ok(child) => {
+                let_go(io, child);
+            }
+            Spawned::Failed(e) => {
+                say(io, "spawn ", e);
+            }
+        }
+    }
+    if !detached {
+        match exec_spawn(exec, "/bin/sleep", "30\0", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+            Spawned::Ok(child) => {
+                let_go(io, child);
+            }
+            Spawned::Failed(e) => {
+                say(io, "spawn ", e);
+            }
+        }
+    }
+    return 0;
+}
+
+fn wait_for_byte[&i](io: &!i Io) -> [io_read, io_write] int {
+    write_bytes(io, "ready\n");
+    flush_out(io);
+    return getchar(io);
+}
+
+fn go[&x, &i, &g](exec: &x Exec("/bin"), io: &!i Io, g: &g Args) -> [exec("/bin"), exec_detached, io_read, io_write, args] int {
+    let mode = int_of(arg(g, 1)[0]);
+    if mode == 'd' {
+        long_one(exec, io, true);
+        return 0;
+    }
+    if mode == 'b' {
+        long_one(exec, io, true);
+        long_one(exec, io, false);
+        wait_for_byte(io);
+        return 0;
+    }
+    if mode == 'c' {
+        var n = number(arg(g, 2));
+        while n > 0 {
+            quick(exec, io);
+            n = n - 1;
+        }
+        var waiting = 8;
+        while waiting > 0 {
+            slow(exec);
+            waiting = waiting - 1;
+        }
+        held(exec, io);
+        wait_for_byte(io);
+        return 0;
+    }
+    if mode == 'e' {
+        let r = quick(exec, io);
+        say(io, "released ", r);
+        held(exec, io);
+        wait_for_byte(io);
+        return 0;
+    }
+    return 2;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    let bin = narrow(exec, "/bin");
+    var console = io;
+    var status = 0;
+    borrow bin as &x in {
+        borrow mut console as &!i in {
+            borrow args as &g in {
+                status = go(x, i, g);
+            }
+        }
+    }
+    release(bin);
+    release(console);
+    release(args);
+    return status;
+}

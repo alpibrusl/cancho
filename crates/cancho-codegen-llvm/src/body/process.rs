@@ -6,8 +6,9 @@
 
 use crate::*;
 use cancho_ir::{
-    AF_UNIX, CHILD_PIDFD_SHIFT, EINVAL, Expr, F_SETFD, FD_CLOEXEC, O_RDWR, SIGSET_BYTES,
-    SOCK_STREAM, SPAWN_OBJECT_BYTES, SYS_PIDFD_OPEN, sendable_signals, spawn_flags,
+    AF_UNIX, CHILD_PIDFD_SHIFT, CHILD_REAPER, CHILD_REAPER_STACK_BYTES, EINVAL, Expr, F_SETFD,
+    FD_CLOEXEC, O_RDWR, PTHREAD_ATTR_BYTES, SIGSET_BYTES, SOCK_STREAM, SPAWN_OBJECT_BYTES,
+    SYS_PIDFD_OPEN, sendable_signals, spawn_flags,
 };
 
 impl<'a> FuncEmitter<'a> {
@@ -76,6 +77,7 @@ impl<'a> FuncEmitter<'a> {
         &mut self,
         prefix: &str,
         in_dir: bool,
+        detached: bool,
         args: &[Expr],
     ) -> Result<Vec<LValue>, String> {
         // The capability is zero-sized and stops here.
@@ -165,7 +167,7 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!(
             "  call i32 @posix_spawnattr_setsigdefault(ptr {attributes}, ptr {every})\n"
         ));
-        let flags = spawn_flags(self.is_darwin());
+        let flags = spawn_flags(self.is_darwin(), detached);
         self.out.push_str(&format!(
             "  call i32 @posix_spawnattr_setflags(ptr {attributes}, i16 {flags})\n"
         ));
@@ -552,5 +554,66 @@ impl<'a> FuncEmitter<'a> {
         let value = self.fresh();
         self.out.push_str(&format!("  {value} = load i64, ptr {answer}\n"));
         Ok(vec![LValue::Reg(value)])
+    }
+    /// `child_pid(&Child)`: the pid, the low 32 bits of the one word (§4.11).
+    pub(crate) fn child_pid(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let [child] = args else {
+            return Err(format!("`child_pid` needs 1 leaf but {} were given", args.len()));
+        };
+        let pid = self.handle_fd(child);
+        let wide = self.fresh();
+        self.out.push_str(&format!("  {wide} = zext i32 {pid} to i64\n"));
+        Ok(vec![LValue::Reg(wide)])
+    }
+
+    /// `child_release(Child)` (§4.11): close the `pidfd`, then give the pid to
+    /// a detached thread whose one job is to reap it (`@cancho_child_reaper`).
+    /// `0`, or `pthread_create`'s error number, in which case the child is
+    /// still the parent's zombie to be when it ends.
+    pub(crate) fn child_release(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        let [word] = args else {
+            return Err(format!("`child_release` needs 1 leaf but {} were given", args.len()));
+        };
+        let word = operand(word);
+        if !self.is_darwin() {
+            let high = self.fresh();
+            self.out.push_str(&format!("  {high} = lshr i64 {word}, {CHILD_PIDFD_SHIFT}\n"));
+            let pidfd = self.fresh();
+            self.out.push_str(&format!("  {pidfd} = trunc i64 {high} to i32\n"));
+            self.out.push_str(&format!("  call i32 @close(i32 {pidfd})\n"));
+        }
+        let low = self.fresh();
+        self.out.push_str(&format!("  {low} = trunc i64 {word} to i32\n"));
+        let pid = self.fresh();
+        self.out.push_str(&format!("  {pid} = zext i32 {low} to i64\n"));
+        let pid_ptr = self.fresh();
+        self.out.push_str(&format!("  {pid_ptr} = inttoptr i64 {pid} to ptr\n"));
+
+        let attributes = self.cell(PTHREAD_ATTR_BYTES);
+        self.out.push_str(&format!("  call i32 @pthread_attr_init(ptr {attributes})\n"));
+        self.out.push_str(&format!(
+            "  call i32 @pthread_attr_setstacksize(ptr {attributes}, i64 {CHILD_REAPER_STACK_BYTES})\n"
+        ));
+        let thread = self.cell(8);
+        self.out.push_str(&format!("  store i64 0, ptr {thread}\n"));
+        let status = self.fresh();
+        self.out.push_str(&format!(
+            "  {status} = call i32 @pthread_create(ptr {thread}, ptr {attributes}, ptr @{CHILD_REAPER}, ptr {pid_ptr})\n"
+        ));
+        self.out.push_str(&format!("  call i32 @pthread_attr_destroy(ptr {attributes})\n"));
+        let n = self.block_number();
+        let (detach, done) = (format!("reapdetach{n}"), format!("reapdone{n}"));
+        let failed = self.fresh();
+        self.out.push_str(&format!("  {failed} = icmp ne i32 {status}, 0\n"));
+        self.out.push_str(&format!("  br i1 {failed}, label %{done}, label %{detach}\n"));
+        self.out.push_str(&format!("{detach}:\n"));
+        let id = self.fresh();
+        self.out.push_str(&format!("  {id} = load ptr, ptr {thread}\n"));
+        self.out.push_str(&format!("  call i32 @pthread_detach(ptr {id})\n"));
+        self.out.push_str(&format!("  br label %{done}\n"));
+        self.out.push_str(&format!("{done}:\n"));
+        let answer = self.fresh();
+        self.out.push_str(&format!("  {answer} = sext i32 {status} to i64\n"));
+        Ok(vec![LValue::Reg(answer)])
     }
 }

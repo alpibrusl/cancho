@@ -374,6 +374,9 @@ impl<'a> Emitter<'a> {
         if regions {
             self.define_region_cache(ctx, fb_ctx)?;
         }
+        if self.reaper_used() {
+            self.define_reaper(ctx, fb_ctx)?;
+        }
         Ok(())
     }
 }
