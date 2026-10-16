@@ -817,9 +817,10 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         jobs.push((program.clone(), program));
     }
     // The poller and a handed-over peer, over a connection made inside the process (each build has a port of its
-    // own, for they run at the same time); standard output flushed and standard input read.
+    // own, for they run at the same time, and below the range the kernel hands out to outgoing connections,
+    // which another test's client could be holding); standard output flushed and standard input read.
     let poller = include_str!("poller_probe.cho");
-    jobs.push((poller.replace("PORT", "47133"), poller.replace("PORT", "47134")));
+    jobs.push((poller.replace("PORT", "29133"), poller.replace("PORT", "29134")));
     let stdio = include_str!("stdio_probe.cho");
     jobs.push((stdio.to_owned(), stdio.to_owned()));
     for text in DOUBLE_LITERALS {
