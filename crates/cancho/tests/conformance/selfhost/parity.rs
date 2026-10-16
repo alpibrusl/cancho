@@ -99,3 +99,44 @@ fn every_builtin_of_the_rust_front_end_is_named_by_the_compiler_in_cancho() {
         "unported_builtins.txt",
     );
 }
+
+/// The modules the compiler in cancho imports, from its root, in the order they must be compiled in.
+fn closure() -> Vec<String> {
+    fn walk(dir: &Path, name: &str, seen: &mut Vec<String>) {
+        let text = std::fs::read_to_string(dir.join(format!("{name}.cho"))).expect("a module");
+        for line in text.lines() {
+            let Some(rest) = line.trim().strip_prefix("import selfhost.") else { continue };
+            let module = rest.split([' ', ';']).next().unwrap_or("");
+            if !module.is_empty()
+                && !seen.contains(&module.to_owned())
+                && dir.join(format!("{module}.cho")).exists()
+            {
+                walk(dir, module, seen);
+                seen.push(module.to_owned());
+            }
+        }
+    }
+    let mut seen = Vec::new();
+    walk(&selfhost_dir(), "compiler", &mut seen);
+    seen
+}
+
+/// A module the compiler imports but a test's own list of the compiler's files leaves out makes it refuse its own
+/// source with `unknown-name`: this says which list, before a long test does.
+#[test]
+fn every_module_of_the_compiler_is_in_the_lists_the_tests_keep_of_them() {
+    let lists = [
+        ("selfhost.rs `with_front_end`", include_str!("../selfhost.rs")),
+        ("selfhost/bootstrap.rs `own_source`", include_str!("bootstrap.rs")),
+    ];
+    for module in closure() {
+        for (which, text) in lists {
+            let named = text.contains(&format!("\"{module}.cho\""))
+                || text.contains(&format!("\"{module}\""));
+            assert!(
+                named,
+                "the module `{module}` of examples/selfhost is not in {which}; add it, before the modules that import it"
+            );
+        }
+    }
+}

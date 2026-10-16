@@ -54,6 +54,7 @@ fn own_source(root_module: &str) -> String {
         "lookup",
         "atoms",
         "filecode",
+        "narrowing",
         "exprs",
         "body",
         "listing",

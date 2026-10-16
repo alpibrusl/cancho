@@ -121,7 +121,7 @@ b3:
 ok:
   ret ptr %buf
 trap:
-  call void @llvm.trap()
+  call void @cancho_trap()
   unreachable
 }
 
@@ -464,7 +464,7 @@ finish:
   store ptr null, ptr %endat
   ret ptr %array
 trap:
-  call void @llvm.trap()
+  call void @cancho_trap()
   unreachable
 }
 
@@ -521,7 +521,7 @@ chdir:
   %refusal = icmp ne i32 %refused, 0
   br i1 %refusal, label %trap, label %attrs
 trap:
-  call void @llvm.trap()
+  call void @cancho_trap()
   unreachable
 attrs:
   %attr = alloca [512 x i8], align 16
@@ -613,6 +613,6 @@ ok:
   %p = load ptr, ptr %slot
   ret ptr %p
 trap:
-  call void @llvm.trap()
+  call void @cancho_trap()
   unreachable
 }
