@@ -8,6 +8,8 @@ assign_to_a_literal.cho
 box_without_heap.cho
 boxed_slice_of_res.cho
 capability_destructured.cho
+child_release_undeclared.cho
+child_released_then_used.cho
 destructure_a_non_tuple.cho
 destructure_partial.cho
 dir_mode_on_wasi.cho
@@ -15,6 +17,8 @@ dir_rename_new_on_wasi.cho
 effect_declared_not_performed.cho
 exec_effect_undeclared.cho
 exec_owned_prefix_covers_sibling.cho
+exec_spawn_detached_on_wasi.cho
+exec_spawn_detached_undeclared.cho
 exec_spawn_in_arity.cho
 exec_spawn_in_owned_dir.cho
 exec_without_capability.cho

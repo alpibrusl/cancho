@@ -865,9 +865,21 @@ impl Builtin {
             // `docs/processes.md` §3.2.
             Builtin::PipeOpen => (Vec::new(), named(PRELUDE_PIPED)),
             // Checked at the call site: the prefix is in the capability's type.
-            Builtin::ExecSpawn | Builtin::ExecSpawnIn => (Vec::new(), Type::Unit),
+            Builtin::ExecSpawn | Builtin::ExecSpawnIn | Builtin::ExecSpawnDetached => {
+                (Vec::new(), Type::Unit)
+            }
             // By value: waiting ends the child.
             Builtin::ChildWait => (vec![named(PRELUDE_CHILD)], named(PRELUDE_EXITED)),
+            // §4.11: letting go ends the handle, as waiting does.
+            Builtin::ChildRelease => (vec![named(PRELUDE_CHILD)], Type::Int),
+            Builtin::ChildPid => (
+                vec![Type::Ref {
+                    unique: false,
+                    region: Region::Param(0),
+                    inner: Box::new(named(PRELUDE_CHILD)),
+                }],
+                Type::Int,
+            ),
             Builtin::ChildKill => (
                 vec![
                     Type::Ref {

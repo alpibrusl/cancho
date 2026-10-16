@@ -5,8 +5,9 @@
 
 use crate::*;
 use cancho_ir::{
-    AF_UNIX, CHILD_PIDFD_SHIFT, Expr, F_SETFD, FD_CLOEXEC, O_RDWR, SIGSET_BYTES, SOCK_STREAM,
-    SPAWN_OBJECT_BYTES, SYS_PIDFD_OPEN, sendable_signals, spawn_flags,
+    AF_UNIX, CHILD_PIDFD_SHIFT, CHILD_REAPER_STACK_BYTES, Expr, F_SETFD, FD_CLOEXEC, O_RDWR,
+    PTHREAD_ATTR_BYTES, SIGSET_BYTES, SOCK_STREAM, SPAWN_OBJECT_BYTES, SYS_PIDFD_OPEN,
+    sendable_signals, spawn_flags,
 };
 
 impl<'a, 'f> BodyEmitter<'a, 'f> {
@@ -55,10 +56,17 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     }
 
     /// `exec_spawn(exec, path, args, env, stdin, stdout, stderr)` (§4.1 to
-    /// §4.6), and with `in_dir` `exec_spawn_in(exec, dir, path, ...)` (§4.10).
+    /// §4.6), and with `in_dir` `exec_spawn_in(exec, dir, path, ...)` (§4.10);
+    /// `detached` is `exec_spawn_detached`, whose child gets a session of its own (§4.11).
     /// `Spawned`'s three leaves: the tag (`Ok` 0, `Failed` 1), the pid, the
     /// reason.
-    pub(crate) fn exec_spawn(&mut self, prefix: &str, in_dir: bool, args: &[Expr]) -> Vec<Value> {
+    pub(crate) fn exec_spawn(
+        &mut self,
+        prefix: &str,
+        in_dir: bool,
+        detached: bool,
+        args: &[Expr],
+    ) -> Vec<Value> {
         let pointer = self.pointer;
         // The capability is zero-sized and stops here.
         let at = 1 + usize::from(in_dir);
@@ -167,7 +175,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             &[types::I32],
             &[attributes, every],
         );
-        let wanted = spawn_flags(self.is_darwin());
+        let wanted = spawn_flags(self.is_darwin(), detached);
         let flags = self.builder.ins().iconst(types::I16, wanted);
         self.libc_call(
             "posix_spawnattr_setflags",
@@ -506,5 +514,59 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         self.builder.switch_to_block(merge);
         self.builder.seal_block(merge);
         vec![self.builder.block_params(merge)[0]]
+    }
+    /// `child_pid(&Child)`: the pid, the low 32 bits of the one word (§4.11).
+    pub(crate) fn child_pid(&mut self, args: &[Value]) -> Vec<Value> {
+        let pid = self.handle_fd(args[0]);
+        vec![self.builder.ins().uextend(types::I64, pid)]
+    }
+
+    /// `child_release(Child)` (§4.11): close the `pidfd`, then give the pid
+    /// to a detached thread of the runtime whose one job is to reap it
+    /// (`cancho_child_reaper`). `0`, or `pthread_create`'s error number, in
+    /// which case the child is still the parent's zombie to be when it ends.
+    pub(crate) fn child_release(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let word = args[0];
+        if !self.is_darwin() {
+            let high = self.builder.ins().ushr_imm(word, CHILD_PIDFD_SHIFT);
+            let pidfd = self.builder.ins().ireduce(types::I32, high);
+            self.libc_call("close", &[types::I32], &[types::I32], &[pidfd]);
+        }
+        let pid = self.builder.ins().ireduce(types::I32, word);
+        let pid = self.builder.ins().uextend(types::I64, pid);
+
+        let attributes = self.scratch_bytes(PTHREAD_ATTR_BYTES);
+        self.libc_call("pthread_attr_init", &[pointer], &[types::I32], &[attributes]);
+        let stack = self.builder.ins().iconst(types::I64, CHILD_REAPER_STACK_BYTES);
+        self.libc_call(
+            "pthread_attr_setstacksize",
+            &[pointer, types::I64],
+            &[types::I32],
+            &[attributes, stack],
+        );
+        let reaper = crate::reaper::declare(self.module);
+        let reaper = self.module.declare_func_in_func(reaper, self.builder.func);
+        let start = self.builder.ins().func_addr(pointer, reaper);
+        let thread = self.scratch_bytes(8);
+        let status = self.libc_call(
+            "pthread_create",
+            &[pointer, pointer, pointer, pointer],
+            &[types::I32],
+            &[thread, attributes, start, pid],
+        );
+        self.libc_call("pthread_attr_destroy", &[pointer], &[types::I32], &[attributes]);
+
+        let detach = self.builder.create_block();
+        let done = self.builder.create_block();
+        self.builder.ins().brif(status, done, &[], detach, &[]);
+        self.builder.switch_to_block(detach);
+        self.builder.seal_block(detach);
+        let id = self.builder.ins().load(types::I64, MemFlags::trusted(), thread, 0);
+        self.libc_call("pthread_detach", &[types::I64], &[types::I32], &[id]);
+        self.builder.ins().jump(done, &[]);
+        self.builder.switch_to_block(done);
+        self.builder.seal_block(done);
+        vec![self.builder.ins().sextend(types::I64, status)]
     }
 }

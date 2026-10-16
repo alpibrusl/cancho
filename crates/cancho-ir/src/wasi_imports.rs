@@ -178,6 +178,7 @@ pub const REFUSED_LABELS: &[&str] = &[
     "signals",
     "signals_read",
     "child_signal",
+    "exec_detached",
     "exec",
     "pipe_read",
     "pipe_write",

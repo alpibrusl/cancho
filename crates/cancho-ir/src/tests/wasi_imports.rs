@@ -34,8 +34,8 @@ fn every_label_the_checker_can_produce_is_classified_exactly_once() {
     }
     // 28 + the three tty labels (`docs/tty.md` §4: `tty_open`
     // argument-carrying, `tty_read`/`tty_write` path-free), all refused
-    // on WASI (§9).
-    assert_eq!(all.len(), 31, "the checker's labels moved; account for the new one: {all:?}");
+    // on WASI (§9), + `exec_detached` (`docs/processes.md` §4.11), refused.
+    assert_eq!(all.len(), 32, "the checker's labels moved; account for the new one: {all:?}");
 }
 
 #[test]

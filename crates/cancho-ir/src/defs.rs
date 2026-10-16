@@ -413,6 +413,8 @@ pub const WORLD_PLAIN_LABELS: &[&str] = &[
     "clock",
     "signals_read",
     "child_signal",
+    // `docs/processes.md` §4.11: a child that outlives the program.
+    "exec_detached",
     "pipe_read",
     "pipe_write",
     // `docs/tty.md` §4: path-free, the prefix spent at `tty_open`
@@ -508,7 +510,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                     name: "exec".to_owned(),
                     argument: Some(prefix.clone()),
                 }]);
-                all.union(&Effects::plain(["child_signal"]));
+                all.union(&Effects::plain(["child_signal", "exec_detached"]));
                 all
             }
             _ => Effects::pure(),

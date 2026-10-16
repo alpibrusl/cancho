@@ -375,6 +375,11 @@ Edition 9 also has **`hw_sha256`, `sha256_blocks` and `sha256_block_words`** ([`
 #445), for the same reason as #382's: edition 7 is closed and these are names a program may declare for itself. `std/crypto.cho`
 declares `edition 9` to call them, which moves its own hashes and no other file's (§6.3).
 
+Edition 9 also has **`exec_spawn_detached`, `child_release` and `child_pid`** ([`processes.md`](processes.md) §4.11, #524), and with them
+the label **`exec_detached`**: names a program may declare for itself, so absent before edition 9
+(`tests/reject/child_release_is_edition_nine.cho`). The label is reachable only through those builtins, so no older file can
+name it, perform it or be broken by it; it adds no type and no `Split` field.
+
 ---
 
 ## 8. What this does not do

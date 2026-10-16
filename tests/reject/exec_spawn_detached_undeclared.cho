@@ -1,0 +1,25 @@
+//~ ERROR performs `exec_detached`, which its row
+//~ RULE effect-not-declared
+
+// `docs/processes.md` §4.11: a detached start performs `exec_detached` as well
+// as `exec(p)`. Declaring the second does not declare the first.
+
+edition 9;
+fn start[&x](exec: &x Exec("/bin")) -> [exec("/bin")] int {
+    match exec_spawn_detached(exec, "/bin/true", "", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            match child_wait(child) {
+                Exited::Code(n) => { return n; }
+                Exited::Signaled(s) => { return 1; }
+                Exited::Failed(e) => { return 1; }
+            }
+        }
+        Spawned::Failed(e) => { return e; }
+    }
+}
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals); release(tty);
+    release(exec);
+    return 0;
+}

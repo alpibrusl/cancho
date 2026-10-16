@@ -1286,7 +1286,10 @@ fn untouched_domains(labels: &[String]) -> Vec<&'static str> {
         ("signals", ["signals", "signals_read"].as_slice()),
         // `docs/processes.md` §2: starting a program, and what a parent
         // does with the children it started.
-        ("other programs", ["exec", "child_signal", "pipe_read", "pipe_write"].as_slice()),
+        (
+            "other programs",
+            ["exec", "exec_detached", "child_signal", "pipe_read", "pipe_write"].as_slice(),
+        ),
         ("foreign code", ["ffi"].as_slice()),
     ]
     .into_iter()
