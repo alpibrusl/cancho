@@ -101,6 +101,7 @@ fn render() -> String {
     }
     let _ = writeln!(out, "pub fn prelude_count() -> [] int {{\n    return {};\n}}\n", defs.len());
     let _ = writeln!(out, "pub fn prelude_box() -> [] int {{\n    return {PRELUDE_BOX};\n}}\n");
+    let _ = writeln!(out, "pub fn prelude_thread() -> [] int {{\n    return {PRELUDE_THREAD};\n}}\n");
     let _ = writeln!(out, "pub fn prelude_ffi() -> [] int {{\n    return {PRELUDE_FFI};\n}}\n");
     // The prelude types the code of some builtins names (what they answer, what they are given).
     for (name, index) in [

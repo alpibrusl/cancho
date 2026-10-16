@@ -230,6 +230,9 @@ fn occurs[&s](st: &!s [int], tv: int, ty: int) -> [] bool {
     if is_box(st, t) {
         return occurs(st, tv, box_inner(st, t));
     }
+    if is_thread(st, t) {
+        return occurs(st, tv, thread_result(st, t));
+    }
     if is_named(st, t) {
         var j = 0;
         while j < 2 {
@@ -267,6 +270,13 @@ pub fn resolve_type[&s](st: &!s [int], ty: int) -> [] int {
     }
     if is_box(st, t) {
         return make_box(st, resolve_type(st, box_inner(st, t)));
+    }
+    if is_thread(st, t) {
+        var given = thread_payload(st, t);
+        if given != 0 {
+            given = resolve_type(st, given);
+        }
+        return make_thread(st, given, resolve_type(st, thread_result(st, t)));
     }
     if is_named(st, t) && named_arg(st, t, 0) != 0 {
         var b = named_arg(st, t, 1);
@@ -430,6 +440,15 @@ pub fn node_type[&s](st: &!s [int], node: int, ctx: int) -> [] int {
         }
         return make_named_args(st, item, a, b);
     }
+    if kind == 2 && ast.get(st, node, 9) == tables.prelude_thread() && ast.get(st, node, 7) == 2 {
+        // `Thread[T, R]` written in a declaration: what `join` gives back is all the code needs.
+        let answer = node_type(st, ast.next(st, ast.get(st, node, 6)), ctx);
+        if answer == 0 {
+            return 0;
+        }
+        var given = node_type(st, ast.get(st, node, 6), ctx);
+        return make_thread(st, given, answer);
+    }
     if kind == 2 && ast.get(st, node, 9) != tables.prelude_box() {
         // A capability or a handle or a prelude enum written in a declaration, narrowed to a literal or not.
         if ast.get(st, node, 7) == 0 {
@@ -538,8 +557,14 @@ pub fn fnptr_param[&s](st: &!s [int], ty: int, k: int) -> [] int {
 
 // `Thread[T, R]` as `spawn` answers it: what the thread returns is all `join` needs. A pointer (the
 // `pthread_t`), a value that must be joined.
-pub fn make_thread[&s](st: &!s [int], result: int) -> [] int {
-    return make(st, thread_kind(), result, 0, 0);
+pub fn make_thread[&s](st: &!s [int], payload: int, result: int) -> [] int {
+    return make(st, thread_kind(), result, payload, 0);
+}
+
+// What the thread was given (0 when it was not written): the references in it are the thread's to hold, and so the
+// handle cannot outlive the block they point into.
+pub fn thread_payload[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 2);
 }
 
 pub fn is_thread[&s](st: &!s [int], ty: int) -> [] bool {
@@ -724,6 +749,9 @@ pub fn element_of[&s](st: &!s [int], ty: int) -> [] int {
 // leave the function.
 pub fn mentions_block[&s](st: &!s [int], ty: int) -> [] bool {
     var t = resolve_type(st, ty);
+    if is_thread(st, t) {
+        return thread_payload(st, t) != 0 && mentions_block(st, thread_payload(st, t));
+    }
     while is_ref(st, t) || is_slice(st, t) {
         if is_slice(st, t) {
             t = slice_element(st, t);
@@ -850,6 +878,9 @@ pub fn escaping_block[&s](st: &!s [int], ty: int, scope: int) -> [] int {
     if is_slice(st, t) {
         return escaping_block(st, slice_element(st, t), scope);
     }
+    if is_thread(st, t) && thread_payload(st, t) != 0 {
+        return escaping_block(st, thread_payload(st, t), scope);
+    }
     return 0 - 1;
 }
 
@@ -933,6 +964,9 @@ pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
     }
     if is_boxslice(st, expected) && is_boxslice(st, found) {
         return unify(st, boxslice_element(st, expected), boxslice_element(st, found));
+    }
+    if is_thread(st, expected) && is_thread(st, found) {
+        return unify(st, thread_result(st, expected), thread_result(st, found));
     }
     if is_box(st, expected) && is_box(st, found) {
         return unify(st, box_inner(st, expected), box_inner(st, found));
