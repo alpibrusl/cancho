@@ -12,6 +12,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use cancho_syntax::lexer::TokenKind;
 use target_lexicon::{Architecture, OperatingSystem, Triple};
 
 use crate::{Emit, Failure, environment, refused, usage};
@@ -55,16 +56,46 @@ fn place(files: &[(String, String)], offset: usize) -> String {
     "the program".to_owned()
 }
 
-/// The name a file gives itself (`module a.b;`) and the names it imports (`import a.b;`).
-fn module_name(text: &str) -> Option<&str> {
-    text.lines().find_map(|l| l.trim().strip_prefix("module ")?.strip_suffix(';')).map(str::trim)
+/// The dotted names that follow each `keyword` token (`module a.b;`, `import a.b;`), read from the lexer's tokens, so that the
+/// layout of a file does not matter: several statements to a line, spaces round a dot, comments.
+fn named_after(text: &str, keyword: TokenKind) -> Vec<String> {
+    let Ok(tokens) = cancho_syntax::lexer::tokenize(text) else {
+        return Vec::new();
+    };
+    let word = |at: usize| &text[tokens[at].span.start as usize..tokens[at].span.end as usize];
+    let mut found = Vec::new();
+    for at in 0..tokens.len() {
+        if tokens[at].kind != keyword {
+            continue;
+        }
+        let mut name = String::new();
+        let mut i = at + 1;
+        while i < tokens.len() && tokens[i].kind == TokenKind::Ident {
+            name.push_str(word(i));
+            if i + 2 < tokens.len()
+                && tokens[i + 1].kind == TokenKind::Dot
+                && tokens[i + 2].kind == TokenKind::Ident
+            {
+                name.push('.');
+                i += 2;
+            } else {
+                break;
+            }
+        }
+        if !name.is_empty() {
+            found.push(name);
+        }
+    }
+    found
 }
 
-fn imports(text: &str) -> Vec<&str> {
-    text.lines()
-        .filter_map(|l| l.trim().strip_prefix("import ")?.strip_suffix(';'))
-        .filter_map(|names| names.split_whitespace().next())
-        .collect()
+/// The name a file gives itself (`module a.b;`) and the names it imports (`import a.b;`).
+fn module_name(text: &str) -> Option<String> {
+    named_after(text, TokenKind::Module).into_iter().next()
+}
+
+fn imports(text: &str) -> Vec<String> {
+    named_after(text, TokenKind::Import)
 }
 
 /// The standard library's modules the program imports, and those they import: the compiler in cancho does
@@ -72,14 +103,14 @@ fn imports(text: &str) -> Vec<&str> {
 fn add_imported(files: &mut Vec<(String, String)>) {
     let mut at = 0;
     while at < files.len() {
-        let wanted: Vec<String> = imports(&files[at].1).into_iter().map(str::to_owned).collect();
-        for name in wanted {
-            let already = files.iter().any(|(_, t)| module_name(t) == Some(name.as_str()));
+        for name in imports(&files[at].1) {
+            let already =
+                files.iter().any(|(_, t)| module_name(t).as_deref() == Some(name.as_str()));
             if already {
                 continue;
             }
             if let Some((file, text)) =
-                crate::STD.iter().find(|(_, t)| module_name(t) == Some(name.as_str()))
+                crate::STD.iter().find(|(_, t)| module_name(t).as_deref() == Some(name.as_str()))
             {
                 files.push(((*file).to_owned(), (*text).to_owned()));
             }
@@ -427,4 +458,28 @@ pub fn build(job: Job<'_>) -> Result<Built, Failure> {
         linked?;
     }
     Ok(Built::Done)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{imports, module_name};
+
+    #[test]
+    fn the_layout_of_a_file_does_not_hide_its_module_or_its_imports() {
+        let plain = "edition 5;\nmodule a.b;\nimport std.conns;\nimport std.http;\nfn main() -> int { return 0; }\n";
+        let flat = "edition 5 ; module a . b ; import std . conns ; import std . http ; fn main ( ) -> int { return 0 ; }";
+        let commented = "// import std.nothing;\nmodule a.b; import std.conns; // import std.nothing;\nimport std . http;\n";
+        for text in [plain, flat, commented] {
+            assert_eq!(module_name(text).as_deref(), Some("a.b"), "{text}");
+            assert_eq!(imports(text), ["std.conns", "std.http"], "{text}");
+        }
+    }
+
+    #[test]
+    fn text_that_looks_like_an_import_is_not_one() {
+        let text = "module a;\nfn f() -> [] byte { return \"import std.conns;\"; }\n";
+        assert_eq!(module_name(text).as_deref(), Some("a"));
+        assert!(imports(text).is_empty());
+        assert_eq!(module_name("fn f() -> int { return 0; }"), None);
+    }
 }
