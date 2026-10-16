@@ -1014,10 +1014,12 @@ fn build_with_the_compiler_in_cancho_from_the_command_line() {
     assert_eq!(ended.status.code(), Some(1));
     let said = String::from_utf8_lossy(&ended.stderr);
     assert!(
-        said.contains("refused.cho:3")
-            && said.contains("expected `int`, found `bool`")
-            && said.contains("type-mismatch"),
-        "the sentence of the Rust front end, and the rule the compiler in cancho refused it by:\n{said}"
+        said.contains("refused.cho:3:")
+            && said.contains("error: ")
+            && said.contains(cancho_syntax::Rule::TypeMismatch.explanation())
+            && said.contains("(rule `type-mismatch`)")
+            && said.contains("^^^^"),
+        "where, why (the sentence of the rule, from the compiler in cancho), the rule, the line and what of it:\n{said}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1051,8 +1053,8 @@ fn cancho_rule(compiler: &Path, program: &Path, out: &Path) -> String {
         .output()
         .expect("cancho runs");
     let said = String::from_utf8_lossy(&ended.stderr);
-    if let Some(at) = said.find("by the rule `") {
-        let rest = &said[at + "by the rule `".len()..];
+    if let Some(at) = said.find("(rule `") {
+        let rest = &said[at + "(rule `".len()..];
         return rest[..rest.find('`').unwrap_or(rest.len())].to_owned();
     }
     if ended.status.success() {

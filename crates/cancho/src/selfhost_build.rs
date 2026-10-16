@@ -107,9 +107,31 @@ fn quote(files: &[(String, String)], from: usize, to: usize) -> String {
     String::new()
 }
 
-/// A refusal as the compiler in cancho gives it: `ERR <rule> <from> <to>`.
+/// Where a span of the laid-out files is: the file, the line and column, and the text of the line.
+fn located(files: &[(String, String)], offset: usize) -> Option<(String, usize, usize, String)> {
+    let mut base = 0;
+    for (name, text) in files {
+        if offset <= base + text.len() {
+            let at = (offset - base).min(text.len());
+            let line = 1 + text[..at].matches('\n').count();
+            let start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+            let column = 1 + text[start..at].chars().count();
+            let shown = text[start..].lines().next().unwrap_or("").to_owned();
+            return Some((name.clone(), line, column, shown));
+        }
+        base += text.len() + 1;
+    }
+    None
+}
+
+/// A refusal as the compiler in cancho gives it: `ERR <rule> <from> <to>`, and on the next line the sentence that says
+/// why (`Rule::explanation`, the same for every program the rule refuses), as a person reads it: where, why, the line,
+/// and what of it.
 fn refusal(answer: &str, files: &[(String, String)]) -> Failure {
-    let mut words = answer.split_whitespace().skip(1);
+    let mut lines = answer.lines();
+    let first = lines.next().unwrap_or("");
+    let sentence = lines.next().unwrap_or("").trim();
+    let mut words = first.split_whitespace().skip(1);
     let rule = words.next().unwrap_or("unknown");
     let from: Option<usize> = words.next().and_then(|w| w.parse().ok());
     let to: usize = words.next().and_then(|w| w.parse().ok()).unwrap_or(0);
@@ -121,9 +143,19 @@ fn refusal(answer: &str, files: &[(String, String)]) -> Failure {
              `--compiler` builds the program)"
         ));
     }
+    let why = if sentence.is_empty() { "refused" } else { sentence };
+    let Some((file, line, column, shown)) = from.and_then(|offset| located(files, offset)) else {
+        return refused(format!("the program: error: {why} (rule `{rule}`)"));
+    };
+    // The caret runs under the span on its first line.
+    let width = to
+        .saturating_sub(from.unwrap_or(0))
+        .min(shown.chars().count().saturating_sub(column - 1))
+        .max(1);
     refused(format!(
-        "{at}: refused by the rule `{rule}`: `{near}` (the compiler in cancho gives the rule and the place, not the \
-         sentence; `cancho check` gives the sentence)"
+        "{file}:{line}:{column}: error: {why} (rule `{rule}`)\n    {shown}\n    {}{}",
+        " ".repeat(column - 1),
+        "^".repeat(width)
     ))
 }
 
@@ -219,39 +251,6 @@ pub fn ensure_compiler() -> Result<PathBuf, Failure> {
     Ok(exe)
 }
 
-/// A refusal of the compiler in cancho as a sentence. It gives the rule and the place; the sentence is the Rust front end's
-/// for the same files, which refuses the same program with the same rule (`SKIP`, the compiler having no code yet, is not a
-/// refusal of the program and stays as it is). If the Rust front end accepts what the compiler in cancho refused, the two
-/// disagree, and that is said.
-fn explained(
-    answer: &str,
-    files: &[(String, String)],
-    inputs: &[PathBuf],
-    with_std: bool,
-) -> Failure {
-    let short = refusal(answer, files);
-    if answer.split_whitespace().nth(1) == Some("SKIP") {
-        return short;
-    }
-    match crate::compile_to_ir(inputs, with_std) {
-        Err(rendered) => Failure {
-            message: format!(
-                "{}\n(the compiler in cancho refused it too, by the rule `{}`)",
-                rendered.message,
-                answer.split_whitespace().nth(1).unwrap_or("unknown")
-            ),
-            code: rendered.code,
-        },
-        Ok(_) => Failure {
-            message: format!(
-                "{}\nthe Rust compiler accepts this program: the two disagree, please report it",
-                short.message
-            ),
-            code: short.code,
-        },
-    }
-}
-
 /// What to build and how: the compiler, the program's files, and what `cancho build` was given.
 pub struct Job<'a> {
     pub compiler: &'a Path,
@@ -306,7 +305,7 @@ pub fn build(job: Job<'_>) -> Result<(), Failure> {
     let _ = writer.join();
     let answer = String::from_utf8_lossy(&ended.stdout).into_owned();
     if answer.starts_with("ERR") {
-        return Err(explained(&answer, &files, inputs, with_std));
+        return Err(refusal(&answer, &files));
     }
     if !ended.status.success() || answer.is_empty() {
         return Err(environment(format!(
