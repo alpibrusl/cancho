@@ -4,6 +4,7 @@ module selfhost.allocs;
 // and the code for it. Split from `exprs.cho` for its length.
 
 import selfhost.ast;
+import selfhost.kinds;
 import selfhost.rules;
 import selfhost.types;
 import selfhost.scope;
@@ -38,6 +39,53 @@ fn region_stride[&s](st: &!s [int], ty: int) -> [] int {
     return 0;
 }
 
+// Does every leaf of the element take the same bytes here as in the Rust backend's layout, which gives a `byte` one and an
+// `f32` four where this compiler gives each leaf a slot of eight? If not, an arena of them would hold fewer elements here, and a
+// program that fits would trap.
+fn same_stride[&s](st: &!s [int], ty: int) -> [] bool {
+    if ty == 2 || ty == 4 {
+        return false;
+    }
+    if types.is_tuple(st, ty) {
+        var k = 0;
+        while k < types.tuple_size(st, ty) {
+            if !same_stride(st, types.tuple_part(st, ty, k)) {
+                return false;
+            }
+            k = k + 1;
+        }
+        return true;
+    }
+    if emit.on(st) && types.is_named(st, ty) {
+        let item = types.named_item(st, ty);
+        if ast.is_kind(st, item, kinds.NK::IStruct) {
+            var f = ast.get(st, item, 8);
+            while f >= 0 {
+                if !same_stride(st, scope.node_val(st, ast.get(st, f, 5), ty)) {
+                    return false;
+                }
+                f = ast.next(st, f);
+            }
+        }
+        if ast.is_kind(st, item, kinds.NK::IEnum) {
+            var v = ast.get(st, item, 8);
+            while v >= 0 {
+                var p = ast.get(st, v, 5);
+                var n = ast.get(st, v, 6);
+                while n > 0 {
+                    if !same_stride(st, scope.node_val(st, p, ty)) {
+                        return false;
+                    }
+                    p = ast.next(st, p);
+                    n = n - 1;
+                }
+                v = ast.next(st, v);
+            }
+        }
+    }
+    return true;
+}
+
 pub fn finish_slice[&s, &x](st: &!s [int], text: &x [byte], from: int, to: int, fill: int, arena: int, in_static: bool, c: ex.Ex, f: ex.Ex) -> [] ex.Ex {
     if scope.is_res_type(st, f.ty) {
         ast.fail(st, rules.r_mode_bound_violated(), ast.nstart(st, fill), ast.nend(st, fill));
@@ -51,6 +99,9 @@ pub fn finish_slice[&s, &x](st: &!s [int], text: &x [byte], from: int, to: int, 
         return ex.skip(st, from, to);
     }
     if f.ty < 1 || f.ty > 6 && !types.is_named(st, f.ty) && !types.is_ref(st, f.ty) {
+        return ex.skip(st, from, to);
+    }
+    if (types.is_named(st, f.ty) || types.is_tuple(st, f.ty)) && !same_stride(st, f.ty) {
         return ex.skip(st, from, to);
     }
     if emit.on(st) && !in_static && c.known && c.value > 0 {

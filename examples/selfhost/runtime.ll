@@ -5,6 +5,7 @@
 ; `UPDATE_SELFHOST_TABLES=1 cargo test -p cancho-ir selfhost_tables` rewrites it). `driver.cho` prints it in the
 ; module it writes, after a `cancho_errno_location` of the target's own.
 
+declare i64 @fwrite(ptr, i64, i64, ptr)
 declare ptr @fopen(ptr, ptr)
 declare i32 @fileno(ptr)
 declare i32 @fclose(ptr)

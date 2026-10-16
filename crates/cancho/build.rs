@@ -39,4 +39,35 @@ fn main() {
         },
     };
     println!("cargo:rustc-env=CANCHO_REV_STAMP={rev}");
+
+    embed_selfhost();
+}
+
+/// The compiler written in cancho (`examples/selfhost/*.cho`), compiled into this binary the way the standard library is,
+/// so that `--compiler auto` and the default build need no checkout next to it: the sources are written out and built
+/// once, by this compiler, into the cache (`docs/self-hosting.md`, `selfhost_build.rs`).
+fn embed_selfhost() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/selfhost");
+    println!("cargo:rerun-if-changed={}", dir.display());
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| e.file_name().into_string().ok())
+                .filter(|n| n.ends_with(".cho"))
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    let mut out = String::from("pub const SELFHOST_SOURCES: &[(&str, &str)] = &[\n");
+    for name in &names {
+        let path = std::fs::canonicalize(dir.join(name)).unwrap_or_else(|_| dir.join(name));
+        // Each file by itself: cargo does not notice an edit to a file inside a directory it was told to watch.
+        println!("cargo:rerun-if-changed={}", path.display());
+        out.push_str(&format!("    ({name:?}, include_str!({:?})),\n", path.display().to_string()));
+    }
+    out.push_str("];\n");
+    let target = Path::new(&std::env::var("OUT_DIR").expect("cargo sets OUT_DIR"))
+        .join("selfhost_sources.rs");
+    std::fs::write(target, out).expect("OUT_DIR is writable");
 }

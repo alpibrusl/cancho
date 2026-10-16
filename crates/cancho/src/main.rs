@@ -74,8 +74,12 @@ options:
     -o <output>     where to write the result (default: the first input's stem)
     --emit exe|obj  emit a linked executable (default) or a bare object file
     --std           make the standard library's source available
-    --compiler <exe>  (build) build with the compiler written in cancho: `<exe>` is `examples/selfhost/compiler.cho` built once, or `auto` to have
-                      it built from this repository and cached; `CANCHO_COMPILER` names it for every build
+    --compiler <exe>  (build) which compiler builds the program. By default the one written in cancho (built once, from sources
+                      compiled into this binary, and cached) writes the code, after the Rust front end has checked the
+                      program; one that has no code for something, or fails, hands that build to the Rust compiler. `rust` asks for
+                      the Rust compiler alone; `auto` for the one in cancho alone, with what it refuses, and no fallback; a path for
+                      that compiler. `CANCHO_COMPILER` says the same for every build; `--backend cranelift` and WebAssembly are the
+                      Rust compiler's
     --output json   `check` and `authority` as data rather than prose
     --backend cranelift|llvm
                     which backend generates code (default: llvm, since #127).
@@ -454,27 +458,7 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
                     "`--compiler` names a compiler that writes LLVM IR; it cannot be combined with `--backend cranelift`",
                 ));
             }
-            // `CANCHO_COMPILER` names the compiler for the builds that go through LLVM: a build that asks for the
-            // Cranelift backend by name is that backend's, and is not sent anywhere else.
-            let compiler = compiler.or_else(|| {
-                if backend == Backend::Cranelift {
-                    return None;
-                }
-                std::env::var_os("CANCHO_COMPILER").map(PathBuf::from)
-            });
-            if let Some(compiler) = compiler {
-                selfhost_build::build(selfhost_build::Job {
-                    compiler: &compiler,
-                    inputs: &inputs,
-                    output: &output,
-                    emit,
-                    with_std,
-                    target: target.as_ref(),
-                    link_libs: &link_libs,
-                    link_paths: &link_paths,
-                })?;
-                return Ok(ExitCode::SUCCESS);
-            }
+            selfhost_build::set_flag(compiler);
             build(
                 &inputs,
                 &output,
@@ -1599,7 +1583,58 @@ fn print_ids(inputs: &[PathBuf], with_std: bool) -> Result<(), Failure> {
     }
 }
 
+/// Build a program with the compiler this run chooses (`selfhost_build::choose`): the one written in cancho by default,
+/// with the Rust front end checking first for now, or the Rust one when it is asked for or the build is one the other does
+/// not write code for.
 fn build(
+    inputs: &[PathBuf],
+    output: &Path,
+    emit: Emit,
+    with_std: bool,
+    codegen: Codegen<'_>,
+    link_libs: &[String],
+    link_paths: &[String],
+) -> Result<(), Failure> {
+    match selfhost_build::choose(codegen.backend == Backend::Cranelift, codegen.target) {
+        selfhost_build::Choice::Rust => {
+            build_with_rust(inputs, output, emit, with_std, codegen, link_libs, link_paths)
+        }
+        selfhost_build::Choice::Cancho { compiler, rust_checks_first, fall_back } => {
+            let built = selfhost_build::build(selfhost_build::Job {
+                compiler: &compiler,
+                inputs,
+                output,
+                emit,
+                with_std,
+                target: codegen.target,
+                link_libs,
+                link_paths,
+                rust_checks_first,
+            })?;
+            match built {
+                selfhost_build::Built::Done => Ok(()),
+                // The default never refuses a valid program for want of code, or for a bug of the new compiler: the Rust
+                // one builds it. Named on its own (`--compiler`, `CANCHO_COMPILER`), the compiler in cancho says what it
+                // cannot do.
+                selfhost_build::Built::NoCode(_) if fall_back => {
+                    build_with_rust(inputs, output, emit, with_std, codegen, link_libs, link_paths)
+                }
+                selfhost_build::Built::Broke(why) if fall_back => {
+                    eprintln!(
+                        "note: the compiler in cancho could not build this ({}); building it with the Rust compiler",
+                        why.message.lines().next().unwrap_or("")
+                    );
+                    build_with_rust(inputs, output, emit, with_std, codegen, link_libs, link_paths)
+                }
+                selfhost_build::Built::NoCode(failure) | selfhost_build::Built::Broke(failure) => {
+                    Err(failure)
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn build_with_rust(
     inputs: &[PathBuf],
     output: &Path,
     emit: Emit,

@@ -159,33 +159,48 @@ fn refusal(answer: &str, files: &[(String, String)]) -> Failure {
     ))
 }
 
-/// The files of `compiler.cho` and the modules of `examples/selfhost` it imports, in the order they are built.
-fn compiler_sources(dir: &Path) -> Result<Vec<PathBuf>, Failure> {
+include!(concat!(env!("OUT_DIR"), "/selfhost_sources.rs"));
+
+/// The text of one source of the compiler in cancho: from the directory named by `CANCHO_SELFHOST_SOURCES` if there is one
+/// (for working on it), else the copy compiled into this binary.
+fn source_of(name: &str) -> Option<String> {
+    if let Some(dir) = std::env::var_os("CANCHO_SELFHOST_SOURCES") {
+        return std::fs::read_to_string(Path::new(&dir).join(name)).ok();
+    }
+    SELFHOST_SOURCES.iter().find(|(n, _)| *n == name).map(|(_, text)| (*text).to_owned())
+}
+
+/// The files of `compiler.cho` and the modules of `examples/selfhost` it imports, in the order they are built, as
+/// `(name, text)`.
+fn compiler_sources() -> Result<Vec<(String, String)>, Failure> {
     fn walk(
-        dir: &Path,
-        file: &Path,
-        seen: &mut BTreeSet<PathBuf>,
-        order: &mut Vec<PathBuf>,
+        name: &str,
+        seen: &mut BTreeSet<String>,
+        order: &mut Vec<(String, String)>,
     ) -> Result<(), Failure> {
-        let text = std::fs::read_to_string(file)
-            .map_err(|e| environment(format!("cannot read `{}`: {e}", file.display())))?;
+        let text = source_of(name).ok_or_else(|| {
+            environment(format!(
+                "the compiler in cancho has no source `{name}`: this binary was built without it"
+            ))
+        })?;
         for names in text
             .lines()
             .filter_map(|l| l.trim().strip_prefix("import selfhost.")?.strip_suffix(';'))
         {
-            let Some(name) = names.split_whitespace().next() else { continue };
-            let path = dir.join(format!("{name}.cho"));
-            if path.exists() && seen.insert(path.clone()) {
-                walk(dir, &path, seen, order)?;
-                order.push(path);
+            let Some(module) = names.split_whitespace().next() else { continue };
+            let file = format!("{module}.cho");
+            if source_of(&file).is_some() && seen.insert(file.clone()) {
+                walk(&file, seen, order)?;
+                let text = source_of(&file).unwrap_or_default();
+                order.push((file, text));
             }
         }
         Ok(())
     }
-    let root = dir.join("compiler.cho");
     let (mut seen, mut order) = (BTreeSet::new(), Vec::new());
-    walk(dir, &root, &mut seen, &mut order)?;
-    order.push(root);
+    walk("compiler.cho", &mut seen, &mut order)?;
+    let root = source_of("compiler.cho").unwrap_or_default();
+    order.push(("compiler.cho".to_owned(), root));
     Ok(order)
 }
 
@@ -193,21 +208,12 @@ fn compiler_sources(dir: &Path) -> Result<Vec<PathBuf>, Failure> {
 /// compiler the first time and kept in the cache by a hash of its sources (`$CANCHO_CACHE`, or `~/.cache/cancho`). A
 /// compiler installed without the repository next to it cannot build it: it says so.
 pub fn ensure_compiler() -> Result<PathBuf, Failure> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/selfhost");
-    if !dir.join("compiler.cho").exists() {
-        return Err(environment(
-            "`--compiler auto` builds the compiler in cancho from `examples/selfhost`, which is not next to this \
-             binary; build it once and name it with `--compiler <exe>`"
-                .to_owned(),
-        ));
-    }
-    let files = compiler_sources(&dir)?;
+    let files = compiler_sources()?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut hasher);
-    for file in &files {
-        std::fs::read(file)
-            .map_err(|e| environment(format!("cannot read `{}`: {e}", file.display())))?
-            .hash(&mut hasher);
+    for (name, text) in &files {
+        name.hash(&mut hasher);
+        text.hash(&mut hasher);
     }
     let base = std::env::var_os("CANCHO_CACHE")
         .map(PathBuf::from)
@@ -228,12 +234,21 @@ pub fn ensure_compiler() -> Result<PathBuf, Failure> {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos())
     ));
-    std::fs::create_dir_all(&scratch)
-        .map_err(|e| environment(format!("cannot create `{}`: {e}", scratch.display())))?;
+    let sources = scratch.join("src");
+    std::fs::create_dir_all(&sources)
+        .map_err(|e| environment(format!("cannot create `{}`: {e}", sources.display())))?;
+    let mut paths = Vec::new();
+    for (name, text) in &files {
+        let path = sources.join(name);
+        std::fs::write(&path, text)
+            .map_err(|e| environment(format!("cannot write `{}`: {e}", path.display())))?;
+        paths.push(path);
+    }
     eprintln!("building the compiler in cancho (once) into {}", exe.display());
     let built = scratch.join("compiler");
-    let made = crate::build(
-        &files,
+    // The first compiler is built by the Rust one: asking `build` would ask for this very compiler.
+    let made = crate::build_with_rust(
+        &paths,
         &built,
         Emit::Exe,
         true,
@@ -251,6 +266,47 @@ pub fn ensure_compiler() -> Result<PathBuf, Failure> {
     Ok(exe)
 }
 
+/// What builds a program: the Rust compiler, or the one written in cancho and whether the Rust front end checks first.
+pub enum Choice {
+    Rust,
+    Cancho { compiler: PathBuf, rust_checks_first: bool, fall_back: bool },
+}
+
+/// Does the Rust front end check a program before the compiler in cancho writes code for it, when that is the default?
+/// Until the compiler in cancho refuses everything the language refuses (#512, `reject_gaps.txt`) it does, so the default
+/// refuses at least what the Rust compiler does and with its sentences; when the list is empty this goes, and
+/// `the_default_build_checks_with_rust_only_while_a_gap_is_listed` says so.
+pub const RUST_CHECKS_FIRST: bool = true;
+
+static FLAG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// The compiler `--compiler` named, for every build of this run.
+pub fn set_flag(flag: Option<PathBuf>) {
+    if let Some(flag) = flag {
+        let _ = FLAG.set(flag);
+    }
+}
+
+/// Which compiler builds this program: the one named by `--compiler`, else by `CANCHO_COMPILER` (`rust` for the Rust one,
+/// `auto` for the one in cancho built from this binary's own sources, or a path); and when nothing is named, the one
+/// written in cancho for a build that goes through LLVM for a host it writes code for, and the Rust one for the rest
+/// (the Cranelift backend, WebAssembly).
+pub fn choose(cranelift: bool, target: Option<&Triple>) -> Choice {
+    let named =
+        FLAG.get().cloned().or_else(|| std::env::var_os("CANCHO_COMPILER").map(PathBuf::from));
+    match named {
+        Some(name) if name == Path::new("rust") => Choice::Rust,
+        Some(_) if cranelift => Choice::Rust,
+        Some(compiler) => Choice::Cancho { compiler, rust_checks_first: false, fall_back: false },
+        None if cranelift || target_line(target).is_err() => Choice::Rust,
+        None => Choice::Cancho {
+            compiler: PathBuf::from("auto"),
+            rust_checks_first: RUST_CHECKS_FIRST,
+            fall_back: true,
+        },
+    }
+}
+
 /// What to build and how: the compiler, the program's files, and what `cancho build` was given.
 pub struct Job<'a> {
     pub compiler: &'a Path,
@@ -261,11 +317,35 @@ pub struct Job<'a> {
     pub target: Option<&'a Triple>,
     pub link_libs: &'a [String],
     pub link_paths: &'a [String],
+    pub rust_checks_first: bool,
 }
 
 /// Build the program of `job` (and the standard library, with `with_std`) with its compiler.
-pub fn build(job: Job<'_>) -> Result<(), Failure> {
-    let Job { compiler, inputs, output, emit, with_std, target, link_libs, link_paths } = job;
+/// What building a program with the compiler in cancho came to: built, or the compiler has no code for something in it
+/// yet (what it says is the refusal to give if there is no other compiler to fall back to).
+pub enum Built {
+    Done,
+    NoCode(Failure),
+    /// The compiler in cancho stopped without a module, or what it wrote did not build: a bug of its own, not a refusal.
+    Broke(Failure),
+}
+
+pub fn build(job: Job<'_>) -> Result<Built, Failure> {
+    let Job {
+        compiler,
+        inputs,
+        output,
+        emit,
+        with_std,
+        target,
+        link_libs,
+        link_paths,
+        rust_checks_first,
+    } = job;
+    if rust_checks_first {
+        // The Rust front end refuses what it refuses, with its sentences; the compiler in cancho writes the code.
+        crate::compile_to_ir(inputs, with_std)?;
+    }
     let built;
     let compiler = if compiler == Path::new("auto") {
         built = ensure_compiler()?;
@@ -305,14 +385,18 @@ pub fn build(job: Job<'_>) -> Result<(), Failure> {
     let _ = writer.join();
     let answer = String::from_utf8_lossy(&ended.stdout).into_owned();
     if answer.starts_with("ERR") {
-        return Err(refusal(&answer, &files));
+        let said = refusal(&answer, &files);
+        if answer.split_whitespace().nth(1) == Some("SKIP") {
+            return Ok(Built::NoCode(said));
+        }
+        return Err(said);
     }
     if !ended.status.success() || answer.is_empty() {
-        return Err(environment(format!(
+        return Ok(Built::Broke(environment(format!(
             "the compiler `{}` ended with {} and no module",
             compiler.display(),
             ended.status
-        )));
+        ))));
     }
     let module = output.with_extension("ll");
     std::fs::write(&module, &answer)
@@ -332,15 +416,15 @@ pub fn build(job: Job<'_>) -> Result<(), Failure> {
     let _ = std::fs::remove_file(&module);
     let made = made?;
     if !made.status.success() {
-        return Err(environment(format!(
+        return Ok(Built::Broke(environment(format!(
             "`{cc}` could not build the module the compiler in cancho wrote: {}",
             String::from_utf8_lossy(&made.stderr)
-        )));
+        ))));
     }
     if emit == Emit::Exe {
         let linked = crate::link(&object, output, link_libs, link_paths);
         let _ = std::fs::remove_file(&object);
         linked?;
     }
-    Ok(())
+    Ok(Built::Done)
 }

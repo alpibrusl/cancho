@@ -323,10 +323,6 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "declare i32 @getchar()\ndeclare i64 @write(i32, ptr, i64)\n\n");
     emit.str(st, runtime.errno_location(st[61] == 1));
     emit.str(st, runtime.text());
-    emit.str(st, "define i64 @cancho_write_bytes(ptr %p, i64 %n) {\nentry:\n  br label %head\nhead:\n");
-    emit.str(st, "  %i = phi i64 [ 0, %entry ], [ %next, %body ]\n  %more = icmp slt i64 %i, %n\n  br i1 %more, label %body, label %done\n");
-    emit.str(st, "body:\n  %addr = getelementptr i8, ptr %p, i64 %i\n  %b = load i8, ptr %addr\n  %c = zext i8 %b to i32\n");
-    emit.str(st, "  %r = call i32 @putchar(i32 %c)\n  %next = add i64 %i, 1\n  br label %head\ndone:\n  ret i64 %n\n}\n\n");
     // An arena is one chunk of 64 KiB, all of it the region's (how much is used is kept beside the chunk, as the Rust backend's bump pointer), taken from the thread's
     // stack of chunks (`region_text`) and given back to it whole; a request past the chunk traps, as the Rust compiler's
     // does.
@@ -449,6 +445,19 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         // A program that opens a socket or reads the clock has the support for them.
         emit.str(st, runtime.net_text(st[61] == 1));
     }
+    // `write_bytes` is one `fwrite` to the C library's buffer, as the Rust backend's is: a write that fails sets the stream's
+    // error indicator, which `flush_out` reports (`EIO`), and `putchar` writes to the same buffer, so the two stay in order.
+    var stream = "@stdout";
+    if st[61] == 1 {
+        stream = "@__stdoutp";
+    }
+    if st[55] & 1 == 0 {
+        emit.str(st, stream);
+        emit.str(st, " = external global ptr, align 8\n");
+    }
+    emit.str(st, "define i64 @cancho_write_bytes(ptr %p, i64 %n) {\nentry:\n  %out = load ptr, ptr ");
+    emit.str(st, stream);
+    emit.str(st, ", align 8\n  %w = call i64 @fwrite(ptr %p, i64 1, i64 %n, ptr %out)\n  ret i64 %n\n}\n\n");
     emit.str(st, "; left out: ");
     emit.nat(st, left_out);
     emit.str(st, "\n");
