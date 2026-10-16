@@ -9,6 +9,7 @@ module selfhost.narrowing;
 // it means): a refusal is only made when it cannot be wrong.
 
 import selfhost.ast;
+import selfhost.kinds;
 import selfhost.rules;
 import selfhost.types;
 import selfhost.netcode;
@@ -189,4 +190,70 @@ pub fn refused_set[&s, &x](st: &!s [int], text: &x [byte], current: int, target:
 
 pub fn is_ffi[&s](st: &!s [int], index: int) -> [] bool {
     return index == netcode.prelude_named("Ffi");
+}
+
+// Every literal of `narrow` must be written as one, so that the refinement can be checked where it is written. False if one
+// is not (refused).
+pub fn literals[&s](st: &!s [int], arg: int, nargs: int) -> [] bool {
+    var each = ast.next(st, arg);
+    var left = nargs - 1;
+    while left > 0 {
+        if !ast.is_kind(st, each, kinds.NK::EStr) {
+            ast.fail(st, rules.r_capability_not_narrowable(), ast.nstart(st, each), ast.nend(st, each));
+            return false;
+        }
+        each = ast.next(st, each);
+        left = left - 1;
+    }
+    return true;
+}
+
+// What `narrow` of a capability of type `cty` to the literals from `lit` (`nargs` - 1 of them) makes of the program:
+// 0 nothing to say, 1 refused (noted), 2 not something this checks.
+pub fn refused[&s, &x](st: &!s [int], text: &x [byte], cty: int, lit: int, nargs: int, from: int, to: int) -> [] int {
+    if types.is_ref(st, cty) {
+        // Narrowing consumes what it attenuates: a borrow is the promise to give it back.
+        ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+        return 1;
+    }
+    if !types.is_prelude(st, cty) {
+        return 2;
+    }
+    let index = types.prelude_index(st, cty);
+    if !narrows(st, index) || nargs > 2 && !narrows_many(st, index) {
+        // It carries no value to narrow, or it does not narrow into several.
+        ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+        return 1;
+    }
+    let now = types.prelude_lit_tok(st, cty);
+    if checked(st, index) {
+        var at = lit;
+        var seen = 0;
+        while seen < nargs - 1 {
+            if refused_one(st, text, is_path(st, index), now, ast.get(st, at, 4), ast.nstart(st, at), ast.nend(st, at)) {
+                return 1;
+            }
+            seen = seen + 1;
+            at = ast.next(st, at);
+        }
+        var x = lit;
+        var i = 0;
+        while i < nargs - 1 {
+            var y = ast.next(st, x);
+            var j = i + 1;
+            while j < nargs - 1 {
+                if refused_pair(st, text, ast.get(st, x, 4), ast.get(st, y, 4), ast.nstart(st, y), ast.nend(st, y)) {
+                    return 1;
+                }
+                y = ast.next(st, y);
+                j = j + 1;
+            }
+            x = ast.next(st, x);
+            i = i + 1;
+        }
+    }
+    if is_ffi(st, index) && refused_set(st, text, now, ast.get(st, lit, 4), from, to) {
+        return 1;
+    }
+    return 0;
 }
