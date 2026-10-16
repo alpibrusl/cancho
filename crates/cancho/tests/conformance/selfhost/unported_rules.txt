@@ -11,7 +11,6 @@ listen-host                       # a literal host bound by the program's author
 no-function-values                # function values the code is not written for
 not-a-place                       # assignment targets the checker does not model
 not-a-tuple                       # tuple patterns on other types
-region-chunk-exceeded             # a constant allocation past the 64 KiB chunk (#514); already red on origin/main
 signal-not-claimable              # the signals a program may claim
 thread-payload-type               # what a thread may be given
 unsupported-on-target             # targets the compiler in cancho does not write code for (WebAssembly, #486)
