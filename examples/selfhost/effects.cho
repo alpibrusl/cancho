@@ -31,6 +31,16 @@ pub fn two_to[&s](st: &!s [int], n: int) -> [] int {
 }
 
 // The bit of the high flag for a label with an argument, and for one no builtin performs.
+// The labels the masks keep: the ones a builtin performs, then `conc`, which `spawn` and `join` perform and which is no
+// builtin's.
+pub fn label_count() -> [] int {
+    return builtins.effect_count() + 1;
+}
+
+pub fn conc_bit() -> [] int {
+    return builtins.effect_count();
+}
+
 pub fn arg_flag[&s](st: &!s [int]) -> [] int {
     return two_to(st, 60);
 }
@@ -57,6 +67,9 @@ pub fn row_mask[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] int 
                 found = i;
             }
             i = i + 1;
+        }
+        if found < 0 && lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "conc") {
+            found = conc_bit();
         }
         p = p + 1;
         if pass1.is_code(st, p, lc.Tok::LParen) {
@@ -105,6 +118,9 @@ pub fn perform[&s](st: &!s [int], b: int) -> [] bool {
 
 // The function performs the label called `name`, which some builtin performs.
 pub fn perform_named[&s](st: &!s [int], name: &static [byte]) -> [] int {
+    if bytes.equal(name, "conc") && !has(st, st[54], conc_bit()) {
+        st[54] = st[54] + two_to(st, conc_bit());
+    }
     var n = 0;
     while n < builtins.effect_count() {
         if bytes.equal(builtins.effect_name(n), name) && !has(st, st[54], n) {
@@ -115,10 +131,40 @@ pub fn perform_named[&s](st: &!s [int], name: &static [byte]) -> [] int {
     return 0;
 }
 
+// The function performed something the masks do not keep: a label with an argument (a path, a program, an address, a
+// library), or what a function value does. Bit 61 of the set says so, and the refusal that the row says more than the body
+// does is not made for such a function.
+pub fn mark_untracked[&s](st: &!s [int]) -> [] int {
+    if !has(st, st[54], 61) {
+        st[54] = st[54] + two_to(st, 61);
+    }
+    return 0;
+}
+
+pub fn untracked[&s](st: &!s [int]) -> [] bool {
+    return has(st, st[54], 61);
+}
+
+// The function performed a label with an argument, which is untracked too (bit 62): an empty row declares none.
+pub fn mark_arg[&s](st: &!s [int]) -> [] int {
+    mark_untracked(st);
+    if !has(st, st[54], 62) {
+        st[54] = st[54] + two_to(st, 62);
+    }
+    return 0;
+}
+
+pub fn arg_performed[&s](st: &!s [int]) -> [] bool {
+    return has(st, st[54], 62);
+}
+
 // The labels a call to a function with the row `mask` performs, added to the set.
 pub fn perform_row[&s](st: &!s [int], mask: int) -> [] int {
+    if has(st, mask, 60) {
+        mark_arg(st);
+    }
     var n = 0;
-    while n < builtins.effect_count() {
+    while n < label_count() {
         if has(st, mask, n) && !has(st, st[54], n) {
             st[54] = st[54] + two_to(st, n);
         }
@@ -159,7 +205,7 @@ pub fn discharged[&s](st: &!s [int], index: int) -> [] int {
 pub fn union[&s](st: &!s [int], a: int, b: int) -> [] int {
     var mask = a;
     var n = 0;
-    while n < builtins.effect_count() {
+    while n < label_count() {
         if has(st, b, n) && !has(st, mask, n) {
             mask = mask + two_to(st, n);
         }
@@ -179,7 +225,7 @@ pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to
     // of the same document): what the parameters discharge is not performed as far as the row goes.
     var performed = 0;
     var m = 0;
-    while m < builtins.effect_count() {
+    while m < label_count() {
         if has(st, st[54], m) && !has(st, authority, m) {
             performed = performed + two_to(st, m);
         }
@@ -199,7 +245,7 @@ pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to
         return 0;
     }
     var n = 0;
-    while n < builtins.effect_count() {
+    while n < label_count() {
         if has(st, performed, n) && !has(st, declared, n) {
             ast.fail(st, rules.r_effect_not_declared(), from, to);
             return 0;
@@ -210,7 +256,7 @@ pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to
         return 0;
     }
     n = 0;
-    while n < builtins.effect_count() {
+    while n < label_count() {
         if has(st, declared, n) && !has(st, performed, n) {
             ast.fail(st, rules.r_effect_declared_not_performed(), from, to);
             return 0;

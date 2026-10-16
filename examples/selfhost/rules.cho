@@ -205,6 +205,34 @@ pub fn r_capability_not_narrowable() -> [] int {
     return 50;
 }
 
+pub fn r_capability_misused() -> [] int {
+    return 51;
+}
+
+pub fn r_not_a_tuple() -> [] int {
+    return 52;
+}
+
+pub fn r_not_a_place() -> [] int {
+    return 53;
+}
+
+pub fn r_listen_host() -> [] int {
+    return 54;
+}
+
+pub fn r_no_function_values() -> [] int {
+    return 55;
+}
+
+pub fn r_signal_not_claimable() -> [] int {
+    return 56;
+}
+
+pub fn r_thread_payload_type() -> [] int {
+    return 59;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -352,6 +380,27 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 50 {
         return "capability-not-narrowable";
+    }
+    if r == 51 {
+        return "capability-misused";
+    }
+    if r == 52 {
+        return "not-a-tuple";
+    }
+    if r == 53 {
+        return "not-a-place";
+    }
+    if r == 54 {
+        return "listen-host";
+    }
+    if r == 55 {
+        return "no-function-values";
+    }
+    if r == 56 {
+        return "signal-not-claimable";
+    }
+    if r == 59 {
+        return "thread-payload-type";
     }
     return "unknown-name";
 }

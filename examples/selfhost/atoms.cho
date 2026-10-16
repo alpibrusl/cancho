@@ -32,7 +32,13 @@ import selfhost.tables;
 
 // The prefix a capability was narrowed to, as the pointer and the length of its literal pushed on the stack
 // of arguments; a capability that was not narrowed is a null and 0, which every path is under.
-pub fn push_prefix[&s, &x](st: &!s [int], text: &x [byte], cap: int) -> [] int {
+pub fn push_prefix[&s, &x](st: &!s [int], text: &x [byte], cap: int, want: int, from: int, to: int) -> [] int {
+    if want >= 0 && !(types.is_ref(st, cap) && types.is_prelude(st, types.ref_inner(st, cap)) && types.prelude_index(st, types.ref_inner(st, cap)) == want) {
+        // What is reached through a path or a program is reached through the borrowed capability that names it.
+        ast.fail(st, rules.r_capability_misused(), from, to);
+        return 0;
+    }
+    effects.mark_arg(st);
     var inner = cap;
     if types.is_ref(st, inner) {
         inner = types.ref_inner(st, inner);
@@ -95,7 +101,12 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
         var it = st[15];
         while it >= 0 {
             if ast.is_kind(st, it, kinds.NK::IFn) && ast.get(st, it, 13) == st[22] && ast.same(st, text, ast.get(st, it, 4), name) {
-                if pass1.count_params(st, ast.get(st, it, 6), false) > 0 || !plain_function(st, text, it) {
+                if pass1.count_params(st, ast.get(st, it, 6), false) > 0 {
+                    // Only a written function with no type parameters can be a value.
+                    ast.fail(st, rules.r_no_function_values(), from, to);
+                    return ex.nothing();
+                }
+                if !plain_function(st, text, it) {
                     return ex.skip(st, from, to);
                 }
                 return ex.in_reg(types.make_fnval(st, it), threadcode.function_pointer(st, it));

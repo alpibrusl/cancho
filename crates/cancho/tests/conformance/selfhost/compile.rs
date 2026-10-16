@@ -817,9 +817,10 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         jobs.push((program.clone(), program));
     }
     // The poller and a handed-over peer, over a connection made inside the process (each build has a port of its
-    // own, for they run at the same time); standard output flushed and standard input read.
+    // own, for they run at the same time, and below the range the kernel hands out to outgoing connections,
+    // which another test's client could be holding); standard output flushed and standard input read.
     let poller = include_str!("poller_probe.cho");
-    jobs.push((poller.replace("PORT", "47133"), poller.replace("PORT", "47134")));
+    jobs.push((poller.replace("PORT", "29133"), poller.replace("PORT", "29134")));
     let stdio = include_str!("stdio_probe.cho");
     jobs.push((stdio.to_owned(), stdio.to_owned()));
     for text in DOUBLE_LITERALS {
@@ -1021,8 +1022,13 @@ fn build_with_the_compiler_in_cancho_from_the_command_line() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The rule the Rust front end refuses `program` by (`cancho check --output json`), or `None` if it accepts it.
+/// The rule `program` must be refused by: the one it declares itself (`//~ RULE <tag>`, as the Rust conformance suite reads
+/// it), or else the one `cancho check --output json` names.
 fn rust_rule(program: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(program).expect("a fixture");
+    if let Some(declared) = text.lines().find_map(|l| l.strip_prefix("//~ RULE ")) {
+        return Some(declared.trim().to_owned());
+    }
     let ended = Command::new(BIN)
         .args(["check", "--output", "json"])
         .arg(program)
@@ -1072,6 +1078,14 @@ fn refusals_agree_with_the_rust_front_end() {
             .map(|e| e.expect("an entry").path())
             .filter(|p| p.extension().is_some_and(|e| e == "cho"))
             .collect();
+    // A fixture whose refusal is a property of a target (`//~ TARGET`) is the Rust compiler's: the compiler in cancho writes
+    // code for the hosts only (WebAssembly is #486).
+    fixtures.retain(|p| {
+        !std::fs::read_to_string(p)
+            .expect("a fixture")
+            .lines()
+            .any(|l| l.starts_with("//~ TARGET "))
+    });
     fixtures.sort();
     let wrong = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {

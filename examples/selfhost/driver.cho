@@ -29,6 +29,7 @@ import selfhost.listing;
 import selfhost.checker;
 import selfhost.body;
 import selfhost.emit;
+import selfhost.scope;
 import selfhost.externcode;
 import selfhost.platform;
 import selfhost.instances;
@@ -336,6 +337,8 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     // What the code is not written for is left out; a call to it then does not link, which is how a
     // program learns of it. Its place is said in a comment of the module.
     var left_out = 0;
+    var has_main = false;
+    scope.shape_clear(st);
     while item >= 0 {
         if ast.is_kind(st, item, kinds.NK::IStatic) {
             let mark = st[44];
@@ -351,6 +354,9 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         }
         if ast.is_kind(st, item, kinds.NK::IFn) {
             let mark = st[44];
+            if pass1.is_word(st, text, ast.get(st, item, 4), "main") {
+                has_main = true;
+            }
             let status = check_learning(st, text, item);
             if status == 1 {
                 return 1;
@@ -403,6 +409,11 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             }
         }
         instance = instance + 1;
+    }
+    if scope.shape_bad(st) || !has_main && entry == 0 {
+        // The entry point is the one `main` of the whole program, taking the `World` and giving back the exit status.
+        ast.fail(st, rules.r_program_shape(), 0, 0);
+        return 1;
     }
     emit.aim(st, 0);
     if entry != 0 {

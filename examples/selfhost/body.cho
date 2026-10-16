@@ -42,6 +42,7 @@ import selfhost.exprs;
 import selfhost.ex;
 import selfhost.lookup;
 import selfhost.effects;
+import selfhost.narrowing;
 import selfhost.builtins;
 import selfhost.prims;
 import selfhost.consteval;
@@ -411,6 +412,31 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
     if !ast.ok(st) {
         return 0;
     }
+    if types.is_named(st, v.ty) && ast.is_kind(st, types.named_item(st, v.ty), kinds.NK::IStruct) {
+        // A pattern names every field: it takes the whole value apart.
+        var named = 0;
+        var at = ast.get(st, id, 6) + 1;
+        while !pass1.is_code(st, at, lc.Tok::RBrace) {
+            named = named + 1;
+            at = at + 1;
+            if pass1.is_code(st, at, lc.Tok::Colon) {
+                at = at + 2;
+            }
+            if pass1.is_code(st, at, lc.Tok::Comma) {
+                at = at + 1;
+            }
+        }
+        var fields = 0;
+        var f = ast.get(st, types.named_item(st, v.ty), 8);
+        while f >= 0 {
+            fields = fields + 1;
+            f = ast.next(st, f);
+        }
+        if named != fields {
+            ast.fail(st, rules.r_arity_mismatch(), from, to);
+            return 0;
+        }
+    }
     if emit.on(st) && scope.struct_codable(st, v.ty) {
         // `let S { a, b: c } = value;` of a struct of the file: each field a binding of its own.
         let item = types.named_item(st, v.ty);
@@ -437,6 +463,11 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
                 q = q + 1;
             }
         }
+        return 0;
+    }
+    if types.is_prelude(st, v.ty) && narrowing.released_only(st, types.prelude_index(st, v.ty)) {
+        // A capability is destroyed by `release`, not by being taken apart.
+        ast.fail(st, rules.r_capability_misused(), from, to);
         return 0;
     }
     if types.is_handle(st, v.ty) || types.is_box(st, v.ty) || types.is_boxslice(st, v.ty) {
@@ -488,8 +519,26 @@ fn destructure_tuple_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> []
     if !ast.ok(st) {
         return 0;
     }
-    if !emit.on(st) || !types.is_tuple(st, v.ty) {
+    if !emit.on(st) {
         ex.skip(st, from, to);
+        return 0;
+    }
+    if !types.is_tuple(st, v.ty) {
+        ast.fail(st, rules.r_not_a_tuple(), ast.nstart(st, ast.get(st, id, 5)), ast.nend(st, ast.get(st, id, 5)));
+        return 0;
+    }
+    var named = 0;
+    var at = ast.get(st, id, 4) + 1;
+    while !pass1.is_code(st, at, lc.Tok::RParen) {
+        named = named + 1;
+        at = at + 1;
+        if pass1.is_code(st, at, lc.Tok::Comma) {
+            at = at + 1;
+        }
+    }
+    if named != types.tuple_size(st, v.ty) {
+        // Destructuring takes the whole value apart.
+        ast.fail(st, rules.r_arity_mismatch(), from, to);
         return 0;
     }
     var q = ast.get(st, id, 4) + 1;
@@ -659,6 +708,11 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     if emit.on(st) && !writes_stmt(st, id) {
+        if ast.is_kind(st, id, kinds.NK::SAssign) {
+            // A place is a binding, a field, an element or what a unique reference points at.
+            ast.fail(st, rules.r_not_a_place(), from, to);
+            return 0;
+        }
         ex.skip(st, from, to);
         return 0;
     }
@@ -1028,6 +1082,28 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
         return 2;
     }
     let ret = scope.lower_type(st, text, ast.get(st, fn_item, 10), st[28], 0 - 1);
+    if emit.on(st) && pass1.is_word(st, text, ast.get(st, fn_item, 4), "main") {
+        // The entry point is part of the contract with the runtime: the one `World` it hands over, and a whole number, the
+        // exit status, back. Rust says so after the bodies are lowered, so it is noted here and reported if nothing else is wrong.
+        var count = 0;
+        var first = 0 - 1;
+        var q = ast.get(st, fn_item, 7);
+        while q >= 0 {
+            if count == 0 {
+                first = q;
+            }
+            count = count + 1;
+            q = ast.next(st, q);
+        }
+        var shaped = count == 1 && ret == 1;
+        if shaped {
+            let given = scope.lower_type(st, text, ast.get(st, first, 5), st[28], 0 - 1);
+            shaped = types.is_prelude(st, given) && types.prelude_index(st, given) == scope.world_index();
+        }
+        if !shaped {
+            scope.shape_set(st);
+        }
+    }
     if emit.on(st) {
         // Code is written for functions of whole numbers and booleans, which are not generic.
         var ok = types.is_plain(ret) || types.is_ref(st, ret) || scope.aggregate_codable(st, ret) || scope.slice_codable(st, ret) || types.is_erased(st, ret);
@@ -1091,15 +1167,22 @@ pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     if ast.ok(st) {
         // The row is exact, both ways.
         var authority = 0;
+        var owns = false;
         var owned = ast.get(st, fn_item, 7);
         while owned >= 0 {
             let kind = scope.lower_type(st, text, ast.get(st, owned, 5), st[28], 0 - 1);
             if types.is_prelude(st, kind) {
+                owns = true;
                 authority = effects.union(st, authority, effects.discharged(st, types.prelude_index(st, kind)));
             }
             owned = ast.next(st, owned);
         }
-        effects.check(st, text, fn_item, from, to, authority, !emit.on(st));
+        if emit.on(st) && !owns && effects.arg_performed(st) && effects.row_mask(st, text, fn_item) == 0 {
+            // A label with an argument is not the plain one, and a row that is empty declares neither; what an owned
+            // capability discharges is a question of which paths it covers, so only a function owning none is judged here.
+            ast.fail(st, rules.r_effect_not_declared(), from, to);
+        }
+        effects.check(st, text, fn_item, from, to, authority, !emit.on(st) || !effects.untracked(st));
     }
     if ast.ok(st) && !terminates(st, ast.get(st, fn_item, 11), ast.get(st, fn_item, 12)) {
         ast.fail(st, rules.r_missing_return(), from, to);

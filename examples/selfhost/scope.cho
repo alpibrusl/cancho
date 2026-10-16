@@ -104,6 +104,22 @@ fn lin_head[&s](st: &!s [int]) -> [] int {
     return st[38] + 5 * ((st[19] - 64) / 3 + 16);
 }
 
+// Whether the program's `main` has the wrong shape, which is said once every function has been checked (word 2 of the
+// header after the log; `drive` clears it).
+pub fn shape_clear[&s](st: &!s [int]) -> [] int {
+    st[lin_head(st) + 2] = 0;
+    return 0;
+}
+
+pub fn shape_set[&s](st: &!s [int]) -> [] int {
+    st[lin_head(st) + 2] = 1;
+    return 0;
+}
+
+pub fn shape_bad[&s](st: &!s [int]) -> [] bool {
+    return st[lin_head(st) + 2] != 0;
+}
+
 pub fn lin_reset[&s](st: &!s [int]) -> [] int {
     let h = lin_head(st);
     st[h] = 0;
