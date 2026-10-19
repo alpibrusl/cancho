@@ -154,7 +154,7 @@ fn a_name_that_is_not_beneath_the_directory_traps() {
         let (_, control) =
             control.iter().find(|(c, _)| *c == config).expect("a control per configuration");
         for (name, control_says) in [
-            ("/bin/true", "spawned code 0"),
+            ("/bin/echo", "spawned code 0"),
             (outside.as_str(), "spawned code 5"),
             ("/", "failed errno 13"),
             ("", "failed errno 2"),
