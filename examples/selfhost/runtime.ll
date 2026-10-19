@@ -500,8 +500,8 @@ done:
   ret void
 }
 
-; exec_spawn: the pid, or minus the errno. The streams are (tag, child's end, file) each.
-define i64 @cancho_spawn(ptr %src, i64 %len, ptr %prefix, i64 %plen, ptr %args, i64 %alen, ptr %env, i64 %elen, i64 %t0, i64 %e0, i64 %f0, i64 %t1, i64 %e1, i64 %f1, i64 %t2, i64 %e2, i64 %f2, ptr %dir) {
+; exec_spawn: the pid, or minus the errno. The streams are (tag, child's end, file) each; a child of `exec_spawn_detached` (%detached is 1) leads a session of its own.
+define i64 @cancho_spawn(ptr %src, i64 %len, ptr %prefix, i64 %plen, ptr %args, i64 %alen, ptr %env, i64 %elen, i64 %t0, i64 %e0, i64 %f0, i64 %t1, i64 %e1, i64 %f1, i64 %t2, i64 %e2, i64 %f2, ptr %dir, i64 %detached) {
 entry:
   %path = call ptr @cancho_checked_path(ptr %src, i64 %len, ptr %prefix, i64 %plen)
   %argv = call ptr @cancho_pointer_list(ptr %args, i64 %alen, ptr %path, i1 false)
@@ -526,7 +526,7 @@ trap:
   unreachable
 attrs:
   %attr = alloca [512 x i8], align 16
-  call void @cancho_spawn_setup(ptr %actions, ptr %attr)
+  call void @cancho_spawn_setup(ptr %actions, ptr %attr, i64 %detached)
   %err = call i32 @posix_spawn(ptr %pid, ptr %path, ptr %actions, ptr %attr, ptr %argv, ptr %envp)
   call i32 @posix_spawn_file_actions_destroy(ptr %actions)
   call i32 @posix_spawnattr_destroy(ptr %attr)
@@ -600,6 +600,15 @@ send:
   %failed = icmp slt i32 %r, 0
   %v = select i1 %failed, i64 %e, i64 0
   ret i64 %v
+}
+
+; child_pid: the pid, the low 32 bits of the word in the slot a reference to the child points at.
+define i64 @cancho_child_pid(ptr %child) {
+entry:
+  %word = load i64, ptr %child
+  %low = trunc i64 %word to i32
+  %pid = zext i32 %low to i64
+  ret i64 %pid
 }
 
 ; arg: argument n of the command line as a pointer; an index outside 0 to argc traps.

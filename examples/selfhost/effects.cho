@@ -231,6 +231,16 @@ pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to
         }
         m = m + 1;
     }
+    // A plain label performed and not in the row is refused whatever else the row carries: a label with an argument
+    // covers no plain label (`Label::covers`).
+    var n = 0;
+    while n < label_count() {
+        if has(st, performed, n) && !has(st, declared, n) {
+            ast.fail(st, rules.r_effect_not_declared(), from, to);
+            return 0;
+        }
+        n = n + 1;
+    }
     if has(st, declared, 60) {
         if !both {
             return 0;
@@ -243,14 +253,6 @@ pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to
         }
         ast.fail(st, rules.r_effect_declared_not_performed(), from, to);
         return 0;
-    }
-    var n = 0;
-    while n < label_count() {
-        if has(st, performed, n) && !has(st, declared, n) {
-            ast.fail(st, rules.r_effect_not_declared(), from, to);
-            return 0;
-        }
-        n = n + 1;
     }
     if !both {
         return 0;

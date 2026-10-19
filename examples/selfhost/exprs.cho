@@ -295,7 +295,7 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] e
 }
 
 // `narrow(cap, "prefix")` (1), `open_read` (2), `open_write` (3), `open_append` (4), `open_new` (5),
-// `open_rw` (6) and `exec_spawn` (7): the builtins whose type or whose check is in the literal a capability
+// `open_rw` (6), `exec_spawn` (7), `exec_spawn_in` (10) and `exec_spawn_detached` (13): the builtins whose type or whose check is in the literal a capability
 // was narrowed to. In compile mode only.
 pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
@@ -476,6 +476,13 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
     } else {
         emit.push_arg(st, 7, false, 0, 0 - 1);
     }
+    // A child of `exec_spawn_detached` leads a session of its own, and is the act after which it can outlive the program.
+    var detached = 0;
+    if which == 13 {
+        detached = 1;
+        effects.perform_named(st, "exec_detached");
+    }
+    emit.push_arg(st, 1, true, detached, 0 - 1);
     let v = filecode.spawn_process(st);
     let spawned = types.make_prelude(st, tables.prelude_spawned());
     return ex.in_reg(spawned, filecode.answer_enum(st, spawned, 3, v));
@@ -1311,6 +1318,14 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
     if written == 4 {
         return ex.in_reg(result, emit.truncate_to_byte(st, last.known, last.value, last.reg));
     }
+    if written == 136 || written == 137 {
+        // `child_pid(&child)` and `child_release(child)`: a thread of the runtime reaps a child that is let go.
+        if written == 137 {
+            st[55] = st[55] | 64;
+            return ex.in_reg(result, filecode.let_go_child(st));
+        }
+        return ex.in_reg(result, filecode.pid_of_child(st));
+    }
     if written >= 111 {
         // An operation on an open file: the count, or minus the errno, made into the enum the signature says.
         let v = filecode.on_handle(st, written);
@@ -1697,6 +1712,9 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
         }
         if pass1.is_word(st, text, callee, "exec_spawn_in") {
             return capability_call(st, text, id, 10);
+        }
+        if pass1.is_word(st, text, callee, "exec_spawn_detached") && prims.builtin_at(st, text, callee, st[23]) >= 0 {
+            return capability_call(st, text, id, 13);
         }
         if pass1.is_word(st, text, callee, "fs_read") {
             return capability_call(st, text, id, 8);

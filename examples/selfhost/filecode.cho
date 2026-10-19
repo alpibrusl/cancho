@@ -165,6 +165,26 @@ pub fn wait_child[&s](st: &!s [int]) -> [] int {
     return n;
 }
 
+// `child_pid(&child)`: the pid, read out of the slot the reference points at.
+pub fn pid_of_child[&s](st: &!s [int]) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "call i64 @cancho_child_pid(ptr ");
+    arg_operand(st, 1, 7);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 1;
+    return n;
+}
+
+// `child_release(child)`: the child is let go, and a thread of the runtime reaps it; 0, or the errno of the thread.
+pub fn let_go_child[&s](st: &!s [int]) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "call i64 @cancho_child_let_go(i64 ");
+    arg_operand(st, 1, 1);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 1;
+    return n;
+}
+
 // `open_read` (0), `open_write` (1), `open_append` (2), `open_new` (3) and `open_rw` (4): a descriptor or minus the
 // errno. The arguments are the path (a pointer and a length) and the prefix (the same).
 pub fn open_path[&s](st: &!s [int], mode: int) -> [] int {
@@ -211,18 +231,19 @@ pub fn fs_once[&s](st: &!s [int], writing: bool) -> [] int {
 }
 
 // `exec_spawn`: the path, the prefix, the arguments and the environment (a pointer and a length each), then the
-// three streams as (tag, the child's end, the file) each: the pid or minus the errno.
+// three streams as (tag, the child's end, the file) each, the directory the child starts in (a pointer, or none) and
+// whether it leads a session of its own (`exec_spawn_detached`): the pid or minus the errno.
 pub fn spawn_process[&s](st: &!s [int]) -> [] int {
     let n = emit.start(st);
     emit.str(st, "call i64 @cancho_spawn(");
-    var k = 18;
+    var k = 19;
     while k >= 1 {
         let at = st[51] + 4 * (st[52] - k);
-        if k != 18 {
+        if k != 19 {
             emit.str(st, ", ");
         }
-        // pointers are the first seven of the first eight; the rest are whole numbers
-        if k == 18 || k == 16 || k == 14 || k == 12 || k == 1 {
+        // pointers are the first seven of the first eight and the directory; the rest are whole numbers
+        if k == 19 || k == 17 || k == 15 || k == 13 || k == 2 {
             emit.str(st, "ptr ");
             emit.operand(st, 7, false, 0, st[at + 3]);
         } else {
@@ -232,7 +253,7 @@ pub fn spawn_process[&s](st: &!s [int]) -> [] int {
         k = k - 1;
     }
     emit.str(st, ")\n");
-    st[52] = st[52] - 18;
+    st[52] = st[52] - 19;
     return n;
 }
 

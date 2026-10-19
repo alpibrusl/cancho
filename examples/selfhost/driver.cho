@@ -429,6 +429,10 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         emit.str(st, runtime.dirs_text(st[61] == 1));
         platform.print(st);
     }
+    if st[55] & 64 != 0 {
+        // A program that lets a child go has the thread that reaps it.
+        emit.str(st, runtime.process_text());
+    }
     if st[55] & 32 != 0 {
         // A program that opens a region has the stack of chunks its thread keeps for them.
         emit.str(st, runtime.region_text(st[61] == 1));

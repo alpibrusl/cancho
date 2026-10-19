@@ -563,6 +563,10 @@ fn render_runtime(dir: &std::path::Path) -> String {
         &std::fs::read_to_string(dir.join("runtime/tty_darwin.ll"))
             .expect("examples/selfhost/runtime/tty_darwin.ll"),
     );
+    let process = escape(
+        &std::fs::read_to_string(dir.join("runtime/process.ll"))
+            .expect("examples/selfhost/runtime/process.ll"),
+    );
     let region_linux =
         escape(&std::fs::read_to_string(dir.join("runtime/region_linux.ll")).unwrap_or_default());
     let region_darwin =
@@ -587,6 +591,8 @@ fn render_runtime(dir: &std::path::Path) -> String {
          // The serial-port verbs (`runtime/tty.c`).\n\
          pub fn tty_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{tty_darwin}\";\n    }}\n    \
          return \"{tty_linux}\";\n}}\n\n\
+         // The thread that reaps a released child (`runtime/process.ll`).\n\
+         pub fn process_text() -> [] &static [byte] {{\n    return \"{process}\";\n}}\n\n\
          // The per-thread stack of region chunks (`cancho-codegen-llvm`'s `region_cache`).\n\
          pub fn region_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{region_darwin}\";\n    }}\n    \
          return \"{region_linux}\";\n}}\n\n\
