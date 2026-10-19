@@ -118,7 +118,11 @@ fn run(exe: &Path, args: &[String], stdin: Option<&[u8]>) -> (Option<i32>, Vec<S
         .unwrap();
     let mut input = child.stdin.take().unwrap();
     if let Some(bytes) = stdin {
-        input.write_all(bytes).unwrap();
+        // A refusal of an option ends the program before it reads its input: a closed pipe is then the answer, not a failure of
+        // the test (it was one, under load).
+        if let Err(e) = input.write_all(bytes) {
+            assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "{e}");
+        }
     }
     drop(input);
     let out = child.wait_with_output().unwrap();
