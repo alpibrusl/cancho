@@ -854,12 +854,12 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     return ex.plain(types.make_named(st, item));
 }
 
-// A struct literal of a declaration with type parameters, in the code only: the parameters are variables the
-// values, or the type expected, solve; up to four fields, all given, in the order declared.
+// A struct literal of a declaration with type parameters: the parameters are variables the values, or the type
+// expected, solve; up to four fields, all given, in the order declared. Without code, only the values are judged.
 pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int, nparams: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
-    if !emit.on(st) || nparams > 2 {
+    if nparams > 2 {
         return ex.skip(st, from, to);
     }
     let whole = types.fresh_named(st, item, nparams);
@@ -894,7 +894,9 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
             if types.is_slice_ref(st, v.ty) {
                 return ex.skip(st, from, to);
             }
-            emit.push_arg(st, v.ty, v.known, v.value, v.reg);
+            if emit.on(st) {
+                emit.push_arg(st, v.ty, v.known, v.value, v.reg);
+            }
             count = count + 1;
         }
         init = ast.next(st, init);
@@ -908,6 +910,9 @@ pub fn struct_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: int
     }
     if !ast.ok(st) {
         return ex.nothing();
+    }
+    if !emit.on(st) {
+        return ex.plain(whole);
     }
     if !scope.struct_codable(st, whole) {
         return ex.skip(st, from, to);
@@ -1738,8 +1743,8 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
             return thread_call(st, text, id, false);
         }
     }
-    // The heap: only the code is written for it, in compile mode.
-    if emit.on(st) && qualifier < 0 {
+    // The heap: only the code is written for it, in compile mode; a `box_slice` is judged without it (a `res` fill is refused).
+    if (emit.on(st) || pass1.is_word(st, text, callee, "box_slice")) && qualifier < 0 {
         if pass1.is_word(st, text, callee, "box_slice") {
             return heap_call(st, text, id, 1);
         }

@@ -755,7 +755,7 @@ pub fn is_res_item[&s](st: &!s [int], ty: int) -> [] bool {
 // struct, an enum or a box.
 pub fn node_val[&s](st: &!s [int], node: int, ctx: int) -> [] int {
     let t = scalar(st, node);
-    if t == 0 && emit.on(st) {
+    if t == 0 && (emit.on(st) || ctx >= 0) {
         return types.node_type(st, node, ctx);
     }
     return t;
@@ -795,6 +795,10 @@ pub fn tuple_codable[&s](st: &!s [int], ty: int) -> [] bool {
 // Must a value of this type be ended by something, a `res` one? A box, a handle, an enum of the prelude that holds
 // one, a struct declared `res`, a tuple that has such a part.
 pub fn is_res_type[&s](st: &!s [int], ty: int) -> [] bool {
+    if types.is_param(st, ty) && !pass1.param_bounded(st, st[28], types.param_position(st, ty)) {
+        // A type parameter not bounded `val` is checked as though it were `res` (`docs/mode-polymorphism.md` section 3.1).
+        return true;
+    }
     if types.is_boxslice(st, ty) || types.is_box(st, ty) || types.is_handle(st, ty) || types.is_thread(st, ty) || is_res_item(st, ty) {
         return true;
     }
@@ -973,8 +977,9 @@ pub fn value_type[&s](st: &!s [int], ty: int) -> [] int {
     if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 && ast.get(st, ty, 7) == 0 && (tables.prelude_res(ast.get(st, ty, 9)) == 0 || emit.on(st)) {
         return types.make_prelude(st, ast.get(st, ty, 9));
     }
-    if emit.on(st) && ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 3 {
-        // A struct or an enum of the file, with its arguments if it has any.
+    if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 3 && (emit.on(st) || ast.get(st, ty, 7) > 0) {
+        // A struct or an enum of the file, with its arguments if it has any (without code, only one that has some: the rest
+        // are the plain ones below).
         return types.node_type(st, ty, 0 - 1);
     }
     if ast.get(st, ty, 8) == 3 && (struct_plain(st, ast.get(st, ty, 9)) || enum_plain(st, ast.get(st, ty, 9))) {
