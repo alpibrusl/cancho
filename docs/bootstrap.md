@@ -26,8 +26,8 @@ stage-by-stage record and the measurements, and the plan to finish is epic
   The projects `cancho-cache`, `cancho-oci`, `cancho-robot`, `cancho-gpu` and `cancho-hooks`
   build with it.
 - **It nearly refuses what the language refuses.** Of the 337 programs in `tests/reject/` that are not a
-  property of a target (marked `//~ TARGET`), it refuses 330 with the rule the Rust compiler gives; the 7 left
-  are listed in `reject_gaps.txt`: the check of a generic definition with its parameters unknown, a row in the
+  property of a target (marked `//~ TARGET`), it refuses 333 with the rule the Rust compiler gives; the 4 left
+  are listed in `reject_gaps.txt`: a row in the
   type of a function value, what an owned capability discharges by path, and a region settled by inference
   ([#512](https://github.com/alpibrusl/cancho/issues/512)). That is why the default still lets the Rust front end
   check first, and it stops when the list is empty (a test says so).
@@ -54,7 +54,7 @@ says so, at that construct.
 
 ## What is left
 
-Tracked in [#491](https://github.com/alpibrusl/cancho/issues/491): the last seven refusals; the other commands
+Tracked in [#491](https://github.com/alpibrusl/cancho/issues/491): the last four refusals; the other commands
 (`check`, `fmt`, ...); the Cranelift and WebAssembly backends; the runtime text that is still generated from the
 Rust crates; keeping golden outputs for when the Rust compiler is gone, and a seed that needs no Rust; compile time
 and whether Windows is a target.

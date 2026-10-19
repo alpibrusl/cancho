@@ -197,6 +197,11 @@ pub fn is_param[&s](st: &!s [int], ty: int) -> [] bool {
     return ty >= first_table() && slot(st, ty, 0) == param_kind();
 }
 
+// The position of a rigid type parameter in the declaration's list.
+pub fn param_position[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 1);
+}
+
 // Follow solved type variables until the head is not a solved variable.
 pub fn shallow[&s](st: &!s [int], ty: int) -> [] int {
     var current = ty;
@@ -418,7 +423,8 @@ pub fn node_type[&s](st: &!s [int], node: int, ctx: int) -> [] int {
         if st[63] > 0 {
             return env_arg(st, k);
         }
-        return 0;
+        // Rigid in the definition that declares it.
+        return make_param(st, k);
     }
     if kind == 3 {
         let item = ast.get(st, node, 9);

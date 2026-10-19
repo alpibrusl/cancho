@@ -1058,8 +1058,39 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
 // ------------------------------------------------------------ functions ---
 
 // The answer for the function `fn_item`: 0 `OK`, 1 a refusal (in `st[3..6]`), 2 `SKIP`. The
-// state's failure is cleared first and left as the answer.
+// state's failure is cleared first and left as the answer. A generic definition is checked once with its parameters
+// rigid, as the Rust compiler does, though code is written for it only at each type it is called at: when code is being
+// written, the definition is checked without writing any, and the answer is a refusal of that check or a `SKIP`. A
+// definition with a parameter not bounded `val` that passes is a `SKIP` too: a value of that type is `res`, and
+// linearity is followed only while code is written, so that it is consumed has not been checked.
 pub fn check_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] int {
+    let dp = ast.get(st, fn_item, 6);
+    if st[63] != 0 || pass1.count_params(st, dp, false) == 0 {
+        return check_item(st, text, fn_item);
+    }
+    let mode = st[40];
+    st[40] = 0;
+    let answer = check_item(st, text, fn_item);
+    st[40] = mode;
+    if answer == 1 {
+        return 1;
+    }
+    var unbounded = mode != 0;
+    var k = 0;
+    while k < pass1.count_params(st, dp, false) {
+        if !pass1.param_bounded(st, dp, k) {
+            unbounded = true;
+        }
+        k = k + 1;
+    }
+    if answer == 0 && !unbounded {
+        return 0;
+    }
+    ast.fail(st, rules.r_skip(), ast.nstart(st, fn_item), ast.nend(st, fn_item));
+    return 2;
+}
+
+fn check_item[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] int {
     st[2] = 0;
     st[21] = 0;
     st[32] = 0;
@@ -1281,15 +1312,6 @@ pub fn check_static[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int
 // Its row need not be empty here: a declared label is decoration and refused after the body.
 fn plain_function_type[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] bool {
     let dp = ast.get(st, fn_item, 6);
-    var k = 0;
-    while k < pass1.count_params(st, dp, false) {
-        // A value of a type parameter that is not `val` could be a resource: linearity is not
-        // checked yet.
-        if st[63] == 0 && !pass1.param_bounded(st, dp, k) {
-            return false;
-        }
-        k = k + 1;
-    }
     var param = ast.get(st, fn_item, 7);
     while param >= 0 {
         if scope.lower_type(st, text, ast.get(st, param, 5), dp, 0 - 1) == 0 {
