@@ -1491,8 +1491,8 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
         st[55] = st[55] | 16;
     } else if which >= 119 && which <= 121 {
         st[55] = st[55] | 8;
-    } else if which != 44 && which != 127 {
-        // (`child_kill`, 127, is in the runtime every module has.)
+    } else if which != 44 && which != 127 && which != 138 {
+        // (`child_kill`, 127, and `child_kill_group`, 138, are in the runtime every module has.)
         st[55] = st[55] | 1;
     }
     let holds_bound = netcode.holds_bound(which);

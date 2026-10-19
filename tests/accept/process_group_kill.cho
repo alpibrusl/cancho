@@ -1,0 +1,68 @@
+//~ STDOUT group 0
+//~ STDOUT ended by a signal
+//~ EXIT 0
+
+// `docs/processes.md` §4.12: start a worker in a group of its own, stop it and
+// everything it started with `child_kill_group`, and wait for it. The
+// program holds `Exec` narrowed to one program, `/bin/sleep`: no `/bin/kill`
+// is needed, and the report says `exec("/bin/sleep")`, `exec_detached` and
+// `child_signal`, and nothing else.
+
+edition 9;
+
+fn stop[&c, &i](child: &c Child, io: &!i Io) -> [child_signal, io_write] int {
+    let answer = child_kill_group(child, 256);
+    if answer == 0 {
+        write_bytes(io, "group 0\n");
+    }
+    return answer;
+}
+
+fn run[&x, &i](exec: &x Exec("/bin/sleep"), io: &!i Io) -> [exec("/bin/sleep"), exec_detached, child_signal, io_write] int {
+    match exec_spawn_detached(exec, "/bin/sleep", "30\0", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            var answer = 1;
+            borrow child as &c in {
+                answer = stop(c, io);
+            }
+            match child_wait(child) {
+                Exited::Signaled(s) => {
+                    write_bytes(io, "ended by a signal\n");
+                    return answer;
+                }
+                Exited::Code(n) => {
+                    return 1;
+                }
+                Exited::Failed(e) => {
+                    return 1;
+                }
+            }
+        }
+        Spawned::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    let sleep = narrow(exec, "/bin/sleep");
+    var console = io;
+    var status = 0;
+    borrow sleep as &x in {
+        borrow mut console as &!i in {
+            status = run(x, i);
+        }
+    }
+    release(sleep);
+    release(console);
+    return status;
+}

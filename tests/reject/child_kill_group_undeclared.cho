@@ -1,0 +1,25 @@
+//~ ERROR performs `child_signal`, which its row
+//~ RULE effect-not-declared
+
+// `docs/processes.md` §4.12: a group signal is a signal on a child, the label
+// `child_kill` has, and a function that sends one has to say it in its row.
+
+edition 9;
+fn stop[&c](child: &c Child) -> [] int {
+    return child_kill_group(child, 256);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    release(exec);
+    return 0;
+}

@@ -114,9 +114,9 @@ W0.3 took the four `__multi3` link errors to passes.
   refuses at the function that reaches the builtin, once per (function,
   family), naming the first builtin found:
   `` `main` uses `spawn`, and threads do not exist on `wasm32-wasip1` ``.
-  Five families (seven since W0.6, below), from `wasi_gap`, an exhaustive `match` over all 162 builtins
-  (70 refused, 92 supported; a new builtin is a compile error until someone
-  says which side it is on): **threads** (`spawn`, `join`, `fork_*`),
+  Five families (seven since W0.6, below), from `wasi_gap`, an exhaustive `match` over all 166 builtins
+  (74 refused, 92 supported; a new builtin is a compile error until someone
+  says which side it is on) *(corrected, #533: 162 and 70 were stale since #524's three process builtins, 165 and 73; `child_kill_group`, `processes.md` §4.12, refused as the other process builtins are, makes 166 and 74, and `os_tables.rs` pins both)*: **threads** (`spawn`, `join`, `fork_*`),
   **sockets** (`connect`, `bind`, `listen`, `tcp_*`, `conn_*`), **the poller**
   (`poller_*`; `poll_oneoff` is the eventual mapping), **signals**, and
   **processes and pipes**. Reject fixtures can now name a target
