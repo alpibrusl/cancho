@@ -1108,6 +1108,7 @@ fn check_item[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] int {
     let from = ast.nstart(st, fn_item);
     let to = ast.nend(st, fn_item);
     st[28] = ast.get(st, fn_item, 6);
+    st[64] = fn_item;
     types.reset(st);
     if st[63] > 0 {
         instances.load_env(st);
@@ -1249,6 +1250,7 @@ pub fn check_static[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int
     st[22] = ast.get(st, item, 13);
     st[23] = ast.get(st, item, 14);
     st[28] = 0 - 1;
+    st[64] = 0 - 1;
     let from = ast.nstart(st, item);
     let to = ast.nend(st, item);
     types.reset(st);
