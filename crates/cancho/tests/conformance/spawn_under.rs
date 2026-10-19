@@ -178,11 +178,10 @@ fn a_name_that_is_not_beneath_the_directory_traps() {
         }
         // The longest name the spawn copies is 4095 bytes: at that length it reaches the kernel, which answers a value.
         let longest = "a".repeat(4095);
-        assert_eq!(
-            run(&exe, &dir, "u", &longest).as_deref(),
-            Some("failed errno 36"),
-            "`{config}`"
-        );
+        // ENAMETOOLONG is 36 on Linux and 63 on macOS.
+        let too_long =
+            if cfg!(target_os = "macos") { "failed errno 63" } else { "failed errno 36" };
+        assert_eq!(run(&exe, &dir, "u", &longest).as_deref(), Some(too_long), "`{config}`");
     }
 }
 

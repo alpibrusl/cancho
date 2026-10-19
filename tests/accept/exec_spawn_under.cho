@@ -54,7 +54,7 @@ fn main(world: World) -> [] int {
                 borrow workers as &w in {
                     borrow exec as &x in {
                         borrow mut console as &!i in {
-                            start(x, w, i, "worker", "true");
+                            start(x, w, i, "worker", "echo");
                             start(x, w, i, "worker missing", "no-such-worker");
                         }
                     }
