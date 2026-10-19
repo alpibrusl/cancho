@@ -59,7 +59,12 @@ fn has[&s](st: &!s [int], mask: int, n: int) -> [] bool {
 // The labels of the row of function `fn_item`: the mask of those a builtin performs, plus the
 // flags for an argument and for an unknown name. `[` is the token the item keeps for it.
 pub fn row_mask[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] int {
-    var p = ast.get(st, fn_item, 9) + 1;
+    return row_mask_at(st, text, ast.get(st, fn_item, 9));
+}
+
+// The same for the row whose `[` is the token `open`: a function's, or the one written in a function type.
+pub fn row_mask_at[&s, &x](st: &!s [int], text: &x [byte], open: int) -> [] int {
+    var p = open + 1;
     var mask = 0;
     while !pass1.is_code(st, p, lc.Tok::RBracket) {
         var found = 0 - 1;
@@ -269,6 +274,25 @@ pub fn perform_call[&s, &x](st: &!s [int], text: &x [byte], callee: int) -> [] i
     perform_row(st, row_mask(st, text, callee));
     if outside_owned(st, text, st[64], callee) {
         ast.fail(st, rules.r_effect_not_declared(), ast.nstart(st, st[64]), ast.nend(st, st[64]));
+    }
+    return 0;
+}
+
+// A call through the binding `local`, which is a parameter of the function being checked written with a function type
+// (`docs/function-values.md` §4.2): the row of that type travels with the value, and calling it performs exactly that row.
+// What a function value held any other way does stays untracked.
+pub fn perform_pointer[&s, &x](st: &!s [int], text: &x [byte], local: int) -> [] int {
+    mark_untracked(st);
+    if st[64] < 0 {
+        return 0;
+    }
+    var param = ast.get(st, st[64], 7);
+    while param >= 0 {
+        let ty = ast.get(st, param, 5);
+        if ast.get(st, param, 4) == st[st[20] + 5 * local] && ast.is_kind(st, ty, kinds.NK::TFn) {
+            perform_row(st, row_mask_at(st, text, ast.get(st, ty, 4)));
+        }
+        param = ast.next(st, param);
     }
     return 0;
 }
