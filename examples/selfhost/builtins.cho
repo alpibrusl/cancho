@@ -7,7 +7,7 @@ module selfhost.builtins;
 // `UPDATE_SELFHOST_TABLES=1 cargo test -p cancho-ir selfhost_tables` rewrites it.
 
 static builtin_region_counts: [int] {
-    let t = alloc_slice[static](165, 0);
+    let t = alloc_slice[static](166, 0);
     t[0] = 1;
     t[1] = 2;
     t[2] = 2;
@@ -83,17 +83,18 @@ static builtin_region_counts: [int] {
     t[143] = 2;
     t[144] = 1;
     t[149] = 1;
-    t[150] = 2;
+    t[150] = 1;
     t[151] = 2;
-    t[152] = 1;
-    t[155] = 2;
+    t[152] = 2;
+    t[153] = 1;
     t[156] = 2;
-    t[164] = 1;
+    t[157] = 2;
+    t[165] = 1;
     return t;
 }
 
 static builtin_effect_stream: [int] {
-    let t = alloc_slice[static](60, 0);
+    let t = alloc_slice[static](61, 0);
     t[2] = 2;
     t[4] = 4;
     t[5] = 4;
@@ -146,16 +147,17 @@ static builtin_effect_stream: [int] {
     t[52] = 34;
     t[53] = 34;
     t[54] = 38;
-    t[55] = 40;
-    t[56] = 42;
-    t[57] = 16;
+    t[55] = 38;
+    t[56] = 40;
+    t[57] = 42;
     t[58] = 16;
-    t[59] = 44;
+    t[59] = 16;
+    t[60] = 44;
     return t;
 }
 
 static builtin_effect_starts: [int] {
-    let t = alloc_slice[static](165, 0);
+    let t = alloc_slice[static](166, 0);
     t[1] = 1;
     t[2] = 2;
     t[3] = 3;
@@ -308,23 +310,24 @@ static builtin_effect_starts: [int] {
     t[150] = 55;
     t[151] = 56;
     t[152] = 57;
-    t[153] = 57;
-    t[154] = 57;
-    t[155] = 57;
+    t[153] = 58;
+    t[154] = 58;
+    t[155] = 58;
     t[156] = 58;
     t[157] = 59;
-    t[158] = 59;
-    t[159] = 59;
-    t[160] = 59;
-    t[161] = 59;
-    t[162] = 59;
-    t[163] = 59;
+    t[158] = 60;
+    t[159] = 60;
+    t[160] = 60;
+    t[161] = 60;
+    t[162] = 60;
+    t[163] = 60;
     t[164] = 60;
+    t[165] = 61;
     return t;
 }
 
 static builtin_effect_counts: [int] {
-    let t = alloc_slice[static](165, 0);
+    let t = alloc_slice[static](166, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -382,9 +385,10 @@ static builtin_effect_counts: [int] {
     t[149] = 1;
     t[150] = 1;
     t[151] = 1;
-    t[155] = 1;
+    t[152] = 1;
     t[156] = 1;
-    t[163] = 1;
+    t[157] = 1;
+    t[164] = 1;
     return t;
 }
 

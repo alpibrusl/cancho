@@ -154,6 +154,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::ChildPid
         | B::ChildEndClose
         | B::ChildKill
+        | B::ChildKillGroup
         | B::ChildWait
         | B::PipeClose
         | B::PipeNonblocking

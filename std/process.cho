@@ -1,4 +1,4 @@
-edition 7;
+edition 9;
 module std.process;
 
 import std.buffer;
@@ -238,7 +238,10 @@ fn failed() -> [] int {
 // read, keeping at most `most` bytes of the output, for at most `timeout`
 // milliseconds by `clock` (§7.1). The child is reaped on every path: killed
 // first when the deadline passes, when it writes more than `most`, or when
-// it cannot be watched.
+// it cannot be watched. When the child was started with
+// `exec_spawn_detached` the kill is to its whole process group, so what it
+// started dies with it (§4.12); a child that exited by itself is not killed,
+// and what it left behind is left.
 //
 // The input and the output are on one poller from the start, never written
 // all and then read: a channel holds 8,192 bytes on macOS and 180,224 on
@@ -494,6 +497,11 @@ fn gather[&h, &c, &i](heap: &!h Heap, clock: &c Clock, child: Child, to_child: P
     shut(errors);
     if state != exited() {
         borrow child as &ch in {
+            // The group first (§4.12): a worker started with
+            // `exec_spawn_detached` leads one, and what it started is in it.
+            // A child that leads none answers `ESRCH` and nothing is sent, so
+            // this is for a plain child exactly what it was.
+            child_kill_group(ch, 256);
             child_kill(ch, 256);
         }
     }

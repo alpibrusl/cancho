@@ -481,17 +481,27 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         bit
     }
 
-    /// `child_kill(&Child, bit)`: one of the sendable signals by its bit, or
+    /// `child_kill(&Child, bit)`, and with `group` `child_kill_group` (§4.12): one of the sendable signals by its bit, or
     /// `EINVAL` with no call. `0`, or the `errno`. The `Child` is unreaped, so
     /// its pid cannot have been reused (§4.7).
-    pub(crate) fn child_kill(&mut self, args: &[Value]) -> Vec<Value> {
-        let pid = self.handle_fd(args[0]);
+    pub(crate) fn child_kill(&mut self, args: &[Value], group: bool) -> Vec<Value> {
+        let mut pid = self.handle_fd(args[0]);
         let bit = args[1];
         let mut native = self.builder.ins().iconst(types::I64, 0);
         for (wanted, number) in sendable_signals(self.is_darwin()) {
             let same = self.builder.ins().icmp_imm(IntCC::Equal, bit, wanted);
             let this = self.builder.ins().iconst(types::I64, number);
             native = self.builder.ins().select(same, this, native);
+        }
+        if group {
+            // `kill(-pid)` is the group `pid` leads (§4.12). A pid of 1 or less
+            // would make it `kill(-1)`, every process of the user, or `kill(0)`,
+            // the caller's own group: neither is ever a child's pid, and neither
+            // is sent. It is `EINVAL`, with no call, like a signal that is none.
+            let sane = self.builder.ins().icmp_imm(IntCC::SignedGreaterThan, pid, 1);
+            let nothing = self.builder.ins().iconst(types::I64, 0);
+            native = self.builder.ins().select(sane, native, nothing);
+            pid = self.builder.ins().ineg(pid);
         }
         let send = self.builder.create_block();
         let merge = self.builder.create_block();
