@@ -5,6 +5,8 @@ module selfhost.filecode;
 // prefix. The arguments are on the argument stack; each call answers one whole number, the count or minus the errno.
 
 import selfhost.emit;
+import selfhost.pass1;
+import selfhost.prims;
 
 // `file_pwrite(file, at, bytes)` (111), `file_pread(file, at, into)` (112), `file_sync(file)` (113),
 // `file_truncate(file, len)` (114), `file_size(file)` (115) and `file_lock(file)` (116). The file is borrowed, so the
@@ -333,4 +335,71 @@ pub fn answer_enum[&s](st: &!s [int], ty: int, kind: int, v: int) -> [] int {
         acc = emit.insert_at(st, ty, acc, 2, 1, false, 0, flipped);
     }
     return acc;
+}
+
+// Which builtin of `exprs.capability_call` the call named `callee` is, or 0: 1 `narrow`, 2 to 6 `open_read`, `open_write`,
+// `open_append`, `open_new` and `open_rw`, 7 `exec_spawn`, 8 `fs_read`, 9 `fs_write`, 10 `exec_spawn_in`, 11 `fs_remove`,
+// 12 `fs_rename`, 13 `exec_spawn_detached`, 14 `exec_covers` and 15 `fs_covers`. The last three are edition 9 and a program
+// of an earlier edition may have a function of the name, so they are the builtin only where the edition names it.
+pub fn capability_which[&s, &x](st: &!s [int], text: &x [byte], callee: int) -> [] int {
+    var which = 0;
+    if pass1.is_word(st, text, callee, "narrow") {
+        which = 1;
+    } else if pass1.is_word(st, text, callee, "open_read") {
+        which = 2;
+    } else if pass1.is_word(st, text, callee, "open_write") {
+        which = 3;
+    } else if pass1.is_word(st, text, callee, "open_append") {
+        which = 4;
+    } else if pass1.is_word(st, text, callee, "open_new") {
+        which = 5;
+    } else if pass1.is_word(st, text, callee, "open_rw") {
+        which = 6;
+    } else if pass1.is_word(st, text, callee, "exec_spawn") {
+        which = 7;
+    } else if pass1.is_word(st, text, callee, "fs_read") {
+        which = 8;
+    } else if pass1.is_word(st, text, callee, "fs_write") {
+        which = 9;
+    } else if pass1.is_word(st, text, callee, "exec_spawn_in") {
+        which = 10;
+    } else if pass1.is_word(st, text, callee, "fs_remove") {
+        which = 11;
+    } else if pass1.is_word(st, text, callee, "fs_rename") {
+        which = 12;
+    } else if pass1.is_word(st, text, callee, "exec_spawn_detached") {
+        which = 13;
+    } else if pass1.is_word(st, text, callee, "exec_covers") {
+        which = 14;
+    } else if pass1.is_word(st, text, callee, "fs_covers") {
+        which = 15;
+    }
+    if which >= 13 && prims.builtin_at(st, text, callee, st[23]) < 0 {
+        return 0;
+    }
+    return which;
+}
+
+// The capability `exec_covers` (14) or `fs_covers` (15) takes: the name of its prelude type.
+pub fn covered_capability(which: int) -> [] &static [byte] {
+    if which == 14 {
+        return "Exec";
+    }
+    return "Fs";
+}
+
+// `exec_covers` and `fs_covers`: whether the path (a pointer and a length) is under the prefix (the same), an `i1`.
+pub fn path_covers[&s](st: &!s [int]) -> [] int {
+    let n = emit.start(st);
+    emit.str(st, "call i1 @cancho_path_covers(ptr ");
+    arg_operand(st, 4, 7);
+    emit.str(st, ", i64 ");
+    arg_operand(st, 3, 1);
+    emit.str(st, ", ptr ");
+    arg_operand(st, 2, 7);
+    emit.str(st, ", i64 ");
+    arg_operand(st, 1, 1);
+    emit.str(st, ")\n");
+    st[52] = st[52] - 4;
+    return n;
 }

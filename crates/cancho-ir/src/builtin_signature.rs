@@ -868,6 +868,8 @@ impl Builtin {
             Builtin::ExecSpawn | Builtin::ExecSpawnIn | Builtin::ExecSpawnDetached => {
                 (Vec::new(), Type::Unit)
             }
+            // Checked at the call site too (§4.13): the bound is in the capability's type.
+            Builtin::ExecCovers | Builtin::FsCovers => (Vec::new(), Type::Unit),
             // By value: waiting ends the child.
             Builtin::ChildWait => (vec![named(PRELUDE_CHILD)], named(PRELUDE_EXITED)),
             // §4.11: letting go ends the handle, as waiting does.

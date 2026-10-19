@@ -1,0 +1,25 @@
+//~ ERROR is not a borrowed `Exec`
+//~ RULE capability-misused
+
+// `docs/processes.md` §4.13: `exec_covers` asks about the bound of an `Exec`; an `Fs` has a bound too, and asking
+// it about programs would be answering with the wrong rule's bound, so it is `fs_covers`'.
+
+edition 9;
+fn allowed[&c](fs: &c Fs("/bin")) -> [] bool {
+    return exec_covers(fs, "/bin/true");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    release(exec);
+    return 0;
+}

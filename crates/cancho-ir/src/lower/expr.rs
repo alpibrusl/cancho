@@ -847,6 +847,10 @@ impl<'a> FnLowering<'a> {
                 if resolved == Resolved::Builtin(Builtin::SignalsWatch) {
                     return self.signals_watch(args, span);
                 }
+                if let Resolved::Builtin(op @ (Builtin::ExecCovers | Builtin::FsCovers)) = resolved
+                {
+                    return self.path_covers(op, args, span);
+                }
                 if resolved == Resolved::Builtin(Builtin::ExecSpawn) {
                     return self.exec_spawn(args, span, false, false);
                 }

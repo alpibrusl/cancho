@@ -90,6 +90,7 @@ mod modules;
 mod narrow_many;
 mod net;
 mod p256;
+mod path_covers;
 mod ports;
 mod process_group;
 mod process_release;

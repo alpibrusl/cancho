@@ -1,0 +1,23 @@
+//~ ERROR `fs_covers` is not a function in this program
+//~ RULE not-a-function
+
+// `docs/processes.md` §4.13: `fs_covers` is edition 9 as well, so an edition-5 file that calls (or declares) a
+// function by that name is unchanged.
+
+edition 5;
+fn allowed[&c](fs: &c Fs("/tmp")) -> [] bool {
+    return fs_covers(fs, "/tmp/x");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    return 0;
+}

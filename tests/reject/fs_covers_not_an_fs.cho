@@ -1,0 +1,24 @@
+//~ ERROR is not a borrowed `Fs`
+//~ RULE capability-misused
+
+// `docs/processes.md` §4.13: the converse of `exec_covers_not_an_exec`.
+
+edition 9;
+fn allowed[&x](exec: &x Exec("/bin")) -> [] bool {
+    return fs_covers(exec, "/bin/true");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    release(exec);
+    return 0;
+}

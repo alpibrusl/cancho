@@ -345,6 +345,22 @@ can be `bounded: true`.
 
 ---
 
+### 3.6 A path outside the bound traps; ask first with `exec_covers` and `fs_covers`
+
+`exec_spawn` under `Exec("/opt/x")` and every `Fs("/data")` operation **trap** (the process ends with `SIGILL`, no
+value) when the path is outside the bound, has a `..` in it, or is 4096 bytes or more. That is the backstop. A
+program that has to turn a denied path into a recorded refusal and keep running (a supervisor, a policy layer) asks
+first, with the capability it is about to use (edition 9):
+
+* `exec_covers(exec, path)` and `fs_covers(fs, path)` answer a `bool`: `true` exactly when the operation would not
+  trap, by the same check the operation runs, so there is no second copy of the rule to keep in step. They have no
+  row: asking touches nothing, and `cancho authority` shows the same report with or without the question.
+* `true` is not "it exists" or "it is allowed to run": `/opt/x/missing` is covered and `exec_spawn` answers
+  `Spawned::Failed(ENOENT)`. The check is on the text of the path (no symlinks are followed, nothing is
+  normalised), and `true..x` is outside because the rule is two dots in a row, not a path component.
+* Do not write your own `starts_with` over the bound. It will agree with the runtime until the first `/opt/xevil`,
+  `a/../b` or 4096-byte path. `docs/processes.md` §4.13 has the rule.
+
 ## 4. A reference may not outlive its region
 
 11 fixtures. A region is an arena, a `borrow` block, or a caller's

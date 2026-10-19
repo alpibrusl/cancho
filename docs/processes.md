@@ -14,6 +14,7 @@
 > | 5 | `exec_spawn_in` (§4.10), `std.process.channels_with_errors` and **`capture_both`** (§7.2) | `builtin.rs`, `std/process.cho`; `processes.rs`, `capture.rs` | yes |
 > | 6 (edition 9) | `exec_spawn_detached`, `child_pid`, `child_release` and the label `exec_detached` (§4.11, #524) | `builtin.rs`; `process_release.rs` | yes |
 > | 6 (edition 9) | `child_kill_group` (§4.12, #533), and `capture` using it | `builtin.rs`, `std/process.cho`; `process_group.rs` | yes |
+> | 6 (edition 9) | `exec_covers` and `fs_covers` (§4.13, #535): is this path inside the bound, by the rule the operations trap on | `builtin.rs`, `memory.rs`/`fs.rs` of both backends; `path_covers.rs` | yes |
 >
 > What is still only designed or open is §9, and only that. *Corrected (#536):* this line used to say "slices 0 to 2
 > built; slices 3 and 4 designed, not built", which was true when slice 2 merged and was never revised when `capture`
@@ -142,6 +143,7 @@ earlier file changes.
 | `child_pid` (edition 9) | `(&Child) -> int` | none |
 | `child_kill` | `(&Child, signal: int) -> int` | `child_signal` |
 | `child_kill_group` (edition 9) | `(&Child, signal: int) -> int` | `child_signal`; `child_kill`'s signals to the process group the child leads (§4.12) |
+| `exec_covers` (edition 9) | `(&Exec("p"), path: &[byte]) -> bool` | none; whether `exec_spawn` would take `path` or trap (§4.13). `fs_covers` is the same question of an `&Fs("p")` and the file operations |
 | `pipe_read` | `(&!Pipe, &![byte]) -> Received` | `pipe_read` |
 | `pipe_write` | `(&!Pipe, &[byte]) -> Sent` | `pipe_write` |
 | `pipe_nonblocking` | `(&!Pipe) -> int` | none |
@@ -231,7 +233,8 @@ deadline, and the reap.
   contains everything. A path containing a `..` component is refused, as
   `Fs` refuses it (§4.1 there). Both are **traps**, for `filesystem.md`
   §4's reason: a path outside the bound is a program doing what its type
-  said it would not, not an outcome to handle.
+  said it would not, not an outcome to handle. *(Added, #535: a program that wants the answer
+  as a value asks `exec_covers` first, §4.13; the trap stays as the backstop and its measured behaviour is in §4.13.)*
 * A missing program, one that is not executable, or one the kernel cannot
   load is an outcome: `Spawned::Failed(errno)`, with the parent's
   `ChildEnd`s and `File`s closed by the builtin, so a failed spawn leaks
@@ -767,6 +770,116 @@ regenerated, so it is not in `unported_builtins.txt`. WebAssembly refuses it as 
 
 **What this does not close** is in §9: after a supervisor *crashes* there is no `Child` to hold, and the group id in
 its journal is a number again.
+
+### 4.13 Asking first: `exec_covers` and `fs_covers`
+
+[#535](https://github.com/alpibrusl/cancho/issues/535), found by the cancho-forge spike (`spike/RESULTS.md` S3, gap G2).
+§4.1 makes a spawn outside the bound a trap, by design. The issue does not dispute the trap; it says what the trap
+costs a **supervisor**: a runtime that enforces policy for agents must turn a denied action into a recorded refusal and
+go on, and a bug in its policy layer that lets a bad path through ends the process with no journal entry. cancho-forge
+therefore checks the path itself before it spawns, and the capability is only the backstop: *"That duplicates the
+bound's logic in program code, which the capability model was meant to avoid."* The issue asks for either a helper that
+answers "is this path inside my bound?" with the rule the runtime uses, so the two cannot drift, or a spawn that returns
+the refusal as a value.
+
+**Measured first** (this checkout, Linux x86-64; a program that spawns, or opens, the path in `argv[2]` under
+`Exec("/usr/bin")` and `Fs("/usr/bin")`; Cranelift, LLVM through the Rust compiler, and LLVM through the compiler in
+cancho, which all print the same except where the last paragraph of this section says):
+
+| operation, path | what happened |
+|---|---|
+| `exec_spawn` `/usr/bin/true` | `Spawned::Ok`, exit 0 |
+| `exec_spawn` `/usr/bin`, `/usr/bin/` (the bound itself) | `Spawned::Failed(13)` (`EACCES`): inside, so a value |
+| `exec_spawn` `/usr/bin/nonexist` | `Spawned::Failed(2)`: inside, so a value |
+| `exec_spawn` `/usr/bin/../../bin/true` (`..`) | **killed, `SIGILL`, exit 132** |
+| `exec_spawn` `/usr/bin2/true` (a sibling that shares the bytes) | **`SIGILL`** |
+| `exec_spawn` `/bin/true`, `true`, `/usr/bi` | **`SIGILL`** |
+| `exec_spawn` `/usr/bin/true..x` (`..` inside a name) | **`SIGILL`**: the rule is on the byte pair, not the component |
+| `open_read` `/usr/bin/true`, `/usr/bin` | opened |
+| `open_read` `/usr/bin/../etc/passwd`, `/etc/passwd`, `/usr/bin2` | **`SIGILL`** |
+
+So the issue's two lines reproduce for `Fs` as well as `Exec`, on both Rust code generators and on the compiler in
+cancho. The same rule is written in **four places**: `checked_path` in `cancho-codegen` and in `cancho-codegen-llvm`
+(about 90 lines each, mirrored by hand), `cancho_checked_path` in the compiler in cancho's `runtime.ll`, and
+`extends_path` in `cancho-ir`, which `narrow` and the effect rows use at compile time. A fifth, in a program, is what
+the issue is asking not to need.
+
+**What was chosen: one predicate per capability, over the same emitted check.**
+
+```
+exec_covers(&Exec("p"), path: &[byte]) -> bool      // [] -- edition 9
+fs_covers(&Fs("p"), path: &[byte]) -> bool          // [] -- edition 9
+```
+
+`true` exactly when `exec_spawn` (`open_read`, `fs_remove`, ...) under that capability would **not** trap on `path`. It
+touches nothing, so it has **no row**: a function that asks has the row `[]`, and a program that asks before it spawns
+has the authority report of one that does not (`tests/accept/path_covers_asks_first.cho`: `io_write` and nothing
+else). The bound is read off the capability's type at the call, as the operations read it, so it cannot be asked about
+a different bound than the one that will be enforced.
+
+*The rule* is `filesystem.md` §1.1 and §4.1 with its corners written down, because the predicate has to say them. A
+path is **outside** when any of these holds, and covered otherwise:
+
+1. it is 4096 bytes or more (the operations copy it to a 4096-byte buffer with its NUL and refuse a longer path rather
+   than cut it);
+2. it is shorter than the bound;
+3. it has `..` anywhere (two dots in a row, so `true..x` as well, which is stricter than a component rule);
+4. within the bound's length its bytes differ from the bound's;
+5. the bound is not empty and does not end in `/`, the path is longer than the bound, and the next byte is neither `/`
+   nor NUL (so `/bin2` is not under `/bin`; a NUL ends the C string the kernel sees at the bound, so it is the bound).
+
+The empty bound contains everything (1 and 3 still apply). A relative path is outside every bound but `""`. Nothing is
+normalised and no file is looked at: a symlink inside the bound that points out of it is inside (`filesystem.md` §2.1
+says what `Fs` is not).
+
+**How the two cannot drift.** There is one emitter. In each code generator the loop of `checked_path` became
+`path_escapes(prefix, path, copy_to)`, which builds the flag "outside" from the five conditions; `checked_path` is
+`path_escapes`, a trap on the flag, and the terminating NUL; `exec_covers` and `fs_covers` are `path_escapes` and the
+negation. The compiler in cancho does the same in `runtime.ll`: `cancho_path_covers` is the rule, `cancho_checked_path`
+calls it and traps on `false`, and the new call is `cancho_path_covers` as it stands. A change to the rule is a change
+to the one function the trap and the answer both use. The remaining copy is `extends_path`, which decides at compile
+time for literals (it has no `..`, length or NUL case, which a literal's rows and `narrow` do not need); `path_covers.rs`
+holds it to the same table of paths as the emitted check, for every path without those three.
+
+**Chosen over, and why:**
+
+| Alternative | Why not |
+|---|---|
+| **(2) A checked spawn**, `exec_spawn_checked(...) -> Spawned` with a `Spawned::Refused` arm or `Failed(EACCES)` | Smaller for the supervisor in lines, larger in the language. `Spawned::Refused` would make every `match` on a `Spawned` in every edition non-exhaustive, so it is a new type or a new edition for the enum, and `Failed(errno)` would confuse "policy said no" with the kernel's own `EACCES`, which §4.1 already returns for the bound itself (measured above). A new seven-argument builtin duplicates `exec_spawn`, `exec_spawn_in` and `exec_spawn_detached` (three), and **it answers only spawn**: `Fs` has `open_*` (five), `fs_read`, `fs_write`, `fs_rename`, `fs_remove`, `tty_open`, and the supervisor of the issue reads and writes under `Fs` bounds as much as it spawns. A predicate closes every one of them with two names. And the refusal must be a *value the supervisor can journal with the reason*, which the predicate gives before anything is attempted |
+| **(3) Both** | The predicate is the whole need, and (2) can still be added later by whoever has an asker: nothing here makes it harder, and the bar is two askers (`CONTRIBUTING.md`). One asker, a supervisor, has asked, and it asked for either |
+| A predicate over two *values*, `path_within(prefix: &[byte], path: &[byte])` | It is the second copy of the rule that the issue wants gone, and the prefix would have to be a string the program wrote, which can differ from the capability's bound. The bound is read from the capability so the question and the enforcement share their prefix |
+| Changing `exec_spawn` to return `Failed` instead of trapping | Changes the meaning of every unchanged file (`editions.md` §5): a program relying on the trap as its backstop would continue with a value. §4.1's reasoning, that a path outside the bound is a program doing what its type said it would not, stands for a program that did not ask |
+| One builtin for both capabilities | The parameter would be "a capability with a prefix", which the type system has no name for; the two builtins share their lowering (`Expr::PathCovers`) and their emitter |
+
+**Edition 9, and the targets.** Both names are ones a program may declare for itself (cancho-forge does), and edition
+7 is closed (`editions.md` §6.4), so they are absent before edition 9 (`tests/reject/exec_covers_is_edition_nine.cho`,
+`fs_covers_is_edition_nine.cho`) and the identity of no earlier file moves. `exec_covers` is refused on WebAssembly with
+the other `Exec` builtins (`tests/reject/exec_covers_on_wasi.cho`, `unsupported-on-target`); `fs_covers` is not, since
+`Fs` is on that target and the question is the one `open_read` is asked (`os_tables.rs`: 168 builtins, 75 refused, 93
+supported; not run under `wasmtime`, which this checkout does not have). Rules: none new. A non-`Exec` first argument
+is `capability-misused` (`exec_covers_not_an_exec.cho`, `fs_covers_not_an_fs.cho`), a wrong count `arity-mismatch`
+(`exec_covers_arity.cho`).
+
+**The compiler in cancho.** `exec_covers` and `fs_covers` are calls 14 and 15 of `capability_call` in
+`examples/selfhost/exprs.cho`; the tables are regenerated, `runtime.ll` and `runtime.cho` carry
+`cancho_path_covers`, and nothing is added to `unported_builtins.txt`, `reject_gaps.txt` or the known differences. To
+make room (`exprs.cho` was 1,998 lines against a ceiling of 2,000) the dozen `is_word` ifs that chose the call moved
+to `filecode.capability_which`, unchanged apart from being a function, and `atoms.push_prefix`, which marks "performed
+a label with an argument", is split from `atoms.push_bound`, which only pushes the bound: that is what keeps the
+selfhost row of a program that asks empty. **A finding, and a correction in place:** asking the question of the
+compiler in cancho found that its `cancho_checked_path` *trapped* on a NUL right after the bound (`"/bin\0etc"` under
+`Exec("/bin")`) where both Rust code generators have always taken it as the bound and returned
+`Spawned::Failed(13)` (measured, the frozen compiler of this session: `SIGILL` through `--compiler auto`, `failed
+errno 13` through the other two). It now takes it, as the oracle does (`a_nul_after_the_bound`). It is a refusal
+becoming an acceptance, in a compiler that is not yet what builds a program by default alone, and for a path the
+operation would have cut at the NUL anyway.
+
+**What this does not do.** It does not remove the trap: a program that does not ask, or asks about another path than
+the one it spawns, still traps, which is the point of a backstop. It answers the textual rule only; a path that is
+covered can still fail (`Failed(ENOENT)`) or name a symlink that leaves the bound. It covers `Exec` and `Fs`; a
+`Net("host:port")` bound traps the same way (`connect`) and has no asker. The `Dir` operations take a name relative to
+a handle and check that, not a bound. macOS is unmeasured: the rule is bytes, the code is shared by both targets, and
+the CI run on darwin-aarch64 is what checks it.
 
 ---
 
@@ -1338,6 +1451,35 @@ when it is gone or `Z`. macOS: the code is the same call with the pid negated, a
   74 now, corrected there in place. `--backend llvm` builds through the compiler in cancho by default, so a test run
   without `CANCHO_COMPILER=rust` never exercises the Rust LLVM backend's code: the third mutant needed the variable.
 
+### Slice 6, §4.13: asking first
+
+What #535 added, measured on Linux 6.18 x86-64. macOS and WebAssembly under `wasmtime` were not run.
+
+* **Code.** `Builtin::ExecCovers` and `Builtin::FsCovers` (edition 9, no row, `exec_covers` refused on WASI), lowered
+  as `Expr::PathCovers { prefix, exec, args }`. In `cancho-codegen` and `cancho-codegen-llvm` `checked_path` is now
+  `path_escapes` plus a trap, and the predicate is `path_escapes` negated. The compiler in cancho: calls 14 and 15 of
+  `capability_call`, `cancho_path_covers` in `runtime.ll` (and `cancho_checked_path` calls it), `atoms.push_bound`,
+  `filecode.capability_which`, the regenerated tables.
+* **Refusals.** `exec_covers_is_edition_nine` and `fs_covers_is_edition_nine` (`not-a-function`),
+  `exec_covers_on_wasi` (`unsupported-on-target`), `exec_covers_not_an_exec` and `fs_covers_not_an_fs`
+  (`capability-misused`), `exec_covers_arity` (`arity-mismatch`). No new rule. `tests/accept/path_covers_asks_first.cho`.
+* **Conformance** (`path_covers.rs`, driver `tests/programs/path_covers.cho` built per bound by Cranelift, the Rust LLVM
+  backend and the compiler in cancho): for four bounds (a directory, one program, a directory ending in `/`, none) a
+  table of paths, each asked of `exec_covers` and `fs_covers` and **held against** what `exec_spawn` and `open_read`
+  really do with it, a value or a signal with nothing printed. The cases include a path outside, `..` at the start, in
+  the middle and inside a name, the prefix-sibling `/bin2`, `/binx`, the exact program, the directory with and
+  without its slash, a relative path, 4095 and 4096 bytes, and a NUL after the bound; a supervisor that asks and
+  survives (`refused`, `journaled`) beside the same path handed straight to `exec_spawn` (killed); and the authority
+  report (`io_write` and no `exec` or `fs_*` label).
+* **Mutants**, each run to a red conformance test and then reverted. Cranelift: the boundary check removed
+  (`/bin2` accepted: three tests fail), `..` not refused (five fail). The Rust LLVM backend: the same two (three and five).
+  The compiler in cancho's `runtime.ll`: the same two (three and five). **Drift between the two uses of the rule,** the
+  one the design exists to prevent: the predicate alone ignoring the length cap (`the_longest_path` fails, the one test
+  with a path of 4096 bytes), and the predicate alone not negated (seven fail).
+* **Found.** The compiler in cancho trapped on a NUL after the bound where the Rust code generators return a value
+  (§4.13), now aligned. `exprs.cho` was at 1,998 lines of its 2,000, so the dozen `is_word` ifs moved to
+  `filecode.capability_which` first.
+
 ## 9. Open
 
 | Question | Why it waits |
@@ -1350,6 +1492,7 @@ when it is gone or `Z`. macOS: the code is the same call with the pid negated, a
 | Children of a parent that dies | §4.7. `PR_SET_PDEATHSIG` exists on Linux only. §4.11 is the opposite request, and a detached child is meant to outlive its parent. **Narrowed by §4.12 (#533), not closed:** while the supervisor lives it can stop a worker *and* what the worker started, with the `Child` it holds and no `/bin/kill`. After the supervisor **crashes** nothing changes: the `Child` died with it, an orphaned worker's group is a number in a journal, and stopping it is the next row. Not measured: a supervisor that traps with workers running (the issue's "related, not measured") |
 | Signalling a pid the program holds only as a number | §4.11, §4.12. A `kill(pid)` builtin needs a capability of its own, since `child_signal` is about a `Child`; today `/bin/kill` through a narrowed `Exec` does it, and says so in the report. **Narrowed (#533):** for a worker the program still holds, `child_kill_group` does it with no `Exec` and no number. What stays open is the orphan after a crash and the pid-reuse hazard that comes with a recorded number (record it with something that tells runs apart, §4.11); it needs a capability or a handle that survives the process, and no program has asked for more than the issue does |
 | `child_kill_group` reaching a descendant that left the group | §4.12. A subprocess that calls `setsid` or `setpgid` is outside the group, and no group signal reaches it. A `cgroup` (Linux) or a job object would; neither exists on both targets, and no asker has needed it |
+| A spawn that returns the refusal as a value (`Spawned::Refused`, or a checked variant) | §4.13 (#535). The predicate closes the supervisor's need and the checked variant needs a new `Spawned` or a new builtin per spawn, and answers no `Fs` operation; no program has asked beyond the issue |
 | `exec_spawn_detached` with a working directory | §4.11. No program has asked: `exec_spawn_in` does not detach, and the combination is the same node with two flags |
 | One reaper thread for all released children | §4.11. A thread per running released child costs about 16 KB (measured); a single reaper needs a table shared between threads, which no program needs yet |
 | Mapping `exec("p")` onto `lex-os`'s `exec` level | The same bridge `agent-toolbox.md` §2.5 found missing for `net_out`. The report carries what the bridge needs |
