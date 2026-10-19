@@ -255,7 +255,8 @@ fn a_supervisor_that_asks_first_survives() {
                 "`{config}` {path:?}: without asking it traps"
             );
         }
-        let out = run(&exe, "s", "/bin/true");
+        // A program that is under `/bin` on Linux and on macOS (`true` is `/usr/bin/true` there).
+        let out = run(&exe, "s", "/bin/echo");
         assert_eq!(
             String::from_utf8_lossy(&out.stdout),
             "spawned code 0\njournaled\n",
