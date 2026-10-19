@@ -634,6 +634,67 @@ pub fn names_region[&s, &x](st: &!s [int], text: &x [byte], ty: int) -> [] bool 
     if ast.is_kind(st, ty, kinds.NK::TSlice) {
         return names_region(st, text, ast.get(st, ty, 6));
     }
+    if ast.is_kind(st, ty, kinds.NK::TName) {
+        var arg = ast.get(st, ty, 6);
+        var k = 0;
+        while k < ast.get(st, ty, 7) {
+            if names_region(st, text, arg) {
+                return true;
+            }
+            arg = ast.next(st, arg);
+            k = k + 1;
+        }
+    }
+    return false;
+}
+
+// The innermost open block called like token `name`, an arena or a `borrow`'s (which keeps `-2 - token`), or -1.
+pub fn region_block[&s, &x](st: &!s [int], text: &x [byte], name: int) -> [] int {
+    var id = st[37];
+    while id >= 0 {
+        let kept = st[st[36] + 2 * id + 1];
+        if kept != 0 - 1 {
+            var token = kept;
+            if kept < 0 {
+                token = 0 - 2 - kept;
+            }
+            if ast.same(st, text, token, name) {
+                return id;
+            }
+        }
+        id = st[st[36] + 2 * id];
+    }
+    return 0 - 1;
+}
+
+// `let used: Holder[&r Bytes] = hole;` in a block of region `r`, where `hole` was declared outside it and its type is a
+// `Holder` whose argument is still unknown: the annotation fills the argument with a reference into `r`, which a binding
+// declared outside the block would then hold (`reference-escapes-region`, rule 4 of section 5). Only this shape is judged.
+pub fn escapes_by_inference[&s, &x](st: &!s [int], text: &x [byte], written: int, value: int) -> [] bool {
+    if !ast.is_kind(st, value, kinds.NK::EName) || !ast.is_kind(st, written, kinds.NK::TName) {
+        return false;
+    }
+    let local = find(st, text, ast.get(st, value, 4));
+    if local < 0 {
+        return false;
+    }
+    let ty = binding_type(st, local);
+    if !types.is_named(st, ty) || !ast.same(st, text, ast.get(st, types.named_item(st, ty), 4), ast.get(st, written, 5)) {
+        return false;
+    }
+    let outer = st[st[38] + 6 * st[st[20] + 5 * local + 4] + 1];
+    var arg = ast.get(st, written, 6);
+    var k = 0;
+    while k < ast.get(st, written, 7) {
+        if ast.is_kind(st, arg, kinds.NK::TRef) && !pass1.is_word(st, text, ast.get(st, arg, 5), "static") {
+            let block = region_block(st, text, ast.get(st, arg, 5));
+            if block >= 0 && block != outer && !types.encloses(st, block, outer) && types.is_tvar(st, types.shallow(st, types.named_arg(st, ty, k))) {
+                return true;
+            }
+        }
+        arg = ast.next(st, arg);
+        k = k + 1;
+    }
     return false;
 }
 

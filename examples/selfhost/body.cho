@@ -748,6 +748,10 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         let written = ast.get(st, id, 6);
         if written >= 0 && st[37] >= 0 && scope.names_region(st, text, written) {
             // A region named in an annotation inside a block may be the block's own.
+            if scope.escapes_by_inference(st, text, written, value) {
+                ast.fail(st, rules.r_reference_escapes_region(), from, to);
+                return 0;
+            }
             ex.skip(st, from, to);
             return 0;
         }
