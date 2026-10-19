@@ -1,0 +1,72 @@
+//~ STDOUT worker code 0
+//~ STDOUT worker missing errno 2
+//~ EXIT 0
+
+// `docs/processes.md` §4.14: a program started by a name beneath a directory the program holds as a `Dir`. `/bin` stands in
+// for the worker directory a deployment would hand over; the `Exec` is the one that bounds nothing, and the row of
+// `start` is `exec_under`, which names no path (a program that spawns this way never reports `exec("")`).
+
+edition 9;
+
+import std.io;
+
+fn start[&x, &d, &i, &n](exec: &x Exec(""), dir: &d Dir, io: &!i Io, label: &n [byte], name: &n [byte]) -> [exec_under, io_write] int {
+    io.write_all(io, label);
+    match exec_spawn_under(exec, dir, name, "", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            match child_wait(child) {
+                Exited::Code(code) => {
+                    io.write_all(io, " code ");
+                    io.print_int(io, code);
+                    io.newline(io);
+                }
+                Exited::Signaled(s) => {
+                    io.write_all(io, " signaled\n");
+                }
+                Exited::Failed(e) => {
+                    io.write_all(io, " wait failed\n");
+                }
+            }
+        }
+        Spawned::Failed(e) => {
+            io.write_all(io, " errno ");
+            io.print_int(io, e);
+            io.newline(io);
+        }
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    var console = io;
+    borrow fs as &f in {
+        match open_dir(f, "/bin") {
+            DirOpened::Ok(d) => {
+                var workers = d;
+                borrow workers as &w in {
+                    borrow exec as &x in {
+                        borrow mut console as &!i in {
+                            start(x, w, i, "worker", "echo");
+                            start(x, w, i, "worker missing", "no-such-worker");
+                        }
+                    }
+                }
+                dir_close(workers);
+            }
+            DirOpened::Failed(e) => {
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(console);
+    return 0;
+}

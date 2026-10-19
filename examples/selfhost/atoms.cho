@@ -62,6 +62,24 @@ pub fn push_bound[&s, &x](st: &!s [int], text: &x [byte], cap: int, want: int, f
     return 0;
 }
 
+// The bound `exec_spawn_under` pushes (`docs/processes.md` 4.14): only the `Exec` that bounds nothing may be asked, since
+// a program found beneath a directory chosen at run time cannot be shown to lie under a literal. It performs `exec_under`,
+// which names no path.
+pub fn push_under[&s, &x](st: &!s [int], text: &x [byte], cap: int, from: int, to: int) -> [] int {
+    effects.perform_named(st, "exec_under");
+    var inner = cap;
+    if types.is_ref(st, inner) {
+        inner = types.ref_inner(st, inner);
+    }
+    let tok = types.prelude_lit_tok(st, inner);
+    // A literal of two quotes is the bound that bounds nothing, as no literal at all is.
+    if types.is_prelude(st, inner) && tok >= 0 && ast.tend(st, tok) - ast.tstart(st, tok) > 2 {
+        ast.fail(st, rules.r_capability_misused(), from, to);
+        return 0;
+    }
+    return push_bound(st, text, cap, netcode.prelude_named("Exec"), from, to);
+}
+
 // Is this the `&!x Heap` a heap operation is reached through?
 pub fn is_heap_ref[&s](st: &!s [int], ty: int) -> [] bool {
     return types.is_ref(st, ty) && types.ref_unique(st, ty) && types.is_prelude(st, types.ref_inner(st, ty)) && types.prelude_index(st, types.ref_inner(st, ty)) == scope.heap_index();

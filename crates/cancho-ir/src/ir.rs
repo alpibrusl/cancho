@@ -524,6 +524,9 @@ pub enum Expr {
         in_dir: bool,
         /// `exec_spawn_detached` (§4.11): the child is started in a session of its own.
         detached: bool,
+        /// `exec_spawn_under` (§4.14, implies `in_dir`): the path is a name beneath the `Dir`, so it must also be
+        /// non-empty and relative; the capability's prefix is empty.
+        under: bool,
         args: Vec<Expr>,
     },
     /// `exec_covers(exec, path)` and `fs_covers(fs, path)` (`docs/processes.md` §4.13, edition 9): does the path lie

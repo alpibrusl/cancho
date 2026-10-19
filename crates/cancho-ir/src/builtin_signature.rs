@@ -865,9 +865,10 @@ impl Builtin {
             // `docs/processes.md` §3.2.
             Builtin::PipeOpen => (Vec::new(), named(PRELUDE_PIPED)),
             // Checked at the call site: the prefix is in the capability's type.
-            Builtin::ExecSpawn | Builtin::ExecSpawnIn | Builtin::ExecSpawnDetached => {
-                (Vec::new(), Type::Unit)
-            }
+            Builtin::ExecSpawn
+            | Builtin::ExecSpawnIn
+            | Builtin::ExecSpawnDetached
+            | Builtin::ExecSpawnUnder => (Vec::new(), Type::Unit),
             // Checked at the call site too (§4.13): the bound is in the capability's type.
             Builtin::ExecCovers | Builtin::FsCovers => (Vec::new(), Type::Unit),
             // By value: waiting ends the child.

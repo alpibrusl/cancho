@@ -881,6 +881,143 @@ covered can still fail (`Failed(ENOENT)`) or name a symlink that leaves the boun
 a handle and check that, not a bound. macOS is unmeasured: the rule is bytes, the code is shared by both targets, and
 the CI run on darwin-aarch64 is what checks it.
 
+### 4.14 A bound chosen at deployment: `Dir` for `Fs`, and `exec_spawn_under` for `Exec`
+
+[#534](https://github.com/alpibrusl/cancho/issues/534), found by cancho-forge (`spike/RESULTS.md` S3, S5, gaps G1 and G9)
+and the "A bound chosen at deployment" row of §9. **Status: (a) documented and (b) built; (c) not built.** What follows measures what the compiler
+does today, finds that half of the issue is answerable by a handle that already exists, and (the issue says "shape is the
+author's") records the choice the maintainer took: document `Dir` for `Fs`, build `exec_spawn_under` for `Exec`, and leave a
+bound carried in the capability's value for a program that the two cannot express. Nothing here changes what an existing
+program means: the builtin is edition 9 and the label is new.
+
+The issue asks two things. **(1)** `narrow` takes a literal, so a program cannot be given its workers directory or
+workspace when it is deployed; the only alternative is to hold `Exec("")`/`Fs("")` and check paths in program code, and the
+report then says `exec("")`. **(2)** A library function cannot be generic in the prefix, so a reusable file layer cannot be
+narrowed by its caller. A second asker for (1) exists, so the bar of two (`CONTRIBUTING.md`) is met for `Exec`:
+cancho-tools' MCP server holds `Exec` narrowed to its tools' directory "baked in at build, since `narrow` takes a literal"
+(ROADMAP, cancho-tools#17), and `examples/tls_echo_fixed` refuses `--dir` for the same reason.
+
+**Measured first** (this checkout, Linux x86-64, `cancho check` and `cancho authority`; nothing run on macOS):
+
+| program | result |
+|---|---|
+| `narrow(fs, arg(g, 1))` | `error: narrow takes a literal, so the refinement can be checked where it is written` |
+| `fn f(fs: &f Fs(""), ..)` called with a `Fs("/tmp/conf")` | `error: expected "", found "/tmp/conf"` (the issue's, reproduced) |
+| `fn f(fs: &f Fs("/tmp/conf"), ..)` called with a `Fs("/tmp")` | `error: expected "/tmp/conf", found "/tmp"` (so it is invariance, not only "no narrower into wider") |
+| `fn f(fs: &f Fs("/tmp"), ..)` called with a `Fs("/tmp")` | accepted; a library fixes its prefix in its own text, as the issue says |
+| a library `fn f(dir: &d Dir, path: &p [byte]) -> [dir_read] int` over `std.dirs.open_file`, handed a `Dir` that `main` opened with `open_dir(fs, arg(g, 1))`, edition 6 | accepted and built; run on a directory named at the command line it opened `x` (exit 0), and on a missing directory it answered `ENOENT` (exit 2). Its report: `dir_read`, `fs_read("")`, `args` |
+
+*Why the type is invariant (an argument, not a measurement).* Every operation takes its bound from the capability's type
+at the call (`Expr::PathOp`, `OpenFile`, `ExecSpawn`, `PathCovers` and the others carry `prefix: String`, and a capability
+is leaf-free: it is not a value at run time, `defs.rs` `leaf_free`). A callee written for `Fs("/tmp")` that was handed an
+`Fs("/tmp/conf")` would therefore check against `/tmp`, which is a **widening**. Subtyping on the prefix is unsound until
+the bound travels with the value, and that is the whole of what (2) asks for.
+
+**What already answers the `Fs` half.** `Dir` (`directory-handles.md`, edition 6) *is* a bound chosen at run time. It is a
+descriptor, opened once from a path under the held `Fs`, and everything beneath it is a single component resolved from
+the descriptor, with no `..` and no link followed. A library over `&Dir` is generic in the directory, its row is
+`dir_read`/`dir_write` and names no path, and it can create, append, rename, remove and sync (slice 2 there), which is
+what a journal does. What it does not give: a **file** as the bound (`Fs("/tmp/app.log")`), and a report that names the
+directory (`open_dir` spends `fs_read("")` when the path is not known to `main`, as `directory-handles.md` §3 already says
+about `cancho-tools`). Whether it serves cancho-forge's journal is for cancho-forge to say; it was not tried there.
+
+**What answers nothing: `Exec`.** There is no handle for "the programs in this directory". `exec_spawn_in` takes a `Dir`
+only as the child's working directory, and the program's path is still checked against the capability's literal. §9 has
+this as "Spawning beneath a `Dir`" with the reason it waits.
+
+**The options**, from the smallest:
+
+| | What it is | Answers | What it costs |
+|---|---|---|---|
+| **(a)** Nothing for `Fs`, name the pattern | Document `Dir` as the answer to (1) and (2) for `Fs`, with the limits above, and close that half of the issue | `Fs` (1) and (2), for a directory | Nothing is built. The report still says `fs_read("")` at the open |
+| **(b)** `Exec` beneath a `Dir` | `exec_spawn_under(&Exec, &Dir, name, ...)`: the program is one component named in a run-time directory, the child starts in it (the `addfchdir` of §4.10 already exists; its availability on macOS is the part CI runs and this checkout did not), and a new pathless label (`dir_exec`) says "the programs of a directory chosen at run time". Edition 9 | `Exec` (1), the cancho-tools and cancho-forge case | The unmeasured parts: whether the component walk gives the same guarantee for a program (a link as the *last* component is followed by `exec`; `Dir` refuses it with `O_NOFOLLOW` for a read), and what `Exec`'s own bound is (`Exec("")`, so the report says `exec("")` beside `dir_exec`, or a new capability) |
+| **(c)** The bound travels with the value | A capability carries its bound at run time: `narrow` takes a `&[byte]`, checks it against the static bound with the same emitted path check (§4.13), refuses by a value, and the operations check the static bound **and** the runtime one. The type stays the outer bound, so the row stays exact and the report can say "deployment-bound, within `p`". Prefix subtyping then becomes sound | `Exec` and `Fs`, a file as well as a directory, (1) and (2) | The decision below. Capabilities stop being zero-sized, which `leaf_free`, the `Split` layout, borrows, `narrow`'s tuples and `release` all assume; `prefix` appears on 140 lines of the two Rust code generators and 76 of the compiler in cancho (counted, not estimated); **and the bytes need an owner**: a borrowed `&[byte]` cannot live inside a capability (a `Stdio` cannot carry a borrow, §9), so either the bound is a copy on the heap and the capability must be freed (a new linear obligation on a type that is `release`d today), or it is restricted to a slice that lives as long as the program (`Args`) |
+
+**Decision (the maintainer's, taken on this section's recommendation).** (a) and (b) now; not (c). The three questions
+the section left to the author were answered: (i) *a directory, opened once* is an acceptable shape for a bound chosen
+at deployment, and the report says plainly what it shows and what it does not (below); (ii) the capability is never
+widened (the `Exec` literal stays the outer ceiling), the name is a plain relative name by §4.13's textual rule, and
+resolution is the kernel's; (iii) n/a. (c) stays in §9, waiting for a program that (a) and (b) cannot express.
+
+#### What was built: `exec_spawn_under`
+
+```
+exec_spawn_under(&Exec(""), &Dir, name: &[byte], args, env, stdin, stdout, stderr) -> [exec_under] Spawned   // edition 9
+```
+
+It is `exec_spawn_in` (§4.10: the child starts in the `Dir`, by descriptor) whose program is **a name resolved in that
+directory** and whose row names no path. Lowered as `Expr::ExecSpawn { in_dir: true, under: true, .. }`; the two Rust code
+generators and the compiler in cancho add one check to `exec_spawn_in`'s and nothing else.
+
+* **The name.** §4.13's rule, plus the half that rule leaves to the capability: it is not empty and does not begin with
+  `/` (an absolute name is the whole filesystem, which is what `Exec("")` covers and what this builtin must not reach for),
+  has no `..` anywhere (the byte pair, so `a..b` too) and is under 4096 bytes. A name that breaks any of these **traps**, as
+  every path outside a bound does (§4.1). A supervisor that wants a value asks first: `exec_covers(exec, name)` is the
+  `..`-and-length half and `len(name) > 0 && name[0] != '/'` the other (the driver of `spawn_under.rs` does exactly this,
+  and the test holds its verdict against the trap for eight names). `a/b` is allowed: the directory's own subdirectories
+  are in it. `argv[0]` is the name as given.
+* **The ceiling.** `Exec("")` only. A program found beneath a directory chosen at run time cannot be shown to lie under a
+  literal such as `/opt/tools`, and starting it anyway would widen a capability that promised `/opt/tools`; so a narrowed
+  `Exec` is refused at compile time, `capability-misused` (`exec_spawn_under_narrowed.cho`). The maintainer's wording was
+  that the literal stays the ceiling and the `Dir` narrows within it. That holds for the literal that can hold it: with
+  `""` the ceiling is everything and the `Dir` is the whole bound; with anything else there is no static fact about the
+  `Dir` to compare it to, so the only sound answers are to refuse or to widen, and refusing is the one that keeps the
+  promise. This is a deviation from "keep the literal" for non-empty literals, and the one place the design had to choose.
+* **The row.** `exec_under`, a plain label that names no path (the program was named in the directory, as `dir_read` names
+  no path). Owning an `Exec("")` or a `World` discharges it; an `Exec` with a literal does not, because it cannot perform it
+  (`Label::covers` is unchanged). It is in the authority report's "other programs" domain and in the refused labels of
+  WASI (`exec_spawn_under` is refused there with the other `Exec` builtins).
+* **What the report says, measured** (`tests/programs/spawn_under.cho`, the supervisor of cancho-forge's issue: a worker
+  directory on the command line, opened once with `open_dir`, workers started beneath it): `args`, `exec_under`,
+  `fs_read("")`, `io_write`; **no `exec`**. The same supervisor written with `exec_spawn_in` under `Exec("")` says
+  `exec("")` (`spawn_in_control.cho`): any program anywhere. So the report moved from "may run any path" to "may run
+  programs in a directory it was given", and it does **not** say which directory (that is a run-time fact; the program
+  text cannot hold it), nor that the open spent `fs_read("")`: the `Dir` was opened under the `Fs("")` the program held,
+  so the report keeps `fs_read("")` for that open exactly as `directory-handles.md` §3 says of `cancho-tools`. A program
+  that knows an outer directory can narrow its `Fs` to it first and the report then says that one (`fs_read("/srv")`);
+  the `Exec` has no such step, for the reason above.
+* **What it does not do.** It does not refuse links: the directory is resolved once, as a descriptor, and the name is
+  resolved by the kernel after `fchdir`, so a link in the directory to a program outside it runs (measured, and pinned
+  by `a_link_in_the_directory_is_the_kernels_to_follow`; §4.13 states the same for the textual rule and `filesystem.md`
+  §2.1 says `Fs` is not a sandbox). It does not make a *file* the bound (`Fs("/tmp/app.log")`) or a bound that is a
+  prefix the type can show; that is (c). It adds no type and no `Split` field.
+
+**Measured** (Linux 6.18 x86-64, Cranelift, LLVM through the Rust compiler and LLVM through the compiler in cancho, which
+print the same on every row; macOS and WASI not run):
+
+| name beneath the worker directory | `exec_spawn_under` |
+|---|---|
+| `worker.sh`, `./worker.sh`, `sub/worker.sh` | `Spawned::Ok`, exit code 7 (the script's); the marker it writes is in the **directory**, not beside the script and not in the driver's directory |
+| `no-such-worker` | `Spawned::Failed(2)` |
+| `sub` (a directory) | `Spawned::Failed(13)` |
+| 4095 bytes | `Spawned::Failed(36)` (it reached the kernel) |
+| `/bin/true`, an absolute path to a script, `/`, empty | **`SIGILL`**; the control, `exec_spawn_in` under the same `Exec("")` and directory, returns `spawned code 0`, `spawned code 5`, `failed errno 13`, `failed errno 2` |
+| `..`, `../worker.sh`, `sub/../worker.sh`, `worker.sh/..`, `a..b`, 4096 bytes | **`SIGILL`** |
+| the same binary, a second worker directory | the second directory's `worker.sh` (exit 9): the bound is the argument, not the text |
+
+Conformance (`spawn_under.rs`, drivers `tests/programs/spawn_under.cho` and `spawn_in_control.cho`, each built on the three
+code generators): the table above, the supervisor held against the trap, the link, a missing directory (the driver's own
+status 3, nothing spawned), and the two reports. Fixtures: `tests/accept/exec_spawn_under.cho`; `tests/reject/`
+`exec_spawn_under_is_edition_nine` (`not-a-function`), `_on_wasi` (`unsupported-on-target`), `_narrowed` and `_not_an_exec`
+(`capability-misused`), `_arity` (`arity-mismatch`), `_undeclared` (`effect-not-declared`), `_not_a_dir` (`type-mismatch`). No
+new rule.
+
+**Mutants**, each run to a red `spawn_under` test and reverted: the rooted-name check removed in Cranelift (2 tests fail),
+the empty-name check removed in Cranelift (2), the rooted-name check removed in the Rust LLVM backend (2), the rooted-name
+check (2) and the empty-name check (2) removed from the compiler in cancho's `cancho_spawn`, the `fchdir` skipped for the
+new builtin in Cranelift (3: the worker no longer starts in the directory), and the row replaced (the whole file, 7).
+
+**The compiler in cancho.** Call 16 of `capability_call`, `atoms.push_under` (it refuses a literal that is not two quotes and
+performs `exec_under`; `atoms.push_bound` does the rest), `filecode.capability_which`, `runtime.ll`'s `cancho_spawn`, whose
+existing `%detached` argument now carries bit 2 for "under" (the session flag is bit 1; no new argument, so no change to
+`filecode.spawn_process`), the regenerated tables (the label is read off `Builtin::effects`, since the tables take label
+names from the builtins' rows) and `runtime.cho`. `exprs.cho` is 1,995 of 2,000 lines. Nothing is added to
+`unported_builtins.txt`, `reject_gaps.txt` or the known differences.
+
+**What is not measured.** macOS (the `Dir` measurement above is Linux only; `directory-handles.md` says Darwin is written
+and run by CI, and `posix_spawn_file_actions_addfchdir_np` followed by a relative program path is what §4.10 already relies on
+there); WebAssembly; cancho-forge's journal against `Dir` (not tried); the cost of (c) beyond the line counts.
+
 ---
 
 ## 5. Alternatives considered
@@ -1485,10 +1622,10 @@ What #535 added, measured on Linux 6.18 x86-64. macOS and WebAssembly under `was
 | Question | Why it waits |
 |---|---|
 | Giving a child the console | §4.4. The exact shape needs the parent to lend `&!Io` for the life of the child, and a `Stdio` value cannot carry a borrow. Neither asker needs it |
-| Spawning beneath a `Dir` | §5's last row. Linux only, so it needs a decision about a capability that exists on one target |
+| ~~Spawning beneath a `Dir`~~ | **Built as `exec_spawn_under` (§4.14, #534):** the program is a name resolved after `fchdir` into the `Dir`, which `exec_spawn_in` already does on both targets, so it did not need `fexecve` (Linux only). Open still: refusing a link as the last component (the kernel follows it), which would be Linux-only |
 | ~~The working directory~~ | **Built (§4.10):** `exec_spawn_in`. Open still: a working directory that is not a `Dir` (a path), which needs the `Fs` rule's check and has no asker |
 | `Stdio::Merge` | §5. Needs an edition; `capture_both` serves the asker who wanted standard error |
-| A bound chosen at deployment | `narrow` takes a literal, so a server whose tools' directory is chosen when it is installed holds `Exec("")` or a literal it was built with. `Fs` has the same question (`authority.md` §2.3, `lines.cho`), and it should be answered for both at once |
+| A bound chosen at deployment | `narrow` takes a literal, so a server whose tools' directory is chosen when it is installed holds `Exec("")` or a literal it was built with. `Fs` has the same question (`authority.md` §2.3, `lines.cho`), and it should be answered for both at once. **Answered in §4.14 (#534) for a directory:** `Fs` has `Dir` (a library over `&Dir` is generic in it) and `Exec` has `exec_spawn_under`. **Open still:** a bound that is a *prefix the type shows* or a single file (option (c): the bound travels in the capability's value, which makes capabilities non-zero-sized and needs an owner for the bytes). Waits for a program that `Dir` and `exec_spawn_under` cannot express |
 | Children of a parent that dies | §4.7. `PR_SET_PDEATHSIG` exists on Linux only. §4.11 is the opposite request, and a detached child is meant to outlive its parent. **Narrowed by §4.12 (#533), not closed:** while the supervisor lives it can stop a worker *and* what the worker started, with the `Child` it holds and no `/bin/kill`. After the supervisor **crashes** nothing changes: the `Child` died with it, an orphaned worker's group is a number in a journal, and stopping it is the next row. Not measured: a supervisor that traps with workers running (the issue's "related, not measured") |
 | Signalling a pid the program holds only as a number | §4.11, §4.12. A `kill(pid)` builtin needs a capability of its own, since `child_signal` is about a `Child`; today `/bin/kill` through a narrowed `Exec` does it, and says so in the report. **Narrowed (#533):** for a worker the program still holds, `child_kill_group` does it with no `Exec` and no number. What stays open is the orphan after a crash and the pid-reuse hazard that comes with a recorded number (record it with something that tells runs apart, §4.11); it needs a capability or a handle that survives the process, and no program has asked for more than the issue does |
 | `child_kill_group` reaching a descendant that left the group | §4.12. A subprocess that calls `setsid` or `setpgid` is outside the group, and no group signal reaches it. A `cgroup` (Linux) or a job object would; neither exists on both targets, and no asker has needed it |

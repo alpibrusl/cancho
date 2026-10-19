@@ -56,7 +56,11 @@ fn drivers(tag: &str, bound: &str) -> Vec<(&'static str, PathBuf)> {
 }
 
 fn run(exe: &Path, mode: &str, path: &str) -> std::process::Output {
-    Command::new(exe).args([mode, path]).output().expect("the driver runs")
+    // Most paths asked of the real operation end in its trap; a GitHub Linux runner would pipe each of those hundreds
+    // of crashes to `systemd-coredump` (`differential.rs`, `without_a_core_dump`), which starved the runner.
+    let mut driver = Command::new(exe);
+    driver.args([mode, path]);
+    differential::without_a_core_dump(&mut driver).output().expect("the driver runs")
 }
 
 /// What `exec_covers` or `fs_covers` printed.

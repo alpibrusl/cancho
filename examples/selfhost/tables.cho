@@ -370,69 +370,69 @@ static prelude_res_bits: [int] {
 }
 
 fn prelude_label_chars() -> [] &static [byte] {
-    return "args child_signal clock conn_accept conn_read conn_write dir_read dir_write err_write exec= exec_detached ffi= file_read file_write fs_read= fs_write= heap io_read io_write net_in= net_out= pipe_read pipe_write poll signals= signals_read tty_open= tty_read tty_write udp_recv udp_senderr_write io_read io_writeffi*dir_read dir_write file_read file_write fs_read* fs_write*heapargsfile_read file_writeconn_accept conn_read conn_write net_in* net_out* poll udp_recv udp_sendconn_acceptconn_read conn_writepollclocksignals* signals_readsignals_readdir_read dir_writedir_readchild_signal exec* exec_detachedchild_signalpipe_read pipe_writeudp_recv udp_sendtty_open* tty_read* tty_write*";
+    return "args child_signal clock conn_accept conn_read conn_write dir_read dir_write err_write exec= exec_detached exec_under ffi= file_read file_write fs_read= fs_write= heap io_read io_write net_in= net_out= pipe_read pipe_write poll signals= signals_read tty_open= tty_read tty_write udp_recv udp_senderr_write io_read io_writeffi*dir_read dir_write file_read file_write fs_read* fs_write*heapargsfile_read file_writeconn_accept conn_read conn_write net_in* net_out* poll udp_recv udp_sendconn_acceptconn_read conn_writepollclocksignals* signals_readsignals_readdir_read dir_writedir_readchild_signal exec* exec_detachedchild_signalpipe_read pipe_writeudp_recv udp_sendtty_open* tty_read* tty_write*";
 }
 
 static prelude_label_starts: [int] {
     let t = alloc_slice[static](53, 0);
-    t[1] = 284;
-    t[2] = 310;
-    t[3] = 314;
-    t[4] = 372;
-    t[5] = 376;
-    t[6] = 376;
-    t[7] = 380;
-    t[8] = 380;
-    t[9] = 400;
-    t[10] = 400;
-    t[11] = 400;
-    t[12] = 472;
-    t[13] = 472;
-    t[14] = 472;
-    t[15] = 483;
-    t[16] = 503;
-    t[17] = 503;
-    t[18] = 503;
-    t[19] = 503;
-    t[20] = 503;
-    t[21] = 503;
-    t[22] = 507;
-    t[23] = 507;
-    t[24] = 512;
-    t[25] = 512;
-    t[26] = 512;
-    t[27] = 512;
-    t[28] = 533;
-    t[29] = 533;
-    t[30] = 545;
-    t[31] = 545;
-    t[32] = 563;
-    t[33] = 563;
-    t[34] = 571;
-    t[35] = 571;
-    t[36] = 571;
-    t[37] = 571;
-    t[38] = 603;
-    t[39] = 603;
-    t[40] = 615;
-    t[41] = 635;
-    t[42] = 635;
-    t[43] = 635;
-    t[44] = 635;
-    t[45] = 635;
-    t[46] = 635;
-    t[47] = 652;
-    t[48] = 652;
-    t[49] = 652;
-    t[50] = 682;
-    t[51] = 682;
-    t[52] = 682;
+    t[1] = 295;
+    t[2] = 321;
+    t[3] = 325;
+    t[4] = 383;
+    t[5] = 387;
+    t[6] = 387;
+    t[7] = 391;
+    t[8] = 391;
+    t[9] = 411;
+    t[10] = 411;
+    t[11] = 411;
+    t[12] = 483;
+    t[13] = 483;
+    t[14] = 483;
+    t[15] = 494;
+    t[16] = 514;
+    t[17] = 514;
+    t[18] = 514;
+    t[19] = 514;
+    t[20] = 514;
+    t[21] = 514;
+    t[22] = 518;
+    t[23] = 518;
+    t[24] = 523;
+    t[25] = 523;
+    t[26] = 523;
+    t[27] = 523;
+    t[28] = 544;
+    t[29] = 544;
+    t[30] = 556;
+    t[31] = 556;
+    t[32] = 574;
+    t[33] = 574;
+    t[34] = 582;
+    t[35] = 582;
+    t[36] = 582;
+    t[37] = 582;
+    t[38] = 614;
+    t[39] = 614;
+    t[40] = 626;
+    t[41] = 646;
+    t[42] = 646;
+    t[43] = 646;
+    t[44] = 646;
+    t[45] = 646;
+    t[46] = 646;
+    t[47] = 663;
+    t[48] = 663;
+    t[49] = 663;
+    t[50] = 693;
+    t[51] = 693;
+    t[52] = 693;
     return t;
 }
 
 static prelude_label_lens: [int] {
     let t = alloc_slice[static](53, 0);
-    t[0] = 284;
+    t[0] = 295;
     t[1] = 26;
     t[2] = 4;
     t[3] = 58;
@@ -555,15 +555,15 @@ pub fn prelude_bound(i: int) -> [] int {
 }
 
 pub fn builtin_count() -> [] int {
-    return 168;
+    return 169;
 }
 
 fn builtin_chars() -> [] &static [byte] {
-    return "putcharwrite_byteswrite_errflush_outgetcharread_bytessplitreleasenarrowfork_heapfork_clockcopy_withincopy_intoindex_of_byteload_le64byte_mask64trailing_zerosleading_zerospopcountwrapping_addwrapping_subwrapping_mulvalue_barrierhw_aes_gcmaes_encrypt_blockaes_ctr32ghash_powersghash_updatemul_wideadd_carrysub_borrowgcm_taggcm_tag_diffhw_sha256sha256_blockssha256_block_wordslenbyte_ofint_offloat_oftruncateis_nansqrtbits_offloat_of_bitsf32_offloat_of32bits_of32f32_of_bitssqrt32f32_of_intint_of_f32fs_readfs_writeopen_readfile_readfile_closeopen_appendopen_writeopen_newopen_rwfile_writefile_pwritefile_preadfile_syncfile_truncatefile_sizefs_renamefs_removefile_lockboxunboxcontentsarg_countargbox_sliceunbox_sliceconnectbindlistenaccepttcp_listentcp_connecttcp_connect_starttcp_acceptpoller_newpoller_add_listenerpoller_add_connpoller_modifypoller_removepoller_waitpoller_closeclock_msclock_unix_msconn_detachconn_attachconn_readconn_writeconn_nonblockingconn_nodelayconn_peerconn_connect_statuslistener_nonblockingconn_closelistener_closeudp_connectudp_bindudp_recv_fromudp_send_toudp_recvudp_sendudp_local_portudp_peerudp_nonblockingudp_closeudp_detachudp_attachpoller_add_udptty_opentty_configuretty_readtty_writetty_flush_inputtty_closepoller_add_ttysignals_watchsignals_pendingpoller_add_signalssignals_closeopen_dirdir_enterdir_open_readdir_closedir_open_newdir_open_appenddir_renamedir_rename_newdir_removedir_syncdir_listdir_nextdir_list_closedir_statdir_modedir_own_modepipe_openexec_spawnexec_spawn_inchild_waitchild_killchild_kill_groupexec_coversfs_coverspipe_readpipe_writepipe_nonblockingpipe_closechild_end_closepoller_add_pipepoller_add_childnull_ptrspawnjointraptcp_listen_onexec_spawn_detachedchild_releasechild_pid";
+    return "putcharwrite_byteswrite_errflush_outgetcharread_bytessplitreleasenarrowfork_heapfork_clockcopy_withincopy_intoindex_of_byteload_le64byte_mask64trailing_zerosleading_zerospopcountwrapping_addwrapping_subwrapping_mulvalue_barrierhw_aes_gcmaes_encrypt_blockaes_ctr32ghash_powersghash_updatemul_wideadd_carrysub_borrowgcm_taggcm_tag_diffhw_sha256sha256_blockssha256_block_wordslenbyte_ofint_offloat_oftruncateis_nansqrtbits_offloat_of_bitsf32_offloat_of32bits_of32f32_of_bitssqrt32f32_of_intint_of_f32fs_readfs_writeopen_readfile_readfile_closeopen_appendopen_writeopen_newopen_rwfile_writefile_pwritefile_preadfile_syncfile_truncatefile_sizefs_renamefs_removefile_lockboxunboxcontentsarg_countargbox_sliceunbox_sliceconnectbindlistenaccepttcp_listentcp_connecttcp_connect_starttcp_acceptpoller_newpoller_add_listenerpoller_add_connpoller_modifypoller_removepoller_waitpoller_closeclock_msclock_unix_msconn_detachconn_attachconn_readconn_writeconn_nonblockingconn_nodelayconn_peerconn_connect_statuslistener_nonblockingconn_closelistener_closeudp_connectudp_bindudp_recv_fromudp_send_toudp_recvudp_sendudp_local_portudp_peerudp_nonblockingudp_closeudp_detachudp_attachpoller_add_udptty_opentty_configuretty_readtty_writetty_flush_inputtty_closepoller_add_ttysignals_watchsignals_pendingpoller_add_signalssignals_closeopen_dirdir_enterdir_open_readdir_closedir_open_newdir_open_appenddir_renamedir_rename_newdir_removedir_syncdir_listdir_nextdir_list_closedir_statdir_modedir_own_modepipe_openexec_spawnexec_spawn_inchild_waitchild_killchild_kill_groupexec_coversfs_coverspipe_readpipe_writepipe_nonblockingpipe_closechild_end_closepoller_add_pipepoller_add_childnull_ptrspawnjointraptcp_listen_onexec_spawn_detachedchild_releasechild_pidexec_spawn_under";
 }
 
 static builtin_starts: [int] {
-    let t = alloc_slice[static](168, 0);
+    let t = alloc_slice[static](169, 0);
     t[1] = 7;
     t[2] = 18;
     t[3] = 27;
@@ -731,11 +731,12 @@ static builtin_starts: [int] {
     t[165] = 1692;
     t[166] = 1711;
     t[167] = 1724;
+    t[168] = 1733;
     return t;
 }
 
 static builtin_lens: [int] {
-    let t = alloc_slice[static](168, 0);
+    let t = alloc_slice[static](169, 0);
     t[0] = 7;
     t[1] = 11;
     t[2] = 9;
@@ -904,11 +905,12 @@ static builtin_lens: [int] {
     t[165] = 19;
     t[166] = 13;
     t[167] = 9;
+    t[168] = 16;
     return t;
 }
 
 static builtin_sinces: [int] {
-    let t = alloc_slice[static](168, 0);
+    let t = alloc_slice[static](169, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -1077,6 +1079,7 @@ static builtin_sinces: [int] {
     t[165] = 9;
     t[166] = 9;
     t[167] = 9;
+    t[168] = 9;
     return t;
 }
 

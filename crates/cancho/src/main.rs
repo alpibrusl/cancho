@@ -1272,7 +1272,8 @@ fn untouched_domains(labels: &[String]) -> Vec<&'static str> {
         // does with the children it started.
         (
             "other programs",
-            ["exec", "exec_detached", "child_signal", "pipe_read", "pipe_write"].as_slice(),
+            ["exec", "exec_detached", "exec_under", "child_signal", "pipe_read", "pipe_write"]
+                .as_slice(),
         ),
         ("foreign code", ["ffi"].as_slice()),
     ]

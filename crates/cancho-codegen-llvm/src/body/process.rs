@@ -70,7 +70,7 @@ impl<'a> FuncEmitter<'a> {
     }
 
     /// `exec_spawn(exec, path, args, env, stdin, stdout, stderr)` (§4.1 to
-    /// §4.6), and with `in_dir` `exec_spawn_in(exec, dir, path, ...)` (§4.10).
+    /// §4.6), and with `in_dir` `exec_spawn_in(exec, dir, path, ...)` (§4.10); `under` is `exec_spawn_under` (§4.14).
     /// `Spawned`'s three leaves: the tag (`Ok` 0, `Failed` 1), the pid, the
     /// reason.
     pub(crate) fn exec_spawn(
@@ -78,6 +78,7 @@ impl<'a> FuncEmitter<'a> {
         prefix: &str,
         in_dir: bool,
         detached: bool,
+        under: bool,
         args: &[Expr],
     ) -> Result<Vec<LValue>, String> {
         // The capability is zero-sized and stops here.
@@ -95,6 +96,17 @@ impl<'a> FuncEmitter<'a> {
             streams.push(leaves);
         }
 
+        // §4.14: a name beneath the `Dir` is relative and not empty; a broken promise traps, as §4.1's do.
+        if under {
+            let empty = self.fresh();
+            self.out.push_str(&format!("  {empty} = icmp eq i64 {}, 0\n", operand(&path[1])));
+            self.trap_if(&empty)?;
+            let first = self.fresh();
+            self.out.push_str(&format!("  {first} = load i8, ptr {}\n", operand(&path[0])));
+            let rooted = self.fresh();
+            self.out.push_str(&format!("  {rooted} = icmp eq i8 {first}, 47\n"));
+            self.trap_if(&rooted)?;
+        }
         // §4.1: under the prefix, no `..`; a broken promise traps.
         let program = self.checked_path(prefix, &path)?;
         // §4.2, §4.3: `\0`-separated lists, as `argv` and `envp`.

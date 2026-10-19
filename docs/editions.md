@@ -392,6 +392,8 @@ may declare for itself (cancho-forge's supervisor wrote its own), so absent befo
 (`tests/reject/exec_covers_is_edition_nine.cho`, `fs_covers_is_edition_nine.cho`). They have no row, add no type, no label and no `Split`
 field, and the trap of an operation outside its bound is unchanged in every edition.
 
+Edition 9 also has **`exec_spawn_under`** ([`processes.md`](processes.md) §4.14, #534): `exec_spawn_in` whose program is a name resolved in the `Dir`, under the `Exec` that bounds nothing, with a new path-free label `exec_under`. A name a program may declare for itself, so absent before edition 9 (`tests/reject/exec_spawn_under_is_edition_nine.cho`); it adds no type and no `Split` field.
+
 ---
 
 ## 8. What this does not do

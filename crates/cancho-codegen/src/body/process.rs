@@ -56,7 +56,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     }
 
     /// `exec_spawn(exec, path, args, env, stdin, stdout, stderr)` (§4.1 to
-    /// §4.6), and with `in_dir` `exec_spawn_in(exec, dir, path, ...)` (§4.10);
+    /// §4.6), and with `in_dir` `exec_spawn_in(exec, dir, path, ...)` (§4.10), and `under` is `exec_spawn_under` (§4.14);
     /// `detached` is `exec_spawn_detached`, whose child gets a session of its own (§4.11).
     /// `Spawned`'s three leaves: the tag (`Ok` 0, `Failed` 1), the pid, the
     /// reason.
@@ -65,6 +65,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         prefix: &str,
         in_dir: bool,
         detached: bool,
+        under: bool,
         args: &[Expr],
     ) -> Vec<Value> {
         let pointer = self.pointer;
@@ -76,6 +77,14 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let environment = self.expr(&args[at + 2]);
         let streams: Vec<Vec<Value>> = args[at + 3..at + 6].iter().map(|s| self.expr(s)).collect();
 
+        // §4.14: a name beneath the `Dir` is relative and not empty; a broken promise traps, as §4.1's do.
+        if under {
+            let empty = self.builder.ins().icmp_imm(IntCC::Equal, path[1], 0);
+            self.builder.ins().trapnz(empty, TrapCode::HEAP_OUT_OF_BOUNDS);
+            let first = self.builder.ins().load(types::I8, MemFlags::trusted(), path[0], 0);
+            let rooted = self.builder.ins().icmp_imm(IntCC::Equal, first, i64::from(b'/'));
+            self.builder.ins().trapnz(rooted, TrapCode::HEAP_OUT_OF_BOUNDS);
+        }
         // §4.1: under the prefix, no `..`; a broken promise traps.
         let program = self.checked_path(prefix, &path);
         // §4.2, §4.3: `\0`-separated lists, as `argv` and `envp`.

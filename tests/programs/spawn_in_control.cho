@@ -1,0 +1,75 @@
+edition 9;
+
+import std.io;
+
+// The control of `tests/programs/spawn_under.cho` (`docs/processes.md` §4.14): `exec_spawn_in` under the same `Exec("")`
+// and the same directory, which is what `exec_spawn_under` is *not*. An absolute name runs wherever it points and `..`
+// is only refused by `Exec`'s own rule, so a test that sees `exec_spawn_under` trap on a name that this program runs
+// knows the extra check is the builtin's and not the capability's. argv[1] is the directory, argv[2] the name.
+
+fn report[&i](io: &!i Io, spawned: Spawned) -> [io_write] int {
+    match spawned {
+        Spawned::Ok(child) => {
+            match child_wait(child) {
+                Exited::Code(n) => {
+                    io.write_all(io, "spawned code ");
+                    io.print_int(io, n);
+                    io.newline(io);
+                }
+                Exited::Signaled(s) => {
+                    io.write_all(io, "spawned signaled\n");
+                }
+                Exited::Failed(e) => {
+                    io.write_all(io, "wait failed\n");
+                }
+            }
+        }
+        Spawned::Failed(e) => {
+            io.write_all(io, "failed errno ");
+            io.print_int(io, e);
+            io.newline(io);
+        }
+    }
+    return 0;
+}
+
+fn control[&x, &d, &i, &p](exec: &x Exec(""), dir: &d Dir, io: &!i Io, name: &p [byte]) -> [exec(""), io_write] int {
+    return report(io, exec_spawn_in(exec, dir, name, "", "", Stdio::Null, Stdio::Null, Stdio::Null));
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    var console = io;
+    var status = 2;
+    borrow fs as &f in {
+        borrow args as &g in {
+            match open_dir(f, arg(g, 1)) {
+                DirOpened::Ok(d) => {
+                    var workers = d;
+                    borrow workers as &w in {
+                        borrow exec as &x in {
+                            borrow mut console as &!i in {
+                                status = control(x, w, i, arg(g, 2));
+                            }
+                        }
+                    }
+                    dir_close(workers);
+                }
+                DirOpened::Failed(e) => {
+                    status = 3;
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(console);
+    release(args);
+    return status;
+}

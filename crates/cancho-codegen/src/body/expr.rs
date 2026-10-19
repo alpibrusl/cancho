@@ -183,10 +183,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let (prefix, args) = (prefix.clone(), args.clone());
                 self.path_covers(&prefix, &args)
             }
-            Expr::ExecSpawn { prefix, in_dir, detached, args } => {
-                let (prefix, in_dir, detached, args) =
-                    (prefix.clone(), *in_dir, *detached, args.clone());
-                self.exec_spawn(&prefix, in_dir, detached, &args)
+            Expr::ExecSpawn { prefix, in_dir, detached, under, args } => {
+                let (prefix, in_dir, detached, under, args) =
+                    (prefix.clone(), *in_dir, *detached, *under, args.clone());
+                self.exec_spawn(&prefix, in_dir, detached, under, &args)
             }
             Expr::Connect { bound, args } => {
                 let (bound, args) = (bound.clone(), args.clone());
@@ -806,7 +806,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::ChildRelease) => self.child_release(&args),
                     Callee::Builtin(Builtin::ChildPid) => self.child_pid(&args),
                     Callee::Builtin(
-                        Builtin::ExecSpawn | Builtin::ExecSpawnIn | Builtin::ExecSpawnDetached,
+                        Builtin::ExecSpawn
+                        | Builtin::ExecSpawnIn
+                        | Builtin::ExecSpawnDetached
+                        | Builtin::ExecSpawnUnder,
                     ) => {
                         unreachable!("`exec_spawn` is lowered as `Expr::ExecSpawn`")
                     }

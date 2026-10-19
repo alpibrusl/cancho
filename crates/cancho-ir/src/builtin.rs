@@ -820,6 +820,11 @@ pub enum Builtin {
     /// it outlives the program's terminal and its process group. Lowered as
     /// `Expr::ExecSpawn { detached: true, .. }`.
     ExecSpawnDetached,
+    /// `exec_spawn_under(&Exec(""), &Dir, name, args, env, stdin, stdout, stderr) -> [exec_under] Spawned` --
+    /// `docs/processes.md` §4.14, edition 9: start the program `name` names beneath a directory chosen at run
+    /// time. `exec_spawn_in` with the name a relative path (no leading `/`, no `..`) and a row that names no path.
+    /// Lowered as `Expr::ExecSpawn { in_dir: true, under: true, .. }`.
+    ExecSpawnUnder,
     /// `child_release(Child) -> [exec_detached] int` -- §4.11, edition 9: let go of a
     /// child that keeps running. Consumes the handle; a thread of the runtime
     /// reaps the child when it ends. `0`, or the `errno` of the thread.
@@ -1084,6 +1089,7 @@ impl Builtin {
         Builtin::ExecSpawnDetached,
         Builtin::ChildRelease,
         Builtin::ChildPid,
+        Builtin::ExecSpawnUnder,
     ];
 
     pub fn name(self) -> &'static str {
@@ -1238,6 +1244,7 @@ impl Builtin {
             Builtin::ExecSpawn => "exec_spawn",
             Builtin::ExecSpawnIn => "exec_spawn_in",
             Builtin::ExecSpawnDetached => "exec_spawn_detached",
+            Builtin::ExecSpawnUnder => "exec_spawn_under",
             Builtin::ChildRelease => "child_release",
             Builtin::ChildPid => "child_pid",
             Builtin::ChildWait => "child_wait",
@@ -1403,6 +1410,7 @@ impl Builtin {
             // already declare, and edition 7 is closed. §4.12's
             // `child_kill_group` is a name a program may declare as well.
             Builtin::ExecSpawnDetached
+            | Builtin::ExecSpawnUnder
             | Builtin::ChildRelease
             | Builtin::ChildPid
             | Builtin::ChildKillGroup => 9,
@@ -1718,6 +1726,9 @@ impl Builtin {
             // report must say so. `exec_spawn_detached` says it as well, at
             // its call site.
             Builtin::ChildRelease => Effects::plain(["exec_detached"]),
+            // `docs/processes.md` §4.14: path-free, the program is whatever the run-time directory holds; the call
+            // site performs it as well (the self-hosted tables read the label names off this row).
+            Builtin::ExecSpawnUnder => Effects::plain(["exec_under"]),
             Builtin::PipeRead => Effects::plain(["pipe_read"]),
             Builtin::PipeWrite => Effects::plain(["pipe_write"]),
             // Moving authority around is not an effect. Splitting a `World`
