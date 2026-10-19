@@ -380,6 +380,12 @@ the label **`exec_detached`**: names a program may declare for itself, so absent
 (`tests/reject/child_release_is_edition_nine.cho`). The label is reachable only through those builtins, so no older file can
 name it, perform it or be broken by it; it adds no type and no `Split` field.
 
+Edition 9 also has **`child_kill_group`** ([`processes.md`](processes.md) §4.12, #533): `child_kill`'s signals to the process group a
+detached child leads, a name a program may declare for itself, so absent before edition 9
+(`tests/reject/child_kill_group_is_edition_nine.cho`). It is a second builtin and not a change to `child_kill` because edition 7
+is closed (§6.4). It adds no type, no label (`child_signal`) and no `Split` field; `std/process.cho` declares `edition 9` to call it,
+which moves its own hash and no other file's (§6.3).
+
 ---
 
 ## 8. What this does not do
