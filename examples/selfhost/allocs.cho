@@ -181,7 +181,7 @@ pub fn finish_box_slice[&s](st: &!s [int], from: int, to: int, fill: int, c: ex.
         ast.fail(st, rules.r_mode_bound_violated(), ast.nstart(st, fill), ast.nend(st, fill));
         return ex.nothing();
     }
-    if !scope.element_ok(st, f.ty) {
+    if !emit.on(st) || !scope.element_ok(st, f.ty) {
         return ex.skip(st, from, to);
     }
     effects.perform_named(st, "heap");
