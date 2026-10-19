@@ -347,6 +347,11 @@ impl<'a> FuncEmitter<'a> {
                 let (op, prefix, args) = (*op, prefix.clone(), args.clone());
                 self.path_op(op, &prefix, &args)
             }
+            // `docs/processes.md` §4.13.
+            Expr::PathCovers { prefix, args, .. } => {
+                let (prefix, args) = (prefix.clone(), args.clone());
+                self.path_covers(&prefix, &args)
+            }
             // `docs/processes.md` §3.2.
             Expr::ExecSpawn { prefix, in_dir, detached, args } => {
                 let (prefix, in_dir, detached, args) =

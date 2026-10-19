@@ -295,8 +295,9 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] e
 }
 
 // `narrow(cap, "prefix")` (1), `open_read` (2), `open_write` (3), `open_append` (4), `open_new` (5),
-// `open_rw` (6), `exec_spawn` (7), `exec_spawn_in` (10) and `exec_spawn_detached` (13): the builtins whose type or whose check is in the literal a capability
-// was narrowed to. In compile mode only.
+// `open_rw` (6), `exec_spawn` (7), `exec_spawn_in` (10), `exec_spawn_detached` (13), `exec_covers` (14) and `fs_covers` (15): the
+// builtins whose type or whose check is in the literal a capability was narrowed to (`filecode.capability_which` numbers them).
+// In compile mode only.
 pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
@@ -341,6 +342,26 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         }
         let third = types.make_prelude_lit(st, index, ast.get(st, ast.next(st, second_lit), 4));
         return ex.in_reg(types.make_triple(st, first, second, third), 0 - 1);
+    }
+    if which == 14 || which == 15 {
+        // `exec_covers(exec, path)` and `fs_covers(fs, path)` (`docs/processes.md` 4.13): whether the path is under the
+        // bound, by the rule the operations trap on (`cancho_path_covers`). Nothing is performed.
+        if nargs != 2 {
+            ast.fail(st, rules.r_arity_mismatch(), from, to);
+            return ex.nothing();
+        }
+        let c = expr(st, text, arg);
+        arg = ast.next(st, arg);
+        let path = expr(st, text, arg);
+        if !ast.ok(st) {
+            return ex.nothing();
+        }
+        if !scope.slice_codable(st, path.ty) {
+            return ex.skip(st, from, to);
+        }
+        ex.push_value(st, path);
+        atoms.push_bound(st, text, c.ty, netcode.prelude_named(filecode.covered_capability(which)), from, to);
+        return ex.in_reg(5, filecode.path_covers(st));
     }
     if which == 11 || which == 12 {
         // `fs_remove(fs, path)` and `fs_rename(fs, from, to)`: the paths under the prefix of the capability.
@@ -1694,44 +1715,9 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     }
     // Capabilities narrowed by a literal, files and processes: only the code is written for them.
     if emit.on(st) && qualifier < 0 {
-        if pass1.is_word(st, text, callee, "narrow") {
-            return capability_call(st, text, id, 1);
-        }
-        if pass1.is_word(st, text, callee, "open_read") {
-            return capability_call(st, text, id, 2);
-        }
-        if pass1.is_word(st, text, callee, "open_write") {
-            return capability_call(st, text, id, 3);
-        }
-        if pass1.is_word(st, text, callee, "open_append") {
-            return capability_call(st, text, id, 4);
-        }
-        if pass1.is_word(st, text, callee, "open_new") {
-            return capability_call(st, text, id, 5);
-        }
-        if pass1.is_word(st, text, callee, "open_rw") {
-            return capability_call(st, text, id, 6);
-        }
-        if pass1.is_word(st, text, callee, "exec_spawn") {
-            return capability_call(st, text, id, 7);
-        }
-        if pass1.is_word(st, text, callee, "exec_spawn_in") {
-            return capability_call(st, text, id, 10);
-        }
-        if pass1.is_word(st, text, callee, "exec_spawn_detached") && prims.builtin_at(st, text, callee, st[23]) >= 0 {
-            return capability_call(st, text, id, 13);
-        }
-        if pass1.is_word(st, text, callee, "fs_read") {
-            return capability_call(st, text, id, 8);
-        }
-        if pass1.is_word(st, text, callee, "fs_write") {
-            return capability_call(st, text, id, 9);
-        }
-        if pass1.is_word(st, text, callee, "fs_remove") {
-            return capability_call(st, text, id, 11);
-        }
-        if pass1.is_word(st, text, callee, "fs_rename") {
-            return capability_call(st, text, id, 12);
+        let which = filecode.capability_which(st, text, callee);
+        if which > 0 {
+            return capability_call(st, text, id, which);
         }
     }
     // Threads: only the code is written for them, in compile mode.

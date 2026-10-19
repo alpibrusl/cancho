@@ -43,27 +43,7 @@ impl<'a> FnLowering<'a> {
         };
         let capability_span = self.ast.expr_span(*capability);
         let (value, found) = self.expr(*capability)?;
-        let resolved = self.unifier.resolve(&found);
-        let prefix = match &resolved {
-            Type::Ref { inner, .. } => match self.unifier.resolve(inner) {
-                Type::Named(def, args) if def.0 as usize == PRELUDE_EXEC => match args.first() {
-                    Some(Type::Lit(prefix)) => Some(prefix.clone()),
-                    _ => None,
-                },
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some(prefix) = prefix else {
-            return Err(Diagnostic::new(
-                Rule::CapabilityMisused,
-                format!(
-                    "`{}` is not a borrowed `Exec`; a program is started through the capability that names which programs may be",
-                    self.unifier.display(&resolved)
-                ),
-                capability_span,
-            ));
-        };
+        let prefix = self.granted_exec_prefix(&found, capability_span)?;
 
         // The path, the arguments and the environment: three byte slices,
         // read and never written.
@@ -114,5 +94,68 @@ impl<'a> FnLowering<'a> {
             Expr::ExecSpawn { prefix, in_dir, detached, args: lowered },
             Type::Named(self.prelude()[PRELUDE_SPAWNED], Vec::new()),
         ))
+    }
+
+    /// The prefix a borrowed `Exec` was narrowed to.
+    pub(crate) fn granted_exec_prefix(
+        &mut self,
+        found: &Type,
+        span: Span,
+    ) -> Result<String, Diagnostic> {
+        let resolved = self.unifier.resolve(found);
+        if let Type::Ref { inner, .. } = &resolved
+            && let Type::Named(def, args) = self.unifier.resolve(inner)
+            && def.0 as usize == PRELUDE_EXEC
+            && let Some(Type::Lit(prefix)) = args.first()
+        {
+            return Ok(prefix.clone());
+        }
+        Err(Diagnostic::new(
+            Rule::CapabilityMisused,
+            format!(
+                "`{}` is not a borrowed `Exec`; a program is started through the capability that names which programs may be",
+                self.unifier.display(&resolved)
+            ),
+            span,
+        ))
+    }
+
+    /// `exec_covers(exec, path)` and `fs_covers(fs, path)` (§4.13): whether the operations would take the path
+    /// under the capability's bound. A borrow of the capability and of the bytes, a `bool`, and **no row**: nothing
+    /// is touched, which is the point (the report of a program that asks first is the report of one that does not).
+    pub(crate) fn path_covers(
+        &mut self,
+        op: Builtin,
+        args: &[ExprId],
+        span: Span,
+    ) -> Result<(Expr, Type), Diagnostic> {
+        let [capability, path] = args else {
+            return Err(Diagnostic::new(
+                Rule::ArityMismatch,
+                format!(
+                    "`{}` takes 2 arguments -- the borrowed capability and the path -- but {} were given",
+                    op.name(),
+                    args.len()
+                ),
+                span,
+            ));
+        };
+        let exec = op == Builtin::ExecCovers;
+        let capability_span = self.ast.expr_span(*capability);
+        let (value, found) = self.expr(*capability)?;
+        let prefix = if exec {
+            self.granted_exec_prefix(&found, capability_span)?
+        } else {
+            self.granted_prefix(&found, capability_span)?
+        };
+        let bytes = Type::Ref {
+            unique: false,
+            region: self.unifier.fresh_region(),
+            inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+        };
+        let path_span = self.ast.expr_span(*path);
+        let (path_value, path_ty) = self.expr(*path)?;
+        self.expect_type(&bytes, &path_ty, path_span)?;
+        Ok((Expr::PathCovers { prefix, exec, args: vec![value, path_value] }, Type::Bool))
     }
 }

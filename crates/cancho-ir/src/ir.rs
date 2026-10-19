@@ -526,6 +526,16 @@ pub enum Expr {
         detached: bool,
         args: Vec<Expr>,
     },
+    /// `exec_covers(exec, path)` and `fs_covers(fs, path)` (`docs/processes.md` §4.13, edition 9): does the path lie
+    /// under the bound, by the rule the operations enforce? Its own node for the reason [`Expr::OpenFile`] is one: the
+    /// prefix travels with it, because the backend emits the check against it and the type it came from is gone by
+    /// then. `args` is the capability (zero-sized) and the path. What comes back is a `bool`. `exec` says which
+    /// capability it was, for the targets that have no `Exec`.
+    PathCovers {
+        prefix: String,
+        exec: bool,
+        args: Vec<Expr>,
+    },
     /// `tty_open(tty, path)` (`docs/tty.md` §3, edition 8). Its own node
     /// for the reason [`Expr::OpenFile`] is one: the prefix the capability
     /// was narrowed to travels with it, because the backend checks the

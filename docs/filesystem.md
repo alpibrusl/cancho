@@ -223,6 +223,13 @@ missing file: it is a program doing something its type said it would not.
 That is the same distinction `defined-behaviour.md` draws everywhere —
 `-1` for an outcome, a trap for a broken promise.
 
+> **Added (#535): a program that wants the verdict as a value asks first.**
+> `fs_covers(fs, path)` (edition 9) is `true` exactly when the operations would
+> not trap on `path`, from the same emitted check, with no row; `exec_covers`
+> is the same question of an `Exec`. The trap stays: it is what a program that
+> does not ask gets. `processes.md` §4.13 has the rule written out, the choice
+> over a checked variant of every operation, and what was measured.
+
 > **Corrected: the check was undefined behaviour in the LLVM backend.**
 > Both backends compared byte `i` of the path with byte `i` of the prefix
 > for every `i` in the path, reading the prefix's data past its end once the

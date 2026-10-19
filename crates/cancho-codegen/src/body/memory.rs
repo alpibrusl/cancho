@@ -218,23 +218,30 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         self.builder.inst_results(call)[0]
     }
 
-    /// The longest path a file operation will build, including the NUL.
-    ///
-    /// A fixed buffer because the path is copied onto the stack to be
-    /// NUL-terminated — C wants a terminator and a slice does not carry one
-    /// (`docs/strings.md` §6). A longer path traps rather than being cut
-    /// short, because a silently truncated path names a different file.
     /// Trap when byte `i` of a path or a host differs from byte `i` of the
     /// `length`-byte bound at `expected`, while `i` is inside the bound.
+    pub(crate) fn check_against(&mut self, expected: Value, length: usize, i: Value, byte: Value) {
+        let escaped = self.differs_inside(expected, length, i, byte);
+        self.builder.ins().trapnz(escaped, TrapCode::HEAP_OUT_OF_BOUNDS);
+    }
+
+    /// Does byte `i` of a path or a host differ from byte `i` of the `length`-byte bound at `expected`, while `i` is
+    /// inside the bound? A `bool` (`I8`), so the check can be a trap or an answer (`path_escapes`).
     ///
     /// The bound's byte is read at `i` only while `i` is inside it, and at 0
     /// otherwise: reading it at every `i` read past the end of its data, which
     /// the LLVM backend's twin of this check showed is not a harmless habit
     /// (there it was `poison`, and `-O2` deleted the path). An empty bound
     /// contains everything and has no byte to read.
-    pub(crate) fn check_against(&mut self, expected: Value, length: usize, i: Value, byte: Value) {
+    pub(crate) fn differs_inside(
+        &mut self,
+        expected: Value,
+        length: usize,
+        i: Value,
+        byte: Value,
+    ) -> Value {
         if length == 0 {
-            return;
+            return self.builder.ins().iconst(types::I8, 0);
         }
         let inside = self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, i, length as i64);
         let zero = self.builder.ins().iconst(types::I64, 0);
@@ -242,31 +249,32 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let want_at = self.builder.ins().iadd(expected, index);
         let want = self.builder.ins().load(types::I8, MemFlags::trusted(), want_at, 0);
         let differs = self.builder.ins().icmp(IntCC::NotEqual, byte, want);
-        let escaped = self.builder.ins().band(inside, differs);
-        self.builder.ins().trapnz(escaped, TrapCode::HEAP_OUT_OF_BOUNDS);
+        self.builder.ins().band(inside, differs)
     }
 
-    pub(crate) fn checked_path(&mut self, prefix: &str, path: &[Value]) -> Value {
+    /// The path rule, once (`docs/filesystem.md` §1.1, §4, `docs/processes.md` §4.13): is `path` *outside* the bound
+    /// `prefix`? A `bool` (`I8`, 1 when it is outside). Outside is any of: 4096 bytes or more, shorter than the
+    /// prefix, a `..` anywhere, bytes that differ from the prefix's while inside it, and (for a prefix that does not
+    /// end in `/`) a path that goes on from it at a byte other than `/`.
+    ///
+    /// **Every operation and `exec_covers`/`fs_covers` go through here**: `checked_path` traps on the answer and the
+    /// predicates return it, so what a program is told and what the runtime enforces cannot differ. With `buffer`,
+    /// each byte is also copied there (the caller has already refused a path that does not fit).
+    pub(crate) fn path_escapes(
+        &mut self,
+        prefix: &str,
+        path: &[Value],
+        buffer: Option<Value>,
+    ) -> Value {
         const PATH_MAX: i64 = 4096;
-        let pointer = self.pointer;
         let (source, length) = (path[0], path[1]);
 
-        // Room for the bytes and the NUL.
+        // Room for the bytes and the NUL; a path shorter than the prefix cannot start with it.
         let too_long =
             self.builder.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, length, PATH_MAX);
-        self.builder.ins().trapnz(too_long, TrapCode::HEAP_OUT_OF_BOUNDS);
-
-        // A path shorter than the prefix cannot start with it.
         let short =
             self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, length, prefix.len() as i64);
-        self.builder.ins().trapnz(short, TrapCode::HEAP_OUT_OF_BOUNDS);
-
-        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            PATH_MAX as u32,
-            0,
-        ));
-        let buffer = self.builder.ins().stack_addr(pointer, slot, 0);
+        let first = self.builder.ins().bor(too_long, short);
 
         // The prefix the capability was narrowed to, as data to compare
         // against. It is known at compile time; the path is not, which is
@@ -274,17 +282,19 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         // (`docs/filesystem.md` §4).
         let expected = self.bytes(prefix)[0];
 
-        // One pass: copy the byte, check it against the prefix while we are
+        // One pass: copy the byte if asked, check it against the prefix while we are
         // still inside it, and refuse `..` anywhere at all.
         let header = self.builder.create_block();
         let body = self.builder.create_block();
         let done = self.builder.create_block();
         let cursor = self.temporary(types::I64);
         let previous = self.temporary(types::I8);
+        let wrong = self.temporary(types::I8);
         let zero = self.builder.ins().iconst(types::I64, 0);
         let none = self.builder.ins().iconst(types::I8, 0);
         self.builder.def_var(cursor, zero);
         self.builder.def_var(previous, none);
+        self.builder.def_var(wrong, first);
         self.builder.ins().jump(header, &[]);
 
         self.builder.switch_to_block(header);
@@ -297,8 +307,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let i = self.builder.use_var(cursor);
         let at = self.builder.ins().iadd(source, i);
         let byte = self.builder.ins().load(types::I8, MemFlags::trusted(), at, 0);
-        let into = self.builder.ins().iadd(buffer, i);
-        self.builder.ins().store(MemFlags::trusted(), byte, into, 0);
+        if let Some(buffer) = buffer {
+            let into = self.builder.ins().iadd(buffer, i);
+            self.builder.ins().store(MemFlags::trusted(), byte, into, 0);
+        }
 
         // `..` is refused rather than normalised (§4.1): normalising is a
         // security function with its own design, and a prefix check that
@@ -307,13 +319,15 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let prior = self.builder.use_var(previous);
         let prior_dot = self.builder.ins().icmp_imm(IntCC::Equal, prior, i64::from(b'.'));
         let traversal = self.builder.ins().band(dot, prior_dot);
-        self.builder.ins().trapnz(traversal, TrapCode::HEAP_OUT_OF_BOUNDS);
         self.builder.def_var(previous, byte);
 
-        // Inside the prefix, the bytes have to match. A path outside what
-        // the capability granted is a broken promise, so it traps rather
-        // than returning -1.
-        self.check_against(expected, prefix.len(), i, byte);
+        // Inside the prefix, the bytes have to match: a path outside what
+        // the capability granted.
+        let differs = self.differs_inside(expected, prefix.len(), i, byte);
+        let this = self.builder.ins().bor(traversal, differs);
+        let so_far = self.builder.use_var(wrong);
+        let all = self.builder.ins().bor(so_far, this);
+        self.builder.def_var(wrong, all);
 
         let next = self.builder.ins().iadd_imm(i, 1);
         self.builder.def_var(cursor, next);
@@ -322,23 +336,73 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
         self.builder.switch_to_block(done);
         self.builder.seal_block(done);
-        let end = self.builder.ins().iadd(buffer, length);
-        self.builder.ins().store(MemFlags::trusted(), none, end, 0);
+        let wrong_so_far = self.builder.use_var(wrong);
 
         // The bytes match, which is not yet the same as being inside the
         // directory: `/tmp` does not contain `/tmpevil` (§1). The path
-        // either *is* the granted name or continues from it at a `/`, and
-        // the NUL is already stored, so the byte one past a path of exactly
-        // the prefix's length reads as zero rather than as rubbish.
-        if !prefix.is_empty() && !prefix.ends_with('/') {
-            let at = self.builder.ins().iadd_imm(buffer, prefix.len() as i64);
-            let byte = self.builder.ins().load(types::I8, MemFlags::trusted(), at, 0);
-            let separator = self.builder.ins().icmp_imm(IntCC::Equal, byte, i64::from(b'/'));
-            let ended = self.builder.ins().icmp_imm(IntCC::Equal, byte, 0);
-            let boundary = self.builder.ins().bor(separator, ended);
-            self.builder.ins().trapz(boundary, TrapCode::HEAP_OUT_OF_BOUNDS);
+        // either *is* the granted name or continues from it at a `/` (a
+        // NUL there ends the C string at the prefix, so it is the prefix).
+        // The byte is read only from a path that has one: a shorter path
+        // has been marked outside already, and may be a pointer to nothing.
+        if prefix.is_empty() || prefix.ends_with('/') {
+            return wrong_so_far;
         }
+        let longer =
+            self.builder.ins().icmp_imm(IntCC::UnsignedGreaterThan, length, prefix.len() as i64);
+        let read = self.builder.create_block();
+        let merge = self.builder.create_block();
+        self.builder.append_block_param(merge, types::I8);
+        let nothing = self.builder.ins().iconst(types::I8, 0);
+        self.builder.ins().brif(longer, read, &[], merge, &[nothing.into()]);
+
+        self.builder.switch_to_block(read);
+        self.builder.seal_block(read);
+        let at = self.builder.ins().iadd_imm(source, prefix.len() as i64);
+        let byte = self.builder.ins().load(types::I8, MemFlags::trusted(), at, 0);
+        self.builder.ins().jump(merge, &[byte.into()]);
+
+        self.builder.switch_to_block(merge);
+        self.builder.seal_block(merge);
+        let byte = self.builder.block_params(merge)[0];
+        let separator = self.builder.ins().icmp_imm(IntCC::Equal, byte, i64::from(b'/'));
+        let ended = self.builder.ins().icmp_imm(IntCC::Equal, byte, 0);
+        let boundary = self.builder.ins().bor(separator, ended);
+        let across = self.builder.ins().bxor_imm(boundary, 1);
+        self.builder.ins().bor(wrong_so_far, across)
+    }
+
+    /// The path of a file operation, NUL-terminated on the stack and checked against `prefix`; a path that is not
+    /// inside it traps (`path_escapes` is the rule, `docs/filesystem.md` §4). A longer path traps rather than being cut
+    /// short, because a silently truncated path names a different file.
+    pub(crate) fn checked_path(&mut self, prefix: &str, path: &[Value]) -> Value {
+        const PATH_MAX: i64 = 4096;
+        let pointer = self.pointer;
+        let length = path[1];
+
+        // The copy has 4096 bytes, so a longer path is refused before it starts.
+        let too_long =
+            self.builder.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, length, PATH_MAX);
+        self.builder.ins().trapnz(too_long, TrapCode::HEAP_OUT_OF_BOUNDS);
+
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            PATH_MAX as u32,
+            0,
+        ));
+        let buffer = self.builder.ins().stack_addr(pointer, slot, 0);
+        let escapes = self.path_escapes(prefix, path, Some(buffer));
+        self.builder.ins().trapnz(escapes, TrapCode::HEAP_OUT_OF_BOUNDS);
+        let none = self.builder.ins().iconst(types::I8, 0);
+        let end = self.builder.ins().iadd(buffer, length);
+        self.builder.ins().store(MemFlags::trusted(), none, end, 0);
         buffer
+    }
+
+    /// `exec_covers(exec, path)` and `fs_covers(fs, path)` (`docs/processes.md` §4.13): `path_escapes`' answer, not.
+    pub(crate) fn path_covers(&mut self, prefix: &str, args: &[Expr]) -> Vec<Value> {
+        let path = self.expr(&args[1]);
+        let escapes = self.path_escapes(prefix, &path, None);
+        vec![self.builder.ins().bxor_imm(escapes, 1)]
     }
 
     /// `fs_read` and `fs_write` (`docs/filesystem.md` §3).

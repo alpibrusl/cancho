@@ -837,6 +837,12 @@ pub enum Builtin {
     /// `child_kill`'s signals to the process group the child leads (`kill(-pid)`).
     /// `0`, or the `errno`; `ESRCH` for a child that does not lead a group.
     ChildKillGroup,
+    /// `exec_covers(&Exec(p), path) -> bool` and `fs_covers(&Fs(p), path) -> bool` -- `docs/processes.md`
+    /// §4.13, edition 9: would `exec_spawn` (or `open_read`, `fs_remove`, ...) take this path under the bound, or trap?
+    /// No row: nothing is touched. Lowered as `Expr::PathCovers`, so the prefix travels with it and the backend
+    /// emits the *same* check the operations do, `checked_path`'s, with a verdict in place of the trap.
+    ExecCovers,
+    FsCovers,
     /// `pipe_read(&!Pipe, &![byte]) -> [pipe_read] Received`.
     PipeRead,
     /// `pipe_write(&!Pipe, &[byte]) -> [pipe_write] Sent`: never raises `SIGPIPE`.
@@ -1059,6 +1065,8 @@ impl Builtin {
         Builtin::ChildWait,
         Builtin::ChildKill,
         Builtin::ChildKillGroup,
+        Builtin::ExecCovers,
+        Builtin::FsCovers,
         Builtin::PipeRead,
         Builtin::PipeWrite,
         Builtin::PipeNonblocking,
@@ -1235,6 +1243,8 @@ impl Builtin {
             Builtin::ChildWait => "child_wait",
             Builtin::ChildKill => "child_kill",
             Builtin::ChildKillGroup => "child_kill_group",
+            Builtin::ExecCovers => "exec_covers",
+            Builtin::FsCovers => "fs_covers",
             Builtin::PipeRead => "pipe_read",
             Builtin::PipeWrite => "pipe_write",
             Builtin::PipeNonblocking => "pipe_nonblocking",
@@ -1396,6 +1406,9 @@ impl Builtin {
             | Builtin::ChildRelease
             | Builtin::ChildPid
             | Builtin::ChildKillGroup => 9,
+            // `docs/processes.md` §4.13: `exec_covers` and `fs_covers` are names a program may declare for itself
+            // (`cancho-forge` wrote its own), and edition 7 is closed.
+            Builtin::ExecCovers | Builtin::FsCovers => 9,
             // `docs/crypto-builtins.md` §3: the latest edition, as
             // `value_barrier` was, since a program may already declare
             // these names.

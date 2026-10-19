@@ -1,0 +1,60 @@
+//~ STDOUT exec covered
+//~ STDOUT exec outside
+//~ STDOUT fs covered
+//~ STDOUT fs outside
+//~ EXIT 0
+
+// `docs/processes.md` §4.13: `exec_covers` and `fs_covers` answer whether a path is inside the bound by the rule the
+// operations enforce, and **asking is not an authority**: both functions below have the empty row, and so does the
+// program's report apart from the console. A supervisor can therefore refuse first, with the rule the runtime uses,
+// and keep the capability for the spawn it does decide to make.
+
+edition 9;
+
+import std.io;
+
+fn runnable[&x, &p](exec: &x Exec("/bin"), path: &p [byte]) -> [] bool {
+    return exec_covers(exec, path);
+}
+
+fn readable[&c, &p](fs: &c Fs("/etc"), path: &p [byte]) -> [] bool {
+    return fs_covers(fs, path);
+}
+
+fn say[&i, &l](io: &!i Io, label: &l [byte], yes: bool) -> [io_write] int {
+    io.write_all(io, label);
+    if yes {
+        io.write_all(io, " covered\n");
+    } else {
+        io.write_all(io, " outside\n");
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    let bin = narrow(exec, "/bin");
+    let etc = narrow(fs, "/etc");
+    var console = io;
+    borrow bin as &x in {
+        borrow etc as &c in {
+            borrow mut console as &!i in {
+                say(i, "exec", runnable(x, "/bin/true"));
+                say(i, "exec", runnable(x, "/bin2/true"));
+                say(i, "fs", readable(c, "/etc/passwd"));
+                say(i, "fs", readable(c, "/etc/../root"));
+            }
+        }
+    }
+    release(bin);
+    release(etc);
+    release(console);
+    return 0;
+}

@@ -386,6 +386,12 @@ detached child leads, a name a program may declare for itself, so absent before 
 is closed (§6.4). It adds no type, no label (`child_signal`) and no `Split` field; `std/process.cho` declares `edition 9` to call it,
 which moves its own hash and no other file's (§6.3).
 
+Edition 9 also has **`exec_covers` and `fs_covers`** ([`processes.md`](processes.md) §4.13, #535): `bool` predicates that answer whether
+`exec_spawn` (or an `Fs` operation) would take a path under the capability's bound or trap, by the same emitted check. Names a program
+may declare for itself (cancho-forge's supervisor wrote its own), so absent before edition 9
+(`tests/reject/exec_covers_is_edition_nine.cho`, `fs_covers_is_edition_nine.cho`). They have no row, add no type, no label and no `Split`
+field, and the trap of an operation outside its bound is unchanged in every edition.
+
 ---
 
 ## 8. What this does not do

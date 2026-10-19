@@ -126,6 +126,7 @@ pub(crate) fn settle_expr(expr: &mut Expr, unifier: &Unifier) {
         | Expr::TtyOpen { args, .. }
         | Expr::ExecSpawn { args, .. }
         | Expr::PathOp { args, .. }
+        | Expr::PathCovers { args, .. }
         | Expr::Connect { args, .. }
         | Expr::Bind { args, .. }
         | Expr::TcpListen { args, .. }

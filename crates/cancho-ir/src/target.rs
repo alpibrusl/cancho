@@ -155,6 +155,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::ChildEndClose
         | B::ChildKill
         | B::ChildKillGroup
+        | B::ExecCovers
         | B::ChildWait
         | B::PipeClose
         | B::PipeNonblocking
@@ -211,6 +212,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::Sqrt
         | B::IntOf
         | B::FsRead
+        | B::FsCovers
         | B::OpenRead
         | B::ReadFile
         | B::Close
@@ -380,6 +382,12 @@ fn expr_gaps(e: &Expr, out: &mut Vec<(Gap, &'static str)>) {
         // builtins: each has its own `Expr` variant.
         Expr::ExecSpawn { args, .. } => {
             out.push((Gap::Processes, "exec_spawn"));
+            args.iter().for_each(|a| expr_gaps(a, out));
+        }
+        Expr::PathCovers { exec, args, .. } => {
+            if *exec {
+                out.push((Gap::Processes, "exec_covers"));
+            }
             args.iter().for_each(|a| expr_gaps(a, out));
         }
         Expr::Connect { args, .. } => {

@@ -35,6 +35,19 @@ impl<'a> FuncEmitter<'a> {
 
     /// Trap when byte `i` of a path or a host differs from byte `i` of the
     /// `length`-byte bound at `expected`, while `i` is inside the bound.
+    pub(crate) fn check_against(
+        &mut self,
+        expected: &str,
+        length: usize,
+        i: &str,
+        byte: &str,
+    ) -> Result<(), String> {
+        let escaped = self.differs_inside(expected, length, i, byte);
+        self.trap_if(&escaped)
+    }
+
+    /// Does byte `i` of a path or a host differ from byte `i` of the `length`-byte bound at `expected`, while `i` is
+    /// inside the bound? An `i1`, so the check can be a trap or an answer (`path_escapes`).
     ///
     /// The bound's byte is read at `i` only while `i` is inside it, and at 0
     /// otherwise. Reading it at every `i` read past the end of its global, and
@@ -44,15 +57,15 @@ impl<'a> FuncEmitter<'a> {
     /// `fs_read("/tmp/q/f")` on `Fs("/tmp")` trapped (`docs/filesystem.md`
     /// §4). An empty bound contains everything, and its global has no byte
     /// to read at all, so there is nothing to compare.
-    pub(crate) fn check_against(
+    pub(crate) fn differs_inside(
         &mut self,
         expected: &str,
         length: usize,
         i: &str,
         byte: &str,
-    ) -> Result<(), String> {
+    ) -> String {
         if length == 0 {
-            return Ok(());
+            return "false".to_owned();
         }
         let inside = self.fresh();
         self.out.push_str(&format!("  {inside} = icmp ult i64 {i}, {length}\n"));
@@ -67,39 +80,45 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {differs} = icmp ne i8 {byte}, {want}\n"));
         let escaped = self.fresh();
         self.out.push_str(&format!("  {escaped} = and i1 {inside}, {differs}\n"));
-        self.trap_if(&escaped)
+        escaped
     }
 
-    /// The longest path a file operation will build, including the NUL
-    /// -- copied onto the stack to terminate it for C, since a slice
-    /// carries no terminator of its own (`docs/strings.md` §6). A
-    /// longer path traps rather than being cut short, because a
-    /// silently truncated path names a different file. Mirrors
-    /// `cancho-codegen`'s own `checked_path` (`body/memory.rs`) line
-    /// for line; the loop is built the same "no `phi`" way `connect`'s
-    /// own `checked_host` already is.
-    pub(crate) fn checked_path(&mut self, prefix: &str, path: &[LValue]) -> Result<String, String> {
+    /// The path rule, once (`docs/filesystem.md` §1.1, §4, `docs/processes.md` §4.13): is the path (a pointer and a
+    /// length) *outside* the bound `prefix`? An `i1`, 1 when it is outside. Outside is any of: 4096 bytes or more,
+    /// shorter than the prefix, a `..` anywhere, bytes that differ from the prefix's while inside it, and (for a
+    /// prefix that does not end in `/`) a path that goes on from it at a byte other than `/`.
+    ///
+    /// **Every operation and `exec_covers`/`fs_covers` go through here**: `checked_path` traps on the answer and the
+    /// predicates return it, so what a program is told and what the runtime enforces cannot differ. With `buffer`,
+    /// each byte is also copied there (the caller has already refused a path that does not fit). Mirrors
+    /// `cancho-codegen`'s `path_escapes` (`body/memory.rs`); the loop is built the "no `phi`" way.
+    pub(crate) fn path_escapes(
+        &mut self,
+        prefix: &str,
+        path: &[LValue],
+        buffer: Option<&str>,
+    ) -> String {
         const PATH_MAX: i64 = 4096;
         let (source, length) = (operand(&path[0]), operand(&path[1]));
 
+        // Room for the bytes and the NUL; a path shorter than the prefix cannot start with it.
         let too_long = self.fresh();
         self.out.push_str(&format!("  {too_long} = icmp uge i64 {length}, {PATH_MAX}\n"));
-        self.trap_if(&too_long)?;
-
         let short = self.fresh();
         self.out.push_str(&format!("  {short} = icmp ult i64 {length}, {}\n", prefix.len()));
-        self.trap_if(&short)?;
+        let first = self.fresh();
+        self.out.push_str(&format!("  {first} = or i1 {too_long}, {short}\n"));
 
-        let buffer = self.fresh();
-        self.hoist(format!("  {buffer} = alloca i8, i64 {PATH_MAX}\n"));
         let expected = operand(&self.bytes_lit(prefix)[0]);
-
         let cursor = self.fresh();
         self.hoist(format!("  {cursor} = alloca i64\n"));
         self.out.push_str(&format!("  store i64 0, ptr {cursor}\n"));
         let previous = self.fresh();
         self.hoist(format!("  {previous} = alloca i8\n"));
         self.out.push_str(&format!("  store i8 0, ptr {previous}\n"));
+        let wrong = self.fresh();
+        self.hoist(format!("  {wrong} = alloca i1\n"));
+        self.out.push_str(&format!("  store i1 {first}, ptr {wrong}\n"));
 
         let n = self.blocks;
         self.blocks += 1;
@@ -119,9 +138,11 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {at} = getelementptr i8, ptr {source}, i64 {i}\n"));
         let byte = self.fresh();
         self.out.push_str(&format!("  {byte} = load i8, ptr {at}\n"));
-        let into = self.fresh();
-        self.out.push_str(&format!("  {into} = getelementptr i8, ptr {buffer}, i64 {i}\n"));
-        self.out.push_str(&format!("  store i8 {byte}, ptr {into}\n"));
+        if let Some(buffer) = buffer {
+            let into = self.fresh();
+            self.out.push_str(&format!("  {into} = getelementptr i8, ptr {buffer}, i64 {i}\n"));
+            self.out.push_str(&format!("  store i8 {byte}, ptr {into}\n"));
+        }
 
         // `..` is refused rather than normalised (`docs/filesystem.md`
         // §4.1): normalising is a security function with its own
@@ -135,13 +156,18 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  {prior_dot} = icmp eq i8 {prior}, 46\n"));
         let traversal = self.fresh();
         self.out.push_str(&format!("  {traversal} = and i1 {dot}, {prior_dot}\n"));
-        self.trap_if(&traversal)?;
         self.out.push_str(&format!("  store i8 {byte}, ptr {previous}\n"));
 
-        // Inside the prefix, the bytes have to match. A path outside
-        // what the capability granted is a broken promise, so it traps
-        // rather than returning `-1`.
-        self.check_against(&expected, prefix.len(), &i, &byte)?;
+        // Inside the prefix, the bytes have to match: a path outside what
+        // the capability granted.
+        let differs = self.differs_inside(&expected, prefix.len(), &i, &byte);
+        let this = self.fresh();
+        self.out.push_str(&format!("  {this} = or i1 {traversal}, {differs}\n"));
+        let so_far = self.fresh();
+        self.out.push_str(&format!("  {so_far} = load i1, ptr {wrong}\n"));
+        let all = self.fresh();
+        self.out.push_str(&format!("  {all} = or i1 {so_far}, {this}\n"));
+        self.out.push_str(&format!("  store i1 {all}, ptr {wrong}\n"));
 
         let next = self.fresh();
         self.out.push_str(&format!("  {next} = add i64 {i}, 1\n"));
@@ -149,33 +175,89 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  br label %{header}\n"));
 
         self.out.push_str(&format!("{done}:\n"));
-        let end = self.fresh();
-        self.out.push_str(&format!("  {end} = getelementptr i8, ptr {buffer}, i64 {length}\n"));
-        self.out.push_str(&format!("  store i8 0, ptr {end}\n"));
+        let wrong_so_far = self.fresh();
+        self.out.push_str(&format!("  {wrong_so_far} = load i1, ptr {wrong}\n"));
 
         // The bytes matching is not yet the same as being inside the
         // directory: `/tmp` does not contain `/tmpevil`. The path
-        // either *is* the granted name or continues from it at a `/`.
-        if !prefix.is_empty() && !prefix.ends_with('/') {
-            let at = self.fresh();
-            self.out.push_str(&format!(
-                "  {at} = getelementptr i8, ptr {buffer}, i64 {}\n",
-                prefix.len()
-            ));
-            let byte = self.fresh();
-            self.out.push_str(&format!("  {byte} = load i8, ptr {at}\n"));
-            let separator = self.fresh();
-            self.out.push_str(&format!("  {separator} = icmp eq i8 {byte}, 47\n"));
-            let ended = self.fresh();
-            self.out.push_str(&format!("  {ended} = icmp eq i8 {byte}, 0\n"));
-            let boundary = self.fresh();
-            self.out.push_str(&format!("  {boundary} = or i1 {separator}, {ended}\n"));
-            let not_boundary = self.fresh();
-            self.out.push_str(&format!("  {not_boundary} = xor i1 {boundary}, true\n"));
-            self.trap_if(&not_boundary)?;
+        // either *is* the granted name or continues from it at a `/` (a
+        // NUL there ends the C string at the prefix, so it is the prefix).
+        // The byte is read only from a path that has one: a shorter path
+        // has been marked outside already, and may be a pointer to nothing.
+        if prefix.is_empty() || prefix.ends_with('/') {
+            return wrong_so_far;
         }
+        let longer = self.fresh();
+        self.out.push_str(&format!("  {longer} = icmp ugt i64 {length}, {}\n", prefix.len()));
+        let cell = self.fresh();
+        self.hoist(format!("  {cell} = alloca i8\n"));
+        self.out.push_str(&format!("  store i8 0, ptr {cell}\n"));
+        let m = self.blocks;
+        self.blocks += 1;
+        let (read, join) = (format!("pathread{m}"), format!("pathjoin{m}"));
+        self.out.push_str(&format!("  br i1 {longer}, label %{read}, label %{join}\n"));
+        self.out.push_str(&format!("{read}:\n"));
+        let beyond = self.fresh();
+        self.out.push_str(&format!(
+            "  {beyond} = getelementptr i8, ptr {source}, i64 {}\n",
+            prefix.len()
+        ));
+        let next_byte = self.fresh();
+        self.out.push_str(&format!("  {next_byte} = load i8, ptr {beyond}\n"));
+        self.out.push_str(&format!("  store i8 {next_byte}, ptr {cell}\n"));
+        self.out.push_str(&format!("  br label %{join}\n"));
+        self.out.push_str(&format!("{join}:\n"));
+        let byte = self.fresh();
+        self.out.push_str(&format!("  {byte} = load i8, ptr {cell}\n"));
+        let separator = self.fresh();
+        self.out.push_str(&format!("  {separator} = icmp eq i8 {byte}, 47\n"));
+        let ended = self.fresh();
+        self.out.push_str(&format!("  {ended} = icmp eq i8 {byte}, 0\n"));
+        let boundary = self.fresh();
+        self.out.push_str(&format!("  {boundary} = or i1 {separator}, {ended}\n"));
+        let across = self.fresh();
+        self.out.push_str(&format!("  {across} = xor i1 {boundary}, true\n"));
+        let outside = self.fresh();
+        self.out.push_str(&format!("  {outside} = or i1 {wrong_so_far}, {across}\n"));
+        outside
+    }
 
+    /// The path of a file operation, NUL-terminated on the stack and checked against `prefix`; a path that is not
+    /// inside it traps (`path_escapes` is the rule, `docs/filesystem.md` §4). A longer path traps rather than being
+    /// cut short, because a silently truncated path names a different file (`docs/strings.md` §6).
+    pub(crate) fn checked_path(&mut self, prefix: &str, path: &[LValue]) -> Result<String, String> {
+        const PATH_MAX: i64 = 4096;
+        let length = operand(&path[1]);
+
+        // The copy has 4096 bytes, so a longer path is refused before it starts.
+        let too_long = self.fresh();
+        self.out.push_str(&format!("  {too_long} = icmp uge i64 {length}, {PATH_MAX}\n"));
+        self.trap_if(&too_long)?;
+
+        let buffer = self.fresh();
+        self.hoist(format!("  {buffer} = alloca i8, i64 {PATH_MAX}\n"));
+        let escapes = self.path_escapes(prefix, path, Some(&buffer));
+        self.trap_if(&escapes)?;
+        let end = self.fresh();
+        self.out.push_str(&format!("  {end} = getelementptr i8, ptr {buffer}, i64 {length}\n"));
+        self.out.push_str(&format!("  store i8 0, ptr {end}\n"));
         Ok(buffer)
+    }
+
+    /// `exec_covers(exec, path)` and `fs_covers(fs, path)` (`docs/processes.md` §4.13): `path_escapes`' answer, not,
+    /// as this backend's `bool` leaf (`i8`).
+    pub(crate) fn path_covers(
+        &mut self,
+        prefix: &str,
+        args: &[Expr],
+    ) -> Result<Vec<LValue>, String> {
+        let path = self.expr(&args[1])?;
+        let escapes = self.path_escapes(prefix, &path, None);
+        let covers = self.fresh();
+        self.out.push_str(&format!("  {covers} = xor i1 {escapes}, true\n"));
+        let widened = self.fresh();
+        self.out.push_str(&format!("  {widened} = zext i1 {covers} to i8\n"));
+        Ok(vec![LValue::Reg(widened)])
     }
 
     /// `fs_read`/`fs_write` (`docs/filesystem.md` §3). Both open with

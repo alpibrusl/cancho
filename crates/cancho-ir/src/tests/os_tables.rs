@@ -141,6 +141,7 @@ fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
         Builtin::ChildRelease,
         Builtin::ChildPid,
         Builtin::ChildKillGroup,
+        Builtin::ExecCovers,
     ] {
         assert_eq!(wasi_gap(letting_go), Some(Gap::Processes), "{}", letting_go.name());
     }
@@ -153,7 +154,10 @@ fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
     assert_eq!(wasi_gap(Builtin::DirRenameNew), Some(Gap::NoReplaceRename));
     // The replacing rename is on WASI's side of the line; only the no-replace one is not.
     assert_eq!(wasi_gap(Builtin::DirRename), None);
-    for supported in [Builtin::DirStat, Builtin::FileSync, Builtin::DirSync, Builtin::FsRead] {
+    // `fs_covers` is the question `open_read` is asked, and `Fs` is on WASI (`processes.md` §4.13).
+    for supported in
+        [Builtin::DirStat, Builtin::FileSync, Builtin::DirSync, Builtin::FsRead, Builtin::FsCovers]
+    {
         assert_eq!(wasi_gap(supported), None, "{}", supported.name());
     }
     for supported in [Builtin::PutChar, Builtin::GetChar, Builtin::ReadFile, Builtin::ClockMs] {
@@ -161,16 +165,16 @@ fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
     }
     assert_eq!(
         Builtin::ALL.iter().filter(|b| wasi_gap(**b).is_some()).count(),
-        74,
+        75,
         "the refused set moved: update docs/wasm.md with it"
     );
     // The total and the supported count too: a builtin added on WASI's
     // side of the line moves these and not the refused count, which is how
     // docs/wasm.md's numbers went stale before (#382 added four).
-    assert_eq!(Builtin::ALL.len(), 166, "the builtin count moved: update docs/wasm.md with it");
+    assert_eq!(Builtin::ALL.len(), 168, "the builtin count moved: update docs/wasm.md with it");
     assert_eq!(
         Builtin::ALL.iter().filter(|b| wasi_gap(**b).is_none()).count(),
-        92,
+        93,
         "the supported set moved: update docs/wasm.md with it"
     );
 }

@@ -179,6 +179,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let (op, prefix, args) = (*op, prefix.clone(), args.clone());
                 self.path_op(op, &prefix, &args)
             }
+            Expr::PathCovers { prefix, args, .. } => {
+                let (prefix, args) = (prefix.clone(), args.clone());
+                self.path_covers(&prefix, &args)
+            }
             Expr::ExecSpawn { prefix, in_dir, detached, args } => {
                 let (prefix, in_dir, detached, args) =
                     (prefix.clone(), *in_dir, *detached, args.clone());
@@ -748,6 +752,11 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::FileLock) => self.file_lock(&args),
                     Callee::Builtin(Builtin::FsRename | Builtin::FsRemove) => {
                         unreachable!("`fs_rename` and `fs_remove` are lowered as `Expr::PathOp`")
+                    }
+                    Callee::Builtin(Builtin::ExecCovers | Builtin::FsCovers) => {
+                        unreachable!(
+                            "`exec_covers` and `fs_covers` are lowered as `Expr::PathCovers`"
+                        )
                     }
                     // Like the two above: the bound travels with its own
                     // node (`docs/net.md` §4.1).

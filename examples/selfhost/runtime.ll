@@ -55,30 +55,25 @@ entry:
   ret i64 %w
 }
 
-; A path under the prefix a capability was narrowed to, as a NUL-terminated copy; anything else traps: a path
-; of 4096 bytes or more, one shorter than the prefix, one with ".." in it, one that does not begin with the
-; prefix, and (when the prefix does not end in "/") one that goes on from it at a byte other than "/".
-define ptr @cancho_checked_path(ptr %src, i64 %len, ptr %prefix, i64 %plen) {
+; Is the path (%src, %len) inside the prefix a capability was narrowed to? The one rule (docs/filesystem.md 1.1 and 4,
+; docs/processes.md 4.13): not when it is 4096 bytes or more, shorter than the prefix, has ".." in it, does not begin with
+; the prefix, or (when the prefix is not empty and does not end in "/") goes on from it at a byte other than "/" (a NUL
+; there ends the C string at the prefix, so it is the prefix). `cancho_checked_path` traps on the answer, and
+; `exec_covers`/`fs_covers` return it, so what a program is told is what the runtime enforces.
+define i1 @cancho_path_covers(ptr %src, i64 %len, ptr %prefix, i64 %plen) {
 entry:
   %toolong = icmp uge i64 %len, 4096
-  br i1 %toolong, label %trap, label %c1
+  br i1 %toolong, label %no, label %c1
 c1:
   %short = icmp ult i64 %len, %plen
-  br i1 %short, label %trap, label %c2
-c2:
-  %size = add i64 %len, 1
-  %buf = call ptr @malloc(i64 %size)
-  %none = icmp eq ptr %buf, null
-  br i1 %none, label %trap, label %loop
+  br i1 %short, label %no, label %loop
 loop:
-  %i = phi i64 [ 0, %c2 ], [ %next, %cont ]
+  %i = phi i64 [ 0, %c1 ], [ %next, %cont ]
   %more = icmp ult i64 %i, %len
   br i1 %more, label %body, label %done
 body:
   %a = getelementptr i8, ptr %src, i64 %i
   %byte = load i8, ptr %a
-  %d = getelementptr i8, ptr %buf, i64 %i
-  store i8 %byte, ptr %d
   %isdot = icmp eq i8 %byte, 46
   %hasprev = icmp ugt i64 %i, 0
   %pi = sub i64 %i, 1
@@ -88,7 +83,7 @@ body:
   %pdot = icmp eq i8 %pbyte, 46
   %both0 = and i1 %isdot, %pdot
   %both = and i1 %both0, %hasprev
-  br i1 %both, label %trap, label %inpre
+  br i1 %both, label %no, label %inpre
 inpre:
   %insidep = icmp ult i64 %i, %plen
   br i1 %insidep, label %cmp, label %cont
@@ -96,30 +91,60 @@ cmp:
   %ea = getelementptr i8, ptr %prefix, i64 %i
   %ebyte = load i8, ptr %ea
   %diff = icmp ne i8 %ebyte, %byte
-  br i1 %diff, label %trap, label %cont
+  br i1 %diff, label %no, label %cont
 cont:
   %next = add i64 %i, 1
   br label %loop
 done:
-  %end = getelementptr i8, ptr %buf, i64 %len
-  store i8 0, ptr %end
   %nonempty = icmp ugt i64 %plen, 0
-  br i1 %nonempty, label %b1, label %ok
+  br i1 %nonempty, label %b1, label %yes
 b1:
   %li = sub i64 %plen, 1
   %la = getelementptr i8, ptr %prefix, i64 %li
   %last = load i8, ptr %la
   %slash = icmp eq i8 %last, 47
-  br i1 %slash, label %ok, label %b2
+  br i1 %slash, label %yes, label %b2
 b2:
   %longer = icmp ugt i64 %len, %plen
-  br i1 %longer, label %b3, label %ok
+  br i1 %longer, label %b3, label %yes
 b3:
   %ba = getelementptr i8, ptr %src, i64 %plen
   %bbyte = load i8, ptr %ba
   %bslash = icmp eq i8 %bbyte, 47
-  br i1 %bslash, label %ok, label %trap
-ok:
+  %bnul = icmp eq i8 %bbyte, 0
+  %bok = or i1 %bslash, %bnul
+  ret i1 %bok
+yes:
+  ret i1 true
+no:
+  ret i1 false
+}
+
+; A path under the prefix a capability was narrowed to, as a NUL-terminated copy; anything else traps
+; (`cancho_path_covers` says which).
+define ptr @cancho_checked_path(ptr %src, i64 %len, ptr %prefix, i64 %plen) {
+entry:
+  %inside = call i1 @cancho_path_covers(ptr %src, i64 %len, ptr %prefix, i64 %plen)
+  br i1 %inside, label %c2, label %trap
+c2:
+  %size = add i64 %len, 1
+  %buf = call ptr @malloc(i64 %size)
+  %none = icmp eq ptr %buf, null
+  br i1 %none, label %trap, label %loop
+loop:
+  %i = phi i64 [ 0, %c2 ], [ %next, %body ]
+  %more = icmp ult i64 %i, %len
+  br i1 %more, label %body, label %done
+body:
+  %a = getelementptr i8, ptr %src, i64 %i
+  %byte = load i8, ptr %a
+  %d = getelementptr i8, ptr %buf, i64 %i
+  store i8 %byte, ptr %d
+  %next = add i64 %i, 1
+  br label %loop
+done:
+  %end = getelementptr i8, ptr %buf, i64 %len
+  store i8 0, ptr %end
   ret ptr %buf
 trap:
   call void @cancho_trap()

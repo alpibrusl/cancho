@@ -1,0 +1,129 @@
+edition 9;
+
+import std.io;
+
+// `docs/processes.md` §4.13: `exec_covers` and `fs_covers`, which answer what `exec_spawn` and `open_read` would do:
+// take the path, or trap. The bound is `/bin` here, and the conformance test builds this file with the text
+// `"/bin"` replaced by each bound it wants to ask about (a directory, one program, a directory ending in `/`, none).
+// argv[1] is a mode and argv[2] the path (the test passes both):
+//   `c`  `exec_covers(exec, path)`, printed `covered` or `outside`
+//   `f`  `fs_covers(fs, path)`, the same
+//   `e`  the real thing: `exec_spawn(exec, path, ...)`, printed `spawned code N` or `failed errno N`; outside the
+//        bound the program is killed by the trap and prints nothing
+//   `o`  the real thing: `open_read(fs, path)`, printed `opened` or `failed errno N`
+//   `s`  a supervisor: ask first, spawn only if covered, say `refused` otherwise, and go on to say `journaled`
+//   `z`  `exec_covers` and `fs_covers` of a path with a NUL after the bound, from a literal (a command line has none)
+
+fn answer[&i](io: &!i Io, yes: bool) -> [io_write] int {
+    if yes {
+        io.write_all(io, "covered\n");
+    } else {
+        io.write_all(io, "outside\n");
+    }
+    return 0;
+}
+
+fn start[&x, &i, &p](exec: &x Exec("/bin"), io: &!i Io, path: &p [byte]) -> [exec("/bin"), io_write] int {
+    match exec_spawn(exec, path, "", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            match child_wait(child) {
+                Exited::Code(n) => {
+                    io.write_all(io, "spawned code ");
+                    io.print_int(io, n);
+                    io.newline(io);
+                }
+                Exited::Signaled(s) => {
+                    io.write_all(io, "spawned signaled\n");
+                }
+                Exited::Failed(e) => {
+                    io.write_all(io, "wait failed\n");
+                }
+            }
+        }
+        Spawned::Failed(e) => {
+            io.write_all(io, "failed errno ");
+            io.print_int(io, e);
+            io.newline(io);
+        }
+    }
+    return 0;
+}
+
+fn try_open[&c, &i, &p](fs: &c Fs("/bin"), io: &!i Io, path: &p [byte]) -> [fs_read("/bin"), io_write] int {
+    match open_read(fs, path) {
+        Opened::Ok(f) => {
+            file_close(f);
+            io.write_all(io, "opened\n");
+        }
+        Opened::Failed(e) => {
+            io.write_all(io, "failed errno ");
+            io.print_int(io, e);
+            io.newline(io);
+        }
+    }
+    return 0;
+}
+
+// The supervisor of the issue: the policy layer asks, the capability is the backstop, and a denied path is a line in
+// the journal and not the end of the supervisor. Its row is `start`'s; asking adds nothing to it.
+fn supervise[&x, &i, &p](exec: &x Exec("/bin"), io: &!i Io, path: &p [byte]) -> [exec("/bin"), io_write] int {
+    if exec_covers(exec, path) {
+        start(exec, io, path);
+    } else {
+        io.write_all(io, "refused\n");
+    }
+    io.write_all(io, "journaled\n");
+    return 0;
+}
+
+fn go[&x, &c, &i, &g](exec: &x Exec("/bin"), fs: &c Fs("/bin"), io: &!i Io, g: &g Args) -> [exec("/bin"), fs_read("/bin"), io_write, args] int {
+    let mode = int_of(arg(g, 1)[0]);
+    if mode == 'c' {
+        return answer(io, exec_covers(exec, arg(g, 2)));
+    }
+    if mode == 'f' {
+        return answer(io, fs_covers(fs, arg(g, 2)));
+    }
+    if mode == 'e' {
+        return start(exec, io, arg(g, 2));
+    }
+    if mode == 'o' {
+        return try_open(fs, io, arg(g, 2));
+    }
+    if mode == 's' {
+        return supervise(exec, io, arg(g, 2));
+    }
+    if mode == 'z' {
+        answer(io, exec_covers(exec, "/bin\0etc"));
+        return answer(io, fs_covers(fs, "/bin\0etc"));
+    }
+    return 2;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    let bin = narrow(exec, "/bin");
+    let files = narrow(fs, "/bin");
+    var console = io;
+    var status = 0;
+    borrow bin as &x in {
+        borrow files as &c in {
+            borrow mut console as &!i in {
+                borrow args as &g in {
+                    status = go(x, c, i, g);
+                }
+            }
+        }
+    }
+    release(bin);
+    release(files);
+    release(console);
+    release(args);
+    return status;
+}
