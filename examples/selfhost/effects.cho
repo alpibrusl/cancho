@@ -13,6 +13,8 @@ module selfhost.effects;
 // a row with either is reported in the two high bits and left to the callers to be careful about.
 
 import selfhost.ast;
+import selfhost.kinds;
+import selfhost.narrowing;
 import selfhost.rules;
 import selfhost.builtins;
 import selfhost.lexcore as lc;
@@ -199,6 +201,76 @@ pub fn discharged[&s](st: &!s [int], index: int) -> [] int {
         i = j + 1;
     }
     return mask;
+}
+
+// Does a function that owns `Fs("/tmp")` or `Exec("/bin")` discharge the path or program in token `lit`, which a callee
+// performs (`family` 0 reads and writes of `Fs`, 1 `Exec`)? A `World` discharges every one; a borrowed capability none
+// (`discharged_by`). What is not a literal of a prelude type is not judged: true.
+fn owner_covers[&s, &x](st: &!s [int], text: &x [byte], caller: int, family: int, lit: int) -> [] bool {
+    var owned = ast.get(st, caller, 7);
+    while owned >= 0 {
+        let ty = ast.get(st, owned, 5);
+        if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 {
+            let index = ast.get(st, ty, 9);
+            if index == 0 {
+                return true;
+            }
+            if index == tables.prelude_fs() && family == 0 || index == tables.prelude_exec() && family == 1 {
+                let arg = ast.get(st, ty, 6);
+                if ast.get(st, ty, 7) != 1 || !ast.is_kind(st, arg, kinds.NK::TLit) {
+                    return true;
+                }
+                if narrowing.path_inside(st, text, ast.get(st, arg, 4), lit) {
+                    return true;
+                }
+            }
+        }
+        owned = ast.next(st, owned);
+    }
+    return false;
+}
+
+// A call of `callee` performs a path or a program that no capability `caller` owns reaches, and `caller` declares no label
+// with an argument to say so: `Label::covers` compares `fs_read("/tmpevil")` with what an `Fs("/tmp")` discharges at a
+// separator, and a label with an argument never covers a plain one. Only the rows of functions are read here, so what
+// a builtin performs with a borrowed capability is not judged.
+pub fn outside_owned[&s, &x](st: &!s [int], text: &x [byte], caller: int, callee: int) -> [] bool {
+    if caller < 0 || has(st, row_mask(st, text, caller), 60) {
+        return false;
+    }
+    var p = ast.get(st, callee, 9) + 1;
+    while !pass1.is_code(st, p, lc.Tok::RBracket) {
+        var family = 0 - 1;
+        if lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "fs_read") || lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "fs_write") {
+            family = 0;
+        } else if lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "exec") {
+            family = 1;
+        }
+        p = p + 1;
+        if pass1.is_code(st, p, lc.Tok::LParen) {
+            if family >= 0 && pass1.is_code(st, p + 1, lc.Tok::Str) && !owner_covers(st, text, caller, family, p + 1) {
+                return true;
+            }
+            while !pass1.is_code(st, p, lc.Tok::RParen) {
+                p = p + 1;
+            }
+            p = p + 1;
+        }
+        if pass1.is_code(st, p, lc.Tok::Comma) {
+            p = p + 1;
+        }
+    }
+    return false;
+}
+
+// What a call of `callee` performs, added to the set, and the refusal when that is outside what the function being checked
+// (`st[64]`) owns and declares.
+pub fn perform_call[&s, &x](st: &!s [int], text: &x [byte], callee: int) -> [] int {
+    perform_row(st, row_mask(st, text, callee));
+    if outside_owned(st, text, st[64], callee) {
+        ast.fail(st, rules.r_effect_not_declared(), ast.nstart(st, st[64]), ast.nend(st, st[64]));
+    }
+    return 0;
 }
 
 // The labels of two masks.

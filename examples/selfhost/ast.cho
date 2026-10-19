@@ -91,13 +91,14 @@ pub struct Dp {
 //                   slots a type
 //  26 region_vars   how many region variables, 27 where they start, one slot each
 //  28 outer         the function's `[...]` token (-1 for none), for what outlives what
-//  32 ...           three slots a token: its `lexcore.code`, start and end
+//  64 function      the function item being checked (-1 for none), for what its owned capabilities cover
+//  65 ...           three slots a token: its `lexcore.code`, start and end
 //  then             the imports, the modules, the files and the nodes
 
 // What `st` must hold for a program of `tokens` tokens in `files` files: every node takes at
 // least a token, so the number of tokens bounds the number of nodes.
 pub fn size_for(tokens: int, files: int) -> [] int {
-    return 64 + 4 * tokens + 2 * (files + 2) + 2 * files + 16 * (tokens + 16) + 5 * (tokens + 16) + 40 * (tokens + 16) + 8 * (tokens + 16) + lin_words();
+    return 65 + 4 * tokens + 2 * (files + 2) + 2 * files + 16 * (tokens + 16) + 5 * (tokens + 16) + 40 * (tokens + 16) + 8 * (tokens + 16) + lin_words();
 }
 
 // What linearity keeps after the log of bindings (`scope.cho`): a header of 16 and the stack of states saved at the
@@ -107,8 +108,8 @@ pub fn lin_words() -> [] int {
 }
 
 pub fn layout[&s](st: &!s [int], tokens: int, files: int) -> [] int {
-    st[19] = 64 + 3 * tokens;
-    st[16] = 64 + 4 * tokens;
+    st[19] = 65 + 3 * tokens;
+    st[16] = 65 + 4 * tokens;
     st[18] = st[16] + 2 * (files + 2);
     st[14] = st[18] + 2 * files;
     st[17] = files;
@@ -126,6 +127,7 @@ pub fn layout[&s](st: &!s [int], tokens: int, files: int) -> [] int {
     st[24] = 8;
     st[26] = 0;
     st[29] = 0;
+    st[64] = 0 - 1;
     st[31] = 0 - 1;
     st[13] = 0;
     st[15] = 0 - 1;
@@ -357,16 +359,16 @@ pub fn fail[&s](st: &!s [int], rule: int, from: int, to: int) -> [] int {
 // ------------------------------------------------------- token plumbing ---
 
 pub fn tstart[&s](st: &!s [int], i: int) -> [] int {
-    return st[64 + 3 * i + 1];
+    return st[65 + 3 * i + 1];
 }
 
 pub fn tend[&s](st: &!s [int], i: int) -> [] int {
-    return st[64 + 3 * i + 2];
+    return st[65 + 3 * i + 2];
 }
 
 // The code of token `i`, whatever the parser's state.
 pub fn code_at[&s](st: &!s [int], i: int) -> [] int {
-    return st[64 + 3 * i];
+    return st[65 + 3 * i];
 }
 
 // The kind of the token `n` ahead, saturating at end of file. After a refusal
@@ -1820,9 +1822,9 @@ pub fn tokenize[&s, &x](st: &!s [int], text: &x [byte], base: int) -> [] int {
     var done = false;
     while !done {
         if pos >= len(text) {
-            st[64 + 3 * n] = eof_code();
-            st[64 + 3 * n + 1] = base + len(text);
-            st[64 + 3 * n + 2] = base + len(text);
+            st[65 + 3 * n] = eof_code();
+            st[65 + 3 * n + 1] = base + len(text);
+            st[65 + 3 * n + 2] = base + len(text);
             n = n + 1;
             done = true;
         } else {
@@ -1831,9 +1833,9 @@ pub fn tokenize[&s, &x](st: &!s [int], text: &x [byte], base: int) -> [] int {
                     pos = next;
                 }
                 lc.Step::Token(k, from, to) => {
-                    st[64 + 3 * n] = lc.code(k);
-                    st[64 + 3 * n + 1] = base + from;
-                    st[64 + 3 * n + 2] = base + to;
+                    st[65 + 3 * n] = lc.code(k);
+                    st[65 + 3 * n + 1] = base + from;
+                    st[65 + 3 * n + 2] = base + to;
                     n = n + 1;
                     after_dot = lc.is_dot(k);
                     pos = to;
