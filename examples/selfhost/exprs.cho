@@ -1812,7 +1812,7 @@ fn lent[&s](st: &!s [int], ty: int) -> [] bool {
 
 // A call of the function in the name `local`, of type `fn(A, B) -> R`.
 fn call_pointer[&s, &x](st: &!s [int], text: &x [byte], id: int, local: int) -> [] ex.Ex {
-    effects.mark_untracked(st);
+    effects.perform_pointer(st, text, local);
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let ty = scope.binding_type(st, local);
