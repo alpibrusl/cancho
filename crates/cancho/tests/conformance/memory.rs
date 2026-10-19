@@ -186,7 +186,13 @@ fn a_static_outgrows_what_an_arena_could_hold() {
         let path = dir.join(format!("{name}.cho"));
         std::fs::write(&path, &source).expect("a writable fixture");
         let exe = dir.join(name);
-        let build = Command::new(BIN)
+        let mut command = Command::new(BIN);
+        if !should_run {
+            // The refusal is held to the Rust front end's words (the sizes in them); the default says the rule's sentence
+            // (#479).
+            command.env("CANCHO_COMPILER", "rust");
+        }
+        let build = command
             .args(["build".as_ref(), path.as_os_str(), "-o".as_ref(), exe.as_os_str()])
             .output()
             .expect("the compiler runs");

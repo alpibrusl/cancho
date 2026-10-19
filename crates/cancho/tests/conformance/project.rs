@@ -43,6 +43,21 @@ fn run(dir: &Path, cache: &Path, args: &[&dyn AsRef<std::ffi::OsStr>]) -> std::p
     cmd.output().expect("the compiler runs")
 }
 
+/// The same with the Rust compiler alone, for a test that holds the Rust front end to the words of a refusal; the default
+/// says the sentence of the rule (#479).
+fn run_rust(
+    dir: &Path,
+    cache: &Path,
+    args: &[&dyn AsRef<std::ffi::OsStr>],
+) -> std::process::Output {
+    let mut cmd = Command::new(BIN);
+    cmd.current_dir(dir).env("CANCHO_CACHE", cache).env("CANCHO_COMPILER", "rust");
+    for a in args {
+        cmd.arg(a.as_ref());
+    }
+    cmd.output().expect("the compiler runs")
+}
+
 fn add_libx(dir: &Path, cache: &Path, repo: &Path, rev: &str) -> std::process::Output {
     run(dir, cache, &[&"add", &"libx", &repo, &"--rev", &rev, &"--path", &".cancho-vcs/libx.top"])
 }
@@ -273,7 +288,7 @@ fn a_compiler_other_than_the_one_named_is_refused() {
             "the escape hatch works for `install`"
         );
     }
-    let ignored = run(&dir, &cache, &[&"build", &"--ignore-compiler-rev"]);
+    let ignored = run_rust(&dir, &cache, &[&"build", &"--ignore-compiler-rev"]);
     // The program imports a library this project does not depend on, so the build fails: but on that, with the
     // compiler only noted.
     let said = stderr(&ignored);

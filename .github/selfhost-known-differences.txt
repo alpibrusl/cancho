@@ -8,7 +8,3 @@ corpus::accepted_programs_build_and_run                                        #
 memory::the_layout_report_says_what_a_type_costs                               # a struct of bytes has another stride
 modules::std_declarations_cost_nothing_unless_called                           # Linux only: the size of the module
 wasm_target::build_refuses_too_not_only_check                                  # the WebAssembly target is the Rust compiler's (#486)
-memory::a_static_outgrows_what_an_arena_could_hold                             # the text of the refusal: the compiler in cancho says the rule's sentence, not Rust's names and sizes (#479)
-modules::a_match_names_an_enum_through_its_qualifier                           # as above
-modules::the_module_rules_are_enforced_across_files                            # as above
-project::a_compiler_other_than_the_one_named_is_refused                        # as above (the message of a module a project does not depend on)

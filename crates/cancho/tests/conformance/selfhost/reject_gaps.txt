@@ -2,4 +2,3 @@
 # it builds them, or refuses them by another rule or with `SKIP`. `refusals_agree_with_the_rust_front_end` holds the
 # rest to the Rust rule and every program listed here to still differing, so the list only shrinks.
 # See #512. Remove a line when its program is refused by the right rule.
-reference_escapes_via_inference.cho
