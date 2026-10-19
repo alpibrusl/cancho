@@ -833,6 +833,10 @@ pub enum Builtin {
     /// `child_kill(&Child, signal) -> [child_signal] int`: one of
     /// `std.signals`' bits, or `KILL` (256). `0`, or the `errno`.
     ChildKill,
+    /// `child_kill_group(&Child, signal) -> [child_signal] int` -- §4.12, edition 9:
+    /// `child_kill`'s signals to the process group the child leads (`kill(-pid)`).
+    /// `0`, or the `errno`; `ESRCH` for a child that does not lead a group.
+    ChildKillGroup,
     /// `pipe_read(&!Pipe, &![byte]) -> [pipe_read] Received`.
     PipeRead,
     /// `pipe_write(&!Pipe, &[byte]) -> [pipe_write] Sent`: never raises `SIGPIPE`.
@@ -1054,6 +1058,7 @@ impl Builtin {
         Builtin::ExecSpawnIn,
         Builtin::ChildWait,
         Builtin::ChildKill,
+        Builtin::ChildKillGroup,
         Builtin::PipeRead,
         Builtin::PipeWrite,
         Builtin::PipeNonblocking,
@@ -1229,6 +1234,7 @@ impl Builtin {
             Builtin::ChildPid => "child_pid",
             Builtin::ChildWait => "child_wait",
             Builtin::ChildKill => "child_kill",
+            Builtin::ChildKillGroup => "child_kill_group",
             Builtin::PipeRead => "pipe_read",
             Builtin::PipeWrite => "pipe_write",
             Builtin::PipeNonblocking => "pipe_nonblocking",
@@ -1384,8 +1390,12 @@ impl Builtin {
             Builtin::TcpListenOn => 9,
             // `docs/processes.md` §4.11: edition 9, the latest open one --
             // `child_release` and `child_pid` are names a program may
-            // already declare, and edition 7 is closed.
-            Builtin::ExecSpawnDetached | Builtin::ChildRelease | Builtin::ChildPid => 9,
+            // already declare, and edition 7 is closed. §4.12's
+            // `child_kill_group` is a name a program may declare as well.
+            Builtin::ExecSpawnDetached
+            | Builtin::ChildRelease
+            | Builtin::ChildPid
+            | Builtin::ChildKillGroup => 9,
             // `docs/crypto-builtins.md` §3: the latest edition, as
             // `value_barrier` was, since a program may already declare
             // these names.
@@ -1542,7 +1552,10 @@ impl Builtin {
             Builtin::DirOwnMode => 1,
             // The handle's region, and for a read or a write the buffer's.
             Builtin::PipeRead | Builtin::PipeWrite => 2,
-            Builtin::ChildKill | Builtin::ChildPid | Builtin::PipeNonblocking => 1,
+            Builtin::ChildKill
+            | Builtin::ChildKillGroup
+            | Builtin::ChildPid
+            | Builtin::PipeNonblocking => 1,
             // The poller's region and the handle's.
             Builtin::PollerAddPipe | Builtin::PollerAddChild => 2,
             Builtin::TcpAccept
@@ -1683,6 +1696,10 @@ impl Builtin {
             // `conn_close` does not; `exec_spawn`'s row comes from the prefix
             // at the call site.
             Builtin::ChildKill => Effects::plain(["child_signal"]),
+            // `docs/processes.md` §4.12: the same label. The group a `Child`
+            // leads holds only that child's own descendants, so it is a
+            // signal on children the program started, not on a pid.
+            Builtin::ChildKillGroup => Effects::plain(["child_signal"]),
             // `docs/processes.md` §4.11: letting a child go is the act after
             // which it can outlive the program, so it is the one place the
             // report must say so. `exec_spawn_detached` says it as well, at

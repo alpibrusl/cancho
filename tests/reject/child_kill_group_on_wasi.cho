@@ -1,0 +1,47 @@
+//~ ERROR processes and pipes do not exist on `wasm32-wasip1`
+//~ RULE unsupported-on-target
+//~ TARGET wasm32-wasip1
+
+// `docs/processes.md` §4.12: WebAssembly has no processes to signal. The
+// function that signals is reached from `main`, as the checker only looks at
+// what a program uses.
+
+edition 9;
+
+fn begin[&x](exec: &x Exec("/bin")) -> [exec("/bin"), exec_detached] Spawned {
+    return exec_spawn_detached(exec, "/bin/true", "", "", Stdio::Null, Stdio::Null, Stdio::Null);
+}
+
+fn stop[&c](child: &c Child) -> [child_signal] int {
+    return child_kill_group(child, 256);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    let bin = narrow(exec, "/bin");
+    var n = 0;
+    borrow bin as &x in {
+        match begin(x) {
+            Spawned::Ok(child) => {
+                borrow child as &c in {
+                    n = stop(c);
+                }
+                child_wait(child);
+            }
+            Spawned::Failed(e) => {
+                n = e;
+            }
+        }
+    }
+    release(bin);
+    return n;
+}

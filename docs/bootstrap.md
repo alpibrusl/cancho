@@ -25,8 +25,8 @@ stage-by-stage record and the measurements, and the plan to finish is epic
   Linux aarch64, minus the few differences listed in `.github/selfhost-known-differences.txt`.
   The projects `cancho-cache`, `cancho-oci`, `cancho-robot`, `cancho-gpu` and `cancho-hooks`
   build with it.
-- **It nearly refuses what the language refuses.** Of the 337 programs in `tests/reject/` that are not a
-  property of a target (marked `//~ TARGET`), it refuses 335 with the rule the Rust compiler gives; the 2 left
+- **It nearly refuses what the language refuses.** Of the 339 programs in `tests/reject/` that are not a
+  property of a target (marked `//~ TARGET`), it refuses 337 with the rule the Rust compiler gives; the 2 left
   are listed in `reject_gaps.txt`: a row in the
   type of a function value, and a region settled by inference
   ([#512](https://github.com/alpibrusl/cancho/issues/512)). That is why the default still lets the Rust front end

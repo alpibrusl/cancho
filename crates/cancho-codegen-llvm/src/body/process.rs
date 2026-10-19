@@ -509,14 +509,18 @@ impl<'a> FuncEmitter<'a> {
         Ok(vec![LValue::Reg(tag), LValue::Reg(code), LValue::Reg(bit), LValue::Reg(reason)])
     }
 
-    /// `child_kill(&Child, bit)`: one of the sendable signals by its bit, or
+    /// `child_kill(&Child, bit)`, and with `group` `child_kill_group` (§4.12): one of the sendable signals by its bit, or
     /// `EINVAL` with no call. `0`, or the `errno`. The `Child` is unreaped, so
     /// its pid cannot have been reused (§4.7).
-    pub(crate) fn child_kill(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+    pub(crate) fn child_kill(
+        &mut self,
+        args: &[LValue],
+        group: bool,
+    ) -> Result<Vec<LValue>, String> {
         let [child, bit] = args else {
             return Err(format!("`child_kill` needs 2 leaves but {} were given", args.len()));
         };
-        let pid = self.handle_fd(child);
+        let mut pid = self.handle_fd(child);
         let bit = operand(bit);
         let mut native = "0".to_owned();
         for (wanted, number) in sendable_signals(self.is_darwin()) {
@@ -526,6 +530,18 @@ impl<'a> FuncEmitter<'a> {
             self.out
                 .push_str(&format!("  {chosen} = select i1 {same}, i64 {number}, i64 {native}\n"));
             native = chosen;
+        }
+        if group {
+            // `kill(-pid)` is the group `pid` leads (§4.12); a pid of 1 or less
+            // would be `kill(-1)` or `kill(0)`, which are never sent: `EINVAL`.
+            let sane = self.fresh();
+            self.out.push_str(&format!("  {sane} = icmp sgt i32 {pid}, 1\n"));
+            let guarded = self.fresh();
+            self.out.push_str(&format!("  {guarded} = select i1 {sane}, i64 {native}, i64 0\n"));
+            native = guarded;
+            let negated = self.fresh();
+            self.out.push_str(&format!("  {negated} = sub i32 0, {pid}\n"));
+            pid = negated;
         }
         let answer = self.fresh();
         self.hoist(format!("  {answer} = alloca i64\n"));

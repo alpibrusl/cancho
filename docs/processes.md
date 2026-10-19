@@ -1,6 +1,25 @@
 # Processes: running a program, with an authority that says which
 
-> **Status: slices 0 to 2 built (§4.5, §4.8, §8); slices 3 and 4 designed, not built. Letting go of a child (§4.11, #524) is built.**
+> **Status: slices 0 to 6 are built; slice 6 is letting go of a child (§4.11, #524) and signalling its process group
+> (§4.12, #533). Nothing in this document is designed-only.** Checked against `main` at the time of #536, by `grep` of
+> `std/process.cho`, `crates/cancho-ir/src/builtin.rs` and `crates/cancho/tests/conformance/` for each name:
+>
+> | Slice (§7) | What | Where it is | Built |
+> |---|---|---|---|
+> | 0 | close-on-exec everywhere (§4.5) | every backend; `close_on_exec.rs` | yes |
+> | 1 | `Exec`, `exec_spawn`, `child_wait`, `child_kill`, `pipe_open`, `pipe_read`, `pipe_write`, `pipe_nonblocking`, `pipe_close`, `child_end_close` (§3.2) | `builtin.rs`; `processes.rs` | yes |
+> | 2 | `poller_add_pipe`, `poller_add_child` (§4.8) | `builtin.rs`; `processes.rs` | yes |
+> | 3 | `std.process`: `argv`/`add`/`list`/`count`/`drop`, `channels`, `close`, **`capture`** (§7.1) | `std/process.cho`; `capture.rs` | yes |
+> | 4 | the MCP server (cancho-tools#10) | in cancho-tools (cancho-tools#17), on `std.process` | yes, outside this repository |
+> | 5 | `exec_spawn_in` (§4.10), `std.process.channels_with_errors` and **`capture_both`** (§7.2) | `builtin.rs`, `std/process.cho`; `processes.rs`, `capture.rs` | yes |
+> | 6 (edition 9) | `exec_spawn_detached`, `child_pid`, `child_release` and the label `exec_detached` (§4.11, #524) | `builtin.rs`; `process_release.rs` | yes |
+> | 6 (edition 9) | `child_kill_group` (§4.12, #533), and `capture` using it | `builtin.rs`, `std/process.cho`; `process_group.rs` | yes |
+>
+> What is still only designed or open is §9, and only that. *Corrected (#536):* this line used to say "slices 0 to 2
+> built; slices 3 and 4 designed, not built", which was true when slice 2 merged and was never revised when `capture`
+> (#276), the MCP server (cancho-tools#17) and slice 5 (#292) were. A reader took it to mean `std.process` did not
+> exist.
+>
 > Written before the code, the way
 > [`filesystem.md`](filesystem.md), [`net.md`](net.md) and
 > [`signals.md`](signals.md) were. When building it disagrees with this
@@ -122,6 +141,7 @@ earlier file changes.
 | `child_release` (edition 9) | `(Child) -> int` | `exec_detached`; the child runs on and is reaped by the runtime (§4.11) |
 | `child_pid` (edition 9) | `(&Child) -> int` | none |
 | `child_kill` | `(&Child, signal: int) -> int` | `child_signal` |
+| `child_kill_group` (edition 9) | `(&Child, signal: int) -> int` | `child_signal`; `child_kill`'s signals to the process group the child leads (§4.12) |
 | `pipe_read` | `(&!Pipe, &![byte]) -> Received` | `pipe_read` |
 | `pipe_write` | `(&!Pipe, &[byte]) -> Sent` | `pipe_write` |
 | `pipe_nonblocking` | `(&!Pipe) -> int` | none |
@@ -661,6 +681,93 @@ reports "other programs" as untouched.
 WebAssembly has no processes, so the three are refused there like the other
 process builtins (`unsupported-on-target`, `tests/reject/exec_spawn_detached_on_wasi.cho`).
 
+### 4.12 Stopping what a worker started: `child_kill_group`
+
+[#533](https://github.com/alpibrusl/cancho/issues/533), found by the cancho-forge spike
+(`spike/s7_grandchild.cho`, `spike/RESULTS.md` S7). A supervisor runs a worker that itself starts subprocesses (a
+compiler, a test runner) and stops it at a deadline. `capture`'s kill reaches the worker's pid only: measured, with
+`/bin/sh -c 'sleep 77 & wait'` and a 300 ms deadline, the `sleep` is still in state `S` when the supervisor has
+ended. §4.11 named the way out, `/bin/kill -KILL -- -<pid>` through a narrowed `Exec`, and it costs what the issue
+says: `cancho authority` reports `exec("/bin")`, which is wider than "one worker directory" and undoes the point of
+a narrow bound, and the pid is a bare number.
+
+```
+child_kill_group(&Child, signal) -> int      // [child_signal]
+```
+
+`child_kill_group(c, signal)` sends `signal` (the same set as `child_kill`, §4.7: `std.signals`' bits and `KILL`,
+256; `STOP` and the faults are `EINVAL`) to the **process group the child leads**: `kill(-pid, native)`. `0`, or the
+`errno`. It is edition 9.
+
+**The shape chosen, and what it was chosen over.**
+
+| Alternative | Why not |
+|---|---|
+| A flag in `child_kill`'s `signal` argument | `child_kill` is edition 7, and edition 7 is closed (§6.4 of `editions.md`): a value that answered `EINVAL` yesterday would send a signal to a group today, in a file that did not change. The argument is also a signal bit; a second meaning in the same integer is the mistake `Stdio::Merge` was kept out for (§5) |
+| A `Signals` bit, or a new capability | `Signals` is about the signals a program *claims for itself* (§4.11). The program already holds what this needs: a `Child` it started. A capability for "a group" would have to be handed around beside the `Child` and could be pointed at any group |
+| `kill(pid, s)` on a number (`pid_kill`), or a "pid with start time" handle | §4.11 and §9: it needs a capability of its own, since it would reach every process of the user. The issue asks for the signal "held by whoever holds its `Child`"; this is that, and nothing wider |
+| A distinct type for a detached child (`DetachedChild`), so a plain child cannot be asked | Every function that takes a `Child` (`child_wait`, `poller_add_child`, `capture`, `child_release`) would have to take both, or `Spawned` would split in two; an edition, for a question the kernel already answers (below) |
+| **A second builtin, same row, same signals** | Chosen. The precedent is §4.11's own: `exec_spawn` has callers, so the detached start is a second builtin over the same code. Here `child_kill_group` lowers to the same function in each backend as `child_kill`, with the target negated |
+
+**Only a detached child can be signalled this way, and that holds by construction, not by a check.** `kill(-P, s)`
+addresses the group whose id is `P`, and a group's id is the pid of its leader. The child's pid is `P`. A child
+started by `exec_spawn_detached` leads a group of its own, so the group `P` exists and is its. A child started by
+`exec_spawn` is in its parent's group, whose id is another process's pid; no group is named `P` unless the child
+makes one for itself (a shell with job control does, and then the group holds only that child's own descendants).
+Linux does not hand the number `P` to a second process while `P` is in use as a pid or a group id, so there is
+no group named `P` that is anyone else's (macOS's allocator is not read here; its CI run is what checks it). The answer for a plain child is therefore `ESRCH` (the constant is 3 on both kernels; measured on Linux), nothing
+is sent, and **the parent is not signalled**: `kill(-P)` can never address the parent's group, since that group's id
+is not `P`. Measured, both backends on Linux: a plain child answers `3` and the program goes on to kill the child and
+print what it did (`tests/programs/process_group.cho`, mode `r`). Refusing it at compile time would need the type
+split of the last row. A guard remains for what no child can have: a pid of 1 or less would make the call `kill(-1)`
+(every process the user may signal) or `kill(0)` (the caller's own group), so those answer `EINVAL` with no call.
+No program can reach that guard (a child's pid is never 1), and it has no test and no mutant, for that reason.
+
+**The authority report.** No new label. `child_kill_group` performs `child_signal`, the label of `child_kill`, and a
+program that owns a `Child` discharges it (§3.2). It does not need `exec("/bin")`, or any `Exec` at all, beyond
+the one that started the worker: a function `fn stop[&c](c: &c Child) -> [child_signal] int` is the whole of it.
+`tests/accept/process_group_kill.cho` starts `/bin/sleep` in its own group, stops the group and waits, and its report is
+
+```
+performs
+    child_signal
+    exec("/bin/sleep")
+    exec_detached
+    io_write
+```
+
+and the supervisor's bound can be the worker's directory. Why the same label is honest: the group a detached child
+leads is in a session of its own (§4.11), and a process can join a group only from the same session, so the group
+holds the child's descendants and nothing else. A signal to it is a signal on processes the program started, which
+is what `child_signal` says. What the label does **not** promise is that every descendant is in the group: one that
+calls `setsid` or `setpgid` leaves it (a build tool that does is not stopped), and a group is not a cgroup. The
+guarantee is the one the issue asked for, the worker's ordinary subprocesses.
+
+**The pid-reuse hazard.** The call takes a `&Child`, not a number. While the `Child` exists the leader's pid is
+held, zombie or not (§4.7), so `-P` cannot be another process's group: the hazard of §4.11's `/bin/kill` is
+gone for this path. A group outlives its reaped leader while it has members (measured, S7: `Z` after the kill), and
+the kernel does not reuse its number as a pid meanwhile. After the group is empty *and* the `Child` has been waited
+for there is nothing to signal and no handle to signal with. The test `a_leader_that_has_ended_does_not_hide_its_group`
+signals a group whose leader has ended and not been waited for, and reaches the grandchild.
+
+**`capture` uses it.** A supervisor holds the `Child` only inside `capture`, which consumes it, so signalling "after
+`capture`" is signalling a number again. `capture` therefore sends the group `KILL` before the pid's, on the paths on
+which it kills (the deadline, the output bound, a failed watch). For a plain child the first is `ESRCH` and nothing
+more happens, so the behaviour of a plain worker is what it was. What it does not do: a worker that **exits by itself**
+and leaves a subprocess behind is not killed (the exit ends the capture, `capture`'s comment says so), and the left
+behind process runs on. A caller that wants it stopped holds the `Child` itself and calls `child_kill_group` before
+`child_wait`.
+
+**Both backends, and the compiler in cancho.** Cranelift and LLVM emit the call as `child_kill`'s with the pid negated
+and the guard above (`child_kill(args, group)` in each). The compiler in cancho (`examples/selfhost`) has it as
+builtin 138, `cancho_child_kill_group` in `runtime.ll`; `tables.cho`, `builtins.cho` and `signatures.cho` are
+regenerated, so it is not in `unported_builtins.txt`. WebAssembly refuses it as it does the other process builtins
+(`tests/reject/child_kill_group_on_wasi.cho`). No new rule: `child_kill_group_is_edition_nine` is `not-a-function`
+(an older edition does not have the name) and `child_kill_group_undeclared` is `effect-not-declared`.
+
+**What this does not close** is in §9: after a supervisor *crashes* there is no `Child` to hold, and the group id in
+its journal is a number again.
+
 ---
 
 ## 5. Alternatives considered
@@ -717,6 +824,7 @@ does ([`net.md`](net.md) §4.1).
 | **4** | cancho-tools#10: the MCP server, as a cancho program holding `Exec` narrowed to the tools' directory ~~and nothing that writes~~ and no `Fs`, `Net` or `Ffi`. **Built** (cancho-tools#17, §8) | 7 |
 
 | **5** | The two prerequisites of a `run` tool in cancho-tools: `exec_spawn_in` (the working directory, §4.10) and `std.process.capture_both` (standard error beside standard output, §7.2). **Built** (§8) | 7 |
+| **6** | Letting go of a child (§4.11, #524) and signalling its group (§4.12, #533): `exec_spawn_detached`, `child_pid`, `child_release`, `child_kill_group`, and `capture` killing the group. **Built** (§8) | 9 |
 
 ### 7.1 Slice 3: `std.process`
 
@@ -1202,6 +1310,34 @@ the x86-64 host, the macOS tests on the Mac.
   `Stdio::Merge` is an edition (a new variant breaks every exhaustive match of
   `Stdio`), so it was not built.
 
+### Slice 6
+
+Letting go (§4.11) was checked in its own PR (#525); this is what #533 (§4.12) added, measured on Linux 6.18 x86-64 in a
+container with no init to adopt orphans, so a killed grandchild stays a zombie (`Z`) and the tests call a process dead
+when it is gone or `Z`. macOS: the code is the same call with the pid negated, and was not run.
+
+* **Code.** `Builtin::ChildKillGroup` (edition 9, row `child_signal`, region count 1, refused on WASI);
+  `child_kill(args, group)` in both backends negates the pid and answers `EINVAL` with no call for a pid of 1 or less;
+  `std/process.cho` is edition 9 and `capture` sends the group `KILL` before the pid's. The compiler in cancho: code 138
+  in `codes.cho`, `netcode.cho` and `exprs.cho`, `cancho_child_kill_group` in `runtime.ll`, and the generated tables.
+* **Refusals.** `tests/reject/child_kill_group_is_edition_nine` (`not-a-function`), `child_kill_group_undeclared`
+  (`effect-not-declared`), `child_kill_group_on_wasi` (`unsupported-on-target`). No new rule. `tests/accept/process_group_kill.cho`.
+* **Conformance** (`process_group.rs`, driver `tests/programs/process_group.cho`, both backends): the S7 scenario run
+  for real: a detached worker `sh -c 'sleep 77 & echo $!; wait'`, a 300 ms deadline through `capture`, and the grandchild
+  (pid printed by the worker) gone or `Z` after the driver ends; the same worker started plain, whose grandchild is
+  still `S` (the control: without it the first test could pass for any reason); the answers of `child_kill_group` for a
+  detached child (`0`, then `Signaled(256)`), a plain child (`3`, and the program goes on), and a signal that is none
+  (`22`); a worker already ended and not waited for, with a grandchild still running, whose group is still reached; and
+  the authority report (`child_signal`, `exec("/bin/sleep")`, no `exec("/bin")`, no `kill`).
+* **Mutants**, each run to a red conformance test and then reverted. (1) `capture` without the group kill: the S7 test
+  fails, `the grandchild survived: Some("S")`. (2) Cranelift with the pid not negated: three tests fail (the plain child
+  answers `0` instead of `3`; both grandchildren survive). (3) The Rust LLVM backend (`CANCHO_COMPILER=rust`), the same
+  mutation: the same three fail. (4) The compiler in cancho's `runtime.ll` with the pid not negated: the same three fail
+  on the `llvm` backend. Not mutated: the `pid > 1` guard, which no program can reach (§4.12).
+* **Found.** `docs/wasm.md`'s builtin counts (162, 70 refused) were already stale since #524 (165 and 73) and are 166 and
+  74 now, corrected there in place. `--backend llvm` builds through the compiler in cancho by default, so a test run
+  without `CANCHO_COMPILER=rust` never exercises the Rust LLVM backend's code: the third mutant needed the variable.
+
 ## 9. Open
 
 | Question | Why it waits |
@@ -1211,8 +1347,9 @@ the x86-64 host, the macOS tests on the Mac.
 | ~~The working directory~~ | **Built (§4.10):** `exec_spawn_in`. Open still: a working directory that is not a `Dir` (a path), which needs the `Fs` rule's check and has no asker |
 | `Stdio::Merge` | §5. Needs an edition; `capture_both` serves the asker who wanted standard error |
 | A bound chosen at deployment | `narrow` takes a literal, so a server whose tools' directory is chosen when it is installed holds `Exec("")` or a literal it was built with. `Fs` has the same question (`authority.md` §2.3, `lines.cho`), and it should be answered for both at once |
-| Children of a parent that dies | §4.7. `PR_SET_PDEATHSIG` exists on Linux only. §4.11 is the opposite request, and a detached child is meant to outlive its parent |
-| Signalling a pid the program holds only as a number | §4.11. A `kill(pid)` builtin needs a capability of its own, since `child_signal` is about a `Child`; today `/bin/kill` through a narrowed `Exec` does it, and says so in the report. The asker (cancho-code's MCP server) can use that |
+| Children of a parent that dies | §4.7. `PR_SET_PDEATHSIG` exists on Linux only. §4.11 is the opposite request, and a detached child is meant to outlive its parent. **Narrowed by §4.12 (#533), not closed:** while the supervisor lives it can stop a worker *and* what the worker started, with the `Child` it holds and no `/bin/kill`. After the supervisor **crashes** nothing changes: the `Child` died with it, an orphaned worker's group is a number in a journal, and stopping it is the next row. Not measured: a supervisor that traps with workers running (the issue's "related, not measured") |
+| Signalling a pid the program holds only as a number | §4.11, §4.12. A `kill(pid)` builtin needs a capability of its own, since `child_signal` is about a `Child`; today `/bin/kill` through a narrowed `Exec` does it, and says so in the report. **Narrowed (#533):** for a worker the program still holds, `child_kill_group` does it with no `Exec` and no number. What stays open is the orphan after a crash and the pid-reuse hazard that comes with a recorded number (record it with something that tells runs apart, §4.11); it needs a capability or a handle that survives the process, and no program has asked for more than the issue does |
+| `child_kill_group` reaching a descendant that left the group | §4.12. A subprocess that calls `setsid` or `setpgid` is outside the group, and no group signal reaches it. A `cgroup` (Linux) or a job object would; neither exists on both targets, and no asker has needed it |
 | `exec_spawn_detached` with a working directory | §4.11. No program has asked: `exec_spawn_in` does not detach, and the combination is the same node with two flags |
 | One reaper thread for all released children | §4.11. A thread per running released child costs about 16 KB (measured); a single reaper needs a table shared between threads, which no program needs yet |
 | Mapping `exec("p")` onto `lex-os`'s `exec` level | The same bridge `agent-toolbox.md` §2.5 found missing for `net_out`. The report carries what the bridge needs |

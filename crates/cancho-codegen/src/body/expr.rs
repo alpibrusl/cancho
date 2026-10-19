@@ -792,7 +792,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::PipeNonblocking) => self.nonblocking(&args),
                     Callee::Builtin(Builtin::PipeOpen) => self.pipe_open(),
                     Callee::Builtin(Builtin::ChildWait) => self.child_wait(&args),
-                    Callee::Builtin(Builtin::ChildKill) => self.child_kill(&args),
+                    Callee::Builtin(Builtin::ChildKill) => self.child_kill(&args, false),
+                    Callee::Builtin(Builtin::ChildKillGroup) => self.child_kill(&args, true),
                     Callee::Builtin(Builtin::ChildRelease) => self.child_release(&args),
                     Callee::Builtin(Builtin::ChildPid) => self.child_pid(&args),
                     Callee::Builtin(

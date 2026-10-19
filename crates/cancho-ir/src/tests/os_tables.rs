@@ -136,7 +136,12 @@ fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
     assert_eq!(wasi_gap(Builtin::PollerWait), Some(Gap::Polling));
     assert_eq!(wasi_gap(Builtin::SignalsWatch), Some(Gap::Signals));
     assert_eq!(wasi_gap(Builtin::ExecSpawn), Some(Gap::Processes));
-    for letting_go in [Builtin::ExecSpawnDetached, Builtin::ChildRelease, Builtin::ChildPid] {
+    for letting_go in [
+        Builtin::ExecSpawnDetached,
+        Builtin::ChildRelease,
+        Builtin::ChildPid,
+        Builtin::ChildKillGroup,
+    ] {
         assert_eq!(wasi_gap(letting_go), Some(Gap::Processes), "{}", letting_go.name());
     }
     // Found by running the builtins no accept fixture reaches: `file_lock` is an
@@ -156,13 +161,13 @@ fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
     }
     assert_eq!(
         Builtin::ALL.iter().filter(|b| wasi_gap(**b).is_some()).count(),
-        73,
+        74,
         "the refused set moved: update docs/wasm.md with it"
     );
     // The total and the supported count too: a builtin added on WASI's
     // side of the line moves these and not the refused count, which is how
     // docs/wasm.md's numbers went stale before (#382 added four).
-    assert_eq!(Builtin::ALL.len(), 165, "the builtin count moved: update docs/wasm.md with it");
+    assert_eq!(Builtin::ALL.len(), 166, "the builtin count moved: update docs/wasm.md with it");
     assert_eq!(
         Builtin::ALL.iter().filter(|b| wasi_gap(**b).is_none()).count(),
         92,

@@ -170,7 +170,7 @@ pub fn arity(which: int) -> [] int {
     if which == 129 || which == 130 || which == 132 || which == 133 || which == 134 {
         return 3;
     }
-    if which >= 122 && which <= 125 || which == 127 {
+    if which >= 122 && which <= 125 || which == 127 || which == 138 {
         return 2;
     }
     if which == 106 || which == 108 {
@@ -336,6 +336,9 @@ pub fn function(which: int) -> [] &static [byte] {
     }
     if which == 127 {
         return "cancho_child_kill";
+    }
+    if which == 138 {
+        return "cancho_child_kill_group";
     }
     if which == 122 {
         return "cancho_tty_open";

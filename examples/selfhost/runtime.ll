@@ -602,6 +602,29 @@ send:
   ret i64 %v
 }
 
+; child_kill_group: `child_kill` to the process group the child leads (`kill(-pid)`, docs/processes.md 4.12). A pid of 1 or less would be
+; kill(-1) or kill(0), which are never sent: EINVAL, as for a bit that is none. A child that leads no group is ESRCH, and nothing is sent.
+define i64 @cancho_child_kill_group(ptr %child, i64 %bit) {
+entry:
+  %word = load i64, ptr %child
+  %pid = trunc i64 %word to i32
+  %native = call i64 @cancho_native_signal(i64 %bit)
+  %known = icmp ne i64 %native, 0
+  %sane = icmp sgt i32 %pid, 1
+  %ok = and i1 %known, %sane
+  br i1 %ok, label %send, label %bad
+bad:
+  ret i64 22
+send:
+  %sig = trunc i64 %native to i32
+  %group = sub i32 0, %pid
+  %r = call i32 @kill(i32 %group, i32 %sig)
+  %e = call i64 @cancho_errno()
+  %failed = icmp slt i32 %r, 0
+  %v = select i1 %failed, i64 %e, i64 0
+  ret i64 %v
+}
+
 ; child_pid: the pid, the low 32 bits of the word in the slot a reference to the child points at.
 define i64 @cancho_child_pid(ptr %child) {
 entry:

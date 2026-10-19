@@ -1211,7 +1211,11 @@ impl<'a> FuncEmitter<'a> {
             }
             Callee::Builtin(Builtin::ChildKill) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
-                self.child_kill(&args)
+                self.child_kill(&args, false)
+            }
+            Callee::Builtin(Builtin::ChildKillGroup) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.child_kill(&args, true)
             }
             Callee::Builtin(Builtin::ChildRelease) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();

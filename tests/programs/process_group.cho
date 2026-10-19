@@ -1,0 +1,235 @@
+edition 9;
+
+import std.buffer;
+import std.io;
+import std.process;
+
+// `docs/processes.md` §4.12: `child_kill_group`, the signal to the process
+// group a detached child leads. argv[1] is a mode; the lines are what the
+// test reads, and what it looks at after this program ends is outside it (the
+// state of the grandchild, read with `ps`).
+//   `t`  a detached worker `sh -c 'sleep 77 & echo $!; wait'` captured with a
+//        300 ms deadline: `capture` kills the group, the grandchild dies
+//   `p`  the same worker, plain: `capture` kills the worker only (§4.12), the
+//        grandchild runs on, and this program is none the worse
+//   `k`  a detached `sleep 30`, group-killed while held: answer 0, `Signaled`
+//   `r`  a plain `sleep 30`: the group signal answers ESRCH (3 on both
+//        kernels), sends nothing, and the program lives to kill the child
+//   `s`  a detached `sleep 30`: a signal that is none is EINVAL, nothing sent
+//   `z`  a detached worker that has ended (a zombie, not yet waited for) with
+//        a grandchild still running: the group signal still reaches it
+// Lines: `worker N`, `grandchild N`, `ran ...`, `group A`, `exited ...`.
+
+fn say[&i, &t](io: &!i Io, text: &t [byte], n: int) -> [io_write] int {
+    io.write_all(io, text);
+    io.print_int(io, n);
+    io.newline(io);
+    return 0;
+}
+
+// The first number the worker wrote.
+fn number[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) && int_of(b[i]) >= '0' && int_of(b[i]) <= '9' {
+        n = n * 10 + (int_of(b[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn report[&i](io: &!i Io, ran: process.Ran) -> [io_write] int {
+    match ran {
+        process.Ran::TimedOut => {
+            io.write_all(io, "ran timed out\n");
+        }
+        process.Ran::Code(n) => {
+            say(io, "ran code ", n);
+        }
+        _ => {
+            io.write_all(io, "ran other\n");
+        }
+    }
+    return 0;
+}
+
+fn exited[&i](io: &!i Io, how: Exited) -> [io_write] int {
+    match how {
+        Exited::Code(n) => {
+            say(io, "exited code ", n);
+        }
+        Exited::Signaled(s) => {
+            say(io, "exited signaled ", s);
+        }
+        Exited::Failed(e) => {
+            say(io, "exited failed ", e);
+        }
+    }
+    return 0;
+}
+
+fn start[&x, &s](exec: &x Exec("/bin"), detached: bool, script: &s [byte], input: Stdio, out: Stdio) -> [exec("/bin"), exec_detached] Spawned {
+    if detached {
+        return exec_spawn_detached(exec, "/bin/sh", script, "", input, out, Stdio::Null);
+    }
+    return exec_spawn(exec, "/bin/sh", script, "", input, out, Stdio::Null);
+}
+
+// The worker that starts a subprocess, run under `capture` and its deadline.
+fn worker[&h, &x, &c, &i](heap: &!h Heap, exec: &x Exec("/bin"), clock: &c Clock, io: &!i Io, detached: bool) -> [heap, exec("/bin"), exec_detached, clock, poll, io_write] int {
+    match process.channels() {
+        process.Channels::Failed(e) => {
+            say(io, "channels ", e);
+        }
+        process.Channels::Ok(to_child, child_in, from_child, child_out) => {
+            match start(exec, detached, "-c\0sleep 77 & echo $!; wait\0", Stdio::Pipe(child_in), Stdio::Pipe(child_out)) {
+                Spawned::Failed(e) => {
+                    process.close(to_child, from_child);
+                    say(io, "spawn ", e);
+                }
+                Spawned::Ok(child) => {
+                    borrow child as &ch in {
+                        say(io, "worker ", child_pid(ch));
+                    }
+                    let (out, ran) = process.capture(heap, clock, child, to_child, from_child, "", 4096, 300);
+                    borrow out as &o in {
+                        say(io, "grandchild ", number(buffer.bytes(o)));
+                    }
+                    buffer.drop(heap, out);
+                    report(io, ran);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+// A child held, signalled as a group with `signal`, and (when it is still
+// there) killed and waited for.
+fn held[&x, &i](exec: &x Exec("/bin"), io: &!i Io, detached: bool, signal: int) -> [exec("/bin"), exec_detached, child_signal, io_write] int {
+    match start(exec, detached, "-c\0exec sleep 30\0", Stdio::Null, Stdio::Null) {
+        Spawned::Failed(e) => {
+            say(io, "spawn ", e);
+        }
+        Spawned::Ok(child) => {
+            borrow child as &ch in {
+                say(io, "worker ", child_pid(ch));
+                say(io, "group ", child_kill_group(ch, signal));
+                // Whatever the group signal did, the child is ended by the end.
+                child_kill(ch, 256);
+            }
+            exited(io, child_wait(child));
+        }
+    }
+    return 0;
+}
+
+// A worker that has ended by the time it is signalled: the leader of the
+// group is a zombie we have not waited for, and a grandchild runs on.
+fn ended[&x, &i](exec: &x Exec("/bin"), io: &!i Io) -> [exec("/bin"), exec_detached, child_signal, pipe_read, io_write] int {
+    match pipe_open() {
+        Piped::Failed(e) => {
+            say(io, "pipe ", e);
+        }
+        Piped::Ok(from, out_end) => {
+            var reader = from;
+            match start(exec, true, "-c\0sleep 77 >/dev/null & echo $!\0", Stdio::Null, Stdio::Pipe(out_end)) {
+                Spawned::Failed(e) => {
+                    say(io, "spawn ", e);
+                }
+                Spawned::Ok(child) => {
+                    region a {
+                        let buf = alloc_slice[a](64, byte_of(0));
+                        var going = true;
+                        var seen = 0;
+                        while going {
+                            borrow mut reader as &!r in {
+                                match pipe_read(r, buf) {
+                                    Received::Data(n) => {
+                                        if seen == 0 {
+                                            seen = number(buf[0..n]);
+                                        }
+                                    }
+                                    Received::End => {
+                                        going = false;
+                                    }
+                                    Received::Again => {
+                                    }
+                                    Received::Failed(e) => {
+                                        going = false;
+                                    }
+                                }
+                            }
+                        }
+                        say(io, "grandchild ", seen);
+                    }
+                    borrow child as &ch in {
+                        say(io, "group ", child_kill_group(ch, 256));
+                    }
+                    exited(io, child_wait(child));
+                }
+            }
+            pipe_close(reader);
+        }
+    }
+    return 0;
+}
+
+fn go[&h, &x, &c, &i, &g](heap: &!h Heap, exec: &x Exec("/bin"), clock: &c Clock, io: &!i Io, g: &g Args) -> [heap, exec("/bin"), exec_detached, clock, poll, child_signal, pipe_read, io_write, args] int {
+    let mode = int_of(arg(g, 1)[0]);
+    if mode == 't' {
+        worker(heap, exec, clock, io, true);
+        return 0;
+    }
+    if mode == 'p' {
+        worker(heap, exec, clock, io, false);
+        return 0;
+    }
+    if mode == 'k' {
+        held(exec, io, true, 256);
+        return 0;
+    }
+    if mode == 'r' {
+        held(exec, io, false, 256);
+        return 0;
+    }
+    if mode == 's' {
+        held(exec, io, true, 12345);
+        return 0;
+    }
+    if mode == 'z' {
+        ended(exec, io);
+        return 0;
+    }
+    return 2;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(signals);
+    release(tty);
+    let bin = narrow(exec, "/bin");
+    var console = io;
+    var memory = heap;
+    var status = 0;
+    borrow bin as &x in {
+        borrow clock as &c in {
+            borrow mut console as &!i in {
+                borrow mut memory as &!h in {
+                    borrow args as &g in {
+                        status = go(h, x, c, i, g);
+                    }
+                }
+            }
+        }
+    }
+    release(bin);
+    release(clock);
+    release(console);
+    release(memory);
+    release(args);
+    return status;
+}

@@ -880,7 +880,7 @@ impl Builtin {
                 }],
                 Type::Int,
             ),
-            Builtin::ChildKill => (
+            Builtin::ChildKill | Builtin::ChildKillGroup => (
                 vec![
                     Type::Ref {
                         unique: false,

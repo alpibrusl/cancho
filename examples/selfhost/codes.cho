@@ -1,7 +1,7 @@
 module selfhost.codes;
 
 // codes.cho -- which builtins the code is written for, by the number `exprs.builtin_call` gives each: 1 `putchar` to 17
-// `child_wait` (the runtime and the files), 18 to 30 the float ones (`floatcode.cho`), 136 `child_pid` and 137 `child_release`.
+// `child_wait` (the runtime and the files), 18 to 30 the float ones (`floatcode.cho`), 136 `child_pid`, 137 `child_release` and 138 `child_kill_group`.
 
 import selfhost.lexcore as lc;
 
@@ -301,6 +301,9 @@ pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     }
     if lc.spells(text, from, to, "child_kill") {
         return 127;
+    }
+    if lc.spells(text, from, to, "child_kill_group") {
+        return 138;
     }
     if lc.spells(text, from, to, "signals_watch") {
         return 119;
