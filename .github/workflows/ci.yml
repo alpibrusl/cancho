@@ -353,13 +353,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # Compiled dependencies and build products, restored per job and OS (docs/ci-speed.md).
-      - uses: Swatinem/rust-cache@v2
         with:
           # The full history: the replay reads every distinct revision of
           # every tracked .cho, which a shallow clone does not have.
           fetch-depth: 0
+
+      # Compiled dependencies and build products, restored per job and OS (docs/ci-speed.md).
+      - uses: Swatinem/rust-cache@v2
+
       - name: Toolchain versions
         run: |
           cargo --version
