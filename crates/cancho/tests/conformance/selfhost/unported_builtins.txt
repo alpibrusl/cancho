@@ -1,5 +1,2 @@
 # The builtins of the Rust front end that no source of `examples/selfhost` (but its generated tables and the runtime text)
 # names yet, with why. See `unported_rules.txt`; the same rule.
-exec_spawn_detached   # docs/processes.md §4.11: the session flag and the label `exec_detached`; #512 follows the process builtins
-child_release         # §4.11: the reaper thread is runtime text that `examples/selfhost/runtime*` does not have yet
-child_pid             # §4.11: reads the pid out of a `Child`

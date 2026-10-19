@@ -7,8 +7,9 @@ entry:
 }
 declare ptr @__errno_location()
 
-define void @cancho_spawn_setup(ptr %actions, ptr %attr) {
+define void @cancho_spawn_setup(ptr %actions, ptr %attr, i64 %detached) {
 entry:
+  %session = icmp ne i64 %detached, 0
   call i32 @posix_spawn_file_actions_addclosefrom_np(ptr %actions, i32 3)
   call i32 @posix_spawnattr_init(ptr %attr)
   %empty = alloca [128 x i8]
@@ -17,7 +18,8 @@ entry:
   %every = alloca [128 x i8]
   call i32 @sigfillset(ptr %every)
   call i32 @posix_spawnattr_setsigdefault(ptr %attr, ptr %every)
-  call i32 @posix_spawnattr_setflags(ptr %attr, i16 12)
+  %flags = select i1 %session, i16 140, i16 12
+  call i32 @posix_spawnattr_setflags(ptr %attr, i16 %flags)
   ret void
 }
 declare i32 @posix_spawnattr_init(ptr)

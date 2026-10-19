@@ -7,8 +7,9 @@ entry:
 }
 declare ptr @__error()
 
-define void @cancho_spawn_setup(ptr %actions, ptr %attr) {
+define void @cancho_spawn_setup(ptr %actions, ptr %attr, i64 %detached) {
 entry:
+  %session = icmp ne i64 %detached, 0
   call i32 @posix_spawnattr_init(ptr %attr)
   %empty = alloca [128 x i8]
   call i32 @sigemptyset(ptr %empty)
@@ -16,7 +17,8 @@ entry:
   %every = alloca [128 x i8]
   call i32 @sigfillset(ptr %every)
   call i32 @posix_spawnattr_setsigdefault(ptr %attr, ptr %every)
-  call i32 @posix_spawnattr_setflags(ptr %attr, i16 16396)
+  %flags = select i1 %session, i16 17420, i16 16396
+  call i32 @posix_spawnattr_setflags(ptr %attr, i16 %flags)
   ret void
 }
 declare i32 @posix_spawnattr_init(ptr)

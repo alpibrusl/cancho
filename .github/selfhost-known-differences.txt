@@ -8,12 +8,6 @@ corpus::accepted_programs_build_and_run                                        #
 memory::the_layout_report_says_what_a_type_costs                               # a struct of bytes has another stride
 modules::std_declarations_cost_nothing_unless_called                           # Linux only: the size of the module
 wasm_target::build_refuses_too_not_only_check                                  # the WebAssembly target is the Rust compiler's (#486)
-process_release::a_child_that_has_already_ended_is_released_cleanly            # exec_spawn_detached, child_release, child_pid are not ported (unported_builtins.txt, #512)
-process_release::a_detached_child_outlives_its_parent_in_a_session_of_its_own  # as above
-process_release::a_detached_start_stays_inside_the_prefix_it_was_narrowed_to   # as above
-process_release::only_the_detached_child_survives_its_parents_group            # as above
-process_release::released_children_do_not_become_zombies                       # as above
-process_release::releasing_a_child_gives_back_its_pidfd                       # as above (a Linux-only test: the compiler in cancho has no code for `child_pid` yet)
 memory::a_static_outgrows_what_an_arena_could_hold                             # the text of the refusal: the compiler in cancho says the rule's sentence, not Rust's names and sizes (#479)
 modules::a_match_names_an_enum_through_its_qualifier                           # as above
 modules::the_module_rules_are_enforced_across_files                            # as above
