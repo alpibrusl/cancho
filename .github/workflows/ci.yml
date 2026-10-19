@@ -1,9 +1,17 @@
 name: ci
 
+# A branch with a pull request is built by the pull request. `push: branches: ["**"]` as well ran every job twice for each
+# push to such a branch (two runs, 24 check runs where 12 are the jobs), so only main is
+# built on push.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+
+# A newer push to a pull request supersedes the run of the one before; a run on main is never cancelled.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
