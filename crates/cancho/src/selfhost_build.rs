@@ -12,6 +12,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use cancho_syntax::lexer::TokenKind;
 use target_lexicon::{Architecture, OperatingSystem, Triple};
 
 use crate::{Emit, Failure, environment, refused, usage};
@@ -55,16 +56,46 @@ fn place(files: &[(String, String)], offset: usize) -> String {
     "the program".to_owned()
 }
 
-/// The name a file gives itself (`module a.b;`) and the names it imports (`import a.b;`).
-fn module_name(text: &str) -> Option<&str> {
-    text.lines().find_map(|l| l.trim().strip_prefix("module ")?.strip_suffix(';')).map(str::trim)
+/// The dotted names that follow each `keyword` token (`module a.b;`, `import a.b;`), read from the lexer's tokens, so that the
+/// layout of a file does not matter: several statements to a line, spaces round a dot, comments.
+fn named_after(text: &str, keyword: TokenKind) -> Vec<String> {
+    let Ok(tokens) = cancho_syntax::lexer::tokenize(text) else {
+        return Vec::new();
+    };
+    let word = |at: usize| &text[tokens[at].span.start as usize..tokens[at].span.end as usize];
+    let mut found = Vec::new();
+    for at in 0..tokens.len() {
+        if tokens[at].kind != keyword {
+            continue;
+        }
+        let mut name = String::new();
+        let mut i = at + 1;
+        while i < tokens.len() && tokens[i].kind == TokenKind::Ident {
+            name.push_str(word(i));
+            if i + 2 < tokens.len()
+                && tokens[i + 1].kind == TokenKind::Dot
+                && tokens[i + 2].kind == TokenKind::Ident
+            {
+                name.push('.');
+                i += 2;
+            } else {
+                break;
+            }
+        }
+        if !name.is_empty() {
+            found.push(name);
+        }
+    }
+    found
 }
 
-fn imports(text: &str) -> Vec<&str> {
-    text.lines()
-        .filter_map(|l| l.trim().strip_prefix("import ")?.strip_suffix(';'))
-        .filter_map(|names| names.split_whitespace().next())
-        .collect()
+/// The name a file gives itself (`module a.b;`) and the names it imports (`import a.b;`).
+fn module_name(text: &str) -> Option<String> {
+    named_after(text, TokenKind::Module).into_iter().next()
+}
+
+fn imports(text: &str) -> Vec<String> {
+    named_after(text, TokenKind::Import)
 }
 
 /// The standard library's modules the program imports, and those they import: the compiler in cancho does
@@ -72,14 +103,14 @@ fn imports(text: &str) -> Vec<&str> {
 fn add_imported(files: &mut Vec<(String, String)>) {
     let mut at = 0;
     while at < files.len() {
-        let wanted: Vec<String> = imports(&files[at].1).into_iter().map(str::to_owned).collect();
-        for name in wanted {
-            let already = files.iter().any(|(_, t)| module_name(t) == Some(name.as_str()));
+        for name in imports(&files[at].1) {
+            let already =
+                files.iter().any(|(_, t)| module_name(t).as_deref() == Some(name.as_str()));
             if already {
                 continue;
             }
             if let Some((file, text)) =
-                crate::STD.iter().find(|(_, t)| module_name(t) == Some(name.as_str()))
+                crate::STD.iter().find(|(_, t)| module_name(t).as_deref() == Some(name.as_str()))
             {
                 files.push(((*file).to_owned(), (*text).to_owned()));
             }
@@ -107,9 +138,31 @@ fn quote(files: &[(String, String)], from: usize, to: usize) -> String {
     String::new()
 }
 
-/// A refusal as the compiler in cancho gives it: `ERR <rule> <from> <to>`.
+/// Where a span of the laid-out files is: the file, the line and column, and the text of the line.
+fn located(files: &[(String, String)], offset: usize) -> Option<(String, usize, usize, String)> {
+    let mut base = 0;
+    for (name, text) in files {
+        if offset <= base + text.len() {
+            let at = (offset - base).min(text.len());
+            let line = 1 + text[..at].matches('\n').count();
+            let start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+            let column = 1 + text[start..at].chars().count();
+            let shown = text[start..].lines().next().unwrap_or("").to_owned();
+            return Some((name.clone(), line, column, shown));
+        }
+        base += text.len() + 1;
+    }
+    None
+}
+
+/// A refusal as the compiler in cancho gives it: `ERR <rule> <from> <to>`, and on the next line the sentence that says
+/// why (`Rule::explanation`, the same for every program the rule refuses), as a person reads it: where, why, the line,
+/// and what of it.
 fn refusal(answer: &str, files: &[(String, String)]) -> Failure {
-    let mut words = answer.split_whitespace().skip(1);
+    let mut lines = answer.lines();
+    let first = lines.next().unwrap_or("");
+    let sentence = lines.next().unwrap_or("").trim();
+    let mut words = first.split_whitespace().skip(1);
     let rule = words.next().unwrap_or("unknown");
     let from: Option<usize> = words.next().and_then(|w| w.parse().ok());
     let to: usize = words.next().and_then(|w| w.parse().ok()).unwrap_or(0);
@@ -121,39 +174,64 @@ fn refusal(answer: &str, files: &[(String, String)]) -> Failure {
              `--compiler` builds the program)"
         ));
     }
+    let why = if sentence.is_empty() { "refused" } else { sentence };
+    let Some((file, line, column, shown)) = from.and_then(|offset| located(files, offset)) else {
+        return refused(format!("the program: error: {why} (rule `{rule}`)"));
+    };
+    // The caret runs under the span on its first line.
+    let width = to
+        .saturating_sub(from.unwrap_or(0))
+        .min(shown.chars().count().saturating_sub(column - 1))
+        .max(1);
     refused(format!(
-        "{at}: refused by the rule `{rule}`: `{near}` (the compiler in cancho gives the rule and the place, not the \
-         sentence; `cancho check` gives the sentence)"
+        "{file}:{line}:{column}: error: {why} (rule `{rule}`)\n    {shown}\n    {}{}",
+        " ".repeat(column - 1),
+        "^".repeat(width)
     ))
 }
 
-/// The files of `compiler.cho` and the modules of `examples/selfhost` it imports, in the order they are built.
-fn compiler_sources(dir: &Path) -> Result<Vec<PathBuf>, Failure> {
+include!(concat!(env!("OUT_DIR"), "/selfhost_sources.rs"));
+
+/// The text of one source of the compiler in cancho: from the directory named by `CANCHO_SELFHOST_SOURCES` if there is one
+/// (for working on it), else the copy compiled into this binary.
+fn source_of(name: &str) -> Option<String> {
+    if let Some(dir) = std::env::var_os("CANCHO_SELFHOST_SOURCES") {
+        return std::fs::read_to_string(Path::new(&dir).join(name)).ok();
+    }
+    SELFHOST_SOURCES.iter().find(|(n, _)| *n == name).map(|(_, text)| (*text).to_owned())
+}
+
+/// The files of `compiler.cho` and the modules of `examples/selfhost` it imports, in the order they are built, as
+/// `(name, text)`.
+fn compiler_sources() -> Result<Vec<(String, String)>, Failure> {
     fn walk(
-        dir: &Path,
-        file: &Path,
-        seen: &mut BTreeSet<PathBuf>,
-        order: &mut Vec<PathBuf>,
+        name: &str,
+        seen: &mut BTreeSet<String>,
+        order: &mut Vec<(String, String)>,
     ) -> Result<(), Failure> {
-        let text = std::fs::read_to_string(file)
-            .map_err(|e| environment(format!("cannot read `{}`: {e}", file.display())))?;
+        let text = source_of(name).ok_or_else(|| {
+            environment(format!(
+                "the compiler in cancho has no source `{name}`: this binary was built without it"
+            ))
+        })?;
         for names in text
             .lines()
             .filter_map(|l| l.trim().strip_prefix("import selfhost.")?.strip_suffix(';'))
         {
-            let Some(name) = names.split_whitespace().next() else { continue };
-            let path = dir.join(format!("{name}.cho"));
-            if path.exists() && seen.insert(path.clone()) {
-                walk(dir, &path, seen, order)?;
-                order.push(path);
+            let Some(module) = names.split_whitespace().next() else { continue };
+            let file = format!("{module}.cho");
+            if source_of(&file).is_some() && seen.insert(file.clone()) {
+                walk(&file, seen, order)?;
+                let text = source_of(&file).unwrap_or_default();
+                order.push((file, text));
             }
         }
         Ok(())
     }
-    let root = dir.join("compiler.cho");
     let (mut seen, mut order) = (BTreeSet::new(), Vec::new());
-    walk(dir, &root, &mut seen, &mut order)?;
-    order.push(root);
+    walk("compiler.cho", &mut seen, &mut order)?;
+    let root = source_of("compiler.cho").unwrap_or_default();
+    order.push(("compiler.cho".to_owned(), root));
     Ok(order)
 }
 
@@ -161,21 +239,12 @@ fn compiler_sources(dir: &Path) -> Result<Vec<PathBuf>, Failure> {
 /// compiler the first time and kept in the cache by a hash of its sources (`$CANCHO_CACHE`, or `~/.cache/cancho`). A
 /// compiler installed without the repository next to it cannot build it: it says so.
 pub fn ensure_compiler() -> Result<PathBuf, Failure> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/selfhost");
-    if !dir.join("compiler.cho").exists() {
-        return Err(environment(
-            "`--compiler auto` builds the compiler in cancho from `examples/selfhost`, which is not next to this \
-             binary; build it once and name it with `--compiler <exe>`"
-                .to_owned(),
-        ));
-    }
-    let files = compiler_sources(&dir)?;
+    let files = compiler_sources()?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut hasher);
-    for file in &files {
-        std::fs::read(file)
-            .map_err(|e| environment(format!("cannot read `{}`: {e}", file.display())))?
-            .hash(&mut hasher);
+    for (name, text) in &files {
+        name.hash(&mut hasher);
+        text.hash(&mut hasher);
     }
     let base = std::env::var_os("CANCHO_CACHE")
         .map(PathBuf::from)
@@ -196,12 +265,21 @@ pub fn ensure_compiler() -> Result<PathBuf, Failure> {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos())
     ));
-    std::fs::create_dir_all(&scratch)
-        .map_err(|e| environment(format!("cannot create `{}`: {e}", scratch.display())))?;
+    let sources = scratch.join("src");
+    std::fs::create_dir_all(&sources)
+        .map_err(|e| environment(format!("cannot create `{}`: {e}", sources.display())))?;
+    let mut paths = Vec::new();
+    for (name, text) in &files {
+        let path = sources.join(name);
+        std::fs::write(&path, text)
+            .map_err(|e| environment(format!("cannot write `{}`: {e}", path.display())))?;
+        paths.push(path);
+    }
     eprintln!("building the compiler in cancho (once) into {}", exe.display());
     let built = scratch.join("compiler");
-    let made = crate::build(
-        &files,
+    // The first compiler is built by the Rust one: asking `build` would ask for this very compiler.
+    let made = crate::build_with_rust(
+        &paths,
         &built,
         Emit::Exe,
         true,
@@ -219,35 +297,43 @@ pub fn ensure_compiler() -> Result<PathBuf, Failure> {
     Ok(exe)
 }
 
-/// A refusal of the compiler in cancho as a sentence. It gives the rule and the place; the sentence is the Rust front end's
-/// for the same files, which refuses the same program with the same rule (`SKIP`, the compiler having no code yet, is not a
-/// refusal of the program and stays as it is). If the Rust front end accepts what the compiler in cancho refused, the two
-/// disagree, and that is said.
-fn explained(
-    answer: &str,
-    files: &[(String, String)],
-    inputs: &[PathBuf],
-    with_std: bool,
-) -> Failure {
-    let short = refusal(answer, files);
-    if answer.split_whitespace().nth(1) == Some("SKIP") {
-        return short;
+/// What builds a program: the Rust compiler, or the one written in cancho and whether the Rust front end checks first.
+pub enum Choice {
+    Rust,
+    Cancho { compiler: PathBuf, rust_checks_first: bool, fall_back: bool },
+}
+
+/// Does the Rust front end check a program before the compiler in cancho writes code for it, when that is the default?
+/// Until the compiler in cancho refuses everything the language refuses (#512, `reject_gaps.txt`) it does, so the default
+/// refuses at least what the Rust compiler does and with its sentences; when the list is empty this goes, and
+/// `the_default_build_checks_with_rust_only_while_a_gap_is_listed` says so.
+pub const RUST_CHECKS_FIRST: bool = true;
+
+static FLAG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// The compiler `--compiler` named, for every build of this run.
+pub fn set_flag(flag: Option<PathBuf>) {
+    if let Some(flag) = flag {
+        let _ = FLAG.set(flag);
     }
-    match crate::compile_to_ir(inputs, with_std) {
-        Err(rendered) => Failure {
-            message: format!(
-                "{}\n(the compiler in cancho refused it too, by the rule `{}`)",
-                rendered.message,
-                answer.split_whitespace().nth(1).unwrap_or("unknown")
-            ),
-            code: rendered.code,
-        },
-        Ok(_) => Failure {
-            message: format!(
-                "{}\nthe Rust compiler accepts this program: the two disagree, please report it",
-                short.message
-            ),
-            code: short.code,
+}
+
+/// Which compiler builds this program: the one named by `--compiler`, else by `CANCHO_COMPILER` (`rust` for the Rust one,
+/// `auto` for the one in cancho built from this binary's own sources, or a path); and when nothing is named, the one
+/// written in cancho for a build that goes through LLVM for a host it writes code for, and the Rust one for the rest
+/// (the Cranelift backend, WebAssembly).
+pub fn choose(cranelift: bool, target: Option<&Triple>) -> Choice {
+    let named =
+        FLAG.get().cloned().or_else(|| std::env::var_os("CANCHO_COMPILER").map(PathBuf::from));
+    match named {
+        Some(name) if name == Path::new("rust") => Choice::Rust,
+        Some(_) if cranelift => Choice::Rust,
+        Some(compiler) => Choice::Cancho { compiler, rust_checks_first: false, fall_back: false },
+        None if cranelift || target_line(target).is_err() => Choice::Rust,
+        None => Choice::Cancho {
+            compiler: PathBuf::from("auto"),
+            rust_checks_first: RUST_CHECKS_FIRST,
+            fall_back: true,
         },
     }
 }
@@ -262,11 +348,35 @@ pub struct Job<'a> {
     pub target: Option<&'a Triple>,
     pub link_libs: &'a [String],
     pub link_paths: &'a [String],
+    pub rust_checks_first: bool,
 }
 
 /// Build the program of `job` (and the standard library, with `with_std`) with its compiler.
-pub fn build(job: Job<'_>) -> Result<(), Failure> {
-    let Job { compiler, inputs, output, emit, with_std, target, link_libs, link_paths } = job;
+/// What building a program with the compiler in cancho came to: built, or the compiler has no code for something in it
+/// yet (what it says is the refusal to give if there is no other compiler to fall back to).
+pub enum Built {
+    Done,
+    NoCode(Failure),
+    /// The compiler in cancho stopped without a module, or what it wrote did not build: a bug of its own, not a refusal.
+    Broke(Failure),
+}
+
+pub fn build(job: Job<'_>) -> Result<Built, Failure> {
+    let Job {
+        compiler,
+        inputs,
+        output,
+        emit,
+        with_std,
+        target,
+        link_libs,
+        link_paths,
+        rust_checks_first,
+    } = job;
+    if rust_checks_first {
+        // The Rust front end refuses what it refuses, with its sentences; the compiler in cancho writes the code.
+        crate::compile_to_ir(inputs, with_std)?;
+    }
     let built;
     let compiler = if compiler == Path::new("auto") {
         built = ensure_compiler()?;
@@ -306,14 +416,18 @@ pub fn build(job: Job<'_>) -> Result<(), Failure> {
     let _ = writer.join();
     let answer = String::from_utf8_lossy(&ended.stdout).into_owned();
     if answer.starts_with("ERR") {
-        return Err(explained(&answer, &files, inputs, with_std));
+        let said = refusal(&answer, &files);
+        if answer.split_whitespace().nth(1) == Some("SKIP") {
+            return Ok(Built::NoCode(said));
+        }
+        return Err(said);
     }
     if !ended.status.success() || answer.is_empty() {
-        return Err(environment(format!(
+        return Ok(Built::Broke(environment(format!(
             "the compiler `{}` ended with {} and no module",
             compiler.display(),
             ended.status
-        )));
+        ))));
     }
     let module = output.with_extension("ll");
     std::fs::write(&module, &answer)
@@ -333,15 +447,39 @@ pub fn build(job: Job<'_>) -> Result<(), Failure> {
     let _ = std::fs::remove_file(&module);
     let made = made?;
     if !made.status.success() {
-        return Err(environment(format!(
+        return Ok(Built::Broke(environment(format!(
             "`{cc}` could not build the module the compiler in cancho wrote: {}",
             String::from_utf8_lossy(&made.stderr)
-        )));
+        ))));
     }
     if emit == Emit::Exe {
         let linked = crate::link(&object, output, link_libs, link_paths);
         let _ = std::fs::remove_file(&object);
         linked?;
     }
-    Ok(())
+    Ok(Built::Done)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{imports, module_name};
+
+    #[test]
+    fn the_layout_of_a_file_does_not_hide_its_module_or_its_imports() {
+        let plain = "edition 5;\nmodule a.b;\nimport std.conns;\nimport std.http;\nfn main() -> int { return 0; }\n";
+        let flat = "edition 5 ; module a . b ; import std . conns ; import std . http ; fn main ( ) -> int { return 0 ; }";
+        let commented = "// import std.nothing;\nmodule a.b; import std.conns; // import std.nothing;\nimport std . http;\n";
+        for text in [plain, flat, commented] {
+            assert_eq!(module_name(text).as_deref(), Some("a.b"), "{text}");
+            assert_eq!(imports(text), ["std.conns", "std.http"], "{text}");
+        }
+    }
+
+    #[test]
+    fn text_that_looks_like_an_import_is_not_one() {
+        let text = "module a;\nfn f() -> [] byte { return \"import std.conns;\"; }\n";
+        assert_eq!(module_name(text).as_deref(), Some("a"));
+        assert!(imports(text).is_empty());
+        assert_eq!(module_name("fn f() -> int { return 0; }"), None);
+    }
 }

@@ -1541,8 +1541,11 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
 pub fn thread_call[&s, &x](st: &!s [int], text: &x [byte], id: int, spawning: bool) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
-    effects.perform_named(st, "conc");
     var arg = ast.get(st, id, 6);
+    if spawning {
+        // Real concurrency entering the program's authority surface; `join` performs nothing of its own.
+        effects.perform_named(st, "conc");
+    }
     if !spawning {
         if ast.get(st, id, 7) != 1 {
             return ex.skip(st, from, to);
@@ -1553,6 +1556,12 @@ pub fn thread_call[&s, &x](st: &!s [int], text: &x [byte], id: int, spawning: bo
         }
         if !types.is_thread(st, t.ty) {
             return ex.skip(st, from, to);
+        }
+        // Joining a handle named by a binding, or a `spawn` joined where it is made, ends its lease.
+        if ast.is_kind(st, arg, kinds.NK::EName) && scope.find(st, text, ast.get(st, arg, 4)) >= 0 {
+            scope.lease_join(st, scope.slot_of(st, scope.find(st, text, ast.get(st, arg, 4))));
+        } else if ast.is_kind(st, arg, kinds.NK::ECall) {
+            scope.lease_join_now(st);
         }
         let result = types.thread_result(st, t.ty);
         return ex.in_reg(result, threadcode.join_thread(st, result, t.reg));
@@ -1576,6 +1585,10 @@ pub fn thread_call[&s, &x](st: &!s [int], text: &x [byte], id: int, spawning: bo
     let result = scope.lower_type(st, text, ast.get(st, item, 10), ast.get(st, item, 6), 0 - 1);
     let carried = types.is_erased(st, payload.ty) || types.is_ref(st, payload.ty) && !types.is_slice_ref(st, payload.ty) || payload.ty == 1 || payload.ty == 2 || payload.ty == 5 || types.is_handle(st, payload.ty);
     let returned = types.is_erased(st, result) || types.is_ref(st, result) && !types.is_slice_ref(st, result) || result == 1 || result == 2 || result == 5;
+    if types.is_ref(st, payload.ty) && types.ref_unique(st, payload.ty) && ast.is_kind(st, ast.get(st, id, 6), kinds.NK::EName) && scope.find(st, text, ast.get(st, ast.get(st, id, 6), 4)) >= 0 {
+        // A `&!` given to a thread is lent to it until the handle is joined.
+        scope.lease_spawn(st, scope.find(st, text, ast.get(st, ast.get(st, id, 6), 4)), from, to);
+    }
     if narrowing.cannot_cross(st, payload.ty) || narrowing.cannot_cross(st, result) {
         // More than one leaf: not something to give a real thread, or to take back from one, yet.
         ast.fail(st, rules.r_thread_payload_type(), from, to);
@@ -1584,7 +1597,7 @@ pub fn thread_call[&s, &x](st: &!s [int], text: &x [byte], id: int, spawning: bo
     if !carried || !returned {
         return ex.skip(st, from, to);
     }
-    return ex.in_reg(types.make_thread(st, result), threadcode.spawn_thread(st, payload.ty, payload.known, payload.value, payload.reg, f.reg));
+    return ex.in_reg(types.make_thread(st, payload.ty, result), threadcode.spawn_thread(st, payload.ty, payload.known, payload.value, payload.reg, f.reg));
 }
 
 pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {

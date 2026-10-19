@@ -73,6 +73,17 @@ pub fn strings_cap() -> [] int {
     return 64;
 }
 
+// A static the interpreter was sure traps (an index out of range, a division by zero, an overflow): word 7 of the header,
+// which `run` clears and `trapped` reads. A static it gave up on is not one: the code that runs it when the program starts stays.
+fn trap_note[&s](st: &!s [int]) -> [] int {
+    st[region_base(st) + 7] = 1;
+    return 0;
+}
+
+pub fn trapped[&s](st: &!s [int]) -> [] bool {
+    return st[region_base(st) + 7] != 0;
+}
+
 pub fn store_cap() -> [] int {
     return 1048576;
 }
@@ -256,6 +267,9 @@ fn eval[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Val {
             return gave_up();
         }
         let i = eval(st, text, ast.get(st, id, 5));
+        if i.ok && (i.a < 0 || i.a >= base.b) {
+            trap_note(st);
+        }
         if !i.ok || i.a < 0 || i.a >= base.b {
             return gave_up();
         }
@@ -342,6 +356,7 @@ fn unary[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Val {
     if op == 0 {
         let r = fold.fold_int(14, 0, v.a);
         if r.trapped {
+            trap_note(st);
             return gave_up();
         }
         return good(r.value, 0);
@@ -404,6 +419,7 @@ fn binary[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] Val {
     if op >= 8 && op <= 17 {
         let r = fold.fold_int(op, left.a, right.a);
         if r.trapped {
+            trap_note(st);
             return gave_up();
         }
         return good(r.value, 0);
@@ -458,6 +474,9 @@ fn run_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
         if ast.is_kind(st, place, kinds.NK::EIndex) {
             let base = eval(st, text, ast.get(st, place, 4));
             let i = eval(st, text, ast.get(st, place, 5));
+            if base.ok && i.ok && (i.a < 0 || i.a >= base.b) {
+                trap_note(st);
+            }
             if !base.ok || !i.ok || i.a < 0 || i.a >= base.b {
                 return 2;
             }
@@ -525,6 +544,7 @@ pub fn run[&s, &x](st: &!s [int], text: &x [byte], item: int, element: int) -> [
     let top = st[region_base(st)];
     st[region_base(st) + 1] = fuel_start();
     st[region_base(st) + 3] = 0;
+    st[region_base(st) + 7] = 0;
     let outcome = run_block(st, text, ast.get(st, item, 7), ast.get(st, item, 8));
     if outcome != 1 {
         // Nothing of what it allocated is kept.

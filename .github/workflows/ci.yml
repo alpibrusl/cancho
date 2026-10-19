@@ -89,9 +89,15 @@ jobs:
   # docs/tls-performance.md §6: the cost of each primitive the TLS stack is made of, against the baseline recorded in
   # `benches/tls_baseline.json`. A change that makes a primitive 1.3 times dearer in instructions (counted under valgrind, so the
   # runner's clock and load do not matter) fails here. A short job: the compiler, then about a minute.
+  #
+  # The baseline is the code the Rust compiler writes, so this job names it (`CANCHO_COMPILER=rust`): the compiler in cancho
+  # is the default of `cancho build`, and writes code 1.26 to 1.32 times dearer on the P-256 rows (docs/bootstrap.md, "Code
+  # quality, measured once").
   tls-perf:
     name: tls-perf
     runs-on: ubuntu-latest
+    env:
+      CANCHO_COMPILER: rust
     steps:
       - uses: actions/checkout@v4
 

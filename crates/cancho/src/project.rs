@@ -305,7 +305,7 @@ pub fn cmd_build(args: &[String]) -> Result<ExitCode, Failure> {
             other => return Err(usage(format!("unexpected `{other}`"))),
         }
     }
-    let compiler = compiler.or_else(|| std::env::var_os("CANCHO_COMPILER").map(PathBuf::from));
+    crate::selfhost_build::set_flag(compiler);
     let root = current_root()?;
     let project = load(&root)?;
     check_compiler(&project, ignore)?;
@@ -326,28 +326,15 @@ pub fn cmd_build(args: &[String]) -> Result<ExitCode, Failure> {
             std::fs::create_dir_all(parent)
                 .map_err(|e| environment(format!("cannot create `{}`: {e}", parent.display())))?;
         }
-        if let Some(compiler) = &compiler {
-            crate::selfhost_build::build(crate::selfhost_build::Job {
-                compiler,
-                inputs: &inputs,
-                output: &out,
-                emit: Emit::Exe,
-                with_std: bin.std,
-                target: None,
-                link_libs: &[],
-                link_paths: &[],
-            })?;
-        } else {
-            crate::build(
-                &inputs,
-                &out,
-                Emit::Exe,
-                bin.std,
-                crate::Codegen { backend: Backend::Llvm, target: None },
-                &[],
-                &[],
-            )?;
-        }
+        crate::build(
+            &inputs,
+            &out,
+            Emit::Exe,
+            bin.std,
+            crate::Codegen { backend: Backend::Llvm, target: None },
+            &[],
+            &[],
+        )?;
         println!("built {}", out.display());
     }
     Ok(ExitCode::SUCCESS)

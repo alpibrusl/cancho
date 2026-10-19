@@ -4,6 +4,8 @@ module selfhost.rules;
 // the tags the Rust `Rule::tag` spells them with. 0 to 2 are the lexer's (`lexcore.rule_name`); 99 is not a rule but the answer `SKIP`, for a function whose body uses something the port does not check yet.
 
 import selfhost.lexcore as lc;
+import selfhost.tables;
+import std.bytes;
 
 pub fn r_type_mismatch() -> [] int {
     return 3;
@@ -403,4 +405,17 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
         return "thread-payload-type";
     }
     return "unknown-name";
+}
+
+// The sentence the Rust front end gives for the rule called `tag` (`Rule::explanation`, in `tables.cho`): why the program is
+// refused, whichever program it is. Nothing for a name it has not got.
+pub fn sentence(tag: &static [byte]) -> [] &static [byte] {
+    var i = 0;
+    while i < tables.rule_count() {
+        if bytes.equal(tables.rule_tag_at(i), tag) {
+            return tables.rule_explanation_at(i);
+        }
+        i = i + 1;
+    }
+    return "";
 }

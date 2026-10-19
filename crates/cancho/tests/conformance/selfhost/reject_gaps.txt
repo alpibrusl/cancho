@@ -12,10 +12,3 @@ function_value_row_undeclared.cho
 generic_array_over_a_resource.cho
 generic_body_checked_when_unused.cho
 reference_escapes_via_inference.cho
-spawn_handle_escapes_borrow.cho
-spawn_same_unique_twice.cho
-spawn_two_copies_of_unique.cho
-spawn_unique_branches_disagree.cho
-spawn_unique_loop_lease_survives.cho
-spawn_unique_used_while_lent.cho
-static_that_traps.cho

@@ -340,10 +340,12 @@ pub(crate) fn build(tag: &str, files: &[&str]) -> PathBuf {
     let dir = scratch(&format!("selfhost-{tag}"));
     let exe = dir.join(tag);
     let root = repo_root().join("examples/selfhost");
+    // The first compiler is built by the Rust one, whatever the default is: that is what makes it the first.
     let build = Command::new(BIN)
         .arg("build")
         .args(files.iter().map(|f| root.join(f)))
         .args(["--std".as_ref(), "-o".as_ref(), exe.as_os_str()])
+        .env("CANCHO_COMPILER", "rust")
         .output()
         .expect("the compiler runs");
     assert!(
