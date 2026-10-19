@@ -111,6 +111,30 @@ fn main(world: World) -> [] int {
 }
 ";
 
+/// The same with 512 MiB of `byte`s filled with `byte_of(0)`: a byte worked out in the text is as much a zero fill as `0`.
+const UNTOUCHED_BYTES: &str = "edition 5;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(args); release(net); release(clock);
+    var answer = 0;
+    borrow mut heap as &!h in {
+        let big = box_slice(h, 536870912, byte_of(0));
+        borrow mut big as &!w in {
+            contents(w)[12345] = byte_of(7);
+            answer = int_of(contents(w)[12345]) + int_of(contents(w)[536870911]);
+        }
+        borrow mut io as &!i in {
+            write_err(i, \"ready\\n\");
+            getchar(i);
+        }
+        unbox_slice(h, big);
+    }
+    release(heap);
+    release(io);
+    return answer;
+}
+";
+
 /// Kilobytes from a `/proc/<pid>/status` line such as `VmHWM:   1234 kB`.
 fn status_kb(pid: u32, key: &str) -> u64 {
     let status =
@@ -127,9 +151,11 @@ fn a_large_zeroed_slice_is_not_made_resident_by_filling_it() {
         return;
     }
     use std::io::{BufRead, BufReader};
-    for backend in BACKENDS {
-        let dir = scratch(&format!("zeroed-untouched-{backend}"));
-        let exe = build(&dir, "untouched", UNTOUCHED, backend);
+    for (backend, source) in
+        BACKENDS.into_iter().flat_map(|b| [(b, UNTOUCHED), (b, UNTOUCHED_BYTES)])
+    {
+        let dir = scratch(&format!("zeroed-untouched-{backend}-{}", source.len()));
+        let exe = build(&dir, "untouched", source, backend);
         let mut child = Command::new(&exe)
             .stdin(Stdio::piped())
             .stderr(Stdio::piped())

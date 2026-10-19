@@ -1342,6 +1342,10 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
         return ex.in_reg(result, emit.widen(st, last.known, last.value, last.reg));
     }
     if written == 4 {
+        if last.known && last.value >= 0 && last.value <= 255 {
+            // A byte worked out in the text stays one, so `box_slice(heap, n, byte_of(0))` is `calloc`.
+            return ex.Ex { ty: result, known: true, value: last.value, reg: 0 - 1, reg2: 0 - 1 };
+        }
         return ex.in_reg(result, emit.truncate_to_byte(st, last.known, last.value, last.reg));
     }
     if written == 136 || written == 137 {
