@@ -150,6 +150,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         B::ExecSpawn
         | B::ExecSpawnIn
         | B::ExecSpawnDetached
+        | B::ExecSpawnUnder
         | B::ChildRelease
         | B::ChildPid
         | B::ChildEndClose

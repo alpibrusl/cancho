@@ -7,7 +7,7 @@ module selfhost.builtins;
 // `UPDATE_SELFHOST_TABLES=1 cargo test -p cancho-ir selfhost_tables` rewrites it.
 
 static builtin_region_counts: [int] {
-    let t = alloc_slice[static](168, 0);
+    let t = alloc_slice[static](169, 0);
     t[0] = 1;
     t[1] = 2;
     t[2] = 2;
@@ -94,7 +94,7 @@ static builtin_region_counts: [int] {
 }
 
 static builtin_effect_stream: [int] {
-    let t = alloc_slice[static](61, 0);
+    let t = alloc_slice[static](62, 0);
     t[2] = 2;
     t[4] = 4;
     t[5] = 4;
@@ -153,11 +153,12 @@ static builtin_effect_stream: [int] {
     t[58] = 16;
     t[59] = 16;
     t[60] = 44;
+    t[61] = 46;
     return t;
 }
 
 static builtin_effect_starts: [int] {
-    let t = alloc_slice[static](168, 0);
+    let t = alloc_slice[static](169, 0);
     t[1] = 1;
     t[2] = 2;
     t[3] = 3;
@@ -325,11 +326,12 @@ static builtin_effect_starts: [int] {
     t[165] = 60;
     t[166] = 60;
     t[167] = 61;
+    t[168] = 61;
     return t;
 }
 
 static builtin_effect_counts: [int] {
-    let t = alloc_slice[static](168, 0);
+    let t = alloc_slice[static](169, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -391,15 +393,16 @@ static builtin_effect_counts: [int] {
     t[158] = 1;
     t[159] = 1;
     t[166] = 1;
+    t[168] = 1;
     return t;
 }
 
 fn effect_chars() -> [] &static [byte] {
-    return "io_writeerr_writeio_readheapfile_readfile_writeargsconn_acceptpollclockconn_readconn_writeudp_recvudp_sendtty_readtty_writesignals_readdir_readdir_writechild_signalpipe_readpipe_writeexec_detached";
+    return "io_writeerr_writeio_readheapfile_readfile_writeargsconn_acceptpollclockconn_readconn_writeudp_recvudp_sendtty_readtty_writesignals_readdir_readdir_writechild_signalpipe_readpipe_writeexec_detachedexec_under";
 }
 
 static effect_name_starts: [int] {
-    let t = alloc_slice[static](23, 0);
+    let t = alloc_slice[static](24, 0);
     t[1] = 8;
     t[2] = 17;
     t[3] = 24;
@@ -422,11 +425,12 @@ static effect_name_starts: [int] {
     t[20] = 164;
     t[21] = 173;
     t[22] = 183;
+    t[23] = 196;
     return t;
 }
 
 static effect_name_lens: [int] {
-    let t = alloc_slice[static](23, 0);
+    let t = alloc_slice[static](24, 0);
     t[0] = 8;
     t[1] = 9;
     t[2] = 7;
@@ -450,11 +454,12 @@ static effect_name_lens: [int] {
     t[20] = 9;
     t[21] = 10;
     t[22] = 13;
+    t[23] = 10;
     return t;
 }
 
 pub fn effect_count() -> [] int {
-    return 23;
+    return 24;
 }
 
 fn arm_chars() -> [] &static [byte] {

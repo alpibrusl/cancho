@@ -361,6 +361,17 @@ first, with the capability it is about to use (edition 9):
 * Do not write your own `starts_with` over the bound. It will agree with the runtime until the first `/opt/xevil`,
   `a/../b` or 4096-byte path. `docs/processes.md` §4.13 has the rule.
 
+### 3.7 A directory given at deployment: `Dir`, and `exec_spawn_under`
+
+`narrow` takes a literal, so a directory chosen when the program is installed cannot be in a capability's type, and a function over `Fs("/x")` fixes `/x`. What takes its place is a handle:
+
+* **Files.** Open the directory once, `open_dir(fs, arg(g, 1))`, and write the library over `&Dir` (`std.dirs.open_file`, `dir_open_new`, `dir_rename`, ...). It is generic in the directory, its row is `dir_read`/`dir_write` with no
+  path, and no link is followed. The opener's report still says `fs_read("")`: the path is not known to the program.
+* **Programs** (edition 9). `exec_spawn_under(exec, dir, "worker.sh", args, env, stdin, stdout, stderr)` starts the program the name names *in that directory*, which is also the child's working directory. It needs the `Exec` that
+  bounds nothing (a narrowed one is `capability-misused`: a run-time directory cannot be shown to lie under a literal), and its row is `exec_under`, so the report says "programs of a directory I was given" and not `exec("")`. The name
+  is relative and has no `..` (`a/b` is fine); an empty one, a rooted one, `..` or 4096 bytes **trap**, so a supervisor asks first: `len(name) > 0 && name[0] != '/' && exec_covers(exec, name)`.
+* Neither narrows a *prefix the type can show*, and the kernel follows a link inside the directory (`docs/processes.md` §4.14).
+
 ## 4. A reference may not outlive its region
 
 11 fixtures. A region is an arena, a `borrow` block, or a caller's

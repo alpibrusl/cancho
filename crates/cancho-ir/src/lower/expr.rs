@@ -860,6 +860,9 @@ impl<'a> FnLowering<'a> {
                 if resolved == Resolved::Builtin(Builtin::ExecSpawnDetached) {
                     return self.exec_spawn(args, span, false, true);
                 }
+                if resolved == Resolved::Builtin(Builtin::ExecSpawnUnder) {
+                    return self.exec_spawn_under(args, span);
+                }
                 if resolved == Resolved::Builtin(Builtin::TcpConnect) {
                     return self.tcp_connect(args, span, false, false);
                 }

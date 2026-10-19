@@ -1,0 +1,25 @@
+//~ ERROR needs the `Exec` that bounds nothing
+//~ RULE capability-misused
+
+// `docs/processes.md` §4.14: a name beneath a directory chosen at run time cannot be shown to lie under a literal, so a narrowed `Exec` is refused rather than widened.
+
+edition 9;
+fn start[&x, &d](exec: &x Exec("/bin"), dir: &d Dir) -> [exec_under] int {
+    match exec_spawn_under(exec, dir, "w", "", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(c) => {
+            match child_wait(c) {
+                Exited::Code(n) => { return n; }
+                Exited::Signaled(s) => { return 1; }
+                Exited::Failed(e) => { return 1; }
+            }
+        }
+        Spawned::Failed(e) => { return e; }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals); release(tty);
+    release(exec);
+    return 0;
+}

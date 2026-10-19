@@ -1,0 +1,105 @@
+edition 9;
+
+import std.io;
+
+// `docs/processes.md` §4.14: `exec_spawn_under`, starting a program beneath a directory that was chosen when the
+// program was deployed. The supervisor of cancho-forge's issue (#534): it is given its worker directory on the command
+// line, opens it once, and starts the workers it holds under it; the capabilities it holds are `Exec("")` and
+// `Fs("")`, and its authority report names `exec_under` and not `exec("")`.
+//   argv[1]  the worker directory (opened with `open_dir`)
+//   argv[2]  a mode:
+//     `u`  `exec_spawn_under(exec, dir, name, ...)`, printed `spawned code N` or `failed errno N`; a name that is
+//          empty, rooted or has `..` in it is a trap: the driver is killed and prints nothing
+//     `s`  a supervisor: ask first (`exec_covers`, and a name that is not rooted or empty), spawn only if both say
+//          yes, say `refused` otherwise, and go on to say `journaled`
+//   argv[3]  the name
+
+fn report[&i](io: &!i Io, spawned: Spawned) -> [io_write] int {
+    match spawned {
+        Spawned::Ok(child) => {
+            match child_wait(child) {
+                Exited::Code(n) => {
+                    io.write_all(io, "spawned code ");
+                    io.print_int(io, n);
+                    io.newline(io);
+                }
+                Exited::Signaled(s) => {
+                    io.write_all(io, "spawned signaled\n");
+                }
+                Exited::Failed(e) => {
+                    io.write_all(io, "wait failed\n");
+                }
+            }
+        }
+        Spawned::Failed(e) => {
+            io.write_all(io, "failed errno ");
+            io.print_int(io, e);
+            io.newline(io);
+        }
+    }
+    return 0;
+}
+
+fn under[&x, &d, &i, &p](exec: &x Exec(""), dir: &d Dir, io: &!i Io, name: &p [byte]) -> [exec_under, io_write] int {
+    return report(io, exec_spawn_under(exec, dir, name, "", "", Stdio::Null, Stdio::Null, Stdio::Null));
+}
+
+// The policy layer of the issue: a denied name is a line in the journal and not the end of the supervisor. `exec_covers`
+// is the rule the spawn traps on for `..` and the length; a name that is empty or rooted is the other half of it.
+fn supervise[&x, &d, &i, &p](exec: &x Exec(""), dir: &d Dir, io: &!i Io, name: &p [byte]) -> [exec_under, io_write] int {
+    if len(name) > 0 && int_of(name[0]) != '/' && exec_covers(exec, name) {
+        under(exec, dir, io, name);
+    } else {
+        io.write_all(io, "refused\n");
+    }
+    io.write_all(io, "journaled\n");
+    return 0;
+}
+
+fn go[&x, &d, &i, &g](exec: &x Exec(""), dir: &d Dir, io: &!i Io, g: &g Args) -> [exec_under, io_write, args] int {
+    let mode = int_of(arg(g, 2)[0]);
+    if mode == 'u' {
+        return under(exec, dir, io, arg(g, 3));
+    }
+    if mode == 's' {
+        return supervise(exec, dir, io, arg(g, 3));
+    }
+    return 2;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    var console = io;
+    var status = 2;
+    borrow fs as &f in {
+        borrow args as &g in {
+            match open_dir(f, arg(g, 1)) {
+                DirOpened::Ok(d) => {
+                    var workers = d;
+                    borrow workers as &w in {
+                        borrow exec as &x in {
+                            borrow mut console as &!i in {
+                                status = go(x, w, i, g);
+                            }
+                        }
+                    }
+                    dir_close(workers);
+                }
+                DirOpened::Failed(e) => {
+                    status = 3;
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(console);
+    release(args);
+    return status;
+}

@@ -415,6 +415,8 @@ pub const WORLD_PLAIN_LABELS: &[&str] = &[
     "child_signal",
     // `docs/processes.md` §4.11: a child that outlives the program.
     "exec_detached",
+    // `docs/processes.md` §4.14: starting a program a run-time directory holds.
+    "exec_under",
     "pipe_read",
     "pipe_write",
     // `docs/tty.md` §4: path-free, the prefix spent at `tty_open`
@@ -511,6 +513,10 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                     argument: Some(prefix.clone()),
                 }]);
                 all.union(&Effects::plain(["child_signal", "exec_detached"]));
+                // §4.14: only the `Exec` that bounds nothing can start a program found beneath a `Dir`.
+                if prefix.is_empty() {
+                    all.union(&Effects::plain(["exec_under"]));
+                }
                 all
             }
             _ => Effects::pure(),

@@ -1,0 +1,25 @@
+//~ ERROR `exec_spawn_under` is not a function in this program
+//~ RULE not-a-function
+
+// `docs/processes.md` §4.14: edition 9, so an earlier file that declares a function of the name is unchanged.
+
+edition 8;
+fn start[&x, &d](exec: &x Exec(""), dir: &d Dir) -> [] int {
+    match exec_spawn_under(exec, dir, "w", "", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(c) => {
+            match child_wait(c) {
+                Exited::Code(n) => { return n; }
+                Exited::Signaled(s) => { return 1; }
+                Exited::Failed(e) => { return 1; }
+            }
+        }
+        Spawned::Failed(e) => { return e; }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals); release(tty);
+    release(exec);
+    return 0;
+}

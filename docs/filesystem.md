@@ -230,6 +230,13 @@ That is the same distinction `defined-behaviour.md` draws everywhere —
 > does not ask gets. `processes.md` §4.13 has the rule written out, the choice
 > over a checked variant of every operation, and what was measured.
 
+> **Added (#534): a directory chosen at deployment is a `Dir`.** `Fs(prefix)` fixes `prefix` in the program's text, and a
+> function over `Fs("/x")` fixes `/x` in the library (a function over `Fs("")` takes only the whole filesystem: measured,
+> `expected "", found "/tmp/conf"`). A program that is given its directory when it is installed opens it once, `open_dir(fs,
+> arg(g, 1))`, and a library over `&Dir` is generic in it: its row is `dir_read`/`dir_write` with no path, and resolution is
+> one component at a time with no link followed (`directory-handles.md`). The report of the opener says `fs_read("")` (the path
+> is not known to the program), and the library's says no path. `processes.md` §4.14 has the measurement and the `Exec` half.
+
 > **Corrected: the check was undefined behaviour in the LLVM backend.**
 > Both backends compared byte `i` of the path with byte `i` of the prefix
 > for every `i` in the path, reading the prefix's data past its end once the

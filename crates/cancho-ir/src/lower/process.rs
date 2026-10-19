@@ -16,7 +16,31 @@ impl<'a> FnLowering<'a> {
         in_dir: bool,
         detached: bool,
     ) -> Result<(Expr, Type), Diagnostic> {
+        self.exec_spawn_with(args, span, in_dir, detached, false)
+    }
+
+    /// `exec_spawn_under(&Exec, &Dir, name, args, env, stdin, stdout, stderr)` (§4.14): `exec_spawn_in` whose path
+    /// is a name beneath the `Dir`. Only the capability that bounds nothing (`Exec("")`) may be asked: a name
+    /// resolved against a directory chosen at run time cannot be shown to lie under a literal, and a spawn the
+    /// literal does not cover would widen the capability. The row is `exec_under`, which names no path.
+    pub(crate) fn exec_spawn_under(
+        &mut self,
+        args: &[ExprId],
+        span: Span,
+    ) -> Result<(Expr, Type), Diagnostic> {
+        self.exec_spawn_with(args, span, true, false, true)
+    }
+
+    fn exec_spawn_with(
+        &mut self,
+        args: &[ExprId],
+        span: Span,
+        in_dir: bool,
+        detached: bool,
+        under: bool,
+    ) -> Result<(Expr, Type), Diagnostic> {
         let (name, wanted) = match (in_dir, detached) {
+            (true, _) if under => ("exec_spawn_under", 8),
             (true, _) => ("exec_spawn_in", 8),
             (_, true) => ("exec_spawn_detached", 7),
             _ => ("exec_spawn", 7),
@@ -44,6 +68,15 @@ impl<'a> FnLowering<'a> {
         let capability_span = self.ast.expr_span(*capability);
         let (value, found) = self.expr(*capability)?;
         let prefix = self.granted_exec_prefix(&found, capability_span)?;
+        if under && !prefix.is_empty() {
+            return Err(Diagnostic::new(
+                Rule::CapabilityMisused,
+                format!(
+                    "`exec_spawn_under` needs the `Exec` that bounds nothing: a program found beneath a directory chosen at run time cannot be shown to lie under `{prefix}`, and spawning it would widen the capability (`docs/processes.md` §4.14)"
+                ),
+                capability_span,
+            ));
+        }
 
         // The path, the arguments and the environment: three byte slices,
         // read and never written.
@@ -82,16 +115,21 @@ impl<'a> FnLowering<'a> {
             lowered.push(stream_value);
         }
 
-        self.performed.union(&Effects::new([Label {
-            name: "exec".to_owned(),
-            argument: Some(prefix.clone()),
-        }]));
+        if under {
+            // §4.14: the program is one the directory holds, so the row names no path.
+            self.performed.union(&Effects::plain(["exec_under"]));
+        } else {
+            self.performed.union(&Effects::new([Label {
+                name: "exec".to_owned(),
+                argument: Some(prefix.clone()),
+            }]));
+        }
         // §4.11: a child that outlives the program is more than `exec` says.
         if detached {
             self.performed.union(&Effects::plain(["exec_detached"]));
         }
         Ok((
-            Expr::ExecSpawn { prefix, in_dir, detached, args: lowered },
+            Expr::ExecSpawn { prefix, in_dir, detached, under, args: lowered },
             Type::Named(self.prelude()[PRELUDE_SPAWNED], Vec::new()),
         ))
     }
