@@ -58,7 +58,10 @@ fn workers(tag: &str, code: i32) -> PathBuf {
 
 /// What the driver did: `Some(stdout)` when it returned, `None` when the trap killed it (a signal and nothing printed).
 fn run(exe: &Path, dir: &Path, mode: &str, name: &str) -> Option<String> {
-    let out = Command::new(exe).arg(dir).args([mode, name]).output().expect("the driver runs");
+    // A name that traps would otherwise cost a core dump on a runner that pipes them (`differential.rs`).
+    let mut driver = Command::new(exe);
+    driver.arg(dir).args([mode, name]);
+    let out = differential::without_a_core_dump(&mut driver).output().expect("the driver runs");
     if out.status.code() == Some(0) {
         return Some(String::from_utf8_lossy(&out.stdout).trim().to_owned());
     }
@@ -157,7 +160,11 @@ fn a_name_that_is_not_beneath_the_directory_traps() {
             ("", "failed errno 2"),
         ] {
             assert_eq!(run(&exe, &dir, "u", name), None, "`{config}` {name:?} should trap");
-            let out = Command::new(control).arg(&dir).arg(name).output().expect("the control runs");
+            let mut control_run = Command::new(control);
+            control_run.arg(&dir).arg(name);
+            let out = differential::without_a_core_dump(&mut control_run)
+                .output()
+                .expect("the control runs");
             assert_eq!(
                 String::from_utf8_lossy(&out.stdout).trim(),
                 control_says,

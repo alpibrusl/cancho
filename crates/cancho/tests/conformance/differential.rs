@@ -163,7 +163,7 @@ fn b2i(b: bool) -> [] int { if b { return 1; } return 0; }
 /// aarch64 Linux). The dump is only a cost, so a hard limit of zero is
 /// left alone rather than failing the run.
 #[cfg(target_os = "linux")]
-fn without_a_core_dump(command: &mut Command) -> &mut Command {
+pub(crate) fn without_a_core_dump(command: &mut Command) -> &mut Command {
     use std::os::unix::process::CommandExt;
     #[repr(C)]
     struct Rlimit {
@@ -196,7 +196,7 @@ fn without_a_core_dump(command: &mut Command) -> &mut Command {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn without_a_core_dump(command: &mut Command) -> &mut Command {
+pub(crate) fn without_a_core_dump(command: &mut Command) -> &mut Command {
     command
 }
 
