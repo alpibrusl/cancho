@@ -33,9 +33,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Compiled dependencies and build products, restored per job and OS (docs/ci-speed.md).
-      - uses: Swatinem/rust-cache@v2
-
       - name: Toolchain versions
         run: |
           cargo --version
@@ -85,9 +82,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Compiled dependencies and build products, restored per job and OS (docs/ci-speed.md).
-      - uses: Swatinem/rust-cache@v2
-
       - name: strace (Linux)
         if: runner.os == 'Linux'
         run: command -v strace || (sudo apt-get update && sudo apt-get install -y strace)
@@ -114,9 +108,6 @@ jobs:
       CANCHO_COMPILER: rust
     steps:
       - uses: actions/checkout@v4
-
-      # Compiled dependencies and build products, restored per job and OS (docs/ci-speed.md).
-      - uses: Swatinem/rust-cache@v2
 
       - name: Compiler
         run: cargo build --release -p cancho
@@ -150,9 +141,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # Compiled dependencies and build products, restored per job and OS (docs/ci-speed.md).
-      - uses: Swatinem/rust-cache@v2
       - name: Tools
         run: |
           sudo apt-get update
@@ -184,9 +172,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # Compiled dependencies and build products, restored per job and OS (docs/ci-speed.md).
-      - uses: Swatinem/rust-cache@v2
       - name: Tools
         run: |
           sudo apt-get update
@@ -246,9 +231,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # Compiled dependencies and build products, restored per job and OS (docs/ci-speed.md).
-      - uses: Swatinem/rust-cache@v2
       - name: Tools
         run: |
           sudo apt-get update
@@ -330,9 +312,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # Compiled dependencies and build products, restored per job and OS (docs/ci-speed.md).
-      - uses: Swatinem/rust-cache@v2
       - name: Toolchain versions
         run: |
           cargo --version
@@ -357,10 +336,6 @@ jobs:
           # The full history: the replay reads every distinct revision of
           # every tracked .cho, which a shallow clone does not have.
           fetch-depth: 0
-
-      # Compiled dependencies and build products, restored per job and OS (docs/ci-speed.md).
-      - uses: Swatinem/rust-cache@v2
-
       - name: Toolchain versions
         run: |
           cargo --version
@@ -380,9 +355,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # Compiled dependencies and build products, restored per job and OS (docs/ci-speed.md).
-      - uses: Swatinem/rust-cache@v2
       - name: Toolchain versions
         run: |
           cargo --version
