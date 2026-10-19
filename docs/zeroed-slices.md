@@ -48,6 +48,10 @@ The memory column is the point: the tape is 24 times the document, and now only 
   zeroed memory would be seen; a non-zero `int` and `byte` fill, a zero computed at run time and `-0.0` read back as themselves;
 * on Linux, a 512 MiB zero-filled slice with one element written leaves the process's peak resident memory (`VmHWM`, read from
   `/proc` while it waits) under 64 MiB; filled, it would be 512 MiB.
+* the same with 512 MiB of `byte`s filled with `byte_of(0)`. The compiler in cancho first gave `byte_of(0)` a register, not a known
+  value, so the fill was `malloc` and a loop: a cache built with it (`cancho-cache`, #547) held **105,996 kB** resident at idle
+  against **1,628 kB** built by the Rust compiler. A `byte_of` of a known 0..255 is now a known byte (`exprs.cho`); same
+  cache, same conditions, **1,772 kB**. The test fails without that (peak 525,644 kB) and passes with it.
 
 **Mutants: eight, seven killed.** Killed: no fill counts as zero; every `int` counts; every float counts (the `-0.0` case);
 `byte_of` of anything counts (the `byte_of(5)` case); Cranelift calls `malloc` for a zero fill and skips the loop (the freed-nines
