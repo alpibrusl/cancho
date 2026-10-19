@@ -4,6 +4,20 @@ use super::*;
 
 /// Build a program from several named files, in the order given.
 fn build_many(tag: &str, files: &[(&str, &str)]) -> (PathBuf, std::process::Output) {
+    build_many_with(None, tag, files)
+}
+
+/// The same, built by the Rust compiler alone, for a test that holds the Rust front end to the words of its refusal: the
+/// default refuses with the sentence of the rule (#479), which has no names in it.
+fn build_many_rust(tag: &str, files: &[(&str, &str)]) -> (PathBuf, std::process::Output) {
+    build_many_with(Some("rust"), tag, files)
+}
+
+fn build_many_with(
+    compiler: Option<&str>,
+    tag: &str,
+    files: &[(&str, &str)],
+) -> (PathBuf, std::process::Output) {
     let dir = scratch(tag);
     let mut paths: Vec<PathBuf> = Vec::new();
     for (name, source) in files {
@@ -13,6 +27,9 @@ fn build_many(tag: &str, files: &[(&str, &str)]) -> (PathBuf, std::process::Outp
     }
     let exe = dir.join("program");
     let mut command = Command::new(BIN);
+    if let Some(compiler) = compiler {
+        command.env("CANCHO_COMPILER", compiler);
+    }
     command.arg("build");
     for path in &paths {
         command.arg(path);
@@ -42,7 +59,7 @@ fn the_module_rules_are_enforced_across_files() {
                        pub struct Open { n: int }\n";
 
     let refused = |tag: &str, main: &str| -> String {
-        let (_, build) = build_many(tag, &[("main.cho", main), ("lib.cho", LIB)]);
+        let (_, build) = build_many_rust(tag, &[("main.cho", main), ("lib.cho", LIB)]);
         assert!(!build.status.success(), "`{tag}` should have been refused");
         String::from_utf8_lossy(&build.stderr).into_owned()
     };
@@ -100,7 +117,7 @@ fn the_module_rules_are_enforced_across_files() {
     assert!(missing.contains("`elsewhere` is not a function"), "{missing}");
 
     // §4: two imports may not bind one qualifier.
-    let (_, collision) = build_many(
+    let (_, collision) = build_many_rust(
         "modules-collision",
         &[
             (
@@ -185,7 +202,7 @@ fn a_match_names_an_enum_through_its_qualifier() {
     // And the qualifier is checked rather than decorative: a name that is
     // not an import here is an error, not something skipped over because
     // the scrutinee already said which enum this is.
-    let (_, wrong) = build_many(
+    let (_, wrong) = build_many_rust(
         "modules-qualified-pattern-unbound",
         &[
             (

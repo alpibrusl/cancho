@@ -304,10 +304,10 @@ pub enum Choice {
 }
 
 /// Does the Rust front end check a program before the compiler in cancho writes code for it, when that is the default?
-/// Until the compiler in cancho refuses everything the language refuses (#512, `reject_gaps.txt`) it does, so the default
-/// refuses at least what the Rust compiler does and with its sentences; when the list is empty this goes, and
+/// While the compiler in cancho did not refuse everything the language refuses (#512, `reject_gaps.txt`) it did, so the
+/// default refused at least what the Rust compiler does and with its sentences; with the list empty it does not, and
 /// `the_default_build_checks_with_rust_only_while_a_gap_is_listed` says so.
-pub const RUST_CHECKS_FIRST: bool = true;
+pub const RUST_CHECKS_FIRST: bool = false;
 
 static FLAG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
