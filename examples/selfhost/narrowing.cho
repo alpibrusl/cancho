@@ -77,6 +77,14 @@ fn equal[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int) -> [] bool {
     return size(st, a) == size(st, b) && starts_with(st, text, a, b);
 }
 
+// Is the path of literal `target` inside the one of `prefix`, at a separator? A literal with an escape is not judged: true.
+pub fn path_inside[&s, &x](st: &!s [int], text: &x [byte], prefix: int, target: int) -> [] bool {
+    if escaped(st, text, prefix) || escaped(st, text, target) {
+        return true;
+    }
+    return extends(st, text, prefix, target);
+}
+
 // One literal narrowing `current` (`check_narrowing`): inside it, at a separator when `path`, and not equal. True if
 // it was refused.
 pub fn refused_one[&s, &x](st: &!s [int], text: &x [byte], path: bool, current: int, target: int, from: int, to: int) -> [] bool {

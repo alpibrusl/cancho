@@ -1876,7 +1876,7 @@ pub fn call_item[&s, &x](st: &!s [int], text: &x [byte], id: int, found: int) ->
         return ex.skip(st, from, to);
     }
     // What the callee's row says it performs, the caller performs.
-    effects.perform_row(st, effects.row_mask(st, text, found));
+    effects.perform_call(st, text, found);
     // Each type and region parameter of the callee is a variable here, which the arguments solve.
     let callee_dp = ast.get(st, found, 6);
     var tvars = 0 - 1;
