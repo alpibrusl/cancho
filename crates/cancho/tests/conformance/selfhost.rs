@@ -302,6 +302,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "printing.cho",
         "floatprint.cho",
         "sink.cho",
+        "filewrite.cho",
         "formatting.cho",
         "jsonprint.cho",
         "jsonread.cho",
@@ -1410,6 +1411,90 @@ fn the_formatter_in_cancho_agrees_with_the_rust_formatter() {
         different.join("\n")
     );
     // The comparison is only worth something if it covers files that change, and files that are refused.
+    eprintln!(
+        "formatted {formatted}, refused {refused}, unchanged {unchanged}, of {}",
+        programs.len()
+    );
+    assert!(formatted > 400, "only {formatted} programs were changed by the formatter");
+    assert!(refused >= 10, "only {refused} programs were refused by the formatter");
+    assert!(unchanged > 300, "only {unchanged} programs were already formatted");
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
+/// What `cli.cho fmt` does to one file: its standard output, standard error and exit status, and the file afterwards.
+fn cli_fmt(exe: &Path, dir: &Path, text: &str, check: bool) -> (String, String, i32, String) {
+    std::fs::write(dir.join("x.cho"), text).expect("the file is written");
+    let mut command = Command::new(exe);
+    command.current_dir(dir).arg("fmt");
+    if check {
+        command.arg("--check");
+    }
+    let run = command.arg("x.cho").output().expect("the command line runs");
+    (
+        String::from_utf8_lossy(&run.stdout).into_owned(),
+        String::from_utf8_lossy(&run.stderr).into_owned(),
+        run.status.code().unwrap_or(-1),
+        std::fs::read_to_string(dir.join("x.cho")).expect("the file is read"),
+    )
+}
+
+/// `examples/selfhost/cli.cho fmt` against `cancho fmt` (`cancho_syntax::format`, and the words `fmt_cli.rs` says): the repository's programs, the
+/// same programs spoilt, and `FORMAT_EDGE`, each as a file, with and without `--check`: the output, the exit status, and the file afterwards.
+#[test]
+fn the_command_line_in_cancho_formats_like_cancho_fmt() {
+    let exe = build("cli", &with_front_end("cli.cho"));
+    let dir = exe.parent().expect("a scratch directory").join("files");
+    std::fs::create_dir_all(&dir).expect("the directory is made");
+    let mut programs: Vec<(String, String)> = sources();
+    programs.extend(FORMAT_EDGE.iter().map(|s| (format!("edge case {s:.40?}"), (*s).to_owned())));
+    let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut spoilt = Vec::new();
+    for (n, (name, text)) in programs.iter().enumerate() {
+        if ast_oracle::printed(text).starts_with("ERR") {
+            continue;
+        }
+        for how in [n % 7, (n + 3) % 7] {
+            spoilt.push((format!("{name} spoilt {how}"), spoil(text, how, &mut seed)));
+        }
+    }
+    programs.extend(spoilt);
+    let (mut different, mut formatted, mut refused, mut unchanged) = (Vec::new(), 0, 0, 0);
+    for (name, text) in &programs {
+        // A file that does not parse is refused by both, in different words (the rule and the span, or the diagnostic).
+        if ast_oracle::printed(text).starts_with("ERR") {
+            continue;
+        }
+        let want = ast_oracle::formatted(text);
+        let expected = if let Some(why) = want.strip_prefix("CANNOT ") {
+            refused += 1;
+            (String::new(), format!("x.cho: not formatted: {}\n", why.trim_end()), 1, text.clone())
+        } else if want == *text {
+            unchanged += 1;
+            (String::new(), String::new(), 0, text.clone())
+        } else {
+            formatted += 1;
+            ("formatted x.cho\n".to_owned(), String::new(), 0, want.clone())
+        };
+        if cli_fmt(&exe, &dir, text, false) != expected {
+            different.push(name.clone());
+        }
+        // Under `--check` nothing is written, and a file that would change is reported and makes the status 1.
+        let checked = if want == *text || want.starts_with("CANNOT ") {
+            expected
+        } else {
+            ("would reformat x.cho\n".to_owned(), String::new(), 1, text.clone())
+        };
+        if cli_fmt(&exe, &dir, text, true) != checked {
+            different.push(format!("{name} (--check)"));
+        }
+    }
+    assert!(
+        different.is_empty(),
+        "the command line in cancho and `cancho fmt` disagree about {} of {} runs:\n{}",
+        different.len(),
+        2 * programs.len(),
+        different.join("\n")
+    );
     eprintln!(
         "formatted {formatted}, refused {refused}, unchanged {unchanged}, of {}",
         programs.len()
