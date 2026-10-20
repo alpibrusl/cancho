@@ -12,12 +12,14 @@ edition 7;
 // Exit status 0, 1 if a file was refused (or, with `--check`, would change), 2 for a usage or an environment error.
 
 import std.buffer;
+import std.bytes;
 import std.io as console;
 import selfhost.ast;
 import selfhost.printing;
 import selfhost.formatting;
 import selfhost.rules;
 import selfhost.lexcore as lc;
+import selfhost.filewrite;
 
 // The canonical text of a program, or why there is none: status 0, 1 (the first refusal, at `from` to `to`), 2 (it does not fit the room).
 res struct Text {
@@ -138,20 +140,6 @@ fn format_once[&h, &i, &x](heap: &!h Heap, io: &!i Io, src: &x [byte]) -> [heap,
     return Made { out: answer, code: 0 };
 }
 
-fn same[&x, &y](a: &x [byte], b: &y [byte]) -> [] bool {
-    if len(a) != len(b) {
-        return false;
-    }
-    var k = 0;
-    while k < len(a) {
-        if a[k] != b[k] {
-            return false;
-        }
-        k = k + 1;
-    }
-    return true;
-}
-
 // The canonical text of a program as a `Made`: the text, or a status that is not 0.
 fn canon_of[&h, &i, &x](heap: &!h Heap, io: &!i Io, src: &x [byte]) -> [heap, io_write] Made {
     let printed = print_text(heap, io, src);
@@ -168,7 +156,7 @@ fn alike_to[&h, &i, &x, &y](heap: &!h Heap, io: &!i Io, first: &x [byte], b: &y 
         verdict = 1;
     } else {
         borrow out as &pb in {
-            if !same(first, buffer.bytes(pb)) {
+            if !bytes.equal(first, buffer.bytes(pb)) {
                 verdict = 2;
             }
         }
@@ -199,7 +187,7 @@ fn comments_alike[&h, &x, &y](heap: &!h Heap, a: &x [byte], b: &y [byte]) -> [he
     var verdict = false;
     borrow c1 as &p in {
         borrow c2 as &q in {
-            verdict = same(buffer.bytes(p), buffer.bytes(q));
+            verdict = bytes.equal(buffer.bytes(p), buffer.bytes(q));
         }
     }
     buffer.drop(heap, c1);
@@ -214,7 +202,7 @@ fn fixed_point[&h, &i, &x](heap: &!h Heap, io: &!i Io, formatted: &x [byte]) -> 
     var verdict = false;
     if code == 0 {
         borrow out as &n in {
-            verdict = same(buffer.bytes(n), formatted);
+            verdict = bytes.equal(buffer.bytes(n), formatted);
         }
     }
     buffer.drop(heap, out);
@@ -320,40 +308,6 @@ fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [hea
     return Contents { bytes: out, failed: trouble };
 }
 
-// All of `bytes` to the file, which may take several writes: 0, or the errno.
-fn write_all[&w, &b](file: &!w File, bytes: &b [byte]) -> [file_write] int {
-    var at = 0;
-    while at < len(bytes) {
-        match file_write(file, bytes[at..len(bytes)]) {
-            Done::Ok(n) => {
-                at = at + n;
-            }
-            Done::Failed(e) => {
-                return e;
-            }
-        }
-    }
-    return 0;
-}
-
-// `bytes` as the file at `path`, made or emptied: 0, or the errno.
-fn store[&f, &p, &b](fs: &f Fs(""), path: &p [byte], bytes: &b [byte]) -> [fs_write(""), file_write] int {
-    match open_write(fs, path) {
-        Opened::Ok(file) => {
-            var written = file;
-            var status = 0;
-            borrow mut written as &!w in {
-                status = write_all(w, bytes);
-            }
-            file_close(written);
-            return status;
-        }
-        Opened::Failed(e) => {
-            return e;
-        }
-    }
-}
-
 fn say[&h, &i, &p](heap: &!h Heap, io: &!i Io, head: &static [byte], path: &p [byte]) -> [heap, io_write] int {
     var line = buffer.append(heap, buffer.empty(heap, 64), head);
     line = buffer.append(heap, line, path);
@@ -413,12 +367,12 @@ fn format_file[&h, &i, &f, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: 
             status = 1;
         } else {
             borrow out as &t in {
-                if !same(buffer.bytes(t), buffer.bytes(src)) {
+                if !bytes.equal(buffer.bytes(t), buffer.bytes(src)) {
                     if check {
                         say(heap, io, "would reformat ", path);
                         status = 1;
                     } else {
-                        let e = store(fs, path, buffer.bytes(t));
+                        let e = filewrite.store(fs, path, buffer.bytes(t));
                         if e != 0 {
                             complain(heap, io, path, "cannot write the file");
                             status = 2;

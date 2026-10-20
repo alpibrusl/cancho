@@ -18,40 +18,7 @@ import std.io as console;
 import selfhost.lexcore as lc;
 import selfhost.rules;
 import selfhost.driver;
-
-// All of `bytes` to the file, which may take several writes: 0, or the errno.
-fn write_all[&w, &b](file: &!w File, bytes: &b [byte]) -> [file_write] int {
-    var at = 0;
-    while at < len(bytes) {
-        match file_write(file, bytes[at..len(bytes)]) {
-            Done::Ok(n) => {
-                at = at + n;
-            }
-            Done::Failed(e) => {
-                return e;
-            }
-        }
-    }
-    return 0;
-}
-
-// `bytes` as the file at `path`, made or emptied: 0, or the errno.
-fn store[&f, &p, &b](fs: &f Fs(""), path: &p [byte], bytes: &b [byte]) -> [fs_write(""), file_write] int {
-    match open_write(fs, path) {
-        Opened::Ok(file) => {
-            var written = file;
-            var status = 0;
-            borrow mut written as &!w in {
-                status = write_all(w, bytes);
-            }
-            file_close(written);
-            return status;
-        }
-        Opened::Failed(e) => {
-            return e;
-        }
-    }
-}
+import selfhost.filewrite;
 
 // `clang` started on the arguments in `list` (each followed by a NUL), with a `PATH` for it to find the linker by (a clang
 // given no environment cannot, on Ubuntu 26.04's clang 21), and waited for: its exit status, 128 and the signal if
@@ -116,7 +83,7 @@ fn build[&h, &i, &a, &f, &x](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f F
                 var path = buffer.append(heap, buffer.empty(heap, len(output) + 4), output);
                 path = buffer.append(heap, path, ".ll");
                 borrow path as &p in {
-                    status = store(fs, buffer.bytes(p), buffer.bytes(b.ir));
+                    status = filewrite.store(fs, buffer.bytes(p), buffer.bytes(b.ir));
                     if status == 0 {
                         var list = buffer.append(heap, buffer.empty(heap, 256), "-O2\0-Wno-override-module\0");
                         list = buffer.append(heap, list, buffer.bytes(p));

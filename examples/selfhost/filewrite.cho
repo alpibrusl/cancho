@@ -1,0 +1,38 @@
+edition 7;
+module selfhost.filewrite;
+
+// filewrite.cho -- a file written whole: shared by the builder (`builder.cho`) and the command line (`cli.cho`).
+
+// All of `bytes` to the file, which may take several writes: 0, or the errno.
+pub fn write_all[&w, &b](file: &!w File, bytes: &b [byte]) -> [file_write] int {
+    var at = 0;
+    while at < len(bytes) {
+        match file_write(file, bytes[at..len(bytes)]) {
+            Done::Ok(n) => {
+                at = at + n;
+            }
+            Done::Failed(e) => {
+                return e;
+            }
+        }
+    }
+    return 0;
+}
+
+// `bytes` as the file at `path`, made or emptied: 0, or the errno.
+pub fn store[&f, &p, &b](fs: &f Fs(""), path: &p [byte], bytes: &b [byte]) -> [fs_write(""), file_write] int {
+    match open_write(fs, path) {
+        Opened::Ok(file) => {
+            var written = file;
+            var status = 0;
+            borrow mut written as &!w in {
+                status = write_all(w, bytes);
+            }
+            file_close(written);
+            return status;
+        }
+        Opened::Failed(e) => {
+            return e;
+        }
+    }
+}
