@@ -34,21 +34,32 @@ impl Upload {
             .unwrap_or_else(|_| repo_root().join("packages/http-server/server.cho"));
         let paths = vec![repo_root().join("tests/programs/server_upload.cho"), source];
         let (dir, exe) = build_example_paths(tag, &paths, "server_upload");
-        let port = free_port();
-        let child = Command::new(&exe)
-            .args([
-                port.to_string(),
-                size.to_string(),
-                max_body.to_string(),
-                head_ms.to_string(),
-                body_ms.to_string(),
-                lazy.to_string(),
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("the compiled server runs");
-        Upload { dir, child, port }
+        // `free_port` frees the port it found, so another test can be given the same one before this server binds it; the server then
+        // exits at once (the port is in use) and the client would wait ten seconds for a listener that is not coming
+        // (macOS, run 39446699726). A server that is gone within a moment of starting is started again on another port.
+        let mut attempts = 0;
+        loop {
+            let port = free_port();
+            let mut child = Command::new(&exe)
+                .args([
+                    port.to_string(),
+                    size.to_string(),
+                    max_body.to_string(),
+                    head_ms.to_string(),
+                    body_ms.to_string(),
+                    lazy.to_string(),
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("the compiled server runs");
+            std::thread::sleep(Duration::from_millis(300));
+            attempts += 1;
+            if attempts < 5 && matches!(child.try_wait(), Ok(Some(_))) {
+                continue;
+            }
+            return Upload { dir, child, port };
+        }
     }
 
     fn client(&self) -> TcpStream {

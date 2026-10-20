@@ -296,6 +296,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
     vec![
         root,
         "driver.cho",
+        "prune.cho",
         "listing.cho",
         "checker.cho",
         "body.cho",
