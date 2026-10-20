@@ -1,6 +1,6 @@
 # Net bounds: separate ways in and out, set-valued, exact host matching
 
-> **Status: design, answering #362.** Nothing is built. The measurements
+> **Status: design, answering #362. Step 1 of §3 (the report, §2.4) is built; steps 2 and 3 are not.** The measurements
 > it rests on are reproduced in the issue and were taken on `main` at
 > `0567e72` by cancho-dns's design document (alpibrusl/cancho-dns#19 §2);
 > this document is the answer to "what should the language do instead",
@@ -112,6 +112,13 @@ and should: it is a report lie, not a vocabulary gap.
 
 1. **§2.4 first** (report only, no language change): `bounded: false`
    for an empty bound. One PR, fixes a lie the report tells today.
+   **Built** (`cancho authority`): an unnarrowed `net_out("")` or `net_in("")` makes the top-level `bounded` `false`, the
+   label's own `bounded` `false`, and appears in `unbounded_by` as `net_out("")` beside the foreign symbols; the prose
+   report opens with `UNBOUNDED: this program holds the network without narrowing it.` The four examples that hold the
+   network unnarrowed on purpose (`http_fetch_nb`, `tls_echo`, `tls_echo_fixed`, `https_hello`: the operator names the
+   hosts and ports) now pin `bounded: false` with the reason, which is what they always were; gates in
+   `tests/conformance/net_bounds.rs`. The compiler in cancho (`examples/selfhost`) has no `authority` report, so there is
+   nothing to port.
 2. **§2.2** on the existing single `Net`: several children from one
    `narrow`, mirroring the `Fs` shape and its gates.
 3. **§2.1 + §2.3** together in the next edition: the direction split at

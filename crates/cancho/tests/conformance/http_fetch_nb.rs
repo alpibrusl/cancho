@@ -41,7 +41,14 @@ fn the_example_reports_a_bounded_authority_and_no_foreign_code() {
         .expect("the compiler runs");
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let json = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(json.trim_start().starts_with("{\n  \"bounded\": true,"), "{json}");
+    // The network is held unnarrowed (the operator names the hosts and ports at run time), so the report says it is not
+    // bounded and says why (`docs/net-bounds.md` section 2.4); what it bounds is everything else, below.
+    assert!(
+        json.trim_start().starts_with(
+            "{\n  \"bounded\": false,\n  \"unbounded_by\": [\n    \"net_out(\\\"\\\")\"\n  ],"
+        ),
+        "{json}"
+    );
     assert!(json.contains("\"foreign_symbols\": []"), "{json}");
     let labels: Vec<String> = json
         .lines()
