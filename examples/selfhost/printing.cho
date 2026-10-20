@@ -48,13 +48,6 @@ fn code(t: lc.Tok) -> [] int {
 
 // ------------------------------------------------------------- literals ---
 
-fn hex_digit(d: int) -> [] int {
-    if d < 10 {
-        return '0' + d;
-    }
-    return 'a' + d - 10;
-}
-
 // The string literal at token `i`, as the language writes one: the escapes the grammar admits, and no others
 // (`docs/strings.md` section 4).
 fn string_literal[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], i: int) -> [io_write] int {
