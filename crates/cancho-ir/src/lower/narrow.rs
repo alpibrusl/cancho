@@ -55,9 +55,9 @@ pub(super) fn check_narrowing(
 /// path (section 5, item 4): the message names the set form where there is one.
 pub(super) fn narrow_many_refusal(which: usize) -> String {
     match which {
-        PRELUDE_FFI => "`narrow` into several capabilities is for `Fs` and `Exec`; `Ffi` narrows to a set in one capability: `narrow(ffi, \"libc,libm\")` (`docs/foreign-authority.md` section 5.2)".to_string(),
-        PRELUDE_SIGNALS => "`narrow` into several capabilities is for `Fs` and `Exec`; `Signals` narrows to a set in one capability: `narrow(signals, \"TERM,INT\")` (`docs/signals.md` section 2.1)".to_string(),
-        _ => "`narrow` into several capabilities is for `Fs` and `Exec`; `Net` is not supported there (`docs/narrowing-into-several.md` section 5, item 4)".to_string(),
+        PRELUDE_FFI => "`narrow` into several capabilities is for `Fs`, `Exec` and `Net`; `Ffi` narrows to a set in one capability: `narrow(ffi, \"libc,libm\")` (`docs/foreign-authority.md` section 5.2)".to_string(),
+        PRELUDE_SIGNALS => "`narrow` into several capabilities is for `Fs`, `Exec` and `Net`; `Signals` narrows to a set in one capability: `narrow(signals, \"TERM,INT\")` (`docs/signals.md` section 2.1)".to_string(),
+        _ => "`narrow` into several capabilities is for `Fs`, `Exec` and `Net`; this capability is not supported there (`docs/narrowing-into-several.md` section 5, item 4)".to_string(),
     }
 }
 
@@ -82,9 +82,17 @@ pub(super) fn narrow_into_several(
     }
     for (i, a) in targets.iter().enumerate() {
         for (j, b) in targets.iter().enumerate().skip(i + 1) {
+            // `Net` bounds are plain textual prefixes of `"host:port"` (`docs/net.md` section 4), so
+            // one inside another is a prefix, with no separator to wait for; the paths extend at a `/`.
+            let nested = if which == PRELUDE_NET {
+                a.starts_with(b.as_str()) || b.starts_with(a.as_str())
+            } else {
+                extends_path(a, b) || extends_path(b, a)
+            };
+            let what = if which == PRELUDE_NET { "bounds" } else { "paths" };
             let why = if a == b {
-                "are the same path, so the second grants nothing the first does not"
-            } else if extends_path(a, b) || extends_path(b, a) {
+                "are the same, so the second grants nothing the first does not"
+            } else if nested {
                 "are nested, so the inner one grants nothing the outer one does not"
             } else {
                 continue;
@@ -92,7 +100,7 @@ pub(super) fn narrow_into_several(
             return Err(Diagnostic::new(
                 Rule::CapabilityNotNarrowable,
                 format!(
-                    "`narrow` into several capabilities needs unrelated paths, and `{a}` and `{b}` {why}"
+                    "`narrow` into several capabilities needs unrelated {what}, and `{a}` and `{b}` {why}"
                 ),
                 spans.get(j).copied().unwrap_or(span),
             ));

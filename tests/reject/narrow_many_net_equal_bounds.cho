@@ -1,0 +1,13 @@
+//~ ERROR are the same
+//~ RULE capability-not-narrowable
+
+// Two children of one bound grant the same thing twice. (`docs/net-bounds.md` §2.2.)
+
+edition 5;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(clock);
+    let (a, b) = narrow(net, "127.0.0.1:80", "127.0.0.1:80");
+    release(a); release(b);
+    return 0;
+}

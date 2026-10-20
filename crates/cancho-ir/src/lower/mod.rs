@@ -461,10 +461,10 @@ impl<'a> FnLowering<'a> {
                 span,
             ));
         };
-        // `docs/narrowing-into-several.md` section 5, item 4: only the two
-        // path capabilities narrow into several. The others already name a
-        // set in one capability, or (`Net`) have no asker.
-        if many && which != PRELUDE_FS && which != PRELUDE_EXEC {
+        // `docs/narrowing-into-several.md` section 5, item 4, and `docs/net-bounds.md`
+        // section 2.2: the two path capabilities and `Net` narrow into several. The
+        // others already name a set in one capability.
+        if many && which != PRELUDE_FS && which != PRELUDE_EXEC && which != PRELUDE_NET {
             return Err(Diagnostic::new(
                 Rule::CapabilityNotNarrowable,
                 narrow_many_refusal(which),
