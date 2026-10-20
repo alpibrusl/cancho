@@ -157,5 +157,5 @@ that names the old ones has to be changed with this.
 (`ps`, after the script) shows why: 35 `apport --from-systemd-coredump` processes, two to three minutes old, running at once. The
 mutants make test programs crash; each core dump starts `apport` on a runner, and the runner's job clean-up then took 15 minutes
 (09:32 to 09:47 in that log). That is also the likeliest reason for the one argued-equivalent mutant that was "killed" in one run
-(`5f2571e9`'s parent): a crash-loaded runner, not the mutation; it is a reading of the log, not tested apart. The mutant jobs now
+(the run on 6eb9975e): a crash-loaded runner, not the mutation; it is a reading of the log, not tested apart. The mutant jobs now
 run with `ulimit -c 0`. The 23.3-minute wall time above is the first run, which did not have the stall; the one with it was 30.
