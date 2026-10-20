@@ -113,7 +113,28 @@ real files in turn and formats what is left.
   change", the second "cannot be formatted"; the message says which.
   A caller that needs them apart reads the prose.
 
-## 6. Open
+## 6. Written in cancho
+
+`examples/selfhost/formatting.cho` is the aligner and the placing of §2.2 and §2.3 written in cancho (#485), a port of `format.rs`, driven by mode 6 of
+the driver and the root `formatter.cho`. It reads two files on standard input, as `FILE <length>` and the bytes: the source, and the text the printer
+(`printer.cho`, mode 4) wrote for it, and writes the formatted source, or the line `CANNOT <sentence>` with the sentence `format.rs` gives
+(`line 5: an import after the first declaration; ...`). Run on its own it does **not** do the checks of §4: they need the printer run on the result,
+which belongs to what runs the printer and the formatter in turn, and no such program is written yet (the command line in cancho, #485). Until it is, a
+program that uses this runs the three checks itself.
+
+**Measured (Linux x86-64, debug `cancho`).** `selfhost::the_formatter_in_cancho_agrees_with_the_rust_formatter` compares it with `cancho_syntax::format`
+on 2,474 programs and finds no difference: every program of the repository, 25 edge programs (a comment in each place a comment can stand, `edition`,
+`pub extern`, an `import` out of place, CRLF, an empty file), and the programs with their layout spoilt (no indentation, CRLF, white space at the ends of
+lines, blank lines doubled or removed, everything on one line, comments added at the ends of lines and between them), two of the seven ways for each. Of
+them the Rust formatter changes 1,550, leaves 698 as they are and refuses 15. The input of the cancho formatter is the Rust printer's text, so the
+comparison is of the formatter alone. Four mutants of `formatting.cho` fail it (no blank line kept; no comment kept at the end of a line; literals
+not respelled; a comment before a `}` not indented): 1,708, 214, 512 and 113 of the 2,474 programs differ.
+
+**Not measured, or not the same.** The formatter of cancho does not refuse a file the Rust one refuses in its checks (§4): it has none. A comment is
+trimmed of white space at its end byte by byte, as ASCII; the Rust `trim_end` also takes a Unicode white space, which is not tested here and would
+differ. Linux x86-64 only; macOS and Linux aarch64 are CI's first run.
+
+## 7. Open
 
 | Question | Why it waits |
 |---|---|

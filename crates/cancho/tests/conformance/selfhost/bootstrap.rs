@@ -61,6 +61,7 @@ fn own_source(root_module: &str) -> String {
         "listing",
         "checker",
         "floatprint",
+        "formatting",
         "printing",
         "prune",
         "driver",

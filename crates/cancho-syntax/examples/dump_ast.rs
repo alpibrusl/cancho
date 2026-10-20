@@ -489,6 +489,18 @@ pub fn printed(source: &str) -> String {
     cancho_syntax::print(&ast)
 }
 
+/// The formatted text for `source` (`format.rs`), or the one line `CANNOT why` for a file it will not format, or the refusal line of
+/// the parser: the oracle of `examples/selfhost/formatter.cho`.
+pub fn formatted(source: &str) -> String {
+    match cancho_syntax::format(source) {
+        Ok(text) => text,
+        Err(cancho_syntax::FormatError::Parse(d)) => {
+            format!("ERR {} {} {}\n", d.rule.tag(), d.span.start, d.span.end)
+        }
+        Err(cancho_syntax::FormatError::Cannot(why)) => format!("CANNOT {why}\n"),
+    }
+}
+
 /// Split a stream of files, each a line `FILE <length>` and then that many bytes, into the
 /// files. The programs of `examples/selfhost` read their input the same way.
 pub fn read_stream(bytes: &[u8]) -> Vec<String> {
