@@ -358,6 +358,9 @@ jobs:
         run: cargo build --release -p cancho
       - name: The mutants (docs/http-server.md §11.5, docs/http-client.md §9, docs/http-server.md §12.13)
         run: |
+          # A mutant that crashes dumps a core, and on a runner every dump starts `apport`: 35 of them were running at once when the
+          # byte-fed job's script had ended (run 39399728296), and the job's clean-up took 15 minutes after it. No core, no `apport`.
+          ulimit -c 0
           rc=0
           timeout --signal=KILL ${{ matrix.limit }} python3 scripts/${{ matrix.script }} ./target/release/cancho </dev/null || rc=$?
           echo "the script ended with status $rc"
