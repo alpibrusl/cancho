@@ -1,0 +1,65 @@
+module selfhost.sink;
+
+// sink.cho -- where the printer's text goes: the standard output, or, when the state says so, a region of the state (`docs/formatting.md`
+// section 6: the formatter is given the printer's text, and a program that does both in one process has it in memory).
+//
+// The state keeps three slots for it, which the compiler's checker uses only when code is written, and never in a program that prints:
+// 53 is 0 for the standard output and 1 for the region, 54 is how many bytes the region holds, 55 is 1 if there was no room for a byte. The
+// region is the buffer that code would be written in, from `st[43]` for `st[50]` integers, one byte to an integer.
+
+import std.io as console;
+
+pub fn write[&i, &s, &r](io: &!i Io, st: &!s [int], text: &r [byte]) -> [io_write] int {
+    if st[53] == 0 {
+        return console.write_all(io, text);
+    }
+    var k = 0;
+    while k < len(text) {
+        byte(st, int_of(text[k]));
+        k = k + 1;
+    }
+    return 0;
+}
+
+pub fn put[&i, &s](io: &!i Io, st: &!s [int], c: int) -> [io_write] int {
+    if st[53] == 0 {
+        return console.putchar(io, c);
+    }
+    return byte(st, c);
+}
+
+// A whole number, in decimal, with its sign.
+pub fn number[&i, &s](io: &!i Io, st: &!s [int], n: int) -> [io_write] int {
+    if st[53] == 0 {
+        return console.print_int(io, n);
+    }
+    if n == 0 {
+        return byte(st, '0');
+    }
+    // The digits are worked out below zero, so that the smallest integer has them.
+    var rest = n;
+    if n > 0 {
+        rest = 0 - n;
+    } else {
+        byte(st, '-');
+    }
+    var scale = 1;
+    while rest / scale <= 0 - 10 {
+        scale = scale * 10;
+    }
+    while scale > 0 {
+        byte(st, '0' + (0 - rest / scale % 10));
+        scale = scale / 10;
+    }
+    return 0;
+}
+
+fn byte[&s](st: &!s [int], c: int) -> [] int {
+    if st[54] >= st[50] {
+        st[55] = 1;
+        return 0;
+    }
+    st[st[43] + st[54]] = c;
+    st[54] = st[54] + 1;
+    return 0;
+}

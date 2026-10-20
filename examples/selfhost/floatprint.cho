@@ -11,7 +11,7 @@ module selfhost.floatprint;
 // The bignums are five runs of 40 little-endian 30-bit limbs in the 256-slot scratch region of the state `floats.cho` reads a
 // literal in, which a printer does not otherwise use; then the digits.
 
-import std.io as console;
+import selfhost.sink;
 import selfhost.ast;
 import selfhost.floats;
 
@@ -269,26 +269,26 @@ fn shortest[&s](st: &!s [int], f: int, e: int, precision: int, lowest: int) -> [
 fn place[&i, &s](io: &!i Io, st: &!s [int], n: int, k: int) -> [io_write] int {
     var j = 0;
     if k <= 0 {
-        console.write_all(io, "0.");
+        sink.write(io, st, "0.");
         var z = 0;
         while z < 0 - k {
-            console.putchar(io, '0');
+            sink.put(io, st, '0');
             z = z + 1;
         }
         while j < n {
-            console.putchar(io, '0' + st[digit_at(st, j)]);
+            sink.put(io, st, '0' + st[digit_at(st, j)]);
             j = j + 1;
         }
         return 0;
     }
     while j < n || j < k {
         if j == k {
-            console.putchar(io, '.');
+            sink.put(io, st, '.');
         }
         if j < n {
-            console.putchar(io, '0' + st[digit_at(st, j)]);
+            sink.put(io, st, '0' + st[digit_at(st, j)]);
         } else {
-            console.putchar(io, '0');
+            sink.put(io, st, '0');
         }
         j = j + 1;
     }
@@ -306,7 +306,7 @@ pub fn literal[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], from: int
     let bits = floats.literal_bits(st, text, from, to, single);
     if !floats.literal_ok(st) {
         // More digits than the scratch holds: the literal as it was written.
-        return console.write_all(io, text[from..to]);
+        return sink.write(io, st, text[from..to]);
     }
     return from_bits(io, st, bits, single);
 }
@@ -317,20 +317,20 @@ pub fn from_bits[&i, &s](io: &!i Io, st: &!s [int], bits: int, single: bool) -> 
     let field = bits >> 52 & 2047;
     if field == 2047 {
         if bits & 4503599627370495 != 0 {
-            console.write_all(io, "NaN.0");
+            sink.write(io, st, "NaN.0");
         } else {
             if bits < 0 {
-                console.putchar(io, '-');
+                sink.put(io, st, '-');
             }
-            console.write_all(io, "inf.0");
+            sink.write(io, st, "inf.0");
         }
         if single {
-            return console.write_all(io, "f32");
+            return sink.write(io, st, "f32");
         }
         return 0;
     }
     if bits < 0 {
-        console.putchar(io, '-');
+        sink.put(io, st, '-');
     }
     var significand = bits & 4503599627370495;
     var exponent = field - 1075;
@@ -342,7 +342,7 @@ pub fn from_bits[&i, &s](io: &!i Io, st: &!s [int], bits: int, single: bool) -> 
     var n = 0;
     var k = 0;
     if significand == 0 {
-        console.write_all(io, "0.0");
+        sink.write(io, st, "0.0");
     } else {
         if single {
             // The value is exactly an `f32`: 24 bits of significand, and no exponent below -149.
@@ -368,11 +368,11 @@ pub fn from_bits[&i, &s](io: &!i Io, st: &!s [int], bits: int, single: bool) -> 
         k = st[digit_at(st, 30)];
         place(io, st, n, k);
         if !has_point(n, k) {
-            console.write_all(io, ".0");
+            sink.write(io, st, ".0");
         }
     }
     if single {
-        return console.write_all(io, "f32");
+        return sink.write(io, st, "f32");
     }
     return 0;
 }
