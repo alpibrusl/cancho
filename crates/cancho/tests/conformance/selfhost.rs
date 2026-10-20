@@ -1494,7 +1494,10 @@ fn the_command_line_in_cancho_formats_like_cancho_fmt() {
         2 * programs.len(),
         different.join("\n")
     );
-    eprintln!("formatted {formatted}, refused {refused}, unchanged {unchanged}, of {}", programs.len());
+    eprintln!(
+        "formatted {formatted}, refused {refused}, unchanged {unchanged}, of {}",
+        programs.len()
+    );
     assert!(formatted > 400, "only {formatted} programs were changed by the formatter");
     assert!(refused >= 10, "only {refused} programs were refused by the formatter");
     assert!(unchanged > 300, "only {unchanged} programs were already formatted");
