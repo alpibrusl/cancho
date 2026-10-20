@@ -36,6 +36,7 @@ import selfhost.instances;
 import selfhost.pass1;
 import selfhost.runtime;
 import selfhost.kinds;
+import selfhost.prune;
 
 fn refusal[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
     console.write_all(io, "ERR ");
@@ -680,11 +681,26 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                 at = header_end(raw, at) + n;
                 f = f + 1;
             }
-            status = answer(io, st, text, mode);
+            if mode == 3 {
+                // The module is built and kept, as in mode 5, so that the functions nothing calls can be left out of it
+                // (`prune.cho`); then it is printed, or the refusal is.
+                status = answer(io, st, text, 5);
+                if status == 0 {
+                    let whole = prune.run(heap, module_bytes(heap, st));
+                    borrow whole as &w in {
+                        buffer.write(io, w);
+                    }
+                    buffer.drop(heap, whole);
+                } else {
+                    status = refusal(io, st);
+                }
+            } else {
+                status = answer(io, st, text, mode);
+            }
             if mode == 5 {
                 if status == 0 {
                     buffer.drop(heap, written);
-                    written = module_bytes(heap, st);
+                    written = prune.run(heap, module_bytes(heap, st));
                 } else {
                     rule = st[3];
                     from = st[4];
