@@ -481,6 +481,24 @@ fn destructure_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] int {
     }
     let first = builtins.prelude_field_first(types.prelude_index(st, v.ty));
     let count = builtins.prelude_field_count(types.prelude_index(st, v.ty));
+    // A pattern names every field of a prelude struct too: `Split` has more of them with each edition, and a pattern of
+    // an earlier edition's shape takes the value only partly apart.
+    var named_count = 0;
+    var q = ast.get(st, id, 6) + 1;
+    while !pass1.is_code(st, q, lc.Tok::RBrace) {
+        named_count = named_count + 1;
+        q = q + 1;
+        if pass1.is_code(st, q, lc.Tok::Colon) {
+            q = q + 2;
+        }
+        if pass1.is_code(st, q, lc.Tok::Comma) {
+            q = q + 1;
+        }
+    }
+    if named_count != count {
+        ast.fail(st, rules.r_arity_mismatch(), from, to);
+        return 0;
+    }
     var p = ast.get(st, id, 6) + 1;
     while ast.ok(st) && !pass1.is_code(st, p, lc.Tok::RBrace) {
         let field = p;
