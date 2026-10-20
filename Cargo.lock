@@ -141,6 +141,7 @@ name = "cancho"
 version = "0.0.0"
 dependencies = [
  "acli",
+ "blake3",
  "cancho-codegen",
  "cancho-codegen-llvm",
  "cancho-id",

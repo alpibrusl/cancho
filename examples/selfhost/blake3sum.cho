@@ -1,0 +1,52 @@
+// blake3sum.cho -- the BLAKE3 hash of standard input, in lowercase hexadecimal: the program that tests `blake3.cho` (against the `blake3`
+// crate, in `tests/conformance/selfhost.rs`).
+//
+//     cancho run examples/selfhost/blake3sum.cho examples/selfhost/blake3.cho --std < f
+
+import std.io as console;
+import std.buffer;
+import selfhost.blake3;
+import selfhost.lexcore as lc;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            let raw = lc.slurp(h, i);
+            let area = box_slice(h, blake3.size() + 8, 0);
+            borrow mut area as &!b in {
+                let state = contents(b);
+                blake3.init(state, 0);
+                borrow raw as &r in {
+                    let bytes = buffer.bytes(r);
+                    var k = 0;
+                    while k < len(bytes) {
+                        blake3.byte(state, 0, int_of(bytes[k]));
+                        k = k + 1;
+                    }
+                }
+                blake3.finish(state, 0, blake3.size());
+                var w = 0;
+                while w < 8 {
+                    var j = 0;
+                    while j < 4 {
+                        let octet = state[blake3.size() + w] >> 8 * j & 255;
+                        console.putchar(i, int_of("0123456789abcdef"[octet / 16]));
+                        console.putchar(i, int_of("0123456789abcdef"[octet % 16]));
+                        j = j + 1;
+                    }
+                    w = w + 1;
+                }
+                console.newline(i);
+            }
+            unbox_slice(h, area);
+            buffer.drop(h, raw);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}

@@ -65,6 +65,8 @@ fn own_source(root_module: &str) -> String {
         "jsonprint",
         "jsonread",
         "ingest",
+        "blake3",
+        "identity",
         "printing",
         "prune",
         "driver",

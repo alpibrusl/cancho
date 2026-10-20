@@ -12,6 +12,7 @@ module selfhost.floats;
 // 64 limbs and their count.
 
 import selfhost.ast;
+import selfhost.kinds;
 import selfhost.lexcore as lc;
 
 pub fn room[&s](st: &!s [int]) -> [] int {
@@ -361,4 +362,43 @@ pub fn literal_bits[&s, &x](st: &!s [int], text: &x [byte], from: int, to: int, 
 // Did the last `literal_bits` have an answer?
 pub fn literal_ok[&s](st: &!s [int]) -> [] bool {
     return st[room(st) + limbs() + 1] == 1;
+}
+
+// The bits of an `f32`, from the bits of the `float` of the same value (which is what `floats.literal_bits` answers for one).
+pub fn single_bits(bits: int) -> [] int {
+    var sign = 0;
+    if bits < 0 {
+        sign = 2147483648;
+    }
+    let field = bits >> 52 & 2047;
+    let mantissa = bits & 4503599627370495;
+    if field == 0 {
+        return sign;
+    }
+    let exponent = field - 1023 + 127;
+    let top = mantissa >> 29;
+    if exponent >= 1 {
+        return sign | exponent << 23 | top;
+    }
+    // Below the smallest normal `f32`: a subnormal, whose significand is shifted down.
+    let shift = 1 - exponent;
+    if shift > 24 {
+        return sign;
+    }
+    return sign | (8388608 | top) >> shift;
+}
+
+// Is every float literal one whose bits can be worked out (at most 120 significant digits)?
+pub fn all_literals_ok[&s, &x](st: &!s [int], text: &x [byte]) -> [] bool {
+    var id = 0;
+    while id < st[13] {
+        if ast.is_kind(st, id, kinds.NK::EFloat) {
+            literal_bits(st, text, ast.nstart(st, id), ast.nend(st, id), ast.get(st, id, 4) != 0);
+            if !literal_ok(st) {
+                return false;
+            }
+        }
+        id = id + 1;
+    }
+    return true;
 }

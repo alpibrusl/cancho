@@ -1,0 +1,349 @@
+module selfhost.blake3;
+
+// blake3.cho -- BLAKE3 (the default hash, 32 bytes out), written in cancho, for `identity.cho` (`docs/canonical-ast.md` section 4: every
+// identity is the BLAKE3 hash of a canonical byte string). A port of the reference implementation (`reference_impl.rs` of the BLAKE3
+// repository), in the streaming form: bytes are given one at a time and the tree of chunks is kept as a stack of chaining values, so
+// the hash of a message is worked out without the message being kept.
+//
+// The state is a run of integers in any slice, from a base `b` (`size()` of them). A word is an integer below 2^32, so a sum is masked
+// and a rotation is two shifts, which stay below 2^60.
+//
+//   b+0 the number of the chunk, 1 how many blocks of it are compressed, 2 the bytes in the block, 3 the depth of the stack
+//   b+4 the chaining value of the chunk (8), b+12 its block (64 bytes), b+76 the state of the compression (16), b+92 its message (16),
+//   b+108 a place to permute in (16), b+124 the output being built (8 words in, 16 of block, counter, length, flags), b+152 the next
+//   chaining value (8), b+160 words of a parent (16), b+176 the stack (64 chaining values)
+
+fn mask() -> [] int {
+    return 4294967295;
+}
+
+pub fn size() -> [] int {
+    return 176 + 64 * 8;
+}
+
+fn iv(i: int) -> [] int {
+    if i == 0 {
+        return 1779033703;
+    }
+    if i == 1 {
+        return 3144134277;
+    }
+    if i == 2 {
+        return 1013904242;
+    }
+    if i == 3 {
+        return 2773480762;
+    }
+    if i == 4 {
+        return 1359893119;
+    }
+    if i == 5 {
+        return 2600822924;
+    }
+    if i == 6 {
+        return 528734635;
+    }
+    return 1541459225;
+}
+
+// The order the message words are taken in for the next round.
+fn permuted(i: int) -> [] int {
+    if i == 0 {
+        return 2;
+    }
+    if i == 1 {
+        return 6;
+    }
+    if i == 2 {
+        return 3;
+    }
+    if i == 3 {
+        return 10;
+    }
+    if i == 4 {
+        return 7;
+    }
+    if i == 5 {
+        return 0;
+    }
+    if i == 6 {
+        return 4;
+    }
+    if i == 7 {
+        return 13;
+    }
+    if i == 8 {
+        return 1;
+    }
+    if i == 9 {
+        return 11;
+    }
+    if i == 10 {
+        return 12;
+    }
+    if i == 11 {
+        return 5;
+    }
+    if i == 12 {
+        return 9;
+    }
+    if i == 13 {
+        return 14;
+    }
+    if i == 14 {
+        return 15;
+    }
+    return 8;
+}
+
+fn rotr(x: int, n: int) -> [] int {
+    return (x >> n | x << 32 - n) & mask();
+}
+
+// The mixing function on the words `a`, `b`, `c`, `d` of the state at `v`, with the message words `mx` and `my`.
+fn g[&s](h: &!s [int], v: int, a: int, b: int, c: int, d: int, mx: int, my: int) -> [] int {
+    var wa = h[v + a];
+    var wb = h[v + b];
+    var wc = h[v + c];
+    var wd = h[v + d];
+    wa = wa + wb + mx & mask();
+    wd = rotr(wd ^ wa, 16);
+    wc = wc + wd & mask();
+    wb = rotr(wb ^ wc, 12);
+    wa = wa + wb + my & mask();
+    wd = rotr(wd ^ wa, 8);
+    wc = wc + wd & mask();
+    wb = rotr(wb ^ wc, 7);
+    h[v + a] = wa;
+    h[v + b] = wb;
+    h[v + c] = wc;
+    h[v + d] = wd;
+    return 0;
+}
+
+fn round[&s](h: &!s [int], v: int, m: int) -> [] int {
+    g(h, v, 0, 4, 8, 12, h[m], h[m + 1]);
+    g(h, v, 1, 5, 9, 13, h[m + 2], h[m + 3]);
+    g(h, v, 2, 6, 10, 14, h[m + 4], h[m + 5]);
+    g(h, v, 3, 7, 11, 15, h[m + 6], h[m + 7]);
+    g(h, v, 0, 5, 10, 15, h[m + 8], h[m + 9]);
+    g(h, v, 1, 6, 11, 12, h[m + 10], h[m + 11]);
+    g(h, v, 2, 7, 8, 13, h[m + 12], h[m + 13]);
+    g(h, v, 3, 4, 9, 14, h[m + 14], h[m + 15]);
+    return 0;
+}
+
+// The compression function on the chaining value of 8 words at `cv` and the block of 16 words at `words`: the 16 words of the state
+// afterwards are at `b+76`, the first 8 of which are the new chaining value (and, for the root, the hash).
+fn compress[&s](h: &!s [int], b: int, cv: int, words: int, counter: int, length: int, flags: int) -> [] int {
+    let v = b + 76;
+    let m = b + 92;
+    var i = 0;
+    while i < 8 {
+        h[v + i] = h[cv + i];
+        i = i + 1;
+    }
+    // The second half starts from the first four words of the key, which for the hash are the constants.
+    i = 0;
+    while i < 4 {
+        h[v + 8 + i] = iv(i);
+        i = i + 1;
+    }
+    h[v + 12] = counter & mask();
+    h[v + 13] = counter >> 32 & mask();
+    h[v + 14] = length;
+    h[v + 15] = flags;
+    i = 0;
+    while i < 16 {
+        h[m + i] = h[words + i];
+        i = i + 1;
+    }
+    var r = 0;
+    while r < 7 {
+        round(h, v, m);
+        if r < 6 {
+            i = 0;
+            while i < 16 {
+                h[b + 108 + i] = h[m + permuted(i)];
+                i = i + 1;
+            }
+            i = 0;
+            while i < 16 {
+                h[m + i] = h[b + 108 + i];
+                i = i + 1;
+            }
+        }
+        r = r + 1;
+    }
+    i = 0;
+    while i < 8 {
+        h[v + i] = h[v + i] ^ h[v + i + 8];
+        h[v + i + 8] = h[v + i + 8] ^ h[cv + i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+// The message words of the block of 64 bytes at `from`: little-endian.
+fn block_words[&s](h: &!s [int], from: int, to: int) -> [] int {
+    var i = 0;
+    while i < 16 {
+        h[to + i] = h[from + 4 * i] | h[from + 4 * i + 1] << 8 | h[from + 4 * i + 2] << 16 | h[from + 4 * i + 3] << 24;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Start hashing at `b`.
+pub fn init[&s](h: &!s [int], b: int) -> [] int {
+    var i = 0;
+    while i < size() {
+        h[b + i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while i < 8 {
+        h[b + 4 + i] = iv(i);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// The `parent` of the chaining values `left` and `right` (8 words each, anywhere in `h`), into the 8 words at `into`.
+fn parent[&s](h: &!s [int], b: int, left: int, right: int, into: int) -> [] int {
+    var i = 0;
+    while i < 8 {
+        h[b + 160 + i] = h[left + i];
+        h[b + 168 + i] = h[right + i];
+        h[b + 152 + i] = iv(i);
+        i = i + 1;
+    }
+    compress(h, b, b + 152, b + 160, 0, 64, 4);
+    i = 0;
+    while i < 8 {
+        h[into + i] = h[b + 76 + i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+// The chaining value of a finished chunk is added to the stack; where two subtrees have become one they are joined.
+fn add_chunk[&s](h: &!s [int], b: int, total: int) -> [] int {
+    var count = total;
+    while count % 2 == 0 {
+        let depth = h[b + 3] - 1;
+        let left = b + 176 + 8 * depth;
+        parent(h, b, left, b + 124, b + 124);
+        h[b + 3] = depth;
+        count = count / 2;
+    }
+    var i = 0;
+    while i < 8 {
+        h[b + 176 + 8 * h[b + 3] + i] = h[b + 124 + i];
+        i = i + 1;
+    }
+    h[b + 3] = h[b + 3] + 1;
+    return 0;
+}
+
+// One more byte of the message.
+pub fn byte[&s](h: &!s [int], b: int, x: int) -> [] int {
+    if h[b + 1] * 64 + h[b + 2] == 1024 {
+        // The chunk is complete: its chaining value joins the tree and a new chunk starts.
+        block_words(h, b + 12, b + 132);
+        var start = 0;
+        if h[b + 1] == 0 {
+            start = 1;
+        }
+        compress(h, b, b + 4, b + 132, h[b], h[b + 2], start | 2);
+        var i = 0;
+        while i < 8 {
+            h[b + 124 + i] = h[b + 76 + i];
+            i = i + 1;
+        }
+        let total = h[b] + 1;
+        add_chunk(h, b, total);
+        h[b] = total;
+        h[b + 1] = 0;
+        h[b + 2] = 0;
+        i = 0;
+        while i < 8 {
+            h[b + 4 + i] = iv(i);
+            i = i + 1;
+        }
+        i = 0;
+        while i < 64 {
+            h[b + 12 + i] = 0;
+            i = i + 1;
+        }
+    }
+    if h[b + 2] == 64 {
+        block_words(h, b + 12, b + 132);
+        var start = 0;
+        if h[b + 1] == 0 {
+            start = 1;
+        }
+        compress(h, b, b + 4, b + 132, h[b], 64, start);
+        var i = 0;
+        while i < 8 {
+            h[b + 4 + i] = h[b + 76 + i];
+            i = i + 1;
+        }
+        h[b + 1] = h[b + 1] + 1;
+        h[b + 2] = 0;
+        i = 0;
+        while i < 64 {
+            h[b + 12 + i] = 0;
+            i = i + 1;
+        }
+    }
+    h[b + 12 + h[b + 2]] = x;
+    h[b + 2] = h[b + 2] + 1;
+    return 0;
+}
+
+// The hash: the 8 words (the bytes of the 32 are those of the words, little-endian) at `into`.
+pub fn finish[&s](h: &!s [int], b: int, into: int) -> [] int {
+    // The output of the last chunk: its chaining value in, its block, its counter, its length, its flags.
+    block_words(h, b + 12, b + 132);
+    var i = 0;
+    while i < 8 {
+        h[b + 124 + i] = h[b + 4 + i];
+        i = i + 1;
+    }
+    h[b + 148] = h[b];
+    h[b + 149] = h[b + 2];
+    var flags = 2;
+    if h[b + 1] == 0 {
+        flags = 3;
+    }
+    h[b + 150] = flags;
+    var remaining = h[b + 3];
+    while remaining > 0 {
+        // Its chaining value, then joined to the one before it on the stack.
+        compress(h, b, b + 124, b + 132, h[b + 148], h[b + 149], h[b + 150]);
+        i = 0;
+        while i < 8 {
+            h[b + 152 + i] = h[b + 76 + i];
+            i = i + 1;
+        }
+        remaining = remaining - 1;
+        i = 0;
+        while i < 8 {
+            h[b + 132 + i] = h[b + 176 + 8 * remaining + i];
+            h[b + 140 + i] = h[b + 152 + i];
+            h[b + 124 + i] = iv(i);
+            i = i + 1;
+        }
+        h[b + 148] = 0;
+        h[b + 149] = 64;
+        h[b + 150] = 4;
+    }
+    compress(h, b, b + 124, b + 132, h[b + 148], h[b + 149], h[b + 150] | 8);
+    i = 0;
+    while i < 8 {
+        h[into + i] = h[b + 76 + i];
+        i = i + 1;
+    }
+    return 0;
+}

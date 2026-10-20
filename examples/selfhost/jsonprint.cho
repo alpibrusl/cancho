@@ -137,30 +137,6 @@ fn string_value[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], i: int) 
     return w(io, "\"");
 }
 
-// The bits of an `f32`, from the bits of the `float` of the same value (which is what `floats.literal_bits` answers for one).
-fn single_bits(bits: int) -> [] int {
-    var sign = 0;
-    if bits < 0 {
-        sign = 2147483648;
-    }
-    let field = bits >> 52 & 2047;
-    let mantissa = bits & 4503599627370495;
-    if field == 0 {
-        return sign;
-    }
-    let exponent = field - 1023 + 127;
-    let top = mantissa >> 29;
-    if exponent >= 1 {
-        return sign | exponent << 23 | top;
-    }
-    // Below the smallest normal `f32`: a subnormal, whose significand is shifted down.
-    let shift = 1 - exponent;
-    if shift > 24 {
-        return sign;
-    }
-    return sign | (8388608 | top) >> shift;
-}
-
 // A number that may be above the largest `int`: the 64 bits `n` holds, as an unsigned decimal.
 fn unsigned[&i](io: &!i Io, n: int) -> [io_write] int {
     if n >= 0 {
@@ -522,7 +498,7 @@ fn expr[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, d: int)
         e = entry(io, d, e, "bits");
         let bits = floats.literal_bits(st, text, ast.nstart(st, id), ast.nend(st, id), single);
         if single {
-            console.print_int(io, single_bits(bits));
+            console.print_int(io, floats.single_bits(bits));
         } else {
             unsigned(io, bits);
         }
@@ -952,25 +928,10 @@ fn dotted_name[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], first: in
     return at;
 }
 
-// Is every float literal one whose bits can be worked out (at most 120 significant digits)?
-fn floats_ok[&s, &x](st: &!s [int], text: &x [byte]) -> [] bool {
-    var id = 0;
-    while id < st[13] {
-        if ast.is_kind(st, id, kinds.NK::EFloat) {
-            floats.literal_bits(st, text, ast.nstart(st, id), ast.nend(st, id), ast.get(st, id, 4) != 0);
-            if !floats.literal_ok(st) {
-                return false;
-            }
-        }
-        id = id + 1;
-    }
-    return true;
-}
-
 // The unit: the module header and the imports of the module the first item (or, with no items, the first import) is in, then every
 // item. 0, or 1 and the line `CANNOT ...` if a float literal is too long for its bits to be worked out.
 pub fn print[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] int {
-    if !floats_ok(st, text) {
+    if !floats.all_literals_ok(st, text) {
         w(io, "CANNOT a floating-point literal of more than 120 significant digits: its bits are not worked out\n");
         return 1;
     }
