@@ -1,0 +1,15 @@
+//~ ERROR names its port exactly
+//~ RULE capability-not-narrowable
+
+// A `Net` bound's port is exact, not a prefix, so narrowing `127.0.0.1:80` to `127.0.0.1:8080` would swap the port for
+// another: a widening, refused as every other widening is. (`docs/net-bounds.md` §2.2.)
+
+edition 5;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(clock);
+    let a = narrow(net, "127.0.0.1:80");
+    let b = narrow(a, "127.0.0.1:8080");
+    release(b);
+    return 0;
+}

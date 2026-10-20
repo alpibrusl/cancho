@@ -298,6 +298,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "driver.cho",
         "printing.cho",
         "floatprint.cho",
+        "prune.cho",
         "listing.cho",
         "checker.cho",
         "body.cho",

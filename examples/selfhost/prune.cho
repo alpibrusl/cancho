@@ -1,0 +1,278 @@
+module selfhost.prune;
+
+// prune.cho -- the functions nothing calls are left out of the module (epic #491, issue #489).
+//
+// The checker writes every function of the program and of the library it imports, whether or not the program reaches it:
+// `cancho-hooks`' log checker is 108,886 lines of IR and 1,011 functions, of which the program reaches 80 (the Rust backend
+// writes 14,415 lines), and `clang -O2` takes 5.4 s on the first against 0.76 s on the second. Taking them out of the text
+// afterwards needs nothing from the checker: a function is `define ... @lexs_<item>` (or `@lexs_<item>i<instance>`), then
+// its lines up to a line that is only `}`, and it is reached if its name is written anywhere that is reached. The roots are
+// everything that is not such a function: `main`, the static initialisers, the support code, the globals. Comment lines
+// (`; left out @lexs_..`) are not references. A name that is not the name of a function written here (a global such as
+// `@lexs_udp_peers`) is not one.
+//
+// The module is left as it was in every other way: the lines kept are the lines written, in their order.
+
+import std.buffer;
+import selfhost.lexcore as lc;
+
+fn begins[&r, &w](text: &r [byte], at: int, word: &w [byte]) -> [] bool {
+    var k = 0;
+    while k < len(word) {
+        if lc.at(text, at + k) != int_of(word[k]) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+fn word_char(c: int) -> [] bool {
+    return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_';
+}
+
+// The index of the newline that ends the line starting at `from`, or the length of the text.
+fn line_end[&r](text: &r [byte], from: int) -> [] int {
+    var p = from;
+    while p < len(text) && lc.at(text, p) != 10 {
+        p = p + 1;
+    }
+    return p;
+}
+
+// The key of the function named by the `@` at `at`: `@lexs_` and the item, and `i` and the instance if there is one. A key is
+// item * 4096 + (0, or the instance + 1); -1 if what is written there is not such a name.
+fn key_at[&r](text: &r [byte], at: int) -> [] int {
+    if !begins(text, at, "@lexs_") {
+        return 0 - 1;
+    }
+    var p = at + 6;
+    if !lc.is_digit(lc.at(text, p)) {
+        return 0 - 1;
+    }
+    var item = 0;
+    while lc.is_digit(lc.at(text, p)) {
+        item = item * 10 + lc.at(text, p) - '0';
+        p = p + 1;
+    }
+    var inst = 0;
+    if lc.at(text, p) == 'i' {
+        p = p + 1;
+        if !lc.is_digit(lc.at(text, p)) {
+            return 0 - 1;
+        }
+        var n = 0;
+        while lc.is_digit(lc.at(text, p)) {
+            n = n * 10 + lc.at(text, p) - '0';
+            p = p + 1;
+        }
+        inst = n + 1;
+    }
+    if word_char(lc.at(text, p)) {
+        return 0 - 1;
+    }
+    return item * 4096 + inst;
+}
+
+// The key of the function defined by the line `from..eol`, or -1 if it defines none of ours.
+fn define_key[&r](text: &r [byte], from: int, eol: int) -> [] int {
+    if !begins(text, from, "define ") {
+        return 0 - 1;
+    }
+    var p = from;
+    while p < eol && lc.at(text, p) != '@' {
+        p = p + 1;
+    }
+    if p >= eol {
+        return 0 - 1;
+    }
+    return key_at(text, p);
+}
+
+// The table `t`: [0] how many functions it can hold, [1] the size of the hash table, [2] how many are on the stack, [3]
+// how many it has; from 8, `cap` cells of keys (key + 1, 0 for none), `cap` cells of the function each key is, then for each
+// function its first byte, the byte after its last, whether it is reached, and the stack of those reached and not yet read.
+fn cells(count: int) -> [] int {
+    return 8 + 2 * (2 * count + 17) + 4 * count;
+}
+
+// The cell of `key` in the hash table: the one that holds it, or the empty one it would go in.
+fn slot[&s](t: &!s [int], key: int) -> [] int {
+    let cap = t[1];
+    var h = key % cap;
+    var probes = 0;
+    while probes < cap {
+        let cell = t[8 + h];
+        if cell == 0 || cell == key + 1 {
+            return 8 + h;
+        }
+        h = h + 1;
+        if h == cap {
+            h = 0;
+        }
+        probes = probes + 1;
+    }
+    return 0 - 1;
+}
+
+// The function with this key, or -1.
+fn lookup[&s](t: &!s [int], key: int) -> [] int {
+    let cell = slot(t, key);
+    if cell >= 0 && t[cell] == key + 1 {
+        return t[cell + t[1]];
+    }
+    return 0 - 1;
+}
+
+fn starts_at[&s](t: &!s [int]) -> [] int {
+    return 8 + 2 * t[1];
+}
+
+fn ends_at[&s](t: &!s [int]) -> [] int {
+    return starts_at(t) + t[0];
+}
+
+fn live_at[&s](t: &!s [int]) -> [] int {
+    return ends_at(t) + t[0];
+}
+
+fn stack_at[&s](t: &!s [int]) -> [] int {
+    return live_at(t) + t[0];
+}
+
+// Every function of ours the text defines, each with the lines it takes. A definition with no closing line is not taken: it
+// is left as text, which is reached.
+fn find_functions[&r, &s](text: &r [byte], t: &!s [int]) -> [] int {
+    var line = 0;
+    while line < len(text) {
+        let eol = line_end(text, line);
+        let key = define_key(text, line, eol);
+        if key >= 0 {
+            var e = eol + 1;
+            var closed = false;
+            while !closed && e < len(text) {
+                let ee = line_end(text, e);
+                if ee == e + 1 && lc.at(text, e) == '}' {
+                    closed = true;
+                }
+                e = ee + 1;
+            }
+            let cell = slot(t, key);
+            if closed && cell >= 0 && t[cell] == 0 {
+                let n = t[3];
+                t[cell] = key + 1;
+                t[cell + t[1]] = n;
+                t[starts_at(t) + n] = line;
+                t[ends_at(t) + n] = e;
+                t[3] = n + 1;
+                line = e;
+            } else {
+                line = eol + 1;
+            }
+        } else {
+            line = eol + 1;
+        }
+    }
+    return 0;
+}
+
+// The functions named in `text[from..to]` are reached.
+fn mark_names[&r, &s](text: &r [byte], from: int, to: int, t: &!s [int]) -> [] int {
+    var p = from;
+    while p < to {
+        if lc.at(text, p) == '@' {
+            let key = key_at(text, p);
+            if key >= 0 {
+                let f = lookup(t, key);
+                if f >= 0 && t[live_at(t) + f] == 0 {
+                    t[live_at(t) + f] = 1;
+                    t[stack_at(t) + t[2]] = f;
+                    t[2] = t[2] + 1;
+                }
+            }
+        }
+        p = p + 1;
+    }
+    return 0;
+}
+
+// The roots: every line outside the functions of ours that is not a comment.
+fn mark_roots[&r, &s](text: &r [byte], t: &!s [int]) -> [] int {
+    var line = 0;
+    while line < len(text) {
+        let eol = line_end(text, line);
+        let key = define_key(text, line, eol);
+        var next = eol + 1;
+        if key >= 0 {
+            let f = lookup(t, key);
+            if f >= 0 && t[starts_at(t) + f] == line {
+                next = t[ends_at(t) + f];
+            } else {
+                mark_names(text, line, eol, t);
+            }
+        } else if lc.at(text, line) != ';' {
+            mark_names(text, line, eol, t);
+        }
+        line = next;
+    }
+    return 0;
+}
+
+fn mark_reached[&r, &s](text: &r [byte], t: &!s [int]) -> [] int {
+    while t[2] > 0 {
+        t[2] = t[2] - 1;
+        let f = t[stack_at(t) + t[2]];
+        mark_names(text, t[starts_at(t) + f], t[ends_at(t) + f], t);
+    }
+    return 0;
+}
+
+// `ir` without the functions of ours that the rest of it does not reach.
+pub fn run[&h](heap: &!h Heap, ir: buffer.Buffer) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 0);
+    borrow ir as &b in {
+        let text = buffer.bytes(b);
+        var defines = 0;
+        var line = 0;
+        while line < len(text) {
+            let eol = line_end(text, line);
+            if begins(text, line, "define ") {
+                defines = defines + 1;
+            }
+            line = eol + 1;
+        }
+        let table = box_slice(heap, cells(defines), 0);
+        buffer.drop(heap, out);
+        out = buffer.empty(heap, len(text));
+        borrow mut table as &!tb in {
+            let t = contents(tb);
+            t[0] = defines;
+            t[1] = 2 * defines + 17;
+            find_functions(text, t);
+            mark_roots(text, t);
+            mark_reached(text, t);
+            var from = 0;
+            line = 0;
+            while line < len(text) {
+                let eol = line_end(text, line);
+                let key = define_key(text, line, eol);
+                var next = eol + 1;
+                if key >= 0 {
+                    let f = lookup(t, key);
+                    if f >= 0 && t[starts_at(t) + f] == line {
+                        next = t[ends_at(t) + f];
+                        if t[live_at(t) + f] == 0 {
+                            out = buffer.append(heap, out, text[from..line]);
+                            from = next;
+                        }
+                    }
+                }
+                line = next;
+            }
+            out = buffer.append(heap, out, text[from..len(text)]);
+        }
+        unbox_slice(heap, table);
+    }
+    buffer.drop(heap, ir);
+    return out;
+}

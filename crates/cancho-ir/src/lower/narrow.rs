@@ -4,6 +4,28 @@
 
 use crate::*;
 
+/// A `Net` bound as the run time reads it: the host half, matched as a prefix, and the port half, matched
+/// exactly (`crates/cancho-codegen/src/body/net.rs`, `connect_raw`, and `docs/connect.md` section 10.1). A bound
+/// with a `:` splits at the last one; bare digits are a port with no host (a listener's, `docs/listen.md`);
+/// anything else is a host with no port named, which any port satisfies.
+fn net_parts(bound: &str) -> (&str, Option<&str>) {
+    match bound.rsplit_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None if !bound.is_empty() && bound.bytes().all(|b| b.is_ascii_digit()) => ("", Some(bound)),
+        None => (bound, None),
+    }
+}
+
+/// Whether everything `inner` admits, `outer` admits too: `inner`'s host starts with `outer`'s, and `outer` names
+/// no port or the same one. This is the relation between a `Net` and a `Net` narrowed from it, and the one that
+/// makes two sibling bounds redundant; the whole-string prefix it replaces is neither (`127.0.0.1:80` is a prefix of
+/// `127.0.0.1:8080`, which it does not admit, and not of `127.0.0.10:80`, which it does).
+fn net_contains(outer: &str, inner: &str) -> bool {
+    let (outer_host, outer_port) = net_parts(outer);
+    let (inner_host, inner_port) = net_parts(inner);
+    inner_host.starts_with(outer_host) && (outer_port.is_none() || outer_port == inner_port)
+}
+
 /// What one literal must satisfy to narrow `current`, the single form and
 /// each member of the multi-literal form alike: inside `current`, at a
 /// separator for the two path capabilities, and not equal to it.
@@ -37,6 +59,17 @@ pub(super) fn check_narrowing(
             Rule::CapabilityNotNarrowable,
             format!(
                 "`{current}` cannot be narrowed to `{target}`: a path prefix extends at a `/`, and `{target}` is a different name that merely starts with the same bytes"
+            ),
+            span,
+        ));
+    }
+    // A `Net` bound's port is matched exactly, so a longer string is not a narrower grant: `127.0.0.1:80` is
+    // a prefix of `127.0.0.1:8080`, whose port the parent does not admit.
+    if which == PRELUDE_NET && !net_contains(current, target) {
+        return Err(Diagnostic::new(
+            Rule::CapabilityNotNarrowable,
+            format!(
+                "`{current}` cannot be narrowed to `{target}`: a `Net` bound names its port exactly, and `{target}` is a different port, which would widen it"
             ),
             span,
         ));
@@ -82,10 +115,10 @@ pub(super) fn narrow_into_several(
     }
     for (i, a) in targets.iter().enumerate() {
         for (j, b) in targets.iter().enumerate().skip(i + 1) {
-            // `Net` bounds are plain textual prefixes of `"host:port"` (`docs/net.md` section 4), so
-            // one inside another is a prefix, with no separator to wait for; the paths extend at a `/`.
+            // A `Net` bound is a host prefix and an exact port, so one inside another is `net_contains`; the
+            // paths extend at a `/`.
             let nested = if which == PRELUDE_NET {
-                a.starts_with(b.as_str()) || b.starts_with(a.as_str())
+                net_contains(a, b) || net_contains(b, a)
             } else {
                 extends_path(a, b) || extends_path(b, a)
             };

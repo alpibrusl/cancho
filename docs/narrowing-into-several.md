@@ -230,10 +230,10 @@ the two path capabilities, `Fs` and `Exec`.** Concretely:
    `extends_path(current, target)`, and not equal to `current`.
 3. **The literals are pairwise unrelated**: no two equal, and none inside another by `extends_path`. Refused
    `capability-not-narrowable`, naming both. Section 9 asks whether nesting should be allowed.
-4. **`Fs`, `Exec` and (added by `net-bounds.md` §2.2) `Net`; no others.** *Amended: `Net` was refused here until its asker came (cancho-dns's resolver, which wants several upstreams; `net-bounds.md`), and now narrows into several. A `Net` bound is a plain textual prefix of `host:port`, so "nested" for it means one literal is a prefix of another, with no separator to wait for (`127.0.0.1:80` and `127.0.0.1:8080` are nested), and equal is refused as for paths. Each child is its own `Net("…")` with its own `net_out`/`net_in` row; the report lists them all. The text of this item below is as written, with `Net` read as allowed.* `Fs` and `Exec` are path prefixes with `extends_path` (`processes.md` §4.1 gave `Exec` `Fs`'s rule), and
+4. **`Fs`, `Exec` and (added by `net-bounds.md` §2.2) `Net`; no others.** *Amended: `Net` was refused here until its asker came (cancho-dns's resolver, which wants several upstreams; `net-bounds.md`), and now narrows into several. A `Net` bound's host is a prefix match and its port exact, so "nested" for it means one bound's host is a prefix of the other's on the same port (`127.0.0.1:80` and `127.0.0.10:80` are nested; `:80` and `:8080` are not), and equal is refused as for paths. Each child is its own `Net("…")` with its own `net_out`/`net_in` row; the report lists them all. The text of this item below is as written, with `Net` read as allowed.* `Fs` and `Exec` are path prefixes with `extends_path` (`processes.md` §4.1 gave `Exec` `Fs`'s rule), and
    both have the same one-chain limit. `Ffi` already narrows to a set and lends narrower; `Signals` is a run-time claim
    (a second live claim of one signal is `EBUSY`, `signals.md` §3, which leaves disjoint children to a `fork_signals`
-   nobody has asked for) and its set form already serves; `Net` is bounded by a textual prefix and its
+   nobody has asked for) and its set form already serves; `Net` is bounded by a host prefix and an exact port and its
    askers so far pass run-time hosts and ports (cancho-pg's pooler holds `Net("")` for that reason, not for this one).
    For those three, more than one literal is refused `capability-not-narrowable` with a message naming the set form or
    saying it is not supported.

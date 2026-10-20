@@ -85,13 +85,86 @@ pub fn path_inside[&s, &x](st: &!s [int], text: &x [byte], prefix: int, target: 
     return extends(st, text, prefix, target);
 }
 
+// A `Net` bound splits at its last `:`. With no `:`, all digits is a bare port and anything else a bare host. These give the
+// start of the port (or -1 for none) and the length of the host.
+fn port_at[&s, &x](st: &!s [int], text: &x [byte], lit: int) -> [] int {
+    var i = last(st, lit);
+    while i > first(st, lit) {
+        i = i - 1;
+        if int_of(text[i]) == 58 {
+            return i + 1;
+        }
+    }
+    let n = size(st, lit);
+    if n == 0 {
+        return 0 - 1;
+    }
+    var k = 0;
+    while k < n {
+        let c = int_of(text[first(st, lit) + k]);
+        if c < 48 || c > 57 {
+            return 0 - 1;
+        }
+        k = k + 1;
+    }
+    return first(st, lit);
+}
+
+fn host_len[&s, &x](st: &!s [int], text: &x [byte], lit: int) -> [] int {
+    let p = port_at(st, text, lit);
+    if p < 0 {
+        return size(st, lit);
+    }
+    if p == first(st, lit) {
+        return 0;
+    }
+    return p - 1 - first(st, lit);
+}
+
+// `net_contains`: the host of `outer` is a prefix of the host of `inner`, and the port, when `outer` names one, is exact.
+fn net_contains[&s, &x](st: &!s [int], text: &x [byte], outer: int, inner: int) -> [] bool {
+    let oh = host_len(st, text, outer);
+    if host_len(st, text, inner) < oh {
+        return false;
+    }
+    var i = 0;
+    while i < oh {
+        if int_of(text[first(st, outer) + i]) != int_of(text[first(st, inner) + i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    let op = port_at(st, text, outer);
+    if op < 0 {
+        return true;
+    }
+    let ip = port_at(st, text, inner);
+    if ip < 0 || last(st, outer) - op != last(st, inner) - ip {
+        return false;
+    }
+    var k = 0;
+    while k < last(st, outer) - op {
+        if int_of(text[op + k]) != int_of(text[ip + k]) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
 // One literal narrowing `current` (`check_narrowing`): inside it, at a separator when `path`, and not equal. True if
 // it was refused.
 pub fn refused_one[&s, &x](st: &!s [int], text: &x [byte], path: bool, current: int, target: int, from: int, to: int) -> [] bool {
     if escaped(st, text, current) || escaped(st, text, target) {
         return false;
     }
-    if !starts_with(st, text, current, target) || path && !extends(st, text, current, target) || equal(st, text, current, target) {
+    var inside = starts_with(st, text, current, target);
+    if path {
+        inside = extends(st, text, current, target);
+    } else {
+        inside = net_contains(st, text, current, target);
+    }
+    if !inside || equal(st, text, current, target) {
         ast.fail(st, rules.r_capability_not_narrowable(), from, to);
         return true;
     }
@@ -103,8 +176,8 @@ pub fn refused_pair[&s, &x](st: &!s [int], text: &x [byte], path: bool, a: int, 
     if escaped(st, text, a) || escaped(st, text, b) {
         return false;
     }
-    // A path extends at a separator; a `Net` bound is a plain prefix of `host:port`.
-    var nested = starts_with(st, text, a, b) || starts_with(st, text, b, a);
+    // A path extends at a separator; a `Net` bound has a host prefix and an exact port.
+    var nested = net_contains(st, text, a, b) || net_contains(st, text, b, a);
     if path {
         nested = extends(st, text, a, b) || extends(st, text, b, a);
     }
@@ -124,7 +197,7 @@ pub fn narrows_many[&s](st: &!s [int], index: int) -> [] bool {
     return index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Exec") || index == netcode.prelude_named("Net");
 }
 
-// A path capability: the separator rule applies to the literals (`Fs`, `Exec`, `Tty`); `Net` is a plain prefix.
+// A path capability: the separator rule applies to the literals (`Fs`, `Exec`, `Tty`); `Net` is a host prefix and an exact port.
 pub fn is_path[&s](st: &!s [int], index: int) -> [] bool {
     return index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Exec") || index == netcode.prelude_named("Tty");
 }

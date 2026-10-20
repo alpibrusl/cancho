@@ -1,15 +1,14 @@
 //~ ERROR are nested
 //~ RULE capability-not-narrowable
 
-// `Net` bounds are plain textual prefixes of `host:port`, so `127.0.0.1:80` also admits `127.0.0.1:8080`: the second child
-// grants nothing the first does not, and the form refuses it as it refuses nested paths. Unlike a path there is no
-// separator to wait for. (`docs/net-bounds.md` §2.2.)
+// A `Net` bound's host is a prefix match and its port is exact, so `127.0.0.1:80` also admits `127.0.0.10:80`: the second
+// child grants nothing the first does not, and the form refuses it as it refuses nested paths. (`docs/net-bounds.md` §2.2.)
 
 edition 5;
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     release(io); release(ffi); release(fs); release(heap); release(args); release(clock);
-    let (a, b) = narrow(net, "127.0.0.1:80", "127.0.0.1:8080");
+    let (a, b) = narrow(net, "127.0.0.1:80", "127.0.0.10:80");
     release(a); release(b);
     return 0;
 }
