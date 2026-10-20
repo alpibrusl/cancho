@@ -1,6 +1,6 @@
 # CI speed
 
-> **Status: measured; the conclusion is section 4: a build cache does not help, and none is added.** Written to
+> **Status: measured; sections 4 and 5. A build cache does not help, and none is added; the jobs are split instead (section 5).** Written to
 > decide whether to add `Swatinem/rust-cache@v2` to the jobs of `.github/workflows/ci.yml`. A claim that turns
 > out false is corrected here, in place (section 3 does so for the first version of this document).
 
@@ -98,3 +98,56 @@ What would shorten a pull request's wait, in the order the data suggests, none o
    already covers the others. This is a trade of coverage for time and is the maintainer's to make.
 3. **Keep the cache for the three short jobs only**, if about 100 s of runner time is worth nine fewer lines:
    it is the only place the data shows a gain.
+
+## 5. What was done: the long steps split across jobs
+
+The wait of a pull request is its longest job. On `main` at 2526701 (run 39341822725, all green), by job:
+
+| job | minutes | what the time is |
+|---|---:|---|
+| `tls-assurance (examples)` | 46.5 | the HTTP client's mutants 18.2, the streaming-body mutants 12.1, the byte-fed mutants 4.3, the rest of the steps about 10 |
+| `linux-x86_64` | 34.5 | `cargo test --workspace` 33.5 |
+| `selfhost (linux-x86_64)` | 32.5 | the conformance suite |
+| `darwin-aarch64`, `selfhost (darwin-aarch64)`, `selfhost (linux-aarch64)` | 22, 18, 21 | the same two |
+
+* **The three mutant scripts are their own jobs** (`tls-assurance (mutants, ...)`): they run `cancho test` on mutated sources and need
+  the compiler and nothing else, so they do not have to follow the other steps. The examples job is left with about 10 minutes of
+  steps plus its compile.
+* **The conformance suite runs in four shards** (`scripts/conformance_shard.py`), in the default (`conformance (...)`) and the strict
+  (`selfhost (...)`) modes. The shard script lists the tests from the test binary, so a new test lands in a shard by itself, and packs
+  whole modules into shards by `.github/conformance-weights.txt`, heaviest first. `build` keeps formatting, lints, every other test
+  and the smoke program.
+
+**Measured (Linux x86-64, a 4-core machine, debug build, each module's tests run on their own):** the 100 modules sum to 1,501 s,
+dominated by `selfhost` (382 s) and `floats` (203 s); no other is above 50 s. Packed in four, the shards weigh 382, 376, 376, 376 s,
+so a shard is a quarter of the suite and **the heaviest module, `selfhost`, is the floor**: more than four shards cannot help until
+that module is split. `scripts/conformance_shard.py --check 4` says every one of the 742 tests (the five known differences left out)
+is in exactly one shard.
+
+**Measured on CI, once (this change's own run, 39388628935, all 32 checks green; the same job list before is run 39341822725).**
+Wall time from the first job starting to the last finishing: **23.3 minutes, against 46.5.** What each part came to:
+
+| job | before (min) | after (min) |
+|---|---:|---:|
+| `tls-assurance (examples)` | 46.5 | 11.4 |
+| `tls-assurance (mutants, HTTP client)` / `(streaming body)` / `(byte-fed server)` | inside the 46.5 (18.2 / 12.1 / 4.3) | 21.9 / 17.4 / 6.3 |
+| `linux-x86_64` (formatting, lints, the other tests, smoke) | 34.5 | 3.3 |
+| `conformance (linux-x86_64, 1..4/4)` | inside the 34.5 (33.5 with the rest) | 9.8, 5.4, 8.0, 7.1 |
+| `selfhost (linux-x86_64, 1..4/4)` | 32.5 | 15.5, 7.8, 4.5, 5.5 |
+| `selfhost (linux-aarch64, 1..4/4)` | 21.2 | 10.3, 6.2, 5.1, 4.9 |
+| `selfhost (darwin-aarch64, 1..4/4)` | 17.7 | 10.8, 4.9, 4.4, 4.9 |
+
+* **The last job to finish was `selfhost (darwin-aarch64, 1/4)`, at 23.3 minutes, and it ran for 10.8 of them**: it started 12.5 minutes
+  in, because the macOS jobs wait for a runner (eight of them, with the conformance ones). The longest job by its own time is
+  the HTTP client's mutants, 21.9 minutes (18.2 as a step before); the 3.7 minutes' difference is within the spread below, and
+  I did not look for another cause.
+* **Runner-minutes went up**: 245 summed over the 32 jobs, against 210 over the 12 before, 16 % more, for the compiling every shard
+  does. The wall time is the gain, not the cost.
+* **One run each.** Section 3 measured a spread of about 300 s on one job from runner to runner, so a figure here is good to about
+  that; the halving (23 against 46.5 minutes) is outside it.
+* **The longest remaining jobs are the HTTP client's mutants (21.9 minutes) and the streaming-body mutants (17.4)**, each a script of
+  hundreds of independent `cancho test` runs; they can be split by mutant the way the suite was split by module, and nothing here
+  does it. The `selfhost` module sets the floor of a conformance shard (`selfhost (linux-x86_64, 1/4)`, 15.5 minutes).
+
+The names of the checks change (`conformance (...)`, `selfhost (..., n/4)`, `tls-assurance (mutants, ...)`); a branch protection rule
+that names the old ones has to be changed with this.
