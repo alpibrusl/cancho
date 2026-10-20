@@ -561,7 +561,7 @@ pub fn listen_refused[&s, &x](st: &!s [int], text: &x [byte], which: int, on: bo
     if which != 36 && which != 130 {
         return false;
     }
-    if !types.is_ref(st, cap) || !types.is_prelude(st, types.ref_inner(st, cap)) || (types.prelude_index(st, types.ref_inner(st, cap)) != netcode.prelude_named("Net") && types.prelude_index(st, types.ref_inner(st, cap)) != netcode.prelude_named("Ports")) {
+    if !types.is_ref(st, cap) || !types.is_prelude(st, types.ref_inner(st, cap)) || types.prelude_index(st, types.ref_inner(st, cap)) != netcode.prelude_named("Net") && types.prelude_index(st, types.ref_inner(st, cap)) != netcode.prelude_named("Ports") {
         ast.fail(st, rules.r_capability_misused(), from, to);
         return true;
     }
