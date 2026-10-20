@@ -97,5 +97,5 @@ program in the corpus reaches them; they are run, not exercised.
 **Measured (Linux x86-64, debug `cancho`).** `selfhost::the_command_line_in_cancho_formats_like_cancho_fmt` builds `cli.cho` with
 the Rust compiler and runs it, as a process on a file, with and without `--check`, against `cancho_syntax::format` and the words
 `fmt_cli.rs` says, on every program of the repository, the edge programs and the programs spoilt two ways each (2,525 programs, 5,050
-runs): the standard output, standard error, exit status and the file afterwards are the same in all of them. Two mutants (`--check`
+runs; the formatter changes 1,580, refuses 14 and leaves 714 as they are): the standard output, standard error, exit status and the file afterwards are the same in all of them. Two mutants (`--check`
 leaves the status 0; `--check` writes the file) each make 1,580 of the 5,050 runs differ.
