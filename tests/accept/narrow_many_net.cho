@@ -1,0 +1,56 @@
+// `docs/net-bounds.md` §2.2 and `docs/narrowing-into-several.md` §5, item 4: `Net` narrows into several the way
+// `Fs` does. Two outbound children, each dialable at its own `host:port` and no other, so the report names both.
+// Nothing listens there; a refused connection is an answer (`Dialed::Failed`), and either answer prints 0.
+//~ STDOUT 0
+//~ EXIT 0
+
+edition 5;
+
+fn dial_http[&n](net: &n Net("127.0.0.1:80")) -> [net_out("127.0.0.1:80")] int {
+    match tcp_connect(net, "127.0.0.1", 80) {
+        Dialed::Ok(c) => {
+            conn_close(c);
+            return 0;
+        }
+        Dialed::Failed(e) => {
+            return 0;
+        }
+    }
+}
+
+fn dial_https[&n](net: &n Net("127.0.0.1:443")) -> [net_out("127.0.0.1:443")] int {
+    match tcp_connect(net, "127.0.0.1", 443) {
+        Dialed::Ok(c) => {
+            conn_close(c);
+            return 0;
+        }
+        Dialed::Failed(e) => {
+            return 0;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    let (web, tls) = narrow(net, "127.0.0.1:80", "127.0.0.1:443");
+    var status = 0;
+    borrow web as &a in {
+        status = status + dial_http(a);
+    }
+    borrow tls as &b in {
+        status = status + dial_https(b);
+    }
+    release(web);
+    release(tls);
+    borrow mut io as &!i in {
+        putchar(i, '0' + status);
+        putchar(i, 10);
+    }
+    release(io);
+    return 0;
+}
