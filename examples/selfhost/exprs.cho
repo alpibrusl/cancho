@@ -1569,10 +1569,8 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
     if narrowing.listen_refused(st, text, which, listen_on, cap, host, from, to) {
         return ex.nothing();
     }
-    if holds_bound && (which == 33 || which == 37 || which == 110 || which == 129) {
-        atoms.push_dial_bound(st, text, cap, from, to);
-    } else if holds_bound {
-        atoms.push_prefix(st, text, cap, 0 - 1, from, to);
+    if holds_bound {
+        atoms.push_call_bound(st, text, cap, which, from, to);
     }
     if which == 119 {
         emit.push_arg(st, 1, true, netcode.signal_bits(st, text, cap), 0 - 1);

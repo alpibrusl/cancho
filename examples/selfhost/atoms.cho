@@ -38,9 +38,12 @@ pub fn push_prefix[&s, &x](st: &!s [int], text: &x [byte], cap: int, want: int, 
     return push_bound(st, text, cap, want, from, to);
 }
 
-// The bound a dial (`connect`, `tcp_connect`, `tcp_connect_start`, `udp_connect`) checks. From edition 10 its host half is
+// The bound a call checks. For a dial (`connect`, `tcp_connect`, `tcp_connect_start`, `udp_connect`), from edition 10 its host half is
 // matched exactly (`docs/net-bounds.md` 2.3), which the runtime is told by a byte 1 ahead of the literal.
-pub fn push_dial_bound[&s, &x](st: &!s [int], text: &x [byte], cap: int, from: int, to: int) -> [] int {
+pub fn push_call_bound[&s, &x](st: &!s [int], text: &x [byte], cap: int, which: int, from: int, to: int) -> [] int {
+    if which != 33 && which != 37 && which != 110 && which != 129 {
+        return push_prefix(st, text, cap, 0 - 1, from, to);
+    }
     effects.mark_arg(st);
     var inner = cap;
     if types.is_ref(st, inner) {
