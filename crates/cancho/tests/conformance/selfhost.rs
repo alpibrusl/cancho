@@ -303,6 +303,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "floatprint.cho",
         "sink.cho",
         "filewrite.cho",
+        "walk.cho",
         "formatting.cho",
         "jsonprint.cho",
         "jsonread.cho",
@@ -1503,6 +1504,97 @@ fn the_command_line_in_cancho_formats_like_cancho_fmt() {
     assert!(refused >= 10, "only {refused} programs were refused by the formatter");
     assert!(unchanged > 300, "only {unchanged} programs were already formatted");
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
+/// Run a command line, from `dir`, on `arguments`: its standard output, its exit status, and every file beneath `dir` afterwards (sorted).
+fn run_in(exe: &Path, dir: &Path, arguments: &[&str]) -> (String, i32, Vec<(String, String)>) {
+    let run =
+        Command::new(exe).current_dir(dir).args(arguments).output().expect("the command runs");
+    let mut files = Vec::new();
+    let mut stack = vec![dir.to_owned()];
+    while let Some(at) = stack.pop() {
+        for entry in std::fs::read_dir(&at).expect("a directory is read") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() && !path.is_symlink() {
+                stack.push(path);
+            } else if let Ok(text) = std::fs::read_to_string(&path) {
+                files.push((
+                    path.strip_prefix(dir).expect("beneath dir").display().to_string(),
+                    text,
+                ));
+            }
+        }
+    }
+    files.sort();
+    (String::from_utf8_lossy(&run.stdout).into_owned(), run.status.code().unwrap_or(-1), files)
+}
+
+/// `cli.cho fmt` on directories, against `cancho fmt`: the order the files are found in, the names that are skipped (a dot at the front, a file
+/// that is not `.cho`), a directory called `x.cho`, a link to a directory, a file that does not parse, and the repository's own directories.
+#[test]
+fn the_command_line_in_cancho_walks_directories_like_cancho_fmt() {
+    let exe = build("cli-walk", &with_front_end("cli.cho"));
+    let base = exe.parent().expect("a scratch directory").to_owned();
+    let loose = "fn   main() -> [] int {\nreturn 0;\n}\n";
+    let tree = |name: &str| -> PathBuf {
+        let root = base.join(name);
+        for dir in ["A/sub", "A/.hidden", "B/x.cho", "C", "D"] {
+            std::fs::create_dir_all(root.join(dir)).expect("a directory is made");
+        }
+        for file in [
+            "A/z.cho",
+            "A/a.cho",
+            "A/sub/m.cho",
+            "A/.hidden/h.cho",
+            "A/.dot.cho",
+            "B/x.cho/in.cho",
+            "B/notes.txt",
+            "C/Q.CHO",
+            "top.cho",
+            "A/Zed.cho",
+            "A/b-1.cho",
+            "A/b_1.cho",
+        ] {
+            std::fs::write(root.join(file), loose).expect("a file is written");
+        }
+        std::fs::write(root.join("A/bad.cho"), "fn broken(").expect("a file is written");
+        std::fs::write(root.join("A/ok.cho"), "fn f() -> [] int {\n    return 0;\n}\n")
+            .expect("a file is written");
+        std::os::unix::fs::symlink("A", root.join("link")).expect("a link is made");
+        root
+    };
+    let (rust, mine) = (tree("rust"), tree("cancho"));
+    let rust_binary = PathBuf::from(BIN);
+    for arguments in [
+        vec!["fmt", "--check", "A", "B", "C", "D", "top.cho", "."],
+        vec!["fmt", "--check", "A/", "./B"],
+        vec!["fmt", "D"],
+        vec!["fmt", "A", "B", "C", "top.cho", "link"],
+    ] {
+        let want = run_in(&rust_binary, &rust, &arguments);
+        let got = run_in(&exe, &mine, &arguments);
+        assert_eq!(
+            got,
+            want,
+            "`cancho {}` and the command line in cancho disagree",
+            arguments.join(" ")
+        );
+    }
+    // The repository's own directories, in the order they are found: the files `--check` reports are the same, and in the same order.
+    let root = repo_root();
+    let sample = ["std", "examples/selfhost", "packages", "tests/accept"];
+    let check = |binary: &Path| {
+        let run = Command::new(binary)
+            .current_dir(&root)
+            .arg("fmt")
+            .arg("--check")
+            .args(sample)
+            .output()
+            .expect("the command runs");
+        (String::from_utf8_lossy(&run.stdout).into_owned(), run.status.code())
+    };
+    assert_eq!(check(&exe), check(&rust_binary));
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 /// The first line of the input of the compiler in cancho: the system, and the architecture where Linux has two.

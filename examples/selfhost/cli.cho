@@ -20,6 +20,7 @@ import selfhost.formatting;
 import selfhost.rules;
 import selfhost.lexcore as lc;
 import selfhost.filewrite;
+import selfhost.walk;
 
 // The canonical text of a program, or why there is none: status 0, 1 (the first refusal, at `from` to `to`), 2 (it does not fit the room).
 res struct Text {
@@ -389,7 +390,20 @@ fn format_file[&h, &i, &f, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: 
     return status;
 }
 
-fn fmt_command[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write] int {
+// Every path after `fmt` that is not `--check`, with the directories among them replaced by the files beneath them.
+fn fmt_files[&h, &a, &f](heap: &!h Heap, args: &a Args, fs: &f Fs("")) -> [heap, args, fs_read(""), dir_read] buffer.Buffer {
+    var found = buffer.empty(heap, 256);
+    var n = 2;
+    while n < arg_count(args) {
+        if !spells_check(arg(args, n)) {
+            found = walk.collect(heap, fs, arg(args, n), found);
+        }
+        n = n + 1;
+    }
+    return found;
+}
+
+fn fmt_command[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), dir_read, file_read, file_write] int {
     var check = false;
     var n = 2;
     while n < arg_count(args) {
@@ -398,31 +412,49 @@ fn fmt_command[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f
         }
         n = n + 1;
     }
+    if arg_count(args) - 2 - check_flags(args) == 0 {
+        console.error_all(io, "usage: cancho fmt [--check] PATH...\n");
+        return 2;
+    }
+    let found = fmt_files(heap, args, fs);
     var status = 0;
-    n = 2;
-    var files = 0;
-    while n < arg_count(args) {
-        if !spells_check(arg(args, n)) {
-            files = files + 1;
-            let one = format_file(heap, io, fs, arg(args, n), check);
+    borrow found as &list in {
+        let all = buffer.bytes(list);
+        var at = 0;
+        while at < len(all) && status != 2 {
+            var end = at;
+            while lc.at(all, end) != 0 {
+                end = end + 1;
+            }
+            let one = format_file(heap, io, fs, all[at..end], check);
             if one > status {
                 status = one;
             }
+            at = end + 1;
         }
-        n = n + 1;
     }
-    if files == 0 {
-        console.error_all(io, "usage: cancho fmt [--check] FILE...\n");
-        return 2;
-    }
+    buffer.drop(heap, found);
     return status;
 }
 
-fn run[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write] int {
+// How many of the arguments are `--check`.
+fn check_flags[&a](args: &a Args) -> [args] int {
+    var count = 0;
+    var n = 2;
+    while n < arg_count(args) {
+        if spells_check(arg(args, n)) {
+            count = count + 1;
+        }
+        n = n + 1;
+    }
+    return count;
+}
+
+fn run[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), dir_read, file_read, file_write] int {
     if arg_count(args) >= 2 && lc.spells(arg(args, 1), 0, 3, "fmt") && len(arg(args, 1)) == 3 {
         return fmt_command(heap, io, args, fs);
     }
-    console.error_all(io, "usage: cancho fmt [--check] FILE...\n");
+    console.error_all(io, "usage: cancho fmt [--check] PATH...\n");
     return 2;
 }
 

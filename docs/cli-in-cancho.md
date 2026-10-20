@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slice 1 built** (`fmt [--check] FILE...`, §7); the rest is design (epic #491,
+Status: **slices 1 and 2 built** (`fmt [--check] PATH...`, §7, §8); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
@@ -90,7 +90,7 @@ The checks are in cancho: (1) the result prints as the original does (`alike`), 
 writes code in (`200` integers a token), raised by one token in a hundred bytes of source because a long string literal is one token;
 a file whose printed text still does not fit is refused with a sentence rather than cut short.
 
-Not done: directories (`cancho fmt DIR` walks, sorts, and skips names starting with `.`), the other commands, and the words of a
+Not done in this slice: directories (§8), the other commands, and the words of a
 parse refusal (cancho says `ERR rule from to` where Rust renders the diagnostic). The checks of §4 only fire on a formatter bug, so no
 program in the corpus reaches them; they are run, not exercised.
 
@@ -99,3 +99,19 @@ the Rust compiler and runs it, as a process on a file, with and without `--check
 `fmt_cli.rs` says, on every program of the repository, the edge programs and the programs spoilt two ways each (2,525 programs, 5,050
 runs; the formatter changes 1,580, refuses 14 and leaves 714 as they are): the standard output, standard error, exit status and the file afterwards are the same in all of them. Two mutants (`--check`
 leaves the status 0; `--check` writes the file) each make 1,580 of the 5,050 runs differ.
+
+## 8. Slice 2: directories
+
+`examples/selfhost/walk.cho` finds the files a command is given: a path that is a file is that file; a directory is every `.cho` file
+beneath it, in bytewise order of name within each directory, skipping names that start with a dot, descending into directories (a link to
+one is followed, as `Path::is_dir` does, by trying `open_dir` on it). It uses `std.dirs.list` over a directory handle. `cli.cho fmt`
+collects every path first and then formats them in order, and stops at the first environment error (a file it cannot read or write), as
+`cancho fmt` does.
+
+**Measured.** `selfhost::the_command_line_in_cancho_walks_directories_like_cancho_fmt` makes a tree (nested directories, a `.hidden`
+directory, a `.dot.cho`, a `notes.txt`, a `Q.CHO`, a directory called `x.cho`, names that differ in case and punctuation, a file that does
+not parse, a link to a directory, an empty directory) and runs both commands on it four ways (`--check` on several roots, a root with a
+trailing `/`, an empty directory, and a rewriting run through the link): standard output, exit status and every file afterwards are
+the same. It then runs both with `--check` over `std`, `examples/selfhost`, `packages` and `tests/accept`. Four mutants (no skip of dotted
+names; every file taken whatever its extension; links not followed; a `/` always added) are each killed. Not the same: a message on the
+standard error for an unreadable directory, which `cancho fmt` words and this does not (it is a file it then fails to read).
