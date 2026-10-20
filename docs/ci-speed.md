@@ -139,8 +139,8 @@ Wall time from the first job starting to the last finishing: **23.3 minutes, aga
 
 * **The last job to finish was `selfhost (darwin-aarch64, 1/4)`, at 23.3 minutes, and it ran for 10.8 of them**: it started 12.5 minutes
   in, because the macOS jobs wait for a runner (eight of them, with the conformance ones). The longest job by its own time is
-  the HTTP client's mutants, 21.9 minutes (it was 18.2 as a step; two cores are shared with nothing else now, so the longer figure
-  is the spread of section 3, not a slowdown this change explains).
+  the HTTP client's mutants, 21.9 minutes (18.2 as a step before); the 3.7 minutes' difference is within the spread below, and
+  I did not look for another cause.
 * **Runner-minutes went up**: 245 summed over the 32 jobs, against 210 over the 12 before, 16 % more, for the compiling every shard
   does. The wall time is the gain, not the cost.
 * **One run each.** Section 3 measured a spread of about 300 s on one job from runner to runner, so a figure here is good to about
