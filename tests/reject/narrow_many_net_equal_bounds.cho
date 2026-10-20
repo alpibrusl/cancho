@@ -1,4 +1,4 @@
-//~ ERROR are the same
+//~ ERROR are the same bound
 //~ RULE capability-not-narrowable
 
 // Two children of one bound grant the same thing twice. (`docs/net-bounds.md` §2.2.)

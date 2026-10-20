@@ -90,8 +90,10 @@ pub(super) fn narrow_into_several(
                 extends_path(a, b) || extends_path(b, a)
             };
             let what = if which == PRELUDE_NET { "bounds" } else { "paths" };
-            let why = if a == b {
-                "are the same, so the second grants nothing the first does not"
+            let why = if a == b && which == PRELUDE_NET {
+                "are the same bound, so the second grants nothing the first does not"
+            } else if a == b {
+                "are the same path, so the second grants nothing the first does not"
             } else if nested {
                 "are nested, so the inner one grants nothing the outer one does not"
             } else {
