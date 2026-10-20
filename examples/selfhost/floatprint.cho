@@ -1,0 +1,358 @@
+module selfhost.floatprint;
+
+// floatprint.cho -- a floating-point literal as the canonical printer writes it (`print.rs`: `float_literal`, `f32_literal`).
+//
+// The Rust printer writes `format!("{value}")`: the shortest decimal digits that read back to the same bits, placed without an
+// exponent, and `.0` after a number that has no point (and the suffix `f32` after an `f32`). The digits are those of Burger and
+// Dybvig's free-format algorithm (what `flt2dec` computes for `Display`): the digits of the value, a bignum at a time, until the
+// ones so far lie inside the interval of numbers that round to it, the last one rounded to the nearer end. The interval's ends are
+// inclusive when the significand is even (round to even).
+//
+// The bignums are five runs of 40 little-endian 30-bit limbs in the 256-slot scratch region of the state `floats.cho` reads a
+// literal in, which a printer does not otherwise use; then the digits.
+
+import std.io as console;
+import selfhost.ast;
+import selfhost.floats;
+
+fn limbs() -> [] int {
+    return 40;
+}
+
+fn mask() -> [] int {
+    return 1073741823;
+}
+
+// The bignums: 0 the remainder, 1 the scale, 2 and 3 the half-gaps above and below, 4 a spare.
+fn num[&s](st: &!s [int], n: int) -> [] int {
+    return floats.room(st) + n * limbs();
+}
+
+fn digit_at[&s](st: &!s [int], k: int) -> [] int {
+    return floats.room(st) + 5 * limbs() + k;
+}
+
+fn zero[&s](st: &!s [int], x: int) -> [] int {
+    var i = 0;
+    while i < limbs() {
+        st[x + i] = 0;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// `x = v`, for a v below 2^62.
+fn set[&s](st: &!s [int], x: int, v: int) -> [] int {
+    zero(st, x);
+    st[x] = v & mask();
+    st[x + 1] = v >> 30 & mask();
+    st[x + 2] = v >> 60;
+    return 0;
+}
+
+fn copy[&s](st: &!s [int], to: int, from: int) -> [] int {
+    var i = 0;
+    while i < limbs() {
+        st[to + i] = st[from + i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+// `x = x * m`, for an m below 2^30.
+fn mul_small[&s](st: &!s [int], x: int, m: int) -> [] int {
+    var carry = 0;
+    var i = 0;
+    while i < limbs() {
+        let p = st[x + i] * m + carry;
+        st[x + i] = p & mask();
+        carry = p >> 30;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// `x = x << bits`.
+fn shl[&s](st: &!s [int], x: int, bits: int) -> [] int {
+    let whole = bits / 30;
+    let part = bits % 30;
+    var i = limbs() - 1;
+    while i >= 0 {
+        var v = 0;
+        let from = i - whole;
+        if from >= 0 {
+            v = st[x + from] << part & mask();
+            if part > 0 && from >= 1 {
+                v = v | st[x + from - 1] >> 30 - part;
+            }
+        }
+        st[x + i] = v;
+        i = i - 1;
+    }
+    return 0;
+}
+
+// -1, 0 or 1: x against y.
+fn cmp[&s](st: &!s [int], x: int, y: int) -> [] int {
+    var i = limbs() - 1;
+    while i >= 0 {
+        if st[x + i] != st[y + i] {
+            if st[x + i] > st[y + i] {
+                return 1;
+            }
+            return 0 - 1;
+        }
+        i = i - 1;
+    }
+    return 0;
+}
+
+// `x = x + y`.
+fn add[&s](st: &!s [int], x: int, y: int) -> [] int {
+    var carry = 0;
+    var i = 0;
+    while i < limbs() {
+        let v = st[x + i] + st[y + i] + carry;
+        st[x + i] = v & mask();
+        carry = v >> 30;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// `x = x - y`, for an x that is not below y.
+fn sub[&s](st: &!s [int], x: int, y: int) -> [] int {
+    var owed = 0;
+    var i = 0;
+    while i < limbs() {
+        var v = st[x + i] - st[y + i] - owed;
+        owed = 0;
+        if v < 0 {
+            v = v + mask() + 1;
+            owed = 1;
+        }
+        st[x + i] = v;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Is r + mp below s, or not above it where `inclusive`? Uses the spare bignum.
+fn fits[&s](st: &!s [int], inclusive: bool) -> [] bool {
+    copy(st, num(st, 4), num(st, 0));
+    add(st, num(st, 4), num(st, 2));
+    let c = cmp(st, num(st, 4), num(st, 1));
+    if inclusive {
+        return c <= 0;
+    }
+    return c < 0;
+}
+
+// The digits of the value `f * 2^e` (a positive number whose `f` has `precision` bits, `lowest` being its least exponent), shortest
+// and nearest, into the digit slots; answers how many digits, and writes the decimal exponent to `st[digit_at(st, 30)]`: the value is
+// 0.d1d2... * 10^exponent.
+fn shortest[&s](st: &!s [int], f: int, e: int, precision: int, lowest: int) -> [] int {
+    let even = f % 2 == 0;
+    let edge = f == 1 << precision - 1 && e > lowest;
+    let r = num(st, 0);
+    let sc = num(st, 1);
+    let mp = num(st, 2);
+    let mm = num(st, 3);
+    if e >= 0 {
+        if !edge {
+            set(st, r, f);
+            shl(st, r, e + 1);
+            set(st, sc, 2);
+            set(st, mp, 1);
+            shl(st, mp, e);
+            set(st, mm, 1);
+            shl(st, mm, e);
+        } else {
+            set(st, r, f);
+            shl(st, r, e + 2);
+            set(st, sc, 4);
+            set(st, mp, 1);
+            shl(st, mp, e + 1);
+            set(st, mm, 1);
+            shl(st, mm, e);
+        }
+    } else if !edge {
+        set(st, r, f);
+        shl(st, r, 1);
+        set(st, sc, 1);
+        shl(st, sc, 1 - e);
+        set(st, mp, 1);
+        set(st, mm, 1);
+    } else {
+        set(st, r, f);
+        shl(st, r, 2);
+        set(st, sc, 1);
+        shl(st, sc, 2 - e);
+        set(st, mp, 2);
+        set(st, mm, 1);
+    }
+    // The smallest k such that (r + mp) / (s * 10^k) is below one (not above it, if the end is not inclusive).
+    var k = 0;
+    while !fits(st, !even) {
+        mul_small(st, sc, 10);
+        k = k + 1;
+    }
+    var down = true;
+    while down {
+        // Would one power of ten less still do? (r + mp) * 10 against s.
+        copy(st, num(st, 4), r);
+        add(st, num(st, 4), mp);
+        mul_small(st, num(st, 4), 10);
+        let c = cmp(st, num(st, 4), sc);
+        var still = c < 0;
+        if !even && c == 0 {
+            still = true;
+        }
+        if still {
+            mul_small(st, r, 10);
+            mul_small(st, mp, 10);
+            mul_small(st, mm, 10);
+            k = k - 1;
+        } else {
+            down = false;
+        }
+    }
+    var n = 0;
+    var go = true;
+    while go {
+        mul_small(st, r, 10);
+        mul_small(st, mp, 10);
+        mul_small(st, mm, 10);
+        var d = 0;
+        while cmp(st, r, sc) >= 0 {
+            sub(st, r, sc);
+            d = d + 1;
+        }
+        let c1 = cmp(st, r, mm);
+        var low = c1 < 0;
+        if even && c1 == 0 {
+            low = true;
+        }
+        copy(st, num(st, 4), r);
+        add(st, num(st, 4), mp);
+        let c2 = cmp(st, num(st, 4), sc);
+        var high = c2 > 0;
+        if even && c2 == 0 {
+            high = true;
+        }
+        if !low && !high {
+            st[digit_at(st, n)] = d;
+            n = n + 1;
+        } else {
+            go = false;
+            if low && !high {
+                st[digit_at(st, n)] = d;
+            } else if !low && high {
+                st[digit_at(st, n)] = d + 1;
+            } else {
+                copy(st, num(st, 4), r);
+                shl(st, num(st, 4), 1);
+                if cmp(st, num(st, 4), sc) < 0 {
+                    st[digit_at(st, n)] = d;
+                } else {
+                    st[digit_at(st, n)] = d + 1;
+                }
+            }
+            n = n + 1;
+        }
+    }
+    st[digit_at(st, 30)] = k;
+    return n;
+}
+
+// The digits as `Display` places them, no exponent: `n` digits and the decimal exponent `k` (the value is 0.d1d2... * 10^k).
+fn place[&i, &s](io: &!i Io, st: &!s [int], n: int, k: int) -> [io_write] int {
+    var j = 0;
+    if k <= 0 {
+        console.write_all(io, "0.");
+        var z = 0;
+        while z < 0 - k {
+            console.putchar(io, '0');
+            z = z + 1;
+        }
+        while j < n {
+            console.putchar(io, '0' + st[digit_at(st, j)]);
+            j = j + 1;
+        }
+        return 0;
+    }
+    while j < n || j < k {
+        if j == k {
+            console.putchar(io, '.');
+        }
+        if j < n {
+            console.putchar(io, '0' + st[digit_at(st, j)]);
+        } else {
+            console.putchar(io, '0');
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// Does the number written have a point? The digits as `place` writes them have one unless the value is a whole number of
+// digits, which the caller then ends with `.0`.
+fn has_point(n: int, k: int) -> [] bool {
+    return k <= 0 || k < n;
+}
+
+// The literal at `from..to` of the text, as the canonical printer writes it.
+pub fn literal[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], from: int, to: int, single: bool) -> [io_write] int {
+    let bits = floats.literal_bits(st, text, from, to, single);
+    if !floats.literal_ok(st) {
+        // More digits than the scratch holds: the literal as it was written.
+        return console.write_all(io, text[from..to]);
+    }
+    if bits < 0 {
+        console.putchar(io, '-');
+    }
+    let field = bits >> 52 & 2047;
+    var significand = bits & 4503599627370495;
+    var exponent = field - 1075;
+    if field > 0 {
+        significand = significand | 4503599627370496;
+    } else {
+        exponent = 0 - 1074;
+    }
+    var n = 0;
+    var k = 0;
+    if significand == 0 {
+        console.write_all(io, "0.0");
+    } else {
+        if single {
+            // The value is exactly an `f32`: 24 bits of significand, and no exponent below -149.
+            var f = significand;
+            var e = exponent;
+            var low = 0 - 149;
+            while e < low {
+                f = f >> 1;
+                e = e + 1;
+            }
+            while f < 8388608 && e > low {
+                f = f << 1;
+                e = e - 1;
+            }
+            while f >= 16777216 {
+                f = f >> 1;
+                e = e + 1;
+            }
+            n = shortest(st, f, e, 24, low);
+        } else {
+            n = shortest(st, significand, exponent, 53, 0 - 1074);
+        }
+        k = st[digit_at(st, 30)];
+        place(io, st, n, k);
+        if !has_point(n, k) {
+            console.write_all(io, ".0");
+        }
+    }
+    if single {
+        return console.write_all(io, "f32");
+    }
+    return 0;
+}

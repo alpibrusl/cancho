@@ -1,0 +1,12 @@
+// printer.cho -- the canonical printer, written in cancho: the program (issue #485).
+//
+// Reads a source file on standard input, parses it with `ast.cho` and writes it back as the one text the language has for it
+// (`printing.cho`), or `ERR rule-tag start end` if the parser refuses it. The oracle is `cancho print`.
+//
+//     cancho run examples/selfhost/printer.cho examples/selfhost/driver.cho ... --std < f.cho
+
+import selfhost.driver;
+
+fn main(world: World) -> [] int {
+    return driver.drive(world, 4, false);
+}
