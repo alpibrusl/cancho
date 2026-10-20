@@ -1,0 +1,13 @@
+// ids.cho -- `cancho ids`, written in cancho: the program (issue #485).
+//
+// Reads a stream of files on standard input (each a line `FILE <length>` and the bytes: the program, then the library), parses them, and writes
+// the identity of every declaration (`identity.cho`): `type name hash`, and for each function `sig name hash` and `body name hash`. It does not
+// check the program first, as `cancho ids` does: what runs the two in turn is the command line.
+//
+//     cancho run examples/selfhost/ids.cho examples/selfhost/driver.cho ... --std < stream
+
+import selfhost.driver;
+
+fn main(world: World) -> [] int {
+    return driver.drive(world, 9, true);
+}

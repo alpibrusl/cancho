@@ -32,6 +32,9 @@ mod bodies_oracle;
 #[path = "../../../cancho-ir/examples/check_declarations.rs"]
 mod declarations_oracle;
 #[allow(dead_code)]
+#[path = "../../../cancho-id/examples/dump_ids.rs"]
+mod ids_oracle;
+#[allow(dead_code)]
 #[path = "../../../cancho-syntax/examples/dump_tokens.rs"]
 mod token_oracle;
 
@@ -302,6 +305,8 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "jsonprint.cho",
         "jsonread.cho",
         "ingest.cho",
+        "blake3.cho",
+        "identity.cho",
         "prune.cho",
         "listing.cho",
         "checker.cho",
@@ -844,6 +849,134 @@ fn the_json_printer_in_cancho_agrees_with_the_rust_one() {
     let long = format!("fn f() -> [] float {{ return 1{}.0; }}\n", "0".repeat(130));
     let said = answer(&exe, &long);
     assert!(said.starts_with("CANNOT "), "{said:.80}");
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
+/// Programs for the identities that the repository has few of: rows that are not sorted or have a label twice, a name declared twice,
+/// parameters and bounds and clauses, every kind of pattern and binder, strings with escapes, every literal, names no import reaches.
+const IDS_EDGE: &[&str] = &[
+    "fn f() -> [io, io_write, io] int { return 0; }",
+    "fn g[&i](x: &i Io, y: fn(int) -> [io, io, fs_read] int) -> [ffi(\"b\"), ffi(\"a\"), ffi(\"a\"), io, ffi(\"a\\n\")] int { return 0; }",
+    "fn f() -> [] int { return 1; }\nfn f() -> [] int { return 2; }\nfn g() -> [] int { return f(); }",
+    "struct S { a: int }\nstruct S { b: bool }\nfn f(s: S) -> [] int { return 0; }",
+    "struct A { b: B }\nstruct B { a: A, c: C }\nstruct C { x: int }\nenum E { X(A), Y }\nfn f(a: A, e: E, c: C) -> [] int { return 0; }",
+    "fn k[T: val, U, &r, &s where r <= s, s <= r, r <= q](a: &r T, b: &!s U, c: [T], d: (T, U), e: fn(&r T) -> [io] U) -> [io] int { return 0; }",
+    "val struct V[T: val] { t: T }\nres struct R { v: V[int], r: &q int }\nenum G[T] { A(T), B }\nres enum H[T: val, U] { C(T, U) }",
+    "pub extern fn getpid[&f](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\nextern fn abs(x: int) -> [] int;\nfn f() -> [] int { return abs(getpid(1)); }",
+    "static T: [int] { return alloc_free(); }\npub static U: [byte] { return \"a\\\\b\\n\\t\\0\\\"\"; }\nfn f() -> [] int { return len(T) + len(U); }",
+    "fn f(p: P, q: q.P) -> [] int { let P { y, x, y2 } = p; let q.P { z, a } = q; return x + y + a + z + y2; }",
+    "fn f(t: (int, int)) -> [] int { let (a, b) = t; let (a, c) = (b, a); return a + b + c + t.0 + t.1; }",
+    "fn f(e: E) -> [] int { match e { E::A(x, _, y) => { return x + y; } q.E::B(z) => { return z; } E::C => { return 0; } _ => { return 1; } } }",
+    "fn f[&r](x: &r int) -> [] int { var y = 1; y = y + *x; borrow x as &s in { region t { let p = alloc[t](1); let q = alloc_slice[s](2, 3); } } borrow mut y as &!u in { } return y; }",
+    "fn f(a: int) -> [] int { let a = a + 1; { } if a > 1 { let a = 2; return a; } else { let b = a; return b; } }",
+    "fn f(a: int) -> [] int { while a < 3 { defer g(a); } return a; }\nfn g(a: int) -> [] int { return a; }",
+    "fn f() -> [] int { return 0 + 1 - 2 * 3 / 4 % 5; }\nfn g(a: bool, b: bool, x: int, y: int) -> [] bool { return a && b || !a && x == y && x != y || x < y && x <= y || x > y && x >= y || x | y == x ^ y && x & y == ~x && x << 1 == y >> 2; }",
+    "fn f() -> [] float { return 0.0 + -0.0 + 1.0 + 1e308 + 5e-324 + 0.1 + 123456789.123456789; }\nfn g() -> [] f32 { return 0.0f32 + 1e-45f32 + 1.1754942e-38f32 + 3.4028235e38f32 + 0.1f32; }",
+    "fn f() -> [] int { return 9223372036854775807 + 0 + 1_000 + 0x_ff + 0b101 + 'a' + '\\n'; }",
+    "fn f() -> [] int { return m.g(m.S { x: 1 }, m.E::A(2), E::B, S { y: 3 }, p.x, p.0, a[1], a[1..2]); }",
+    "fn f(s: [byte]) -> [] int { return len(\"é\\u\") + len(s); }",
+];
+
+/// `examples/selfhost/ids.cho` against `cancho_id::identify`: the identity of every declaration of the programs of the repository, each alone
+/// and each with the standard library after it (where a name is answered by the hash of the declaration it reaches).
+#[test]
+fn the_identities_in_cancho_agree_with_the_rust_ones() {
+    let exe = build("ids", &with_front_end("ids.cho"));
+    let mut programs = sources();
+    programs.extend(IDS_EDGE.iter().map(|s| (format!("ids edge {s:.40?}"), (*s).to_owned())));
+    let mut different = Vec::new();
+    let mut compared = 0usize;
+    let mut refused = 0usize;
+    let alone =
+        in_parallel(&programs, |(_, text)| answer(&exe, &stream(std::slice::from_ref(text))));
+    for ((name, text), ours) in programs.iter().zip(alone) {
+        let theirs = ids_oracle::identities(std::slice::from_ref(text));
+        compared += 1;
+        refused += usize::from(theirs.starts_with("ERR"));
+        if ours != theirs {
+            different.push(format!("{name} alone"));
+        }
+    }
+    // Programs of several files, where a name is reached through an import.
+    for files in SEVERAL_FILES {
+        let files: Vec<String> = files.iter().map(|f| (*f).to_owned()).collect();
+        compared += 1;
+        if answer(&exe, &stream(&files)) != ids_oracle::identities(&files) {
+            different.push(format!("{:?}", files.iter().take(3).collect::<Vec<_>>()));
+        }
+    }
+    // With the library: a sample, as each of these parses half a megabyte.
+    let sample: Vec<&(String, String)> = programs
+        .iter()
+        .enumerate()
+        .filter(|(i, (name, _))| i % 8 == 0 || name.starts_with("ids edge"))
+        .map(|(_, c)| c)
+        .collect();
+    let with_std = in_parallel(&sample, |(_, text)| {
+        let files = with_library(text);
+        (answer(&exe, &stream(&files)), ids_oracle::identities(&files))
+    });
+    for ((name, _), (ours, theirs)) in sample.iter().zip(with_std) {
+        compared += 1;
+        if ours != theirs {
+            different.push(format!("{name} with the library"));
+        }
+    }
+    assert!(
+        different.is_empty(),
+        "the identities in cancho and the Rust ones differ for {} of {compared} programs:\n{}",
+        different.len(),
+        different.join("\n")
+    );
+    assert!(refused > 5, "only {refused} programs were refused by the parser");
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
+/// `examples/selfhost/blake3.cho` against the `blake3` crate: messages of every length around the sizes at which the tree of chunks changes
+/// shape (a block is 64 bytes, a chunk 1,024, and the stack of chaining values is joined at every power of two chunks).
+#[test]
+fn blake3_in_cancho_agrees_with_the_blake3_crate() {
+    let exe = build("blake3sum", &["blake3sum.cho", "blake3.cho", "lexcore.cho"]);
+    let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+    let mut lengths: Vec<usize> = (0..=130).collect();
+    for chunks in [1usize, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 65] {
+        for delta in [0usize, 1, 63, 64, 65, 1023] {
+            lengths.push(chunks * 1024 - 1024 + delta + 1);
+            lengths.push(chunks * 1024 + delta);
+        }
+    }
+    lengths.extend([200_000, 1 << 20]);
+    lengths.sort_unstable();
+    lengths.dedup();
+    let mut different = Vec::new();
+    for length in &lengths {
+        let message: Vec<u8> = (0..*length)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed as u8
+            })
+            .collect();
+        let want = format!("{}\n", blake3::hash(&message).to_hex());
+        let mut child = Command::new(&exe)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("the compiled port runs");
+        child.stdin.take().expect("a piped stdin").write_all(&message).expect("the port reads");
+        let got = String::from_utf8_lossy(&child.wait_with_output().expect("it finishes").stdout)
+            .into_owned();
+        if got != want {
+            different.push(*length);
+        }
+    }
+    assert!(
+        different.is_empty(),
+        "BLAKE3 in cancho and the blake3 crate disagree about messages of {} lengths: {different:?}",
+        different.len()
+    );
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
 

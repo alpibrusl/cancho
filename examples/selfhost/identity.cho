@@ -1,0 +1,1400 @@
+module selfhost.identity;
+
+// identity.cho -- `cancho ids`, written in cancho: the content-addressed identity of every declaration (`docs/canonical-ast.md`), a port of
+// `crates/cancho-id/src/lib.rs`.
+//
+// A declaration's identity is the BLAKE3 hash (`blake3.cho`) of a canonical byte string, which is fed to the hasher as it is made: one
+// byte at a time, so no encoding is kept. The rules are those of the Rust encoder, in its order: a tag byte for each node, `u32` and `i64`
+// little-endian, text as its length and its bytes, a nested hash as its 32 bytes; locals, generic parameters and regions by their
+// position, not their name; a name that a declaration answers to by the hash of that declaration, so that a body names its callees by
+// their signatures.
+//
+// The tree is read as `printing.cho` reads it, and what it keeps only as tokens (an effect row, a declaration's `[T, &r where a <= b]`, a
+// pattern, the names of a destructuring) from the tokens. Everything the encoder needs besides is in the second array, `d`:
+//
+//   0 the module being hashed, 1 the table of types that names are looked up in (-1 for none), 2 the table of signatures,
+//   3 how many binders are in scope, 4 how many regions, 5 how many type parameters, 6 how many regions the declaration has,
+//   7 the size of a table, 8 the size of a stack, 9 how many `where` clauses, 10 how many labels of an effect row,
+//   16 to 23 the hash just made, 24 to 31 where the stacks are, 32 to 34 where the tables are, 64 the hasher (`blake3.size()`)
+//
+// A table has an entry of 12 slots for each name: whether it is used, the module, the token of the name, and the hash (8 words). Names are
+// compared by their text. Like the Rust `HashMap`, a name that is written twice in a module keeps the hash of the last.
+
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.ast;
+import selfhost.kinds;
+import selfhost.blake3;
+import selfhost.floats;
+
+// ----------------------------------------------------------------- sizes ---
+
+// How many integers `d` needs for a program of `tokens` tokens and `items` items.
+pub fn size_for(tokens: int, items: int) -> [] int {
+    return 64 + blake3.size() + 8 * (tokens + 16) + 3 * 12 * table_size(items) + 64;
+}
+
+fn table_size(items: int) -> [] int {
+    return 2 * items + 8;
+}
+
+pub fn layout[&j](d: &!j [int], tokens: int, items: int) -> [] int {
+    let c = tokens + 16;
+    let p = table_size(items);
+    var at = 64 + blake3.size();
+    var k = 0;
+    while k < 8 {
+        d[24 + k] = at;
+        at = at + c;
+        k = k + 1;
+    }
+    k = 0;
+    while k < 3 {
+        d[32 + k] = at;
+        at = at + 12 * p;
+        k = k + 1;
+    }
+    d[7] = p;
+    d[8] = c;
+    d[1] = 0 - 1;
+    d[2] = 0 - 1;
+    return at;
+}
+
+fn gen_base[&j](d: &!j [int]) -> [] int {
+    return d[24];
+}
+
+fn bound_base[&j](d: &!j [int]) -> [] int {
+    return d[25];
+}
+
+fn reg_base[&j](d: &!j [int]) -> [] int {
+    return d[26];
+}
+
+fn bind_base[&j](d: &!j [int]) -> [] int {
+    return d[27];
+}
+
+fn out_inner[&j](d: &!j [int]) -> [] int {
+    return d[28];
+}
+
+fn out_outer[&j](d: &!j [int]) -> [] int {
+    return d[29];
+}
+
+fn label_name[&j](d: &!j [int]) -> [] int {
+    return d[30];
+}
+
+fn label_arg[&j](d: &!j [int]) -> [] int {
+    return d[31];
+}
+
+fn code(t: lc.Tok) -> [] int {
+    return lc.code(t);
+}
+
+// ------------------------------------------------------------ the encoder ---
+
+fn put[&j](d: &!j [int], x: int) -> [] int {
+    return blake3.byte(d, 64, x & 255);
+}
+
+fn put_tag[&j](d: &!j [int], t: int) -> [] int {
+    return put(d, t);
+}
+
+fn put_u32[&j](d: &!j [int], v: int) -> [] int {
+    put(d, v);
+    put(d, v >> 8);
+    put(d, v >> 16);
+    return put(d, v >> 24);
+}
+
+fn put_i64[&j](d: &!j [int], v: int) -> [] int {
+    var k = 0;
+    while k < 8 {
+        put(d, v >> 8 * k);
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn put_len[&j](d: &!j [int], n: int) -> [] int {
+    return put_u32(d, n);
+}
+
+fn put_flag[&j](d: &!j [int], b: bool) -> [] int {
+    if b {
+        return put(d, 1);
+    }
+    return put(d, 0);
+}
+
+// The text of a token, as a length and its bytes.
+fn put_name[&j, &s, &x](d: &!j [int], st: &!s [int], text: &x [byte], tok: int) -> [] int {
+    let from = ast.tstart(st, tok);
+    let to = ast.tend(st, tok);
+    put_len(d, to - from);
+    var k = from;
+    while k < to {
+        put(d, lc.at(text, k));
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn decoded_length[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] int {
+    var j = ast.tstart(st, tok) + 1;
+    let to = ast.tend(st, tok) - 1;
+    var n = 0;
+    while j < to {
+        if lc.at(text, j) == '\\' {
+            j = j + 1;
+        }
+        j = j + 1;
+        n = n + 1;
+    }
+    return n;
+}
+
+// The byte `k` of the string literal token, once its escapes are read.
+fn decoded_byte[&s, &x](st: &!s [int], text: &x [byte], tok: int, k: int) -> [] int {
+    var j = ast.tstart(st, tok) + 1;
+    var n = 0;
+    while n < k {
+        if lc.at(text, j) == '\\' {
+            j = j + 1;
+        }
+        j = j + 1;
+        n = n + 1;
+    }
+    let c = lc.at(text, j);
+    if c != '\\' {
+        return c;
+    }
+    let e = lc.at(text, j + 1);
+    if e == 'n' {
+        return 10;
+    }
+    if e == 'r' {
+        return 13;
+    }
+    if e == 't' {
+        return 9;
+    }
+    if e == '0' {
+        return 0;
+    }
+    return e;
+}
+
+// A string literal, as the length of its bytes and the bytes.
+fn put_literal[&j, &s, &x](d: &!j [int], st: &!s [int], text: &x [byte], tok: int) -> [] int {
+    let n = decoded_length(st, text, tok);
+    put_len(d, n);
+    var j = ast.tstart(st, tok) + 1;
+    var k = 0;
+    while k < n {
+        var c = lc.at(text, j);
+        if c == '\\' {
+            j = j + 1;
+            let e = lc.at(text, j);
+            c = e;
+            if e == 'n' {
+                c = 10;
+            }
+            if e == 'r' {
+                c = 13;
+            }
+            if e == 't' {
+                c = 9;
+            }
+            if e == '0' {
+                c = 0;
+            }
+        }
+        put(d, c);
+        j = j + 1;
+        k = k + 1;
+    }
+    return 0;
+}
+
+// The 32 bytes of the 8 words at `from`.
+fn put_hash[&j](d: &!j [int], from: int) -> [] int {
+    var w = 0;
+    while w < 8 {
+        let word = d[from + w];
+        put(d, word);
+        put(d, word >> 8);
+        put(d, word >> 16);
+        put(d, word >> 24);
+        w = w + 1;
+    }
+    return 0;
+}
+
+// Start an encoding in the domain `name`: the hash is of the domain and then the bytes.
+fn begin[&j](d: &!j [int], domain: &static [byte]) -> [] int {
+    blake3.init(d, 64);
+    var k = 0;
+    while k < len(domain) {
+        put(d, lc.at(domain, k));
+        k = k + 1;
+    }
+    return 0;
+}
+
+// The end: the hash is in the slots 16 to 23.
+fn finish[&j](d: &!j [int]) -> [] int {
+    return blake3.finish(d, 64, 16);
+}
+
+// The tags, which are numbers that are never reused.
+fn t_int() -> [] int {
+    return 1;
+}
+
+fn t_bool() -> [] int {
+    return 2;
+}
+
+fn t_local() -> [] int {
+    return 3;
+}
+
+fn t_free() -> [] int {
+    return 4;
+}
+
+fn t_none() -> [] int {
+    return 0;
+}
+
+fn t_some() -> [] int {
+    return 1;
+}
+
+// ------------------------------------------------------- names and modules ---
+
+// A hash of the text of a token, below 10^6.
+fn name_hash[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] int {
+    var h = 7;
+    var k = ast.tstart(st, tok);
+    let to = ast.tend(st, tok);
+    while k < to {
+        h = (h * 33 + lc.at(text, k)) % 1000003;
+        k = k + 1;
+    }
+    return h;
+}
+
+// The module that the import numbered `k` names: its path is the dotted names from token `first`. 0 if it is not a module of the program.
+fn module_of_path[&s, &x](st: &!s [int], text: &x [byte], first: int) -> [] int {
+    var n = 1;
+    while ast.code_at(st, first + 2 * n - 1) == code(lc.Tok::Dot) {
+        n = n + 1;
+    }
+    var m = 1;
+    while m < st[11] {
+        if ast.module_len(st, m) == n {
+            var same = true;
+            var k = 0;
+            while same && k < n {
+                same = ast.same(st, text, first + 2 * k, ast.module_first(st, m) + 2 * k);
+                k = k + 1;
+            }
+            if same {
+                return m;
+            }
+        }
+        m = m + 1;
+    }
+    return 0;
+}
+
+// The module that the qualifier (a token, or -1) reaches from module `from`: `from` itself with none, the module imported under that
+// name if there is one in the program, and -1 if there is not.
+fn resolve[&s, &x](st: &!s [int], text: &x [byte], from: int, qualifier: int) -> [] int {
+    if qualifier < 0 {
+        return from;
+    }
+    var k = 0;
+    while k < st[12] {
+        if ast.import_module(st, k) == from {
+            let keyword = ast.import_keyword(st, k);
+            var last = keyword + 1;
+            while ast.code_at(st, last + 1) == code(lc.Tok::Dot) {
+                last = last + 2;
+            }
+            var alias = last;
+            if ast.code_at(st, last + 1) == code(lc.Tok::As) {
+                alias = last + 2;
+            }
+            if ast.same(st, text, alias, qualifier) {
+                let m = module_of_path(st, text, keyword + 1);
+                if m == 0 {
+                    return 0 - 1;
+                }
+                return m;
+            }
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// The entry of `table` for the name (token) in module `module`, or -1; and, when `make`, a free entry for it if there is none.
+fn entry[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], table: int, home: int, name: int, make: bool) -> [] int {
+    if table < 0 || home < 0 {
+        return 0 - 1;
+    }
+    let p = d[7];
+    var i = (name_hash(st, text, name) + home * 7919) % p;
+    var tries = 0;
+    while tries < p {
+        let at = table + 12 * i;
+        if d[at] == 0 {
+            if make {
+                d[at] = 1;
+                d[at + 1] = home;
+                d[at + 2] = name;
+                return at;
+            }
+            return 0 - 1;
+        }
+        if d[at + 1] == home && ast.same(st, text, d[at + 2], name) {
+            return at;
+        }
+        i = (i + 1) % p;
+        tries = tries + 1;
+    }
+    return 0 - 1;
+}
+
+// The hash just made is the entry for the name.
+fn record[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], table: int, home: int, name: int) -> [] int {
+    let at = entry(st, text, d, table, home, name, true);
+    if at >= 0 {
+        var w = 0;
+        while w < 8 {
+            d[at + 3 + w] = d[16 + w];
+            w = w + 1;
+        }
+    }
+    return 0;
+}
+
+// ----------------------------------------------------------------- types ---
+
+// The `[T, U: val, &r where a <= b]` of a declaration whose `[` is token `start` (-1: none): the type parameters, whether each is
+// bounded `val`, the regions and the clauses of the `where`, into the lists of `d`.
+fn declaration_params[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], start: int) -> [] int {
+    d[5] = 0;
+    d[6] = 0;
+    d[9] = 0;
+    if start < 0 {
+        return 0;
+    }
+    var k = start + 1;
+    while ast.code_at(st, k) != code(lc.Tok::RBracket) && ast.code_at(st, k) != code(lc.Tok::Where) && d[5] + d[6] < d[8] - 2 {
+        if ast.code_at(st, k) == code(lc.Tok::Amp) {
+            d[reg_base(d) + d[6]] = k + 1;
+            d[6] = d[6] + 1;
+            k = k + 2;
+        } else {
+            d[gen_base(d) + d[5]] = k;
+            d[bound_base(d) + d[5]] = 0;
+            k = k + 1;
+            if ast.code_at(st, k) == code(lc.Tok::Colon) {
+                d[bound_base(d) + d[5]] = 1;
+                k = k + 2;
+            }
+            d[5] = d[5] + 1;
+        }
+        if ast.code_at(st, k) == code(lc.Tok::Comma) {
+            k = k + 1;
+        }
+    }
+    if ast.code_at(st, k) == code(lc.Tok::Where) {
+        k = k + 1;
+        var more = true;
+        while more && d[9] < d[8] - 2 {
+            d[out_inner(d) + d[9]] = k;
+            d[out_outer(d) + d[9]] = k + 2;
+            d[9] = d[9] + 1;
+            k = k + 3;
+            if ast.code_at(st, k) == code(lc.Tok::Comma) {
+                k = k + 1;
+            } else {
+                more = false;
+            }
+        }
+    }
+    return 0;
+}
+
+// The position of the name (token) among the first `n` names of the list at `base`: the first or the last match, or -1.
+fn first_position[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], base: int, n: int, name: int) -> [] int {
+    var k = 0;
+    while k < n {
+        if ast.same(st, text, d[base + k], name) {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+fn last_position[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], base: int, n: int, name: int) -> [] int {
+    var k = n;
+    while k > 0 {
+        k = k - 1;
+        if ast.same(st, text, d[base + k], name) {
+            return k;
+        }
+    }
+    return 0 - 1;
+}
+
+// The names of a position in the list of regions; `4294967295` for a name that is none of them.
+fn region_position[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], name: int) -> [] int {
+    let p = first_position(st, text, d, reg_base(d), d[6], name);
+    if p < 0 {
+        return 4294967295;
+    }
+    return p;
+}
+
+// Compare the labels `a` and `b` of the row: -1, 0 or 1, by name and then by argument (none first).
+fn compare_labels[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], a: int, b: int) -> [] int {
+    let na = d[label_name(d) + a];
+    let nb = d[label_name(d) + b];
+    let la = ast.tend(st, na) - ast.tstart(st, na);
+    let lb = ast.tend(st, nb) - ast.tstart(st, nb);
+    var k = 0;
+    while k < la && k < lb {
+        let ca = lc.at(text, ast.tstart(st, na) + k);
+        let cb = lc.at(text, ast.tstart(st, nb) + k);
+        if ca != cb {
+            if ca < cb {
+                return 0 - 1;
+            }
+            return 1;
+        }
+        k = k + 1;
+    }
+    if la != lb {
+        if la < lb {
+            return 0 - 1;
+        }
+        return 1;
+    }
+    let aa = d[label_arg(d) + a];
+    let ab = d[label_arg(d) + b];
+    if aa < 0 && ab < 0 {
+        return 0;
+    }
+    if aa < 0 {
+        return 0 - 1;
+    }
+    if ab < 0 {
+        return 1;
+    }
+    let ma = decoded_length(st, text, aa);
+    let mb = decoded_length(st, text, ab);
+    k = 0;
+    while k < ma && k < mb {
+        let ca = decoded_byte(st, text, aa, k);
+        let cb = decoded_byte(st, text, ab, k);
+        if ca != cb {
+            if ca < cb {
+                return 0 - 1;
+            }
+            return 1;
+        }
+        k = k + 1;
+    }
+    if ma == mb {
+        return 0;
+    }
+    if ma < mb {
+        return 0 - 1;
+    }
+    return 1;
+}
+
+// The effect row whose `[` is token `open`, sorted by name and argument and without repeats: the tag, how many labels, and each.
+fn encode_effects[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], open: int) -> [] int {
+    put_tag(d, 100);
+    var k = open + 1;
+    var n = 0;
+    while ast.code_at(st, k) != code(lc.Tok::RBracket) && n < d[8] - 2 {
+        d[label_name(d) + n] = k;
+        d[label_arg(d) + n] = 0 - 1;
+        k = k + 1;
+        if ast.code_at(st, k) == code(lc.Tok::LParen) {
+            d[label_arg(d) + n] = k + 1;
+            k = k + 3;
+        }
+        if ast.code_at(st, k) == code(lc.Tok::Comma) {
+            k = k + 1;
+        }
+        n = n + 1;
+    }
+    // An insertion sort: the rows are a few labels long.
+    var i = 1;
+    while i < n {
+        var j = i;
+        while j > 0 && compare_labels(st, text, d, j - 1, j) > 0 {
+            let tn = d[label_name(d) + j];
+            let ta = d[label_arg(d) + j];
+            d[label_name(d) + j] = d[label_name(d) + j - 1];
+            d[label_arg(d) + j] = d[label_arg(d) + j - 1];
+            d[label_name(d) + j - 1] = tn;
+            d[label_arg(d) + j - 1] = ta;
+            j = j - 1;
+        }
+        i = i + 1;
+    }
+    var distinct = 0;
+    i = 0;
+    while i < n {
+        if i == 0 || compare_labels(st, text, d, i - 1, i) != 0 {
+            distinct = distinct + 1;
+        }
+        i = i + 1;
+    }
+    put_len(d, distinct);
+    i = 0;
+    while i < n {
+        if i == 0 || compare_labels(st, text, d, i - 1, i) != 0 {
+            put_name(d, st, text, d[label_name(d) + i]);
+            if d[label_arg(d) + i] >= 0 {
+                put_tag(d, t_some());
+                put_literal(d, st, text, d[label_arg(d) + i]);
+            } else {
+                put_tag(d, t_none());
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// A type, as the encoder writes it. Generic parameters and regions are by position, a declared type is by its hash.
+fn encode_type[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int) -> [] int {
+    if ast.is_kind(st, id, kinds.NK::TRef) {
+        put_tag(d, 67);
+        put_flag(d, ast.get(st, id, 4) != 0);
+        let p = last_position(st, text, d, reg_base(d), d[4], ast.get(st, id, 5));
+        if p >= 0 {
+            put_tag(d, t_local());
+            put_u32(d, p);
+        } else {
+            put_tag(d, t_none());
+            put_name(d, st, text, ast.get(st, id, 5));
+        }
+        return encode_type(st, text, d, ast.get(st, id, 6));
+    }
+    if ast.is_kind(st, id, kinds.NK::TSlice) {
+        put_tag(d, 107);
+        return encode_type(st, text, d, ast.get(st, id, 6));
+    }
+    if ast.is_kind(st, id, kinds.NK::TTuple) {
+        put_tag(d, 108);
+        put_len(d, ast.get(st, id, 7));
+        encode_types(st, text, d, ast.get(st, id, 6), ast.get(st, id, 7));
+        return 0;
+    }
+    if ast.is_kind(st, id, kinds.NK::TFn) {
+        put_tag(d, 115);
+        put_len(d, ast.get(st, id, 6));
+        encode_types(st, text, d, ast.get(st, id, 5), ast.get(st, id, 6));
+        encode_effects(st, text, d, ast.get(st, id, 4));
+        return encode_type(st, text, d, ast.get(st, id, 7));
+    }
+    if ast.is_kind(st, id, kinds.NK::TLit) {
+        put_tag(d, 102);
+        return put_literal(d, st, text, ast.get(st, id, 4));
+    }
+    put_tag(d, 64);
+    let name = ast.get(st, id, 5);
+    let g = first_position(st, text, d, gen_base(d), d[5], name);
+    if g >= 0 {
+        put_tag(d, t_local());
+        put_u32(d, g);
+    } else {
+        let m = resolve(st, text, d[0], ast.get(st, id, 4));
+        let at = entry(st, text, d, d[1], m, name, false);
+        if at >= 0 {
+            put_tag(d, t_free());
+            put_hash(d, at + 3);
+        } else {
+            put_tag(d, t_none());
+            put_name(d, st, text, name);
+        }
+    }
+    put_len(d, ast.get(st, id, 7));
+    encode_types(st, text, d, ast.get(st, id, 6), ast.get(st, id, 7));
+    return 0;
+}
+
+fn encode_types[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], head: int, n: int) -> [] int {
+    var at = head;
+    var k = 0;
+    while k < n {
+        encode_type(st, text, d, at);
+        at = ast.next(st, at);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// ----------------------------------------------------------- declarations ---
+
+// A declaration's `val` bounds, one for each type parameter: the mode tag for a bound and nothing for none.
+fn encode_bounds[&j](d: &!j [int]) -> [] int {
+    var k = 0;
+    while k < d[5] {
+        if d[bound_base(d) + k] == 1 {
+            put_tag(d, 98);
+        } else {
+            put_tag(d, t_none());
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// A function's signature. Into `d[16..24]`.
+fn hash_signature[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int) -> [] int {
+    d[0] = ast.get(st, id, 13);
+    declaration_params(st, text, d, ast.get(st, id, 6));
+    d[4] = d[6];
+    begin(d, "cancho.sig.v1");
+    put_name(d, st, text, ast.get(st, id, 4));
+    put_len(d, d[5]);
+    encode_bounds(d);
+    put_len(d, d[6]);
+    put_len(d, d[9]);
+    var k = 0;
+    while k < d[9] {
+        put_u32(d, region_position(st, text, d, d[out_inner(d) + k]));
+        put_u32(d, region_position(st, text, d, d[out_outer(d) + k]));
+        k = k + 1;
+    }
+    put_tag(d, 100);
+    encode_effects(st, text, d, ast.get(st, id, 9));
+    put_len(d, ast.get(st, id, 8));
+    var at = ast.get(st, id, 7);
+    k = 0;
+    while k < ast.get(st, id, 8) {
+        encode_type(st, text, d, ast.get(st, at, 5));
+        at = ast.next(st, at);
+        k = k + 1;
+    }
+    encode_type(st, text, d, ast.get(st, id, 10));
+    return finish(d);
+}
+
+// A foreign function: one identity, and the symbol (the name) is part of it.
+fn hash_extern[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int) -> [] int {
+    d[0] = ast.get(st, id, 13);
+    declaration_params(st, text, d, ast.get(st, id, 6));
+    d[5] = 0;
+    d[4] = d[6];
+    begin(d, "cancho.sig.v1");
+    put_tag(d, 101);
+    put_name(d, st, text, ast.get(st, id, 4));
+    put_name(d, st, text, ast.get(st, id, 4));
+    put_len(d, d[6]);
+    encode_effects(st, text, d, ast.get(st, id, 9));
+    put_len(d, ast.get(st, id, 8));
+    var at = ast.get(st, id, 7);
+    var k = 0;
+    while k < ast.get(st, id, 8) {
+        encode_type(st, text, d, ast.get(st, at, 5));
+        at = ast.next(st, at);
+        k = k + 1;
+    }
+    encode_type(st, text, d, ast.get(st, id, 10));
+    return finish(d);
+}
+
+// The tag for a declared mode: `res` is its own, an absent mode and `val` are one.
+fn mode_tag(mode: int) -> [] int {
+    if mode == 2 {
+        return 99;
+    }
+    return 98;
+}
+
+fn hash_struct[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int) -> [] int {
+    d[0] = ast.get(st, id, 13);
+    declaration_params(st, text, d, ast.get(st, id, 7));
+    d[6] = 0;
+    d[4] = 0;
+    begin(d, "cancho.type.v1");
+    put_tag(d, 96);
+    put_tag(d, mode_tag(ast.get(st, id, 6)));
+    put_name(d, st, text, ast.get(st, id, 4));
+    put_len(d, d[5]);
+    encode_bounds(d);
+    var n = 0;
+    var at = ast.get(st, id, 8);
+    while at >= 0 {
+        n = n + 1;
+        at = ast.next(st, at);
+    }
+    put_len(d, n);
+    at = ast.get(st, id, 8);
+    while at >= 0 {
+        put_name(d, st, text, ast.get(st, at, 4));
+        encode_type(st, text, d, ast.get(st, at, 5));
+        at = ast.next(st, at);
+    }
+    return finish(d);
+}
+
+fn hash_enum[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int) -> [] int {
+    d[0] = ast.get(st, id, 13);
+    declaration_params(st, text, d, ast.get(st, id, 7));
+    d[6] = 0;
+    d[4] = 0;
+    begin(d, "cancho.type.v1");
+    put_tag(d, 97);
+    put_tag(d, mode_tag(ast.get(st, id, 6)));
+    put_name(d, st, text, ast.get(st, id, 4));
+    put_len(d, d[5]);
+    encode_bounds(d);
+    var n = 0;
+    var at = ast.get(st, id, 8);
+    while at >= 0 {
+        n = n + 1;
+        at = ast.next(st, at);
+    }
+    put_len(d, n);
+    at = ast.get(st, id, 8);
+    while at >= 0 {
+        put_name(d, st, text, ast.get(st, at, 4));
+        put_len(d, ast.get(st, at, 6));
+        encode_types(st, text, d, ast.get(st, at, 5), ast.get(st, at, 6));
+        at = ast.next(st, at);
+    }
+    return finish(d);
+}
+
+// A `static`'s signature: its name and its type.
+fn hash_static_type[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int) -> [] int {
+    d[0] = ast.get(st, id, 13);
+    d[5] = 0;
+    d[6] = 0;
+    d[4] = 0;
+    begin(d, "cancho.sig.v1");
+    put_tag(d, 117);
+    put_name(d, st, text, ast.get(st, id, 4));
+    encode_type(st, text, d, ast.get(st, id, 6));
+    return finish(d);
+}
+
+// ---------------------------------------------------------------- bodies ---
+
+// The binder named by the token: its position among those in scope, the last first, or -1.
+fn binder_position[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], name: int) -> [] int {
+    return last_position(st, text, d, bind_base(d), d[3], name);
+}
+
+fn bind[&j](d: &!j [int], name: int) -> [] int {
+    if d[3] < d[8] - 1 {
+        d[bind_base(d) + d[3]] = name;
+        d[3] = d[3] + 1;
+    }
+    return 0;
+}
+
+// A name in a body: the position of its binder if it is bound, the signature it answers to otherwise.
+fn qualified_name[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], qualifier: int, name: int) -> [] int {
+    if qualifier < 0 {
+        let p = binder_position(st, text, d, name);
+        if p >= 0 {
+            put_tag(d, t_local());
+            return put_u32(d, p);
+        }
+    }
+    let m = resolve(st, text, d[0], qualifier);
+    let at = entry(st, text, d, d[2], m, name, false);
+    if at >= 0 {
+        put_tag(d, t_free());
+        return put_hash(d, at + 3);
+    }
+    put_tag(d, t_none());
+    return put_name(d, st, text, name);
+}
+
+// A type named in a body (an enum in a pattern, a struct in a literal): by its hash if it is declared.
+fn type_reference[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], qualifier: int, name: int) -> [] int {
+    let m = resolve(st, text, d[0], qualifier);
+    let at = entry(st, text, d, d[1], m, name, false);
+    if at >= 0 {
+        put_tag(d, t_free());
+        return put_hash(d, at + 3);
+    }
+    put_tag(d, t_none());
+    return put_name(d, st, text, name);
+}
+
+// A region in a body: its position if it is one in scope.
+fn region_reference[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], name: int) -> [] int {
+    let p = last_position(st, text, d, reg_base(d), d[4], name);
+    if p >= 0 {
+        put_tag(d, t_local());
+        return put_u32(d, p);
+    }
+    put_tag(d, t_none());
+    return put_name(d, st, text, name);
+}
+
+fn unary_tag(op: int) -> [] int {
+    if op == 0 {
+        return 1;
+    }
+    if op == 1 {
+        return 2;
+    }
+    if op == 2 {
+        return 4;
+    }
+    return 3;
+}
+
+// The tag of a binary operator, by its number in `ast.op_name`.
+fn binary_tag(op: int) -> [] int {
+    if op == 0 {
+        return 13;
+    }
+    if op == 1 {
+        return 12;
+    }
+    if op <= 7 {
+        return op + 4;
+    }
+    if op == 8 {
+        return 15;
+    }
+    if op == 9 {
+        return 16;
+    }
+    if op == 10 {
+        return 14;
+    }
+    if op == 11 {
+        return 17;
+    }
+    if op == 12 {
+        return 18;
+    }
+    return op - 12;
+}
+
+fn expr_list[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], head: int, n: int) -> [] int {
+    var at = head;
+    var k = 0;
+    while k < n {
+        expr(st, text, d, at);
+        at = ast.next(st, at);
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn expr[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int) -> [] int {
+    if ast.is_kind(st, id, kinds.NK::EInt) {
+        put_tag(d, t_int());
+        return put_i64(d, ast.get(st, id, 4));
+    }
+    if ast.is_kind(st, id, kinds.NK::EFloat) {
+        let single = ast.get(st, id, 4) != 0;
+        let bits = floats.literal_bits(st, text, ast.nstart(st, id), ast.nend(st, id), single);
+        if single {
+            put_tag(d, 116);
+            return put_i64(d, floats.single_bits(bits));
+        }
+        put_tag(d, 114);
+        return put_i64(d, bits);
+    }
+    if ast.is_kind(st, id, kinds.NK::EBool) {
+        put_tag(d, t_bool());
+        return put_flag(d, ast.get(st, id, 4) != 0);
+    }
+    if ast.is_kind(st, id, kinds.NK::EStr) {
+        put_tag(d, 102);
+        return put_literal(d, st, text, ast.get(st, id, 4));
+    }
+    if ast.is_kind(st, id, kinds.NK::EName) {
+        put_tag(d, t_local());
+        return qualified_name(st, text, d, 0 - 1, ast.get(st, id, 4));
+    }
+    if ast.is_kind(st, id, kinds.NK::EIndex) {
+        put_tag(d, 106);
+        expr(st, text, d, ast.get(st, id, 4));
+        return expr(st, text, d, ast.get(st, id, 5));
+    }
+    if ast.is_kind(st, id, kinds.NK::ESlice) {
+        put_tag(d, 112);
+        expr(st, text, d, ast.get(st, id, 4));
+        expr(st, text, d, ast.get(st, id, 5));
+        return expr(st, text, d, ast.get(st, id, 6));
+    }
+    if ast.is_kind(st, id, kinds.NK::ETuple) {
+        put_tag(d, 109);
+        put_len(d, ast.get(st, id, 5));
+        return expr_list(st, text, d, ast.get(st, id, 4), ast.get(st, id, 5));
+    }
+    if ast.is_kind(st, id, kinds.NK::ETupleField) {
+        put_tag(d, 110);
+        put_u32(d, ast.get(st, id, 5));
+        return expr(st, text, d, ast.get(st, id, 4));
+    }
+    if ast.is_kind(st, id, kinds.NK::EAllocSlice) {
+        put_tag(d, 105);
+        region_reference(st, text, d, ast.get(st, id, 4));
+        expr(st, text, d, ast.get(st, id, 5));
+        return expr(st, text, d, ast.get(st, id, 6));
+    }
+    if ast.is_kind(st, id, kinds.NK::EAlloc) {
+        put_tag(d, 104);
+        region_reference(st, text, d, ast.get(st, id, 4));
+        return expr(st, text, d, ast.get(st, id, 5));
+    }
+    if ast.is_kind(st, id, kinds.NK::EStructLit) {
+        put_tag(d, 5);
+        type_reference(st, text, d, ast.get(st, id, 4), ast.get(st, id, 5));
+        put_len(d, ast.get(st, id, 7));
+        var at = ast.get(st, id, 6);
+        var k = 0;
+        while k < ast.get(st, id, 7) {
+            put_name(d, st, text, ast.get(st, at, 4));
+            expr(st, text, d, ast.get(st, at, 5));
+            at = ast.next(st, at);
+            k = k + 1;
+        }
+        return 0;
+    }
+    if ast.is_kind(st, id, kinds.NK::EField) {
+        put_tag(d, 6);
+        expr(st, text, d, ast.get(st, id, 4));
+        return put_name(d, st, text, ast.get(st, id, 5));
+    }
+    if ast.is_kind(st, id, kinds.NK::EVariant) {
+        put_tag(d, 7);
+        type_reference(st, text, d, ast.get(st, id, 4), ast.get(st, id, 5));
+        put_name(d, st, text, ast.get(st, id, 6));
+        put_len(d, ast.get(st, id, 8));
+        return expr_list(st, text, d, ast.get(st, id, 7), ast.get(st, id, 8));
+    }
+    if ast.is_kind(st, id, kinds.NK::EUnary) {
+        put_tag(d, 8);
+        put_tag(d, unary_tag(ast.get(st, id, 4)));
+        return expr(st, text, d, ast.get(st, id, 5));
+    }
+    if ast.is_kind(st, id, kinds.NK::ECall) {
+        put_tag(d, 10);
+        qualified_name(st, text, d, ast.get(st, id, 4), ast.get(st, id, 5));
+        put_len(d, ast.get(st, id, 7));
+        return expr_list(st, text, d, ast.get(st, id, 6), ast.get(st, id, 7));
+    }
+    put_tag(d, 9);
+    put_tag(d, binary_tag(ast.get(st, id, 4)));
+    expr(st, text, d, ast.get(st, id, 5));
+    return expr(st, text, d, ast.get(st, id, 6));
+}
+
+// A block: how many statements and each. The bindings it makes leave with it.
+fn block[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], head: int, n: int) -> [] int {
+    let depth = d[3];
+    put_len(d, n);
+    var at = head;
+    var k = 0;
+    while k < n {
+        stmt(st, text, d, at);
+        at = ast.next(st, at);
+        k = k + 1;
+    }
+    d[3] = depth;
+    return 0;
+}
+
+// The tokens of a match pattern: the wildcard, or the enum and the variant and the bindings, which are pushed as binders.
+fn pattern[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], first: int) -> [] int {
+    if ast.code_at(st, first) == code(lc.Tok::Underscore) {
+        return put_tag(d, 65);
+    }
+    put_tag(d, 66);
+    var k = first;
+    var qualifier = 0 - 1;
+    if ast.code_at(st, k + 1) == code(lc.Tok::Dot) {
+        qualifier = k;
+        k = k + 2;
+    }
+    type_reference(st, text, d, qualifier, k);
+    put_name(d, st, text, k + 2);
+    k = k + 3;
+    var n = 0;
+    if ast.code_at(st, k) == code(lc.Tok::LParen) {
+        var m = k + 1;
+        while ast.code_at(st, m) != code(lc.Tok::RParen) {
+            n = n + 1;
+            m = m + 1;
+            if ast.code_at(st, m) == code(lc.Tok::Comma) {
+                m = m + 1;
+            }
+        }
+    }
+    put_len(d, n);
+    if n > 0 {
+        k = k + 1;
+        var left = n;
+        while left > 0 {
+            if ast.code_at(st, k) == code(lc.Tok::Underscore) {
+                put_tag(d, t_none());
+            } else {
+                put_tag(d, t_some());
+                bind(d, k);
+            }
+            k = k + 1;
+            if ast.code_at(st, k) == code(lc.Tok::Comma) {
+                k = k + 1;
+            }
+            left = left - 1;
+        }
+    }
+    return 0;
+}
+
+// Is the name at token `a` before the name at token `b`, byte by byte?
+fn name_before[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int) -> [] bool {
+    let la = ast.tend(st, a) - ast.tstart(st, a);
+    let lb = ast.tend(st, b) - ast.tstart(st, b);
+    var k = 0;
+    while k < la && k < lb {
+        let ca = lc.at(text, ast.tstart(st, a) + k);
+        let cb = lc.at(text, ast.tstart(st, b) + k);
+        if ca != cb {
+            return ca < cb;
+        }
+        k = k + 1;
+    }
+    return la < lb;
+}
+
+// Does the name at token `a` sort before the name at token `b`, and for the same name, is it written first?
+fn token_before[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int) -> [] bool {
+    if name_before(st, text, a, b) {
+        return true;
+    }
+    return !name_before(st, text, b, a) && a < b;
+}
+
+fn stmt[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int) -> [] int {
+    if ast.is_kind(st, id, kinds.NK::SLet) {
+        put_tag(d, 32);
+        put_flag(d, ast.get(st, id, 4) != 0);
+        if ast.get(st, id, 6) >= 0 {
+            put_tag(d, t_some());
+            encode_type(st, text, d, ast.get(st, id, 6));
+        } else {
+            put_tag(d, t_none());
+        }
+        expr(st, text, d, ast.get(st, id, 7));
+        return bind(d, ast.get(st, id, 5));
+    }
+    if ast.is_kind(st, id, kinds.NK::SAssign) {
+        put_tag(d, 33);
+        expr(st, text, d, ast.get(st, id, 4));
+        return expr(st, text, d, ast.get(st, id, 5));
+    }
+    if ast.is_kind(st, id, kinds.NK::SExpr) {
+        put_tag(d, 34);
+        return expr(st, text, d, ast.get(st, id, 4));
+    }
+    if ast.is_kind(st, id, kinds.NK::SIf) {
+        put_tag(d, 35);
+        expr(st, text, d, ast.get(st, id, 4));
+        block(st, text, d, ast.get(st, id, 5), ast.get(st, id, 6));
+        if ast.get(st, id, 8) >= 0 {
+            put_tag(d, t_some());
+            return block(st, text, d, ast.get(st, id, 7), ast.get(st, id, 8));
+        }
+        return put_tag(d, t_none());
+    }
+    if ast.is_kind(st, id, kinds.NK::SWhile) {
+        put_tag(d, 36);
+        expr(st, text, d, ast.get(st, id, 4));
+        return block(st, text, d, ast.get(st, id, 5), ast.get(st, id, 6));
+    }
+    if ast.is_kind(st, id, kinds.NK::SMatch) {
+        put_tag(d, 37);
+        expr(st, text, d, ast.get(st, id, 4));
+        put_len(d, ast.get(st, id, 6));
+        var arm = ast.get(st, id, 5);
+        var k = 0;
+        while k < ast.get(st, id, 6) {
+            let depth = d[3];
+            pattern(st, text, d, ast.get(st, arm, 4));
+            block(st, text, d, ast.get(st, arm, 5), ast.get(st, arm, 6));
+            d[3] = depth;
+            arm = ast.next(st, arm);
+            k = k + 1;
+        }
+        return 0;
+    }
+    if ast.is_kind(st, id, kinds.NK::SBorrow) {
+        put_tag(d, 68);
+        put_flag(d, ast.get(st, id, 5) != 0);
+        qualified_name(st, text, d, 0 - 1, ast.get(st, id, 4));
+        d[reg_base(d) + d[4]] = ast.get(st, id, 6);
+        d[4] = d[4] + 1;
+        bind(d, ast.get(st, id, 6));
+        block(st, text, d, ast.get(st, id, 7), ast.get(st, id, 8));
+        d[3] = d[3] - 1;
+        d[4] = d[4] - 1;
+        return 0;
+    }
+    if ast.is_kind(st, id, kinds.NK::SRegion) {
+        put_tag(d, 103);
+        d[reg_base(d) + d[4]] = ast.get(st, id, 4);
+        d[4] = d[4] + 1;
+        block(st, text, d, ast.get(st, id, 5), ast.get(st, id, 6));
+        d[4] = d[4] - 1;
+        return 0;
+    }
+    if ast.is_kind(st, id, kinds.NK::SDestructure) {
+        put_tag(d, 39);
+        type_reference(st, text, d, ast.get(st, id, 4), ast.get(st, id, 5));
+        // The field names, sorted: the order they are written in is no part of what the pattern means.
+        let open = ast.get(st, id, 6);
+        var n = 0;
+        var k = open + 1;
+        while ast.code_at(st, k) != code(lc.Tok::RBrace) {
+            n = n + 1;
+            k = k + 1;
+            if ast.code_at(st, k) == code(lc.Tok::Comma) {
+                k = k + 1;
+            }
+        }
+        put_len(d, n);
+        // Each field in turn: the smallest not yet written, by name and then by where it is written (the sort is stable).
+        var written = 0;
+        var last = 0 - 1;
+        while written < n {
+            var best = 0 - 1;
+            k = open + 1;
+            while ast.code_at(st, k) != code(lc.Tok::RBrace) {
+                let after_last = last < 0 || token_before(st, text, last, k);
+                if after_last && (best < 0 || token_before(st, text, k, best)) {
+                    best = k;
+                }
+                k = k + 1;
+                if ast.code_at(st, k) == code(lc.Tok::Comma) {
+                    k = k + 1;
+                }
+            }
+            put_name(d, st, text, best);
+            // The binders go in after the value, in this order: keep the tokens until then.
+            d[bind_base(d) + d[3] + written] = best;
+            last = best;
+            written = written + 1;
+        }
+        expr(st, text, d, ast.get(st, id, 7));
+        d[3] = d[3] + n;
+        return 0;
+    }
+    if ast.is_kind(st, id, kinds.NK::SDestructureTuple) {
+        put_tag(d, 111);
+        let open = ast.get(st, id, 4);
+        var n = 0;
+        var k = open + 1;
+        while ast.code_at(st, k) != code(lc.Tok::RParen) {
+            n = n + 1;
+            k = k + 1;
+            if ast.code_at(st, k) == code(lc.Tok::Comma) {
+                k = k + 1;
+            }
+        }
+        put_len(d, n);
+        expr(st, text, d, ast.get(st, id, 5));
+        k = open + 1;
+        var left = n;
+        while left > 0 {
+            bind(d, k);
+            k = k + 1;
+            if ast.code_at(st, k) == code(lc.Tok::Comma) {
+                k = k + 1;
+            }
+            left = left - 1;
+        }
+        return 0;
+    }
+    if ast.is_kind(st, id, kinds.NK::SReturn) {
+        put_tag(d, 38);
+        return expr(st, text, d, ast.get(st, id, 4));
+    }
+    put_tag(d, 113);
+    return expr(st, text, d, ast.get(st, id, 4));
+}
+
+// A function's body: the parameters are the first binders, and its regions the first regions.
+fn hash_body[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int) -> [] int {
+    d[0] = ast.get(st, id, 13);
+    declaration_params(st, text, d, ast.get(st, id, 6));
+    d[4] = d[6];
+    d[3] = 0;
+    var at = ast.get(st, id, 7);
+    var k = 0;
+    while k < ast.get(st, id, 8) {
+        bind(d, ast.get(st, at, 4));
+        at = ast.next(st, at);
+        k = k + 1;
+    }
+    begin(d, "cancho.body.v1");
+    block(st, text, d, ast.get(st, id, 11), ast.get(st, id, 12));
+    return finish(d);
+}
+
+fn hash_static_body[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int) -> [] int {
+    d[0] = ast.get(st, id, 13);
+    d[5] = 0;
+    d[6] = 0;
+    d[4] = 0;
+    d[3] = 0;
+    begin(d, "cancho.body.v1");
+    block(st, text, d, ast.get(st, id, 7), ast.get(st, id, 8));
+    return finish(d);
+}
+
+// ---------------------------------------------------------------- output ---
+
+fn show_hash[&i, &j](io: &!i Io, d: &!j [int], from: int) -> [io_write] int {
+    var w = 0;
+    while w < 8 {
+        var b = 0;
+        while b < 4 {
+            let octet = d[from + w] >> 8 * b & 255;
+            console.putchar(io, int_of("0123456789abcdef"[octet / 16]));
+            console.putchar(io, int_of("0123456789abcdef"[octet % 16]));
+            b = b + 1;
+        }
+        w = w + 1;
+    }
+    return 0;
+}
+
+// `kind name hash`, the name padded to 24.
+fn line[&i, &s, &x, &j](io: &!i Io, st: &!s [int], text: &x [byte], d: &!j [int], kind: &static [byte], name: int, from: int) -> [io_write] int {
+    console.write_all(io, kind);
+    console.putchar(io, ' ');
+    let from_byte = ast.tstart(st, name);
+    let to_byte = ast.tend(st, name);
+    console.write_all(io, text[from_byte..to_byte]);
+    var pad = to_byte - from_byte;
+    while pad < 24 {
+        console.putchar(io, ' ');
+        pad = pad + 1;
+    }
+    console.putchar(io, ' ');
+    show_hash(io, d, from);
+    return console.newline(io);
+}
+
+fn is_type[&s](st: &!s [int], id: int) -> [] bool {
+    return ast.is_kind(st, id, kinds.NK::IStruct) || ast.is_kind(st, id, kinds.NK::IEnum);
+}
+
+fn is_signature[&s](st: &!s [int], id: int) -> [] bool {
+    return ast.is_kind(st, id, kinds.NK::IFn) || ast.is_kind(st, id, kinds.NK::IExtern);
+}
+
+// The identities of the program, one line each: the types, and then for each function a line for its signature and a line for its
+// body. `items` is how many items there are (for the size of the tables, `size_for`).
+pub fn print[&i, &s, &x, &j](io: &!i Io, st: &!s [int], text: &x [byte], d: &!j [int]) -> [io_write] int {
+    if !floats.all_literals_ok(st, text) {
+        console.write_all(io, "CANNOT a floating-point literal of more than 120 significant digits: its bits are not worked out\n");
+        return 1;
+    }
+    // The types, twice: the first time no name is known, and the second time each is known by the hash of the first.
+    d[1] = 0 - 1;
+    var id = st[15];
+    while id >= 0 {
+        if is_type(st, id) {
+            if ast.is_kind(st, id, kinds.NK::IStruct) {
+                hash_struct(st, text, d, id);
+            } else {
+                hash_enum(st, text, d, id);
+            }
+            record(st, text, d, d[32], ast.get(st, id, 13), ast.get(st, id, 4));
+        }
+        id = ast.next(st, id);
+    }
+    d[1] = d[32];
+    id = st[15];
+    while id >= 0 {
+        if is_type(st, id) {
+            if ast.is_kind(st, id, kinds.NK::IStruct) {
+                hash_struct(st, text, d, id);
+            } else {
+                hash_enum(st, text, d, id);
+            }
+            record(st, text, d, d[33], ast.get(st, id, 13), ast.get(st, id, 4));
+        }
+        id = ast.next(st, id);
+    }
+    // The signatures, with the types as they are now known.
+    d[1] = d[33];
+    id = st[15];
+    while id >= 0 {
+        if is_signature(st, id) {
+            if ast.is_kind(st, id, kinds.NK::IFn) {
+                hash_signature(st, text, d, id);
+            } else {
+                hash_extern(st, text, d, id);
+            }
+            record(st, text, d, d[34], ast.get(st, id, 13), ast.get(st, id, 4));
+        }
+        id = ast.next(st, id);
+    }
+    d[2] = d[34];
+    id = st[15];
+    while id >= 0 {
+        if is_type(st, id) {
+            let at = entry(st, text, d, d[33], ast.get(st, id, 13), ast.get(st, id, 4), false);
+            line(io, st, text, d, "type", ast.get(st, id, 4), at + 3);
+        }
+        id = ast.next(st, id);
+    }
+    id = st[15];
+    while id >= 0 {
+        if is_signature(st, id) {
+            let at = entry(st, text, d, d[34], ast.get(st, id, 13), ast.get(st, id, 4), false);
+            line(io, st, text, d, "sig ", ast.get(st, id, 4), at + 3);
+            if ast.is_kind(st, id, kinds.NK::IFn) {
+                hash_body(st, text, d, id);
+                line(io, st, text, d, "body", ast.get(st, id, 4), 16);
+            } else {
+                line(io, st, text, d, "body", ast.get(st, id, 4), at + 3);
+            }
+        }
+        if ast.is_kind(st, id, kinds.NK::IStatic) {
+            hash_static_type(st, text, d, id);
+            line(io, st, text, d, "sig ", ast.get(st, id, 4), 16);
+            hash_static_body(st, text, d, id);
+            line(io, st, text, d, "body", ast.get(st, id, 4), 16);
+        }
+        id = ast.next(st, id);
+    }
+    return 0;
+}

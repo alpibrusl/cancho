@@ -298,3 +298,14 @@ empty.
 >
 > A tuple destructuring and an enum pattern's bindings are positional and stay
 > that way: `let (a, b) = t` and `let (b, a) = t` are different programs.
+
+## 9. Written in cancho
+
+`examples/selfhost/identity.cho` is `cancho-id`'s `identify` written in cancho (#485), with `blake3.cho` for the hash, and prints what `cancho ids`
+prints (`docs/self-hosting.md` row 5ah). The encoder is the one of §4, fed to the hasher a byte at a time, and the rules of §5 and the decisions
+the Rust file records are kept where they are quirks: the types are hashed twice, the first time with no declared name known, so that a type that
+names another is hashed with the other's first-pass hash; a name declared twice in a module answers with the last declaration; an effect row is
+sorted and has no repeats; a destructuring's field names are sorted; a name no import reaches is encoded by its text. The Rust and the cancho
+identities agree hash for hash on every program of the repository, alone and with the library after it, and on the programs written for the
+places that most easily differ (`selfhost::the_identities_in_cancho_agree_with_the_rust_ones`).
+
