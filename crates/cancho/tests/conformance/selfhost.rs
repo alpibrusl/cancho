@@ -1597,6 +1597,80 @@ fn the_command_line_in_cancho_walks_directories_like_cancho_fmt() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// `cli.cho print`, `print --output json` and `ingest`, against the oracles of the stand-alone ports (the printer, the JSON printer and the
+/// ingester of the Rust front end): the repository's programs and the edge programs, each printed both ways, and the JSON of each, and the
+/// inputs the ingester is tried on, ingested. A program the parser refuses is reported on the standard error (`x.cho: ERR rule from to`) and
+/// makes the status 1; an ingest that is refused gives the same line on the standard output.
+#[test]
+fn the_command_line_in_cancho_prints_and_ingests_like_the_rust_front_end() {
+    let exe = build("cli-print", &with_front_end("cli.cho"));
+    let dir = exe.parent().expect("a scratch directory").join("files");
+    std::fs::create_dir_all(&dir).expect("the directory is made");
+    let run = |name: &str, text: &str, arguments: &[&str]| -> (String, String, i32) {
+        std::fs::write(dir.join(name), text).expect("the file is written");
+        let done = Command::new(&exe)
+            .current_dir(&dir)
+            .args(arguments)
+            .output()
+            .expect("the command line runs");
+        (
+            String::from_utf8_lossy(&done.stdout).into_owned(),
+            String::from_utf8_lossy(&done.stderr).into_owned(),
+            done.status.code().unwrap_or(-1),
+        )
+    };
+    let mut programs = sources();
+    programs.extend(PRINT_EDGE.iter().map(|s| (format!("print edge {s:.40?}"), (*s).to_owned())));
+    programs.extend(JSON_EDGE.iter().map(|s| (format!("json edge {s:.40?}"), (*s).to_owned())));
+    let (mut different, mut printed_ok, mut refused, mut ingested_ok) = (Vec::new(), 0, 0, 0);
+    let mut inputs: Vec<(String, String)> = Vec::new();
+    for (name, text) in &programs {
+        for (form, want, arguments) in [
+            ("text", ast_oracle::printed(text), vec!["print", "x.cho"]),
+            ("json", ast_oracle::printed_json(text), vec!["print", "--output", "json", "x.cho"]),
+        ] {
+            let expected = if want.starts_with("ERR") {
+                refused += 1;
+                (String::new(), format!("x.cho: {want}"), 1)
+            } else {
+                printed_ok += 1;
+                (want.clone(), String::new(), 0)
+            };
+            if run("x.cho", text, &arguments) != expected {
+                different.push(format!("{name} (print, {form})"));
+            }
+        }
+        let json = ast_oracle::printed_json(text);
+        if !json.starts_with("ERR") {
+            inputs.push((format!("{name} as json"), json));
+        }
+    }
+    inputs.extend(INGEST_EDGE.iter().map(|s| (format!("ingest edge {s:.50?}"), (*s).to_owned())));
+    for (name, json) in &inputs {
+        let want = ast_oracle::ingested(json);
+        let status = i32::from(want.starts_with("ERR"));
+        ingested_ok += 1 - status;
+        if run("y.json", json, &["ingest", "y.json"]) != (want, String::new(), status) {
+            different.push(format!("{name} (ingest)"));
+        }
+    }
+    assert!(
+        different.is_empty(),
+        "the command line in cancho and the Rust front end disagree about {} runs:\n{}",
+        different.len(),
+        different.join("\n")
+    );
+    eprintln!(
+        "printed {printed_ok}, refused {refused}, ingested {ingested_ok}, of {} programs and {} inputs",
+        programs.len(),
+        inputs.len()
+    );
+    assert!(printed_ok > 800, "only {printed_ok} prints succeeded");
+    assert!(refused >= 10, "only {refused} programs were refused");
+    assert!(ingested_ok > 400, "only {ingested_ok} ingests succeeded");
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
 /// The first line of the input of the compiler in cancho: the system, and the architecture where Linux has two.
 pub(crate) fn target_line() -> &'static str {
     if cfg!(target_os = "macos") {
