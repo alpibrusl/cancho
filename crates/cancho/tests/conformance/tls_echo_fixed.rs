@@ -46,7 +46,14 @@ fn the_report_names_the_two_paths_and_no_fs_read_of_the_root() {
         .expect("the compiler runs");
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let json = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(json.trim_start().starts_with("{\n  \"bounded\": true,"), "{json}");
+    // The network is held unnarrowed (the operator names the hosts and ports at run time), so the report says it is not
+    // bounded and says why (`docs/net-bounds.md` section 2.4); what it bounds is everything else, below.
+    assert!(
+        json.trim_start().starts_with(
+            "{\n  \"bounded\": false,\n  \"unbounded_by\": [\n    \"net_in(\\\"\\\")\"\n  ],"
+        ),
+        "{json}"
+    );
     assert!(json.contains("\"foreign_symbols\": []"), "{json}");
     assert!(!json.contains("\"fs_read\", \"argument\": \"\""), "{json}");
     let want = [

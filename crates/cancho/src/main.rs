@@ -1233,22 +1233,29 @@ fn mentions_parameter(ty: &Type) -> bool {
     }
 }
 
-/// Whether a label's name bounds what it authorises.
+/// Whether a label bounds what it authorises.
 ///
-/// Every label but one names the domain it grants: `fs_read("/tmp")` is a
-/// directory, `io_write` is one stream, `heap` reaches nothing else. The
-/// exception is `ffi`, whose argument names a *library* -- and a library
-/// is not an authority domain: `Ffi("libc")` grants sockets, processes and
-/// `unlink` in the same breath as `abs` (`docs/under-a-grant.md` §4).
+/// Two kinds of label do not. `ffi` names a *library*, and a library is not
+/// an authority domain: `Ffi("libc")` grants sockets, processes and `unlink`
+/// in the same breath as `abs` (`docs/under-a-grant.md` §4). And `net_out`
+/// or `net_in` with an empty argument is the *unnarrowed root* `split` hands
+/// out -- every host and port, or every port -- which names no domain at all
+/// (`docs/net-bounds.md` §2.4: the same state `narrow(fs, "")` is refused
+/// for). Every other label names the domain it grants: `fs_read("/tmp")` is a
+/// directory, `io_write` is one stream, `heap` reaches nothing else.
 ///
 /// So the report **fails closed**. A supervisor that reads nothing but the
-/// top-level `bounded` field refuses any program that reaches foreign
-/// code, which is the safe default for a report that cannot say what that
-/// code does. Reading further is how a supervisor decides to trust one
-/// anyway -- a decision about the program, which the report must not make
-/// on its behalf.
-fn bounds_its_domain(label: &str) -> bool {
-    label != "ffi"
+/// top-level `bounded` field refuses any program that reaches foreign code
+/// or holds the whole network, which is the safe default for a report that
+/// cannot say what that code does or where those packets go. Reading further
+/// is how a supervisor decides to trust one anyway -- a decision about the
+/// program, which the report must not make on its behalf.
+fn bounds_its_domain(label: &str, argument: Option<&str>) -> bool {
+    match label {
+        "ffi" => false,
+        "net_out" | "net_in" => argument.is_some_and(|bound| !bound.is_empty()),
+        _ => true,
+    }
 }
 
 /// The domains of the negative half (`docs/authority.md` §2.2): what a
@@ -1323,7 +1330,8 @@ fn print_authority(
     let mut kinds: Vec<&str> = performed.iter().map(|(name, _)| name.as_str()).collect();
     kinds.dedup();
 
-    let labels_bounded = performed.iter().all(|(name, _)| bounds_its_domain(name));
+    let labels_bounded =
+        performed.iter().all(|(name, argument)| bounds_its_domain(name, argument.as_deref()));
 
     // `docs/authority.md` §3: `Program::externs` lists every `extern fn`
     // declared in the compiled unit whether anything calls it or not,
@@ -1362,8 +1370,19 @@ fn print_authority(
         })
         .collect();
     let ffi_performed = performed.iter().any(|(name, _)| name == "ffi");
-    let Attribution { bounded: foreign_bounded, unbounded_by } =
+    let Attribution { bounded: foreign_bounded, mut unbounded_by } =
         foreign_report::attribute(ffi_performed, &reach);
+    // The unnarrowed network, named in the same list as the foreign symbols so
+    // `bounded: false` is always explained there (`docs/net-bounds.md` §2.4).
+    let open_network: Vec<String> = performed
+        .iter()
+        .filter(|(name, argument)| {
+            matches!(name.as_str(), "net_out" | "net_in")
+                && !bounds_its_domain(name, argument.as_deref())
+        })
+        .map(|(name, _)| format!("{name}(\"\")"))
+        .collect();
+    unbounded_by.extend(open_network.iter().cloned());
     let bounded = labels_bounded && foreign_bounded;
 
     // The functions the checker can prove are pure (`docs/purity.md` §2).
@@ -1416,6 +1435,7 @@ fn print_authority(
             writeln!(out, "  \"labels\": [")?;
             for (i, (name, argument)) in performed.iter().enumerate() {
                 let comma = if i + 1 == performed.len() { "" } else { "," };
+                let bounds = bounds_its_domain(name, argument.as_deref());
                 let argument = match argument {
                     Some(value) => format!("\"{}\"", escaped(value)),
                     None => "null".to_owned(),
@@ -1424,7 +1444,7 @@ fn print_authority(
                     out,
                     "    {{ \"name\": \"{}\", \"argument\": {argument}, \"bounded\": {} }}{comma}",
                     escaped(name),
-                    bounds_its_domain(name)
+                    bounds
                 )?;
             }
             writeln!(out, "  ],")?;
@@ -1467,7 +1487,7 @@ fn print_authority(
         };
     }
     let written = (|| -> io::Result<()> {
-        if !bounded {
+        if !foreign_bounded {
             writeln!(out, "UNBOUNDED: this program calls foreign code. The labels below bound it")?;
             writeln!(
                 out,
@@ -1476,12 +1496,18 @@ fn print_authority(
             writeln!(out, "a symbol does is the linked library's, not the language's.")?;
             writeln!(out, "See docs/foreign-authority.md.")?;
         }
+        if !open_network.is_empty() {
+            writeln!(out, "UNBOUNDED: this program holds the network without narrowing it. A")?;
+            writeln!(out, "net_out(\"\") reaches every host and port, a net_in(\"\") every port;")?;
+            writeln!(out, "narrow the capability to name the ones it may use.")?;
+            writeln!(out, "See docs/net-bounds.md.")?;
+        }
         if labels.is_empty() {
             writeln!(out, "performs nothing")?;
         } else {
             writeln!(out, "performs")?;
-            for (label, (name, _)) in labels.iter().zip(&performed) {
-                if bounds_its_domain(name) {
+            for (label, (name, argument)) in labels.iter().zip(&performed) {
+                if bounds_its_domain(name, argument.as_deref()) {
                     writeln!(out, "    {label}")?;
                 } else {
                     writeln!(out, "    {label}    <- unbounded")?;

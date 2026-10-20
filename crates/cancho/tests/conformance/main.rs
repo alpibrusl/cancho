@@ -89,6 +89,7 @@ mod memory;
 mod modules;
 mod narrow_many;
 mod net;
+mod net_bounds;
 mod p256;
 mod path_covers;
 mod ports;
