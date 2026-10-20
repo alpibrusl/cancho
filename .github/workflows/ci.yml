@@ -341,18 +341,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `limit`: about three times what each took (6, 22 and 17 minutes), in seconds. A run that has finished its work and
+          # then does not end (the byte-fed job did, twice, on a runner) is killed with a process listing, not left to run.
           - name: byte-fed server
             script: http_server_bytes_mutants.py
+            limit: 1200
           - name: HTTP client
             script: http_client_mutants.py
+            limit: 3600
           - name: streaming body
             script: http_server_body_mutants.py
+            limit: 3000
     steps:
       - uses: actions/checkout@v4
       - name: Compiler
         run: cargo build --release -p cancho
       - name: The mutants (docs/http-server.md §11.5, docs/http-client.md §9, docs/http-server.md §12.13)
-        run: python3 scripts/${{ matrix.script }} ./target/release/cancho
+        run: |
+          rc=0
+          timeout --signal=KILL ${{ matrix.limit }} python3 scripts/${{ matrix.script }} ./target/release/cancho </dev/null || rc=$?
+          echo "the script ended with status $rc"
+          ps -eo pid,ppid,pgid,etime,stat,args --forest | tail -40
+          exit $rc
 
   # docs/satisfy.md (#406): the spec-to-implementation loop's first
   # end-to-end run is a checked property of this repository — the
