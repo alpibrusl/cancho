@@ -391,8 +391,7 @@ pub fn format[&h, &s, &x, &y](heap: &!h Heap, m: &!s [int], src: &x [byte], prin
 
     // `print` has no edition marker to print, and dropping it would change what the file means: it is carried across as the first line.
     var skip = 0;
-    if nin >= 3 && rd(m, s_in(), 0) == code(lc.Tok::Ident) && lc.spells(src, rd(m, s_in() + 1, 0), rd(m, s_in() + 2, 0), "edition") &&
-        rd(m, s_in(), 1) == code(lc.Tok::Int) && rd(m, s_in(), 2) == code(lc.Tok::Semi) {
+    if nin >= 3 && rd(m, s_in(), 0) == code(lc.Tok::Ident) && lc.spells(src, rd(m, s_in() + 1, 0), rd(m, s_in() + 2, 0), "edition") && rd(m, s_in(), 1) == code(lc.Tok::Int) && rd(m, s_in(), 2) == code(lc.Tok::Semi) {
         skip = 3;
     }
 
