@@ -358,11 +358,12 @@ jobs:
         run: cargo build --release -p cancho
       - name: The mutants (docs/http-server.md §11.5, docs/http-client.md §9, docs/http-server.md §12.13)
         run: |
-          # A mutant that crashes dumps a core, and on a runner every dump starts `apport`: 35 of them were running at once when the
-          # byte-fed job's script had ended (run 39399728296), and the job's clean-up took 15 minutes after it. No core, no `apport`.
-          ulimit -c 0
+          # A mutant that crashes dumps a core, and on a runner every dump starts `apport`: dozens of them at once, and the job's
+          # clean-up taking 15 minutes after the script had ended (runs 39399728296 and 39438696805). `ulimit -c 0` did not stop
+          # them: for a piped `core_pattern` the kernel ignores a core limit of 0 and honours exactly 1 (the comment on
+          # `without_a_core_dump` in tests/conformance/differential.rs), so the limit is 1 byte, hard and soft.
           rc=0
-          timeout --signal=KILL ${{ matrix.limit }} python3 scripts/${{ matrix.script }} ./target/release/cancho </dev/null || rc=$?
+          prlimit --core=1:1 -- timeout --signal=KILL ${{ matrix.limit }} python3 scripts/${{ matrix.script }} ./target/release/cancho </dev/null || rc=$?
           echo "the script ended with status $rc"
           ps -eo pid,ppid,pgid,etime,stat,args --forest | tail -40
           exit $rc
