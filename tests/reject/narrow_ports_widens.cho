@@ -1,0 +1,23 @@
+//~ ERROR port is exact
+//~ RULE capability-not-narrowable
+
+// A `Ports` bound names its port exactly, as a `Net` bound does. (`docs/net-bounds.md` §2.2, §3.)
+
+edition 11;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(out);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    let a = narrow(ports, "5353");
+    let b = narrow(a, "53530");
+    release(b);
+    return 0;
+}

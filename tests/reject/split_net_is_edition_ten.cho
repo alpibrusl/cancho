@@ -1,0 +1,11 @@
+//~ ERROR has 11 fields, but this pattern names 10
+//~ RULE arity-mismatch
+
+// From edition 11 `split` answers `out` and `ports` where it answered `net`, so the edition-10 pattern no longer takes it apart. (`docs/net-bounds.md` §3.)
+
+edition 11;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    return 0;
+}

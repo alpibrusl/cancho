@@ -337,6 +337,14 @@ that never replaces a name, and `dir_mode` and `dir_own_mode` ([`directory-listi
 Each is a builtin under an existing label and a name an older file may already declare, so it is absent before
 edition 7 (`tests/reject/dir_rename_new_is_edition_seven.cho`) and nothing else about edition 6 changes.
 
+**Edition 11 is edition 10 plus the network split in two** ([`net-bounds.md`](net-bounds.md) §3): the types `Out` and `Ports`, and
+**an eleventh `Split` field in place of `net`**: `io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty`. `Split` changes
+shape, which is why this is an edition and not a later slice of 10: an edition-10 file destructures `net`, and that pattern is
+`arity-mismatch` against an edition-11 `split()` (`tests/reject/split_net_is_edition_ten.cho`). The dial verbs take a borrowed `Out`
+(or `Net`) and the listen verbs a borrowed `Ports` (or `Net`), so a package written earlier and handed a `Net` keeps working;
+nothing in an edition-11 file can make a `Net`. `Split` is now seven declarations of one name; an edition-10 file's `split()`
+still answers the ten fields it did.
+
 **Edition 10 is edition 9 plus exact host matching in a `Net` bound** ([`net-bounds.md`](net-bounds.md) §2.3). Not a name but a
 meaning: before edition 10 the host half of a bound is a prefix (`127.0.0.1` admits `127.0.0.10`, `ns1.example.com` admits
 `ns1.example.com.attacker.net`), and from it the host is the whole name, or `*.suffix` for one more label, with an empty host

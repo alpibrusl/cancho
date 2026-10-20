@@ -245,6 +245,8 @@ pub fn leaf_free(ty: &Type) -> bool {
             | PRELUDE_HEAP
             | PRELUDE_ARGS
             | PRELUDE_NET
+            | PRELUDE_OUT
+            | PRELUDE_PORTS
             | PRELUDE_CLOCK
             | PRELUDE_SIGNALS
             | PRELUDE_EXEC
@@ -290,6 +292,9 @@ pub(crate) fn is_capability(def: DefId) -> bool {
             | PRELUDE_SIGNALS
             | PRELUDE_SIGNAL_WATCH
             | PRELUDE_NET
+            | PRELUDE_OUT
+            | PRELUDE_PORTS
+            | PRELUDE_SPLIT_PORTS
             | PRELUDE_TTY
             | PRELUDE_SPLIT_TTY
             // §8.2 again, and more sharply: a program that could write
@@ -322,6 +327,8 @@ pub(crate) fn released_only(def: DefId) -> bool {
             | PRELUDE_HEAP
             | PRELUDE_ARGS
             | PRELUDE_NET
+            | PRELUDE_OUT
+            | PRELUDE_PORTS
             | PRELUDE_CLOCK
             | PRELUDE_SIGNALS
             | PRELUDE_EXEC
@@ -619,6 +626,43 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
             }
             _ => Effects::pure(),
         },
+        // `docs/net-bounds.md` §3, edition 11: the two halves of `Net`. `Out(bound)` pays `net_out(bound)` and the
+        // path-free labels of a socket it dialled; `Ports(bound)` pays `net_in(bound)` and those of a listener.
+        PRELUDE_OUT => match args.first() {
+            Some(Type::Lit(bound)) => {
+                let mut all = Effects::new([Label {
+                    name: "net_out".to_owned(),
+                    argument: Some(bound.clone()),
+                }]);
+                all.union(&Effects::plain([
+                    "conn_read",
+                    "conn_write",
+                    "udp_recv",
+                    "udp_send",
+                    "poll",
+                ]));
+                all
+            }
+            _ => Effects::pure(),
+        },
+        PRELUDE_PORTS => match args.first() {
+            Some(Type::Lit(bound)) => {
+                let mut all = Effects::new([Label {
+                    name: "net_in".to_owned(),
+                    argument: Some(bound.clone()),
+                }]);
+                all.union(&Effects::plain([
+                    "conn_accept",
+                    "conn_read",
+                    "conn_write",
+                    "udp_recv",
+                    "udp_send",
+                    "poll",
+                ]));
+                all
+            }
+            _ => Effects::pure(),
+        },
         _ => Effects::pure(),
     }
 }
@@ -721,6 +765,12 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let split_tty = symbol("Split");
     let port = symbol("Port");
     let tty_opened = symbol("TtyOpened");
+    // `docs/net-bounds.md` §3, edition 11: `Net`'s two halves, and the `Split` that carries them in place of `net`.
+    let out = symbol("Out");
+    let out_field = symbol("out");
+    let ports = symbol("Ports");
+    let ports_field = symbol("ports");
+    let split_ports = symbol("Split");
     let truncated_arm = symbol("Truncated");
     let null_arm = symbol("Null");
     let pipe_arm = symbol("Pipe");
@@ -818,6 +868,9 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let split_tty_def = unifier.declare("Split");
     let port_def = unifier.declare("Port");
     let tty_opened_def = unifier.declare("TtyOpened");
+    let out_def = unifier.declare("Out");
+    let ports_def = unifier.declare("Ports");
+    let split_ports_def = unifier.declare("Split");
 
     vec![
         TypeDef {
@@ -1614,6 +1667,34 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             vec![(ok_arm, vec![Type::Named(port_def, Vec::new())]), (failed_arm, vec![Type::Int])],
             span,
         ),
+        // `docs/net-bounds.md` §3, edition 11: the outbound and the inbound halves of `Net`, each indexed by its bound.
+        resource(out, out_def, vec![prefix], span, 11),
+        resource(ports, ports_def, vec![prefix], span, 11),
+        // Edition 11's `Split`: edition 8's ten fields with `net` replaced, in its place, by `out` and `ports`.
+        TypeDef {
+            name: split_ports,
+            def: split_ports_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Struct(vec![
+                (io_field, Type::Named(io_def, Vec::new())),
+                (ffi_field, Type::Named(ffi_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (fs_field, Type::Named(fs_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (heap_field, Type::Named(heap_def, Vec::new())),
+                (args_field, Type::Named(args_def, Vec::new())),
+                (out_field, Type::Named(out_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (ports_field, Type::Named(ports_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (clock_field, Type::Named(clock_def, Vec::new())),
+                (signals_field, Type::Named(signals_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (exec_field, Type::Named(exec_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (tty_field, Type::Named(tty_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            ]),
+            span,
+            since: 11,
+        },
     ]
 }
 

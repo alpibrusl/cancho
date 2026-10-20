@@ -1,0 +1,50 @@
+// `docs/net-bounds.md` §3, edition 11: `split` hands out the two halves of the network, so a program that listens and
+// dials (a resolver: one inbound port, one upstream) carries one narrowed capability for each, which the edition-2
+// `Net` could not do. The report lists `net_out` for the upstream and `net_in` for the port, and nothing is unbounded.
+//~ EXIT 0
+
+edition 11;
+
+fn serve_and_ask[&o, &p](up: &o Out("127.0.0.1:53"), inbound: &p Ports("5353")) -> [net_out("127.0.0.1:53"), net_in("5353")] int {
+    match tcp_listen(inbound, 5353, 8, 0) {
+        Listening::Ok(l) => {
+            listener_close(l);
+        }
+        Listening::Failed(e) => {
+            let ignored = e;
+        }
+    }
+    match tcp_connect(up, "127.0.0.1", 53) {
+        Dialed::Ok(c) => {
+            conn_close(c);
+        }
+        Dialed::Failed(e) => {
+            let ignored = e;
+        }
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    let up = narrow(out, "127.0.0.1:53");
+    let inbound = narrow(ports, "5353");
+    var status = 0;
+    borrow up as &a in {
+        borrow inbound as &b in {
+            status = serve_and_ask(a, b);
+        }
+    }
+    release(up);
+    release(inbound);
+    return status;
+}

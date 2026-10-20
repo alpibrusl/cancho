@@ -245,11 +245,16 @@ pub fn refused_pair[&s, &x](st: &!s [int], text: &x [byte], path: bool, a: int, 
 
 // The capabilities `narrow` accepts, by the name of their prelude type; and the three that narrow into several.
 pub fn narrows[&s](st: &!s [int], index: int) -> [] bool {
-    return index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Net") || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || index == netcode.prelude_named("Tty");
+    return index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || is_net(st, index) || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || index == netcode.prelude_named("Tty");
 }
 
 pub fn narrows_many[&s](st: &!s [int], index: int) -> [] bool {
-    return index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Exec") || index == netcode.prelude_named("Net");
+    return index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Exec") || is_net(st, index);
+}
+
+// `Net`, and the two halves of it from edition 11 (`docs/net-bounds.md` 3): bounded by the same `host:port` text.
+pub fn is_net[&s](st: &!s [int], index: int) -> [] bool {
+    return index == netcode.prelude_named("Net") || index == netcode.prelude_named("Out") || index == netcode.prelude_named("Ports");
 }
 
 // A path capability: the separator rule applies to the literals (`Fs`, `Exec`, `Tty`); `Net` is a host prefix and an exact port.
@@ -259,7 +264,7 @@ pub fn is_path[&s](st: &!s [int], index: int) -> [] bool {
 
 // A capability whose literal is checked here: the paths and `Net`. `Ffi` and `Signals` name a set, and narrow as one.
 pub fn checked[&s](st: &!s [int], index: int) -> [] bool {
-    return is_path(st, index) || index == netcode.prelude_named("Net");
+    return is_path(st, index) || is_net(st, index);
 }
 
 // Is the library written in text[ts..te] one of those of the set `held` (names separated by commas)?
@@ -453,7 +458,7 @@ pub fn refused[&s, &x](st: &!s [int], text: &x [byte], cty: int, lit: int, nargs
 // A capability whose only consumer is `release`: the root authorities, which are not taken apart and not destroyed by
 // anything else (`released_only`).
 pub fn released_only[&s](st: &!s [int], index: int) -> [] bool {
-    return index == netcode.prelude_named("World") || index == netcode.prelude_named("Io") || index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Heap") || index == netcode.prelude_named("Args") || index == netcode.prelude_named("Net") || index == netcode.prelude_named("Clock") || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || index == netcode.prelude_named("Tty");
+    return index == netcode.prelude_named("World") || index == netcode.prelude_named("Io") || index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Heap") || index == netcode.prelude_named("Args") || is_net(st, index) || index == netcode.prelude_named("Clock") || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || index == netcode.prelude_named("Tty");
 }
 
 // ---------------------------------------------------------------- listeners ---
@@ -536,14 +541,27 @@ fn covers[&s, &x](st: &!s [int], text: &x [byte], bound: int, address: int) -> [
     return only == 0 || only == address;
 }
 
-// A listener (`tcp_listen`, `tcp_listen_on`, `udp_bind`) through the `Net` that was handed over: it must be a borrowed `Net`,
+// A dial (`connect`, `tcp_connect`, `tcp_connect_start`, `udp_connect`) takes a borrowed `Net` or, from edition 11, an `Out`: never a
+// `Ports`, which holds the listening half. True if refused.
+pub fn dial_refused[&s](st: &!s [int], which: int, cap: int, from: int, to: int) -> [] bool {
+    if which != 33 && which != 37 && which != 110 && which != 129 {
+        return false;
+    }
+    if types.is_ref(st, cap) && types.is_prelude(st, types.ref_inner(st, cap)) && types.prelude_index(st, types.ref_inner(st, cap)) == netcode.prelude_named("Ports") {
+        ast.fail(st, rules.r_capability_misused(), from, to);
+        return true;
+    }
+    return false;
+}
+
+// A listener (`tcp_listen`, `tcp_listen_on`, `udp_bind`) through the `Net` that was handed over: it must be a borrowed `Net` or `Ports`,
 // and what it was narrowed to must grant the interface the call binds: every one for `tcp_listen` and `udp_bind`, the address
 // of the literal for `tcp_listen_on`. True if refused.
 pub fn listen_refused[&s, &x](st: &!s [int], text: &x [byte], which: int, on: bool, cap: int, address: int, from: int, to: int) -> [] bool {
     if which != 36 && which != 130 {
         return false;
     }
-    if !types.is_ref(st, cap) || !types.is_prelude(st, types.ref_inner(st, cap)) || types.prelude_index(st, types.ref_inner(st, cap)) != netcode.prelude_named("Net") {
+    if !types.is_ref(st, cap) || !types.is_prelude(st, types.ref_inner(st, cap)) || (types.prelude_index(st, types.ref_inner(st, cap)) != netcode.prelude_named("Net") && types.prelude_index(st, types.ref_inner(st, cap)) != netcode.prelude_named("Ports")) {
         ast.fail(st, rules.r_capability_misused(), from, to);
         return true;
     }

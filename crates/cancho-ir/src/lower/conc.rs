@@ -51,6 +51,8 @@ fn crosses_to_a_thread(ty: &Type) -> bool {
                 | PRELUDE_ARGS
                 | PRELUDE_HEAP
                 | PRELUDE_NET
+                | PRELUDE_OUT
+                | PRELUDE_PORTS
                 | PRELUDE_CLOCK
         ),
         _ => false,

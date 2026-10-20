@@ -4,6 +4,11 @@
 
 use crate::*;
 
+/// `Net` and its two halves of edition 11 (`docs/net-bounds.md` §3) are bounded by the same `host:port` text.
+pub(super) fn is_net(which: usize) -> bool {
+    which == PRELUDE_NET || which == PRELUDE_OUT || which == PRELUDE_PORTS
+}
+
 /// A `Net` bound as the run time reads it: the host half, matched as a prefix, and the port half, matched
 /// exactly (`crates/cancho-codegen/src/body/net.rs`, `connect_raw`, and `docs/connect.md` section 10.1). A bound
 /// with a `:` splits at the last one; bare digits are a port with no host (a listener's, `docs/listen.md`);
@@ -53,7 +58,7 @@ pub(super) fn check_narrowing(
 ) -> Result<(), Diagnostic> {
     // From edition 10 a `Net` bound is not a textual prefix of what it admits (`*.example.com` admits
     // `api.example.com`), so `net_contains` below is its whole containment test.
-    if !(which == PRELUDE_NET && edition >= 10) && !target.starts_with(current) {
+    if !(is_net(which) && edition >= 10) && !target.starts_with(current) {
         return Err(Diagnostic::new(
             Rule::CapabilityNotNarrowable,
             format!(
@@ -83,7 +88,7 @@ pub(super) fn check_narrowing(
     }
     // A `Net` bound's port is matched exactly, so a longer string is not a narrower grant: `127.0.0.1:80` is
     // a prefix of `127.0.0.1:8080`, whose port the parent does not admit.
-    if which == PRELUDE_NET && !net_contains(current, target, edition >= 10) {
+    if is_net(which) && !net_contains(current, target, edition >= 10) {
         return Err(Diagnostic::new(
             Rule::CapabilityNotNarrowable,
             format!(
@@ -136,13 +141,13 @@ pub(super) fn narrow_into_several(
         for (j, b) in targets.iter().enumerate().skip(i + 1) {
             // A `Net` bound is a host prefix and an exact port, so one inside another is `net_contains`; the
             // paths extend at a `/`.
-            let nested = if which == PRELUDE_NET {
+            let nested = if is_net(which) {
                 net_contains(a, b, edition >= 10) || net_contains(b, a, edition >= 10)
             } else {
                 extends_path(a, b) || extends_path(b, a)
             };
-            let what = if which == PRELUDE_NET { "bounds" } else { "paths" };
-            let why = if a == b && which == PRELUDE_NET {
+            let what = if is_net(which) { "bounds" } else { "paths" };
+            let why = if a == b && is_net(which) {
                 "are the same bound, so the second grants nothing the first does not"
             } else if a == b {
                 "are the same path, so the second grants nothing the first does not"

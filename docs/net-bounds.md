@@ -1,6 +1,6 @@
 # Net bounds: separate ways in and out, set-valued, exact host matching
 
-> **Status: design, answering #362. Steps 1 (the report, §2.4), 2 (several children from one `narrow`, §2.2) and 3A (exact hosts, §2.3, edition 10) of §3 are built; 3B (the `out`/`ports` split, §2.1) is not.** The measurements
+> **Status: design, answering #362. Steps 1 (the report, §2.4), 2 (several children from one `narrow`, §2.2) and 3A (exact hosts, §2.3, edition 10) of §3 are built; 3B (the `out`/`ports` split, §2.1, edition 11) is built too; §3 below says how.** The measurements
 > it rests on are reproduced in the issue and were taken on `main` at
 > `0567e72` by cancho-dns's design document (alpibrusl/cancho-dns#19 §2);
 > this document is the answer to "what should the language do instead",
@@ -149,8 +149,29 @@ and should: it is a report lie, not a vocabulary gap.
      `crates/cancho/tests/conformance/net_hosts.rs`; fixtures `tests/accept/narrow_net_hosts_edition_ten.cho`,
      `tests/accept/narrow_many_net_exact_hosts.cho`, `tests/reject/narrow_net_{exact_host_widens,wildcard_from_exact,wildcard_two_labels}.cho`,
      `tests/reject/narrow_many_net_wildcard_nested.cho`.
-   * **3B, the `out`/`ports` split. Not built.** It changes `Split` and so is its own edition-10 slice or an edition 11,
-     depending on whether 3A has shipped by then; it changes every file that destructures `net`.
+   * **3B, the `out`/`ports` split: edition 11.** Decisions, before the code:
+     * **Two new prelude types, `Out("bound")` and `Ports("bound")`,** each a leaf-free `res` capability indexed by its
+       bound as `Net` is, and **an eleventh-field `Split`** for edition 11: `io, ffi, fs, heap, args, out, ports, clock,
+       signals, exec, tty` (`net` is replaced by the two, in its place). Appended to the prelude after `TtyOpened`, so no
+       earlier index moves. An edition-11 file's `split()` answers it; earlier editions' are unchanged.
+     * **The dial verbs (`connect`, `tcp_connect`, `tcp_connect_start`, `udp_connect`) take a borrowed `Out`; the listen
+       verbs (`bind`, `tcp_listen`, `tcp_listen_on`, `udp_bind`) take a borrowed `Ports`.** A borrowed `Net` is still
+       accepted by both families, so a package written before edition 11 and handed a `Net` keeps working, and nothing
+       in an edition-11 file can *make* a `Net`. The labels are the ones they always were, `net_out(bound)` for a dial and
+       `net_in(bound)` for a listener: the report does not change shape, only what is held.
+     * **What owning each discharges.** `Out(b)`: `net_out(b)` and the path-free handle labels a dialled socket carries
+       (`conn_read`, `conn_write`, `udp_send`, `udp_recv`, `poll`). `Ports(b)`: `net_in(b)` and those a listener carries
+       (`conn_accept`, `conn_read`, `conn_write`, `udp_recv`, `udp_send`, `poll`). Neither discharges the other's verb
+       label, so a program holding only `Ports` cannot dial and one holding only `Out` cannot listen, which is the point.
+     * **`narrow`** takes either, one literal or several, with the edition-10 containment (exact host, port exact) and the
+       same refusals. `release` consumes either. A thread can own either (`spawn`).
+     * **Not in it:** an `Out` that dials and a `Ports` that listens do not share a bound, so a program that wants one host
+       for both says it twice; an inbound host list (`§4`) stays out.
+     **Built.** Fixtures: `tests/accept/split_out_ports.cho` (a resolver-shaped program holds both and the report lists `net_out`
+     for the upstream and `net_in` for the port), `tests/reject/{dial_through_ports,listen_through_out,split_net_is_edition_ten,narrow_ports_widens}.cho`;
+     `crates/cancho/tests/conformance/net_split.rs` (the report, and each half's bound enforced on both backends). The compiler in
+     cancho mirrors it (`narrowing.cho`: `is_net`, `dial_refused`, `listen_refused` taking `Ports`; `builtins.split_for`; the
+     prelude and discharge tables are generated).
 
 Each step leaves cancho-dns unblocked further, and step 1 alone
 corrects what its design document measured.

@@ -126,10 +126,17 @@ pub const PRELUDE_SPLIT_TTY: usize = 50;
 pub const PRELUDE_PORT: usize = 51;
 pub const PRELUDE_TTY_OPENED: usize = 52;
 
+/// `docs/net-bounds.md` §3, edition 11: the outbound and the inbound halves of [`PRELUDE_NET`] as two capabilities
+/// (leaf-free, indexed by their bound as `Net` is), and the eleven-field `Split` that carries them in place of `net`.
+/// Appended last so no earlier index moves.
+pub const PRELUDE_OUT: usize = 53;
+pub const PRELUDE_PORTS: usize = 54;
+pub const PRELUDE_SPLIT_PORTS: usize = 55;
+
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 53;
+pub const PRELUDE_COUNT: usize = 56;
 
 /// Which path operation an [`Expr::PathOp`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -440,6 +440,8 @@ impl<'a> FnLowering<'a> {
         if which != PRELUDE_FFI
             && which != PRELUDE_FS
             && which != PRELUDE_NET
+            && which != PRELUDE_OUT
+            && which != PRELUDE_PORTS
             && which != PRELUDE_SIGNALS
             && which != PRELUDE_EXEC
             // `docs/tty.md` §4: a device-path prefix, `Fs`'s shape.
@@ -448,7 +450,7 @@ impl<'a> FnLowering<'a> {
             return Err(Diagnostic::new(
                 Rule::CapabilityNotNarrowable,
                 format!(
-                    "`{}` carries no value to narrow; `Ffi`, `Fs`, `Net`, `Signals`, `Exec` and `Tty` are the capabilities that name one",
+                    "`{}` carries no value to narrow; `Ffi`, `Fs`, `Net`, `Out`, `Ports`, `Signals`, `Exec` and `Tty` are the capabilities that name one",
                     self.unifier.display(&resolved)
                 ),
                 span,
@@ -464,7 +466,7 @@ impl<'a> FnLowering<'a> {
         // `docs/narrowing-into-several.md` section 5, item 4, and `docs/net-bounds.md`
         // section 2.2: the two path capabilities and `Net` narrow into several. The
         // others already name a set in one capability.
-        if many && which != PRELUDE_FS && which != PRELUDE_EXEC && which != PRELUDE_NET {
+        if many && which != PRELUDE_FS && which != PRELUDE_EXEC && !narrow::is_net(which) {
             return Err(Diagnostic::new(
                 Rule::CapabilityNotNarrowable,
                 narrow_many_refusal(which),
