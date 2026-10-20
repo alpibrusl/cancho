@@ -119,8 +119,8 @@ real files in turn and formats what is left.
 the driver and the root `formatter.cho`. It reads two files on standard input, as `FILE <length>` and the bytes: the source, and the text the printer
 (`printer.cho`, mode 4) wrote for it, and writes the formatted source, or the line `CANNOT <sentence>` with the sentence `format.rs` gives
 (`line 5: an import after the first declaration; ...`). Run on its own it does **not** do the checks of §4: they need the printer run on the result,
-which belongs to what runs the printer and the formatter in turn, and no such program is written yet (the command line in cancho, #485). Until it is, a
-program that uses this runs the three checks itself.
+which belongs to what runs the printer and the formatter in turn: `examples/selfhost/cli.cho` (`docs/cli-in-cancho.md` §7) does, and runs the three
+checks itself.
 
 **Measured (Linux x86-64, debug `cancho`).** `selfhost::the_formatter_in_cancho_agrees_with_the_rust_formatter` compares it with `cancho_syntax::format`
 on 2,474 programs and finds no difference: every program of the repository, 25 edge programs (a comment in each place a comment can stand, `edition`,

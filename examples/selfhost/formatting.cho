@@ -808,3 +808,26 @@ pub fn finish[&h, &x](heap: &!h Heap, text: &x [byte]) -> [heap] buffer.Buffer {
     }
     return buffer.append(heap, buffer.empty(heap, e + 1), text[0..e]);
 }
+
+// The comments of `text`, in order, each without the white space at its end and followed by a newline: what the second check of
+// `docs/formatting.md` section 4 compares (the same comments, in the same order). Nothing if `text` does not tokenise.
+pub fn comments_of[&h, &x](heap: &!h Heap, text: &x [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    let area = box_slice(heap, size_for(len(text), len(text)), 0);
+    borrow mut area as &!b in {
+        let m = contents(b);
+        layout(m, len(text), len(text));
+        if tokenise(m, text, s_all(), s_all_comments(), s_counts_all()) == 0 {
+            var c = 0;
+            while c < m[s_counts_all() + 1] {
+                let from = rd(m, s_all_comments(), c);
+                let to = trimmed_end(text, from, rd(m, s_all_comments() + 1, c));
+                out = buffer.append(heap, out, text[from..to]);
+                out = put_byte(heap, out, '\n');
+                c = c + 1;
+            }
+        }
+    }
+    unbox_slice(heap, area);
+    return out;
+}
