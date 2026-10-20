@@ -179,6 +179,10 @@ def judge(job):
     if text is None:
         return name, "BAD", f"`old` occurs {n} times"
     r = run(exe, text, name)
+    if name in EQUIVALENT and (r.returncode == 4 or "FAILED" in r.stdout):
+        # Argued equivalent and killed once: a run that failed for load (four builds on two cores, `LIMIT`) and not for the
+        # mutation looks the same, so it is run again; it is killed only if it fails twice.
+        r = run(exe, text, name)
     if r.returncode == 4 or "FAILED" in r.stdout:
         return name, "killed", ""
     if r.returncode == 0:
