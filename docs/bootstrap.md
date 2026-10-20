@@ -59,15 +59,20 @@ Tracked in [#491](https://github.com/alpibrusl/cancho/issues/491): the other com
 Rust crates; keeping golden outputs for when the Rust compiler is gone, and a seed that needs no Rust; compile time
 and whether Windows is a target.
 
-**Code quality, measured once** (Linux x86-64, `tests/programs/tls_prims_bench.cho` built with `--std`, instructions
+**Code quality, measured twice** (Linux x86-64, `tests/programs/tls_prims_bench.cho` built with `--std`, instructions
 a call under valgrind as `scripts/tls_perf.py check` counts them, against the baseline recorded for the Rust
-compiler): the Rust compiler is within 1.06 of the baseline on all 36 rows; the compiler in cancho is 1.26 to 1.32
-times it on the P-256 rows (`p256_shared` 1.32, `p256_public` 1.30, ECDSA 1.26 to 1.28), about the same on the
-AES-GCM, ChaCha20-Poly1305, HKDF, HMAC, SHA-2 and X25519 rows (0.97 to 1.13) and 4.97 on `calibrate` (a loop of a
-single instruction a step for the Rust compiler, 5,007 instructions a call against 1,008). The binary is 360,208
-bytes against 318,656. So the `tls-perf` job builds with `CANCHO_COMPILER=rust`: its baseline is the Rust compiler's
-code, and it guards that. Closing this gap, or recording a baseline of the compiler in cancho, is code quality's
-share of #491.
+compiler). The first measurement: the Rust compiler is within 1.06 of the baseline on all 36 rows; the compiler in cancho,
+which passed `clang -O1` the IR it wrote (the Rust backend passes `-O2`), was 1.26 to 1.32 times it on the P-256 rows
+(`p256_shared` 1.32, `p256_public` 1.30, ECDSA 1.26 to 1.28), about the same on the AES-GCM, ChaCha20-Poly1305, HKDF, HMAC,
+SHA-2 and X25519 rows (0.97 to 1.13) and 4.97 on `calibrate` (a loop of a single instruction a step for the Rust compiler,
+5,007 instructions a call against 1,008). The binary was 360,208 bytes against 318,656. **The second, with `-O2` for the
+compiler in cancho as well** (`selfhost_build.rs` and `builder.cho`; no other change): all 36 rows within 1.3, the P-256
+rows 1.03 to 1.05 (`p256_shared` 1.04, `p256_public` 1.04, ECDSA 1.03 to 1.05), `calibrate` 1.00; the binary 372,664 bytes.
+The price, one machine, three runs each: building `tls_prims_bench` took 4.7 s with `-O2` against 3.95 s with `-O1` (the
+build of `cancho-gpu` was 13 to 15 s either way at the first measurement). So the `tls-perf` job still builds with
+`CANCHO_COMPILER=rust`, because its baseline is the Rust compiler's code and it guards that; it can now run on either, and
+this document does not change it. The `-O1` gap was not the only one #489 found: the 7 to 11 times on `cancho-gpu` was a
+zero fill (#547, #549), not the optimiser.
 
 # History: the v0 compiler
 
