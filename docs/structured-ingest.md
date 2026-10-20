@@ -151,3 +151,42 @@ outlives clause swapped; the escape of a control character), by 3, 1, 17, 7 and 
 port works out; it writes the one line `CANNOT a floating-point literal of more than 120 significant digits: its bits are not worked out`
 and nothing else, and exits 1. The repository has no such literal. `ingest` (JSON back to text) is not written yet; it is the other
 direction and needs a JSON reader and the refusal rules `ingest-json`, `ingest-node` and `ingest-arity`.
+
+## 7. `ingest` written in cancho
+
+`cancho ingest` reads JSON, builds the tree, and writes `print` of it (`ingest.rs`: `read_json`, `json_to_ast`). The cancho printer
+(`printing.cho`) reads the tree `ast.cho` builds, and that tree keeps names, effect rows, `[T, &r where ..]` lists and patterns as **tokens** of a
+text. So that the printer is the one that writes, and `ingest` is not a second printer to keep equal to the first, the builder makes what the parser
+would have: the nodes, and a synthetic text with the tokens they point at (every name as its spelling, a string as its literal, an effect row as
+`[io, ffi("libc")]`, a pattern as `E::A(x, _)`), and `printing.print` runs on that. Three parts:
+
+* `jsonread.cho`: `read_json` and its refusals (`ingest-json`: the same positions and spans as `json.rs`, the depth limit of 128 included, and
+  the second limit `too_deep` of `json_to_ast`, which refuses a container at depth 128 where the reader still allows one). Values are records of
+  six integers in one array (kind, start, end, and what the kind keeps), strings are decoded where they are used, so no string is copied until a
+  name needs one.
+* `ingest.cho`: `Builder` in the order `ingest.rs` checks things, which decides which refusal is first (a sticky refusal, as in `ast.cho`): the
+  `unit` fields in the order written, then the module path and the imports, then every item. Names are tested as the Rust builder tests them
+  (an identifier the lexer would make one token of, and not a keyword). A float literal arrives as bits, which the printer cannot read from text:
+  the node keeps them, and `floatprint.cho` writes the digits from the bits (`from_bits`), which is what `literal` already did after reading
+  them, with `NaN` and the infinities added as `print.rs` writes them.
+* driver mode 8 and the root `ingester.cho`; a refusal is the line `ERR rule from to`, as for the printer, with the three new tags.
+
+What is measured is, as before, agreement with the Rust command: the JSON of every program of the repository (which must give back the text
+`print` gives), and JSON that is wrong in each way the refusals list (a missing or mistyped field, an unknown kind, a name that is not an
+identifier or is a keyword, a duplicate key, an empty `items`, a negative tuple index, a bit pattern too wide, nesting past the limit,
+malformed JSON in each of the reader's ways), compared as the refusal line.
+
+**Measured (Linux x86-64, debug `cancho`).** `selfhost::the_ingester_in_cancho_agrees_with_the_rust_one` compares it with `read_json` and
+`json_to_ast` and `print` on 8,000 inputs and finds no difference: the JSON of every program of the repository and of the edge programs (which must
+give the text `print` gives), the same JSON damaged once or twice at a random place in each of twenty ways (most of the 8,000) (a node made `null`, a
+boolean, an integer, a string, a keyword, a number with a fraction or too large, an empty array or object; a child taken away, written twice or
+renamed to `kind`; two elements swapped), 110 inputs written to be wrong in each way the three rules list, the reader's own failures
+(an unterminated string, a bad escape, a trailing comma, a duplicate key, a number that is not one, text after the value) and nesting of 126 to
+130 arrays and objects, the limit where `too_deep` and the reader differ. Every refusal is compared as the line `ERR rule from to`: the rule and
+the span. More than 20 inputs are refused by each of the three rules, and more than 300 are let through. Eight mutants of `jsonread.cho` and
+`ingest.cho` fail it (the span of a duplicate key; the empty tuple; a 32-bit pattern one too wide; an empty `items`; the depth at which `too_deep`
+refuses; the keyword check of a name; the wrapping of a tuple index to 32 bits; the exponent of a subnormal `f32`).
+
+**What differs.** The sentences: the refusal is the line with the rule and the span, not the message `ingest.rs` gives (the command line will
+say them from `rules.sentence`, as it does for the other commands). A bit pattern that is not finite is written as `NaN.0` and `inf.0`, as `print.rs` writes
+the `Display` of one.

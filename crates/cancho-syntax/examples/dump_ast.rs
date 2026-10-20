@@ -501,6 +501,21 @@ pub fn printed_json(source: &str) -> String {
     format!("{}\n", cancho_syntax::write_json(&cancho_syntax::ast_to_json(&ast)))
 }
 
+/// What `cancho ingest` makes of `json` (`ingest.rs`, `read_json` and `json_to_ast`, then `print`), or the refusal line `ERR rule from to` with
+/// a span in the JSON: the oracle of `examples/selfhost/ingester.cho`.
+pub fn ingested(json: &str) -> String {
+    let refusal = |d: cancho_syntax::Diagnostic| {
+        format!("ERR {} {} {}\n", d.rule.tag(), d.span.start, d.span.end)
+    };
+    match cancho_syntax::read_json(json) {
+        Err(d) => refusal(d),
+        Ok(value) => match cancho_syntax::json_to_ast(&value) {
+            Err(d) => refusal(d),
+            Ok(ast) => cancho_syntax::print(&ast),
+        },
+    }
+}
+
 /// The formatted text for `source` (`format.rs`), or the one line `CANNOT why` for a file it will not format, or the refusal line of
 /// the parser: the oracle of `examples/selfhost/formatter.cho`.
 pub fn formatted(source: &str) -> String {

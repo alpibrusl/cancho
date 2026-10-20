@@ -308,10 +308,30 @@ pub fn literal[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], from: int
         // More digits than the scratch holds: the literal as it was written.
         return console.write_all(io, text[from..to]);
     }
+    return from_bits(io, st, bits, single);
+}
+
+// The canonical text of the `double` with these bits (`single`: of the `f32` of the same value, which has the suffix and is written with
+// the digits that tell it from its neighbours among `f32`s). The infinities and `NaN` are written as `Display` writes them, with `.0`.
+pub fn from_bits[&i, &s](io: &!i Io, st: &!s [int], bits: int, single: bool) -> [io_write] int {
+    let field = bits >> 52 & 2047;
+    if field == 2047 {
+        if bits & 4503599627370495 != 0 {
+            console.write_all(io, "NaN.0");
+        } else {
+            if bits < 0 {
+                console.putchar(io, '-');
+            }
+            console.write_all(io, "inf.0");
+        }
+        if single {
+            return console.write_all(io, "f32");
+        }
+        return 0;
+    }
     if bits < 0 {
         console.putchar(io, '-');
     }
-    let field = bits >> 52 & 2047;
     var significand = bits & 4503599627370495;
     var exponent = field - 1075;
     if field > 0 {

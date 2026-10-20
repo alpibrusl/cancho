@@ -1,0 +1,1621 @@
+module selfhost.ingest;
+
+// ingest.cho -- `cancho ingest`, written in cancho: the builder of `json_to_ast` in `crates/cancho-syntax/src/ingest.rs`
+// (`docs/structured-ingest.md` section 7).
+//
+// The JSON is read by `jsonread.cho` into records. This module walks them in the order `ingest.rs` does, which decides which refusal is
+// the first, and builds what the parser would have built: the nodes of `ast.cho`'s tree, and a synthetic text with the tokens they point
+// at (a name as its spelling, a string as its literal, an effect row as `[io, ffi("libc")]`, a pattern as `E::A(x, _)`, a declaration's
+// `[T, &r where a <= b]`), so that `printing.print` writes it and is the one printer there is.
+//
+// The three refusals are `ingest-json` (`jsonread.cho`), `ingest-node` (a word that names nothing, a name that is not an identifier or is a
+// keyword) and `ingest-arity` (a known node with the wrong shape), each with the span of the JSON value it is about. Like the refusals of
+// `ast.cho` they are sticky: the first is kept, and after it every function builds nothing and reads nothing.
+//
+// What the state keeps beyond `ast.cho`'s: 0 where the next byte of the synthetic text goes, 7 how many tokens there can be, 63 how many nodes.
+
+import selfhost.lexcore as lc;
+import selfhost.ast;
+import selfhost.kinds;
+import selfhost.rules;
+import selfhost.jsonread;
+import selfhost.floats;
+
+// ----------------------------------------------------------------- sizes ---
+
+// What `st` needs for the records of `jm`: how many tokens, nodes and imports, and the scratch the printer works floats out in.
+pub fn tokens_for[&j, &x](jm: &!j [int], src: &x [byte]) -> [] int {
+    var strings = 0;
+    var nulls = 0;
+    var arrays = 0;
+    var k = 0;
+    while k < jm[0] {
+        let kd = jsonread.kind(jm, k);
+        if kd == jsonread.k_string() {
+            strings = strings + 1;
+        }
+        if kd == jsonread.k_null() {
+            nulls = nulls + 1;
+        }
+        if kd == jsonread.k_array() {
+            arrays = arrays + 1;
+        }
+        k = k + 1;
+    }
+    return 4 * (strings + nulls) + 2 * arrays + len(src) + 64;
+}
+
+pub fn nodes_for[&j](jm: &!j [int]) -> [] int {
+    var objects = 0;
+    var k = 0;
+    while k < jm[0] {
+        if jsonread.kind(jm, k) == jsonread.k_object() {
+            objects = objects + 1;
+        }
+        k = k + 1;
+    }
+    return objects + 16;
+}
+
+// The size of the state for `tokens` tokens, `nodes` nodes and `imports` imports: the header, the tokens (three slots each), the imports,
+// the module table (two slots a module, two modules), the file table, the nodes (sixteen slots each), and then the scratch of the printer.
+pub fn size_for(tokens: int, nodes: int, imports: int) -> [] int {
+    return body_end(tokens, nodes, imports) + ast.const_region() + ast.inst_region();
+}
+
+fn body_end(tokens: int, nodes: int, imports: int) -> [] int {
+    return 65 + 3 * tokens + imports + 8 + 4 + 16 * nodes;
+}
+
+pub fn layout[&s](st: &!s [int], tokens: int, nodes: int, imports: int) -> [] int {
+    st[19] = 65 + 3 * tokens;
+    st[16] = st[19] + imports;
+    st[18] = st[16] + 8;
+    st[14] = st[18] + 4;
+    st[62] = body_end(tokens, nodes, imports);
+    st[7] = tokens;
+    st[63] = nodes;
+    st[2] = 0;
+    st[0] = 0;
+    st[8] = 0;
+    st[11] = 1;
+    st[12] = 0;
+    st[13] = 0;
+    st[15] = 0 - 1;
+    st[10] = 0 - 1;
+    st[st[16]] = 0 - 1;
+    st[st[16] + 1] = 0;
+    return 0;
+}
+
+// ------------------------------------------------------------ refusals ---
+
+fn ok[&s](st: &!s [int]) -> [] bool {
+    return st[2] == 0;
+}
+
+fn refuse[&s, &j](st: &!s [int], jm: &!j [int], rule: int, v: int) -> [] int {
+    if v < 0 {
+        return ast.fail(st, rule, 0, 0);
+    }
+    return ast.fail(st, rule, jsonread.start(jm, v), jsonread.end(jm, v));
+}
+
+// ------------------------------------------------------------- the text ---
+
+// A token: its spelling is written to the synthetic text, and its code, start and end are recorded. The index of the token.
+fn token[&s, &t, &r](st: &!s [int], tx: &!t [byte], code: int, spelled: &r [byte]) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    if st[8] >= st[7] || st[0] + len(spelled) + 1 > len(tx) {
+        ast.fail(st, rules.r_ingest_json(), 0, 0);
+        return 0 - 1;
+    }
+    let from = st[0];
+    var k = 0;
+    while k < len(spelled) {
+        tx[from + k] = spelled[k];
+        k = k + 1;
+    }
+    return token_at(st, tx, code, from, len(spelled));
+}
+
+// The token whose `n` bytes are already in the text at `from`: a space is written after it, and it is recorded.
+fn token_at[&s, &t](st: &!s [int], tx: &!t [byte], code: int, from: int, n: int) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    let id = st[8];
+    if id >= st[7] || from + n + 1 > len(tx) {
+        ast.fail(st, rules.r_ingest_json(), 0, 0);
+        return 0 - 1;
+    }
+    tx[from + n] = byte_of(' ');
+    st[0] = from + n + 1;
+    st[65 + 3 * id] = code;
+    st[65 + 3 * id + 1] = from;
+    st[65 + 3 * id + 2] = from + n;
+    st[8] = id + 1;
+    return id;
+}
+
+fn punct[&s, &t](st: &!s [int], tx: &!t [byte], t: lc.Tok, spelled: &static [byte]) -> [] int {
+    return token(st, tx, lc.code(t), spelled);
+}
+
+// Is the byte `c` one an identifier may have after its first?
+fn is_name_byte(c: int) -> [] bool {
+    return lc.is_ident_continue(c);
+}
+
+// The name at the JSON string `v`: it must be a string, and an identifier the lexer would make one token of, and not a keyword. The
+// token that spells it.
+fn name_token[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    if jsonread.kind(jm, v) != jsonread.k_string() {
+        return refuse(st, jm, rules.r_ingest_arity(), v);
+    }
+    let base = jsonread.scratch0(jm);
+    let n = jsonread.decode_into(jm, src, v, base);
+    return name_from(st, tx, jm, base, n, jsonread.start(jm, v), jsonread.end(jm, v));
+}
+
+// The name that is the `n` decoded bytes at `base` of `jm`, refused (with the span `from..to`) if it is not one.
+fn name_from[&s, &t, &j](st: &!s [int], tx: &!t [byte], jm: &!j [int], base: int, n: int, from: int, to: int) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    var good = n > 0 && lc.is_ident_start(jm[base]);
+    var k = 1;
+    while good && k < n {
+        if !is_name_byte(jm[base + k]) {
+            good = false;
+        }
+        k = k + 1;
+    }
+    if !good {
+        return ast.fail(st, rules.r_ingest_node(), from, to) - 1;
+    }
+    let at = st[0];
+    if st[8] >= st[7] || at + n + 1 > len(tx) {
+        return ast.fail(st, rules.r_ingest_json(), 0, 0) - 1;
+    }
+    k = 0;
+    while k < n {
+        tx[at + k] = byte_of(jm[base + k]);
+        k = k + 1;
+    }
+    if lc.code(lc.keyword(tx, at, at + n)) != lc.code(lc.Tok::Ident) {
+        return ast.fail(st, rules.r_ingest_node(), from, to) - 1;
+    }
+    return token_at(st, tx, lc.code(lc.Tok::Ident), at, n);
+}
+
+// The string literal for the JSON string `v`, which the printer reads back: its escapes written as the language writes them.
+fn string_token[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    let base = jsonread.scratch0(jm);
+    let n = jsonread.decode_into(jm, src, v, base);
+    let from = st[0];
+    // Every decoded byte takes at most two bytes of literal.
+    if st[8] >= st[7] || from + 2 * n + 4 > len(tx) {
+        return ast.fail(st, rules.r_ingest_json(), 0, 0) - 1;
+    }
+    var at = from;
+    tx[at] = byte_of('"');
+    at = at + 1;
+    var k = 0;
+    while k < n {
+        let c = jm[base + k];
+        if c == 10 {
+            tx[at] = byte_of('\\');
+            tx[at + 1] = byte_of('n');
+            at = at + 2;
+        } else if c == 13 {
+            tx[at] = byte_of('\\');
+            tx[at + 1] = byte_of('r');
+            at = at + 2;
+        } else if c == 9 {
+            tx[at] = byte_of('\\');
+            tx[at + 1] = byte_of('t');
+            at = at + 2;
+        } else if c == 0 {
+            tx[at] = byte_of('\\');
+            tx[at + 1] = byte_of('0');
+            at = at + 2;
+        } else if c == '\\' || c == '"' {
+            tx[at] = byte_of('\\');
+            tx[at + 1] = byte_of(c);
+            at = at + 2;
+        } else {
+            tx[at] = byte_of(c);
+            at = at + 1;
+        }
+        k = k + 1;
+    }
+    tx[at] = byte_of('"');
+    at = at + 1;
+    tx[at] = byte_of(' ');
+    let id = st[8];
+    st[65 + 3 * id] = lc.code(lc.Tok::Str);
+    st[65 + 3 * id + 1] = from;
+    st[65 + 3 * id + 2] = at;
+    st[8] = id + 1;
+    st[0] = at + 1;
+    return id;
+}
+
+// ------------------------------------------------------------- the JSON ---
+
+// The value of the member `key` of the object `obj`, or -1 if it has none (or is not an object).
+fn field[&s, &x, &j](st: &!s [int], src: &x [byte], jm: &!j [int], obj: int, key: &static [byte]) -> [] int {
+    if jsonread.kind(jm, obj) != jsonread.k_object() {
+        return 0 - 1;
+    }
+    var m = jsonread.first(jm, obj);
+    while m >= 0 {
+        if jsonread.is_string(jm, src, jm[16 + 6 * m + 3], key) {
+            return jm[16 + 6 * m + 4];
+        }
+        m = jsonread.next(jm, m);
+    }
+    return 0 - 1;
+}
+
+// The one field a node must have.
+fn required[&s, &x, &j](st: &!s [int], src: &x [byte], jm: &!j [int], obj: int, key: &static [byte]) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    let v = field(st, src, jm, obj, key);
+    if v < 0 {
+        return refuse(st, jm, rules.r_ingest_arity(), obj) - 1;
+    }
+    return v;
+}
+
+// Is the value `v` null, or absent?
+fn absent[&j](jm: &!j [int], v: int) -> [] bool {
+    return v < 0 || jsonread.kind(jm, v) == jsonread.k_null();
+}
+
+// The value must be a string.
+fn want_string[&s, &j](st: &!s [int], jm: &!j [int], v: int) -> [] int {
+    if ok(st) && jsonread.kind(jm, v) != jsonread.k_string() {
+        refuse(st, jm, rules.r_ingest_arity(), v);
+    }
+    return v;
+}
+
+// A boolean: 0 or 1.
+fn boolean[&s, &j](st: &!s [int], jm: &!j [int], v: int) -> [] int {
+    if !ok(st) {
+        return 0;
+    }
+    if jsonread.kind(jm, v) == jsonread.k_true() {
+        return 1;
+    }
+    if jsonread.kind(jm, v) != jsonread.k_false() {
+        refuse(st, jm, rules.r_ingest_arity(), v);
+    }
+    return 0;
+}
+
+// A boolean that may be left out (and is then false).
+fn optional_boolean[&s, &x, &j](st: &!s [int], src: &x [byte], jm: &!j [int], obj: int, key: &static [byte]) -> [] int {
+    let v = field(st, src, jm, obj, key);
+    if v < 0 {
+        return 0;
+    }
+    return boolean(st, jm, v);
+}
+
+// An integer.
+fn integer[&s, &j](st: &!s [int], jm: &!j [int], v: int) -> [] int {
+    if !ok(st) {
+        return 0;
+    }
+    if jsonread.kind(jm, v) != jsonread.k_int() {
+        refuse(st, jm, rules.r_ingest_arity(), v);
+        return 0;
+    }
+    return jsonread.first(jm, v);
+}
+
+// An array: its record, or a refusal.
+fn array[&s, &j](st: &!s [int], jm: &!j [int], v: int) -> [] int {
+    if ok(st) && jsonread.kind(jm, v) != jsonread.k_array() {
+        refuse(st, jm, rules.r_ingest_arity(), v);
+    }
+    return v;
+}
+
+// The mode a value names: 0 for null, 1 for `"val"`, 2 for `"res"`.
+fn mode[&s, &x, &j](st: &!s [int], src: &x [byte], jm: &!j [int], v: int) -> [] int {
+    if !ok(st) {
+        return 0;
+    }
+    if jsonread.kind(jm, v) == jsonread.k_null() {
+        return 0;
+    }
+    if jsonread.kind(jm, v) != jsonread.k_string() {
+        refuse(st, jm, rules.r_ingest_arity(), v);
+        return 0;
+    }
+    if jsonread.is_string(jm, src, v, "val") {
+        return 1;
+    }
+    if jsonread.is_string(jm, src, v, "res") {
+        return 2;
+    }
+    refuse(st, jm, rules.r_ingest_node(), v);
+    return 0;
+}
+
+// The span of a node's `kind`, or of the node if it has none.
+fn kind_span[&s, &x, &j](st: &!s [int], src: &x [byte], jm: &!j [int], obj: int) -> [] int {
+    let k = field(st, src, jm, obj, "kind");
+    if k < 0 {
+        return obj;
+    }
+    return k;
+}
+
+// The `n`th element of the array `arr`.
+fn nth[&j](jm: &!j [int], arr: int, n: int) -> [] int {
+    var e = jsonread.first(jm, arr);
+    var k = 0;
+    while k < n && e >= 0 {
+        e = jsonread.next(jm, e);
+        k = k + 1;
+    }
+    return e;
+}
+
+// ---------------------------------------------------------------- nodes ---
+
+fn node[&s](st: &!s [int], k: kinds.NK) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    if st[13] >= st[63] {
+        ast.fail(st, rules.r_ingest_json(), 0, 0);
+        return 0 - 1;
+    }
+    return ast.mk(st, k, 0, 0);
+}
+
+// ----------------------------------------------------- declaration lists ---
+
+// The names of the array `list` (absent: none), each checked: how many. Nothing is written to the text.
+fn check_names[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], list: int) -> [] int {
+    if !ok(st) || list < 0 {
+        return 0;
+    }
+    array(st, jm, list);
+    var e = jsonread.first(jm, list);
+    var n = 0;
+    while ok(st) && e >= 0 {
+        check_name(st, tx, src, jm, e);
+        e = jsonread.next(jm, e);
+        n = n + 1;
+    }
+    return n;
+}
+
+// Would the string `v` be accepted as a name? Refuses as `name_token` does, and writes nothing.
+fn check_name[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int) -> [] int {
+    if !ok(st) {
+        return 0;
+    }
+    let before = st[0];
+    let tokens = st[8];
+    name_token(st, tx, src, jm, v);
+    // Taken back: the text and the tokens were only a place to test it.
+    if ok(st) {
+        st[0] = before;
+        st[8] = tokens;
+    }
+    return 0;
+}
+
+// The bounds of the array `list` (absent: none), each checked.
+fn check_bounds[&s, &x, &j](st: &!s [int], src: &x [byte], jm: &!j [int], list: int) -> [] int {
+    if !ok(st) || list < 0 {
+        return 0;
+    }
+    array(st, jm, list);
+    var e = jsonread.first(jm, list);
+    while ok(st) && e >= 0 {
+        mode(st, src, jm, e);
+        e = jsonread.next(jm, e);
+    }
+    return 0;
+}
+
+// The pairs of the `outlives` array (absent: none), each checked.
+fn check_outlives[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], list: int) -> [] int {
+    if !ok(st) || list < 0 {
+        return 0;
+    }
+    array(st, jm, list);
+    var e = jsonread.first(jm, list);
+    while ok(st) && e >= 0 {
+        check_name(st, tx, src, jm, required(st, src, jm, e, "inner"));
+        check_name(st, tx, src, jm, required(st, src, jm, e, "outer"));
+        e = jsonread.next(jm, e);
+    }
+    return 0;
+}
+
+// The `[T, U: val, &r where a <= b]` of a declaration, written as tokens after it has been checked: the token of its `[`, or -1 if it has
+// no type parameter and no region. `generics`, `bounds`, `regions` and `outlives` are the JSON values (or -1).
+fn declaration_params[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], generics: int, bounds: int, regions: int, outlives: int) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    var n_generics = 0;
+    if generics >= 0 {
+        n_generics = jsonread.count(jm, generics);
+    }
+    var n_regions = 0;
+    if regions >= 0 {
+        n_regions = jsonread.count(jm, regions);
+    }
+    if n_generics == 0 && n_regions == 0 {
+        return 0 - 1;
+    }
+    let open = punct(st, tx, lc.Tok::LBracket, "[");
+    var any = false;
+    var i = 0;
+    while i < n_generics {
+        if any {
+            punct(st, tx, lc.Tok::Comma, ",");
+        }
+        any = true;
+        name_token(st, tx, src, jm, nth(jm, generics, i));
+        // `T: val` only for a bound that is `val`; `res` is not a bound that can be written.
+        var bound = 0;
+        if bounds >= 0 && i < jsonread.count(jm, bounds) {
+            bound = mode(st, src, jm, nth(jm, bounds, i));
+        }
+        if bound == 1 {
+            punct(st, tx, lc.Tok::Colon, ":");
+            punct(st, tx, lc.Tok::Val, "val");
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < n_regions {
+        if any {
+            punct(st, tx, lc.Tok::Comma, ",");
+        }
+        any = true;
+        punct(st, tx, lc.Tok::Amp, "&");
+        name_token(st, tx, src, jm, nth(jm, regions, i));
+        i = i + 1;
+    }
+    if outlives >= 0 && jsonread.count(jm, outlives) > 0 {
+        punct(st, tx, lc.Tok::Where, "where");
+        var e = jsonread.first(jm, outlives);
+        var first = true;
+        while e >= 0 {
+            if !first {
+                punct(st, tx, lc.Tok::Comma, ",");
+            }
+            first = false;
+            name_token(st, tx, src, jm, field(st, src, jm, e, "inner"));
+            punct(st, tx, lc.Tok::LtEq, "<=");
+            name_token(st, tx, src, jm, field(st, src, jm, e, "outer"));
+            e = jsonread.next(jm, e);
+        }
+    }
+    punct(st, tx, lc.Tok::RBracket, "]");
+    return open;
+}
+
+// ---------------------------------------------------------------- types ---
+
+// The effect row of the array `list` (absent: empty): the token of its `[`.
+fn effect_row[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], list: int) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    let open = punct(st, tx, lc.Tok::LBracket, "[");
+    if list >= 0 {
+        array(st, jm, list);
+        var e = jsonread.first(jm, list);
+        var first = true;
+        while ok(st) && e >= 0 {
+            if !first {
+                punct(st, tx, lc.Tok::Comma, ",");
+            }
+            first = false;
+            name_token(st, tx, src, jm, required(st, src, jm, e, "name"));
+            let argument = field(st, src, jm, e, "argument");
+            if ok(st) && !absent(jm, argument) {
+                if jsonread.kind(jm, argument) != jsonread.k_string() {
+                    refuse(st, jm, rules.r_ingest_arity(), argument);
+                } else {
+                    punct(st, tx, lc.Tok::LParen, "(");
+                    string_token(st, tx, src, jm, argument);
+                    punct(st, tx, lc.Tok::RParen, ")");
+                }
+            }
+            e = jsonread.next(jm, e);
+        }
+    }
+    punct(st, tx, lc.Tok::RBracket, "]");
+    return open;
+}
+
+// The types of the array `list`, as a chain.
+fn type_list[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], list: int) -> [] ast.Ls {
+    var out = ast.empty_list();
+    if !ok(st) || list < 0 {
+        return out;
+    }
+    array(st, jm, list);
+    var e = jsonread.first(jm, list);
+    while ok(st) && e >= 0 {
+        out = ast.push(st, out, ty(st, tx, src, jm, e));
+        e = jsonread.next(jm, e);
+    }
+    return out;
+}
+
+// The name of the optional `qualifier` field: its token, or -1.
+fn qualifier[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], obj: int) -> [] int {
+    let q = field(st, src, jm, obj, "qualifier");
+    if !ok(st) || absent(jm, q) {
+        return 0 - 1;
+    }
+    return name_token(st, tx, src, jm, q);
+}
+
+fn ty[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    if jsonread.kind(jm, v) != jsonread.k_object() {
+        return refuse(st, jm, rules.r_ingest_arity(), v) - 1;
+    }
+    let kv = field(st, src, jm, v, "kind");
+    if kv < 0 {
+        // The plain form: a named type.
+        let name = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+        let q = qualifier(st, tx, src, jm, v);
+        let args = type_list(st, tx, src, jm, field(st, src, jm, v, "args"));
+        let id = node(st, kinds.NK::TName);
+        ast.put(st, id, 4, q);
+        ast.put(st, id, 5, name);
+        ast.put(st, id, 6, args.head);
+        ast.put(st, id, 7, args.n);
+        return id;
+    }
+    if jsonread.kind(jm, kv) != jsonread.k_string() {
+        return refuse(st, jm, rules.r_ingest_arity(), kv) - 1;
+    }
+    if jsonread.is_string(jm, src, kv, "ref") {
+        let unique = boolean(st, jm, required(st, src, jm, v, "unique"));
+        let rg = name_token(st, tx, src, jm, required(st, src, jm, v, "region"));
+        let inner = ty(st, tx, src, jm, required(st, src, jm, v, "inner"));
+        let id = node(st, kinds.NK::TRef);
+        ast.put(st, id, 4, unique);
+        ast.put(st, id, 5, rg);
+        ast.put(st, id, 6, inner);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "slice") {
+        let inner = ty(st, tx, src, jm, required(st, src, jm, v, "inner"));
+        let id = node(st, kinds.NK::TSlice);
+        ast.put(st, id, 6, inner);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "tuple") {
+        let parts = type_list(st, tx, src, jm, required(st, src, jm, v, "parts"));
+        let id = node(st, kinds.NK::TTuple);
+        ast.put(st, id, 6, parts.head);
+        ast.put(st, id, 7, parts.n);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "lit") {
+        let value = want_string(st, jm, required(st, src, jm, v, "value"));
+        let literal = string_token(st, tx, src, jm, value);
+        let id = node(st, kinds.NK::TLit);
+        ast.put(st, id, 4, literal);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "fn") {
+        let params = type_list(st, tx, src, jm, required(st, src, jm, v, "params"));
+        let row = effect_row(st, tx, src, jm, field(st, src, jm, v, "effects"));
+        let ret = ty(st, tx, src, jm, required(st, src, jm, v, "ret"));
+        let id = node(st, kinds.NK::TFn);
+        ast.put(st, id, 4, row);
+        ast.put(st, id, 5, params.head);
+        ast.put(st, id, 6, params.n);
+        ast.put(st, id, 7, ret);
+        return id;
+    }
+    return refuse(st, jm, rules.r_ingest_node(), kv) - 1;
+}
+
+// ---------------------------------------------------------- expressions ---
+
+// The expressions of the array `list`, as a chain.
+fn expr_list[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], list: int) -> [] ast.Ls {
+    var out = ast.empty_list();
+    if !ok(st) || list < 0 {
+        return out;
+    }
+    array(st, jm, list);
+    var e = jsonread.first(jm, list);
+    while ok(st) && e >= 0 {
+        out = ast.push(st, out, expr(st, tx, src, jm, e));
+        e = jsonread.next(jm, e);
+    }
+    return out;
+}
+
+// The binary operator the string `v` names, as the number `ast.cho` gives it, or -1.
+fn binary_op[&x, &j](src: &x [byte], jm: &!j [int], v: int) -> [] int {
+    if jsonread.is_string(jm, src, v, "||") {
+        return 0;
+    }
+    if jsonread.is_string(jm, src, v, "&&") {
+        return 1;
+    }
+    if jsonread.is_string(jm, src, v, "==") {
+        return 2;
+    }
+    if jsonread.is_string(jm, src, v, "!=") {
+        return 3;
+    }
+    if jsonread.is_string(jm, src, v, "<") {
+        return 4;
+    }
+    if jsonread.is_string(jm, src, v, "<=") {
+        return 5;
+    }
+    if jsonread.is_string(jm, src, v, ">") {
+        return 6;
+    }
+    if jsonread.is_string(jm, src, v, ">=") {
+        return 7;
+    }
+    if jsonread.is_string(jm, src, v, "|") {
+        return 8;
+    }
+    if jsonread.is_string(jm, src, v, "^") {
+        return 9;
+    }
+    if jsonread.is_string(jm, src, v, "&") {
+        return 10;
+    }
+    if jsonread.is_string(jm, src, v, "<<") {
+        return 11;
+    }
+    if jsonread.is_string(jm, src, v, ">>") {
+        return 12;
+    }
+    if jsonread.is_string(jm, src, v, "+") {
+        return 13;
+    }
+    if jsonread.is_string(jm, src, v, "-") {
+        return 14;
+    }
+    if jsonread.is_string(jm, src, v, "*") {
+        return 15;
+    }
+    if jsonread.is_string(jm, src, v, "/") {
+        return 16;
+    }
+    if jsonread.is_string(jm, src, v, "%") {
+        return 17;
+    }
+    return 0 - 1;
+}
+
+fn unary_op[&x, &j](src: &x [byte], jm: &!j [int], v: int) -> [] int {
+    if jsonread.is_string(jm, src, v, "-") {
+        return 0;
+    }
+    if jsonread.is_string(jm, src, v, "!") {
+        return 1;
+    }
+    if jsonread.is_string(jm, src, v, "~") {
+        return 2;
+    }
+    if jsonread.is_string(jm, src, v, "*") {
+        return 3;
+    }
+    return 0 - 1;
+}
+
+// A bit pattern of `width` bits (32 or 64): the integer or number that is one, as the 64 bits in an `int`. A refusal if it is not a
+// non-negative integer, or does not fit.
+fn bits[&s, &x, &j](st: &!s [int], src: &x [byte], jm: &!j [int], v: int, width: int) -> [] int {
+    if !ok(st) {
+        return 0;
+    }
+    let kd = jsonread.kind(jm, v);
+    if kd == jsonread.k_int() {
+        let value = jsonread.first(jm, v);
+        if value < 0 {
+            refuse(st, jm, rules.r_ingest_arity(), v);
+            return 0;
+        }
+        if width == 32 && value > 4294967295 {
+            refuse(st, jm, rules.r_ingest_arity(), v);
+            return 0;
+        }
+        return value;
+    }
+    if kd != jsonread.k_number() {
+        refuse(st, jm, rules.r_ingest_arity(), v);
+        return 0;
+    }
+    // A number kept as text: only digits make a `u64`, and they must not run past it.
+    var hi = 0;
+    var lo = 0;
+    var k = jsonread.start(jm, v);
+    let to = jsonread.end(jm, v);
+    var good = k < to;
+    while good && k < to {
+        let d = lc.at(src, k) - '0';
+        if d < 0 || d > 9 {
+            good = false;
+        } else {
+            let low = lo * 10 + d;
+            hi = hi * 10 + (low >> 32);
+            lo = low & 4294967295;
+            if hi >= 4294967296 {
+                good = false;
+            }
+        }
+        k = k + 1;
+    }
+    if !good || width == 32 && hi != 0 {
+        refuse(st, jm, rules.r_ingest_arity(), v);
+        return 0;
+    }
+    return hi << 32 | lo;
+}
+
+// The bits of the `double` that holds the same value as the `f32` with bits `b`.
+fn double_of_single(b: int) -> [] int {
+    let sign = b >> 31 & 1;
+    let field = b >> 23 & 255;
+    var mantissa = b & 8388607;
+    var exponent = 0;
+    if field == 255 {
+        exponent = 2047;
+    } else if field == 0 {
+        if mantissa == 0 {
+            exponent = 0;
+        } else {
+            // A subnormal `f32` is a normal `double`: shift it up until its leading bit is the one that is implied.
+            var e = 0 - 126;
+            while mantissa < 8388608 {
+                mantissa = mantissa << 1;
+                e = e - 1;
+            }
+            mantissa = mantissa & 8388607;
+            exponent = e + 1023;
+        }
+    } else {
+        exponent = field - 127 + 1023;
+    }
+    return sign << 63 | exponent << 52 | mantissa << 29;
+}
+
+fn expr[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    let kv = want_string(st, jm, required(st, src, jm, v, "kind"));
+    if !ok(st) {
+        return 0 - 1;
+    }
+    if jsonread.is_string(jm, src, kv, "int") {
+        let value = integer(st, jm, required(st, src, jm, v, "value"));
+        let id = node(st, kinds.NK::EInt);
+        ast.put(st, id, 4, value);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "float") {
+        let b = bits(st, src, jm, required(st, src, jm, v, "bits"), 64);
+        let id = node(st, kinds.NK::EFloat);
+        ast.put(st, id, 4, 0);
+        ast.put(st, id, 5, b);
+        ast.put(st, id, 6, 1);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "f32") {
+        let b = bits(st, src, jm, required(st, src, jm, v, "bits"), 32);
+        let id = node(st, kinds.NK::EFloat);
+        ast.put(st, id, 4, 1);
+        ast.put(st, id, 5, double_of_single(b));
+        ast.put(st, id, 6, 1);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "bool") {
+        let value = boolean(st, jm, required(st, src, jm, v, "value"));
+        let id = node(st, kinds.NK::EBool);
+        ast.put(st, id, 4, value);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "str") {
+        let value = want_string(st, jm, required(st, src, jm, v, "value"));
+        let literal = string_token(st, tx, src, jm, value);
+        let id = node(st, kinds.NK::EStr);
+        ast.put(st, id, 4, literal);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "name") {
+        let name = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+        let id = node(st, kinds.NK::EName);
+        ast.put(st, id, 4, name);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "struct_lit") {
+        let q = qualifier(st, tx, src, jm, v);
+        let name = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+        var fields = ast.empty_list();
+        let list = array(st, jm, required(st, src, jm, v, "fields"));
+        var e = 0 - 1;
+        if ok(st) {
+            e = jsonread.first(jm, list);
+        }
+        while ok(st) && e >= 0 {
+            let field_name = name_token(st, tx, src, jm, required(st, src, jm, e, "name"));
+            let value = expr(st, tx, src, jm, required(st, src, jm, e, "value"));
+            let f = node(st, kinds.NK::FieldInit);
+            ast.put(st, f, 4, field_name);
+            ast.put(st, f, 5, value);
+            fields = ast.push(st, fields, f);
+            e = jsonread.next(jm, e);
+        }
+        let id = node(st, kinds.NK::EStructLit);
+        ast.put(st, id, 4, q);
+        ast.put(st, id, 5, name);
+        ast.put(st, id, 6, fields.head);
+        ast.put(st, id, 7, fields.n);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "field") {
+        let base = expr(st, tx, src, jm, required(st, src, jm, v, "base"));
+        let name = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+        let id = node(st, kinds.NK::EField);
+        ast.put(st, id, 4, base);
+        ast.put(st, id, 5, name);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "tuple") {
+        let parts = expr_list(st, tx, src, jm, required(st, src, jm, v, "parts"));
+        if ok(st) && parts.n == 0 {
+            refuse(st, jm, rules.r_ingest_arity(), v);
+        }
+        let id = node(st, kinds.NK::ETuple);
+        ast.put(st, id, 4, parts.head);
+        ast.put(st, id, 5, parts.n);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "tuple_field") {
+        let base = expr(st, tx, src, jm, required(st, src, jm, v, "base"));
+        let index = integer(st, jm, required(st, src, jm, v, "index"));
+        if ok(st) && index < 0 {
+            refuse(st, jm, rules.r_ingest_arity(), v);
+        }
+        let id = node(st, kinds.NK::ETupleField);
+        ast.put(st, id, 4, base);
+        ast.put(st, id, 5, index & 4294967295);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "variant") {
+        let q = qualifier(st, tx, src, jm, v);
+        let enum_name = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+        let variant = name_token(st, tx, src, jm, required(st, src, jm, v, "variant"));
+        let args = expr_list(st, tx, src, jm, field(st, src, jm, v, "args"));
+        let id = node(st, kinds.NK::EVariant);
+        ast.put(st, id, 4, q);
+        ast.put(st, id, 5, enum_name);
+        ast.put(st, id, 6, variant);
+        ast.put(st, id, 7, args.head);
+        ast.put(st, id, 8, args.n);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "unary") {
+        let ov = want_string(st, jm, required(st, src, jm, v, "op"));
+        var op = 0 - 1;
+        if ok(st) {
+            op = unary_op(src, jm, ov);
+            if op < 0 {
+                refuse(st, jm, rules.r_ingest_node(), v);
+            }
+        }
+        let operand = expr(st, tx, src, jm, required(st, src, jm, v, "operand"));
+        let id = node(st, kinds.NK::EUnary);
+        ast.put(st, id, 4, op);
+        ast.put(st, id, 5, operand);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "binary") {
+        let ov = want_string(st, jm, required(st, src, jm, v, "op"));
+        var op = 0 - 1;
+        if ok(st) {
+            op = binary_op(src, jm, ov);
+            if op < 0 {
+                refuse(st, jm, rules.r_ingest_node(), v);
+            }
+        }
+        let lhs = expr(st, tx, src, jm, required(st, src, jm, v, "lhs"));
+        let rhs = expr(st, tx, src, jm, required(st, src, jm, v, "rhs"));
+        let id = node(st, kinds.NK::EBinary);
+        ast.put(st, id, 4, op);
+        ast.put(st, id, 5, lhs);
+        ast.put(st, id, 6, rhs);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "call") {
+        let q = qualifier(st, tx, src, jm, v);
+        let callee = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+        let args = expr_list(st, tx, src, jm, required(st, src, jm, v, "args"));
+        let id = node(st, kinds.NK::ECall);
+        ast.put(st, id, 4, q);
+        ast.put(st, id, 5, callee);
+        ast.put(st, id, 6, args.head);
+        ast.put(st, id, 7, args.n);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "index") {
+        let base = expr(st, tx, src, jm, required(st, src, jm, v, "base"));
+        let index = expr(st, tx, src, jm, required(st, src, jm, v, "index"));
+        let id = node(st, kinds.NK::EIndex);
+        ast.put(st, id, 4, base);
+        ast.put(st, id, 5, index);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "slice") {
+        let base = expr(st, tx, src, jm, required(st, src, jm, v, "base"));
+        let from = expr(st, tx, src, jm, required(st, src, jm, v, "start"));
+        let to = expr(st, tx, src, jm, required(st, src, jm, v, "end"));
+        let id = node(st, kinds.NK::ESlice);
+        ast.put(st, id, 4, base);
+        ast.put(st, id, 5, from);
+        ast.put(st, id, 6, to);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "alloc") {
+        let rg = name_token(st, tx, src, jm, required(st, src, jm, v, "region"));
+        let value = expr(st, tx, src, jm, required(st, src, jm, v, "value"));
+        let id = node(st, kinds.NK::EAlloc);
+        ast.put(st, id, 4, rg);
+        ast.put(st, id, 5, value);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "alloc_slice") {
+        let rg = name_token(st, tx, src, jm, required(st, src, jm, v, "region"));
+        let count = expr(st, tx, src, jm, required(st, src, jm, v, "count"));
+        let fill = expr(st, tx, src, jm, required(st, src, jm, v, "fill"));
+        let id = node(st, kinds.NK::EAllocSlice);
+        ast.put(st, id, 4, rg);
+        ast.put(st, id, 5, count);
+        ast.put(st, id, 6, fill);
+        return id;
+    }
+    return refuse(st, jm, rules.r_ingest_node(), kv) - 1;
+}
+
+// ----------------------------------------------------------- statements ---
+
+// The statements of the array `list`, as a chain.
+fn block[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], list: int) -> [] ast.Ls {
+    var out = ast.empty_list();
+    if !ok(st) {
+        return out;
+    }
+    array(st, jm, list);
+    var e = 0 - 1;
+    if ok(st) {
+        e = jsonread.first(jm, list);
+    }
+    while ok(st) && e >= 0 {
+        out = ast.push(st, out, stmt(st, tx, src, jm, e));
+        e = jsonread.next(jm, e);
+    }
+    return out;
+}
+
+// The names of the array `list`, written as tokens between `open` and `close`: the token of the opener.
+fn name_run[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], list: int, open: lc.Tok, open_text: &static [byte], close: lc.Tok, close_text: &static [byte]) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    array(st, jm, list);
+    // Checked first, so that the refusal is the first name's and nothing is written for it.
+    check_names(st, tx, src, jm, list);
+    if !ok(st) {
+        return 0 - 1;
+    }
+    let first = punct(st, tx, open, open_text);
+    var e = jsonread.first(jm, list);
+    var any = false;
+    while e >= 0 {
+        if any {
+            punct(st, tx, lc.Tok::Comma, ",");
+        }
+        any = true;
+        name_token(st, tx, src, jm, e);
+        e = jsonread.next(jm, e);
+    }
+    punct(st, tx, close, close_text);
+    return first;
+}
+
+// A match pattern: the token it starts at.
+fn pattern[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    let kv = want_string(st, jm, required(st, src, jm, v, "kind"));
+    if !ok(st) {
+        return 0 - 1;
+    }
+    if jsonread.is_string(jm, src, kv, "wildcard") {
+        return punct(st, tx, lc.Tok::Underscore, "_");
+    }
+    if !jsonread.is_string(jm, src, kv, "variant") {
+        return refuse(st, jm, rules.r_ingest_node(), kv) - 1;
+    }
+    // The qualifier, the names and the bindings are checked in the order `ingest.rs` does, and then written.
+    let qv = field(st, src, jm, v, "qualifier");
+    if !absent(jm, qv) {
+        check_name(st, tx, src, jm, qv);
+    }
+    check_name(st, tx, src, jm, required(st, src, jm, v, "name"));
+    check_name(st, tx, src, jm, required(st, src, jm, v, "variant"));
+    let bindings = array(st, jm, required(st, src, jm, v, "bindings"));
+    var e = 0 - 1;
+    if ok(st) {
+        e = jsonread.first(jm, bindings);
+    }
+    while ok(st) && e >= 0 {
+        if jsonread.kind(jm, e) != jsonread.k_null() {
+            check_name(st, tx, src, jm, e);
+        }
+        e = jsonread.next(jm, e);
+    }
+    if !ok(st) {
+        return 0 - 1;
+    }
+    var first = 0 - 1;
+    if !absent(jm, qv) {
+        first = name_token(st, tx, src, jm, qv);
+        punct(st, tx, lc.Tok::Dot, ".");
+    }
+    let enum_name = name_token(st, tx, src, jm, field(st, src, jm, v, "name"));
+    if first < 0 {
+        first = enum_name;
+    }
+    punct(st, tx, lc.Tok::ColonColon, "::");
+    name_token(st, tx, src, jm, field(st, src, jm, v, "variant"));
+    punct(st, tx, lc.Tok::LParen, "(");
+    e = jsonread.first(jm, bindings);
+    var any = false;
+    while e >= 0 {
+        if any {
+            punct(st, tx, lc.Tok::Comma, ",");
+        }
+        any = true;
+        if jsonread.kind(jm, e) == jsonread.k_null() {
+            punct(st, tx, lc.Tok::Underscore, "_");
+        } else {
+            name_token(st, tx, src, jm, e);
+        }
+        e = jsonread.next(jm, e);
+    }
+    punct(st, tx, lc.Tok::RParen, ")");
+    return first;
+}
+
+fn stmt[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    let kv = want_string(st, jm, required(st, src, jm, v, "kind"));
+    if !ok(st) {
+        return 0 - 1;
+    }
+    if jsonread.is_string(jm, src, kv, "let") {
+        let mutable = optional_boolean(st, src, jm, v, "mutable");
+        let name = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+        var annotation = 0 - 1;
+        let tv = field(st, src, jm, v, "ty");
+        if ok(st) && !absent(jm, tv) {
+            annotation = ty(st, tx, src, jm, tv);
+        }
+        let value = expr(st, tx, src, jm, required(st, src, jm, v, "value"));
+        let id = node(st, kinds.NK::SLet);
+        ast.put(st, id, 4, mutable);
+        ast.put(st, id, 5, name);
+        ast.put(st, id, 6, annotation);
+        ast.put(st, id, 7, value);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "assign") {
+        let place = expr(st, tx, src, jm, required(st, src, jm, v, "place"));
+        let value = expr(st, tx, src, jm, required(st, src, jm, v, "value"));
+        let id = node(st, kinds.NK::SAssign);
+        ast.put(st, id, 4, place);
+        ast.put(st, id, 5, value);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "destructure") {
+        let q = qualifier(st, tx, src, jm, v);
+        let name = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+        let open = name_run(st, tx, src, jm, required(st, src, jm, v, "fields"), lc.Tok::LBrace, "{", lc.Tok::RBrace, "}");
+        let value = expr(st, tx, src, jm, required(st, src, jm, v, "value"));
+        let id = node(st, kinds.NK::SDestructure);
+        ast.put(st, id, 4, q);
+        ast.put(st, id, 5, name);
+        ast.put(st, id, 6, open);
+        ast.put(st, id, 7, value);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "destructure_tuple") {
+        let open = name_run(st, tx, src, jm, required(st, src, jm, v, "names"), lc.Tok::LParen, "(", lc.Tok::RParen, ")");
+        let value = expr(st, tx, src, jm, required(st, src, jm, v, "value"));
+        let id = node(st, kinds.NK::SDestructureTuple);
+        ast.put(st, id, 4, open);
+        ast.put(st, id, 5, value);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "borrow") {
+        let value = name_token(st, tx, src, jm, required(st, src, jm, v, "value"));
+        let unique = boolean(st, jm, required(st, src, jm, v, "unique"));
+        let rg = name_token(st, tx, src, jm, required(st, src, jm, v, "region"));
+        let body = block(st, tx, src, jm, required(st, src, jm, v, "body"));
+        let id = node(st, kinds.NK::SBorrow);
+        ast.put(st, id, 4, value);
+        ast.put(st, id, 5, unique);
+        ast.put(st, id, 6, rg);
+        ast.put(st, id, 7, body.head);
+        ast.put(st, id, 8, body.n);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "region") {
+        let rg = name_token(st, tx, src, jm, required(st, src, jm, v, "region"));
+        let body = block(st, tx, src, jm, required(st, src, jm, v, "body"));
+        let id = node(st, kinds.NK::SRegion);
+        ast.put(st, id, 4, rg);
+        ast.put(st, id, 5, body.head);
+        ast.put(st, id, 6, body.n);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "expr") {
+        let value = expr(st, tx, src, jm, required(st, src, jm, v, "value"));
+        let id = node(st, kinds.NK::SExpr);
+        ast.put(st, id, 4, value);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "if") {
+        let cond = expr(st, tx, src, jm, required(st, src, jm, v, "cond"));
+        let then_block = block(st, tx, src, jm, required(st, src, jm, v, "then"));
+        var else_block = ast.empty_list();
+        var has_else = false;
+        let ev = field(st, src, jm, v, "else");
+        if ok(st) && !absent(jm, ev) {
+            else_block = block(st, tx, src, jm, ev);
+            has_else = true;
+        }
+        let id = node(st, kinds.NK::SIf);
+        ast.put(st, id, 4, cond);
+        ast.put(st, id, 5, then_block.head);
+        ast.put(st, id, 6, then_block.n);
+        ast.put(st, id, 7, else_block.head);
+        if has_else {
+            ast.put(st, id, 8, else_block.n);
+        } else {
+            ast.put(st, id, 8, 0 - 1);
+        }
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "while") {
+        let cond = expr(st, tx, src, jm, required(st, src, jm, v, "cond"));
+        let body = block(st, tx, src, jm, required(st, src, jm, v, "body"));
+        let id = node(st, kinds.NK::SWhile);
+        ast.put(st, id, 4, cond);
+        ast.put(st, id, 5, body.head);
+        ast.put(st, id, 6, body.n);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "match") {
+        let scrutinee = expr(st, tx, src, jm, required(st, src, jm, v, "scrutinee"));
+        let arms_v = array(st, jm, required(st, src, jm, v, "arms"));
+        var arms = ast.empty_list();
+        var e = 0 - 1;
+        if ok(st) {
+            e = jsonread.first(jm, arms_v);
+        }
+        while ok(st) && e >= 0 {
+            let pat = pattern(st, tx, src, jm, required(st, src, jm, e, "pattern"));
+            let body = block(st, tx, src, jm, required(st, src, jm, e, "body"));
+            let arm = node(st, kinds.NK::Arm);
+            ast.put(st, arm, 4, pat);
+            ast.put(st, arm, 5, body.head);
+            ast.put(st, arm, 6, body.n);
+            arms = ast.push(st, arms, arm);
+            e = jsonread.next(jm, e);
+        }
+        let id = node(st, kinds.NK::SMatch);
+        ast.put(st, id, 4, scrutinee);
+        ast.put(st, id, 5, arms.head);
+        ast.put(st, id, 6, arms.n);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "return") {
+        let value = expr(st, tx, src, jm, required(st, src, jm, v, "value"));
+        let id = node(st, kinds.NK::SReturn);
+        ast.put(st, id, 4, value);
+        return id;
+    }
+    if jsonread.is_string(jm, src, kv, "defer") {
+        let value = expr(st, tx, src, jm, required(st, src, jm, v, "value"));
+        let id = node(st, kinds.NK::SDefer);
+        ast.put(st, id, 4, value);
+        return id;
+    }
+    return refuse(st, jm, rules.r_ingest_node(), kv) - 1;
+}
+
+// ---------------------------------------------------------------- items ---
+
+// The parameters of the array `list`, as a chain of `Param`s.
+fn param_list[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], list: int) -> [] ast.Ls {
+    var out = ast.empty_list();
+    if !ok(st) {
+        return out;
+    }
+    array(st, jm, list);
+    var e = 0 - 1;
+    if ok(st) {
+        e = jsonread.first(jm, list);
+    }
+    while ok(st) && e >= 0 {
+        let name = name_token(st, tx, src, jm, required(st, src, jm, e, "name"));
+        let annotation = ty(st, tx, src, jm, required(st, src, jm, e, "ty"));
+        let id = node(st, kinds.NK::Param);
+        ast.put(st, id, 4, name);
+        ast.put(st, id, 5, annotation);
+        out = ast.push(st, out, id);
+        e = jsonread.next(jm, e);
+    }
+    return out;
+}
+
+// A declaration is in module `module` and the edition 1.
+fn place[&s](st: &!s [int], id: int, home: int) -> [] int {
+    ast.put(st, id, 13, home);
+    ast.put(st, id, 14, 1);
+    return id;
+}
+
+fn fn_item[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int, home: int) -> [] int {
+    let public = optional_boolean(st, src, jm, v, "public");
+    // The name; then the lists are checked in the order `ingest.rs` reads them, and the `[..]` is written from them.
+    let name = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+    let generics = field(st, src, jm, v, "generics");
+    check_names(st, tx, src, jm, generics);
+    let bounds = field(st, src, jm, v, "bounds");
+    check_bounds(st, src, jm, bounds);
+    let regions = field(st, src, jm, v, "regions");
+    check_names(st, tx, src, jm, regions);
+    let outlives = field(st, src, jm, v, "outlives");
+    check_outlives(st, tx, src, jm, outlives);
+    let open = declaration_params(st, tx, src, jm, generics, bounds, regions, outlives);
+    let params = param_list(st, tx, src, jm, required(st, src, jm, v, "params"));
+    let row = effect_row(st, tx, src, jm, field(st, src, jm, v, "effects"));
+    let ret = ty(st, tx, src, jm, required(st, src, jm, v, "ret"));
+    let body = block(st, tx, src, jm, required(st, src, jm, v, "body"));
+    let id = node(st, kinds.NK::IFn);
+    ast.put(st, id, 4, name);
+    ast.put(st, id, 5, public);
+    ast.put(st, id, 6, open);
+    ast.put(st, id, 7, params.head);
+    ast.put(st, id, 8, params.n);
+    ast.put(st, id, 9, row);
+    ast.put(st, id, 10, ret);
+    ast.put(st, id, 11, body.head);
+    ast.put(st, id, 12, body.n);
+    return place(st, id, home);
+}
+
+fn extern_item[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int, home: int) -> [] int {
+    let name = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+    let regions = field(st, src, jm, v, "regions");
+    check_names(st, tx, src, jm, regions);
+    let open = declaration_params(st, tx, src, jm, 0 - 1, 0 - 1, regions, 0 - 1);
+    let params = param_list(st, tx, src, jm, required(st, src, jm, v, "params"));
+    let row = effect_row(st, tx, src, jm, field(st, src, jm, v, "effects"));
+    let ret = ty(st, tx, src, jm, required(st, src, jm, v, "ret"));
+    want_string(st, jm, required(st, src, jm, v, "symbol"));
+    let id = node(st, kinds.NK::IExtern);
+    ast.put(st, id, 4, name);
+    ast.put(st, id, 6, open);
+    ast.put(st, id, 7, params.head);
+    ast.put(st, id, 8, params.n);
+    ast.put(st, id, 9, row);
+    ast.put(st, id, 10, ret);
+    return place(st, id, home);
+}
+
+fn struct_item[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int, home: int) -> [] int {
+    let public = optional_boolean(st, src, jm, v, "public");
+    let name = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+    var m = 0;
+    let mv = field(st, src, jm, v, "mode");
+    if mv >= 0 {
+        m = mode(st, src, jm, mv);
+    }
+    let generics = field(st, src, jm, v, "generics");
+    check_names(st, tx, src, jm, generics);
+    let bounds = field(st, src, jm, v, "bounds");
+    check_bounds(st, src, jm, bounds);
+    let open = declaration_params(st, tx, src, jm, generics, bounds, 0 - 1, 0 - 1);
+    let list = array(st, jm, required(st, src, jm, v, "fields"));
+    var fields = ast.empty_list();
+    var e = 0 - 1;
+    if ok(st) {
+        e = jsonread.first(jm, list);
+    }
+    while ok(st) && e >= 0 {
+        let field_name = name_token(st, tx, src, jm, required(st, src, jm, e, "name"));
+        let annotation = ty(st, tx, src, jm, required(st, src, jm, e, "ty"));
+        let f = node(st, kinds.NK::Field);
+        ast.put(st, f, 4, field_name);
+        ast.put(st, f, 5, annotation);
+        fields = ast.push(st, fields, f);
+        e = jsonread.next(jm, e);
+    }
+    let id = node(st, kinds.NK::IStruct);
+    ast.put(st, id, 4, name);
+    ast.put(st, id, 5, public);
+    ast.put(st, id, 6, m);
+    ast.put(st, id, 7, open);
+    ast.put(st, id, 8, fields.head);
+    return place(st, id, home);
+}
+
+fn enum_item[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int, home: int) -> [] int {
+    let public = optional_boolean(st, src, jm, v, "public");
+    let name = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+    var m = 0;
+    let mv = field(st, src, jm, v, "mode");
+    if mv >= 0 {
+        m = mode(st, src, jm, mv);
+    }
+    let generics = field(st, src, jm, v, "generics");
+    check_names(st, tx, src, jm, generics);
+    let bounds = field(st, src, jm, v, "bounds");
+    check_bounds(st, src, jm, bounds);
+    let open = declaration_params(st, tx, src, jm, generics, bounds, 0 - 1, 0 - 1);
+    let list = array(st, jm, required(st, src, jm, v, "variants"));
+    var variants = ast.empty_list();
+    var e = 0 - 1;
+    if ok(st) {
+        e = jsonread.first(jm, list);
+    }
+    while ok(st) && e >= 0 {
+        let variant_name = name_token(st, tx, src, jm, required(st, src, jm, e, "name"));
+        let payload = type_list(st, tx, src, jm, field(st, src, jm, e, "payload"));
+        let id = node(st, kinds.NK::Variant);
+        ast.put(st, id, 4, variant_name);
+        ast.put(st, id, 5, payload.head);
+        ast.put(st, id, 6, payload.n);
+        variants = ast.push(st, variants, id);
+        e = jsonread.next(jm, e);
+    }
+    let id = node(st, kinds.NK::IEnum);
+    ast.put(st, id, 4, name);
+    ast.put(st, id, 5, public);
+    ast.put(st, id, 6, m);
+    ast.put(st, id, 7, open);
+    ast.put(st, id, 8, variants.head);
+    return place(st, id, home);
+}
+
+fn static_item[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int, home: int) -> [] int {
+    let public = optional_boolean(st, src, jm, v, "public");
+    let name = name_token(st, tx, src, jm, required(st, src, jm, v, "name"));
+    let annotation = ty(st, tx, src, jm, required(st, src, jm, v, "ty"));
+    let body = block(st, tx, src, jm, required(st, src, jm, v, "body"));
+    let id = node(st, kinds.NK::IStatic);
+    ast.put(st, id, 4, name);
+    ast.put(st, id, 5, public);
+    ast.put(st, id, 6, annotation);
+    ast.put(st, id, 7, body.head);
+    ast.put(st, id, 8, body.n);
+    return place(st, id, home);
+}
+
+fn item[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int, home: int) -> [] int {
+    if !ok(st) {
+        return 0 - 1;
+    }
+    let kv = want_string(st, jm, required(st, src, jm, v, "kind"));
+    if !ok(st) {
+        return 0 - 1;
+    }
+    if jsonread.is_string(jm, src, kv, "fn") {
+        return fn_item(st, tx, src, jm, v, home);
+    }
+    if jsonread.is_string(jm, src, kv, "extern") {
+        return extern_item(st, tx, src, jm, v, home);
+    }
+    if jsonread.is_string(jm, src, kv, "struct") {
+        return struct_item(st, tx, src, jm, v, home);
+    }
+    if jsonread.is_string(jm, src, kv, "enum") {
+        return enum_item(st, tx, src, jm, v, home);
+    }
+    if jsonread.is_string(jm, src, kv, "static") {
+        return static_item(st, tx, src, jm, v, home);
+    }
+    return refuse(st, jm, rules.r_ingest_node(), kv) - 1;
+}
+
+// ------------------------------------------------------------- the unit ---
+
+// The dotted path in the string `v` as tokens: `a . b . c`. Every segment must be a name, and a refusal is about the whole unit (`unit`),
+// as in `ingest.rs`, which tests the segments as strings with the span of the unit. The token of the first segment, and how many segments.
+fn path_tokens[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], v: int, unit: int) -> [] ast.Ls {
+    var first = 0 - 1;
+    var n = 0;
+    if !ok(st) {
+        return ast.Ls { head: first, tail: first, n: n };
+    }
+    let base = jsonread.scratch0(jm);
+    let total = jsonread.decode_into(jm, src, v, base);
+    var at = 0;
+    var done = false;
+    while !done && ok(st) {
+        var stop = at;
+        while stop < total && jm[base + stop] != '.' {
+            stop = stop + 1;
+        }
+        let tok = name_from(st, tx, jm, base + at, stop - at, jsonread.start(jm, unit), jsonread.end(jm, unit));
+        if first < 0 {
+            first = tok;
+        }
+        n = n + 1;
+        if stop >= total {
+            done = true;
+        } else {
+            punct(st, tx, lc.Tok::Dot, ".");
+            at = stop + 1;
+        }
+    }
+    return ast.Ls { head: first, tail: first, n: n };
+}
+
+// The unit: an object with `module`, `imports` and `items`, read in the order written, and then built.
+fn unit[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int], root: int) -> [] int {
+    if !ok(st) {
+        return 0;
+    }
+    if jsonread.kind(jm, root) != jsonread.k_object() {
+        return refuse(st, jm, rules.r_ingest_arity(), root);
+    }
+    var module_v = 0 - 1;
+    var imports_v = 0 - 1;
+    var items_v = 0 - 1;
+    var m = jsonread.first(jm, root);
+    while ok(st) && m >= 0 {
+        let key = jm[16 + 6 * m + 3];
+        let value = jm[16 + 6 * m + 4];
+        if jsonread.is_string(jm, src, key, "module") {
+            want_string(st, jm, value);
+            module_v = value;
+        } else if jsonread.is_string(jm, src, key, "imports") {
+            array(st, jm, value);
+            imports_v = value;
+            var imp = 0 - 1;
+            if ok(st) {
+                imp = jsonread.first(jm, value);
+            }
+            while ok(st) && imp >= 0 {
+                if jsonread.kind(jm, imp) != jsonread.k_object() {
+                    refuse(st, jm, rules.r_ingest_arity(), imp);
+                }
+                var f = 0 - 1;
+                if ok(st) {
+                    f = jsonread.first(jm, imp);
+                }
+                var has_path = false;
+                while ok(st) && f >= 0 {
+                    let fk = jm[16 + 6 * f + 3];
+                    let fv = jm[16 + 6 * f + 4];
+                    if jsonread.is_string(jm, src, fk, "path") {
+                        want_string(st, jm, fv);
+                        has_path = true;
+                    } else if jsonread.is_string(jm, src, fk, "as") {
+                        want_string(st, jm, fv);
+                    } else {
+                        refuse(st, jm, rules.r_ingest_node(), fv);
+                    }
+                    f = jsonread.next(jm, f);
+                }
+                if ok(st) && !has_path {
+                    refuse(st, jm, rules.r_ingest_arity(), imp);
+                }
+                imp = jsonread.next(jm, imp);
+            }
+        } else if jsonread.is_string(jm, src, key, "items") {
+            array(st, jm, value);
+            if ok(st) && jsonread.count(jm, value) == 0 {
+                refuse(st, jm, rules.r_ingest_arity(), value);
+            }
+            items_v = value;
+        } else {
+            // `edition`, which the JSON form has none of, and anything else a unit has no field for.
+            refuse(st, jm, rules.r_ingest_node(), value);
+        }
+        m = jsonread.next(jm, m);
+    }
+    var home = 0;
+    if ok(st) && module_v >= 0 {
+        let path = path_tokens(st, tx, src, jm, module_v, root);
+        if ok(st) {
+            st[st[16] + 2] = path.head;
+            st[st[16] + 3] = path.n;
+            st[11] = 2;
+            home = 1;
+        }
+    }
+    var imp = 0 - 1;
+    if ok(st) && imports_v >= 0 {
+        imp = jsonread.first(jm, imports_v);
+    }
+    while ok(st) && imp >= 0 {
+        let keyword = punct(st, tx, lc.Tok::Import, "import");
+        path_tokens(st, tx, src, jm, field(st, src, jm, imp, "path"), root);
+        let alias = field(st, src, jm, imp, "as");
+        if ok(st) && alias >= 0 {
+            punct(st, tx, lc.Tok::As, "as");
+            let base = jsonread.scratch0(jm);
+            let n = jsonread.decode_into(jm, src, alias, base);
+            name_from(st, tx, jm, base, n, jsonread.start(jm, root), jsonread.end(jm, root));
+        }
+        punct(st, tx, lc.Tok::Semi, ";");
+        if ok(st) {
+            st[st[19] + st[12]] = keyword * 65536 + home;
+            st[12] = st[12] + 1;
+        }
+        imp = jsonread.next(jm, imp);
+    }
+    var items = ast.empty_list();
+    var it = 0 - 1;
+    if ok(st) && items_v >= 0 {
+        it = jsonread.first(jm, items_v);
+    }
+    while ok(st) && it >= 0 {
+        items = ast.push(st, items, item(st, tx, src, jm, it, home));
+        it = jsonread.next(jm, it);
+    }
+    st[15] = items.head;
+    st[10] = items.tail;
+    return 0;
+}
+
+// Build the tree and the text from the records of `jm` (read from `src`): 0, or 1 if the JSON is refused (the rule and the span are in
+// `st[3]` to `st[5]`).
+pub fn build[&s, &t, &x, &j](st: &!s [int], tx: &!t [byte], src: &x [byte], jm: &!j [int]) -> [] int {
+    unit(st, tx, src, jm, jm[1]);
+    return st[2];
+}

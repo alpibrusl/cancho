@@ -588,7 +588,7 @@ pub fn spells[&r, &w](text: &r [byte], from: int, to: int, word: &w [byte]) -> [
     return true;
 }
 
-fn keyword[&r](text: &r [byte], from: int, to: int) -> [] Tok {
+pub fn keyword[&r](text: &r [byte], from: int, to: int) -> [] Tok {
     if spells(text, from, to, "fn") {
         return Tok::Fn;
     }

@@ -1,0 +1,605 @@
+module selfhost.jsonread;
+
+// jsonread.cho -- the JSON reader, written in cancho: a port of `read_json` in `crates/cancho-syntax/src/json.rs`, with the depth check
+// `json_to_ast` makes on its result (`docs/structured-ingest.md` section 7).
+//
+// A value is a record of six integers in one array (`jm`), so a whole document is one allocation whose size is known from the text:
+//
+//   0 its kind (the `k_` functions below), 1 where it starts in the text, 2 where it ends,
+//   3 and 4 what the kind keeps, 5 the next value of the list it is in (-1 if last).
+//
+// An array keeps its first element and how many; an object keeps its first member and how many; a member is a record of its own, which
+// keeps its key (a string) and its value. An integer keeps its value. A string keeps nothing: it is decoded where it is used, which is
+// how `json.rs` differs by nothing a caller can see (the decoded text is what a refusal's span is not about).
+//
+// The refusal is the first thing that is not JSON, as in `json.rs`: the rule `ingest-json`, and the span in the text. It is sticky, as
+// the refusals of `ast.cho` are: after it every function answers -1 and reads nothing.
+//
+//   header   0 how many records, 1 the root, 2 failed, 3 the rule, 4 and 5 where, 6 the capacity, 7 where the reader is in the text,
+//            8 the room of each of the two places a key is decoded in; the records start at 16
+
+import selfhost.lexcore as lc;
+import selfhost.rules;
+
+pub fn k_null() -> [] int {
+    return 0;
+}
+
+pub fn k_true() -> [] int {
+    return 1;
+}
+
+pub fn k_false() -> [] int {
+    return 2;
+}
+
+pub fn k_int() -> [] int {
+    return 3;
+}
+
+pub fn k_number() -> [] int {
+    return 4;
+}
+
+pub fn k_string() -> [] int {
+    return 5;
+}
+
+pub fn k_array() -> [] int {
+    return 6;
+}
+
+pub fn k_object() -> [] int {
+    return 7;
+}
+
+pub fn k_member() -> [] int {
+    return 8;
+}
+
+// How deep arrays and objects may nest.
+pub fn max_depth() -> [] int {
+    return 128;
+}
+
+// What `jm` must hold for the text `src`: the header, the records, and two places to decode a string into.
+pub fn size_for[&x](src: &x [byte]) -> [] int {
+    return 16 + 6 * capacity(src) + 2 * (len(src) + 16);
+}
+
+// How many records the text can hold: every string, container and separator is at most one, a member and a scalar after a separator
+// are each at most one more.
+fn capacity[&x](src: &x [byte]) -> [] int {
+    var quotes = 0;
+    var braces = 0;
+    var separators = 0;
+    var i = 0;
+    while i < len(src) {
+        let c = lc.at(src, i);
+        if c == '"' {
+            quotes = quotes + 1;
+        }
+        if c == '{' || c == '[' {
+            braces = braces + 1;
+        }
+        if c == ',' || c == ':' {
+            separators = separators + 1;
+        }
+        i = i + 1;
+    }
+    return quotes / 2 + braces + 2 * separators + 8;
+}
+
+// ----------------------------------------------------------- accessors ---
+
+pub fn kind[&j](jm: &!j [int], id: int) -> [] int {
+    if id < 0 {
+        return 0 - 1;
+    }
+    return jm[16 + 6 * id];
+}
+
+pub fn start[&j](jm: &!j [int], id: int) -> [] int {
+    return jm[16 + 6 * id + 1];
+}
+
+pub fn end[&j](jm: &!j [int], id: int) -> [] int {
+    return jm[16 + 6 * id + 2];
+}
+
+pub fn first[&j](jm: &!j [int], id: int) -> [] int {
+    return jm[16 + 6 * id + 3];
+}
+
+pub fn count[&j](jm: &!j [int], id: int) -> [] int {
+    return jm[16 + 6 * id + 4];
+}
+
+pub fn next[&j](jm: &!j [int], id: int) -> [] int {
+    return jm[16 + 6 * id + 5];
+}
+
+pub fn failed[&j](jm: &!j [int]) -> [] bool {
+    return jm[2] != 0;
+}
+
+fn fail[&j](jm: &!j [int], from: int, to: int) -> [] int {
+    if jm[2] == 0 {
+        jm[2] = 1;
+        jm[3] = rules.r_ingest_json();
+        jm[4] = from;
+        jm[5] = to;
+    }
+    return 0 - 1;
+}
+
+fn make[&j](jm: &!j [int], k: int, from: int, to: int) -> [] int {
+    if jm[2] != 0 {
+        return 0 - 1;
+    }
+    if jm[0] >= jm[6] {
+        return fail(jm, from, to);
+    }
+    let id = jm[0];
+    jm[0] = id + 1;
+    let at = 16 + 6 * id;
+    jm[at] = k;
+    jm[at + 1] = from;
+    jm[at + 2] = to;
+    jm[at + 3] = 0 - 1;
+    jm[at + 4] = 0;
+    jm[at + 5] = 0 - 1;
+    return id;
+}
+
+// ------------------------------------------------------------ decoding ---
+
+// The bytes of the string record `id`, decoded as `json.rs` decodes them, into the ints of `jm` from `base`: how many.
+pub fn decode_into[&j, &x](jm: &!j [int], src: &x [byte], id: int, base: int) -> [] int {
+    var i = start(jm, id) + 1;
+    let to = end(jm, id) - 1;
+    var n = 0;
+    while i < to {
+        let b = lc.at(src, i);
+        if b == '\\' {
+            i = i + 1;
+            let e = lc.at(src, i);
+            i = i + 1;
+            if e == 'u' {
+                var code = 0;
+                var d = 0;
+                while d < 4 {
+                    code = code * 16 + hex_value(lc.at(src, i));
+                    i = i + 1;
+                    d = d + 1;
+                }
+                n = utf8(jm, base, n, code);
+            } else {
+                var c = e;
+                if e == 'b' {
+                    c = 8;
+                }
+                if e == 'f' {
+                    c = 12;
+                }
+                if e == 'n' {
+                    c = 10;
+                }
+                if e == 'r' {
+                    c = 13;
+                }
+                if e == 't' {
+                    c = 9;
+                }
+                jm[base + n] = c;
+                n = n + 1;
+            }
+        } else {
+            jm[base + n] = b;
+            n = n + 1;
+            i = i + 1;
+        }
+    }
+    return n;
+}
+
+fn hex_value(c: int) -> [] int {
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    if c >= 'a' && c <= 'f' {
+        return c - 'a' + 10;
+    }
+    return c - 'A' + 10;
+}
+
+// The code point as UTF-8, which a lone surrogate (not a character) is replaced by U+FFFD in.
+fn utf8[&j](jm: &!j [int], base: int, n: int, code: int) -> [] int {
+    var c = code;
+    if c >= 55296 && c <= 57343 {
+        c = 65533;
+    }
+    if c < 128 {
+        jm[base + n] = c;
+        return n + 1;
+    }
+    if c < 2048 {
+        jm[base + n] = 192 | c >> 6;
+        jm[base + n + 1] = 128 | c & 63;
+        return n + 2;
+    }
+    jm[base + n] = 224 | c >> 12;
+    jm[base + n + 1] = 128 | c >> 6 & 63;
+    jm[base + n + 2] = 128 | c & 63;
+    return n + 3;
+}
+
+// Where the place `which` (0 or 1) for decoding a string is.
+fn scratch[&j](jm: &!j [int], which: int) -> [] int {
+    return 16 + 6 * jm[6] + which * jm[8];
+}
+
+// Where the first place for decoding a string is.
+pub fn scratch0[&j](jm: &!j [int]) -> [] int {
+    return scratch(jm, 0);
+}
+
+// Do the strings `a` and `b` decode to the same bytes?
+pub fn same_string[&j, &x](jm: &!j [int], src: &x [byte], a: int, b: int) -> [] bool {
+    let na = decode_into(jm, src, a, scratch(jm, 0));
+    let nb = decode_into(jm, src, b, scratch(jm, 1));
+    if na != nb {
+        return false;
+    }
+    var k = 0;
+    while k < na {
+        if jm[scratch(jm, 0) + k] != jm[scratch(jm, 1) + k] {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// The string `id` is the text `word`.
+pub fn is_string[&j, &x](jm: &!j [int], src: &x [byte], id: int, word: &static [byte]) -> [] bool {
+    if kind(jm, id) != k_string() {
+        return false;
+    }
+    let n = decode_into(jm, src, id, scratch(jm, 0));
+    if n != len(word) {
+        return false;
+    }
+    var k = 0;
+    while k < n {
+        if jm[scratch(jm, 0) + k] != lc.at(word, k) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// ------------------------------------------------------------- reading ---
+
+fn is_space(c: int) -> [] bool {
+    return c == ' ' || c == 9 || c == 10 || c == 12 || c == 13;
+}
+
+fn skip_space[&j, &x](jm: &!j [int], src: &x [byte]) -> [] int {
+    while jm[7] < len(src) && is_space(lc.at(src, jm[7])) {
+        jm[7] = jm[7] + 1;
+    }
+    return 0;
+}
+
+fn read_value[&j, &x](jm: &!j [int], src: &x [byte], depth: int) -> [] int {
+    if jm[2] != 0 {
+        return 0 - 1;
+    }
+    skip_space(jm, src);
+    let at = jm[7];
+    if at >= len(src) {
+        return fail(jm, at, at + 1);
+    }
+    let b = lc.at(src, at);
+    if depth > max_depth() && (b == '{' || b == '[') {
+        return fail(jm, at, at + 1);
+    }
+    if b == '{' {
+        return read_object(jm, src, depth, at);
+    }
+    if b == '[' {
+        return read_array(jm, src, depth, at);
+    }
+    if b == '"' {
+        return read_string(jm, src, at);
+    }
+    if b == 't' || b == 'f' || b == 'n' {
+        return read_word(jm, src, at);
+    }
+    if b == '-' || lc.is_digit(b) {
+        return read_number(jm, src, at);
+    }
+    return fail(jm, at, at + 1);
+}
+
+fn read_object[&j, &x](jm: &!j [int], src: &x [byte], depth: int, at: int) -> [] int {
+    jm[7] = at + 1;
+    skip_space(jm, src);
+    if jm[7] < len(src) && lc.at(src, jm[7]) == '}' {
+        jm[7] = jm[7] + 1;
+        return make(jm, k_object(), at, jm[7]);
+    }
+    var head = 0 - 1;
+    var tail = 0 - 1;
+    var n = 0;
+    var go = true;
+    while go && jm[2] == 0 {
+        skip_space(jm, src);
+        let key = read_value(jm, src, depth + 1);
+        if jm[2] == 0 && kind(jm, key) != k_string() {
+            fail(jm, start(jm, key), end(jm, key));
+        }
+        // A key written twice, the first one being any earlier member's.
+        var m = head;
+        while jm[2] == 0 && m >= 0 {
+            if same_key(jm, src, first(jm, m), key) {
+                fail(jm, at, jm[7]);
+            }
+            m = next(jm, m);
+        }
+        skip_space(jm, src);
+        if jm[2] == 0 {
+            if jm[7] < len(src) && lc.at(src, jm[7]) == ':' {
+                jm[7] = jm[7] + 1;
+            } else {
+                fail(jm, jm[7], jm[7] + 1);
+            }
+        }
+        let value = read_value(jm, src, depth + 1);
+        if jm[2] == 0 {
+            let member = make(jm, k_member(), start(jm, key), end(jm, value));
+            if jm[2] == 0 {
+                jm[16 + 6 * member + 3] = key;
+                jm[16 + 6 * member + 4] = value;
+                if tail >= 0 {
+                    jm[16 + 6 * tail + 5] = member;
+                } else {
+                    head = member;
+                }
+                tail = member;
+                n = n + 1;
+            }
+        }
+        skip_space(jm, src);
+        if jm[2] == 0 {
+            if jm[7] < len(src) && lc.at(src, jm[7]) == ',' {
+                jm[7] = jm[7] + 1;
+            } else if jm[7] < len(src) && lc.at(src, jm[7]) == '}' {
+                jm[7] = jm[7] + 1;
+                go = false;
+            } else {
+                fail(jm, jm[7], jm[7] + 1);
+            }
+        }
+    }
+    if jm[2] != 0 {
+        return 0 - 1;
+    }
+    let id = make(jm, k_object(), at, jm[7]);
+    if id >= 0 {
+        jm[16 + 6 * id + 3] = head;
+        jm[16 + 6 * id + 4] = n;
+    }
+    return id;
+}
+
+// Is the key of the member `old` (a string record) the same as the string `key`?
+fn same_key[&j, &x](jm: &!j [int], src: &x [byte], old: int, key: int) -> [] bool {
+    return same_string(jm, src, old, key);
+}
+
+fn read_array[&j, &x](jm: &!j [int], src: &x [byte], depth: int, at: int) -> [] int {
+    jm[7] = at + 1;
+    skip_space(jm, src);
+    if jm[7] < len(src) && lc.at(src, jm[7]) == ']' {
+        jm[7] = jm[7] + 1;
+        return make(jm, k_array(), at, jm[7]);
+    }
+    var head = 0 - 1;
+    var tail = 0 - 1;
+    var n = 0;
+    var go = true;
+    while go && jm[2] == 0 {
+        let item = read_value(jm, src, depth + 1);
+        if jm[2] == 0 {
+            if tail >= 0 {
+                jm[16 + 6 * tail + 5] = item;
+            } else {
+                head = item;
+            }
+            tail = item;
+            n = n + 1;
+        }
+        skip_space(jm, src);
+        if jm[2] == 0 {
+            if jm[7] < len(src) && lc.at(src, jm[7]) == ',' {
+                jm[7] = jm[7] + 1;
+            } else if jm[7] < len(src) && lc.at(src, jm[7]) == ']' {
+                jm[7] = jm[7] + 1;
+                go = false;
+            } else {
+                fail(jm, jm[7], jm[7] + 1);
+            }
+        }
+    }
+    if jm[2] != 0 {
+        return 0 - 1;
+    }
+    let id = make(jm, k_array(), at, jm[7]);
+    if id >= 0 {
+        jm[16 + 6 * id + 3] = head;
+        jm[16 + 6 * id + 4] = n;
+    }
+    return id;
+}
+
+fn read_string[&j, &x](jm: &!j [int], src: &x [byte], at: int) -> [] int {
+    var i = at + 1;
+    var done = false;
+    while !done && jm[2] == 0 {
+        if i >= len(src) {
+            fail(jm, at, i);
+        } else {
+            let b = lc.at(src, i);
+            if b == '"' {
+                i = i + 1;
+                done = true;
+            } else if b == '\\' {
+                i = i + 1;
+                if i >= len(src) {
+                    fail(jm, i, i);
+                } else {
+                    let e = lc.at(src, i);
+                    i = i + 1;
+                    if e == 'u' {
+                        var d = 0;
+                        while d < 4 && jm[2] == 0 {
+                            if i >= len(src) || !lc.is_hex(lc.at(src, i)) {
+                                fail(jm, i, i + 1);
+                            } else {
+                                i = i + 1;
+                            }
+                            d = d + 1;
+                        }
+                    } else if e != '"' && e != '\\' && e != '/' && e != 'b' && e != 'f' && e != 'n' && e != 'r' && e != 't' {
+                        fail(jm, i - 1, i);
+                    }
+                }
+            } else {
+                i = i + 1;
+            }
+        }
+    }
+    jm[7] = i;
+    return make(jm, k_string(), at, i);
+}
+
+// `true`, `false` or `null`: tried in that order, whichever the text starts with.
+fn read_word[&j, &x](jm: &!j [int], src: &x [byte], at: int) -> [] int {
+    if at + 4 <= len(src) && lc.spells(src, at, at + 4, "true") {
+        jm[7] = at + 4;
+        return make(jm, k_true(), at, at + 4);
+    }
+    if at + 5 <= len(src) && lc.spells(src, at, at + 5, "false") {
+        jm[7] = at + 5;
+        return make(jm, k_false(), at, at + 5);
+    }
+    if at + 4 <= len(src) && lc.spells(src, at, at + 4, "null") {
+        jm[7] = at + 4;
+        return make(jm, k_null(), at, at + 4);
+    }
+    return fail(jm, at, at + 1);
+}
+
+// A number: an integer that fits is an integer, anything else keeps its text.
+fn read_number[&j, &x](jm: &!j [int], src: &x [byte], at: int) -> [] int {
+    var i = at;
+    var plain = true;
+    while i < len(src) && is_number_byte(lc.at(src, i)) {
+        let c = lc.at(src, i);
+        if !lc.is_digit(c) && c != '-' {
+            plain = false;
+        }
+        i = i + 1;
+    }
+    jm[7] = i;
+    var negative = false;
+    var from = at;
+    if lc.at(src, at) == '-' {
+        negative = true;
+        from = at + 1;
+    }
+    // An optional `-` and then digits only, none of them out of range: an `i64`.
+    var fits = plain && from < i;
+    var value = 0;
+    var k = from;
+    while fits && k < i {
+        let d = lc.at(src, k) - '0';
+        if d < 0 || d > 9 {
+            fits = false;
+        } else if negative {
+            // Accumulate downwards, so that -9223372036854775808 is reachable.
+            if value < (0 - 9223372036854775807 - 1 + d) / 10 {
+                fits = false;
+            } else {
+                value = value * 10 - d;
+            }
+        } else if value > (9223372036854775807 - d) / 10 {
+            fits = false;
+        } else {
+            value = value * 10 + d;
+        }
+        k = k + 1;
+    }
+    if fits {
+        let id = make(jm, k_int(), at, i);
+        if id >= 0 {
+            jm[16 + 6 * id + 3] = value;
+        }
+        return id;
+    }
+    return make(jm, k_number(), at, i);
+}
+
+fn is_number_byte(c: int) -> [] bool {
+    return lc.is_digit(c) || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E';
+}
+
+// The first container, in the order of the text, that nests as deep as `max_depth` or deeper: its record, or -1.
+fn too_deep[&j](jm: &!j [int], id: int, depth: int) -> [] int {
+    let k = kind(jm, id);
+    if k != k_array() && k != k_object() {
+        return 0 - 1;
+    }
+    if depth >= max_depth() {
+        return id;
+    }
+    var child = first(jm, id);
+    var found = 0 - 1;
+    while child >= 0 && found < 0 {
+        var item = child;
+        if k == k_object() {
+            item = jm[16 + 6 * child + 4];
+        }
+        found = too_deep(jm, item, depth + 1);
+        child = next(jm, child);
+    }
+    return found;
+}
+
+// Read the whole text into `jm` (laid out by `layout`): 0, or 1 if it is refused.
+pub fn read[&j, &x](jm: &!j [int], src: &x [byte]) -> [] int {
+    var i = 0;
+    while i < 16 {
+        jm[i] = 0;
+        i = i + 1;
+    }
+    jm[6] = capacity(src);
+    jm[8] = len(src) + 16;
+    jm[1] = 0 - 1;
+    let root = read_value(jm, src, 0);
+    skip_space(jm, src);
+    if jm[2] == 0 && jm[7] != len(src) {
+        fail(jm, jm[7], jm[7] + 1);
+    }
+    if jm[2] == 0 {
+        let deep = too_deep(jm, root, 0);
+        if deep >= 0 {
+            fail(jm, start(jm, deep), end(jm, deep));
+        }
+    }
+    jm[1] = root;
+    return jm[2];
+}
