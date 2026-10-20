@@ -158,4 +158,10 @@ that names the old ones has to be changed with this.
 mutants make test programs crash; each core dump starts `apport` on a runner, and the runner's job clean-up then took 15 minutes
 (09:32 to 09:47 in that log). That is also the likeliest reason for the one argued-equivalent mutant that was "killed" in one run
 (the run on 6eb9975e): a crash-loaded runner, not the mutation; it is a reading of the log, not tested apart. The mutant jobs now
-run with `ulimit -c 0`. The 23.3-minute wall time above is the first run, which did not have the stall; the one with it was 30.
+run with `ulimit -c 0`; **that did not work**: the hard limit 0 is ignored when `core_pattern` is a pipe, as `apport`'s is. The kernel
+honours a limit of 1 byte for a piped pattern, so the jobs run the script under `prlimit --core=1:1`. The 23.3-minute wall time above is
+the first run, which did not have the stall; the one with it was 30.
+
+**After `prlimit --core=1:1` (the run of that change, one run).** The byte-fed mutants took 3.0 minutes, the streaming-body mutants
+6.5 and the HTTP client's 19.6; the wall time was 28.7 minutes, most of it the macOS jobs waiting for a runner. A figure from one run,
+with the spread above.
