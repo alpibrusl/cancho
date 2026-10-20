@@ -38,6 +38,27 @@ pub fn push_prefix[&s, &x](st: &!s [int], text: &x [byte], cap: int, want: int, 
     return push_bound(st, text, cap, want, from, to);
 }
 
+// The bound a call checks. For a dial (`connect`, `tcp_connect`, `tcp_connect_start`, `udp_connect`), from edition 10 its host half is
+// matched exactly (`docs/net-bounds.md` 2.3), which the runtime is told by a byte 1 ahead of the literal.
+pub fn push_call_bound[&s, &x](st: &!s [int], text: &x [byte], cap: int, which: int, from: int, to: int) -> [] int {
+    if which != 33 && which != 37 && which != 110 && which != 129 {
+        return push_prefix(st, text, cap, 0 - 1, from, to);
+    }
+    effects.mark_arg(st);
+    var inner = cap;
+    if types.is_ref(st, inner) {
+        inner = types.ref_inner(st, inner);
+    }
+    let tok = types.prelude_lit_tok(st, inner);
+    if st[23] < 10 || tok < 0 {
+        return push_bound(st, text, cap, 0 - 1, from, to);
+    }
+    let n = emit.string_constant_lead(st, text, tok, true);
+    emit.push_arg(st, 7, false, 0, 0 - 2 - n);
+    emit.push_arg(st, 1, true, st[59], 0 - 1);
+    return 0;
+}
+
 // The same, without performing anything: `exec_covers` and `fs_covers` only ask where the bound is
 // (`docs/processes.md` 4.13), and the report of a program that asks is the report of one that does not.
 pub fn push_bound[&s, &x](st: &!s [int], text: &x [byte], cap: int, want: int, from: int, to: int) -> [] int {

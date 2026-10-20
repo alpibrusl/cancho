@@ -34,18 +34,39 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// run time and NUL-terminated for `getaddrinfo` — `checked_path`'s
     /// shape, minus the `/`-boundary and `..` rules neither `Net` nor a
     /// host name has (`docs/connect.md` §10.1).
-    pub(crate) fn checked_host(&mut self, bound: &str, name: &[Value]) -> Value {
+    ///
+    /// With `exact` (edition 10, `docs/net-bounds.md` §2.3) the host half is matched by equality, or, written
+    /// `*.suffix`, as exactly one more label ahead of `.suffix`; otherwise it is the prefix match older editions have.
+    pub(crate) fn checked_host(&mut self, bound: &str, name: &[Value], exact: bool) -> Value {
         const HOST_MAX: i64 = 256;
         let pointer = self.pointer;
         let (source, length) = (name[0], name[1]);
+        // An empty host half is the unnarrowed root: it admits every name, in every edition.
+        let exact = exact && !bound.is_empty();
 
         let too_long =
             self.builder.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, length, HOST_MAX);
         self.builder.ins().trapnz(too_long, TrapCode::HEAP_OUT_OF_BOUNDS);
 
-        let short =
-            self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, length, bound.len() as i64);
+        // A wildcard bound `*.suffix` is checked by its tail `.suffix`, which must follow at least one label byte.
+        let tail =
+            if exact { bound.strip_prefix('*').filter(|t| t.starts_with('.')) } else { None };
+        let short = match tail {
+            Some(tail) => self.builder.ins().icmp_imm(
+                IntCC::UnsignedLessThanOrEqual,
+                length,
+                tail.len() as i64,
+            ),
+            None if exact => {
+                self.builder.ins().icmp_imm(IntCC::NotEqual, length, bound.len() as i64)
+            }
+            None => {
+                self.builder.ins().icmp_imm(IntCC::UnsignedLessThan, length, bound.len() as i64)
+            }
+        };
         self.builder.ins().trapnz(short, TrapCode::HEAP_OUT_OF_BOUNDS);
+        // Where the tail begins in the name: everything before it is the one label.
+        let label_end = tail.map(|tail| self.builder.ins().iadd_imm(length, -(tail.len() as i64)));
 
         let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
@@ -53,7 +74,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             0,
         ));
         let buffer = self.builder.ins().stack_addr(pointer, slot, 0);
-        let expected = self.bytes(bound)[0];
+        let expected = self.bytes(tail.unwrap_or(bound))[0];
 
         let header = self.builder.create_block();
         let body = self.builder.create_block();
@@ -79,7 +100,18 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         // Inside the bound, the bytes have to match -- a plain prefix, with
         // no separator to land on (`docs/net.md` §4, `lower/mod.rs`'s
         // `narrow`).
-        self.check_against(expected, bound.len(), i, byte);
+        match (tail, label_end) {
+            (Some(tail), Some(label_end)) => {
+                // Before the tail a byte must not be a `.` (one label), from it on the bytes must be the tail's.
+                let in_label = self.builder.ins().icmp(IntCC::UnsignedLessThan, i, label_end);
+                let dot = self.builder.ins().icmp_imm(IntCC::Equal, byte, 46);
+                let second_label = self.builder.ins().band(in_label, dot);
+                self.builder.ins().trapnz(second_label, TrapCode::HEAP_OUT_OF_BOUNDS);
+                let into_tail = self.builder.ins().isub(i, label_end);
+                self.check_against(expected, tail.len(), into_tail, byte);
+            }
+            _ => self.check_against(expected, bound.len(), i, byte),
+        }
 
         let next = self.builder.ins().iadd_imm(i, 1);
         self.builder.def_var(cursor, next);
@@ -99,8 +131,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// into whatever `sockaddr` the resolver filled in, and connects.
     /// `args` is the capability (zero-sized, stopping here), the name as
     /// `&r [byte]`, and the port as an `int`.
-    pub(crate) fn connect(&mut self, bound: &str, args: &[Expr]) -> Vec<Value> {
-        let (fd, _) = self.connect_raw(bound, args, false, false, false);
+    pub(crate) fn connect(&mut self, bound: &str, args: &[Expr], exact: bool) -> Vec<Value> {
+        let (fd, _) = self.connect_raw(bound, args, false, false, false, exact);
         vec![fd]
     }
 
@@ -117,6 +149,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         connection: bool,
         start: bool,
         datagram: bool,
+        exact: bool,
     ) -> (Value, Value) {
         let pointer = self.pointer;
         let name = self.expr(&args[1]);
@@ -137,7 +170,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             let wrong_port = self.builder.ins().icmp_imm(IntCC::NotEqual, port, expected);
             self.builder.ins().trapnz(wrong_port, TrapCode::HEAP_OUT_OF_BOUNDS);
         }
-        let host = self.checked_host(host_bound, &name);
+        let host = self.checked_host(host_bound, &name, exact);
 
         // `ai_addr` and `ai_canonname` swap places between glibc and
         // Darwin's libc -- BSD's original `getaddrinfo` (RFC 2553) put
@@ -303,8 +336,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         args: &[Expr],
         start: bool,
         datagram: bool,
+        exact: bool,
     ) -> Vec<Value> {
-        let (fd, reason) = self.connect_raw(bound, args, !datagram, start, datagram);
+        let (fd, reason) = self.connect_raw(bound, args, !datagram, start, datagram, exact);
         let failed = self.builder.ins().icmp_imm(IntCC::SignedLessThan, fd, 0);
         let one = self.builder.ins().iconst(types::I64, 1);
         let zero = self.builder.ins().iconst(types::I64, 0);

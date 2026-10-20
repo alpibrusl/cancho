@@ -165,9 +165,11 @@ pub fn emit_per() -> [] int {
     return 200;
 }
 
-// What each buffer has however small the program is: the runtime alone is more than 14,000 bytes.
+// What each buffer has however small the program is: the runtime alone is most of it (the sockets and the clock are 124,240
+// bytes on Darwin, the largest, and `runtime.ll` and the other pieces come with them). A program too small for its runtime
+// overflowed the buffer and was refused as not yet compiled, which Darwin showed when edition 10 grew `net.c`.
 pub fn emit_floor() -> [] int {
-    return 120000;
+    return 160000;
 }
 
 pub fn layout_emit[&s](st: &!s [int], tokens: int, files: int) -> [] int {
@@ -1715,7 +1717,7 @@ pub fn unit[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             value = int_value(st, text, tok, false);
         }
         expect(st, lc.Tok::Semi);
-        if ok(st) && (value < 1 || value > 9) {
+        if ok(st) && (value < 1 || value > 10) {
             fail(st, rules.r_unknown_edition(), tstart(st, keyword), tend(st, tok));
         }
         st[6] = value;

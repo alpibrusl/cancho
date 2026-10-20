@@ -1570,7 +1570,7 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
         return ex.nothing();
     }
     if holds_bound {
-        atoms.push_prefix(st, text, cap, 0 - 1, from, to);
+        atoms.push_call_bound(st, text, cap, which, from, to);
     }
     if which == 119 {
         emit.push_arg(st, 1, true, netcode.signal_bits(st, text, cap), 0 - 1);

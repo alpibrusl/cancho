@@ -297,9 +297,33 @@ void cancho_net_pipe_open(i64 *out) {
 
 i64 cancho_net_close(i64 fd) { return close((int)fd); }
 
-/* The host of a dial, checked against the bound's host and made a C string; traps when it is not the bound's. */
-static void netrt_checked_host(const u8 *name, i64 len, const u8 *bound, i64 host_len, u8 *buffer) {
-  if (len >= 256 || len < host_len) cancho_trap();
+/* The host of a dial, checked against the bound's host and made a C string; traps when it is not the bound's.
+ * Before edition 10 the bound's host is a prefix of the name. With `exact` (a bound the compiler marked, edition 10,
+ * `docs/net-bounds.md` 2.3) it is the whole name, or, written `*.suffix`, exactly one label ahead of `.suffix`; an empty
+ * host half is the unnarrowed root and admits every name either way. */
+static void netrt_checked_host(const u8 *name, i64 len, const u8 *bound, i64 host_len, u8 *buffer, int exact) {
+  if (len >= 256) cancho_trap();
+  if (exact && host_len > 0) {
+    if (host_len >= 2 && bound[0] == '*' && bound[1] == '.') {
+      const u8 *tail = bound + 1;
+      i64 tail_len = host_len - 1;
+      if (len <= tail_len) cancho_trap();
+      i64 label_end = len - tail_len;
+      for (i64 i = 0; i < len; i++) {
+        buffer[i] = name[i];
+        if (i < label_end ? name[i] == '.' : name[i] != tail[i - label_end]) cancho_trap();
+      }
+    } else {
+      if (len != host_len) cancho_trap();
+      for (i64 i = 0; i < len; i++) {
+        buffer[i] = name[i];
+        if (name[i] != bound[i]) cancho_trap();
+      }
+    }
+    buffer[len] = 0;
+    return;
+  }
+  if (len < host_len) cancho_trap();
   for (i64 i = 0; i < len; i++) {
     buffer[i] = name[i];
     if (i < host_len && name[i] != bound[i]) cancho_trap();
@@ -310,9 +334,15 @@ static void netrt_checked_host(const u8 *name, i64 len, const u8 *bound, i64 hos
 /* The descriptor of a connection to `name`:`port`, or -1 with `*why` the reason (-1 when the name did not
  * resolve). `conn` makes it a `Conn` (no `SIGPIPE` on Darwin), `start` leaves it non-blocking and in progress. */
 static i64 netrt_dial(const u8 *name, i64 len, i64 port, const u8 *bound, i64 bound_len, i64 conn, i64 start, int kind, i64 *why) {
+  int exact = 0;
+  if (bound_len > 0 && bound[0] == 1) {
+    exact = 1;
+    bound++;
+    bound_len--;
+  }
   netrt_check_port(port, netrt_dial_port(bound, bound_len));
   u8 host[256];
-  netrt_checked_host(name, len, bound, netrt_host_length(bound, bound_len), host);
+  netrt_checked_host(name, len, bound, netrt_host_length(bound, bound_len), host, exact);
   u8 hints[48];
   for (int i = 0; i < 48; i++) hints[i] = 0;
   *(int *)(hints + 4) = 2;

@@ -486,9 +486,17 @@ impl<'a> FnLowering<'a> {
             return Ok((value, Type::Named(DefId(which as u32), vec![Type::Lit(canonical)])));
         }
         if many {
-            return narrow_into_several(value, which, current, &targets, &spans, span);
+            return narrow_into_several(
+                value,
+                which,
+                current,
+                &targets,
+                &spans,
+                span,
+                self.edition,
+            );
         }
-        check_narrowing(which, current, &target, span)?;
+        check_narrowing(which, current, &target, span, self.edition)?;
 
         Ok((value, Type::Named(DefId(which as u32), vec![Type::Lit(target)])))
     }

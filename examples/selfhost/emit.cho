@@ -1500,10 +1500,19 @@ pub fn push_slice[&s](st: &!s [int], ptr_reg: int, len_known: bool, len_value: i
 // The text of a string literal as a global of its own, `@str.<n>`: the number answered, the length
 // left in `st[59]`. The token includes its quotes; the six escapes are what the lexer allows.
 pub fn string_constant[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] int {
+    return string_constant_lead(st, text, tok, false);
+}
+
+// The same, and with `lead` a byte 1 ahead of the text: the mark `runtime/net.c` reads as "match the host of this bound exactly"
+// (`docs/net-bounds.md` 2.3, edition 10). No bound begins with it.
+pub fn string_constant_lead[&s, &x](st: &!s [int], text: &x [byte], tok: int, lead: bool) -> [] int {
     let n = st[58];
     st[58] = n + 1;
     // Its length first, so the array can be sized.
     var length = 0;
+    if lead {
+        length = 1;
+    }
     var i = ast.tstart(st, tok) + 1;
     let end = ast.tend(st, tok) - 1;
     while i < end {
@@ -1521,6 +1530,10 @@ pub fn string_constant[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] i
     nat(st, length);
     str(st, " x i8] [");
     var k = 0;
+    if lead {
+        str(st, "i8 1");
+        k = 1;
+    }
     i = ast.tstart(st, tok) + 1;
     while i < end {
         var c = int_of(text[i]);

@@ -337,6 +337,13 @@ that never replaces a name, and `dir_mode` and `dir_own_mode` ([`directory-listi
 Each is a builtin under an existing label and a name an older file may already declare, so it is absent before
 edition 7 (`tests/reject/dir_rename_new_is_edition_seven.cho`) and nothing else about edition 6 changes.
 
+**Edition 10 is edition 9 plus exact host matching in a `Net` bound** ([`net-bounds.md`](net-bounds.md) §2.3). Not a name but a
+meaning: before edition 10 the host half of a bound is a prefix (`127.0.0.1` admits `127.0.0.10`, `ns1.example.com` admits
+`ns1.example.com.attacker.net`), and from it the host is the whole name, or `*.suffix` for one more label, with an empty host
+half still admitting every name. That cannot join a closed or open earlier edition, since it would change what an existing file
+does, so it opens 10. `Split` is unchanged, no label or builtin is added, and a file that declares `edition 10` hashes differently from
+its edition-9 text (§6.3); no other file's hash moves.
+
 **Edition 9 is edition 8 plus the word-at-a-time scan** ([`word-scan.md`](word-scan.md)): the builtins `load_le64`,
 `byte_mask64`, `trailing_zeros`, `leading_zeros` and `popcount`. It exists because §6.4 closes edition 7 and edition 8 is the serial-port capability (the freeze: a name
 added to a closed edition could shadow a user's own), and these are exactly the names a program may declare for itself: `popcount` and

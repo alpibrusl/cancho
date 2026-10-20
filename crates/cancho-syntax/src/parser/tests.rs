@@ -680,14 +680,14 @@ fn edition_nine_is_accepted() {
     assert_eq!(ast.edition_of(ItemId(item.unwrap() as u32)), 9);
 }
 
-/// There is nothing later than edition 9 to opt into yet
+/// There is nothing later than edition 10 to opt into yet
 /// (`docs/editions.md` §7, `docs/tty.md` §6), so any other number is
 /// refused rather than silently accepted.
 #[test]
 fn an_unknown_edition_is_refused() {
-    let err = parse("edition 10;\nfn f() -> [] int { return 1; }").unwrap_err();
+    let err = parse("edition 11;\nfn f() -> [] int { return 1; }").unwrap_err();
     assert_eq!(err.rule, Rule::UnknownEdition);
-    assert!(err.message.contains("unknown edition 10"), "{}", err.message);
+    assert!(err.message.contains("unknown edition 11"), "{}", err.message);
 }
 
 /// The marker comes before even `module` (§6.1) — checked once, ahead
