@@ -298,6 +298,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "driver.cho",
         "printing.cho",
         "floatprint.cho",
+        "formatting.cho",
         "prune.cho",
         "listing.cho",
         "checker.cho",
@@ -789,6 +790,140 @@ fn the_printer_in_cancho_agrees_with_the_rust_printer() {
         different.len(),
         different.join("\n")
     );
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
+/// Programs for the formatter that the repository does not hold: a comment in each place a comment can stand, blank lines, the
+/// spellings of literals, the edition marker, `pub extern`, an `import` out of place, and what is empty.
+const FORMAT_EDGE: &[&str] = &[
+    "// header\n\n// second\nimport std.io as console;   // trailing import\n\n// doc for f\nfn f(a: int) -> [] int {   // after brace\n    // leading\n    let x = 'a' + 0x10 + (a);  // trailing x\n\n\n    let y = 1.50;\n    // dangling at end\n    return x;\n}\n// end of file\n",
+    "fn f() -> [] int {\n    // keep\n    return 0; // me\n}\n",
+    "fn f() -> [] int {\n    return g(1, // one\n        2);\n}\n",
+    "fn f(a: int) -> [] int {\n    if a == 1 {\n        return 1;\n    } else if a == 2 {\n        return 2;\n    } else {\n        return 3;\n    }\n}\n",
+    "fn f(a: int) -> [] int {\n    if a == 1 {\n        return 1;\n    } else {\n        if a == 2 {\n            return 2;\n        }\n    }\n    return 3;\n}\n",
+    "fn f(a: int) -> [] int {\n    if a == 1 {\n        return 1;\n    } else {\n        if a == 2 {\n            return 2;\n        }\n        return 4;\n    }\n}\n",
+    "edition 2;\n\nfn f() -> [] int {\n    return 0;\n}\n",
+    "edition 2; // the edition\nfn f() -> [] int { return 0; }\n",
+    "fn f() -> [] int {\n\n    let x = 1;\n\n    return x;\n\n}\n",
+    "pub extern fn getpid[&f](ffi: &f Ffi(\"libc\")) -> [ffi(\"libc\")] int;\n",
+    "fn f() -> [] int {\n    return 0;\n}\n\nimport std.io;\n",
+    "fn f() -> [] int {\n    return 0;\n}\nimport a.b;\nimport c.d;\n",
+    "",
+    "// only a comment   \n\n\n",
+    "fn f() -> [] int {   \r\n    return 0; // c  \r\n}\r\n",
+    "fn f() -> [] int {\n    let s = \"// not a comment\";\n    return 0;\n}\n",
+    "struct P {\n    // the x\n    x: int, // x end\n    y: int,\n}\n\nenum E {\n    A, // first\n    // second\n    B(int),\n}\n\nfn f(e: E) -> [] int {\n    match e {\n        // arm a\n        E::A => {\n            return 0; // zero\n        }\n        E::B(n) => {\n            return n;\n        }\n    }\n}\n",
+    "fn f() -> [] int { return 1_000 + 0x_ff + 0b1010 + 'a' + '\\n' + 007 + (1) + ((2)); }",
+    "fn f() -> [] float { return 1.50 + 1e5 + 0.1; }",
+    "fn f() -> [] int { return g(1, 2,) + h(); } // done",
+    "fn f() -> [] int { /* not a comment in this language */ return 0; }",
+    "// a\n// b\n\n\n// c\nfn f() -> [] int { return 0; }\n// d\n\n// e",
+    "module m;\nimport a;\n// between\nimport b; // after\nfn f() -> [] int { return 0; }\n",
+    "fn f() -> [] int {\n    {\n        // in a block\n    }\n    return 0;\n}\n",
+    "fn f(\n    a: int, // a\n    b: int, // b\n) -> [] int {\n    return a + b;\n}\n",
+];
+
+/// Ways of spoiling the layout of a program that leave it the same program: no indentation, CRLF, white space at the ends of lines,
+/// blank lines doubled, lines blanked, everything on one line, and comments added at the ends of lines and between them.
+fn spoil(text: &str, how: usize, seed: &mut u64) -> String {
+    let mut next = |bound: u64| {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        *seed % bound
+    };
+    let lines: Vec<&str> = text.split('\n').collect();
+    match how {
+        0 => lines.iter().map(|l| l.trim_start()).collect::<Vec<_>>().join("\n"),
+        1 => lines.join("\r\n"),
+        2 => lines
+            .iter()
+            .map(|l| if l.trim().is_empty() { (*l).to_owned() } else { format!("{l}  ") })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        3 => lines.join("\n\n"),
+        4 => {
+            let mut out = Vec::new();
+            for l in &lines {
+                let r = next(100);
+                if r < 8 {
+                    out.push(format!("    // inserted {}", next(100)));
+                }
+                if r > 92 && !l.trim().is_empty() && !l.contains("//") {
+                    out.push(format!("{l} // end {}", next(100)));
+                } else {
+                    out.push((*l).to_owned());
+                }
+            }
+            out.join("\n")
+        }
+        5 => lines
+            .iter()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .map(|l| l.trim())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .replace(';', ";\n"),
+        _ => {
+            lines.iter().map(|l| if next(10) == 0 { "" } else { *l }).collect::<Vec<_>>().join("\n")
+        }
+    }
+}
+
+/// `examples/selfhost/formatter.cho` against `cancho_syntax::format`: the repository's programs, the same programs with their layout
+/// spoilt two of seven ways each, and `FORMAT_EDGE`. The formatter is given the Rust printer's text, so what is compared is the formatter alone.
+#[test]
+fn the_formatter_in_cancho_agrees_with_the_rust_formatter() {
+    let exe = build("formatter", &with_front_end("formatter.cho"));
+    let mut programs: Vec<(String, String)> = sources();
+    programs.extend(FORMAT_EDGE.iter().map(|s| (format!("edge case {s:.40?}"), (*s).to_owned())));
+    let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+    let mut spoilt = Vec::new();
+    for (n, (name, text)) in programs.iter().enumerate() {
+        // The programs the repository must refuse are not spoilt: they do not parse, and the printer's text is the one refusal line.
+        if ast_oracle::printed(text).starts_with("ERR") {
+            continue;
+        }
+        // Two ways for each program, a different two for the next, so that all seven are used often and the test stays short.
+        for how in [n % 7, (n + 3) % 7] {
+            spoilt.push((format!("{name} spoilt {how}"), spoil(text, how, &mut seed)));
+        }
+    }
+    programs.extend(spoilt);
+    let (mut different, mut formatted, mut refused, mut unchanged) = (Vec::new(), 0, 0, 0);
+    for (name, text) in &programs {
+        let printed = ast_oracle::printed(text);
+        if printed.starts_with("ERR") {
+            continue;
+        }
+        let input = format!("FILE {}\n{text}FILE {}\n{printed}", text.len(), printed.len());
+        let want = ast_oracle::formatted(text);
+        if want.starts_with("CANNOT") {
+            refused += 1;
+        } else if want == *text {
+            unchanged += 1;
+        } else {
+            formatted += 1;
+        }
+        if answer(&exe, &input) != want {
+            different.push(name.clone());
+        }
+    }
+    assert!(
+        different.is_empty(),
+        "the formatter in cancho and the Rust formatter disagree about {} of {} programs:\n{}",
+        different.len(),
+        programs.len(),
+        different.join("\n")
+    );
+    // The comparison is only worth something if it covers files that change, and files that are refused.
+    eprintln!(
+        "formatted {formatted}, refused {refused}, unchanged {unchanged}, of {}",
+        programs.len()
+    );
+    assert!(formatted > 400, "only {formatted} programs were changed by the formatter");
+    assert!(refused >= 10, "only {refused} programs were refused by the formatter");
+    assert!(unchanged > 300, "only {unchanged} programs were already formatted");
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
 

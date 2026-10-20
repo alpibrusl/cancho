@@ -12,6 +12,7 @@ module selfhost.driver;
 //     mode 2   as mode 1 for the declarations, and then, if they are well formed, one line for
 //              each function: `fn <start> <end>` and `OK`, a refusal, or `SKIP` (`body.cho`)
 //     mode 4   the parsed program as the canonical text (`printing.cho`)
+//     mode 6   the formatted text of a file, from the file and its canonical text (`formatting.cho`): two files in a stream
 //     mode 3   the program as LLVM IR text (`emit.cho`), for `clang`; a function the checker
 //              refuses, or has not yet a way to write, is the one line `ERR rule-tag start end`
 //
@@ -38,6 +39,7 @@ import selfhost.pass1;
 import selfhost.runtime;
 import selfhost.kinds;
 import selfhost.printing;
+import selfhost.formatting;
 import selfhost.prune;
 
 // The line `ERR rule-tag start end`.
@@ -757,6 +759,55 @@ pub fn target_skip[&r](raw: &r [byte]) -> [] int {
     return 0;
 }
 
+// Mode 6: the input is two files, the source and the text the printer (mode 4) wrote for it. The formatted source is written, or
+// the line `CANNOT ...`. The checks that make the result safe to write over a file are for what runs the printer on it.
+pub fn format_run[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte]) -> [heap, io_write] int {
+    let first = header_length(raw, 0);
+    if first < 0 {
+        console.write_all(io, "CANNOT the input is not two files");
+        console.newline(io);
+        return 1;
+    }
+    let from = header_end(raw, 0);
+    let second_at = from + first;
+    let second = header_length(raw, second_at);
+    if second < 0 || header_end(raw, second_at) + second > len(raw) || from + first > len(raw) {
+        console.write_all(io, "CANNOT the input is not two files");
+        console.newline(io);
+        return 1;
+    }
+    let src = raw[from..from + first];
+    let printed = raw[header_end(raw, second_at)..header_end(raw, second_at) + second];
+    let area = box_slice(heap, formatting.size_for(len(src), len(printed)), 0);
+    var answer = 0;
+    borrow mut area as &!b in {
+        let m = contents(b);
+        formatting.layout(m, len(src), len(printed));
+        let formatted = formatting.format(heap, m, src, printed);
+        let formatting.Formatted { text, status } = formatted;
+        answer = status;
+        var shown = text;
+        if status == 0 {
+            var done = buffer.empty(heap, 0);
+            borrow shown as &w in {
+                buffer.drop(heap, done);
+                done = formatting.finish(heap, buffer.bytes(w));
+            }
+            buffer.drop(heap, shown);
+            shown = done;
+        }
+        borrow shown as &w in {
+            buffer.write(io, w);
+        }
+        buffer.drop(heap, shown);
+        if answer != 0 {
+            console.newline(io);
+        }
+    }
+    unbox_slice(heap, area);
+    return answer;
+}
+
 // Read standard input, parse it, and print the answer for `mode`; `many` says that the input is
 // a stream of files. The exit status is 1 for a refusal.
 pub fn drive(world: World, mode: int, many: bool) -> [] int {
@@ -771,7 +822,9 @@ pub fn drive(world: World, mode: int, many: bool) -> [] int {
             borrow raw as &r in {
                 let all = buffer.bytes(r);
                 let rest = all[target_skip(all)..len(all)];
-                if many {
+                if mode == 6 {
+                    status = format_run(h, i, rest);
+                } else if many {
                     status = discard(h, run_many(h, i, rest, mode, target_of(all)));
                 } else {
                     status = run_one(h, i, rest, mode, target_of(all));
