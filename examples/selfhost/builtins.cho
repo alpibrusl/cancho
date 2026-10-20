@@ -1260,6 +1260,9 @@ static field_types: [int] {
 }
 
 pub fn split_for(edition: int) -> [] int {
+    if edition >= 11 {
+        return 55;
+    }
     if edition >= 8 {
         return 50;
     }
