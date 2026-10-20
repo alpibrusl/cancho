@@ -118,7 +118,7 @@ fn build[&h, &i, &a, &f, &x](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f F
                 borrow path as &p in {
                     status = store(fs, buffer.bytes(p), buffer.bytes(b.ir));
                     if status == 0 {
-                        var list = buffer.append(heap, buffer.empty(heap, 256), "-O1\0-Wno-override-module\0");
+                        var list = buffer.append(heap, buffer.empty(heap, 256), "-O2\0-Wno-override-module\0");
                         list = buffer.append(heap, list, buffer.bytes(p));
                         list = buffer.append(heap, list, "\0-o\0");
                         list = buffer.append(heap, list, output);

@@ -438,7 +438,7 @@ pub fn build(job: Job<'_>) -> Result<Built, Failure> {
     };
     let cc = std::env::var("CLANG").unwrap_or_else(|_| "clang".to_owned());
     let made = Command::new(&cc)
-        .args(["-O1", "-Wno-override-module", "-c"])
+        .args(["-O2", "-Wno-override-module", "-c"])
         .arg(&module)
         .arg("-o")
         .arg(&object)
