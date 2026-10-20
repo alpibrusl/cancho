@@ -300,6 +300,8 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "floatprint.cho",
         "formatting.cho",
         "jsonprint.cho",
+        "jsonread.cho",
+        "ingest.cho",
         "prune.cho",
         "listing.cho",
         "checker.cho",
@@ -842,6 +844,286 @@ fn the_json_printer_in_cancho_agrees_with_the_rust_one() {
     let long = format!("fn f() -> [] float {{ return 1{}.0; }}\n", "0".repeat(130));
     let said = answer(&exe, &long);
     assert!(said.starts_with("CANNOT "), "{said:.80}");
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
+/// JSON for `ingest` that is wrong in the ways its refusals list: not JSON, in each of the reader's ways, and JSON whose unit, items,
+/// names, kinds and numbers are not what the builder takes.
+const INGEST_EDGE: &[&str] = &[
+    "",
+    "  ",
+    "{",
+    "}",
+    "[",
+    "[1,]",
+    "[1 2]",
+    "{\"a\":1,}",
+    "{\"a\" 1}",
+    "{1:2}",
+    "{\"a\":1 \"b\":2}",
+    "{\"a\":1,\"a\":2}",
+    "\"abc",
+    "\"\\q\"",
+    "\"\\u12\"",
+    "\"\\u12G4\"",
+    "\"a\\",
+    "tru",
+    "nul",
+    "nullx",
+    "truefalse",
+    "-",
+    "--1",
+    "1.5",
+    "1e5",
+    "99999999999999999999",
+    "-9223372036854775808",
+    "-9223372036854775809",
+    "9223372036854775807",
+    "9223372036854775808",
+    "007",
+    "[1] x",
+    "x",
+    "{} {}",
+    "[]",
+    "7",
+    "null",
+    "\"s\"",
+    "{}",
+    "{\"items\": []}",
+    "{\"items\": 5}",
+    "{\"items\": {}}",
+    "{\"edition\": 1}",
+    "{\"foo\": 1}",
+    "{\"module\": 5}",
+    "{\"module\": \"\"}",
+    "{\"module\": \"a..b\", \"items\": [{\"kind\":\"static\",\"name\":\"x\",\"ty\":{\"name\":\"int\"},\"body\":[]}]}",
+    "{\"module\": \"a.b\", \"items\": [{\"kind\":\"static\",\"name\":\"x\",\"ty\":{\"name\":\"int\"},\"body\":[]}]}",
+    "{\"module\": \"fn.b\"}",
+    "{\"imports\": [{}]}",
+    "{\"imports\": [5]}",
+    "{\"imports\": {\"path\": \"a\"}}",
+    "{\"imports\": [{\"path\": \"std.io\", \"x\": 1}]}",
+    "{\"imports\": [{\"path\": \"std.io\", \"as\": \"console\"}]}",
+    "{\"imports\": [{\"path\": \"std.io\", \"as\": 3}]}",
+    "{\"imports\": [{\"path\": \"std..io\"}]}",
+    "{\"imports\": [{\"path\": \"std.io\", \"as\": \"2x\"}]}",
+    "{\"items\": [5]}",
+    "{\"items\": [{}]}",
+    "{\"items\": [{\"kind\": 5}]}",
+    "{\"items\": [{\"kind\": \"bogus\"}]}",
+    "{\"items\": [{\"kind\": \"fn\"}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\"}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"while\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"public\": 1, \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"int\",\"value\":1}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"int\",\"value\":\"1\"}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"tuple\",\"parts\":[]}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"tuple_field\",\"base\":{\"kind\":\"name\",\"name\":\"a\"},\"index\":-1}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"tuple_field\",\"base\":{\"kind\":\"name\",\"name\":\"a\"},\"index\":4294967297}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"unary\",\"op\":\"?\",\"operand\":{\"kind\":\"int\",\"value\":1}}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"binary\",\"op\":\"**\",\"lhs\":{\"kind\":\"int\",\"value\":1},\"rhs\":{\"kind\":\"int\",\"value\":2}}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"unary\",\"op\":\"-\",\"operand\":{\"kind\":\"int\",\"value\":-5}}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"float\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"float\",\"bits\":18442240474082181120}},{\"kind\":\"return\",\"value\":{\"kind\":\"float\",\"bits\":9218868437227405312}},{\"kind\":\"return\",\"value\":{\"kind\":\"float\",\"bits\":9221120237041090560}},{\"kind\":\"return\",\"value\":{\"kind\":\"f32\",\"bits\":2139095040}},{\"kind\":\"return\",\"value\":{\"kind\":\"f32\",\"bits\":2143289344}},{\"kind\":\"return\",\"value\":{\"kind\":\"f32\",\"bits\":4286578688}},{\"kind\":\"return\",\"value\":{\"kind\":\"f32\",\"bits\":1}},{\"kind\":\"return\",\"value\":{\"kind\":\"float\",\"bits\":9223372036854775808}},{\"kind\":\"return\",\"value\":{\"kind\":\"float\",\"bits\":0}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"float\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"f32\",\"bits\":4294967295}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"float\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"f32\",\"bits\":4294967296}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"float\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"float\",\"bits\":18446744073709551616}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"float\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"float\",\"bits\":-1}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"float\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"float\",\"bits\":1.5}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"float\"}, \"body\": [{\"kind\":\"return\",\"value\":{\"kind\":\"str\",\"value\":\"a\\u0001\\u00e9\\ud800\\n\\\"\\\\/\"}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"generics\": [\"T\", \"U\"], \"bounds\": [null, \"val\", \"val\", \"res\"], \"regions\": [\"r\"], \"outlives\": [{\"inner\": \"r\", \"outer\": \"r\"}], \"params\": [], \"effects\": [{\"name\": \"io\"}, {\"name\": \"ffi\", \"argument\": \"libc\"}], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"generics\": [], \"regions\": [], \"outlives\": [{\"inner\": \"r\", \"outer\": \"s\"}], \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"bounds\": [\"mut\"], \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"bounds\": [5], \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"effects\": [{\"name\": \"ffi\", \"argument\": 5}], \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"effects\": null, \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [{\"name\": \"a\"}], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [{\"name\": \"a\", \"ty\": 5}], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [{\"name\": \"a\", \"ty\": {\"kind\": 5}}], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [{\"name\": \"a\", \"ty\": {\"kind\": \"zzz\"}}], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [{\"name\": \"a\", \"ty\": {\"kind\": \"ref\", \"unique\": true, \"region\": \"r\", \"inner\": {\"kind\": \"slice\", \"inner\": {\"kind\": \"tuple\", \"parts\": [{\"name\": \"int\", \"qualifier\": \"q\", \"args\": [{\"kind\": \"lit\", \"value\": \"libc\"}, {\"kind\": \"fn\", \"params\": [{\"name\":\"int\"}], \"effects\": [{\"name\":\"io\"}], \"ret\": {\"name\":\"int\"}}]}]}}}}], \"ret\": {\"name\":\"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"extern\", \"name\": \"getpid\", \"regions\": [\"f\"], \"params\": [], \"effects\": [], \"ret\": {\"name\":\"int\"}, \"symbol\": \"getpid\"}]}",
+    "{\"items\": [{\"kind\": \"extern\", \"name\": \"getpid\", \"params\": [], \"ret\": {\"name\":\"int\"}}]}",
+    "{\"items\": [{\"kind\": \"struct\", \"name\": \"S\", \"fields\": []}]}",
+    "{\"items\": [{\"kind\": \"struct\", \"name\": \"S\", \"mode\": \"zzz\", \"fields\": []}]}",
+    "{\"items\": [{\"kind\": \"struct\", \"name\": \"S\", \"mode\": 5, \"fields\": []}]}",
+    "{\"items\": [{\"kind\": \"struct\", \"name\": \"S\", \"mode\": \"res\", \"generics\": [\"T\"], \"bounds\": [\"val\"], \"fields\": [{\"name\": \"x\", \"ty\": {\"name\": \"T\"}}]}]}",
+    "{\"items\": [{\"kind\": \"enum\", \"name\": \"E\", \"variants\": [{\"name\": \"A\"}, {\"name\": \"B\", \"payload\": [{\"name\": \"int\"}]}]}]}",
+    "{\"items\": [{\"kind\": \"enum\", \"name\": \"E\", \"variants\": [{\"name\": \"A\", \"payload\": null}]}]}",
+    "{\"items\": [{\"kind\": \"enum\", \"name\": \"E\"}]}",
+    "{\"items\": [{\"kind\": \"static\", \"name\": \"N\", \"public\": true, \"ty\": {\"name\": \"int\"}, \"body\": []}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"match\",\"scrutinee\":{\"kind\":\"name\",\"name\":\"e\"},\"arms\":[{\"pattern\":{\"kind\":\"wildcard\"},\"body\":[]},{\"pattern\":{\"kind\":\"variant\",\"qualifier\":\"q\",\"name\":\"E\",\"variant\":\"A\",\"bindings\":[null,\"x\"]},\"body\":[]},{\"pattern\":{\"kind\":\"variant\",\"name\":\"E\",\"variant\":\"B\",\"bindings\":[]},\"body\":[]}]}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"match\",\"scrutinee\":{\"kind\":\"name\",\"name\":\"e\"},\"arms\":[{\"pattern\":{\"kind\":\"zzz\"},\"body\":[]}]}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"match\",\"scrutinee\":{\"kind\":\"name\",\"name\":\"e\"},\"arms\":[{\"pattern\":{\"kind\":\"variant\",\"name\":\"E\",\"variant\":\"A\",\"bindings\":[5]},\"body\":[]}]}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"if\",\"cond\":{\"kind\":\"bool\",\"value\":true},\"then\":[],\"else\":[{\"kind\":\"if\",\"cond\":{\"kind\":\"bool\",\"value\":false},\"then\":[],\"else\":null}]},{\"kind\":\"if\",\"cond\":{\"kind\":\"bool\",\"value\":true},\"then\":[],\"else\":[]}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"if\",\"cond\":{\"kind\":\"struct_lit\",\"name\":\"S\",\"fields\":[]},\"then\":[]}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"destructure\",\"qualifier\":\"q\",\"name\":\"S\",\"fields\":[\"a\",\"b\"],\"value\":{\"kind\":\"name\",\"name\":\"s\"}},{\"kind\":\"destructure_tuple\",\"names\":[\"a\"],\"value\":{\"kind\":\"name\",\"name\":\"s\"}},{\"kind\":\"borrow\",\"value\":\"x\",\"unique\":true,\"region\":\"r\",\"body\":[]},{\"kind\":\"region\",\"region\":\"r\",\"body\":[]},{\"kind\":\"defer\",\"value\":{\"kind\":\"call\",\"name\":\"g\",\"args\":[]}},{\"kind\":\"assign\",\"place\":{\"kind\":\"index\",\"base\":{\"kind\":\"name\",\"name\":\"a\"},\"index\":{\"kind\":\"int\",\"value\":1}},\"value\":{\"kind\":\"slice\",\"base\":{\"kind\":\"name\",\"name\":\"a\"},\"start\":{\"kind\":\"int\",\"value\":1},\"end\":{\"kind\":\"int\",\"value\":2}}},{\"kind\":\"let\",\"mutable\":true,\"name\":\"y\",\"ty\":null,\"value\":{\"kind\":\"alloc\",\"region\":\"r\",\"value\":{\"kind\":\"alloc_slice\",\"region\":\"r\",\"count\":{\"kind\":\"int\",\"value\":1},\"fill\":{\"kind\":\"int\",\"value\":0}}}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"destructure\",\"name\":\"S\",\"fields\":[\"a\",5],\"value\":{\"kind\":\"name\",\"name\":\"s\"}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"expr\",\"value\":{\"kind\":\"variant\",\"qualifier\":\"q\",\"name\":\"E\",\"variant\":\"A\",\"args\":[{\"kind\":\"int\",\"value\":1}]}},{\"kind\":\"expr\",\"value\":{\"kind\":\"variant\",\"name\":\"E\",\"variant\":\"A\"}},{\"kind\":\"expr\",\"value\":{\"kind\":\"field\",\"base\":{\"kind\":\"int\",\"value\":1},\"name\":\"f\"}},{\"kind\":\"expr\",\"value\":{\"kind\":\"tuple_field\",\"base\":{\"kind\":\"float\",\"bits\":4607182418800017408},\"index\":0}},{\"kind\":\"expr\",\"value\":{\"kind\":\"tuple\",\"parts\":[{\"kind\":\"int\",\"value\":1}]}}]}]}",
+    "{\"items\": [{\"kind\": \"fn\", \"name\": \"f\", \"params\": [], \"ret\": {\"name\":\"int\"}, \"body\": [{\"kind\":\"expr\",\"value\":{\"kind\":\"binary\",\"op\":\"*\",\"lhs\":{\"kind\":\"binary\",\"op\":\"+\",\"lhs\":{\"kind\":\"int\",\"value\":1},\"rhs\":{\"kind\":\"int\",\"value\":2}},\"rhs\":{\"kind\":\"binary\",\"op\":\"-\",\"lhs\":{\"kind\":\"int\",\"value\":3},\"rhs\":{\"kind\":\"binary\",\"op\":\"-\",\"lhs\":{\"kind\":\"int\",\"value\":4},\"rhs\":{\"kind\":\"int\",\"value\":5}}}}}]}]}",
+];
+
+/// `value` with one change: a node of the tree (counted from the root) made wrong in the way `how` says.
+fn damage(value: &mut cancho_syntax::Json, target: &mut usize, how: u64) -> bool {
+    use cancho_syntax::{Json, Span};
+    let here = Span::new(0, 0);
+    if *target == 0 {
+        *target = usize::MAX;
+        let whole = how % 20;
+        let replacement = match whole {
+            0 => Json::Null(here),
+            1 => Json::Bool(true, here),
+            2 => Json::Int(-1, here),
+            3 => Json::Int(7, here),
+            4 => Json::Str("x".to_owned(), here),
+            5 => Json::Str("bogus".to_owned(), here),
+            6 => Json::Str("while".to_owned(), here),
+            7 => Json::Str("2fast".to_owned(), here),
+            8 => Json::Number("1.5".to_owned(), here),
+            9 => Json::Number("18446744073709551616".to_owned(), here),
+            10 => Json::Array(Vec::new(), here),
+            11 => Json::Object(Vec::new(), here),
+            12 => Json::Str(String::new(), here),
+            13 => Json::Int(4_294_967_296, here),
+            _ => Json::Null(here),
+        };
+        match (whole, &mut *value) {
+            // Take the first child away.
+            (14, Json::Array(items, _)) if !items.is_empty() => {
+                items.remove(0);
+            }
+            (14, Json::Object(entries, _)) if !entries.is_empty() => {
+                entries.remove(0);
+            }
+            // Take the last child away.
+            (15, Json::Array(items, _)) if !items.is_empty() => {
+                items.pop();
+            }
+            (15, Json::Object(entries, _)) if !entries.is_empty() => {
+                entries.pop();
+            }
+            // Write the first child twice.
+            (16, Json::Array(items, _)) if !items.is_empty() => {
+                let first = items[0].clone();
+                items.insert(0, first);
+            }
+            (16, Json::Object(entries, _)) if !entries.is_empty() => {
+                let first = entries[0].clone();
+                entries.insert(0, first);
+            }
+            // Name the first key `kind`, or the last.
+            (17, Json::Object(entries, _)) if !entries.is_empty() => {
+                entries[0].0 = "kind".to_owned();
+            }
+            (18, Json::Object(entries, _)) if !entries.is_empty() => {
+                let last = entries.len() - 1;
+                entries[last].0 = "zzz".to_owned();
+            }
+            (19, Json::Array(items, _)) if items.len() > 1 => {
+                items.swap(0, 1);
+            }
+            _ => *value = replacement,
+        }
+        return true;
+    }
+    *target -= 1;
+    match value {
+        Json::Array(items, _) => items.iter_mut().any(|item| damage(item, target, how)),
+        Json::Object(entries, _) => entries.iter_mut().any(|(_, item)| damage(item, target, how)),
+        _ => false,
+    }
+}
+
+fn nodes_of(value: &cancho_syntax::Json) -> usize {
+    use cancho_syntax::Json;
+    match value {
+        Json::Array(items, _) => 1 + items.iter().map(nodes_of).sum::<usize>(),
+        Json::Object(entries, _) => 1 + entries.iter().map(|(_, v)| nodes_of(v)).sum::<usize>(),
+        _ => 1,
+    }
+}
+
+/// `examples/selfhost/ingester.cho` against `cancho ingest`: the JSON of every program in the repository must give the text `print` gives,
+/// and JSON that is wrong in each way the refusals list must be refused with the same rule and the same span.
+#[test]
+fn the_ingester_in_cancho_agrees_with_the_rust_one() {
+    let exe = build("ingester", &with_front_end("ingester.cho"));
+    let mut inputs: Vec<(String, String)> = Vec::new();
+    let mut programs = sources();
+    programs.extend(PRINT_EDGE.iter().map(|s| (format!("print edge {s:.40?}"), (*s).to_owned())));
+    programs.extend(JSON_EDGE.iter().map(|s| (format!("json edge {s:.40?}"), (*s).to_owned())));
+    let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    for (n, (name, text)) in programs.iter().enumerate() {
+        let mut map = cancho_syntax::SourceMap::new();
+        let mut ast = cancho_syntax::Ast::new();
+        let base = map.add("file", text.clone());
+        if cancho_syntax::parse_into(&mut ast, text, base).is_err() {
+            continue;
+        }
+        let json = cancho_syntax::ast_to_json(&ast);
+        inputs.push((format!("{name} as json"), cancho_syntax::write_json(&json)));
+        // Every program, damaged once or twice in the places that tree has; the larger ones less often, so that the test stays short.
+        let times = if text.len() > 3000 { usize::from(n % 4 == 0) } else { 12 };
+        for k in 0..times {
+            let mut damaged = json.clone();
+            let mut target = (next() % nodes_of(&damaged) as u64) as usize;
+            damage(&mut damaged, &mut target, next());
+            if k % 5 == 4 {
+                let mut target = (next() % nodes_of(&damaged) as u64) as usize;
+                damage(&mut damaged, &mut target, next());
+            }
+            inputs.push((format!("{name} damaged {k}"), cancho_syntax::write_json(&damaged)));
+        }
+    }
+    inputs.extend(INGEST_EDGE.iter().map(|s| (format!("ingest edge {s:.50?}"), (*s).to_owned())));
+    // Nesting at the limit and past it, in arrays and in objects.
+    for depth in [126, 127, 128, 129, 130] {
+        inputs.push((
+            format!("{depth} arrays"),
+            format!("{}{}", "[".repeat(depth), "]".repeat(depth)),
+        ));
+        inputs.push((
+            format!("{depth} objects"),
+            format!("{}0{}", "{\"a\":".repeat(depth), "}".repeat(depth)),
+        ));
+    }
+    // Spaces in every place the reader skips them.
+    inputs.push((
+        "spaced".to_owned(),
+        "\n {\t\"items\" :\r[ { \"kind\" : \"static\" , \"name\" : \"x\" , \"ty\" : { \"name\" : \"int\" } , \"body\" : [ ] } ] } \n".to_owned(),
+    ));
+    let (mut different, mut refused, mut accepted) = (Vec::new(), [0usize; 3], 0usize);
+    for (name, json) in &inputs {
+        let want = ast_oracle::ingested(json);
+        if let Some(rule) = want.strip_prefix("ERR ") {
+            match rule.split(' ').next() {
+                Some("ingest-json") => refused[0] += 1,
+                Some("ingest-node") => refused[1] += 1,
+                Some("ingest-arity") => refused[2] += 1,
+                _ => {}
+            }
+        } else {
+            accepted += 1;
+        }
+        if answer(&exe, json) != want {
+            different.push(name.clone());
+        }
+    }
+    assert!(
+        different.is_empty(),
+        "the ingester in cancho and the Rust one disagree about {} of {} inputs:\n{}",
+        different.len(),
+        inputs.len(),
+        different.join("\n")
+    );
+    // The comparison is only worth something if it covers every rule and the programs that are let through.
+    assert!(refused.iter().all(|n| *n >= 20), "refusals by rule (json, node, arity): {refused:?}");
+    assert!(accepted > 300, "only {accepted} inputs were accepted");
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
 

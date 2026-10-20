@@ -12,6 +12,7 @@ module selfhost.driver;
 //     mode 2   as mode 1 for the declarations, and then, if they are well formed, one line for
 //              each function: `fn <start> <end>` and `OK`, a refusal, or `SKIP` (`body.cho`)
 //     mode 4   the parsed program as the canonical text (`printing.cho`)
+//     mode 8   JSON as the canonical text of the program it stands for (`ingest.cho`)
 //     mode 7   the parsed program as data, JSON (`jsonprint.cho`)
 //     mode 6   the formatted text of a file, from the file and its canonical text (`formatting.cho`): two files in a stream
 //     mode 3   the program as LLVM IR text (`emit.cho`), for `clang`; a function the checker
@@ -42,18 +43,24 @@ import selfhost.kinds;
 import selfhost.printing;
 import selfhost.formatting;
 import selfhost.jsonprint;
+import selfhost.jsonread;
+import selfhost.ingest;
 import selfhost.prune;
 
 // The line `ERR rule-tag start end`.
-fn refusal_line[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
+fn err_line[&i](io: &!i Io, rule: int, from: int, to: int) -> [io_write] int {
     console.write_all(io, "ERR ");
-    console.write_all(io, rules.rule_tag(st[3]));
+    console.write_all(io, rules.rule_tag(rule));
     console.space(io);
-    console.print_nat(io, st[4]);
+    console.print_nat(io, from);
     console.space(io);
-    console.print_nat(io, st[5]);
+    console.print_nat(io, to);
     console.newline(io);
     return 1;
+}
+
+fn refusal_line[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
+    return err_line(io, st[3], st[4], st[5]);
 }
 
 fn refusal[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
@@ -814,6 +821,40 @@ pub fn format_run[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte]) -> [he
     return answer;
 }
 
+// Mode 8: the input is JSON (`docs/structured-ingest.md`), and the output is the canonical text of the program it stands for, or the line
+// `ERR rule from to` with a span in the JSON.
+pub fn ingest_run[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte]) -> [heap, io_write] int {
+    let records = box_slice(heap, jsonread.size_for(raw), 0);
+    var status = 0;
+    borrow mut records as &!jb in {
+        let jm = contents(jb);
+        if jsonread.read(jm, raw) != 0 {
+            status = err_line(io, jm[3], jm[4], jm[5]);
+        } else {
+            let tokens = ingest.tokens_for(jm, raw);
+            let nodes = ingest.nodes_for(jm);
+            let state = box_slice(heap, ingest.size_for(tokens, nodes, nodes), 0);
+            let text = box_slice(heap, len(raw) + 5 * tokens + 64, byte_of(0));
+            borrow mut state as &!sb in {
+                borrow mut text as &!tb in {
+                    let st = contents(sb);
+                    let tx = contents(tb);
+                    ingest.layout(st, tokens, nodes, nodes);
+                    if ingest.build(st, tx, raw, jm) != 0 {
+                        status = refusal_line(io, st);
+                    } else {
+                        printing.print(io, st, tx[0..st[0]]);
+                    }
+                }
+            }
+            unbox_slice(heap, text);
+            unbox_slice(heap, state);
+        }
+    }
+    unbox_slice(heap, records);
+    return status;
+}
+
 // Read standard input, parse it, and print the answer for `mode`; `many` says that the input is
 // a stream of files. The exit status is 1 for a refusal.
 pub fn drive(world: World, mode: int, many: bool) -> [] int {
@@ -828,7 +869,9 @@ pub fn drive(world: World, mode: int, many: bool) -> [] int {
             borrow raw as &r in {
                 let all = buffer.bytes(r);
                 let rest = all[target_skip(all)..len(all)];
-                if mode == 6 {
+                if mode == 8 {
+                    status = ingest_run(h, i, rest);
+                } else if mode == 6 {
                     status = format_run(h, i, rest);
                 } else if many {
                     status = discard(h, run_many(h, i, rest, mode, target_of(all)));

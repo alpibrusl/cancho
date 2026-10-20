@@ -127,6 +127,20 @@ pub fn r_not_a_function() -> [] int {
     return 32;
 }
 
+// The three rules of `ingest` (`docs/structured-ingest.md` section 3): the text is not JSON, a word is not in the vocabulary, a known
+// node has the wrong shape.
+pub fn r_ingest_json() -> [] int {
+    return 100;
+}
+
+pub fn r_ingest_node() -> [] int {
+    return 101;
+}
+
+pub fn r_ingest_arity() -> [] int {
+    return 102;
+}
+
 pub fn r_skip() -> [] int {
     return 99;
 }
@@ -403,6 +417,15 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 59 {
         return "thread-payload-type";
+    }
+    if r == 100 {
+        return "ingest-json";
+    }
+    if r == 101 {
+        return "ingest-node";
+    }
+    if r == 102 {
+        return "ingest-arity";
     }
     return "unknown-name";
 }

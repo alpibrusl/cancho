@@ -527,6 +527,10 @@ fn expr_at[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, leve
         return string_literal(io, st, text, ast.get(st, id, 4));
     }
     if ast.is_kind(st, id, kinds.NK::EFloat) {
+        if ast.get(st, id, 6) == 1 {
+            // A literal that came as bits (`ingest.cho`) has no text to read them from.
+            return floatprint.from_bits(io, st, ast.get(st, id, 5), ast.get(st, id, 4) != 0);
+        }
         return floatprint.literal(io, st, text, ast.nstart(st, id), ast.nend(st, id), ast.get(st, id, 4) != 0);
     }
     if ast.is_kind(st, id, kinds.NK::EName) {

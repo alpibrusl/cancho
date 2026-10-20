@@ -2,8 +2,5 @@
 # crates gain is not in `rules.cho`, so `parity::every_rule_of_the_rust_front_end_is_known_to_the_compiler_in_cancho` fails until
 # the compiler in cancho knows it or the rule is listed here with the issue that will. Take a line out when the rule is
 # ported (the test insists). Tracked in #512 unless it says otherwise.
-ingest-arity                      # `cancho ingest` is not part of the compiler (#485)
-ingest-json                       # as above
-ingest-node                       # as above
 internal                          # the Rust compiler's own failure (docs/internal-errors.md); the compiler in cancho has its own (#479)
 unsupported-on-target             # targets the compiler in cancho does not write code for (WebAssembly, #486)

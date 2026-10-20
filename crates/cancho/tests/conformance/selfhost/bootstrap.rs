@@ -63,6 +63,8 @@ fn own_source(root_module: &str) -> String {
         "floatprint",
         "formatting",
         "jsonprint",
+        "jsonread",
+        "ingest",
         "printing",
         "prune",
         "driver",
