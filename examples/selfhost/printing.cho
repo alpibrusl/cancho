@@ -388,7 +388,7 @@ fn postfix_level() -> [] int {
     return 12;
 }
 
-fn operator(op: int) -> [] &static [byte] {
+pub fn operator(op: int) -> [] &static [byte] {
     if op == 0 {
         return "||";
     }
@@ -443,7 +443,7 @@ fn operator(op: int) -> [] &static [byte] {
     return "%";
 }
 
-fn unary_symbol(op: int) -> [] &static [byte] {
+pub fn unary_symbol(op: int) -> [] &static [byte] {
     if op == 0 {
         return "-";
     }
@@ -954,7 +954,7 @@ fn module_header[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], m: int)
 }
 
 // Does module `m` have an import?
-fn has_imports[&s](st: &!s [int], m: int) -> [] bool {
+pub fn has_imports[&s](st: &!s [int], m: int) -> [] bool {
     var k = 0;
     while k < st[12] {
         if ast.import_module(st, k) == m {

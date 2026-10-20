@@ -1,0 +1,1045 @@
+module selfhost.jsonprint;
+
+// jsonprint.cho -- the tree as data: `cancho print --output json`, written in cancho (issue #485, `docs/structured-ingest.md`).
+//
+// A port of `ast_to_json` in `crates/cancho-syntax/src/ingest.rs`, written with the writer of `json.rs` (two spaces to a level, one
+// element to a line, `[]` for an empty array): the same text for the same tree. Every name is text, every id is the value it names, and
+// no span appears. Like `printing.cho` it reads the tree `ast.cho` builds and, for what the tree keeps only as tokens (an effect row, a
+// declaration's `[T, &r where ..]`, a destructuring pattern's names, a match pattern), the tokens.
+//
+// Every value is written by a function that is told the depth of the line it starts on: its entries are one level deeper, and its
+// closing bracket is on that depth again. The oracle is `cancho print --output json`; `tests/conformance/selfhost.rs` compares the two
+// over every program in the repository.
+
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.ast;
+import selfhost.kinds;
+import selfhost.floats;
+import selfhost.printing;
+
+fn w[&i, &r](io: &!i Io, s: &r [byte]) -> [io_write] int {
+    return console.write_all(io, s);
+}
+
+fn code(t: lc.Tok) -> [] int {
+    return lc.code(t);
+}
+
+fn pad[&i](io: &!i Io, depth: int) -> [io_write] int {
+    var k = 0;
+    while k < depth {
+        w(io, "  ");
+        k = k + 1;
+    }
+    return 0;
+}
+
+// ------------------------------------------------------------- the writer ---
+
+// The start of entry `n` of an object that starts on depth `d`: the opening brace or the comma, then the key.
+fn entry[&i](io: &!i Io, d: int, n: int, key: &static [byte]) -> [io_write] int {
+    if n == 0 {
+        w(io, "{\n");
+    } else {
+        w(io, ",\n");
+    }
+    pad(io, d + 1);
+    w(io, "\"");
+    w(io, key);
+    w(io, "\": ");
+    return n + 1;
+}
+
+fn end_object[&i](io: &!i Io, d: int) -> [io_write] int {
+    w(io, "\n");
+    pad(io, d);
+    return w(io, "}");
+}
+
+// Element `k` of an array that starts on depth `d`: the opening bracket or the comma, then the indentation.
+fn element[&i](io: &!i Io, d: int, k: int) -> [io_write] int {
+    if k == 0 {
+        w(io, "[\n");
+    } else {
+        w(io, ",\n");
+    }
+    return pad(io, d + 1);
+}
+
+// The end of an array of `n` elements.
+fn end_array[&i](io: &!i Io, d: int, n: int) -> [io_write] int {
+    if n == 0 {
+        return w(io, "[]");
+    }
+    w(io, "\n");
+    pad(io, d);
+    return w(io, "]");
+}
+
+fn boolean[&i](io: &!i Io, v: bool) -> [io_write] int {
+    if v {
+        return w(io, "true");
+    }
+    return w(io, "false");
+}
+
+// The text of token `i` as a string.
+fn name[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], i: int) -> [io_write] int {
+    w(io, "\"");
+    w(io, text[ast.tstart(st, i)..ast.tend(st, i)]);
+    return w(io, "\"");
+}
+
+// The string literal at token `i`, its escapes read and written as JSON writes them.
+fn string_value[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], i: int) -> [io_write] int {
+    let to = ast.tend(st, i) - 1;
+    var j = ast.tstart(st, i) + 1;
+    w(io, "\"");
+    while j < to {
+        var c = lc.at(text, j);
+        if c == '\\' {
+            j = j + 1;
+            let e = lc.at(text, j);
+            c = e;
+            if e == 'n' {
+                c = 10;
+            }
+            if e == 'r' {
+                c = 13;
+            }
+            if e == 't' {
+                c = 9;
+            }
+            if e == '0' {
+                c = 0;
+            }
+        }
+        if c == 10 {
+            w(io, "\\n");
+        } else if c == 13 {
+            w(io, "\\r");
+        } else if c == 9 {
+            w(io, "\\t");
+        } else if c == '\\' {
+            w(io, "\\\\");
+        } else if c == '"' {
+            w(io, "\\\"");
+        } else if c < 32 {
+            w(io, "\\u00");
+            w(io, "0123456789abcdef"[c / 16..c / 16 + 1]);
+            w(io, "0123456789abcdef"[c % 16..c % 16 + 1]);
+        } else {
+            console.putchar(io, c);
+        }
+        j = j + 1;
+    }
+    return w(io, "\"");
+}
+
+// The bits of an `f32`, from the bits of the `float` of the same value (which is what `floats.literal_bits` answers for one).
+fn single_bits(bits: int) -> [] int {
+    var sign = 0;
+    if bits < 0 {
+        sign = 2147483648;
+    }
+    let field = bits >> 52 & 2047;
+    let mantissa = bits & 4503599627370495;
+    if field == 0 {
+        return sign;
+    }
+    let exponent = field - 1023 + 127;
+    let top = mantissa >> 29;
+    if exponent >= 1 {
+        return sign | exponent << 23 | top;
+    }
+    // Below the smallest normal `f32`: a subnormal, whose significand is shifted down.
+    let shift = 1 - exponent;
+    if shift > 24 {
+        return sign;
+    }
+    return sign | (8388608 | top) >> shift;
+}
+
+// A number that may be above the largest `int`: the 64 bits `n` holds, as an unsigned decimal.
+fn unsigned[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 0 {
+        return console.print_int(io, n);
+    }
+    // n = hi * 2^32 + lo; 2^32 = 4 * 10^9 + 294967296. Everything stays below 2^62.
+    let hi = n >> 32 & 4294967295;
+    let lo = n & 4294967295;
+    let p = hi * 294967296 + lo;
+    let p1 = p / 1000000000;
+    let p0 = p % 1000000000;
+    let q = 4 * hi + p1;
+    let q1 = q / 1000000000;
+    let q0 = q % 1000000000;
+    if q1 > 0 {
+        console.print_int(io, q1);
+        nine(io, q0);
+    } else {
+        console.print_int(io, q0);
+    }
+    return nine(io, p0);
+}
+
+// `n` below 10^9 as nine digits.
+fn nine[&i](io: &!i Io, n: int) -> [io_write] int {
+    var scale = 100000000;
+    while scale > 0 {
+        console.putchar(io, 48 + n / scale % 10);
+        scale = scale / 10;
+    }
+    return 0;
+}
+
+// ------------------------------------------------- what the tokens still say ---
+
+// How many labels the effect row whose `[` is token `open` holds.
+fn labels[&s](st: &!s [int], open: int) -> [] int {
+    var k = open + 1;
+    var n = 0;
+    while ast.code_at(st, k) != code(lc.Tok::RBracket) {
+        n = n + 1;
+        k = k + 1;
+        if ast.code_at(st, k) == code(lc.Tok::LParen) {
+            k = k + 3;
+        }
+        if ast.code_at(st, k) == code(lc.Tok::Comma) {
+            k = k + 1;
+        }
+    }
+    return n;
+}
+
+// The effect row whose `[` is token `open`, as an array of `{ name, argument }`.
+fn effects[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], open: int, d: int) -> [io_write] int {
+    var k = open + 1;
+    var n = 0;
+    while ast.code_at(st, k) != code(lc.Tok::RBracket) {
+        element(io, d, n);
+        var e = entry(io, d + 1, 0, "name");
+        name(io, st, text, k);
+        k = k + 1;
+        if ast.code_at(st, k) == code(lc.Tok::LParen) {
+            e = entry(io, d + 1, e, "argument");
+            string_value(io, st, text, k + 1);
+            k = k + 3;
+        }
+        end_object(io, d + 1);
+        n = n + 1;
+        if ast.code_at(st, k) == code(lc.Tok::Comma) {
+            k = k + 1;
+        }
+    }
+    return end_array(io, d, n);
+}
+
+// A match pattern, from its first token.
+fn pattern[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], first: int, d: int) -> [io_write] int {
+    var e = entry(io, d, 0, "kind");
+    if ast.code_at(st, first) == code(lc.Tok::Underscore) {
+        w(io, "\"wildcard\"");
+        return end_object(io, d);
+    }
+    w(io, "\"variant\"");
+    var k = first;
+    if ast.code_at(st, k + 1) == code(lc.Tok::Dot) {
+        e = entry(io, d, e, "qualifier");
+        name(io, st, text, k);
+        k = k + 2;
+    }
+    e = entry(io, d, e, "name");
+    name(io, st, text, k);
+    e = entry(io, d, e, "variant");
+    name(io, st, text, k + 2);
+    e = entry(io, d, e, "bindings");
+    k = k + 3;
+    var n = 0;
+    if ast.code_at(st, k) == code(lc.Tok::LParen) {
+        k = k + 1;
+        while ast.code_at(st, k) != code(lc.Tok::RParen) {
+            element(io, d + 1, n);
+            if ast.code_at(st, k) == code(lc.Tok::Underscore) {
+                w(io, "null");
+            } else {
+                name(io, st, text, k);
+            }
+            n = n + 1;
+            k = k + 1;
+            if ast.code_at(st, k) == code(lc.Tok::Comma) {
+                k = k + 1;
+            }
+        }
+    }
+    end_array(io, d + 1, n);
+    return end_object(io, d);
+}
+
+// The names between the opener at token `open` and `closer`, as an array of strings.
+fn names[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], open: int, closer: lc.Tok, d: int) -> [io_write] int {
+    var k = open + 1;
+    var n = 0;
+    while ast.code_at(st, k) != code(closer) {
+        element(io, d, n);
+        name(io, st, text, k);
+        n = n + 1;
+        k = k + 1;
+        if ast.code_at(st, k) == code(lc.Tok::Comma) {
+            k = k + 1;
+        }
+    }
+    return end_array(io, d, n);
+}
+
+// The `[T, U: val, &r where a <= b]` of a declaration whose `[` is token `start` (-1 if it has none): the end of the list is the
+// token that closes it or starts the `where`.
+fn list_end[&s](st: &!s [int], start: int) -> [] int {
+    var k = start + 1;
+    while ast.code_at(st, k) != code(lc.Tok::RBracket) && ast.code_at(st, k) != code(lc.Tok::Where) {
+        k = k + 1;
+    }
+    return k;
+}
+
+// The type parameters, as an array of strings.
+fn type_params[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], start: int, d: int) -> [io_write] int {
+    var n = 0;
+    if start >= 0 {
+        var k = start + 1;
+        while ast.code_at(st, k) != code(lc.Tok::RBracket) && ast.code_at(st, k) != code(lc.Tok::Where) {
+            if ast.code_at(st, k) == code(lc.Tok::Amp) {
+                k = k + 2;
+            } else {
+                element(io, d, n);
+                name(io, st, text, k);
+                n = n + 1;
+                k = k + 1;
+                if ast.code_at(st, k) == code(lc.Tok::Colon) {
+                    k = k + 2;
+                }
+            }
+            if ast.code_at(st, k) == code(lc.Tok::Comma) {
+                k = k + 1;
+            }
+        }
+    }
+    return end_array(io, d, n);
+}
+
+// The bounds of the type parameters, as an array of `null` and `"val"`.
+fn bounds[&i, &s](io: &!i Io, st: &!s [int], start: int, d: int) -> [io_write] int {
+    var n = 0;
+    if start >= 0 {
+        var k = start + 1;
+        while ast.code_at(st, k) != code(lc.Tok::RBracket) && ast.code_at(st, k) != code(lc.Tok::Where) {
+            if ast.code_at(st, k) == code(lc.Tok::Amp) {
+                k = k + 2;
+            } else {
+                element(io, d, n);
+                n = n + 1;
+                k = k + 1;
+                if ast.code_at(st, k) == code(lc.Tok::Colon) {
+                    w(io, "\"val\"");
+                    k = k + 2;
+                } else {
+                    w(io, "null");
+                }
+            }
+            if ast.code_at(st, k) == code(lc.Tok::Comma) {
+                k = k + 1;
+            }
+        }
+    }
+    return end_array(io, d, n);
+}
+
+// The regions, as an array of strings.
+fn regions[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], start: int, d: int) -> [io_write] int {
+    var n = 0;
+    if start >= 0 {
+        var k = start + 1;
+        while ast.code_at(st, k) != code(lc.Tok::RBracket) && ast.code_at(st, k) != code(lc.Tok::Where) {
+            if ast.code_at(st, k) == code(lc.Tok::Amp) {
+                element(io, d, n);
+                name(io, st, text, k + 1);
+                n = n + 1;
+                k = k + 2;
+            } else {
+                k = k + 1;
+                if ast.code_at(st, k) == code(lc.Tok::Colon) {
+                    k = k + 2;
+                }
+            }
+            if ast.code_at(st, k) == code(lc.Tok::Comma) {
+                k = k + 1;
+            }
+        }
+    }
+    return end_array(io, d, n);
+}
+
+// The clauses `a <= b` of the `where`, as an array of `{ inner, outer }`.
+fn outlives[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], start: int, d: int) -> [io_write] int {
+    var n = 0;
+    if start >= 0 {
+        var k = list_end(st, start);
+        if ast.code_at(st, k) == code(lc.Tok::Where) {
+            k = k + 1;
+            var go = true;
+            while go {
+                element(io, d, n);
+                entry(io, d + 1, 0, "inner");
+                name(io, st, text, k);
+                entry(io, d + 1, 1, "outer");
+                name(io, st, text, k + 2);
+                end_object(io, d + 1);
+                n = n + 1;
+                k = k + 3;
+                if ast.code_at(st, k) == code(lc.Tok::Comma) {
+                    k = k + 1;
+                } else {
+                    go = false;
+                }
+            }
+        }
+    }
+    return end_array(io, d, n);
+}
+
+// ---------------------------------------------------------------- types ---
+
+fn types[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], head: int, n: int, d: int) -> [io_write] int {
+    var at = head;
+    var k = 0;
+    while k < n {
+        element(io, d, k);
+        type_expr(io, st, text, at, d + 1);
+        at = ast.next(st, at);
+        k = k + 1;
+    }
+    return end_array(io, d, n);
+}
+
+fn type_expr[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, d: int) -> [io_write] int {
+    var e = 0;
+    if ast.is_kind(st, id, kinds.NK::TName) {
+        if ast.get(st, id, 4) >= 0 {
+            e = entry(io, d, e, "qualifier");
+            name(io, st, text, ast.get(st, id, 4));
+        }
+        e = entry(io, d, e, "name");
+        name(io, st, text, ast.get(st, id, 5));
+        if ast.get(st, id, 7) > 0 {
+            e = entry(io, d, e, "args");
+            types(io, st, text, ast.get(st, id, 6), ast.get(st, id, 7), d + 1);
+        }
+        return end_object(io, d);
+    }
+    e = entry(io, d, e, "kind");
+    if ast.is_kind(st, id, kinds.NK::TRef) {
+        w(io, "\"ref\"");
+        e = entry(io, d, e, "unique");
+        boolean(io, ast.get(st, id, 4) != 0);
+        e = entry(io, d, e, "region");
+        name(io, st, text, ast.get(st, id, 5));
+        e = entry(io, d, e, "inner");
+        type_expr(io, st, text, ast.get(st, id, 6), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::TSlice) {
+        w(io, "\"slice\"");
+        e = entry(io, d, e, "inner");
+        type_expr(io, st, text, ast.get(st, id, 6), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::TTuple) {
+        w(io, "\"tuple\"");
+        e = entry(io, d, e, "parts");
+        types(io, st, text, ast.get(st, id, 6), ast.get(st, id, 7), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::TLit) {
+        w(io, "\"lit\"");
+        e = entry(io, d, e, "value");
+        string_value(io, st, text, ast.get(st, id, 4));
+        return end_object(io, d);
+    }
+    w(io, "\"fn\"");
+    e = entry(io, d, e, "params");
+    types(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6), d + 1);
+    e = entry(io, d, e, "effects");
+    effects(io, st, text, ast.get(st, id, 4), d + 1);
+    e = entry(io, d, e, "ret");
+    type_expr(io, st, text, ast.get(st, id, 7), d + 1);
+    return end_object(io, d);
+}
+
+// ---------------------------------------------------------- expressions ---
+
+// Binary operators by their number in `ast.op_name`, as the symbols JSON uses.
+fn exprs[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], head: int, n: int, d: int) -> [io_write] int {
+    var at = head;
+    var k = 0;
+    while k < n {
+        element(io, d, k);
+        expr(io, st, text, at, d + 1);
+        at = ast.next(st, at);
+        k = k + 1;
+    }
+    return end_array(io, d, n);
+}
+
+// The optional qualifier and the name: `qualifier` (if there is one) and `name`. Returns how many entries were written.
+fn qualified[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], d: int, e: int, q: int, n: int) -> [io_write] int {
+    var k = e;
+    if q >= 0 {
+        k = entry(io, d, k, "qualifier");
+        name(io, st, text, q);
+    }
+    k = entry(io, d, k, "name");
+    name(io, st, text, n);
+    return k;
+}
+
+fn expr[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, d: int) -> [io_write] int {
+    var e = entry(io, d, 0, "kind");
+    if ast.is_kind(st, id, kinds.NK::EInt) {
+        w(io, "\"int\"");
+        e = entry(io, d, e, "value");
+        console.print_int(io, ast.get(st, id, 4));
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::EFloat) {
+        var single = false;
+        if ast.get(st, id, 4) != 0 {
+            single = true;
+            w(io, "\"f32\"");
+        } else {
+            w(io, "\"float\"");
+        }
+        e = entry(io, d, e, "bits");
+        let bits = floats.literal_bits(st, text, ast.nstart(st, id), ast.nend(st, id), single);
+        if single {
+            console.print_int(io, single_bits(bits));
+        } else {
+            unsigned(io, bits);
+        }
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::EBool) {
+        w(io, "\"bool\"");
+        e = entry(io, d, e, "value");
+        boolean(io, ast.get(st, id, 4) != 0);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::EStr) {
+        w(io, "\"str\"");
+        e = entry(io, d, e, "value");
+        string_value(io, st, text, ast.get(st, id, 4));
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::EName) {
+        w(io, "\"name\"");
+        e = entry(io, d, e, "name");
+        name(io, st, text, ast.get(st, id, 4));
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::EStructLit) {
+        w(io, "\"struct_lit\"");
+        e = qualified(io, st, text, d, e, ast.get(st, id, 4), ast.get(st, id, 5));
+        e = entry(io, d, e, "fields");
+        var at = ast.get(st, id, 6);
+        var k = 0;
+        while k < ast.get(st, id, 7) {
+            element(io, d + 1, k);
+            entry(io, d + 2, 0, "name");
+            name(io, st, text, ast.get(st, at, 4));
+            entry(io, d + 2, 1, "value");
+            expr(io, st, text, ast.get(st, at, 5), d + 3);
+            end_object(io, d + 2);
+            at = ast.next(st, at);
+            k = k + 1;
+        }
+        end_array(io, d + 1, k);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::EField) {
+        w(io, "\"field\"");
+        e = entry(io, d, e, "base");
+        expr(io, st, text, ast.get(st, id, 4), d + 1);
+        e = entry(io, d, e, "name");
+        name(io, st, text, ast.get(st, id, 5));
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::ETuple) {
+        w(io, "\"tuple\"");
+        e = entry(io, d, e, "parts");
+        exprs(io, st, text, ast.get(st, id, 4), ast.get(st, id, 5), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::ETupleField) {
+        w(io, "\"tuple_field\"");
+        e = entry(io, d, e, "base");
+        expr(io, st, text, ast.get(st, id, 4), d + 1);
+        e = entry(io, d, e, "index");
+        console.print_int(io, ast.get(st, id, 5));
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::EIndex) {
+        w(io, "\"index\"");
+        e = entry(io, d, e, "base");
+        expr(io, st, text, ast.get(st, id, 4), d + 1);
+        e = entry(io, d, e, "index");
+        expr(io, st, text, ast.get(st, id, 5), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::ESlice) {
+        w(io, "\"slice\"");
+        e = entry(io, d, e, "base");
+        expr(io, st, text, ast.get(st, id, 4), d + 1);
+        e = entry(io, d, e, "start");
+        expr(io, st, text, ast.get(st, id, 5), d + 1);
+        e = entry(io, d, e, "end");
+        expr(io, st, text, ast.get(st, id, 6), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::EVariant) {
+        w(io, "\"variant\"");
+        e = qualified(io, st, text, d, e, ast.get(st, id, 4), ast.get(st, id, 5));
+        e = entry(io, d, e, "variant");
+        name(io, st, text, ast.get(st, id, 6));
+        e = entry(io, d, e, "args");
+        exprs(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::ECall) {
+        w(io, "\"call\"");
+        e = qualified(io, st, text, d, e, ast.get(st, id, 4), ast.get(st, id, 5));
+        e = entry(io, d, e, "args");
+        exprs(io, st, text, ast.get(st, id, 6), ast.get(st, id, 7), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::EAlloc) {
+        w(io, "\"alloc\"");
+        e = entry(io, d, e, "region");
+        name(io, st, text, ast.get(st, id, 4));
+        e = entry(io, d, e, "value");
+        expr(io, st, text, ast.get(st, id, 5), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::EAllocSlice) {
+        w(io, "\"alloc_slice\"");
+        e = entry(io, d, e, "region");
+        name(io, st, text, ast.get(st, id, 4));
+        e = entry(io, d, e, "count");
+        expr(io, st, text, ast.get(st, id, 5), d + 1);
+        e = entry(io, d, e, "fill");
+        expr(io, st, text, ast.get(st, id, 6), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::EUnary) {
+        w(io, "\"unary\"");
+        e = entry(io, d, e, "op");
+        w(io, "\"");
+        w(io, printing.unary_symbol(ast.get(st, id, 4)));
+        w(io, "\"");
+        e = entry(io, d, e, "operand");
+        expr(io, st, text, ast.get(st, id, 5), d + 1);
+        return end_object(io, d);
+    }
+    w(io, "\"binary\"");
+    e = entry(io, d, e, "op");
+    w(io, "\"");
+    w(io, printing.operator(ast.get(st, id, 4)));
+    w(io, "\"");
+    e = entry(io, d, e, "lhs");
+    expr(io, st, text, ast.get(st, id, 5), d + 1);
+    e = entry(io, d, e, "rhs");
+    expr(io, st, text, ast.get(st, id, 6), d + 1);
+    return end_object(io, d);
+}
+
+// ----------------------------------------------------------- statements ---
+
+fn block[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], head: int, n: int, d: int) -> [io_write] int {
+    var at = head;
+    var k = 0;
+    while k < n {
+        element(io, d, k);
+        stmt(io, st, text, at, d + 1);
+        at = ast.next(st, at);
+        k = k + 1;
+    }
+    return end_array(io, d, n);
+}
+
+fn stmt[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, d: int) -> [io_write] int {
+    var e = entry(io, d, 0, "kind");
+    if ast.is_kind(st, id, kinds.NK::SLet) {
+        w(io, "\"let\"");
+        e = entry(io, d, e, "mutable");
+        boolean(io, ast.get(st, id, 4) != 0);
+        e = entry(io, d, e, "name");
+        name(io, st, text, ast.get(st, id, 5));
+        e = entry(io, d, e, "ty");
+        if ast.get(st, id, 6) >= 0 {
+            type_expr(io, st, text, ast.get(st, id, 6), d + 1);
+        } else {
+            w(io, "null");
+        }
+        e = entry(io, d, e, "value");
+        expr(io, st, text, ast.get(st, id, 7), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::SAssign) {
+        w(io, "\"assign\"");
+        e = entry(io, d, e, "place");
+        expr(io, st, text, ast.get(st, id, 4), d + 1);
+        e = entry(io, d, e, "value");
+        expr(io, st, text, ast.get(st, id, 5), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::SDestructure) {
+        w(io, "\"destructure\"");
+        e = qualified(io, st, text, d, e, ast.get(st, id, 4), ast.get(st, id, 5));
+        e = entry(io, d, e, "fields");
+        names(io, st, text, ast.get(st, id, 6), lc.Tok::RBrace, d + 1);
+        e = entry(io, d, e, "value");
+        expr(io, st, text, ast.get(st, id, 7), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::SDestructureTuple) {
+        w(io, "\"destructure_tuple\"");
+        e = entry(io, d, e, "names");
+        names(io, st, text, ast.get(st, id, 4), lc.Tok::RParen, d + 1);
+        e = entry(io, d, e, "value");
+        expr(io, st, text, ast.get(st, id, 5), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::SBorrow) {
+        w(io, "\"borrow\"");
+        e = entry(io, d, e, "value");
+        name(io, st, text, ast.get(st, id, 4));
+        e = entry(io, d, e, "unique");
+        boolean(io, ast.get(st, id, 5) != 0);
+        e = entry(io, d, e, "region");
+        name(io, st, text, ast.get(st, id, 6));
+        e = entry(io, d, e, "body");
+        block(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::SRegion) {
+        w(io, "\"region\"");
+        e = entry(io, d, e, "region");
+        name(io, st, text, ast.get(st, id, 4));
+        e = entry(io, d, e, "body");
+        block(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::SExpr) {
+        w(io, "\"expr\"");
+        e = entry(io, d, e, "value");
+        expr(io, st, text, ast.get(st, id, 4), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::SIf) {
+        w(io, "\"if\"");
+        e = entry(io, d, e, "cond");
+        expr(io, st, text, ast.get(st, id, 4), d + 1);
+        e = entry(io, d, e, "then");
+        block(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6), d + 1);
+        e = entry(io, d, e, "else");
+        if ast.get(st, id, 8) < 0 {
+            w(io, "null");
+        } else {
+            block(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8), d + 1);
+        }
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::SWhile) {
+        w(io, "\"while\"");
+        e = entry(io, d, e, "cond");
+        expr(io, st, text, ast.get(st, id, 4), d + 1);
+        e = entry(io, d, e, "body");
+        block(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::SMatch) {
+        w(io, "\"match\"");
+        e = entry(io, d, e, "scrutinee");
+        expr(io, st, text, ast.get(st, id, 4), d + 1);
+        e = entry(io, d, e, "arms");
+        var arm = ast.get(st, id, 5);
+        var k = 0;
+        while k < ast.get(st, id, 6) {
+            element(io, d + 1, k);
+            entry(io, d + 2, 0, "pattern");
+            pattern(io, st, text, ast.get(st, arm, 4), d + 3);
+            entry(io, d + 2, 1, "body");
+            block(io, st, text, ast.get(st, arm, 5), ast.get(st, arm, 6), d + 3);
+            end_object(io, d + 2);
+            arm = ast.next(st, arm);
+            k = k + 1;
+        }
+        end_array(io, d + 1, k);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::SReturn) {
+        w(io, "\"return\"");
+    } else {
+        w(io, "\"defer\"");
+    }
+    e = entry(io, d, e, "value");
+    expr(io, st, text, ast.get(st, id, 4), d + 1);
+    return end_object(io, d);
+}
+
+// ---------------------------------------------------------------- items ---
+
+fn params[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], head: int, n: int, d: int) -> [io_write] int {
+    var at = head;
+    var k = 0;
+    while k < n {
+        element(io, d, k);
+        entry(io, d + 1, 0, "name");
+        name(io, st, text, ast.get(st, at, 4));
+        entry(io, d + 1, 1, "ty");
+        type_expr(io, st, text, ast.get(st, at, 5), d + 2);
+        end_object(io, d + 1);
+        at = ast.next(st, at);
+        k = k + 1;
+    }
+    return end_array(io, d, n);
+}
+
+fn mode[&i](io: &!i Io, m: int) -> [io_write] int {
+    if m == 2 {
+        return w(io, "\"res\"");
+    }
+    if m == 1 {
+        return w(io, "\"val\"");
+    }
+    return w(io, "null");
+}
+
+fn item[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, d: int) -> [io_write] int {
+    var e = entry(io, d, 0, "kind");
+    if ast.is_kind(st, id, kinds.NK::IFn) {
+        w(io, "\"fn\"");
+        e = entry(io, d, e, "public");
+        boolean(io, ast.get(st, id, 5) != 0);
+        e = entry(io, d, e, "name");
+        name(io, st, text, ast.get(st, id, 4));
+        e = entry(io, d, e, "generics");
+        type_params(io, st, text, ast.get(st, id, 6), d + 1);
+        e = entry(io, d, e, "bounds");
+        bounds(io, st, ast.get(st, id, 6), d + 1);
+        e = entry(io, d, e, "regions");
+        regions(io, st, text, ast.get(st, id, 6), d + 1);
+        e = entry(io, d, e, "outlives");
+        outlives(io, st, text, ast.get(st, id, 6), d + 1);
+        e = entry(io, d, e, "params");
+        params(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8), d + 1);
+        e = entry(io, d, e, "effects");
+        effects(io, st, text, ast.get(st, id, 9), d + 1);
+        e = entry(io, d, e, "ret");
+        type_expr(io, st, text, ast.get(st, id, 10), d + 1);
+        e = entry(io, d, e, "body");
+        block(io, st, text, ast.get(st, id, 11), ast.get(st, id, 12), d + 1);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::IExtern) {
+        w(io, "\"extern\"");
+        e = entry(io, d, e, "name");
+        name(io, st, text, ast.get(st, id, 4));
+        e = entry(io, d, e, "regions");
+        regions(io, st, text, ast.get(st, id, 6), d + 1);
+        e = entry(io, d, e, "params");
+        params(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8), d + 1);
+        e = entry(io, d, e, "effects");
+        effects(io, st, text, ast.get(st, id, 9), d + 1);
+        e = entry(io, d, e, "ret");
+        type_expr(io, st, text, ast.get(st, id, 10), d + 1);
+        e = entry(io, d, e, "symbol");
+        name(io, st, text, ast.get(st, id, 4));
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::IStruct) {
+        w(io, "\"struct\"");
+        e = entry(io, d, e, "public");
+        boolean(io, ast.get(st, id, 5) != 0);
+        e = entry(io, d, e, "name");
+        name(io, st, text, ast.get(st, id, 4));
+        e = entry(io, d, e, "mode");
+        mode(io, ast.get(st, id, 6));
+        e = entry(io, d, e, "generics");
+        type_params(io, st, text, ast.get(st, id, 7), d + 1);
+        e = entry(io, d, e, "bounds");
+        bounds(io, st, ast.get(st, id, 7), d + 1);
+        e = entry(io, d, e, "fields");
+        var at = ast.get(st, id, 8);
+        var k = 0;
+        while at >= 0 {
+            element(io, d + 1, k);
+            entry(io, d + 2, 0, "name");
+            name(io, st, text, ast.get(st, at, 4));
+            entry(io, d + 2, 1, "ty");
+            type_expr(io, st, text, ast.get(st, at, 5), d + 3);
+            end_object(io, d + 2);
+            at = ast.next(st, at);
+            k = k + 1;
+        }
+        end_array(io, d + 1, k);
+        return end_object(io, d);
+    }
+    if ast.is_kind(st, id, kinds.NK::IEnum) {
+        w(io, "\"enum\"");
+        e = entry(io, d, e, "public");
+        boolean(io, ast.get(st, id, 5) != 0);
+        e = entry(io, d, e, "name");
+        name(io, st, text, ast.get(st, id, 4));
+        e = entry(io, d, e, "mode");
+        mode(io, ast.get(st, id, 6));
+        e = entry(io, d, e, "generics");
+        type_params(io, st, text, ast.get(st, id, 7), d + 1);
+        e = entry(io, d, e, "bounds");
+        bounds(io, st, ast.get(st, id, 7), d + 1);
+        e = entry(io, d, e, "variants");
+        var at = ast.get(st, id, 8);
+        var k = 0;
+        while at >= 0 {
+            element(io, d + 1, k);
+            entry(io, d + 2, 0, "name");
+            name(io, st, text, ast.get(st, at, 4));
+            entry(io, d + 2, 1, "payload");
+            types(io, st, text, ast.get(st, at, 5), ast.get(st, at, 6), d + 3);
+            end_object(io, d + 2);
+            at = ast.next(st, at);
+            k = k + 1;
+        }
+        end_array(io, d + 1, k);
+        return end_object(io, d);
+    }
+    w(io, "\"static\"");
+    e = entry(io, d, e, "public");
+    boolean(io, ast.get(st, id, 5) != 0);
+    e = entry(io, d, e, "name");
+    name(io, st, text, ast.get(st, id, 4));
+    e = entry(io, d, e, "ty");
+    type_expr(io, st, text, ast.get(st, id, 6), d + 1);
+    e = entry(io, d, e, "body");
+    block(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8), d + 1);
+    return end_object(io, d);
+}
+
+// ------------------------------------------------------------- the unit ---
+
+// Does module `m` have an import?
+// The dotted name of the import whose keyword is token `keyword`, up to the token before `as` or `;`: returns the token of the last
+// segment.
+fn dotted_name[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], first: int) -> [io_write] int {
+    var at = first;
+    w(io, "\"");
+    w(io, text[ast.tstart(st, at)..ast.tend(st, at)]);
+    while ast.code_at(st, at + 1) == code(lc.Tok::Dot) {
+        w(io, ".");
+        w(io, text[ast.tstart(st, at + 2)..ast.tend(st, at + 2)]);
+        at = at + 2;
+    }
+    w(io, "\"");
+    return at;
+}
+
+// Is every float literal one whose bits can be worked out (at most 120 significant digits)?
+fn floats_ok[&s, &x](st: &!s [int], text: &x [byte]) -> [] bool {
+    var id = 0;
+    while id < st[13] {
+        if ast.is_kind(st, id, kinds.NK::EFloat) {
+            floats.literal_bits(st, text, ast.nstart(st, id), ast.nend(st, id), ast.get(st, id, 4) != 0);
+            if !floats.literal_ok(st) {
+                return false;
+            }
+        }
+        id = id + 1;
+    }
+    return true;
+}
+
+// The unit: the module header and the imports of the module the first item (or, with no items, the first import) is in, then every
+// item. 0, or 1 and the line `CANNOT ...` if a float literal is too long for its bits to be worked out.
+pub fn print[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write] int {
+    if !floats_ok(st, text) {
+        w(io, "CANNOT a floating-point literal of more than 120 significant digits: its bits are not worked out\n");
+        return 1;
+    }
+    let any = st[15] >= 0;
+    var index = 0;
+    if any && ast.get(st, st[15], 13) != 0 {
+        index = ast.get(st, st[15], 13);
+    }
+    var imports_index = 0;
+    if st[11] > 1 && !printing.has_imports(st, 0) {
+        imports_index = index;
+        var found = false;
+        var m = 1;
+        while m < st[11] && !found {
+            if printing.has_imports(st, m) {
+                imports_index = m;
+                found = true;
+            }
+            m = m + 1;
+        }
+    }
+    var unit = index;
+    if !any {
+        unit = imports_index;
+    }
+    var e = 0;
+    if unit != 0 {
+        e = entry(io, 0, e, "module");
+        w(io, "\"");
+        let first = ast.module_first(st, unit);
+        w(io, text[ast.tstart(st, first)..ast.tend(st, first)]);
+        var n = 1;
+        while n < ast.module_len(st, unit) {
+            w(io, ".");
+            w(io, text[ast.tstart(st, first + 2 * n)..ast.tend(st, first + 2 * n)]);
+            n = n + 1;
+        }
+        w(io, "\"");
+    }
+    if printing.has_imports(st, unit) {
+        e = entry(io, 0, e, "imports");
+        var count = 0;
+        var k = 0;
+        while k < st[12] {
+            if ast.import_module(st, k) == unit {
+                element(io, 1, count);
+                entry(io, 2, 0, "path");
+                let last = dotted_name(io, st, text, ast.import_keyword(st, k) + 1);
+                if ast.code_at(st, last + 1) == code(lc.Tok::As) && !ast.same(st, text, last + 2, last) {
+                    entry(io, 2, 1, "as");
+                    name(io, st, text, last + 2);
+                }
+                end_object(io, 2);
+                count = count + 1;
+            }
+            k = k + 1;
+        }
+        end_array(io, 1, count);
+    }
+    e = entry(io, 0, e, "items");
+    var count = 0;
+    var at = st[15];
+    while at >= 0 {
+        element(io, 1, count);
+        item(io, st, text, at, 2);
+        count = count + 1;
+        at = ast.next(st, at);
+    }
+    end_array(io, 1, count);
+    end_object(io, 0);
+    return w(io, "\n");
+}

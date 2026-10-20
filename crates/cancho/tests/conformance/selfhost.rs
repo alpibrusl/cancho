@@ -299,6 +299,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "printing.cho",
         "floatprint.cho",
         "formatting.cho",
+        "jsonprint.cho",
         "prune.cho",
         "listing.cho",
         "checker.cho",
@@ -792,6 +793,82 @@ fn the_printer_in_cancho_agrees_with_the_rust_printer() {
     );
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
+
+/// `examples/selfhost/jsonprinter.cho` against `cancho print --output json`: the tree of every program in the repository as data.
+#[test]
+fn the_json_printer_in_cancho_agrees_with_the_rust_one() {
+    let exe = build("jsonprinter", &with_front_end("jsonprinter.cho"));
+    let mut different = Vec::new();
+    let mut programs = sources();
+    programs.extend(PRINT_EDGE.iter().map(|s| (format!("print edge {s:.40?}"), (*s).to_owned())));
+    programs.extend(JSON_EDGE.iter().map(|s| (format!("json edge {s:.40?}"), (*s).to_owned())));
+    let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let mut floats = String::new();
+    for i in 0..300 {
+        let double = f64::from_bits(next() & 0x7fff_ffff_ffff_ffff);
+        if double.is_finite() {
+            floats.push_str(&format!("fn d{i}() -> [] float {{ return {double:e}; }}\n"));
+        }
+        let single = f32::from_bits((next() & 0x7fff_ffff) as u32);
+        if single.is_finite() {
+            floats.push_str(&format!("fn s{i}() -> [] f32 {{ return {single:e}f32; }}\n"));
+        }
+        // Subnormals of both sizes, where the bits are most easily got wrong.
+        let small = f32::from_bits((next() & 0x007f_ffff) as u32);
+        floats.push_str(&format!("fn t{i}() -> [] f32 {{ return {small:e}f32; }}\n"));
+        let tiny = f64::from_bits(next() & 0x000f_ffff_ffff_ffff);
+        floats.push_str(&format!("fn u{i}() -> [] float {{ return {tiny:e}; }}\n"));
+    }
+    programs.push(("random floats".to_owned(), floats));
+    for (name, text) in &programs {
+        if answer(&exe, text) != ast_oracle::printed_json(text) {
+            different.push(name.clone());
+        }
+    }
+    assert!(
+        different.is_empty(),
+        "the JSON printer in cancho and the Rust one disagree about {} of {} programs:\n{}",
+        different.len(),
+        programs.len(),
+        different.join("\n")
+    );
+    // A literal of more than 120 significant digits has bits this port does not work out: it says so, and writes no JSON.
+    let long = format!("fn f() -> [] float {{ return 1{}.0; }}\n", "0".repeat(130));
+    let said = answer(&exe, &long);
+    assert!(said.starts_with("CANNOT "), "{said:.80}");
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
+/// Programs for the JSON printer that the repository does not hold: the shapes of the vocabulary that the corpus has few of.
+const JSON_EDGE: &[&str] = &[
+    "",
+    "import std.io;",
+    "import std.io as console;\nimport a.b.c as d;\nimport x.y as y;",
+    "module m.n;",
+    "module m.n;\nimport std.io;\nfn f() -> [] int { return 0; }",
+    "module m;\nfn f() -> [] int { return 0; }\nmodule n;\nimport q;\nfn g() -> [] int { return 1; }",
+    "fn f[T, U: val, &r, &s where r <= s, s <= r](a: &r T) -> [io, ffi(\"libc\")] U { return a; }",
+    "pub extern fn getpid[&f](ffi: &f Ffi(\"libc\"), x: fn(int, [byte]) -> [io] (int, int)) -> [ffi(\"libc\")] int;",
+    "pub val struct P[T, U: val] { x: T, y: (U, int), z: [byte], w: &r Q[T, Ffi(\"a\")] }\nres struct R { }\nstruct S { a: int }",
+    "pub enum E[T] { A, B(int, T), C(&r [byte]) }\nval enum F { X }\nres enum G { Y(int) }",
+    "pub static N: int { return 1; }\nstatic M: [byte] { return \"a\\n\\t\\r\\0\\\\\\\"\\x\"; }",
+    "fn f() -> [] int { let (a, b) = g(); let S { x, y } = h(); let q.S { x } = h(); let T { } = h(); return a; }",
+    "fn f() -> [] int { var x: int = 1; let y: (int, [byte]) = (1, \"s\"); x = y.0; a[1] = 2; a[1..2] = b; return x; }",
+    "fn f() -> [] int { match e { _ => { } E::A => { } q.E::B(a, _) => { } E::C() => { } } return 0; }",
+    "fn f(h: &!r Heap) -> [heap] int { borrow mut h as &!r2 in { borrow x as &r3 in { } } region r { let p = alloc[r](1); let q = alloc_slice[r](4, 0); } defer g(); return 0; }",
+    "fn f() -> [] int { if a { } if b { x(); } else { y(); } if c { } else if d { } else { } while e { f(); } return -1 + !a * ~b + *c; }",
+    "fn f() -> [] bool { return a && b || c == d != e < f <= g > h >= i | j ^ k & l << m >> n + o - p * q / r % s; }",
+    "fn f() -> [] int { return q.g(a.B::C(1), E::D, s.T { x: 1, y: 2 }, q.U { }, 9223372036854775807, 0, true, false); }",
+    "fn f() -> [] int { return 'a' + '\\n' + '\\'' + \"\\u\".len; }",
+    "fn f() -> [] float { return 0.0 + 1.0 + 1e308 + 5e-324 + 2.2250738585072014e-308 + 1.7976931348623157e308 + 123456789.123456789; }",
+    "fn f() -> [] f32 { return 0.0f32 + 1f32 + 1e-45f32 + 1.1754942e-38f32 + 1.1754944e-38f32 + 3.4028235e38f32 + 16777216f32; }",
+];
 
 /// Programs for the formatter that the repository does not hold: a comment in each place a comment can stand, blank lines, the
 /// spellings of literals, the edition marker, `pub extern`, an `import` out of place, and what is empty.

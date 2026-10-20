@@ -489,6 +489,18 @@ pub fn printed(source: &str) -> String {
     cancho_syntax::print(&ast)
 }
 
+/// The tree as JSON for `source` (`ingest.rs`, `ast_to_json`), as `cancho print --output json` writes it, or the refusal line of the
+/// parser: the oracle of `examples/selfhost/jsonprinter.cho`.
+pub fn printed_json(source: &str) -> String {
+    let mut map = SourceMap::new();
+    let mut ast = Ast::new();
+    let base = map.add("file", source.to_owned());
+    if let Err(d) = parse_into(&mut ast, source, base) {
+        return format!("ERR {} {} {}\n", d.rule.tag(), d.span.start, d.span.end);
+    }
+    format!("{}\n", cancho_syntax::write_json(&cancho_syntax::ast_to_json(&ast)))
+}
+
 /// The formatted text for `source` (`format.rs`), or the one line `CANNOT why` for a file it will not format, or the refusal line of
 /// the parser: the oracle of `examples/selfhost/formatter.cho`.
 pub fn formatted(source: &str) -> String {
