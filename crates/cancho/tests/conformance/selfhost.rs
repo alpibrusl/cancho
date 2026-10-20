@@ -296,6 +296,8 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
     vec![
         root,
         "driver.cho",
+        "printing.cho",
+        "floatprint.cho",
         "listing.cho",
         "checker.cho",
         "body.cho",
@@ -694,6 +696,99 @@ fn the_lexer_in_cancho_agrees_with_the_rust_lexer() {
 #[test]
 fn the_parser_in_cancho_agrees_with_the_rust_parser() {
     agree("parser", &with_front_end("parser.cho"), ast_oracle::listing);
+}
+
+/// Programs for the printer that the repository does not hold: every way the tree needs parentheses, `else if` ladders, the shapes a
+/// destructuring, a pattern or a declaration's brackets take, escapes, and one-part tuples.
+const PRINT_EDGE: &[&str] = &[
+    "fn f(a: int, b: int, c: int) -> [] int { return (a + b) * c - (a - (b - c)) / (a % b); }",
+    "fn f(a: int, b: int, c: int) -> [] int { return a << b >> c | a ^ b & c; }",
+    "fn f(a: bool, b: bool, c: bool) -> [] bool { return a && b || c && !(a || b); }",
+    "fn f(a: int) -> [] int { return -(a / 10) + -(-a) + ~a + *a; }",
+    "fn f() -> [] int { return -(5) + -5 + -(0x10) - (-9223372036854775808); }",
+    "fn f() -> [] float { return -(1.5) + -1.5 + 2.5 - (-0.0); }",
+    "fn f(a: int) -> [] int { return ((a)) + (((a + 1))); }",
+    "fn f(a: [int]) -> [] int { return a[1] + a[(1 + 2)] + (a)[0] + a[0..2][1..2][0]; }",
+    "fn f(t: (int, (int, int))) -> [] int { return t.1.0 + (1).2 + (1.5).0; }",
+    "fn f(t: int) -> [] (int,) { return (t,); }",
+    "fn f(t: int) -> [] (int, int) { return (t, t); }",
+    "fn f(t: int) -> [] () { return (); }",
+    "struct P { x: int, y: int }\nfn f(p: P) -> [] int { if (P { x: 1, y: 2 }).x == 1 { return 1; } else if p.x == 2 { return 2; } else { return 3; } }",
+    "struct P { x: int }\nfn f() -> [] int { while (P { x: 1 }).x < 3 { return 1; } return 0; }",
+    "struct P { x: int }\nfn f() -> [] int { match (P { x: 1 }).x { } return 0; }",
+    "struct P { x: int }\nfn f() -> [] int { if (P { x: 1 }).x + 1 == 2 { return 1; } return 0; }",
+    "struct P { x: int }\nfn f() -> [] P { return P { }; }",
+    "enum E { A, B(int), C(int, [int]) }\nfn f(e: E) -> [] int { match e { E::A => { return 0; } E::B(x) => { return x; } E::C(_, y) => { return y[0]; } } }",
+    "enum E[T] { A, B(T) }\nfn f(e: E[int]) -> [] int { match e { E::A => { } E::B(_) => { } } return 0; }",
+    "fn f(a: int) -> [] int { if a == 1 { return 1; } else if a == 2 { return 2; } else if a == 3 { return 3; } return 0; }",
+    "fn f(a: int) -> [] int { if a == 1 { return 1; } else { if a == 2 { return 2; } } return 0; }",
+    "fn f(a: int) -> [] int { if a == 1 { return 1; } else { if a == 2 { return 2; } return 3; } }",
+    "fn f(a: int) -> [] int { if a == 1 { } else { } return 0; }",
+    "fn f[T, U: val, &r, &q where r <= q](a: &r T, b: &!q U) -> [] int { return 0; }",
+    "fn f[&r](a: &r [byte]) -> [io] int { return 0; }",
+    "fn f[T: val](a: T) -> [] T { return a; }",
+    "fn f[&r, T, &q](a: T) -> [heap, ffi(\"libc\"), io_write] int { return 0; }",
+    "fn f(g: fn(int, [byte]) -> [io, fs_read(\"/etc\")] int) -> [] int { return g(1, \"x\"); }",
+    "extern fn puts(s: [byte]) -> [ffi(\"libc\")] int;\nextern fn g[&r](x: &r int) -> [] int;",
+    "pub struct S[T] { a: T, b: [T], }\npub res struct R { a: int }\nval struct V { a: int }\nres enum Q { A(R) }\npub val enum W { A }",
+    "static T: [int] { return alloc_free(); }\npub static U: [byte] { return \"a\\\\b\\n\\t\\0\\\"\"; }",
+    "fn f() -> [] int { let (a, b) = g(); let S { x, y } = h(); let q.S { x } = h(); let T { } = h(); return a; }",
+    "fn f() -> [] int { var x: int = 1; let y: (int, [byte]) = (1, \"s\"); x = y.0; a[1] = 2; return x; }",
+    "fn f(h: &!r Heap) -> [heap] int { borrow mut h as &!r2 in { borrow x as &r3 in { } } region r { let p = alloc[r](1); let q = alloc_slice[r](4, 0); } defer g(); return 0; }",
+    "fn f(c: Ffi(\"libc\"), d: Map[Ffi(\"a\"), int], e: Ffi(\"a\", \"b\")) -> [] int { return 0; }",
+    "module a.b.c;\nimport std.io;\nimport x.y as z;\nimport p.q as q;\nfn f() -> [] int { return q.g(a.B::C(1), E::D); }",
+    "import std.io;\nfn f() -> [] int { return 0; }\n\n\nfn g() -> [] int { return 1; }",
+    "fn f() -> [] int { return 1_000 + 0x_ff + 0b1010 + 0o17 + 'a' + '\\n' + 007; }",
+    "fn f() -> [] float { return 1e5 + 1E-5 + 1_0.5_0 + 0.1 + 100000000000000000000.0 + 0.000001 + 1e-7 + 12345.678e2; }",
+    "fn f() -> [] f32 { return 0.1f32 + 1e10f32 + 16777217.0f32 + 3.4028235e38f32 + 1e-45f32 + 5f32; }",
+    "fn f() -> [] int { return a.b.c(1)(2).d[3].e; }",
+];
+
+/// `examples/selfhost/printer.cho` against `cancho_syntax::print`: the canonical text of every program in the repository.
+#[test]
+fn the_printer_in_cancho_agrees_with_the_rust_printer() {
+    let exe = build("printer", &with_front_end("printer.cho"));
+    let mut different = Vec::new();
+    let corpus = sources();
+    for (name, text) in &corpus {
+        if answer(&exe, text) != ast_oracle::printed(text) {
+            different.push(name.clone());
+        }
+    }
+    // What the repository does not hold, and 600 floating-point literals of every size: the shortest digits that read back are the
+    // printer's, and they are worked out here with a bignum.
+    let mut programs: Vec<String> = PRINT_EDGE.iter().map(|s| (*s).to_owned()).collect();
+    let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let mut floats = String::new();
+    for i in 0..300 {
+        let double = f64::from_bits(next() & 0x7fff_ffff_ffff_ffff);
+        if double.is_finite() {
+            floats.push_str(&format!("fn d{i}() -> [] float {{ return {double:e}; }}\n"));
+        }
+        let single = f32::from_bits((next() & 0x7fff_ffff) as u32);
+        if single.is_finite() {
+            floats.push_str(&format!("fn s{i}() -> [] f32 {{ return {single:e}f32; }}\n"));
+        }
+    }
+    programs.push(floats);
+    for text in &programs {
+        if answer(&exe, text) != ast_oracle::printed(text) {
+            different.push(format!("edge case {text:.60?}"));
+        }
+    }
+    assert!(
+        different.is_empty(),
+        "the printer in cancho and the Rust printer disagree about {} programs:\n{}",
+        different.len(),
+        different.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
 
 /// The first line of the input of the compiler in cancho: the system, and the architecture where Linux has two.

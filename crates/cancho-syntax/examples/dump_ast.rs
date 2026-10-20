@@ -478,6 +478,17 @@ pub fn listing(source: &str) -> String {
     listing_files(&[source.to_owned()])
 }
 
+/// The canonical text for `source` (`print.rs`), or the one refusal line: the oracle of `examples/selfhost/printer.cho`.
+pub fn printed(source: &str) -> String {
+    let mut map = SourceMap::new();
+    let mut ast = Ast::new();
+    let base = map.add("file", source.to_owned());
+    if let Err(d) = parse_into(&mut ast, source, base) {
+        return format!("ERR {} {} {}\n", d.rule.tag(), d.span.start, d.span.end);
+    }
+    cancho_syntax::print(&ast)
+}
+
 /// Split a stream of files, each a line `FILE <length>` and then that many bytes, into the
 /// files. The programs of `examples/selfhost` read their input the same way.
 pub fn read_stream(bytes: &[u8]) -> Vec<String> {

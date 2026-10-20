@@ -14,7 +14,7 @@ module selfhost.floats;
 import selfhost.ast;
 import selfhost.lexcore as lc;
 
-fn room[&s](st: &!s [int]) -> [] int {
+pub fn room[&s](st: &!s [int]) -> [] int {
     return st[62] + ast.const_region() + 16 + 4096 + 65536;
 }
 
