@@ -1,6 +1,6 @@
 # Net bounds: separate ways in and out, set-valued, exact host matching
 
-> **Status: design, answering #362. Step 1 of §3 (the report, §2.4) is built; steps 2 and 3 are not.** The measurements
+> **Status: design, answering #362. Steps 1 (the report, §2.4) and 2 (several children from one `narrow`, §2.2) of §3 are built; step 3 is not.** The measurements
 > it rests on are reproduced in the issue and were taken on `main` at
 > `0567e72` by cancho-dns's design document (alpibrusl/cancho-dns#19 §2);
 > this document is the answer to "what should the language do instead",
@@ -121,6 +121,15 @@ and should: it is a report lie, not a vocabulary gap.
    nothing to port.
 2. **§2.2** on the existing single `Net`: several children from one
    `narrow`, mirroring the `Fs` shape and its gates.
+   **Built.** `narrow(net, "a:53", "b:53")` answers a tuple of `Net`s, one per bound, each its own label in the report
+   (`net_out("a:53")`, `net_out("b:53")`) and each checked at run time against its own bound only (measured: dialing
+   `:443` through the `:80` child traps on both backends). The pairwise rule is `Net`'s own: equal is refused, and so
+   is one bound a textual prefix of another (`127.0.0.1:80` and `127.0.0.1:8080`), because the prefix check would let
+   the longer through the shorter, which is the very thing §2.3 says is wrong and step 3 fixes; until then the form refuses the case
+   it would otherwise make misleading. Rust lowering in `crates/cancho-ir/src/lower/narrow.rs`, the compiler in cancho
+   in `examples/selfhost/narrowing.cho`; fixtures `tests/accept/narrow_many_net.cho`,
+   `tests/reject/narrow_many_net_{nested,equal}_bounds.cho`; `tests/reject/narrow_many_on_net.cho` (which asserted the
+   refusal this step removes) is deleted.
 3. **§2.1 + §2.3** together in the next edition: the direction split at
    `split` and exact host matching — both breaking for a narrowed
    `net`, both additive under an edition marker.

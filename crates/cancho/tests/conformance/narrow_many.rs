@@ -324,6 +324,36 @@ fn exec_narrows_into_several_and_the_report_names_both_programs() {
 }
 
 #[test]
+fn net_narrows_into_several_and_the_report_names_both_bounds() {
+    let (_, _, labels) = authority_of("tests/accept/narrow_many_net.cho");
+    assert_eq!(
+        labels,
+        [
+            "io_write".to_string(),
+            "net_out=127.0.0.1:443".to_string(),
+            "net_out=127.0.0.1:80".to_string(),
+        ],
+        "{labels:?}"
+    );
+    // The report is bounded: no label is the unnarrowed network.
+    let json = authority_json(
+        &std::fs::read_to_string(repo_root().join("tests/accept/narrow_many_net.cho")).unwrap(),
+        "narrow-many-net-report",
+    );
+    assert!(json.starts_with("{\n  \"bounded\": true,\n  \"unbounded_by\": [],"), "{json}");
+    // Dialing the other child's port through this child is outside its bound, and traps on both backends.
+    let dir = scratch("narrow-many-net");
+    let source = std::fs::read_to_string(repo_root().join("tests/accept/narrow_many_net.cho"))
+        .unwrap()
+        .replace("tcp_connect(net, \"127.0.0.1\", 80)", "tcp_connect(net, \"127.0.0.1\", 443)");
+    for backend in BACKENDS {
+        let exe = build_source(&dir, "net", &source, backend);
+        assert_traps(&exe, &format!("dialing :443 through the :80 child ({backend})"));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn the_single_literal_form_is_unchanged() {
     let dir = scratch("narrow-many-single");
     let [a, ..] = files(&dir);
