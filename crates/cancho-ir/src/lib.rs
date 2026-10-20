@@ -39,6 +39,7 @@ use linear::{Event, Trace, mode_of};
 
 mod builtin;
 mod builtin_signature;
+mod capabilities;
 mod defs;
 mod errno;
 mod foreign;
@@ -55,6 +56,7 @@ mod tty;
 mod wasi_imports;
 
 pub use builtin::*;
+pub use capabilities::*;
 pub use defs::*;
 pub use errno::*;
 pub use foreign::*;
