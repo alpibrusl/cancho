@@ -133,14 +133,24 @@ jobs:
   # `benches/tls_baseline.json`. A change that makes a primitive 1.3 times dearer in instructions (counted under valgrind, so the
   # runner's clock and load do not matter) fails here. A short job: the compiler, then about a minute.
   #
-  # The baseline is the code the Rust compiler writes, so this job names it (`CANCHO_COMPILER=rust`): the compiler in cancho
-  # is the default of `cancho build`, and writes code 1.26 to 1.32 times dearer on the P-256 rows (docs/bootstrap.md, "Code
-  # quality, measured once").
+  # The baseline is the code the Rust compiler writes. The job runs twice: with the Rust compiler (`CANCHO_COMPILER=rust`),
+  # which it guards as before, and with the compiler in cancho (`CANCHO_COMPILER=auto`: no fall back to the Rust one, so a
+  # build the compiler in cancho cannot do fails here and does not measure the Rust compiler's code). Since `clang -O2`
+  # (#556) the compiler in cancho is within 1.05 of the baseline on all 36 rows (docs/bootstrap.md, "Code quality, measured
+  # twice"), well inside the 1.3 the guard allows.
   tls-perf:
-    name: tls-perf
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: tls-perf
+            compiler: rust
+          - name: tls-perf (compiler in cancho)
+            compiler: auto
     env:
-      CANCHO_COMPILER: rust
+      CANCHO_COMPILER: ${{ matrix.compiler }}
     steps:
       - uses: actions/checkout@v4
 
