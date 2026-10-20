@@ -132,3 +132,22 @@ half-built AST.
 * **One file at a time,** matching `print`'s own shape
   (`many-files.md` §5): printing is about one text, and the JSON form
   of one text is one object.
+
+## 6. `print --output json` written in cancho
+
+`examples/selfhost/jsonprint.cho` is `ast_to_json` and the writer of `json.rs` written in cancho (#485), a port that reads the tree `ast.cho`
+builds and, for what the tree keeps only as tokens (effect rows, a declaration's `[T, &r where ..]`, destructuring and match patterns), the
+tokens, as `printing.cho` does. Driver mode 7, root `jsonprinter.cho`; a refusal of the parser is the line `ERR rule from to`.
+
+**Measured (Linux x86-64, debug `cancho`).** `selfhost::the_json_printer_in_cancho_agrees_with_the_rust_one` compares it with
+`cancho print --output json` on 904 programs and finds no difference: every program of the repository (the ones the parser refuses as their
+`ERR` line), the 41 programs of the printer test, 21 programs for the shapes of the vocabulary the corpus has few of (modules and imports,
+generics with bounds and `where`, `extern`, struct and enum modes, every pattern, every statement, every operator, escapes in strings, the
+edges of `float` and `f32`), and one program of 1,200 random and subnormal floating-point literals. Five mutants of `jsonprint.cho` fail it
+(a wrong carry in the unsigned decimal of a `float`'s bits; the subnormal shift of an `f32`; a bound written `null`; the two ends of an
+outlives clause swapped; the escape of a control character), by 3, 1, 17, 7 and 13 programs.
+
+**What differs.** A floating-point literal of more than 120 significant digits (the room `floats.cho` works its bignum in) has no bits this
+port works out; it writes the one line `CANNOT a floating-point literal of more than 120 significant digits: its bits are not worked out`
+and nothing else, and exits 1. The repository has no such literal. `ingest` (JSON back to text) is not written yet; it is the other
+direction and needs a JSON reader and the refusal rules `ingest-json`, `ingest-node` and `ingest-arity`.
