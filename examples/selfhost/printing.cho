@@ -9,20 +9,20 @@ module selfhost.printing;
 //
 // The output goes to the standard output a piece at a time, with the depth of the indentation carried along.
 
-import std.io as console;
+import selfhost.sink;
 import selfhost.lexcore as lc;
 import selfhost.ast;
 import selfhost.kinds;
 import selfhost.floatprint;
 
-fn w[&i, &r](io: &!i Io, s: &r [byte]) -> [io_write] int {
-    return console.write_all(io, s);
+fn w[&i, &s, &r](io: &!i Io, st: &!s [int], text: &r [byte]) -> [io_write] int {
+    return sink.write(io, st, text);
 }
 
-fn indent[&i](io: &!i Io, depth: int) -> [io_write] int {
+fn indent[&i, &s](io: &!i Io, st: &!s [int], depth: int) -> [io_write] int {
     var k = 0;
     while k < depth {
-        w(io, "    ");
+        w(io, st, "    ");
         k = k + 1;
     }
     return 0;
@@ -30,14 +30,14 @@ fn indent[&i](io: &!i Io, depth: int) -> [io_write] int {
 
 // The text of token `i`.
 fn name[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], i: int) -> [io_write] int {
-    return w(io, text[ast.tstart(st, i)..ast.tend(st, i)]);
+    return w(io, st, text[ast.tstart(st, i)..ast.tend(st, i)]);
 }
 
 // `q.name`, or `name` where there is no qualifier (-1).
 fn qualified[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], q: int, n: int) -> [io_write] int {
     if q >= 0 {
         name(io, st, text, q);
-        w(io, ".");
+        w(io, st, ".");
     }
     return name(io, st, text, n);
 }
@@ -53,7 +53,7 @@ fn code(t: lc.Tok) -> [] int {
 fn string_literal[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], i: int) -> [io_write] int {
     let to = ast.tend(st, i) - 1;
     var j = ast.tstart(st, i) + 1;
-    w(io, "\"");
+    w(io, st, "\"");
     while j < to {
         var c = lc.at(text, j);
         if c == '\\' {
@@ -74,50 +74,50 @@ fn string_literal[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], i: int
             }
         }
         if c == 10 {
-            w(io, "\\n");
+            w(io, st, "\\n");
         } else if c == 13 {
-            w(io, "\\r");
+            w(io, st, "\\r");
         } else if c == 9 {
-            w(io, "\\t");
+            w(io, st, "\\t");
         } else if c == '\\' {
-            w(io, "\\\\");
+            w(io, st, "\\\\");
         } else if c == '"' {
-            w(io, "\\\"");
+            w(io, st, "\\\"");
         } else if c == 0 {
-            w(io, "\\0");
+            w(io, st, "\\0");
         } else {
-            console.putchar(io, c);
+            sink.put(io, st, c);
         }
         j = j + 1;
     }
-    return w(io, "\"");
+    return w(io, st, "\"");
 }
 
 // ----------------------------------------------- what the tokens still say ---
 
 // `[io, ffi("libc")]`, from the row whose `[` is token `open`: in the order written.
 fn effect_row[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], open: int) -> [io_write] int {
-    w(io, "[");
+    w(io, st, "[");
     var k = open + 1;
     var first = true;
     while ast.code_at(st, k) != code(lc.Tok::RBracket) {
         if !first {
-            w(io, ", ");
+            w(io, st, ", ");
         }
         first = false;
         name(io, st, text, k);
         k = k + 1;
         if ast.code_at(st, k) == code(lc.Tok::LParen) {
-            w(io, "(");
+            w(io, st, "(");
             string_literal(io, st, text, k + 1);
-            w(io, ")");
+            w(io, st, ")");
             k = k + 3;
         }
         if ast.code_at(st, k) == code(lc.Tok::Comma) {
             k = k + 1;
         }
     }
-    return w(io, "]");
+    return w(io, st, "]");
 }
 
 // `{ a, b }` or `(a, b)`'s names, from the token after the opener, up to `closer`: a, b.
@@ -126,7 +126,7 @@ fn names[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], open: int, clos
     var first = true;
     while ast.code_at(st, k) != code(closer) {
         if !first {
-            w(io, ", ");
+            w(io, st, ", ");
         }
         first = false;
         name(io, st, text, k);
@@ -141,7 +141,7 @@ fn names[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], open: int, clos
 // A match pattern, from its first token: `_`, or `Enum::Variant(a, _)`, `q.Enum::Variant`.
 fn pattern[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], first: int) -> [io_write] int {
     if ast.code_at(st, first) == code(lc.Tok::Underscore) {
-        return w(io, "_");
+        return w(io, st, "_");
     }
     var k = first;
     var qualifier = 0 - 1;
@@ -150,7 +150,7 @@ fn pattern[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], first: int) -
         k = k + 2;
     }
     qualified(io, st, text, qualifier, k);
-    w(io, "::");
+    w(io, st, "::");
     name(io, st, text, k + 2);
     k = k + 3;
     if ast.code_at(st, k) == code(lc.Tok::LParen) {
@@ -159,14 +159,14 @@ fn pattern[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], first: int) -
         var firstb = true;
         while ast.code_at(st, k) != code(lc.Tok::RParen) {
             if firstb {
-                w(io, "(");
+                w(io, st, "(");
             } else {
-                w(io, ", ");
+                w(io, st, ", ");
             }
             firstb = false;
             any = true;
             if ast.code_at(st, k) == code(lc.Tok::Underscore) {
-                w(io, "_");
+                w(io, st, "_");
             } else {
                 name(io, st, text, k);
             }
@@ -176,7 +176,7 @@ fn pattern[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], first: int) -
             }
         }
         if any {
-            w(io, ")");
+            w(io, st, ")");
         }
     }
     return 0;
@@ -208,7 +208,7 @@ fn generics[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], start: int) 
     if !any {
         return 0;
     }
-    w(io, "[");
+    w(io, st, "[");
     var first = true;
     k = start + 1;
     while ast.code_at(st, k) != code(lc.Tok::RBracket) && ast.code_at(st, k) != code(lc.Tok::Where) {
@@ -216,13 +216,13 @@ fn generics[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], start: int) 
             k = k + 2;
         } else {
             if !first {
-                w(io, ", ");
+                w(io, st, ", ");
             }
             first = false;
             name(io, st, text, k);
             k = k + 1;
             if ast.code_at(st, k) == code(lc.Tok::Colon) {
-                w(io, ": val");
+                w(io, st, ": val");
                 k = k + 2;
             }
         }
@@ -234,10 +234,10 @@ fn generics[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], start: int) 
     while ast.code_at(st, k) != code(lc.Tok::RBracket) && ast.code_at(st, k) != code(lc.Tok::Where) {
         if ast.code_at(st, k) == code(lc.Tok::Amp) {
             if !first {
-                w(io, ", ");
+                w(io, st, ", ");
             }
             first = false;
-            w(io, "&");
+            w(io, st, "&");
             name(io, st, text, k + 1);
             k = k + 2;
         } else {
@@ -251,17 +251,17 @@ fn generics[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], start: int) 
         }
     }
     if ast.code_at(st, k) == code(lc.Tok::Where) {
-        w(io, " where ");
+        w(io, st, " where ");
         k = k + 1;
         var firstc = true;
         var go = true;
         while go {
             if !firstc {
-                w(io, ", ");
+                w(io, st, ", ");
             }
             firstc = false;
             name(io, st, text, k);
-            w(io, " <= ");
+            w(io, st, " <= ");
             name(io, st, text, k + 2);
             k = k + 3;
             if ast.code_at(st, k) == code(lc.Tok::Comma) {
@@ -271,7 +271,7 @@ fn generics[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], start: int) 
             }
         }
     }
-    return w(io, "]");
+    return w(io, st, "]");
 }
 
 // ---------------------------------------------------------------- types ---
@@ -281,7 +281,7 @@ fn types[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], head: int, n: i
     var left = n;
     while left > 0 {
         if left != n {
-            w(io, ", ");
+            w(io, st, ", ");
         }
         type_expr(io, st, text, at);
         at = ast.next(st, at);
@@ -299,27 +299,27 @@ fn type_expr[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int) ->
         }
         if n == 1 && ast.is_kind(st, ast.get(st, id, 6), kinds.NK::TLit) {
             // `Ffi("libc")`: a literal argument is written in parentheses.
-            w(io, "(");
+            w(io, st, "(");
             type_expr(io, st, text, ast.get(st, id, 6));
-            return w(io, ")");
+            return w(io, st, ")");
         }
-        w(io, "[");
+        w(io, st, "[");
         types(io, st, text, ast.get(st, id, 6), n);
-        return w(io, "]");
+        return w(io, st, "]");
     }
     if ast.is_kind(st, id, kinds.NK::TRef) {
-        w(io, "&");
+        w(io, st, "&");
         if ast.get(st, id, 4) != 0 {
-            w(io, "!");
+            w(io, st, "!");
         }
         name(io, st, text, ast.get(st, id, 5));
-        w(io, " ");
+        w(io, st, " ");
         return type_expr(io, st, text, ast.get(st, id, 6));
     }
     if ast.is_kind(st, id, kinds.NK::TSlice) {
-        w(io, "[");
+        w(io, st, "[");
         type_expr(io, st, text, ast.get(st, id, 6));
-        return w(io, "]");
+        return w(io, st, "]");
     }
     if ast.is_kind(st, id, kinds.NK::TTuple) {
         return tuple_of_types(io, st, text, ast.get(st, id, 6), ast.get(st, id, 7));
@@ -328,22 +328,22 @@ fn type_expr[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int) ->
         return string_literal(io, st, text, ast.get(st, id, 4));
     }
     // A function type.
-    w(io, "fn(");
+    w(io, st, "fn(");
     types(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6));
-    w(io, ") -> ");
+    w(io, st, ") -> ");
     effect_row(io, st, text, ast.get(st, id, 4));
-    w(io, " ");
+    w(io, st, " ");
     return type_expr(io, st, text, ast.get(st, id, 7));
 }
 
 // `(A, B)`, and `(A,)` for one part.
 fn tuple_of_types[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], head: int, n: int) -> [io_write] int {
-    w(io, "(");
+    w(io, st, "(");
     types(io, st, text, head, n);
     if n == 1 {
-        w(io, ",");
+        w(io, st, ",");
     }
-    return w(io, ")");
+    return w(io, st, ")");
 }
 
 // ---------------------------------------------------------- expressions ---
@@ -481,9 +481,9 @@ fn bare_struct[&s](st: &!s [int], id: int) -> [] bool {
 // An expression in a position followed by a block.
 fn condition[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int) -> [io_write] int {
     if bare_struct(st, id) {
-        w(io, "(");
+        w(io, st, "(");
         expr_at(io, st, text, id, 0);
-        return w(io, ")");
+        return w(io, st, ")");
     }
     return expr_at(io, st, text, id, 0);
 }
@@ -493,7 +493,7 @@ fn exprs[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], head: int, n: i
     var left = n;
     while left > 0 {
         if left != n {
-            w(io, ", ");
+            w(io, st, ", ");
         }
         expr_at(io, st, text, at, 0);
         at = ast.next(st, at);
@@ -505,9 +505,9 @@ fn exprs[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], head: int, n: i
 // The base of a `.`: a numeric literal there is parenthesised.
 fn dotted[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], base: int) -> [io_write] int {
     if is_number(st, base) {
-        w(io, "(");
+        w(io, st, "(");
         expr_at(io, st, text, base, postfix_level());
-        return w(io, ")");
+        return w(io, st, ")");
     }
     return expr_at(io, st, text, base, postfix_level());
 }
@@ -515,13 +515,13 @@ fn dotted[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], base: int) -> 
 // `level` is the binding power of the context: anything that binds more loosely is wrapped.
 fn expr_at[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, level: int) -> [io_write] int {
     if ast.is_kind(st, id, kinds.NK::EInt) {
-        return console.print_int(io, ast.get(st, id, 4));
+        return sink.number(io, st, ast.get(st, id, 4));
     }
     if ast.is_kind(st, id, kinds.NK::EBool) {
         if ast.get(st, id, 4) != 0 {
-            return w(io, "true");
+            return w(io, st, "true");
         }
-        return w(io, "false");
+        return w(io, st, "false");
     }
     if ast.is_kind(st, id, kinds.NK::EStr) {
         return string_literal(io, st, text, ast.get(st, id, 4));
@@ -540,106 +540,106 @@ fn expr_at[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, leve
         qualified(io, st, text, ast.get(st, id, 4), ast.get(st, id, 5));
         let n = ast.get(st, id, 7);
         if n == 0 {
-            return w(io, " { }");
+            return w(io, st, " { }");
         }
-        w(io, " { ");
+        w(io, st, " { ");
         var at = ast.get(st, id, 6);
         var left = n;
         while left > 0 {
             if left != n {
-                w(io, ", ");
+                w(io, st, ", ");
             }
             name(io, st, text, ast.get(st, at, 4));
-            w(io, ": ");
+            w(io, st, ": ");
             expr_at(io, st, text, ast.get(st, at, 5), 0);
             at = ast.next(st, at);
             left = left - 1;
         }
-        return w(io, " }");
+        return w(io, st, " }");
     }
     if ast.is_kind(st, id, kinds.NK::EField) {
         dotted(io, st, text, ast.get(st, id, 4));
-        w(io, ".");
+        w(io, st, ".");
         return name(io, st, text, ast.get(st, id, 5));
     }
     if ast.is_kind(st, id, kinds.NK::ETuple) {
-        w(io, "(");
+        w(io, st, "(");
         exprs(io, st, text, ast.get(st, id, 4), ast.get(st, id, 5));
         if ast.get(st, id, 5) == 1 {
-            w(io, ",");
+            w(io, st, ",");
         }
-        return w(io, ")");
+        return w(io, st, ")");
     }
     if ast.is_kind(st, id, kinds.NK::ETupleField) {
         dotted(io, st, text, ast.get(st, id, 4));
-        w(io, ".");
-        return console.print_int(io, ast.get(st, id, 5));
+        w(io, st, ".");
+        return sink.number(io, st, ast.get(st, id, 5));
     }
     if ast.is_kind(st, id, kinds.NK::EIndex) {
         expr_at(io, st, text, ast.get(st, id, 4), postfix_level());
-        w(io, "[");
+        w(io, st, "[");
         expr_at(io, st, text, ast.get(st, id, 5), 0);
-        return w(io, "]");
+        return w(io, st, "]");
     }
     if ast.is_kind(st, id, kinds.NK::ESlice) {
         expr_at(io, st, text, ast.get(st, id, 4), postfix_level());
-        w(io, "[");
+        w(io, st, "[");
         expr_at(io, st, text, ast.get(st, id, 5), 0);
-        w(io, "..");
+        w(io, st, "..");
         expr_at(io, st, text, ast.get(st, id, 6), 0);
-        return w(io, "]");
+        return w(io, st, "]");
     }
     if ast.is_kind(st, id, kinds.NK::EVariant) {
         qualified(io, st, text, ast.get(st, id, 4), ast.get(st, id, 5));
-        w(io, "::");
+        w(io, st, "::");
         name(io, st, text, ast.get(st, id, 6));
         if ast.get(st, id, 8) == 0 {
             return 0;
         }
-        w(io, "(");
+        w(io, st, "(");
         exprs(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8));
-        return w(io, ")");
+        return w(io, st, ")");
     }
     if ast.is_kind(st, id, kinds.NK::ECall) {
         qualified(io, st, text, ast.get(st, id, 4), ast.get(st, id, 5));
-        w(io, "(");
+        w(io, st, "(");
         exprs(io, st, text, ast.get(st, id, 6), ast.get(st, id, 7));
-        return w(io, ")");
+        return w(io, st, ")");
     }
     if ast.is_kind(st, id, kinds.NK::EAlloc) {
-        w(io, "alloc[");
+        w(io, st, "alloc[");
         name(io, st, text, ast.get(st, id, 4));
-        w(io, "](");
+        w(io, st, "](");
         expr_at(io, st, text, ast.get(st, id, 5), 0);
-        return w(io, ")");
+        return w(io, st, ")");
     }
     if ast.is_kind(st, id, kinds.NK::EAllocSlice) {
-        w(io, "alloc_slice[");
+        w(io, st, "alloc_slice[");
         name(io, st, text, ast.get(st, id, 4));
-        w(io, "](");
+        w(io, st, "](");
         expr_at(io, st, text, ast.get(st, id, 5), 0);
-        w(io, ", ");
+        w(io, st, ", ");
         expr_at(io, st, text, ast.get(st, id, 6), 0);
-        return w(io, ")");
+        return w(io, st, ")");
     }
     if ast.is_kind(st, id, kinds.NK::EUnary) {
         let wrapped = unary_level() < level;
         if wrapped {
-            w(io, "(");
+            w(io, st, "(");
         }
         let op = ast.get(st, id, 4);
         let operand = ast.get(st, id, 5);
         if op == 0 && is_number(st, operand) {
             // `-` before a literal token is one literal, so a negation of one keeps the two apart.
-            w(io, "-(");
+            w(io, st, "-(");
             expr_at(io, st, text, operand, unary_level());
-            w(io, ")");
+            w(io, st, ")");
         } else {
-            w(io, unary_symbol(op));
+            w(io, st, unary_symbol(op));
             expr_at(io, st, text, operand, unary_level());
         }
         if wrapped {
-            w(io, ")");
+            w(io, st, ")");
         }
         return 0;
     }
@@ -648,15 +648,15 @@ fn expr_at[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, leve
     let own = power(op);
     let wrapped = own < level;
     if wrapped {
-        w(io, "(");
+        w(io, st, "(");
     }
     expr_at(io, st, text, ast.get(st, id, 5), own);
-    w(io, " ");
-    w(io, operator(op));
-    w(io, " ");
+    w(io, st, " ");
+    w(io, st, operator(op));
+    w(io, st, " ");
     expr_at(io, st, text, ast.get(st, id, 6), own + 1);
     if wrapped {
-        w(io, ")");
+        w(io, st, ")");
     }
     return 0;
 }
@@ -677,32 +677,32 @@ fn stmts[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], head: int, n: i
 // The lines of a block that has had its opening brace written, and the closing one.
 fn nested[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], head: int, n: int, depth: int) -> [io_write] int {
     stmts(io, st, text, head, n, depth + 1);
-    indent(io, depth);
-    return w(io, "}\n");
+    indent(io, st, depth);
+    return w(io, st, "}\n");
 }
 
 // `if c { .. }` and what follows it. `chain` is 1 for the link of a chain, which starts the line `} else if`.
 fn if_chain[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, depth: int, chain: bool) -> [io_write] int {
     if chain {
-        w(io, "} else ");
+        w(io, st, "} else ");
     } else {
-        indent(io, depth);
+        indent(io, st, depth);
     }
-    w(io, "if ");
+    w(io, st, "if ");
     condition(io, st, text, ast.get(st, id, 4));
-    w(io, " {\n");
+    w(io, st, " {\n");
     stmts(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6), depth + 1);
     let n = ast.get(st, id, 8);
     if n < 0 {
-        indent(io, depth);
-        return w(io, "}\n");
+        indent(io, st, depth);
+        return w(io, st, "}\n");
     }
-    indent(io, depth);
+    indent(io, st, depth);
     let only = ast.get(st, id, 7);
     if n == 1 && ast.is_kind(st, only, kinds.NK::SIf) {
         return if_chain(io, st, text, only, depth, true);
     }
-    w(io, "} else {\n");
+    w(io, st, "} else {\n");
     return nested(io, st, text, only, n, depth);
 }
 
@@ -710,116 +710,116 @@ fn stmt[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int, depth: 
     if ast.is_kind(st, id, kinds.NK::SIf) {
         return if_chain(io, st, text, id, depth, false);
     }
-    indent(io, depth);
+    indent(io, st, depth);
     if ast.is_kind(st, id, kinds.NK::SLet) {
         if ast.get(st, id, 4) != 0 {
-            w(io, "var ");
+            w(io, st, "var ");
         } else {
-            w(io, "let ");
+            w(io, st, "let ");
         }
         name(io, st, text, ast.get(st, id, 5));
         if ast.get(st, id, 6) >= 0 {
-            w(io, ": ");
+            w(io, st, ": ");
             type_expr(io, st, text, ast.get(st, id, 6));
         }
-        w(io, " = ");
+        w(io, st, " = ");
         expr_at(io, st, text, ast.get(st, id, 7), 0);
-        return w(io, ";\n");
+        return w(io, st, ";\n");
     }
     if ast.is_kind(st, id, kinds.NK::SAssign) {
         expr_at(io, st, text, ast.get(st, id, 4), 0);
-        w(io, " = ");
+        w(io, st, " = ");
         expr_at(io, st, text, ast.get(st, id, 5), 0);
-        return w(io, ";\n");
+        return w(io, st, ";\n");
     }
     if ast.is_kind(st, id, kinds.NK::SDestructure) {
-        w(io, "let ");
+        w(io, st, "let ");
         qualified(io, st, text, ast.get(st, id, 4), ast.get(st, id, 5));
-        w(io, " { ");
+        w(io, st, " { ");
         names(io, st, text, ast.get(st, id, 6), lc.Tok::RBrace);
-        w(io, " } = ");
+        w(io, st, " } = ");
         expr_at(io, st, text, ast.get(st, id, 7), 0);
-        return w(io, ";\n");
+        return w(io, st, ";\n");
     }
     if ast.is_kind(st, id, kinds.NK::SDestructureTuple) {
-        w(io, "let (");
+        w(io, st, "let (");
         names(io, st, text, ast.get(st, id, 4), lc.Tok::RParen);
-        w(io, ") = ");
+        w(io, st, ") = ");
         expr_at(io, st, text, ast.get(st, id, 5), 0);
-        return w(io, ";\n");
+        return w(io, st, ";\n");
     }
     if ast.is_kind(st, id, kinds.NK::SBorrow) {
-        w(io, "borrow ");
+        w(io, st, "borrow ");
         if ast.get(st, id, 5) != 0 {
-            w(io, "mut ");
+            w(io, st, "mut ");
         }
         name(io, st, text, ast.get(st, id, 4));
-        w(io, " as &");
+        w(io, st, " as &");
         if ast.get(st, id, 5) != 0 {
-            w(io, "!");
+            w(io, st, "!");
         }
         name(io, st, text, ast.get(st, id, 6));
-        w(io, " in {\n");
+        w(io, st, " in {\n");
         return nested(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8), depth);
     }
     if ast.is_kind(st, id, kinds.NK::SRegion) {
-        w(io, "region ");
+        w(io, st, "region ");
         name(io, st, text, ast.get(st, id, 4));
-        w(io, " {\n");
+        w(io, st, " {\n");
         return nested(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6), depth);
     }
     if ast.is_kind(st, id, kinds.NK::SExpr) {
         expr_at(io, st, text, ast.get(st, id, 4), 0);
-        return w(io, ";\n");
+        return w(io, st, ";\n");
     }
     if ast.is_kind(st, id, kinds.NK::SWhile) {
-        w(io, "while ");
+        w(io, st, "while ");
         condition(io, st, text, ast.get(st, id, 4));
-        w(io, " {\n");
+        w(io, st, " {\n");
         return nested(io, st, text, ast.get(st, id, 5), ast.get(st, id, 6), depth);
     }
     if ast.is_kind(st, id, kinds.NK::SMatch) {
-        w(io, "match ");
+        w(io, st, "match ");
         condition(io, st, text, ast.get(st, id, 4));
-        w(io, " {\n");
+        w(io, st, " {\n");
         var arm = ast.get(st, id, 5);
         var left = ast.get(st, id, 6);
         while left > 0 {
-            indent(io, depth + 1);
+            indent(io, st, depth + 1);
             pattern(io, st, text, ast.get(st, arm, 4));
-            w(io, " => {\n");
+            w(io, st, " => {\n");
             nested(io, st, text, ast.get(st, arm, 5), ast.get(st, arm, 6), depth + 1);
             arm = ast.next(st, arm);
             left = left - 1;
         }
-        indent(io, depth);
-        return w(io, "}\n");
+        indent(io, st, depth);
+        return w(io, st, "}\n");
     }
     if ast.is_kind(st, id, kinds.NK::SReturn) {
-        w(io, "return ");
+        w(io, st, "return ");
         expr_at(io, st, text, ast.get(st, id, 4), 0);
-        return w(io, ";\n");
+        return w(io, st, ";\n");
     }
-    w(io, "defer ");
+    w(io, st, "defer ");
     expr_at(io, st, text, ast.get(st, id, 4), 0);
-    return w(io, ";\n");
+    return w(io, st, ";\n");
 }
 
 // ---------------------------------------------------------------- items ---
 
-fn visibility[&i](io: &!i Io, public: int) -> [io_write] int {
+fn visibility[&i, &s](io: &!i Io, st: &!s [int], public: int) -> [io_write] int {
     if public != 0 {
-        return w(io, "pub ");
+        return w(io, st, "pub ");
     }
     return 0;
 }
 
-fn mode_prefix[&i](io: &!i Io, mode: int) -> [io_write] int {
+fn mode_prefix[&i, &s](io: &!i Io, st: &!s [int], mode: int) -> [io_write] int {
     if mode == 2 {
-        return w(io, "res ");
+        return w(io, st, "res ");
     }
     if mode == 1 {
-        return w(io, "val ");
+        return w(io, st, "val ");
     }
     return 0;
 }
@@ -829,10 +829,10 @@ fn params[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], head: int, n: 
     var left = n;
     while left > 0 {
         if left != n {
-            w(io, ", ");
+            w(io, st, ", ");
         }
         name(io, st, text, ast.get(st, at, 4));
-        w(io, ": ");
+        w(io, st, ": ");
         type_expr(io, st, text, ast.get(st, at, 5));
         at = ast.next(st, at);
         left = left - 1;
@@ -842,104 +842,104 @@ fn params[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], head: int, n: 
 
 fn item[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], id: int) -> [io_write] int {
     if ast.is_kind(st, id, kinds.NK::IFn) {
-        visibility(io, ast.get(st, id, 5));
-        w(io, "fn ");
+        visibility(io, st, ast.get(st, id, 5));
+        w(io, st, "fn ");
         name(io, st, text, ast.get(st, id, 4));
         generics(io, st, text, ast.get(st, id, 6));
-        w(io, "(");
+        w(io, st, "(");
         params(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8));
-        w(io, ") -> ");
+        w(io, st, ") -> ");
         effect_row(io, st, text, ast.get(st, id, 9));
-        w(io, " ");
+        w(io, st, " ");
         type_expr(io, st, text, ast.get(st, id, 10));
-        w(io, " {\n");
+        w(io, st, " {\n");
         return nested(io, st, text, ast.get(st, id, 11), ast.get(st, id, 12), 0);
     }
     if ast.is_kind(st, id, kinds.NK::IExtern) {
-        w(io, "extern fn ");
+        w(io, st, "extern fn ");
         name(io, st, text, ast.get(st, id, 4));
         generics(io, st, text, ast.get(st, id, 6));
-        w(io, "(");
+        w(io, st, "(");
         params(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8));
-        w(io, ") -> ");
+        w(io, st, ") -> ");
         effect_row(io, st, text, ast.get(st, id, 9));
-        w(io, " ");
+        w(io, st, " ");
         type_expr(io, st, text, ast.get(st, id, 10));
-        return w(io, ";\n");
+        return w(io, st, ";\n");
     }
     if ast.is_kind(st, id, kinds.NK::IStruct) {
-        visibility(io, ast.get(st, id, 5));
-        mode_prefix(io, ast.get(st, id, 6));
-        w(io, "struct ");
+        visibility(io, st, ast.get(st, id, 5));
+        mode_prefix(io, st, ast.get(st, id, 6));
+        w(io, st, "struct ");
         name(io, st, text, ast.get(st, id, 4));
         generics(io, st, text, ast.get(st, id, 7));
-        w(io, " {\n");
+        w(io, st, " {\n");
         var at = ast.get(st, id, 8);
         while at >= 0 {
-            indent(io, 1);
+            indent(io, st, 1);
             name(io, st, text, ast.get(st, at, 4));
-            w(io, ": ");
+            w(io, st, ": ");
             type_expr(io, st, text, ast.get(st, at, 5));
-            w(io, ",\n");
+            w(io, st, ",\n");
             at = ast.next(st, at);
         }
-        return w(io, "}\n");
+        return w(io, st, "}\n");
     }
     if ast.is_kind(st, id, kinds.NK::IEnum) {
-        visibility(io, ast.get(st, id, 5));
-        mode_prefix(io, ast.get(st, id, 6));
-        w(io, "enum ");
+        visibility(io, st, ast.get(st, id, 5));
+        mode_prefix(io, st, ast.get(st, id, 6));
+        w(io, st, "enum ");
         name(io, st, text, ast.get(st, id, 4));
         generics(io, st, text, ast.get(st, id, 7));
-        w(io, " {\n");
+        w(io, st, " {\n");
         var at = ast.get(st, id, 8);
         while at >= 0 {
-            indent(io, 1);
+            indent(io, st, 1);
             name(io, st, text, ast.get(st, at, 4));
             if ast.get(st, at, 6) > 0 {
-                w(io, "(");
+                w(io, st, "(");
                 types(io, st, text, ast.get(st, at, 5), ast.get(st, at, 6));
-                w(io, ")");
+                w(io, st, ")");
             }
-            w(io, ",\n");
+            w(io, st, ",\n");
             at = ast.next(st, at);
         }
-        return w(io, "}\n");
+        return w(io, st, "}\n");
     }
     // A static.
-    visibility(io, ast.get(st, id, 5));
-    w(io, "static ");
+    visibility(io, st, ast.get(st, id, 5));
+    w(io, st, "static ");
     name(io, st, text, ast.get(st, id, 4));
-    w(io, ": ");
+    w(io, st, ": ");
     type_expr(io, st, text, ast.get(st, id, 6));
-    w(io, " {\n");
+    w(io, st, " {\n");
     return nested(io, st, text, ast.get(st, id, 7), ast.get(st, id, 8), 0);
 }
 
 // `module a.b;` for a module that is not the root, and the module's imports in the order written.
 fn module_header[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], m: int) -> [io_write] int {
     if m != 0 {
-        w(io, "module ");
+        w(io, st, "module ");
         let first = ast.module_first(st, m);
         name(io, st, text, first);
         var n = 1;
         while n < ast.module_len(st, m) {
-            w(io, ".");
+            w(io, st, ".");
             name(io, st, text, first + 2 * n);
             n = n + 1;
         }
-        w(io, ";\n");
+        w(io, st, ";\n");
     }
     var k = 0;
     while k < st[12] {
         if ast.import_module(st, k) == m {
             let keyword = ast.import_keyword(st, k);
-            w(io, "import ");
+            w(io, st, "import ");
             var at = keyword + 1;
             var last = at;
             name(io, st, text, at);
             while ast.code_at(st, at + 1) == code(lc.Tok::Dot) {
-                w(io, ".");
+                w(io, st, ".");
                 name(io, st, text, at + 2);
                 at = at + 2;
                 last = at;
@@ -947,10 +947,10 @@ fn module_header[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], m: int)
             at = at + 1;
             if ast.code_at(st, at) == code(lc.Tok::As) && !ast.same(st, text, at + 1, last) {
                 // An alias that is the last segment is no alias.
-                w(io, " as ");
+                w(io, st, " as ");
                 name(io, st, text, at + 1);
             }
-            w(io, ";\n");
+            w(io, st, ";\n");
         }
         k = k + 1;
     }
@@ -989,7 +989,7 @@ pub fn print[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_writ
         let imports = has_imports(st, m);
         if has_items(st, m) || imports {
             if !first {
-                w(io, "\n");
+                w(io, st, "\n");
             }
             first = false;
             module_header(io, st, text, m);
@@ -998,7 +998,7 @@ pub fn print[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_writ
             while at >= 0 {
                 if ast.get(st, at, 13) == m {
                     if n > 0 || m != 0 || imports {
-                        w(io, "\n");
+                        w(io, st, "\n");
                     }
                     item(io, st, text, at);
                     n = n + 1;
