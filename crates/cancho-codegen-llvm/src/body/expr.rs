@@ -309,17 +309,17 @@ impl<'a> FuncEmitter<'a> {
                 let (bound, args, datagram) = (bound.clone(), args.clone(), *datagram);
                 self.tcp_listen(&bound, &args, datagram)
             }
-            Expr::TcpConnect { bound, args, start, datagram } => {
-                let (bound, args, start, datagram) =
-                    (bound.clone(), args.clone(), *start, *datagram);
-                self.tcp_connect(&bound, &args, start, datagram)
+            Expr::TcpConnect { bound, args, start, datagram, exact_host } => {
+                let (bound, args, start, datagram, exact) =
+                    (bound.clone(), args.clone(), *start, *datagram, *exact_host);
+                self.tcp_connect(&bound, &args, start, datagram, exact)
             }
             // `connect(net, name, port)` (§7.22, `docs/connect.md` §10):
             // the last of `Net`'s four builtins, mirroring
             // `cancho-codegen`'s own `Expr::Connect` arm (`body/net.rs`).
-            Expr::Connect { bound, args } => {
-                let (bound, args) = (bound.clone(), args.clone());
-                self.connect(&bound, &args)
+            Expr::Connect { bound, args, exact_host } => {
+                let (bound, args, exact) = (bound.clone(), args.clone(), *exact_host);
+                self.connect(&bound, &args, exact)
             }
             // `fs_read`/`fs_write` (§7.24, `docs/filesystem.md` §3):
             // dedicated nodes for the same reason `Connect`/`Bind` are

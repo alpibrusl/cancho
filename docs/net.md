@@ -95,7 +95,7 @@ no inbound field because inbound is not a grant question.
 
 | | What the capability bounds | Who decides the rest |
 |---|---|---|
-| **Outbound** | *which host* — `Net.out("api.example.com:443")`, narrowing by prefix the way `Fs` does | nobody else; the program picked it |
+| **Outbound** | *which host* — `Net.out("api.example.com:443")`, narrowing by prefix the way `Fs` does (host a prefix, port exact; **from edition 10 the host is exact or `*.suffix`**, `net-bounds.md` §2.3) | nobody else; the program picked it |
 | **Inbound** | *which port* — `Net.in(8080)` | the **perimeter**, which decides who can reach that port |
 
 An inbound capability that bounded anything more would be a row that

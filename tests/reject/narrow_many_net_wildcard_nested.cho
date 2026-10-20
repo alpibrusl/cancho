@@ -1,0 +1,14 @@
+//~ ERROR are nested
+//~ RULE capability-not-narrowable
+
+// `*.0.0.1` admits `127.0.0.1`, so the second child grants nothing the first does not. (`docs/net-bounds.md` §2.2, §2.3.)
+
+edition 10;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(clock);
+    release(signals); release(exec); release(tty);
+    let (a, b) = narrow(net, "*.0.0.1:9", "127.0.0.1:9");
+    release(a); release(b);
+    return 0;
+}

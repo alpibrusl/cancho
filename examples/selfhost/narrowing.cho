@@ -121,18 +121,73 @@ fn host_len[&s, &x](st: &!s [int], text: &x [byte], lit: int) -> [] int {
     return p - 1 - first(st, lit);
 }
 
-// `net_contains`: the host of `outer` is a prefix of the host of `inner`, and the port, when `outer` names one, is exact.
-fn net_contains[&s, &x](st: &!s [int], text: &x [byte], outer: int, inner: int) -> [] bool {
+// Is the host of `inner` one label ahead of the suffix `outer` names, `outer` being written `*.suffix`? The label is not
+// empty and has no `.` or `*` in it.
+fn one_label_under[&s, &x](st: &!s [int], text: &x [byte], outer: int, inner: int) -> [] bool {
     let oh = host_len(st, text, outer);
-    if host_len(st, text, inner) < oh {
+    let ih = host_len(st, text, inner);
+    let suffix = oh - 2;
+    let label = ih - suffix - 1;
+    if suffix < 0 || label < 1 {
         return false;
     }
     var i = 0;
-    while i < oh {
-        if int_of(text[first(st, outer) + i]) != int_of(text[first(st, inner) + i]) {
+    while i < suffix {
+        if int_of(text[first(st, outer) + 2 + i]) != int_of(text[first(st, inner) + label + 1 + i]) {
             return false;
         }
         i = i + 1;
+    }
+    if int_of(text[first(st, inner) + label]) != 46 {
+        return false;
+    }
+    i = 0;
+    while i < label {
+        let c = int_of(text[first(st, inner) + i]);
+        if c == 46 || c == 42 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn same_host[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int) -> [] bool {
+    let n = host_len(st, text, a);
+    if host_len(st, text, b) != n {
+        return false;
+    }
+    var i = 0;
+    while i < n {
+        if int_of(text[first(st, a) + i]) != int_of(text[first(st, b) + i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `net_contains`: everything `inner` admits, `outer` admits. The port, when `outer` names one, is exact. The host is a prefix
+// of the other's, or, with `exact` (edition 10, `docs/net-bounds.md` 2.3), an empty host admits any, `*.suffix` admits that
+// bound and one label ahead of `.suffix`, and every other host admits only itself.
+fn net_contains[&s, &x](st: &!s [int], text: &x [byte], outer: int, inner: int, exact: bool) -> [] bool {
+    let oh = host_len(st, text, outer);
+    if exact {
+        let wild = oh >= 2 && int_of(text[first(st, outer)]) == 42 && int_of(text[first(st, outer) + 1]) == 46;
+        if oh > 0 && !same_host(st, text, outer, inner) && !(wild && one_label_under(st, text, outer, inner)) {
+            return false;
+        }
+    } else {
+        if host_len(st, text, inner) < oh {
+            return false;
+        }
+        var i = 0;
+        while i < oh {
+            if int_of(text[first(st, outer) + i]) != int_of(text[first(st, inner) + i]) {
+                return false;
+            }
+            i = i + 1;
+        }
     }
     let op = port_at(st, text, outer);
     if op < 0 {
@@ -162,7 +217,7 @@ pub fn refused_one[&s, &x](st: &!s [int], text: &x [byte], path: bool, current: 
     if path {
         inside = extends(st, text, current, target);
     } else {
-        inside = net_contains(st, text, current, target);
+        inside = net_contains(st, text, current, target, st[23] >= 10);
     }
     if !inside || equal(st, text, current, target) {
         ast.fail(st, rules.r_capability_not_narrowable(), from, to);
@@ -177,7 +232,7 @@ pub fn refused_pair[&s, &x](st: &!s [int], text: &x [byte], path: bool, a: int, 
         return false;
     }
     // A path extends at a separator; a `Net` bound has a host prefix and an exact port.
-    var nested = net_contains(st, text, a, b) || net_contains(st, text, b, a);
+    var nested = net_contains(st, text, a, b, st[23] >= 10) || net_contains(st, text, b, a, st[23] >= 10);
     if path {
         nested = extends(st, text, a, b) || extends(st, text, b, a);
     }

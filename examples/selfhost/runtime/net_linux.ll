@@ -844,6 +844,7 @@ entry:
   %start.addr = alloca i64, align 8
   %kind.addr = alloca i32, align 4
   %why.addr = alloca ptr, align 8
+  %exact = alloca i32, align 4
   %host = alloca [256 x i8], align 1
   %hints = alloca [48 x i8], align 1
   %i = alloca i32, align 4
@@ -864,177 +865,202 @@ entry:
   store i64 %start, ptr %start.addr, align 8
   store i32 %kind, ptr %kind.addr, align 4
   store ptr %why, ptr %why.addr, align 8
-  %0 = load i64, ptr %port.addr, align 8
+  store i32 0, ptr %exact, align 4
+  %0 = load i64, ptr %bound_len.addr, align 8
+  %cmp = icmp sgt i64 %0, 0
+  br i1 %cmp, label %land.lhs.true, label %if.end
+
+land.lhs.true:                                    ; preds = %entry
   %1 = load ptr, ptr %bound.addr, align 8
-  %2 = load i64, ptr %bound_len.addr, align 8
-  %call = call i64 @netrt_dial_port(ptr %1, i64 %2)
-  call void @netrt_check_port(i64 %0, i64 %call)
-  %3 = load ptr, ptr %name.addr, align 8
-  %4 = load i64, ptr %len.addr, align 8
-  %5 = load ptr, ptr %bound.addr, align 8
+  %arrayidx = getelementptr inbounds i8, ptr %1, i64 0
+  %2 = load i8, ptr %arrayidx, align 1
+  %conv = zext i8 %2 to i32
+  %cmp1 = icmp eq i32 %conv, 1
+  br i1 %cmp1, label %if.then, label %if.end
+
+if.then:                                          ; preds = %land.lhs.true
+  store i32 1, ptr %exact, align 4
+  %3 = load ptr, ptr %bound.addr, align 8
+  %incdec.ptr = getelementptr inbounds i8, ptr %3, i32 1
+  store ptr %incdec.ptr, ptr %bound.addr, align 8
+  %4 = load i64, ptr %bound_len.addr, align 8
+  %dec = add i64 %4, -1
+  store i64 %dec, ptr %bound_len.addr, align 8
+  br label %if.end
+
+if.end:                                           ; preds = %if.then, %land.lhs.true, %entry
+  %5 = load i64, ptr %port.addr, align 8
   %6 = load ptr, ptr %bound.addr, align 8
   %7 = load i64, ptr %bound_len.addr, align 8
-  %call1 = call i64 @netrt_host_length(ptr %6, i64 %7)
+  %call = call i64 @netrt_dial_port(ptr %6, i64 %7)
+  call void @netrt_check_port(i64 %5, i64 %call)
+  %8 = load ptr, ptr %name.addr, align 8
+  %9 = load i64, ptr %len.addr, align 8
+  %10 = load ptr, ptr %bound.addr, align 8
+  %11 = load ptr, ptr %bound.addr, align 8
+  %12 = load i64, ptr %bound_len.addr, align 8
+  %call3 = call i64 @netrt_host_length(ptr %11, i64 %12)
   %arraydecay = getelementptr inbounds [256 x i8], ptr %host, i64 0, i64 0
-  call void @netrt_checked_host(ptr %3, i64 %4, ptr %5, i64 %call1, ptr %arraydecay)
+  %13 = load i32, ptr %exact, align 4
+  call void @netrt_checked_host(ptr %8, i64 %9, ptr %10, i64 %call3, ptr %arraydecay, i32 %13)
   store i32 0, ptr %i, align 4
   br label %for.cond
 
-for.cond:                                         ; preds = %for.inc, %entry
-  %8 = load i32, ptr %i, align 4
-  %cmp = icmp slt i32 %8, 48
-  br i1 %cmp, label %for.body, label %for.end
+for.cond:                                         ; preds = %for.inc, %if.end
+  %14 = load i32, ptr %i, align 4
+  %cmp4 = icmp slt i32 %14, 48
+  br i1 %cmp4, label %for.body, label %for.end
 
 for.body:                                         ; preds = %for.cond
-  %9 = load i32, ptr %i, align 4
-  %idxprom = sext i32 %9 to i64
-  %arrayidx = getelementptr inbounds [48 x i8], ptr %hints, i64 0, i64 %idxprom
-  store i8 0, ptr %arrayidx, align 1
+  %15 = load i32, ptr %i, align 4
+  %idxprom = sext i32 %15 to i64
+  %arrayidx6 = getelementptr inbounds [48 x i8], ptr %hints, i64 0, i64 %idxprom
+  store i8 0, ptr %arrayidx6, align 1
   br label %for.inc
 
 for.inc:                                          ; preds = %for.body
-  %10 = load i32, ptr %i, align 4
-  %inc = add i32 %10, 1
+  %16 = load i32, ptr %i, align 4
+  %inc = add i32 %16, 1
   store i32 %inc, ptr %i, align 4
   br label %for.cond
 
 for.end:                                          ; preds = %for.cond
-  %arraydecay2 = getelementptr inbounds [48 x i8], ptr %hints, i64 0, i64 0
-  %add.ptr = getelementptr inbounds i8, ptr %arraydecay2, i64 4
+  %arraydecay7 = getelementptr inbounds [48 x i8], ptr %hints, i64 0, i64 0
+  %add.ptr = getelementptr inbounds i8, ptr %arraydecay7, i64 4
   store i32 2, ptr %add.ptr, align 4
-  %11 = load i32, ptr %kind.addr, align 4
-  %arraydecay3 = getelementptr inbounds [48 x i8], ptr %hints, i64 0, i64 0
-  %add.ptr4 = getelementptr inbounds i8, ptr %arraydecay3, i64 8
-  store i32 %11, ptr %add.ptr4, align 4
+  %17 = load i32, ptr %kind.addr, align 4
+  %arraydecay8 = getelementptr inbounds [48 x i8], ptr %hints, i64 0, i64 0
+  %add.ptr9 = getelementptr inbounds i8, ptr %arraydecay8, i64 8
+  store i32 %17, ptr %add.ptr9, align 4
   store ptr null, ptr %res, align 8
-  %12 = load ptr, ptr %why.addr, align 8
-  store i64 0, ptr %12, align 8
-  %arraydecay5 = getelementptr inbounds [256 x i8], ptr %host, i64 0, i64 0
-  %arraydecay6 = getelementptr inbounds [48 x i8], ptr %hints, i64 0, i64 0
-  %call7 = call i32 @getaddrinfo(ptr %arraydecay5, ptr null, ptr %arraydecay6, ptr %res)
-  %cmp8 = icmp ne i32 %call7, 0
-  br i1 %cmp8, label %if.then, label %if.end
+  %18 = load ptr, ptr %why.addr, align 8
+  store i64 0, ptr %18, align 8
+  %arraydecay10 = getelementptr inbounds [256 x i8], ptr %host, i64 0, i64 0
+  %arraydecay11 = getelementptr inbounds [48 x i8], ptr %hints, i64 0, i64 0
+  %call12 = call i32 @getaddrinfo(ptr %arraydecay10, ptr null, ptr %arraydecay11, ptr %res)
+  %cmp13 = icmp ne i32 %call12, 0
+  br i1 %cmp13, label %if.then15, label %if.end16
 
-if.then:                                          ; preds = %for.end
-  %13 = load ptr, ptr %why.addr, align 8
-  store i64 -1, ptr %13, align 8
+if.then15:                                        ; preds = %for.end
+  %19 = load ptr, ptr %why.addr, align 8
+  store i64 -1, ptr %19, align 8
   store i64 -1, ptr %retval, align 8
   br label %return
 
-if.end:                                           ; preds = %for.end
-  %14 = load ptr, ptr %res, align 8
-  %add.ptr9 = getelementptr inbounds i8, ptr %14, i64 24
-  %15 = load ptr, ptr %add.ptr9, align 8
-  store ptr %15, ptr %addr, align 8
-  %16 = load ptr, ptr %res, align 8
-  %add.ptr10 = getelementptr inbounds i8, ptr %16, i64 16
-  %17 = load i32, ptr %add.ptr10, align 4
-  store i32 %17, ptr %addrlen, align 4
-  %18 = load i64, ptr %port.addr, align 8
-  %shr = ashr i64 %18, 8
-  %conv = trunc i64 %shr to i8
-  %19 = load ptr, ptr %addr, align 8
-  %arrayidx11 = getelementptr inbounds i8, ptr %19, i64 2
-  store i8 %conv, ptr %arrayidx11, align 1
-  %20 = load i64, ptr %port.addr, align 8
-  %conv12 = trunc i64 %20 to i8
-  %21 = load ptr, ptr %addr, align 8
-  %arrayidx13 = getelementptr inbounds i8, ptr %21, i64 3
-  store i8 %conv12, ptr %arrayidx13, align 1
-  %22 = load i32, ptr %kind.addr, align 4
-  %call14 = call i32 @netrt_tcp_socket(i32 %22)
-  store i32 %call14, ptr %fd, align 4
-  %23 = load i32, ptr %fd, align 4
-  %cmp15 = icmp slt i32 %23, 0
-  br i1 %cmp15, label %if.then17, label %if.end20
-
-if.then17:                                        ; preds = %if.end
-  %call18 = call ptr @cancho_errno_location()
-  %24 = load i32, ptr %call18, align 4
-  %conv19 = sext i32 %24 to i64
-  %25 = load ptr, ptr %why.addr, align 8
-  store i64 %conv19, ptr %25, align 8
-  %26 = load ptr, ptr %res, align 8
-  call void @freeaddrinfo(ptr %26)
-  store i64 -1, ptr %retval, align 8
-  br label %return
-
-if.end20:                                         ; preds = %if.end
-  %27 = load i64, ptr %start.addr, align 8
-  %tobool = icmp ne i64 %27, 0
-  br i1 %tobool, label %if.then21, label %if.end24
-
-if.then21:                                        ; preds = %if.end20
-  %28 = load i32, ptr %fd, align 4
-  %call22 = call i32 (i32, i32, ...) @fcntl(i32 %28, i32 3)
-  store i32 %call22, ptr %flags, align 4
+if.end16:                                         ; preds = %for.end
+  %20 = load ptr, ptr %res, align 8
+  %add.ptr17 = getelementptr inbounds i8, ptr %20, i64 24
+  %21 = load ptr, ptr %add.ptr17, align 8
+  store ptr %21, ptr %addr, align 8
+  %22 = load ptr, ptr %res, align 8
+  %add.ptr18 = getelementptr inbounds i8, ptr %22, i64 16
+  %23 = load i32, ptr %add.ptr18, align 4
+  store i32 %23, ptr %addrlen, align 4
+  %24 = load i64, ptr %port.addr, align 8
+  %shr = ashr i64 %24, 8
+  %conv19 = trunc i64 %shr to i8
+  %25 = load ptr, ptr %addr, align 8
+  %arrayidx20 = getelementptr inbounds i8, ptr %25, i64 2
+  store i8 %conv19, ptr %arrayidx20, align 1
+  %26 = load i64, ptr %port.addr, align 8
+  %conv21 = trunc i64 %26 to i8
+  %27 = load ptr, ptr %addr, align 8
+  %arrayidx22 = getelementptr inbounds i8, ptr %27, i64 3
+  store i8 %conv21, ptr %arrayidx22, align 1
+  %28 = load i32, ptr %kind.addr, align 4
+  %call23 = call i32 @netrt_tcp_socket(i32 %28)
+  store i32 %call23, ptr %fd, align 4
   %29 = load i32, ptr %fd, align 4
-  %30 = load i32, ptr %flags, align 4
-  %or = or i32 %30, 2048
-  %call23 = call i32 (i32, i32, ...) @fcntl(i32 %29, i32 4, i32 %or)
-  br label %if.end24
+  %cmp24 = icmp slt i32 %29, 0
+  br i1 %cmp24, label %if.then26, label %if.end29
 
-if.end24:                                         ; preds = %if.then21, %if.end20
-  %31 = load i32, ptr %fd, align 4
-  %32 = load ptr, ptr %addr, align 8
-  %33 = load i32, ptr %addrlen, align 4
-  %call25 = call i32 @connect(i32 %31, ptr %32, i32 %33)
-  store i32 %call25, ptr %r, align 4
-  %call26 = call ptr @cancho_errno_location()
-  %34 = load i32, ptr %call26, align 4
-  %conv27 = sext i32 %34 to i64
-  store i64 %conv27, ptr %reason, align 8
-  %35 = load i32, ptr %r, align 4
-  %cmp28 = icmp eq i32 %35, 0
-  br i1 %cmp28, label %lor.end, label %lor.rhs
+if.then26:                                        ; preds = %if.end16
+  %call27 = call ptr @cancho_errno_location()
+  %30 = load i32, ptr %call27, align 4
+  %conv28 = sext i32 %30 to i64
+  %31 = load ptr, ptr %why.addr, align 8
+  store i64 %conv28, ptr %31, align 8
+  %32 = load ptr, ptr %res, align 8
+  call void @freeaddrinfo(ptr %32)
+  store i64 -1, ptr %retval, align 8
+  br label %return
 
-lor.rhs:                                          ; preds = %if.end24
-  %36 = load i64, ptr %start.addr, align 8
-  %tobool30 = icmp ne i64 %36, 0
-  br i1 %tobool30, label %land.lhs.true, label %land.end
+if.end29:                                         ; preds = %if.end16
+  %33 = load i64, ptr %start.addr, align 8
+  %tobool = icmp ne i64 %33, 0
+  br i1 %tobool, label %if.then30, label %if.end33
 
-land.lhs.true:                                    ; preds = %lor.rhs
-  %37 = load i32, ptr %r, align 4
-  %cmp31 = icmp slt i32 %37, 0
-  br i1 %cmp31, label %land.rhs, label %land.end
+if.then30:                                        ; preds = %if.end29
+  %34 = load i32, ptr %fd, align 4
+  %call31 = call i32 (i32, i32, ...) @fcntl(i32 %34, i32 3)
+  store i32 %call31, ptr %flags, align 4
+  %35 = load i32, ptr %fd, align 4
+  %36 = load i32, ptr %flags, align 4
+  %or = or i32 %36, 2048
+  %call32 = call i32 (i32, i32, ...) @fcntl(i32 %35, i32 4, i32 %or)
+  br label %if.end33
 
-land.rhs:                                         ; preds = %land.lhs.true
-  %38 = load i64, ptr %reason, align 8
-  %cmp33 = icmp eq i64 %38, 115
+if.end33:                                         ; preds = %if.then30, %if.end29
+  %37 = load i32, ptr %fd, align 4
+  %38 = load ptr, ptr %addr, align 8
+  %39 = load i32, ptr %addrlen, align 4
+  %call34 = call i32 @connect(i32 %37, ptr %38, i32 %39)
+  store i32 %call34, ptr %r, align 4
+  %call35 = call ptr @cancho_errno_location()
+  %40 = load i32, ptr %call35, align 4
+  %conv36 = sext i32 %40 to i64
+  store i64 %conv36, ptr %reason, align 8
+  %41 = load i32, ptr %r, align 4
+  %cmp37 = icmp eq i32 %41, 0
+  br i1 %cmp37, label %lor.end, label %lor.rhs
+
+lor.rhs:                                          ; preds = %if.end33
+  %42 = load i64, ptr %start.addr, align 8
+  %tobool39 = icmp ne i64 %42, 0
+  br i1 %tobool39, label %land.lhs.true40, label %land.end
+
+land.lhs.true40:                                  ; preds = %lor.rhs
+  %43 = load i32, ptr %r, align 4
+  %cmp41 = icmp slt i32 %43, 0
+  br i1 %cmp41, label %land.rhs, label %land.end
+
+land.rhs:                                         ; preds = %land.lhs.true40
+  %44 = load i64, ptr %reason, align 8
+  %cmp43 = icmp eq i64 %44, 115
   br label %land.end
 
-land.end:                                         ; preds = %land.rhs, %land.lhs.true, %lor.rhs
-  %39 = phi i1 [ false, %land.lhs.true ], [ false, %lor.rhs ], [ %cmp33, %land.rhs ]
+land.end:                                         ; preds = %land.rhs, %land.lhs.true40, %lor.rhs
+  %45 = phi i1 [ false, %land.lhs.true40 ], [ false, %lor.rhs ], [ %cmp43, %land.rhs ]
   br label %lor.end
 
-lor.end:                                          ; preds = %land.end, %if.end24
-  %40 = phi i1 [ true, %if.end24 ], [ %39, %land.end ]
-  %lor.ext = zext i1 %40 to i32
+lor.end:                                          ; preds = %land.end, %if.end33
+  %46 = phi i1 [ true, %if.end33 ], [ %45, %land.end ]
+  %lor.ext = zext i1 %46 to i32
   store i32 %lor.ext, ptr %ok, align 4
-  %41 = load ptr, ptr %res, align 8
-  call void @freeaddrinfo(ptr %41)
-  %42 = load i32, ptr %ok, align 4
-  %tobool35 = icmp ne i32 %42, 0
-  br i1 %tobool35, label %if.then36, label %if.end38
+  %47 = load ptr, ptr %res, align 8
+  call void @freeaddrinfo(ptr %47)
+  %48 = load i32, ptr %ok, align 4
+  %tobool45 = icmp ne i32 %48, 0
+  br i1 %tobool45, label %if.then46, label %if.end48
 
-if.then36:                                        ; preds = %lor.end
-  %43 = load i32, ptr %fd, align 4
-  %conv37 = sext i32 %43 to i64
-  store i64 %conv37, ptr %retval, align 8
+if.then46:                                        ; preds = %lor.end
+  %49 = load i32, ptr %fd, align 4
+  %conv47 = sext i32 %49 to i64
+  store i64 %conv47, ptr %retval, align 8
   br label %return
 
-if.end38:                                         ; preds = %lor.end
-  %44 = load i64, ptr %reason, align 8
-  %45 = load ptr, ptr %why.addr, align 8
-  store i64 %44, ptr %45, align 8
-  %46 = load i32, ptr %fd, align 4
-  %call39 = call i32 @close(i32 %46)
+if.end48:                                         ; preds = %lor.end
+  %50 = load i64, ptr %reason, align 8
+  %51 = load ptr, ptr %why.addr, align 8
+  store i64 %50, ptr %51, align 8
+  %52 = load i32, ptr %fd, align 4
+  %call49 = call i32 @close(i32 %52)
   store i64 -1, ptr %retval, align 8
   br label %return
 
-return:                                           ; preds = %if.end38, %if.then36, %if.then17, %if.then
-  %47 = load i64, ptr %retval, align 8
-  ret i64 %47
+return:                                           ; preds = %if.end48, %if.then46, %if.then26, %if.then15
+  %53 = load i64, ptr %retval, align 8
+  ret i64 %53
 }
 
 ; Function Attrs: noinline nounwind
@@ -2753,89 +2779,284 @@ return:                                           ; preds = %for.end, %if.then
 }
 
 ; Function Attrs: noinline nounwind
-define internal void @netrt_checked_host(ptr %name, i64 %len, ptr %bound, i64 %host_len, ptr %buffer) {
+define internal void @netrt_checked_host(ptr %name, i64 %len, ptr %bound, i64 %host_len, ptr %buffer, i32 %exact) {
 entry:
   %name.addr = alloca ptr, align 8
   %len.addr = alloca i64, align 8
   %bound.addr = alloca ptr, align 8
   %host_len.addr = alloca i64, align 8
   %buffer.addr = alloca ptr, align 8
+  %exact.addr = alloca i32, align 4
+  %tail = alloca ptr, align 8
+  %tail_len = alloca i64, align 8
+  %label_end = alloca i64, align 8
   %i = alloca i64, align 8
+  %i41 = alloca i64, align 8
+  %i66 = alloca i64, align 8
   store ptr %name, ptr %name.addr, align 8
   store i64 %len, ptr %len.addr, align 8
   store ptr %bound, ptr %bound.addr, align 8
   store i64 %host_len, ptr %host_len.addr, align 8
   store ptr %buffer, ptr %buffer.addr, align 8
+  store i32 %exact, ptr %exact.addr, align 4
   %0 = load i64, ptr %len.addr, align 8
   %cmp = icmp sge i64 %0, 256
-  br i1 %cmp, label %if.then, label %lor.lhs.false
+  br i1 %cmp, label %if.then, label %if.end
 
-lor.lhs.false:                                    ; preds = %entry
-  %1 = load i64, ptr %len.addr, align 8
-  %2 = load i64, ptr %host_len.addr, align 8
-  %cmp1 = icmp slt i64 %1, %2
-  br i1 %cmp1, label %if.then, label %if.end
-
-if.then:                                          ; preds = %lor.lhs.false, %entry
+if.then:                                          ; preds = %entry
   call void @cancho_trap()
   unreachable
 
-if.end:                                           ; preds = %lor.lhs.false
+if.end:                                           ; preds = %entry
+  %1 = load i32, ptr %exact.addr, align 4
+  %tobool = icmp ne i32 %1, 0
+  br i1 %tobool, label %land.lhs.true, label %if.end61
+
+land.lhs.true:                                    ; preds = %if.end
+  %2 = load i64, ptr %host_len.addr, align 8
+  %cmp1 = icmp sgt i64 %2, 0
+  br i1 %cmp1, label %if.then2, label %if.end61
+
+if.then2:                                         ; preds = %land.lhs.true
+  %3 = load i64, ptr %host_len.addr, align 8
+  %cmp3 = icmp sge i64 %3, 2
+  br i1 %cmp3, label %land.lhs.true4, label %if.else
+
+land.lhs.true4:                                   ; preds = %if.then2
+  %4 = load ptr, ptr %bound.addr, align 8
+  %arrayidx = getelementptr inbounds i8, ptr %4, i64 0
+  %5 = load i8, ptr %arrayidx, align 1
+  %conv = zext i8 %5 to i32
+  %cmp5 = icmp eq i32 %conv, 42
+  br i1 %cmp5, label %land.lhs.true7, label %if.else
+
+land.lhs.true7:                                   ; preds = %land.lhs.true4
+  %6 = load ptr, ptr %bound.addr, align 8
+  %arrayidx8 = getelementptr inbounds i8, ptr %6, i64 1
+  %7 = load i8, ptr %arrayidx8, align 1
+  %conv9 = zext i8 %7 to i32
+  %cmp10 = icmp eq i32 %conv9, 46
+  br i1 %cmp10, label %if.then12, label %if.else
+
+if.then12:                                        ; preds = %land.lhs.true7
+  %8 = load ptr, ptr %bound.addr, align 8
+  %add.ptr = getelementptr inbounds i8, ptr %8, i64 1
+  store ptr %add.ptr, ptr %tail, align 8
+  %9 = load i64, ptr %host_len.addr, align 8
+  %sub = sub i64 %9, 1
+  store i64 %sub, ptr %tail_len, align 8
+  %10 = load i64, ptr %len.addr, align 8
+  %11 = load i64, ptr %tail_len, align 8
+  %cmp13 = icmp sle i64 %10, %11
+  br i1 %cmp13, label %if.then15, label %if.end16
+
+if.then15:                                        ; preds = %if.then12
+  call void @cancho_trap()
+  unreachable
+
+if.end16:                                         ; preds = %if.then12
+  %12 = load i64, ptr %len.addr, align 8
+  %13 = load i64, ptr %tail_len, align 8
+  %sub17 = sub i64 %12, %13
+  store i64 %sub17, ptr %label_end, align 8
   store i64 0, ptr %i, align 8
   br label %for.cond
 
-for.cond:                                         ; preds = %for.inc, %if.end
-  %3 = load i64, ptr %i, align 8
-  %4 = load i64, ptr %len.addr, align 8
-  %cmp2 = icmp slt i64 %3, %4
-  br i1 %cmp2, label %for.body, label %for.end
+for.cond:                                         ; preds = %for.inc, %if.end16
+  %14 = load i64, ptr %i, align 8
+  %15 = load i64, ptr %len.addr, align 8
+  %cmp18 = icmp slt i64 %14, %15
+  br i1 %cmp18, label %for.body, label %for.end
 
 for.body:                                         ; preds = %for.cond
-  %5 = load ptr, ptr %name.addr, align 8
-  %6 = load i64, ptr %i, align 8
-  %arrayidx = getelementptr inbounds i8, ptr %5, i64 %6
-  %7 = load i8, ptr %arrayidx, align 1
-  %8 = load ptr, ptr %buffer.addr, align 8
-  %9 = load i64, ptr %i, align 8
-  %arrayidx3 = getelementptr inbounds i8, ptr %8, i64 %9
-  store i8 %7, ptr %arrayidx3, align 1
-  %10 = load i64, ptr %i, align 8
-  %11 = load i64, ptr %host_len.addr, align 8
-  %cmp4 = icmp slt i64 %10, %11
-  br i1 %cmp4, label %land.lhs.true, label %if.end11
+  %16 = load ptr, ptr %name.addr, align 8
+  %17 = load i64, ptr %i, align 8
+  %arrayidx20 = getelementptr inbounds i8, ptr %16, i64 %17
+  %18 = load i8, ptr %arrayidx20, align 1
+  %19 = load ptr, ptr %buffer.addr, align 8
+  %20 = load i64, ptr %i, align 8
+  %arrayidx21 = getelementptr inbounds i8, ptr %19, i64 %20
+  store i8 %18, ptr %arrayidx21, align 1
+  %21 = load i64, ptr %i, align 8
+  %22 = load i64, ptr %label_end, align 8
+  %cmp22 = icmp slt i64 %21, %22
+  br i1 %cmp22, label %cond.true, label %cond.false
 
-land.lhs.true:                                    ; preds = %for.body
-  %12 = load ptr, ptr %name.addr, align 8
-  %13 = load i64, ptr %i, align 8
-  %arrayidx5 = getelementptr inbounds i8, ptr %12, i64 %13
-  %14 = load i8, ptr %arrayidx5, align 1
-  %conv = zext i8 %14 to i32
-  %15 = load ptr, ptr %bound.addr, align 8
-  %16 = load i64, ptr %i, align 8
-  %arrayidx6 = getelementptr inbounds i8, ptr %15, i64 %16
-  %17 = load i8, ptr %arrayidx6, align 1
-  %conv7 = zext i8 %17 to i32
-  %cmp8 = icmp ne i32 %conv, %conv7
-  br i1 %cmp8, label %if.then10, label %if.end11
+cond.true:                                        ; preds = %for.body
+  %23 = load ptr, ptr %name.addr, align 8
+  %24 = load i64, ptr %i, align 8
+  %arrayidx24 = getelementptr inbounds i8, ptr %23, i64 %24
+  %25 = load i8, ptr %arrayidx24, align 1
+  %conv25 = zext i8 %25 to i32
+  %cmp26 = icmp eq i32 %conv25, 46
+  br i1 %cmp26, label %if.then35, label %if.end36
 
-if.then10:                                        ; preds = %land.lhs.true
+cond.false:                                       ; preds = %for.body
+  %26 = load ptr, ptr %name.addr, align 8
+  %27 = load i64, ptr %i, align 8
+  %arrayidx28 = getelementptr inbounds i8, ptr %26, i64 %27
+  %28 = load i8, ptr %arrayidx28, align 1
+  %conv29 = zext i8 %28 to i32
+  %29 = load ptr, ptr %tail, align 8
+  %30 = load i64, ptr %i, align 8
+  %31 = load i64, ptr %label_end, align 8
+  %sub30 = sub i64 %30, %31
+  %arrayidx31 = getelementptr inbounds i8, ptr %29, i64 %sub30
+  %32 = load i8, ptr %arrayidx31, align 1
+  %conv32 = zext i8 %32 to i32
+  %cmp33 = icmp ne i32 %conv29, %conv32
+  br i1 %cmp33, label %if.then35, label %if.end36
+
+if.then35:                                        ; preds = %cond.false, %cond.true
   call void @cancho_trap()
   unreachable
 
-if.end11:                                         ; preds = %land.lhs.true, %for.body
+if.end36:                                         ; preds = %cond.false, %cond.true
   br label %for.inc
 
-for.inc:                                          ; preds = %if.end11
-  %18 = load i64, ptr %i, align 8
-  %inc = add i64 %18, 1
+for.inc:                                          ; preds = %if.end36
+  %33 = load i64, ptr %i, align 8
+  %inc = add i64 %33, 1
   store i64 %inc, ptr %i, align 8
   br label %for.cond
 
 for.end:                                          ; preds = %for.cond
-  %19 = load ptr, ptr %buffer.addr, align 8
-  %20 = load i64, ptr %len.addr, align 8
-  %arrayidx12 = getelementptr inbounds i8, ptr %19, i64 %20
-  store i8 0, ptr %arrayidx12, align 1
+  br label %if.end59
+
+if.else:                                          ; preds = %land.lhs.true7, %land.lhs.true4, %if.then2
+  %34 = load i64, ptr %len.addr, align 8
+  %35 = load i64, ptr %host_len.addr, align 8
+  %cmp37 = icmp ne i64 %34, %35
+  br i1 %cmp37, label %if.then39, label %if.end40
+
+if.then39:                                        ; preds = %if.else
+  call void @cancho_trap()
+  unreachable
+
+if.end40:                                         ; preds = %if.else
+  store i64 0, ptr %i41, align 8
+  br label %for.cond42
+
+for.cond42:                                       ; preds = %for.inc56, %if.end40
+  %36 = load i64, ptr %i41, align 8
+  %37 = load i64, ptr %len.addr, align 8
+  %cmp43 = icmp slt i64 %36, %37
+  br i1 %cmp43, label %for.body45, label %for.end58
+
+for.body45:                                       ; preds = %for.cond42
+  %38 = load ptr, ptr %name.addr, align 8
+  %39 = load i64, ptr %i41, align 8
+  %arrayidx46 = getelementptr inbounds i8, ptr %38, i64 %39
+  %40 = load i8, ptr %arrayidx46, align 1
+  %41 = load ptr, ptr %buffer.addr, align 8
+  %42 = load i64, ptr %i41, align 8
+  %arrayidx47 = getelementptr inbounds i8, ptr %41, i64 %42
+  store i8 %40, ptr %arrayidx47, align 1
+  %43 = load ptr, ptr %name.addr, align 8
+  %44 = load i64, ptr %i41, align 8
+  %arrayidx48 = getelementptr inbounds i8, ptr %43, i64 %44
+  %45 = load i8, ptr %arrayidx48, align 1
+  %conv49 = zext i8 %45 to i32
+  %46 = load ptr, ptr %bound.addr, align 8
+  %47 = load i64, ptr %i41, align 8
+  %arrayidx50 = getelementptr inbounds i8, ptr %46, i64 %47
+  %48 = load i8, ptr %arrayidx50, align 1
+  %conv51 = zext i8 %48 to i32
+  %cmp52 = icmp ne i32 %conv49, %conv51
+  br i1 %cmp52, label %if.then54, label %if.end55
+
+if.then54:                                        ; preds = %for.body45
+  call void @cancho_trap()
+  unreachable
+
+if.end55:                                         ; preds = %for.body45
+  br label %for.inc56
+
+for.inc56:                                        ; preds = %if.end55
+  %49 = load i64, ptr %i41, align 8
+  %inc57 = add i64 %49, 1
+  store i64 %inc57, ptr %i41, align 8
+  br label %for.cond42
+
+for.end58:                                        ; preds = %for.cond42
+  br label %if.end59
+
+if.end59:                                         ; preds = %for.end58, %for.end
+  %50 = load ptr, ptr %buffer.addr, align 8
+  %51 = load i64, ptr %len.addr, align 8
+  %arrayidx60 = getelementptr inbounds i8, ptr %50, i64 %51
+  store i8 0, ptr %arrayidx60, align 1
+  br label %return
+
+if.end61:                                         ; preds = %land.lhs.true, %if.end
+  %52 = load i64, ptr %len.addr, align 8
+  %53 = load i64, ptr %host_len.addr, align 8
+  %cmp62 = icmp slt i64 %52, %53
+  br i1 %cmp62, label %if.then64, label %if.end65
+
+if.then64:                                        ; preds = %if.end61
+  call void @cancho_trap()
+  unreachable
+
+if.end65:                                         ; preds = %if.end61
+  store i64 0, ptr %i66, align 8
+  br label %for.cond67
+
+for.cond67:                                       ; preds = %for.inc84, %if.end65
+  %54 = load i64, ptr %i66, align 8
+  %55 = load i64, ptr %len.addr, align 8
+  %cmp68 = icmp slt i64 %54, %55
+  br i1 %cmp68, label %for.body70, label %for.end86
+
+for.body70:                                       ; preds = %for.cond67
+  %56 = load ptr, ptr %name.addr, align 8
+  %57 = load i64, ptr %i66, align 8
+  %arrayidx71 = getelementptr inbounds i8, ptr %56, i64 %57
+  %58 = load i8, ptr %arrayidx71, align 1
+  %59 = load ptr, ptr %buffer.addr, align 8
+  %60 = load i64, ptr %i66, align 8
+  %arrayidx72 = getelementptr inbounds i8, ptr %59, i64 %60
+  store i8 %58, ptr %arrayidx72, align 1
+  %61 = load i64, ptr %i66, align 8
+  %62 = load i64, ptr %host_len.addr, align 8
+  %cmp73 = icmp slt i64 %61, %62
+  br i1 %cmp73, label %land.lhs.true75, label %if.end83
+
+land.lhs.true75:                                  ; preds = %for.body70
+  %63 = load ptr, ptr %name.addr, align 8
+  %64 = load i64, ptr %i66, align 8
+  %arrayidx76 = getelementptr inbounds i8, ptr %63, i64 %64
+  %65 = load i8, ptr %arrayidx76, align 1
+  %conv77 = zext i8 %65 to i32
+  %66 = load ptr, ptr %bound.addr, align 8
+  %67 = load i64, ptr %i66, align 8
+  %arrayidx78 = getelementptr inbounds i8, ptr %66, i64 %67
+  %68 = load i8, ptr %arrayidx78, align 1
+  %conv79 = zext i8 %68 to i32
+  %cmp80 = icmp ne i32 %conv77, %conv79
+  br i1 %cmp80, label %if.then82, label %if.end83
+
+if.then82:                                        ; preds = %land.lhs.true75
+  call void @cancho_trap()
+  unreachable
+
+if.end83:                                         ; preds = %land.lhs.true75, %for.body70
+  br label %for.inc84
+
+for.inc84:                                        ; preds = %if.end83
+  %69 = load i64, ptr %i66, align 8
+  %inc85 = add i64 %69, 1
+  store i64 %inc85, ptr %i66, align 8
+  br label %for.cond67
+
+for.end86:                                        ; preds = %for.cond67
+  %70 = load ptr, ptr %buffer.addr, align 8
+  %71 = load i64, ptr %len.addr, align 8
+  %arrayidx87 = getelementptr inbounds i8, ptr %70, i64 %71
+  store i8 0, ptr %arrayidx87, align 1
+  br label %return
+
+return:                                           ; preds = %for.end86, %if.end59
   ret void
 }
 

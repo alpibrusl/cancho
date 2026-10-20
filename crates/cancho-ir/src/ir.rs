@@ -572,6 +572,9 @@ pub enum Expr {
     Connect {
         bound: String,
         args: Vec<Expr>,
+        /// Edition 10 (`docs/net-bounds.md` §2.3): the host half of the bound is matched exactly, or as
+        /// `*.suffix` for one more label, instead of as a prefix.
+        exact_host: bool,
     },
     /// `bind(net, port)` — `docs/net.md` §2.1 (`docs/listen.md` §6): the
     /// inbound mirror of [`Expr::Connect`], bound by a port alone.
@@ -599,6 +602,8 @@ pub enum Expr {
     TcpConnect {
         bound: String,
         args: Vec<Expr>,
+        /// As [`Expr::Connect`]'s.
+        exact_host: bool,
         /// `udp_connect` (`docs/udp.md` §2): the same check and walk on a datagram socket,
         /// answering a `UdpOpened`. Never combined with `start`.
         datagram: bool,

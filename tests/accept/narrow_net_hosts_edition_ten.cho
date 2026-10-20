@@ -1,0 +1,22 @@
+// `docs/net-bounds.md` §2.3, edition 10: a wildcard narrows to one name under it, and two exact hosts one digit apart are
+// disjoint siblings (before edition 10 `127.0.0.1` was a prefix of `127.0.0.10`, and the form refused the pair).
+//~ EXIT 0
+
+edition 10;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    release(signals);
+    release(exec);
+    let any = narrow(net, ":9");
+    let wild = narrow(any, "*.0.0.1:9");
+    let one = narrow(wild, "127.0.0.1:9");
+    release(one);
+    release(tty);
+    return 0;
+}

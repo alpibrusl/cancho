@@ -178,21 +178,44 @@ impl<'a> FuncEmitter<'a> {
     /// line, the loop built the same "no `phi`" way `bind`'s own byte
     /// loop already is: a cursor in an `alloca i64` cell rather than a
     /// block parameter.
-    fn checked_host(&mut self, bound: &str, name: &[LValue]) -> Result<String, String> {
+    ///
+    /// With `exact` (edition 10, `docs/net-bounds.md` §2.3) the host half is matched by equality, or, written
+    /// `*.suffix`, as exactly one more label ahead of `.suffix`; otherwise it is the prefix match older editions have.
+    fn checked_host(
+        &mut self,
+        bound: &str,
+        name: &[LValue],
+        exact: bool,
+    ) -> Result<String, String> {
         const HOST_MAX: i64 = 256;
         let (source, length) = (operand(&name[0]), operand(&name[1]));
+        // An empty host half is the unnarrowed root: it admits every name, in every edition.
+        let exact = exact && !bound.is_empty();
+        // A wildcard bound `*.suffix` is checked by its tail `.suffix`, which must follow at least one label byte.
+        let tail =
+            if exact { bound.strip_prefix('*').filter(|t| t.starts_with('.')) } else { None };
 
         let too_long = self.fresh();
         self.out.push_str(&format!("  {too_long} = icmp uge i64 {length}, {HOST_MAX}\n"));
         self.trap_if(&too_long)?;
 
         let short = self.fresh();
-        self.out.push_str(&format!("  {short} = icmp ult i64 {length}, {}\n", bound.len()));
+        let (cmp, limit) = match tail {
+            Some(tail) => ("ule", tail.len()),
+            None if exact => ("ne", bound.len()),
+            None => ("ult", bound.len()),
+        };
+        self.out.push_str(&format!("  {short} = icmp {cmp} i64 {length}, {limit}\n"));
         self.trap_if(&short)?;
+        // Where the tail begins in the name: everything before it is the one label.
+        let label_end = self.fresh();
+        if let Some(tail) = tail {
+            self.out.push_str(&format!("  {label_end} = sub i64 {length}, {}\n", tail.len()));
+        }
 
         let buffer = self.fresh();
         self.hoist(format!("  {buffer} = alloca i8, i64 {HOST_MAX}\n"));
-        let expected = operand(&self.bytes_lit(bound)[0]);
+        let expected = operand(&self.bytes_lit(tail.unwrap_or(bound))[0]);
 
         let cursor = self.fresh();
         self.hoist(format!("  {cursor} = alloca i64\n"));
@@ -222,7 +245,21 @@ impl<'a> FuncEmitter<'a> {
 
         // Inside the bound, the bytes have to match -- a plain prefix,
         // with no separator to land on (`docs/net.md` §4).
-        self.check_against(&expected, bound.len(), &i, &byte)?;
+        if let Some(tail) = tail {
+            // Before the tail a byte must not be a `.` (one label), from it on the bytes must be the tail's.
+            let in_label = self.fresh();
+            self.out.push_str(&format!("  {in_label} = icmp ult i64 {i}, {label_end}\n"));
+            let dot = self.fresh();
+            self.out.push_str(&format!("  {dot} = icmp eq i8 {byte}, 46\n"));
+            let second_label = self.fresh();
+            self.out.push_str(&format!("  {second_label} = and i1 {in_label}, {dot}\n"));
+            self.trap_if(&second_label)?;
+            let into_tail = self.fresh();
+            self.out.push_str(&format!("  {into_tail} = sub i64 {i}, {label_end}\n"));
+            self.check_against(&expected, tail.len(), &into_tail, &byte)?;
+        } else {
+            self.check_against(&expected, bound.len(), &i, &byte)?;
+        }
 
         let next = self.fresh();
         self.out.push_str(&format!("  {next} = add i64 {i}, 1\n"));
@@ -245,8 +282,13 @@ impl<'a> FuncEmitter<'a> {
     /// without trapping, so the three failure paths and the one success
     /// path all store into one `alloca i64` result cell rather than
     /// merging through a block parameter.
-    pub(crate) fn connect(&mut self, bound: &str, args: &[Expr]) -> Result<Vec<LValue>, String> {
-        let (fd, _) = self.connect_raw(bound, args, false, false, false)?;
+    pub(crate) fn connect(
+        &mut self,
+        bound: &str,
+        args: &[Expr],
+        exact: bool,
+    ) -> Result<Vec<LValue>, String> {
+        let (fd, _) = self.connect_raw(bound, args, false, false, false, exact)?;
         Ok(vec![fd])
     }
 
@@ -263,6 +305,7 @@ impl<'a> FuncEmitter<'a> {
         connection: bool,
         start: bool,
         datagram: bool,
+        exact: bool,
     ) -> Result<(LValue, LValue), String> {
         let name = self.expr(&args[1])?;
         let port = self.scalar(&args[2])?;
@@ -282,7 +325,7 @@ impl<'a> FuncEmitter<'a> {
             ));
             self.trap_if(&wrong_port)?;
         }
-        let host = self.checked_host(host_bound, &name)?;
+        let host = self.checked_host(host_bound, &name, exact)?;
 
         // `ai_addr` and `ai_canonname` swap places between glibc and
         // Darwin's libc (`docs/connect.md` §10.2's table) -- every other
@@ -463,8 +506,9 @@ impl<'a> FuncEmitter<'a> {
         args: &[Expr],
         start: bool,
         datagram: bool,
+        exact: bool,
     ) -> Result<Vec<LValue>, String> {
-        let (fd, reason) = self.connect_raw(bound, args, !datagram, start, datagram)?;
+        let (fd, reason) = self.connect_raw(bound, args, !datagram, start, datagram, exact)?;
         let failed = self.fresh();
         self.out.push_str(&format!("  {failed} = icmp slt i64 {}, 0\n", operand(&fd)));
         let tag = self.fresh();

@@ -1,0 +1,15 @@
+//~ ERROR cannot be narrowed
+//~ RULE capability-not-narrowable
+
+// From edition 10 a `Net` host is exact, so `127.0.0.1` does not admit `127.0.0.10`, and narrowing to it would widen the bound. (`docs/net-bounds.md` §2.3.)
+
+edition 10;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(clock);
+    release(signals); release(exec); release(tty);
+    let a = narrow(net, "127.0.0.1:9");
+    let b = narrow(a, "127.0.0.10:9");
+    release(b);
+    return 0;
+}

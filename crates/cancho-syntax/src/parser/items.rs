@@ -39,13 +39,14 @@ impl<'a> Parser<'a> {
             // edition 6 plus the capability to start a program
             // (`docs/processes.md`); edition 8 is edition 7 plus the
             // serial-port capability (`docs/tty.md` §6); edition 9 is
-            // edition 8 plus the word-at-a-time scan (`docs/word-scan.md`).
+            // edition 8 plus the word-at-a-time scan (`docs/word-scan.md`);
+            // edition 10 is edition 9 plus exact host matching in a `Net` bound (`docs/net-bounds.md` §2.3).
             // Nothing later than that exists to opt into yet.
-            if !(1..=9).contains(&value) {
+            if !(1..=10).contains(&value) {
                 return Err(Diagnostic::new(
                     Rule::UnknownEdition,
                     format!(
-                        "unknown edition {value}; the only editions today are 1, 2, 3, 4, 5, 6, 7, 8 and 9"
+                        "unknown edition {value}; the only editions today are 1, 2, 3, 4, 5, 6, 7, 8, 9 and 10"
                     ),
                     keyword.span.to(tok.span),
                 ));

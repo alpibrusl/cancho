@@ -92,7 +92,14 @@ impl<'a> FnLowering<'a> {
             argument: Some(bound.clone()),
         }]));
 
-        Ok((Expr::Connect { bound, args: vec![net_value, name_value, port_value] }, Type::Int))
+        Ok((
+            Expr::Connect {
+                bound,
+                args: vec![net_value, name_value, port_value],
+                exact_host: self.edition >= 10,
+            },
+            Type::Int,
+        ))
     }
 
     /// `bind(net, port)` — `docs/net.md` §2.1: the inbound half, bound by
@@ -319,6 +326,7 @@ impl<'a> FnLowering<'a> {
                 args: vec![net_value, name_value, port_value],
                 start,
                 datagram,
+                exact_host: self.edition >= 10,
             },
             Type::Named(
                 self.prelude()[if datagram { PRELUDE_UDP_OPENED } else { PRELUDE_DIALED }],

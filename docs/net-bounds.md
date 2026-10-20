@@ -1,6 +1,6 @@
 # Net bounds: separate ways in and out, set-valued, exact host matching
 
-> **Status: design, answering #362. Steps 1 (the report, §2.4) and 2 (several children from one `narrow`, §2.2) of §3 are built; step 3 is not.** The measurements
+> **Status: design, answering #362. Steps 1 (the report, §2.4), 2 (several children from one `narrow`, §2.2) and 3A (exact hosts, §2.3, edition 10) of §3 are built; 3B (the `out`/`ports` split, §2.1) is not.** The measurements
 > it rests on are reproduced in the issue and were taken on `main` at
 > `0567e72` by cancho-dns's design document (alpibrusl/cancho-dns#19 §2);
 > this document is the answer to "what should the language do instead",
@@ -129,13 +129,28 @@ and should: it is a report lie, not a vocabulary gap.
    `127.0.0.10:80` but not `127.0.0.1:8080`, which is accepted as a disjoint sibling. The same containment decides a single
    `narrow`: narrowing `127.0.0.1:80` to `127.0.0.1:8080` was accepted before this fix and widened the port; it is now
    `capability-not-narrowable`. (The first version of this step used whole-string prefix and was wrong both ways.) The host
-   half stays a prefix until step 3 makes it exact. Rust lowering in `crates/cancho-ir/src/lower/narrow.rs`, the compiler in cancho
+   half stays a prefix until step 3A makes it exact (edition 10). Rust lowering in `crates/cancho-ir/src/lower/narrow.rs`, the compiler in cancho
    in `examples/selfhost/narrowing.cho`; fixtures `tests/accept/narrow_many_net.cho`,
    `tests/accept/narrow_many_net_ports.cho`, `tests/reject/narrow_many_net_{nested,equal}_bounds.cho`, `tests/reject/narrow_net_widens_port.cho`; `tests/reject/narrow_many_on_net.cho` (which asserted the
    refusal this step removes) is deleted.
-3. **§2.1 + §2.3** together in the next edition: the direction split at
-   `split` and exact host matching — both breaking for a narrowed
-   `net`, both additive under an edition marker.
+3. **§2.3, then §2.1**, in editions. Edition 7 and 9 were closed or taken (`editions.md` §6.4), so the number is **10**.
+   * **3A, exact hosts. Built, edition 10.** `Split` is unchanged (ten fields), and nothing but the host half moves: an
+     empty host half still admits every name (the unnarrowed root, and `:9`); `*.suffix` admits exactly one more label
+     (`x.suffix`, not `x.y.suffix`, not `suffix`); every other host admits only itself. The edition travels as a flag on
+     the nodes (`Expr::Connect`/`TcpConnect`'s `exact_host`), both Rust emitters (`cancho-codegen`, `cancho-codegen-llvm`) check it, and the compiler in
+     cancho marks an edition-10 dial bound with a leading byte 1 that `examples/selfhost/runtime/net.c` reads (no
+     bound begins with it; the runtime was regenerated with `runtime/make.sh`, and `common` kept on the two `lexs_*`
+     globals clang 18 would turn into plain ones). Narrowing follows: from edition 10 a `Net` child is narrower than its
+     parent by `net_contains` with exact hosts, so `127.0.0.1:9` cannot narrow to `127.0.0.10:9` or to `*.0.0.1:9`,
+     `*.0.0.1:9` narrows to `127.0.0.1:9` but not to `*.127.0.0.1:9`, and the pairwise rule of the several form uses
+     the same relation (`127.0.0.1` and `127.0.0.10` are now disjoint siblings; `*.0.0.1` and `127.0.0.1` are nested).
+     Earlier editions keep the prefix, so no existing file changes meaning. Measured on both backends with IP-literal
+     names (so no resolver is asked; `*.0.0.1` is the one-label wildcard that `127.0.0.1` matches):
+     `crates/cancho/tests/conformance/net_hosts.rs`; fixtures `tests/accept/narrow_net_hosts_edition_ten.cho`,
+     `tests/accept/narrow_many_net_exact_hosts.cho`, `tests/reject/narrow_net_{exact_host_widens,wildcard_from_exact,wildcard_two_labels}.cho`,
+     `tests/reject/narrow_many_net_wildcard_nested.cho`.
+   * **3B, the `out`/`ports` split. Not built.** It changes `Split` and so is its own edition-10 slice or an edition 11,
+     depending on whether 3A has shipped by then; it changes every file that destructures `net`.
 
 Each step leaves cancho-dns unblocked further, and step 1 alone
 corrects what its design document measured.

@@ -20,10 +20,25 @@ fn net_parts(bound: &str) -> (&str, Option<&str>) {
 /// no port or the same one. This is the relation between a `Net` and a `Net` narrowed from it, and the one that
 /// makes two sibling bounds redundant; the whole-string prefix it replaces is neither (`127.0.0.1:80` is a prefix of
 /// `127.0.0.1:8080`, which it does not admit, and not of `127.0.0.10:80`, which it does).
-fn net_contains(outer: &str, inner: &str) -> bool {
+///
+/// With `exact` (edition 10, `docs/net-bounds.md` §2.3) the host half is not a prefix: an empty host admits any,
+/// `*.suffix` admits that bound and any one label ahead of `.suffix`, and every other host admits only itself.
+fn net_contains(outer: &str, inner: &str, exact: bool) -> bool {
     let (outer_host, outer_port) = net_parts(outer);
     let (inner_host, inner_port) = net_parts(inner);
-    inner_host.starts_with(outer_host) && (outer_port.is_none() || outer_port == inner_port)
+    let host = if !exact {
+        inner_host.starts_with(outer_host)
+    } else if outer_host.is_empty() || outer_host == inner_host {
+        true
+    } else if let Some(suffix) = outer_host.strip_prefix("*.") {
+        inner_host
+            .strip_suffix(suffix)
+            .and_then(|label| label.strip_suffix('.'))
+            .is_some_and(|label| !label.is_empty() && !label.contains(['.', '*']))
+    } else {
+        false
+    };
+    host && (outer_port.is_none() || outer_port == inner_port)
 }
 
 /// What one literal must satisfy to narrow `current`, the single form and
@@ -34,8 +49,11 @@ pub(super) fn check_narrowing(
     current: &str,
     target: &str,
     span: Span,
+    edition: u32,
 ) -> Result<(), Diagnostic> {
-    if !target.starts_with(current) {
+    // From edition 10 a `Net` bound is not a textual prefix of what it admits (`*.example.com` admits
+    // `api.example.com`), so `net_contains` below is its whole containment test.
+    if !(which == PRELUDE_NET && edition >= 10) && !target.starts_with(current) {
         return Err(Diagnostic::new(
             Rule::CapabilityNotNarrowable,
             format!(
@@ -65,11 +83,11 @@ pub(super) fn check_narrowing(
     }
     // A `Net` bound's port is matched exactly, so a longer string is not a narrower grant: `127.0.0.1:80` is
     // a prefix of `127.0.0.1:8080`, whose port the parent does not admit.
-    if which == PRELUDE_NET && !net_contains(current, target) {
+    if which == PRELUDE_NET && !net_contains(current, target, edition >= 10) {
         return Err(Diagnostic::new(
             Rule::CapabilityNotNarrowable,
             format!(
-                "`{current}` cannot be narrowed to `{target}`: a `Net` bound names its port exactly, and `{target}` is a different port, which would widen it"
+                "`{current}` cannot be narrowed to `{target}`: a `Net` bound's port is exact, and from edition 10 so is its host, and `{target}` admits what `{current}` does not, which would widen it"
             ),
             span,
         ));
@@ -109,16 +127,17 @@ pub(super) fn narrow_into_several(
     targets: &[String],
     spans: &[Span],
     span: Span,
+    edition: u32,
 ) -> Result<(Expr, Type), Diagnostic> {
     for (target, at) in targets.iter().zip(spans) {
-        check_narrowing(which, current, target, *at)?;
+        check_narrowing(which, current, target, *at, edition)?;
     }
     for (i, a) in targets.iter().enumerate() {
         for (j, b) in targets.iter().enumerate().skip(i + 1) {
             // A `Net` bound is a host prefix and an exact port, so one inside another is `net_contains`; the
             // paths extend at a `/`.
             let nested = if which == PRELUDE_NET {
-                net_contains(a, b) || net_contains(b, a)
+                net_contains(a, b, edition >= 10) || net_contains(b, a, edition >= 10)
             } else {
                 extends_path(a, b) || extends_path(b, a)
             };
