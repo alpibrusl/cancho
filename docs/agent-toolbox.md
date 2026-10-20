@@ -102,7 +102,7 @@ disagree (§2.5).
 
 ### 1.2 Non-goals
 
-* **Not a coreutils clone.** About ten tools, each admitted by D1's rule.
+* **Not a coreutils clone.** About a dozen tools at most (D1, as amended), each admitted by D1's rule.
 * **No POSIX flag fidelity.** `docs/flags.md` §1 measured what fidelity
   costs: two ports of GNU programs got six of twelve spellings right and
   one of them answered `--decode` by *encoding*, exiting 0. The toolbox
@@ -118,9 +118,10 @@ disagree (§2.5).
   3 to 5 times slower than GNU `grep` on one input (and slower still than
   `rg`). Performance is reported (§7.1, M9) and gated only against
   pathologies, never against GNU.
-* **No process spawning, no network by default, no delete.** The language
-  has no `exec` builtin, so `find -exec` and `xargs` are not a thing the
-  toolbox can be tempted into. No tool deletes (D15): that is what
+* **No process spawning, no network by default, no delete.** The default
+  set holds no `exec`, so `find -exec` and `xargs` are not a thing the
+  toolbox can be tempted into. (The language has had `Exec` since slice 1;
+  D15's "Amended: `run`" is the one opt-in tool that uses it.) No tool deletes (D15): that is what
   lex-os's `Reversibility::IrreversibleConsequential` exists to keep out
   of a no-human system (`crates/lex-os-manifest/src/lib.rs`).
 
@@ -423,6 +424,31 @@ experiment** (§7.2) and the thing this has to beat.
 **Why ten.** Not a number with a source. It is the size at which each tool
 can still be reviewed for authority by reading its row, and at which a
 maintainer can keep the language-gap list honest.
+
+**Amended: twelve, and the count is a review budget, not a design.** The
+ceiling is now *at most twelve tools* (`max_tools = 12` in cancho-tools'
+`tools.toml`). The reason for the number was never a measurement, and the
+asks that arrived (`run`, cancho-tools `docs/next-tools.md` §3; `archive`,
+cancho-tools `docs/archive.md`) are not scope creep in D1's sense: each passes
+all four admission conditions above, and each has an authority row that is
+read in one line. What the ceiling still does is make a thirteenth tool a
+diff in `tools.toml` and in this paragraph, argued in public. What it must
+not do is stand in for the four conditions; a tool that meets the count and
+fails a condition is refused, and a tool that fails the count and meets the
+conditions is a reason to amend this paragraph again, with the reason.
+
+*What this amendment does not move.* The standing prohibitions are not counted
+by D1 and are unchanged: no `ffi`, `net_out`, `net_in` and `clock` in any
+tool (`scripts/manifest.py` `FORBIDDEN`), with the single recorded exception
+of `run`'s `clock`, for its deadline (cancho-tools `tools.toml`, `[run]`).
+`run` is also the one tool that declares `irreversible-consequential`
+(D15), so it is *opt-in*: built and listed by a deployment that chooses it,
+not part of the default set. `archive` holds `write`'s row and no more
+(`dir_read`, `dir_write`, `file_read`, `file_write`, `fs_read("")`, `heap`,
+`io_read`, `io_write`, `err_write`, `args`), so it needs no exception. Network tools
+(a `fetch`, an `ssh`) are not admitted by this amendment: they are a
+different authority class and are argued in cancho-tools
+`docs/archive.md` §9 as a separate project.
 
 ### D2. The wire format: one document, or a stream that says it finished
 
@@ -1019,7 +1045,21 @@ removed only as the caller read it), refuses an existing tombstone
 Tombstones accumulate, and clearing them is a person's job with a shell. There
 is still no purge, and no tool that unlinks.
 
-That is **eight tools plus a deferred ninth**, under D1's ten. **Six are
+**Amended: `run` is the one tool that spawns, and only by opt-in.** The sentence
+above ("the language has no `exec` builtin") was true when D15 was written and
+is not now: `Exec` has been a capability since cancho slice 1 (`docs/processes.md`).
+cancho-tools' `run` (`docs/next-tools.md` §3) starts a program that a deployer
+put in one directory, with an exact argument list, no shell, a fixed
+environment, a deadline and an output cap. Its authority row says so
+(`exec("<dir>")`, `clock` for the deadline, `poll`, `pipe_read`, `pipe_write`), and
+it declares `irreversible-consequential`, so a grant that must hold no such
+class (a no-human supervisor) refuses it *by its report*, which is what D15 asks
+of that class. It is not in the default set: a deployment builds it and lists it
+in the MCP server on purpose. The prohibition on a tool that deletes is
+unchanged, and `run` does not weaken it by being able to start `rm`: that is
+exactly what the programs directory decides, and the report cannot see inside it.
+
+That is **eight tools plus a deferred ninth**, under D1's ten (since amended to twelve: `run` and `archive` are admitted by the D1 amendment, and `archive` is the tar/gzip row the original table did not have). **Six are
 buildable now** (`seek`, `write`, `peek`, `jsonq`, `tally`, and `hash` with a
 caveat); `list` waits on L2/L3, `diff` on an asker, `fetch` on L9.
 
@@ -1436,7 +1476,7 @@ decision rule and sample size.
 
 | Risk | Why it is real here | Mitigation |
 |---|---|---|
-| **Scope creep** | Every Unix tool is "ten lines" in the head and a `grep` clone in the diff; `jsonq` wants to be `jq` | D1's admission rule; `query.unsupported-syntax` with a `none` repair that names `jq`; the ten-tool ceiling is in `tools.toml`, so exceeding it is a diff |
+| **Scope creep** | Every Unix tool is "ten lines" in the head and a `grep` clone in the diff; `jsonq` wants to be `jq` | D1's admission rule; `query.unsupported-syntax` with a `none` repair that names `jq`; the tool ceiling (twelve, D1 as amended) is in `tools.toml`, so exceeding it is a diff |
 | **POSIX expectations** | An agent will type `grep -r`. `docs/flags.md` found silent ignoring is the dangerous failure; `docs/agent-cli.md` found a generated surface teaching a wrong spelling | table-driven parsing (one table drives parse and `introspect`); an unknown flag is `args.unknown-flag` with the nearest declared flag as the hint, never ignored |
 | **The claim outruns the evidence** | The easy sentence ("a safer, agent-friendly `grep`") is already in this document's own prior art | §7.3's table; `introspect.evidence` lists which gates have run; the README gets nothing from S-last until S-last runs |
 | **Authority theatre** | `fs_read("")` with `bounded: true` reads as reassuring and means the whole filesystem | `not_narrowable` in every manifest (D12); §0 amendment 2; extent comes from D9/D13/D14 and the perimeter |
