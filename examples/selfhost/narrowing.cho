@@ -99,24 +99,29 @@ pub fn refused_one[&s, &x](st: &!s [int], text: &x [byte], path: bool, current: 
 }
 
 // Two literals of one `narrow` into several: no two the same path, and none inside another. True if refused.
-pub fn refused_pair[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int, from: int, to: int) -> [] bool {
+pub fn refused_pair[&s, &x](st: &!s [int], text: &x [byte], path: bool, a: int, b: int, from: int, to: int) -> [] bool {
     if escaped(st, text, a) || escaped(st, text, b) {
         return false;
     }
-    if equal(st, text, a, b) || extends(st, text, a, b) || extends(st, text, b, a) {
+    // A path extends at a separator; a `Net` bound is a plain prefix of `host:port`.
+    var nested = starts_with(st, text, a, b) || starts_with(st, text, b, a);
+    if path {
+        nested = extends(st, text, a, b) || extends(st, text, b, a);
+    }
+    if equal(st, text, a, b) || nested {
         ast.fail(st, rules.r_capability_not_narrowable(), from, to);
         return true;
     }
     return false;
 }
 
-// The capabilities `narrow` accepts, by the name of their prelude type; and the two that narrow into several.
+// The capabilities `narrow` accepts, by the name of their prelude type; and the three that narrow into several.
 pub fn narrows[&s](st: &!s [int], index: int) -> [] bool {
     return index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Net") || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || index == netcode.prelude_named("Tty");
 }
 
 pub fn narrows_many[&s](st: &!s [int], index: int) -> [] bool {
-    return index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Exec");
+    return index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Exec") || index == netcode.prelude_named("Net");
 }
 
 // A path capability: the separator rule applies to the literals (`Fs`, `Exec`, `Tty`); `Net` is a plain prefix.
@@ -298,7 +303,7 @@ pub fn refused[&s, &x](st: &!s [int], text: &x [byte], cty: int, lit: int, nargs
             var y = ast.next(st, x);
             var j = i + 1;
             while j < nargs - 1 {
-                if refused_pair(st, text, ast.get(st, x, 4), ast.get(st, y, 4), ast.nstart(st, y), ast.nend(st, y)) {
+                if refused_pair(st, text, is_path(st, index), ast.get(st, x, 4), ast.get(st, y, 4), ast.nstart(st, y), ast.nend(st, y)) {
                     return 1;
                 }
                 y = ast.next(st, y);

@@ -230,7 +230,7 @@ the two path capabilities, `Fs` and `Exec`.** Concretely:
    `extends_path(current, target)`, and not equal to `current`.
 3. **The literals are pairwise unrelated**: no two equal, and none inside another by `extends_path`. Refused
    `capability-not-narrowable`, naming both. Section 9 asks whether nesting should be allowed.
-4. **Only `Fs` and `Exec`.** Both are path prefixes with `extends_path` (`processes.md` §4.1 gave `Exec` `Fs`'s rule), and
+4. **`Fs`, `Exec` and (added by `net-bounds.md` §2.2) `Net`; no others.** *Amended: `Net` was refused here until its asker came (cancho-dns's resolver, which wants several upstreams; `net-bounds.md`), and now narrows into several. A `Net` bound is a plain textual prefix of `host:port`, so "nested" for it means one literal is a prefix of another, with no separator to wait for (`127.0.0.1:80` and `127.0.0.1:8080` are nested), and equal is refused as for paths. Each child is its own `Net("…")` with its own `net_out`/`net_in` row; the report lists them all. The text of this item below is as written, with `Net` read as allowed.* `Fs` and `Exec` are path prefixes with `extends_path` (`processes.md` §4.1 gave `Exec` `Fs`'s rule), and
    both have the same one-chain limit. `Ffi` already narrows to a set and lends narrower; `Signals` is a run-time claim
    (a second live claim of one signal is `EBUSY`, `signals.md` §3, which leaves disjoint children to a `fork_signals`
    nobody has asked for) and its set form already serves; `Net` is bounded by a textual prefix and its
@@ -432,7 +432,7 @@ under WASI. cancho-pg and cancho-hooks were read, not built.
 1. `narrow(cap, lit)` is today's form, byte for byte the same code path. `narrow(cap)` and `narrow()` are `arity-mismatch` ("takes a capability and one or more literals").
 2. With two or more literals: every argument after the first must be a string literal (`capability-not-narrowable` otherwise, at the offending argument). A borrowed `cap`, a type
    that is not a capability, and one that carries no value (`Heap`, `Io`, ...) are refused with the single form's messages.
-3. The capability must be `Fs` or `Exec`. On `Ffi` and `Signals` the refusal names the set form (`narrow(ffi, "libc,libm")`, `narrow(signals, "TERM,INT")`); on `Net` it says it is
+3. The capability must be `Fs`, `Exec` or `Net` (the last since `net-bounds.md` §2.2). On `Ffi` and `Signals` the refusal names the set form (`narrow(ffi, "libc,libm")`, `narrow(signals, "TERM,INT")`); on any other capability it says it is
    not supported. All `capability-not-narrowable`, all before any other check of the literals.
 4. Each literal passes the single form's three checks in one shared function (`check_narrowing`): it starts with the capability's path, it extends it at a `/` (`extends_path`), and it
    is not equal to it.
