@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 and 2 built** (`fmt [--check] PATH...`, §7, §8); the rest is design (epic #491,
+Status: **slices 1 to 3 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
@@ -115,3 +115,19 @@ trailing `/`, an empty directory, and a rewriting run through the link): standar
 the same. It then runs both with `--check` over `std`, `examples/selfhost`, `packages` and `tests/accept`. Four mutants (no skip of dotted
 names; every file taken whatever its extension; links not followed; a `/` always added) are each killed. Not the same: a message on the
 standard error for an unreadable directory, which `cancho fmt` words and this does not (it is a file it then fails to read).
+
+## 9. Slice 3: `print`, `print --output json`, `ingest`
+
+`cli.cho print FILE` writes the canonical text of the program to the standard output, `print --output json FILE` the tree as JSON
+(`jsonprint.cho`), and `ingest FILE` the canonical text of the program a JSON file stands for (`ingest.cho`). A program the parser
+refuses is reported as `FILE: ERR RULE FROM TO` on the standard error with status 1, where `cancho print` renders the diagnostic with a
+line and a column; an ingest that is refused writes `ERR RULE FROM TO` on the standard output (the form of the stand-alone ingester),
+status 1, where `cancho ingest` renders a diagnostic on the standard error and, with `--output json`, answers a `refused` object: that
+form is not available (the command says so and exits 2). `jsonprint.print` used to answer the number of bytes its last write took
+as a status; it answers 0 now.
+
+**Measured (Linux x86-64, debug `cancho`).** `selfhost::the_command_line_in_cancho_prints_and_ingests_like_the_rust_front_end` runs
+each of 920 programs (the repository's, the edge programs) through `print` and `print --output json` (1,708 prints that succeed, 132
+refusals) and 964 inputs through `ingest` (871 succeed; the JSON of each program, and the ingester's edge inputs), against the
+oracles of the stand-alone ports: the standard output, the standard error of a refusal, and the status are the same in every run. Three
+mutants (the JSON form never chosen; a refusal not reported; the status not set) each fail it.

@@ -1002,5 +1002,6 @@ pub fn print[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_writ
     }
     end_array(io, 1, count);
     end_object(io, 0);
-    return w(io, "\n");
+    w(io, "\n");
+    return 0;
 }
