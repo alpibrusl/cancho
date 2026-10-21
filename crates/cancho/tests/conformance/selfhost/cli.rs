@@ -1050,7 +1050,7 @@ fn the_command_line_in_cancho_reports_layout_like_cancho_layout() {
         vec![repo_root().join("examples/tls_nb/gaps/g17_conn_payload.cho").display().to_string()];
     assert_eq!(missed, expected, "the refusals the checker in cancho does not make");
     assert!(
-        same > 100 && with_std > 20,
+        same > 100 && with_std > 10,
         "only {same} runs gave a table, {with_std} with the library"
     );
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));

@@ -310,8 +310,8 @@ variant's payload. The rows the prelude declares come first, as a table of 48 na
 the compiler in cancho has no type for (`node_type` answers 0: a function-typed field, a tuple of more than eight) is a status 3 as in §14, saying where.
 
 **Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_reports_layout_like_cancho_layout` runs the repository's programs and the programs of
-several files with both commands, and with the standard library for a tenth of them: 109 runs (21 with the library) write the same table byte for byte, 878
-are refused by both, 8 cannot be judged (status 3), and 1 is a refusal the checker in cancho does not make (`examples/tls_nb/gaps/g17_conn_payload.cho`, §12; the test names it).
+several files with both commands, and with the standard library for a tenth of them (chosen by a hash of the program's name, so that adding a file to the repository does not change which): 107 runs (19 with the library) write the same table byte for byte, 887
+are refused by both, 9 cannot be judged (status 3), and 1 is a refusal the checker in cancho does not make (`examples/tls_nb/gaps/g17_conn_payload.cho`, §12; the test names it).
 
 **Found by this test, and fixed.** The first run of it had 6 such refusals, four of them a program with no `main` *with the library*: the library has a function
 named `run`, which `driver.cho` took for the entry point the builder uses (`entry`), so the missing `main` was not seen; `cli.cho build --std-dir` and
