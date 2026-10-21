@@ -764,7 +764,15 @@ fn the_command_line_in_cancho_runs_like_cancho_run() {
         {
             same += 1;
         } else {
-            different.push(name.clone());
+            different.push(format!(
+                "{name}:\n  theirs {:?} {:?} {:?}\n  mine   {:?} {:?} {:?}",
+                theirs.status.code(),
+                String::from_utf8_lossy(&theirs.stdout),
+                String::from_utf8_lossy(&theirs.stderr),
+                mine.status.code(),
+                String::from_utf8_lossy(&mine.stdout),
+                String::from_utf8_lossy(&mine.stderr)
+            ));
         }
         let left: Vec<String> = std::fs::read_dir(&dir)
             .expect("a directory is read")
