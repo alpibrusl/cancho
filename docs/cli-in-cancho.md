@@ -138,8 +138,8 @@ mutants (the JSON form never chosen; a refusal not reported; the status not set)
 such embedding, so `examples/selfhost/guidelines.cho` is **generated**: one `console.write_all` a line of the file, in parts of forty
 lines. A string literal is one line (`docs/strings.md` §4), so the text is written as it is, line by line, with `\\`, `\"`, `\n`, `\r` and
 `\t` the only escapes. The test `selfhost::guidelines_module_is_the_text_of_agents_md` regenerates the module from `AGENTS.md` and fails
-if the committed file differs; run it with `CANCHO_REGENERATE=1` to write the file again. The module is 1,165 lines for a file of 910:
-the 2,000-line ceiling of a source file is reached when `AGENTS.md` has about 1,800 lines, and the module is then split in two.
+if the committed file differs; run it with `CANCHO_REGENERATE=1` to write the file again. The module is 1,165 lines for a file of 1,024:
+the 2,000-line ceiling of a source file is reached when `AGENTS.md` has about 1,860 lines, and the module is then split in two.
 
 `the_command_line_in_cancho_writes_the_agent_guidelines` compares the bytes the command writes with those of `cancho agent-guidelines` and
 with the file (37,734 bytes), and checks that an argument is a usage error (status 2, nothing on the standard output).
