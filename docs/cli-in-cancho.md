@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 10 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15; `test`, §16); the rest is design (epic #491,
+Status: **slices 1 to 11 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15; `test`, §16; `layout`, §17); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
@@ -289,3 +289,32 @@ compares the status, the standard output and the standard error (of a refusal, u
 that wrote, and a status of 256, which the runner turns into 1), a trap, tests in modules, two modules that end the same, a test that is not
 `pub`, no tests, a `main`, a type parameter, a result that is not `int`, a parameter that is not a capability, a capability twice, a file that
 does not parse, and a program that is refused: none differs, and nothing is left beside the files.
+
+## 17. Slice 11: `layout`; and what `authority` would take
+
+**What was read first.** The two read-only reports of the Rust command are not alike. `print_layout` (60 lines of `main.rs`) is a function of the declared
+types: it asks `cancho_codegen::layout_of` of each struct and enum that has no type parameter, which counts *leaves* (`abi.rs`, `leaves_into`) and
+reports `leaves`, `size` (8 a leaf), `packed` (each leaf at its natural width, rounded up to the widest) and `stride`. `print_authority` (about 230 lines)
+is a report on the *IR* the Rust pipeline builds: the labels each reachable function performs, the externs it reaches, the functions that are pure
+(`Func::is_pure`), how many operators and calls compile-time evaluation folded (`folded_operators`, `folded_calls`) and how many functions are left
+after pass 2 (`functions`), and, for a WASI target, the imports the row licenses. The compiler in cancho has the effect rows and the reachable
+set (`effects.cho`, `prune.cho`), but **no purity analysis and no count of what its evaluator folded**, so `authority` is not a port of one function: it is the
+effects, a purity pass (`docs/purity.md` §2: no label and no parameter that is written through), and a counter in `fold.cho` and `consteval.cho` that agrees with
+the Rust one to the unit. That is the next slice, and it starts with the counter, because it is the part that can disagree.
+
+**`layout`** is driver mode 12 and `layoutrep.cho`. The program is built as `build` builds it (so that a refusal, and a program with no `main`, are the same
+ones), then each struct and enum that has no type parameter, in the order they are declared, is walked: a `int`, `float` or pointer is a leaf of 8, an `f32` 4,
+a `byte` or `bool` 1; a reference is one pointer and, to a slice, a length; a `Box[[T]]` is two; a tuple its parts; a struct its fields; an enum a tag and every
+variant's payload. The rows the prelude declares come first, as a table of 48 names and leaf counts (`File` to `Ports`; every leaf of those is 8 wide, so
+`packed` is `size`); the line about what packing would save is the sum over all rows of `size - packed`, and is written only if it is not 0. A type with a field
+the compiler in cancho has no type for (`node_type` answers 0: a function-typed field, a tuple of more than eight) is a status 3 as in §14, saying where.
+
+**Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_reports_layout_like_cancho_layout` runs the repository's programs and the programs of
+several files with both commands, and with the standard library for a tenth of them: 109 runs (21 with the library) write the same table byte for byte, 878
+are refused by both, 8 cannot be judged (status 3), and 6 are refusals the checker in cancho does not make (the test allows at most 10). The 6 are
+`examples/tls_nb/gaps/g17_conn_payload.cho` (§12), one of the programs of several files (not looked into), and four runs **with the library** of a program that has no `main` (three files of `packages/` and `tests/programs`, and a two-line edge case; measured one by one):
+the library has a function named `run`, which `driver.cho` takes for the entry point the builder uses (`entry`), so the missing `main` is not seen; the
+same gap makes `cli.cho build --std-dir` and `check --std-dir` accept a program with no `main` (measured on a two-line file), and is not fixed here.
+
+**Not here.** `--std` and `--target` (§14); a generic type is skipped, as in the Rust command, but so is one that has a type parameter no member mentions
+(the Rust command measures that one); `authority` (above).

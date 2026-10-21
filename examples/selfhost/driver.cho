@@ -49,6 +49,7 @@ import selfhost.ingest;
 import selfhost.identity;
 import selfhost.prune;
 import selfhost.testscan;
+import selfhost.layoutrep;
 
 // The line `ERR rule-tag start end`.
 fn err_line[&i](io: &!i Io, rule: int, from: int, to: int) -> [io_write] int {
@@ -830,6 +831,14 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                 }
             } else if mode == 10 {
                 status = check_quiet(st, text);
+            } else if mode == 12 {
+                // The layout of the types of the program, when it is built as the build builds it, so that a program with no `main` is refused as it is (`layoutrep.cho`).
+                status = answer(io, st, text, 5);
+                if status == 0 {
+                    buffer.drop(heap, written);
+                    written = layoutrep.report(heap, st, text);
+                    status = st[63];
+                }
             } else if mode == 11 {
                 buffer.drop(heap, written);
                 written = scanned(heap, st, text);
@@ -837,7 +846,7 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
             } else {
                 status = answer(io, st, text, mode);
             }
-            if (mode == 10 || mode == 11) && status != 0 {
+            if mode >= 10 && status != 0 {
                 rule = st[3];
                 from = st[4];
                 to = st[5];

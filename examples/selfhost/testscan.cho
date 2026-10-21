@@ -48,7 +48,7 @@ fn word[&s, &x](st: &!s [int], text: &x [byte], tok: int, w: &static [byte]) -> 
 }
 
 // Does the declaration whose `[` is the token `start` name a type parameter (a name that does not follow a `&`)?
-fn has_type_param[&s](st: &!s [int], start: int) -> [] bool {
+pub fn has_type_param[&s](st: &!s [int], start: int) -> [] bool {
     if start < 0 {
         return false;
     }
