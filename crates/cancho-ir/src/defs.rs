@@ -229,146 +229,6 @@ pub(crate) fn reaches_through(
         || args.iter().any(|arg| reaches_through(defs, arg, target, seen))
 }
 
-/// Does a value of this type occupy no machine values at all?
-///
-/// §8.1: "capabilities erase at compile time except where they carry data".
-/// A struct with no fields has no leaves, so threading one is free -- which
-/// is a claim worth a test rather than a comment.
-pub fn leaf_free(ty: &Type) -> bool {
-    matches!(ty, Type::Named(def, _)
-    if matches!(
-        def.0 as usize,
-        PRELUDE_WORLD
-            | PRELUDE_IO
-            | PRELUDE_FFI
-            | PRELUDE_FS
-            | PRELUDE_HEAP
-            | PRELUDE_ARGS
-            | PRELUDE_NET
-            | PRELUDE_CLOCK
-            | PRELUDE_SIGNALS
-            | PRELUDE_EXEC
-    ))
-}
-
-/// Is this the file handle (`docs/file-handles.md`)?
-///
-/// Unlike the six capabilities above it is **not** leaf-free: a descriptor
-/// is a number the kernel gave us, so a `File` is one leaf. That is the
-/// whole difference between it and an `Io`, which is authority with nothing
-/// behind it.
-pub fn is_file(def: DefId) -> bool {
-    def.0 as usize == PRELUDE_FILE
-}
-
-/// Is this one of the prelude's capability types?
-///
-/// §8.2: authority comes from exactly one place, and a program that could
-/// *write* `Io { }` would have an ambient constructor by another name — the
-/// very thing "no `Io::global()`, no `unsafe { }` that conjures one" rules
-/// out. So a capability has no literal form, and the only `Io` in existence
-/// is the one the runtime handed to `main` inside a `World`.
-pub(crate) fn is_capability(def: DefId) -> bool {
-    matches!(
-        def.0 as usize,
-        PRELUDE_WORLD
-            | PRELUDE_IO
-            | PRELUDE_FFI
-            | PRELUDE_FS
-            | PRELUDE_HEAP
-            | PRELUDE_ARGS
-            | PRELUDE_SPLIT
-            | PRELUDE_SPLIT_NET
-            | PRELUDE_SPLIT_CLOCK
-            | PRELUDE_SPLIT_SIGNALS
-            | PRELUDE_SPLIT_EXEC
-            | PRELUDE_EXEC
-            | PRELUDE_CHILD
-            | PRELUDE_PIPE
-            | PRELUDE_CHILD_END
-            | PRELUDE_CLOCK
-            | PRELUDE_SIGNALS
-            | PRELUDE_SIGNAL_WATCH
-            | PRELUDE_NET
-            | PRELUDE_TTY
-            | PRELUDE_SPLIT_TTY
-            // §8.2 again, and more sharply: a program that could write
-            // `File { }` would be conjuring a descriptor, which is worse
-            // than conjuring authority because the number would be someone
-            // else's open file.
-            | PRELUDE_FILE
-            | PRELUDE_DIR
-            | PRELUDE_DIR_LIST
-            | PRELUDE_LISTENER
-            | PRELUDE_CONN
-            | PRELUDE_UDP
-            | PRELUDE_POLLER
-    )
-}
-
-/// Is this a capability whose only consumer is `release`?
-///
-/// `Split` is not: taking it apart is the whole point of having one.
-/// `World` and `Io` are, because destructuring either would destroy
-/// authority without naming the function that knows how (§4.1) — and for
-/// `World` and `Io`, which carry no fields, it would do it silently.
-pub(crate) fn released_only(def: DefId) -> bool {
-    matches!(
-        def.0 as usize,
-        PRELUDE_WORLD
-            | PRELUDE_IO
-            | PRELUDE_FFI
-            | PRELUDE_FS
-            | PRELUDE_HEAP
-            | PRELUDE_ARGS
-            | PRELUDE_NET
-            | PRELUDE_CLOCK
-            | PRELUDE_SIGNALS
-            | PRELUDE_EXEC
-            // `docs/tty.md` §4: the serial-port capability, released the
-            // way every root capability is.
-            | PRELUDE_TTY
-    )
-}
-
-/// Is this a type whose only consumer is `close` (`docs/file-handles.md`)?
-///
-/// The same rule as [`released_only`] and [`unboxed_only`], pointed at the
-/// third thing that owns something the language cannot see: a descriptor.
-/// Destructuring a `File` would drop it without calling `close`, which is
-/// a leak the kernel keeps rather than one the allocator does.
-pub(crate) fn closed_only(def: DefId) -> bool {
-    matches!(
-        def.0 as usize,
-        PRELUDE_FILE
-            | PRELUDE_DIR
-            | PRELUDE_DIR_LIST
-            | PRELUDE_LISTENER
-            | PRELUDE_CONN
-            | PRELUDE_UDP
-            | PRELUDE_TTY
-            | PRELUDE_POLLER
-            | PRELUDE_SIGNAL_WATCH
-            // `docs/processes.md` §4.7: a child is ended by `child_wait`, a
-            // channel's end by `pipe_close`, and the child's end by
-            // `exec_spawn` or `child_end_close` -- never by a pattern.
-            | PRELUDE_CHILD
-            | PRELUDE_PIPE
-            | PRELUDE_CHILD_END
-    )
-}
-
-/// Is this a type whose only consumer is `unbox` (`docs/heap.md` §3)?
-///
-/// `Box[T]` carries no *fields* — what it owns is an allocation, and the
-/// pointer to it is not something a pattern can name. Destructuring one
-/// would end the allocation without naming the function that frees it,
-/// which is §4.1's rule and the same reason a capability may not be taken
-/// apart.
-pub(crate) fn unboxed_only(def: DefId) -> bool {
-    def.0 as usize == PRELUDE_BOX
-}
-
 /// Does `target` name something *inside* `prefix` (`docs/filesystem.md` §1)?
 ///
 /// A path prefix is not a byte prefix. `/tmp` contains `/tmp/a`, and it does
@@ -619,6 +479,43 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
             }
             _ => Effects::pure(),
         },
+        // `docs/net-bounds.md` §3, edition 11: the two halves of `Net`. `Out(bound)` pays `net_out(bound)` and the
+        // path-free labels of a socket it dialled; `Ports(bound)` pays `net_in(bound)` and those of a listener.
+        PRELUDE_OUT => match args.first() {
+            Some(Type::Lit(bound)) => {
+                let mut all = Effects::new([Label {
+                    name: "net_out".to_owned(),
+                    argument: Some(bound.clone()),
+                }]);
+                all.union(&Effects::plain([
+                    "conn_read",
+                    "conn_write",
+                    "udp_recv",
+                    "udp_send",
+                    "poll",
+                ]));
+                all
+            }
+            _ => Effects::pure(),
+        },
+        PRELUDE_PORTS => match args.first() {
+            Some(Type::Lit(bound)) => {
+                let mut all = Effects::new([Label {
+                    name: "net_in".to_owned(),
+                    argument: Some(bound.clone()),
+                }]);
+                all.union(&Effects::plain([
+                    "conn_accept",
+                    "conn_read",
+                    "conn_write",
+                    "udp_recv",
+                    "udp_send",
+                    "poll",
+                ]));
+                all
+            }
+            _ => Effects::pure(),
+        },
         _ => Effects::pure(),
     }
 }
@@ -721,6 +618,12 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let split_tty = symbol("Split");
     let port = symbol("Port");
     let tty_opened = symbol("TtyOpened");
+    // `docs/net-bounds.md` §3, edition 11: `Net`'s two halves, and the `Split` that carries them in place of `net`.
+    let out = symbol("Out");
+    let out_field = symbol("out");
+    let ports = symbol("Ports");
+    let ports_field = symbol("ports");
+    let split_ports = symbol("Split");
     let truncated_arm = symbol("Truncated");
     let null_arm = symbol("Null");
     let pipe_arm = symbol("Pipe");
@@ -818,6 +721,9 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let split_tty_def = unifier.declare("Split");
     let port_def = unifier.declare("Port");
     let tty_opened_def = unifier.declare("TtyOpened");
+    let out_def = unifier.declare("Out");
+    let ports_def = unifier.declare("Ports");
+    let split_ports_def = unifier.declare("Split");
 
     vec![
         TypeDef {
@@ -1614,6 +1520,34 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             vec![(ok_arm, vec![Type::Named(port_def, Vec::new())]), (failed_arm, vec![Type::Int])],
             span,
         ),
+        // `docs/net-bounds.md` §3, edition 11: the outbound and the inbound halves of `Net`, each indexed by its bound.
+        resource(out, out_def, vec![prefix], span, 11),
+        resource(ports, ports_def, vec![prefix], span, 11),
+        // Edition 11's `Split`: edition 8's ten fields with `net` replaced, in its place, by `out` and `ports`.
+        TypeDef {
+            name: split_ports,
+            def: split_ports_def,
+            module: PRELUDE_MODULE,
+            public: true,
+            generics: Vec::new(),
+            bounds: Vec::new(),
+            declared_mode: None,
+            kind: DefKind::Struct(vec![
+                (io_field, Type::Named(io_def, Vec::new())),
+                (ffi_field, Type::Named(ffi_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (fs_field, Type::Named(fs_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (heap_field, Type::Named(heap_def, Vec::new())),
+                (args_field, Type::Named(args_def, Vec::new())),
+                (out_field, Type::Named(out_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (ports_field, Type::Named(ports_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (clock_field, Type::Named(clock_def, Vec::new())),
+                (signals_field, Type::Named(signals_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (exec_field, Type::Named(exec_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+                (tty_field, Type::Named(tty_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            ]),
+            span,
+            since: 11,
+        },
     ]
 }
 

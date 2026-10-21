@@ -1566,7 +1566,7 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
     if !ast.ok(st) {
         return ex.nothing();
     }
-    if narrowing.listen_refused(st, text, which, listen_on, cap, host, from, to) {
+    if narrowing.listen_refused(st, text, which, listen_on, cap, host, from, to) || narrowing.dial_refused(st, which, cap, from, to) {
         return ex.nothing();
     }
     if holds_bound {

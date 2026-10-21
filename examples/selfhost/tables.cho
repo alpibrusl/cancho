@@ -12,7 +12,7 @@ module selfhost.tables;
 // Its index is its `DefId`, so the order is the Rust order.
 
 pub fn prelude_count() -> [] int {
-    return 53;
+    return 56;
 }
 
 pub fn prelude_box() -> [] int {
@@ -72,11 +72,11 @@ pub fn prelude_exited() -> [] int {
 }
 
 fn prelude_chars() -> [] &static [byte] {
-    return "WorldIoFfiFsHeapBoxArgsSplitFileOpenedReadNetSplitThreadListenerConnListeningAcceptedReceivedSentDialedPollerPollingClockSplitAttachedDoneSignalsSplitSignalWatchWatchingDirDirOpenedDirListListingListedDirStatExecSplitChildPipeChildEndStdioPipedSpawnedExitedUdpUdpOpenedDatagramTtySplitPortTtyOpened";
+    return "WorldIoFfiFsHeapBoxArgsSplitFileOpenedReadNetSplitThreadListenerConnListeningAcceptedReceivedSentDialedPollerPollingClockSplitAttachedDoneSignalsSplitSignalWatchWatchingDirDirOpenedDirListListingListedDirStatExecSplitChildPipeChildEndStdioPipedSpawnedExitedUdpUdpOpenedDatagramTtySplitPortTtyOpenedOutPortsSplit";
 }
 
 static prelude_starts: [int] {
-    let t = alloc_slice[static](53, 0);
+    let t = alloc_slice[static](56, 0);
     t[1] = 5;
     t[2] = 7;
     t[3] = 10;
@@ -129,11 +129,14 @@ static prelude_starts: [int] {
     t[50] = 280;
     t[51] = 285;
     t[52] = 289;
+    t[53] = 298;
+    t[54] = 301;
+    t[55] = 306;
     return t;
 }
 
 static prelude_lens: [int] {
-    let t = alloc_slice[static](53, 0);
+    let t = alloc_slice[static](56, 0);
     t[0] = 5;
     t[1] = 2;
     t[2] = 3;
@@ -187,11 +190,14 @@ static prelude_lens: [int] {
     t[50] = 5;
     t[51] = 4;
     t[52] = 9;
+    t[53] = 3;
+    t[54] = 5;
+    t[55] = 5;
     return t;
 }
 
 static prelude_arities: [int] {
-    let t = alloc_slice[static](53, 0);
+    let t = alloc_slice[static](56, 0);
     t[2] = 1;
     t[3] = 1;
     t[5] = 1;
@@ -200,11 +206,13 @@ static prelude_arities: [int] {
     t[27] = 1;
     t[37] = 1;
     t[49] = 1;
+    t[53] = 1;
+    t[54] = 1;
     return t;
 }
 
 static prelude_sinces: [int] {
-    let t = alloc_slice[static](53, 0);
+    let t = alloc_slice[static](56, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -258,11 +266,14 @@ static prelude_sinces: [int] {
     t[50] = 8;
     t[51] = 8;
     t[52] = 7;
+    t[53] = 11;
+    t[54] = 11;
+    t[55] = 11;
     return t;
 }
 
 static prelude_publics: [int] {
-    let t = alloc_slice[static](53, 0);
+    let t = alloc_slice[static](56, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -316,11 +327,14 @@ static prelude_publics: [int] {
     t[50] = 1;
     t[51] = 1;
     t[52] = 1;
+    t[53] = 1;
+    t[54] = 1;
+    t[55] = 1;
     return t;
 }
 
 static prelude_res_bits: [int] {
-    let t = alloc_slice[static](53, 0);
+    let t = alloc_slice[static](56, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 3;
@@ -366,15 +380,18 @@ static prelude_res_bits: [int] {
     t[50] = 1;
     t[51] = 1;
     t[52] = 1;
+    t[53] = 3;
+    t[54] = 3;
+    t[55] = 1;
     return t;
 }
 
 fn prelude_label_chars() -> [] &static [byte] {
-    return "args child_signal clock conn_accept conn_read conn_write dir_read dir_write err_write exec= exec_detached exec_under ffi= file_read file_write fs_read= fs_write= heap io_read io_write net_in= net_out= pipe_read pipe_write poll signals= signals_read tty_open= tty_read tty_write udp_recv udp_senderr_write io_read io_writeffi*dir_read dir_write file_read file_write fs_read* fs_write*heapargsfile_read file_writeconn_accept conn_read conn_write net_in* net_out* poll udp_recv udp_sendconn_acceptconn_read conn_writepollclocksignals* signals_readsignals_readdir_read dir_writedir_readchild_signal exec* exec_detachedchild_signalpipe_read pipe_writeudp_recv udp_sendtty_open* tty_read* tty_write*";
+    return "args child_signal clock conn_accept conn_read conn_write dir_read dir_write err_write exec= exec_detached exec_under ffi= file_read file_write fs_read= fs_write= heap io_read io_write net_in= net_out= pipe_read pipe_write poll signals= signals_read tty_open= tty_read tty_write udp_recv udp_senderr_write io_read io_writeffi*dir_read dir_write file_read file_write fs_read* fs_write*heapargsfile_read file_writeconn_accept conn_read conn_write net_in* net_out* poll udp_recv udp_sendconn_acceptconn_read conn_writepollclocksignals* signals_readsignals_readdir_read dir_writedir_readchild_signal exec* exec_detachedchild_signalpipe_read pipe_writeudp_recv udp_sendtty_open* tty_read* tty_write*conn_read conn_write net_out* poll udp_recv udp_sendconn_accept conn_read conn_write net_in* poll udp_recv udp_send";
 }
 
 static prelude_label_starts: [int] {
-    let t = alloc_slice[static](53, 0);
+    let t = alloc_slice[static](56, 0);
     t[1] = 295;
     t[2] = 321;
     t[3] = 325;
@@ -427,11 +444,14 @@ static prelude_label_starts: [int] {
     t[50] = 693;
     t[51] = 693;
     t[52] = 693;
+    t[53] = 693;
+    t[54] = 745;
+    t[55] = 808;
     return t;
 }
 
 static prelude_label_lens: [int] {
-    let t = alloc_slice[static](53, 0);
+    let t = alloc_slice[static](56, 0);
     t[0] = 295;
     t[1] = 26;
     t[2] = 4;
@@ -453,11 +473,13 @@ static prelude_label_lens: [int] {
     t[40] = 20;
     t[46] = 17;
     t[49] = 30;
+    t[53] = 52;
+    t[54] = 63;
     return t;
 }
 
 static prelude_leaf_counts: [int] {
-    let t = alloc_slice[static](53, 0);
+    let t = alloc_slice[static](56, 0);
     t[8] = 1;
     t[14] = 1;
     t[15] = 1;
@@ -474,7 +496,7 @@ static prelude_leaf_counts: [int] {
 }
 
 static prelude_capabilities: [int] {
-    let t = alloc_slice[static](53, 0);
+    let t = alloc_slice[static](56, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -503,11 +525,14 @@ static prelude_capabilities: [int] {
     t[46] = 1;
     t[49] = 1;
     t[50] = 1;
+    t[53] = 1;
+    t[54] = 1;
+    t[55] = 1;
     return t;
 }
 
 static prelude_bounds: [int] {
-    let t = alloc_slice[static](53, 0);
+    let t = alloc_slice[static](56, 0);
     return t;
 }
 
@@ -1097,7 +1122,7 @@ pub fn rule_count() -> [] int {
 }
 
 fn rule_chars() -> [] &static [byte] {
-    return "ambiguous-typeA type the arguments do not settle must be written down; inference here is local and total, and never guesses.arity-mismatchA call, a pattern or a variant takes a fixed number of things, and this gave a different number.assign-to-immutableA `let` binding never changes after it is bound; `var` is the declaration that allows assignment.borrow-conflictA unique reference `&!` is the only way to reach its referent while it lives, so nothing else may read, write, move or consume that value meanwhile.builtin-redeclaredThe prelude's names — the capabilities, the builtins, the primitive types — belong to the language and a program may not redefine one.capability-misusedA capability is a value with exactly one way to use it: hold it, lend it, or end it with `release`. It is not taken apart, not written as a literal, and an operation it authorises reaches it through the parameter that names it.capability-not-narrowable`narrow` attenuates and never widens: the target must be strictly inside what the capability already grants, spelled as a literal so it can be checked where it is written.constant-trapsAn operation whose operands are all literals is evaluated during compilation, so one that would trap at run time cannot be compiled at all.duplicate-declarationA name is introduced once in the scope that holds it — a file, a signature, a struct, a pattern or a literal.effect-declared-not-performedAn effect row is exact in both directions: a label a function declares but never performs makes the row decoration rather than a contract.effect-not-declaredEvery effect a function's body performs appears in its row, and a function performs what the capability it was lent authorises.enum-has-no-variantsAn enum with no variants has no values, so nothing can ever construct or match one.field-orderA struct literal's fields are evaluated in declaration order, so writing them in another order would hide which expression runs first.foreign-boundary-typeA foreign parameter or result must have a layout both sides agree on: the scalars, and a slice by reference. Nothing else crosses.foreign-declarationA foreign declaration names one library and one symbol, and that pairing is unique in a program, and the function is reached only through the one `Ffi` capability that names that library.foreign-scopeThe scope of an `Ffi` is the set of libraries it names: letters, digits, `_`, `.`, `+` and `-`, comma separated, each once, such as `\"libc,libssl\"`.infinite-typeA type that contains itself has no finite size, so a `Box` has to sit somewhere on the path back to it.ingest-arityA known JSON node with a missing or wrongly typed field, or a negative tuple index, cannot become a tree.ingest-jsonThe JSON handed to `cancho ingest` has to be JSON, nested no deeper than the reader allows, with an object where the shape needs one (`docs/structured-ingest.md`).ingest-nodeA JSON node's `kind` has to name something the compiler builds. An unknown word is a vocabulary error, not a malformed one.internalThe compiler failed on a program it had accepted. The program is not at fault; the position is the function whose code could not be generated.linear-use-after-moveA `res` value is used exactly once. Once it has been moved or consumed there is nothing left to use, borrow or read.linear-value-taken-apartA `res` value is ended by the function that owns that job — `release`, `unbox`, a destructuring `let` — and never by reading a part out of it, which would leave the rest unaccounted for.linear-value-unconsumedA `res` value is consumed exactly once on every path: not dropped at the end of a block, not discarded by an assignment or a statement, and not left to differ between branches.listen-host`tcp_listen_on` names the address to listen on as a string literal holding a dotted-quad IPv4 address, and that address must be inside what the `Net` was narrowed to; the all-interfaces `tcp_listen` is refused on a `Net` narrowed to one host. No names, no IPv6, no host read at run time.literal-formA literal has one spelling — a string that does not span lines, a `0x` with digits after it, a float with a point — and this is not it.literal-out-of-rangeA literal must fit the type it is written at: `int` is 64-bit signed and `float` is IEEE-754 binary64.match-arm-unreachableEvery arm of a `match` must be able to run: no arm after one that already covers everything, and no variant matched twice.match-not-exhaustiveA `match` covers every variant of its enum, or has a `_`. There is no runtime failure for a value that matched nothing.match-on-a-non-enum`match` takes an enum or a reference to one. A struct is taken apart by destructuring instead.missing-fieldA struct literal gives every field: there is no default and no partial value.missing-returnEvery path out of a function returns a value of its declared type; falling off the end is not one of them.mode-bound-violated`res` and `val` are the two modes, and a container, a parameter or a declaration that promises `val` cannot hold a `res`: copying one would leave two values owing one obligation.module-not-importedA qualified name reaches another module only where this file has imported it.no-function-valuesA named, top-level function with no type parameters can be a value; a generic function, a builtin, an `extern fn`, or anything else in call position cannot.not-a-functionThe name in call position is not a function in this program: a local binding is a value, not something to call.not-a-placeAssignment writes to a place — a binding, or a field reached through a unique reference — and not to an arbitrary expression.not-a-referenceThis operation follows or writes through a reference, and the value it was given is not one.not-a-sliceIndexing and range-taking need a slice, and this value is not one.not-a-structField access, a struct literal or a destructuring `let` needs a struct, and this is not one.not-a-tupleA positional component or a `let (..)` needs a tuple, and this is not one.not-an-enumA variant is constructed or matched from an enum, and the name qualifying it here is not one.not-public`pub` is what makes a declaration reachable from another module, and a `pub` signature may not name something that is not.operator-type-mismatchAn operator is defined on the types that have the operation: arithmetic and ordering on the numbers, equality on the scalars.pattern-shapeA pattern says what it takes apart in one step, and the shapes it may take are fixed: there is no `()`, and a pattern does not nest.program-shapeA program has one `main` taking the `World` and returning `int`, and a file declares at most one module, first.reference-escapes-regionA reference may not outlive the region it points into — an arena, a `borrow` block, or a caller's region parameter.region-chunk-exceededA region is one 65,536-byte chunk, so one allocation whose size is known to be larger cannot be made in it; data that big belongs on the heap, in a `box_slice`.region-mismatchTwo regions are the same one or they are not, and a `where` clause is how a signature relates the ones it takes.region-not-in-scopeA region comes from a `[&r]` parameter or a `region r { .. }` block, and this name is neither.shared-reference-writtenA shared reference `&` promises its referent will not change, so it cannot be written through or turned into a unique one.signal-not-claimableA program may claim only the signals a request can be read from -- `HUP`, `INT`, `QUIT`, `TERM`, `USR1`, `USR2`, `ALRM` and `WINCH` -- named without the `SIG` prefix, comma-separated, each once; `KILL` and `STOP` cannot be caught and the faults (`SEGV`, `ILL`, `BUS`, `FPE`) are not requests.static-itemA `static` is compile-time data: a slice of scalars, evaluated during compilation, performing nothing and reading only `static`s declared before it.thread-payload-type`spawn`'s payload and `body`'s return type must each cross to a real OS thread as one pointer-width value -- `int`, `bool`, `c_ptr`, a reference, a function value, `()`, or an owned zero-leaf/one-leaf capability such as `Io` or `File` -- the same shape `pthread_create`'s own `void *(*)(void *)` start routine can carry.type-args-not-takenA type parameter stands for one type and is not itself generic, so it takes no type arguments.type-mismatchAn expression's type does not match what the context requires — a return type, an annotation, a parameter, or the mode of a reference.unexpected-characterA character that begins no token in this language, or that cannot appear where it does.unknown-editionA file's `edition N;` marker names one of the editions this compiler knows; a file with no marker is edition 1, and there is nothing later than edition 10 to name yet.unknown-escapeA string literal takes the six escapes `\\n`, `\\r`, `\\t`, `\\\\`, `\\\"` and `\\0`; there is no `\\x` and no `\\u`, and a source file is already UTF-8.unknown-nameThe name is not in scope, or the thing it is read out of does not have it.unreachable-statementA statement after one that always leaves the block — a `return`, or a loop that never ends — can never run.unsized-typeA slice type `[T]` has no size of its own, so it is used through a reference rather than as a value.unsupported-on-targetThe program reaches something this target cannot do -- threads, sockets, signals or processes on WASI. Build for the host, or remove the call; `docs/wasm.md` lists what each target supports.";
+    return "ambiguous-typeA type the arguments do not settle must be written down; inference here is local and total, and never guesses.arity-mismatchA call, a pattern or a variant takes a fixed number of things, and this gave a different number.assign-to-immutableA `let` binding never changes after it is bound; `var` is the declaration that allows assignment.borrow-conflictA unique reference `&!` is the only way to reach its referent while it lives, so nothing else may read, write, move or consume that value meanwhile.builtin-redeclaredThe prelude's names — the capabilities, the builtins, the primitive types — belong to the language and a program may not redefine one.capability-misusedA capability is a value with exactly one way to use it: hold it, lend it, or end it with `release`. It is not taken apart, not written as a literal, and an operation it authorises reaches it through the parameter that names it.capability-not-narrowable`narrow` attenuates and never widens: the target must be strictly inside what the capability already grants, spelled as a literal so it can be checked where it is written.constant-trapsAn operation whose operands are all literals is evaluated during compilation, so one that would trap at run time cannot be compiled at all.duplicate-declarationA name is introduced once in the scope that holds it — a file, a signature, a struct, a pattern or a literal.effect-declared-not-performedAn effect row is exact in both directions: a label a function declares but never performs makes the row decoration rather than a contract.effect-not-declaredEvery effect a function's body performs appears in its row, and a function performs what the capability it was lent authorises.enum-has-no-variantsAn enum with no variants has no values, so nothing can ever construct or match one.field-orderA struct literal's fields are evaluated in declaration order, so writing them in another order would hide which expression runs first.foreign-boundary-typeA foreign parameter or result must have a layout both sides agree on: the scalars, and a slice by reference. Nothing else crosses.foreign-declarationA foreign declaration names one library and one symbol, and that pairing is unique in a program, and the function is reached only through the one `Ffi` capability that names that library.foreign-scopeThe scope of an `Ffi` is the set of libraries it names: letters, digits, `_`, `.`, `+` and `-`, comma separated, each once, such as `\"libc,libssl\"`.infinite-typeA type that contains itself has no finite size, so a `Box` has to sit somewhere on the path back to it.ingest-arityA known JSON node with a missing or wrongly typed field, or a negative tuple index, cannot become a tree.ingest-jsonThe JSON handed to `cancho ingest` has to be JSON, nested no deeper than the reader allows, with an object where the shape needs one (`docs/structured-ingest.md`).ingest-nodeA JSON node's `kind` has to name something the compiler builds. An unknown word is a vocabulary error, not a malformed one.internalThe compiler failed on a program it had accepted. The program is not at fault; the position is the function whose code could not be generated.linear-use-after-moveA `res` value is used exactly once. Once it has been moved or consumed there is nothing left to use, borrow or read.linear-value-taken-apartA `res` value is ended by the function that owns that job — `release`, `unbox`, a destructuring `let` — and never by reading a part out of it, which would leave the rest unaccounted for.linear-value-unconsumedA `res` value is consumed exactly once on every path: not dropped at the end of a block, not discarded by an assignment or a statement, and not left to differ between branches.listen-host`tcp_listen_on` names the address to listen on as a string literal holding a dotted-quad IPv4 address, and that address must be inside what the `Net` was narrowed to; the all-interfaces `tcp_listen` is refused on a `Net` narrowed to one host. No names, no IPv6, no host read at run time.literal-formA literal has one spelling — a string that does not span lines, a `0x` with digits after it, a float with a point — and this is not it.literal-out-of-rangeA literal must fit the type it is written at: `int` is 64-bit signed and `float` is IEEE-754 binary64.match-arm-unreachableEvery arm of a `match` must be able to run: no arm after one that already covers everything, and no variant matched twice.match-not-exhaustiveA `match` covers every variant of its enum, or has a `_`. There is no runtime failure for a value that matched nothing.match-on-a-non-enum`match` takes an enum or a reference to one. A struct is taken apart by destructuring instead.missing-fieldA struct literal gives every field: there is no default and no partial value.missing-returnEvery path out of a function returns a value of its declared type; falling off the end is not one of them.mode-bound-violated`res` and `val` are the two modes, and a container, a parameter or a declaration that promises `val` cannot hold a `res`: copying one would leave two values owing one obligation.module-not-importedA qualified name reaches another module only where this file has imported it.no-function-valuesA named, top-level function with no type parameters can be a value; a generic function, a builtin, an `extern fn`, or anything else in call position cannot.not-a-functionThe name in call position is not a function in this program: a local binding is a value, not something to call.not-a-placeAssignment writes to a place — a binding, or a field reached through a unique reference — and not to an arbitrary expression.not-a-referenceThis operation follows or writes through a reference, and the value it was given is not one.not-a-sliceIndexing and range-taking need a slice, and this value is not one.not-a-structField access, a struct literal or a destructuring `let` needs a struct, and this is not one.not-a-tupleA positional component or a `let (..)` needs a tuple, and this is not one.not-an-enumA variant is constructed or matched from an enum, and the name qualifying it here is not one.not-public`pub` is what makes a declaration reachable from another module, and a `pub` signature may not name something that is not.operator-type-mismatchAn operator is defined on the types that have the operation: arithmetic and ordering on the numbers, equality on the scalars.pattern-shapeA pattern says what it takes apart in one step, and the shapes it may take are fixed: there is no `()`, and a pattern does not nest.program-shapeA program has one `main` taking the `World` and returning `int`, and a file declares at most one module, first.reference-escapes-regionA reference may not outlive the region it points into — an arena, a `borrow` block, or a caller's region parameter.region-chunk-exceededA region is one 65,536-byte chunk, so one allocation whose size is known to be larger cannot be made in it; data that big belongs on the heap, in a `box_slice`.region-mismatchTwo regions are the same one or they are not, and a `where` clause is how a signature relates the ones it takes.region-not-in-scopeA region comes from a `[&r]` parameter or a `region r { .. }` block, and this name is neither.shared-reference-writtenA shared reference `&` promises its referent will not change, so it cannot be written through or turned into a unique one.signal-not-claimableA program may claim only the signals a request can be read from -- `HUP`, `INT`, `QUIT`, `TERM`, `USR1`, `USR2`, `ALRM` and `WINCH` -- named without the `SIG` prefix, comma-separated, each once; `KILL` and `STOP` cannot be caught and the faults (`SEGV`, `ILL`, `BUS`, `FPE`) are not requests.static-itemA `static` is compile-time data: a slice of scalars, evaluated during compilation, performing nothing and reading only `static`s declared before it.thread-payload-type`spawn`'s payload and `body`'s return type must each cross to a real OS thread as one pointer-width value -- `int`, `bool`, `c_ptr`, a reference, a function value, `()`, or an owned zero-leaf/one-leaf capability such as `Io` or `File` -- the same shape `pthread_create`'s own `void *(*)(void *)` start routine can carry.type-args-not-takenA type parameter stands for one type and is not itself generic, so it takes no type arguments.type-mismatchAn expression's type does not match what the context requires — a return type, an annotation, a parameter, or the mode of a reference.unexpected-characterA character that begins no token in this language, or that cannot appear where it does.unknown-editionA file's `edition N;` marker names one of the editions this compiler knows; a file with no marker is edition 1, and there is nothing later than edition 11 to name yet.unknown-escapeA string literal takes the six escapes `\\n`, `\\r`, `\\t`, `\\\\`, `\\\"` and `\\0`; there is no `\\x` and no `\\u`, and a source file is already UTF-8.unknown-nameThe name is not in scope, or the thing it is read out of does not have it.unreachable-statementA statement after one that always leaves the block — a `return`, or a loop that never ends — can never run.unsized-typeA slice type `[T]` has no size of its own, so it is used through a reference rather than as a value.unsupported-on-targetThe program reaches something this target cannot do -- threads, sockets, signals or processes on WASI. Build for the host, or remove the call; `docs/wasm.md` lists what each target supports.";
 }
 
 static rule_tag_starts: [int] {

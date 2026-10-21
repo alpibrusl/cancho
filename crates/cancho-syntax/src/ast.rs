@@ -806,6 +806,13 @@ pub const PRELUDE: &[&str] = &[
     // The `Split` field that carries it, lowercase as `signals`'s and
     // `exec`'s are.
     "tty",
+    // `docs/net-bounds.md` §3, edition 11: `Net`'s two halves and the
+    // `Split` fields that carry them. Appended last so no earlier symbol
+    // moves.
+    "Out",
+    "Ports",
+    "out",
+    "ports",
 ];
 
 impl Ast {

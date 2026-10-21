@@ -29,7 +29,9 @@ impl<'a> FnLowering<'a> {
         let (value, found) = self.expr(*world)?;
         let expected = Type::Named(self.prelude()[PRELUDE_WORLD], Vec::new());
         self.expect_type(&expected, &found, world_span)?;
-        let split_index = if self.edition >= 8 {
+        let split_index = if self.edition >= 11 {
+            PRELUDE_SPLIT_PORTS
+        } else if self.edition >= 8 {
             PRELUDE_SPLIT_TTY
         } else if self.edition >= 7 {
             PRELUDE_SPLIT_EXEC
@@ -72,7 +74,7 @@ impl<'a> FnLowering<'a> {
         };
         let capability_span = self.ast.expr_span(*capability);
         let (net_value, net_ty) = self.expr(*capability)?;
-        let bound = self.granted_net_bound(&net_ty, capability_span)?;
+        let bound = self.granted_net_bound(&net_ty, capability_span, false)?;
 
         let bytes = Type::Ref {
             unique: false,
@@ -120,7 +122,7 @@ impl<'a> FnLowering<'a> {
         };
         let capability_span = self.ast.expr_span(*capability);
         let (net_value, net_ty) = self.expr(*capability)?;
-        let bound = self.granted_net_bound(&net_ty, capability_span)?;
+        let bound = self.granted_net_bound(&net_ty, capability_span, true)?;
 
         let port_span = self.ast.expr_span(*port);
         let (port_value, port_ty) = self.expr(*port)?;
@@ -168,7 +170,7 @@ impl<'a> FnLowering<'a> {
         };
         let capability_span = self.ast.expr_span(*capability);
         let (net_value, net_ty) = self.expr(*capability)?;
-        let bound = self.granted_net_bound(&net_ty, capability_span)?;
+        let bound = self.granted_net_bound(&net_ty, capability_span, true)?;
         // `docs/native-sockets.md` section 12.4: this call binds every
         // interface, which a bound naming one host does not grant.
         if !parse_listen_bound(&bound).plain_port {
@@ -231,7 +233,7 @@ impl<'a> FnLowering<'a> {
         };
         let capability_span = self.ast.expr_span(*capability);
         let (net_value, net_ty) = self.expr(*capability)?;
-        let bound = self.granted_net_bound(&net_ty, capability_span)?;
+        let bound = self.granted_net_bound(&net_ty, capability_span, true)?;
 
         let host_span = self.ast.expr_span(*host);
         let AstExpr::Str(text) = self.ast.expr(*host) else {
@@ -300,7 +302,7 @@ impl<'a> FnLowering<'a> {
         };
         let capability_span = self.ast.expr_span(*capability);
         let (net_value, net_ty) = self.expr(*capability)?;
-        let bound = self.granted_net_bound(&net_ty, capability_span)?;
+        let bound = self.granted_net_bound(&net_ty, capability_span, false)?;
 
         let bytes = Type::Ref {
             unique: false,
@@ -337,15 +339,23 @@ impl<'a> FnLowering<'a> {
 
     /// The `host:port` bound a borrowed `Net` was narrowed to, the same
     /// shape [`Self::granted_prefix`] reads off a borrowed `Fs`.
+    ///
+    /// From edition 11 the capability may instead be the half that names the
+    /// verb's direction (`docs/net-bounds.md` §3): a dial takes a borrowed
+    /// `Out`, a listener a borrowed `Ports`. A borrowed `Net` is accepted by
+    /// both, so a package written before edition 11 and handed one keeps
+    /// working. `listen` says which verb is asking.
     pub(crate) fn granted_net_bound(
         &mut self,
         ty: &Type,
         span: Span,
+        listen: bool,
     ) -> Result<String, Diagnostic> {
         let resolved = self.unifier.resolve(ty);
+        let half = if listen { PRELUDE_PORTS } else { PRELUDE_OUT };
         if let Type::Ref { inner, .. } = &resolved
             && let Type::Named(def, args) = self.unifier.resolve(inner)
-            && def.0 as usize == PRELUDE_NET
+            && (def.0 as usize == PRELUDE_NET || def.0 as usize == half)
             && let Some(Type::Lit(bound)) = args.first()
         {
             return Ok(bound.clone());
@@ -353,8 +363,9 @@ impl<'a> FnLowering<'a> {
         Err(Diagnostic::new(
             Rule::CapabilityMisused,
             format!(
-                "`{}` is not a borrowed `Net`; the network is reached through the capability that names what it may touch",
-                self.unifier.display(&resolved)
+                "`{}` is not a borrowed {}; the network is reached through the capability that names what it may touch",
+                self.unifier.display(&resolved),
+                if listen { "`Ports` (or `Net`)" } else { "`Out` (or `Net`)" }
             ),
             span,
         ))

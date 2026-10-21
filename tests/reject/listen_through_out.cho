@@ -1,0 +1,31 @@
+//~ ERROR is not a borrowed
+//~ RULE capability-misused
+
+// A listener takes the inbound half. `Out` holds the dialing one, so a program that holds only `Out` cannot listen. (`docs/net-bounds.md` §3.)
+
+edition 11;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(ports);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    borrow out as &o in {
+        match tcp_listen(o, 5353, 8, 0) {
+            Listening::Ok(l) => {
+                listener_close(l);
+            }
+            Listening::Failed(e) => {
+                let ignored = e;
+            }
+        }
+    }
+    release(out);
+    return 0;
+}
