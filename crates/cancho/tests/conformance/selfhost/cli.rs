@@ -572,3 +572,147 @@ fn the_command_line_in_cancho_writes_the_identities_like_cancho_ids() {
     );
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
+
+/// Run `exe` with no input for at most five seconds: its status and standard output, or `None` if it did not finish.
+fn run_for(exe: &Path, dir: &Path) -> Option<(Option<i32>, Vec<u8>)> {
+    let mut child = Command::new(exe)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the program runs");
+    let start = std::time::Instant::now();
+    loop {
+        if child.try_wait().expect("the program is waited for").is_some() {
+            let done = child.wait_with_output().expect("its output is read");
+            return Some((done.status.code(), done.stdout));
+        }
+        if start.elapsed() > std::time::Duration::from_secs(5) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// `cli.cho build` against `cancho build`: the programs of the repository that the Rust command builds without the standard library and
+/// that finish by themselves are built by both and run, and what they write and the status they end with are compared (the programs are not
+/// the same bytes: the compilers are not). A program the compiler in cancho has no code for is a status 3. The file `-o` names is the only
+/// file left behind, `--emit obj` makes an object file, and a refused program makes nothing.
+#[test]
+fn the_command_line_in_cancho_builds_like_cancho_build() {
+    let exe = build("cli-build", &with_front_end("cli.cho"));
+    let dir = scratch("selfhost-build-run");
+    let (mut same, mut cannot, mut different, mut built) = (0, Vec::new(), Vec::new(), 0);
+    for (name, text) in sources() {
+        if name.contains("/selfhost/") || name.contains("/reject/") {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the directory is made");
+        std::fs::write(dir.join("x.cho"), &text).expect("a file is written");
+        let theirs = Command::new(BIN)
+            .current_dir(&dir)
+            .args(["build", "x.cho", "-o", "rust.out"])
+            .output()
+            .expect("cancho runs");
+        if !theirs.status.success() {
+            continue;
+        }
+        let Some(want) = run_for(&dir.join("rust.out"), &dir) else { continue };
+        built += 1;
+        let mine = Command::new(&exe)
+            .current_dir(&dir)
+            .args(["build", "x.cho", "-o", "mine.out"])
+            .output()
+            .expect("the command line runs");
+        match mine.status.code() {
+            Some(3) => {
+                cannot.push(name.clone());
+                assert!(
+                    !dir.join("mine.out").exists(),
+                    "{name}: a program that cannot be judged made a file"
+                );
+            }
+            Some(0) => {
+                let got = run_for(&dir.join("mine.out"), &dir);
+                if got.as_ref() == Some(&want) {
+                    same += 1;
+                } else {
+                    different.push(name.clone());
+                }
+                let mut left: Vec<String> = std::fs::read_dir(&dir)
+                    .expect("a directory is read")
+                    .map(|e| e.expect("an entry").file_name().to_string_lossy().into_owned())
+                    .collect();
+                left.sort();
+                assert_eq!(
+                    left,
+                    ["mine.out", "rust.out", "x.cho"],
+                    "{name}: what the build left in the directory"
+                );
+            }
+            other => different.push(format!(
+                "{name}: status {other:?}: {}",
+                String::from_utf8_lossy(&mine.stderr)
+            )),
+        }
+    }
+    eprintln!(
+        "built by both {built}: the same {same}, cannot be judged {}, different {}",
+        cannot.len(),
+        different.len()
+    );
+    assert!(
+        different.is_empty(),
+        "the programs built by the command line in cancho behave differently from the Rust ones:\n{}",
+        different.join("\n")
+    );
+    assert!(same > 60, "only {same} programs were built and run by both");
+    // The options.
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("the directory is made");
+    std::fs::write(
+        dir.join("h.cho"),
+        std::fs::read_to_string(repo_root().join("examples/hello.cho")).expect("hello is read"),
+    )
+    .expect("a file is written");
+    let run = |arguments: &[&str]| {
+        Command::new(&exe)
+            .current_dir(&dir)
+            .arg("build")
+            .args(arguments)
+            .output()
+            .expect("the command line runs")
+    };
+    assert_eq!(run(&["h.cho"]).status.code(), Some(0));
+    assert!(dir.join("h").exists(), "the default name is the stem of the first file");
+    assert_eq!(run(&["--emit", "obj", "h.cho"]).status.code(), Some(0));
+    let object = std::fs::read(dir.join("h.o")).expect("an object file");
+    assert!(
+        object.starts_with(b"\x7fELF") || object.starts_with(&[0xcf, 0xfa, 0xed, 0xfe]),
+        "h.o is an object file"
+    );
+    assert_eq!(run(&["-o", "named", "-l", "m", "-L", "/usr/lib", "h.cho"]).status.code(), Some(0));
+    assert!(dir.join("named").exists());
+    let left: Vec<String> = std::fs::read_dir(&dir)
+        .expect("a directory is read")
+        .map(|e| e.expect("an entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        left.iter().all(|n| ["h.cho", "h", "h.o", "named"].contains(&n.as_str())),
+        "left over: {left:?}"
+    );
+    // A refused program makes nothing, and says why; a bad command line is a status 2.
+    std::fs::write(dir.join("bad.cho"), "fn main(world: World) -> [] int { return x; }")
+        .expect("a file is written");
+    let refused = run(&["bad.cho"]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(!dir.join("bad").exists() && !dir.join("bad.ll").exists());
+    assert_eq!(run(&[]).status.code(), Some(2));
+    assert_eq!(run(&["--emit", "wasm", "h.cho"]).status.code(), Some(2));
+    assert_eq!(run(&["h.cho", "-o"]).status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
