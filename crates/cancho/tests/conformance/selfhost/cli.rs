@@ -759,8 +759,17 @@ fn the_command_line_in_cancho_runs_like_cancho_run() {
             cannot += 1;
             continue;
         }
-        if (mine.status.code(), &mine.stdout, &mine.stderr)
-            == (theirs.status.code(), &theirs.stdout, &theirs.stderr)
+        // The Rust command passes on what the linker says (on macOS, a warning about the alignment of a section); this one does not
+        // (`docs/cli-in-cancho.md` section 14), so those lines are left out of what is compared.
+        let without_linker = |text: &[u8]| -> String {
+            String::from_utf8_lossy(text)
+                .lines()
+                .filter(|line| !line.starts_with("ld: warning:"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        if (mine.status.code(), &mine.stdout, without_linker(&mine.stderr))
+            == (theirs.status.code(), &theirs.stdout, without_linker(&theirs.stderr))
         {
             same += 1;
         } else {
