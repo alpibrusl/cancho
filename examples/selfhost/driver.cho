@@ -48,6 +48,7 @@ import selfhost.jsonread;
 import selfhost.ingest;
 import selfhost.identity;
 import selfhost.prune;
+import selfhost.testscan;
 
 // The line `ERR rule-tag start end`.
 fn err_line[&i](io: &!i Io, rule: int, from: int, to: int) -> [io_write] int {
@@ -713,6 +714,26 @@ fn identities[&h, &i, &s, &x](heap: &!h Heap, io: &!i Io, st: &!s [int], text: &
     return status;
 }
 
+// Mode 11: what `testscan.cho` found. The tests are the answer, with their number in `st[5]`; or the status it refused with is `st[63]`, with
+// `st[3]`, `st[4]` and `st[5]` as in any refusal, and the text that goes with the refusal is the answer.
+fn scanned[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte]) -> [heap] buffer.Buffer {
+    if ast.parse(st, text) != 0 {
+        st[63] = 1;
+        return buffer.empty(heap, 0);
+    }
+    let testscan.Scan { tests, count, status, why, at, named } = testscan.scan(heap, st, text);
+    st[63] = status;
+    st[3] = why;
+    st[4] = at;
+    st[5] = count;
+    if status == 0 {
+        buffer.drop(heap, named);
+        return tests;
+    }
+    buffer.drop(heap, tests);
+    return named;
+}
+
 // A stream of files: laid end to end, one byte between them, and parsed in order. Mode 5 is the build: the
 // module is kept as bytes, for a program to write to a file, and nothing is printed.
 pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: int, target: int) -> [heap, io_write] Built {
@@ -754,7 +775,7 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
             at = header_end(raw, at) + n;
             f = f + 1;
         }
-        if mode >= 3 && mode != 9 {
+        if mode >= 3 && mode != 9 && mode != 11 {
             // A string literal is one token and as many bytes, and its code is the bytes again, spelt out: the room the code is written in is
             // counted by the token, so it is raised by the length of the text.
             tokens = tokens + len(text) / 50;
@@ -763,7 +784,7 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
         if mode == 9 {
             // The identities only need the room the printer works floats out in.
             size = size + ast.const_region() + ast.inst_region();
-        } else if mode >= 3 {
+        } else if mode >= 3 && mode != 11 {
             size = size + ast.emit_size(tokens);
         }
         let state = box_slice(heap, size, 0);
@@ -772,7 +793,7 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
             if mode == 9 {
                 ast.layout(st, tokens, files);
                 st[62] = ast.size_for(tokens, files);
-            } else if mode >= 3 {
+            } else if mode >= 3 && mode != 11 {
                 ast.layout_emit(st, tokens, files);
                 st[61] = target;
             } else {
@@ -809,10 +830,14 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                 }
             } else if mode == 10 {
                 status = check_quiet(st, text);
+            } else if mode == 11 {
+                buffer.drop(heap, written);
+                written = scanned(heap, st, text);
+                status = st[63];
             } else {
                 status = answer(io, st, text, mode);
             }
-            if mode == 10 && status != 0 {
+            if (mode == 10 || mode == 11) && status != 0 {
                 rule = st[3];
                 from = st[4];
                 to = st[5];

@@ -555,7 +555,7 @@ fn the_command_line_in_cancho_writes_the_identities_like_cancho_ids() {
         missed.len()
     );
     // The refusals the checker in cancho does not make, or has no judgement of (a body it has no code for is let through): the program with
-    // a `spawn` of a connection, one reference that escapes through inference, a tuple index that is no name, and a program of several files.
+    // a `spawn` of a connection, one reference that escapes through inference, and a program of several files.
     let mut expected: Vec<String> = [
         "examples/tls_nb/gaps/g17_conn_payload.cho",
         "tests/reject/reference_escapes_via_inference.cho",
@@ -563,7 +563,6 @@ fn the_command_line_in_cancho_writes_the_identities_like_cancho_ids() {
     .iter()
     .map(|p| repo_root().join(p).display().to_string())
     .collect();
-    expected.push("edge case \"fn f() -> [] int { return t.0.1.4294967295; }\"".to_owned());
     expected.push("several files 39".to_owned());
     assert_eq!(missed, expected, "the refusals the checker in cancho does not make");
     assert!(
@@ -825,5 +824,122 @@ fn the_command_line_in_cancho_runs_like_cancho_run() {
         .map(|e| e.expect("an entry").file_name().to_string_lossy().into_owned())
         .collect();
     assert!(!left.iter().any(|n| n.contains("cancho-run")), "left over: {left:?}");
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
+/// The programs `test` is run on: a name, and the files of the program, each as its name and text.
+fn test_programs() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
+    let pass = "fn test_a() -> [] int {\n    return 0;\n}\n\nfn test_b[&h](heap: &!h Heap) -> [] int {\n    return 0;\n}\n";
+    let shown = "fn test_ok() -> [] int {\n    return 0;\n}\n\nfn test_noisy[&i](io: &!i Io) -> [io_write] int {\n    putchar(io, 'x');\n    putchar(io, '\\n');\n    return 7;\n}\n\nfn test_both[&h, &i](heap: &!h Heap, io: &!i Io) -> [io_write] int {\n    putchar(io, 'y');\n    return 256;\n}\n";
+    let trap = "fn test_fine() -> [] int {\n    return 0;\n}\n\nfn test_trap() -> [] int {\n    return 1 / zero();\n}\n\nfn zero() -> [] int {\n    return 0;\n}\n";
+    let module = |path: &str, name: &str, public: bool, answer: i32| {
+        format!(
+            "module {path};\n\n{}fn {name}() -> [] int {{\n    return {answer};\n}}\n",
+            if public { "pub " } else { "" }
+        )
+    };
+    vec![
+        ("all pass", vec![("x.cho", pass.to_owned())]),
+        ("some fail", vec![("x.cho", shown.to_owned())]),
+        ("a trap", vec![("x.cho", trap.to_owned())]),
+        (
+            "tests in modules",
+            vec![
+                ("x.cho", "fn test_root() -> [] int {\n    return 0;\n}\n".to_owned()),
+                ("a.cho", module("lib.core", "test_core", true, 0)),
+                ("b.cho", module("lib.more", "test_more", true, 3)),
+            ],
+        ),
+        (
+            "two modules end the same",
+            vec![
+                ("x.cho", "fn test_root() -> [] int {\n    return 0;\n}\n".to_owned()),
+                ("a.cho", module("one.core", "test_one", true, 0)),
+                ("b.cho", module("two.core", "test_two", true, 0)),
+            ],
+        ),
+        (
+            "a test that is not pub",
+            vec![("x.cho", pass.to_owned()), ("a.cho", module("lib.core", "test_core", false, 0))],
+        ),
+        ("no tests", vec![("x.cho", "fn helper() -> [] int {\n    return 0;\n}\n".to_owned())]),
+        ("a main", vec![("x.cho", "fn main(world: World) -> [] int {\n    release(world);\n    return 0;\n}\n\nfn test_a() -> [] int {\n    return 0;\n}\n".to_owned())]),
+        ("a type parameter", vec![("x.cho", "fn test_a[&h](heap: &!h Heap) -> [] int {\n    return 0;\n}\n\nfn test_b[T](x: T) -> [] int {\n    return 0;\n}\n".to_owned())]),
+        ("not an int", vec![("x.cho", "fn test_a() -> [] bool {\n    return true;\n}\n".to_owned())]),
+        ("a parameter of another kind", vec![("x.cho", "fn test_a(n: int) -> [] int {\n    return n;\n}\n".to_owned())]),
+        ("a capability twice", vec![("x.cho", "fn test_a[&h](a: &!h Heap, b: &!h Heap) -> [] int {\n    return 0;\n}\n".to_owned())]),
+        ("a file that does not parse", vec![("x.cho", "fn test_a( -> [] int {\n    return 0;\n}\n".to_owned())]),
+        ("a program that is refused", vec![("x.cho", "fn test_a() -> [] int {\n    return missing;\n}\n".to_owned())]),
+    ]
+}
+
+/// `test` in cancho against `cancho test`: the programs of `test_programs`, each as files: the output, and the exit status.
+#[test]
+fn the_command_line_in_cancho_tests_like_cancho_test() {
+    let exe = build("cli-test", &with_front_end("cli.cho"));
+    let dir = scratch("selfhost-run-test");
+    // The Rust command says what is wrong at the place of a refusal in its own words, and the rule after them; this one says the sentence of the rule
+    // (`docs/cli-in-cancho.md` section 12): of a refusal, the place is compared. The Rust command also says, once, that it is building the compiler.
+    let plain = |text: &str| -> String {
+        text.lines()
+            .filter(|line| !line.starts_with("building the compiler in cancho"))
+            .map(|line| match line.find(": error: ") {
+                Some(at) => line[..at].to_owned(),
+                None => line.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut different = Vec::new();
+    let mut checked = Vec::new();
+    for (name, files) in test_programs() {
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the directory is made");
+        for (file, text) in &files {
+            std::fs::write(dir.join(file), text).expect("a file is written");
+        }
+        let names: Vec<&str> = files.iter().map(|(file, _)| *file).collect();
+        let theirs = Command::new(BIN)
+            .current_dir(&dir)
+            .arg("test")
+            .args(&names)
+            .stdin(Stdio::null())
+            .output()
+            .expect("cancho runs");
+        let mine = Command::new(&exe)
+            .current_dir(&dir)
+            .arg("test")
+            .args(&names)
+            .stdin(Stdio::null())
+            .output()
+            .expect("the command line runs");
+        let said = |run: &std::process::Output| {
+            (
+                run.status.code(),
+                plain(&String::from_utf8_lossy(&run.stdout)),
+                plain(&String::from_utf8_lossy(&run.stderr)),
+            )
+        };
+        if said(&mine) == said(&theirs) {
+            checked.push(format!("{name}: {:?}", theirs.status.code()));
+        } else {
+            different.push(format!(
+                "{name}:\n  theirs {:?}\n  mine   {:?}",
+                said(&theirs),
+                said(&mine)
+            ));
+        }
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .expect("a directory is read")
+            .map(|e| e.expect("an entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!left.iter().any(|n| n.contains("cancho-test")), "{name}: left over: {left:?}");
+    }
+    eprintln!("tested by both: {}", checked.join("; "));
+    assert!(
+        different.is_empty(),
+        "`test` in cancho and `cancho test` disagree about:\n{}",
+        different.join("\n")
+    );
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
