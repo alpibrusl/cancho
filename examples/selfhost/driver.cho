@@ -152,7 +152,7 @@ fn shim[&s](st: &!s [int], entry_item: int) -> [] int {
 
 // Mode 3 and the builder: every function is checked, and written as it is; then the rest of the module
 // is written after them, in the state's buffers: the declarations of what the code calls, the runtime, and
-// the C `main` that calls the program's `main` (or, failing that, a function called `run`). 0, or 1 for a
+// the C `main` that calls the program's `main` (or, failing that, a function called `run` of the root module: one of a module of the library is not an entry). 0, or 1 for a
 // refusal (`st[3]` to `st[5]`).
 // Does the module's own preamble already declare the C function this declaration names? The lines of the
 // runtime that start with `declare` are read for the name between `@` and `(`; the few the driver declares
@@ -390,7 +390,7 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
                 st[44] = mark;
                 left_out = left_out + 1;
                 note_left_out(st, item, 0 - 1);
-                if pass1.is_word(st, text, ast.get(st, item, 4), "main") || entry == 0 && pass1.is_word(st, text, ast.get(st, item, 4), "run") {
+                if pass1.is_word(st, text, ast.get(st, item, 4), "main") || entry == 0 && ast.get(st, item, 13) == 0 && pass1.is_word(st, text, ast.get(st, item, 4), "run") {
                     // The program starts there: it is reached.
                     emit.str(st, "; entry @lexs_");
                     emit.nat(st, item);
@@ -399,7 +399,7 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
             } else if pass1.is_word(st, text, ast.get(st, item, 4), "main") {
                 entry = 2;
                 entry_item = item;
-            } else if entry == 0 && pass1.is_word(st, text, ast.get(st, item, 4), "run") {
+            } else if entry == 0 && ast.get(st, item, 13) == 0 && pass1.is_word(st, text, ast.get(st, item, 4), "run") {
                 entry = 1;
                 entry_item = item;
             }

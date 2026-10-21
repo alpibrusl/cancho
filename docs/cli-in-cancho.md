@@ -311,10 +311,12 @@ the compiler in cancho has no type for (`node_type` answers 0: a function-typed 
 
 **Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_reports_layout_like_cancho_layout` runs the repository's programs and the programs of
 several files with both commands, and with the standard library for a tenth of them: 109 runs (21 with the library) write the same table byte for byte, 878
-are refused by both, 8 cannot be judged (status 3), and 6 are refusals the checker in cancho does not make (the test allows at most 10). The 6 are
-`examples/tls_nb/gaps/g17_conn_payload.cho` (§12), one of the programs of several files (not looked into), and four runs **with the library** of a program that has no `main` (three files of `packages/` and `tests/programs`, and a two-line edge case; measured one by one):
-the library has a function named `run`, which `driver.cho` takes for the entry point the builder uses (`entry`), so the missing `main` is not seen; the
-same gap makes `cli.cho build --std-dir` and `check --std-dir` accept a program with no `main` (measured on a two-line file), and is not fixed here.
+are refused by both, 8 cannot be judged (status 3), and 1 is a refusal the checker in cancho does not make (`examples/tls_nb/gaps/g17_conn_payload.cho`, §12; the test names it).
+
+**Found by this test, and fixed.** The first run of it had 6 such refusals, four of them a program with no `main` *with the library*: the library has a function
+named `run`, which `driver.cho` took for the entry point the builder uses (`entry`), so the missing `main` was not seen; `cli.cho build --std-dir` and
+`check --std-dir` accepted a two-line file with no `main` for the same reason (measured). Only a `run` of the root module is an entry now (`driver.cho`,
+`build_module`); the 6 became 1 (one of the others, a program of several files, was the same).
 
 **Not here.** `--std` and `--target` (§14); a generic type is skipped, as in the Rust command, but so is one that has a type parameter no member mentions
 (the Rust command measures that one); `authority` (above).
