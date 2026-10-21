@@ -716,3 +716,131 @@ fn the_command_line_in_cancho_builds_like_cancho_build() {
     assert_eq!(run(&["h.cho", "-o"]).status.code(), Some(2));
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
+
+/// `cli.cho run` against `cancho run`: the programs of the repository that `cancho build` makes without the standard library and that finish
+/// by themselves are run by both, and the standard output, the standard error and the status are compared. What the command in cancho does not
+/// do, and the Rust one does: it writes the program's output when the program is over (and not as it goes), the program has no standard input
+/// unless `--stdin` says so, and its environment is a `PATH`. A program that is killed by a signal is a status 3, as in the Rust command.
+#[test]
+fn the_command_line_in_cancho_runs_like_cancho_run() {
+    let exe = build("cli-run", &with_front_end("cli.cho"));
+    let dir = scratch("selfhost-run-run");
+    let (mut same, mut cannot, mut different) = (0, 0, Vec::new());
+    for (name, text) in sources() {
+        if name.contains("/selfhost/") || name.contains("/reject/") {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the directory is made");
+        std::fs::write(dir.join("x.cho"), &text).expect("a file is written");
+        let built = Command::new(BIN)
+            .current_dir(&dir)
+            .args(["build", "x.cho", "-o", "rust.out"])
+            .output()
+            .expect("cancho runs");
+        if !built.status.success() || run_for(&dir.join("rust.out"), &dir).is_none() {
+            continue;
+        }
+        let theirs = Command::new(BIN)
+            .current_dir(&dir)
+            .args(["run", "x.cho"])
+            .stdin(Stdio::null())
+            .output()
+            .expect("cancho runs");
+        let mine = Command::new(&exe)
+            .current_dir(&dir)
+            .args(["run", "x.cho"])
+            .stdin(Stdio::null())
+            .output()
+            .expect("the command line runs");
+        if mine.status.code() == Some(3)
+            && theirs.status.code() != Some(3)
+            && mine.stdout.is_empty()
+        {
+            cannot += 1;
+            continue;
+        }
+        // The Rust command passes on what the linker says (on macOS, a warning about the alignment of a section); this one does not
+        // (`docs/cli-in-cancho.md` section 14), so those lines are left out of what is compared.
+        let without_linker = |text: &[u8]| -> String {
+            String::from_utf8_lossy(text)
+                .lines()
+                .filter(|line| !line.starts_with("ld: warning:"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        if (mine.status.code(), &mine.stdout, without_linker(&mine.stderr))
+            == (theirs.status.code(), &theirs.stdout, without_linker(&theirs.stderr))
+        {
+            same += 1;
+        } else {
+            different.push(format!(
+                "{name}:\n  theirs {:?} {:?} {:?}\n  mine   {:?} {:?} {:?}",
+                theirs.status.code(),
+                String::from_utf8_lossy(&theirs.stdout),
+                String::from_utf8_lossy(&theirs.stderr),
+                mine.status.code(),
+                String::from_utf8_lossy(&mine.stdout),
+                String::from_utf8_lossy(&mine.stderr)
+            ));
+        }
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .expect("a directory is read")
+            .map(|e| e.expect("an entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!left.iter().any(|n| n.contains("cancho-run")), "{name}: left over: {left:?}");
+    }
+    eprintln!(
+        "run by both: the same {same}, cannot be judged {cannot}, different {}",
+        different.len()
+    );
+    assert!(
+        different.is_empty(),
+        "`run` in cancho and `cancho run` disagree about:\n{}",
+        different.join("\n")
+    );
+    assert!(same > 60, "only {same} programs were run by both");
+    // The standard input is empty unless `--stdin` forwards ours; the status of the program is the status of the command; a trap is a status 3.
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("the directory is made");
+    let echo = "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args);\n    release(heap);\n    release(fs);\n    release(ffi);\n    var n = 0;\n    borrow mut io as &!i in {\n        var c = getchar(i);\n        while c >= 0 {\n            n = n + 1;\n            putchar(i, c);\n            c = getchar(i);\n        }\n    }\n    release(io);\n    return n;\n}\n";
+    std::fs::write(dir.join("echo.cho"), echo).expect("a file is written");
+    let run_with = |arguments: &[&str], input: &[u8]| {
+        let mut child = Command::new(&exe)
+            .current_dir(&dir)
+            .arg("run")
+            .args(arguments)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the command line runs");
+        child.stdin.take().expect("a piped stdin").write_all(input).expect("the input is written");
+        child.wait_with_output().expect("the command line finishes")
+    };
+    let forwarded = run_with(&["--stdin", "echo.cho"], b"abc");
+    assert_eq!(
+        (forwarded.status.code(), forwarded.stdout.as_slice()),
+        (Some(3), b"abc".as_slice())
+    );
+    let empty = run_with(&["echo.cho"], b"abc");
+    assert_eq!((empty.status.code(), empty.stdout.as_slice()), (Some(0), b"".as_slice()));
+    std::fs::write(
+        dir.join("trap.cho"),
+        "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args);\n    release(heap);\n    release(fs);\n    release(ffi);\n    release(io);\n    var zero = 0;\n    return 1 / zero;\n}\n",
+    )
+    .expect("a file is written");
+    let trapped = run_with(&["trap.cho"], b"");
+    assert_eq!(
+        trapped.status.code(),
+        Some(3),
+        "a program that traps: {}",
+        String::from_utf8_lossy(&trapped.stderr)
+    );
+    let left: Vec<String> = std::fs::read_dir(&dir)
+        .expect("a directory is read")
+        .map(|e| e.expect("an entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(!left.iter().any(|n| n.contains("cancho-run")), "left over: {left:?}");
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}

@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 8 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14); the rest is design (epic #491,
+Status: **slices 1 to 9 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
@@ -238,5 +238,24 @@ object file; `-l`, `-L` and `-o` work; a refused program makes nothing (status 1
 
 **Not here yet.** `--std` (use `--std-dir`, which reads the files, so a program that imports the library builds only with it), `--target`
 (WebAssembly), `--backend cranelift`, `--compiler`, a project (`cancho.toml`) with no file named, and the Rust command's own words for what the linker
-says. And `run` and `test`: a program started by this one has no standard input, output or error of the caller's (a child gets `Stdio::Null`, a
-file or a pipe, and `Stdio::Inherit` is a design decision refused in `docs/processes.md` §4.4), so they need the output of the child relayed.
+says. And `test` (§15 says how `run` got round the child's streams).
+
+## 15. Slice 9: `run`
+
+`cli.cho run [--stdin] [-l NAME]... [-L PATH]... [--clang PATH] [--host H] [--std-dir DIR] FILE...` builds the program as `build` does, to
+`STEM.cancho-run` beside where it is run, starts it, waits, takes it away, and ends with the program's own status. A child of this program
+cannot be given the caller's standard streams (`Stdio::Inherit` is refused in `docs/processes.md` §4.4: a child would print for a parent
+that released its `Io`), so the program is started with pipes and `std.process.capture_both` (§7.2 of that document) is the relay.
+
+**What that costs, and the Rust command does not.** Nothing the program writes appears while it runs: standard output and standard error are
+written, in that order, when it is over (a program that prints a prompt and waits for the user, or runs for a long time, shows nothing until it
+ends); at most 64 MiB of each is kept, and a program that writes more, or runs for more than a day, is killed (status 3, with a sentence);
+the program has an **empty standard input** unless `--stdin` reads ours to its end and gives it all at the start (so an interactive program
+cannot be run); and its environment is a `PATH`, not the caller's. The program killed by a signal is a status 3, silently, as in the Rust
+command; one that could not be watched or started is a status 3 with a sentence.
+
+**Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_runs_like_cancho_run` runs the 82 programs of §14 with both commands: 80
+write the same on both streams and end with the same status, 2 cannot be judged (status 3, nothing written), none differs, and nothing is left
+beside the program. `--stdin` hands a program its three bytes and an empty input is read as the end; a program that divides by zero is a status 3.
+A streaming relay (a `std.process` loop that writes as it reads) and an input that is read as the program asks for it are what would close the
+differences; neither is built.
