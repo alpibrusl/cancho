@@ -15,6 +15,7 @@ fn literal(line: &str) -> String {
             '\n' => escaped.push_str("\\n"),
             '\r' => escaped.push_str("\\r"),
             '\t' => escaped.push_str("\\t"),
+            '\0' => escaped.push_str("\\0"),
             c if c.is_control() => panic!("a generated text holds a control character {c:?}"),
             c => escaped.push(c),
         }
@@ -109,4 +110,43 @@ fn command_tree_module_is_what_cancho_says() {
     want.push_str(&writer("skill_json_head", &json[..at]));
     want.push_str(&writer("skill_json_tail", &json[at + "null".len()..]));
     check("commandtree.cho", &want, "command_tree_module_is_what_cancho_says");
+}
+
+/// The standard library files in the order `cancho --std` adds them to a program (`STD` in `crates/cancho/src/main.rs`), as the module
+/// `stdorder.cho`: the names, each followed by a NUL. The order is the order of the identities `cancho ids --std` writes.
+#[test]
+fn std_order_module_is_the_std_table_of_cancho() {
+    let main = std::fs::read_to_string(repo_root().join("crates/cancho/src/main.rs"))
+        .expect("main.rs is read");
+    let table = main
+        .split("const STD: &[(&str, &str)] = &[")
+        .nth(1)
+        .expect("the STD table")
+        .split("];")
+        .next()
+        .expect("its end");
+    let names: Vec<&str> = table
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("(\"<std>/")?.split(".cho\"").next())
+        .collect();
+    assert!(names.len() > 40, "only {} names in the STD table", names.len());
+    // Every file of `std/` is in it, and nothing else is.
+    let mut on_disk: Vec<String> = std::fs::read_dir(repo_root().join("std"))
+        .expect("std/ is read")
+        .filter_map(|e| e.ok()?.file_name().to_str()?.strip_suffix(".cho").map(str::to_owned))
+        .collect();
+    on_disk.sort();
+    let mut listed: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
+    listed.sort();
+    assert_eq!(listed, on_disk, "the STD table and std/");
+    let mut text = String::new();
+    for name in &names {
+        text.push_str(&format!("{name}\n"));
+    }
+    let want = header(
+        "stdorder",
+        "the standard library's files, in the order `--std` adds them",
+        "std_order_module_is_the_std_table_of_cancho",
+    ) + &writer("names", &text.replace('\n', "\0"));
+    check("stdorder.cho", &want, "std_order_module_is_the_std_table_of_cancho");
 }

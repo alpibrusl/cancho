@@ -543,6 +543,50 @@ fn compile[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte]) -> [io_write]
     return 0;
 }
 
+// Mode 10: the program is checked as the build (`build_module`) checks it, and nothing is written or printed: the statics, the bodies of the
+// functions, the functions generic ones are called with: 0, or 1 with the rule and the place in `st[3]`,
+// `st[4]` and `st[5]`. What the code is not written for (2) is let through, since it cannot be judged; and the program is not asked for a
+// `main`, nor for the shape of one (`cancho ids` is not).
+fn check_quiet[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
+    if ast.parse(st, text) != 0 || checker.check(st, text) != 0 {
+        return 1;
+    }
+    var item = st[15];
+    scope.shape_clear(st);
+    while item >= 0 {
+        if ast.is_kind(st, item, kinds.NK::IStatic) {
+            let mark = st[44];
+            if body.check_static(st, text, item) == 1 {
+                return 1;
+            }
+            st[44] = mark;
+        }
+        if ast.is_kind(st, item, kinds.NK::IFn) {
+            let mark = st[44];
+            if check_learning(st, text, item) == 1 {
+                return 1;
+            }
+            st[44] = mark;
+        }
+        item = ast.next(st, item);
+    }
+    var instance = 0;
+    while instance < instances.count(st) {
+        if instances.item_of(st, instance) >= 0 {
+            let mark = st[44];
+            instances.begin(st, instance);
+            let status = check_learning(st, text, instances.item_of(st, instance));
+            instances.end(st);
+            if status == 1 {
+                return 1;
+            }
+            st[44] = mark;
+        }
+        instance = instance + 1;
+    }
+    return 0;
+}
+
 fn answer[&i, &s, &x](io: &!i Io, st: &!s [int], text: &x [byte], mode: int) -> [io_write] int {
     if mode == 5 {
         // The build keeps what it finds and prints nothing.
@@ -763,8 +807,15 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                 } else {
                     status = identities(heap, io, st, text, tokens);
                 }
+            } else if mode == 10 {
+                status = check_quiet(st, text);
             } else {
                 status = answer(io, st, text, mode);
+            }
+            if mode == 10 && status != 0 {
+                rule = st[3];
+                from = st[4];
+                to = st[5];
             }
             if mode == 5 {
                 if status == 0 {
