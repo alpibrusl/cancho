@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 3 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10); the rest is design (epic #491,
+Status: **slices 1 to 4 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
