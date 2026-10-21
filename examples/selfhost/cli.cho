@@ -23,6 +23,7 @@ import selfhost.rules;
 import selfhost.lexcore as lc;
 import selfhost.filewrite;
 import selfhost.walk;
+import selfhost.guidelines;
 
 // The canonical text of a program, or why there is none: status 0, 1 (the first refusal, at `from` to `to`), 2 (it does not fit the room).
 res struct Text {
@@ -534,7 +535,15 @@ fn run[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""))
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "ingest") {
         return one_file_command(heap, io, args, fs, true);
     }
-    console.error_all(io, "usage: cancho (fmt [--check] PATH... | print [--output json] FILE | ingest FILE)\n");
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "agent-guidelines") {
+        if arg_count(args) > 2 {
+            console.error_all(io, "usage: `agent-guidelines` takes no arguments\n");
+            return 2;
+        }
+        guidelines.print(io);
+        return 0;
+    }
+    console.error_all(io, "usage: cancho (fmt [--check] PATH... | print [--output json] FILE | ingest FILE | agent-guidelines)\n");
     return 2;
 }
 
