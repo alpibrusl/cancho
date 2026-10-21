@@ -1,0 +1,168 @@
+edition 7;
+module selfhost.diagnose;
+
+// diagnose.cho -- where a refusal is, and what is said of it, for `cancho check` (`docs/cli-in-cancho.md`).
+//
+// A refusal has an offset into the program laid end to end, one byte between the files (the way the checker and `SourceMap` lay it out).
+// This finds the file, the line and the column (counted in characters, as `SourceFile::line_col` does) and renders it as the text of
+// `Diagnostic::render` (the path, the line, the column, a sentence, the line of the source and a caret under it) or as an entry of
+// the JSON `check --output json` answers. The sentence is the sentence of the rule: the per-site message of the Rust command is not
+// in the checker in cancho.
+
+import std.buffer;
+import selfhost.lexcore as lc;
+import selfhost.rules;
+
+pub struct Place {
+    file: int,
+    line: int,
+    column: int,
+    line_from: int,
+    line_to: int,
+}
+
+// The place of `offset` in `laid`, whose files are `lens` bytes long each.
+pub fn locate[&l, &n](laid: &l [byte], lens: &n [int], offset: int) -> [] Place {
+    var file = 0;
+    var start = 0;
+    while file + 1 < len(lens) && offset >= start + lens[file] + 1 {
+        start = start + lens[file] + 1;
+        file = file + 1;
+    }
+    var local = offset - start;
+    if local > lens[file] {
+        local = lens[file];
+    }
+    if local < 0 {
+        local = 0;
+    }
+    var line = 1;
+    var line_from = start;
+    var k = start;
+    while k < start + local {
+        if lc.at(laid, k) == '\n' {
+            line = line + 1;
+            line_from = k + 1;
+        }
+        k = k + 1;
+    }
+    var line_to = line_from;
+    while line_to < start + lens[file] && lc.at(laid, line_to) != '\n' {
+        line_to = line_to + 1;
+    }
+    var column = 1;
+    k = line_from;
+    while k < start + local {
+        if lc.at(laid, k) & 192 != 128 {
+            column = column + 1;
+        }
+        k = k + 1;
+    }
+    return Place { file: file, line: line, column: column, line_from: line_from, line_to: line_to };
+}
+
+fn characters[&l](laid: &l [byte], from: int, to: int) -> [] int {
+    var count = 0;
+    var k = from;
+    while k < to {
+        if lc.at(laid, k) & 192 != 128 {
+            count = count + 1;
+        }
+        k = k + 1;
+    }
+    return count;
+}
+
+// `text` as a JSON string appended to `out`: quoted, with the escapes JSON requires.
+pub fn json_string[&h, &w](heap: &!h Heap, out: buffer.Buffer, word: &w [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, out, byte_of('"'));
+    var k = 0;
+    while k < len(word) {
+        let c = lc.at(word, k);
+        if c == '"' {
+            b = buffer.append(heap, b, "\\\"");
+        } else if c == '\\' {
+            b = buffer.append(heap, b, "\\\\");
+        } else if c == '\n' {
+            b = buffer.append(heap, b, "\\n");
+        } else if c == '\r' {
+            b = buffer.append(heap, b, "\\r");
+        } else if c == '\t' {
+            b = buffer.append(heap, b, "\\t");
+        } else if c < 32 {
+            b = buffer.append(heap, b, "\\u00");
+            b = buffer.push(heap, b, "0123456789abcdef"[c / 16]);
+            b = buffer.push(heap, b, "0123456789abcdef"[c % 16]);
+        } else {
+            b = buffer.push(heap, b, word[k]);
+        }
+        k = k + 1;
+    }
+    return buffer.push(heap, b, byte_of('"'));
+}
+
+// The text of a refusal of `rule` at `from` to `to`, for the file `path`.
+pub fn render[&h, &p, &l, &n](heap: &!h Heap, out: buffer.Buffer, path: &p [byte], laid: &l [byte], lens: &n [int], rule: int, from: int, to: int) -> [heap] buffer.Buffer {
+    let place = locate(laid, lens, from);
+    var b = buffer.append(heap, out, path);
+    b = buffer.push(heap, b, byte_of(':'));
+    b = buffer.push_nat(heap, b, place.line);
+    b = buffer.push(heap, b, byte_of(':'));
+    b = buffer.push_nat(heap, b, place.column);
+    b = buffer.append(heap, b, ": error: ");
+    b = buffer.append(heap, b, rules.sentence(rules.rule_tag(rule)));
+    b = buffer.append(heap, b, "\n    ");
+    b = buffer.append(heap, b, laid[place.line_from..place.line_to]);
+    b = buffer.append(heap, b, "\n    ");
+    var pad = place.column - 1;
+    while pad > 0 {
+        b = buffer.push(heap, b, byte_of(' '));
+        pad = pad - 1;
+    }
+    // The caret stops at the end of the line: the span may cover several.
+    var room = characters(laid, place.line_from, place.line_to) - (place.column - 1);
+    var width = to - from;
+    if width < 1 {
+        width = 1;
+    }
+    if room < 1 {
+        room = 1;
+    }
+    if width > room {
+        width = room;
+    }
+    while width > 0 {
+        b = buffer.push(heap, b, byte_of('^'));
+        width = width - 1;
+    }
+    return b;
+}
+
+// An entry of the `refused` array of `check --output json`; `located` is false for a refusal about the program and not about a place in it.
+pub fn entry[&h, &p, &l, &n](heap: &!h Heap, out: buffer.Buffer, path: &p [byte], laid: &l [byte], lens: &n [int], rule: int, from: int, located: bool) -> [heap] buffer.Buffer {
+    let place = locate(laid, lens, from);
+    let sentence = rules.sentence(rules.rule_tag(rule));
+    var b = buffer.append(heap, out, "    {\n      \"rule\": ");
+    b = json_string(heap, b, rules.rule_tag(rule));
+    b = buffer.append(heap, b, ",\n      \"message\": ");
+    b = json_string(heap, b, sentence);
+    b = buffer.append(heap, b, ",\n      \"explanation\": ");
+    b = json_string(heap, b, sentence);
+    if !located {
+        return buffer.append(heap, b, ",\n      \"position\": null\n    }");
+    }
+    b = buffer.append(heap, b, ",\n      \"position\": { \"file\": ");
+    b = json_string(heap, b, path);
+    b = buffer.append(heap, b, ", \"line\": ");
+    b = buffer.push_nat(heap, b, place.line);
+    b = buffer.append(heap, b, ", \"column\": ");
+    b = buffer.push_nat(heap, b, place.column);
+    return buffer.append(heap, b, " }\n    }");
+}
+
+// The text of a refusal about the program: the path and the sentence, with no place.
+pub fn render_program[&h, &p](heap: &!h Heap, out: buffer.Buffer, path: &p [byte], rule: int) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, path);
+    b = buffer.append(heap, b, ": error: ");
+    return buffer.append(heap, b, rules.sentence(rules.rule_tag(rule)));
+}

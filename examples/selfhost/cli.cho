@@ -25,6 +25,7 @@ import selfhost.filewrite;
 import selfhost.walk;
 import selfhost.guidelines;
 import selfhost.commandtree;
+import selfhost.diagnose;
 
 // The canonical text of a program, or why there is none: status 0, 1 (the first refusal, at `from` to `to`), 2 (it does not fit the room).
 res struct Text {
@@ -573,34 +574,6 @@ fn bad_form[&h, &i, &w](heap: &!h Heap, io: &!i Io, word: &w [byte]) -> [heap, e
     return status;
 }
 
-// `word` as a JSON string appended to `out`: quoted, with the escapes JSON requires.
-fn json_string[&h, &w](heap: &!h Heap, out: buffer.Buffer, word: &w [byte]) -> [heap] buffer.Buffer {
-    var b = buffer.push(heap, out, byte_of('"'));
-    var k = 0;
-    while k < len(word) {
-        let c = lc.at(word, k);
-        if c == '"' {
-            b = buffer.append(heap, b, "\\\"");
-        } else if c == '\\' {
-            b = buffer.append(heap, b, "\\\\");
-        } else if c == '\n' {
-            b = buffer.append(heap, b, "\\n");
-        } else if c == '\r' {
-            b = buffer.append(heap, b, "\\r");
-        } else if c == '\t' {
-            b = buffer.append(heap, b, "\\t");
-        } else if c < 32 {
-            b = buffer.append(heap, b, "\\u00");
-            b = buffer.push(heap, b, "0123456789abcdef"[c / 16]);
-            b = buffer.push(heap, b, "0123456789abcdef"[c % 16]);
-        } else {
-            b = buffer.push(heap, b, word[k]);
-        }
-        k = k + 1;
-    }
-    return buffer.push(heap, b, byte_of('"'));
-}
-
 // `introspect` and `skill` (`docs/agent-cli.md`): the command tree, and a skill file made from it, in the form `--output` names. `skill` with a
 // path writes the file there and says so.
 fn tree_command[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), skill: bool) -> [heap, io_write, err_write, args, fs_write(""), file_write] int {
@@ -656,7 +629,7 @@ fn tree_command[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &
         if path < 0 {
             answer = buffer.append(heap, answer, "null");
         } else {
-            answer = json_string(heap, answer, arg(args, path));
+            answer = diagnose.json_string(heap, answer, arg(args, path));
         }
         answer = commandtree.skill_json_tail(heap, answer);
         if status == 0 {
@@ -678,9 +651,176 @@ fn tree_command[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &
     return status;
 }
 
+// Does `word` take the argument after it? (the flags of `check`)
+fn takes_value[&w](word: &w [byte]) -> [] bool {
+    return bytes.equal(word, "--output") || bytes.equal(word, "--host") || bytes.equal(word, "--backend");
+}
+
+// The index among the arguments of the `k`th file named after the command.
+fn file_arg[&a](args: &a Args, k: int) -> [args] int {
+    var seen = 0;
+    var n = 2;
+    while n < arg_count(args) {
+        if takes_value(arg(args, n)) {
+            n = n + 1;
+        } else {
+            if seen == k {
+                return n;
+            }
+            seen = seen + 1;
+        }
+        n = n + 1;
+    }
+    return 0 - 1;
+}
+
+// What is said of the first refusal `rule` at `from` to `to`, or of none: the answer of `check`, and its status.
+fn report_check[&h, &i, &a, &l, &n](heap: &!h Heap, io: &!i Io, args: &a Args, laid: &l [byte], lens: &n [int], json: bool, refused: int, rule: int, from: int, to: int) -> [heap, io_write, err_write, args] int {
+    if refused == 0 {
+        if json {
+            console.write_all(io, "{\n  \"refused\": []\n}\n");
+        }
+        return 0;
+    }
+    if rule == rules.r_skip() {
+        // The compiler in cancho has no judgement to give of this program: the construct at this place is one it has no code for.
+        let place = diagnose.locate(laid, lens, from);
+        var why = buffer.append(heap, buffer.empty(heap, 128), arg(args, file_arg(args, place.file)));
+        why = buffer.push(heap, why, byte_of(':'));
+        why = buffer.push_nat(heap, why, place.line);
+        why = buffer.push(heap, why, byte_of(':'));
+        why = buffer.push_nat(heap, why, place.column);
+        why = buffer.append(heap, why, ": this command line cannot judge the program: the compiler in cancho has no code for what is here\n");
+        borrow why as &t in {
+            console.error_all(io, buffer.bytes(t));
+        }
+        buffer.drop(heap, why);
+        return 3;
+    }
+    // A refusal about the program as a whole (no `main`) has no place; it is given at the first file.
+    let located = !(rule == rules.r_program_shape() && from == 0 && to == 0);
+    var which = 0;
+    if located {
+        which = diagnose.locate(laid, lens, from).file;
+    }
+    let path = arg(args, file_arg(args, which));
+    if json {
+        var out = buffer.append(heap, buffer.empty(heap, 512), "{\n  \"refused\": [\n");
+        out = diagnose.entry(heap, out, path, laid, lens, rule, from, located);
+        out = buffer.append(heap, out, "\n  ]\n}\n");
+        show(heap, io, out);
+    } else {
+        var out = buffer.empty(heap, 512);
+        if located {
+            out = diagnose.render(heap, out, path, laid, lens, rule, from, to);
+        } else {
+            out = diagnose.render_program(heap, out, path, rule);
+        }
+        out = buffer.push(heap, out, byte_of('\n'));
+        borrow out as &t in {
+            console.error_all(io, buffer.bytes(t));
+        }
+        buffer.drop(heap, out);
+    }
+    return 1;
+}
+
+// `check [--output json] [--host H] FILE...` (`docs/cli-in-cancho.md` section 12): the program is the files, in order; it is checked and its code
+// is written and thrown away, as `cancho build` would, by the build of the compiler in cancho (`driver.run_many`, mode 5). The target is the one
+// `--host` names (linux, darwin or linux-aarch64; the default is linux): a program cannot ask what it runs on.
+fn check_command[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, err_write, args, fs_read(""), file_read] int {
+    var json = false;
+    var host = 0;
+    var files = 0;
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--output") {
+            n = n + 1;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "json") {
+                json = true;
+            } else {
+                return usage_error(heap, io, "`--output` needs a form: json");
+            }
+        } else if bytes.equal(word, "--host") {
+            n = n + 1;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "linux") {
+                host = 0;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "darwin") {
+                host = 1;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "linux-aarch64") {
+                host = 2;
+            } else {
+                return usage_error(heap, io, "`--host` needs linux, darwin or linux-aarch64");
+            }
+        } else if bytes.equal(word, "--backend") {
+            n = n + 1;
+            if n >= arg_count(args) || !bytes.equal(arg(args, n), "llvm") {
+                return usage_error(heap, io, "`--backend`: only llvm is available in this command line");
+            }
+        } else if bytes.equal(word, "--std") || bytes.equal(word, "--target") {
+            return usage_error(heap, io, "`--std` and `--target` are not available in this command line yet");
+        } else {
+            files = files + 1;
+        }
+        n = n + 1;
+    }
+    if files == 0 {
+        return usage_error(heap, io, "no file given");
+    }
+    var raw = buffer.empty(heap, 65536);
+    var laid = buffer.empty(heap, 65536);
+    let lens = box_slice(heap, files, 0);
+    var status = 0;
+    var which = 0;
+    while which < files && status == 0 {
+        let path = arg(args, file_arg(args, which));
+        let read = read_file(heap, fs, path);
+        let Contents { bytes, failed } = read;
+        if failed != 0 {
+            complain(heap, io, path, "cannot read the file");
+            status = 2;
+        } else {
+            borrow bytes as &src in {
+                borrow mut lens as &!lb in {
+                    contents(lb)[which] = buffer.size(src);
+                }
+                raw = buffer.append(heap, raw, "FILE ");
+                raw = buffer.push_nat(heap, raw, buffer.size(src));
+                raw = buffer.push(heap, raw, byte_of('\n'));
+                raw = buffer.append(heap, raw, buffer.bytes(src));
+                laid = buffer.append(heap, laid, buffer.bytes(src));
+                laid = buffer.push(heap, laid, byte_of(0));
+            }
+        }
+        buffer.drop(heap, bytes);
+        which = which + 1;
+    }
+    if status == 0 {
+        borrow raw as &r in {
+            let built = driver.run_many(heap, io, buffer.bytes(r), 5, host);
+            borrow built as &b in {
+                borrow laid as &lt in {
+                    borrow mut lens as &!lb in {
+                        status = report_check(heap, io, args, buffer.bytes(lt), contents(lb), json, b.status, b.rule, b.from, b.to);
+                    }
+                }
+            }
+            driver.discard(heap, built);
+        }
+    }
+    buffer.drop(heap, raw);
+    buffer.drop(heap, laid);
+    unbox_slice(heap, lens);
+    return status;
+}
+
 fn run[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), dir_read, file_read, file_write] int {
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "fmt") {
         return fmt_command(heap, io, args, fs);
+    }
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "check") {
+        return check_command(heap, io, args, fs);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "print") {
         return one_file_command(heap, io, args, fs, false);

@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 5 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11); the rest is design (epic #491,
+Status: **slices 1 to 6 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
@@ -169,3 +169,33 @@ commands as JSON, examples and schemas), makes the directories above a skill fil
 could not write it (a path under a file). This command writes only what it is asked, has no `mkdir` to make directories with (the standard
 library has none), and says status 3 on the standard error when the file cannot be written. The `--version` line (the revision and host
 of the build) is not here: it is a property of the build, not of a text.
+
+## 12. Slice 6: `check`
+
+`cli.cho check [--output json] [--host H] FILE...` checks a program of several files and writes its code and throws it away, as `cancho check`
+does (the backend runs there too): it is the build of the compiler in cancho (`driver.run_many`, mode 5), whose answer is a status, a rule
+and an offset into the files laid end to end. `examples/selfhost/diagnose.cho` turns the offset into a file, a line and a column (counted in
+characters, as `SourceFile::line_col` does) and renders it: the text of `Diagnostic::render` (the path, line, column, a sentence, the line
+of the source and a caret under it, as wide as the span and no wider than the line) or the entry of the `refused` array. `--output json` of an
+accepted program is `{"refused": []}`, as Rust writes it. Exit status 0, 1 for a refusal, 2 for a bad command line or a file that cannot be read.
+
+**Decided (the owner, in this session).** The `message` of a refusal is the **sentence of the rule**, the one the `explanation` already is: the
+Rust command has a hand-written message at each of about 350 sites and the checker in cancho has none, and the checker stops at the **first**
+refusal where Rust reports every independent one. Porting the messages is open work, not a decision against it.
+
+**Not available yet.** `--std` and `--target` (the standard library's text is not in the command line, and a WebAssembly target is the Rust
+backend's) answer a usage error; `--backend` takes `llvm` only. A cancho program cannot ask what it runs on, so `--host linux|darwin|linux-aarch64`
+(default `linux`) names the target the code is written for. A program the compiler in cancho has no code for (its `skip`: it hands those builds
+to the Rust compiler) cannot be judged here: the command says where, on the standard error, and exits 3.
+
+**Measured (Linux x86-64).** `selfhost::the_command_line_in_cancho_checks_like_cancho_check` runs `check --output json` of both on the 861
+programs of the repository, one at a time, and on the 41 programs of several files of `SEVERAL_FILES` (902 in all): 87 are accepted by both
+with the same answer; 781 are refused by both with the same rule and file and, for all but the 25 below, the same line and column; in 25 the
+rule and file are the same and the place is not (the checker in cancho and the Rust one name another span for some capability rules, or find
+another refusal first); 8 cannot be judged (exit 3); and 1 is a refusal the checker in cancho does not make
+(`examples/tls_nb/gaps/g17_conn_payload.cho`, `thread-payload-type`). For every one of the 781 whose place is the same, the text of the refusal has the
+same place, source line and caret.
+
+**A trap found by this.** `examples/selfhost/runtime.cho` (a 650,000-byte string literal) made the build in cancho trap (an illegal instruction):
+`emit.put` wrote past the end of its buffer, and past the end of the state when the literal was long enough. It counts a byte past the end and
+does not write it (`overflowed` is how the answer is known to be no good), and the room for the code is raised by the length of the text.

@@ -710,6 +710,11 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
             at = header_end(raw, at) + n;
             f = f + 1;
         }
+        if mode >= 3 && mode != 9 {
+            // A string literal is one token and as many bytes, and its code is the bytes again, spelt out: the room the code is written in is
+            // counted by the token, so it is raised by the length of the text.
+            tokens = tokens + len(text) / 50;
+        }
         var size = ast.size_for(tokens, files);
         if mode == 9 {
             // The identities only need the room the printer works floats out in.

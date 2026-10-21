@@ -306,6 +306,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "filewrite.cho",
         "guidelines.cho",
         "commandtree.cho",
+        "diagnose.cho",
         "walk.cho",
         "formatting.cho",
         "jsonprint.cho",
@@ -1762,6 +1763,143 @@ fn the_command_line_in_cancho_answers_help_and_the_command_tree_like_cancho() {
         .expect("the command runs");
     assert_eq!(lost.status.code(), Some(3));
     assert!(lost.stdout.is_empty());
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
+/// What `check --output json` answers for `files` (run in `dir`): the status and the first refusal as (rule, file, line, column), or none.
+type Checked = (Option<i32>, Option<(String, String, u64, u64)>, String);
+
+fn checked(binary: &Path, dir: &Path, flags: &[&str], files: &[&str]) -> Checked {
+    let done = Command::new(binary)
+        .current_dir(dir)
+        .args(["check", "--output", "json"])
+        .args(flags)
+        .args(files)
+        .output()
+        .expect("check runs");
+    let stdout = String::from_utf8_lossy(&done.stdout).into_owned();
+    let first = serde_json::from_str::<serde_json::Value>(&stdout).ok().and_then(|v| {
+        let first = v["refused"].get(0)?.clone();
+        let position = &first["position"];
+        Some((
+            first["rule"].as_str()?.to_owned(),
+            position["file"].as_str().unwrap_or("").to_owned(),
+            position["line"].as_u64().unwrap_or(0),
+            position["column"].as_u64().unwrap_or(0),
+        ))
+    });
+    (done.status.code(), first, stdout)
+}
+
+/// `cli.cho check` against `cancho check --output json`, on the repository's programs and on programs of several files. The sentence in
+/// `message` is the rule's, not the Rust command's per-site words (decided in `docs/cli-in-cancho.md` section 12), and the checker in cancho
+/// stops at the first refusal, so what is compared is the status and the first refusal: its rule and its file are compared, and its line and column are counted where they differ (the checker in cancho and the Rust one name another span for some capability rules, or find another refusal first).
+#[test]
+fn the_command_line_in_cancho_checks_like_cancho_check() {
+    let exe = build("cli-check", &with_front_end("cli.cho"));
+    let dir = scratch("selfhost-check-run");
+    let host = if cfg!(target_os = "macos") {
+        "darwin"
+    } else if cfg!(target_arch = "aarch64") {
+        "linux-aarch64"
+    } else {
+        "linux"
+    };
+    let mut cases: Vec<(String, Vec<(String, String)>)> = sources()
+        .into_iter()
+        .map(|(name, text)| (name, vec![("x.cho".to_owned(), text)]))
+        .collect();
+    for (n, group) in SEVERAL_FILES.iter().enumerate() {
+        let files =
+            group.iter().enumerate().map(|(k, t)| (format!("f{k}.cho"), (*t).to_owned())).collect();
+        cases.push((format!("several files {n}"), files));
+    }
+    // The programs that Rust refuses and the checker in cancho does not (yet), and the programs it cannot judge.
+    let (mut accepted, mut agreed, mut column, mut cannot, mut missed) =
+        (0, 0, Vec::new(), Vec::new(), Vec::new());
+    let (mut wrong, mut texts) = (Vec::new(), Vec::new());
+    for (name, files) in &cases {
+        for (path, text) in files {
+            std::fs::write(dir.join(path), text).expect("a file is written");
+        }
+        let names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        let want = checked(Path::new(BIN), &dir, &[], &names);
+        let got = checked(&exe, &dir, &["--host", host], &names);
+        match (&want.1, &got) {
+            _ if got.0 == Some(3) => cannot.push(name.clone()),
+            (None, (Some(0), None, text)) if text == &want.2 => accepted += 1,
+            (Some(w), (Some(1), Some(g), _)) if w.0 == g.0 && w.1 == g.1 => {
+                if w.2 == g.2 && w.3 == g.3 {
+                    agreed += 1;
+                    // The text of the refusal: the place, then the line of the source and the caret under it, which are the same
+                    // whatever the sentence is.
+                    if !w.1.is_empty() {
+                        let text = |binary: &Path, flags: &[&str]| -> Vec<String> {
+                            let done = Command::new(binary)
+                                .current_dir(&dir)
+                                .arg("check")
+                                .args(flags)
+                                .args(&names)
+                                .output()
+                                .expect("check runs");
+                            let stderr = String::from_utf8_lossy(&done.stderr).into_owned();
+                            let first = stderr
+                                .split("\n\n")
+                                .next()
+                                .unwrap_or("")
+                                .trim_end()
+                                .lines()
+                                .map(str::to_owned)
+                                .collect::<Vec<_>>();
+                            let head = first[0].split(": error: ").next().unwrap_or("").to_owned();
+                            vec![
+                                head,
+                                first[first.len() - 2].clone(),
+                                first[first.len() - 1].clone(),
+                            ]
+                        };
+                        if text(Path::new(BIN), &[]) != text(&exe, &["--host", host]) {
+                            texts.push(name.clone());
+                        }
+                    }
+                } else {
+                    column.push(name.clone());
+                }
+            }
+            (Some(_), (Some(0), None, _)) => missed.push(name.clone()),
+            // A refusal about the program has no place in the Rust answer: only the rule and the status are compared.
+            (Some(w), (Some(1), Some(g), _)) if w.1.is_empty() && w.0 == g.0 => agreed += 1,
+            _ => wrong.push(format!("{name}: {:?} against {:?}", want.1, got.1)),
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "`check` in cancho and `cancho check` disagree about {} programs:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
+    eprintln!(
+        "accepted {accepted}, refused alike {agreed}, a different place {}, cannot judge {}, refusal missed {}, of {} programs",
+        column.len(),
+        cannot.len(),
+        missed.len(),
+        cases.len()
+    );
+    assert_eq!(
+        missed,
+        ["examples/tls_nb/gaps/g17_conn_payload.cho".to_owned()]
+            .map(|p| repo_root().join(p).display().to_string()),
+        "the refusals the checker in cancho misses"
+    );
+    assert!(
+        accepted > 60 && agreed > 600,
+        "the comparison covered {accepted} accepted and {agreed} refused programs"
+    );
+    assert!(
+        column.len() * 20 < cases.len(),
+        "the place of the first refusal differs in {} programs: {column:?}",
+        column.len()
+    );
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
 
