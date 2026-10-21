@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 7 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13); the rest is design (epic #491,
+Status: **slices 1 to 8 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
@@ -217,3 +217,26 @@ fails if `std/` and the table differ). The identities, and so the lines, do not 
 are the same byte for byte, the status the same. Four refusals the checker in cancho does not make are named in the test: `g17_conn_payload.cho`
 (`thread-payload-type`), `reference_escapes_via_inference.cho`, a tuple index that is no name, and one program of several files; each is a
 body the checker lets through or has no judgement of.
+
+## 14. Slice 8: `build`
+
+`cli.cho build [-o OUT] [--emit exe|obj] [-l NAME]... [-L PATH]... [--clang PATH] [--host H] [--std-dir DIR] FILE...` checks the program as `check`
+does (the compiler in cancho, mode 5) and, if it is accepted, writes the module it made to `OUT.ll`, has `clang` (`/usr/bin/clang` unless
+`--clang` says another) make the executable, or with `--emit obj` the object file, from it, and takes the temporary files away. `OUT` is `-o`, or the
+stem of the first file (and `.o` for an object file), as in the Rust command. Everything is done through a capability: the files through
+`Fs`, `clang` and `uname` through `Exec`. What `clang` says on a failure is passed on (standard error), with status 3.
+
+**Decided (the owner, in this session).** A program the compiler in cancho has no code for (its `skip`) is **not handed to the Rust compiler**: it is a
+status 3 with the place on the standard error, and nothing is made. And a program cannot ask what machine it is on, so the host is found by
+running `uname -sm` (its answer goes to a file beside the output and is read back and deleted); `--host` names it instead.
+
+**Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_builds_like_cancho_build` takes the programs of the repository that
+`cancho build` makes without the standard library and that finish by themselves in five seconds with no input (82 of the 374 outside `selfhost/` and
+`reject/`; 292 do not build without `--std`), builds each with the command line in cancho and runs both: 80 write the same and end with the
+same status, 2 cannot be judged (status 3), none differs. The only file left beside `-o` is the output; `--emit obj` makes an ELF (or Mach-O)
+object file; `-l`, `-L` and `-o` work; a refused program makes nothing (status 1); a bad command line is a status 2.
+
+**Not here yet.** `--std` (use `--std-dir`, which reads the files, so a program that imports the library builds only with it), `--target`
+(WebAssembly), `--backend cranelift`, `--compiler`, a project (`cancho.toml`) with no file named, and the Rust command's own words for what the linker
+says. And `run` and `test`: a program started by this one has no standard input, output or error of the caller's (a child gets `Stdio::Null`, a
+file or a pipe, and `Stdio::Inherit` is a design decision refused in `docs/processes.md` §4.4), so they need the output of the child relayed.
