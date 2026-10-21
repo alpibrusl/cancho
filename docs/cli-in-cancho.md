@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 6 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12); the rest is design (epic #491,
+Status: **slices 1 to 7 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
@@ -94,7 +94,7 @@ Not done in this slice: directories (§8), the other commands, and the words of 
 parse refusal (cancho says `ERR rule from to` where Rust renders the diagnostic). The checks of §4 only fire on a formatter bug, so no
 program in the corpus reaches them; they are run, not exercised.
 
-**Measured (Linux x86-64, debug `cancho`).** `selfhost::the_command_line_in_cancho_formats_like_cancho_fmt` builds `cli.cho` with
+**Measured (Linux x86-64, debug `cancho`).** `selfhost::cli::the_command_line_in_cancho_formats_like_cancho_fmt` builds `cli.cho` with
 the Rust compiler and runs it, as a process on a file, with and without `--check`, against `cancho_syntax::format` and the words
 `fmt_cli.rs` says, on every program of the repository, the edge programs and the programs spoilt two ways each (2,525 programs, 5,050
 runs; the formatter changes 1,580, refuses 14 and leaves 714 as they are): the standard output, standard error, exit status and the file afterwards are the same in all of them. Two mutants (`--check`
@@ -108,7 +108,7 @@ one is followed, as `Path::is_dir` does, by trying `open_dir` on it). It uses `s
 collects every path first and then formats them in order, and stops at the first environment error (a file it cannot read or write), as
 `cancho fmt` does.
 
-**Measured.** `selfhost::the_command_line_in_cancho_walks_directories_like_cancho_fmt` makes a tree (nested directories, a `.hidden`
+**Measured.** `selfhost::cli::the_command_line_in_cancho_walks_directories_like_cancho_fmt` makes a tree (nested directories, a `.hidden`
 directory, a `.dot.cho`, a `notes.txt`, a `Q.CHO`, a directory called `x.cho`, names that differ in case and punctuation, a file that does
 not parse, a link to a directory, an empty directory) and runs both commands on it four ways (`--check` on several roots, a root with a
 trailing `/`, an empty directory, and a rewriting run through the link): standard output, exit status and every file afterwards are
@@ -126,7 +126,7 @@ status 1, where `cancho ingest` renders a diagnostic on the standard error and, 
 form is not available (the command says so and exits 2). `jsonprint.print` used to answer the number of bytes its last write took
 as a status; it answers 0 now.
 
-**Measured (Linux x86-64, debug `cancho`).** `selfhost::the_command_line_in_cancho_prints_and_ingests_like_the_rust_front_end` runs
+**Measured (Linux x86-64, debug `cancho`).** `selfhost::cli::the_command_line_in_cancho_prints_and_ingests_like_the_rust_front_end` runs
 each of 920 programs (the repository's, the edge programs) through `print` and `print --output json` (1,708 prints that succeed, 132
 refusals) and 964 inputs through `ingest` (871 succeed; the JSON of each program, and the ingester's edge inputs), against the
 oracles of the stand-alone ports: the standard output, the standard error of a refusal, and the status are the same in every run. Three
@@ -158,7 +158,7 @@ and says `Skill file written to PATH`.
 Until the Rust binary is gone the module is derived from it; after that it is the source, and the tree of commands is edited in it (or
 the module is made from a table in cancho: open).
 
-**Measured (Linux x86-64).** `selfhost::the_command_line_in_cancho_answers_help_and_the_command_tree_like_cancho` runs 20 command lines on
+**Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_answers_help_and_the_command_tree_like_cancho` runs 20 command lines on
 both (`--help`, `-h`, `help`; `introspect` in the three forms, `=` and separate, with a stray argument; `skill` in the three forms, with and
 without a path, the path last or first, a path with a quote and a backslash in it; a missing and a bad form for each): standard output, standard
 error, status and the file written are the same in all of them. Four mutants (a quote not escaped, the table form chosen as text, `-h` not
@@ -188,14 +188,32 @@ backend's) answer a usage error; `--backend` takes `llvm` only. A cancho program
 (default `linux`) names the target the code is written for. A program the compiler in cancho has no code for (its `skip`: it hands those builds
 to the Rust compiler) cannot be judged here: the command says where, on the standard error, and exits 3.
 
-**Measured (Linux x86-64).** `selfhost::the_command_line_in_cancho_checks_like_cancho_check` runs `check --output json` of both on the 861
-programs of the repository, one at a time, and on the 41 programs of several files of `SEVERAL_FILES` (902 in all): 87 are accepted by both
-with the same answer; 781 are refused by both with the same rule and file and, for all but the 25 below, the same line and column; in 25 the
+**Measured (Linux x86-64, at the time of writing).** `selfhost::cli::the_command_line_in_cancho_checks_like_cancho_check` runs `check --output json` of both on
+the 867 programs of the repository, one at a time, and on the 41 programs of several files of `SEVERAL_FILES` (908 in all): 88 are accepted by both
+with the same answer; 783 are refused by both with the same rule and file and, for all but the 28 below, the same line and column; in 28 the
 rule and file are the same and the place is not (the checker in cancho and the Rust one name another span for some capability rules, or find
 another refusal first); 8 cannot be judged (exit 3); and 1 is a refusal the checker in cancho does not make
-(`examples/tls_nb/gaps/g17_conn_payload.cho`, `thread-payload-type`). For every one of the 781 whose place is the same, the text of the refusal has the
-same place, source line and caret.
+(`examples/tls_nb/gaps/g17_conn_payload.cho`, `thread-payload-type`). For every one of the 783 whose place is the same, the text of the refusal has the
+same place, source line and caret. The counts move with the repository's programs; the test asserts the shape (the same rule and file always, at most
+one program in twenty with another place), not these numbers.
 
 **A trap found by this.** `examples/selfhost/runtime.cho` (a 650,000-byte string literal) made the build in cancho trap (an illegal instruction):
 `emit.put` wrote past the end of its buffer, and past the end of the state when the literal was long enough. It counts a byte past the end and
 does not write it (`overflowed` is how the answer is known to be no good), and the room for the code is raised by the length of the text.
+
+## 13. Slice 7: `ids`
+
+`cli.cho ids [--host H] [--std-dir DIR] FILE...` writes the identity of every declaration (`type`, `sig` and `body` lines), as `cancho ids` does: the
+program is checked first and a refused program is a status 1 and no lines. Mode 10 of the driver is that check: the statics, the bodies, and the
+generic functions as they are called, as `build_module` checks them, with nothing written and no `main` asked for (`ids` of a library works); a body the
+compiler in cancho has no code for (its `skip`) is let through, since an identity does not depend on the code. Mode 9 then writes the lines.
+
+`--std` is `--std-dir DIR`: this command line does not carry the standard library, so the files are read from DIR, in the order `--std` of the Rust
+command adds them (`STD` in `main.rs`, kept as `stdorder.cho`, **generated** by `selfhost::statics::std_order_module_is_the_std_table_of_cancho`, which also
+fails if `std/` and the table differ). The identities, and so the lines, do not depend on where the files were.
+
+**Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_writes_the_identities_like_cancho_ids` runs `ids` of both on the 908 programs of
+`check` above, and, for every tenth, with the library: 182 runs write lines (26 of them with the library, 767,106 bytes of it), 813 refuse, and the lines
+are the same byte for byte, the status the same. Four refusals the checker in cancho does not make are named in the test: `g17_conn_payload.cho`
+(`thread-payload-type`), `reference_escapes_via_inference.cho`, a tuple index that is no name, and one program of several files; each is a
+body the checker lets through or has no judgement of.
