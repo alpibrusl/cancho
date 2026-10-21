@@ -317,6 +317,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "blake3.cho",
         "identity.cho",
         "prune.cho",
+        "testscan.cho",
         "listing.cho",
         "checker.cho",
         "body.cho",

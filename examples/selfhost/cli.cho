@@ -28,6 +28,7 @@ import selfhost.guidelines;
 import selfhost.commandtree;
 import selfhost.diagnose;
 import selfhost.stdorder;
+import selfhost.testscan;
 
 // The canonical text of a program, or why there is none: status 0, 1 (the first refusal, at `from` to `to`), 2 (it does not fit the room).
 res struct Text {
@@ -892,34 +893,57 @@ fn make_binary[&h, &i, &a, &f, &x, &r, &o, &c](heap: &!h Heap, io: &!i Io, args:
 }
 
 // How a child that was run came to an end, as the status of `run`: its own status, or 3 with the reason.
-fn ended[&i](io: &!i Io, ran: process.Ran) -> [err_write] int {
+// How a program that was run ended, as `kind` and `value`: 0 it answered `value`, 1 it was killed by the signal `value`, 2 it did not finish in time, 3 it wrote
+// too much, 4 it could not be watched, 5 it did not start (which has been said).
+res struct Captured {
+    out: buffer.Buffer,
+    err: buffer.Buffer,
+    kind: int,
+    value: int,
+}
+
+fn kind_of(ran: process.Ran) -> [] (int, int) {
     match ran {
         process.Ran::Code(n) => {
-            return n;
+            return (0, n);
         }
         process.Ran::Signaled(s) => {
-            // As the Rust command: nothing is said, and the status is 3.
-            return 3;
+            return (1, s);
         }
         process.Ran::TimedOut => {
-            console.error_all(io, "the program did not finish in the time `run` allows\n");
-            return 3;
+            return (2, 0);
         }
         process.Ran::TooMuch => {
-            console.error_all(io, "the program wrote more than `run` keeps\n");
-            return 3;
+            return (3, 0);
         }
         process.Ran::Failed(e) => {
-            console.error_all(io, "the program could not be watched\n");
-            return 3;
+            return (4, 0);
         }
     }
 }
 
-// The program at `exe` run with `input` on its standard input and nothing else (its environment is a `PATH`), and its standard output and standard error
-// written, when it is over, to ours. What the standard library's `capture_both` is: nothing is written while the program runs, and it keeps at most
-// 64 MiB of each stream and runs for at most a day. Its own status, or 3.
-fn run_built[&h, &i, &x, &c, &p, &n](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte]) -> [heap, io_write, err_write, exec(""), clock, poll] int {
+// The status `run` ends with for a program that ended as `kind` and `n`.
+fn ended[&i](io: &!i Io, kind: int, n: int) -> [err_write] int {
+    if kind == 0 {
+        return n;
+    }
+    if kind == 2 {
+        console.error_all(io, "the program did not finish in the time `run` allows\n");
+    }
+    if kind == 3 {
+        console.error_all(io, "the program wrote more than `run` keeps\n");
+    }
+    if kind == 4 {
+        console.error_all(io, "the program could not be watched\n");
+    }
+    // A signal is not said, as in the Rust command; the status is 3 for all that is not an answer.
+    return 3;
+}
+
+// The program at `exe` run with `argv` (each argument followed by a NUL, after its own name) and `input` on its standard input and nothing else (its
+// environment is a `PATH`). What the standard library's `capture_both` is: nothing is written while the program runs, and it keeps at most 64 MiB of
+// each stream and runs for at most a day.
+fn run_capture[&h, &i, &x, &c, &p, &n, &v](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte], argv: &v [byte]) -> [heap, err_write, exec(""), clock, poll] Captured {
     var named = buffer.empty(heap, len(exe) + 3);
     if len(exe) > 0 && lc.at(exe, 0) != '/' && lc.at(exe, 0) != '.' {
         // A name with no directory is looked for in `PATH` by the system; this one is in the directory the command was run in.
@@ -927,37 +951,155 @@ fn run_built[&h, &i, &x, &c, &p, &n](heap: &!h Heap, io: &!i Io, exec: &x Exec("
     } else {
         named = buffer.append(heap, named, exe);
     }
-    var status = 3;
+    var out = buffer.empty(heap, 0);
+    var err = buffer.empty(heap, 0);
+    var kind = 5;
+    var code = 0;
     match process.channels_with_errors() {
         process.ChannelsWithErrors::Failed(e) => {
             console.error_all(io, "cannot make the pipes to run the program with\n");
         }
         process.ChannelsWithErrors::Ok(to_child, child_in, from_child, child_out, from_errors, child_errors) => {
             borrow named as &np in {
-                match exec_spawn(exec, buffer.bytes(np), "", "PATH=/usr/bin:/bin\0", Stdio::Pipe(child_in), Stdio::Pipe(child_out), Stdio::Pipe(child_errors)) {
+                match exec_spawn(exec, buffer.bytes(np), argv, "PATH=/usr/bin:/bin\0", Stdio::Pipe(child_in), Stdio::Pipe(child_out), Stdio::Pipe(child_errors)) {
                     Spawned::Failed(e) => {
                         process.close(to_child, from_child);
                         pipe_close(from_errors);
                         console.error_all(io, "cannot start the program\n");
                     }
                     Spawned::Ok(child) => {
-                        let (out, err, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 67108864, 67108864, 86400000);
-                        borrow out as &o in {
-                            buffer.write(io, o);
-                        }
-                        borrow err as &e in {
-                            console.error_all(io, buffer.bytes(e));
-                        }
+                        let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 67108864, 67108864, 86400000);
                         buffer.drop(heap, out);
                         buffer.drop(heap, err);
-                        status = ended(io, ran);
+                        out = got;
+                        err = errors;
+                        let (k, m) = kind_of(ran);
+                        kind = k;
+                        code = m;
                     }
                 }
             }
         }
     }
     buffer.drop(heap, named);
-    return status;
+    return Captured { out: out, err: err, kind: kind, value: code };
+}
+
+// The program at `exe` run with `input` on its standard input, and its standard output and standard error written, when it is over, to ours. Its own
+// status, or 3.
+fn run_built[&h, &i, &x, &c, &p, &n](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte]) -> [heap, io_write, err_write, exec(""), clock, poll] int {
+    let Captured { out, err, kind, value } = run_capture(heap, io, exec, clock, exe, input, "");
+    borrow out as &o in {
+        buffer.write(io, o);
+    }
+    borrow err as &e in {
+        console.error_all(io, buffer.bytes(e));
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return ended(io, kind, value);
+}
+
+// The file at `path`, or, for the extra one, `extra` itself.
+fn read_or_extra[&h, &f, &p, &e](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], is_extra: bool, extra: &e [byte]) -> [heap, fs_read(""), file_read] Contents {
+    if is_extra {
+        return Contents { bytes: buffer.append(heap, buffer.empty(heap, len(extra) + 1), extra), failed: 0 };
+    }
+    return read_file(heap, fs, path);
+}
+
+// A program read: its files' names (each followed by a NUL), the stream `driver.run_many` reads, the files laid end to end with a NUL between, the
+// length of each, and a status (0, or 2 for a file that could not be read, which has been said). `extra` is the text of one more file, named
+// `extra_name`, that goes last (the runner `test` writes); nothing if it is empty.
+res struct Loaded {
+    names: buffer.Buffer,
+    raw: buffer.Buffer,
+    laid: buffer.Buffer,
+    lens: Box[[int]],
+    count: int,
+    read_status: int,
+}
+
+fn load_program[&h, &i, &a, &f, &e, &m](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), build: bool, run: bool, std_dir: int, extra: &e [byte], extra_name: &m [byte]) -> [heap, err_write, args, fs_read(""), file_read] Loaded {
+    // The names: the files, then the standard library, then the extra file.
+    var names = buffer.empty(heap, 256);
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if takes_value(word, build) {
+            n = n + 1;
+        } else if !(run && bytes.equal(word, "--stdin")) {
+            names = buffer.append(heap, buffer.append(heap, names, word), "\0");
+        }
+        n = n + 1;
+    }
+    if std_dir >= 0 {
+        // The files of the standard library, in the order `--std` adds them, found in the directory.
+        let order = stdorder.names(heap, buffer.empty(heap, 600));
+        borrow order as &o in {
+            let all = buffer.bytes(o);
+            var at = 0;
+            var end = 0;
+            while at < len(all) {
+                end = at;
+                while lc.at(all, end) != 0 {
+                    end = end + 1;
+                }
+                names = buffer.append(heap, names, arg(args, std_dir));
+                if len(arg(args, std_dir)) > 0 && lc.at(arg(args, std_dir), len(arg(args, std_dir)) - 1) != '/' {
+                    names = buffer.push(heap, names, byte_of('/'));
+                }
+                names = buffer.append(heap, names, all[at..end]);
+                names = buffer.append(heap, names, ".cho\0");
+                at = end + 1;
+            }
+        }
+        buffer.drop(heap, order);
+    }
+    if len(extra) > 0 {
+        names = buffer.append(heap, buffer.append(heap, names, extra_name), "\0");
+    }
+    var count = 0;
+    borrow names as &nm in {
+        var k = 0;
+        while k < buffer.size(nm) {
+            if lc.at(buffer.bytes(nm), k) == 0 {
+                count = count + 1;
+            }
+            k = k + 1;
+        }
+    }
+    var raw = buffer.empty(heap, 65536);
+    var laid = buffer.empty(heap, 65536);
+    let lens = box_slice(heap, count, 0);
+    var status = 0;
+    var which = 0;
+    borrow names as &nm in {
+        while which < count && status == 0 {
+            let path = name_at(buffer.bytes(nm), which);
+            let read = read_or_extra(heap, fs, path, len(extra) > 0 && which == count - 1, extra);
+            let Contents { bytes, failed } = read;
+            if failed != 0 {
+                complain(heap, io, path, "cannot read the file");
+                status = 2;
+            } else {
+                borrow bytes as &src in {
+                    borrow mut lens as &!lb in {
+                        contents(lb)[which] = buffer.size(src);
+                    }
+                    raw = buffer.append(heap, raw, "FILE ");
+                    raw = buffer.push_nat(heap, raw, buffer.size(src));
+                    raw = buffer.push(heap, raw, byte_of('\n'));
+                    raw = buffer.append(heap, raw, buffer.bytes(src));
+                    laid = buffer.append(heap, laid, buffer.bytes(src));
+                    laid = buffer.push(heap, laid, byte_of(0));
+                }
+            }
+            buffer.drop(heap, bytes);
+            which = which + 1;
+        }
+    }
+    return Loaded { names: names, raw: raw, laid: laid, lens: lens, count: count, read_status: status };
 }
 
 // `check [--output json] [--host H] [--std-dir DIR] FILE...` (`docs/cli-in-cancho.md` section 12) and `ids [--host H] [--std-dir DIR] FILE...` (section 13):
@@ -1044,81 +1186,9 @@ fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a 
     if files == 0 {
         return usage_error(heap, io, "no file given");
     }
-    // The names: the files, then the standard library.
-    var names = buffer.empty(heap, 256);
-    n = 2;
-    while n < arg_count(args) {
-        let word = arg(args, n);
-        if takes_value(word, build) {
-            n = n + 1;
-        } else if !(run && bytes.equal(word, "--stdin")) {
-            names = buffer.append(heap, buffer.append(heap, names, word), "\0");
-        }
-        n = n + 1;
-    }
-    if std_dir >= 0 {
-        // The files of the standard library, in the order `--std` adds them, found in the directory.
-        let order = stdorder.names(heap, buffer.empty(heap, 600));
-        borrow order as &o in {
-            let all = buffer.bytes(o);
-            var at = 0;
-            var end = 0;
-            while at < len(all) {
-                end = at;
-                while lc.at(all, end) != 0 {
-                    end = end + 1;
-                }
-                names = buffer.append(heap, names, arg(args, std_dir));
-                if len(arg(args, std_dir)) > 0 && lc.at(arg(args, std_dir), len(arg(args, std_dir)) - 1) != '/' {
-                    names = buffer.push(heap, names, byte_of('/'));
-                }
-                names = buffer.append(heap, names, all[at..end]);
-                names = buffer.append(heap, names, ".cho\0");
-                at = end + 1;
-            }
-        }
-        buffer.drop(heap, order);
-    }
-    var count = 0;
-    borrow names as &nm in {
-        var k = 0;
-        while k < buffer.size(nm) {
-            if lc.at(buffer.bytes(nm), k) == 0 {
-                count = count + 1;
-            }
-            k = k + 1;
-        }
-    }
-    var raw = buffer.empty(heap, 65536);
-    var laid = buffer.empty(heap, 65536);
-    let lens = box_slice(heap, count, 0);
-    var status = 0;
-    var which = 0;
-    borrow names as &nm in {
-        while which < count && status == 0 {
-            let path = name_at(buffer.bytes(nm), which);
-            let read = read_file(heap, fs, path);
-            let Contents { bytes, failed } = read;
-            if failed != 0 {
-                complain(heap, io, path, "cannot read the file");
-                status = 2;
-            } else {
-                borrow bytes as &src in {
-                    borrow mut lens as &!lb in {
-                        contents(lb)[which] = buffer.size(src);
-                    }
-                    raw = buffer.append(heap, raw, "FILE ");
-                    raw = buffer.push_nat(heap, raw, buffer.size(src));
-                    raw = buffer.push(heap, raw, byte_of('\n'));
-                    raw = buffer.append(heap, raw, buffer.bytes(src));
-                    laid = buffer.append(heap, laid, buffer.bytes(src));
-                    laid = buffer.push(heap, laid, byte_of(0));
-                }
-            }
-            buffer.drop(heap, bytes);
-            which = which + 1;
-        }
-    }
+    let loaded = load_program(heap, io, args, fs, build, run, std_dir, "", "");
+    let Loaded { names, raw, laid, lens, count, read_status } = loaded;
+    var status = read_status;
     // Where a build is to write: `-o`, or the stem of the first file (and `.o` for an object file).
     var target = buffer.empty(heap, 64);
     if build && status == 0 {
@@ -1198,6 +1268,369 @@ fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a 
     return status;
 }
 
+// What is said, on the standard error, of a program `test` cannot run: `status` is what `testscan.cho` answered (2 a `main` of the root module, at
+// `at`; 3 a test of the shape `why` says it is not, named `named`; 4 two modules that end in the same word, `named` being the word and the two
+// paths, each followed by a NUL). Status 2.
+fn test_refusal[&h, &i, &y, &l, &n, &m](heap: &!h Heap, io: &!i Io, names: &y [byte], laid: &l [byte], lens: &n [int], status: int, why: int, at: int, named: &m [byte]) -> [heap, err_write] int {
+    var out = buffer.empty(heap, 512);
+    if status == 4 {
+        var first = 0;
+        while lc.at(named, first) != 0 {
+            first = first + 1;
+        }
+        var second = first + 1;
+        while lc.at(named, second) != 0 {
+            second = second + 1;
+        }
+        var third = second + 1;
+        while lc.at(named, third) != 0 {
+            third = third + 1;
+        }
+        out = buffer.append(heap, out, "two test modules, `");
+        out = buffer.append(heap, out, named[first + 1..second]);
+        out = buffer.append(heap, out, "` and `");
+        out = buffer.append(heap, out, named[second + 1..third]);
+        out = buffer.append(heap, out, "`, both end in `");
+        out = buffer.append(heap, out, named[0..first]);
+        out = buffer.append(heap, out, "`; the runner imports each by its last segment\n");
+    } else {
+        out = buffer.append(heap, out, name_at(names, diagnose.locate(laid, lens, at).file));
+        if status == 2 {
+            out = buffer.append(heap, out, ": `cancho test` supplies its own `main`; a file it runs must not declare one\n");
+        } else {
+            out = buffer.append(heap, out, ": `");
+            out = buffer.append(heap, out, named);
+            out = buffer.append(heap, out, "` looks like a test but ");
+            out = buffer.append(heap, out, testscan.reason(why));
+            out = buffer.append(heap, out, "\n\na test is `fn test_x[regions](caps) -> [row] int` with no type parameters, where each parameter is a unique `Heap` or `Io` reference (`docs/testing.md` §3); it answers 0 to pass\n");
+        }
+    }
+    borrow out as &t in {
+        console.error_all(io, buffer.bytes(t));
+    }
+    buffer.drop(heap, out);
+    return 2;
+}
+
+// How a test that did not pass ended, as a sentence (`kind` and `value` are those of `Captured`).
+fn describe[&h](heap: &!h Heap, out: buffer.Buffer, kind: int, value: int) -> [heap] buffer.Buffer {
+    var text = out;
+    if kind == 1 {
+        // `std.signals` has no bit for the fault signals, and says 0 for them: the trap every checked operation ends with is the one a test is most
+        // likely to have ended with, and it is what is said; a SIGSEGV or a SIGABRT is said to be the same.
+        var signal = 4;
+        if value > 0 {
+            signal = 1;
+            var bit = value;
+            while bit > 1 {
+                bit = bit / 2;
+                signal = signal + 1;
+            }
+        }
+        text = buffer.push_nat(heap, buffer.append(heap, text, "trapped: killed by signal "), signal);
+        if signal == 4 {
+            text = buffer.append(heap, text, " (SIGILL, the trap every checked operation ends with)");
+        } else if signal == 11 {
+            text = buffer.append(heap, text, " (SIGSEGV)");
+        } else if signal == 6 {
+            text = buffer.append(heap, text, " (SIGABRT)");
+        }
+    } else if kind == 0 {
+        text = buffer.append(heap, buffer.push_nat(heap, buffer.append(heap, text, "returned "), value), ", and a test answers 0 to pass");
+    } else {
+        text = buffer.append(heap, text, "ended without a status");
+    }
+    return text;
+}
+
+// The program at `exe` run with the number `index` as its argument and nothing on its standard input.
+fn run_numbered[&h, &i, &x, &c, &p](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], index: int) -> [heap, err_write, exec(""), clock, poll] Captured {
+    let argv = buffer.push(heap, buffer.push_nat(heap, buffer.empty(heap, 16), index), byte_of(0));
+    var got = Captured { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, value: 0 };
+    borrow argv as &av in {
+        let Captured { out, err, kind, value } = got;
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+        got = run_capture(heap, io, exec, clock, exe, "", buffer.bytes(av));
+    }
+    buffer.drop(heap, argv);
+    return got;
+}
+
+// Run each of `tests` (a label, a call and a path, each followed by a NUL, for each) as the program at `exe` with its number as the argument, and say
+// how it went as `cancho test` does (`docs/cli-in-cancho.md` section 16). 0 if all passed, else 4.
+fn run_tests[&h, &i, &x, &c, &p, &t](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], tests: &t [byte]) -> [heap, io_write, err_write, exec(""), clock, poll] int {
+    var total = 0;
+    var k = 0;
+    while k < len(tests) {
+        if lc.at(tests, k) == 0 {
+            total = total + 1;
+        }
+        k = k + 1;
+    }
+    total = total / 3;
+    console.write_all(io, "running ");
+    var shown = buffer.push_nat(heap, buffer.empty(heap, 16), total);
+    shown = buffer.append(heap, shown, " test");
+    if total != 1 {
+        shown = buffer.push(heap, shown, byte_of('s'));
+    }
+    shown = buffer.push(heap, shown, byte_of('\n'));
+    borrow shown as &sh in {
+        buffer.write(io, sh);
+    }
+    buffer.drop(heap, shown);
+    var report = buffer.empty(heap, 256);
+    var failed = 0;
+    var index = 0;
+    var at = 0;
+    while at < len(tests) {
+        var label_end = at;
+        while lc.at(tests, label_end) != 0 {
+            label_end = label_end + 1;
+        }
+        var call_end = label_end + 1;
+        while lc.at(tests, call_end) != 0 {
+            call_end = call_end + 1;
+        }
+        var path_end = call_end + 1;
+        while lc.at(tests, path_end) != 0 {
+            path_end = path_end + 1;
+        }
+        let label = tests[at..label_end];
+        let got = run_numbered(heap, io, exec, clock, exe, index);
+        let Captured { out, err, kind, value } = got;
+        console.write_all(io, "test ");
+        console.write_all(io, label);
+        if kind == 0 && value == 0 {
+            console.write_all(io, " ... ok\n");
+        } else {
+            console.write_all(io, " ... FAILED\n");
+            failed = failed + 1;
+            report = buffer.append(heap, buffer.append(heap, buffer.append(heap, report, "\n---- "), label), " ----\n");
+            report = buffer.push(heap, describe(heap, report, kind, value), byte_of('\n'));
+            borrow out as &o in {
+                if buffer.size(o) > 0 {
+                    report = buffer.append(heap, report, "stdout:\n");
+                    report = buffer.push(heap, buffer.append(heap, report, buffer.bytes(o)), byte_of('\n'));
+                }
+            }
+            borrow err as &e in {
+                if buffer.size(e) > 0 {
+                    report = buffer.append(heap, report, "stderr:\n");
+                    report = buffer.push(heap, buffer.append(heap, report, buffer.bytes(e)), byte_of('\n'));
+                }
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+        index = index + 1;
+        at = path_end + 1;
+    }
+    var tail = buffer.empty(heap, 64);
+    if failed == 0 {
+        tail = buffer.push_nat(heap, buffer.append(heap, tail, "\ntest result: ok. "), total);
+        tail = buffer.append(heap, tail, " passed; 0 failed\n");
+    } else {
+        borrow report as &rp in {
+            console.write_all(io, "\nfailures:\n");
+            buffer.write(io, rp);
+        }
+        tail = buffer.push_nat(heap, buffer.append(heap, tail, "\ntest result: FAILED. "), total - failed);
+        tail = buffer.push_nat(heap, buffer.append(heap, tail, " passed; "), failed);
+        tail = buffer.append(heap, tail, " failed\n");
+    }
+    borrow tail as &tl in {
+        buffer.write(io, tl);
+    }
+    buffer.drop(heap, tail);
+    buffer.drop(heap, report);
+    if failed == 0 {
+        return 0;
+    }
+    return 4;
+}
+
+// The program of the files, the standard library (from the directory `std_dir` names, if it is not negative) and the runner for `tests` (what
+// `testscan.cho` found), built, and its tests run (`run_tests`). `host_in`, `host_given` and `clang_at` are as in `program_command`.
+fn test_program[&h, &i, &a, &f, &x, &c, &t](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, std_dir: int, host_in: int, host_given: bool, clang_at: int, tests: &t [byte]) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    var host = host_in;
+    var status = 0;
+    let source = testscan.runner(heap, tests);
+    borrow source as &sp in {
+        let loaded = load_program(heap, io, args, fs, true, false, std_dir, buffer.bytes(sp), "runner_main.cho");
+        let Loaded { names, raw, laid, lens, count, read_status } = loaded;
+        status = read_status;
+        var exe = buffer.empty(heap, 64);
+        if status == 0 {
+            borrow names as &nm in {
+                exe = buffer.append(heap, exe, stem(name_at(buffer.bytes(nm), 0)));
+            }
+            exe = buffer.append(heap, exe, ".cancho-test");
+            if !host_given {
+                borrow exe as &ep in {
+                    var note = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(ep)) + 8), buffer.bytes(ep));
+                    note = buffer.append(heap, note, ".host");
+                    borrow note as &np in {
+                        host = detect_host(heap, exec, fs, buffer.bytes(np));
+                    }
+                    buffer.drop(heap, note);
+                }
+            }
+            borrow raw as &r in {
+                let built = driver.run_many(heap, io, buffer.bytes(r), 5, host);
+                borrow built as &b in {
+                    borrow laid as &lt in {
+                        borrow mut lens as &!lb in {
+                            borrow names as &nm in {
+                                status = report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to);
+                            }
+                        }
+                    }
+                    if status == 0 {
+                        var clang = "/usr/bin/clang";
+                        if clang_at >= 0 {
+                            clang = arg(args, clang_at);
+                        }
+                        borrow exe as &ep in {
+                            status = make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(ep), clang, false);
+                            if status == 0 {
+                                status = run_tests(heap, io, exec, clock, buffer.bytes(ep), tests);
+                                fs_remove(fs, buffer.bytes(ep));
+                            }
+                        }
+                    }
+                }
+                driver.discard(heap, built);
+            }
+        }
+        buffer.drop(heap, exe);
+        buffer.drop(heap, raw);
+        buffer.drop(heap, laid);
+        buffer.drop(heap, names);
+        unbox_slice(heap, lens);
+    }
+    buffer.drop(heap, source);
+    return status;
+}
+
+// `test [--host H] [--std-dir DIR] [--backend llvm] [--clang PATH] [-l LIB] [-L DIR] FILE...` (`docs/cli-in-cancho.md` section 16): the tests of the
+// files (`testscan.cho`) are found, one program is built of the files and the runner that is written for them, and each test is run as a process of
+// its own (the runner takes the number of the test as its argument), with the report of `cancho test`. Exit status 0 if all passed, 4 if one did not,
+// 1 for a refusal, 2 for a usage error or a program with no tests, 3 for what could not be done. The program is built next to the first file, as `run`
+// does, and taken away.
+fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    var host = 0;
+    var host_given = false;
+    var clang_at = 0 - 1;
+    var std_dir = 0 - 1;
+    var files = 0;
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--host") {
+            n = n + 1;
+            host_given = true;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "linux") {
+                host = 0;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "darwin") {
+                host = 1;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "linux-aarch64") {
+                host = 2;
+            } else {
+                return usage_error(heap, io, "`--host` needs linux, darwin or linux-aarch64");
+            }
+        } else if bytes.equal(word, "--std-dir") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return usage_error(heap, io, "`--std-dir` needs a directory");
+            }
+            std_dir = n;
+        } else if bytes.equal(word, "--backend") {
+            n = n + 1;
+            if n >= arg_count(args) || !bytes.equal(arg(args, n), "llvm") {
+                return usage_error(heap, io, "`--backend`: only llvm is available in this command line");
+            }
+        } else if bytes.equal(word, "-l") || bytes.equal(word, "-L") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return usage_error(heap, io, "`-l` and `-L` need a value");
+            }
+        } else if bytes.equal(word, "--clang") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return usage_error(heap, io, "`--clang` needs a path");
+            }
+            clang_at = n;
+        } else if bytes.equal(word, "--std") || bytes.equal(word, "--target") {
+            return usage_error(heap, io, "`--std` and `--target` are not available in this command line: `--std-dir DIR` adds the standard library from DIR");
+        } else if bytes.equal(word, "-o") || bytes.equal(word, "--emit") || bytes.equal(word, "--output") {
+            return usage_error(heap, io, "`test` does not take `-o`, `--emit` or `--output`");
+        } else {
+            files = files + 1;
+        }
+        n = n + 1;
+    }
+    if files == 0 {
+        return usage_error(heap, io, "no file given");
+    }
+    // The files alone are read, and their tests found.
+    let first = load_program(heap, io, args, fs, true, false, 0 - 1, "", "");
+    let Loaded { names, raw, laid, lens, count, read_status } = first;
+    var status = read_status;
+    var tests = buffer.empty(heap, 0);
+    if status == 0 {
+        borrow raw as &r in {
+            let scanned = driver.run_many(heap, io, buffer.bytes(r), 11, 0);
+            borrow scanned as &sc in {
+                status = sc.status;
+                if sc.status == 0 {
+                    buffer.drop(heap, tests);
+                    tests = buffer.append(heap, buffer.empty(heap, buffer.size(sc.ir) + 1), buffer.bytes(sc.ir));
+                } else if sc.status == 1 {
+                    borrow laid as &lt in {
+                        borrow mut lens as &!lb in {
+                            borrow names as &nm in {
+                                status = report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, 1, sc.rule, sc.from, sc.to);
+                            }
+                        }
+                    }
+                } else {
+                    borrow laid as &lt in {
+                        borrow mut lens as &!lb in {
+                            borrow names as &nm in {
+                                status = test_refusal(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), sc.status, sc.rule, sc.from, buffer.bytes(sc.ir));
+                            }
+                        }
+                    }
+                }
+            }
+            driver.discard(heap, scanned);
+        }
+    }
+    buffer.drop(heap, raw);
+    buffer.drop(heap, laid);
+    buffer.drop(heap, names);
+    unbox_slice(heap, lens);
+    var none = false;
+    borrow tests as &tz in {
+        none = buffer.size(tz) == 0;
+    }
+    if status == 0 && none {
+        console.error_all(io, "no `test_*` functions found in the files given\n\n`cancho test` runs the functions named `test_*` (`docs/testing.md` §3); a run that found none is not a pass\n");
+        status = 2;
+    }
+    if status != 0 {
+        buffer.drop(heap, tests);
+        return status;
+    }
+    borrow tests as &tt in {
+        status = test_program(heap, io, args, fs, exec, clock, std_dir, host, host_given, clang_at, buffer.bytes(tt));
+    }
+    buffer.drop(heap, tests);
+    return status;
+}
+
 fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_read, io_write, err_write, args, fs_read(""), fs_write(""), dir_read, file_read, file_write, exec(""), clock, poll] int {
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "fmt") {
         return fmt_command(heap, io, args, fs);
@@ -1210,6 +1643,9 @@ fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "run") {
         return program_command(heap, io, args, fs, exec, clock, false, true, true);
+    }
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "test") {
+        return test_command(heap, io, args, fs, exec, clock);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "ids") {
         return program_command(heap, io, args, fs, exec, clock, true, false, false);

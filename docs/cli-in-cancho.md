@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 9 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15); the rest is design (epic #491,
+Status: **slices 1 to 10 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15; `test`, §16); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
@@ -238,7 +238,7 @@ object file; `-l`, `-L` and `-o` work; a refused program makes nothing (status 1
 
 **Not here yet.** `--std` (use `--std-dir`, which reads the files, so a program that imports the library builds only with it), `--target`
 (WebAssembly), `--backend cranelift`, `--compiler`, a project (`cancho.toml`) with no file named, and the Rust command's own words for what the linker
-says. And `test` (§15 says how `run` got round the child's streams).
+says. (§15 says how `run` got round the child's streams; §16 is `test`.)
 
 ## 15. Slice 9: `run`
 
@@ -259,3 +259,33 @@ write the same on both streams and end with the same status, 2 cannot be judged 
 beside the program. `--stdin` hands a program its three bytes and an empty input is read as the end; a program that divides by zero is a status 3.
 A streaming relay (a `std.process` loop that writes as it reads) and an input that is read as the program asks for it are what would close the
 differences; neither is built.
+
+## 16. Slice 10: `test`
+
+`cli.cho test [--host H] [--std-dir DIR] [--backend llvm] [--clang PATH] [-l NAME]... [-L PATH]... FILE...` finds the `test_*` functions of the
+files, builds one program of the files and a runner written for them, and runs each test as a process of its own, as `cancho test` does
+(`docs/testing.md` §3, `test_cli.rs`).
+
+**Finding the tests** is `testscan.cho`, driver mode 11: the files are parsed (nothing is checked) and the declarations walked in order. A function
+named `test_*` is a test if it has no type parameter, answers `int`, and asks for nothing but a unique `Heap` and a unique `Io`, once each; in a
+module that is not the root it must be `pub`. The refusals are those of the Rust command, with its words: a `main` in the root module of a file
+(`cancho test` supplies its own), a function that looks like a test and is not one (why, and the shape a test has), no test at all, and two test
+modules whose paths end in the same word (the runner imports each by its last segment): status 2 for each.
+
+**The runner** is a file, `runner_main.cho`, that is read like the others: an `import` for each module that has a test, a `main` that reads its
+first argument as a number, and an `if which == K { status = CALL; }` for each test; `testscan.runner` writes it, with the text `test_cli.rs` has.
+The program is built to `STEM.cancho-test` beside the first file (the Rust command uses a directory of the temporary directory), each test is run
+with `std.process.capture_both` (§15) with its number as the argument and an empty input, and the file is taken away when the tests are over.
+
+**Differences.** The tests run with a `PATH` for an environment, not the caller's; a test that runs for more than a day is killed (status 3 of
+that test, "ended without a status"); a refusal says the sentence of its rule (§12), where the Rust command says what is wrong at the place; the
+Rust command reads each file separately for the tests, and this one reads them together, so a parse error is placed in the stream (the same file
+and place); a file that cannot be read is a status 2 (the Rust command's 3). `std.signals` has no bit for the fault signals and `child_wait` says
+0 for them, so a test that ends by a trap, a SIGSEGV (a stack overflow) or a SIGABRT is said to have ended by SIGILL, the trap every checked
+operation ends with; the other signals are named by their number. `--std` and `--target` are what they are in §14.
+
+**Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_tests_like_cancho_test` runs 14 programs with both commands and
+compares the status, the standard output and the standard error (of a refusal, up to the place): all pass, some fail (with the output of a test
+that wrote, and a status of 256, which the runner turns into 1), a trap, tests in modules, two modules that end the same, a test that is not
+`pub`, no tests, a `main`, a type parameter, a result that is not `int`, a parameter that is not a capability, a capability twice, a file that
+does not parse, and a program that is refused: none differs, and nothing is left beside the files.

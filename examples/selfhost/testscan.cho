@@ -1,0 +1,383 @@
+edition 7;
+module selfhost.testscan;
+
+// testscan.cho -- the tests of a program: the functions named `test_*` (`docs/testing.md` section 3), found in the parsed files the way
+// `test_cli.rs` finds them: a plain function with no type parameter that answers `int` and asks for nothing but a unique `Heap` and a unique
+// `Io`, once each, and, in a module that is not the root, is `pub`. A file may not declare a `main` in the root module (the runner writes one).
+//
+// The answer is, for each test, three texts each followed by a NUL: the label (`module.name`, or the name), the call the runner makes (the
+// last segment of the module, a dot, the name, and the capabilities as `th` and `ti`) and the module's path to import ("" for the root); or
+// the first thing wrong, with where it is.
+
+import std.buffer;
+import selfhost.ast;
+import selfhost.kinds;
+import selfhost.lexcore as lc;
+import selfhost.pass1;
+
+// What was found. `status`: 0 the tests are in `tests`; 2 a root `main` at `at`; 3 a test of a wrong shape at `at` (`why` says how, `named`
+// is its name); 4 two modules end in the same word (`named` is "alias", then the two paths, each followed by a NUL).
+pub res struct Scan {
+    tests: buffer.Buffer,
+    count: int,
+    status: int,
+    why: int,
+    at: int,
+    named: buffer.Buffer,
+}
+
+// The sentences `shape_error` has for `why`.
+pub fn reason(why: int) -> [] &static [byte] {
+    if why == 1 {
+        return "takes a type parameter";
+    }
+    if why == 2 {
+        return "does not return `int`";
+    }
+    if why == 3 {
+        return "has a parameter that is not a unique `Heap` or `Io` reference";
+    }
+    if why == 4 {
+        return "asks for the same capability twice";
+    }
+    return "is not `pub`, and the runner reaches it from outside its module";
+}
+
+fn word[&s, &x](st: &!s [int], text: &x [byte], tok: int, w: &static [byte]) -> [] bool {
+    return pass1.is_word(st, text, tok, w);
+}
+
+// Does the declaration whose `[` is the token `start` name a type parameter (a name that does not follow a `&`)?
+fn has_type_param[&s](st: &!s [int], start: int) -> [] bool {
+    if start < 0 {
+        return false;
+    }
+    var i = start + 1;
+    while ast.code_at(st, i) != lc.code(lc.Tok::RBracket) && ast.code_at(st, i) != lc.code(lc.Tok::Where) && ast.code_at(st, i) != lc.code(lc.Tok::Eof) {
+        if ast.code_at(st, i) == lc.code(lc.Tok::Amp) {
+            i = i + 2;
+        } else if ast.code_at(st, i) == lc.code(lc.Tok::Comma) {
+            i = i + 1;
+        } else {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Is the type `t` the plain name `w`, unqualified and unapplied?
+fn plain[&s, &x](st: &!s [int], text: &x [byte], t: int, w: &static [byte]) -> [] bool {
+    return ast.is_kind(st, t, kinds.NK::TName) && ast.get(st, t, 4) < 0 && ast.get(st, t, 7) == 0 && word(st, text, ast.get(st, t, 5), w);
+}
+
+// How a test is wrong: 0 if it is not, else the `why` of `reason`. `caps` receives the capabilities it asks for as 1 (Heap) and 2 (Io), in order.
+fn shape[&s, &x](st: &!s [int], text: &x [byte], item: int, caps: &static [byte]) -> [] int {
+    if has_type_param(st, ast.get(st, item, 6)) {
+        return 1;
+    }
+    if !plain(st, text, ast.get(st, item, 10), "int") {
+        return 2;
+    }
+    var heap_seen = false;
+    var io_seen = false;
+    var p = ast.get(st, item, 7);
+    var left = ast.get(st, item, 8);
+    while left > 0 {
+        let t = ast.get(st, p, 5);
+        if !ast.is_kind(st, t, kinds.NK::TRef) || ast.get(st, t, 4) != 1 {
+            return 3;
+        }
+        let inner = ast.get(st, t, 6);
+        if plain(st, text, inner, "Heap") {
+            if heap_seen {
+                return 4;
+            }
+            heap_seen = true;
+        } else if plain(st, text, inner, "Io") {
+            if io_seen {
+                return 4;
+            }
+            io_seen = true;
+        } else {
+            return 3;
+        }
+        p = ast.next(st, p);
+        left = left - 1;
+    }
+    return 0;
+}
+
+// The path of the module `unit` as dotted text appended to `out`.
+fn path_of[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte], unit: int, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    var b = out;
+    if unit == 0 {
+        return b;
+    }
+    let first = ast.module_first(st, unit);
+    var n = 0;
+    while n < ast.module_len(st, unit) {
+        if n > 0 {
+            b = buffer.push(heap, b, byte_of('.'));
+        }
+        b = buffer.append(heap, b, text[ast.tstart(st, first + 2 * n)..ast.tend(st, first + 2 * n)]);
+        n = n + 1;
+    }
+    return b;
+}
+
+// The last segment of the module `unit`.
+fn alias_of[&s, &x](st: &!s [int], text: &x [byte], unit: int) -> [] &x [byte] {
+    let first = ast.module_first(st, unit);
+    let last = first + 2 * (ast.module_len(st, unit) - 1);
+    return text[ast.tstart(st, last)..ast.tend(st, last)];
+}
+
+// Does `list`, a list of texts each followed by a NUL, have an entry that is `entry`? The index of it among them, or -1.
+fn index_of[&l, &e](list: &l [byte], entry: &e [byte]) -> [] int {
+    var at = 0;
+    var k = 0;
+    while at < len(list) {
+        var end = at;
+        while lc.at(list, end) != 0 {
+            end = end + 1;
+        }
+        if end - at == len(entry) && lc.spells(list, at, end, entry) {
+            return k;
+        }
+        k = k + 1;
+        at = end + 1;
+    }
+    return 0 - 1;
+}
+
+pub fn scan[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte]) -> [heap] Scan {
+    var tests = buffer.empty(heap, 256);
+    var named = buffer.empty(heap, 0);
+    // The modules the runner imports: "alias", a NUL, "path", a NUL, for each.
+    var imports = buffer.empty(heap, 64);
+    var count = 0;
+    var clash = false;
+    var status = 0;
+    var why = 0;
+    var at = 0;
+    var item = st[15];
+    while item >= 0 && status == 0 {
+        if ast.is_kind(st, item, kinds.NK::IFn) {
+            let unit = ast.get(st, item, 13);
+            let name = ast.get(st, item, 4);
+            if unit == 0 && word(st, text, name, "main") {
+                status = 2;
+                at = ast.nstart(st, item);
+            } else if ast.tend(st, name) - ast.tstart(st, name) >= 5 && lc.spells(text, ast.tstart(st, name), ast.tstart(st, name) + 5, "test_") {
+                let bad = shape(st, text, item, "");
+                if bad == 0 && unit != 0 && ast.get(st, item, 5) == 0 {
+                    status = 3;
+                    why = 5;
+                    at = ast.nstart(st, item);
+                    buffer.drop(heap, named);
+                    named = buffer.append(heap, buffer.empty(heap, 32), text[ast.tstart(st, name)..ast.tend(st, name)]);
+                } else if bad != 0 {
+                    status = 3;
+                    why = bad;
+                    at = ast.nstart(st, item);
+                    buffer.drop(heap, named);
+                    named = buffer.append(heap, buffer.empty(heap, 32), text[ast.tstart(st, name)..ast.tend(st, name)]);
+                } else {
+                    // The label.
+                    tests = path_of(heap, st, text, unit, tests);
+                    if unit != 0 {
+                        tests = buffer.push(heap, tests, byte_of('.'));
+                    }
+                    tests = buffer.append(heap, tests, text[ast.tstart(st, name)..ast.tend(st, name)]);
+                    tests = buffer.push(heap, tests, byte_of(0));
+                    // The call.
+                    if unit != 0 {
+                        tests = buffer.append(heap, tests, alias_of(st, text, unit));
+                        tests = buffer.push(heap, tests, byte_of('.'));
+                    }
+                    tests = buffer.append(heap, tests, text[ast.tstart(st, name)..ast.tend(st, name)]);
+                    tests = buffer.push(heap, tests, byte_of('('));
+                    var p = ast.get(st, item, 7);
+                    var left = ast.get(st, item, 8);
+                    while left > 0 {
+                        if plain(st, text, ast.get(st, ast.get(st, p, 5), 6), "Heap") {
+                            tests = buffer.append(heap, tests, "th");
+                        } else {
+                            tests = buffer.append(heap, tests, "ti");
+                        }
+                        if left > 1 {
+                            tests = buffer.append(heap, tests, ", ");
+                        }
+                        p = ast.next(st, p);
+                        left = left - 1;
+                    }
+                    tests = buffer.append(heap, tests, ")\0");
+                    // The import.
+                    var path = buffer.empty(heap, 32);
+                    path = path_of(heap, st, text, unit, path);
+                    if unit != 0 {
+                        // Where the path of this alias is among the imports so far: -1 for none, else the offset of its text.
+                        var known = 0 - 1;
+                        var same = true;
+                        borrow imports as &imp in {
+                            let all = buffer.bytes(imp);
+                            let k = index_of(all, alias_of(st, text, unit));
+                            if k >= 0 {
+                                var q = 0;
+                                var entry = 0;
+                                while entry < 2 * k + 1 {
+                                    while lc.at(all, q) != 0 {
+                                        q = q + 1;
+                                    }
+                                    q = q + 1;
+                                    entry = entry + 1;
+                                }
+                                var end = q;
+                                while lc.at(all, end) != 0 {
+                                    end = end + 1;
+                                }
+                                known = q;
+                                borrow path as &pt in {
+                                    same = end - q == len(buffer.bytes(pt)) && lc.spells(all, q, end, buffer.bytes(pt));
+                                    if !same && !clash {
+                                        named = buffer.append(heap, named, alias_of(st, text, unit));
+                                        named = buffer.push(heap, named, byte_of(0));
+                                        named = buffer.append(heap, named, all[q..end]);
+                                        named = buffer.push(heap, named, byte_of(0));
+                                        named = buffer.append(heap, named, buffer.bytes(pt));
+                                        named = buffer.push(heap, named, byte_of(0));
+                                    }
+                                }
+                            }
+                        }
+                        if known < 0 {
+                            imports = buffer.append(heap, imports, alias_of(st, text, unit));
+                            imports = buffer.push(heap, imports, byte_of(0));
+                            borrow path as &pt in {
+                                imports = buffer.append(heap, imports, buffer.bytes(pt));
+                            }
+                            imports = buffer.push(heap, imports, byte_of(0));
+                        }
+                        if !same {
+                            clash = true;
+                        } else {
+                            borrow path as &pt in {
+                                tests = buffer.append(heap, tests, buffer.bytes(pt));
+                            }
+                        }
+                    }
+                    buffer.drop(heap, path);
+                    tests = buffer.push(heap, tests, byte_of(0));
+                    count = count + 1;
+                }
+            }
+        }
+        item = ast.next(st, item);
+    }
+    buffer.drop(heap, imports);
+    if status == 0 && clash {
+        status = 4;
+    }
+    return Scan { tests: tests, count: count, status: status, why: why, at: at, named: named };
+}
+
+// The program that runs one test, chosen by the first argument (`test_cli.rs`, `synthesize_main`): an `import` for the module of each test, the
+// reader of the argument, and a `main` that calls the one test asked for. `tests` is what `scan` found.
+pub fn runner[&h, &t](heap: &!h Heap, tests: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 2048);
+    var paths = buffer.empty(heap, 64);
+    var at = 0;
+    while at < len(tests) {
+        // The label, the call, the path.
+        var call_at = at;
+        while lc.at(tests, call_at) != 0 {
+            call_at = call_at + 1;
+        }
+        call_at = call_at + 1;
+        var path_at = call_at;
+        while lc.at(tests, path_at) != 0 {
+            path_at = path_at + 1;
+        }
+        path_at = path_at + 1;
+        var path_end = path_at;
+        while lc.at(tests, path_end) != 0 {
+            path_end = path_end + 1;
+        }
+        let path = tests[path_at..path_end];
+        var known = false;
+        borrow paths as &seen in {
+            known = index_of(buffer.bytes(seen), path) >= 0;
+        }
+        if len(path) > 0 && !known {
+            paths = buffer.push(heap, buffer.append(heap, paths, path), byte_of(0));
+            out = buffer.append(heap, buffer.append(heap, buffer.append(heap, out, "import "), path), ";\n");
+        }
+        at = path_end + 1;
+    }
+    buffer.drop(heap, paths);
+    out = buffer.append(heap, out, "\n");
+    out = buffer.append(heap, out, "fn runner_selected_test[&a](args: &a Args) -> [args] int {\n");
+    out = buffer.append(heap, out, "    if arg_count(args) < 2 {\n");
+    out = buffer.append(heap, out, "        return 0 - 1;\n");
+    out = buffer.append(heap, out, "    }\n");
+    out = buffer.append(heap, out, "    let text = arg(args, 1);\n");
+    out = buffer.append(heap, out, "    var n = 0;\n");
+    out = buffer.append(heap, out, "    var i = 0;\n");
+    out = buffer.append(heap, out, "    while i < len(text) {\n");
+    out = buffer.append(heap, out, "        n = n * 10 + (int_of(text[i]) - '0');\n");
+    out = buffer.append(heap, out, "        i = i + 1;\n");
+    out = buffer.append(heap, out, "    }\n");
+    out = buffer.append(heap, out, "    return n;\n");
+    out = buffer.append(heap, out, "}\n");
+    out = buffer.append(heap, out, "\n");
+    out = buffer.append(heap, out, "fn main(world: World) -> [] int {\n");
+    out = buffer.append(heap, out, "    let Split { io, ffi, fs, heap, args } = split(world);\n");
+    out = buffer.append(heap, out, "    release(ffi);\n");
+    out = buffer.append(heap, out, "    release(fs);\n");
+    out = buffer.append(heap, out, "    var which = 0 - 1;\n");
+    out = buffer.append(heap, out, "    borrow args as &g in {\n");
+    out = buffer.append(heap, out, "        which = runner_selected_test(g);\n");
+    out = buffer.append(heap, out, "    }\n");
+    out = buffer.append(heap, out, "    release(args);\n");
+    out = buffer.append(heap, out, "    var status = 255;\n");
+    out = buffer.append(heap, out, "    borrow mut heap as &!th in {\n");
+    out = buffer.append(heap, out, "        borrow mut io as &!ti in {\n");
+
+    var index = 0;
+    at = 0;
+    while at < len(tests) {
+        var call_at = at;
+        while lc.at(tests, call_at) != 0 {
+            call_at = call_at + 1;
+        }
+        call_at = call_at + 1;
+        var call_end = call_at;
+        while lc.at(tests, call_end) != 0 {
+            call_end = call_end + 1;
+        }
+        var path_end = call_end + 1;
+        while lc.at(tests, path_end) != 0 {
+            path_end = path_end + 1;
+        }
+        out = buffer.append(heap, out, "            if which == ");
+        out = buffer.push_nat(heap, out, index);
+        out = buffer.append(heap, out, " {\n                status = ");
+        out = buffer.append(heap, out, tests[call_at..call_end]);
+        out = buffer.append(heap, out, ";\n            }\n");
+        index = index + 1;
+        at = path_end + 1;
+    }
+    out = buffer.append(heap, out, "        }\n");
+    out = buffer.append(heap, out, "    }\n");
+    out = buffer.append(heap, out, "    release(heap);\n");
+    out = buffer.append(heap, out, "    release(io);\n");
+    out = buffer.append(heap, out, "    // An exit status is one byte: a multiple of 256 would read as a pass.\n");
+    out = buffer.append(heap, out, "    if status != 0 {\n");
+    out = buffer.append(heap, out, "        if status % 256 == 0 {\n");
+    out = buffer.append(heap, out, "            return 1;\n");
+    out = buffer.append(heap, out, "        }\n");
+    out = buffer.append(heap, out, "    }\n");
+    out = buffer.append(heap, out, "    return status;\n");
+    out = buffer.append(heap, out, "}\n");
+    return out;
+}
