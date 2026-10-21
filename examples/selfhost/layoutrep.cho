@@ -1,0 +1,239 @@
+edition 7;
+module selfhost.layoutrep;
+
+// layoutrep.cho -- `cancho layout`: what each type of a program costs in memory (`docs/layout.md` section 4, `docs/cli-in-cancho.md` section 17).
+//
+// A value is scalarised into leaves (`docs/defined-behaviour.md` section 5): a whole number, a float, a pointer, a tag, a length is one, a struct is its
+// fields', a tuple its parts', an enum a tag and the leaves of every variant's payload. Where a leaf lives in memory it takes 8 bytes, and that is `size`; `packed` is
+// what each leaf would take at its natural width (8, 4 for an `f32`, 1 for a `byte` or a `bool`) rounded up to the widest, which nothing here builds; and `stride` is the
+// distance between the elements of a slice of the type, which is `size` for a struct or an enum. The rows are the types the prelude declares, as a table, and then the
+// structs and enums of the program that have no type parameter, in the order they are declared.
+
+import std.buffer;
+import selfhost.ast;
+import selfhost.kinds;
+import selfhost.types;
+import selfhost.scope;
+import selfhost.testscan;
+import selfhost.rules;
+import selfhost.lexcore as lc;
+
+// The names of the prelude's types from `File` (index 8) to `Ports` (index 55), each followed by a NUL, and the leaves of each, a digit apiece.
+fn prelude_names() -> [] &static [byte] {
+    return "File\0Opened\0Read\0Net\0Split\0Thread\0Listener\0Conn\0Listening\0Accepted\0Received\0Sent\0Dialed\0Poller\0Polling\0Clock\0Split\0Attached\0Done\0Signals\0Split\0SignalWatch\0Watching\0Dir\0DirOpened\0DirList\0Listing\0Listed\0DirStat\0Exec\0Split\0Child\0Pipe\0ChildEnd\0Stdio\0Piped\0Spawned\0Exited\0Udp\0UdpOpened\0Datagram\0Tty\0Split\0Port\0TtyOpened\0Out\0Ports\0Split\0";
+}
+
+fn prelude_leaves() -> [] &static [byte] {
+    return "133001113333313003300131313450011134341340013000";
+}
+
+// The leaves of the prelude type of index `i`: 0 for the capabilities and for what is before `File`.
+fn prelude_leaf_count(i: int) -> [] int {
+    if i < 8 || i > 55 {
+        return 0;
+    }
+    return int_of(prelude_leaves()[i - 8]) - '0';
+}
+
+// What a walk of a type has found, in four cells: the leaves, the bytes they take at their natural width, the widest of them, and 1 if the walk met a type it
+// has no judgement of.
+fn leaf[&a](acc: &!a [int], width: int) -> [] int {
+    acc[0] = acc[0] + 1;
+    acc[1] = acc[1] + width;
+    if width > acc[2] {
+        acc[2] = width;
+    }
+    return 0;
+}
+
+fn walk[&s, &a](st: &!s [int], acc: &!a [int], ty: int, depth: int) -> [] int {
+    if depth > 64 {
+        acc[3] = 1;
+        return 0;
+    }
+    if ty == 1 || ty == 3 {
+        return leaf(acc, 8);
+    }
+    if ty == 2 || ty == 5 {
+        return leaf(acc, 1);
+    }
+    if ty == 4 {
+        return leaf(acc, 4);
+    }
+    if ty == 6 {
+        return 0;
+    }
+    if ty < types.first_table() {
+        acc[3] = 1;
+        return 0;
+    }
+    if types.is_tuple(st, ty) {
+        var k = 0;
+        while k < types.tuple_size(st, ty) {
+            walk(st, acc, types.tuple_part(st, ty, k), depth + 1);
+            k = k + 1;
+        }
+        return 0;
+    }
+    if types.is_ref(st, ty) {
+        leaf(acc, 8);
+        if types.is_slice(st, types.ref_inner(st, ty)) {
+            leaf(acc, 8);
+        }
+        return 0;
+    }
+    if types.is_boxslice(st, ty) {
+        leaf(acc, 8);
+        return leaf(acc, 8);
+    }
+    if types.is_box(st, ty) || types.is_thread(st, ty) || types.is_fnptr(st, ty) || types.is_fnval(st, ty) {
+        return leaf(acc, 8);
+    }
+    if types.is_prelude(st, ty) {
+        var n = prelude_leaf_count(types.prelude_index(st, ty));
+        while n > 0 {
+            leaf(acc, 8);
+            n = n - 1;
+        }
+        return 0;
+    }
+    if types.is_named(st, ty) {
+        let item = types.named_item(st, ty);
+        if ast.is_kind(st, item, kinds.NK::IStruct) {
+            var f = ast.get(st, item, 8);
+            while f >= 0 {
+                let t = types.node_type(st, ast.get(st, f, 5), ty);
+                if t == 0 {
+                    acc[3] = 1;
+                    return 0;
+                }
+                walk(st, acc, t, depth + 1);
+                f = ast.next(st, f);
+            }
+            return 0;
+        }
+        if ast.is_kind(st, item, kinds.NK::IEnum) {
+            leaf(acc, 8);
+            var v = ast.get(st, item, 8);
+            while v >= 0 {
+                var p = ast.get(st, v, 5);
+                var n = ast.get(st, v, 6);
+                while n > 0 {
+                    let t = types.node_type(st, p, ty);
+                    if t == 0 {
+                        acc[3] = 1;
+                        return 0;
+                    }
+                    walk(st, acc, t, depth + 1);
+                    p = ast.next(st, p);
+                    n = n - 1;
+                }
+                v = ast.next(st, v);
+            }
+            return 0;
+        }
+    }
+    acc[3] = 1;
+    return 0;
+}
+
+// `name` padded on the right to `width`, or as it is if it is longer.
+fn pad_right[&h, &n](heap: &!h Heap, out: buffer.Buffer, name: &n [byte], width: int) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, name);
+    var k = len(name);
+    while k < width {
+        b = buffer.push(heap, b, byte_of(' '));
+        k = k + 1;
+    }
+    return b;
+}
+
+// The number `value` as a space and then `width` columns, on the right.
+fn column[&h](heap: &!h Heap, out: buffer.Buffer, value: int, width: int) -> [heap] buffer.Buffer {
+    var digits = 1;
+    var rest = value / 10;
+    while rest > 0 {
+        digits = digits + 1;
+        rest = rest / 10;
+    }
+    var b = buffer.push(heap, out, byte_of(' '));
+    var k = digits;
+    while k < width {
+        b = buffer.push(heap, b, byte_of(' '));
+        k = k + 1;
+    }
+    return buffer.push_nat(heap, b, value);
+}
+
+fn row[&h, &n](heap: &!h Heap, out: buffer.Buffer, name: &n [byte], leaves: int, size: int, packed: int) -> [heap] buffer.Buffer {
+    var b = pad_right(heap, out, name, 24);
+    b = column(heap, b, leaves, 6);
+    b = column(heap, b, size, 7);
+    b = column(heap, b, packed, 8);
+    b = column(heap, b, size, 8);
+    return buffer.push(heap, b, byte_of('\n'));
+}
+
+// The report. If a type of the program is one this compiler has no judgement of the answer is empty, `st[63]` is 1, and `st[3]`, `st[4]` and `st[5]` are the
+// refusal `skip` at the declaration; else `st[63]` is 0.
+pub fn report[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buffer.empty(heap, 4096), "type                     leaves    size   packed   stride\n");
+    var saved = 0;
+    var i = 0;
+    var at = 0;
+    let names = prelude_names();
+    while at < len(names) {
+        var end = at;
+        while lc.at(names, end) != 0 {
+            end = end + 1;
+        }
+        let leaves = prelude_leaf_count(8 + i);
+        out = row(heap, out, names[at..end], leaves, 8 * leaves, 8 * leaves);
+        i = i + 1;
+        at = end + 1;
+    }
+    let acc = box_slice(heap, 4, 0);
+    var failed = 0 - 1;
+    var item = st[15];
+    borrow mut acc as &!ab in {
+        let cells = contents(ab);
+        while item >= 0 && failed < 0 {
+            let is_struct = ast.is_kind(st, item, kinds.NK::IStruct);
+            if (is_struct || ast.is_kind(st, item, kinds.NK::IEnum)) && !testscan.has_type_param(st, ast.get(st, item, 7)) {
+                cells[0] = 0;
+                cells[1] = 0;
+                cells[2] = 0;
+                cells[3] = 0;
+                walk(st, cells, types.make_named(st, item), 0);
+                if cells[3] != 0 {
+                    failed = item;
+                } else {
+                    var packed = 0;
+                    if cells[2] > 0 {
+                        packed = (cells[1] + cells[2] - 1) / cells[2] * cells[2];
+                    }
+                    let size = 8 * cells[0];
+                    saved = saved + size - packed;
+                    out = row(heap, out, text[ast.tstart(st, ast.get(st, item, 4))..ast.tend(st, ast.get(st, item, 4))], cells[0], size, packed);
+                }
+            }
+            item = ast.next(st, item);
+        }
+    }
+    unbox_slice(heap, acc);
+    if failed >= 0 {
+        buffer.drop(heap, out);
+        st[63] = 1;
+        st[3] = rules.r_skip();
+        st[4] = ast.nstart(st, failed);
+        st[5] = ast.nend(st, failed);
+        return buffer.empty(heap, 0);
+    }
+    if saved > 0 {
+        out = buffer.append(heap, out, "\npacking would save ");
+        out = buffer.push_nat(heap, out, saved);
+        out = buffer.append(heap, out, " bytes per copy across these types (`docs/layout.md` §2)\n");
+    }
+    st[63] = 0;
+    return out;
+}

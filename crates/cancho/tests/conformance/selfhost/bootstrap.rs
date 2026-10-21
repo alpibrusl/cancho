@@ -72,6 +72,7 @@ fn own_source(root_module: &str) -> String {
         "printing",
         "prune",
         "testscan",
+        "layoutrep",
         "driver",
     ] {
         files.push(own.join(format!("{module}.cho")));

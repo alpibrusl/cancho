@@ -963,3 +963,85 @@ fn the_command_line_in_cancho_tests_like_cancho_test() {
     );
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
+
+/// `cli.cho layout` against `cancho layout`: the table of what each type costs, byte for byte, for the repository's programs and the programs of
+/// several files, and, for a tenth of them, with the standard library (`--std` of the Rust command, `--std-dir std` of this one). A refused program
+/// is a status 1 and nothing on the standard output; a program with a type the compiler in cancho has no judgement of is a status 3, and is counted.
+#[test]
+fn the_command_line_in_cancho_reports_layout_like_cancho_layout() {
+    let exe = build("cli-layout", &with_front_end("cli.cho"));
+    let dir = scratch("selfhost-layout-run");
+    let std_dir = repo_root().join("std");
+    let std_dir = std_dir.to_str().expect("a path");
+    let mut cases: Vec<(String, Vec<(String, String)>)> = sources()
+        .into_iter()
+        .map(|(name, text)| (name, vec![("x.cho".to_owned(), text)]))
+        .collect();
+    for (n, group) in SEVERAL_FILES.iter().enumerate() {
+        let files =
+            group.iter().enumerate().map(|(k, t)| (format!("f{k}.cho"), (*t).to_owned())).collect();
+        cases.push((format!("several files {n}"), files));
+    }
+    let run = |binary: &Path, flags: &[&str], names: &[&str]| -> (Option<i32>, String) {
+        let done = Command::new(binary)
+            .current_dir(&dir)
+            .arg("layout")
+            .args(flags)
+            .args(names)
+            .output()
+            .expect("layout runs");
+        (done.status.code(), String::from_utf8_lossy(&done.stdout).into_owned())
+    };
+    let (mut different, mut same, mut refused, mut cannot, mut with_std, mut missed) =
+        (Vec::new(), 0, 0, Vec::new(), 0, Vec::new());
+    for (n, (name, files)) in cases.iter().enumerate() {
+        for (path, text) in files {
+            std::fs::write(dir.join(path), text).expect("a file is written");
+        }
+        let names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        let mut variants = vec![(vec![], vec![])];
+        if n % 10 == 0 {
+            variants.push((vec!["--std"], vec!["--std-dir", std_dir]));
+        }
+        for (theirs, ours) in variants {
+            let want = run(Path::new(BIN), &theirs, &names);
+            let got = run(&exe, &ours, &names);
+            if want.0 == Some(1) && got.0 == Some(0) {
+                missed.push(name.clone());
+            } else if got.0 == Some(3) && want.0 != Some(3) {
+                cannot.push(format!("{name} {theirs:?}"));
+            } else if want == got {
+                if want.0 == Some(0) {
+                    same += 1;
+                    with_std += usize::from(!theirs.is_empty());
+                } else {
+                    refused += 1;
+                }
+            } else {
+                different.push(format!("{name} {theirs:?}: {:?} against {:?}", want.0, got.0));
+            }
+        }
+    }
+    eprintln!(
+        "layout: the same {same} (with the library {with_std}), refused by both {refused}, cannot be judged {}, refusal missed {}",
+        cannot.len(),
+        missed.len()
+    );
+    eprintln!("missed: {missed:?}\ncannot: {cannot:?}");
+    assert!(
+        different.is_empty(),
+        "`layout` in cancho and `cancho layout` disagree about {} runs:\n{}",
+        different.len(),
+        different.join("\n")
+    );
+    assert!(
+        missed.len() <= 10,
+        "the checker in cancho lets through {} refusals: {missed:?}",
+        missed.len()
+    );
+    assert!(
+        same > 100 && with_std > 20,
+        "only {same} runs gave a table, {with_std} with the library"
+    );
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
