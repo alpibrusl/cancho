@@ -1039,18 +1039,16 @@ fn the_command_line_in_cancho_reports_layout_like_cancho_layout() {
         cannot.len(),
         missed.len()
     );
-    eprintln!("missed: {missed:?}\ncannot: {cannot:?}");
     assert!(
         different.is_empty(),
         "`layout` in cancho and `cancho layout` disagree about {} runs:\n{}",
         different.len(),
         different.join("\n")
     );
-    assert!(
-        missed.len() <= 10,
-        "the checker in cancho lets through {} refusals: {missed:?}",
-        missed.len()
-    );
+    // The one refusal the checker in cancho does not make (`docs/cli-in-cancho.md` section 12): a `spawn` of a connection.
+    let expected =
+        vec![repo_root().join("examples/tls_nb/gaps/g17_conn_payload.cho").display().to_string()];
+    assert_eq!(missed, expected, "the refusals the checker in cancho does not make");
     assert!(
         same > 100 && with_std > 20,
         "only {same} runs gave a table, {with_std} with the library"
