@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 4 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10); the rest is design (epic #491,
+Status: **slices 1 to 5 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
@@ -135,11 +135,37 @@ mutants (the JSON form never chosen; a refusal not reported; the status not set)
 ## 10. Slice 4: `agent-guidelines`
 
 `cli.cho agent-guidelines` writes `AGENTS.md`, as the Rust binary does (which embeds it with `include_str!`). A cancho program has no
-such embedding, so `examples/selfhost/guidelines.cho` is **generated**: one `console.write_all` a line of the file, in parts of forty
-lines. A string literal is one line (`docs/strings.md` §4), so the text is written as it is, line by line, with `\\`, `\"`, `\n`, `\r` and
-`\t` the only escapes. The test `selfhost::guidelines_module_is_the_text_of_agents_md` regenerates the module from `AGENTS.md` and fails
+such embedding, so `examples/selfhost/guidelines.cho` is **generated**: one `buffer.append` a line of the file, in parts of forty
+lines (the text is built in a buffer, so that the same module serves a file and the standard output). A string literal is one line (`docs/strings.md` §4), so the text is written as it is, line by line, with `\\`, `\"`, `\n`, `\r` and
+`\t` the only escapes. The test `selfhost::statics::guidelines_module_is_the_text_of_agents_md` regenerates the module from `AGENTS.md` and fails
 if the committed file differs; run it with `CANCHO_REGENERATE=1` to write the file again. The module is 1,165 lines for a file of 1,024:
 the 2,000-line ceiling of a source file is reached when `AGENTS.md` has about 1,860 lines, and the module is then split in two.
 
 `the_command_line_in_cancho_writes_the_agent_guidelines` compares the bytes the command writes with those of `cancho agent-guidelines` and
 with the file (37,734 bytes), and checks that an argument is a usage error (status 2, nothing on the standard output).
+
+## 11. Slice 5: `--help`, `introspect`, `skill`
+
+These three write text that the Rust binary gets from its usage string and from the ACLI library's tree of commands (`src/acli.rs`).
+`examples/selfhost/commandtree.cho` holds that text, **generated** the way `guidelines.cho` is (§10) by the test
+`selfhost::statics::command_tree_module_is_what_cancho_says`, which runs the Rust binary and fails if the committed module differs
+(`CANCHO_REGENERATE=1` writes it): the usage (10,150 bytes), `introspect` in its three forms (text 12,937 bytes, JSON 20,125, table 12,954),
+and `skill` (text and table are the same 14,686 bytes; JSON 15,301, cut where the path goes, since `skill --output json PATH` answers the
+path and `null` otherwise). The module is 1,453 lines. `cli.cho` parses `--output FORM` and `--output=FORM` (text, json or table), answers
+a bad form or a missing one with the message, a blank line and the usage on the standard error, status 2, and, for `skill PATH`, writes the file
+and says `Skill file written to PATH`.
+
+Until the Rust binary is gone the module is derived from it; after that it is the source, and the tree of commands is edited in it (or
+the module is made from a table in cancho: open).
+
+**Measured (Linux x86-64).** `selfhost::the_command_line_in_cancho_answers_help_and_the_command_tree_like_cancho` runs 20 command lines on
+both (`--help`, `-h`, `help`; `introspect` in the three forms, `=` and separate, with a stray argument; `skill` in the three forms, with and
+without a path, the path last or first, a path with a quote and a backslash in it; a missing and a bad form for each): standard output, standard
+error, status and the file written are the same in all of them. Four mutants (a quote not escaped, the table form chosen as text, `-h` not
+known, `--output=` not known) each fail it.
+
+**Not the same.** The Rust command (the ACLI library) also writes a `.cli/` directory beside where it runs (a README, a changelog, the
+commands as JSON, examples and schemas), makes the directories above a skill file, and reports `Skill file written to PATH` even when it
+could not write it (a path under a file). This command writes only what it is asked, has no `mkdir` to make directories with (the standard
+library has none), and says status 3 on the standard error when the file cannot be written. The `--version` line (the revision and host
+of the build) is not here: it is a property of the build, not of a text.
