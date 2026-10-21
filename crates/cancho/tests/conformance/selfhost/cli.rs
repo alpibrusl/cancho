@@ -896,10 +896,13 @@ fn the_command_line_in_cancho_tests_like_cancho_test() {
     let exe = build("cli-test", &with_front_end("cli.cho"));
     let dir = scratch("selfhost-run-test");
     // The Rust command says what is wrong at the place of a refusal in its own words, and the rule after them; this one says the sentence of the rule
-    // (`docs/cli-in-cancho.md` section 12): of a refusal, the place is compared. The Rust command also says, once, that it is building the compiler.
+    // (`docs/cli-in-cancho.md` section 12): of a refusal, the place is compared. The Rust command also says, once, that it is building the compiler, and passes on what the linker says.
     let plain = |text: &str| -> String {
         text.lines()
-            .filter(|line| !line.starts_with("building the compiler in cancho"))
+            .filter(|line| {
+                !line.starts_with("building the compiler in cancho")
+                    && !line.starts_with("ld: warning:")
+            })
             .map(|line| match line.find(": error: ") {
                 Some(at) => line[..at].to_owned(),
                 None => line.to_owned(),
