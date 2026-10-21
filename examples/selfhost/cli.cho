@@ -14,6 +14,7 @@ edition 7;
 import std.buffer;
 import std.bytes;
 import std.io as console;
+import std.process;
 import selfhost.ast;
 import selfhost.printing;
 import selfhost.jsonprint;
@@ -890,13 +891,83 @@ fn make_binary[&h, &i, &a, &f, &x, &r, &o, &c](heap: &!h Heap, io: &!i Io, args:
     return status;
 }
 
+// How a child that was run came to an end, as the status of `run`: its own status, or 3 with the reason.
+fn ended[&i](io: &!i Io, ran: process.Ran) -> [err_write] int {
+    match ran {
+        process.Ran::Code(n) => {
+            return n;
+        }
+        process.Ran::Signaled(s) => {
+            // As the Rust command: nothing is said, and the status is 3.
+            return 3;
+        }
+        process.Ran::TimedOut => {
+            console.error_all(io, "the program did not finish in the time `run` allows\n");
+            return 3;
+        }
+        process.Ran::TooMuch => {
+            console.error_all(io, "the program wrote more than `run` keeps\n");
+            return 3;
+        }
+        process.Ran::Failed(e) => {
+            console.error_all(io, "the program could not be watched\n");
+            return 3;
+        }
+    }
+}
+
+// The program at `exe` run with `input` on its standard input and nothing else (its environment is a `PATH`), and its standard output and standard error
+// written, when it is over, to ours. What the standard library's `capture_both` is: nothing is written while the program runs, and it keeps at most
+// 64 MiB of each stream and runs for at most a day. Its own status, or 3.
+fn run_built[&h, &i, &x, &c, &p, &n](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte]) -> [heap, io_write, err_write, exec(""), clock, poll] int {
+    var named = buffer.empty(heap, len(exe) + 3);
+    if len(exe) > 0 && lc.at(exe, 0) != '/' && lc.at(exe, 0) != '.' {
+        // A name with no directory is looked for in `PATH` by the system; this one is in the directory the command was run in.
+        named = buffer.append(heap, buffer.append(heap, named, "./"), exe);
+    } else {
+        named = buffer.append(heap, named, exe);
+    }
+    var status = 3;
+    match process.channels_with_errors() {
+        process.ChannelsWithErrors::Failed(e) => {
+            console.error_all(io, "cannot make the pipes to run the program with\n");
+        }
+        process.ChannelsWithErrors::Ok(to_child, child_in, from_child, child_out, from_errors, child_errors) => {
+            borrow named as &np in {
+                match exec_spawn(exec, buffer.bytes(np), "", "PATH=/usr/bin:/bin\0", Stdio::Pipe(child_in), Stdio::Pipe(child_out), Stdio::Pipe(child_errors)) {
+                    Spawned::Failed(e) => {
+                        process.close(to_child, from_child);
+                        pipe_close(from_errors);
+                        console.error_all(io, "cannot start the program\n");
+                    }
+                    Spawned::Ok(child) => {
+                        let (out, err, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 67108864, 67108864, 86400000);
+                        borrow out as &o in {
+                            buffer.write(io, o);
+                        }
+                        borrow err as &e in {
+                            console.error_all(io, buffer.bytes(e));
+                        }
+                        buffer.drop(heap, out);
+                        buffer.drop(heap, err);
+                        status = ended(io, ran);
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, named);
+    return status;
+}
+
 // `check [--output json] [--host H] [--std-dir DIR] FILE...` (`docs/cli-in-cancho.md` section 12) and `ids [--host H] [--std-dir DIR] FILE...` (section 13):
 // the program is the files, in order, and then the `.cho` files of DIR (the standard library, which this command line does not carry: it is
 // where `--std` of the Rust command finds it). It is checked and its code is written and thrown away, as `cancho build` would, by the build of
 // the compiler in cancho (`driver.run_many`, mode 5); `ids` then writes the identity of every declaration (mode 9). The target is the one `--host`
 // names (linux, darwin or linux-aarch64; the default is linux): a program cannot ask what it runs on.
-fn program_command[&h, &i, &a, &f, &x](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), ids: bool, build: bool) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec("")] int {
+fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, ids: bool, build: bool, run: bool) -> [heap, io_read, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
     var json = false;
+    var forward = false;
     var host = 0;
     var host_given = false;
     var out_at = 0 - 1;
@@ -955,6 +1026,8 @@ fn program_command[&h, &i, &a, &f, &x](heap: &!h Heap, io: &!i Io, args: &a Args
             if n >= arg_count(args) {
                 return usage_error(heap, io, "`-l` and `-L` need a value");
             }
+        } else if run && bytes.equal(word, "--stdin") {
+            forward = true;
         } else if build && bytes.equal(word, "--clang") {
             n = n + 1;
             if n >= arg_count(args) {
@@ -978,7 +1051,7 @@ fn program_command[&h, &i, &a, &f, &x](heap: &!h Heap, io: &!i Io, args: &a Args
         let word = arg(args, n);
         if takes_value(word, build) {
             n = n + 1;
-        } else {
+        } else if !(run && bytes.equal(word, "--stdin")) {
             names = buffer.append(heap, buffer.append(heap, names, word), "\0");
         }
         n = n + 1;
@@ -1058,6 +1131,10 @@ fn program_command[&h, &i, &a, &f, &x](heap: &!h Heap, io: &!i Io, args: &a Args
             if obj {
                 target = buffer.append(heap, target, ".o");
             }
+            if run {
+                // The program `run` makes is next to where it is run, and taken away.
+                target = buffer.append(heap, target, ".cancho-run");
+            }
         }
         if !host_given {
             borrow target as &tp in {
@@ -1092,6 +1169,18 @@ fn program_command[&h, &i, &a, &f, &x](heap: &!h Heap, io: &!i Io, args: &a Args
                     }
                     borrow target as &tp in {
                         status = make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(tp), clang, obj);
+                        if status == 0 && run {
+                            var input = buffer.empty(heap, 0);
+                            if forward {
+                                buffer.drop(heap, input);
+                                input = lc.slurp(heap, io);
+                            }
+                            borrow input as &ip in {
+                                status = run_built(heap, io, exec, clock, buffer.bytes(tp), buffer.bytes(ip));
+                            }
+                            buffer.drop(heap, input);
+                            fs_remove(fs, buffer.bytes(tp));
+                        }
                     }
                 }
             }
@@ -1109,18 +1198,21 @@ fn program_command[&h, &i, &a, &f, &x](heap: &!h Heap, io: &!i Io, args: &a Args
     return status;
 }
 
-fn run[&h, &i, &a, &f, &x](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec("")) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), dir_read, file_read, file_write, exec("")] int {
+fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_read, io_write, err_write, args, fs_read(""), fs_write(""), dir_read, file_read, file_write, exec(""), clock, poll] int {
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "fmt") {
         return fmt_command(heap, io, args, fs);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "check") {
-        return program_command(heap, io, args, fs, exec, false, false);
+        return program_command(heap, io, args, fs, exec, clock, false, false, false);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "build") {
-        return program_command(heap, io, args, fs, exec, false, true);
+        return program_command(heap, io, args, fs, exec, clock, false, true, false);
+    }
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "run") {
+        return program_command(heap, io, args, fs, exec, clock, false, true, true);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "ids") {
-        return program_command(heap, io, args, fs, exec, true, false);
+        return program_command(heap, io, args, fs, exec, clock, true, false, false);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "print") {
         return one_file_command(heap, io, args, fs, false);
@@ -1154,7 +1246,6 @@ fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
     release(ffi);
     release(net);
-    release(clock);
     release(signals);
     var status = 0;
     borrow mut heap as &!h in {
@@ -1162,12 +1253,15 @@ fn main(world: World) -> [] int {
             borrow args as &a in {
                 borrow fs as &f in {
                     borrow exec as &x in {
-                        status = run(h, i, a, f, x);
+                        borrow clock as &k in {
+                            status = run(h, i, a, f, x, k);
+                        }
                     }
                 }
             }
         }
     }
+    release(clock);
     release(exec);
     release(fs);
     release(args);
