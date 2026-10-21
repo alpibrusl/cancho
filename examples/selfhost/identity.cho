@@ -26,6 +26,7 @@ import selfhost.ast;
 import selfhost.kinds;
 import selfhost.blake3;
 import selfhost.floats;
+import std.buffer;
 
 // ----------------------------------------------------------------- sizes ---
 
@@ -1319,13 +1320,9 @@ fn is_signature[&s](st: &!s [int], id: int) -> [] bool {
     return ast.is_kind(st, id, kinds.NK::IFn) || ast.is_kind(st, id, kinds.NK::IExtern);
 }
 
-// The identities of the program, one line each: the types, and then for each function a line for its signature and a line for its
-// body. `items` is how many items there are (for the size of the tables, `size_for`).
-pub fn print[&i, &s, &x, &j](io: &!i Io, st: &!s [int], text: &x [byte], d: &!j [int]) -> [io_write] int {
-    if !floats.all_literals_ok(st, text) {
-        console.write_all(io, "CANNOT a floating-point literal of more than 120 significant digits: its bits are not worked out\n");
-        return 1;
-    }
+// The hashes of the types (twice: the first time no name is known, and the second time each is known by the hash of the first) and of the signatures, with the
+// types as they are now known, into the tables of `d`.
+fn hash_all[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int]) -> [] int {
     // The types, twice: the first time no name is known, and the second time each is known by the hash of the first.
     d[1] = 0 - 1;
     var id = st[15];
@@ -1368,7 +1365,18 @@ pub fn print[&i, &s, &x, &j](io: &!i Io, st: &!s [int], text: &x [byte], d: &!j 
         id = ast.next(st, id);
     }
     d[2] = d[34];
-    id = st[15];
+    return 0;
+}
+
+// The identities of the program, one line each: the types, and then for each function a line for its signature and a line for its
+// body. `items` is how many items there are (for the size of the tables, `size_for`).
+pub fn print[&i, &s, &x, &j](io: &!i Io, st: &!s [int], text: &x [byte], d: &!j [int]) -> [io_write] int {
+    if !floats.all_literals_ok(st, text) {
+        console.write_all(io, "CANNOT a floating-point literal of more than 120 significant digits: its bits are not worked out\n");
+        return 1;
+    }
+    hash_all(st, text, d);
+    var id = st[15];
     while id >= 0 {
         if is_type(st, id) {
             let at = entry(st, text, d, d[33], ast.get(st, id, 13), ast.get(st, id, 4), false);
@@ -1397,4 +1405,58 @@ pub fn print[&i, &s, &x, &j](io: &!i Io, st: &!s [int], text: &x [byte], d: &!j 
         id = ast.next(st, id);
     }
     return 0;
+}
+
+fn hex_into[&h, &j](heap: &!h Heap, out: buffer.Buffer, d: &!j [int], from: int) -> [heap] buffer.Buffer {
+    var b = out;
+    var w = 0;
+    while w < 8 {
+        var k = 0;
+        while k < 4 {
+            let octet = d[from + w] >> 8 * k & 255;
+            b = buffer.push(heap, b, "0123456789abcdef"[octet / 16]);
+            b = buffer.push(heap, b, "0123456789abcdef"[octet % 16]);
+            k = k + 1;
+        }
+        w = w + 1;
+    }
+    return b;
+}
+
+// The functions of the program (the signatures of a function and of a foreign function), in the order they are declared, as `module`, a NUL, `name`, a NUL, the 64
+// hexadecimal digits of the identity of the signature, and a newline, for each; `satisfy` says which of them a candidate provides. The module is its path, with the dots, and
+// empty for the root. It is empty too if a floating-point literal of the program is one whose bits are not worked out (`st[63]` is 1 then).
+pub fn listing[&h, &s, &x, &j](heap: &!h Heap, st: &!s [int], text: &x [byte], d: &!j [int]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    if !floats.all_literals_ok(st, text) {
+        st[63] = 1;
+        return out;
+    }
+    hash_all(st, text, d);
+    var id = st[15];
+    while id >= 0 {
+        if is_signature(st, id) {
+            let at = entry(st, text, d, d[34], ast.get(st, id, 13), ast.get(st, id, 4), false);
+            let unit = ast.get(st, id, 13);
+            if unit > 0 {
+                let first = ast.module_first(st, unit);
+                var n = 0;
+                while n < ast.module_len(st, unit) {
+                    if n > 0 {
+                        out = buffer.push(heap, out, byte_of('.'));
+                    }
+                    out = buffer.append(heap, out, text[ast.tstart(st, first + 2 * n)..ast.tend(st, first + 2 * n)]);
+                    n = n + 1;
+                }
+            }
+            out = buffer.push(heap, out, byte_of(0));
+            out = buffer.append(heap, out, text[ast.tstart(st, ast.get(st, id, 4))..ast.tend(st, ast.get(st, id, 4))]);
+            out = buffer.push(heap, out, byte_of(0));
+            out = hex_into(heap, out, d, at + 3);
+            out = buffer.push(heap, out, byte_of('\n'));
+        }
+        id = ast.next(st, id);
+    }
+    st[63] = 0;
+    return out;
 }

@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 11 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15; `test`, §16; `layout`, §17); the rest is design (epic #491,
+Status: **slices 1 to 12 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15; `test`, §16; `layout`, §17; `satisfy`, §18); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
@@ -318,3 +318,23 @@ same gap makes `cli.cho build --std-dir` and `check --std-dir` accept a program 
 
 **Not here.** `--std` and `--target` (§14); a generic type is skipped, as in the Rust command, but so is one that has a type parameter no member mentions
 (the Rust command measures that one); `authority` (above).
+
+## 18. Slice 12: `satisfy`
+
+`cli.cho satisfy [--host H] [--std-dir DIR] [--clang PATH] CONTRACT CANDIDATE` (`docs/satisfy.md`, `satisfy_cli.rs`) is a composition of what is already here, and no new
+analysis: the two files (and the library) are checked as one program (driver mode 10, as `ids` does: nothing is asked of the pair, which has no `main`); the tests are
+those of the contract alone (`scan_tests`, mode 11 on the first file of the stream, which `satisfytext.record` cuts out, so that a `test_*` of the candidate is not the
+contract's); there must be some (status 2, as the Rust command says); the contract must call, as `name(` in its text with the comments and the string literals set aside
+(`satisfytext.calls_any`, a copy of the Rust function, by name and not by resolution), something the candidate declares that is not a test (status 2, naming them in the order
+of their modules and names); then the tests are built and run as `test` does (§16), and the verdict is `satisfied` and, for each function of the candidate, `  MODULE:: sig NAME`
+and `    sig_id HEX`, or `not satisfied: see the test failures above` and status 4. The identities are driver mode 13 (`identity.listing`, a sibling of the `ids` output
+that writes into memory: the module, the name and the 64 digits of the signature of each function, in the order they are declared), run on the whole program and on the
+candidate alone, which says which are the candidate's.
+
+**Differences.** `--std` is `--std-dir DIR` (§14); `--host` and `--clang` are the ones of `build`; a refusal says the sentence of its rule, the first only (§12); the tests
+run with a `PATH` for an environment (§16). The Rust command builds the tests with its Cranelift backend and this one with clang, which changes nothing that is said.
+
+**Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_satisfies_like_cancho_satisfy` runs 12 pairs with both commands and compares the status, the standard
+output and the standard error (of a refusal, up to the place): satisfied (with a module, with a root candidate that declares a struct, and a candidate with a test of its own),
+a test that fails (4), a contract with no tests, a contract that calls nothing, a contract that names a function only in a comment and in a string, a candidate that is refused, a
+contract that calls what is not there, a test of the wrong shape, an option that is not one, one file, and three: none differs, and nothing is left beside the files.
