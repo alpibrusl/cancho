@@ -51,7 +51,11 @@ fn base_slot(t: int) -> [] int {
 pub fn put[&s](st: &!s [int], b: int) -> [] int {
     let t = st[49];
     let base = base_slot(t);
-    st[st[base] + st[base + 1]] = b;
+    // A byte past the end of its buffer is counted and not written: it would be in the next buffer, or past the end of the state, and
+    // `overflowed` is how the code that was written is known to be no good.
+    if st[base + 1] < st[50] {
+        st[st[base] + st[base + 1]] = b;
+    }
     st[base + 1] = st[base + 1] + 1;
     return 0;
 }
