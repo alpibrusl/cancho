@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 3 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9); the rest is design (epic #491,
+Status: **slices 1 to 3 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
@@ -131,3 +131,15 @@ each of 920 programs (the repository's, the edge programs) through `print` and `
 refusals) and 964 inputs through `ingest` (871 succeed; the JSON of each program, and the ingester's edge inputs), against the
 oracles of the stand-alone ports: the standard output, the standard error of a refusal, and the status are the same in every run. Three
 mutants (the JSON form never chosen; a refusal not reported; the status not set) each fail it.
+
+## 10. Slice 4: `agent-guidelines`
+
+`cli.cho agent-guidelines` writes `AGENTS.md`, as the Rust binary does (which embeds it with `include_str!`). A cancho program has no
+such embedding, so `examples/selfhost/guidelines.cho` is **generated**: one `console.write_all` a line of the file, in parts of forty
+lines. A string literal is one line (`docs/strings.md` §4), so the text is written as it is, line by line, with `\\`, `\"`, `\n`, `\r` and
+`\t` the only escapes. The test `selfhost::guidelines_module_is_the_text_of_agents_md` regenerates the module from `AGENTS.md` and fails
+if the committed file differs; run it with `CANCHO_REGENERATE=1` to write the file again. The module is 1,165 lines for a file of 910:
+the 2,000-line ceiling of a source file is reached when `AGENTS.md` has about 1,800 lines, and the module is then split in two.
+
+`the_command_line_in_cancho_writes_the_agent_guidelines` compares the bytes the command writes with those of `cancho agent-guidelines` and
+with the file (37,734 bytes), and checks that an argument is a usage error (status 2, nothing on the standard output).
