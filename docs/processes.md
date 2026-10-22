@@ -14,7 +14,8 @@
 > | 5 | `exec_spawn_in` (§4.10), `std.process.channels_with_errors` and **`capture_both`** (§7.2) | `builtin.rs`, `std/process.cho`; `processes.rs`, `capture.rs` | yes |
 > | 6 (edition 9) | `exec_spawn_detached`, `child_pid`, `child_release` and the label `exec_detached` (§4.11, #524) | `builtin.rs`; `process_release.rs` | yes |
 > | 6 (edition 9) | `child_kill_group` (§4.12, #533), and `capture` using it | `builtin.rs`, `std/process.cho`; `process_group.rs` | yes |
-> | 6 (edition 9) | `exec_covers` and `fs_covers` (§4.13, #535): is this path inside the bound, by the rule the operations trap on | `builtin.rs`, `memory.rs`/`fs.rs` of both backends; `path_covers.rs` | yes |
+> | 6 (edition 9) | `exec_spawn_detached_under` (§4.15, #562): a worker found beneath a `Dir` that leads a group of its own | `builtin.rs`, `lower/process.rs`, `examples/selfhost/`; `spawn_detached_under.rs` | yes |
+| 6 (edition 9) | `exec_covers` and `fs_covers` (§4.13, #535): is this path inside the bound, by the rule the operations trap on | `builtin.rs`, `memory.rs`/`fs.rs` of both backends; `path_covers.rs` | yes |
 >
 > What is still only designed or open is §9, and only that. *Corrected (#536):* this line used to say "slices 0 to 2
 > built; slices 3 and 4 designed, not built", which was true when slice 2 merged and was never revised when `capture`
@@ -138,6 +139,7 @@ earlier file changes.
 | `exec_spawn` | `(&Exec("p"), path: &[byte], args: &[byte], env: &[byte], stdin: Stdio, stdout: Stdio, stderr: Stdio) -> Spawned` | `exec("p")` |
 | `exec_spawn_in` | `(&Exec("p"), &Dir, path: &[byte], args: &[byte], env: &[byte], stdin: Stdio, stdout: Stdio, stderr: Stdio) -> Spawned` | `exec("p")`; `exec_spawn` whose child starts in the `Dir` (§4.10) |
 | `exec_spawn_detached` (edition 9) | as `exec_spawn` | `exec("p")`, `exec_detached`; the child leads a session of its own (§4.11) |
+| `exec_spawn_detached_under` (edition 9) | as `exec_spawn_under` (§4.14) | `exec_under`, `exec_detached`; the child leads a session and a process group of its own (§4.15) |
 | `child_wait` | `(Child) -> Exited` | none (ending a handle is not using one) |
 | `child_release` (edition 9) | `(Child) -> int` | `exec_detached`; the child runs on and is reaped by the runtime (§4.11) |
 | `child_pid` (edition 9) | `(&Child) -> int` | none |
@@ -596,7 +598,9 @@ fn start[&x](exec: &x Exec("/opt/builds/bin")) -> [exec("/opt/builds/bin"), exec
   callers, as §4.10 found, so the detached start is a second builtin that
   lowers to the same IR node (`Expr::ExecSpawn`, with a `detached` flag) and
   the same function in each backend. A detached start with a working
-  directory (`exec_spawn_detached_in`) is not built: no program has asked.
+  directory (`exec_spawn_detached_in`) is not built: no program has asked. *(**Corrected, #562, §4.15:** one program did
+  ask, for the `under` form, and it is built as `exec_spawn_detached_under`; the form with a plain working directory is still
+  not built.)*
 * *Release works on any child.* A child from plain `exec_spawn` can be
   released too, and runs on in its parent's session. The two are independent:
   *detached* is about where the child lives, *released* is about whether the
@@ -1017,6 +1021,62 @@ names from the builtins' rows) and `runtime.cho`. `exprs.cho` is 1,995 of 2,000 
 **What is not measured.** macOS (the `Dir` measurement above is Linux only; `directory-handles.md` says Darwin is written
 and run by CI, and `posix_spawn_file_actions_addfchdir_np` followed by a relative program path is what §4.10 already relies on
 there); WebAssembly; cancho-forge's journal against `Dir` (not tried); the cost of (c) beyond the line counts.
+
+### 4.15 A worker beneath a `Dir` that leads a group of its own: `exec_spawn_detached_under`
+
+[#562](https://github.com/alpibrusl/cancho/issues/562), found by cancho-forge (`src/worker.cho`, spike S7, gap G10). **Status:
+built.** `exec_spawn_under` (§4.14) starts a worker beneath a directory chosen at run time and `exec_spawn_detached` (§4.11)
+starts a child that leads a session and a process group of its own, which is what `child_kill_group` (§4.12) and `capture`'s
+deadline need so that a worker's own subprocesses (a compiler, a test runner) die with it. No form did both, so a worker
+started beneath a `Dir` was not a group leader and `capture` at the deadline killed the worker and **leaked what it started**
+(S7 measured it for the plain `exec_spawn`; the `under` form is the same code path). Cancho-forge's Cancho Code adapter,
+a worker that runs `cancho-build`, could not ship without it.
+
+```
+exec_spawn_detached_under(&Exec(""), &Dir, name: &[byte], args, env, stdin, stdout, stderr) -> [exec_under, exec_detached] Spawned   // edition 9
+```
+
+It is `exec_spawn_under` with the flag `exec_spawn_detached` adds, and nothing else: the same name rule and ceiling
+(§4.14: relative, not empty, no `..`, under 4096 bytes, or it traps; `Exec("")` only, a narrowed `Exec` is
+`capability-misused`), the same `POSIX_SPAWN_SETSID` (§4.11), the row of both (`exec_under` and `exec_detached`, no path).
+`child_kill_group` and `capture` work on the `Child` unchanged, because a `Child` is a pid whatever started it.
+
+* **Lowering.** `Expr::ExecSpawn { in_dir: true, under: true, detached: true, .. }`. The two flags were already independent in
+  both Rust code generators (`spawn_flags(darwin, detached)` and the `under` check), so they needed no change; the work is the
+  builtin, the lowering (`exec_spawn_under` takes `detached`), the WASI table (refused with the other `Exec` builtins: 170
+  builtins, 77 refused, 93 supported) and the compiler in cancho.
+* **The compiler in cancho.** Call 17 of `capability_call`. `cancho_spawn`'s existing `%detached` word already carried bit 1
+  (a session of its own) and bit 2 (a name beneath the directory) and is independent in each, so `runtime.ll` is unchanged;
+  `filecode.spawn_bits` (new, with `in_dir` and `under`) names the words (13 is 1, 16 is 2, 17 is 3). The three helpers keep
+  `exprs.cho` at 1,994 of 2,000 lines: the three `which == 10 || which == 16` tests became one call.
+* **Not built.** `exec_spawn_detached_in` (a detached start with a working directory but a program path under a literal
+  `Exec`): no program has asked (§4.11).
+
+**Measured** (Linux 6.18 x86-64; Cranelift, LLVM through the Rust compiler, LLVM through the compiler in cancho; the driver is
+`tests/programs/spawn_detached_under.cho`, cancho-forge's S7 with the worker beneath a `Dir`, whose worker script starts
+`sleep N`, prints its pid and waits):
+
+| mode | `capture` at 300 ms | the grandchild (`sleep N`) |
+|---|---|---|
+| `exec_spawn_detached_under` | `ran timed out`, the worker reaped | **gone** (`ps`: absent or `Z`), on all three |
+| `exec_spawn_under` (the control) | `ran timed out` | **still running**; the test kills it afterwards |
+| `exec_spawn_detached_under`, `no-such-worker` | `spawn 2` | none |
+| `exec_spawn_detached_under`, `/bin/sh`, `../worker.sh`, `sub/../worker.sh` | the driver traps (a signal, nothing printed) | none |
+
+The authority report of the driver is `args`, `child_signal`, `clock`, `exec_detached`, `exec_under`, `fs_read("")`, `heap`,
+`io_write`, `pipe_read`, `pipe_write`, `poll`: **no `exec("...")`, no `/bin/kill`**, which is the acceptance of the issue.
+
+Conformance: `crates/cancho/tests/conformance/spawn_detached_under.rs`, four tests (the deadline, the control, the name rule,
+the report). Fixtures: `tests/accept/exec_spawn_detached_under.cho`; `tests/reject/exec_spawn_detached_under_is_edition_nine`
+(`not-a-function`), `_narrowed` (`capability-misused`), `_arity` (`arity-mismatch`), `_not_a_dir` (`type-mismatch`),
+`_undeclared` (`effect-not-declared`, a row with `exec_under` and without `exec_detached`). No new rule.
+
+**Mutants**, each run to a red test and reverted: the lowering of `exec_spawn_detached_under` passing `detached: false` (the
+deadline test fails: the grandchild survives); `filecode.spawn_bits(17)` returning 2 instead of 3 (the same test fails, on the
+compiler in cancho only).
+
+**What is not measured.** macOS (the session flag is `0x400` there, as §4.11); WebAssembly (refused); a descendant that
+leaves the group by `setsid` (§4.12, unchanged).
 
 ---
 

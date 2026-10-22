@@ -1037,8 +1037,11 @@ fn the_command_line_in_cancho_reports_layout_like_cancho_layout() {
     let expected =
         vec![repo_root().join("examples/tls_nb/gaps/g17_conn_payload.cho").display().to_string()];
     assert_eq!(missed, expected, "the refusals the checker in cancho does not make");
+    // Every tenth file of the sorted corpus is also run with the library, so adding a fixture moves which files those are
+    // and how many of them are programs that get a table rather than a refusal: 19 with `exec_spawn_detached_under`'s seven
+    // files (#562), 21 or more before. The floor says the library runs are not absent, not how many there are.
     assert!(
-        same > 100 && with_std > 20,
+        same > 100 && with_std > 15,
         "only {same} runs gave a table, {with_std} with the library"
     );
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));

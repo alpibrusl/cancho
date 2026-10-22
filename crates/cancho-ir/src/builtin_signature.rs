@@ -868,7 +868,8 @@ impl Builtin {
             Builtin::ExecSpawn
             | Builtin::ExecSpawnIn
             | Builtin::ExecSpawnDetached
-            | Builtin::ExecSpawnUnder => (Vec::new(), Type::Unit),
+            | Builtin::ExecSpawnUnder
+            | Builtin::ExecSpawnDetachedUnder => (Vec::new(), Type::Unit),
             // Checked at the call site too (§4.13): the bound is in the capability's type.
             Builtin::ExecCovers | Builtin::FsCovers => (Vec::new(), Type::Unit),
             // By value: waiting ends the child.

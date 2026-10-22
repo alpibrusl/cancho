@@ -809,7 +809,8 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                         Builtin::ExecSpawn
                         | Builtin::ExecSpawnIn
                         | Builtin::ExecSpawnDetached
-                        | Builtin::ExecSpawnUnder,
+                        | Builtin::ExecSpawnUnder
+                        | Builtin::ExecSpawnDetachedUnder,
                     ) => {
                         unreachable!("`exec_spawn` is lowered as `Expr::ExecSpawn`")
                     }

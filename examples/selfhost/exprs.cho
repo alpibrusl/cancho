@@ -295,7 +295,7 @@ pub fn alloc_slice_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] e
 }
 
 // `narrow(cap, "prefix")` (1), `open_read` (2), `open_write` (3), `open_append` (4), `open_new` (5),
-// `open_rw` (6), `exec_spawn` (7), `exec_spawn_in` (10), `exec_spawn_detached` (13), `exec_covers` (14), `fs_covers` (15) and `exec_spawn_under` (16): the
+// `open_rw` (6), `exec_spawn` (7), `exec_spawn_in` (10), `exec_spawn_detached` (13), `exec_covers` (14), `fs_covers` (15), `exec_spawn_under` (16) and `exec_spawn_detached_under` (17): the
 // builtins whose type or whose check is in the literal a capability was narrowed to (`filecode.capability_which` numbers them).
 // In compile mode only.
 pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) -> [] ex.Ex {
@@ -434,7 +434,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         return ex.in_reg(opened, filecode.answer_enum(st, opened, 0, v));
     }
     var inside = 7;
-    if which == 10 || which == 16 {
+    if filecode.in_dir(which) {
         inside = 8;
     }
     if nargs != inside {
@@ -444,7 +444,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
     let c = expr(st, text, arg);
     arg = ast.next(st, arg);
     var dir = ex.nothing();
-    if which == 10 || which == 16 {
+    if filecode.in_dir(which) {
         // `exec_spawn_in(exec, dir, ...)`: the child starts in the directory the handle is of.
         dir = expr(st, text, arg);
         if ast.ok(st) && !(types.is_ref(st, dir.ty) && types.is_prelude(st, types.ref_inner(st, dir.ty)) && types.prelude_index(st, types.ref_inner(st, dir.ty)) == netcode.prelude_named("Dir")) {
@@ -472,7 +472,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         return ex.skip(st, from, to);
     }
     ex.push_value(st, path);
-    if which == 16 {
+    if filecode.under(which) {
         atoms.push_under(st, text, c.ty, from, to);
     } else {
         atoms.push_prefix(st, text, c.ty, netcode.prelude_named("Exec"), from, to);
@@ -499,19 +499,14 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         emit.push_arg(st, 1, false, 0, emit.extract_field(st, one.ty, one.reg, emit.penum_payload_index(st, stdio, first + 2, 0)));
         k = k + 1;
     }
-    if which == 10 || which == 16 {
+    if filecode.in_dir(which) {
         emit.push_arg(st, 7, false, 0, dir.reg);
     } else {
         emit.push_arg(st, 7, false, 0, 0 - 1);
     }
     // A child of `exec_spawn_detached` leads a session of its own, and is the act after which it can outlive the program.
-    var detached = 0;
-    if which == 16 {
-        // 2: a name beneath the directory (`cancho_spawn` refuses an empty or rooted one).
-        detached = 2;
-    }
-    if which == 13 {
-        detached = 1;
+    let detached = filecode.spawn_bits(which);
+    if which == 13 || which == 17 {
         effects.perform_named(st, "exec_detached");
     }
     emit.push_arg(st, 1, true, detached, 0 - 1);
