@@ -24,14 +24,25 @@ fn serve[&r](n: &!r Node) -> [udp_recv, udp_send] int {
             match udp_recv_from(n.udp, buf, who) {
                 Datagram::Got(k) => {
                     match udp_send_to(n.udp, buf[0..k], who[0]) {
-                        Sent::Wrote(w) => { }
-                        Sent::Again => { n.refused = n.refused + 1; }
-                        Sent::Failed(e) => { n.refused = n.refused + 1; }
+                        Sent::Wrote(w) => {
+                        }
+                        Sent::Again => {
+                            n.refused = n.refused + 1;
+                        }
+                        Sent::Failed(e) => {
+                            n.refused = n.refused + 1;
+                        }
                     }
                 }
-                Datagram::Truncated(k) => { n.refused = n.refused + 1; }
-                Datagram::Again => { n.refused = n.refused + 1; }
-                Datagram::Failed(e) => { n.refused = n.refused + 1; }
+                Datagram::Truncated(k) => {
+                    n.refused = n.refused + 1;
+                }
+                Datagram::Again => {
+                    n.refused = n.refused + 1;
+                }
+                Datagram::Failed(e) => {
+                    n.refused = n.refused + 1;
+                }
             }
             done = done + 1;
         }
