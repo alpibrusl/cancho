@@ -126,7 +126,7 @@ pub fn canonical(number: int) -> [] int {
 
 // Does the call need the support for directories?
 pub fn needs_dirs(which: int) -> [] bool {
-    return which >= 54 && which <= 69 && which != 63;
+    return which >= 54 && which <= 69 && which != 63 || which == 139;
 }
 
 // The constants a call pushes after its arguments.
@@ -197,7 +197,7 @@ pub fn arity(which: int) -> [] int {
     if which == 36 {
         return 4;
     }
-    if which == 33 || which == 37 || which == 59 || which == 60 {
+    if which == 33 || which == 37 || which == 59 || which == 60 || which == 139 {
         return 3;
     }
     if which == 32 || which == 34 || which == 39 || which == 40 || which >= 54 && which <= 58 || which == 61 || which == 65 || which == 67 || which == 68 {
@@ -234,7 +234,7 @@ pub fn slots(which: int) -> [] int {
     if which == 67 {
         return 5;
     }
-    if which >= 36 && which <= 40 || which >= 54 && which <= 62 || which == 64 || which == 68 || which == 69 {
+    if which >= 36 && which <= 40 || which >= 54 && which <= 62 || which == 64 || which == 68 || which == 69 || which == 139 {
         return 3;
     }
     return 0;
@@ -281,7 +281,7 @@ pub fn enum_name(which: int) -> [] &static [byte] {
     if which >= 56 && which <= 58 {
         return "Opened";
     }
-    if which >= 59 && which <= 62 || which == 68 || which == 69 {
+    if which >= 59 && which <= 62 || which == 68 || which == 69 || which == 139 {
         return "Done";
     }
     if which == 64 {
@@ -411,6 +411,9 @@ pub fn function(which: int) -> [] &static [byte] {
     }
     if which == 61 {
         return "cancho_dir_remove";
+    }
+    if which == 139 {
+        return "cancho_dir_mkdir";
     }
     if which == 62 {
         return "cancho_dir_sync";

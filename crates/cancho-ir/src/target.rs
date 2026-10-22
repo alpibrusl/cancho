@@ -70,7 +70,8 @@ impl Gap {
             Gap::Locks => "WASI has no `flock`, so it is an undefined symbol at link time",
             Gap::Permissions => {
                 "WASI's stat has no permission bits (wasi-libc's `st_mode` carries the file type \
-                 and nothing else), so `dir_mode` would answer 0 for every file"
+                 and nothing else), so `dir_mode` would answer 0 for every file, and \
+                 `dir_mkdir`'s mode would be ignored"
             }
             Gap::NoReplaceRename => {
                 "WASI's `path_rename` replaces an existing destination and has no no-replace flag, \
@@ -145,7 +146,7 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::TtyClose
         | B::PollerAddTty => Some(Gap::Termios),
         B::FileLock => Some(Gap::Locks),
-        B::DirMode | B::DirOwnMode => Some(Gap::Permissions),
+        B::DirMode | B::DirOwnMode | B::DirMkdir => Some(Gap::Permissions),
         B::DirRenameNew => Some(Gap::NoReplaceRename),
         B::ExecSpawn
         | B::ExecSpawnIn

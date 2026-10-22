@@ -151,6 +151,20 @@ impl<'a> FuncEmitter<'a> {
         unsupported: Option<i64>,
         call: impl FnOnce(&mut Self, &[String]) -> String,
     ) -> Vec<LValue> {
+        self.dir_call_checked(names, None, unsupported, call)
+    }
+
+    /// `dir_call_mapping`, and when `refuse` is given (an `i1` register
+    /// computed before the call), a true one is refused as a bad name is:
+    /// `EINVAL`, no call made. `dir_mkdir` uses it for a mode outside
+    /// `0..=0o777`.
+    pub(crate) fn dir_call_checked(
+        &mut self,
+        names: &[(String, String)],
+        refuse: Option<String>,
+        unsupported: Option<i64>,
+        call: impl FnOnce(&mut Self, &[String]) -> String,
+    ) -> Vec<LValue> {
         let result_cell = self.fresh();
         self.hoist(format!("  {result_cell} = alloca i64\n"));
         let reason_cell = self.fresh();
@@ -161,6 +175,11 @@ impl<'a> FuncEmitter<'a> {
 
         let copies: Vec<String> =
             names.iter().map(|(name, length)| self.component(name, length, &refused)).collect();
+        if let Some(refuse) = refuse {
+            let go = format!("dirgo{n}");
+            self.out.push_str(&format!("  br i1 {refuse}, label %{refused}, label %{go}\n"));
+            self.out.push_str(&format!("{go}:\n"));
+        }
         let result = call(self, &copies);
         let mut reason = self.errno();
         if let Some(unsupported) = unsupported {
@@ -305,6 +324,32 @@ impl<'a> FuncEmitter<'a> {
                 copies[0]
             ));
             removed
+        }))
+    }
+
+    /// `dir_mkdir(dir, name, mode)`: `mkdirat`, the mode under the umask. A
+    /// mode outside `0..=0o777` -- one unsigned compare catches a negative
+    /// too -- is refused before the call (`docs/directory-handles.md` §3,
+    /// slice 5).
+    pub(crate) fn dir_mkdir(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 4 {
+            return Err(format!("`dir_mkdir` needs 4 leaves but {} were given", args.len()));
+        }
+        let handle = operand(&args[0]);
+        let name = (operand(&args[1]), operand(&args[2]));
+        let mode = operand(&args[3]);
+        let bad = self.fresh();
+        self.out.push_str(&format!("  {bad} = icmp ugt i64 {mode}, 511\n"));
+        Ok(self.dir_call_checked(&[name], Some(bad), None, |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let narrow = this.fresh();
+            this.out.push_str(&format!("  {narrow} = trunc i64 {mode} to i32\n"));
+            let made = this.fresh();
+            this.out.push_str(&format!(
+                "  {made} = call i32 @mkdirat(i32 {fd}, ptr {}, i32 {narrow})\n",
+                copies[0]
+            ));
+            made
         }))
     }
 

@@ -776,6 +776,12 @@ pub enum Builtin {
     /// `dir_remove(&Dir, name) -> [dir_write] Done`: `unlinkat(dir, name, 0)`.
     /// A link is removed, never followed.
     DirRemove,
+    /// `dir_mkdir(&Dir, name, mode: int) -> [dir_write] Done`: `mkdirat(dir,
+    /// name, mode)`, the mode under the process's umask. An existing name is
+    /// `Failed(EEXIST)`, a dangling link included; a mode outside `0..=0o777`
+    /// is `Failed(EINVAL)` with no call (`docs/directory-handles.md` §3,
+    /// slice 5). Edition 9.
+    DirMkdir,
     /// `dir_sync(&Dir) -> [dir_write] Done`: `fsync` on the directory itself,
     /// so a rename in it is durable.
     DirSync,
@@ -1062,6 +1068,7 @@ impl Builtin {
         Builtin::DirRename,
         Builtin::DirRenameNew,
         Builtin::DirRemove,
+        Builtin::DirMkdir,
         Builtin::DirSync,
         Builtin::DirList,
         Builtin::DirNext,
@@ -1239,6 +1246,7 @@ impl Builtin {
             Builtin::DirRename => "dir_rename",
             Builtin::DirRenameNew => "dir_rename_new",
             Builtin::DirRemove => "dir_remove",
+            Builtin::DirMkdir => "dir_mkdir",
             Builtin::DirSync => "dir_sync",
             Builtin::DirList => "dir_list",
             Builtin::DirNext => "dir_next",
@@ -1412,6 +1420,9 @@ impl Builtin {
             // is closed (`docs/editions.md` §6.4) and `tcp_listen_on` is a
             // name a program may declare for itself.
             Builtin::TcpListenOn => 9,
+            // `docs/directory-handles.md` §3, slice 5: edition 9 -- `dir_mkdir`
+            // is a name a program may already declare.
+            Builtin::DirMkdir => 9,
             // `docs/processes.md` §4.11: edition 9, the latest open one --
             // `child_release` and `child_pid` are names a program may
             // already declare, and edition 7 is closed. §4.12's
@@ -1566,7 +1577,7 @@ impl Builtin {
             | Builtin::DirOpenRead
             | Builtin::DirOpenNew
             | Builtin::DirOpenAppend => 2,
-            Builtin::DirRemove => 2,
+            Builtin::DirRemove | Builtin::DirMkdir => 2,
             // The handle's region and each name's.
             Builtin::DirRename | Builtin::DirRenameNew => 3,
             Builtin::DirSync => 1,
@@ -1718,6 +1729,7 @@ impl Builtin {
             | Builtin::DirRename
             | Builtin::DirRenameNew
             | Builtin::DirRemove
+            | Builtin::DirMkdir
             | Builtin::DirSync => Effects::plain(["dir_write"]),
             Builtin::ConnWrite => Effects::plain(["conn_write"]),
             // `docs/processes.md` §3.2: path-free, the program was named at

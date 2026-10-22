@@ -163,6 +163,19 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         unsupported: Option<i64>,
         call: impl FnOnce(&mut Self, &[Value]) -> Value,
     ) -> Vec<Value> {
+        self.dir_call_checked(names, None, unsupported, call)
+    }
+
+    /// `dir_call_mapping`, and when `refuse` is given (a boolean computed
+    /// before the call), a true one is refused as a bad name is: `EINVAL`, no
+    /// call made. `dir_mkdir` uses it for a mode outside `0..=0o777`.
+    pub(crate) fn dir_call_checked(
+        &mut self,
+        names: &[(Value, Value)],
+        refuse: Option<Value>,
+        unsupported: Option<i64>,
+        call: impl FnOnce(&mut Self, &[Value]) -> Value,
+    ) -> Vec<Value> {
         let merge = self.builder.create_block();
         self.builder.append_block_param(merge, types::I64);
         self.builder.append_block_param(merge, types::I64);
@@ -170,6 +183,12 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
         let copies: Vec<Value> =
             names.iter().map(|&(name, length)| self.component(name, length, refused)).collect();
+        if let Some(refuse) = refuse {
+            let go = self.builder.create_block();
+            self.builder.ins().brif(refuse, refused, &[], go, &[]);
+            self.builder.switch_to_block(go);
+            self.builder.seal_block(go);
+        }
         let result = call(self, &copies);
         let mut reason = self.errno();
         if let Some(unsupported) = unsupported {
@@ -282,6 +301,28 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 &[types::I32, pointer, types::I32],
                 &[types::I32],
                 &[fd, copies[0], no_flags],
+            )
+        })
+    }
+
+    /// `dir_mkdir(dir, name, mode)`: `mkdirat`, the mode under the umask. A
+    /// mode outside `0..=0o777` -- one unsigned compare catches a negative
+    /// too -- is refused before the call, so no bit the program did not mean
+    /// (setuid, sticky) reaches the kernel (`docs/directory-handles.md` §3,
+    /// slice 5).
+    pub(crate) fn dir_mkdir(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let handle = args[0];
+        let mode = args[3];
+        let bad = self.builder.ins().icmp_imm(IntCC::UnsignedGreaterThan, mode, 0o777);
+        self.dir_call_checked(&[(args[1], args[2])], Some(bad), None, |this, copies| {
+            let fd = this.dir_fd(handle);
+            let mode = this.builder.ins().ireduce(types::I32, mode);
+            this.libc_call(
+                "mkdirat",
+                &[types::I32, pointer, types::I32],
+                &[types::I32],
+                &[fd, copies[0], mode],
             )
         })
     }

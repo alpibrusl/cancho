@@ -1,0 +1,25 @@
+//~ ERROR performs `dir_write`, which its row
+//~ RULE effect-not-declared
+
+// `docs/directory-handles.md` §3, slice 5: making a directory changes what is
+// beneath the directory, so it performs `dir_write`, as `dir_rename` does, and
+// a function that borrows a `Dir` has to say so.
+
+edition 9;
+
+fn make[&d](dir: &d Dir) -> [dir_read] int {
+    match dir_mkdir(dir, "out", 493) {
+        Done::Ok(n) => {
+            return n;
+        }
+        Done::Failed(e) => {
+            return 0 - e;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals); release(exec); release(tty);
+    return 0;
+}
