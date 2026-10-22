@@ -480,6 +480,18 @@ fn the_command_line_in_cancho_checks_like_cancho_check() {
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
 
+/// Is this program one of the tenth that is also run with the standard library? Chosen by the name, relative to the repository, and not by its place in the list, so that
+/// adding a program to the repository does not change which ones they are (it did: a new file moved the picks, and one that the checker in cancho lets through was picked).
+fn with_library(name: &str) -> bool {
+    let root = repo_root();
+    let short = name.strip_prefix(root.to_str().expect("a path")).unwrap_or(name);
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in short.bytes() {
+        hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+    }
+    hash % 10 == 0
+}
+
 /// `cli.cho ids` against `cancho ids`: the lines of identities, byte for byte, for the repository's programs and the programs of several
 /// files, and, for a tenth of them, with the standard library (`--std` of the Rust command, `--std-dir std` of this one, which does not carry
 /// the library: the files are read, in the order `--std` adds them, from the directory). A refused program is a status 1 and no lines. The checker
@@ -518,13 +530,13 @@ fn the_command_line_in_cancho_writes_the_identities_like_cancho_ids() {
     };
     let (mut different, mut written, mut refused, mut with_std, mut missed) =
         (Vec::new(), 0, 0, 0, Vec::new());
-    for (n, (name, files)) in cases.iter().enumerate() {
+    for (name, files) in &cases {
         for (path, text) in files {
             std::fs::write(dir.join(path), text).expect("a file is written");
         }
         let names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
         let mut variants = vec![(vec![], vec!["--host", host])];
-        if n % 10 == 0 {
+        if with_library(name) {
             variants.push((vec!["--std"], vec!["--host", host, "--std-dir", std_dir]));
         }
         for (theirs, ours) in variants {
@@ -998,13 +1010,13 @@ fn the_command_line_in_cancho_reports_layout_like_cancho_layout() {
     };
     let (mut different, mut same, mut refused, mut cannot, mut with_std, mut missed) =
         (Vec::new(), 0, 0, Vec::new(), 0, Vec::new());
-    for (n, (name, files)) in cases.iter().enumerate() {
+    for (name, files) in &cases {
         for (path, text) in files {
             std::fs::write(dir.join(path), text).expect("a file is written");
         }
         let names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
         let mut variants = vec![(vec![], vec![])];
-        if n % 10 == 0 {
+        if with_library(name) {
             variants.push((vec!["--std"], vec!["--std-dir", std_dir]));
         }
         for (theirs, ours) in variants {
@@ -1041,12 +1053,156 @@ fn the_command_line_in_cancho_reports_layout_like_cancho_layout() {
     let expected =
         vec![repo_root().join("examples/tls_nb/gaps/g17_conn_payload.cho").display().to_string()];
     assert_eq!(missed, expected, "the refusals the checker in cancho does not make");
-    // Every tenth file of the sorted corpus is also run with the library, so adding a fixture moves which files those are
-    // and how many of them are programs that get a table rather than a refusal: 19 with `exec_spawn_detached_under`'s seven
-    // files (#562), 21 or more before. The floor says the library runs are not absent, not how many there are.
+    // The programs run with the library are chosen by a hash of their names (`with_library`), so adding a fixture does not move which
+    // they are; how many of them are programs that get a table and not a refusal is what the floor is under (19 when this was written).
     assert!(
-        same > 100 && with_std > 15,
+        same > 100 && with_std > 10,
         "only {same} runs gave a table, {with_std} with the library"
+    );
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
+/// The pairs of files `satisfy` is run on: a name, the arguments before the files' names, and the files (a contract, a candidate).
+type Files = Vec<(&'static str, String)>;
+
+fn satisfy_cases() -> Vec<(&'static str, Vec<&'static str>, Files)> {
+    let candidate = "module lib.calc;\n\npub fn double(n: int) -> [] int {\n    return n + n;\n}\n\npub fn triple(n: int) -> [] int {\n    return n + n + n;\n}\n\nfn test_inner() -> [] int {\n    return 0;\n}\n"
+        .to_owned();
+    let contract = "import lib.calc;\n\nfn test_double() -> [] int {\n    if calc.double(4) == 8 {\n        return 0;\n    }\n    return 1;\n}\n\nfn test_triple() -> [] int {\n    if calc.triple(2) == 6 {\n        return 0;\n    }\n    return 1;\n}\n"
+        .to_owned();
+    let both = |c: &str, d: &str| vec![("contract.cho", c.to_owned()), ("cand.cho", d.to_owned())];
+    vec![
+        ("satisfied", vec![], both(&contract, &candidate)),
+        (
+            "a test that fails",
+            vec![],
+            both(&contract, &candidate.replace("n + n + n", "n + n + n + 1")),
+        ),
+        (
+            "a root candidate",
+            vec![],
+            both(
+                "fn test_inc() -> [] int {\n    if inc(1) == 2 {\n        return 0;\n    }\n    return 1;\n}\n",
+                "struct Pair { a: int, b: int }\n\nfn inc(n: int) -> [] int {\n    return n + 1;\n}\n",
+            ),
+        ),
+        (
+            "a contract with no tests",
+            vec![],
+            both(
+                "import lib.calc;\n\nfn helper() -> [] int {\n    return calc.double(1);\n}\n",
+                &candidate,
+            ),
+        ),
+        (
+            "a contract that calls nothing",
+            vec![],
+            both("fn test_nothing() -> [] int {\n    return 0;\n}\n", &candidate),
+        ),
+        (
+            "a contract that only names a function in a comment and a string",
+            vec![],
+            both(
+                "// calc.double(1) triple(2)\nfn test_text() -> [] int {\n    let s = \"double(1)\";\n    return 0;\n}\n",
+                &candidate,
+            ),
+        ),
+        (
+            "a candidate that is refused",
+            vec![],
+            both(
+                &contract,
+                "module lib.calc;\n\npub fn double(n: int) -> [] int {\n    return missing;\n}\n\npub fn triple(n: int) -> [] int {\n    return n;\n}\n",
+            ),
+        ),
+        (
+            "a contract that calls what is not there",
+            vec![],
+            both(
+                "import lib.calc;\n\nfn test_x() -> [] int {\n    return calc.quadruple(1);\n}\n",
+                &candidate,
+            ),
+        ),
+        (
+            "a test of the wrong shape",
+            vec![],
+            both(
+                "import lib.calc;\n\nfn test_x(n: int) -> [] int {\n    return calc.double(n) - 2 * n;\n}\n",
+                &candidate,
+            ),
+        ),
+        ("an option that is not one", vec!["--bogus"], both(&contract, &candidate)),
+        ("one file", vec![], vec![("contract.cho", contract.clone())]),
+        (
+            "three files",
+            vec![],
+            vec![
+                ("contract.cho", contract.clone()),
+                ("cand.cho", candidate.clone()),
+                ("more.cho", "fn extra() -> [] int {\n    return 1;\n}\n".to_owned()),
+            ],
+        ),
+    ]
+}
+
+/// `satisfy` in cancho against `cancho satisfy`: the pairs of `satisfy_cases`, the output (a refusal up to its place) and the exit status.
+#[test]
+fn the_command_line_in_cancho_satisfies_like_cancho_satisfy() {
+    let exe = build("cli-satisfy", &with_front_end("cli.cho"));
+    let dir = scratch("selfhost-satisfy-run");
+    let plain = |text: &str| -> String {
+        text.lines()
+            .filter(|line| {
+                !line.starts_with("building the compiler in cancho")
+                    && !line.starts_with("ld: warning:")
+            })
+            .map(|line| match line.find(": error: ") {
+                Some(at) => line[..at].to_owned(),
+                None => line.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let (mut different, mut checked) = (Vec::new(), Vec::new());
+    for (name, options, files) in satisfy_cases() {
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the directory is made");
+        for (file, text) in &files {
+            std::fs::write(dir.join(file), text).expect("a file is written");
+        }
+        let names: Vec<&str> = files.iter().map(|(file, _)| *file).collect();
+        let run = |binary: &Path| {
+            let done = Command::new(binary)
+                .current_dir(&dir)
+                .arg("satisfy")
+                .args(&options)
+                .args(&names)
+                .stdin(Stdio::null())
+                .output()
+                .expect("satisfy runs");
+            (
+                done.status.code(),
+                plain(&String::from_utf8_lossy(&done.stdout)),
+                plain(&String::from_utf8_lossy(&done.stderr)),
+            )
+        };
+        let (theirs, mine) = (run(Path::new(BIN)), run(&exe));
+        if theirs == mine {
+            checked.push(format!("{name}: {:?}", theirs.0));
+        } else {
+            different.push(format!("{name}:\n  theirs {theirs:?}\n  mine   {mine:?}"));
+        }
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .expect("a directory is read")
+            .map(|e| e.expect("an entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!left.iter().any(|n| n.contains("cancho-test")), "{name}: left over: {left:?}");
+    }
+    eprintln!("satisfied by both: {}", checked.join("; "));
+    assert!(
+        different.is_empty(),
+        "`satisfy` in cancho and `cancho satisfy` disagree about:\n{}",
+        different.join("\n")
     );
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }

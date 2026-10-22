@@ -132,7 +132,7 @@ pub fn builtin_code[&x](text: &x [byte], from: int, to: int) -> [] int {
 // 47 `clock_unix_ms`, 93 to 105 the poller and the hand-over of a connection (see `netcode.cho`), 48 `pipe_open`, 49 `pipe_read`, 50 `pipe_write`, 51 `pipe_close`, 52 `child_end_close`,
 // 53 `pipe_nonblocking`, then the directories: 54 `open_dir`, 55 `dir_enter`, 56 `dir_open_read`, 57 `dir_open_new`,
 // 58 `dir_open_append`, 59 `dir_rename`, 60 `dir_rename_new`, 61 `dir_remove`, 62 `dir_sync`, 63 `dir_close`, 64 `dir_list`,
-// 65 `dir_next`, 66 `dir_list_close`, 67 `dir_stat`, 68 `dir_mode`, 69 `dir_own_mode`; 0 for another name.
+// 65 `dir_next`, 66 `dir_list_close`, 67 `dir_stat`, 68 `dir_mode`, 69 `dir_own_mode`, 139 `dir_mkdir`; 0 for another name.
 pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     if lc.spells(text, from, to, "bind") {
         return 32;
@@ -250,6 +250,9 @@ pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     }
     if lc.spells(text, from, to, "dir_own_mode") {
         return 69;
+    }
+    if lc.spells(text, from, to, "dir_mkdir") {
+        return 139;
     }
     if lc.spells(text, from, to, "tty_open") {
         return 122;

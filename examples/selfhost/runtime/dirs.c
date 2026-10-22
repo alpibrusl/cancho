@@ -26,6 +26,7 @@ extern int renameatx_np(int, const char *, int, const char *, unsigned);
 extern int renameat2(int, const char *, int, const char *, unsigned);
 #endif
 extern int unlinkat(int, const char *, int);
+extern int mkdirat(int, const char *, unsigned);
 extern int fsync(int);
 extern int fstatat(int, const char *, void *, int);
 extern int fstat(int, void *);
@@ -101,6 +102,14 @@ void cancho_dir_remove(const i64 *dir, const u8 *name, i64 len, i64 *out) {
   u8 copy[NAME_MAX + 1];
   if (!dirrt_component(name, len, copy)) return dirrt_refused(out);
   int r = unlinkat((int)*dir, (const char *)copy, 0);
+  dirrt_triple(out, r, ERRNO);
+}
+
+/* `dir_mkdir(dir, name, mode)`: a mode outside 0..0o777 is refused as a bad name is, with no call. */
+void cancho_dir_mkdir(const i64 *dir, const u8 *name, i64 len, i64 mode, i64 *out) {
+  u8 copy[NAME_MAX + 1];
+  if (!dirrt_component(name, len, copy) || (unsigned long)mode > 0777) return dirrt_refused(out);
+  int r = mkdirat((int)*dir, (const char *)copy, (unsigned)mode);
   dirrt_triple(out, r, ERRNO);
 }
 

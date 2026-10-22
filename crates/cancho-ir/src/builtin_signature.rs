@@ -649,6 +649,22 @@ impl Builtin {
                     named(PRELUDE_OPENED)
                 },
             ),
+            Builtin::DirMkdir => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_DIR)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Int,
+                ],
+                named(PRELUDE_DONE),
+            ),
             Builtin::DirRename | Builtin::DirRenameNew => (
                 vec![
                     Type::Ref {

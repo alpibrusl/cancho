@@ -715,6 +715,27 @@ fn identities[&h, &i, &s, &x](heap: &!h Heap, io: &!i Io, st: &!s [int], text: &
     return status;
 }
 
+// Mode 13: the functions of the parsed program with the identity of each signature, as `identity.listing` writes them; `st[63]` is 1 if a literal of the program
+// is one whose bits are not worked out.
+fn identity_list[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte], tokens: int) -> [heap] buffer.Buffer {
+    var items = 0;
+    var at = st[15];
+    while at >= 0 {
+        items = items + 1;
+        at = ast.next(st, at);
+    }
+    let area = box_slice(heap, identity.size_for(tokens, items), 0);
+    var out = buffer.empty(heap, 0);
+    borrow mut area as &!db in {
+        let d = contents(db);
+        identity.layout(d, tokens, items);
+        buffer.drop(heap, out);
+        out = identity.listing(heap, st, text, d);
+    }
+    unbox_slice(heap, area);
+    return out;
+}
+
 // Mode 11: what `testscan.cho` found. The tests are the answer, with their number in `st[5]`; or the status it refused with is `st[63]`, with
 // `st[3]`, `st[4]` and `st[5]` as in any refusal, and the text that goes with the refusal is the answer.
 fn scanned[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte]) -> [heap] buffer.Buffer {
@@ -776,13 +797,13 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
             at = header_end(raw, at) + n;
             f = f + 1;
         }
-        if mode >= 3 && mode != 9 && mode != 11 {
+        if mode >= 3 && mode != 9 && mode != 11 && mode != 13 {
             // A string literal is one token and as many bytes, and its code is the bytes again, spelt out: the room the code is written in is
             // counted by the token, so it is raised by the length of the text.
             tokens = tokens + len(text) / 50;
         }
         var size = ast.size_for(tokens, files);
-        if mode == 9 {
+        if mode == 9 || mode == 13 {
             // The identities only need the room the printer works floats out in.
             size = size + ast.const_region() + ast.inst_region();
         } else if mode >= 3 && mode != 11 {
@@ -791,7 +812,7 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
         let state = box_slice(heap, size, 0);
         borrow mut state as &!b in {
             let st = contents(b);
-            if mode == 9 {
+            if mode == 9 || mode == 13 {
                 ast.layout(st, tokens, files);
                 st[62] = ast.size_for(tokens, files);
             } else if mode >= 3 && mode != 11 {
@@ -828,6 +849,15 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                     status = refusal_line(io, st);
                 } else {
                     status = identities(heap, io, st, text, tokens);
+                }
+            } else if mode == 13 {
+                // The functions of the program with the identity of each signature (`identity.listing`), for `satisfy`.
+                if ast.parse(st, text) != 0 {
+                    status = 1;
+                } else {
+                    buffer.drop(heap, written);
+                    written = identity_list(heap, st, text, tokens);
+                    status = st[63];
                 }
             } else if mode == 10 {
                 status = check_quiet(st, text);

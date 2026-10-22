@@ -1,6 +1,6 @@
 # Directory handles: opening beneath a directory, following no links
 
-Status: **slices 1, 2 and 4 built** (4 is edition 7), both backends: open a directory, step into a child directory, open a
+Status: **slices 1, 2, 4 and 5 built** (4 is edition 7, 5 is edition 9), both backends: open a directory, step into a child directory, open a
 file in it for reading (slice 1, #250), and create, append to, rename, remove and sync beneath it (slice 2). Linux
 measured; Darwin's flags and Apple AArch64's variadic call are written and run only by CI. Slice 3 (`cancho-tools`
 on top) is built there (alpibrusl/cancho-tools#4); §3 corrects what it said the row would become. Issue #227, gap L6 of [`agent-toolbox.md`](agent-toolbox.md).
@@ -150,7 +150,40 @@ generators.
    * **Requirements.** Linux kernel 3.15 and glibc 2.28 (`renameat2` has no wrapper before that; not measured against another libc). macOS 10.12 (`renameatx_np`). A libc without the symbol fails at link time, not at run time, so a
      program cannot silently get the replacing behaviour.
 
+5. **Built: creating a directory** (#595). There was no builtin that makes one, so a tool that unpacks a tree (cancho-tools'
+   `archive --op extract`) could only extract into directories that already existed, and no tool in the toolbox could
+   make them. One builtin, **edition 9** (the latest open one, `editions.md` §6.4: `dir_mkdir` is a name a program may
+   already declare):
+
+   ```
+   dir_mkdir(dir: &Dir, name: &[byte], mode: int) -> [dir_write] Done        // mkdirat(dir, name, mode)
+   ```
+
+   * **Never replaces, never follows.** `mkdirat` fails with `EEXIST` for a name that exists, whatever it is: a file, a
+     directory, a link, a dangling link (it does not follow the link to see whether its target is missing). The caller
+     decides whether an existing directory is acceptable; `dir_stat` tells it which it is.
+   * **`mode` is the permission bits asked for, `0` to `0o777`.** The process umask applies, as it does to
+     `dir_open_new` (so `0o755` under a umask of `0o022` is `0o755`, and `0o777` is `0o755`). A `mode` above `0o777`
+     or below zero is `Failed(EINVAL)` with no call: setuid, setgid and sticky are not something a program asks for by
+     passing a larger number, and `mkdir` ignores setuid and setgid on Linux anyway.
+   * **One component**, §2's check on `name` (`EINVAL` with no call for empty, `.`, `..`, a `/`, a NUL, or longer than
+     `NAME_MAX`); `dir_write`; every other answer is `mkdirat`'s (`ENOENT` if the directory itself was removed,
+     `EACCES`, `ENOSPC`, `EROFS`).
+   * **WASI: refused**, under the permission-bits family (§4 of `wasm.md`): `path_create_directory` takes no mode, so
+     the argument would be silently dropped, as `dir_mode` would answer 0.
+   * What it does **not** do: create a missing parent (`mkdir -p` is a loop of `dir_enter` and `dir_mkdir` in the
+     caller, one component at a time, which is where the policy for an existing directory belongs), set the mode of a
+     directory that exists (there is no `chmod`; a mode argument for `dir_open_new` is #596), or make a directory
+     atomically with its contents.
+
 ## 4. What it is checked by
+
+Slice 5 (`tests/conformance/directory_mkdir.rs`, **both backends**, the same expectations): a free name becomes a directory with
+the mode asked for under a umask of `0o022` (`0o755` is `0o755`, `0o700` is `0o700`, `0o777` is `0o755`), and it can be entered; an
+existing file, directory, link or dangling link is `EEXIST` and nothing is written outside; `..`, `.`, an empty name, `a/b` and a
+NUL are `EINVAL` with no call; a mode of `0o1000`, `0o4755` and `-1` is `EINVAL` and no directory appears;
+`tests/reject/dir_mkdir_is_edition_nine.cho` (`not-a-function` at edition 8), `dir_mkdir_not_declared.cho`
+(`effect-not-declared`) and `dir_mkdir_on_wasi.cho`.
 
 Slice 4 (`tests/conformance/directory_rename_new.rs`, **both backends**, the same expectations):
 
