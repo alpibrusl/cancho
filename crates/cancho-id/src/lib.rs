@@ -15,6 +15,7 @@
 //! Nothing consumes these hashes yet. They exist because M0 claimed the AST
 //! was built for canonicalisation, and until something hashed it that was an
 //! assertion rather than a fact.
+#![forbid(unsafe_code)]
 
 use std::collections::HashMap;
 

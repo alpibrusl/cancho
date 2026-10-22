@@ -9,6 +9,7 @@
 //! a Cranelift verifier complaint or a broken invariant, which the CLI reports
 //! as an `internal` refusal at the function it happened in
 //! (`docs/internal-errors.md`).
+#![forbid(unsafe_code)]
 
 use std::fmt;
 

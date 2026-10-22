@@ -16,6 +16,7 @@
 //!
 //! `run` is the exception: it replaces its own status with the compiled
 //! program's, so `cancho run p.cho` and `cancho build p.cho && ./p` agree.
+#![forbid(unsafe_code)]
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -32,6 +33,7 @@ mod fmt_cli;
 mod foreign_report;
 mod project;
 mod satisfy_cli;
+mod scratch;
 mod selfhost_build;
 mod test_cli;
 mod vcs_cli;
@@ -473,9 +475,8 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
         "run" => {
             let Invocation { inputs, with_std, backend, target, link_libs, link_paths, .. } =
                 parse_args(&args[1..], false, true)?;
-            let dir = std::env::temp_dir().join(format!("cancho-run-{}", std::process::id()));
-            std::fs::create_dir_all(&dir)
-                .map_err(|e| environment(format!("cannot create `{}`: {e}", dir.display())))?;
+            let dir = scratch::private_temp_dir("cancho-run")
+                .map_err(|e| environment(format!("cannot create a temporary directory: {e}")))?;
             let exe =
                 dir.join(default_output(&inputs[0], Emit::Exe).file_name().unwrap_or_default());
             let result = build(

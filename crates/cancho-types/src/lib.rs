@@ -15,6 +15,7 @@
 //!   and a generic call can be solved within one body. A signature is never
 //!   inferred — every parameter and return type is written — so unification
 //!   never has to cross a function boundary.
+#![forbid(unsafe_code)]
 
 use std::fmt;
 

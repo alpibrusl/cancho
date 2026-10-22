@@ -87,6 +87,10 @@ length is the buffer size and `Truncated` means "at least as big as the buffer" 
 
 ## 4. A peer is a ticket, not an address
 
+> **Corrected (#587, [`unsafe-and-global-state.md`](unsafe-and-global-state.md) §5):** everything below, and every test of it, describes a program
+> with **one thread** receiving. The ring and its counter are plain memory shared by the process, so two threads receiving on
+> different sockets can share a ticket and an entry ([#594](https://github.com/alpibrusl/cancho/issues/594)).
+
 A server replies to the client that wrote to it, often after waiting for something else (a resolver answers a
 cache miss only after its upstream does). So the sender's address must outlive the next `udp_recv`. It cannot
 be a number the program can write, or `udp_send_to(u, bytes, 0x7f000001_0035)` would be a free `sendto`.

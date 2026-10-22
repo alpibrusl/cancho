@@ -20,6 +20,7 @@
 //! 2. **Types compare cheaply and canonically** — that is `cancho-types`.
 //! 3. **The branch join is a real operation.** [`terminates`] is that join for
 //!    control flow today; M2 adds a live set to the same shape.
+#![forbid(unsafe_code)]
 
 use std::fmt;
 

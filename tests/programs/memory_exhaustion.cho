@@ -1,0 +1,115 @@
+edition 9;
+
+import std.buffer;
+import std.io;
+
+// `docs/unsafe-and-global-state.md` §6: what a failed allocation leaves. The driver asks for more memory than the test
+// lets the process have (`ulimit -v`, one step of a sweep) and the test reads how it ended: `0` when it finished, or the
+// trap (`SIGILL`) every checked operation ends with, and nothing else.
+//   argv[1]  a mode:
+//     `g`  a growing `std.buffer`: 64 KiB appended 4,096 times, 256 MiB in all; every growth is an allocation, a copy and
+//          a free of the old one, so a failure falls between them
+//     `r`  regions nested 1,000 deep, each holding its 64 KiB chunk: 64 MB of `malloc`s that are all live at once
+//     `b`  `box_slice` of 8 MiB, written and read back, 32 times in a row and each freed before the next: a limit below
+//          8 MiB fails the first, a limit above it never fails (the allocator reuses what it freed)
+//     `x`  what a trap leaves visible: a line to standard output, then an index past the end of a slice; the test reads
+//          whether the line reached the pipe
+//   Prints `done` and a number when it finishes.
+
+fn grow[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    let chunk = box_slice(heap, 65536, byte_of(65));
+    var b = buffer.empty(heap, 0);
+    var k = 0;
+    borrow chunk as &c in {
+        while k < 4096 {
+            b = buffer.append(heap, b, contents(c));
+            k = k + 1;
+        }
+    }
+    io.write_all(io, "done ");
+    borrow b as &bb in {
+        io.print_int(io, buffer.size(bb));
+    }
+    io.newline(io);
+    buffer.drop(heap, b);
+    unbox_slice(heap, chunk);
+    return 0;
+}
+
+fn deep[&i](io: &!i Io, n: int) -> [io_write] int {
+    region a {
+        let s = alloc_slice[a](8, 0);
+        if n > 0 {
+            return deep(io, n - 1) + s[3];
+        }
+        return s[3];
+    }
+}
+
+fn boxes[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {
+    var round = 0;
+    var sum = 0;
+    while round < 32 {
+        let b = box_slice(heap, 8388608, byte_of(round));
+        borrow b as &c in {
+            sum = sum + int_of(contents(c)[8388607]);
+        }
+        unbox_slice(heap, b);
+        round = round + 1;
+    }
+    io.write_all(io, "done ");
+    io.print_int(io, sum);
+    io.newline(io);
+    return 0;
+}
+
+fn index_past[&h, &i](heap: &!h Heap, io: &!i Io, at: int) -> [heap, io_write] int {
+    io.write_all(io, "before\n");
+    let b = box_slice(heap, 8, byte_of(1));
+    var sum = 0;
+    borrow b as &c in {
+        sum = int_of(contents(c)[at]);
+    }
+    io.write_all(io, "after\n");
+    unbox_slice(heap, b);
+    return sum;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var console = io;
+    var memory = heap;
+    var code = 2;
+    borrow args as &g in {
+        let mode = int_of(arg(g, 1)[0]);
+        borrow mut console as &!i in {
+            borrow mut memory as &!h in {
+                if mode == 'g' {
+                    code = grow(h, i);
+                }
+                if mode == 'r' {
+                    deep(i, 1000);
+                    io.write_all(i, "done 0\n");
+                    code = 0;
+                }
+                if mode == 'b' {
+                    code = boxes(h, i);
+                }
+                if mode == 'x' {
+                    code = index_past(h, i, 100 + len(arg(g, 1)));
+                }
+            }
+        }
+    }
+    release(args);
+    release(memory);
+    release(console);
+    return code;
+}

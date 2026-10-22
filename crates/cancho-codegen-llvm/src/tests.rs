@@ -1734,3 +1734,47 @@ fn a_programs_own_free_and_malloc_are_the_only_declarations() {
     assert!(plain.contains("declare ptr @malloc(i64)\n"), "{plain}");
     assert!(plain.contains("declare void @free(ptr)\n"), "{plain}");
 }
+
+/// `docs/unsafe-and-global-state.md` §3: `COUNTER` only names the temporary files of `run_clang`, and the compilations of
+/// one process neither collide on them nor leave them behind. Two compilations with another between them write the same
+/// object, and no `cancho-llvm-<pid>-*` file is left in the temporary directory by this process.
+#[test]
+fn two_compilations_in_one_process_write_the_same_object_and_leave_nothing() {
+    let first = compiled(&program_returning("x + 1"), "main");
+    let other = compiled(&program_returning("x + 2"), "main");
+    let second = compiled(&program_returning("x + 1"), "main");
+    assert_ne!(first, other, "the second program is another program");
+    assert_eq!(first, second, "a compilation in between changed the next one");
+    let prefix = format!("cancho-llvm-{}-", std::process::id());
+    let left: Vec<_> = std::fs::read_dir(std::env::temp_dir())
+        .expect("the temporary directory is readable")
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+        .collect();
+    assert!(left.is_empty(), "temporary files left behind: {left:?}");
+}
+
+/// `docs/unsafe-and-global-state.md` §3: the temporary directory of a compilation is made, never reused. A link left at
+/// the name by another user is refused and what it points at is untouched; so is a directory that is already there.
+#[test]
+fn the_private_directory_is_refused_where_anything_already_is() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let base = std::env::temp_dir().join(format!("cancho-private-dir-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).expect("a scratch directory");
+    let victim = base.join("victim");
+    std::fs::create_dir(&victim).expect("a victim directory");
+    std::fs::write(victim.join("keep"), "mine").expect("a file");
+
+    let fresh = base.join("fresh");
+    make_private_dir(&fresh).expect("a new name is made");
+    assert_eq!(std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777, 0o700);
+
+    let linked = base.join("linked");
+    symlink(&victim, &linked).expect("a link");
+    assert!(make_private_dir(&linked).is_err(), "a link at the name must be refused");
+    assert!(make_private_dir(&fresh).is_err(), "a directory at the name must be refused");
+    assert_eq!(std::fs::read_to_string(victim.join("keep")).unwrap(), "mine");
+    assert_eq!(std::fs::read_dir(&victim).unwrap().count(), 1, "nothing was made in the victim");
+    let _ = std::fs::remove_dir_all(&base);
+}

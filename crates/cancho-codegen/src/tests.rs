@@ -541,3 +541,24 @@ fn main(world: World) -> [] int {
         }
     }
 }
+
+/// `docs/unsafe-and-global-state.md` §3: the code generator keeps no state between two compilations in one process (it
+/// has no `static` that is written; the compiler's `COUNTER` and `FLAG` are elsewhere). A compilation of another program in
+/// between, with a different set of runtime globals in it, changes nothing about the object a third one writes.
+#[test]
+fn two_compilations_in_one_process_write_the_same_object() {
+    let compile = |source: &str| {
+        let ast = parse(source).expect("should parse");
+        let program = lower(&ast).expect("should lower");
+        compile_object_for(&program, "main", host_triple()).expect("should compile")
+    };
+    let first = compile(SOURCE);
+    let other = compile(
+        "fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world); \
+         release(io); release(args); release(heap); release(fs); release(ffi); \
+         region a { let s = alloc_slice[a](4, 7); return s[1]; } }",
+    );
+    let second = compile(SOURCE);
+    assert_ne!(first, other, "the second program is another program");
+    assert_eq!(first, second, "a compilation in between changed the next one");
+}
