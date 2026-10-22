@@ -25,7 +25,7 @@
 | F1 | `cancho run`, `test` and `satisfy` built into `temp_dir()/cancho-<command>-<pid>` with `create_dir_all`, then **ran what they had built**: another user who made that directory first (a pid is guessable) controlled the executable between its writing and its running | **fixed** (§3.3) |
 | F2 | the LLVM backend wrote `cancho-llvm-<pid>-<n>.ll` into the shared temporary directory through whatever link was at that name | **fixed** (§3.2) |
 | F3 | the LLVM object carried that temporary name, so **the same program built twice differed** (Cranelift's did not) | **fixed** (§3.2) |
-| F4 | `conn_attach` spends a ticket with a plain load, compare and store: two threads can redeem one ticket | filed, [#593](https://github.com/alpibrusl/cancho/issues/593); read from the code, not reproduced |
+| F4 | `conn_attach` spent a ticket with a plain load, compare and store: two threads could redeem one ticket | **reproduced and fixed** (#593, §5): 4 to 35 doubly redeemed tickets in 300 rounds on x86-64 before; none after, with a mutant that brings them back |
 | F5 | the UDP peer ring and its ticket counter are plain memory: two receiving threads can share a ticket and an entry | filed, [#594](https://github.com/alpibrusl/cancho/issues/594); read from the code, not reproduced |
 
 No refusal is involved in any of them, so no rule tag is added.
@@ -155,8 +155,21 @@ tickets name **the same descriptor number** (it did, so the case happened), then
 redeems ticket 2 and gets its own connection. The previous test (`a_ticket_is_spent_when_it_is_redeemed`) stopped at
 redeeming a ticket after its own connection was closed; it never had another connection take the number. **Mutant:** the
 comparison of the ticket's epoch with the table's removed (Cranelift, `conn_attach`): the new test fails (score 2, the old ticket
-attached the new connection). **Finding F4:** the table is read, compared and written without atomics, so this holds for one
-thread; two threads redeeming copies of one ticket are not excluded ([#593](https://github.com/alpibrusl/cancho/issues/593)).
+attached the new connection).
+
+**F4, the same table across threads (#593): reproduced, then fixed.** A ticket is an `int`, so it can be copied into two
+threads, and `conn_attach` took no capability. The table was read, compared and written with plain loads and stores, so two
+threads redeeming one ticket together could both pass the check. `tests/programs/ticket_race.cho` makes it observable: each
+round dials, detaches (the ticket), and starts two threads that wait for the same millisecond on the clock and then call
+`conn_attach` on that one ticket; a round is *doubled* when both were given the connection. Measured before the fix (x86-64,
+4 cores; the first probe, three runs of 300 rounds each): 11, 11 and 35 doubled rounds on Cranelift; 4, 34 and 20 on LLVM
+through the compiler in cancho; 23, 14 and 34 on LLVM through the Rust compiler. After the fix: 0 in 400 rounds, twice, per
+code generator, and `conn_attach` spends the ticket with one compare-and-swap (`atomic_cas`, `cmpxchg`,
+`__atomic_compare_exchange_n`) and `conn_detach` bumps with an atomic add, all sequentially consistent: of any number of
+threads redeeming one ticket exactly one finds the epoch it checked. **Mutant:** the compare-and-swap replaced by the old
+store (Cranelift) fails the test. The runtime of the compiler in cancho is `examples/selfhost/runtime/net.c`, regenerated with
+`make.sh` into `net_linux.ll` and `net_darwin.ll` (clang writes `@lexs_*` as plain `global` now; the two lines were put back
+to `common global`, which the program's own definition relies on). aarch64 is measured by CI only.
 
 **The UDP peer ring (`lexs_udp_peers`).** Existing tests cover the single-threaded claims: a ticket older than the ring is
 refused (`a_ticket_older_than_the_ring_is_refused`), a forged one sends nothing, a ticket is redeemed once, and only the socket
@@ -213,8 +226,7 @@ the compiler's).
 
 ## 7. Not done
 
-* F4 and F5: two threads, not reproduced. Both need a lockstep two-thread test before a fix, and a decision between
-  atomics on the shared tables and per-socket state (#594 proposes both).
+* F5 (#594): see its own section when it is done.
 * The clearing of a released region chunk was not re-measured; `region-chunk-cache.md` §8 did.
 * macOS: **the failed-allocation claim of §6 is measured on Linux x86-64 only.** `ulimit -v` is refused on macOS
   (`cannot modify limit: Invalid argument`, seen on CI in this PR's first run) and it has no other per-process address-space

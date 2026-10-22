@@ -1,0 +1,106 @@
+edition 9;
+
+import std.io;
+
+// `docs/unsafe-and-global-state.md` §5 (#593): a ticket is an `int`, so it can be copied into two threads, and a ticket
+// is redeemed once. This driver redeems the same ticket from two threads at the same moment, many times, and counts the
+// rounds in which both were given the connection.
+//   argv[1]  the port of a server that accepts and holds connections (the test's)
+//   argv[2]  the number of rounds
+// Each round: dial, `conn_detach` (the ticket), then two threads wait until the same millisecond arrives on the clock
+// and each calls `conn_attach` on that one ticket. A thread that gets the connection closes it and answers 1, otherwise
+// 0. Prints `rounds N doubled D`: D is the rounds in which the answers added up to 2.
+
+res struct Job {
+    clock: Clock,
+    at: int,
+    ticket: int,
+}
+
+fn attempt[&r](j: &r Job) -> [clock] int {
+    while clock_ms(j.clock) < j.at {
+    }
+    match conn_attach(j.ticket) {
+        Attached::Ok(c) => {
+            conn_close(c);
+            return 1;
+        }
+        Attached::Failed(e) => {
+            return 0;
+        }
+    }
+}
+
+// The decimal number the argument holds.
+fn number[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) && int_of(b[i]) >= '0' && int_of(b[i]) <= '9' {
+        n = n * 10 + (int_of(b[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn race[&n, &i](net: &n Net(""), io: &!i Io, job: Job, port: int, rounds: int) -> [conc, net_out(""), clock, io_write] Job {
+    var doubles = 0;
+    var round = 0;
+    var state = job;
+    while round < rounds {
+        match tcp_connect(net, "127.0.0.1", port) {
+            Dialed::Ok(c) => {
+                let ticket = conn_detach(c);
+                borrow mut state as &!jm in {
+                    jm.ticket = ticket;
+                    jm.at = clock_ms(jm.clock) + 2;
+                }
+                borrow state as &jr in {
+                    let f = attempt;
+                    let h1 = spawn(jr, f);
+                    let h2 = spawn(jr, f);
+                    let a = join(h1);
+                    let b = join(h2);
+                    if a + b == 2 {
+                        doubles = doubles + 1;
+                    }
+                }
+            }
+            Dialed::Failed(e) => {
+            }
+        }
+        round = round + 1;
+    }
+    io.write_all(io, "rounds ");
+    io.print_int(io, round);
+    io.write_all(io, " doubled ");
+    io.print_int(io, doubles);
+    io.newline(io);
+    return state;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(signals);
+    release(exec);
+    release(tty);
+    var console = io;
+    var job = Job { clock: clock, at: 0, ticket: 0 };
+    borrow args as &g in {
+        let port = number(arg(g, 1));
+        let rounds = number(arg(g, 2));
+        borrow net as &nb in {
+            borrow mut console as &!i in {
+                job = race(nb, i, job, port, rounds);
+            }
+        }
+    }
+    release(net);
+    let Job { clock, at, ticket } = job;
+    release(clock);
+    release(args);
+    release(console);
+    return 0;
+}
