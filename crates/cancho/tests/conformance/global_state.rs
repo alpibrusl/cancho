@@ -94,6 +94,13 @@ fn under_limit(exe: &Path, mode: &str, kib: u32) -> Ended {
 /// every step of a sweep from plenty to nothing; each run finishes with the right answer or traps. A failed `malloc`
 /// that was used (a null `Box`, a half-grown buffer read after the failed copy) would be a `SIGSEGV`, not a trap, and
 /// a wrong answer would be a `done` with another number.
+// macOS cannot set the limit the sweep needs: `ulimit -v` answers "cannot modify limit: Invalid argument" there (seen on
+// CI), and the kernel has no other per-process address-space limit a shell can set. The claim is measured on Linux only
+// (`docs/unsafe-and-global-state.md` §6).
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS has no settable address-space limit (`ulimit -v` is refused); measured on Linux only"
+)]
 #[test]
 fn a_failed_allocation_traps_and_never_leaves_a_half_made_value_in_use() {
     // KiB. The first rows are enough for every driver; the last are not enough for any.

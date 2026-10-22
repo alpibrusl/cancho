@@ -216,8 +216,11 @@ the compiler's).
 * F4 and F5: two threads, not reproduced. Both need a lockstep two-thread test before a fix, and a decision between
   atomics on the shared tables and per-socket state (#594 proposes both).
 * The clearing of a released region chunk was not re-measured; `region-chunk-cache.md` §8 did.
-* macOS: every measurement above is Linux x86-64. `ulimit -v` does not limit the address space on macOS, so the sweep does
-  not run there as written.
+* macOS: **the failed-allocation claim of §6 is measured on Linux x86-64 only.** `ulimit -v` is refused on macOS
+  (`cannot modify limit: Invalid argument`, seen on CI in this PR's first run) and it has no other per-process address-space
+  limit to set from a shell, so the sweep is `#[ignore]`d there with that reason. The other two measurements (the descriptor
+  reuse and the trap) run on both. That a null `malloc` is a trap on macOS rests on the code, which is the same on both
+  (`body/memory.rs` is not per-platform), and is not measured.
 * Non-Linux `ETXTBSY`/`posix_spawn` behaviour; stack exhaustion (a deep recursion is a `SIGSEGV`, not a trap; not in this audit's
   scope, and not a state-sharing question).
 * The on-disk caches (`$CANCHO_CACHE`, `docs/package-system.md`) are state across runs by design and were not audited here.
