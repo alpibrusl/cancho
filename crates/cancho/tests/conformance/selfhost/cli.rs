@@ -464,7 +464,7 @@ fn the_command_line_in_cancho_checks_like_cancho_check() {
     );
     assert_eq!(
         missed,
-        ["examples/tls_nb/gaps/g17_conn_payload.cho".to_owned()]
+        ["examples/tls_nb/gaps/g17_conn_payload.cho", "tests/reject/dir_mkdir_not_declared.cho"]
             .map(|p| repo_root().join(p).display().to_string()),
         "the refusals the checker in cancho misses"
     );
@@ -558,6 +558,7 @@ fn the_command_line_in_cancho_writes_the_identities_like_cancho_ids() {
     // a `spawn` of a connection, one reference that escapes through inference, and a program of several files.
     let mut expected: Vec<String> = [
         "examples/tls_nb/gaps/g17_conn_payload.cho",
+        "tests/reject/dir_mkdir_not_declared.cho",
         "tests/reject/reference_escapes_via_inference.cho",
     ]
     .iter()
@@ -1033,9 +1034,12 @@ fn the_command_line_in_cancho_reports_layout_like_cancho_layout() {
         different.len(),
         different.join("\n")
     );
-    // The one refusal the checker in cancho does not make (`docs/cli-in-cancho.md` section 12): a `spawn` of a connection.
-    let expected =
-        vec![repo_root().join("examples/tls_nb/gaps/g17_conn_payload.cho").display().to_string()];
+    // The refusals the checker in cancho does not make (`docs/cli-in-cancho.md` section 12): a `spawn` of a connection, and
+    // `dir_mkdir`'s effect, a builtin it has no code for yet (#595).
+    let expected = vec![
+        repo_root().join("examples/tls_nb/gaps/g17_conn_payload.cho").display().to_string(),
+        repo_root().join("tests/reject/dir_mkdir_not_declared.cho").display().to_string(),
+    ];
     assert_eq!(missed, expected, "the refusals the checker in cancho does not make");
     // Every tenth file of the sorted corpus is also run with the library, so adding a fixture moves which files those are
     // and how many of them are programs that get a table rather than a refusal: 19 with `exec_spawn_detached_under`'s seven
