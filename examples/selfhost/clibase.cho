@@ -1,0 +1,263 @@
+edition 7;
+module selfhost.clibase;
+
+// clibase.cho -- the pieces every command of the command line shares: reading a file, saying a thing on the standard error, the usage, the report of a refusal, and the small helpers on names and paths. Split out of `cli.cho`, which keeps `main` and the choice of the command.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import std.process;
+import selfhost.ast;
+import selfhost.printing;
+import selfhost.jsonprint;
+import selfhost.driver;
+import selfhost.formatting;
+import selfhost.rules;
+import selfhost.lexcore as lc;
+import selfhost.filewrite;
+import selfhost.walk;
+import selfhost.guidelines;
+import selfhost.commandtree;
+import selfhost.diagnose;
+import selfhost.stdorder;
+import selfhost.testscan;
+import selfhost.satisfytext;
+
+pub fn sentence[&h](heap: &!h Heap, why: &static [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.empty(heap, 64), why);
+}
+
+pub fn refusal_text[&h](heap: &!h Heap, rule: int, from: int, to: int) -> [heap] buffer.Buffer {
+    var line = buffer.append(heap, buffer.empty(heap, 64), "ERR ");
+    line = buffer.append(heap, line, rules.rule_tag(rule));
+    line = buffer.append(heap, line, " ");
+    line = buffer.push_nat(heap, line, from);
+    line = buffer.append(heap, line, " ");
+    line = buffer.push_nat(heap, line, to);
+    return line;
+}
+
+pub fn reason(why: int) -> [] &static [byte] {
+    if why == 1 {
+        return "the formatted text does not parse; the file is left as it is";
+    }
+    if why == 2 {
+        return "the formatted text means something other than the original; the file is left as it is";
+    }
+    if why == 3 {
+        return "formatting would lose, duplicate or reorder a comment; the file is left as it is";
+    }
+    return "formatting its own output changes it again; the formatter is not a fixed point on this file, which is a bug in the formatter, not in the file";
+}
+
+// All of the file at `path`: 0 and the bytes, or the errno (at least 1) and nothing.
+pub res struct Contents {
+    bytes: buffer.Buffer,
+    failed: int,
+}
+
+pub fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] Contents {
+    var out = buffer.empty(heap, 4096);
+    var trouble = 0;
+    match open_read(fs, path) {
+        Opened::Failed(reason) => {
+            trouble = reason;
+            if trouble == 0 {
+                trouble = 1;
+            }
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var chunk = buffer.empty(heap, 65536);
+            borrow mut file as &!handle in {
+                var going = true;
+                while going {
+                    var got = 0;
+                    borrow mut chunk as &!c in {
+                        match file_read(handle, buffer.room(c)) {
+                            Read::Got(n) => {
+                                got = n;
+                                buffer.filled(c, n);
+                            }
+                            Read::End => {
+                                going = false;
+                            }
+                            Read::Failed(reason) => {
+                                going = false;
+                                trouble = reason;
+                                if trouble == 0 {
+                                    trouble = 1;
+                                }
+                            }
+                        }
+                    }
+                    if got > 0 {
+                        borrow chunk as &c in {
+                            out = buffer.append(heap, out, buffer.bytes(c));
+                        }
+                        borrow mut chunk as &!c in {
+                            buffer.clear(c);
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, chunk);
+            file_close(file);
+        }
+    }
+    return Contents { bytes: out, failed: trouble };
+}
+
+pub fn say[&h, &i, &p](heap: &!h Heap, io: &!i Io, head: &static [byte], path: &p [byte]) -> [heap, io_write] int {
+    var line = buffer.append(heap, buffer.empty(heap, 64), head);
+    line = buffer.append(heap, line, path);
+    line = buffer.push(heap, line, byte_of('\n'));
+    borrow line as &l in {
+        buffer.write(io, l);
+    }
+    buffer.drop(heap, line);
+    return 0;
+}
+
+// An error line on the standard error: `PATH: WHAT\n`.
+pub fn complain[&h, &i, &p, &w](heap: &!h Heap, io: &!i Io, path: &p [byte], what: &w [byte]) -> [heap, err_write] int {
+    var line = buffer.append(heap, buffer.empty(heap, 64), path);
+    line = buffer.append(heap, line, ": ");
+    line = buffer.append(heap, line, what);
+    line = buffer.push(heap, line, byte_of('\n'));
+    borrow line as &l in {
+        console.error_all(io, buffer.bytes(l));
+    }
+    buffer.drop(heap, line);
+    return 0;
+}
+
+pub fn spells_check[&p](arg: &p [byte]) -> [] bool {
+    return bytes.equal(arg, "--check");
+}
+
+// A text built in a buffer, written to the standard output; the buffer is spent.
+pub fn show[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_write] int {
+    borrow text as &t in {
+        buffer.write(io, t);
+    }
+    return buffer.drop(heap, text);
+}
+
+// A bad command line: what is wrong, then the usage, on the standard error. Status 2.
+pub fn usage_error[&h, &i, &w](heap: &!h Heap, io: &!i Io, why: &w [byte]) -> [heap, err_write] int {
+    console.error_all(io, why);
+    console.error_all(io, "\n\n");
+    let text = commandtree.usage(heap, buffer.empty(heap, 12000));
+    borrow text as &t in {
+        console.error_all(io, buffer.bytes(t));
+    }
+    buffer.drop(heap, text);
+    console.error_all(io, "\n");
+    return 2;
+}
+
+// Does `word` take the argument after it? (the flags of `check`)
+pub fn takes_value[&w](word: &w [byte], build: bool) -> [] bool {
+    if bytes.equal(word, "--output") || bytes.equal(word, "--host") || bytes.equal(word, "--backend") || bytes.equal(word, "--std-dir") {
+        return true;
+    }
+    return build && (bytes.equal(word, "-o") || bytes.equal(word, "--emit") || bytes.equal(word, "-l") || bytes.equal(word, "-L") || bytes.equal(word, "--clang"));
+}
+
+// The `k`th name of a list of names, each followed by a NUL.
+pub fn name_at[&n](names: &n [byte], k: int) -> [] &n [byte] {
+    var at = 0;
+    var seen = 0;
+    while seen < k && at < len(names) {
+        if lc.at(names, at) == 0 {
+            seen = seen + 1;
+        }
+        at = at + 1;
+    }
+    var end = at;
+    while end < len(names) && lc.at(names, end) != 0 {
+        end = end + 1;
+    }
+    return names[at..end];
+}
+
+// What is said of the first refusal `rule` at `from` to `to`, or of none: the answer of `check`, and its status.
+pub fn report_check[&h, &i, &y, &l, &n](heap: &!h Heap, io: &!i Io, names: &y [byte], laid: &l [byte], lens: &n [int], json: bool, refused: int, rule: int, from: int, to: int) -> [heap, io_write, err_write] int {
+    if refused == 0 {
+        if json {
+            console.write_all(io, "{\n  \"refused\": []\n}\n");
+        }
+        return 0;
+    }
+    if rule == rules.r_skip() {
+        // The compiler in cancho has no judgement to give of this program: the construct at this place is one it has no code for.
+        let place = diagnose.locate(laid, lens, from);
+        var why = buffer.append(heap, buffer.empty(heap, 128), name_at(names, place.file));
+        why = buffer.push(heap, why, byte_of(':'));
+        why = buffer.push_nat(heap, why, place.line);
+        why = buffer.push(heap, why, byte_of(':'));
+        why = buffer.push_nat(heap, why, place.column);
+        why = buffer.append(heap, why, ": this command line cannot judge the program: the compiler in cancho has no code for what is here\n");
+        borrow why as &t in {
+            console.error_all(io, buffer.bytes(t));
+        }
+        buffer.drop(heap, why);
+        return 3;
+    }
+    // A refusal about the program as a whole (no `main`) has no place; it is given at the first file.
+    let located = !(rule == rules.r_program_shape() && from == 0 && to == 0);
+    var which = 0;
+    if located {
+        which = diagnose.locate(laid, lens, from).file;
+    }
+    let path = name_at(names, which);
+    if json {
+        var out = buffer.append(heap, buffer.empty(heap, 512), "{\n  \"refused\": [\n");
+        out = diagnose.entry(heap, out, path, laid, lens, rule, from, located);
+        out = buffer.append(heap, out, "\n  ]\n}\n");
+        show(heap, io, out);
+    } else {
+        var out = buffer.empty(heap, 512);
+        if located {
+            out = diagnose.render(heap, out, path, laid, lens, rule, from, to);
+        } else {
+            out = diagnose.render_program(heap, out, path, rule);
+        }
+        out = buffer.push(heap, out, byte_of('\n'));
+        borrow out as &t in {
+            console.error_all(io, buffer.bytes(t));
+        }
+        buffer.drop(heap, out);
+    }
+    return 1;
+}
+
+// Is `word` somewhere in `text`?
+pub fn contains[&t, &w](text: &t [byte], word: &w [byte]) -> [] bool {
+    var at = 0;
+    while at + len(word) <= len(text) {
+        if lc.spells(text, at, at + len(word), word) {
+            return true;
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// The name of a file without the directories before it and the `.cho` after it.
+pub fn stem[&p](path: &p [byte]) -> [] &p [byte] {
+    var from = 0;
+    var k = 0;
+    while k < len(path) {
+        if lc.at(path, k) == '/' {
+            from = k + 1;
+        }
+        k = k + 1;
+    }
+    var to = len(path);
+    if to - from > 4 && lc.spells(path, to - 4, to, ".cho") {
+        to = to - 4;
+    }
+    return path[from..to];
+}

@@ -1,0 +1,579 @@
+edition 7;
+module selfhost.clitest;
+
+// clitest.cho -- `test` and `satisfy` (sections 16 and 18): the tests of a program are found, a runner is built with it, and each test is run as a process of its own. Split out of `cli.cho`, which keeps `main` and the choice of the command.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import std.process;
+import selfhost.ast;
+import selfhost.printing;
+import selfhost.jsonprint;
+import selfhost.driver;
+import selfhost.formatting;
+import selfhost.rules;
+import selfhost.lexcore as lc;
+import selfhost.filewrite;
+import selfhost.walk;
+import selfhost.guidelines;
+import selfhost.commandtree;
+import selfhost.diagnose;
+import selfhost.stdorder;
+import selfhost.testscan;
+import selfhost.satisfytext;
+import selfhost.clibase;
+import selfhost.cliprog;
+
+// What is said, on the standard error, of a program `test` cannot run: `status` is what `testscan.cho` answered (2 a `main` of the root module, at
+// `at`; 3 a test of the shape `why` says it is not, named `named`; 4 two modules that end in the same word, `named` being the word and the two
+// paths, each followed by a NUL). Status 2.
+pub fn test_refusal[&h, &i, &y, &l, &n, &m](heap: &!h Heap, io: &!i Io, names: &y [byte], laid: &l [byte], lens: &n [int], status: int, why: int, at: int, named: &m [byte]) -> [heap, err_write] int {
+    var out = buffer.empty(heap, 512);
+    if status == 4 {
+        var first = 0;
+        while lc.at(named, first) != 0 {
+            first = first + 1;
+        }
+        var second = first + 1;
+        while lc.at(named, second) != 0 {
+            second = second + 1;
+        }
+        var third = second + 1;
+        while lc.at(named, third) != 0 {
+            third = third + 1;
+        }
+        out = buffer.append(heap, out, "two test modules, `");
+        out = buffer.append(heap, out, named[first + 1..second]);
+        out = buffer.append(heap, out, "` and `");
+        out = buffer.append(heap, out, named[second + 1..third]);
+        out = buffer.append(heap, out, "`, both end in `");
+        out = buffer.append(heap, out, named[0..first]);
+        out = buffer.append(heap, out, "`; the runner imports each by its last segment\n");
+    } else {
+        out = buffer.append(heap, out, clibase.name_at(names, diagnose.locate(laid, lens, at).file));
+        if status == 2 {
+            out = buffer.append(heap, out, ": `cancho test` supplies its own `main`; a file it runs must not declare one\n");
+        } else {
+            out = buffer.append(heap, out, ": `");
+            out = buffer.append(heap, out, named);
+            out = buffer.append(heap, out, "` looks like a test but ");
+            out = buffer.append(heap, out, testscan.reason(why));
+            out = buffer.append(heap, out, "\n\na test is `fn test_x[regions](caps) -> [row] int` with no type parameters, where each parameter is a unique `Heap` or `Io` reference (`docs/testing.md` §3); it answers 0 to pass\n");
+        }
+    }
+    borrow out as &t in {
+        console.error_all(io, buffer.bytes(t));
+    }
+    buffer.drop(heap, out);
+    return 2;
+}
+
+// How a test that did not pass ended, as a sentence (`kind` and `value` are those of `Captured`).
+pub fn describe[&h](heap: &!h Heap, out: buffer.Buffer, kind: int, value: int) -> [heap] buffer.Buffer {
+    var text = out;
+    if kind == 1 {
+        // `std.signals` has no bit for the fault signals, and says 0 for them: the trap every checked operation ends with is the one a test is most
+        // likely to have ended with, and it is what is said; a SIGSEGV or a SIGABRT is said to be the same.
+        var signal = 4;
+        if value > 0 {
+            signal = 1;
+            var bit = value;
+            while bit > 1 {
+                bit = bit / 2;
+                signal = signal + 1;
+            }
+        }
+        text = buffer.push_nat(heap, buffer.append(heap, text, "trapped: killed by signal "), signal);
+        if signal == 4 {
+            text = buffer.append(heap, text, " (SIGILL, the trap every checked operation ends with)");
+        } else if signal == 11 {
+            text = buffer.append(heap, text, " (SIGSEGV)");
+        } else if signal == 6 {
+            text = buffer.append(heap, text, " (SIGABRT)");
+        }
+    } else if kind == 0 {
+        text = buffer.append(heap, buffer.push_nat(heap, buffer.append(heap, text, "returned "), value), ", and a test answers 0 to pass");
+    } else {
+        text = buffer.append(heap, text, "ended without a status");
+    }
+    return text;
+}
+
+// The program at `exe` run with the number `index` as its argument and nothing on its standard input.
+pub fn run_numbered[&h, &i, &x, &c, &p](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], index: int) -> [heap, err_write, exec(""), clock, poll] cliprog.Captured {
+    let argv = buffer.push(heap, buffer.push_nat(heap, buffer.empty(heap, 16), index), byte_of(0));
+    var got = cliprog.Captured { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, value: 0 };
+    borrow argv as &av in {
+        let cliprog.Captured { out, err, kind, value } = got;
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+        got = cliprog.run_capture(heap, io, exec, clock, exe, "", buffer.bytes(av));
+    }
+    buffer.drop(heap, argv);
+    return got;
+}
+
+// Run each of `tests` (a label, a call and a path, each followed by a NUL, for each) as the program at `exe` with its number as the argument, and say
+// how it went as `cancho test` does (`docs/cli-in-cancho.md` section 16). 0 if all passed, else 4.
+pub fn run_tests[&h, &i, &x, &c, &p, &t](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], tests: &t [byte]) -> [heap, io_write, err_write, exec(""), clock, poll] int {
+    var total = 0;
+    var k = 0;
+    while k < len(tests) {
+        if lc.at(tests, k) == 0 {
+            total = total + 1;
+        }
+        k = k + 1;
+    }
+    total = total / 3;
+    console.write_all(io, "running ");
+    var shown = buffer.push_nat(heap, buffer.empty(heap, 16), total);
+    shown = buffer.append(heap, shown, " test");
+    if total != 1 {
+        shown = buffer.push(heap, shown, byte_of('s'));
+    }
+    shown = buffer.push(heap, shown, byte_of('\n'));
+    borrow shown as &sh in {
+        buffer.write(io, sh);
+    }
+    buffer.drop(heap, shown);
+    var report = buffer.empty(heap, 256);
+    var failed = 0;
+    var index = 0;
+    var at = 0;
+    while at < len(tests) {
+        var label_end = at;
+        while lc.at(tests, label_end) != 0 {
+            label_end = label_end + 1;
+        }
+        var call_end = label_end + 1;
+        while lc.at(tests, call_end) != 0 {
+            call_end = call_end + 1;
+        }
+        var path_end = call_end + 1;
+        while lc.at(tests, path_end) != 0 {
+            path_end = path_end + 1;
+        }
+        let label = tests[at..label_end];
+        let got = run_numbered(heap, io, exec, clock, exe, index);
+        let cliprog.Captured { out, err, kind, value } = got;
+        console.write_all(io, "test ");
+        console.write_all(io, label);
+        if kind == 0 && value == 0 {
+            console.write_all(io, " ... ok\n");
+        } else {
+            console.write_all(io, " ... FAILED\n");
+            failed = failed + 1;
+            report = buffer.append(heap, buffer.append(heap, buffer.append(heap, report, "\n---- "), label), " ----\n");
+            report = buffer.push(heap, describe(heap, report, kind, value), byte_of('\n'));
+            borrow out as &o in {
+                if buffer.size(o) > 0 {
+                    report = buffer.append(heap, report, "stdout:\n");
+                    report = buffer.push(heap, buffer.append(heap, report, buffer.bytes(o)), byte_of('\n'));
+                }
+            }
+            borrow err as &e in {
+                if buffer.size(e) > 0 {
+                    report = buffer.append(heap, report, "stderr:\n");
+                    report = buffer.push(heap, buffer.append(heap, report, buffer.bytes(e)), byte_of('\n'));
+                }
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+        index = index + 1;
+        at = path_end + 1;
+    }
+    var tail = buffer.empty(heap, 64);
+    if failed == 0 {
+        tail = buffer.push_nat(heap, buffer.append(heap, tail, "\ntest result: ok. "), total);
+        tail = buffer.append(heap, tail, " passed; 0 failed\n");
+    } else {
+        borrow report as &rp in {
+            console.write_all(io, "\nfailures:\n");
+            buffer.write(io, rp);
+        }
+        tail = buffer.push_nat(heap, buffer.append(heap, tail, "\ntest result: FAILED. "), total - failed);
+        tail = buffer.push_nat(heap, buffer.append(heap, tail, " passed; "), failed);
+        tail = buffer.append(heap, tail, " failed\n");
+    }
+    borrow tail as &tl in {
+        buffer.write(io, tl);
+    }
+    buffer.drop(heap, tail);
+    buffer.drop(heap, report);
+    if failed == 0 {
+        return 0;
+    }
+    return 4;
+}
+
+// The program of the files, the standard library (from the directory `std_dir` names, if it is not negative) and the runner for `tests` (what
+// `testscan.cho` found), built, and its tests run (`run_tests`). `host_in`, `host_given` and `clang_at` are as in `program_command`.
+pub fn test_program[&h, &i, &a, &f, &x, &c, &t](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, std_dir: int, host_in: int, host_given: bool, clang_at: int, tests: &t [byte]) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    var host = host_in;
+    var status = 0;
+    let source = testscan.runner(heap, tests);
+    borrow source as &sp in {
+        let loaded = cliprog.load_program(heap, io, args, fs, true, false, std_dir, buffer.bytes(sp), "runner_main.cho");
+        let cliprog.Loaded { names, raw, laid, lens, count, read_status } = loaded;
+        status = read_status;
+        var exe = buffer.empty(heap, 64);
+        if status == 0 {
+            borrow names as &nm in {
+                exe = buffer.append(heap, exe, clibase.stem(clibase.name_at(buffer.bytes(nm), 0)));
+            }
+            exe = buffer.append(heap, exe, ".cancho-test");
+            if !host_given {
+                borrow exe as &ep in {
+                    var note = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(ep)) + 8), buffer.bytes(ep));
+                    note = buffer.append(heap, note, ".host");
+                    borrow note as &np in {
+                        host = cliprog.detect_host(heap, exec, fs, buffer.bytes(np));
+                    }
+                    buffer.drop(heap, note);
+                }
+            }
+            borrow raw as &r in {
+                let built = driver.run_many(heap, io, buffer.bytes(r), 5, host);
+                borrow built as &b in {
+                    borrow laid as &lt in {
+                        borrow mut lens as &!lb in {
+                            borrow names as &nm in {
+                                status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to);
+                            }
+                        }
+                    }
+                    if status == 0 {
+                        var clang = "/usr/bin/clang";
+                        if clang_at >= 0 {
+                            clang = arg(args, clang_at);
+                        }
+                        borrow exe as &ep in {
+                            status = cliprog.make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(ep), clang, false);
+                            if status == 0 {
+                                status = run_tests(heap, io, exec, clock, buffer.bytes(ep), tests);
+                                fs_remove(fs, buffer.bytes(ep));
+                            }
+                        }
+                    }
+                }
+                driver.discard(heap, built);
+            }
+        }
+        buffer.drop(heap, exe);
+        buffer.drop(heap, raw);
+        buffer.drop(heap, laid);
+        buffer.drop(heap, names);
+        unbox_slice(heap, lens);
+    }
+    buffer.drop(heap, source);
+    return status;
+}
+
+// The tests `testscan.cho` finds in the stream `scan` (the files, or one of them), and a status: 0 (the tests are `found`, with the label, the call and the path of each,
+// each followed by a NUL), or what has been said (1 a refusal, 2 a file or a test that `test` cannot run). `names`, `laid` and `lens` are those of the program the stream is
+// from, which say where.
+pub res struct Found {
+    found: buffer.Buffer,
+    how: int,
+}
+
+pub fn scan_tests[&h, &i, &r, &y, &l, &n](heap: &!h Heap, io: &!i Io, scan: &r [byte], names: &y [byte], laid: &l [byte], lens: &!n [int]) -> [heap, io_write, err_write] Found {
+    var tests = buffer.empty(heap, 0);
+    let scanned = driver.run_many(heap, io, scan, 11, 0);
+    var status = 0;
+    borrow scanned as &sc in {
+        status = sc.status;
+        if sc.status == 0 {
+            buffer.drop(heap, tests);
+            tests = buffer.append(heap, buffer.empty(heap, buffer.size(sc.ir) + 1), buffer.bytes(sc.ir));
+        } else if sc.status == 1 {
+            status = clibase.report_check(heap, io, names, laid, lens, false, 1, sc.rule, sc.from, sc.to);
+        } else {
+            status = test_refusal(heap, io, names, laid, lens, sc.status, sc.rule, sc.from, buffer.bytes(sc.ir));
+        }
+    }
+    driver.discard(heap, scanned);
+    return Found { found: tests, how: status };
+}
+
+// `test [--host H] [--std-dir DIR] [--backend llvm] [--clang PATH] [-l LIB] [-L DIR] FILE...` (`docs/cli-in-cancho.md` section 16): the tests of the
+// files (`testscan.cho`) are found, one program is built of the files and the runner that is written for them, and each test is run as a process of
+// its own (the runner takes the number of the test as its argument), with the report of `cancho test`. Exit status 0 if all passed, 4 if one did not,
+// 1 for a refusal, 2 for a usage error or a program with no tests, 3 for what could not be done. The program is built next to the first file, as `run`
+// does, and taken away.
+pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    var host = 0;
+    var host_given = false;
+    var clang_at = 0 - 1;
+    var std_dir = 0 - 1;
+    var files = 0;
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--host") {
+            n = n + 1;
+            host_given = true;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "linux") {
+                host = 0;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "darwin") {
+                host = 1;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "linux-aarch64") {
+                host = 2;
+            } else {
+                return clibase.usage_error(heap, io, "`--host` needs linux, darwin or linux-aarch64");
+            }
+        } else if bytes.equal(word, "--std-dir") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--std-dir` needs a directory");
+            }
+            std_dir = n;
+        } else if bytes.equal(word, "--backend") {
+            n = n + 1;
+            if n >= arg_count(args) || !bytes.equal(arg(args, n), "llvm") {
+                return clibase.usage_error(heap, io, "`--backend`: only llvm is available in this command line");
+            }
+        } else if bytes.equal(word, "-l") || bytes.equal(word, "-L") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`-l` and `-L` need a value");
+            }
+        } else if bytes.equal(word, "--clang") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--clang` needs a path");
+            }
+            clang_at = n;
+        } else if bytes.equal(word, "--std") || bytes.equal(word, "--target") {
+            return clibase.usage_error(heap, io, "`--std` and `--target` are not available in this command line: `--std-dir DIR` adds the standard library from DIR");
+        } else if bytes.equal(word, "-o") || bytes.equal(word, "--emit") || bytes.equal(word, "--output") {
+            return clibase.usage_error(heap, io, "`test` does not take `-o`, `--emit` or `--output`");
+        } else {
+            files = files + 1;
+        }
+        n = n + 1;
+    }
+    if files == 0 {
+        return clibase.usage_error(heap, io, "no file given");
+    }
+    // The files alone are read, and their tests found.
+    let first = cliprog.load_program(heap, io, args, fs, true, false, 0 - 1, "", "");
+    let cliprog.Loaded { names, raw, laid, lens, count, read_status } = first;
+    var status = read_status;
+    var tests = buffer.empty(heap, 0);
+    if status == 0 {
+        borrow raw as &r in {
+            borrow laid as &lt in {
+                borrow names as &nm in {
+                    borrow mut lens as &!lb in {
+                        let Found { found, how } = scan_tests(heap, io, buffer.bytes(r), buffer.bytes(nm), buffer.bytes(lt), contents(lb));
+                        buffer.drop(heap, tests);
+                        tests = found;
+                        status = how;
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, raw);
+    buffer.drop(heap, laid);
+    buffer.drop(heap, names);
+    unbox_slice(heap, lens);
+    var none = false;
+    borrow tests as &tz in {
+        none = buffer.size(tz) == 0;
+    }
+    if status == 0 && none {
+        console.error_all(io, "no `test_*` functions found in the files given\n\n`cancho test` runs the functions named `test_*` (`docs/testing.md` §3); a run that found none is not a pass\n");
+        status = 2;
+    }
+    if status != 0 {
+        buffer.drop(heap, tests);
+        return status;
+    }
+    borrow tests as &tt in {
+        status = test_program(heap, io, args, fs, exec, clock, std_dir, host, host_given, clang_at, buffer.bytes(tt));
+    }
+    buffer.drop(heap, tests);
+    return status;
+}
+
+// `satisfy [--host H] [--std-dir DIR] [--clang PATH] CONTRACT CANDIDATE` (`docs/cli-in-cancho.md` section 18): the two files (and the library) are checked as one program; the tests
+// are those of the contract alone (`testscan.cho`), and there must be some; the contract must call something the candidate declares (by name, in its text, `satisfytext.calls_any`);
+// then the tests are run as `test` runs them. Satisfied is status 0 and the identity of the signature of each function of the candidate; a test that fails is 4.
+pub fn satisfy_pair[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, std_dir: int, host_in: int, host_given: bool, clang_at: int) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    let loaded = cliprog.load_program(heap, io, args, fs, true, false, std_dir, "", "");
+    let cliprog.Loaded { names, raw, laid, lens, count, read_status } = loaded;
+    var status = read_status;
+    var candidate = buffer.empty(heap, 0);
+    var whole = buffer.empty(heap, 0);
+    var tests = buffer.empty(heap, 0);
+    var provided = buffer.empty(heap, 0);
+    var joined = buffer.empty(heap, 0);
+    var calls = true;
+    borrow raw as &r in {
+        borrow laid as &lt in {
+            borrow names as &nm in {
+                borrow mut lens as &!lb in {
+                    if status == 0 {
+                        // The pair, and the library, as one program: nothing is asked of it but that it checks.
+                        let checked = driver.run_many(heap, io, buffer.bytes(r), 10, host_in);
+                        borrow checked as &b in {
+                            status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to);
+                        }
+                        driver.discard(heap, checked);
+                    }
+                    if status == 0 {
+                        let Found { found, how } = scan_tests(heap, io, satisfytext.record(buffer.bytes(r), 0), buffer.bytes(nm), buffer.bytes(lt), contents(lb));
+                        buffer.drop(heap, tests);
+                        tests = found;
+                        status = how;
+                    }
+                    if status == 0 {
+                        let listed = driver.run_many(heap, io, satisfytext.record(buffer.bytes(r), 1), 13, host_in);
+                        borrow listed as &lg in {
+                            buffer.drop(heap, candidate);
+                            candidate = buffer.append(heap, buffer.empty(heap, buffer.size(lg.ir) + 1), buffer.bytes(lg.ir));
+                        }
+                        driver.discard(heap, listed);
+                        let all = driver.run_many(heap, io, buffer.bytes(r), 13, host_in);
+                        borrow all as &lg in {
+                            buffer.drop(heap, whole);
+                            whole = buffer.append(heap, buffer.empty(heap, buffer.size(lg.ir) + 1), buffer.bytes(lg.ir));
+                        }
+                        driver.discard(heap, all);
+                        borrow candidate as &cb in {
+                            buffer.drop(heap, provided);
+                            provided = satisfytext.provided(heap, buffer.bytes(cb), false);
+                            buffer.drop(heap, joined);
+                            joined = satisfytext.provided(heap, buffer.bytes(cb), true);
+                        }
+                        borrow provided as &pv in {
+                            if len(buffer.bytes(pv)) > 0 {
+                                calls = satisfytext.calls_any(heap, buffer.bytes(lt)[0..contents(lb)[0]], buffer.bytes(pv));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, raw);
+    buffer.drop(heap, laid);
+    buffer.drop(heap, names);
+    unbox_slice(heap, lens);
+    var none = false;
+    borrow tests as &tz in {
+        none = buffer.size(tz) == 0;
+    }
+    if status == 0 && none {
+        status = clibase.usage_error(heap, io, "the contract declares no `test_*` functions; a contract that tests nothing cannot be satisfied");
+    }
+    if status == 0 && !calls {
+        var why = buffer.append(heap, buffer.empty(heap, 256), "the contract never calls anything the candidate declares (");
+        borrow joined as &jn in {
+            why = buffer.append(heap, why, buffer.bytes(jn));
+        }
+        why = buffer.append(heap, why, "); a contract that does not exercise the candidate is satisfied by every candidate");
+        borrow why as &wy in {
+            status = clibase.usage_error(heap, io, buffer.bytes(wy));
+        }
+        buffer.drop(heap, why);
+    }
+    if status == 0 {
+        borrow tests as &tt in {
+            status = test_program(heap, io, args, fs, exec, clock, std_dir, host_in, host_given, clang_at, buffer.bytes(tt));
+        }
+        if status == 0 {
+            console.write_all(io, "satisfied\n");
+            borrow whole as &wl in {
+                borrow candidate as &cd in {
+                    var at = 0;
+                    let list = buffer.bytes(wl);
+                    while at < len(list) {
+                        let m = satisfytext.module_end(list, at);
+                        let n = satisfytext.name_end(list, at);
+                        let h = satisfytext.identity_end(list, at);
+                        if satisfytext.has_entry(buffer.bytes(cd), list[at..m], list[m + 1..n]) {
+                            console.write_all(io, "  ");
+                            console.write_all(io, list[at..m]);
+                            if m > at {
+                                console.write_all(io, "::");
+                            }
+                            console.write_all(io, " sig ");
+                            console.write_all(io, list[m + 1..n]);
+                            console.write_all(io, "\n    sig_id ");
+                            console.write_all(io, list[n + 1..h]);
+                            console.write_all(io, "\n");
+                        }
+                        at = h + 1;
+                    }
+                }
+            }
+        } else if status == 4 {
+            console.write_all(io, "not satisfied: see the test failures above\n");
+        }
+    }
+    buffer.drop(heap, candidate);
+    buffer.drop(heap, whole);
+    buffer.drop(heap, tests);
+    buffer.drop(heap, provided);
+    buffer.drop(heap, joined);
+    return status;
+}
+
+pub fn satisfy_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    var host = 0;
+    var host_given = false;
+    var clang_at = 0 - 1;
+    var std_dir = 0 - 1;
+    var files = 0;
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--host") {
+            n = n + 1;
+            host_given = true;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "linux") {
+                host = 0;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "darwin") {
+                host = 1;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "linux-aarch64") {
+                host = 2;
+            } else {
+                return clibase.usage_error(heap, io, "`--host` needs linux, darwin or linux-aarch64");
+            }
+        } else if bytes.equal(word, "--std-dir") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--std-dir` needs a directory");
+            }
+            std_dir = n;
+        } else if bytes.equal(word, "--clang") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--clang` needs a path");
+            }
+            clang_at = n;
+        } else if bytes.equal(word, "--std") {
+            return clibase.usage_error(heap, io, "`--std` is not available in this command line: `--std-dir DIR` adds the standard library from DIR");
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            let why = buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.empty(heap, 64), "unknown `satisfy` option `"), word), "`");
+            var said = 0;
+            borrow why as &wy in {
+                said = clibase.usage_error(heap, io, buffer.bytes(wy));
+            }
+            buffer.drop(heap, why);
+            return said;
+        } else {
+            files = files + 1;
+        }
+        n = n + 1;
+    }
+    if files != 2 {
+        return clibase.usage_error(heap, io, "`cancho satisfy <contract.cho> <candidate.cho> [--std]` — exactly two files");
+    }
+    return satisfy_pair(heap, io, args, fs, exec, clock, std_dir, host, host_given, clang_at);
+}

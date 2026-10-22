@@ -340,3 +340,11 @@ run with a `PATH` for an environment (§16). The Rust command builds the tests w
 output and the standard error (of a refusal, up to the place): satisfied (with a module, with a root candidate that declares a struct, and a candidate with a test of its own),
 a test that fails (4), a contract with no tests, a contract that calls nothing, a contract that names a function only in a comment and in a string, a candidate that is refused, a
 contract that calls what is not there, a test of the wrong shape, an option that is not one, one file, and three: none differs, and nothing is left beside the files.
+
+## 19. The command line is five files
+
+`cli.cho` had grown to 1,910 of the 2,000 lines a source file may have (`CONTRIBUTING.md`), so it is split by concern and nothing else changed (every
+function and every line of it is where it was, with `pub` and the name of its module in front of the calls that cross a boundary): `cli.cho` (117 lines) keeps
+`main` and the choice of the command; `clibase.cho` (263) what every command shares (reading a file, the usage, the report of a refusal, names and paths);
+`clifmt.cho` (523) `fmt`, `print`, `ingest`, `introspect` and `skill`; `cliprog.cho` (540) the loading of a program, `check`, `ids`, `layout`, `build` and `run`;
+`clitest.cho` (579) `test` and `satisfy`. The 18 tests of `selfhost::cli`, `selfhost::parity` and `selfhost::statics` pass unchanged.
