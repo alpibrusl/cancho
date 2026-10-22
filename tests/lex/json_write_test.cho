@@ -142,6 +142,47 @@ fn test_invalid_utf8_becomes_the_replacement_character[&h](heap: &!h Heap) -> [h
     return 0;
 }
 
+// The writer scans runs of plain bytes in a loop of its own. Every ASCII byte between two plain runs, and at both ends of
+// a text: a byte that needs no escape stays one byte (a text of seven bytes, nine with its quotes), one that does
+// grows, and the plain bytes around it are never lost.
+fn test_every_ascii_byte_between_and_at_the_ends_of_plain_runs[&h](heap: &!h Heap) -> [heap] int {
+    var c = 0;
+    while c < 128 {
+        var text = buffer.empty(heap, 16);
+        text = buffer.append(heap, text, "abc");
+        text = buffer.push(heap, text, byte_of(c));
+        text = buffer.append(heap, text, "def");
+        var w = json.writer(heap, 4);
+        borrow text as &r in {
+            w = json.put_string(heap, w, buffer.bytes(r));
+        }
+        buffer.drop(heap, text);
+        borrow w as &d in {
+            let out = json.bytes(d);
+            test.assert(bytes.equal(out[0..4], "\"abc"));
+            test.assert(bytes.equal(out[len(out) - 4..len(out)], "def\""));
+            if c >= 32 && c != '"' && c != '\\' {
+                test.assert(len(out) == 9);
+                test.assert(int_of(out[4]) == c);
+            } else {
+                test.assert(len(out) > 9);
+            }
+        }
+        json.drop(heap, w);
+        c = c + 1;
+    }
+    var edge = json.writer(heap, 4);
+    edge = json.begin_array(heap, edge);
+    edge = json.put_string(heap, edge, "~");
+    edge = json.put_string(heap, edge, "\\z");
+    edge = json.put_string(heap, edge, "z\"");
+    edge = json.put_string(heap, edge, " !");
+    edge = json.put_string(heap, edge, "[]#");
+    edge = json.end_array(heap, edge);
+    test.assert(finished(heap, edge, "[\"~\",\"\\\\z\",\"z\\\"\",\" !\",\"[]#\"]"));
+    return 0;
+}
+
 fn test_keys_are_escaped_like_strings[&h](heap: &!h Heap) -> [heap] int {
     var w = json.writer(heap, 4);
     w = json.begin_object(heap, w);

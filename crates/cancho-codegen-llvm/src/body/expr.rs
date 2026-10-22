@@ -1234,7 +1234,8 @@ impl<'a> FuncEmitter<'a> {
                 Builtin::ExecSpawn
                 | Builtin::ExecSpawnIn
                 | Builtin::ExecSpawnDetached
-                | Builtin::ExecSpawnUnder,
+                | Builtin::ExecSpawnUnder
+                | Builtin::ExecSpawnDetachedUnder,
             ) => Err("`exec_spawn` is lowered as `Expr::ExecSpawn`".to_owned()),
             // `docs/native-sockets.md` §4: the poller.
             Callee::Builtin(Builtin::PollerNew) => self.poller_new(),

@@ -339,7 +339,7 @@ pub fn answer_enum[&s](st: &!s [int], ty: int, kind: int, v: int) -> [] int {
 
 // Which builtin of `exprs.capability_call` the call named `callee` is, or 0: 1 `narrow`, 2 to 6 `open_read`, `open_write`,
 // `open_append`, `open_new` and `open_rw`, 7 `exec_spawn`, 8 `fs_read`, 9 `fs_write`, 10 `exec_spawn_in`, 11 `fs_remove`,
-// 12 `fs_rename`, 13 `exec_spawn_detached`, 14 `exec_covers`, 15 `fs_covers` and 16 `exec_spawn_under`. The last four are edition 9 and a program
+// 12 `fs_rename`, 13 `exec_spawn_detached`, 14 `exec_covers`, 15 `fs_covers`, 16 `exec_spawn_under` and 17 `exec_spawn_detached_under`. The last five are edition 9 and a program
 // of an earlier edition may have a function of the name, so they are the builtin only where the edition names it.
 pub fn capability_which[&s, &x](st: &!s [int], text: &x [byte], callee: int) -> [] int {
     var which = 0;
@@ -375,11 +375,38 @@ pub fn capability_which[&s, &x](st: &!s [int], text: &x [byte], callee: int) -> 
         which = 15;
     } else if pass1.is_word(st, text, callee, "exec_spawn_under") {
         which = 16;
+    } else if pass1.is_word(st, text, callee, "exec_spawn_detached_under") {
+        which = 17;
     }
     if which >= 13 && prims.builtin_at(st, text, callee, st[23]) < 0 {
         return 0;
     }
     return which;
+}
+
+// `exec_spawn_in` (10), `exec_spawn_under` (16) and `exec_spawn_detached_under` (17) take the `Dir` the child starts in.
+pub fn in_dir(which: int) -> [] bool {
+    return which == 10 || which == 16 || which == 17;
+}
+
+// `exec_spawn_under` (16) and `exec_spawn_detached_under` (17): the path is a name beneath the `Dir`.
+pub fn under(which: int) -> [] bool {
+    return which == 16 || which == 17;
+}
+
+// `cancho_spawn`'s flag word: bit 1 is a session of its own (`exec_spawn_detached` 13, and 17), bit 2 a name beneath the
+// directory (`cancho_spawn` refuses an empty or rooted one; 16 and 17).
+pub fn spawn_bits(which: int) -> [] int {
+    if which == 13 {
+        return 1;
+    }
+    if which == 16 {
+        return 2;
+    }
+    if which == 17 {
+        return 3;
+    }
+    return 0;
 }
 
 // The capability `exec_covers` (14) or `fs_covers` (15) takes: the name of its prelude type.

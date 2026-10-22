@@ -1049,6 +1049,8 @@ fn the_command_line_in_cancho_reports_layout_like_cancho_layout() {
     let expected =
         vec![repo_root().join("examples/tls_nb/gaps/g17_conn_payload.cho").display().to_string()];
     assert_eq!(missed, expected, "the refusals the checker in cancho does not make");
+    // The programs run with the library are chosen by a hash of their names (`with_library`), so adding a fixture does not move which
+    // they are; how many of them are programs that get a table and not a refusal is what the floor is under (19 when this was written).
     assert!(
         same > 100 && with_std > 10,
         "only {same} runs gave a table, {with_std} with the library"
