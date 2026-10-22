@@ -473,6 +473,7 @@ pub(crate) fn emit_module(
         "i32 @renameatx_np(i32, ptr, i32, ptr, i32)",
     );
     declare_libc_unless_own(&mut text, "unlinkat", "i32 @unlinkat(i32, ptr, i32)");
+    declare_libc_unless_own(&mut text, "mkdirat", "i32 @mkdirat(i32, ptr, i32)");
     // `connect` (§7.22, `docs/connect.md` §10): the last of `Net`'s four
     // builtins, needing `getaddrinfo`/`freeaddrinfo` (host resolution)
     // and `connect` itself alongside the `socket` already declared above.

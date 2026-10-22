@@ -7,7 +7,7 @@ module selfhost.builtins;
 // `UPDATE_SELFHOST_TABLES=1 cargo test -p cancho-ir selfhost_tables` rewrites it.
 
 static builtin_region_counts: [int] {
-    let t = alloc_slice[static](170, 0);
+    let t = alloc_slice[static](171, 0);
     t[0] = 1;
     t[1] = 2;
     t[2] = 2;
@@ -76,25 +76,26 @@ static builtin_region_counts: [int] {
     t[135] = 3;
     t[136] = 3;
     t[137] = 2;
-    t[138] = 1;
+    t[138] = 2;
     t[139] = 1;
-    t[140] = 2;
-    t[142] = 2;
+    t[140] = 1;
+    t[141] = 2;
     t[143] = 2;
-    t[144] = 1;
-    t[149] = 1;
+    t[144] = 2;
+    t[145] = 1;
     t[150] = 1;
-    t[153] = 2;
+    t[151] = 1;
     t[154] = 2;
-    t[155] = 1;
-    t[158] = 2;
+    t[155] = 2;
+    t[156] = 1;
     t[159] = 2;
-    t[167] = 1;
+    t[160] = 2;
+    t[168] = 1;
     return t;
 }
 
 static builtin_effect_stream: [int] {
-    let t = alloc_slice[static](64, 0);
+    let t = alloc_slice[static](65, 0);
     t[2] = 2;
     t[4] = 4;
     t[5] = 4;
@@ -141,26 +142,27 @@ static builtin_effect_stream: [int] {
     t[46] = 36;
     t[47] = 36;
     t[48] = 36;
-    t[49] = 34;
+    t[49] = 36;
     t[50] = 34;
     t[51] = 34;
     t[52] = 34;
     t[53] = 34;
-    t[54] = 38;
+    t[54] = 34;
     t[55] = 38;
-    t[56] = 40;
-    t[57] = 42;
-    t[58] = 16;
+    t[56] = 38;
+    t[57] = 40;
+    t[58] = 42;
     t[59] = 16;
-    t[60] = 44;
-    t[61] = 46;
-    t[62] = 44;
-    t[63] = 46;
+    t[60] = 16;
+    t[61] = 44;
+    t[62] = 46;
+    t[63] = 44;
+    t[64] = 46;
     return t;
 }
 
 static builtin_effect_starts: [int] {
-    let t = alloc_slice[static](170, 0);
+    let t = alloc_slice[static](171, 0);
     t[1] = 1;
     t[2] = 2;
     t[3] = 3;
@@ -302,39 +304,40 @@ static builtin_effect_starts: [int] {
     t[139] = 49;
     t[140] = 50;
     t[141] = 51;
-    t[142] = 51;
+    t[142] = 52;
     t[143] = 52;
     t[144] = 53;
     t[145] = 54;
-    t[146] = 54;
-    t[147] = 54;
-    t[148] = 54;
-    t[149] = 54;
+    t[146] = 55;
+    t[147] = 55;
+    t[148] = 55;
+    t[149] = 55;
     t[150] = 55;
     t[151] = 56;
-    t[152] = 56;
-    t[153] = 56;
+    t[152] = 57;
+    t[153] = 57;
     t[154] = 57;
     t[155] = 58;
-    t[156] = 58;
-    t[157] = 58;
-    t[158] = 58;
+    t[156] = 59;
+    t[157] = 59;
+    t[158] = 59;
     t[159] = 59;
     t[160] = 60;
-    t[161] = 60;
-    t[162] = 60;
-    t[163] = 60;
-    t[164] = 60;
-    t[165] = 60;
-    t[166] = 60;
+    t[161] = 61;
+    t[162] = 61;
+    t[163] = 61;
+    t[164] = 61;
+    t[165] = 61;
+    t[166] = 61;
     t[167] = 61;
-    t[168] = 61;
+    t[168] = 62;
     t[169] = 62;
+    t[170] = 63;
     return t;
 }
 
 static builtin_effect_counts: [int] {
-    let t = alloc_slice[static](170, 0);
+    let t = alloc_slice[static](171, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -386,18 +389,19 @@ static builtin_effect_counts: [int] {
     t[138] = 1;
     t[139] = 1;
     t[140] = 1;
-    t[142] = 1;
+    t[141] = 1;
     t[143] = 1;
     t[144] = 1;
-    t[149] = 1;
+    t[145] = 1;
     t[150] = 1;
-    t[153] = 1;
+    t[151] = 1;
     t[154] = 1;
-    t[158] = 1;
+    t[155] = 1;
     t[159] = 1;
-    t[166] = 1;
-    t[168] = 1;
-    t[169] = 2;
+    t[160] = 1;
+    t[167] = 1;
+    t[169] = 1;
+    t[170] = 2;
     return t;
 }
 
