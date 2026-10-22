@@ -353,6 +353,36 @@ impl<'a> FuncEmitter<'a> {
         }))
     }
 
+    /// `dir_open_new_mode(dir, name, mode)`: `dir_open_new` with the file's
+    /// permission bits, atomically; a mode outside `0..=0o777` is refused before
+    /// the call (`docs/directory-handles.md` §3, slice 6).
+    pub(crate) fn dir_open_new_mode(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 4 {
+            return Err(format!(
+                "`dir_open_new_mode` needs 4 leaves but {} were given",
+                args.len()
+            ));
+        }
+        let f = self.open_flags();
+        let flags = f.write_only | f.create | f.exclusive | f.nofollow | f.cloexec;
+        let handle = operand(&args[0]);
+        let name = (operand(&args[1]), operand(&args[2]));
+        let mode = operand(&args[3]);
+        let bad = self.fresh();
+        self.out.push_str(&format!("  {bad} = icmp ugt i64 {mode}, 511\n"));
+        Ok(self.dir_call_checked(&[name], Some(bad), None, |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let narrow = this.fresh();
+            this.out.push_str(&format!("  {narrow} = trunc i64 {mode} to i32\n"));
+            let opened = this.fresh();
+            this.out.push_str(&format!(
+                "  {opened} = call i32 (i32, ptr, i32, ...) @openat(i32 {fd}, ptr {}, i32 {flags}, i32 {narrow})\n",
+                copies[0]
+            ));
+            opened
+        }))
+    }
+
     /// `dir_sync(dir)`: `fsync` on the directory, as `Done`.
     pub(crate) fn dir_sync(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
         let handle =

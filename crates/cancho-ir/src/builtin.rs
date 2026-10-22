@@ -782,6 +782,12 @@ pub enum Builtin {
     /// is `Failed(EINVAL)` with no call (`docs/directory-handles.md` §3,
     /// slice 5). Edition 9.
     DirMkdir,
+    /// `dir_open_new_mode(&Dir, name, mode: int) -> [dir_write] Opened`:
+    /// `dir_open_new` with the permission bits the file is made with, under the
+    /// umask, atomically -- `openat(O_CREAT | O_EXCL, mode)`. A mode outside
+    /// `0..=0o777` is `Failed(EINVAL)` with no call (`docs/directory-handles.md`
+    /// §3, slice 6). Edition 9.
+    DirOpenNewMode,
     /// `dir_sync(&Dir) -> [dir_write] Done`: `fsync` on the directory itself,
     /// so a rename in it is durable.
     DirSync,
@@ -1069,6 +1075,7 @@ impl Builtin {
         Builtin::DirRenameNew,
         Builtin::DirRemove,
         Builtin::DirMkdir,
+        Builtin::DirOpenNewMode,
         Builtin::DirSync,
         Builtin::DirList,
         Builtin::DirNext,
@@ -1247,6 +1254,7 @@ impl Builtin {
             Builtin::DirRenameNew => "dir_rename_new",
             Builtin::DirRemove => "dir_remove",
             Builtin::DirMkdir => "dir_mkdir",
+            Builtin::DirOpenNewMode => "dir_open_new_mode",
             Builtin::DirSync => "dir_sync",
             Builtin::DirList => "dir_list",
             Builtin::DirNext => "dir_next",
@@ -1422,7 +1430,7 @@ impl Builtin {
             Builtin::TcpListenOn => 9,
             // `docs/directory-handles.md` §3, slice 5: edition 9 -- `dir_mkdir`
             // is a name a program may already declare.
-            Builtin::DirMkdir => 9,
+            Builtin::DirMkdir | Builtin::DirOpenNewMode => 9,
             // `docs/processes.md` §4.11: edition 9, the latest open one --
             // `child_release` and `child_pid` are names a program may
             // already declare, and edition 7 is closed. §4.12's
@@ -1577,7 +1585,7 @@ impl Builtin {
             | Builtin::DirOpenRead
             | Builtin::DirOpenNew
             | Builtin::DirOpenAppend => 2,
-            Builtin::DirRemove | Builtin::DirMkdir => 2,
+            Builtin::DirRemove | Builtin::DirMkdir | Builtin::DirOpenNewMode => 2,
             // The handle's region and each name's.
             Builtin::DirRename | Builtin::DirRenameNew => 3,
             Builtin::DirSync => 1,
@@ -1730,6 +1738,7 @@ impl Builtin {
             | Builtin::DirRenameNew
             | Builtin::DirRemove
             | Builtin::DirMkdir
+            | Builtin::DirOpenNewMode
             | Builtin::DirSync => Effects::plain(["dir_write"]),
             Builtin::ConnWrite => Effects::plain(["conn_write"]),
             // `docs/processes.md` §3.2: path-free, the program was named at

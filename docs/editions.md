@@ -405,6 +405,8 @@ Edition 9 also has **`dir_mkdir`** ([`directory-handles.md`](directory-handles.m
 program may declare for itself, so absent before edition 9 (`tests/reject/dir_mkdir_is_edition_nine.cho`). It adds no type, no label
 (`dir_write`) and no `Split` field, and no standard-library file changes edition for it.
 
+Edition 9 also has **`dir_open_new_mode`** ([`directory-handles.md`](directory-handles.md) §3 item 6, #596): `dir_open_new` with the permission bits the file is made with. It is a second builtin and not a change to `dir_open_new` because edition 7 is closed (§6.4), and a name a program may declare for itself, so absent before edition 9 (`tests/reject/dir_open_new_mode_is_edition_nine.cho`). It adds no type, no label and no `Split` field.
+
 Edition 9 also has **`exec_covers` and `fs_covers`** ([`processes.md`](processes.md) §4.13, #535): `bool` predicates that answer whether
 `exec_spawn` (or an `Fs` operation) would take a path under the capability's bound or trap, by the same emitted check. Names a program
 may declare for itself (cancho-forge's supervisor wrote its own), so absent before edition 9

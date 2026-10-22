@@ -154,6 +154,7 @@ fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
     assert_eq!(wasi_gap(Builtin::DirMode), Some(Gap::Permissions));
     assert_eq!(wasi_gap(Builtin::DirOwnMode), Some(Gap::Permissions));
     assert_eq!(wasi_gap(Builtin::DirMkdir), Some(Gap::Permissions));
+    assert_eq!(wasi_gap(Builtin::DirOpenNewMode), Some(Gap::Permissions));
     assert_eq!(wasi_gap(Builtin::DirRenameNew), Some(Gap::NoReplaceRename));
     // The replacing rename is on WASI's side of the line; only the no-replace one is not.
     assert_eq!(wasi_gap(Builtin::DirRename), None);
@@ -168,13 +169,13 @@ fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
     }
     assert_eq!(
         Builtin::ALL.iter().filter(|b| wasi_gap(**b).is_some()).count(),
-        78,
+        79,
         "the refused set moved: update docs/wasm.md with it"
     );
     // The total and the supported count too: a builtin added on WASI's
     // side of the line moves these and not the refused count, which is how
     // docs/wasm.md's numbers went stale before (#382 added four).
-    assert_eq!(Builtin::ALL.len(), 171, "the builtin count moved: update docs/wasm.md with it");
+    assert_eq!(Builtin::ALL.len(), 172, "the builtin count moved: update docs/wasm.md with it");
     assert_eq!(
         Builtin::ALL.iter().filter(|b| wasi_gap(**b).is_none()).count(),
         93,

@@ -400,6 +400,62 @@ return:                                           ; preds = %if.end, %if.then
 declare i32 @unlinkat(i32, ptr, i32)
 
 ; Function Attrs: noinline nounwind
+define void @cancho_dir_create(ptr %dir, ptr %name, i64 %len, i64 %mode, ptr %out) {
+entry:
+  %dir.addr = alloca ptr, align 8
+  %name.addr = alloca ptr, align 8
+  %len.addr = alloca i64, align 8
+  %mode.addr = alloca i64, align 8
+  %out.addr = alloca ptr, align 8
+  %copy = alloca [256 x i8], align 1
+  %fd = alloca i32, align 4
+  store ptr %dir, ptr %dir.addr, align 8
+  store ptr %name, ptr %name.addr, align 8
+  store i64 %len, ptr %len.addr, align 8
+  store i64 %mode, ptr %mode.addr, align 8
+  store ptr %out, ptr %out.addr, align 8
+  %0 = load ptr, ptr %name.addr, align 8
+  %1 = load i64, ptr %len.addr, align 8
+  %arraydecay = getelementptr inbounds [256 x i8], ptr %copy, i64 0, i64 0
+  %call = call i32 @dirrt_component(ptr %0, i64 %1, ptr %arraydecay)
+  %tobool = icmp ne i32 %call, 0
+  br i1 %tobool, label %lor.lhs.false, label %if.then
+
+lor.lhs.false:                                    ; preds = %entry
+  %2 = load i64, ptr %mode.addr, align 8
+  %cmp = icmp ugt i64 %2, 511
+  br i1 %cmp, label %if.then, label %if.end
+
+if.then:                                          ; preds = %lor.lhs.false, %entry
+  %3 = load ptr, ptr %out.addr, align 8
+  call void @dirrt_refused(ptr %3)
+  br label %return
+
+if.end:                                           ; preds = %lor.lhs.false
+  %4 = load ptr, ptr %dir.addr, align 8
+  %5 = load i64, ptr %4, align 8
+  %conv = trunc i64 %5 to i32
+  %arraydecay1 = getelementptr inbounds [256 x i8], ptr %copy, i64 0, i64 0
+  %6 = load i64, ptr getelementptr inbounds ([0 x i64], ptr @cancho_plat, i64 0, i64 3), align 8
+  %conv2 = trunc i64 %6 to i32
+  %7 = load i64, ptr %mode.addr, align 8
+  %conv3 = trunc i64 %7 to i32
+  %call4 = call i32 (i32, ptr, i32, ...) @openat(i32 %conv, ptr %arraydecay1, i32 %conv2, i32 %conv3)
+  store i32 %call4, ptr %fd, align 4
+  %8 = load ptr, ptr %out.addr, align 8
+  %9 = load i32, ptr %fd, align 4
+  %conv5 = sext i32 %9 to i64
+  %call6 = call ptr @cancho_errno_location()
+  %10 = load i32, ptr %call6, align 4
+  %conv7 = sext i32 %10 to i64
+  call void @dirrt_triple(ptr %8, i64 %conv5, i64 %conv7)
+  br label %return
+
+return:                                           ; preds = %if.end, %if.then
+  ret void
+}
+
+; Function Attrs: noinline nounwind
 define void @cancho_dir_mkdir(ptr %dir, ptr %name, i64 %len, i64 %mode, ptr %out) {
 entry:
   %dir.addr = alloca ptr, align 8

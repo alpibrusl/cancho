@@ -649,7 +649,7 @@ impl Builtin {
                     named(PRELUDE_OPENED)
                 },
             ),
-            Builtin::DirMkdir => (
+            Builtin::DirMkdir | Builtin::DirOpenNewMode => (
                 vec![
                     Type::Ref {
                         unique: false,
@@ -663,7 +663,11 @@ impl Builtin {
                     },
                     Type::Int,
                 ],
-                named(PRELUDE_DONE),
+                if self == Builtin::DirOpenNewMode {
+                    named(PRELUDE_OPENED)
+                } else {
+                    named(PRELUDE_DONE)
+                },
             ),
             Builtin::DirRename | Builtin::DirRenameNew => (
                 vec![

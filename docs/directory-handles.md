@@ -1,6 +1,6 @@
 # Directory handles: opening beneath a directory, following no links
 
-Status: **slices 1, 2, 4 and 5 built** (4 is edition 7, 5 is edition 9), both backends: open a directory, step into a child directory, open a
+Status: **slices 1, 2, 4, 5 and 6 built** (4 is edition 7, 5 and 6 are edition 9), both backends: open a directory, step into a child directory, open a
 file in it for reading (slice 1, #250), and create, append to, rename, remove and sync beneath it (slice 2). Linux
 measured; Darwin's flags and Apple AArch64's variadic call are written and run only by CI. Slice 3 (`cancho-tools`
 on top) is built there (alpibrusl/cancho-tools#4); §3 corrects what it said the row would become. Issue #227, gap L6 of [`agent-toolbox.md`](agent-toolbox.md).
@@ -173,10 +173,29 @@ generators.
      the argument would be silently dropped, as `dir_mode` would answer 0.
    * What it does **not** do: create a missing parent (`mkdir -p` is a loop of `dir_enter` and `dir_mkdir` in the
      caller, one component at a time, which is where the policy for an existing directory belongs), set the mode of a
-     directory that exists (there is no `chmod`; a mode argument for `dir_open_new` is #596), or make a directory
+     directory that exists (there is no `chmod`; a file's mode is set when it is made, item 6), or make a directory
      atomically with its contents.
 
+6. **Built: creating a file with its mode** (#596). `dir_open_new` takes no mode, so a file made with it is `0666` less the
+   umask: `archive --op extract` wrote every file as `0644` and a script or binary lost its executable bit (measured: a
+   `0755` file in a GNU tar extracted as `0644` under a umask of `0o022`). A `chmod` would be a second, weaker mechanism (a
+   window in which the file has the wrong bits) and a wider authority, so the mode is given at creation. A second builtin,
+   **edition 9** (edition 7 is closed, and `dir_open_new_mode` is a name a program may declare):
+
+   ```
+   dir_open_new_mode(dir: &Dir, name: &[byte], mode: int) -> [dir_write] Opened   // openat(dir, name, O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW, mode)
+   ```
+
+   * **`dir_open_new`, and atomic.** Everything §3 item 1 says of `dir_open_new` holds (exclusive, no link followed, a taken
+     name or a dangling link is `EEXIST`, one component, close-on-exec); the file never exists with other bits than the
+     ones asked for, the umask applying as always (`0o755` under `0o022` is `0o755`, `0o777` is `0o755`).
+   * **`mode` is `0` to `0o777`.** Above that, or below zero, is `Failed(EINVAL)` with no call: setuid, setgid and sticky
+     are not asked for by passing a larger number. `dir_open_new` itself is unchanged and keeps `0o644`.
+   * **WASI: refused**, under the permission-bits family, as `dir_mkdir` is.
+
 ## 4. What it is checked by
+
+Slice 6 (`tests/conformance/directory_open_new_mode.rs`, **both backends** and the compiler in cancho): a file is made with the mode asked for under a umask of `0o022` (`0o755` is `0o755`, `0o700` is `0o700`, `0o777` is `0o755`, `0o644` and `0` as asked) and holds the bytes written; a file, directory or dangling link in the way is `EEXIST` and untouched; `..`, an empty name and `a/b` are `EINVAL`; modes `0o1000`, `0o4755`, `0o1777` and `-1` are `EINVAL` and no file appears; `tests/reject/dir_open_new_mode_is_edition_nine.cho`, `dir_open_new_mode_not_declared.cho` and `dir_open_new_mode_on_wasi.cho`.
 
 Slice 5 (`tests/conformance/directory_mkdir.rs`, **both backends**, the same expectations): a free name becomes a directory with
 the mode asked for under a umask of `0o022` (`0o755` is `0o755`, `0o700` is `0o700`, `0o777` is `0o755`), and it can be entered; an
