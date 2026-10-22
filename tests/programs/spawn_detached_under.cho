@@ -12,7 +12,8 @@ import std.process;
 //   argv[2]  a mode:
 //     `d`  `exec_spawn_detached_under`: `capture` kills the group at the deadline, the grandchild dies
 //     `u`  `exec_spawn_under`, the control: `capture` kills the worker only, the grandchild runs on
-//   argv[3]  the worker's name (a script that prints the pid of the `sleep` it starts, and waits for it)
+//   argv[3]  the worker's name: `sh` (a link in the directory to the shell), which is given the script
+//            `sleep 7000 & echo $!; wait`: it prints the pid of the `sleep` it starts, and waits for it
 // Lines: `worker N`, `grandchild N`, `ran ...`; what the test looks at after this program ends is outside it (the state
 // of the grandchild, read with `ps`).
 
@@ -51,9 +52,9 @@ fn report[&i](io: &!i Io, ran: process.Ran) -> [io_write] int {
 
 fn start[&x, &d, &p](exec: &x Exec(""), dir: &d Dir, detached: bool, name: &p [byte], input: Stdio, out: Stdio) -> [exec_under, exec_detached] Spawned {
     if detached {
-        return exec_spawn_detached_under(exec, dir, name, "", "", input, out, Stdio::Null);
+        return exec_spawn_detached_under(exec, dir, name, "-c\0sleep 7000 & echo $!; wait\0", "", input, out, Stdio::Null);
     }
-    return exec_spawn_under(exec, dir, name, "", "", input, out, Stdio::Null);
+    return exec_spawn_under(exec, dir, name, "-c\0sleep 7000 & echo $!; wait\0", "", input, out, Stdio::Null);
 }
 
 fn worker[&h, &x, &d, &c, &i, &p](heap: &!h Heap, exec: &x Exec(""), dir: &d Dir, clock: &c Clock, io: &!i Io, detached: bool, name: &p [byte]) -> [heap, exec_under, exec_detached, clock, poll, io_write] int {

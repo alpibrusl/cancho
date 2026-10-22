@@ -9,7 +9,6 @@
 
 use super::process_group::{alive, ends, number, state};
 use super::*;
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
 
 const CONFIGS: [(&str, &[&str]); 3] = [
@@ -47,14 +46,15 @@ fn drivers() -> &'static [(&'static str, PathBuf)] {
     })
 }
 
-/// A worker directory holding `worker.sh`, which starts `sleep <seconds>`, prints its pid and waits for it. Each call
-/// uses a duration of its own, so a `sleep` is this test's and no other's.
-fn workers(tag: &str, seconds: u32) -> PathBuf {
+/// A worker directory holding `sh`, a link to the shell, which the driver gives a script that starts `sleep`, prints its
+/// pid and waits for it. The worker is not a file written here: a script written and executed at once is `ETXTBSY` (26)
+/// whenever another thread of the test process forks between the write and the close (measured: 11 of 600 spawns with four
+/// threads forking), and the tests of this crate run in parallel. The pid is printed, so the grandchild is known
+/// without a duration of its own.
+fn workers(tag: &str) -> PathBuf {
     let dir = scratch(tag);
-    let path = dir.join("worker.sh");
-    std::fs::write(&path, format!("#!/bin/sh\nsleep {seconds} &\necho $!\nwait\n"))
-        .expect("a script");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let _ = std::fs::remove_file(dir.join("sh"));
+    std::os::unix::fs::symlink("/bin/sh", dir.join("sh")).expect("a link");
     dir
 }
 
@@ -74,9 +74,8 @@ fn lines(out: &std::process::Output) -> Vec<String> {
 #[test]
 fn a_deadline_ends_what_a_worker_beneath_a_directory_started() {
     for (config, exe) in drivers() {
-        let seconds = 7_100 + CONFIGS.iter().position(|(n, _)| n == config).unwrap() as u32;
-        let dir = workers(&format!("sdu-deadline-{}", config.replace(' ', "-")), seconds);
-        let out = run(exe, &dir, "d", "worker.sh");
+        let dir = workers(&format!("sdu-deadline-{}", config.replace(' ', "-")));
+        let out = run(exe, &dir, "d", "sh");
         assert_eq!(out.status.code(), Some(0), "`{config}`: {out:?}");
         let lines = lines(&out);
         assert!(lines.contains(&"ran timed out".to_owned()), "`{config}`: {lines:?}");
@@ -96,9 +95,8 @@ fn a_deadline_ends_what_a_worker_beneath_a_directory_started() {
 #[test]
 fn a_worker_started_without_a_group_of_its_own_leaks_what_it_started() {
     for (config, exe) in drivers() {
-        let seconds = 7_200 + CONFIGS.iter().position(|(n, _)| n == config).unwrap() as u32;
-        let dir = workers(&format!("sdu-control-{}", config.replace(' ', "-")), seconds);
-        let out = run(exe, &dir, "u", "worker.sh");
+        let dir = workers(&format!("sdu-control-{}", config.replace(' ', "-")));
+        let out = run(exe, &dir, "u", "sh");
         assert_eq!(out.status.code(), Some(0), "`{config}`: {out:?}");
         let lines = lines(&out);
         assert!(lines.contains(&"ran timed out".to_owned()), "`{config}`: {lines:?}");
@@ -115,11 +113,11 @@ fn a_worker_started_without_a_group_of_its_own_leaks_what_it_started() {
 #[test]
 fn the_name_rule_is_exec_spawn_unders() {
     for (config, exe) in drivers() {
-        let dir = workers(&format!("sdu-names-{}", config.replace(' ', "-")), 7_300);
+        let dir = workers(&format!("sdu-names-{}", config.replace(' ', "-")));
         let out = run(exe, &dir, "d", "no-such-worker");
         assert_eq!(out.status.code(), Some(0), "`{config}`: {out:?}");
         assert!(lines(&out).contains(&"spawn 2".to_owned()), "`{config}`: {out:?}");
-        for name in ["/bin/sh", "../worker.sh", "sub/../worker.sh"] {
+        for name in ["/bin/sh", "../sh", "sub/../sh"] {
             let out = run(exe, &dir, "d", name);
             assert!(
                 out.status.signal().is_some() && out.stdout.is_empty(),

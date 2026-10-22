@@ -1053,8 +1053,8 @@ It is `exec_spawn_under` with the flag `exec_spawn_detached` adds, and nothing e
   `Exec`): no program has asked (§4.11).
 
 **Measured** (Linux 6.18 x86-64; Cranelift, LLVM through the Rust compiler, LLVM through the compiler in cancho; the driver is
-`tests/programs/spawn_detached_under.cho`, cancho-forge's S7 with the worker beneath a `Dir`, whose worker script starts
-`sleep N`, prints its pid and waits):
+`tests/programs/spawn_detached_under.cho`, cancho-forge's S7 with the worker beneath a `Dir`, whose worker is `sh`, a link in
+the directory to the shell, given the script `sleep 7000 & echo $!; wait`):
 
 | mode | `capture` at 300 ms | the grandchild (`sleep N`) |
 |---|---|---|
@@ -1077,6 +1077,14 @@ compiler in cancho only).
 
 **What is not measured.** macOS (the session flag is `0x400` there, as §4.11); WebAssembly (refused); a descendant that
 leaves the group by `setsid` (§4.12, unchanged).
+
+**A flake found by CI, and why the worker is a link.** The first version of the test wrote a worker script into the directory
+and started it at once; on a loaded runner the spawn answered `Failed(26)`, `ETXTBSY`: another thread of the test process
+forked between the script's `write` and `close`, and the child it made held the write descriptor until its own `exec`. The
+builtin was not involved (nothing had run). Reproduced outside cancho: four threads spawning `/bin/true` while another writes
+and executes a script made 11 of 600 executions fail with 26. The worker is now a link to `/bin/sh` and the script travels in
+the arguments, so no file is written and executed in the test; `spawn_under.rs` still writes its scripts (a latent instance
+of the same race, not touched here).
 
 ---
 
