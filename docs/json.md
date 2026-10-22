@@ -232,6 +232,12 @@ bytes as `json.dumps(separators=(",", ":"))`:
 | `std.json` Writer | 106 ms | **148 MB/s** |
 | Python `json.dumps` | 266 ms | 59 MB/s |
 
+**Writing one long string** (`put_string` of 1 MiB of lowercase ASCII, instructions by `callgrind`, issue #584): the escaper
+scanned a byte with four comparisons, 15 instructions a byte (15.7 M for 1 MiB). A loop of its own for the common bytes
+(above `\\`, below DEL, or between `"` and `\\`: two comparisons) takes it to 8 instructions a byte (8.4 M), the same
+output bytes (`test_every_ascii_byte_between_and_at_the_ends_of_plain_runs`). Unrolling that loop four bytes at a time
+measured worse (9.2 M) and was not kept. The run is still appended in one piece, as before.
+
 **The honest reading.** Scanning is fast and conversion is not uniformly:
 17-digit floats are the weak case (about 0.9 µs each, 3.3× slower than
 Python's `float()`), and writing a 17-digit float is slower still (§7). A
