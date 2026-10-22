@@ -59,13 +59,12 @@ enum Ended {
 /// `exe mode` with `ulimit -v kib`. Anything but the three ends of [`Ended`] is a failure of the program: a signal that
 /// is not the trap (a null pointer used, a bad free) or a status that is not 0.
 fn under_limit(exe: &Path, mode: &str, kib: u32) -> Ended {
-    let out = Command::new("sh")
-        .arg("-c")
-        .arg(format!("ulimit -v {kib} && exec \"$0\" \"$1\""))
-        .arg(exe)
-        .arg(mode)
-        .output()
-        .expect("sh runs");
+    // The sweep ends most runs in a trap, and a GitHub Linux runner pipes every crash to `systemd-coredump`
+    // (`differential.rs`, `without_a_core_dump`), so about eighty crashes in a test are minutes on a loaded runner. The
+    // limit is set on the shell, which passes it to the program.
+    let mut shell = Command::new("sh");
+    shell.arg("-c").arg(format!("ulimit -v {kib} && exec \"$0\" \"$1\"")).arg(exe).arg(mode);
+    let out = differential::without_a_core_dump(&mut shell).output().expect("sh runs");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     match (out.status.code(), out.status.signal()) {
@@ -141,7 +140,10 @@ fn a_failed_allocation_traps_and_never_leaves_a_half_made_value_in_use() {
 #[test]
 fn a_trap_ends_the_process_and_loses_what_standard_output_still_buffered() {
     for (config, exe) in drivers() {
-        let piped = Command::new(exe).arg("x").output().expect("the driver runs");
+        let mut driver = Command::new(exe);
+        driver.arg("x");
+        let piped =
+            differential::without_a_core_dump(&mut driver).output().expect("the driver runs");
         assert_eq!(piped.status.signal(), Some(4), "`{config}`: a trap is SIGILL: {piped:?}");
         assert!(
             piped.stdout.is_empty(),
