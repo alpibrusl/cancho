@@ -393,7 +393,7 @@ declares `edition 9` to call them, which moves its own hashes and no other file'
 Edition 9 also has **`exec_spawn_detached`, `child_release` and `child_pid`** ([`processes.md`](processes.md) §4.11, #524), and with them
 the label **`exec_detached`**: names a program may declare for itself, so absent before edition 9
 (`tests/reject/child_release_is_edition_nine.cho`). The label is reachable only through those builtins, so no older file can
-name it, perform it or be broken by it; it adds no type and no `Split` field.
+name it, perform it or be broken by it; it adds no type and no `Split` field. **`exec_spawn_detached_under`** ([`processes.md`](processes.md) §4.15, #562) is the same with a child that leads a session and a process group of its own, so `capture`'s deadline reaches what the worker started; its row is `exec_under` and `exec_detached`, and it is absent before edition 9 as well.
 
 Edition 9 also has **`child_kill_group`** ([`processes.md`](processes.md) §4.12, #533): `child_kill`'s signals to the process group a
 detached child leads, a name a program may declare for itself, so absent before edition 9

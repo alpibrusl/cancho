@@ -23,12 +23,15 @@ impl<'a> FnLowering<'a> {
     /// is a name beneath the `Dir`. Only the capability that bounds nothing (`Exec("")`) may be asked: a name
     /// resolved against a directory chosen at run time cannot be shown to lie under a literal, and a spawn the
     /// literal does not cover would widen the capability. The row is `exec_under`, which names no path.
+    /// `exec_spawn_detached_under` (§4.15) is the same with `detached`: the child leads a session of its own, and the
+    /// row adds `exec_detached`.
     pub(crate) fn exec_spawn_under(
         &mut self,
         args: &[ExprId],
         span: Span,
+        detached: bool,
     ) -> Result<(Expr, Type), Diagnostic> {
-        self.exec_spawn_with(args, span, true, false, true)
+        self.exec_spawn_with(args, span, true, detached, true)
     }
 
     fn exec_spawn_with(
@@ -40,6 +43,7 @@ impl<'a> FnLowering<'a> {
         under: bool,
     ) -> Result<(Expr, Type), Diagnostic> {
         let (name, wanted) = match (in_dir, detached) {
+            (true, true) if under => ("exec_spawn_detached_under", 8),
             (true, _) if under => ("exec_spawn_under", 8),
             (true, _) => ("exec_spawn_in", 8),
             (_, true) => ("exec_spawn_detached", 7),
@@ -72,7 +76,7 @@ impl<'a> FnLowering<'a> {
             return Err(Diagnostic::new(
                 Rule::CapabilityMisused,
                 format!(
-                    "`exec_spawn_under` needs the `Exec` that bounds nothing: a program found beneath a directory chosen at run time cannot be shown to lie under `{prefix}`, and spawning it would widen the capability (`docs/processes.md` §4.14)"
+                    "`{name}` needs the `Exec` that bounds nothing: a program found beneath a directory chosen at run time cannot be shown to lie under `{prefix}`, and spawning it would widen the capability (`docs/processes.md` §4.14)"
                 ),
                 capability_span,
             ));

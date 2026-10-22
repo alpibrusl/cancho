@@ -42,7 +42,7 @@ fn driver() -> &'static [(&'static str, PathBuf)] {
 }
 
 /// The `ps` state of a process, `None` once it is gone.
-fn state(pid: u32) -> Option<String> {
+pub(crate) fn state(pid: u32) -> Option<String> {
     let out =
         Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().expect("ps runs");
     let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
@@ -50,12 +50,12 @@ fn state(pid: u32) -> Option<String> {
 }
 
 /// Running or sleeping: there, and not a zombie waiting for a reaper.
-fn alive(pid: u32) -> bool {
+pub(crate) fn alive(pid: u32) -> bool {
     state(pid).is_some_and(|stat| !stat.starts_with('Z'))
 }
 
 /// Not running within `seconds`: gone, or a zombie.
-fn ends(pid: u32, seconds: u64) -> bool {
+pub(crate) fn ends(pid: u32, seconds: u64) -> bool {
     let until = Instant::now() + Duration::from_secs(seconds);
     while Instant::now() < until {
         if !alive(pid) {
@@ -74,7 +74,7 @@ fn run(backend: &str, exe: &Path, mode: &str) -> Vec<String> {
 }
 
 /// The number on the line that starts with `prefix`.
-fn number(lines: &[String], prefix: &str) -> u32 {
+pub(crate) fn number(lines: &[String], prefix: &str) -> u32 {
     lines
         .iter()
         .find_map(|l| l.strip_prefix(prefix))

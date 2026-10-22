@@ -1,0 +1,128 @@
+edition 9;
+
+import std.buffer;
+import std.io;
+import std.process;
+
+// `docs/processes.md` §4.15: `exec_spawn_detached_under`, a worker started beneath a directory chosen at deployment
+// that leads a process group of its own, so the deadline of `capture` ends what the worker started. The scenario of
+// cancho-forge's S7 (#562): a worker that starts a subprocess, a 300 ms deadline, a program that holds `Exec("")`
+// and the worker directory as a `Dir`, and no `/bin/kill`.
+//   argv[1]  the worker directory (opened with `open_dir`)
+//   argv[2]  a mode:
+//     `d`  `exec_spawn_detached_under`: `capture` kills the group at the deadline, the grandchild dies
+//     `u`  `exec_spawn_under`, the control: `capture` kills the worker only, the grandchild runs on
+//   argv[3]  the worker's name: `sh` (a link in the directory to the shell), which is given the script
+//            `sleep 7000 & echo $!; wait`: it prints the pid of the `sleep` it starts, and waits for it
+// Lines: `worker N`, `grandchild N`, `ran ...`; what the test looks at after this program ends is outside it (the state
+// of the grandchild, read with `ps`).
+
+fn say[&i, &t](io: &!i Io, text: &t [byte], n: int) -> [io_write] int {
+    io.write_all(io, text);
+    io.print_int(io, n);
+    io.newline(io);
+    return 0;
+}
+
+// The first number the worker wrote.
+fn number[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) && int_of(b[i]) >= '0' && int_of(b[i]) <= '9' {
+        n = n * 10 + (int_of(b[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn report[&i](io: &!i Io, ran: process.Ran) -> [io_write] int {
+    match ran {
+        process.Ran::TimedOut => {
+            io.write_all(io, "ran timed out\n");
+        }
+        process.Ran::Code(n) => {
+            say(io, "ran code ", n);
+        }
+        _ => {
+            io.write_all(io, "ran other\n");
+        }
+    }
+    return 0;
+}
+
+fn start[&x, &d, &p](exec: &x Exec(""), dir: &d Dir, detached: bool, name: &p [byte], input: Stdio, out: Stdio) -> [exec_under, exec_detached] Spawned {
+    if detached {
+        return exec_spawn_detached_under(exec, dir, name, "-c\0sleep 7000 & echo $!; wait\0", "", input, out, Stdio::Null);
+    }
+    return exec_spawn_under(exec, dir, name, "-c\0sleep 7000 & echo $!; wait\0", "", input, out, Stdio::Null);
+}
+
+fn worker[&h, &x, &d, &c, &i, &p](heap: &!h Heap, exec: &x Exec(""), dir: &d Dir, clock: &c Clock, io: &!i Io, detached: bool, name: &p [byte]) -> [heap, exec_under, exec_detached, clock, poll, io_write] int {
+    match process.channels() {
+        process.Channels::Failed(e) => {
+            say(io, "channels ", e);
+        }
+        process.Channels::Ok(to_child, child_in, from_child, child_out) => {
+            match start(exec, dir, detached, name, Stdio::Pipe(child_in), Stdio::Pipe(child_out)) {
+                Spawned::Failed(e) => {
+                    process.close(to_child, from_child);
+                    say(io, "spawn ", e);
+                }
+                Spawned::Ok(child) => {
+                    borrow child as &ch in {
+                        say(io, "worker ", child_pid(ch));
+                    }
+                    let (out, ran) = process.capture(heap, clock, child, to_child, from_child, "", 4096, 300);
+                    borrow out as &o in {
+                        say(io, "grandchild ", number(buffer.bytes(o)));
+                    }
+                    buffer.drop(heap, out);
+                    report(io, ran);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    release(tty);
+    var console = io;
+    var memory = heap;
+    var status = 2;
+    borrow fs as &f in {
+        borrow args as &g in {
+            match open_dir(f, arg(g, 1)) {
+                DirOpened::Ok(d) => {
+                    var workers = d;
+                    borrow workers as &w in {
+                        borrow exec as &x in {
+                            borrow clock as &c in {
+                                borrow mut console as &!i in {
+                                    borrow mut memory as &!h in {
+                                        status = worker(h, x, w, c, i, int_of(arg(g, 2)[0]) == 'd', arg(g, 3));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    dir_close(workers);
+                }
+                DirOpened::Failed(e) => {
+                    status = 3;
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(memory);
+    release(console);
+    release(args);
+    return status;
+}

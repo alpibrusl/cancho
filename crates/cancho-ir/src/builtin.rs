@@ -825,6 +825,11 @@ pub enum Builtin {
     /// time. `exec_spawn_in` with the name a relative path (no leading `/`, no `..`) and a row that names no path.
     /// Lowered as `Expr::ExecSpawn { in_dir: true, under: true, .. }`.
     ExecSpawnUnder,
+    /// `exec_spawn_detached_under(&Exec(""), &Dir, name, args, env, stdin, stdout, stderr) -> [exec_under, exec_detached] Spawned`
+    /// -- `docs/processes.md` §4.15, edition 9: `exec_spawn_under` whose child leads a session and a process group of its
+    /// own (`exec_spawn_detached`'s), so `child_kill_group` and `capture`'s deadline reach what the worker started.
+    /// Lowered as `Expr::ExecSpawn { in_dir: true, under: true, detached: true, .. }`.
+    ExecSpawnDetachedUnder,
     /// `child_release(Child) -> [exec_detached] int` -- §4.11, edition 9: let go of a
     /// child that keeps running. Consumes the handle; a thread of the runtime
     /// reaps the child when it ends. `0`, or the `errno` of the thread.
@@ -1090,6 +1095,7 @@ impl Builtin {
         Builtin::ChildRelease,
         Builtin::ChildPid,
         Builtin::ExecSpawnUnder,
+        Builtin::ExecSpawnDetachedUnder,
     ];
 
     pub fn name(self) -> &'static str {
@@ -1245,6 +1251,7 @@ impl Builtin {
             Builtin::ExecSpawnIn => "exec_spawn_in",
             Builtin::ExecSpawnDetached => "exec_spawn_detached",
             Builtin::ExecSpawnUnder => "exec_spawn_under",
+            Builtin::ExecSpawnDetachedUnder => "exec_spawn_detached_under",
             Builtin::ChildRelease => "child_release",
             Builtin::ChildPid => "child_pid",
             Builtin::ChildWait => "child_wait",
@@ -1411,6 +1418,7 @@ impl Builtin {
             // `child_kill_group` is a name a program may declare as well.
             Builtin::ExecSpawnDetached
             | Builtin::ExecSpawnUnder
+            | Builtin::ExecSpawnDetachedUnder
             | Builtin::ChildRelease
             | Builtin::ChildPid
             | Builtin::ChildKillGroup => 9,
@@ -1729,6 +1737,8 @@ impl Builtin {
             // `docs/processes.md` §4.14: path-free, the program is whatever the run-time directory holds; the call
             // site performs it as well (the self-hosted tables read the label names off this row).
             Builtin::ExecSpawnUnder => Effects::plain(["exec_under"]),
+            // `docs/processes.md` §4.15: both labels, path-free; the call site performs them as well.
+            Builtin::ExecSpawnDetachedUnder => Effects::plain(["exec_under", "exec_detached"]),
             Builtin::PipeRead => Effects::plain(["pipe_read"]),
             Builtin::PipeWrite => Effects::plain(["pipe_write"]),
             // Moving authority around is not an effect. Splitting a `World`
