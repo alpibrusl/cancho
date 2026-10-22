@@ -29,6 +29,7 @@ import selfhost.commandtree;
 import selfhost.diagnose;
 import selfhost.stdorder;
 import selfhost.testscan;
+import selfhost.satisfytext;
 
 // The canonical text of a program, or why there is none: status 0, 1 (the first refusal, at `from` to `to`), 2 (it does not fit the room).
 res struct Text {
@@ -1520,6 +1521,33 @@ fn test_program[&h, &i, &a, &f, &x, &c, &t](heap: &!h Heap, io: &!i Io, args: &a
     return status;
 }
 
+// The tests `testscan.cho` finds in the stream `scan` (the files, or one of them), and a status: 0 (the tests are `found`, with the label, the call and the path of each,
+// each followed by a NUL), or what has been said (1 a refusal, 2 a file or a test that `test` cannot run). `names`, `laid` and `lens` are those of the program the stream is
+// from, which say where.
+res struct Found {
+    found: buffer.Buffer,
+    how: int,
+}
+
+fn scan_tests[&h, &i, &r, &y, &l, &n](heap: &!h Heap, io: &!i Io, scan: &r [byte], names: &y [byte], laid: &l [byte], lens: &!n [int]) -> [heap, io_write, err_write] Found {
+    var tests = buffer.empty(heap, 0);
+    let scanned = driver.run_many(heap, io, scan, 11, 0);
+    var status = 0;
+    borrow scanned as &sc in {
+        status = sc.status;
+        if sc.status == 0 {
+            buffer.drop(heap, tests);
+            tests = buffer.append(heap, buffer.empty(heap, buffer.size(sc.ir) + 1), buffer.bytes(sc.ir));
+        } else if sc.status == 1 {
+            status = report_check(heap, io, names, laid, lens, false, 1, sc.rule, sc.from, sc.to);
+        } else {
+            status = test_refusal(heap, io, names, laid, lens, sc.status, sc.rule, sc.from, buffer.bytes(sc.ir));
+        }
+    }
+    driver.discard(heap, scanned);
+    return Found { found: tests, how: status };
+}
+
 // `test [--host H] [--std-dir DIR] [--backend llvm] [--clang PATH] [-l LIB] [-L DIR] FILE...` (`docs/cli-in-cancho.md` section 16): the tests of the
 // files (`testscan.cho`) are found, one program is built of the files and the runner that is written for them, and each test is run as a process of
 // its own (the runner takes the number of the test as its argument), with the report of `cancho test`. Exit status 0 if all passed, 4 if one did not,
@@ -1587,31 +1615,16 @@ fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Arg
     var tests = buffer.empty(heap, 0);
     if status == 0 {
         borrow raw as &r in {
-            let scanned = driver.run_many(heap, io, buffer.bytes(r), 11, 0);
-            borrow scanned as &sc in {
-                status = sc.status;
-                if sc.status == 0 {
-                    buffer.drop(heap, tests);
-                    tests = buffer.append(heap, buffer.empty(heap, buffer.size(sc.ir) + 1), buffer.bytes(sc.ir));
-                } else if sc.status == 1 {
-                    borrow laid as &lt in {
-                        borrow mut lens as &!lb in {
-                            borrow names as &nm in {
-                                status = report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, 1, sc.rule, sc.from, sc.to);
-                            }
-                        }
-                    }
-                } else {
-                    borrow laid as &lt in {
-                        borrow mut lens as &!lb in {
-                            borrow names as &nm in {
-                                status = test_refusal(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), sc.status, sc.rule, sc.from, buffer.bytes(sc.ir));
-                            }
-                        }
+            borrow laid as &lt in {
+                borrow names as &nm in {
+                    borrow mut lens as &!lb in {
+                        let Found { found, how } = scan_tests(heap, io, buffer.bytes(r), buffer.bytes(nm), buffer.bytes(lt), contents(lb));
+                        buffer.drop(heap, tests);
+                        tests = found;
+                        status = how;
                     }
                 }
             }
-            driver.discard(heap, scanned);
         }
     }
     buffer.drop(heap, raw);
@@ -1637,6 +1650,184 @@ fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Arg
     return status;
 }
 
+// `satisfy [--host H] [--std-dir DIR] [--clang PATH] CONTRACT CANDIDATE` (`docs/cli-in-cancho.md` section 18): the two files (and the library) are checked as one program; the tests
+// are those of the contract alone (`testscan.cho`), and there must be some; the contract must call something the candidate declares (by name, in its text, `satisfytext.calls_any`);
+// then the tests are run as `test` runs them. Satisfied is status 0 and the identity of the signature of each function of the candidate; a test that fails is 4.
+fn satisfy_pair[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, std_dir: int, host_in: int, host_given: bool, clang_at: int) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    let loaded = load_program(heap, io, args, fs, true, false, std_dir, "", "");
+    let Loaded { names, raw, laid, lens, count, read_status } = loaded;
+    var status = read_status;
+    var candidate = buffer.empty(heap, 0);
+    var whole = buffer.empty(heap, 0);
+    var tests = buffer.empty(heap, 0);
+    var provided = buffer.empty(heap, 0);
+    var joined = buffer.empty(heap, 0);
+    var calls = true;
+    borrow raw as &r in {
+        borrow laid as &lt in {
+            borrow names as &nm in {
+                borrow mut lens as &!lb in {
+                    if status == 0 {
+                        // The pair, and the library, as one program: nothing is asked of it but that it checks.
+                        let checked = driver.run_many(heap, io, buffer.bytes(r), 10, host_in);
+                        borrow checked as &b in {
+                            status = report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to);
+                        }
+                        driver.discard(heap, checked);
+                    }
+                    if status == 0 {
+                        let Found { found, how } = scan_tests(heap, io, satisfytext.record(buffer.bytes(r), 0), buffer.bytes(nm), buffer.bytes(lt), contents(lb));
+                        buffer.drop(heap, tests);
+                        tests = found;
+                        status = how;
+                    }
+                    if status == 0 {
+                        let listed = driver.run_many(heap, io, satisfytext.record(buffer.bytes(r), 1), 13, host_in);
+                        borrow listed as &lg in {
+                            buffer.drop(heap, candidate);
+                            candidate = buffer.append(heap, buffer.empty(heap, buffer.size(lg.ir) + 1), buffer.bytes(lg.ir));
+                        }
+                        driver.discard(heap, listed);
+                        let all = driver.run_many(heap, io, buffer.bytes(r), 13, host_in);
+                        borrow all as &lg in {
+                            buffer.drop(heap, whole);
+                            whole = buffer.append(heap, buffer.empty(heap, buffer.size(lg.ir) + 1), buffer.bytes(lg.ir));
+                        }
+                        driver.discard(heap, all);
+                        borrow candidate as &cb in {
+                            buffer.drop(heap, provided);
+                            provided = satisfytext.provided(heap, buffer.bytes(cb), false);
+                            buffer.drop(heap, joined);
+                            joined = satisfytext.provided(heap, buffer.bytes(cb), true);
+                        }
+                        borrow provided as &pv in {
+                            if len(buffer.bytes(pv)) > 0 {
+                                calls = satisfytext.calls_any(heap, buffer.bytes(lt)[0..contents(lb)[0]], buffer.bytes(pv));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, raw);
+    buffer.drop(heap, laid);
+    buffer.drop(heap, names);
+    unbox_slice(heap, lens);
+    var none = false;
+    borrow tests as &tz in {
+        none = buffer.size(tz) == 0;
+    }
+    if status == 0 && none {
+        status = usage_error(heap, io, "the contract declares no `test_*` functions; a contract that tests nothing cannot be satisfied");
+    }
+    if status == 0 && !calls {
+        var why = buffer.append(heap, buffer.empty(heap, 256), "the contract never calls anything the candidate declares (");
+        borrow joined as &jn in {
+            why = buffer.append(heap, why, buffer.bytes(jn));
+        }
+        why = buffer.append(heap, why, "); a contract that does not exercise the candidate is satisfied by every candidate");
+        borrow why as &wy in {
+            status = usage_error(heap, io, buffer.bytes(wy));
+        }
+        buffer.drop(heap, why);
+    }
+    if status == 0 {
+        borrow tests as &tt in {
+            status = test_program(heap, io, args, fs, exec, clock, std_dir, host_in, host_given, clang_at, buffer.bytes(tt));
+        }
+        if status == 0 {
+            console.write_all(io, "satisfied\n");
+            borrow whole as &wl in {
+                borrow candidate as &cd in {
+                    var at = 0;
+                    let list = buffer.bytes(wl);
+                    while at < len(list) {
+                        let m = satisfytext.module_end(list, at);
+                        let n = satisfytext.name_end(list, at);
+                        let h = satisfytext.identity_end(list, at);
+                        if satisfytext.has_entry(buffer.bytes(cd), list[at..m], list[m + 1..n]) {
+                            console.write_all(io, "  ");
+                            console.write_all(io, list[at..m]);
+                            if m > at {
+                                console.write_all(io, "::");
+                            }
+                            console.write_all(io, " sig ");
+                            console.write_all(io, list[m + 1..n]);
+                            console.write_all(io, "\n    sig_id ");
+                            console.write_all(io, list[n + 1..h]);
+                            console.write_all(io, "\n");
+                        }
+                        at = h + 1;
+                    }
+                }
+            }
+        } else if status == 4 {
+            console.write_all(io, "not satisfied: see the test failures above\n");
+        }
+    }
+    buffer.drop(heap, candidate);
+    buffer.drop(heap, whole);
+    buffer.drop(heap, tests);
+    buffer.drop(heap, provided);
+    buffer.drop(heap, joined);
+    return status;
+}
+
+fn satisfy_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    var host = 0;
+    var host_given = false;
+    var clang_at = 0 - 1;
+    var std_dir = 0 - 1;
+    var files = 0;
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--host") {
+            n = n + 1;
+            host_given = true;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "linux") {
+                host = 0;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "darwin") {
+                host = 1;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "linux-aarch64") {
+                host = 2;
+            } else {
+                return usage_error(heap, io, "`--host` needs linux, darwin or linux-aarch64");
+            }
+        } else if bytes.equal(word, "--std-dir") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return usage_error(heap, io, "`--std-dir` needs a directory");
+            }
+            std_dir = n;
+        } else if bytes.equal(word, "--clang") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return usage_error(heap, io, "`--clang` needs a path");
+            }
+            clang_at = n;
+        } else if bytes.equal(word, "--std") {
+            return usage_error(heap, io, "`--std` is not available in this command line: `--std-dir DIR` adds the standard library from DIR");
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            let why = buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.empty(heap, 64), "unknown `satisfy` option `"), word), "`");
+            var said = 0;
+            borrow why as &wy in {
+                said = usage_error(heap, io, buffer.bytes(wy));
+            }
+            buffer.drop(heap, why);
+            return said;
+        } else {
+            files = files + 1;
+        }
+        n = n + 1;
+    }
+    if files != 2 {
+        return usage_error(heap, io, "`cancho satisfy <contract.cho> <candidate.cho> [--std]` — exactly two files");
+    }
+    return satisfy_pair(heap, io, args, fs, exec, clock, std_dir, host, host_given, clang_at);
+}
+
 fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_read, io_write, err_write, args, fs_read(""), fs_write(""), dir_read, file_read, file_write, exec(""), clock, poll] int {
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "fmt") {
         return fmt_command(heap, io, args, fs);
@@ -1652,6 +1843,9 @@ fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "test") {
         return test_command(heap, io, args, fs, exec, clock);
+    }
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "satisfy") {
+        return satisfy_command(heap, io, args, fs, exec, clock);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "layout") {
         return program_command(heap, io, args, fs, exec, clock, false, true, false, false);
