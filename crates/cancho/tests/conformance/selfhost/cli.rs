@@ -575,10 +575,6 @@ fn the_command_line_in_cancho_writes_the_identities_like_cancho_ids() {
     .iter()
     .map(|p| repo_root().join(p).display().to_string())
     .collect();
-    // #599: with the library, `t` is a generic function and a bare name of one is not a value (`no-function-values`); the
-    // checker in cancho accepts it. Which edge cases run with the library depends on how many files precede them in the
-    // corpus, so this appeared when #587 added files.
-    expected.push("edge case \"fn f() -> [] int { return t.0.1.4294967295; }\"".to_owned());
     expected.push("several files 39".to_owned());
     assert_eq!(missed, expected, "the refusals the checker in cancho does not make");
     assert!(
