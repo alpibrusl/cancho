@@ -234,7 +234,7 @@ bytes as `json.dumps(separators=(",", ":"))`:
 
 **Writing one long string** (`put_string` of 1 MiB of lowercase ASCII, instructions by `callgrind`, issue #584): the escaper
 scanned a byte with four comparisons, 15 instructions a byte (15.7 M for 1 MiB). A loop of its own for the common bytes
-(above `\\`, below DEL, or between `"` and `\\`: two comparisons) takes it to 8 instructions a byte (8.4 M), the same
+(above `\`, below DEL, or between `"` and `\`: two comparisons) takes it to 8 instructions a byte (8.4 M), the same
 output bytes (`test_every_ascii_byte_between_and_at_the_ends_of_plain_runs`). Unrolling that loop four bytes at a time
 measured worse (9.2 M) and was not kept. The run is still appended in one piece, as before.
 
