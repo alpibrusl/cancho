@@ -1421,11 +1421,15 @@ entry:
   %ncells.addr = alloca i64, align 8
   %out.addr = alloca ptr, align 8
   %fd = alloca i32, align 4
-  %ticket = alloca i64, align 8
-  %entry1 = alloca ptr, align 8
+  %sender = alloca [2 x i64], align 8
   %moved = alloca i64, align 8
   %reason = alloca i64, align 8
   %len = alloca i32, align 4
+  %ticket = alloca i64, align 8
+  %.atomictmp = alloca i64, align 8
+  %atomic-temp = alloca i64, align 8
+  %entry10 = alloca ptr, align 8
+  %.atomictmp17 = alloca i64, align 8
   store ptr %udp, ptr %udp.addr, align 8
   store ptr %p, ptr %p.addr, align 8
   store i64 %room, ptr %room.addr, align 8
@@ -1436,67 +1440,85 @@ entry:
   %1 = load i64, ptr %0, align 8
   %conv = trunc i64 %1 to i32
   store i32 %conv, ptr %fd, align 4
-  %2 = load i64, ptr getelementptr inbounds (i8, ptr @lexs_udp_peers, i64 2097152), align 8
-  %add = add i64 %2, 1
-  store i64 %add, ptr %ticket, align 8
-  %3 = load i64, ptr %ticket, align 8
-  %and = and i64 %3, 65535
-  %mul = mul i64 %and, 32
-  %add.ptr = getelementptr inbounds i8, ptr @lexs_udp_peers, i64 %mul
-  store ptr %add.ptr, ptr %entry1, align 8
+  %arrayidx = getelementptr inbounds [2 x i64], ptr %sender, i64 0, i64 0
+  store i64 0, ptr %arrayidx, align 8
+  %arrayidx1 = getelementptr inbounds [2 x i64], ptr %sender, i64 0, i64 1
+  store i64 0, ptr %arrayidx1, align 8
   store i64 -1, ptr %moved, align 8
   store i64 22, ptr %reason, align 8
-  %4 = load i64, ptr %room.addr, align 8
-  %cmp = icmp ne i64 %4, 0
+  %2 = load i64, ptr %room.addr, align 8
+  %cmp = icmp ne i64 %2, 0
   br i1 %cmp, label %land.lhs.true, label %if.end
 
 land.lhs.true:                                    ; preds = %entry
-  %5 = load i64, ptr %ncells.addr, align 8
-  %cmp3 = icmp ne i64 %5, 0
+  %3 = load i64, ptr %ncells.addr, align 8
+  %cmp3 = icmp ne i64 %3, 0
   br i1 %cmp3, label %if.then, label %if.end
 
 if.then:                                          ; preds = %land.lhs.true
   store i32 16, ptr %len, align 4
-  %6 = load i32, ptr %fd, align 4
-  %7 = load ptr, ptr %p.addr, align 8
-  %8 = load i64, ptr %room.addr, align 8
-  %9 = load ptr, ptr %entry1, align 8
-  %call = call i64 @recvfrom(i32 %6, ptr %7, i64 %8, i32 0, ptr %9, ptr %len)
+  %4 = load i32, ptr %fd, align 4
+  %5 = load ptr, ptr %p.addr, align 8
+  %6 = load i64, ptr %room.addr, align 8
+  %arraydecay = getelementptr inbounds [2 x i64], ptr %sender, i64 0, i64 0
+  %call = call i64 @recvfrom(i32 %4, ptr %5, i64 %6, i32 0, ptr %arraydecay, ptr %len)
   store i64 %call, ptr %moved, align 8
   %call5 = call ptr @cancho_errno_location()
-  %10 = load i32, ptr %call5, align 4
-  %conv6 = sext i32 %10 to i64
+  %7 = load i32, ptr %call5, align 4
+  %conv6 = sext i32 %7 to i64
   store i64 %conv6, ptr %reason, align 8
   br label %if.end
 
 if.end:                                           ; preds = %if.then, %land.lhs.true, %entry
-  %11 = load i64, ptr %moved, align 8
-  %cmp7 = icmp sge i64 %11, 0
-  br i1 %cmp7, label %if.then9, label %if.end12
+  %8 = load i64, ptr %moved, align 8
+  %cmp7 = icmp sge i64 %8, 0
+  br i1 %cmp7, label %if.then9, label %if.end19
 
 if.then9:                                         ; preds = %if.end
+  store i64 1, ptr %.atomictmp, align 8
+  %9 = load i64, ptr %.atomictmp, align 8
+  %10 = atomicrmw add ptr getelementptr inbounds (i8, ptr @lexs_udp_peers, i64 2097152), i64 %9 seq_cst, align 8
+  store i64 %10, ptr %atomic-temp, align 8
+  %11 = load i64, ptr %atomic-temp, align 8
+  %add = add i64 %11, 1
+  store i64 %add, ptr %ticket, align 8
   %12 = load i64, ptr %ticket, align 8
-  %13 = load ptr, ptr %entry1, align 8
-  %add.ptr10 = getelementptr inbounds i8, ptr %13, i64 16
-  store i64 %12, ptr %add.ptr10, align 8
-  %14 = load i32, ptr %fd, align 4
-  %15 = load ptr, ptr %entry1, align 8
-  %add.ptr11 = getelementptr inbounds i8, ptr %15, i64 24
-  store i32 %14, ptr %add.ptr11, align 4
-  %16 = load i64, ptr %ticket, align 8
-  store i64 %16, ptr getelementptr inbounds (i8, ptr @lexs_udp_peers, i64 2097152), align 8
-  %17 = load i64, ptr %ticket, align 8
-  %18 = load ptr, ptr %cells.addr, align 8
-  %arrayidx = getelementptr inbounds i64, ptr %18, i64 0
-  store i64 %17, ptr %arrayidx, align 8
-  br label %if.end12
+  %and = and i64 %12, 65535
+  %mul = mul i64 %and, 32
+  %add.ptr = getelementptr inbounds i8, ptr @lexs_udp_peers, i64 %mul
+  store ptr %add.ptr, ptr %entry10, align 8
+  %arrayidx11 = getelementptr inbounds [2 x i64], ptr %sender, i64 0, i64 0
+  %13 = load i64, ptr %arrayidx11, align 8
+  %14 = load ptr, ptr %entry10, align 8
+  %arrayidx12 = getelementptr inbounds i64, ptr %14, i64 0
+  store i64 %13, ptr %arrayidx12, align 8
+  %arrayidx13 = getelementptr inbounds [2 x i64], ptr %sender, i64 0, i64 1
+  %15 = load i64, ptr %arrayidx13, align 8
+  %16 = load ptr, ptr %entry10, align 8
+  %arrayidx14 = getelementptr inbounds i64, ptr %16, i64 1
+  store i64 %15, ptr %arrayidx14, align 8
+  %17 = load i32, ptr %fd, align 4
+  %18 = load ptr, ptr %entry10, align 8
+  %add.ptr15 = getelementptr inbounds i8, ptr %18, i64 24
+  store i32 %17, ptr %add.ptr15, align 4
+  %19 = load ptr, ptr %entry10, align 8
+  %add.ptr16 = getelementptr inbounds i8, ptr %19, i64 16
+  %20 = load i64, ptr %ticket, align 8
+  store i64 %20, ptr %.atomictmp17, align 8
+  %21 = load i64, ptr %.atomictmp17, align 8
+  store atomic i64 %21, ptr %add.ptr16 release, align 8
+  %22 = load i64, ptr %ticket, align 8
+  %23 = load ptr, ptr %cells.addr, align 8
+  %arrayidx18 = getelementptr inbounds i64, ptr %23, i64 0
+  store i64 %22, ptr %arrayidx18, align 8
+  br label %if.end19
 
-if.end12:                                         ; preds = %if.then9, %if.end
-  %19 = load i64, ptr %moved, align 8
-  %20 = load i64, ptr %reason, align 8
-  %21 = load i64, ptr %room.addr, align 8
-  %22 = load ptr, ptr %out.addr, align 8
-  call void @netrt_datagram(i64 %19, i64 %20, i64 %21, ptr %22)
+if.end19:                                         ; preds = %if.then9, %if.end
+  %24 = load i64, ptr %moved, align 8
+  %25 = load i64, ptr %reason, align 8
+  %26 = load i64, ptr %room.addr, align 8
+  %27 = load ptr, ptr %out.addr, align 8
+  call void @netrt_datagram(i64 %24, i64 %25, i64 %26, ptr %27)
   ret void
 }
 
@@ -1588,6 +1610,7 @@ entry:
   %fd.addr = alloca i32, align 4
   %ticket.addr = alloca i64, align 8
   %entry.addr = alloca ptr, align 8
+  %atomic-temp = alloca i64, align 8
   store i32 %fd, ptr %fd.addr, align 4
   store i64 %ticket, ptr %ticket.addr, align 8
   store ptr %entry1, ptr %entry.addr, align 8
@@ -1598,22 +1621,24 @@ entry:
 land.lhs.true:                                    ; preds = %entry
   %1 = load ptr, ptr %entry.addr, align 8
   %add.ptr = getelementptr inbounds i8, ptr %1, i64 16
-  %2 = load i64, ptr %add.ptr, align 8
-  %3 = load i64, ptr %ticket.addr, align 8
-  %cmp2 = icmp eq i64 %2, %3
+  %2 = load atomic i64, ptr %add.ptr acquire, align 8
+  store i64 %2, ptr %atomic-temp, align 8
+  %3 = load i64, ptr %atomic-temp, align 8
+  %4 = load i64, ptr %ticket.addr, align 8
+  %cmp2 = icmp eq i64 %3, %4
   br i1 %cmp2, label %land.rhs, label %land.end
 
 land.rhs:                                         ; preds = %land.lhs.true
-  %4 = load ptr, ptr %entry.addr, align 8
-  %add.ptr3 = getelementptr inbounds i8, ptr %4, i64 24
-  %5 = load i32, ptr %add.ptr3, align 4
-  %6 = load i32, ptr %fd.addr, align 4
-  %cmp4 = icmp eq i32 %5, %6
+  %5 = load ptr, ptr %entry.addr, align 8
+  %add.ptr3 = getelementptr inbounds i8, ptr %5, i64 24
+  %6 = load i32, ptr %add.ptr3, align 4
+  %7 = load i32, ptr %fd.addr, align 4
+  %cmp4 = icmp eq i32 %6, %7
   br label %land.end
 
 land.end:                                         ; preds = %land.rhs, %land.lhs.true, %entry
-  %7 = phi i1 [ false, %land.lhs.true ], [ false, %entry ], [ %cmp4, %land.rhs ]
-  %land.ext = zext i1 %7 to i32
+  %8 = phi i1 [ false, %land.lhs.true ], [ false, %entry ], [ %cmp4, %land.rhs ]
+  %land.ext = zext i1 %8 to i32
   ret i32 %land.ext
 }
 

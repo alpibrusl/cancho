@@ -91,3 +91,71 @@ fn a_ticket_redeemed_by_two_threads_at_once_is_given_out_once() {
         }
     }
 }
+
+/// #594: two threads receiving on two sockets at the same moment are each answered through their own ticket, to their own
+/// peer. The driver (`tests/programs/udp_ring_race.cho`) runs two server threads that receive and echo; two clients on
+/// threads of the test send at the same moment each round and expect their own bytes back. Measured before the fix (x86-64):
+/// on Cranelift, 300 and 269 of 600 replies went to the other client in two of three runs, and 346 on LLVM in one (both server
+/// threads had read the same ticket from the shared counter before either datagram arrived, so both entries were one entry);
+/// after it, none.
+#[test]
+fn two_threads_receiving_at_once_are_answered_to_their_own_peers() {
+    use std::io::BufRead as _;
+    use std::net::UdpSocket;
+    use std::sync::{Arc, Barrier};
+    const ROUNDS: u32 = 300;
+    for (config, exe) in drivers("thread-state-udp", "udp_ring_race.cho") {
+        let mut server = Command::new(&exe)
+            .arg(ROUNDS.to_string())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("the driver runs");
+        let mut stdout = std::io::BufReader::new(server.stdout.take().expect("its output"));
+        let mut line = String::new();
+        stdout.read_line(&mut line).expect("the ports line");
+        let ports: Vec<u16> =
+            line.split_whitespace().skip(1).map(|p| p.parse().expect("a port")).collect();
+        assert_eq!(ports.len(), 2, "`{config}`: a `ports P Q` line: {line:?}");
+
+        let barrier = Arc::new(Barrier::new(2));
+        let clients: Vec<_> = ["A", "B"]
+            .into_iter()
+            .zip(ports)
+            .map(|(name, port)| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let socket = UdpSocket::bind("127.0.0.1:0").expect("a client socket");
+                    socket
+                        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                        .expect("a timeout");
+                    let (mut wrong, mut lost) = (0u32, 0u32);
+                    for round in 0..ROUNDS {
+                        barrier.wait();
+                        let message = format!("{name}{round}");
+                        socket.send_to(message.as_bytes(), ("127.0.0.1", port)).expect("a send");
+                        let mut buf = [0u8; 64];
+                        match socket.recv_from(&mut buf) {
+                            Ok((n, _)) if &buf[..n] == message.as_bytes() => {}
+                            Ok(_) => wrong += 1,
+                            Err(_) => lost += 1,
+                        }
+                    }
+                    (wrong, lost)
+                })
+            })
+            .collect();
+        let (mut wrong, mut lost) = (0, 0);
+        for client in clients {
+            let (w, l) = client.join().expect("a client finishes");
+            wrong += w;
+            lost += l;
+        }
+        let mut rest = String::new();
+        std::io::Read::read_to_string(&mut stdout, &mut rest).expect("the end of its output");
+        assert_eq!(server.wait().expect("the driver ends").code(), Some(0), "`{config}`");
+        assert!(
+            wrong == 0 && lost == 0 && rest.trim() == "refused 0",
+            "`{config}`: {wrong} replies went to the wrong peer, {lost} were lost, the server said {rest:?}"
+        );
+    }
+}

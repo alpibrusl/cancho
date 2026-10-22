@@ -478,19 +478,27 @@ void cancho_udp_recv(const i64 *udp, u8 *p, i64 room, i64 *out) {
 /* `udp_recv_from(&!Udp, &![byte], &![int])`: the datagram, and a ticket for its sender in the first cell. */
 void cancho_udp_recv_from(const i64 *udp, u8 *p, i64 room, i64 *cells, i64 ncells, i64 *out) {
   int fd = (int)*udp;
-  i64 ticket = *(i64 *)(lexs_udp_peers + PEER_SLOTS * PEER_STRIDE) + 1;
-  u8 *entry = lexs_udp_peers + (ticket & (PEER_SLOTS - 1)) * PEER_STRIDE;
+  /* The sender's address lands in a buffer of this call's own, and is copied into the ring only once the datagram has
+     arrived and a ticket has been claimed: the ticket used to be read from the shared counter before the blocking
+     receive, so two threads waiting at once were issued the same ticket and the same entry (#594). */
+  i64 sender[2];
+  sender[0] = 0;
+  sender[1] = 0;
   i64 moved = -1;
   i64 reason = EINVAL;
   if (room != 0 && ncells != 0) {
     int len = 16;
-    moved = recvfrom(fd, p, room, MSG_TRUNC_FLAG, entry, &len);
+    moved = recvfrom(fd, p, room, MSG_TRUNC_FLAG, sender, &len);
     reason = ERRNO;
   }
   if (moved >= 0) {
-    *(i64 *)(entry + PEER_TICKET_AT) = ticket;
+    /* One atomic add claims the ticket; the entry is written whole and its ticket last, with release ordering. */
+    i64 ticket = __atomic_fetch_add((i64 *)(lexs_udp_peers + PEER_SLOTS * PEER_STRIDE), 1, __ATOMIC_SEQ_CST) + 1;
+    u8 *entry = lexs_udp_peers + (ticket & (PEER_SLOTS - 1)) * PEER_STRIDE;
+    ((i64 *)entry)[0] = sender[0];
+    ((i64 *)entry)[1] = sender[1];
     *(int *)(entry + PEER_FD_AT) = fd;
-    *(i64 *)(lexs_udp_peers + PEER_SLOTS * PEER_STRIDE) = ticket;
+    __atomic_store_n((i64 *)(entry + PEER_TICKET_AT), ticket, __ATOMIC_RELEASE);
     cells[0] = ticket;
   }
   netrt_datagram(moved, reason, room, out);
@@ -498,7 +506,8 @@ void cancho_udp_recv_from(const i64 *udp, u8 *p, i64 room, i64 *cells, i64 ncell
 
 /* Does the ticket name an entry that still holds it, heard on this socket? */
 static int netrt_ticket_ok(int fd, i64 ticket, u8 *entry) {
-  return ticket > 0 && *(i64 *)(entry + PEER_TICKET_AT) == ticket && *(int *)(entry + PEER_FD_AT) == fd;
+  /* Acquire: the ticket first, then what it vouches for. */
+  return ticket > 0 && __atomic_load_n((i64 *)(entry + PEER_TICKET_AT), __ATOMIC_ACQUIRE) == ticket && *(int *)(entry + PEER_FD_AT) == fd;
 }
 
 /* `udp_send_to(&!Udp, &[byte], ticket)`: out = Sent's tag (Wrote 0, Again 1, Failed 2), the count, why. */

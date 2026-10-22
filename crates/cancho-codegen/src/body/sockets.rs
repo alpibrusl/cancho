@@ -496,15 +496,18 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let fd = self.handle_fd(args[0]);
         let (buf, room, cells_at, cells) = (args[1], args[2], args[3], args[4]);
 
-        // The ticket this datagram will be issued under, and the entry it will land in.
-        let probe = self.global(cancho_ir::UDP_PEER_GLOBAL);
-        let counter_at = self
-            .builder
-            .ins()
-            .iadd_imm(probe, cancho_ir::UDP_PEER_SLOTS * cancho_ir::UDP_PEER_STRIDE);
-        let issued = self.builder.ins().load(types::I64, MemFlags::trusted(), counter_at, 0);
-        let ticket = self.builder.ins().iadd_imm(issued, 1);
-        let (entry, counter) = self.peer_entry(ticket);
+        // The sender's address lands in a buffer of this call's own, and is copied into the ring only once the datagram has
+        // arrived and a ticket has been claimed (#594): the ticket used to be read from the shared counter *before* the
+        // blocking receive, so two threads waiting at once were issued the same ticket and the same entry.
+        let sender_slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            16,
+            3,
+        ));
+        let sender = self.builder.ins().stack_addr(pointer, sender_slot, 0);
+        let nothing = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().store(MemFlags::trusted(), nothing, sender, 0);
+        self.builder.ins().store(MemFlags::trusted(), nothing, sender, 8);
 
         let len_slot = self.builder.create_sized_stack_slot(StackSlotData::new(
             StackSlotKind::ExplicitSlot,
@@ -538,7 +541,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             "recvfrom",
             &[types::I32, pointer, types::I64, types::I32, pointer, pointer],
             &[types::I64],
-            &[fd, buf, room, flags, entry, len_at],
+            &[fd, buf, room, flags, sender, len_at],
         );
         let errno = self.errno();
         self.builder.ins().jump(merge, &[got.into(), errno.into()]);
@@ -556,9 +559,31 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
         self.builder.switch_to_block(record);
         self.builder.seal_block(record);
-        self.builder.ins().store(MemFlags::trusted(), ticket, entry, cancho_ir::UDP_PEER_TICKET_AT);
+        // The ticket is claimed by one atomic add, so no two datagrams, on any threads, are issued the same one; the entry
+        // is written whole and its ticket last, with release ordering, and the readers load the ticket first with acquire.
+        let ring = self.global(cancho_ir::UDP_PEER_GLOBAL);
+        let counter = self
+            .builder
+            .ins()
+            .iadd_imm(ring, cancho_ir::UDP_PEER_SLOTS * cancho_ir::UDP_PEER_STRIDE);
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let before = self.builder.ins().atomic_rmw(
+            types::I64,
+            MemFlags::trusted(),
+            AtomicRmwOp::Add,
+            counter,
+            one,
+        );
+        let ticket = self.builder.ins().iadd_imm(before, 1);
+        let (entry, _) = self.peer_entry(ticket);
+        for at in [0, 8] {
+            let word = self.builder.ins().load(types::I64, MemFlags::trusted(), sender, at);
+            self.builder.ins().store(MemFlags::trusted(), word, entry, at);
+        }
         self.builder.ins().store(MemFlags::trusted(), fd, entry, cancho_ir::UDP_PEER_FD_AT);
-        self.builder.ins().store(MemFlags::trusted(), ticket, counter, 0);
+        let ticket_at =
+            self.builder.ins().iadd_imm(entry, i64::from(cancho_ir::UDP_PEER_TICKET_AT));
+        self.builder.ins().atomic_store(MemFlags::trusted(), ticket, ticket_at);
         self.builder.ins().store(MemFlags::trusted(), ticket, cells_at, 0);
         self.builder.ins().jump(after, &[]);
 
@@ -578,12 +603,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let (buf, length, ticket) = (args[1], args[2], args[3]);
         let (entry, _) = self.peer_entry(ticket);
 
-        let stored = self.builder.ins().load(
-            types::I64,
-            MemFlags::trusted(),
-            entry,
-            cancho_ir::UDP_PEER_TICKET_AT,
-        );
+        // Acquire: the ticket first, then what it vouches for (#594).
+        let ticket_at =
+            self.builder.ins().iadd_imm(entry, i64::from(cancho_ir::UDP_PEER_TICKET_AT));
+        let stored = self.builder.ins().atomic_load(types::I64, MemFlags::trusted(), ticket_at);
         let owner = self.builder.ins().load(
             types::I32,
             MemFlags::trusted(),
@@ -644,12 +667,10 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         let fd = self.handle_fd(args[0]);
         let (ticket, out, room) = (args[1], args[2], args[3]);
         let (entry, _) = self.peer_entry(ticket);
-        let stored = self.builder.ins().load(
-            types::I64,
-            MemFlags::trusted(),
-            entry,
-            cancho_ir::UDP_PEER_TICKET_AT,
-        );
+        // Acquire: the ticket first, then what it vouches for (#594).
+        let ticket_at =
+            self.builder.ins().iadd_imm(entry, i64::from(cancho_ir::UDP_PEER_TICKET_AT));
+        let stored = self.builder.ins().atomic_load(types::I64, MemFlags::trusted(), ticket_at);
         let owner = self.builder.ins().load(
             types::I32,
             MemFlags::trusted(),
