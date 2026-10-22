@@ -232,11 +232,15 @@ bytes as `json.dumps(separators=(",", ":"))`:
 | `std.json` Writer | 106 ms | **148 MB/s** |
 | Python `json.dumps` | 266 ms | 59 MB/s |
 
-**Writing one long string** (`put_string` of 1 MiB of lowercase ASCII, instructions by `callgrind`, issue #584): the escaper
-scanned a byte with four comparisons, 15 instructions a byte (15.7 M for 1 MiB). A loop of its own for the common bytes
-(above `\`, below DEL, or between `"` and `\`: two comparisons) takes it to 8 instructions a byte (8.4 M), the same
-output bytes (`test_every_ascii_byte_between_and_at_the_ends_of_plain_runs`). Unrolling that loop four bytes at a time
-measured worse (9.2 M) and was not kept. The run is still appended in one piece, as before.
+**Writing one long string** (`put_string` of 1 MiB, instructions by `callgrind`, issue #584): the escaper scanned a byte
+with four comparisons, 15 instructions a byte (15.7 M for 1 MiB). A loop of its own for the common bytes (above `\`, below
+DEL, or between `"` and `\`: two comparisons) takes lowercase ASCII to 8 instructions a byte (8.4 M) and English-like text
+with a space every few words to 10.4 (10.9 M; a space is not in the loop, and adding it as a third clause measured 10.6 M,
+not worth the clause). The output bytes are the same
+(`test_every_ascii_byte_between_and_at_the_ends_of_plain_runs`). Unrolling the loop four bytes at a time measured worse
+(9.2 M) and was not kept. The run is still appended in one piece, as before. In `cancho-fetch`'s json mode this is a 16 MB
+body at 170 M instructions of 301 M (the rest is its own UTF-8 check, 96 M); wall time moved less than the run-to-run
+spread (76 ms before, 81 ms after, medians of 7), so do not expect a visible change there.
 
 **The honest reading.** Scanning is fast and conversion is not uniformly:
 17-digit floats are the weak case (about 0.9 µs each, 3.3× slower than
