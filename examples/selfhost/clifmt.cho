@@ -1,0 +1,523 @@
+edition 7;
+module selfhost.clifmt;
+
+// clifmt.cho -- `fmt`, `print`, `ingest`, `introspect` and `skill` (`docs/cli-in-cancho.md` sections 7 to 11): the commands that work on one file or on a path, and write what they find. Split out of `cli.cho`, which keeps `main` and the choice of the command.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import std.process;
+import selfhost.ast;
+import selfhost.printing;
+import selfhost.jsonprint;
+import selfhost.driver;
+import selfhost.formatting;
+import selfhost.rules;
+import selfhost.lexcore as lc;
+import selfhost.filewrite;
+import selfhost.walk;
+import selfhost.guidelines;
+import selfhost.commandtree;
+import selfhost.diagnose;
+import selfhost.stdorder;
+import selfhost.testscan;
+import selfhost.satisfytext;
+import selfhost.clibase;
+
+// cli.cho -- the `cancho` command line, written in cancho (`docs/cli-in-cancho.md`, issue #485).
+//
+// The first slice is `fmt [--check] FILE...`: each file is read, printed (`printing.cho`) into memory through the sink, formatted
+// (`formatting.cho`), and the three checks of `docs/formatting.md` section 4 are run on the result before it is written over the file. The
+// output and the exit status are those of `cancho fmt`:
+//
+//     formatted PATH         the file was rewritten                       would reformat PATH   (with --check, nothing is written)
+//     PATH: not formatted: WHY   on the standard error, for a file that fails a check; ERR RULE FROM TO for one that does not parse
+//
+// Exit status 0, 1 if a file was refused (or, with `--check`, would change), 2 for a usage or an environment error.
+// The canonical text of a program, or why there is none: status 0, 1 (the first refusal, at `from` to `to`), 2 (it does not fit the room).
+pub res struct Text {
+    shown: buffer.Buffer,
+    ok: int,
+    rule: int,
+    from: int,
+    to: int,
+}
+
+// `how` is 0 to have the canonical text in the answer, 1 to have it written to the standard output, 2 to have the tree as JSON written there.
+pub fn print_text[&h, &i, &x](heap: &!h Heap, io: &!i Io, src: &x [byte], how: int) -> [heap, io_write] Text {
+    var out = buffer.empty(heap, len(src) + 64);
+    var status = 0;
+    var rule = 0;
+    var from = 0;
+    var to = 0;
+    // The room the code would be written in has 200 integers a token; a long string literal is one token and as many bytes, so the count
+    // is raised by the length of the text, which makes the room enough for the printed text of anything but a degenerate layout.
+    let tokens = ast.count_tokens(src) + len(src) / 100 + 1;
+    let state = box_slice(heap, ast.size_for(tokens, 1) + ast.emit_size(tokens), 0);
+    borrow mut state as &!b in {
+        let st = contents(b);
+        ast.layout_emit(st, tokens, 1);
+        ast.set_file(st, 0, 0, len(src));
+        if ast.parse(st, src) != 0 {
+            status = 1;
+            rule = st[3];
+            from = st[4];
+            to = st[5];
+        } else if how == 1 {
+            // The printer's own refusal (3) has said what it has to say.
+            if printing.print(io, st, src) != 0 {
+                status = 3;
+            }
+        } else if how == 2 {
+            if jsonprint.print(io, st, src) != 0 {
+                status = 3;
+            }
+        } else {
+            // The printer writes into the room the compiler would write code in, one byte to an integer (`sink.cho`).
+            st[53] = 1;
+            printing.print(io, st, src);
+            if st[55] != 0 {
+                status = 2;
+            } else {
+                var k = 0;
+                while k < st[54] {
+                    out = buffer.push(heap, out, byte_of(st[st[43] + k]));
+                    k = k + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, state);
+    return Text { shown: out, ok: status, rule: rule, from: from, to: to };
+}
+
+// What came of formatting: the text, or, with a status, the sentence for `PATH: not formatted: ` (1) or the line for a file that does not
+// parse (2).
+pub res struct Made {
+    out: buffer.Buffer,
+    code: int,
+}
+
+// One pass of the formatter: the printer, then the aligner.
+pub fn format_once[&h, &i, &x](heap: &!h Heap, io: &!i Io, src: &x [byte]) -> [heap, io_write] Made {
+    let printed = print_text(heap, io, src, 0);
+    let Text { shown, ok, rule, from, to } = printed;
+    if ok == 1 {
+        buffer.drop(heap, shown);
+        return Made { out: clibase.refusal_text(heap, rule, from, to), code: 2 };
+    }
+    if ok == 2 {
+        buffer.drop(heap, shown);
+        return Made { out: clibase.sentence(heap, "the canonical rendering does not fit in memory"), code: 1 };
+    }
+    var answer = buffer.empty(heap, 0);
+    var failed = 0;
+    borrow shown as &p in {
+        let bytes_of = buffer.bytes(p);
+        let area = box_slice(heap, formatting.size_for(len(src), len(bytes_of)), 0);
+        borrow mut area as &!b in {
+            let m = contents(b);
+            formatting.layout(m, len(src), len(bytes_of));
+            let formatted = formatting.format(heap, m, src, bytes_of);
+            let formatting.Formatted { text, status } = formatted;
+            let made = text;
+            failed = status;
+            if status == 0 {
+                borrow made as &w in {
+                    buffer.drop(heap, answer);
+                    answer = formatting.finish(heap, buffer.bytes(w));
+                }
+                buffer.drop(heap, made);
+            } else {
+                buffer.drop(heap, answer);
+                answer = made;
+            }
+        }
+        unbox_slice(heap, area);
+    }
+    buffer.drop(heap, shown);
+    if failed != 0 {
+        // The line is `CANNOT <sentence>`: the sentence is what `fmt` reports.
+        var why = buffer.empty(heap, 64);
+        borrow answer as &w in {
+            let all = buffer.bytes(w);
+            why = buffer.append(heap, why, all[7..len(all)]);
+        }
+        buffer.drop(heap, answer);
+        return Made { out: why, code: 1 };
+    }
+    return Made { out: answer, code: 0 };
+}
+
+// The canonical text of a program as a `Made`: the text, or a status that is not 0.
+pub fn canon_of[&h, &i, &x](heap: &!h Heap, io: &!i Io, src: &x [byte]) -> [heap, io_write] Made {
+    let printed = print_text(heap, io, src, 0);
+    let Text { shown, ok, rule, from, to } = printed;
+    return Made { out: shown, code: ok };
+}
+
+// Do `first` and `b` print as the same text?
+pub fn alike_to[&h, &i, &x, &y](heap: &!h Heap, io: &!i Io, first: &x [byte], b: &y [byte]) -> [heap, io_write] int {
+    let second = canon_of(heap, io, b);
+    let Made { out, code } = second;
+    var verdict = 0;
+    if code != 0 {
+        verdict = 1;
+    } else {
+        borrow out as &pb in {
+            if !bytes.equal(first, buffer.bytes(pb)) {
+                verdict = 2;
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    return verdict;
+}
+
+// 0 if `a` and `b` print as the same text, 1 if `b` does not parse, 2 if they print differently.
+pub fn alike[&h, &i, &x, &y](heap: &!h Heap, io: &!i Io, a: &x [byte], b: &y [byte]) -> [heap, io_write] int {
+    let first = canon_of(heap, io, a);
+    let Made { out, code } = first;
+    var verdict = 0;
+    if code != 0 {
+        verdict = 2;
+    } else {
+        borrow out as &pa in {
+            verdict = alike_to(heap, io, buffer.bytes(pa), b);
+        }
+    }
+    buffer.drop(heap, out);
+    return verdict;
+}
+
+pub fn comments_alike[&h, &x, &y](heap: &!h Heap, a: &x [byte], b: &y [byte]) -> [heap] bool {
+    let c1 = formatting.comments_of(heap, a);
+    let c2 = formatting.comments_of(heap, b);
+    var verdict = false;
+    borrow c1 as &p in {
+        borrow c2 as &q in {
+            verdict = bytes.equal(buffer.bytes(p), buffer.bytes(q));
+        }
+    }
+    buffer.drop(heap, c1);
+    buffer.drop(heap, c2);
+    return verdict;
+}
+
+// Does formatting `formatted` give `formatted`?
+pub fn fixed_point[&h, &i, &x](heap: &!h Heap, io: &!i Io, formatted: &x [byte]) -> [heap, io_write] bool {
+    let again = format_once(heap, io, formatted);
+    let Made { out, code } = again;
+    var verdict = false;
+    if code == 0 {
+        borrow out as &n in {
+            verdict = bytes.equal(buffer.bytes(n), formatted);
+        }
+    }
+    buffer.drop(heap, out);
+    return verdict;
+}
+
+// The formatted text of `src`, once the three checks of `docs/formatting.md` section 4 hold for it: it prints as `src` does, it holds the same
+// comments, and formatting it again changes nothing. A status of 1 says why not (a sentence), 2 that `src` does not parse.
+pub fn format_source[&h, &i, &x](heap: &!h Heap, io: &!i Io, src: &x [byte]) -> [heap, io_write] Made {
+    let once = format_once(heap, io, src);
+    let Made { out, code } = once;
+    if code != 0 {
+        return Made { out: out, code: code };
+    }
+    var why = 0;
+    borrow out as &t in {
+        let formatted = buffer.bytes(t);
+        why = alike(heap, io, src, formatted);
+        if why == 0 && !comments_alike(heap, src, formatted) {
+            why = 3;
+        }
+        if why == 0 && !fixed_point(heap, io, formatted) {
+            why = 4;
+        }
+    }
+    if why != 0 {
+        buffer.drop(heap, out);
+        return Made { out: clibase.sentence(heap, clibase.reason(why)), code: 1 };
+    }
+    return Made { out: out, code: 0 };
+}
+
+// One file: 0 if it needs nothing or was written, 1 if it was refused or (under `--check`) would change, 2 on an environment error.
+pub fn format_file[&h, &i, &f, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: &p [byte], check: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write] int {
+    let read = clibase.read_file(heap, fs, path);
+    let clibase.Contents { bytes, failed } = read;
+    if failed != 0 {
+        clibase.complain(heap, io, path, "cannot read the file");
+        buffer.drop(heap, bytes);
+        return 2;
+    }
+    var status = 0;
+    borrow bytes as &src in {
+        let done = format_source(heap, io, buffer.bytes(src));
+        let Made { out, code } = done;
+        if code == 2 {
+            borrow out as &line in {
+                console.error_all(io, buffer.bytes(line));
+                console.error_all(io, "\n");
+            }
+            status = 1;
+        } else if code == 1 {
+            var what = buffer.append(heap, buffer.empty(heap, 64), "not formatted: ");
+            borrow out as &why in {
+                what = buffer.append(heap, what, buffer.bytes(why));
+            }
+            borrow what as &w in {
+                clibase.complain(heap, io, path, buffer.bytes(w));
+            }
+            buffer.drop(heap, what);
+            status = 1;
+        } else {
+            borrow out as &t in {
+                if !bytes.equal(buffer.bytes(t), buffer.bytes(src)) {
+                    if check {
+                        clibase.say(heap, io, "would reformat ", path);
+                        status = 1;
+                    } else {
+                        let e = filewrite.store(fs, path, buffer.bytes(t));
+                        if e != 0 {
+                            clibase.complain(heap, io, path, "cannot write the file");
+                            status = 2;
+                        } else {
+                            clibase.say(heap, io, "formatted ", path);
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, out);
+    }
+    buffer.drop(heap, bytes);
+    return status;
+}
+
+// Every path after `fmt` that is not `--check`, with the directories among them replaced by the files beneath them.
+pub fn fmt_files[&h, &a, &f](heap: &!h Heap, args: &a Args, fs: &f Fs("")) -> [heap, args, fs_read(""), dir_read] buffer.Buffer {
+    var found = buffer.empty(heap, 256);
+    var n = 2;
+    while n < arg_count(args) {
+        if !clibase.spells_check(arg(args, n)) {
+            found = walk.collect(heap, fs, arg(args, n), found);
+        }
+        n = n + 1;
+    }
+    return found;
+}
+
+pub fn fmt_command[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), dir_read, file_read, file_write] int {
+    var check = false;
+    var n = 2;
+    while n < arg_count(args) {
+        if clibase.spells_check(arg(args, n)) {
+            check = true;
+        }
+        n = n + 1;
+    }
+    if arg_count(args) - 2 - check_flags(args) == 0 {
+        console.error_all(io, "usage: cancho fmt [--check] PATH...\n");
+        return 2;
+    }
+    let found = fmt_files(heap, args, fs);
+    var status = 0;
+    borrow found as &list in {
+        let all = buffer.bytes(list);
+        var at = 0;
+        while at < len(all) && status != 2 {
+            var end = at;
+            while lc.at(all, end) != 0 {
+                end = end + 1;
+            }
+            let one = format_file(heap, io, fs, all[at..end], check);
+            if one > status {
+                status = one;
+            }
+            at = end + 1;
+        }
+    }
+    buffer.drop(heap, found);
+    return status;
+}
+
+// How many of the arguments are `--check`.
+pub fn check_flags[&a](args: &a Args) -> [args] int {
+    var count = 0;
+    var n = 2;
+    while n < arg_count(args) {
+        if clibase.spells_check(arg(args, n)) {
+            count = count + 1;
+        }
+        n = n + 1;
+    }
+    return count;
+}
+
+// `print [--output json] FILE` and `ingest FILE`: the one file, read whole. `print` writes the canonical text of the program (or its tree
+// as JSON) to the standard output and `ingest` the canonical text of the program a JSON tree stands for; a file that is refused is
+// reported as `PATH: ERR RULE FROM TO` on the standard error (print) or `ERR RULE FROM TO` on the standard output (ingest), status 1.
+pub fn one_file_command[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), ingest: bool) -> [heap, io_write, err_write, args, fs_read(""), file_read] int {
+    var json = false;
+    var path = "";
+    var files = 0;
+    var n = 2;
+    while n < arg_count(args) {
+        if bytes.equal(arg(args, n), "--output") {
+            n = n + 1;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "json") && !ingest {
+                json = true;
+            } else {
+                console.error_all(io, "usage: only `--output json` of `print` is available\n");
+                return 2;
+            }
+        } else {
+            path = arg(args, n);
+            files = files + 1;
+        }
+        n = n + 1;
+    }
+    if files != 1 {
+        console.error_all(io, "usage: cancho print [--output json] FILE | cancho ingest FILE\n");
+        return 2;
+    }
+    let read = clibase.read_file(heap, fs, path);
+    let clibase.Contents { bytes, failed } = read;
+    var status = 0;
+    if failed != 0 {
+        clibase.complain(heap, io, path, "cannot read the file");
+        status = 2;
+    } else {
+        borrow bytes as &src in {
+            if ingest {
+                status = driver.ingest_run(heap, io, buffer.bytes(src));
+            } else {
+                var how = 1;
+                if json {
+                    how = 2;
+                }
+                let printed = print_text(heap, io, buffer.bytes(src), how);
+                let Text { shown, ok, rule, from, to } = printed;
+                if ok == 1 {
+                    let line = clibase.refusal_text(heap, rule, from, to);
+                    borrow line as &l in {
+                        clibase.complain(heap, io, path, buffer.bytes(l));
+                    }
+                    buffer.drop(heap, line);
+                }
+                if ok != 0 {
+                    status = 1;
+                }
+                buffer.drop(heap, shown);
+            }
+        }
+    }
+    buffer.drop(heap, bytes);
+    return status;
+}
+
+// The form of an answer named by `--output`: 0 text, 1 json, 2 table, or -1.
+pub fn form_of[&r](word: &r [byte]) -> [] int {
+    if bytes.equal(word, "text") {
+        return 0;
+    }
+    if bytes.equal(word, "json") {
+        return 1;
+    }
+    if bytes.equal(word, "table") {
+        return 2;
+    }
+    return 0 - 1;
+}
+
+pub fn bad_form[&h, &i, &w](heap: &!h Heap, io: &!i Io, word: &w [byte]) -> [heap, err_write] int {
+    var why = buffer.append(heap, buffer.empty(heap, 96), "Invalid output format: '");
+    why = buffer.append(heap, why, word);
+    why = buffer.append(heap, why, "'. Use text, json, or table.");
+    var status = 2;
+    borrow why as &w2 in {
+        status = clibase.usage_error(heap, io, buffer.bytes(w2));
+    }
+    buffer.drop(heap, why);
+    return status;
+}
+
+// `introspect` and `skill` (`docs/agent-cli.md`): the command tree, and a skill file made from it, in the form `--output` names. `skill` with a
+// path writes the file there and says so.
+pub fn tree_command[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), skill: bool) -> [heap, io_write, err_write, args, fs_write(""), file_write] int {
+    var form = 0;
+    var path = 0 - 1;
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--output") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--output` needs a form");
+            }
+            form = form_of(arg(args, n));
+            if form < 0 {
+                return bad_form(heap, io, arg(args, n));
+            }
+        } else if len(word) >= 9 && lc.spells(word, 0, 9, "--output=") {
+            form = form_of(word[9..len(word)]);
+            if form < 0 {
+                return bad_form(heap, io, word[9..len(word)]);
+            }
+        } else if path < 0 {
+            path = n;
+        }
+        n = n + 1;
+    }
+    if !skill {
+        if form == 1 {
+            clibase.show(heap, io, commandtree.introspect_json(heap, buffer.empty(heap, 20000)));
+            return 0;
+        }
+        if form == 2 {
+            clibase.show(heap, io, commandtree.introspect_table(heap, buffer.empty(heap, 20000)));
+            return 0;
+        }
+        clibase.show(heap, io, commandtree.introspect_text(heap, buffer.empty(heap, 20000)));
+        return 0;
+    }
+    let text = commandtree.skill_text(heap, buffer.empty(heap, 20000));
+    var status = 0;
+    if path >= 0 {
+        borrow text as &t in {
+            if filewrite.store(fs, arg(args, path), buffer.bytes(t)) != 0 {
+                clibase.complain(heap, io, arg(args, path), "cannot write the file");
+                status = 3;
+            }
+        }
+    }
+    if form == 1 {
+        // The answer is the JSON envelope, with the file's path where the Rust command writes it, or `null`.
+        var answer = commandtree.skill_json_head(heap, buffer.empty(heap, 20000));
+        if path < 0 {
+            answer = buffer.append(heap, answer, "null");
+        } else {
+            answer = diagnose.json_string(heap, answer, arg(args, path));
+        }
+        answer = commandtree.skill_json_tail(heap, answer);
+        if status == 0 {
+            clibase.show(heap, io, answer);
+        } else {
+            buffer.drop(heap, answer);
+        }
+        buffer.drop(heap, text);
+        return status;
+    }
+    if path < 0 {
+        clibase.show(heap, io, text);
+        return 0;
+    }
+    buffer.drop(heap, text);
+    if status == 0 {
+        clibase.say(heap, io, "Skill file written to ", arg(args, path));
+    }
+    return status;
+}

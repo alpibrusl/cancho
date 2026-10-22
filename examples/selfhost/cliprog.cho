@@ -1,0 +1,540 @@
+edition 7;
+module selfhost.cliprog;
+
+// cliprog.cho -- the commands that read a program (the files, and the library from a directory) and build it: `check`, `ids`, `layout`, `build` and `run` (sections 12 to 15), and the loading, the linking and the running they share. Split out of `cli.cho`, which keeps `main` and the choice of the command.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import std.process;
+import selfhost.ast;
+import selfhost.printing;
+import selfhost.jsonprint;
+import selfhost.driver;
+import selfhost.formatting;
+import selfhost.rules;
+import selfhost.lexcore as lc;
+import selfhost.filewrite;
+import selfhost.walk;
+import selfhost.guidelines;
+import selfhost.commandtree;
+import selfhost.diagnose;
+import selfhost.stdorder;
+import selfhost.testscan;
+import selfhost.satisfytext;
+import selfhost.clibase;
+
+// The program `tool` started with the arguments in `list` (each followed by a NUL) and waited for, its standard output (or, with `err`,
+// its standard error) written to the file at `log`: its exit status, 128 and the signal if it was killed, or 255 if it did not run.
+pub fn spawn_to[&x, &f, &c, &l, &p](exec: &x Exec(""), fs: &f Fs(""), tool: &c [byte], list: &l [byte], log: &p [byte], err: bool) -> [exec(""), fs_write("")] int {
+    match open_write(fs, log) {
+        Opened::Failed(e) => {
+            return 255;
+        }
+        Opened::Ok(file) => {
+            if err {
+                match exec_spawn(exec, tool, list, "PATH=/usr/bin:/bin\0", Stdio::Null, Stdio::Null, Stdio::File(file)) {
+                    Spawned::Ok(child) => {
+                        match child_wait(child) {
+                            Exited::Code(n) => {
+                                return n;
+                            }
+                            Exited::Signaled(s) => {
+                                return 128 + s;
+                            }
+                            Exited::Failed(e) => {
+                                return 255;
+                            }
+                        }
+                    }
+                    Spawned::Failed(e) => {
+                        return 255;
+                    }
+                }
+            } else {
+                match exec_spawn(exec, tool, list, "PATH=/usr/bin:/bin\0", Stdio::Null, Stdio::File(file), Stdio::Null) {
+                    Spawned::Ok(child) => {
+                        match child_wait(child) {
+                            Exited::Code(n) => {
+                                return n;
+                            }
+                            Exited::Signaled(s) => {
+                                return 128 + s;
+                            }
+                            Exited::Failed(e) => {
+                                return 255;
+                            }
+                        }
+                    }
+                    Spawned::Failed(e) => {
+                        return 255;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// What the machine is, for the code to be written for it: 1 for macOS, 2 for Linux on aarch64, 0 otherwise. A program cannot ask, so `uname -sm` is
+// run, its answer written to the file at `note` and read back.
+pub fn detect_host[&h, &x, &f, &p](heap: &!h Heap, exec: &x Exec(""), fs: &f Fs(""), note: &p [byte]) -> [heap, exec(""), fs_read(""), fs_write(""), file_read] int {
+    var host = 0;
+    if spawn_to(exec, fs, "/usr/bin/uname", "-sm\0", note, false) == 0 {
+        let read = clibase.read_file(heap, fs, note);
+        let clibase.Contents { bytes, failed } = read;
+        if failed == 0 {
+            borrow bytes as &t in {
+                let said = buffer.bytes(t);
+                if len(said) >= 6 && lc.spells(said, 0, 6, "Darwin") {
+                    host = 1;
+                } else if len(said) >= 5 && lc.spells(said, 0, 5, "Linux") && clibase.contains(said, "aarch64") {
+                    host = 2;
+                }
+            }
+        }
+        buffer.drop(heap, bytes);
+    }
+    fs_remove(fs, note);
+    return host;
+}
+
+// The module `ir` made into the executable (or, `obj`, the object file) at `out`, by `clang`: the text is written to `out.ll`, `clang` reads
+// it with the libraries and the paths after `-l` and `-L` in the arguments, and what is left over is taken away. 0, or 3 with what `clang` said.
+pub fn make_binary[&h, &i, &a, &f, &x, &r, &o, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), ir: &r [byte], out: &o [byte], clang: &c [byte], obj: bool) -> [heap, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec("")] int {
+    var ll = buffer.append(heap, buffer.empty(heap, len(out) + 8), out);
+    ll = buffer.append(heap, ll, ".ll");
+    var log = buffer.append(heap, buffer.empty(heap, len(out) + 16), out);
+    log = buffer.append(heap, log, ".clang.log");
+    var status = 0;
+    borrow ll as &lp in {
+        borrow log as &gp in {
+            status = filewrite.store(fs, buffer.bytes(lp), ir);
+            if status != 0 {
+                clibase.complain(heap, io, buffer.bytes(lp), "cannot write the file");
+                status = 3;
+            } else {
+                var list = buffer.append(heap, buffer.empty(heap, 256), "-O2\0-Wno-override-module\0");
+                list = buffer.append(heap, list, buffer.bytes(lp));
+                list = buffer.append(heap, list, "\0-o\0");
+                list = buffer.append(heap, list, out);
+                list = buffer.push(heap, list, byte_of(0));
+                if obj {
+                    list = buffer.append(heap, list, "-c\0");
+                }
+                var n = 2;
+                while n + 1 < arg_count(args) {
+                    if bytes.equal(arg(args, n), "-l") || bytes.equal(arg(args, n), "-L") {
+                        list = buffer.append(heap, list, arg(args, n));
+                        list = buffer.append(heap, list, arg(args, n + 1));
+                        list = buffer.push(heap, list, byte_of(0));
+                        n = n + 1;
+                    }
+                    n = n + 1;
+                }
+                borrow list as &l in {
+                    status = spawn_to(exec, fs, clang, buffer.bytes(l), buffer.bytes(gp), true);
+                }
+                buffer.drop(heap, list);
+                if status != 0 {
+                    let said = clibase.read_file(heap, fs, buffer.bytes(gp));
+                    let clibase.Contents { bytes, failed } = said;
+                    if failed == 0 {
+                        borrow bytes as &t in {
+                            console.error_all(io, buffer.bytes(t));
+                        }
+                    }
+                    buffer.drop(heap, bytes);
+                    console.error_all(io, "clang did not make the program\n");
+                    status = 3;
+                }
+                fs_remove(fs, buffer.bytes(lp));
+            }
+            fs_remove(fs, buffer.bytes(gp));
+        }
+    }
+    buffer.drop(heap, ll);
+    buffer.drop(heap, log);
+    return status;
+}
+
+// How a child that was run came to an end, as the status of `run`: its own status, or 3 with the reason.
+// How a program that was run ended, as `kind` and `value`: 0 it answered `value`, 1 it was killed by the signal `value`, 2 it did not finish in time, 3 it wrote
+// too much, 4 it could not be watched, 5 it did not start (which has been said).
+pub res struct Captured {
+    out: buffer.Buffer,
+    err: buffer.Buffer,
+    kind: int,
+    value: int,
+}
+
+pub fn kind_of(ran: process.Ran) -> [] (int, int) {
+    match ran {
+        process.Ran::Code(n) => {
+            return (0, n);
+        }
+        process.Ran::Signaled(s) => {
+            return (1, s);
+        }
+        process.Ran::TimedOut => {
+            return (2, 0);
+        }
+        process.Ran::TooMuch => {
+            return (3, 0);
+        }
+        process.Ran::Failed(e) => {
+            return (4, 0);
+        }
+    }
+}
+
+// The status `run` ends with for a program that ended as `kind` and `n`.
+pub fn ended[&i](io: &!i Io, kind: int, n: int) -> [err_write] int {
+    if kind == 0 {
+        return n;
+    }
+    if kind == 2 {
+        console.error_all(io, "the program did not finish in the time `run` allows\n");
+    }
+    if kind == 3 {
+        console.error_all(io, "the program wrote more than `run` keeps\n");
+    }
+    if kind == 4 {
+        console.error_all(io, "the program could not be watched\n");
+    }
+    // A signal is not said, as in the Rust command; the status is 3 for all that is not an answer.
+    return 3;
+}
+
+// The program at `exe` run with `argv` (each argument followed by a NUL, after its own name) and `input` on its standard input and nothing else (its
+// environment is a `PATH`). What the standard library's `capture_both` is: nothing is written while the program runs, and it keeps at most 64 MiB of
+// each stream and runs for at most a day.
+pub fn run_capture[&h, &i, &x, &c, &p, &n, &v](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte], argv: &v [byte]) -> [heap, err_write, exec(""), clock, poll] Captured {
+    var named = buffer.empty(heap, len(exe) + 3);
+    if len(exe) > 0 && lc.at(exe, 0) != '/' && lc.at(exe, 0) != '.' {
+        // A name with no directory is looked for in `PATH` by the system; this one is in the directory the command was run in.
+        named = buffer.append(heap, buffer.append(heap, named, "./"), exe);
+    } else {
+        named = buffer.append(heap, named, exe);
+    }
+    var out = buffer.empty(heap, 0);
+    var err = buffer.empty(heap, 0);
+    var kind = 5;
+    var code = 0;
+    match process.channels_with_errors() {
+        process.ChannelsWithErrors::Failed(e) => {
+            console.error_all(io, "cannot make the pipes to run the program with\n");
+        }
+        process.ChannelsWithErrors::Ok(to_child, child_in, from_child, child_out, from_errors, child_errors) => {
+            borrow named as &np in {
+                match exec_spawn(exec, buffer.bytes(np), argv, "PATH=/usr/bin:/bin\0", Stdio::Pipe(child_in), Stdio::Pipe(child_out), Stdio::Pipe(child_errors)) {
+                    Spawned::Failed(e) => {
+                        process.close(to_child, from_child);
+                        pipe_close(from_errors);
+                        console.error_all(io, "cannot start the program\n");
+                    }
+                    Spawned::Ok(child) => {
+                        let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 67108864, 67108864, 86400000);
+                        buffer.drop(heap, out);
+                        buffer.drop(heap, err);
+                        out = got;
+                        err = errors;
+                        let (k, m) = kind_of(ran);
+                        kind = k;
+                        code = m;
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, named);
+    return Captured { out: out, err: err, kind: kind, value: code };
+}
+
+// The program at `exe` run with `input` on its standard input, and its standard output and standard error written, when it is over, to ours. Its own
+// status, or 3.
+pub fn run_built[&h, &i, &x, &c, &p, &n](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte]) -> [heap, io_write, err_write, exec(""), clock, poll] int {
+    let Captured { out, err, kind, value } = run_capture(heap, io, exec, clock, exe, input, "");
+    borrow out as &o in {
+        buffer.write(io, o);
+    }
+    borrow err as &e in {
+        console.error_all(io, buffer.bytes(e));
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return ended(io, kind, value);
+}
+
+// The file at `path`, or, for the extra one, `extra` itself.
+pub fn read_or_extra[&h, &f, &p, &e](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], is_extra: bool, extra: &e [byte]) -> [heap, fs_read(""), file_read] clibase.Contents {
+    if is_extra {
+        return clibase.Contents { bytes: buffer.append(heap, buffer.empty(heap, len(extra) + 1), extra), failed: 0 };
+    }
+    return clibase.read_file(heap, fs, path);
+}
+
+// A program read: its files' names (each followed by a NUL), the stream `driver.run_many` reads, the files laid end to end with a NUL between, the
+// length of each, and a status (0, or 2 for a file that could not be read, which has been said). `extra` is the text of one more file, named
+// `extra_name`, that goes last (the runner `test` writes); nothing if it is empty.
+pub res struct Loaded {
+    names: buffer.Buffer,
+    raw: buffer.Buffer,
+    laid: buffer.Buffer,
+    lens: Box[[int]],
+    count: int,
+    read_status: int,
+}
+
+pub fn load_program[&h, &i, &a, &f, &e, &m](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), build: bool, run: bool, std_dir: int, extra: &e [byte], extra_name: &m [byte]) -> [heap, err_write, args, fs_read(""), file_read] Loaded {
+    // The names: the files, then the standard library, then the extra file.
+    var names = buffer.empty(heap, 256);
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if clibase.takes_value(word, build) {
+            n = n + 1;
+        } else if !(run && bytes.equal(word, "--stdin")) {
+            names = buffer.append(heap, buffer.append(heap, names, word), "\0");
+        }
+        n = n + 1;
+    }
+    if std_dir >= 0 {
+        // The files of the standard library, in the order `--std` adds them, found in the directory.
+        let order = stdorder.names(heap, buffer.empty(heap, 600));
+        borrow order as &o in {
+            let all = buffer.bytes(o);
+            var at = 0;
+            var end = 0;
+            while at < len(all) {
+                end = at;
+                while lc.at(all, end) != 0 {
+                    end = end + 1;
+                }
+                names = buffer.append(heap, names, arg(args, std_dir));
+                if len(arg(args, std_dir)) > 0 && lc.at(arg(args, std_dir), len(arg(args, std_dir)) - 1) != '/' {
+                    names = buffer.push(heap, names, byte_of('/'));
+                }
+                names = buffer.append(heap, names, all[at..end]);
+                names = buffer.append(heap, names, ".cho\0");
+                at = end + 1;
+            }
+        }
+        buffer.drop(heap, order);
+    }
+    if len(extra) > 0 {
+        names = buffer.append(heap, buffer.append(heap, names, extra_name), "\0");
+    }
+    var count = 0;
+    borrow names as &nm in {
+        var k = 0;
+        while k < buffer.size(nm) {
+            if lc.at(buffer.bytes(nm), k) == 0 {
+                count = count + 1;
+            }
+            k = k + 1;
+        }
+    }
+    var raw = buffer.empty(heap, 65536);
+    var laid = buffer.empty(heap, 65536);
+    let lens = box_slice(heap, count, 0);
+    var status = 0;
+    var which = 0;
+    borrow names as &nm in {
+        while which < count && status == 0 {
+            let path = clibase.name_at(buffer.bytes(nm), which);
+            let read = read_or_extra(heap, fs, path, len(extra) > 0 && which == count - 1, extra);
+            let clibase.Contents { bytes, failed } = read;
+            if failed != 0 {
+                clibase.complain(heap, io, path, "cannot read the file");
+                status = 2;
+            } else {
+                borrow bytes as &src in {
+                    borrow mut lens as &!lb in {
+                        contents(lb)[which] = buffer.size(src);
+                    }
+                    raw = buffer.append(heap, raw, "FILE ");
+                    raw = buffer.push_nat(heap, raw, buffer.size(src));
+                    raw = buffer.push(heap, raw, byte_of('\n'));
+                    raw = buffer.append(heap, raw, buffer.bytes(src));
+                    laid = buffer.append(heap, laid, buffer.bytes(src));
+                    laid = buffer.push(heap, laid, byte_of(0));
+                }
+            }
+            buffer.drop(heap, bytes);
+            which = which + 1;
+        }
+    }
+    return Loaded { names: names, raw: raw, laid: laid, lens: lens, count: count, read_status: status };
+}
+
+// `check [--output json] [--host H] [--std-dir DIR] FILE...` (`docs/cli-in-cancho.md` section 12) and `ids [--host H] [--std-dir DIR] FILE...` (section 13):
+// the program is the files, in order, and then the `.cho` files of DIR (the standard library, which this command line does not carry: it is
+// where `--std` of the Rust command finds it). It is checked and its code is written and thrown away, as `cancho build` would, by the build of
+// the compiler in cancho (`driver.run_many`, mode 5); `ids` then writes the identity of every declaration (mode 9). The target is the one `--host`
+// names (linux, darwin or linux-aarch64; the default is linux): a program cannot ask what it runs on.
+pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, ids: bool, layout: bool, build: bool, run: bool) -> [heap, io_read, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    var json = false;
+    var forward = false;
+    var host = 0;
+    var host_given = false;
+    var out_at = 0 - 1;
+    var obj = false;
+    var clang_at = 0 - 1;
+    var std_dir = 0 - 1;
+    var files = 0;
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--output") {
+            n = n + 1;
+            if !ids && !layout && !build && n < arg_count(args) && bytes.equal(arg(args, n), "json") {
+                json = true;
+            } else {
+                return clibase.usage_error(heap, io, "`--output` needs a form: json (of `check`)");
+            }
+        } else if bytes.equal(word, "--host") {
+            n = n + 1;
+            host_given = true;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "linux") {
+                host = 0;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "darwin") {
+                host = 1;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "linux-aarch64") {
+                host = 2;
+            } else {
+                return clibase.usage_error(heap, io, "`--host` needs linux, darwin or linux-aarch64");
+            }
+        } else if bytes.equal(word, "--std-dir") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--std-dir` needs a directory");
+            }
+            std_dir = n;
+        } else if bytes.equal(word, "--backend") {
+            n = n + 1;
+            if ids || layout || n >= arg_count(args) || !bytes.equal(arg(args, n), "llvm") {
+                return clibase.usage_error(heap, io, "`--backend`: only llvm is available in `check` of this command line");
+            }
+        } else if build && bytes.equal(word, "-o") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`-o` needs a path");
+            }
+            out_at = n;
+        } else if build && bytes.equal(word, "--emit") {
+            n = n + 1;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "obj") {
+                obj = true;
+            } else if n >= arg_count(args) || !bytes.equal(arg(args, n), "exe") {
+                return clibase.usage_error(heap, io, "`--emit` needs exe or obj");
+            }
+        } else if build && (bytes.equal(word, "-l") || bytes.equal(word, "-L")) {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`-l` and `-L` need a value");
+            }
+        } else if run && bytes.equal(word, "--stdin") {
+            forward = true;
+        } else if build && bytes.equal(word, "--clang") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--clang` needs a path");
+            }
+            clang_at = n;
+        } else if bytes.equal(word, "--std") || bytes.equal(word, "--target") {
+            return clibase.usage_error(heap, io, "`--std` and `--target` are not available in this command line: `--std-dir DIR` adds the standard library from DIR");
+        } else {
+            files = files + 1;
+        }
+        n = n + 1;
+    }
+    if files == 0 {
+        return clibase.usage_error(heap, io, "no file given");
+    }
+    let loaded = load_program(heap, io, args, fs, build, run, std_dir, "", "");
+    let Loaded { names, raw, laid, lens, count, read_status } = loaded;
+    var status = read_status;
+    // Where a build is to write: `-o`, or the stem of the first file (and `.o` for an object file).
+    var target = buffer.empty(heap, 64);
+    if build && status == 0 {
+        if out_at >= 0 {
+            target = buffer.append(heap, target, arg(args, out_at));
+        } else {
+            borrow names as &nm in {
+                target = buffer.append(heap, target, clibase.stem(clibase.name_at(buffer.bytes(nm), 0)));
+            }
+            if obj {
+                target = buffer.append(heap, target, ".o");
+            }
+            if run {
+                // The program `run` makes is next to where it is run, and taken away.
+                target = buffer.append(heap, target, ".cancho-run");
+            }
+        }
+        if !host_given {
+            borrow target as &tp in {
+                var note = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(tp)) + 8), buffer.bytes(tp));
+                note = buffer.append(heap, note, ".host");
+                borrow note as &np in {
+                    host = detect_host(heap, exec, fs, buffer.bytes(np));
+                }
+                buffer.drop(heap, note);
+            }
+        }
+    }
+    if status == 0 {
+        borrow raw as &r in {
+            var mode = 5;
+            if ids {
+                mode = 10;
+            }
+            if layout {
+                mode = 12;
+            }
+            let built = driver.run_many(heap, io, buffer.bytes(r), mode, host);
+            borrow built as &b in {
+                borrow laid as &lt in {
+                    borrow mut lens as &!lb in {
+                        borrow names as &nm in {
+                            status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), json, b.status, b.rule, b.from, b.to);
+                        }
+                    }
+                }
+                if status == 0 && layout {
+                    buffer.write(io, b.ir);
+                }
+                if status == 0 && build {
+                    var clang = "/usr/bin/clang";
+                    if clang_at >= 0 {
+                        clang = arg(args, clang_at);
+                    }
+                    borrow target as &tp in {
+                        status = make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(tp), clang, obj);
+                        if status == 0 && run {
+                            var input = buffer.empty(heap, 0);
+                            if forward {
+                                buffer.drop(heap, input);
+                                input = lc.slurp(heap, io);
+                            }
+                            borrow input as &ip in {
+                                status = run_built(heap, io, exec, clock, buffer.bytes(tp), buffer.bytes(ip));
+                            }
+                            buffer.drop(heap, input);
+                            fs_remove(fs, buffer.bytes(tp));
+                        }
+                    }
+                }
+            }
+            driver.discard(heap, built);
+            if status == 0 && ids {
+                status = driver.discard(heap, driver.run_many(heap, io, buffer.bytes(r), 9, host));
+            }
+        }
+    }
+    buffer.drop(heap, raw);
+    buffer.drop(heap, laid);
+    buffer.drop(heap, names);
+    buffer.drop(heap, target);
+    unbox_slice(heap, lens);
+    return status;
+}
