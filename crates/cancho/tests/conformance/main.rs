@@ -70,6 +70,7 @@ mod floats;
 mod foreign_authority;
 mod formatting;
 mod gcm;
+mod global_state;
 mod http;
 mod http_client;
 mod http_fetch_nb;

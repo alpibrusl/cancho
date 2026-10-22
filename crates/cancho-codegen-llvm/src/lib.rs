@@ -259,6 +259,7 @@
 //! opt-in, unfinished backend -- and now, for `Expr`, is instead a
 //! compile error in this crate itself, caught before any program reaches
 //! it.
+#![forbid(unsafe_code)]
 
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -304,6 +305,15 @@ pub fn compile_object_for(
 /// differential suite makes) must not collide on one temporary file.
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// A new directory only this user can enter. Refused when anything is at `path`, a link included, which is what keeps a
+/// name another user guessed from being written through.
+fn make_private_dir(path: &std::path::Path) -> std::io::Result<()> {
+    let mut private = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut private, 0o700);
+    private.create(path)
+}
+
 /// `-O2`, always: `mem2reg` -- the pass every leaf's `alloca` (`emit.rs`'s
 /// own header) depends on to reach a register at all -- is **not** run at
 /// `clang`'s default `-O0`. `docs/llvm-backend.md` §5 called it "mandatory,"
@@ -314,28 +324,36 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 /// is not an enhancement bolted on after the fact; it is what makes the
 /// header's own claim true (`docs/llvm-backend.md` §7 corrects it in place).
 fn run_clang(module: &str, triple: &Triple) -> Result<Vec<u8>, CodegenError> {
+    // A directory of its own, made by this call and refused if the name is taken: a file with a name another user could
+    // guess, in the temporary directory every user shares, is written through whatever link that user left there
+    // (`docs/unsafe-and-global-state.md` §3). The files inside have the same names in every compilation and `clang` is run
+    // in the directory, so the object does not carry the name of the temporary (it did: `cancho-llvm-<pid>-<n>.ll`, in
+    // its file symbol, so the same program built twice differed).
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir();
-    let stem = format!("cancho-llvm-{}-{id}", std::process::id());
-    let ll_path = dir.join(format!("{stem}.ll"));
-    let obj_path = dir.join(format!("{stem}.o"));
-
-    std::fs::write(&ll_path, module).map_err(|e| CodegenError {
+    let dir = std::env::temp_dir().join(format!("cancho-llvm-{}-{id}", std::process::id()));
+    make_private_dir(&dir).map_err(|e| CodegenError {
         function: None,
-        message: format!("cannot write `{}`: {e}", ll_path.display()),
+        message: format!("cannot create `{}`: {e}", dir.display()),
         environment: true,
     })?;
+    let (ll_name, obj_name) = ("module.ll", "module.o");
 
     let result = (|| -> Result<Vec<u8>, CodegenError> {
+        std::fs::write(dir.join(ll_name), module).map_err(|e| CodegenError {
+            function: None,
+            message: format!("cannot write `{}`: {e}", dir.join(ll_name).display()),
+            environment: true,
+        })?;
         let cc = std::env::var("CLANG").unwrap_or_else(|_| "clang".to_owned());
         let status = Command::new(&cc)
+            .current_dir(&dir)
             .arg("-c")
             .arg("-O2")
             .arg("-target")
             .arg(triple.to_string())
-            .arg(&ll_path)
+            .arg(ll_name)
             .arg("-o")
-            .arg(&obj_path)
+            .arg(obj_name)
             .output()
             .map_err(|e| CodegenError {
                 function: None,
@@ -356,15 +374,14 @@ fn run_clang(module: &str, triple: &Triple) -> Result<Vec<u8>, CodegenError> {
                 environment: false,
             });
         }
-        std::fs::read(&obj_path).map_err(|e| CodegenError {
+        std::fs::read(dir.join(obj_name)).map_err(|e| CodegenError {
             function: None,
-            message: format!("cannot read `{}`: {e}", obj_path.display()),
+            message: format!("cannot read `{}`: {e}", dir.join(obj_name).display()),
             environment: true,
         })
     })();
 
-    let _ = std::fs::remove_file(&ll_path);
-    let _ = std::fs::remove_file(&obj_path);
+    let _ = std::fs::remove_dir_all(&dir);
     result
 }
 

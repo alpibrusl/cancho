@@ -4,6 +4,7 @@
 //! The M0 surface is deliberately tiny (#3): integers, functions and calls,
 //! arithmetic and comparison, `if`/`else`, `while`, and local bindings. No
 //! types beyond `int`, no linearity, no effects — those are M1 and M2.
+#![forbid(unsafe_code)]
 
 pub mod ast;
 pub mod format;

@@ -102,9 +102,8 @@ pub fn cmd_satisfy(args: &[String]) -> Result<ExitCode, Failure> {
             provided.join(", ")
         )));
     }
-    let dir = std::env::temp_dir().join(format!("cancho-satisfy-{}", std::process::id()));
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| environment(format!("cannot create `{}`: {e}", dir.display())))?;
+    let dir = crate::scratch::private_temp_dir("cancho-satisfy")
+        .map_err(|e| environment(format!("cannot create a temporary directory: {e}")))?;
     let run = crate::test_cli::run_all(
         &dir,
         &[contract, candidate],

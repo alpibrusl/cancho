@@ -279,9 +279,8 @@ pub fn cmd_test(args: &[String]) -> Result<ExitCode, Failure> {
         });
     }
 
-    let dir = std::env::temp_dir().join(format!("cancho-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| environment(format!("cannot create `{}`: {e}", dir.display())))?;
+    let dir = crate::scratch::private_temp_dir("cancho-test")
+        .map_err(|e| environment(format!("cannot create a temporary directory: {e}")))?;
     let result = run_all(&dir, &inputs, &tests, with_std, backend, &link_libs, &link_paths);
     let _ = std::fs::remove_dir_all(&dir);
     result

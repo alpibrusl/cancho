@@ -24,6 +24,7 @@
 //! JSON, a content hash of `(kind, sorted parents, edition)` — and no code,
 //! the same relationship `lex-os` and `cancho` already committed to
 //! (`README.md`'s "Where this sits").
+#![forbid(unsafe_code)]
 
 mod attestation;
 mod blobs;

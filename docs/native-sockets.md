@@ -437,6 +437,11 @@ So two builtins and a library:
   table's edge. A free slot's cell holds the next free slot, so `close`
   needs no heap. `drop` closes every connection left.
 
+> **Corrected (#587, [`unsafe-and-global-state.md`](unsafe-and-global-state.md) §5):** "**once**" holds for one thread. The table
+> is read, compared and written without atomics, so two threads redeeming copies of one ticket are not excluded
+> ([#593](https://github.com/alpibrusl/cancho/issues/593)). Measured since: a connection that ends and another that takes its
+> descriptor number do not share a ticket (`global_state.rs`).
+
 **Why a ticket is not authority.** The runtime keeps a 32-bit counter per
 descriptor below 65,536 (256 KiB of bss, one global in both backends). A
 ticket is `epoch << 32 | descriptor`. `conn_detach` bumps the counter to an
