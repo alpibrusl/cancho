@@ -115,6 +115,7 @@ mod spawn_detached_under;
 mod spawn_under;
 mod stdin_bulk;
 mod testing;
+mod thread_state;
 mod tls;
 mod tls_auth;
 mod tls_client_auth;

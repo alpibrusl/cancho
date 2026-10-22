@@ -1021,11 +1021,11 @@ impl<'a> FuncEmitter<'a> {
 
         self.out.push_str(&format!("{issue}:\n"));
         let slot = self.epoch_slot(&fd);
+        // One atomic add, not a load and a store (#593): the table is shared by every thread of the process.
         let epoch = self.fresh();
-        self.out.push_str(&format!("  {epoch} = load i32, ptr {slot}\n"));
+        self.out.push_str(&format!("  {epoch} = atomicrmw add ptr {slot}, i32 1 seq_cst\n"));
         let next = self.fresh();
         self.out.push_str(&format!("  {next} = add i32 {epoch}, 1\n"));
-        self.out.push_str(&format!("  store i32 {next}, ptr {slot}\n"));
         let next64 = self.fresh();
         self.out.push_str(&format!("  {next64} = zext i32 {next} to i64\n"));
         let masked = self.fresh();
@@ -1106,19 +1106,31 @@ impl<'a> FuncEmitter<'a> {
             valid = both;
         }
 
+        // Spent by one compare-and-swap of the epoch the ticket was checked against: of two threads that redeem copies
+        // of one ticket at once, exactly one finds the epoch still `current` (#593).
         let n = self.blocks;
         self.blocks += 1;
         let (spend, after) = (format!("attachspend{n}"), format!("attachdone{n}"));
+        let entry = format!("attachentry{n}");
+        self.out.push_str(&format!("  br label %{entry}\n{entry}:\n"));
         self.out.push_str(&format!("  br i1 {valid}, label %{spend}, label %{after}\n"));
         self.out.push_str(&format!("{spend}:\n"));
         let next = self.fresh();
         self.out.push_str(&format!("  {next} = add i32 {current}, 1\n"));
-        self.out.push_str(&format!("  store i32 {next}, ptr {slot}\n"));
+        let pair = self.fresh();
+        self.out.push_str(&format!(
+            "  {pair} = cmpxchg ptr {slot}, i32 {current}, i32 {next} seq_cst seq_cst\n"
+        ));
+        let won = self.fresh();
+        self.out.push_str(&format!("  {won} = extractvalue {{ i32, i1 }} {pair}, 1\n"));
         self.out.push_str(&format!("  br label %{after}\n"));
         self.out.push_str(&format!("{after}:\n"));
+        let claimed = self.fresh();
+        self.out
+            .push_str(&format!("  {claimed} = phi i1 [ false, %{entry} ], [ {won}, %{spend} ]\n"));
 
         let tag = self.fresh();
-        self.out.push_str(&format!("  {tag} = select i1 {valid}, i64 0, i64 1\n"));
+        self.out.push_str(&format!("  {tag} = select i1 {claimed}, i64 0, i64 1\n"));
         Ok(vec![LValue::Reg(tag), LValue::Reg(fd), LValue::Const(9)])
     }
 }

@@ -6,6 +6,7 @@
 use super::net::port_bound_of;
 use crate::*;
 use cancho_ir::{EBADF, EINVAL, F_GETFL, F_SETFD, F_SETFL, FD_CLOEXEC, SocketOs};
+use cranelift_codegen::ir::AtomicRmwOp;
 
 impl<'a, 'f> BodyEmitter<'a, 'f> {
     pub(crate) fn is_darwin(&self) -> bool {
@@ -1020,9 +1021,17 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         self.builder.switch_to_block(issue);
         self.builder.seal_block(issue);
         let slot = self.epoch_slot(fd);
-        let epoch = self.builder.ins().load(types::I32, MemFlags::trusted(), slot, 0);
+        // One atomic add, not a load and a store: `docs/unsafe-and-global-state.md` §5 (#593), the table is shared by
+        // every thread of the process.
+        let one = self.builder.ins().iconst(types::I32, 1);
+        let epoch = self.builder.ins().atomic_rmw(
+            types::I32,
+            MemFlags::trusted(),
+            AtomicRmwOp::Add,
+            slot,
+            one,
+        );
         let next = self.builder.ins().iadd_imm(epoch, 1);
-        self.builder.ins().store(MemFlags::trusted(), next, slot, 0);
         let next64 = self.builder.ins().uextend(types::I64, next);
         let masked = self.builder.ins().band_imm(next64, 0x7fff_ffff);
         let high = self.builder.ins().ishl_imm(masked, 32);
@@ -1073,19 +1082,26 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             valid = self.builder.ins().band(valid, is_udp);
         }
 
+        // Spent by one compare-and-swap of the epoch the ticket was checked against: of two threads that redeem
+        // copies of one ticket at once, exactly one finds the epoch still `current` (#593; a load, a compare and a
+        // store let both through, measured in `global_state.rs`).
         let spend = self.builder.create_block();
         let after = self.builder.create_block();
-        self.builder.ins().brif(valid, spend, &[], after, &[]);
+        self.builder.append_block_param(after, types::I8);
+        let not_spent = self.builder.ins().iconst(types::I8, 0);
+        self.builder.ins().brif(valid, spend, &[], after, &[not_spent.into()]);
         self.builder.switch_to_block(spend);
         self.builder.seal_block(spend);
         let next = self.builder.ins().iadd_imm(current, 1);
-        self.builder.ins().store(MemFlags::trusted(), next, slot, 0);
-        self.builder.ins().jump(after, &[]);
+        let before = self.builder.ins().atomic_cas(MemFlags::trusted(), slot, current, next);
+        let won = self.builder.ins().icmp(IntCC::Equal, before, current);
+        self.builder.ins().jump(after, &[won.into()]);
         self.builder.switch_to_block(after);
         self.builder.seal_block(after);
+        let claimed = self.builder.block_params(after)[0];
 
         let one = self.builder.ins().iconst(types::I64, 1);
-        let tag = self.builder.ins().select(valid, zero, one);
+        let tag = self.builder.ins().select(claimed, zero, one);
         let ebadf = self.builder.ins().iconst(types::I64, 9);
         vec![tag, fd, ebadf]
     }

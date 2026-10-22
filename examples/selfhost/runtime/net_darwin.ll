@@ -2350,6 +2350,8 @@ entry:
   %fd.addr = alloca i64, align 8
   %udp.addr = alloca i64, align 8
   %next = alloca i32, align 4
+  %.atomictmp = alloca i32, align 4
+  %atomic-temp = alloca i32, align 4
   store i64 %fd, ptr %fd.addr, align 8
   store i64 %udp, ptr %udp.addr, align 8
   %0 = load i64, ptr %fd.addr, align 8
@@ -2366,25 +2368,25 @@ if.then:                                          ; preds = %entry
 if.end:                                           ; preds = %entry
   %2 = load i64, ptr %fd.addr, align 8
   %arrayidx = getelementptr inbounds [65536 x i32], ptr @lexs_fd_epoch, i64 0, i64 %2
-  %3 = load i32, ptr %arrayidx, align 4
-  %add = add i32 %3, 1
+  store i32 1, ptr %.atomictmp, align 4
+  %3 = load i32, ptr %.atomictmp, align 4
+  %4 = atomicrmw add ptr %arrayidx, i32 %3 seq_cst, align 4
+  store i32 %4, ptr %atomic-temp, align 4
+  %5 = load i32, ptr %atomic-temp, align 4
+  %add = add i32 %5, 1
   store i32 %add, ptr %next, align 4
-  %4 = load i32, ptr %next, align 4
-  %5 = load i64, ptr %fd.addr, align 8
-  %arrayidx1 = getelementptr inbounds [65536 x i32], ptr @lexs_fd_epoch, i64 0, i64 %5
-  store i32 %4, ptr %arrayidx1, align 4
   %6 = load i32, ptr %next, align 4
   %and = and i32 %6, 2147483647
-  %conv2 = sext i32 %and to i64
-  %shl = shl i64 %conv2, 32
+  %conv1 = sext i32 %and to i64
+  %shl = shl i64 %conv1, 32
   %7 = load i64, ptr %fd.addr, align 8
   %or = or i64 %shl, %7
   %8 = load i64, ptr %udp.addr, align 8
   %tobool = icmp ne i64 %8, 0
   %9 = zext i1 %tobool to i64
   %cond = select i1 %tobool, i64 2147483648, i64 0
-  %or3 = or i64 %or, %cond
-  store i64 %or3, ptr %retval, align 8
+  %or2 = or i64 %or, %cond
+  store i64 %or2, ptr %retval, align 8
   br label %return
 
 return:                                           ; preds = %if.end, %if.then
@@ -2404,6 +2406,8 @@ entry:
   %index = alloca i64, align 8
   %current = alloca i32, align 4
   %valid = alloca i32, align 4
+  %.atomictmp = alloca i32, align 4
+  %cmpxchg.bool = alloca i8, align 1
   store i64 %ticket, ptr %ticket.addr, align 8
   store i64 %udp, ptr %udp.addr, align 8
   store ptr %out, ptr %out.addr, align 8
@@ -2491,32 +2495,50 @@ land.end19:                                       ; preds = %land.rhs15, %if.the
 if.end:                                           ; preds = %land.end19, %land.end
   %19 = load i32, ptr %valid, align 4
   %tobool21 = icmp ne i32 %19, 0
-  br i1 %tobool21, label %if.then22, label %if.end24
+  br i1 %tobool21, label %if.then22, label %if.end26
 
 if.then22:                                        ; preds = %if.end
-  %20 = load i32, ptr %current, align 4
-  %add = add i32 %20, 1
-  %21 = load i64, ptr %index, align 8
-  %arrayidx23 = getelementptr inbounds [65536 x i32], ptr @lexs_fd_epoch, i64 0, i64 %21
-  store i32 %add, ptr %arrayidx23, align 4
-  br label %if.end24
+  %20 = load i64, ptr %index, align 8
+  %arrayidx23 = getelementptr inbounds [65536 x i32], ptr @lexs_fd_epoch, i64 0, i64 %20
+  %21 = load i32, ptr %current, align 4
+  %add = add i32 %21, 1
+  store i32 %add, ptr %.atomictmp, align 4
+  %22 = load i32, ptr %current, align 4
+  %23 = load i32, ptr %.atomictmp, align 4
+  %24 = cmpxchg ptr %arrayidx23, i32 %22, i32 %23 seq_cst seq_cst, align 4
+  %25 = extractvalue { i32, i1 } %24, 0
+  %26 = extractvalue { i32, i1 } %24, 1
+  br i1 %26, label %cmpxchg.continue, label %cmpxchg.store_expected
 
-if.end24:                                         ; preds = %if.then22, %if.end
-  %22 = load i32, ptr %valid, align 4
-  %tobool25 = icmp ne i32 %22, 0
-  %23 = zext i1 %tobool25 to i64
-  %cond26 = select i1 %tobool25, i32 0, i32 1
-  %conv27 = sext i32 %cond26 to i64
-  %24 = load ptr, ptr %out.addr, align 8
-  %arrayidx28 = getelementptr inbounds i64, ptr %24, i64 0
-  store i64 %conv27, ptr %arrayidx28, align 8
-  %25 = load i64, ptr %fd, align 8
-  %26 = load ptr, ptr %out.addr, align 8
-  %arrayidx29 = getelementptr inbounds i64, ptr %26, i64 1
-  store i64 %25, ptr %arrayidx29, align 8
-  %27 = load ptr, ptr %out.addr, align 8
-  %arrayidx30 = getelementptr inbounds i64, ptr %27, i64 2
-  store i64 9, ptr %arrayidx30, align 8
+cmpxchg.store_expected:                           ; preds = %if.then22
+  store i32 %25, ptr %current, align 4
+  br label %cmpxchg.continue
+
+cmpxchg.continue:                                 ; preds = %cmpxchg.store_expected, %if.then22
+  %frombool = zext i1 %26 to i8
+  store i8 %frombool, ptr %cmpxchg.bool, align 1
+  %27 = load i8, ptr %cmpxchg.bool, align 1
+  %tobool24 = trunc i8 %27 to i1
+  %conv25 = zext i1 %tobool24 to i32
+  store i32 %conv25, ptr %valid, align 4
+  br label %if.end26
+
+if.end26:                                         ; preds = %cmpxchg.continue, %if.end
+  %28 = load i32, ptr %valid, align 4
+  %tobool27 = icmp ne i32 %28, 0
+  %29 = zext i1 %tobool27 to i64
+  %cond28 = select i1 %tobool27, i32 0, i32 1
+  %conv29 = sext i32 %cond28 to i64
+  %30 = load ptr, ptr %out.addr, align 8
+  %arrayidx30 = getelementptr inbounds i64, ptr %30, i64 0
+  store i64 %conv29, ptr %arrayidx30, align 8
+  %31 = load i64, ptr %fd, align 8
+  %32 = load ptr, ptr %out.addr, align 8
+  %arrayidx31 = getelementptr inbounds i64, ptr %32, i64 1
+  store i64 %31, ptr %arrayidx31, align 8
+  %33 = load ptr, ptr %out.addr, align 8
+  %arrayidx32 = getelementptr inbounds i64, ptr %33, i64 2
+  store i64 9, ptr %arrayidx32, align 8
   ret void
 }
 

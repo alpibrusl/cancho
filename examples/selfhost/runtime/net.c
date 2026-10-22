@@ -693,8 +693,8 @@ i64 cancho_conn_detach(i64 fd, i64 udp) {
     close((int)fd);
     return -1;
   }
-  int next = lexs_fd_epoch[fd] + 1;
-  lexs_fd_epoch[fd] = next;
+  /* One atomic add: the table is shared by every thread of the process (#593). */
+  int next = __atomic_fetch_add(&lexs_fd_epoch[fd], 1, __ATOMIC_SEQ_CST) + 1;
   return ((i64)(next & 2147483647) << 32) | fd | (udp ? (i64)1 << 31 : 0);
 }
 
@@ -707,7 +707,9 @@ void cancho_conn_attach(i64 ticket, i64 udp, i64 *out) {
   int current = lexs_fd_epoch[index];
   int valid = in_range && ((i64)(current & 2147483647) == epoch) && (epoch & 1) && ticket >= 0;
   if (udp) valid = valid && (((unsigned long)ticket >> 31) & 1);
-  if (valid) lexs_fd_epoch[index] = current + 1;
+  /* Spent by one compare-and-swap of the epoch the ticket was checked against: of two threads redeeming copies of one
+     ticket, exactly one finds it still `current` (#593). */
+  if (valid) valid = __atomic_compare_exchange_n(&lexs_fd_epoch[index], &current, current + 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
   out[0] = valid ? 0 : 1;
   out[1] = fd;
   out[2] = 9;
