@@ -26,7 +26,7 @@
 | F2 | the LLVM backend wrote `cancho-llvm-<pid>-<n>.ll` into the shared temporary directory through whatever link was at that name | **fixed** (§3.2) |
 | F3 | the LLVM object carried that temporary name, so **the same program built twice differed** (Cranelift's did not) | **fixed** (§3.2) |
 | F4 | `conn_attach` spent a ticket with a plain load, compare and store: two threads could redeem one ticket | **reproduced and fixed** (#593, §5): 4 to 35 doubly redeemed tickets in 300 rounds on x86-64 before; none after, with a mutant that brings them back |
-| F5 | the UDP peer ring and its ticket counter are plain memory: two receiving threads can share a ticket and an entry | filed, [#594](https://github.com/alpibrusl/cancho/issues/594); read from the code, not reproduced |
+| F5 | the UDP peer ring issued a ticket *before* the blocking receive and kept it in plain memory: two receiving threads were issued one ticket and one entry, and replies went to the wrong peer | **reproduced and fixed** (#594, §5): up to 346 of 600 replies to the wrong client on x86-64 before; none after, with a mutant that brings them back |
 
 No refusal is involved in any of them, so no rule tag is added.
 
@@ -171,11 +171,24 @@ store (Cranelift) fails the test. The runtime of the compiler in cancho is `exam
 `make.sh` into `net_linux.ll` and `net_darwin.ll` (clang writes `@lexs_*` as plain `global` now; the two lines were put back
 to `common global`, which the program's own definition relies on). aarch64 is measured by CI only.
 
-**The UDP peer ring (`lexs_udp_peers`).** Existing tests cover the single-threaded claims: a ticket older than the ring is
-refused (`a_ticket_older_than_the_ring_is_refused`), a forged one sends nothing, a ticket is redeemed once, and only the socket
-that heard the sender can use it. **Finding F5:** none is multi-threaded, and the counter and the entry are plain memory
-([#594](https://github.com/alpibrusl/cancho/issues/594)). The two documents that describe the tickets
-(`docs/udp.md` §4 and `docs/native-sockets.md` §10.3) now say they describe one thread.
+**The UDP peer ring (`lexs_udp_peers`): F5 (#594), reproduced, then fixed.** The single-threaded claims were already tested: a
+ticket older than the ring is refused (`a_ticket_older_than_the_ring_is_refused`), a forged one sends nothing, a ticket is redeemed
+once, and only the socket that heard the sender can use it. The multi-threaded one was false. `udp_recv_from` read the ticket
+counter *before* its blocking `recvfrom` and passed the ring entry's address to the kernel as the place for the sender's
+address, so two threads that were both waiting on different sockets read the same counter, were issued the same ticket and the
+same entry, and wrote the same 16 bytes: the later datagram's address and descriptor replaced the earlier's, and the earlier
+thread's reply went to the later thread's peer (or was refused as another socket's). `tests/programs/udp_ring_race.cho` makes it
+observable: two threads each serve a socket (receive, answer through the ticket), two clients on threads of the test send at the
+same moment each round and expect their own bytes back; a reply with other bytes went to the wrong peer. Measured before the fix
+(x86-64; two clients of 300 rounds each, so out of 600 replies; three runs per code generator, twice: on the branch's first
+base and again on `main` after #593): Cranelift 0, 299 and 300 wrong, then 300, 0 and 269; LLVM through the Rust compiler 0, 0 and 53,
+then 346, 0 and 0; LLVM through the compiler in cancho 0, 288 and 257, then 0, 0 and 0 (a run in which the two threads happen to
+read the counter at different times is clean; it is a race, and its frequency is the timing's). After the fix: none, in
+300 rounds, on all three. The fix: the address lands in a buffer on the call's stack (zeroed first), the datagram arrives, **then**
+one atomic add claims the ticket, the address and the descriptor are copied into the entry and the ticket is stored last with release
+ordering; `udp_send_to` and `udp_peer` load the ticket first with acquire ordering. **Mutant:** the old `udp_recv_from` (Cranelift)
+fails the test. aarch64 is measured by CI only. Not closed: an entry read while a datagram 65,536 tickets later overwrites it can be
+torn; that is the ring's own bound, stated in `docs/udp.md` §4.
 
 **The signal claim (`lexs_signal_state`).** The thread count is `atomicrmw`/`atomic_rmw` on both generators
 (`body/signals.rs`: "any thread may spawn"). The mask is written by the claim and the release; the claim is refused while a
@@ -226,7 +239,7 @@ the compiler's).
 
 ## 7. Not done
 
-* F5 (#594): see its own section when it is done.
+* A torn read of a ring entry overwritten 65,536 tickets later (F5, above) is the ring's bound and is not closed.
 * The clearing of a released region chunk was not re-measured; `region-chunk-cache.md` §8 did.
 * macOS: **the failed-allocation claim of §6 is measured on Linux x86-64 only.** `ulimit -v` is refused on macOS
   (`cannot modify limit: Invalid argument`, seen on CI in this PR's first run) and it has no other per-process address-space

@@ -1,0 +1,133 @@
+edition 9;
+
+import std.io;
+
+// `docs/unsafe-and-global-state.md` §5 (#594): two threads that receive on two sockets at the same time. Each serves
+// `rounds` datagrams: receive, and answer the sender through the ticket the receive issued. The ticket ring and its counter
+// are shared by the process, so the question is whether a reply reaches the peer it belongs to.
+//   argv[1]  the number of rounds
+// Prints the two ports on standard output (`ports P Q`, unbuffered, so the test can read them), and at the end
+// `refused N` on standard output: the replies `udp_send_to` refused, for a ticket that was not the socket's own.
+
+res struct Node {
+    udp: Udp,
+    rounds: int,
+    refused: int,
+}
+
+fn serve[&r](n: &!r Node) -> [udp_recv, udp_send] int {
+    var done = 0;
+    region a {
+        var buf = alloc_slice[a](64, byte_of(0));
+        var who = alloc_slice[a](1, 0);
+        while done < n.rounds {
+            match udp_recv_from(n.udp, buf, who) {
+                Datagram::Got(k) => {
+                    match udp_send_to(n.udp, buf[0..k], who[0]) {
+                        Sent::Wrote(w) => {
+                        }
+                        Sent::Again => {
+                            n.refused = n.refused + 1;
+                        }
+                        Sent::Failed(e) => {
+                            n.refused = n.refused + 1;
+                        }
+                    }
+                }
+                Datagram::Truncated(k) => {
+                    n.refused = n.refused + 1;
+                }
+                Datagram::Again => {
+                    n.refused = n.refused + 1;
+                }
+                Datagram::Failed(e) => {
+                    n.refused = n.refused + 1;
+                }
+            }
+            done = done + 1;
+        }
+    }
+    return 0;
+}
+
+// Closes the socket; the replies it refused.
+fn finish(n: Node) -> [] int {
+    let Node { udp, rounds, refused } = n;
+    udp_close(udp);
+    return refused;
+}
+
+fn number[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) && int_of(b[i]) >= '0' && int_of(b[i]) <= '9' {
+        n = n * 10 + (int_of(b[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var console = io;
+    var refused = 0;
+    borrow args as &g in {
+        let rounds = number(arg(g, 1));
+        borrow net as &nb in {
+            match udp_bind(nb, 0, 0) {
+                UdpOpened::Ok(ua) => {
+                    match udp_bind(nb, 0, 0) {
+                        UdpOpened::Ok(ub) => {
+                            var first = Node { udp: ua, rounds: rounds, refused: 0 };
+                            var second = Node { udp: ub, rounds: rounds, refused: 0 };
+                            borrow mut console as &!i in {
+                                borrow first as &fa in {
+                                    borrow second as &sb in {
+                                        io.write_all(i, "ports ");
+                                        io.print_int(i, udp_local_port(fa.udp));
+                                        io.write_all(i, " ");
+                                        io.print_int(i, udp_local_port(sb.udp));
+                                        io.newline(i);
+                                        flush_out(i);
+                                    }
+                                }
+                            }
+                            borrow mut first as &!ma in {
+                                borrow mut second as &!mb in {
+                                    let f = serve;
+                                    let g2 = serve;
+                                    let h1 = spawn(ma, f);
+                                    let h2 = spawn(mb, g2);
+                                    let a = join(h1);
+                                    let b = join(h2);
+                                }
+                            }
+                            refused = finish(first) + finish(second);
+                        }
+                        UdpOpened::Failed(e) => {
+                            udp_close(ua);
+                        }
+                    }
+                }
+                UdpOpened::Failed(e) => {
+                }
+            }
+        }
+    }
+    borrow mut console as &!i in {
+        io.write_all(i, "refused ");
+        io.print_int(i, refused);
+        io.newline(i);
+    }
+    release(net);
+    release(args);
+    release(console);
+    return 0;
+}

@@ -87,9 +87,18 @@ length is the buffer size and `Truncated` means "at least as big as the buffer" 
 
 ## 4. A peer is a ticket, not an address
 
-> **Corrected (#587, [`unsafe-and-global-state.md`](unsafe-and-global-state.md) §5):** everything below, and every test of it, describes a program
-> with **one thread** receiving. The ring and its counter are plain memory shared by the process, so two threads receiving on
-> different sockets can share a ticket and an entry ([#594](https://github.com/alpibrusl/cancho/issues/594)).
+> **Corrected twice (#587, #594; [`unsafe-and-global-state.md`](unsafe-and-global-state.md) §5).** This section, and its tests,
+> described a program with **one thread** receiving. The ring and its counter are shared by the process, and `udp_recv_from`
+> read the counter *before* the blocking receive: two threads waiting on two sockets at the same time were issued the same
+> ticket and the same ring entry, so a reply could go to the other thread's peer (measured, `thread_state.rs`, x86-64, two clients
+> of 300 rounds each, so out of 600 replies: 300 and 269 to the wrong client in two of three runs on Cranelift, 346 in one of
+> three on LLVM through the Rust compiler, and earlier runs 288 and 257 on LLVM through the compiler in cancho; the other runs
+> were clean, because the race needs both threads to have read the counter before either datagram arrives). Now the sender's address lands in a buffer of the call's own, the ticket is
+> claimed by one atomic add **after** the datagram has arrived, the entry is written whole and its ticket last with release
+> ordering, and `udp_send_to`, `udp_peer` read the ticket first with acquire ordering. A ticket is numbered by arrival, not by
+> the call that waited for it; a receive that fails still leaves no ticket. Reading an entry while a *later* datagram, 65,536
+> tickets on, overwrites it can still see a torn address; that is the ring's bound ("older than the ring is refused") and is
+> not closed.
 
 A server replies to the client that wrote to it, often after waiting for something else (a resolver answers a
 cache miss only after its upstream does). So the sender's address must outlive the next `udp_recv`. It cannot

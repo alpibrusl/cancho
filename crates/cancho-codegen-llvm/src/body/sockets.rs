@@ -485,6 +485,18 @@ impl<'a> FuncEmitter<'a> {
         entry
     }
 
+    /// The ring entry's ticket, loaded with acquire ordering: the ticket first, then what it vouches for (#594).
+    fn load_ticket_acquire(&mut self, entry: &str) -> String {
+        let addr = self.fresh();
+        self.out.push_str(&format!(
+            "  {addr} = getelementptr i8, ptr {entry}, i64 {}\n",
+            cancho_ir::UDP_PEER_TICKET_AT
+        ));
+        let reg = self.fresh();
+        self.out.push_str(&format!("  {reg} = load atomic i64, ptr {addr} acquire, align 8\n"));
+        reg
+    }
+
     /// `udp_recv_from(&!Udp, &![byte], &![int])` (`docs/udp.md` §4): `udp_recv` that also writes the
     /// sender into the next entry of the peer ring and a ticket for it into the first cell of the
     /// `int` slice. An empty buffer or an empty ticket slice is `Failed(EINVAL)` before the kernel.
@@ -494,18 +506,13 @@ impl<'a> FuncEmitter<'a> {
         let (buf, room, cells_at, cells) =
             (operand(&args[1]), operand(&args[2]), operand(&args[3]), operand(&args[4]));
 
-        // The ticket this datagram will be issued under, and the entry it will land in.
-        let counter = self.fresh();
-        self.out.push_str(&format!(
-            "  {counter} = getelementptr i8, ptr @{}, i64 {}\n",
-            cancho_ir::UDP_PEER_GLOBAL,
-            cancho_ir::UDP_PEER_SLOTS * cancho_ir::UDP_PEER_STRIDE
-        ));
-        let issued = self.fresh();
-        self.out.push_str(&format!("  {issued} = load i64, ptr {counter}\n"));
-        let ticket = self.fresh();
-        self.out.push_str(&format!("  {ticket} = add i64 {issued}, 1\n"));
-        let entry = self.peer_entry(&ticket);
+        // The sender's address lands in a buffer of this call's own, and is copied into the ring only once the datagram
+        // has arrived and a ticket has been claimed (#594): the ticket used to be read from the shared counter *before*
+        // the blocking receive, so two threads waiting at once were issued the same ticket and the same entry.
+        let sender = self.fresh();
+        self.hoist(format!("  {sender} = alloca [16 x i8], align 8\n"));
+        self.store_field(&sender, 0, "i64", "0");
+        self.store_field(&sender, 8, "i64", "0");
 
         let len_cell = self.fresh();
         self.hoist(format!("  {len_cell} = alloca i32\n"));
@@ -539,7 +546,7 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("{receive}:\n"));
         let got = self.fresh();
         self.out.push_str(&format!(
-            "  {got} = call i64 @recvfrom(i32 {fd}, ptr {buf}, i64 {room}, i32 {}, ptr {entry}, ptr {len_cell})\n",
+            "  {got} = call i64 @recvfrom(i32 {fd}, ptr {buf}, i64 {room}, i32 {}, ptr {sender}, ptr {len_cell})\n",
             os.msg_trunc
         ));
         let errno = self.errno();
@@ -558,9 +565,31 @@ impl<'a> FuncEmitter<'a> {
         self.out.push_str(&format!("  br i1 {arrived}, label %{record}, label %{after}\n"));
 
         self.out.push_str(&format!("{record}:\n"));
-        self.store_field(&entry, cancho_ir::UDP_PEER_TICKET_AT, "i64", &ticket);
+        // The ticket is claimed by one atomic add, so no two datagrams, on any threads, are issued the same one; the entry is
+        // written whole and its ticket last, with release ordering.
+        let counter = self.fresh();
+        self.out.push_str(&format!(
+            "  {counter} = getelementptr i8, ptr @{}, i64 {}\n",
+            cancho_ir::UDP_PEER_GLOBAL,
+            cancho_ir::UDP_PEER_SLOTS * cancho_ir::UDP_PEER_STRIDE
+        ));
+        let before = self.fresh();
+        self.out.push_str(&format!("  {before} = atomicrmw add ptr {counter}, i64 1 seq_cst\n"));
+        let ticket = self.fresh();
+        self.out.push_str(&format!("  {ticket} = add i64 {before}, 1\n"));
+        let entry = self.peer_entry(&ticket);
+        for at in [0, 8] {
+            let word = self.load_field(&sender, at, "i64");
+            self.store_field(&entry, at, "i64", &word);
+        }
         self.store_field(&entry, cancho_ir::UDP_PEER_FD_AT, "i32", &fd);
-        self.out.push_str(&format!("  store i64 {ticket}, ptr {counter}\n"));
+        let ticket_at = self.fresh();
+        self.out.push_str(&format!(
+            "  {ticket_at} = getelementptr i8, ptr {entry}, i64 {}\n",
+            cancho_ir::UDP_PEER_TICKET_AT
+        ));
+        self.out
+            .push_str(&format!("  store atomic i64 {ticket}, ptr {ticket_at} release, align 8\n"));
         self.out.push_str(&format!("  store i64 {ticket}, ptr {cells_at}\n"));
         self.out.push_str(&format!("  br label %{after}\n"));
 
@@ -578,7 +607,7 @@ impl<'a> FuncEmitter<'a> {
         let (buf, length, ticket) = (operand(&args[1]), operand(&args[2]), operand(&args[3]));
         let entry = self.peer_entry(&ticket);
 
-        let stored = self.load_field(&entry, cancho_ir::UDP_PEER_TICKET_AT, "i64");
+        let stored = self.load_ticket_acquire(&entry);
         let owner = self.load_field(&entry, cancho_ir::UDP_PEER_FD_AT, "i32");
         let positive = self.fresh();
         self.out.push_str(&format!("  {positive} = icmp sgt i64 {ticket}, 0\n"));
@@ -640,7 +669,7 @@ impl<'a> FuncEmitter<'a> {
         let fd = self.handle_fd(&args[0]);
         let (ticket, out, room) = (operand(&args[1]), operand(&args[2]), operand(&args[3]));
         let entry = self.peer_entry(&ticket);
-        let stored = self.load_field(&entry, cancho_ir::UDP_PEER_TICKET_AT, "i64");
+        let stored = self.load_ticket_acquire(&entry);
         let owner = self.load_field(&entry, cancho_ir::UDP_PEER_FD_AT, "i32");
         let positive = self.fresh();
         self.out.push_str(&format!("  {positive} = icmp sgt i64 {ticket}, 0\n"));
