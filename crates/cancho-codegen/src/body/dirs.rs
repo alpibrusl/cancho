@@ -119,11 +119,16 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
     /// a variadic and a fixed argument travel the same way. One signature per
     /// module either way, so every `openat` here goes through this.
     pub(crate) fn openat(&mut self, fd: Value, path: Value, flags: i64, mode: i64) -> Value {
+        let mode = self.builder.ins().iconst(types::I64, mode);
+        self.openat_mode(fd, path, flags, mode)
+    }
+
+    /// `openat` with a mode that is a value (an `I64`), not a constant.
+    pub(crate) fn openat_mode(&mut self, fd: Value, path: Value, flags: i64, mode: Value) -> Value {
         let pointer = self.pointer;
         let flags = self.builder.ins().iconst(types::I32, flags);
         if self.is_darwin() && self.aarch64() {
             let filler = self.builder.ins().iconst(types::I64, 0);
-            let mode = self.builder.ins().iconst(types::I64, mode);
             let mut params = vec![types::I32, pointer, types::I32];
             params.extend([types::I64; 6]);
             let mut args = vec![fd, path, flags];
@@ -131,7 +136,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
             args.push(mode);
             self.libc_call("openat", &params, &[types::I32], &args)
         } else {
-            let mode = self.builder.ins().iconst(types::I32, mode);
+            let mode = self.builder.ins().ireduce(types::I32, mode);
             self.libc_call(
                 "openat",
                 &[types::I32, pointer, types::I32, types::I32],
@@ -324,6 +329,21 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 &[types::I32],
                 &[fd, copies[0], mode],
             )
+        })
+    }
+
+    /// `dir_open_new_mode(dir, name, mode)`: `dir_open_new` with the file's
+    /// permission bits, atomically. A mode outside `0..=0o777` is refused before
+    /// the call, as `dir_mkdir`'s is (`docs/directory-handles.md` §3, slice 6).
+    pub(crate) fn dir_open_new_mode(&mut self, args: &[Value]) -> Vec<Value> {
+        let f = self.open_flags();
+        let flags = f.write_only | f.create | f.exclusive | f.nofollow | f.cloexec;
+        let handle = args[0];
+        let mode = args[3];
+        let bad = self.builder.ins().icmp_imm(IntCC::UnsignedGreaterThan, mode, 0o777);
+        self.dir_call_checked(&[(args[1], args[2])], Some(bad), None, |this, copies| {
+            let fd = this.dir_fd(handle);
+            this.openat_mode(fd, copies[0], flags, mode)
         })
     }
 

@@ -114,9 +114,9 @@ W0.3 took the four `__multi3` link errors to passes.
   refuses at the function that reaches the builtin, once per (function,
   family), naming the first builtin found:
   `` `main` uses `spawn`, and threads do not exist on `wasm32-wasip1` ``.
-  Five families (seven since W0.6, below), from `wasi_gap`, an exhaustive `match` over all 171 builtins
-  (78 refused, 93 supported; a new builtin is a compile error until someone
-  says which side it is on) *(corrected, #533: 162 and 70 were stale since #524's three process builtins, 165 and 73; `child_kill_group`, `processes.md` §4.12, refused as the other process builtins are, makes 166 and 74, and `os_tables.rs` pins both; corrected again, #535: `exec_covers` (refused as the other `Exec` builtins are) and `fs_covers` (supported: `Fs` is on WASI, and it asks what `open_read` is asked, `processes.md` §4.13) make 168, 75 and 93; corrected again, #534: `exec_spawn_under` (§4.14, refused as the other `Exec` builtins are) makes 169, 76 and 93; corrected again, #562: `exec_spawn_detached_under` (§4.15, refused likewise) makes 170, 77 and 93; corrected again, #595: `dir_mkdir` (`directory-handles.md` §3, slice 5, refused with the permission bits) makes 171, 78 and 93)*: **threads** (`spawn`, `join`, `fork_*`),
+  Five families (seven since W0.6, below), from `wasi_gap`, an exhaustive `match` over all 172 builtins
+  (79 refused, 93 supported; a new builtin is a compile error until someone
+  says which side it is on) *(corrected, #533: 162 and 70 were stale since #524's three process builtins, 165 and 73; `child_kill_group`, `processes.md` §4.12, refused as the other process builtins are, makes 166 and 74, and `os_tables.rs` pins both; corrected again, #535: `exec_covers` (refused as the other `Exec` builtins are) and `fs_covers` (supported: `Fs` is on WASI, and it asks what `open_read` is asked, `processes.md` §4.13) make 168, 75 and 93; corrected again, #534: `exec_spawn_under` (§4.14, refused as the other `Exec` builtins are) makes 169, 76 and 93; corrected again, #562: `exec_spawn_detached_under` (§4.15, refused likewise) makes 170, 77 and 93; corrected again, #595: `dir_mkdir` (`directory-handles.md` §3, slice 5, refused with the permission bits) makes 171, 78 and 93; and #596: `dir_open_new_mode`, refused likewise, makes 172, 79 and 93)*: **threads** (`spawn`, `join`, `fork_*`),
   **sockets** (`connect`, `bind`, `listen`, `tcp_*`, `conn_*`), **the poller**
   (`poller_*`; `poll_oneoff` is the eventual mapping), **signals**, and
   **processes and pipes**. Reject fixtures can now name a target
@@ -656,7 +656,7 @@ sockets, threads and signals rows).
 | Processes (`posix_spawn`, `kill`) | **no** | **no** | Refuse; no WASI equivalent |
 | Signals | **no** | **no** | Refuse |
 | File locks (`flock`) | **no** | **no** | Refuse; an undefined symbol otherwise (W0.6) |
-| Permission bits (`dir_mode`, `dir_own_mode`, `dir_mkdir`) | **no** | **no** | Refuse; WASI's stat has none, so they would answer 0 (W0.6), and `dir_mkdir`'s mode would be ignored |
+| Permission bits (`dir_mode`, `dir_own_mode`, `dir_mkdir`, `dir_open_new_mode`) | **no** | **no** | Refuse; WASI's stat has none, so they would answer 0 (W0.6), and a mode given to `dir_mkdir` or `dir_open_new_mode` would be ignored |
 | Threads (`pthread_*`) | experimental | experimental | Refuse until wasi-threads settles |
 | `extern fn` to arbitrary C | link-time only | link-time only | Only libraries compiled to wasm; `Ffi("libc")` means wasi-libc, whose `int`/`size_t` are 32-bit |
 

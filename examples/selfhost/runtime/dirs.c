@@ -105,6 +105,14 @@ void cancho_dir_remove(const i64 *dir, const u8 *name, i64 len, i64 *out) {
   dirrt_triple(out, r, ERRNO);
 }
 
+/* `dir_open_new_mode(dir, name, mode)`: `dir_open_new` (2) with the file's mode; outside 0..0o777 is refused, no call. */
+void cancho_dir_create(const i64 *dir, const u8 *name, i64 len, i64 mode, i64 *out) {
+  u8 copy[NAME_MAX + 1];
+  if (!dirrt_component(name, len, copy) || (unsigned long)mode > 0777) return dirrt_refused(out);
+  int fd = openat((int)*dir, (const char *)copy, (int)P(OPEN_ENTER + 2), (int)mode);
+  dirrt_triple(out, fd, ERRNO);
+}
+
 /* `dir_mkdir(dir, name, mode)`: a mode outside 0..0o777 is refused as a bad name is, with no call. */
 void cancho_dir_mkdir(const i64 *dir, const u8 *name, i64 len, i64 mode, i64 *out) {
   u8 copy[NAME_MAX + 1];

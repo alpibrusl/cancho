@@ -1263,6 +1263,10 @@ impl<'a> FuncEmitter<'a> {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.dir_remove(&args)
             }
+            Callee::Builtin(Builtin::DirOpenNewMode) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.dir_open_new_mode(&args)
+            }
             Callee::Builtin(Builtin::DirMkdir) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.dir_mkdir(&args)

@@ -7,7 +7,8 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 
-const BACKENDS: [&str; 2] = ["cranelift", "llvm"];
+/// The backend and the compiler that writes it: the Rust compiler for both, and the compiler in cancho for LLVM.
+const BACKENDS: [(&str, &str); 3] = [("cranelift", "rust"), ("llvm", "rust"), ("llvm", "auto")];
 
 /// `argv[1]` is the directory; `argv[2..]` are pairs of a name and a mode in decimal (a leading `-` is
 /// negative). Prints `ok` or `err <errno>` for each, a line apiece.
@@ -89,10 +90,10 @@ fn main(world: World) -> [] int {
 const EINVAL: i32 = 22;
 const EEXIST: i32 = 17;
 
-fn build(dir: &Path, backend: &str) -> PathBuf {
+fn build(dir: &Path, backend: &str, compiler: &str) -> PathBuf {
     let file = dir.join("probe.cho");
     std::fs::write(&file, PROBE).expect("a writable fixture");
-    let exe = dir.join(format!("probe-{backend}"));
+    let exe = dir.join(format!("probe-{backend}-{compiler}"));
     let out = Command::new(BIN)
         .args([
             "build".as_ref(),
@@ -103,11 +104,12 @@ fn build(dir: &Path, backend: &str) -> PathBuf {
             "-o".as_ref(),
             exe.as_os_str(),
         ])
+        .env("CANCHO_COMPILER", compiler)
         .output()
         .expect("the compiler runs");
     assert!(
         out.status.success(),
-        "`--backend {backend}`: {}",
+        "`--backend {backend}` by `{compiler}`: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     exe
@@ -132,18 +134,19 @@ fn bits(path: &Path) -> u32 {
 
 #[test]
 fn a_directory_is_made_with_its_mode_under_the_umask_on_both_backends() {
-    for backend in BACKENDS {
-        let dir = scratch(&format!("directory-mkdir-{backend}"));
+    for (backend, compiler) in BACKENDS {
+        let label = format!("{backend} by {compiler}");
+        let dir = scratch(&format!("directory-mkdir-{backend}-{compiler}"));
         let root = dir.join("root");
         std::fs::create_dir_all(&root).expect("a writable scratch directory");
-        let exe = build(&dir, backend);
+        let exe = build(&dir, backend, compiler);
         let err = |e: i32| format!("err {e}");
 
         // The mode is the program's, less the umask: 0o777 under 0o022 is 0o755.
         assert_eq!(
             mkdir(&exe, &root, &[("a755", 0o755), ("a700", 0o700), ("a777", 0o777), ("a000", 0)]),
             ["ok", "ok", "ok", "ok"],
-            "{backend}"
+            "{label}"
         );
         assert_eq!(
             [
@@ -153,9 +156,9 @@ fn a_directory_is_made_with_its_mode_under_the_umask_on_both_backends() {
                 bits(&root.join("a000"))
             ],
             [0o755, 0o700, 0o755, 0],
-            "{backend}"
+            "{label}"
         );
-        assert!(root.join("a700").is_dir(), "{backend}");
+        assert!(root.join("a700").is_dir(), "{label}");
 
         // A name that is taken is EEXIST, whatever holds it, and what held it is untouched.
         std::fs::write(root.join("file"), "KEEP").expect("a file");
@@ -169,10 +172,10 @@ fn a_directory_is_made_with_its_mode_under_the_umask_on_both_backends() {
                 &[("file", 0o755), ("dir", 0o755), ("dangling", 0o755), ("link", 0o755)]
             ),
             [err(EEXIST), err(EEXIST), err(EEXIST), err(EEXIST)],
-            "{backend}"
+            "{label}"
         );
-        assert_eq!(read_or_absent(&root.join("file")), "KEEP", "{backend}");
-        assert!(!root.join("elsewhere").exists(), "{backend}: a dangling link was followed");
+        assert_eq!(read_or_absent(&root.join("file")), "KEEP", "{label}");
+        assert!(!root.join("elsewhere").exists(), "{label}: a dangling link was followed");
 
         // Not one component, or a mode that is not permission bits: EINVAL, and no call was made.
         assert_eq!(
@@ -191,10 +194,10 @@ fn a_directory_is_made_with_its_mode_under_the_umask_on_both_backends() {
                 ]
             ),
             vec![err(EINVAL); 8],
-            "{backend}"
+            "{label}"
         );
         for name in ["big", "suid", "sticky", "negative", "a"] {
-            assert!(!root.join(name).exists(), "{backend}: `{name}` was made");
+            assert!(!root.join(name).exists(), "{label}: `{name}` was made");
         }
     }
 }

@@ -1,0 +1,42 @@
+//~ ERROR permission bits do not exist on `wasm32-wasip1`
+//~ RULE unsupported-on-target
+//~ TARGET wasm32-wasip1
+
+// `dir_open_new_mode` is fine for the host and refused for WebAssembly: WASI's stat has
+// no permission bits, so the mode it is given would be ignored
+// (`docs/directory-handles.md` §3, slice 6; `docs/wasm.md`).
+//
+// The same file passes `cancho check` with no `--target`.
+
+edition 9;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    borrow fs as &f in {
+        match open_dir(f, "/tmp") {
+            DirOpened::Ok(opened) => {
+                var dir = opened;
+                borrow dir as &r in {
+                    match dir_open_new_mode(r, "out", 493) {
+                        Opened::Ok(f) => { file_close(f); }
+                        Opened::Failed(e) => { code = e; }
+                    }
+                }
+                dir_close(dir);
+            }
+            DirOpened::Failed(e) => { code = e; }
+        }
+    }
+    release(fs);
+    return code;
+}
