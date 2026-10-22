@@ -1484,12 +1484,12 @@ fn write_string[&h, &r](heap: &!h Heap, b: buffer.Buffer, text: &r [byte]) -> [h
         // Most of a text is ASCII that needs no escape, so it has a loop of its own: two comparisons a byte, up to the
         // first byte that is not one (space, `!`, `"`, `\\`, a control, and any byte of a multi-byte character end it; the
         // code below takes those one at a time). 15 instructions a byte before this loop, 8 after (issue #584).
-        var plain = (c > 92 && c < 128) || (c > 34 && c < 92);
+        var plain = c > 92 && c < 128 || c > 34 && c < 92;
         while plain {
             p = p + 1;
             if p < n {
                 c = int_of(text[p]);
-                plain = (c > 92 && c < 128) || (c > 34 && c < 92);
+                plain = c > 92 && c < 128 || c > 34 && c < 92;
             } else {
                 plain = false;
             }
