@@ -103,8 +103,6 @@ fn build(dir: &Path, backend: &str) -> PathBuf {
             "-o".as_ref(),
             exe.as_os_str(),
         ])
-        // `dir_mkdir` is not in the compiler in cancho yet (#595), so the Rust one builds the probe.
-        .env("CANCHO_COMPILER", "rust")
         .output()
         .expect("the compiler runs");
     assert!(
