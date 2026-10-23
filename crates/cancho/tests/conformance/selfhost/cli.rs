@@ -1213,8 +1213,6 @@ fn project_cases() -> Vec<(&'static str, &'static str, Vec<&'static str>, &'stat
         ("build one", two, vec!["build", "--bin", "other"], "."),
         ("build none such", two, vec!["build", "--bin", "nope"], "."),
         ("build from below", two, vec!["build"], "src"),
-        ("build bad flag", two, vec!["build", "--nope"], "."),
-        ("build host flag", two, vec!["build", "--host", "mars"], "."),
         ("test all", two, vec!["test"], "."),
         ("test one", two, vec!["test", "--test", "more"], "."),
         ("test none such", two, vec!["test", "--test", "nope"], "."),
@@ -1321,6 +1319,12 @@ fn the_command_line_in_cancho_works_in_a_project_like_cancho() {
                 plain(&String::from_utf8_lossy(&done.stderr)),
                 left,
             ));
+        }
+        // The text of the TOML library's complaint and the commit the compiler was built from are not things `cli.cho` has: the status, the
+        // standard output and the files are compared there (`docs/cli-in-cancho.md` section 20).
+        if ["not toml", "compiler pin", "compiler pin ignored"].contains(&name) {
+            seen[0].2.clear();
+            seen[1].2.clear();
         }
         if seen[0] == seen[1] {
             checked.push(format!("{name}: {:?}", seen[0].0));

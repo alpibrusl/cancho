@@ -50,7 +50,7 @@ fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "add") {
         return cliproject.add_command(io);
     }
-    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "build") && cliproject.wants_project(heap, args, fs, false) {
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "build") && cliproject.wants_project(heap, io, args, fs, exec, clock, false) {
         return cliproject.build_command(heap, io, args, fs, exec, clock);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "build") {
@@ -59,7 +59,7 @@ fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "run") {
         return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, true, true);
     }
-    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "test") && cliproject.wants_project(heap, args, fs, true) {
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "test") && cliproject.wants_project(heap, io, args, fs, exec, clock, true) {
         return cliproject.test_command(heap, io, args, fs, exec, clock);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "test") {

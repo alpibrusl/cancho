@@ -68,25 +68,21 @@ fn beneath[&h, &r, &e](heap: &!h Heap, root: &r [byte], entry: &e [byte]) -> [he
 
 // The project the command was run beneath: the number of directories up from the current one that holds `cancho.toml` (-1 if none does) and its text.
 pub res struct Found {
-    text: buffer.Buffer,
-    up: int,
+    body: buffer.Buffer,
+    level: int,
 }
 
-fn levels[&h](heap: &!h Heap, up: int) -> [heap] buffer.Buffer {
-    var b = buffer.empty(heap, 3 * up + 12);
-    var k = 0;
-    while k < up {
-        b = buffer.append(heap, b, "../");
-        k = k + 1;
-    }
-    return buffer.append(heap, b, "cancho.toml");
-}
-
-// Looks for `cancho.toml` here and in the directories above, as far as 64 of them.
-pub fn find_project[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, fs_read(""), file_read] Found {
+// Looks for `cancho.toml` in `cwd` (an absolute path: a `..` in a path is a trap) and in the directories above, as far as 64 of them.
+pub fn find_project[&h, &f, &w](heap: &!h Heap, fs: &f Fs(""), cwd: &w [byte]) -> [heap, fs_read(""), file_read] Found {
     var up = 0;
     while up < 64 {
-        let path = levels(heap, up);
+        let dir = ancestor(heap, cwd, up);
+        var path = buffer.empty(heap, 0);
+        borrow dir as &db in {
+            buffer.drop(heap, path);
+            path = beneath(heap, buffer.bytes(db), "cancho.toml");
+        }
+        buffer.drop(heap, dir);
         var found = false;
         var text = buffer.empty(heap, 0);
         borrow path as &pb in {
@@ -102,12 +98,12 @@ pub fn find_project[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, fs_read("")
         }
         buffer.drop(heap, path);
         if found {
-            return Found { text: text, up: up };
+            return Found { body: text, level: up };
         }
         buffer.drop(heap, text);
         up = up + 1;
     }
-    return Found { text: buffer.empty(heap, 0), up: 0 - 1 };
+    return Found { body: buffer.empty(heap, 0), level: 0 - 1 };
 }
 
 // A project, read: its records (`projfile.cho`), the directory that holds its file and the path of the file, both absolute, and a status (0, or what has been said).
@@ -132,9 +128,16 @@ fn say_error[&h, &i, &a, &b, &c](heap: &!h Heap, io: &!i Io, head: &a [byte], mi
 // The project the command was run beneath, read: `no cancho.toml` (status 1) if there is none; a file that is not a project file is 1, one that `load` refuses is 1, and one
 // this command line does not read is 3.
 pub fn load[&h, &i, &f, &x, &c](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, fs_read(""), file_read, exec(""), clock, poll] Project {
-    let found = find_project(heap, fs);
-    let Found { text, up } = found;
     let cwd = current_directory(heap, io, exec, clock);
+    var text = buffer.empty(heap, 0);
+    var up = 0 - 1;
+    borrow cwd as &cb in {
+        let looked = find_project(heap, fs, buffer.bytes(cb));
+        let Found { body, level } = looked;
+        buffer.drop(heap, text);
+        text = body;
+        up = level;
+    }
     if up < 0 {
         borrow cwd as &cb in {
             var m = buffer.append(heap, buffer.empty(heap, 128), "no `cancho.toml` in `");
@@ -493,7 +496,7 @@ fn options[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, only_flag: &st
 
 // Does `build` (with `test` false) or `test` (with `test` true) with these arguments mean the project, and not the files it is given? When the arguments are only flags (those
 // of `options`, and no file) and a `cancho.toml` is here or above.
-pub fn wants_project[&h, &a, &f](heap: &!h Heap, args: &a Args, fs: &f Fs(""), test: bool) -> [heap, args, fs_read(""), file_read] bool {
+pub fn wants_project[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, test: bool) -> [heap, err_write, args, fs_read(""), file_read, exec(""), clock, poll] bool {
     var n = 2;
     while n < arg_count(args) {
         let word = arg(args, n);
@@ -509,10 +512,16 @@ pub fn wants_project[&h, &a, &f](heap: &!h Heap, args: &a Args, fs: &f Fs(""), t
             return false;
         }
     }
-    let found = find_project(heap, fs);
-    let Found { text, up } = found;
-    buffer.drop(heap, text);
-    return up >= 0;
+    let cwd = current_directory(heap, io, exec, clock);
+    var above = 0 - 1;
+    borrow cwd as &cb in {
+        let looked = find_project(heap, fs, buffer.bytes(cb));
+        let Found { body, level } = looked;
+        buffer.drop(heap, body);
+        above = level;
+    }
+    buffer.drop(heap, cwd);
+    return above >= 0;
 }
 
 // `install` (`docs/package-system.md` section 8.3): the project is read and the compiler checked; it has nothing to fetch if it has no dependency, and one that has is a status 3.
