@@ -417,6 +417,8 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
             return clibase.usage_error(heap, io, "`--std` and `--target` are not available in this command line: `--std-dir DIR` adds the standard library from DIR");
         } else if bytes.equal(word, "-o") || bytes.equal(word, "--emit") || bytes.equal(word, "--output") {
             return clibase.usage_error(heap, io, "`test` does not take `-o`, `--emit` or `--output`");
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            return clibase.unknown_option(heap, io, word);
         } else {
             files = files + 1;
         }

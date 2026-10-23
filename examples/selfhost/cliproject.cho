@@ -202,6 +202,9 @@ pub fn load[&h, &i, &f, &x, &c](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec:
 // ----------------------------------------------------------------------------------------------------------------------------- the commands ---
 
 fn is_file[&f, &p](fs: &f Fs(""), path: &p [byte]) -> [fs_read("")] bool {
+    if walk.dotdot(path) {
+        return false;
+    }
     match open_read(fs, path) {
         Opened::Ok(file) => {
             file_close(file);

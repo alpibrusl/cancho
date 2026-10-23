@@ -21,6 +21,18 @@ pub fn write_all[&w, &b](file: &!w File, bytes: &b [byte]) -> [file_write] int {
 
 // `bytes` as the file at `path`, made or emptied: 0, or the errno.
 pub fn store[&f, &p, &b](fs: &f Fs(""), path: &p [byte], bytes: &b [byte]) -> [fs_write(""), file_write] int {
+    // An `Fs` traps on a path with two dots in a row or of 4,096 bytes or more (`walk.dotdot`, which this module cannot import: the builder uses it too).
+    var at = 1;
+    var refused = len(path) >= 4096;
+    while at < len(path) && !refused {
+        if path[at] == byte_of('.') && path[at - 1] == byte_of('.') {
+            refused = true;
+        }
+        at = at + 1;
+    }
+    if refused {
+        return 22;
+    }
     match open_write(fs, path) {
         Opened::Ok(file) => {
             var written = file;

@@ -27,6 +27,9 @@ import selfhost.clibase;
 // The program `tool` started with the arguments in `list` (each followed by a NUL) and waited for, its standard output (or, with `err`,
 // its standard error) written to the file at `log`: its exit status, 128 and the signal if it was killed, or 255 if it did not run.
 pub fn spawn_to[&x, &f, &c, &l, &p](exec: &x Exec(""), fs: &f Fs(""), tool: &c [byte], list: &l [byte], log: &p [byte], err: bool) -> [exec(""), fs_write("")] int {
+    if walk.dotdot(log) {
+        return 255;
+    }
     match open_write(fs, log) {
         Opened::Failed(e) => {
             return 255;
@@ -458,6 +461,8 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             clang_at = n;
         } else if bytes.equal(word, "--std") || bytes.equal(word, "--target") {
             return clibase.usage_error(heap, io, "`--std` and `--target` are not available in this command line: `--std-dir DIR` adds the standard library from DIR");
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            return clibase.unknown_option(heap, io, word);
         } else {
             files = files + 1;
         }

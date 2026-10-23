@@ -360,9 +360,21 @@ The commands fall back to the file forms when the arguments are not the ones of 
 
 **Differences.** The complaint of the TOML library is said in its first line only (and not with its picture of the line); the commit the compiler was built from is not known, so a
 `[package] cancho` pin cannot be checked (a refusal that says so, or with `--ignore-compiler-rev` a note); `build/deps` is neither cleared nor made; `std = true` needs
-`--std-dir DIR`; `--compiler` is accepted and ignored; an unknown option is read as a file name where the Rust command refuses it.
+`--std-dir DIR`; `--compiler` is accepted and ignored.
 
 **Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_works_in_a_project_like_cancho` runs 21 cases with both commands and compares the status, the
 standard output, the standard error and the files left: build all, one, none such, from a subdirectory; test all, one, none such, from a subdirectory; install (here, below, with an
 argument); no program, no tests; an unknown field, not TOML, a bad name, missing sources, an empty directory, a name twice; a compiler pin (refused, and ignored): none differs
 (the three texts above are not compared on the standard error). A project with a dependency exits 3 under `build`, `install` and `test`, and `add` does too.
+
+## 21. Two corrections: a path with `..`, and an unknown option
+
+**A path with `..` in it trapped.** An `Fs` refuses a path by a trap when it has two dots in a row anywhere (`..` and `a..b` alike) or is 4,096 bytes or more (`docs/filesystem.md`
+section 4.1, `cancho_path_covers`), and `cli.cho` passed the arguments it was given to `open_read`, `open_dir` and `open_write` as they were: `cli.cho check ../a.cho` died of
+`SIGILL` (measured: status 132; it was found by the project slice, §20, whose first lookup went up with `../cancho.toml`). `walk.dotdot` now asks first, at the five places that open
+a path (`read_file`, `is_file`, `is_directory` with the two walks, `store`, `spawn_to`), and the command says `PATH: cannot read the file` and answers 2. **Difference:** the Rust
+command reads such a path (the operating system resolves it) and `cli.cho` does not, because it has no way to turn a relative path into an absolute one without asking
+`/bin/pwd` at each of those places; the project lookup does ask it once, and goes up by absolute paths.
+
+**An unknown option was read as a file name** by `check`, `ids`, `layout`, `build`, `run` and `test` (it was refused only by `satisfy` and, in a project, `build`). They now answer
+`unknown option `X`` and the usage, status 2, as the Rust command does (compared in `the_command_line_in_cancho_works_in_a_project_like_cancho`, with the `..` cases).
