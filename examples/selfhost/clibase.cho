@@ -59,6 +59,9 @@ pub res struct Contents {
 pub fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] Contents {
     var out = buffer.empty(heap, 4096);
     var trouble = 0;
+    if walk.dotdot(path) {
+        return Contents { bytes: out, failed: 22 };
+    }
     match open_read(fs, path) {
         Opened::Failed(reason) => {
             trouble = reason;
@@ -163,6 +166,17 @@ pub fn takes_value[&w](word: &w [byte], build: bool) -> [] bool {
         return true;
     }
     return build && (bytes.equal(word, "-o") || bytes.equal(word, "--emit") || bytes.equal(word, "-l") || bytes.equal(word, "-L") || bytes.equal(word, "--clang"));
+}
+
+// A word that starts with a `-` and is none of the options of the command: said as the Rust command says it, with the usage. The status, 2.
+pub fn unknown_option[&h, &i, &w](heap: &!h Heap, io: &!i Io, word: &w [byte]) -> [heap, err_write] int {
+    let why = buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.empty(heap, 64), "unknown option `"), word), "`");
+    var said = 0;
+    borrow why as &wy in {
+        said = usage_error(heap, io, buffer.bytes(wy));
+    }
+    buffer.drop(heap, why);
+    return said;
 }
 
 // The `k`th name of a list of names, each followed by a NUL.

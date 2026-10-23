@@ -29,8 +29,27 @@ fn add[&h, &p](heap: &!h Heap, found: buffer.Buffer, path: &p [byte]) -> [heap] 
     return buffer.push(heap, buffer.append(heap, found, path), byte_of(0));
 }
 
+// Would an `Fs` refuse `path` by a trap? It does when the path has two dots in a row anywhere, `..` or `a..b` (`docs/filesystem.md` section 4.1), or is 4,096 bytes or more
+// (the rule is `cancho_path_covers`), so the command line asks before it opens one.
+pub fn dotdot[&p](path: &p [byte]) -> [] bool {
+    if len(path) >= 4096 {
+        return true;
+    }
+    var at = 1;
+    while at < len(path) {
+        if lc.at(path, at) == '.' && lc.at(path, at - 1) == '.' {
+            return true;
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
 // Is `path` a directory (or a link to one)?
 pub fn is_directory[&f, &p](fs: &f Fs(""), path: &p [byte]) -> [fs_read("")] bool {
+    if dotdot(path) {
+        return false;
+    }
     match open_dir(fs, path) {
         DirOpened::Ok(dir) => {
             dir_close(dir);
@@ -45,6 +64,9 @@ pub fn is_directory[&f, &p](fs: &f Fs(""), path: &p [byte]) -> [fs_read("")] boo
 // The `.cho` files beneath the directory at `path`, added to `found`.
 fn below[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found: buffer.Buffer) -> [heap, fs_read(""), dir_read] buffer.Buffer {
     var out = found;
+    if dotdot(path) {
+        return out;
+    }
     match open_dir(fs, path) {
         DirOpened::Failed(reason) => {
             return out;
@@ -95,6 +117,9 @@ pub fn collect[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found
 // The `.cho` files directly in the directory at `path` (a name that starts with a dot is one too; a directory is not), added to `found`, in bytewise order of name.
 pub fn direct[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found: buffer.Buffer) -> [heap, fs_read(""), dir_read] buffer.Buffer {
     var out = found;
+    if dotdot(path) {
+        return out;
+    }
     match open_dir(fs, path) {
         DirOpened::Failed(reason) => {
             return out;

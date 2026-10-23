@@ -1213,6 +1213,8 @@ fn project_cases() -> Vec<(&'static str, &'static str, Vec<&'static str>, &'stat
         ("build one", two, vec!["build", "--bin", "other"], "."),
         ("build none such", two, vec!["build", "--bin", "nope"], "."),
         ("build from below", two, vec!["build"], "src"),
+        ("build bad flag", two, vec!["build", "--nope"], "."),
+        ("test bad flag", two, vec!["test", "--nope"], "."),
         ("test all", two, vec!["test"], "."),
         ("test one", two, vec!["test", "--test", "more"], "."),
         ("test none such", two, vec!["test", "--test", "nope"], "."),
@@ -1351,6 +1353,19 @@ fn the_command_line_in_cancho_works_in_a_project_like_cancho() {
         let done = Command::new(&exe).current_dir(&dir).arg(command).output().expect("it runs");
         assert_eq!(done.status.code(), Some(3), "{command}: {done:?}");
         assert!(!dir.join("build").exists(), "{command} made something");
+    }
+    // A path with `..` in it is refused by an `Fs` with a trap; the command line says it cannot read the file and answers 2.
+    for command in ["check", "build", "fmt", "test"] {
+        let done = Command::new(&exe)
+            .current_dir(dir.join("src"))
+            .args([command, "../src/main.cho"])
+            .output()
+            .expect("it runs");
+        assert_eq!(done.status.code(), Some(2), "{command}: {done:?}");
+        assert!(
+            String::from_utf8_lossy(&done.stderr).contains("../src/main.cho: cannot read the file"),
+            "{command}: {done:?}"
+        );
     }
     let added = Command::new(&exe).current_dir(&dir).args(["add", "x"]).output().expect("it runs");
     assert_eq!(added.status.code(), Some(3));
