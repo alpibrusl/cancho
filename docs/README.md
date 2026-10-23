@@ -338,6 +338,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`shadowing.md`](shadowing.md) | Shadowing: allowed exactly when the binding is dead | settled and built |
 | [`standard-input.md`](standard-input.md) | `getchar`: a second label on `Io`, not a new capability; `read_bytes` (edition 9): the bulk read behind the same label, 73x `getchar` on macOS | settled and built |
 | [`modules.md`](modules.md) | `module`/`import`/`pub`; a module is a namespace, not a trust boundary | settled and built |
+| [`private-constructors.md`](private-constructors.md) | `pub opaque` types: construction, destructuring and field access stay inside the declaring module; asked for by cancho-quantum | proposed — measured holes and cost counts; nothing built |
 | [`standard-library.md`](standard-library.md) | What belongs in `std`, and how a function earns its way in | written and built |
 | [`mode-polymorphism.md`](mode-polymorphism.md) | `[T: val]` bounds | settled and built — found a leak and a double free |
 | [`collections.md`](collections.md) | Which collections hold a resource, and why it's about shape | settled and built |
@@ -407,6 +408,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`agent-tools.md`](agent-tools.md) | A tool genuinely shaped for an agent's own loop | built (`examples/seek/`) |
 | [`agent-toolbox.md`](agent-toolbox.md) | Whether a *set* of unix-like tools in cancho, with a JSON contract, rule-tagged errors with repair hints and a compiler-derived authority, is worth building — and the protocol that would say so | design; the probes it rests on are run and recorded, nothing is built. Found: `Fs` extent cannot be static (`narrow` takes a literal), no directory listing or regex, `sha256` traps past 64 KiB, a failed `stdout` write is invisible, and lex-os reads a cancho `net_out` label as *no network*; corrects `bulk-io.md` §3.3 and `agent-tools.md` §1 |
 | [`aliasing.md`](aliasing.md) | Whether `&!` should mean Rust's `&mut` | measured — no |
+| [`same-place-twice.md`](same-place-twice.md) | Refusing one `res` referent (or one `&!`) named twice in a call, without refusing in-place updates of data; asked for by cancho-quantum; corrects `aliasing.md` §2's count | proposed — a probe over 188 programs; nothing built |
 | [`check-cost.md`](check-cost.md) | The price of every check this language emits | measured — corrects `overflow-cost.md` and `gpu.md` |
 | [`poison.md`](poison.md) | A per-lane flag instead of a trap, on a vector ISA | measured — depends on the check |
 | [`backend-limits.md`](backend-limits.md) | What Cranelift can and cannot be asked for | an audit, checked against source |
