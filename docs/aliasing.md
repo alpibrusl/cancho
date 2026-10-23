@@ -70,6 +70,16 @@ library's own sites counted once rather than once per program.
 | places a `&!` is copied into a new binding | **2** | 0 |
 | functions returning a `&!` in a parameter's region | **1** | 1 |
 
+> **Corrected, `same-place-twice.md` §2.1.** The row "…where that pair
+> involves a `&!`: **0**" (and `std`: 0) does not hold on the corpus at
+> `3fa3fbb`. Counted by parameter mode over 188 programs, **12 distinct
+> call shapes** pass one `&!` and one `&` parameter the same bare name,
+> mostly in `std` (`mul(t, t, z9)`: an output that is also an input), and 6
+> pass two `&!` ranges of one buffer. Why this disagrees with the count above
+> was not established. The conclusion of §4.1 is unchanged, but the cost it
+> prices is not zero for a rule that refuses a `&!` and a `&` together, which is
+> why `same-place-twice.md` proposes two narrower rules.
+
 The counts are from **before** §3's four fixtures were added. Those
 fixtures alias on purpose, so they would each add a row to the table;
 leaving them out is what makes it a measurement of the corpus rather

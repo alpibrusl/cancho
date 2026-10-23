@@ -16,6 +16,7 @@
 - [Boxed slices](boxed-slices.md)
 - [Sharing, and why Rc is not expressible](sharing.md)
 - [Aliasing: does `&!` mean `&mut`?](aliasing.md)
+- [Same place twice: one resource reached twice in a call](same-place-twice.md)
 - [Collections](collections.md)
 - [Testing](testing.md)
 - [Satisfy: a contract a candidate must meet](satisfy.md)
@@ -75,6 +76,7 @@
 
 - [A program in more than one file](many-files.md)
 - [Modules](modules.md)
+- [Private constructors: opaque `pub` types](private-constructors.md)
 - [defer](defer.md)
 
 # Networking
