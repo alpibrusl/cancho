@@ -1344,7 +1344,7 @@ fn the_command_line_in_cancho_works_in_a_project_like_cancho() {
     std::fs::write(dir.join("src/main.cho"), main).expect("a source is written");
     std::fs::write(
         dir.join("cancho.toml"),
-        "[package]\nname = \"demo\"\n\n[dependencies.lib]\ngit = \"https://example.invalid/lib\"\nrev = \"0123456789abcdef0123456789abcdef01234567\"\n\n[[bin]]\nname = \"a\"\nsources = [\"src\"]\n",
+        "[package]\nname = \"demo\"\n\n[dependencies.lib]\ngit = \"https://example.invalid/lib\"\nrev = \"0123456789abcdef0123456789abcdef01234567\"\n\n[[bin]]\nname = \"a\"\nsources = [\"src\"]\n\n[[test]]\nname = \"t\"\nsources = [\"src\"]\n",
     )
     .expect("the project file is written");
     for command in ["build", "install", "test"] {
