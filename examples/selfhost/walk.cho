@@ -30,7 +30,7 @@ fn add[&h, &p](heap: &!h Heap, found: buffer.Buffer, path: &p [byte]) -> [heap] 
 }
 
 // Is `path` a directory (or a link to one)?
-fn is_directory[&f, &p](fs: &f Fs(""), path: &p [byte]) -> [fs_read("")] bool {
+pub fn is_directory[&f, &p](fs: &f Fs(""), path: &p [byte]) -> [fs_read("")] bool {
     match open_dir(fs, path) {
         DirOpened::Ok(dir) => {
             dir_close(dir);
@@ -90,4 +90,39 @@ pub fn collect[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found
         return below(heap, fs, path, found);
     }
     return add(heap, found, path);
+}
+
+// The `.cho` files directly in the directory at `path` (a name that starts with a dot is one too; a directory is not), added to `found`, in bytewise order of name.
+pub fn direct[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found: buffer.Buffer) -> [heap, fs_read(""), dir_read] buffer.Buffer {
+    var out = found;
+    match open_dir(fs, path) {
+        DirOpened::Failed(reason) => {
+            return out;
+        }
+        DirOpened::Ok(opened) => {
+            var dir = opened;
+            borrow dir as &d in {
+                let names = dirs.list(heap, d, 1000000);
+                borrow names as &n in {
+                    var k = 0;
+                    while k < dirs.count(n) {
+                        let name = dirs.name(n, k);
+                        if len(name) > 4 && is_cho(name) {
+                            let sub = child(heap, path, name);
+                            borrow sub as &s in {
+                                if !is_directory(fs, buffer.bytes(s)) {
+                                    out = add(heap, out, buffer.bytes(s));
+                                }
+                            }
+                            buffer.drop(heap, sub);
+                        }
+                        k = k + 1;
+                    }
+                }
+                dirs.drop(heap, names);
+            }
+            dir_close(dir);
+        }
+    }
+    return out;
 }

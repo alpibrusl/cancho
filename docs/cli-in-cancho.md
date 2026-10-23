@@ -348,3 +348,21 @@ function and every line of it is where it was, with `pub` and the name of its mo
 `main` and the choice of the command; `clibase.cho` (263) what every command shares (reading a file, the usage, the report of a refusal, names and paths);
 `clifmt.cho` (523) `fmt`, `print`, `ingest`, `introspect` and `skill`; `cliprog.cho` (540) the loading of a program, `check`, `ids`, `layout`, `build` and `run`;
 `clitest.cho` (579) `test` and `satisfy`. The 18 tests of `selfhost::cli`, `selfhost::parity` and `selfhost::statics` pass unchanged.
+
+## 20. Slice 13: the project, without dependencies
+
+`cli.cho install`, `build` and `test` with no file (`docs/package-system.md` section 8.3) work in a project whose `cancho.toml` has no dependency. `projfile.cho` (1,185 lines) is the
+`cancho.toml` parser, a subset of TOML written in cancho: a lexer, the tables `[package]`, `[dependencies.NAME]`, `[[bin]]` and `[[test]]`, and the validation of `load` (names,
+revisions, unique names, sources) with the messages of the Rust command. `cliproject.cho` (860 lines) finds the project (the current directory by `/bin/pwd`, then each ancestor
+in turn, up to 64: a `..` in a path is a trap under `Fs`, so no relative path is used), checks `[package] cancho`, and builds (`build_files`, a program's `--bin NAME`) or runs
+(`clitest.test_set`, a set's `--test NAME`, under a heading `== test NAME`) what it names. A project that has a dependency is a status 3, said, and nothing is made; so is `add`.
+The commands fall back to the file forms when the arguments are not the ones of the project form.
+
+**Differences.** The complaint of the TOML library is said in its first line only (and not with its picture of the line); the commit the compiler was built from is not known, so a
+`[package] cancho` pin cannot be checked (a refusal that says so, or with `--ignore-compiler-rev` a note); `build/deps` is neither cleared nor made; `std = true` needs
+`--std-dir DIR`; `--compiler` is accepted and ignored; an unknown option is read as a file name where the Rust command refuses it.
+
+**Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_works_in_a_project_like_cancho` runs 21 cases with both commands and compares the status, the
+standard output, the standard error and the files left: build all, one, none such, from a subdirectory; test all, one, none such, from a subdirectory; install (here, below, with an
+argument); no program, no tests; an unknown field, not TOML, a bad name, missing sources, an empty directory, a name twice; a compiler pin (refused, and ignored): none differs
+(the three texts above are not compared on the standard error). A project with a dependency exits 3 under `build`, `install` and `test`, and `add` does too.
