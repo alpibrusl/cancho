@@ -748,7 +748,6 @@ fn check_records[&h, &r](heap: &!h Heap, recs: &r [byte], why: buffer.Buffer) ->
     return (status, w);
 }
 
-
 // ----------------------------------------------------------------------------------------------------------------------------------- the file ---
 
 // The record of one table, from its key entries `en[from..to]` (each ended by a byte 3): the table is of kind `kind` (1 package, 2 dependency, 3 program, 4 set of tests,
