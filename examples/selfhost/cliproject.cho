@@ -1,0 +1,851 @@
+edition 7;
+module selfhost.cliproject;
+
+// cliproject.cho -- the project file in the command line in cancho (`docs/cli-in-cancho.md` section 20, `project.rs`): `install`, `build` and `test` with no files
+// (`docs/package-system.md` section 8). The file is read by `projfile.cho`; the programs are built and the sets of tests run as `build` and `test` do with files. What
+// needs `vcs` (a dependency, so `install` of one, `add`) is not here, and is a status 3.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.driver;
+import selfhost.walk;
+import selfhost.satisfytext;
+import selfhost.projfile;
+import selfhost.clibase;
+import selfhost.cliprog;
+import selfhost.clitest;
+
+// The directory the command was run in, as the system says it: `/bin/pwd` with no environment to tell it a logical one, as the Rust command asks the system for it.
+fn current_directory[&h, &i, &x, &c](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, exec(""), clock, poll] buffer.Buffer {
+    let got = cliprog.run_capture(heap, io, exec, clock, "/bin/pwd", "", "");
+    let cliprog.Captured { out, err, kind, value } = got;
+    var text = buffer.empty(heap, 64);
+    if kind == 0 && value == 0 {
+        borrow out as &o in {
+            let said = buffer.bytes(o);
+            var end = len(said);
+            while end > 0 && lc.at(said, end - 1) == 10 {
+                end = end - 1;
+            }
+            text = buffer.append(heap, text, said[0..end]);
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return text;
+}
+
+// `path` with its last `up` components taken off (`/a/b/c` and 1 is `/a/b`; it never goes above `/`).
+fn ancestor[&h, &p](heap: &!h Heap, path: &p [byte], up: int) -> [heap] buffer.Buffer {
+    var end = len(path);
+    var left = up;
+    while left > 0 && end > 1 {
+        end = end - 1;
+        while end > 1 && lc.at(path, end - 1) != '/' {
+            end = end - 1;
+        }
+        if end > 1 {
+            end = end - 1;
+        }
+        left = left - 1;
+    }
+    return buffer.append(heap, buffer.empty(heap, end + 1), path[0..end]);
+}
+
+// `entry` beneath the directory `root`: the entry itself if it is an absolute path.
+fn beneath[&h, &r, &e](heap: &!h Heap, root: &r [byte], entry: &e [byte]) -> [heap] buffer.Buffer {
+    if len(entry) > 0 && lc.at(entry, 0) == '/' {
+        return buffer.append(heap, buffer.empty(heap, len(entry) + 1), entry);
+    }
+    var b = buffer.append(heap, buffer.empty(heap, len(root) + len(entry) + 2), root);
+    if len(root) == 0 || lc.at(root, len(root) - 1) != '/' {
+        b = buffer.push(heap, b, byte_of('/'));
+    }
+    return buffer.append(heap, b, entry);
+}
+
+// The project the command was run beneath: the number of directories up from the current one that holds `cancho.toml` (-1 if none does) and its text.
+pub res struct Found {
+    text: buffer.Buffer,
+    up: int,
+}
+
+fn levels[&h](heap: &!h Heap, up: int) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 3 * up + 12);
+    var k = 0;
+    while k < up {
+        b = buffer.append(heap, b, "../");
+        k = k + 1;
+    }
+    return buffer.append(heap, b, "cancho.toml");
+}
+
+// Looks for `cancho.toml` here and in the directories above, as far as 64 of them.
+pub fn find_project[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, fs_read(""), file_read] Found {
+    var up = 0;
+    while up < 64 {
+        let path = levels(heap, up);
+        var found = false;
+        var text = buffer.empty(heap, 0);
+        borrow path as &pb in {
+            let read = clibase.read_file(heap, fs, buffer.bytes(pb));
+            let clibase.Contents { bytes, failed } = read;
+            if failed == 0 {
+                found = true;
+                buffer.drop(heap, text);
+                text = bytes;
+            } else {
+                buffer.drop(heap, bytes);
+            }
+        }
+        buffer.drop(heap, path);
+        if found {
+            return Found { text: text, up: up };
+        }
+        buffer.drop(heap, text);
+        up = up + 1;
+    }
+    return Found { text: buffer.empty(heap, 0), up: 0 - 1 };
+}
+
+// A project, read: its records (`projfile.cho`), the directory that holds its file and the path of the file, both absolute, and a status (0, or what has been said).
+pub res struct Project {
+    records: buffer.Buffer,
+    root: buffer.Buffer,
+    file: buffer.Buffer,
+    status: int,
+}
+
+// One line on the standard error: `head`, `middle` and `tail`, and a newline.
+fn say_error[&h, &i, &a, &b, &c](heap: &!h Heap, io: &!i Io, head: &a [byte], middle: &b [byte], tail: &c [byte]) -> [heap, err_write] int {
+    var line = buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.empty(heap, 128), head), middle), tail);
+    line = buffer.push(heap, line, byte_of(10));
+    borrow line as &lb in {
+        console.error_all(io, buffer.bytes(lb));
+    }
+    buffer.drop(heap, line);
+    return 0;
+}
+
+// The project the command was run beneath, read: `no cancho.toml` (status 1) if there is none; a file that is not a project file is 1, one that `load` refuses is 1, and one
+// this command line does not read is 3.
+pub fn load[&h, &i, &f, &x, &c](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, fs_read(""), file_read, exec(""), clock, poll] Project {
+    let found = find_project(heap, fs);
+    let Found { text, up } = found;
+    let cwd = current_directory(heap, io, exec, clock);
+    if up < 0 {
+        borrow cwd as &cb in {
+            var m = buffer.append(heap, buffer.empty(heap, 128), "no `cancho.toml` in `");
+            m = buffer.append(heap, m, buffer.bytes(cb));
+            borrow m as &mb in {
+                say_error(heap, io, buffer.bytes(mb), "", "` or any directory above it (docs/package-system.md §8)");
+            }
+            buffer.drop(heap, m);
+        }
+        buffer.drop(heap, text);
+        buffer.drop(heap, cwd);
+        return Project { records: buffer.empty(heap, 0), root: buffer.empty(heap, 0), file: buffer.empty(heap, 0), status: 1 };
+    }
+    var root = buffer.empty(heap, 0);
+    borrow cwd as &cb in {
+        buffer.drop(heap, root);
+        root = ancestor(heap, buffer.bytes(cb), up);
+    }
+    buffer.drop(heap, cwd);
+    var file = buffer.empty(heap, 0);
+    borrow root as &rb in {
+        buffer.drop(heap, file);
+        file = beneath(heap, buffer.bytes(rb), "cancho.toml");
+    }
+    var recs = buffer.empty(heap, 0);
+    var result = 0;
+    borrow text as &tb in {
+        let parsed = projfile.parse(heap, buffer.bytes(tb));
+        let projfile.Parsed { records, status, why } = parsed;
+        buffer.drop(heap, recs);
+        recs = records;
+        borrow file as &fb in {
+            borrow why as &wb in {
+                if status == 1 {
+                    say_error(heap, io, "`", buffer.bytes(fb), "` is not a project file: ");
+                    console.error_all(io, buffer.bytes(wb));
+                    console.error_all(io, "\n");
+                    result = 1;
+                } else if status == 2 {
+                    var head = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 64), "`"), buffer.bytes(fb));
+                    borrow head as &hb in {
+                        say_error(heap, io, buffer.bytes(hb), "`: ", buffer.bytes(wb));
+                    }
+                    buffer.drop(heap, head);
+                    result = 1;
+                } else if status == 3 {
+                    var head = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 64), "`"), buffer.bytes(fb));
+                    borrow head as &hb in {
+                        say_error(heap, io, buffer.bytes(hb), "`: cannot judge: ", buffer.bytes(wb));
+                    }
+                    buffer.drop(heap, head);
+                    result = 3;
+                }
+            }
+        }
+        buffer.drop(heap, why);
+    }
+    buffer.drop(heap, text);
+    return Project { records: recs, root: root, file: file, status: result };
+}
+
+// ----------------------------------------------------------------------------------------------------------------------------- the commands ---
+
+fn is_file[&f, &p](fs: &f Fs(""), path: &p [byte]) -> [fs_read("")] bool {
+    match open_read(fs, path) {
+        Opened::Ok(file) => {
+            file_close(file);
+            return true;
+        }
+        Opened::Failed(reason) => {
+            return false;
+        }
+    }
+}
+
+// The start of the record that follows the one at `at` in `recs`.
+fn after_record[&r](recs: &r [byte], at: int) -> [] int {
+    var p = at;
+    while p < len(recs) && lc.at(recs, p) != 2 {
+        p = p + 1;
+    }
+    return p + 1;
+}
+
+// `a` against `b` as paths are ordered: component by component (a `/` separates them, and an empty component is nothing): -1, 0 or 1.
+fn compare_paths[&a, &b](x: &a [byte], y: &b [byte]) -> [] int {
+    var i = 0;
+    var j = 0;
+    while true {
+        while i < len(x) && lc.at(x, i) == '/' {
+            i = i + 1;
+        }
+        while j < len(y) && lc.at(y, j) == '/' {
+            j = j + 1;
+        }
+        if i >= len(x) || j >= len(y) {
+            if i >= len(x) && j >= len(y) {
+                return 0;
+            }
+            if i >= len(x) {
+                return 0 - 1;
+            }
+            return 1;
+        }
+        var ie = i;
+        while ie < len(x) && lc.at(x, ie) != '/' {
+            ie = ie + 1;
+        }
+        var je = j;
+        while je < len(y) && lc.at(y, je) != '/' {
+            je = je + 1;
+        }
+        let c = satisfytext.compare(x[i..ie], y[j..je]);
+        if c != 0 {
+            return c;
+        }
+        i = ie;
+        j = je;
+    }
+    return 0;
+}
+
+// The paths of the list `paths` (each followed by a NUL), each once, in the order of paths.
+fn sorted_paths[&h, &p](heap: &!h Heap, paths: &p [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(paths) + 1);
+    var last_at = 0 - 1;
+    var more = true;
+    while more {
+        var best = 0 - 1;
+        var at = 0;
+        while at < len(paths) {
+            let e = projfile.field_end(paths, at, len(paths));
+            var after_last = true;
+            if last_at >= 0 {
+                let le = projfile.field_end(paths, last_at, len(paths));
+                after_last = compare_paths(paths[at..e], paths[last_at..le]) > 0;
+            }
+            if after_last {
+                var smaller = best < 0;
+                if !smaller {
+                    let be = projfile.field_end(paths, best, len(paths));
+                    smaller = compare_paths(paths[at..e], paths[best..be]) < 0;
+                }
+                if smaller {
+                    best = at;
+                }
+            }
+            at = e + 1;
+        }
+        if best < 0 {
+            more = false;
+        } else {
+            let be = projfile.field_end(paths, best, len(paths));
+            out = buffer.append(heap, out, paths[best..be + 1]);
+            last_at = best;
+        }
+    }
+    return out;
+}
+
+// The files of a program or of a set of tests named `name`: each entry of `sources` (separated by a byte 1) beneath `root` that is a file, or every `.cho` directly in it if
+// it is a directory; each once, in the order of paths, each followed by a NUL. If an entry is neither, or holds no `.cho` file, it has been said and the answer is empty and
+// `broken` is 1.
+pub res struct Sources {
+    listed: buffer.Buffer,
+    broken: int,
+}
+
+fn sources_of[&h, &i, &f, &r, &n, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), root: &r [byte], name: &n [byte], sources: &s [byte]) -> [heap, err_write, fs_read(""), dir_read] Sources {
+    var found = buffer.empty(heap, 128);
+    var bad = 0;
+    var at = 0;
+    while at <= len(sources) && bad == 0 && len(sources) > 0 {
+        var end = at;
+        while end < len(sources) && lc.at(sources, end) != 1 {
+            end = end + 1;
+        }
+        let entry = sources[at..end];
+        let path = beneath(heap, root, entry);
+        borrow path as &pb in {
+            if walk.is_directory(fs, buffer.bytes(pb)) {
+                var before = 0;
+                borrow found as &fz in {
+                    before = buffer.size(fz);
+                }
+                found = walk.direct(heap, fs, buffer.bytes(pb), found);
+                var grown = false;
+                borrow found as &fz in {
+                    grown = buffer.size(fz) != before;
+                }
+                if !grown {
+                    say_error(heap, io, "`", name, "`: ");
+                    var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 64), "`"), entry);
+                    borrow m as &mb in {
+                        say_error(heap, io, buffer.bytes(mb), "` holds no `.cho` file", "");
+                    }
+                    buffer.drop(heap, m);
+                    bad = 1;
+                }
+            } else if is_file(fs, buffer.bytes(pb)) {
+                found = buffer.push(heap, buffer.append(heap, found, buffer.bytes(pb)), byte_of(0));
+            } else {
+                var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 64), "`"), entry);
+                borrow m as &mb in {
+                    say_error(heap, io, "`", name, "`: ");
+                    say_error(heap, io, buffer.bytes(mb), "` is not a file or directory", "");
+                }
+                buffer.drop(heap, m);
+                bad = 1;
+            }
+        }
+        buffer.drop(heap, path);
+        at = end + 1;
+    }
+    if bad != 0 {
+        buffer.drop(heap, found);
+        return Sources { listed: buffer.empty(heap, 0), broken: 1 };
+    }
+    var ordered = buffer.empty(heap, 0);
+    borrow found as &fb in {
+        buffer.drop(heap, ordered);
+        ordered = sorted_paths(heap, buffer.bytes(fb));
+    }
+    buffer.drop(heap, found);
+    return Sources { listed: ordered, broken: 0 };
+}
+
+// A project that was written for a compiler (`[package] cancho`) is checked against this one, which does not know which commit it was built from (the Rust command stamps it at
+// build time): refused, unless `ignore`, which says so and goes on. 0, or 1.
+fn check_compiler[&h, &i, &r](heap: &!h Heap, io: &!i Io, recs: &r [byte], ignore: bool) -> [heap, err_write] int {
+    let name_end = projfile.field_end(recs, 2, len(recs));
+    if lc.at(recs, name_end + 1) != '1' {
+        return 0;
+    }
+    let from = name_end + 3;
+    var stop = from;
+    while stop < len(recs) && lc.at(recs, stop) != 2 {
+        stop = stop + 1;
+    }
+    let want = recs[from..stop];
+    if ignore {
+        var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 128), "note: this project was written for cancho "), want);
+        borrow m as &mb in {
+            say_error(heap, io, buffer.bytes(mb), "; this is unknown (--ignore-compiler-rev)", "");
+        }
+        buffer.drop(heap, m);
+        return 0;
+    }
+    var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 256), "this project was written for cancho "), want);
+    borrow m as &mb in {
+        say_error(heap, io, buffer.bytes(mb), ", and this command line does not know which commit it was built from, so it cannot be checked; install that compiler, change `[package] cancho` after checking the sources against this one, or pass --ignore-compiler-rev", "");
+    }
+    buffer.drop(heap, m);
+    return 1;
+}
+
+// A dependency is fetched by `vcs`, which this command line does not carry: the first one (in the order of names) is said, and the status is 3.
+fn needs_vcs[&h, &i, &r](heap: &!h Heap, io: &!i Io, recs: &r [byte]) -> [heap, err_write] int {
+    var at = 0;
+    while at < len(recs) {
+        if lc.at(recs, at) == 'D' {
+            let name_at = at + 2;
+            let name_end = projfile.field_end(recs, name_at, len(recs));
+            var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 128), "dependency `"), recs[name_at..name_end]);
+            borrow m as &mb in {
+                say_error(heap, io, buffer.bytes(mb), "`: this command line cannot judge a project with dependencies yet: it does not fetch them (that is ", "`vcs`, which it does not carry)");
+            }
+            buffer.drop(heap, m);
+            return 3;
+        }
+        at = after_record(recs, at);
+    }
+    return 0;
+}
+
+// The options of `build` and `test` in a project: `--ignore-compiler-rev`, the name after `only_flag`, `--compiler PATH` (accepted and not used), and, of this command line, `--std-dir DIR`,
+// `--host H` and `--clang PATH`. Each is the index of its argument, or -1; `ignore` is 0 or 1; `bad` is the status of a bad one (it has been said).
+pub res struct Options {
+    ignore: bool,
+    only: int,
+    std_dir: int,
+    host: int,
+    host_given: bool,
+    clang_at: int,
+    bad: int,
+}
+
+fn options[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, only_flag: &static [byte]) -> [heap, err_write, args] Options {
+    var ignore = false;
+    var only = 0 - 1;
+    var std_dir = 0 - 1;
+    var host = 0;
+    var host_given = false;
+    var clang_at = 0 - 1;
+    var bad = 0;
+    var n = 2;
+    while n < arg_count(args) && bad == 0 {
+        let word = arg(args, n);
+        if bytes.equal(word, "--ignore-compiler-rev") {
+            ignore = true;
+        } else if bytes.equal(word, only_flag) {
+            n = n + 1;
+            if n >= arg_count(args) {
+                var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 32), "`"), only_flag);
+                m = buffer.append(heap, m, "` needs a name");
+                borrow m as &mb in {
+                    bad = clibase.usage_error(heap, io, buffer.bytes(mb));
+                }
+                buffer.drop(heap, m);
+            } else {
+                only = n;
+            }
+        } else if bytes.equal(word, "--compiler") && bytes.equal(only_flag, "--bin") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                bad = clibase.usage_error(heap, io, "`--compiler` needs a path");
+            }
+        } else if bytes.equal(word, "--std-dir") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                bad = clibase.usage_error(heap, io, "`--std-dir` needs a directory");
+            } else {
+                std_dir = n;
+            }
+        } else if bytes.equal(word, "--clang") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                bad = clibase.usage_error(heap, io, "`--clang` needs a path");
+            } else {
+                clang_at = n;
+            }
+        } else if bytes.equal(word, "--host") {
+            n = n + 1;
+            host_given = true;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "linux") {
+                host = 0;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "darwin") {
+                host = 1;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "linux-aarch64") {
+                host = 2;
+            } else {
+                bad = clibase.usage_error(heap, io, "`--host` needs linux, darwin or linux-aarch64");
+            }
+        } else {
+            var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 32), "unexpected `"), word);
+            m = buffer.push(heap, m, byte_of('`'));
+            borrow m as &mb in {
+                bad = clibase.usage_error(heap, io, buffer.bytes(mb));
+            }
+            buffer.drop(heap, m);
+        }
+        n = n + 1;
+    }
+    return Options { ignore: ignore, only: only, std_dir: std_dir, host: host, host_given: host_given, clang_at: clang_at, bad: bad };
+}
+
+// Does `build` (with `test` false) or `test` (with `test` true) with these arguments mean the project, and not the files it is given? When the arguments are only flags (those
+// of `options`, and no file) and a `cancho.toml` is here or above.
+pub fn wants_project[&h, &a, &f](heap: &!h Heap, args: &a Args, fs: &f Fs(""), test: bool) -> [heap, args, fs_read(""), file_read] bool {
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--ignore-compiler-rev") {
+            n = n + 1;
+        } else if bytes.equal(word, "--std-dir") || bytes.equal(word, "--clang") || bytes.equal(word, "--host") {
+            n = n + 2;
+        } else if !test && (bytes.equal(word, "--bin") || bytes.equal(word, "--compiler")) {
+            n = n + 2;
+        } else if test && bytes.equal(word, "--test") {
+            n = n + 2;
+        } else {
+            return false;
+        }
+    }
+    let found = find_project(heap, fs);
+    let Found { text, up } = found;
+    buffer.drop(heap, text);
+    return up >= 0;
+}
+
+// `install` (`docs/package-system.md` section 8.3): the project is read and the compiler checked; it has nothing to fetch if it has no dependency, and one that has is a status 3.
+pub fn install_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), file_read, exec(""), clock, poll] int {
+    var ignore = false;
+    var n = 2;
+    while n < arg_count(args) {
+        if bytes.equal(arg(args, n), "--ignore-compiler-rev") {
+            ignore = true;
+        } else {
+            var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 96), "`install` takes no argument but `--ignore-compiler-rev`, found `"), arg(args, n));
+            m = buffer.push(heap, m, byte_of('`'));
+            var said = 0;
+            borrow m as &mb in {
+                said = clibase.usage_error(heap, io, buffer.bytes(mb));
+            }
+            buffer.drop(heap, m);
+            return said;
+        }
+        n = n + 1;
+    }
+    let project = load(heap, io, fs, exec, clock);
+    let Project { records, root, file, status } = project;
+    var result = status;
+    if result == 0 {
+        borrow records as &rb in {
+            result = check_compiler(heap, io, buffer.bytes(rb), ignore);
+            if result == 0 {
+                result = needs_vcs(heap, io, buffer.bytes(rb));
+            }
+        }
+    }
+    buffer.drop(heap, records);
+    buffer.drop(heap, root);
+    buffer.drop(heap, file);
+    return result;
+}
+
+// `add` needs `vcs`, which this command line does not carry.
+pub fn add_command[&i](io: &!i Io) -> [err_write] int {
+    console.error_all(io, "this command line cannot judge `add` yet: it fetches the dependency, which is `vcs`, and that is not in it\n");
+    return 3;
+}
+
+// A program of the project built: the files `files` (names, each followed by a NUL) and the library if `with_std` (from the directory `std_path`) made into the executable at `out`
+// by the compiler in cancho and `clang`. 0, or what has been said.
+fn build_files[&h, &i, &a, &f, &x, &l, &s, &o, &k](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), files: &l [byte], with_std: bool, std_path: &s [byte], host_in: int, host_given: bool, out: &o [byte], clang: &k [byte]) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec("")] int {
+    let loaded = cliprog.load_files(heap, io, fs, buffer.append(heap, buffer.empty(heap, len(files) + 1), files), with_std, std_path, "", "");
+    let cliprog.Loaded { names, raw, laid, lens, count, read_status } = loaded;
+    var status = read_status;
+    if status == 0 {
+        var host = host_in;
+        if !host_given {
+            var note = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(out) + 8), out), ".host");
+            borrow note as &np in {
+                host = cliprog.detect_host(heap, exec, fs, buffer.bytes(np));
+            }
+            buffer.drop(heap, note);
+        }
+        borrow raw as &r in {
+            let built = driver.run_many(heap, io, buffer.bytes(r), 5, host);
+            borrow built as &b in {
+                borrow laid as &lt in {
+                    borrow mut lens as &!lb in {
+                        borrow names as &nm in {
+                            status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to);
+                        }
+                    }
+                }
+                if status == 0 {
+                    status = cliprog.make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), out, clang, false);
+                }
+            }
+            driver.discard(heap, built);
+        }
+    }
+    buffer.drop(heap, raw);
+    buffer.drop(heap, laid);
+    buffer.drop(heap, names);
+    unbox_slice(heap, lens);
+    return status;
+}
+
+// The directory `path` is in (`/a/b` for `/a/b/c`), made, with those above it, by `/bin/mkdir -p`. 0, or 3 (said).
+fn make_parent[&h, &i, &x, &c, &p](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, path: &p [byte]) -> [heap, err_write, exec(""), clock, poll] int {
+    var end = len(path);
+    while end > 0 && lc.at(path, end - 1) != '/' {
+        end = end - 1;
+    }
+    if end <= 1 {
+        return 0;
+    }
+    var argv = buffer.append(heap, buffer.empty(heap, end + 8), "-p\0");
+    argv = buffer.push(heap, buffer.append(heap, argv, path[0..end - 1]), byte_of(0));
+    var status = 3;
+    borrow argv as &ab in {
+        let got = cliprog.run_capture(heap, io, exec, clock, "/bin/mkdir", "", buffer.bytes(ab));
+        let cliprog.Captured { out, err, kind, value } = got;
+        if kind == 0 && value == 0 {
+            status = 0;
+        } else {
+            say_error(heap, io, "cannot create `", path[0..end - 1], "`");
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, argv);
+    return status;
+}
+
+// Does the project have a program (`kind` B) or a set of tests (`kind` T) named `name`, or, with a negative `name_len`, how many has it? (The count is the answer.)
+fn count_of[&r, &n](recs: &r [byte], kind: int, name: &n [byte], named: bool) -> [] int {
+    var count = 0;
+    var at = 0;
+    while at < len(recs) {
+        if lc.at(recs, at) == kind {
+            let ns = at + 2;
+            let ne = projfile.field_end(recs, ns, len(recs));
+            if !named || ne - ns == len(name) && lc.spells(recs, ns, ne, name) {
+                count = count + 1;
+            }
+        }
+        at = after_record(recs, at);
+    }
+    return count;
+}
+
+// `build` with no files (`docs/package-system.md` section 8.3): every program of the project (`--bin NAME` one), each built from its sources. A program that says `std = true`
+// needs `--std-dir DIR` in this command line. 0, or the status of the first that failed.
+pub fn build_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    let opts = options(heap, io, args, "--bin");
+    let Options { ignore, only, std_dir, host, host_given, clang_at, bad } = opts;
+    if bad != 0 {
+        return bad;
+    }
+    let project = load(heap, io, fs, exec, clock);
+    let Project { records, root, file, status } = project;
+    var result = status;
+    borrow records as &rb in {
+        let recs = buffer.bytes(rb);
+        if result == 0 {
+            result = check_compiler(heap, io, recs, ignore);
+        }
+        if result == 0 && count_of(recs, 'B', "", false) == 0 {
+            console.error_all(io, "`cancho.toml` has no [[bin]] to build\n");
+            result = 1;
+        }
+        if result == 0 && only >= 0 && count_of(recs, 'B', arg(args, only), true) == 0 {
+            say_error(heap, io, "`cancho.toml` has no [[bin]] named `", arg(args, only), "`");
+            result = 1;
+        }
+        if result == 0 {
+            result = needs_vcs(heap, io, recs);
+        }
+        var at = 0;
+        while at < len(recs) && result == 0 {
+            if lc.at(recs, at) == 'B' {
+                let ns = at + 2;
+                let ne = projfile.field_end(recs, ns, len(recs));
+                let name = recs[ns..ne];
+                let std_flag = lc.at(recs, ne + 1) == '1';
+                let has_out = lc.at(recs, ne + 3) == '1';
+                let out_at = ne + 5;
+                let out_end = projfile.field_end(recs, out_at, len(recs));
+                var stop = out_end;
+                while stop < len(recs) && lc.at(recs, stop) != 2 {
+                    stop = stop + 1;
+                }
+                let sources = recs[out_end + 1..stop];
+                var wanted = only < 0;
+                if only >= 0 {
+                    wanted = bytes.equal(arg(args, only), name);
+                }
+                if wanted {
+                    borrow root as &root_b in {
+                        let found = sources_of(heap, io, fs, buffer.bytes(root_b), name, sources);
+                        let Sources { listed, broken } = found;
+                        if broken != 0 {
+                            result = 1;
+                        } else if std_flag && std_dir < 0 {
+                            say_error(heap, io, "`", name, "`: `std = true` needs `--std-dir DIR` in this command line");
+                            result = 2;
+                        } else {
+                            var entry = buffer.empty(heap, 0);
+                            if has_out {
+                                entry = buffer.append(heap, entry, recs[out_at..out_end]);
+                            } else {
+                                entry = buffer.append(heap, buffer.append(heap, entry, "build/"), name);
+                            }
+                            var out = buffer.empty(heap, 0);
+                            borrow entry as &eb in {
+                                buffer.drop(heap, out);
+                                out = beneath(heap, buffer.bytes(root_b), buffer.bytes(eb));
+                            }
+                            buffer.drop(heap, entry);
+                            borrow out as &ob in {
+                                result = make_parent(heap, io, exec, clock, buffer.bytes(ob));
+                                if result == 0 {
+                                    var std_path = buffer.empty(heap, 0);
+                                    if std_dir >= 0 {
+                                        std_path = buffer.append(heap, std_path, arg(args, std_dir));
+                                    }
+                                    var clang = buffer.append(heap, buffer.empty(heap, 32), "/usr/bin/clang");
+                                    if clang_at >= 0 {
+                                        buffer.drop(heap, clang);
+                                        clang = buffer.append(heap, buffer.empty(heap, 32), arg(args, clang_at));
+                                    }
+                                    borrow listed as &pb in {
+                                        borrow std_path as &sb in {
+                                            borrow clang as &kb in {
+                                                result = build_files(heap, io, args, fs, exec, buffer.bytes(pb), std_flag, buffer.bytes(sb), host, host_given, buffer.bytes(ob), buffer.bytes(kb));
+                                            }
+                                        }
+                                    }
+                                    buffer.drop(heap, std_path);
+                                    buffer.drop(heap, clang);
+                                }
+                                if result == 0 {
+                                    console.write_all(io, "built ");
+                                    console.write_all(io, buffer.bytes(ob));
+                                    console.write_all(io, "\n");
+                                }
+                            }
+                            buffer.drop(heap, out);
+                        }
+                        buffer.drop(heap, listed);
+                    }
+                }
+            }
+            at = after_record(recs, at);
+        }
+    }
+    buffer.drop(heap, records);
+    buffer.drop(heap, root);
+    buffer.drop(heap, file);
+    return result;
+}
+
+// `test` with no files (`docs/package-system.md` section 8.3): every set of tests of the project (`--test NAME` one), each under a heading `== test NAME`. The sets all run; 0 if
+// every one passed, else the status of the first that did not. A set that cannot be made ready (a source that is not there, a `std = true` with no `--std-dir`) is said and ends the run.
+pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    let opts = options(heap, io, args, "--test");
+    let Options { ignore, only, std_dir, host, host_given, clang_at, bad } = opts;
+    if bad != 0 {
+        return bad;
+    }
+    let project = load(heap, io, fs, exec, clock);
+    let Project { records, root, file, status } = project;
+    var result = status;
+    var first = 0;
+    borrow records as &rb in {
+        let recs = buffer.bytes(rb);
+        if result == 0 {
+            result = check_compiler(heap, io, recs, ignore);
+        }
+        if result == 0 && count_of(recs, 'T', "", false) == 0 {
+            console.error_all(io, "`cancho.toml` has no [[test]] to run\n");
+            result = 1;
+        }
+        if result == 0 && only >= 0 && count_of(recs, 'T', arg(args, only), true) == 0 {
+            say_error(heap, io, "`cancho.toml` has no [[test]] named `", arg(args, only), "`");
+            result = 1;
+        }
+        if result == 0 {
+            result = needs_vcs(heap, io, recs);
+        }
+        var at = 0;
+        while at < len(recs) && result == 0 {
+            if lc.at(recs, at) == 'T' {
+                let ns = at + 2;
+                let ne = projfile.field_end(recs, ns, len(recs));
+                let name = recs[ns..ne];
+                let std_flag = lc.at(recs, ne + 1) == '1';
+                var stop = ne + 3;
+                while stop < len(recs) && lc.at(recs, stop) != 2 {
+                    stop = stop + 1;
+                }
+                let sources = recs[ne + 3..stop];
+                var wanted = only < 0;
+                if only >= 0 {
+                    wanted = bytes.equal(arg(args, only), name);
+                }
+                if wanted {
+                    borrow root as &root_b in {
+                        let found = sources_of(heap, io, fs, buffer.bytes(root_b), name, sources);
+                        let Sources { listed, broken } = found;
+                        if broken != 0 {
+                            result = 1;
+                        } else if std_flag && std_dir < 0 {
+                            say_error(heap, io, "`", name, "`: `std = true` needs `--std-dir DIR` in this command line");
+                            result = 2;
+                        } else {
+                            console.write_all(io, "== test ");
+                            console.write_all(io, name);
+                            console.write_all(io, "\n");
+                            var std_path = buffer.empty(heap, 0);
+                            if std_dir >= 0 {
+                                std_path = buffer.append(heap, std_path, arg(args, std_dir));
+                            }
+                            var clang = buffer.append(heap, buffer.empty(heap, 32), "/usr/bin/clang");
+                            if clang_at >= 0 {
+                                buffer.drop(heap, clang);
+                                clang = buffer.append(heap, buffer.empty(heap, 32), arg(args, clang_at));
+                            }
+                            var ran = 0;
+                            borrow listed as &pb in {
+                                borrow std_path as &sb in {
+                                    borrow clang as &kb in {
+                                        ran = clitest.test_set(heap, io, args, fs, exec, clock, buffer.bytes(pb), std_flag, buffer.bytes(sb), host, host_given, buffer.bytes(kb));
+                                    }
+                                }
+                            }
+                            buffer.drop(heap, std_path);
+                            buffer.drop(heap, clang);
+                            if ran != 0 && first == 0 {
+                                first = ran;
+                            }
+                            if ran != 0 && ran != 4 {
+                                result = ran;
+                            }
+                        }
+                        buffer.drop(heap, listed);
+                    }
+                }
+            }
+            at = after_record(recs, at);
+        }
+    }
+    buffer.drop(heap, records);
+    buffer.drop(heap, root);
+    buffer.drop(heap, file);
+    if result == 0 {
+        return first;
+    }
+    return result;
+}

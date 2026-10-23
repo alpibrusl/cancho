@@ -1,0 +1,1185 @@
+edition 7;
+module selfhost.projfile;
+
+// projfile.cho -- `cancho.toml` (`docs/package-system.md` section 8.2, `project.rs`), read by the command line in cancho (`docs/cli-in-cancho.md` section 20).
+//
+// A file of the subset of TOML a project file is written in: comments, tables (`[package]`, `[dependencies.NAME]`) and arrays of tables (`[[bin]]`, `[[test]]`), and keys
+// whose values are a string (basic, or literal), a boolean, or an array of strings. What is TOML and not read here (an inline table, a multi-line string, a dotted key, the
+// `\u` escape of a string) is a status 3, the command line cannot judge the file, and not a refusal of it. A key or a table the project file does not have is refused
+// (`unknown field`), as the Rust command does by `deny_unknown_fields`, and the checks of `load` follow in its order.
+//
+// The answer is the project as records, each ended by a byte 2, its fields separated by a NUL (the several `sources` of a program by a byte 1):
+//
+//     P NAME HAS CANCHO              the package: HAS is 1 if `cancho` is given
+//     D NAME GIT REV PATH            a dependency, in the order of their names
+//     B NAME STD HAS OUT SOURCES     a program: STD and HAS are 0 or 1
+//     T NAME STD SOURCES             a set of tests
+
+import std.buffer;
+import selfhost.lexcore as lc;
+import selfhost.satisfytext;
+
+pub res struct Parsed {
+    records: buffer.Buffer,
+    status: int,
+    why: buffer.Buffer,
+}
+
+// The kinds of entry the first pass makes: a header (`H`, then 0 for `[t]` or 1 for `[[t]]`, then the parts of the name separated by a byte 1) or a key (`K`, the
+// key, the type of the value (S string, B boolean, A array of strings, O another that is a scalar), and the value, the items of an array separated by a byte 1).
+// Each ends with a byte 2, and carries after it, as a decimal number and a NUL, the line it was on.
+
+fn is_space(c: int) -> [] bool {
+    return c == ' ' || c == 9;
+}
+
+fn is_bare(c: int) -> [] bool {
+    return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_' || c == '-';
+}
+
+// The position after the spaces at `p`.
+fn skip_space[&t](text: &t [byte], at: int) -> [] int {
+    var p = at;
+    while p < len(text) && is_space(lc.at(text, p)) {
+        p = p + 1;
+    }
+    return p;
+}
+
+// The position after a comment at `p` (up to, and not past, the end of its line), or `p`.
+fn skip_comment[&t](text: &t [byte], at: int) -> [] int {
+    var p = at;
+    if p < len(text) && lc.at(text, p) == '#' {
+        while p < len(text) && lc.at(text, p) != 10 {
+            p = p + 1;
+        }
+    }
+    return p;
+}
+
+// Where the lexer stopped: `e[0]` the kind (0 none, 1 refused, 3 not read), `e[1]` the position, `e[2]` the sentence.
+fn fail[&e](e: &!e [int], kind: int, at: int, what: int) -> [] int {
+    if e[0] == 0 {
+        e[0] = kind;
+        e[1] = at;
+        e[2] = what;
+    }
+    return 0 - 1;
+}
+
+fn sentence(what: int) -> [] &static [byte] {
+    if what == 1 {
+        return "unterminated string";
+    }
+    if what == 2 {
+        return "expected `=` after a key";
+    }
+    if what == 3 {
+        return "expected a key";
+    }
+    if what == 4 {
+        return "invalid table header";
+    }
+    if what == 5 {
+        return "expected a value";
+    }
+    if what == 6 {
+        return "expected a newline after a value";
+    }
+    if what == 7 {
+        return "unterminated array";
+    }
+    if what == 8 {
+        return "invalid escape in a string";
+    }
+    if what == 9 {
+        return "a string cannot hold a newline";
+    }
+    if what == 20 {
+        return "an inline table is not read by this command line";
+    }
+    if what == 21 {
+        return "a multi-line string is not read by this command line";
+    }
+    if what == 22 {
+        return "a dotted key is not read by this command line";
+    }
+    if what == 23 {
+        return "the `\\u` escape is not read by this command line";
+    }
+    if what == 24 {
+        return "an array inside an array is not read by this command line";
+    }
+    if what == 25 {
+        return "an array of tables inside a table is not read by this command line";
+    }
+    return "invalid";
+}
+
+// A string whose opening quote is at `at`: its text is appended to `out`, and the position after it is answered (or -1).
+fn read_string[&h, &t, &e](heap: &!h Heap, text: &t [byte], at: int, out: buffer.Buffer, e: &!e [int]) -> [heap] (int, buffer.Buffer) {
+    var b = out;
+    let quote = lc.at(text, at);
+    if lc.at(text, at + 1) == quote && lc.at(text, at + 2) == quote {
+        return (fail(e, 3, at, 21), b);
+    }
+    var p = at + 1;
+    while p < len(text) {
+        let c = lc.at(text, p);
+        if c == quote {
+            return (p + 1, b);
+        }
+        if c == 10 || c == 13 {
+            return (fail(e, 1, p, 9), b);
+        }
+        if quote == '"' && c == 92 {
+            let n = lc.at(text, p + 1);
+            if n == 'n' {
+                b = buffer.push(heap, b, byte_of(10));
+            } else if n == 't' {
+                b = buffer.push(heap, b, byte_of(9));
+            } else if n == 'r' {
+                b = buffer.push(heap, b, byte_of(13));
+            } else if n == 'b' {
+                b = buffer.push(heap, b, byte_of(8));
+            } else if n == 'f' {
+                b = buffer.push(heap, b, byte_of(12));
+            } else if n == 34 {
+                b = buffer.push(heap, b, byte_of(34));
+            } else if n == 92 {
+                b = buffer.push(heap, b, byte_of(92));
+            } else if n == 'u' || n == 'U' {
+                return (fail(e, 3, p, 23), b);
+            } else {
+                return (fail(e, 1, p, 8), b);
+            }
+            p = p + 2;
+        } else {
+            b = buffer.push(heap, b, text[p]);
+            p = p + 1;
+        }
+    }
+    return (fail(e, 1, at, 1), b);
+}
+
+// A key (bare or quoted) at `at`: appended to `out`; the position after it, or -1.
+fn read_key[&h, &t, &e](heap: &!h Heap, text: &t [byte], at: int, out: buffer.Buffer, e: &!e [int]) -> [heap] (int, buffer.Buffer) {
+    var b = out;
+    var p = at;
+    if p < len(text) && (lc.at(text, p) == '"' || lc.at(text, p) == 39) {
+        return read_string(heap, text, p, b, e);
+    }
+    if p >= len(text) || !is_bare(lc.at(text, p)) {
+        return (fail(e, 1, p, 3), b);
+    }
+    while p < len(text) && is_bare(lc.at(text, p)) {
+        b = buffer.push(heap, b, text[p]);
+        p = p + 1;
+    }
+    return (p, b);
+}
+
+// The position after the spaces, newlines and comments at `at`.
+fn skip_blank[&t](text: &t [byte], at: int) -> [] int {
+    var p = at;
+    var more = true;
+    while more {
+        more = false;
+        let q = skip_space(text, p);
+        let r = skip_comment(text, q);
+        var s = r;
+        if s < len(text) && (lc.at(text, s) == 10 || lc.at(text, s) == 13) {
+            s = s + 1;
+        }
+        if s != p {
+            p = s;
+            more = true;
+        }
+    }
+    return p;
+}
+
+// An array whose `[` is at `at`: appended to `out` as `A`, a NUL and its items separated by a byte 1 (`O` and the text `array` if an item is not a string); the
+// position after it, or -1.
+fn read_array[&h, &t, &e](heap: &!h Heap, text: &t [byte], at: int, out: buffer.Buffer, e: &!e [int]) -> [heap] (int, buffer.Buffer) {
+    var items = buffer.empty(heap, 32);
+    var all_strings = true;
+    var count = 0;
+    var p = skip_blank(text, at + 1);
+    var done = false;
+    var failed = false;
+    while !done && !failed {
+        if p >= len(text) {
+            fail(e, 1, at, 7);
+            failed = true;
+        } else if lc.at(text, p) == ']' {
+            p = p + 1;
+            done = true;
+        } else {
+            var ready = true;
+            if count > 0 {
+                if lc.at(text, p) != ',' {
+                    fail(e, 1, p, 6);
+                    failed = true;
+                    ready = false;
+                } else {
+                    p = skip_blank(text, p + 1);
+                    if p >= len(text) {
+                        fail(e, 1, at, 7);
+                        failed = true;
+                        ready = false;
+                    } else if lc.at(text, p) == ']' {
+                        p = p + 1;
+                        done = true;
+                        ready = false;
+                    } else {
+                        items = buffer.push(heap, items, byte_of(1));
+                    }
+                }
+            }
+            if ready {
+                let item = lc.at(text, p);
+                if item == '"' || item == 39 {
+                    let (after, grown) = read_string(heap, text, p, items, e);
+                    items = grown;
+                    if after < 0 {
+                        failed = true;
+                    } else {
+                        p = skip_blank(text, after);
+                    }
+                } else if item == '[' {
+                    fail(e, 3, p, 24);
+                    failed = true;
+                } else if item == '{' {
+                    fail(e, 3, p, 20);
+                    failed = true;
+                } else {
+                    // A scalar that is not a string: skipped, and the array is not one of strings.
+                    all_strings = false;
+                    let start = p;
+                    while p < len(text) && !is_space(lc.at(text, p)) && lc.at(text, p) != ',' && lc.at(text, p) != ']' && lc.at(text, p) != 10 && lc.at(text, p) != 13 && lc.at(text, p) != '#' {
+                        p = p + 1;
+                    }
+                    if p == start {
+                        fail(e, 1, p, 5);
+                        failed = true;
+                    }
+                    p = skip_blank(text, p);
+                }
+                count = count + 1;
+            }
+        }
+    }
+    var b = out;
+    if failed {
+        buffer.drop(heap, items);
+        return (0 - 1, b);
+    }
+    if all_strings {
+        b = buffer.append(heap, b, "A\0");
+        borrow items as &ib in {
+            b = buffer.append(heap, b, buffer.bytes(ib));
+        }
+    } else {
+        b = buffer.append(heap, b, "O\0array");
+    }
+    buffer.drop(heap, items);
+    return (p, b);
+}
+
+// A value at `at`: its type letter, a NUL and its text are appended to `out`; the position after it, or -1.
+fn read_value[&h, &t, &e](heap: &!h Heap, text: &t [byte], at: int, out: buffer.Buffer, e: &!e [int]) -> [heap] (int, buffer.Buffer) {
+    var b = out;
+    let c = lc.at(text, at);
+    if c == '"' || c == 39 {
+        b = buffer.append(heap, b, "S\0");
+        return read_string(heap, text, at, b, e);
+    }
+    if c == '{' {
+        return (fail(e, 3, at, 20), b);
+    }
+    if c == '[' {
+        return read_array(heap, text, at, b, e);
+    }
+    // A boolean, a number or a date: up to a space, a comma, a comment or the end of the line.
+    var p = at;
+    while p < len(text) && !is_space(lc.at(text, p)) && lc.at(text, p) != 10 && lc.at(text, p) != 13 && lc.at(text, p) != '#' && lc.at(text, p) != ',' {
+        p = p + 1;
+    }
+    if p == at {
+        return (fail(e, 1, at, 5), b);
+    }
+    if lc.spells(text, at, p, "true") {
+        b = buffer.append(heap, b, "B\0");
+        return (p, buffer.push(heap, b, byte_of('1')));
+    }
+    if lc.spells(text, at, p, "false") {
+        b = buffer.append(heap, b, "B\0");
+        return (p, buffer.push(heap, b, byte_of('0')));
+    }
+    b = buffer.append(heap, b, "O\0");
+    return (p, buffer.append(heap, b, text[at..p]));
+}
+
+// The rest of the line at `at`, after a header or a value: spaces and a comment are allowed; the position after the newline (or the end), or -1.
+fn end_of_line[&t, &e](text: &t [byte], at: int, e: &!e [int]) -> [] int {
+    let p = skip_comment(text, skip_space(text, at));
+    if p >= len(text) {
+        return p;
+    }
+    if lc.at(text, p) == 13 && lc.at(text, p + 1) == 10 {
+        return p + 2;
+    }
+    if lc.at(text, p) == 10 {
+        return p + 1;
+    }
+    return fail(e, 1, p, 6);
+}
+
+// The decimal digits of `n` appended to `out`.
+fn number[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    return buffer.push_nat(heap, out, n);
+}
+
+// The first pass: the headers and keys of the file as entries, each `H` or `K`, a NUL, the offset in the text as a decimal number, a NUL, and then for a header 0 or 1 (for
+// `[[`), a NUL and the parts of its name separated by a byte 1; for a key the key, a NUL, the letter of its type, a NUL and its value; each ended by a byte 3.
+fn lex[&h, &t, &e](heap: &!h Heap, text: &t [byte], e: &!e [int]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    var p = skip_blank(text, 0);
+    while p < len(text) && e[0] == 0 {
+        let start = p;
+        if lc.at(text, p) == '[' {
+            var array = false;
+            p = p + 1;
+            if lc.at(text, p) == '[' {
+                array = true;
+                p = p + 1;
+            }
+            out = number(heap, buffer.append(heap, out, "H\0"), start);
+            out = buffer.push(heap, out, byte_of(0));
+            if array {
+                out = buffer.push(heap, out, byte_of('1'));
+            } else {
+                out = buffer.push(heap, out, byte_of('0'));
+            }
+            out = buffer.push(heap, out, byte_of(0));
+            var more = true;
+            while more && e[0] == 0 {
+                p = skip_space(text, p);
+                let (after, grown) = read_key(heap, text, p, out, e);
+                out = grown;
+                p = after;
+                if p >= 0 {
+                    p = skip_space(text, p);
+                    if p < len(text) && lc.at(text, p) == '.' {
+                        out = buffer.push(heap, out, byte_of(1));
+                        p = p + 1;
+                    } else {
+                        more = false;
+                    }
+                }
+            }
+            if e[0] == 0 {
+                if lc.at(text, p) != ']' || array && lc.at(text, p + 1) != ']' {
+                    fail(e, 1, p, 4);
+                } else {
+                    var step = 1;
+                    if array {
+                        step = 2;
+                    }
+                    p = end_of_line(text, p + step, e);
+                }
+            }
+        } else {
+            out = number(heap, buffer.append(heap, out, "K\0"), start);
+            out = buffer.push(heap, out, byte_of(0));
+            let (after, grown) = read_key(heap, text, p, out, e);
+            out = grown;
+            p = after;
+            if e[0] == 0 {
+                p = skip_space(text, p);
+                if p < len(text) && lc.at(text, p) == '.' {
+                    fail(e, 3, p, 22);
+                } else if p >= len(text) || lc.at(text, p) != '=' {
+                    fail(e, 1, p, 2);
+                } else {
+                    p = skip_space(text, p + 1);
+                    if p >= len(text) || lc.at(text, p) == 10 || lc.at(text, p) == 13 || lc.at(text, p) == '#' {
+                        fail(e, 1, p, 5);
+                    } else {
+                        out = buffer.push(heap, out, byte_of(0));
+                        let (next, more_out) = read_value(heap, text, p, out, e);
+                        out = more_out;
+                        if next >= 0 {
+                            p = end_of_line(text, next, e);
+                        }
+                    }
+                }
+            }
+        }
+        if e[0] == 0 {
+            out = buffer.push(heap, out, byte_of(3));
+            p = skip_blank(text, p);
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------- the second pass ---
+
+// The field `k` of the entry that is `ent[from..to]`, its fields separated by NULs: where it starts, answered with `field_end`.
+pub fn field_start[&t](ent: &t [byte], from: int, to: int, k: int) -> [] int {
+    var p = from;
+    var seen = 0;
+    while seen < k && p < to {
+        if lc.at(ent, p) == 0 {
+            seen = seen + 1;
+        }
+        p = p + 1;
+    }
+    return p;
+}
+
+pub fn field_end[&t](ent: &t [byte], at: int, to: int) -> [] int {
+    var p = at;
+    while p < to && lc.at(ent, p) != 0 {
+        p = p + 1;
+    }
+    return p;
+}
+
+// What a table of kind `kind` (1 package, 2 dependency, 3 program, 4 set of tests) has as fields: the name of the field of index `i`, and the letter of its type.
+fn field_name(kind: int, i: int) -> [] &static [byte] {
+    if kind == 1 {
+        if i == 0 {
+            return "name";
+        }
+        return "cancho";
+    }
+    if kind == 2 {
+        if i == 0 {
+            return "git";
+        }
+        if i == 1 {
+            return "rev";
+        }
+        return "path";
+    }
+    if i == 0 {
+        return "name";
+    }
+    if i == 1 {
+        return "sources";
+    }
+    if i == 2 {
+        return "std";
+    }
+    return "out";
+}
+
+fn field_count(kind: int) -> [] int {
+    if kind == 1 {
+        return 2;
+    }
+    if kind == 2 {
+        return 3;
+    }
+    if kind == 3 {
+        return 4;
+    }
+    return 3;
+}
+
+fn field_letter(kind: int, i: int) -> [] int {
+    if kind == 3 || kind == 4 {
+        if i == 1 {
+            return 'A';
+        }
+        if i == 2 {
+            return 'B';
+        }
+    }
+    return 'S';
+}
+
+// How many of the fields the table needs (the first ones): `name`; `git` and `rev`; `name` and `sources`.
+fn required(kind: int) -> [] int {
+    if kind == 1 {
+        return 1;
+    }
+    if kind == 2 {
+        return 2;
+    }
+    return 2;
+}
+
+fn expected(kind: int) -> [] &static [byte] {
+    if kind == 0 {
+        return "expected one of `package`, `dependencies`, `bin`, `test`";
+    }
+    if kind == 1 {
+        return "expected `name` or `cancho`";
+    }
+    if kind == 2 {
+        return "expected one of `git`, `rev`, `path`";
+    }
+    if kind == 3 {
+        return "expected one of `name`, `sources`, `std`, `out`";
+    }
+    return "expected one of `name`, `sources`, `std`";
+}
+
+// The line and column (from 1) of the offset `at`.
+fn line_column[&t](text: &t [byte], at: int) -> [] (int, int) {
+    var line = 1;
+    var column = 1;
+    var p = 0;
+    while p < at && p < len(text) {
+        if lc.at(text, p) == 10 {
+            line = line + 1;
+            column = 1;
+        } else {
+            column = column + 1;
+        }
+        p = p + 1;
+    }
+    return (line, column);
+}
+
+// `TOML parse error at line L, column C`, a newline and `what`, as the first lines of the message of the TOML library.
+fn toml_error[&h, &t, &w](heap: &!h Heap, text: &t [byte], at: int, what: &w [byte]) -> [heap] buffer.Buffer {
+    let (line, column) = line_column(text, at);
+    var b = buffer.push_nat(heap, buffer.append(heap, buffer.empty(heap, 96), "TOML parse error at line "), line);
+    b = buffer.push_nat(heap, buffer.append(heap, b, ", column "), column);
+    b = buffer.push(heap, b, byte_of(10));
+    return buffer.append(heap, b, what);
+}
+
+// The decimal number written at `ent[from..to]`.
+fn read_number[&t](ent: &t [byte], from: int, to: int) -> [] int {
+    var n = 0;
+    var p = from;
+    while p < to {
+        n = n * 10 + lc.at(ent, p) - '0';
+        p = p + 1;
+    }
+    return n;
+}
+
+// Is the text `ent[from..to]` the word `w`?
+pub fn is_word[&t, &w](ent: &t [byte], from: int, to: int, word: &w [byte]) -> [] bool {
+    return to - from == len(word) && lc.spells(ent, from, to, word);
+}
+
+// Is the `name` one of letters, digits, `-`, `_` and `.`, and not empty?
+fn name_ok[&n](name: &n [byte]) -> [] bool {
+    if len(name) == 0 {
+        return false;
+    }
+    var k = 0;
+    while k < len(name) {
+        let c = lc.at(name, k);
+        if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '-' || c == '_' || c == '.') {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// A full commit hash: 40 or 64 digits of lowercase hexadecimal.
+fn revision_ok[&r](rev: &r [byte]) -> [] bool {
+    if len(rev) != 40 && len(rev) != 64 {
+        return false;
+    }
+    var k = 0;
+    while k < len(rev) {
+        let c = lc.at(rev, k);
+        if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// Is `path` a relative path inside a repository: not empty, not absolute, and no component but a name (a leading `.` or any `..` is not one)?
+fn path_ok[&p](path: &p [byte]) -> [] bool {
+    if len(path) == 0 || lc.at(path, 0) == '/' {
+        return false;
+    }
+    var start = 0;
+    var first = true;
+    while start <= len(path) {
+        var end = start;
+        while end < len(path) && lc.at(path, end) != '/' {
+            end = end + 1;
+        }
+        let part = path[start..end];
+        if is_word(part, 0, len(part), "..") {
+            return false;
+        }
+        if first && is_word(part, 0, len(part), ".") {
+            return false;
+        }
+        if end > start {
+            first = false;
+        }
+        start = end + 1;
+    }
+    return true;
+}
+
+fn appended[&h, &a, &b](heap: &!h Heap, out: buffer.Buffer, before: &a [byte], name: &b [byte], after: &static [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.append(heap, buffer.append(heap, out, before), name), after);
+}
+
+// The checks `load` makes of a project, in its order, on the records: 0, or the message of the first that fails.
+fn check_records[&h, &r](heap: &!h Heap, recs: &r [byte], why: buffer.Buffer) -> [heap] (int, buffer.Buffer) {
+    var w = why;
+    var seen_bins = buffer.empty(heap, 32);
+    var seen_tests = buffer.empty(heap, 32);
+    var status = 0;
+    var at = 0;
+    while at < len(recs) && status == 0 {
+        let end = field_end(recs, at, len(recs));
+        var stop = at;
+        while stop < len(recs) && lc.at(recs, stop) != 2 {
+            stop = stop + 1;
+        }
+        let kind = lc.at(recs, at);
+        let a1 = field_start(recs, at, stop, 1);
+        let e1 = field_end(recs, a1, stop);
+        let name = recs[a1..e1];
+        if kind == 'P' {
+            if !name_ok(name) {
+                w = appended(heap, w, "package name `", name, "` must be letters, digits, `-`, `_` or `.`");
+                status = 2;
+            } else {
+                let has = lc.at(recs, e1 + 1) == '1';
+                let c0 = e1 + 3;
+                if has && !revision_ok(recs[c0..stop]) {
+                    w = appended(heap, w, "[package] cancho: must be a full commit hash (40 or 64 lowercase hex digits), found `", recs[c0..stop], "`");
+                    status = 2;
+                }
+            }
+        } else if kind == 'D' {
+            let a2 = e1 + 1;
+            let e2 = field_end(recs, a2, stop);
+            let a3 = e2 + 1;
+            let e3 = field_end(recs, a3, stop);
+            let a4 = e3 + 1;
+            if !name_ok(name) {
+                w = appended(heap, w, "dependency name `", name, "` must be letters, digits, `-`, `_` or `.`");
+                status = 2;
+            } else {
+                var origin = buffer.empty(heap, 0);
+                if !revision_ok(recs[a3..e3]) {
+                    origin = appended(heap, origin, "origin `rev` must be a full commit hash (40 or 64 lowercase hex digits), found `", recs[a3..e3], "`; a branch or tag name moves, so a lock never holds one");
+                } else if e2 == a2 || lc.at(recs, a2) == '-' || e2 - a2 >= 5 && lc.spells(recs, a2, a2 + 5, "ext::") {
+                    origin = appended(heap, origin, "origin `git` is not a repository location: `", recs[a2..e2], "`");
+                } else if !path_ok(recs[a4..stop]) {
+                    origin = appended(heap, origin, "origin `path` must be a relative path inside the repository, found `", recs[a4..stop], "`");
+                }
+                borrow origin as &ob in {
+                    if len(buffer.bytes(ob)) > 0 {
+                        w = appended(heap, w, "[dependencies.", name, "]: ");
+                        w = buffer.append(heap, w, buffer.bytes(ob));
+                        status = 2;
+                    }
+                }
+                buffer.drop(heap, origin);
+            }
+        } else {
+            // A program or a set of tests: its name must be of letters, digits and the like, and unique among its kind; and it must have sources.
+            var seen = buffer.empty(heap, 0);
+            var bin = kind == 'B';
+            borrow seen_bins as &sb in {
+                borrow seen_tests as &st in {
+                    var unique = true;
+                    var list = buffer.bytes(st);
+                    if bin {
+                        list = buffer.bytes(sb);
+                    }
+                    var q = 0;
+                    while q < len(list) {
+                        let qe = field_end(list, q, len(list));
+                        if qe - q == len(name) && lc.spells(list, q, qe, name) {
+                            unique = false;
+                        }
+                        q = qe + 1;
+                    }
+                    var label = "[[test]]";
+                    if bin {
+                        label = "[[bin]]";
+                    }
+                    if !name_ok(name) || !unique {
+                        w = appended(heap, w, label, " name `", "");
+                        w = appended(heap, w, "", name, "` must be unique, of letters, digits, `-`, `_` or `.`");
+                        status = 2;
+                    }
+                }
+            }
+            buffer.drop(heap, seen);
+            if status == 0 {
+                // The sources are the last field.
+                var last = stop;
+                while last > at && lc.at(recs, last - 1) != 0 {
+                    last = last - 1;
+                }
+                if last == stop {
+                    var label = "[[test]] `";
+                    if bin {
+                        label = "[[bin]] `";
+                    }
+                    w = appended(heap, w, label, name, "` has no `sources`");
+                    status = 2;
+                } else if bin {
+                    seen_bins = buffer.push(heap, buffer.append(heap, seen_bins, name), byte_of(0));
+                } else {
+                    seen_tests = buffer.push(heap, buffer.append(heap, seen_tests, name), byte_of(0));
+                }
+            }
+        }
+        at = stop + 1;
+    }
+    buffer.drop(heap, seen_bins);
+    buffer.drop(heap, seen_tests);
+    return (status, w);
+}
+
+
+// ----------------------------------------------------------------------------------------------------------------------------------- the file ---
+
+// The record of one table, from its key entries `en[from..to]` (each ended by a byte 3): the table is of kind `kind` (1 package, 2 dependency, 3 program, 4 set of tests,
+// 0 the keys before any table), `name` is the name of a dependency, and `header_at` the offset of its header in the text. The keys are checked as the TOML library checks
+// them against the structure (an unknown one, one of the wrong type, one twice; then one the table needs and has not); `status` is 1 and `why` the message if one fails.
+// `old` is dropped and `new` is what is answered.
+fn replaced[&h](heap: &!h Heap, old: buffer.Buffer, new: buffer.Buffer) -> [heap] buffer.Buffer {
+    buffer.drop(heap, old);
+    return new;
+}
+
+res struct Table {
+    rec: buffer.Buffer,
+    said: buffer.Buffer,
+    result: int,
+}
+
+fn type_name(letter: int) -> [] &static [byte] {
+    if letter == 'S' {
+        return "a string";
+    }
+    if letter == 'B' {
+        return "a boolean";
+    }
+    return "an array of strings";
+}
+
+fn table_record[&h, &t, &n, &m](heap: &!h Heap, text: &t [byte], en: &n [byte], from: int, to: int, kind: int, name: &m [byte], header_at: int) -> [heap] Table {
+    let marks = box_slice(heap, 24, 0);
+    var why = buffer.empty(heap, 64);
+    var status = 0;
+    var record = buffer.empty(heap, 64);
+    borrow mut marks as &!mb in {
+        // marks[i]: the value of field i starts at, marks[8 + i]: it ends at, marks[16 + i]: 1 if the field is given.
+        let m = contents(mb);
+        var at = from;
+        while at < to && status == 0 {
+            var stop = at;
+            while stop < to && lc.at(en, stop) != 3 {
+                stop = stop + 1;
+            }
+            let key_offset = read_number(en, field_start(en, at, stop, 1), field_end(en, field_start(en, at, stop, 1), stop));
+            let key_at = field_start(en, at, stop, 2);
+            let key_end = field_end(en, key_at, stop);
+            let key = en[key_at..key_end];
+            var index = 0 - 1;
+            if kind >= 1 && kind <= 4 {
+                var i = 0;
+                while i < field_count(kind) {
+                    if is_word(key, 0, len(key), field_name(kind, i)) {
+                        index = i;
+                    }
+                    i = i + 1;
+                }
+            }
+            if index < 0 {
+                if kind == 0 && (is_word(key, 0, len(key), "package") || is_word(key, 0, len(key), "dependencies") || is_word(key, 0, len(key), "bin") || is_word(key, 0, len(key), "test")) {
+                    why = replaced(heap, why, toml_error(heap, text, key_offset, "invalid type: expected a table for this key"));
+                } else {
+                    var message = buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.empty(heap, 64), "unknown field `"), key), "`, ");
+                    message = buffer.append(heap, message, expected(kind));
+                    borrow message as &mb2 in {
+                        why = replaced(heap, why, toml_error(heap, text, key_offset, buffer.bytes(mb2)));
+                    }
+                    buffer.drop(heap, message);
+                }
+                status = 1;
+            } else if m[16 + index] != 0 {
+                var message = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 32), "duplicate key `"), key);
+                message = buffer.push(heap, message, byte_of('`'));
+                borrow message as &mb2 in {
+                    why = replaced(heap, why, toml_error(heap, text, key_offset, buffer.bytes(mb2)));
+                }
+                buffer.drop(heap, message);
+                status = 1;
+            } else if lc.at(en, key_end + 1) != field_letter(kind, index) {
+                var message = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 48), "invalid type for `"), key);
+                message = buffer.append(heap, buffer.append(heap, message, "`: expected "), type_name(field_letter(kind, index)));
+                borrow message as &mb2 in {
+                    why = replaced(heap, why, toml_error(heap, text, key_offset, buffer.bytes(mb2)));
+                }
+                buffer.drop(heap, message);
+                status = 1;
+            } else {
+                m[index] = key_end + 3;
+                m[8 + index] = stop;
+                m[16 + index] = 1;
+            }
+            at = stop + 1;
+        }
+        if status == 0 && kind >= 1 {
+            var i = 0;
+            while i < required(kind) && status == 0 {
+                if m[16 + i] == 0 {
+                    var message = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 32), "missing field `"), field_name(kind, i));
+                    message = buffer.push(heap, message, byte_of('`'));
+                    borrow message as &mb2 in {
+                        why = replaced(heap, why, toml_error(heap, text, header_at, buffer.bytes(mb2)));
+                    }
+                    buffer.drop(heap, message);
+                    status = 1;
+                }
+                i = i + 1;
+            }
+        }
+        if status == 0 && kind >= 1 {
+            // The record.
+            if kind == 1 {
+                record = buffer.append(heap, buffer.append(heap, record, "P\0"), en[m[0]..m[8]]);
+                record = buffer.push(heap, record, byte_of(0));
+                if m[17] != 0 {
+                    record = buffer.append(heap, buffer.append(heap, record, "1\0"), en[m[1]..m[9]]);
+                } else {
+                    record = buffer.append(heap, record, "0\0");
+                }
+            } else if kind == 2 {
+                record = buffer.append(heap, buffer.append(heap, record, "D\0"), name);
+                record = buffer.append(heap, buffer.append(heap, record, "\0"), en[m[0]..m[8]]);
+                record = buffer.append(heap, buffer.append(heap, record, "\0"), en[m[1]..m[9]]);
+                record = buffer.push(heap, record, byte_of(0));
+                if m[18] != 0 {
+                    record = buffer.append(heap, record, en[m[2]..m[10]]);
+                } else {
+                    record = buffer.append(heap, record, ".cancho-vcs");
+                }
+            } else {
+                var tag = "T\0";
+                if kind == 3 {
+                    tag = "B\0";
+                }
+                record = buffer.append(heap, buffer.append(heap, record, tag), en[m[0]..m[8]]);
+                record = buffer.push(heap, record, byte_of(0));
+                if m[18] != 0 && lc.at(en, m[2]) == '1' {
+                    record = buffer.append(heap, record, "1\0");
+                } else {
+                    record = buffer.append(heap, record, "0\0");
+                }
+                if kind == 3 {
+                    if m[19] != 0 {
+                        record = buffer.push(heap, buffer.append(heap, buffer.append(heap, record, "1\0"), en[m[3]..m[11]]), byte_of(0));
+                    } else {
+                        record = buffer.append(heap, record, "0\0\0");
+                    }
+                }
+                record = buffer.append(heap, record, en[m[1]..m[9]]);
+            }
+            record = buffer.push(heap, record, byte_of(2));
+        }
+    }
+    unbox_slice(heap, marks);
+    return Table { rec: record, said: why, result: status };
+}
+
+// The offset of the end (the byte 3) of the entry that starts at `at`.
+fn entry_stop[&n](en: &n [byte], at: int) -> [] int {
+    var p = at;
+    while p < len(en) && lc.at(en, p) != 3 {
+        p = p + 1;
+    }
+    return p;
+}
+
+// Where the next header starts at or after `at`, or the length of the entries.
+fn next_header[&n](en: &n [byte], at: int) -> [] int {
+    var p = at;
+    while p < len(en) && lc.at(en, p) != 'H' {
+        p = entry_stop(en, p) + 1;
+    }
+    return p;
+}
+
+// What is wrong with the header whose parts are `first` and `second`, by `code`, as the message of the TOML library says it.
+fn header_message[&h, &a, &b](heap: &!h Heap, code: int, first: &a [byte], second: &b [byte]) -> [heap] buffer.Buffer {
+    var m = buffer.empty(heap, 64);
+    if code == 11 {
+        return buffer.append(heap, m, "invalid type: sequence, expected a map");
+    }
+    if code == 12 {
+        m = appended(heap, m, "unknown field `", second, "`, ");
+        return buffer.append(heap, m, expected(1));
+    }
+    if code == 13 {
+        return appended(heap, m, "duplicate key `", first, "`");
+    }
+    if code == 15 {
+        return buffer.append(heap, m, "invalid type: map, expected a sequence");
+    }
+    m = appended(heap, m, "unknown field `", first, "`, ");
+    return buffer.append(heap, m, expected(0));
+}
+
+// The records of `deps` (written in the order of the file) in the order of the names of the dependencies.
+fn sorted[&h, &d](heap: &!h Heap, deps: &d [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(deps) + 1);
+    var last_at = 0 - 1;
+    var more = true;
+    while more {
+        var best = 0 - 1;
+        var at = 0;
+        while at < len(deps) {
+            var stop = at;
+            while stop < len(deps) && lc.at(deps, stop) != 2 {
+                stop = stop + 1;
+            }
+            let ns = at + 2;
+            let ne = field_end(deps, ns, stop);
+            var after_last = true;
+            if last_at >= 0 {
+                let ls = last_at + 2;
+                let le = field_end(deps, ls, len(deps));
+                after_last = satisfytext.compare(deps[ns..ne], deps[ls..le]) > 0;
+            }
+            if after_last {
+                var smaller = best < 0;
+                if !smaller {
+                    let bs = best + 2;
+                    let be = field_end(deps, bs, len(deps));
+                    smaller = satisfytext.compare(deps[ns..ne], deps[bs..be]) < 0;
+                }
+                if smaller {
+                    best = at;
+                }
+            }
+            at = stop + 1;
+        }
+        if best < 0 {
+            more = false;
+        } else {
+            var stop = best;
+            while stop < len(deps) && lc.at(deps, stop) != 2 {
+                stop = stop + 1;
+            }
+            out = buffer.append(heap, out, deps[best..stop + 1]);
+            last_at = best;
+        }
+    }
+    return out;
+}
+
+// The project that `text` is: see the top of this file. `status` is 0 (the records), 1 (the text is not a project file: `why` is what the TOML library would say, in
+// its first lines), 2 (it is one that `load` refuses: `why` goes after the name of the file) or 3 (a TOML this command line does not read: `why` says which).
+pub fn parse[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] Parsed {
+    let marks = box_slice(heap, 4, 0);
+    var ent = buffer.empty(heap, 0);
+    var lexed = 0;
+    var where_at = 0;
+    var what = 0;
+    borrow mut marks as &!mb in {
+        let e = contents(mb);
+        buffer.drop(heap, ent);
+        ent = lex(heap, text, e);
+        lexed = e[0];
+        where_at = e[1];
+        what = e[2];
+    }
+    unbox_slice(heap, marks);
+    if lexed == 3 {
+        buffer.drop(heap, ent);
+        return Parsed { records: buffer.empty(heap, 0), status: 3, why: buffer.append(heap, buffer.empty(heap, 64), sentence(what)) };
+    }
+    if lexed != 0 {
+        buffer.drop(heap, ent);
+        return Parsed { records: buffer.empty(heap, 0), status: 1, why: toml_error(heap, text, where_at, sentence(what)) };
+    }
+    var pk = buffer.empty(heap, 64);
+    var deps = buffer.empty(heap, 64);
+    var bins = buffer.empty(heap, 64);
+    var tests = buffer.empty(heap, 64);
+    var why = buffer.empty(heap, 64);
+    var status = 0;
+    var seen_package = false;
+    borrow ent as &eb in {
+        let en = buffer.bytes(eb);
+        // The keys before the first table.
+        var at = next_header(en, 0);
+        let none = buffer.empty(heap, 0);
+        borrow none as &nb in {
+            let before = table_record(heap, text, en, 0, at, 0, buffer.bytes(nb), 0);
+            let Table { rec, said, result } = before;
+            buffer.drop(heap, rec);
+            buffer.drop(heap, why);
+            why = said;
+            status = result;
+        }
+        buffer.drop(heap, none);
+        while at < len(en) && status == 0 {
+            let stop = entry_stop(en, at);
+            let header_at = read_number(en, field_start(en, at, stop, 1), field_end(en, field_start(en, at, stop, 1), stop));
+            let array = lc.at(en, field_start(en, at, stop, 2)) == '1';
+            let parts_at = field_start(en, at, stop, 3);
+            var first_end = parts_at;
+            while first_end < stop && lc.at(en, first_end) != 1 {
+                first_end = first_end + 1;
+            }
+            var second_end = first_end + 1;
+            while second_end < stop && lc.at(en, second_end) != 1 {
+                second_end = second_end + 1;
+            }
+            let has_second = first_end < stop;
+            let has_third = second_end < stop;
+            let first = en[parts_at..first_end];
+            var second = en[parts_at..parts_at];
+            if has_second {
+                second = en[first_end + 1..second_end];
+            }
+            var kind = 0;
+            var problem = 0;
+            if is_word(first, 0, len(first), "package") {
+                if array {
+                    problem = 11;
+                } else if has_second {
+                    problem = 12;
+                } else if seen_package {
+                    problem = 13;
+                } else {
+                    kind = 1;
+                    seen_package = true;
+                }
+            } else if is_word(first, 0, len(first), "dependencies") {
+                if array {
+                    problem = 11;
+                } else if !has_second {
+                    kind = 5;
+                } else if has_third {
+                    problem = 14;
+                } else {
+                    kind = 2;
+                    borrow deps as &db in {
+                        let dl = buffer.bytes(db);
+                        var q = 0;
+                        while q < len(dl) {
+                            let ns = q + 2;
+                            let ne = field_end(dl, ns, len(dl));
+                            if ne - ns == len(second) && lc.spells(dl, ns, ne, second) {
+                                problem = 13;
+                            }
+                            var rec_end = ne;
+                            while rec_end < len(dl) && lc.at(dl, rec_end) != 2 {
+                                rec_end = rec_end + 1;
+                            }
+                            q = rec_end + 1;
+                        }
+                    }
+                }
+            } else if is_word(first, 0, len(first), "bin") || is_word(first, 0, len(first), "test") {
+                if has_second {
+                    problem = 14;
+                } else if !array {
+                    problem = 15;
+                } else if lc.at(first, 0) == 'b' {
+                    kind = 3;
+                } else {
+                    kind = 4;
+                }
+            } else {
+                problem = 16;
+            }
+            let after = next_header(en, stop + 1);
+            if problem == 14 {
+                status = 3;
+                buffer.drop(heap, why);
+                why = buffer.append(heap, buffer.empty(heap, 64), "a table inside a table of a project file is not read by this command line");
+            } else if problem != 0 {
+                status = 1;
+                let said = header_message(heap, problem, first, second);
+                borrow said as &sd in {
+                    buffer.drop(heap, why);
+                    why = toml_error(heap, text, header_at, buffer.bytes(sd));
+                }
+                buffer.drop(heap, said);
+            } else {
+                let made = table_record(heap, text, en, stop + 1, after, kind, second, header_at);
+                let Table { rec, said, result } = made;
+                if result != 0 {
+                    status = 1;
+                    buffer.drop(heap, why);
+                    why = said;
+                } else {
+                    buffer.drop(heap, said);
+                    borrow rec as &rb in {
+                        if kind == 1 {
+                            pk = buffer.append(heap, pk, buffer.bytes(rb));
+                        } else if kind == 2 {
+                            deps = buffer.append(heap, deps, buffer.bytes(rb));
+                        } else if kind == 3 {
+                            bins = buffer.append(heap, bins, buffer.bytes(rb));
+                        } else if kind == 4 {
+                            tests = buffer.append(heap, tests, buffer.bytes(rb));
+                        }
+                    }
+                }
+                buffer.drop(heap, rec);
+            }
+            at = after;
+        }
+    }
+    buffer.drop(heap, ent);
+    if status == 0 && !seen_package {
+        status = 1;
+        buffer.drop(heap, why);
+        why = toml_error(heap, text, 0, "missing field `package`");
+    }
+    var records = buffer.empty(heap, 0);
+    if status == 0 {
+        buffer.drop(heap, records);
+        records = buffer.empty(heap, 256);
+        borrow pk as &pb in {
+            records = buffer.append(heap, records, buffer.bytes(pb));
+        }
+        borrow deps as &db in {
+            let ordered = sorted(heap, buffer.bytes(db));
+            borrow ordered as &ob in {
+                records = buffer.append(heap, records, buffer.bytes(ob));
+            }
+            buffer.drop(heap, ordered);
+        }
+        borrow bins as &bb in {
+            records = buffer.append(heap, records, buffer.bytes(bb));
+        }
+        borrow tests as &tb in {
+            records = buffer.append(heap, records, buffer.bytes(tb));
+        }
+        borrow records as &rb in {
+            let (checked, said) = check_records(heap, buffer.bytes(rb), why);
+            why = said;
+            status = checked;
+        }
+    }
+    buffer.drop(heap, pk);
+    buffer.drop(heap, deps);
+    buffer.drop(heap, bins);
+    buffer.drop(heap, tests);
+    return Parsed { records: records, status: status, why: why };
+}

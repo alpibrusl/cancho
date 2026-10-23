@@ -34,6 +34,8 @@ import selfhost.clibase;
 import selfhost.clifmt;
 import selfhost.cliprog;
 import selfhost.clitest;
+import selfhost.projfile;
+import selfhost.cliproject;
 
 fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_read, io_write, err_write, args, fs_read(""), fs_write(""), dir_read, file_read, file_write, exec(""), clock, poll] int {
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "fmt") {
@@ -42,11 +44,23 @@ fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "check") {
         return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, false, false);
     }
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "install") {
+        return cliproject.install_command(heap, io, args, fs, exec, clock);
+    }
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "add") {
+        return cliproject.add_command(io);
+    }
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "build") && cliproject.wants_project(heap, args, fs, false) {
+        return cliproject.build_command(heap, io, args, fs, exec, clock);
+    }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "build") {
         return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, true, false);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "run") {
         return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, true, true);
+    }
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "test") && cliproject.wants_project(heap, args, fs, true) {
+        return cliproject.test_command(heap, io, args, fs, exec, clock);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "test") {
         return clitest.test_command(heap, io, args, fs, exec, clock);

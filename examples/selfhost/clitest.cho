@@ -208,14 +208,14 @@ pub fn run_tests[&h, &i, &x, &c, &p, &t](heap: &!h Heap, io: &!i Io, exec: &x Ex
     return 4;
 }
 
-// The program of the files, the standard library (from the directory `std_dir` names, if it is not negative) and the runner for `tests` (what
-// `testscan.cho` found), built, and its tests run (`run_tests`). `host_in`, `host_given` and `clang_at` are as in `program_command`.
-pub fn test_program[&h, &i, &a, &f, &x, &c, &t](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, std_dir: int, host_in: int, host_given: bool, clang_at: int, tests: &t [byte]) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+// The program of the files `files` (names, each followed by a NUL), the standard library (from the directory `std_path` if `with_std`) and the runner for `tests`
+// (what `testscan.cho` found), built with the compiler `clang`, and its tests run (`run_tests`). `host_in` and `host_given` are as in `program_command`.
+pub fn test_files[&h, &i, &a, &f, &x, &c, &t, &l, &s, &k](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, files: &l [byte], with_std: bool, std_path: &s [byte], host_in: int, host_given: bool, clang: &k [byte], tests: &t [byte]) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
     var host = host_in;
     var status = 0;
     let source = testscan.runner(heap, tests);
     borrow source as &sp in {
-        let loaded = cliprog.load_program(heap, io, args, fs, true, false, std_dir, buffer.bytes(sp), "runner_main.cho");
+        let loaded = cliprog.load_files(heap, io, fs, buffer.append(heap, buffer.empty(heap, len(files) + 1), files), with_std, std_path, buffer.bytes(sp), "runner_main.cho");
         let cliprog.Loaded { names, raw, laid, lens, count, read_status } = loaded;
         status = read_status;
         var exe = buffer.empty(heap, 64);
@@ -245,10 +245,6 @@ pub fn test_program[&h, &i, &a, &f, &x, &c, &t](heap: &!h Heap, io: &!i Io, args
                         }
                     }
                     if status == 0 {
-                        var clang = "/usr/bin/clang";
-                        if clang_at >= 0 {
-                            clang = arg(args, clang_at);
-                        }
                         borrow exe as &ep in {
                             status = cliprog.make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(ep), clang, false);
                             if status == 0 {
@@ -268,6 +264,32 @@ pub fn test_program[&h, &i, &a, &f, &x, &c, &t](heap: &!h Heap, io: &!i Io, args
         unbox_slice(heap, lens);
     }
     buffer.drop(heap, source);
+    return status;
+}
+
+// The same for the files the command was given in `args`, the library at the argument `std_dir` (if it is not negative) and the compiler at the argument `clang_at`.
+pub fn test_program[&h, &i, &a, &f, &x, &c, &t](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, std_dir: int, host_in: int, host_given: bool, clang_at: int, tests: &t [byte]) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    let files = cliprog.files_of_args(heap, args, true, false);
+    var std_path = buffer.empty(heap, 0);
+    if std_dir >= 0 {
+        std_path = buffer.append(heap, std_path, arg(args, std_dir));
+    }
+    var clang = buffer.append(heap, buffer.empty(heap, 32), "/usr/bin/clang");
+    if clang_at >= 0 {
+        buffer.drop(heap, clang);
+        clang = buffer.append(heap, buffer.empty(heap, 32), arg(args, clang_at));
+    }
+    var status = 0;
+    borrow files as &fb in {
+        borrow std_path as &sb in {
+            borrow clang as &kb in {
+                status = test_files(heap, io, args, fs, exec, clock, buffer.bytes(fb), std_dir >= 0, buffer.bytes(sb), host_in, host_given, buffer.bytes(kb), tests);
+            }
+        }
+    }
+    buffer.drop(heap, files);
+    buffer.drop(heap, std_path);
+    buffer.drop(heap, clang);
     return status;
 }
 
@@ -297,6 +319,52 @@ pub fn scan_tests[&h, &i, &r, &y, &l, &n](heap: &!h Heap, io: &!i Io, scan: &r [
     driver.discard(heap, scanned);
     return Found { found: tests, how: status };
 }
+
+// The tests of the files `files` (names, each followed by a NUL) are found (`testscan.cho`), one program is built of them, the library (from the directory `std_path` if `with_std`)
+// and a runner, and each test is run as a process of its own, with the report of `cancho test`. 0, 4 if a test failed, or what has been said.
+pub fn test_set[&h, &i, &a, &f, &x, &c, &l, &s, &k](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, files: &l [byte], with_std: bool, std_path: &s [byte], host: int, host_given: bool, clang: &k [byte]) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    // The files alone are read, and their tests found.
+    let first = cliprog.load_files(heap, io, fs, buffer.append(heap, buffer.empty(heap, len(files) + 1), files), false, "", "", "");
+    let cliprog.Loaded { names, raw, laid, lens, count, read_status } = first;
+    var status = read_status;
+    var tests = buffer.empty(heap, 0);
+    if status == 0 {
+        borrow raw as &r in {
+            borrow laid as &lt in {
+                borrow names as &nm in {
+                    borrow mut lens as &!lb in {
+                        let Found { found, how } = scan_tests(heap, io, buffer.bytes(r), buffer.bytes(nm), buffer.bytes(lt), contents(lb));
+                        buffer.drop(heap, tests);
+                        tests = found;
+                        status = how;
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, raw);
+    buffer.drop(heap, laid);
+    buffer.drop(heap, names);
+    unbox_slice(heap, lens);
+    var none = false;
+    borrow tests as &tz in {
+        none = buffer.size(tz) == 0;
+    }
+    if status == 0 && none {
+        console.error_all(io, "no `test_*` functions found in the files given\n\n`cancho test` runs the functions named `test_*` (`docs/testing.md` §3); a run that found none is not a pass\n");
+        status = 2;
+    }
+    if status != 0 {
+        buffer.drop(heap, tests);
+        return status;
+    }
+    borrow tests as &tt in {
+        status = test_files(heap, io, args, fs, exec, clock, files, with_std, std_path, host, host_given, clang, buffer.bytes(tt));
+    }
+    buffer.drop(heap, tests);
+    return status;
+}
+
 
 // `test [--host H] [--std-dir DIR] [--backend llvm] [--clang PATH] [-l LIB] [-L DIR] FILE...` (`docs/cli-in-cancho.md` section 16): the tests of the
 // files (`testscan.cho`) are found, one program is built of the files and the runner that is written for them, and each test is run as a process of
@@ -358,45 +426,27 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
     if files == 0 {
         return clibase.usage_error(heap, io, "no file given");
     }
-    // The files alone are read, and their tests found.
-    let first = cliprog.load_program(heap, io, args, fs, true, false, 0 - 1, "", "");
-    let cliprog.Loaded { names, raw, laid, lens, count, read_status } = first;
-    var status = read_status;
-    var tests = buffer.empty(heap, 0);
-    if status == 0 {
-        borrow raw as &r in {
-            borrow laid as &lt in {
-                borrow names as &nm in {
-                    borrow mut lens as &!lb in {
-                        let Found { found, how } = scan_tests(heap, io, buffer.bytes(r), buffer.bytes(nm), buffer.bytes(lt), contents(lb));
-                        buffer.drop(heap, tests);
-                        tests = found;
-                        status = how;
-                    }
-                }
+    var std_path = buffer.empty(heap, 0);
+    if std_dir >= 0 {
+        std_path = buffer.append(heap, std_path, arg(args, std_dir));
+    }
+    var clang = buffer.append(heap, buffer.empty(heap, 32), "/usr/bin/clang");
+    if clang_at >= 0 {
+        buffer.drop(heap, clang);
+        clang = buffer.append(heap, buffer.empty(heap, 32), arg(args, clang_at));
+    }
+    let names_of_files = cliprog.files_of_args(heap, args, true, false);
+    var status = 0;
+    borrow names_of_files as &fb in {
+        borrow std_path as &sb in {
+            borrow clang as &kb in {
+                status = test_set(heap, io, args, fs, exec, clock, buffer.bytes(fb), std_dir >= 0, buffer.bytes(sb), host, host_given, buffer.bytes(kb));
             }
         }
     }
-    buffer.drop(heap, raw);
-    buffer.drop(heap, laid);
-    buffer.drop(heap, names);
-    unbox_slice(heap, lens);
-    var none = false;
-    borrow tests as &tz in {
-        none = buffer.size(tz) == 0;
-    }
-    if status == 0 && none {
-        console.error_all(io, "no `test_*` functions found in the files given\n\n`cancho test` runs the functions named `test_*` (`docs/testing.md` §3); a run that found none is not a pass\n");
-        status = 2;
-    }
-    if status != 0 {
-        buffer.drop(heap, tests);
-        return status;
-    }
-    borrow tests as &tt in {
-        status = test_program(heap, io, args, fs, exec, clock, std_dir, host, host_given, clang_at, buffer.bytes(tt));
-    }
-    buffer.drop(heap, tests);
+    buffer.drop(heap, names_of_files);
+    buffer.drop(heap, std_path);
+    buffer.drop(heap, clang);
     return status;
 }
 

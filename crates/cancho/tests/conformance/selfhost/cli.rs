@@ -1202,3 +1202,154 @@ fn the_command_line_in_cancho_satisfies_like_cancho_satisfy() {
     );
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
+
+/// A project for the cases below: the text of its `cancho.toml` and the files it names.
+fn project_cases() -> Vec<(&'static str, &'static str, Vec<&'static str>, &'static str)> {
+    let two = "[package]\nname = \"demo\"\n\n[[bin]]\nname = \"hello\"\nsources = [\"src\"]\n\n\
+        [[bin]]\nname = \"other\"\nsources = [\"src/main.cho\"]\nout = \"dist/x/other\"\n\n\
+        [[test]]\nname = \"unit\"\nsources = [\"tests\"]\n\n[[test]]\nname = \"more\"\nsources = [\"tests/t.cho\", \"tests\"]\n";
+    vec![
+        ("build all", two, vec!["build"], "."),
+        ("build one", two, vec!["build", "--bin", "other"], "."),
+        ("build none such", two, vec!["build", "--bin", "nope"], "."),
+        ("build from below", two, vec!["build"], "src"),
+        ("build bad flag", two, vec!["build", "--nope"], "."),
+        ("build host flag", two, vec!["build", "--host", "mars"], "."),
+        ("test all", two, vec!["test"], "."),
+        ("test one", two, vec!["test", "--test", "more"], "."),
+        ("test none such", two, vec!["test", "--test", "nope"], "."),
+        ("test from below", two, vec!["test"], "tests"),
+        ("install", two, vec!["install"], "."),
+        ("install from below", two, vec!["install"], "src"),
+        ("install with an argument", two, vec!["install", "x"], "."),
+        ("no program", "[package]\nname = \"demo\"\n", vec!["build"], "."),
+        ("no tests", "[package]\nname = \"demo\"\n", vec!["test"], "."),
+        ("unknown field", "[package]\nname = \"demo\"\nversion = \"1\"\n", vec!["install"], "."),
+        ("not toml", "[package\n", vec!["install"], "."),
+        ("bad name", "[package]\nname = \"De Mo\"\n", vec!["install"], "."),
+        (
+            "missing sources",
+            "[package]\nname = \"demo\"\n\n[[bin]]\nname = \"a\"\nsources = [\"nowhere\"]\n",
+            vec!["build"],
+            ".",
+        ),
+        (
+            "empty directory",
+            "[package]\nname = \"demo\"\n\n[[bin]]\nname = \"a\"\nsources = [\"empty\"]\n",
+            vec!["build"],
+            ".",
+        ),
+        (
+            "same name twice",
+            "[package]\nname = \"demo\"\n\n[[bin]]\nname = \"a\"\nsources = [\"src\"]\n\n[[bin]]\nname = \"a\"\nsources = [\"src\"]\n",
+            vec!["build"],
+            ".",
+        ),
+        (
+            "compiler pin",
+            "[package]\nname = \"demo\"\ncancho = \"0000000000000000000000000000000000000000\"\n\n[[bin]]\nname = \"a\"\nsources = [\"src\"]\n",
+            vec!["build"],
+            ".",
+        ),
+        (
+            "compiler pin ignored",
+            "[package]\nname = \"demo\"\ncancho = \"0000000000000000000000000000000000000000\"\n\n[[bin]]\nname = \"a\"\nsources = [\"src\"]\n",
+            vec!["build", "--ignore-compiler-rev"],
+            ".",
+        ),
+    ]
+}
+
+/// `cli.cho` in a project, against `cancho` in the same one: `build`, `test` and `install` find `cancho.toml` here or above, read it,
+/// and make or run what it names. Both say the same on the standard output and error (the TOML library's own picture of the line is not
+/// compared) and leave the same files; a project with a dependency is a status 3 in `cli.cho`, which cannot fetch it.
+#[test]
+fn the_command_line_in_cancho_works_in_a_project_like_cancho() {
+    let exe = build("cli-project", &with_front_end("cli.cho"));
+    let dir = scratch("selfhost-project-run");
+    let plain = |text: &str| -> String {
+        let kept: Vec<&str> = text
+            .lines()
+            .filter(|line| {
+                let shown = line.trim_start();
+                let digits = shown.trim_start_matches(|c: char| c.is_ascii_digit());
+                !line.starts_with("building the compiler in cancho")
+                    && !line.starts_with("ld: warning:")
+                    && !shown.starts_with('|')
+                    && !(digits.len() != shown.len() && digits.starts_with(" |"))
+            })
+            .collect();
+        let joined = kept.join(" ");
+        let words: Vec<&str> = joined.split_whitespace().collect();
+        words.join(" ").replace(&dir.display().to_string(), "DIR")
+    };
+    let main = "edition 7;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);\n    release(ffi);\n    release(net);\n    release(signals);\n    release(clock);\n    release(exec);\n    release(fs);\n    release(args);\n    release(heap);\n    release(io);\n    return 0;\n}\n";
+    let tests = "edition 7;\nfn test_one() -> [] int { return 0; }\nfn test_two() -> [] int { return 1; }\n";
+    let (mut different, mut checked) = (Vec::new(), Vec::new());
+    for (name, toml, arguments, below) in project_cases() {
+        let mut seen = Vec::new();
+        for binary in [Path::new(BIN), exe.as_path()] {
+            let _ = std::fs::remove_dir_all(&dir);
+            for sub in ["src", "tests", "empty"] {
+                std::fs::create_dir_all(dir.join(sub)).expect("the directory is made");
+            }
+            std::fs::write(dir.join("cancho.toml"), toml).expect("the project file is written");
+            std::fs::write(dir.join("src/main.cho"), main).expect("a source is written");
+            std::fs::write(dir.join("tests/t.cho"), tests).expect("a test is written");
+            let done = Command::new(binary)
+                .current_dir(dir.join(below))
+                .args(&arguments)
+                .stdin(Stdio::null())
+                .output()
+                .expect("the command runs");
+            let mut left = Vec::new();
+            let mut stack = vec![dir.clone()];
+            while let Some(at) = stack.pop() {
+                for entry in std::fs::read_dir(&at).expect("a directory is read") {
+                    let path = entry.expect("an entry").path();
+                    if path.is_dir() {
+                        stack.push(path);
+                    } else {
+                        left.push(path.strip_prefix(&dir).unwrap().display().to_string());
+                    }
+                }
+            }
+            left.sort();
+            seen.push((
+                done.status.code(),
+                plain(&String::from_utf8_lossy(&done.stdout)),
+                plain(&String::from_utf8_lossy(&done.stderr)),
+                left,
+            ));
+        }
+        if seen[0] == seen[1] {
+            checked.push(format!("{name}: {:?}", seen[0].0));
+        } else {
+            different.push(format!("{name}:\n  theirs {:?}\n  mine   {:?}", seen[0], seen[1]));
+        }
+    }
+    eprintln!("agreed on: {}", checked.join("; "));
+    assert!(
+        different.is_empty(),
+        "`cancho` and `cli.cho` disagree in a project about:\n{}",
+        different.join("\n")
+    );
+    // A dependency needs `vcs`, which `cli.cho` does not carry: a status 3, said, and nothing made.
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).expect("the directory is made");
+    std::fs::write(dir.join("src/main.cho"), main).expect("a source is written");
+    std::fs::write(
+        dir.join("cancho.toml"),
+        "[package]\nname = \"demo\"\n\n[dependencies.lib]\ngit = \"https://example.invalid/lib\"\nrev = \"0123456789abcdef0123456789abcdef01234567\"\n\n[[bin]]\nname = \"a\"\nsources = [\"src\"]\n",
+    )
+    .expect("the project file is written");
+    for command in ["build", "install", "test"] {
+        let done = Command::new(&exe).current_dir(&dir).arg(command).output().expect("it runs");
+        assert_eq!(done.status.code(), Some(3), "{command}: {done:?}");
+        assert!(!dir.join("build").exists(), "{command} made something");
+    }
+    let added = Command::new(&exe).current_dir(&dir).args(["add", "x"]).output().expect("it runs");
+    assert_eq!(added.status.code(), Some(3));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}

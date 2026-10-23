@@ -285,8 +285,8 @@ pub res struct Loaded {
     read_status: int,
 }
 
-pub fn load_program[&h, &i, &a, &f, &e, &m](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), build: bool, run: bool, std_dir: int, extra: &e [byte], extra_name: &m [byte]) -> [heap, err_write, args, fs_read(""), file_read] Loaded {
-    // The names: the files, then the standard library, then the extra file.
+// The names of the files a command was given, each followed by a NUL: the arguments after the name of the command that are not flags or the values of flags.
+pub fn files_of_args[&h, &a](heap: &!h Heap, args: &a Args, build: bool, run: bool) -> [heap, args] buffer.Buffer {
     var names = buffer.empty(heap, 256);
     var n = 2;
     while n < arg_count(args) {
@@ -298,7 +298,22 @@ pub fn load_program[&h, &i, &a, &f, &e, &m](heap: &!h Heap, io: &!i Io, args: &a
         }
         n = n + 1;
     }
+    return names;
+}
+
+pub fn load_program[&h, &i, &a, &f, &e, &m](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), build: bool, run: bool, std_dir: int, extra: &e [byte], extra_name: &m [byte]) -> [heap, err_write, args, fs_read(""), file_read] Loaded {
+    let files = files_of_args(heap, args, build, run);
     if std_dir >= 0 {
+        return load_files(heap, io, fs, files, true, arg(args, std_dir), extra, extra_name);
+    }
+    return load_files(heap, io, fs, files, false, "", extra, extra_name);
+}
+
+// The program of the files `files` (names, each followed by a NUL), then the files of the standard library found in the directory `std_path` if `with_std`, then the
+// extra file.
+pub fn load_files[&h, &i, &f, &s, &e, &m](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), files: buffer.Buffer, with_std: bool, std_path: &s [byte], extra: &e [byte], extra_name: &m [byte]) -> [heap, err_write, fs_read(""), file_read] Loaded {
+    var names = files;
+    if with_std {
         // The files of the standard library, in the order `--std` adds them, found in the directory.
         let order = stdorder.names(heap, buffer.empty(heap, 600));
         borrow order as &o in {
@@ -310,8 +325,8 @@ pub fn load_program[&h, &i, &a, &f, &e, &m](heap: &!h Heap, io: &!i Io, args: &a
                 while lc.at(all, end) != 0 {
                     end = end + 1;
                 }
-                names = buffer.append(heap, names, arg(args, std_dir));
-                if len(arg(args, std_dir)) > 0 && lc.at(arg(args, std_dir), len(arg(args, std_dir)) - 1) != '/' {
+                names = buffer.append(heap, names, std_path);
+                if len(std_path) > 0 && lc.at(std_path, len(std_path) - 1) != '/' {
                     names = buffer.push(heap, names, byte_of('/'));
                 }
                 names = buffer.append(heap, names, all[at..end]);
