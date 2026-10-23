@@ -112,6 +112,8 @@ fn read_head(s: &mut TcpStream) -> String {
         match s.read(&mut byte) {
             Ok(0) => break,
             Ok(_) => got.push(byte[0]),
+            // A signal that arrives during a blocking read ends it with EINTR; `read_exact` retries that and a bare `read` does not.
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(e) => panic!("{e}: after {:?}", String::from_utf8_lossy(&got)),
         }
     }
