@@ -378,3 +378,50 @@ command reads such a path (the operating system resolves it) and `cli.cho` does 
 
 **An unknown option was read as a file name** by `check`, `ids`, `layout`, `build`, `run` and `test` (it was refused only by `satisfy` and, in a project, `build`). They now answer
 `unknown option `X`` and the usage, status 2, as the Rust command does (compared in `the_command_line_in_cancho_works_in_a_project_like_cancho`, with the `..` cases).
+
+## 22. Dependencies: the design (written before the code)
+
+> **Status: design.** Nothing in this section is built. The numbers are measured on the repository at `53bee285` (Linux x86-64, the debug build of the Rust command, the
+> command line in cancho built from `cli.cho`); a claim that the code shows to be false is corrected here, where it was made.
+
+**What is missing.** A project with a `[dependencies.NAME]` table is a status 3 (§20), and so is `add`. What the Rust command does for one dependency (`project.rs::install_all`):
+(1) `vcs_origin::ensure`: a checkout of the commit `rev` of `git` in a cache keyed by the commit, filled by `git`; (2) `lock_of_all`: a pin, by name, for every declaration in the store's
+`manifest.json`; (3) `fetch_verified`: for the pins, the sources from the store's `sources/HASH.cho`, **re-parsed, re-type-checked and re-identified** together with the closure of the store's
+`requires/N.json` (each an origin or a path to another store, walked with a cycle check and a diamond check), the sources written to `build/deps/HASH.cho` only if every pin held, and `std`
+added to what is checked if any of them imports it. The Rust that this replaces: `project.rs` 521 lines (§20 has ported 330 of them), `vcs_origin.rs` 158, and in `vcs_cli.rs` the
+functions `select_locked`, `verify_selected`, `resolve_closure`, `resolve_own_requirements` and `fetch_verified` (about 400 lines), `lock_of_all` (16), and the readers of `Manifest`, `Blobs`,
+`Lock` and `Requirement` in `cancho-vcs` (640 lines of 1,340; the op log, the attestation chain and `publish` are not on this path and stay with the `vcs` commands, below).
+
+**What the command line in cancho already has for it** (measured). The check and the identities: for the closure of `packages/x509/.cancho-vcs/x509_verify` (3 files: 55 declarations,
+35 KB of source in the one file of the store, two more from its `requires/`) plus the library, `cli.cho ids FILES --std-dir std` answers in **0.69 s** and 2,551 lines of identities, and
+the Rust `cancho vcs fetch` of the same pins takes 2.2 s (`vcs resolve`: 3.0 s; both the debug build of Rust, so this says only that the work is not out of reach, not that cancho is
+faster). The `sig` and `body` hashes that `manifest.json` holds as `sig_id` (the key) and `stage_id` are the two lines per function that `ids` writes (measured on `examples/hello.cho`). The JSON
+reader (`jsonread.cho`), the BLAKE3 of a blob (`blake3.cho`, the name of a file in `sources/` is the hash of its text), the walk of directories (`walk.cho`), the run of a program with its
+output (`cliprog.run_capture`), and the check of a program that needs no `main` (driver mode 10, what `satisfy` uses) are all in the files. **What is not:** the body hash in a listing
+(mode 13 writes `module`, `name` and the signature only), a reader of the imports of a source (is there an `import std.`?), `git` run safely, and the cache.
+
+**Decisions.**
+
+1. **`git` through `Exec`, with the settings of `vcs_origin.rs` unchanged** (`-c core.hooksPath=/dev/null`, only the five protocols the Rust code allows, `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`),
+   as `init`, `fetch --depth 1` of the commit (then all heads and tags if the server refuses), `checkout --detach`, `rev-parse HEAD` compared with `rev`, then the `.git` taken away (`/bin/rm -rf`)
+   and the directory renamed into the cache (`fs_rename`; a lost race is fine: the other directory is as good). `ls-remote` for `add --ref`. The program is `git` found on `PATH`, as the Rust command
+   finds it; `run_capture` gives the child `PATH=/usr/bin:/bin` and nothing else (§16), so the cache root is passed as an argument, not through the environment: `$CANCHO_CACHE`, else
+   `$XDG_CACHE_HOME/cancho`, else `$HOME/.cache/cancho` — and **the environment cannot be read from cancho** (`grep` for `getenv`, `env_var` and `environ` in `std/*.cho` finds none; the only `environ` in the repository is the WASI import list), so the third becomes
+   `--cache DIR` or, failing that, `HOME` through `/usr/bin/env` run once. Difference, stated now: `$CANCHO_CACHE` is spelt `--cache` in this command line.
+2. **The verification is the compiler in cancho, not a second implementation of it.** A source is checked with the closure and (if it imports `std`) the library as one program (mode 10); its identities
+   are the listing of mode 13 **extended with the body hash** (one more column, `module\0name\0sig\0body\n`; `satisfy` and `ids` read the first three and are unchanged). The `imports_std` test reads the
+   import lines of the source: a token scan in `testscan.cho`'s style, which skips comments and strings, as the Rust one reads the parsed imports and not the text. **Risk named:** the Rust
+   check is on the parsed `Ast`, and a scan of tokens is a copy of that rule, which `testscan.cho` and `satisfytext.cho` are too; the differential test below is what says whether it differs.
+3. **Slices, each with a differential test against the Rust command, each one a pull request:**
+   - **14a** `cliorigin.cho`: `ensure` and `resolve_ref`, tested on local repositories (`file://`, as `project.rs` tests do): the cache directory, a lost race, a commit that is not there, a path that is not in
+     the commit, a ref that is not one, and that no `.git` is left. Measured goal: the same directory content as `vcs_origin::ensure`.
+   - **14b** `clistore.cho`: `Manifest`/`Blobs`/`Requirement` readers, `select_locked`, the closure walk with its two checks, `verify_selected` on mode 10 and 13-with-body, the write to `build/deps`.
+     Tested on every store in `packages/` (26 `manifest.json`, 1,415 declarations, 15 stores flagged `uses_std`; counted with `find` and `grep`), on stores whose blob was changed, whose pin was moved, with a cycle and with a diamond (the cases of `tests/conformance/vcs_*.rs`).
+   - **14c** `install`, project `build` and `test` with dependencies (the `nothing is published` and `dependency NAME:` messages of `install_all`; `build` and `test` install first).
+   - **14d** `add` (the checks of the store, the append to `cancho.toml`, the rollback if the install fails), and the compiler pin (`--version`), which is what lets the `[package] cancho` check say more than §20's refusal.
+4. **Not in this work, and said so:** `vcs publish`, `vcs lock`, `vcs sync`, `vcs log`, the op log and the attestation chain (`cancho-vcs` 700 lines, `vcs_cli.rs` 700, `vcs_sync.rs` 355, `vcs_dir.rs` 189). They write stores;
+   a project only reads one. They are the last of the Rust to go (#486–#490) and need `ed25519` and the canonical JSON writer, which nothing else asks for.
+
+**What would show this design wrong:** a store in `packages/` for which `verify_selected` in cancho disagrees with Rust on whether the pins hold (the identities differ from `ids`, or a text the Rust parser accepts and the one in cancho
+refuses, the known gaps of the checker are the ones asserted in `the_command_line_in_cancho_checks_like_cancho_check`); a `git` that cannot be run with `PATH=/usr/bin:/bin` on a machine where it lives elsewhere; or a cache that two
+processes fill at once and break (the Rust code relies on `rename` onto an existing directory failing; `fs_rename` must be measured to do the same).
