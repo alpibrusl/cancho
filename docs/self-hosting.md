@@ -952,3 +952,12 @@ usual link finish the build. A refusal is exit status 1 with the Rust front end'
 refused it by (the compiler in cancho answers a rule and a place; if the Rust front end accepts what it refused, the message says the two disagree), and a program
 the compiler has no code for yet says so, at the construct. `--compiler auto` (or `CANCHO_COMPILER=auto`, or `CANCHO_COMPILER=<exe>`) has the compiler built from this repository's `examples/selfhost` by the Rust compiler the first time, and kept in `$CANCHO_CACHE` or `~/.cache/cancho` under a hash of its sources (a binary installed without the repository next to it says so). Targets: aarch64 macOS, x86-64 and aarch64 Linux. It is a way to try the
 compiler on real programs; `cancho build` without the flag is unchanged.
+
+### Two disagreements found by a real program, and fixed (alpibrusl/cancho#614)
+
+cancho-web's `examples/users_threads` built with the Rust compiler and was refused by the compiler in cancho (which `cancho build` uses by default), while `cancho check` accepted it. Two rules of the Rust checker's effect rows had not been ported:
+
+* **`fork_clock` performs nothing.** The Rust checker gives it no effect (`Builtin::effects`; `parallelism.md` §9.1: the parent already holds the authority). The port made it perform `clock`, so a function whose only act was forking a clock was refused with its true row `[]` and refused as decoration with `[clock]`: no row passed. `tests/accept/fork_clock_row.cho`.
+* **`spawn` costs the caller the thread function's row** (`threads.md` §2), less what the caller's borrowed capabilities authorise. The port added `conc` and stopped there, so `serve` in `users_threads`, whose row `[heap, conc, clock, conn_read, conn_write, poll]` the Rust checker requires exactly, was refused for declaring labels it "never performs". `tests/accept/spawn_row.cho`, which fails on the compiler in cancho before the change and passes after it.
+
+Both programs are in the lists that build with both compilers and compare (`conformance/backends.rs`, `selfhost/compile.rs`). The corpus the earlier stages compare over did not contain either shape, which is what the numbers in §6 could not say: they are agreement on the programs that were compared, not a proof.

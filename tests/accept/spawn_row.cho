@@ -1,0 +1,56 @@
+//~ EXIT 0
+
+// `spawn` costs the caller `conc` and whatever the thread's function performs, less what the capabilities the caller holds authorise
+// (`docs/threads.md` §2). The payload below carries a `Clock`, which authorises `clock` and not `poll`, so `serve` has the row
+// `[conc, poll]`. The compiler written in cancho once left the second label out and then refused the row as decoration, while
+// `check` accepted it (alpibrusl/cancho#614, the same function as in cancho-web's `users_threads`).
+
+edition 5;
+
+res struct Lane {
+    clock: Clock,
+    status: int,
+}
+
+fn lane[&r](w: &!r Lane) -> [poll] int {
+    match poller_new() {
+        Polling::Ok(p) => {
+            var q = p;
+            region a {
+                let events = alloc_slice[a](4, 0);
+                borrow mut q as &!pw in {
+                    let ready = poller_wait(pw, events, 0);
+                    w.status = ready;
+                }
+            }
+            poller_close(q);
+        }
+        Polling::Failed(e) => {
+            w.status = 1;
+        }
+    }
+    return 0;
+}
+
+fn serve(clock: Clock) -> [conc, poll] int {
+    var a = Lane { clock: clock, status: 1 };
+    borrow mut a as &!pa in {
+        let f = lane;
+        let t = spawn(pa, f);
+        join(t);
+    }
+    let Lane { clock, status } = a;
+    release(clock);
+    return status;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(heap);
+    release(io);
+    return serve(clock);
+}

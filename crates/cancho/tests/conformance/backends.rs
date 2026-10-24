@@ -1263,6 +1263,18 @@ fn the_two_backends_agree_on_fork_clock_workers() {
     assert_backends_agree("backends-fork-clock-workers", "tests/accept/fork_clock_workers.cho", "");
 }
 
+/// `fork_clock` has the row `[]`, in the Rust compiler and in the one written in cancho (alpibrusl/cancho#614); on both backends.
+#[test]
+fn the_two_backends_agree_on_fork_clock_row() {
+    assert_backends_agree("backends-fork-clock-row", "tests/accept/fork_clock_row.cho", "");
+}
+
+/// `spawn` costs the caller the thread function's row less what the caller's capabilities authorise (alpibrusl/cancho#614); on both backends.
+#[test]
+fn the_two_backends_agree_on_spawn_row() {
+    assert_backends_agree("backends-spawn-row", "tests/accept/spawn_row.cho", "");
+}
+
 /// `docs/memory-moves.md`: `copy_within`, overlapping in both directions, empty at either end, inside a sub-slice; on both backends.
 #[test]
 fn the_two_backends_agree_on_copy_within() {
