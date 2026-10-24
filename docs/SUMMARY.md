@@ -17,6 +17,7 @@
 - [Sharing, and why Rc is not expressible](sharing.md)
 - [Aliasing: does `&!` mean `&mut`?](aliasing.md)
 - [Same place twice: one resource reached twice in a call](same-place-twice.md)
+- [A capability with a numeric budget](capability-budget.md)
 - [Collections](collections.md)
 - [Testing](testing.md)
 - [Satisfy: a contract a candidate must meet](satisfy.md)

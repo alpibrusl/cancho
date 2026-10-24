@@ -165,3 +165,4 @@ by the same wall, without `cancho` learning what a cent is.
 | Wiring this into `lex-os-check` | A change in that repository, against a `Grant` whose vocabulary is its own. §5 is the half `cancho` owes |
 | An `--output json` for `check` | Diagnostics as data, which is a separate and larger surface than one report |
 | A cost model, if a static bound is ever wanted | §3. It needs one backend, or a unit that is honest about being abstract |
+| A count of *one operation*, narrowed by literals (a quantum shot budget) | [`capability-budget.md`](capability-budget.md): a narrow reversal of §4 for a counted capability that gates a single mediated operation, proposed, not built |
