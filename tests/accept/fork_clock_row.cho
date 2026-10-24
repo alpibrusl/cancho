@@ -1,0 +1,29 @@
+//~ EXIT 0
+
+// `fork_clock` performs nothing (`Builtin::effects`; `docs/parallelism.md` §9.1: the parent already holds the authority), so a function that
+// only forks a clock has the row `[]`. The compiler written in cancho once gave it `clock`, and the program below was refused by `build`
+// while `check` accepted it (alpibrusl/cancho#614).
+
+edition 5;
+
+fn forked[&k](clock: &k Clock) -> [] Clock {
+    return fork_clock(clock);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(heap);
+    release(io);
+    var status = 1;
+    borrow clock as &c in {
+        let second = forked(c);
+        release(second);
+        status = 0;
+    }
+    release(clock);
+    return status;
+}

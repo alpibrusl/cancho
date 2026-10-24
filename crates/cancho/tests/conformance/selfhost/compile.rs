@@ -809,6 +809,8 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         "narrow_many_in_struct",
         "fork_heap_workers",
         "fork_clock_workers",
+        "fork_clock_row",
+        "spawn_row",
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/accept")

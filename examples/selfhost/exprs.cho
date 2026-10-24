@@ -1633,6 +1633,9 @@ pub fn thread_call[&s, &x](st: &!s [int], text: &x [byte], id: int, spawning: bo
         return ex.skip(st, from, to);
     }
     let item = types.fnval_item(st, f.ty);
+    // `body` only runs because this call caused it to: what its row says is performed here, less what the borrowed capabilities of
+    // the function being checked already authorise (the Rust checker's `spawn`, `docs/threads.md` 2).
+    effects.perform_call(st, text, item);
     let result = scope.lower_type(st, text, ast.get(st, item, 10), ast.get(st, item, 6), 0 - 1);
     let carried = types.is_erased(st, payload.ty) || types.is_ref(st, payload.ty) && !types.is_slice_ref(st, payload.ty) || payload.ty == 1 || payload.ty == 2 || payload.ty == 5 || types.is_handle(st, payload.ty);
     let returned = types.is_erased(st, result) || types.is_ref(st, result) && !types.is_slice_ref(st, result) || result == 1 || result == 2 || result == 5;
@@ -1775,8 +1778,9 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
             }
             var index = scope.heap_index();
             if codes.word_code(text, ast.tstart(st, callee), ast.tend(st, callee)) == 82 {
+                // Nothing is performed: the Rust checker gives `fork_clock` no effect (`Builtin::effects`), and the parent already holds
+                // the authority (`docs/parallelism.md` 9.1). Reading the clock is `clock_ms`, which performs `clock`.
                 index = netcode.prelude_named("Clock");
-                effects.perform_named(st, "clock");
             } else {
                 effects.perform_named(st, "heap");
             }
