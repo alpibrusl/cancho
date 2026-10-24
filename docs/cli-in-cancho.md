@@ -406,7 +406,7 @@ output (`cliprog.run_capture`), and the check of a program that needs no `main` 
    as `init`, `fetch --depth 1` of the commit (then all heads and tags if the server refuses), `checkout --detach`, `rev-parse HEAD` compared with `rev`, then the `.git` taken away (`/bin/rm -rf`)
    and the directory renamed into the cache (`fs_rename`; a lost race is fine: the other directory is as good). `ls-remote` for `add --ref`. The program is `git` found on `PATH`, as the Rust command
    finds it; `run_capture` gives the child `PATH=/usr/bin:/bin` and nothing else (§16), so the cache root is passed as an argument, not through the environment: `$CANCHO_CACHE`, else
-   `$XDG_CACHE_HOME/cancho`, else `$HOME/.cache/cancho` — and **the environment cannot be read from cancho** (there is no `env` in `Args`, measured by `grep` in `std`), so the third becomes
+   `$XDG_CACHE_HOME/cancho`, else `$HOME/.cache/cancho` — and **the environment cannot be read from cancho** (`grep` for `getenv`, `env_var` and `environ` in `std/*.cho` finds none; the only `environ` in the repository is the WASI import list), so the third becomes
    `--cache DIR` or, failing that, `HOME` through `/usr/bin/env` run once. Difference, stated now: `$CANCHO_CACHE` is spelt `--cache` in this command line.
 2. **The verification is the compiler in cancho, not a second implementation of it.** A source is checked with the closure and (if it imports `std`) the library as one program (mode 10); its identities
    are the listing of mode 13 **extended with the body hash** (one more column, `module\0name\0sig\0body\n`; `satisfy` and `ids` read the first three and are unchanged). The `imports_std` test reads the
@@ -416,12 +416,12 @@ output (`cliprog.run_capture`), and the check of a program that needs no `main` 
    - **14a** `cliorigin.cho`: `ensure` and `resolve_ref`, tested on local repositories (`file://`, as `project.rs` tests do): the cache directory, a lost race, a commit that is not there, a path that is not in
      the commit, a ref that is not one, and that no `.git` is left. Measured goal: the same directory content as `vcs_origin::ensure`.
    - **14b** `clistore.cho`: `Manifest`/`Blobs`/`Requirement` readers, `select_locked`, the closure walk with its two checks, `verify_selected` on mode 10 and 13-with-body, the write to `build/deps`.
-     Tested on every store in `packages/` (12 stores, 983 declarations flagged `uses_std`), on stores whose blob was changed, whose pin was moved, with a cycle and with a diamond (the cases of `tests/conformance/vcs_*.rs`).
+     Tested on every store in `packages/` (26 `manifest.json`, 1,415 declarations, 15 stores flagged `uses_std`; counted with `find` and `grep`), on stores whose blob was changed, whose pin was moved, with a cycle and with a diamond (the cases of `tests/conformance/vcs_*.rs`).
    - **14c** `install`, project `build` and `test` with dependencies (the `nothing is published` and `dependency NAME:` messages of `install_all`; `build` and `test` install first).
    - **14d** `add` (the checks of the store, the append to `cancho.toml`, the rollback if the install fails), and the compiler pin (`--version`), which is what lets the `[package] cancho` check say more than §20's refusal.
 4. **Not in this work, and said so:** `vcs publish`, `vcs lock`, `vcs sync`, `vcs log`, the op log and the attestation chain (`cancho-vcs` 700 lines, `vcs_cli.rs` 700, `vcs_sync.rs` 355, `vcs_dir.rs` 189). They write stores;
    a project only reads one. They are the last of the Rust to go (#486–#490) and need `ed25519` and the canonical JSON writer, which nothing else asks for.
 
 **What would show this design wrong:** a store in `packages/` for which `verify_selected` in cancho disagrees with Rust on whether the pins hold (the identities differ from `ids`, or a text the Rust parser accepts and the one in cancho
-refuses, which the check of §10 of the checker's gaps already lists as missed refusals); a `git` that cannot be run with `PATH=/usr/bin:/bin` on a machine where it lives elsewhere; or a cache that two
+refuses, the known gaps of the checker are the ones asserted in `the_command_line_in_cancho_checks_like_cancho_check`); a `git` that cannot be run with `PATH=/usr/bin:/bin` on a machine where it lives elsewhere; or a cache that two
 processes fill at once and break (the Rust code relies on `rename` onto an existing directory failing; `fs_rename` must be measured to do the same).
