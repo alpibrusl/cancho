@@ -1423,6 +1423,44 @@ fn hex_into[&h, &j](heap: &!h Heap, out: buffer.Buffer, d: &!j [int], from: int)
     return b;
 }
 
+// For each function, foreign function and static of the program, in the order `print` writes them: the 64 hexadecimal digits of the identity of its signature, a space, the 64 of
+// its body, and a newline. This is what a published store records for a declaration (`sig_id` and `stage_id`, `docs/cli-in-cancho.md` section 22), so that it can be checked
+// without the module and the name. Empty, with `st[63]` 1, if a floating-point literal of the program is one whose bits are not worked out.
+pub fn pairs[&h, &s, &x, &j](heap: &!h Heap, st: &!s [int], text: &x [byte], d: &!j [int]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    if !floats.all_literals_ok(st, text) {
+        st[63] = 1;
+        return out;
+    }
+    hash_all(st, text, d);
+    var id = st[15];
+    while id >= 0 {
+        if is_signature(st, id) {
+            let at = entry(st, text, d, d[34], ast.get(st, id, 13), ast.get(st, id, 4), false);
+            out = hex_into(heap, out, d, at + 3);
+            out = buffer.push(heap, out, byte_of(' '));
+            if ast.is_kind(st, id, kinds.NK::IFn) {
+                hash_body(st, text, d, id);
+                out = hex_into(heap, out, d, 16);
+            } else {
+                out = hex_into(heap, out, d, at + 3);
+            }
+            out = buffer.push(heap, out, byte_of('\n'));
+        }
+        if ast.is_kind(st, id, kinds.NK::IStatic) {
+            hash_static_type(st, text, d, id);
+            out = hex_into(heap, out, d, 16);
+            out = buffer.push(heap, out, byte_of(' '));
+            hash_static_body(st, text, d, id);
+            out = hex_into(heap, out, d, 16);
+            out = buffer.push(heap, out, byte_of('\n'));
+        }
+        id = ast.next(st, id);
+    }
+    st[63] = 0;
+    return out;
+}
+
 // The functions of the program (the signatures of a function and of a foreign function), in the order they are declared, as `module`, a NUL, `name`, a NUL, the 64
 // hexadecimal digits of the identity of the signature, and a newline, for each; `satisfy` says which of them a candidate provides. The module is its path, with the dots, and
 // empty for the root. It is empty too if a floating-point literal of the program is one whose bits are not worked out (`st[63]` is 1 then).

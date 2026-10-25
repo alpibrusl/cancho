@@ -1,0 +1,321 @@
+edition 7;
+module selfhost.clistore;
+
+// clistore.cho -- a store of published declarations read, and what a program pins in it checked (`docs/package-system.md` sections 4 and 7, `docs/cli-in-cancho.md` section
+// 22, slice 14b): the part of `crates/cancho-vcs` (`Manifest`, `Blobs`, `Lock`, `Requirement`) and of `vcs_cli.rs` (`select_locked`, `verify_selected`,
+// `resolve_closure`, `fetch_verified`) that a project that has dependencies needs.
+//
+// A store is a directory with `manifest.json` (the declarations it has, by the identity of their signature), `sources/HASH.cho` (the text of each file, named by the BLAKE3
+// hash of the text) and, if it needs other stores, `requires/N.json`. Nothing in it is trusted: a blob is hashed again, and the source behind a pin is parsed, checked and
+// identified again by the compiler in cancho (`driver.run_many`, mode 10 and mode 14), and must produce the signature and the body the pin says.
+//
+// The files are read into records, text fields each followed by a NUL:
+//   a manifest      `SIG NAME STAGE SOURCE` for each declaration (`vcs publish` keeps them sorted by SIG)
+//   a requirement   `STORE ORIGIN [GIT REV PATH] ENTRIES` then the byte 2, where ORIGIN is `1` or `0` and each of ENTRIES is `NAME SIG STAGE SOURCE`, the list ended by the byte 1
+
+import std.buffer;
+import std.bytes;
+import selfhost.lexcore as lc;
+import selfhost.blake3;
+import selfhost.jsonread;
+import selfhost.walk;
+import selfhost.clibase;
+import selfhost.projfile;
+import selfhost.cliorigin;
+
+// What reading a file of a store gave: the records, and why not (empty if it was read).
+pub res struct Pins {
+    records: buffer.Buffer,
+    why: buffer.Buffer,
+}
+
+// The 64 hexadecimal digits of the BLAKE3 hash of `text`.
+pub fn hash_hex[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    let area = box_slice(heap, blake3.size() + 16, 0);
+    var out = buffer.empty(heap, 64);
+    borrow mut area as &!ab in {
+        let h = contents(ab);
+        blake3.init(h, 0);
+        var at = 0;
+        while at < len(text) {
+            blake3.byte(h, 0, lc.at(text, at));
+            at = at + 1;
+        }
+        let into = blake3.size();
+        blake3.finish(h, 0, into);
+        var w = 0;
+        while w < 8 {
+            var k = 0;
+            while k < 4 {
+                let octet = h[into + w] >> 8 * k & 255;
+                out = buffer.push(heap, out, "0123456789abcdef"[octet / 16]);
+                out = buffer.push(heap, out, "0123456789abcdef"[octet % 16]);
+                k = k + 1;
+            }
+            w = w + 1;
+        }
+    }
+    unbox_slice(heap, area);
+    return out;
+}
+
+// ------------------------------------------------------------------ JSON ---
+
+// The value of the member `key` of the object `obj`, or -1.
+fn member[&j, &x](jm: &!j [int], src: &x [byte], obj: int, key: &static [byte]) -> [] int {
+    if jsonread.kind(jm, obj) != jsonread.k_object() {
+        return 0 - 1;
+    }
+    var m = jsonread.first(jm, obj);
+    while m >= 0 {
+        if jsonread.is_string(jm, src, jm[16 + 6 * m + 3], key) {
+            return jm[16 + 6 * m + 4];
+        }
+        m = jsonread.next(jm, m);
+    }
+    return 0 - 1;
+}
+
+// Is `id` a string?
+fn is_text[&j](jm: &!j [int], id: int) -> [] bool {
+    return id >= 0 && jsonread.kind(jm, id) == jsonread.k_string();
+}
+
+// The string `id` decoded, and a NUL, added to `into` (nothing is added if `id` is not a string).
+fn add_string[&h, &j, &x](heap: &!h Heap, into: buffer.Buffer, jm: &!j [int], src: &x [byte], id: int) -> [heap] buffer.Buffer {
+    var out = into;
+    if !is_text(jm, id) {
+        return out;
+    }
+    let base = jsonread.scratch0(jm);
+    let n = jsonread.decode_into(jm, src, id, base);
+    var k = 0;
+    while k < n {
+        out = buffer.push(heap, out, byte_of(jm[base + k]));
+        k = k + 1;
+    }
+    return buffer.push(heap, out, byte_of(0));
+}
+
+// The text of a file of a store as JSON in `jm`: why not, or nothing.
+fn parsed[&j, &x](jm: &!j [int], src: &x [byte]) -> [] bool {
+    return jsonread.read(jm, src) == 0;
+}
+
+// What the file `name` of the directory `dir` holds: the bytes, and `absent` if it is not there, or why it could not be read.
+res struct Slurped {
+    body: buffer.Buffer,
+    absent: bool,
+    why: buffer.Buffer,
+}
+
+fn slurp[&h, &f, &d, &n](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte], name: &n [byte], what: &static [byte]) -> [heap, fs_read(""), file_read] Slurped {
+    let path = cliorigin.joined(heap, dir, name);
+    var result = Slurped { body: buffer.empty(heap, 0), absent: false, why: buffer.empty(heap, 0) };
+    borrow path as &pb in {
+        let read = clibase.read_file(heap, fs, buffer.bytes(pb));
+        let clibase.Contents { bytes, failed } = read;
+        if failed == 2 {
+            buffer.drop(heap, bytes);
+            result = replaced_slurped(heap, result, Slurped { body: buffer.empty(heap, 0), absent: true, why: buffer.empty(heap, 0) });
+        } else if failed != 0 {
+            buffer.drop(heap, bytes);
+            result = replaced_slurped(heap, result, Slurped { body: buffer.empty(heap, 0), absent: false, why: cliorigin.message(heap, "cannot read ", what, "") });
+        } else {
+            result = replaced_slurped(heap, result, Slurped { body: bytes, absent: false, why: buffer.empty(heap, 0) });
+        }
+    }
+    buffer.drop(heap, path);
+    return result;
+}
+
+fn replaced_slurped[&h](heap: &!h Heap, old: Slurped, new: Slurped) -> [heap] Slurped {
+    let Slurped { body, absent, why } = old;
+    buffer.drop(heap, body);
+    buffer.drop(heap, why);
+    return new;
+}
+
+// The declarations of the manifest of the store in `dir`: `SIG NAME STAGE SOURCE` each, in the order of the file. No manifest is an empty one.
+pub fn read_manifest[&h, &f, &d](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte]) -> [heap, fs_read(""), file_read] Pins {
+    let got = slurp(heap, fs, dir, "manifest.json", "the manifest");
+    let Slurped { body, absent, why } = got;
+    var records = buffer.empty(heap, 0);
+    var trouble = buffer.empty(heap, 0);
+    var failed = false;
+    borrow why as &wb in {
+        failed = buffer.size(wb) > 0;
+    }
+    if failed {
+        trouble = projfile.replaced(heap, trouble, cliorigin.message(heap, "cannot read manifest at `", dir, "`"));
+    } else if !absent {
+        borrow body as &bb in {
+            let src = buffer.bytes(bb);
+            let area = box_slice(heap, jsonread.size_for(src), 0);
+            var good = false;
+            borrow mut area as &!ab in {
+                let jm = contents(ab);
+                good = parsed(jm, src);
+                if good {
+                    let root = jm[1];
+                    let entries = member(jm, src, root, "entries");
+                    if jsonread.kind(jm, root) != jsonread.k_object() || entries < 0 || jsonread.kind(jm, entries) != jsonread.k_object() {
+                        good = false;
+                    } else {
+                        var m = jsonread.first(jm, entries);
+                        while m >= 0 && good {
+                            let value = jm[16 + 6 * m + 4];
+                            let keyed = jm[16 + 6 * m + 3];
+                            let name_at = member(jm, src, value, "name");
+                            let stage_at = member(jm, src, value, "stage_id");
+                            let source_at = member(jm, src, value, "source_hash");
+                            var line = add_string(heap, buffer.empty(heap, 256), jm, src, keyed);
+                            line = add_string(heap, line, jm, src, name_at);
+                            line = add_string(heap, line, jm, src, stage_at);
+                            line = add_string(heap, line, jm, src, source_at);
+                            if is_text(jm, keyed) && is_text(jm, name_at) && is_text(jm, stage_at) && is_text(jm, source_at) {
+                                borrow line as &lb in {
+                                    records = buffer.append(heap, records, buffer.bytes(lb));
+                                }
+                            } else {
+                                good = false;
+                            }
+                            buffer.drop(heap, line);
+                            m = jsonread.next(jm, m);
+                        }
+                    }
+                }
+            }
+            unbox_slice(heap, area);
+            if !good {
+                trouble = projfile.replaced(heap, trouble, cliorigin.message(heap, "cannot read manifest at `", dir, "`: malformed manifest"));
+            }
+        }
+    }
+    buffer.drop(heap, body);
+    buffer.drop(heap, why);
+    return Pins { records: records, why: trouble };
+}
+
+// ---------------------------------------------------------- requirements ---
+
+// A requirement as a record: `STORE`, then `1` and `GIT REV PATH` if its lock says where the store is, or `0`; then the entries of its lock, `NAME SIG STAGE SOURCE` each; then
+// the byte 1 and the byte 2. `fail` is set if the text was not a requirement.
+fn requirement_record[&h, &j, &x](heap: &!h Heap, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
+    let root = jm[1];
+    let store_at = member(jm, src, root, "store");
+    let lock = member(jm, src, root, "lock");
+    var out = buffer.empty(heap, 0);
+    if !is_text(jm, store_at) || lock < 0 || jsonread.kind(jm, lock) != jsonread.k_object() {
+        return out;
+    }
+    let entries = member(jm, src, lock, "entries");
+    if entries < 0 || jsonread.kind(jm, entries) != jsonread.k_object() {
+        return out;
+    }
+    let origin = member(jm, src, lock, "origin");
+    var rec = add_string(heap, buffer.empty(heap, 512), jm, src, store_at);
+    var good = true;
+    if origin >= 0 && jsonread.kind(jm, origin) != jsonread.k_null() {
+        let git_at = member(jm, src, origin, "git");
+        let rev_at = member(jm, src, origin, "rev");
+        var path_at = member(jm, src, origin, "path");
+        if !is_text(jm, git_at) || !is_text(jm, rev_at) {
+            good = false;
+        }
+        rec = buffer.append(heap, rec, "1\0");
+        rec = add_string(heap, add_string(heap, rec, jm, src, git_at), jm, src, rev_at);
+        if path_at < 0 {
+            rec = buffer.append(heap, rec, ".cancho-vcs\0");
+        } else {
+            if !is_text(jm, path_at) {
+                good = false;
+            }
+            rec = add_string(heap, rec, jm, src, path_at);
+        }
+    } else {
+        rec = buffer.append(heap, rec, "0\0");
+    }
+    var m = jsonread.first(jm, entries);
+    while m >= 0 && good {
+        let value = jm[16 + 6 * m + 4];
+        let key = jm[16 + 6 * m + 3];
+        let sig_at = member(jm, src, value, "sig_id");
+        let stage_at = member(jm, src, value, "stage_id");
+        let source_at = member(jm, src, value, "source_hash");
+        if is_text(jm, key) && is_text(jm, sig_at) && is_text(jm, stage_at) && is_text(jm, source_at) {
+            rec = add_string(heap, add_string(heap, add_string(heap, add_string(heap, rec, jm, src, key), jm, src, sig_at), jm, src, stage_at), jm, src, source_at);
+        } else {
+            good = false;
+        }
+        m = jsonread.next(jm, m);
+    }
+    if !good {
+        buffer.drop(heap, rec);
+        return out;
+    }
+    rec = buffer.push(heap, rec, byte_of(1));
+    rec = buffer.push(heap, rec, byte_of(2));
+    buffer.drop(heap, out);
+    return rec;
+}
+
+// The requirements of the store in `dir`, in the order of their file names (`requires/N.json`), as `requirement_record`s. No `requires` directory is none.
+pub fn read_requirements[&h, &f, &d](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte]) -> [heap, fs_read(""), dir_read, file_read] Pins {
+    let below = cliorigin.joined(heap, dir, "requires");
+    var listed = buffer.empty(heap, 0);
+    borrow below as &bb in {
+        listed = walk.direct_with(heap, fs, buffer.bytes(bb), listed, ".json");
+    }
+    buffer.drop(heap, below);
+    var ordered = buffer.empty(heap, 0);
+    borrow listed as &lb in {
+        ordered = projfile.replaced(heap, ordered, projfile.sorted_paths(heap, buffer.bytes(lb)));
+    }
+    buffer.drop(heap, listed);
+    var records = buffer.empty(heap, 0);
+    var trouble = buffer.empty(heap, 0);
+    borrow ordered as &ob in {
+        let all = buffer.bytes(ob);
+        var at = 0;
+        while at < len(all) {
+            let end = projfile.field_end(all, at, len(all));
+            let path = all[at..end];
+            let read = clibase.read_file(heap, fs, path);
+            let clibase.Contents { bytes, failed } = read;
+            var good = failed == 0;
+            if good {
+                borrow bytes as &yb in {
+                    let src = buffer.bytes(yb);
+                    let area = box_slice(heap, jsonread.size_for(src), 0);
+                    borrow mut area as &!ab in {
+                        let jm = contents(ab);
+                        if parsed(jm, src) {
+                            let rec = requirement_record(heap, jm, src);
+                            borrow rec as &rb in {
+                                if buffer.size(rb) == 0 {
+                                    good = false;
+                                } else {
+                                    records = buffer.append(heap, records, buffer.bytes(rb));
+                                }
+                            }
+                            buffer.drop(heap, rec);
+                        } else {
+                            good = false;
+                        }
+                    }
+                    unbox_slice(heap, area);
+                }
+            }
+            buffer.drop(heap, bytes);
+            if !good {
+                trouble = projfile.replaced(heap, trouble, cliorigin.message(heap, "malformed requirement at `", path, "`"));
+                at = len(all);
+            } else {
+                at = end + 1;
+            }
+        }
+    }
+    buffer.drop(heap, ordered);
+    return Pins { records: records, why: trouble };
+}

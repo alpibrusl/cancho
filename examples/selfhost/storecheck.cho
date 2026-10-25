@@ -1,0 +1,114 @@
+edition 7;
+
+// storecheck.cho -- `clistore.cho` run on its own, for its differential test (`docs/cli-in-cancho.md` section 22):
+//
+//     storecheck manifest DIR      the declarations of the manifest of the store in DIR: `SIG NAME STAGE SOURCE`, a line each
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.clistore;
+
+// The records with each NUL a space and each record on a line (`fields` to a record).
+fn show[&i, &r](io: &!i Io, records: &r [byte], fields: int) -> [io_write] int {
+    var seen = 0;
+    var at = 0;
+    var line = 0;
+    while at < len(records) {
+        var end = at;
+        while end < len(records) && lc.at(records, end) != 0 {
+            end = end + 1;
+        }
+        console.write_all(io, records[at..end]);
+        seen = seen + 1;
+        if seen % fields == 0 {
+            console.write_all(io, "\n");
+            line = line + 1;
+        } else {
+            console.write_all(io, " ");
+        }
+        at = end + 1;
+    }
+    return line;
+}
+
+fn run[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, err_write, args, fs_read(""), file_read, dir_read] int {
+    if arg_count(args) == 3 && bytes.equal(arg(args, 1), "manifest") {
+        let got = clistore.read_manifest(heap, fs, arg(args, 2));
+        let clistore.Pins { records, why } = got;
+        var status = 0;
+        borrow why as &wb in {
+            if buffer.size(wb) > 0 {
+                console.error_all(io, buffer.bytes(wb));
+                console.error_all(io, "\n");
+                status = 3;
+            }
+        }
+        borrow records as &rb in {
+            let shown = show(io, buffer.bytes(rb), 4);
+        }
+        buffer.drop(heap, records);
+        buffer.drop(heap, why);
+        return status;
+    }
+    if arg_count(args) == 3 && bytes.equal(arg(args, 1), "requires") {
+        let got = clistore.read_requirements(heap, fs, arg(args, 2));
+        let clistore.Pins { records, why } = got;
+        var status = 0;
+        borrow why as &wb in {
+            if buffer.size(wb) > 0 {
+                console.error_all(io, buffer.bytes(wb));
+                console.error_all(io, "\n");
+                status = 3;
+            }
+        }
+        borrow records as &rb in {
+            console.write_all(io, "(each NUL is a space, the byte 1 a bar and the byte 2 a newline)\n");
+            let r = buffer.bytes(rb);
+            var at = 0;
+            while at < len(r) {
+                let c = lc.at(r, at);
+                if c == 0 {
+                    console.write_all(io, " ");
+                } else if c == 1 {
+                    console.write_all(io, "|");
+                } else if c == 2 {
+                    console.write_all(io, "\n");
+                } else {
+                    console.write_all(io, r[at..at + 1]);
+                }
+                at = at + 1;
+            }
+        }
+        buffer.drop(heap, records);
+        buffer.drop(heap, why);
+        return status;
+    }
+    console.error_all(io, "usage: storecheck (manifest DIR | requires DIR)\n");
+    return 2;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    release(clock);
+    release(exec);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow fs as &f in {
+                    status = run(h, i, a, f);
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
