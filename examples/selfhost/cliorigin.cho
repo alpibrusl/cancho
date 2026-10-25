@@ -1,0 +1,444 @@
+edition 7;
+module selfhost.cliorigin;
+
+// cliorigin.cho -- a dependency's origin made available as a directory (`docs/package-system.md` section 7.3, `docs/cli-in-cancho.md` section 22): a cache of git
+// checkouts keyed by the full commit hash, filled by running `git`, a port of `crates/cancho/src/vcs_origin.rs`. A checkout that is in the cache is complete and never
+// stale; nothing is trusted for content (the caller re-parses, re-checks and re-hashes); `git` fetches bytes and runs nothing from them (hooks pointed at nothing, only the
+// protocols a repository can honestly use, no prompt, no submodule), and the `.git` is taken away once the commit is verified.
+//
+// Every failure is a message in `why` (empty when there was none) and a status: 0 well, 1 an origin that is not a pin (refused), 3 the environment (no cache, no `git`, the
+// network, a commit that is not there).
+
+import std.buffer;
+import std.bytes;
+import selfhost.lexcore as lc;
+import selfhost.walk;
+import selfhost.cliprog;
+
+// What a step said: its standard output, and why it failed (empty if it did not).
+pub res struct Step {
+    said: buffer.Buffer,
+    failure: buffer.Buffer,
+}
+
+// The origin of a dependency made a directory: the store inside the checkout, a message if there is none, and the status.
+pub res struct Checkout {
+    dir: buffer.Buffer,
+    why: buffer.Buffer,
+    status: int,
+}
+
+fn arg_of[&h, &t](heap: &!h Heap, list: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    return buffer.push(heap, buffer.append(heap, list, text), byte_of(0));
+}
+
+fn all_hex[&t](text: &t [byte]) -> [] bool {
+    var at = 0;
+    while at < len(text) {
+        let c = lc.at(text, at);
+        if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+            return false;
+        }
+        at = at + 1;
+    }
+    return true;
+}
+
+fn starts[&t](text: &t [byte], head: &static [byte]) -> [] bool {
+    return len(text) >= len(head) && bytes.equal(text[0..len(head)], head);
+}
+
+fn message[&h, &a, &b, &c](heap: &!h Heap, head: &a [byte], middle: &b [byte], tail: &c [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(head) + len(middle) + len(tail) + 8), head), middle), tail);
+}
+
+// Is `path` a relative path inside the repository: not empty, not absolute, with no `..`, and not starting with `.`? (`Path::components` skips an empty component and a `.`
+// that is not first.)
+fn path_ok[&t](path: &t [byte]) -> [] bool {
+    if len(path) == 0 || lc.at(path, 0) == '/' {
+        return false;
+    }
+    var at = 0;
+    var first = true;
+    while at < len(path) {
+        var end = at;
+        while end < len(path) && lc.at(path, end) != '/' {
+            end = end + 1;
+        }
+        let part = path[at..end];
+        if len(part) == 2 && bytes.equal(part, "..") {
+            return false;
+        }
+        if len(part) == 1 && bytes.equal(part, ".") && first {
+            return false;
+        }
+        if len(part) > 0 {
+            first = false;
+        }
+        at = end + 1;
+    }
+    return true;
+}
+
+// Why `git`, `rev` and `path` are not an origin that is a pin (`Origin::validate`), or nothing.
+pub fn invalid[&h, &g, &r, &p](heap: &!h Heap, git: &g [byte], rev: &r [byte], path: &p [byte]) -> [heap] buffer.Buffer {
+    if !(len(rev) == 40 || len(rev) == 64) || !all_hex(rev) {
+        let head = message(heap, "origin `rev` must be a full commit hash (40 or 64 lowercase hex digits), found `", rev, "`; a branch or tag name moves, so a lock never holds one");
+        return head;
+    }
+    if len(git) == 0 || lc.at(git, 0) == '-' || starts(git, "ext::") {
+        return message(heap, "origin `git` is not a repository location: `", git, "`");
+    }
+    if !path_ok(path) {
+        return message(heap, "origin `path` must be a relative path inside the repository, found `", path, "`");
+    }
+    return buffer.empty(heap, 0);
+}
+
+fn replaced[&h](heap: &!h Heap, old: buffer.Buffer, new: buffer.Buffer) -> [heap] buffer.Buffer {
+    buffer.drop(heap, old);
+    return new;
+}
+
+// `text` without the white space at its ends.
+fn trim[&t](text: &t [byte]) -> [] &t [byte] {
+    var from = 0;
+    var to = len(text);
+    while from < to && (lc.at(text, from) == ' ' || lc.at(text, from) == 10 || lc.at(text, from) == 13 || lc.at(text, from) == 9) {
+        from = from + 1;
+    }
+    while to > from && (lc.at(text, to - 1) == ' ' || lc.at(text, to - 1) == 10 || lc.at(text, to - 1) == 13 || lc.at(text, to - 1) == 9) {
+        to = to - 1;
+    }
+    return text[from..to];
+}
+
+// `git` with the settings every call wants: hooks off, only the transports a repository location can honestly use (`ext::` and the other remote helpers run programs, and `http`
+// is cleartext), no prompt, no optional lock. It is given no more of an environment than that (`docs/cli-in-cancho.md` section 22: a program started from cancho has only the
+// environment it is given, so an ssh agent or a credential helper of the user is not there).
+fn git_run[&h, &i, &x, &c, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, what: &static [byte], rest: &r [byte]) -> [heap, err_write, exec(""), clock, poll] Step {
+    var argv = buffer.append(heap, buffer.empty(heap, len(rest) + 200), "-c\0core.hooksPath=/dev/null\0-c\0protocol.allow=never\0-c\0protocol.https.allow=always\0");
+    argv = buffer.append(heap, argv, "-c\0protocol.ssh.allow=always\0-c\0protocol.git.allow=always\0-c\0protocol.file.allow=always\0");
+    argv = buffer.append(heap, argv, rest);
+    var said = buffer.empty(heap, 0);
+    var why = buffer.empty(heap, 0);
+    borrow argv as &ab in {
+        let got = cliprog.run_capture_in(heap, io, exec, clock, "/usr/bin/git", "", buffer.bytes(ab), "PATH=/usr/bin:/bin\0GIT_TERMINAL_PROMPT=0\0GIT_OPTIONAL_LOCKS=0\0");
+        let cliprog.Captured { out, err, kind, value } = got;
+        if kind == 5 {
+            why = replaced(heap, why, message(heap, "cannot run `git` to ", what, ""));
+        } else if kind != 0 || value != 0 {
+            borrow err as &eb in {
+                why = replaced(heap, why, message(heap, "`git` failed to ", what, ": "));
+                why = buffer.append(heap, why, trim(buffer.bytes(eb)));
+            }
+        } else {
+            borrow out as &ob in {
+                said = buffer.append(heap, said, trim(buffer.bytes(ob)));
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, argv);
+    return Step { said: said, failure: why };
+}
+
+// `/bin/mkdir -p` or `/bin/rm -rf` on `path`: did it work? (`rm` is never asked for the empty path or `/`.)
+fn tool[&h, &i, &x, &c, &p](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &static [byte], flag: &static [byte], path: &p [byte]) -> [heap, err_write, exec(""), clock, poll] bool {
+    if len(path) == 0 || len(path) == 1 && lc.at(path, 0) == '/' {
+        return false;
+    }
+    var argv = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(path) + 8), flag), "\0");
+    argv = arg_of(heap, argv, path);
+    var worked = false;
+    borrow argv as &ab in {
+        let got = cliprog.run_capture(heap, io, exec, clock, exe, "", buffer.bytes(ab));
+        let cliprog.Captured { out, err, kind, value } = got;
+        worked = kind == 0 && value == 0;
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, argv);
+    return worked;
+}
+
+// The cache root: `given` (`--cache DIR`) as it is, else `.cache/cancho` in the home directory of the user, as `bash` finds it with no environment to tell it (`echo ~` asks the
+// system when `HOME` is not set; measured on Linux with `env -i`). Empty if there is none.
+pub fn cache_root[&h, &i, &x, &c, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, given: &g [byte]) -> [heap, err_write, exec(""), clock, poll] buffer.Buffer {
+    if len(given) > 0 {
+        return buffer.append(heap, buffer.empty(heap, len(given) + 1), given);
+    }
+    var root = buffer.empty(heap, 64);
+    let got = cliprog.run_capture(heap, io, exec, clock, "/bin/bash", "", "-c\0echo ~\0");
+    let cliprog.Captured { out, err, kind, value } = got;
+    if kind == 0 && value == 0 {
+        borrow out as &ob in {
+            let home = trim(buffer.bytes(ob));
+            if len(home) > 0 && lc.at(home, 0) == '/' {
+                root = buffer.append(heap, buffer.append(heap, root, home), "/.cache/cancho");
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return root;
+}
+
+// What a step failed with, or nothing; what it said is dropped.
+fn failure_of[&h](heap: &!h Heap, step: Step) -> [heap] buffer.Buffer {
+    let Step { said, failure } = step;
+    buffer.drop(heap, said);
+    return failure;
+}
+
+// Run `git` with the arguments `rest` for `what` and answer why it failed, or nothing.
+fn git_ok[&h, &i, &x, &c, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, what: &static [byte], rest: buffer.Buffer) -> [heap, err_write, exec(""), clock, poll] buffer.Buffer {
+    var failed = buffer.empty(heap, 0);
+    borrow rest as &rb in {
+        failed = replaced(heap, failed, failure_of(heap, git_run(heap, io, exec, clock, what, buffer.bytes(rb))));
+    }
+    buffer.drop(heap, rest);
+    return failed;
+}
+
+fn blank[&b](w: &b buffer.Buffer) -> [] bool {
+    return buffer.size(w) == 0;
+}
+
+// The checkout of `rev` made in `tmp` (a directory that exists and is empty) and its `.git` taken away: why not, or nothing.
+fn fetch_into[&h, &i, &x, &c, &t, &g, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, tmp: &t [byte], git: &g [byte], rev: &r [byte]) -> [heap, err_write, exec(""), clock, poll] buffer.Buffer {
+    var why = git_ok(heap, io, exec, clock, "initialise a checkout", arg_of(heap, arg_of(heap, arg_of(heap, buffer.empty(heap, 64), "init"), "--quiet"), tmp));
+    var good = false;
+    borrow why as &wb in {
+        good = blank(wb);
+    }
+    // A commit by hash, one commit deep: what GitHub and any server with protocol v2 will serve. If the server refuses, take its branches and tags and look for the commit among them.
+    if good {
+        var shallow = arg_of(heap, arg_of(heap, buffer.empty(heap, 128), "-C"), tmp);
+        shallow = arg_of(heap, arg_of(heap, arg_of(heap, arg_of(heap, arg_of(heap, shallow, "fetch"), "--quiet"), "--depth"), "1"), "--no-tags");
+        shallow = arg_of(heap, arg_of(heap, arg_of(heap, shallow, "--"), git), rev);
+        why = replaced(heap, why, git_ok(heap, io, exec, clock, "fetch the commit", shallow));
+        borrow why as &wb in {
+            good = blank(wb);
+        }
+        if !good {
+            var all = arg_of(heap, arg_of(heap, buffer.empty(heap, 160), "-C"), tmp);
+            all = arg_of(heap, arg_of(heap, arg_of(heap, arg_of(heap, arg_of(heap, all, "fetch"), "--quiet"), "--no-tags"), "--"), git);
+            all = arg_of(heap, arg_of(heap, all, "+refs/heads/*:refs/remotes/origin/*"), "+refs/tags/*:refs/tags/*");
+            why = replaced(heap, why, git_ok(heap, io, exec, clock, "fetch the repository", all));
+            borrow why as &wb in {
+                good = blank(wb);
+            }
+        }
+    }
+    if good {
+        var out = arg_of(heap, arg_of(heap, buffer.empty(heap, 128), "-C"), tmp);
+        out = arg_of(heap, arg_of(heap, arg_of(heap, arg_of(heap, out, "checkout"), "--quiet"), "--detach"), rev);
+        why = replaced(heap, why, git_ok(heap, io, exec, clock, "check out the commit", out));
+        borrow why as &wb in {
+            good = blank(wb);
+        }
+    }
+    if good {
+        var head = arg_of(heap, arg_of(heap, arg_of(heap, arg_of(heap, buffer.empty(heap, 128), "-C"), tmp), "rev-parse"), "HEAD");
+        borrow head as &hb in {
+            let step = git_run(heap, io, exec, clock, "read the commit", buffer.bytes(hb));
+            let Step { said, failure } = step;
+            why = replaced(heap, why, failure);
+            borrow said as &sb in {
+                if !bytes.equal(buffer.bytes(sb), rev) {
+                    why = replaced(heap, why, message(heap, "asked `", git, "` for commit "));
+                    why = buffer.append(heap, buffer.append(heap, buffer.append(heap, why, rev), " and got "), buffer.bytes(sb));
+                }
+            }
+            buffer.drop(heap, said);
+        }
+        buffer.drop(heap, head);
+    }
+    return why;
+}
+
+// `base` and `part` joined by a `/`.
+fn joined[&h, &b, &p](heap: &!h Heap, base: &b [byte], part: &p [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.empty(heap, len(base) + len(part) + 2), base);
+    b = buffer.push(heap, b, byte_of('/'));
+    return buffer.append(heap, b, part);
+}
+
+// The checkout of `rev` made as the directory `dest`, built in a neighbour of its own name and moved into place (another process that finished first has made a directory as
+// good): why not, or nothing. The neighbour is `REV.tmp.MILLISECONDS`, where the Rust code has the process number (a program started from cancho cannot ask for its own).
+fn fill[&h, &i, &x, &c, &f, &k, &g, &r, &d](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], git: &g [byte], rev: &r [byte], dest: &d [byte]) -> [heap, err_write, fs_read(""), fs_write(""), exec(""), clock, poll] buffer.Buffer {
+    let parent = joined(heap, cache, "git");
+    var why = buffer.empty(heap, 0);
+    borrow parent as &pb in {
+        if !tool(heap, io, exec, clock, "/bin/mkdir", "-p", buffer.bytes(pb)) {
+            why = replaced(heap, why, message(heap, "cannot create `", buffer.bytes(pb), "`"));
+        } else {
+            var name = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 96), rev), ".tmp.");
+            name = buffer.push_nat(heap, name, clock_unix_ms(clock));
+            var tmp = buffer.empty(heap, 0);
+            borrow name as &nb in {
+                buffer.drop(heap, tmp);
+                tmp = joined(heap, buffer.bytes(pb), buffer.bytes(nb));
+            }
+            buffer.drop(heap, name);
+            borrow tmp as &tb in {
+                let _gone = tool(heap, io, exec, clock, "/bin/rm", "-rf", buffer.bytes(tb));
+                if !tool(heap, io, exec, clock, "/bin/mkdir", "-p", buffer.bytes(tb)) {
+                    why = replaced(heap, why, message(heap, "cannot create `", buffer.bytes(tb), "`"));
+                } else {
+                    why = replaced(heap, why, fetch_into(heap, io, exec, clock, buffer.bytes(tb), git, rev));
+                    var good = false;
+                    borrow why as &wb in {
+                        good = blank(wb);
+                    }
+                    if good {
+                        let dotgit = joined(heap, buffer.bytes(tb), ".git");
+                        borrow dotgit as &gb in {
+                            if !tool(heap, io, exec, clock, "/bin/rm", "-rf", buffer.bytes(gb)) {
+                                why = replaced(heap, why, message(heap, "cannot remove the checkout's `.git`", "", ""));
+                            }
+                        }
+                        buffer.drop(heap, dotgit);
+                        borrow why as &wb in {
+                            good = blank(wb);
+                        }
+                    }
+                    if good {
+                        match fs_rename(fs, buffer.bytes(tb), dest) {
+                            Done::Ok(moved) => {
+                            }
+                            Done::Failed(e) => {
+                                if !walk.is_directory(fs, dest) {
+                                    why = replaced(heap, why, message(heap, "cannot move the checkout into `", dest, "`"));
+                                }
+                            }
+                        }
+                    }
+                }
+                let _removed = tool(heap, io, exec, clock, "/bin/rm", "-rf", buffer.bytes(tb));
+            }
+            buffer.drop(heap, tmp);
+        }
+    }
+    buffer.drop(heap, parent);
+    return why;
+}
+
+// The store directory the origin names, the commit fetched first if the cache does not hold it. `cache` is the cache root (`cache_root`). A message and a status
+// (1 not a pin, 3 the environment) if there is no store.
+pub fn ensure[&h, &i, &x, &c, &f, &k, &g, &r, &p](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], git: &g [byte], rev: &r [byte], path: &p [byte]) -> [heap, err_write, fs_read(""), fs_write(""), exec(""), clock, poll] Checkout {
+    let bad = invalid(heap, git, rev, path);
+    var refused = false;
+    borrow bad as &bb in {
+        refused = !blank(bb);
+    }
+    if refused {
+        return Checkout { dir: buffer.empty(heap, 0), why: bad, status: 1 };
+    }
+    buffer.drop(heap, bad);
+    if len(cache) == 0 {
+        return Checkout { dir: buffer.empty(heap, 0), why: buffer.append(heap, buffer.empty(heap, 64), "no cache directory: pass --cache DIR"), status: 3 };
+    }
+    let base = joined(heap, cache, "git");
+    var dest = buffer.empty(heap, 0);
+    borrow base as &bsb in {
+        buffer.drop(heap, dest);
+        dest = joined(heap, buffer.bytes(bsb), rev);
+    }
+    buffer.drop(heap, base);
+    var why = buffer.empty(heap, 0);
+    borrow dest as &db in {
+        if !walk.is_directory(fs, buffer.bytes(db)) {
+            why = replaced(heap, why, fill(heap, io, exec, clock, fs, cache, git, rev, buffer.bytes(db)));
+        }
+    }
+    var failed = false;
+    borrow why as &wb in {
+        failed = !blank(wb);
+    }
+    if failed {
+        buffer.drop(heap, dest);
+        return Checkout { dir: buffer.empty(heap, 0), why: why, status: 3 };
+    }
+    buffer.drop(heap, why);
+    var store = buffer.empty(heap, 0);
+    borrow dest as &dsb in {
+        buffer.drop(heap, store);
+        store = joined(heap, buffer.bytes(dsb), path);
+    }
+    buffer.drop(heap, dest);
+    var there = false;
+    borrow store as &sb in {
+        there = walk.is_directory(fs, buffer.bytes(sb));
+    }
+    if !there {
+        buffer.drop(heap, store);
+        var m = message(heap, "commit ", rev, " of `");
+        m = buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.append(heap, m, git), "` has no directory `"), path), "`");
+        return Checkout { dir: buffer.empty(heap, 0), why: m, status: 3 };
+    }
+    return Checkout { dir: store, why: buffer.empty(heap, 0), status: 0 };
+}
+
+// A branch or tag name resolved to the commit it names right now, once, for `add --ref`: the hash in `said`, or why not. The name is never written anywhere; the hash is.
+pub fn resolve_ref[&h, &i, &x, &c, &u, &n](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, url: &u [byte], name: &n [byte]) -> [heap, err_write, exec(""), clock, poll] Step {
+    if len(url) == 0 || lc.at(url, 0) == '-' || starts(url, "ext::") {
+        return Step { said: buffer.empty(heap, 0), failure: message(heap, "not a repository location: `", url, "`") };
+    }
+    if len(name) == 0 || lc.at(name, 0) == '-' {
+        return Step { said: buffer.empty(heap, 0), failure: message(heap, "not a ref name: `", name, "`") };
+    }
+    var a = arg_of(heap, arg_of(heap, buffer.empty(heap, 96), "ls-remote"), "--");
+    a = arg_of(heap, arg_of(heap, a, url), name);
+    var step = Step { said: buffer.empty(heap, 0), failure: buffer.empty(heap, 0) };
+    borrow a as &ab in {
+        let ran = git_run(heap, io, exec, clock, "resolve the ref", buffer.bytes(ab));
+        let Step { said, failure } = ran;
+        var failed = false;
+        borrow failure as &fb in {
+            failed = !blank(fb);
+        }
+        if failed {
+            buffer.drop(heap, said);
+            step = replaced_step(heap, step, Step { said: buffer.empty(heap, 0), failure: failure });
+        } else {
+            buffer.drop(heap, failure);
+            var hash = buffer.empty(heap, 0);
+            borrow said as &sb in {
+                let listing = buffer.bytes(sb);
+                var end = 0;
+                while end < len(listing) && lc.at(listing, end) != ' ' && lc.at(listing, end) != 9 && lc.at(listing, end) != 10 {
+                    end = end + 1;
+                }
+                let first = listing[0..end];
+                if (len(first) == 40 || len(first) == 64) && all_hex(first) {
+                    hash = buffer.append(heap, hash, first);
+                }
+            }
+            buffer.drop(heap, said);
+            var found = false;
+            borrow hash as &hb in {
+                found = !blank(hb);
+            }
+            if found {
+                step = replaced_step(heap, step, Step { said: hash, failure: buffer.empty(heap, 0) });
+            } else {
+                buffer.drop(heap, hash);
+                var m = message(heap, "`", url, "` has no ref `");
+                m = buffer.append(heap, buffer.append(heap, m, name), "`");
+                step = replaced_step(heap, step, Step { said: buffer.empty(heap, 0), failure: m });
+            }
+        }
+    }
+    buffer.drop(heap, a);
+    return step;
+}
+
+fn replaced_step[&h](heap: &!h Heap, old: Step, new: Step) -> [heap] Step {
+    let Step { said, failure } = old;
+    buffer.drop(heap, said);
+    buffer.drop(heap, failure);
+    return new;
+}
