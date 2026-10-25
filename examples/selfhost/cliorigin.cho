@@ -14,6 +14,7 @@ import std.bytes;
 import selfhost.lexcore as lc;
 import selfhost.walk;
 import selfhost.cliprog;
+import selfhost.projfile;
 
 // What a step said: its standard output, and why it failed (empty if it did not).
 pub res struct Step {
@@ -95,11 +96,6 @@ pub fn invalid[&h, &g, &r, &p](heap: &!h Heap, git: &g [byte], rev: &r [byte], p
     return buffer.empty(heap, 0);
 }
 
-fn replaced[&h](heap: &!h Heap, old: buffer.Buffer, new: buffer.Buffer) -> [heap] buffer.Buffer {
-    buffer.drop(heap, old);
-    return new;
-}
-
 // `text` without the white space at its ends.
 fn trim[&t](text: &t [byte]) -> [] &t [byte] {
     var from = 0;
@@ -126,10 +122,10 @@ fn git_run[&h, &i, &x, &c, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
         let got = cliprog.run_capture_in(heap, io, exec, clock, "/usr/bin/git", "", buffer.bytes(ab), "PATH=/usr/bin:/bin\0GIT_TERMINAL_PROMPT=0\0GIT_OPTIONAL_LOCKS=0\0");
         let cliprog.Captured { out, err, kind, value } = got;
         if kind == 5 {
-            why = replaced(heap, why, message(heap, "cannot run `git` to ", what, ""));
+            why = projfile.replaced(heap, why, message(heap, "cannot run `git` to ", what, ""));
         } else if kind != 0 || value != 0 {
             borrow err as &eb in {
-                why = replaced(heap, why, message(heap, "`git` failed to ", what, ": "));
+                why = projfile.replaced(heap, why, message(heap, "`git` failed to ", what, ": "));
                 why = buffer.append(heap, why, trim(buffer.bytes(eb)));
             }
         } else {
@@ -196,7 +192,7 @@ fn failure_of[&h](heap: &!h Heap, step: Step) -> [heap] buffer.Buffer {
 fn git_ok[&h, &i, &x, &c, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, what: &static [byte], rest: buffer.Buffer) -> [heap, err_write, exec(""), clock, poll] buffer.Buffer {
     var failed = buffer.empty(heap, 0);
     borrow rest as &rb in {
-        failed = replaced(heap, failed, failure_of(heap, git_run(heap, io, exec, clock, what, buffer.bytes(rb))));
+        failed = projfile.replaced(heap, failed, failure_of(heap, git_run(heap, io, exec, clock, what, buffer.bytes(rb))));
     }
     buffer.drop(heap, rest);
     return failed;
@@ -218,7 +214,7 @@ fn fetch_into[&h, &i, &x, &c, &t, &g, &r](heap: &!h Heap, io: &!i Io, exec: &x E
         var shallow = arg_of(heap, arg_of(heap, buffer.empty(heap, 128), "-C"), tmp);
         shallow = arg_of(heap, arg_of(heap, arg_of(heap, arg_of(heap, arg_of(heap, shallow, "fetch"), "--quiet"), "--depth"), "1"), "--no-tags");
         shallow = arg_of(heap, arg_of(heap, arg_of(heap, shallow, "--"), git), rev);
-        why = replaced(heap, why, git_ok(heap, io, exec, clock, "fetch the commit", shallow));
+        why = projfile.replaced(heap, why, git_ok(heap, io, exec, clock, "fetch the commit", shallow));
         borrow why as &wb in {
             good = blank(wb);
         }
@@ -226,7 +222,7 @@ fn fetch_into[&h, &i, &x, &c, &t, &g, &r](heap: &!h Heap, io: &!i Io, exec: &x E
             var all = arg_of(heap, arg_of(heap, buffer.empty(heap, 160), "-C"), tmp);
             all = arg_of(heap, arg_of(heap, arg_of(heap, arg_of(heap, arg_of(heap, all, "fetch"), "--quiet"), "--no-tags"), "--"), git);
             all = arg_of(heap, arg_of(heap, all, "+refs/heads/*:refs/remotes/origin/*"), "+refs/tags/*:refs/tags/*");
-            why = replaced(heap, why, git_ok(heap, io, exec, clock, "fetch the repository", all));
+            why = projfile.replaced(heap, why, git_ok(heap, io, exec, clock, "fetch the repository", all));
             borrow why as &wb in {
                 good = blank(wb);
             }
@@ -235,7 +231,7 @@ fn fetch_into[&h, &i, &x, &c, &t, &g, &r](heap: &!h Heap, io: &!i Io, exec: &x E
     if good {
         var out = arg_of(heap, arg_of(heap, buffer.empty(heap, 128), "-C"), tmp);
         out = arg_of(heap, arg_of(heap, arg_of(heap, arg_of(heap, out, "checkout"), "--quiet"), "--detach"), rev);
-        why = replaced(heap, why, git_ok(heap, io, exec, clock, "check out the commit", out));
+        why = projfile.replaced(heap, why, git_ok(heap, io, exec, clock, "check out the commit", out));
         borrow why as &wb in {
             good = blank(wb);
         }
@@ -245,10 +241,10 @@ fn fetch_into[&h, &i, &x, &c, &t, &g, &r](heap: &!h Heap, io: &!i Io, exec: &x E
         borrow head as &hb in {
             let step = git_run(heap, io, exec, clock, "read the commit", buffer.bytes(hb));
             let Step { said, failure } = step;
-            why = replaced(heap, why, failure);
+            why = projfile.replaced(heap, why, failure);
             borrow said as &sb in {
                 if !bytes.equal(buffer.bytes(sb), rev) {
-                    why = replaced(heap, why, message(heap, "asked `", git, "` for commit "));
+                    why = projfile.replaced(heap, why, message(heap, "asked `", git, "` for commit "));
                     why = buffer.append(heap, buffer.append(heap, buffer.append(heap, why, rev), " and got "), buffer.bytes(sb));
                 }
             }
@@ -273,7 +269,7 @@ fn fill[&h, &i, &x, &c, &f, &k, &g, &r, &d](heap: &!h Heap, io: &!i Io, exec: &x
     var why = buffer.empty(heap, 0);
     borrow parent as &pb in {
         if !tool(heap, io, exec, clock, "/bin/mkdir", "-p", buffer.bytes(pb)) {
-            why = replaced(heap, why, message(heap, "cannot create `", buffer.bytes(pb), "`"));
+            why = projfile.replaced(heap, why, message(heap, "cannot create `", buffer.bytes(pb), "`"));
         } else {
             var name = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 96), rev), ".tmp.");
             name = buffer.push_nat(heap, name, clock_unix_ms(clock));
@@ -286,9 +282,9 @@ fn fill[&h, &i, &x, &c, &f, &k, &g, &r, &d](heap: &!h Heap, io: &!i Io, exec: &x
             borrow tmp as &tb in {
                 let _gone = tool(heap, io, exec, clock, "/bin/rm", "-rf", buffer.bytes(tb));
                 if !tool(heap, io, exec, clock, "/bin/mkdir", "-p", buffer.bytes(tb)) {
-                    why = replaced(heap, why, message(heap, "cannot create `", buffer.bytes(tb), "`"));
+                    why = projfile.replaced(heap, why, message(heap, "cannot create `", buffer.bytes(tb), "`"));
                 } else {
-                    why = replaced(heap, why, fetch_into(heap, io, exec, clock, buffer.bytes(tb), git, rev));
+                    why = projfile.replaced(heap, why, fetch_into(heap, io, exec, clock, buffer.bytes(tb), git, rev));
                     var good = false;
                     borrow why as &wb in {
                         good = blank(wb);
@@ -297,7 +293,7 @@ fn fill[&h, &i, &x, &c, &f, &k, &g, &r, &d](heap: &!h Heap, io: &!i Io, exec: &x
                         let dotgit = joined(heap, buffer.bytes(tb), ".git");
                         borrow dotgit as &gb in {
                             if !tool(heap, io, exec, clock, "/bin/rm", "-rf", buffer.bytes(gb)) {
-                                why = replaced(heap, why, message(heap, "cannot remove the checkout's `.git`", "", ""));
+                                why = projfile.replaced(heap, why, message(heap, "cannot remove the checkout's `.git`", "", ""));
                             }
                         }
                         buffer.drop(heap, dotgit);
@@ -311,7 +307,7 @@ fn fill[&h, &i, &x, &c, &f, &k, &g, &r, &d](heap: &!h Heap, io: &!i Io, exec: &x
                             }
                             Done::Failed(e) => {
                                 if !walk.is_directory(fs, dest) {
-                                    why = replaced(heap, why, message(heap, "cannot move the checkout into `", dest, "`"));
+                                    why = projfile.replaced(heap, why, message(heap, "cannot move the checkout into `", dest, "`"));
                                 }
                             }
                         }
@@ -351,7 +347,7 @@ pub fn ensure[&h, &i, &x, &c, &f, &k, &g, &r, &p](heap: &!h Heap, io: &!i Io, ex
     var why = buffer.empty(heap, 0);
     borrow dest as &db in {
         if !walk.is_directory(fs, buffer.bytes(db)) {
-            why = replaced(heap, why, fill(heap, io, exec, clock, fs, cache, git, rev, buffer.bytes(db)));
+            why = projfile.replaced(heap, why, fill(heap, io, exec, clock, fs, cache, git, rev, buffer.bytes(db)));
         }
     }
     var failed = false;
