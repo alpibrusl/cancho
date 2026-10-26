@@ -63,13 +63,7 @@ fn words_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, from: int) ->
 
 // The end of the record that starts at `at`: `n` fields, each followed by a NUL.
 pub fn record_end[&r](recs: &r [byte], at: int, n: int) -> [] int {
-    var p = at;
-    var k = 0;
-    while k < n {
-        p = projfile.field_end(recs, p, len(recs)) + 1;
-        k = k + 1;
-    }
-    return p;
+    return clistore.field_from(recs, at, n);
 }
 
 // The `k`th field of the record at `at`.

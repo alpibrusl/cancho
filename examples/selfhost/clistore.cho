@@ -530,7 +530,7 @@ fn field_at[&r](recs: &r [byte], at: int, k: int) -> [] int {
 }
 
 // The start of the `k`th field of the record at `at`.
-fn field_from[&r](recs: &r [byte], at: int, k: int) -> [] int {
+pub fn field_from[&r](recs: &r [byte], at: int, k: int) -> [] int {
     var p = at;
     var seen = 0;
     while seen < k {
