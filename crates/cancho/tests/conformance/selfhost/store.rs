@@ -48,7 +48,7 @@ pub(super) fn stores_in(dir: &Path, at: &Path, found: &mut Vec<String>) {
 }
 
 /// The files of a directory with their bytes, sorted by name.
-fn files_in(dir: &Path) -> Vec<(String, Vec<u8>)> {
+pub(super) fn files_in(dir: &Path) -> Vec<(String, Vec<u8>)> {
     let mut found = Vec::new();
     if let Ok(read) = std::fs::read_dir(dir) {
         for entry in read {
@@ -66,13 +66,13 @@ fn files_in(dir: &Path) -> Vec<(String, Vec<u8>)> {
 /// What a fetch gave: the status, what it said on the standard error, and the files it wrote.
 type Fetch = (Option<i32>, String, Vec<(String, Vec<u8>)>);
 
-struct World {
-    url: String,
-    rev: String,
+pub(super) struct World {
+    pub(super) url: String,
+    pub(super) rev: String,
 }
 
 /// A repository whose commit holds the directory `tree` as `packages` (a store that requires another by a relative path finds it there).
-fn repository(work: &Path, tree: &Path, name: &str) -> World {
+pub(super) fn repository(work: &Path, tree: &Path, name: &str) -> World {
     let repo = work.join(name);
     let _ = std::fs::remove_dir_all(&repo);
     std::fs::create_dir_all(&repo).unwrap();

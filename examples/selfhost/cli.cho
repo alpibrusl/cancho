@@ -37,6 +37,7 @@ import selfhost.clitest;
 import selfhost.projfile;
 import selfhost.cliproject;
 import selfhost.clivcs;
+import selfhost.clilock;
 
 fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_read, io_write, err_write, args, fs_read(""), fs_write(""), dir_read, file_read, file_write, exec(""), clock, poll] int {
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "fmt") {
@@ -50,6 +51,9 @@ fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f
     }
     if arg_count(args) >= 3 && bytes.equal(arg(args, 1), "vcs") && bytes.equal(arg(args, 2), "log") {
         return clivcs.log_command(heap, io, args, fs);
+    }
+    if arg_count(args) >= 3 && bytes.equal(arg(args, 1), "vcs") && bytes.equal(arg(args, 2), "lock") {
+        return clilock.lock_command(heap, io, args, fs, exec, clock);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "add") {
         return cliproject.add_command(heap, io, args, fs, exec, clock);

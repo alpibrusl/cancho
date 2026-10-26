@@ -61,11 +61,11 @@ fn words_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, from: int) ->
     return Words { store_at: store_at, files: files, bad: bad };
 }
 
-// The end of the record that starts at `at`: five fields (`SIG NAME STAGE SOURCE STD`), each followed by a NUL.
-fn record_end[&r](recs: &r [byte], at: int) -> [] int {
+// The end of the record that starts at `at`: `n` fields, each followed by a NUL.
+pub fn record_end[&r](recs: &r [byte], at: int, n: int) -> [] int {
     var p = at;
     var k = 0;
-    while k < 5 {
+    while k < n {
         p = projfile.field_end(recs, p, len(recs)) + 1;
         k = k + 1;
     }
@@ -73,7 +73,7 @@ fn record_end[&r](recs: &r [byte], at: int) -> [] int {
 }
 
 // The `k`th field of the record at `at`.
-fn field_of[&r](recs: &r [byte], at: int, k: int) -> [] &r [byte] {
+pub fn field_of[&r](recs: &r [byte], at: int, k: int) -> [] &r [byte] {
     var p = at;
     var seen = 0;
     while seen < k {
@@ -83,9 +83,9 @@ fn field_of[&r](recs: &r [byte], at: int, k: int) -> [] &r [byte] {
     return recs[p..projfile.field_end(recs, p, len(recs))];
 }
 
-// Which of two records comes first: by name, and a name that is the same by where the record is (the order `vcs publish` keeps them in is by signature).
-fn before[&r](recs: &r [byte], a: int, b: int) -> [] bool {
-    let c = bytes.compare(field_of(recs, a, 1), field_of(recs, b, 1));
+// Which of two records comes first: by their field `k` (the name), and a name that is the same by where the record is (the order `vcs publish` keeps them in is by signature).
+pub fn before[&r](recs: &r [byte], a: int, b: int, k: int) -> [] bool {
+    let c = bytes.compare(field_of(recs, a, k), field_of(recs, b, k));
     if c != 0 {
         return c < 0;
     }
@@ -179,10 +179,10 @@ fn rows[&h, &i, &s, &r](heap: &!h Heap, io: &!i Io, store: &s [byte], recs: &r [
         var best = 0 - 1;
         var at = 0;
         while at < len(recs) {
-            if (taken < 0 || before(recs, taken, at)) && (best < 0 || before(recs, at, best)) {
+            if (taken < 0 || before(recs, taken, at, 1)) && (best < 0 || before(recs, at, best, 1)) {
                 best = at;
             }
-            at = record_end(recs, at);
+            at = record_end(recs, at, 5);
         }
         if best < 0 {
             going = false;

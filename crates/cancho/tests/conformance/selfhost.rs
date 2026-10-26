@@ -330,6 +330,8 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "projfile.cho",
         "cliproject.cho",
         "clivcs.cho",
+        "clilock.cho",
+        "jsonwrite.cho",
         "cliorigin.cho",
         "clistore.cho",
         "listing.cho",

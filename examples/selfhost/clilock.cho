@@ -1,0 +1,560 @@
+edition 7;
+module selfhost.clilock;
+
+// clilock.cho -- `vcs lock`, a port of `cmd_lock` (`crates/cancho/src/vcs_cli.rs`) and `Lock` (`crates/cancho-vcs/src/lock.rs`): names looked up in the manifest of a store and pinned, by the
+// hashes of what they are, in a lock file (`docs/cli-in-cancho.md` section 28).
+//
+// A lock is read as the record `clistore.read_lock` gives (the empty store field, `0\0` or `1\0GIT\0REV\0PATH\0`, then `NAME SIG STAGE SOURCE` for each entry, then the bytes 1 and 2) and written
+// as `serde_json::to_vec_pretty` writes it (`jsonwrite.cho`).
+//
+// Exit status: 1 refused, 2 a bad command line, 3 the environment.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.walk;
+import selfhost.filewrite;
+import selfhost.projfile;
+import selfhost.clibase;
+import selfhost.clistore;
+import selfhost.cliorigin;
+import selfhost.clivcs;
+import selfhost.jsonwrite;
+
+// The words of a `vcs lock` command line: the names (each followed by a NUL), where the values of `--store`, `-o`, `--git`, `--rev`, `--ref`, `--path` and `--cache` are in the
+// arguments (-1 if not given), whether `--all` was given, and `bad` (the status of a usage error that has been said).
+pub res struct Locking {
+    names: buffer.Buffer,
+    store_at: int,
+    out_at: int,
+    git_at: int,
+    rev_at: int,
+    ref_at: int,
+    path_at: int,
+    cache_at: int,
+    all: bool,
+    bad: int,
+}
+
+fn takes_value[&w](word: &w [byte]) -> [] bool {
+    return bytes.equal(word, "--store") || bytes.equal(word, "-o") || bytes.equal(word, "--git") || bytes.equal(word, "--rev") || bytes.equal(word, "--ref") || bytes.equal(word, "--path") || bytes.equal(word, "--cache");
+}
+
+fn lock_arguments[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args) -> [heap, err_write, args] Locking {
+    var names = buffer.empty(heap, 64);
+    var store_at = 0 - 1;
+    var out_at = 0 - 1;
+    var git_at = 0 - 1;
+    var rev_at = 0 - 1;
+    var ref_at = 0 - 1;
+    var path_at = 0 - 1;
+    var cache_at = 0 - 1;
+    var all = false;
+    var bad = 0;
+    var n = 3;
+    while n < arg_count(args) && bad == 0 {
+        let word = arg(args, n);
+        if takes_value(word) && n + 1 >= arg_count(args) {
+            var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 32), "`"), word);
+            m = buffer.append(heap, m, "` needs a value");
+            borrow m as &mb in {
+                bad = clibase.usage_error(heap, io, buffer.bytes(mb));
+            }
+            buffer.drop(heap, m);
+        } else if bytes.equal(word, "--all") {
+            all = true;
+        } else if takes_value(word) {
+            n = n + 1;
+            if bytes.equal(word, "--store") {
+                store_at = n;
+            } else if bytes.equal(word, "-o") {
+                out_at = n;
+            } else if bytes.equal(word, "--git") {
+                git_at = n;
+            } else if bytes.equal(word, "--rev") {
+                rev_at = n;
+            } else if bytes.equal(word, "--ref") {
+                ref_at = n;
+            } else if bytes.equal(word, "--path") {
+                path_at = n;
+            } else if len(arg(args, n)) == 0 || lc.at(arg(args, n), 0) != '/' {
+                bad = clibase.usage_error(heap, io, "`--cache` needs an absolute directory");
+            } else {
+                cache_at = n;
+            }
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            bad = clibase.unknown_option(heap, io, word);
+        } else {
+            names = buffer.push(heap, buffer.append(heap, names, word), byte_of(0));
+        }
+        n = n + 1;
+    }
+    return Locking { names: names, store_at: store_at, out_at: out_at, git_at: git_at, rev_at: rev_at, ref_at: ref_at, path_at: path_at, cache_at: cache_at, all: all, bad: bad };
+}
+
+// A line on the standard error: `head`, `middle`, `tail`.
+fn say[&h, &i, &a, &b, &c](heap: &!h Heap, io: &!i Io, head: &a [byte], middle: &b [byte], tail: &c [byte]) -> [heap, err_write] int {
+    let line = buffer.push(heap, cliorigin.message(heap, head, middle, tail), byte_of(10));
+    borrow line as &lb in {
+        console.error_all(io, buffer.bytes(lb));
+    }
+    buffer.drop(heap, line);
+    return 0;
+}
+
+// `vcs lock (--store DIR | --git URL (--rev HASH | --ref NAME) [--path DIR]) -o FILE (--all | NAME...)`.
+pub fn lock_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    let given = lock_arguments(heap, io, args);
+    let Locking { names, store_at, out_at, git_at, rev_at, ref_at, path_at, cache_at, all, bad } = given;
+    var status = bad;
+    if status == 0 {
+        borrow names as &nb in {
+            status = lock_checked(heap, io, args, fs, exec, clock, buffer.bytes(nb), store_at, out_at, git_at, rev_at, ref_at, path_at, cache_at, all);
+        }
+    }
+    buffer.drop(heap, names);
+    return status;
+}
+
+// The command line checked, in the order the Rust command checks it.
+fn lock_checked[&h, &i, &a, &f, &x, &c, &n](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, names: &n [byte], store_at: int, out_at: int, git_at: int, rev_at: int, ref_at: int, path_at: int, cache_at: int, all: bool) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    if out_at < 0 {
+        return clibase.usage_error(heap, io, "`vcs lock` needs `-o <lockfile>`");
+    }
+    if len(names) == 0 && !all {
+        return clibase.usage_error(heap, io, "`vcs lock` needs at least one declaration name, or `--all`");
+    }
+    if all && len(names) > 0 {
+        return clibase.usage_error(heap, io, "`--all` pins every declaration; it cannot be combined with names");
+    }
+    if git_at >= 0 && store_at >= 0 {
+        return clibase.usage_error(heap, io, "`--git` and `--store` both say where the store is; give one");
+    }
+    if git_at < 0 && store_at < 0 {
+        return clibase.usage_error(heap, io, "`vcs lock` needs `--store <dir>` or `--git <url>`");
+    }
+    if store_at >= 0 {
+        if rev_at >= 0 || ref_at >= 0 || path_at >= 0 {
+            return clibase.usage_error(heap, io, "`--rev`, `--ref` and `--path` go with `--git`");
+        }
+        return lock_store(heap, io, fs, exec, clock, names, arg(args, out_at), arg(args, store_at), false, "", "", "", all);
+    }
+    if rev_at >= 0 && ref_at >= 0 {
+        return clibase.usage_error(heap, io, "give `--rev` or `--ref`, not both");
+    }
+    if rev_at < 0 && ref_at < 0 {
+        return clibase.usage_error(heap, io, "`--git` needs `--rev <hash>` or `--ref <name>`");
+    }
+    let url = arg(args, git_at);
+    var rev = buffer.empty(heap, 64);
+    if rev_at >= 0 {
+        rev = buffer.append(heap, rev, arg(args, rev_at));
+    } else {
+        let resolved = cliorigin.resolve_ref(heap, io, exec, clock, url, arg(args, ref_at));
+        let cliorigin.Step { said, failure } = resolved;
+        var failed = false;
+        borrow failure as &fb in {
+            if buffer.size(fb) > 0 {
+                say(heap, io, "", buffer.bytes(fb), "");
+                failed = true;
+            }
+        }
+        buffer.drop(heap, failure);
+        if failed {
+            buffer.drop(heap, said);
+            buffer.drop(heap, rev);
+            return 3;
+        }
+        borrow said as &sb in {
+            console.write_all(io, arg(args, ref_at));
+            console.write_all(io, " is ");
+            console.write_all(io, buffer.bytes(sb));
+            console.write_all(io, "\n");
+        }
+        buffer.drop(heap, rev);
+        rev = said;
+    }
+    var path = ".cancho-vcs";
+    if path_at >= 0 {
+        path = arg(args, path_at);
+    }
+    var result = 0;
+    var cache_given = "";
+    if cache_at >= 0 {
+        cache_given = arg(args, cache_at);
+    }
+    let cache = cliorigin.cache_root(heap, io, exec, clock, cache_given);
+    borrow cache as &cb in {
+        borrow rev as &rvb in {
+            let got = cliorigin.ensure(heap, io, exec, clock, fs, buffer.bytes(cb), url, buffer.bytes(rvb), path);
+            let cliorigin.Checkout { dir, why, status } = got;
+            borrow why as &wb in {
+                if buffer.size(wb) > 0 {
+                    say(heap, io, "", buffer.bytes(wb), "");
+                    result = 3;
+                }
+            }
+            buffer.drop(heap, why);
+            if result == 0 {
+                borrow dir as &db in {
+                    result = lock_store(heap, io, fs, exec, clock, names, arg(args, out_at), buffer.bytes(db), true, url, buffer.bytes(rvb), path, all);
+                }
+            }
+            buffer.drop(heap, dir);
+        }
+    }
+    buffer.drop(heap, cache);
+    buffer.drop(heap, rev);
+    return result;
+}
+
+// How many records of `manifest` (`SIG NAME STAGE SOURCE`) are named `name`, and where the first starts.
+fn named_in[&m, &w](manifest: &m [byte], name: &w [byte]) -> [] (int, int) {
+    var count = 0;
+    var first = 0 - 1;
+    var at = 0;
+    while at < len(manifest) {
+        if bytes.equal(clivcs.field_of(manifest, at, 1), name) {
+            if count == 0 {
+                first = at;
+            }
+            count = count + 1;
+        }
+        at = clivcs.record_end(manifest, at, 4);
+    }
+    return (count, first);
+}
+
+// The names of the records of `manifest`, sorted, each followed by a NUL.
+fn every_name[&h, &m](heap: &!h Heap, manifest: &m [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    var taken = 0 - 1;
+    var going = true;
+    while going {
+        var best = 0 - 1;
+        var at = 0;
+        while at < len(manifest) {
+            if (taken < 0 || clivcs.before(manifest, taken, at, 1)) && (best < 0 || clivcs.before(manifest, at, best, 1)) {
+                best = at;
+            }
+            at = clivcs.record_end(manifest, at, 4);
+        }
+        if best < 0 {
+            going = false;
+        } else {
+            out = buffer.push(heap, buffer.append(heap, out, clivcs.field_of(manifest, best, 1)), byte_of(0));
+            taken = best;
+        }
+    }
+    return out;
+}
+
+// The entries `ents` without the one named `name`.
+fn without[&h, &e, &w](heap: &!h Heap, ents: &e [byte], name: &w [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(ents) + 256);
+    var at = 0;
+    while at < len(ents) {
+        let end = clivcs.record_end(ents, at, 4);
+        if !bytes.equal(clivcs.field_of(ents, at, 0), name) {
+            out = buffer.append(heap, out, ents[at..end]);
+        }
+        at = end;
+    }
+    return out;
+}
+
+// What a lock record says about where its store is: `1` and the three fields at `from`, or `0`.
+fn origin_end[&r](rec: &r [byte]) -> [] int {
+    if lc.at(rec, 1) != '1' {
+        return 3;
+    }
+    var p = 3;
+    var k = 0;
+    while k < 3 {
+        p = projfile.field_end(rec, p, len(rec)) + 1;
+        k = k + 1;
+    }
+    return p;
+}
+
+// Is the origin the lock record `rec` has the one asked for (or none, if `has` is not set)?
+fn same_origin[&r, &g, &v, &p](rec: &r [byte], has: bool, git: &g [byte], rev: &v [byte], path: &p [byte]) -> [] bool {
+    let had = lc.at(rec, 1) == '1';
+    if had != has {
+        return false;
+    }
+    if !has {
+        return true;
+    }
+    return bytes.equal(clivcs.field_of(rec, 3, 0), git) && bytes.equal(clivcs.field_of(rec, 3, 1), rev) && bytes.equal(clivcs.field_of(rec, 3, 2), path);
+}
+
+// The lock written: the origin if there is one, then the entries sorted by name.
+fn lock_text[&h, &e, &g, &v, &p](heap: &!h Heap, ents: &e [byte], has: bool, git: &g [byte], rev: &v [byte], path: &p [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.push(heap, buffer.empty(heap, 1024), byte_of(123));
+    if has {
+        out = jsonwrite.key(heap, out, 1, "origin");
+        out = buffer.push(heap, out, byte_of(123));
+        out = jsonwrite.key(heap, out, 2, "git");
+        out = jsonwrite.string(heap, out, git);
+        out = buffer.push(heap, out, byte_of(44));
+        out = jsonwrite.key(heap, out, 2, "rev");
+        out = jsonwrite.string(heap, out, rev);
+        out = buffer.push(heap, out, byte_of(44));
+        out = jsonwrite.key(heap, out, 2, "path");
+        out = jsonwrite.string(heap, out, path);
+        out = jsonwrite.newline(heap, out, 1);
+        out = buffer.append(heap, out, "},");
+    }
+    out = jsonwrite.key(heap, out, 1, "entries");
+    out = buffer.push(heap, out, byte_of(123));
+    var taken = 0 - 1;
+    var wrote = false;
+    var going = true;
+    while going {
+        var best = 0 - 1;
+        var at = 0;
+        while at < len(ents) {
+            if (taken < 0 || clivcs.before(ents, taken, at, 0)) && (best < 0 || clivcs.before(ents, at, best, 0)) {
+                best = at;
+            }
+            at = clivcs.record_end(ents, at, 4);
+        }
+        if best < 0 {
+            going = false;
+        } else {
+            if wrote {
+                out = buffer.push(heap, out, byte_of(44));
+            }
+            out = jsonwrite.key(heap, out, 2, clivcs.field_of(ents, best, 0));
+            out = buffer.push(heap, out, byte_of(123));
+            out = jsonwrite.key(heap, out, 3, "sig_id");
+            out = jsonwrite.string(heap, out, clivcs.field_of(ents, best, 1));
+            out = buffer.push(heap, out, byte_of(44));
+            out = jsonwrite.key(heap, out, 3, "stage_id");
+            out = jsonwrite.string(heap, out, clivcs.field_of(ents, best, 2));
+            out = buffer.push(heap, out, byte_of(44));
+            out = jsonwrite.key(heap, out, 3, "source_hash");
+            out = jsonwrite.string(heap, out, clivcs.field_of(ents, best, 3));
+            out = jsonwrite.newline(heap, out, 2);
+            out = buffer.push(heap, out, byte_of(125));
+            wrote = true;
+            taken = best;
+        }
+    }
+    if wrote {
+        out = jsonwrite.newline(heap, out, 1);
+    }
+    out = buffer.push(heap, out, byte_of(125));
+    out = jsonwrite.newline(heap, out, 0);
+    return buffer.push(heap, out, byte_of(125));
+}
+
+// The names to pin: `--all` is every name of the manifest, sorted (one that two declarations share is there twice, and refused); otherwise the names as given.
+fn wanted_names[&h, &m, &n](heap: &!h Heap, manifest: &m [byte], given: &n [byte], all: bool) -> [heap] buffer.Buffer {
+    if all {
+        return every_name(heap, manifest);
+    }
+    return buffer.append(heap, buffer.empty(heap, len(given) + 8), given);
+}
+
+// The lock at `out` extended with `names` of the store in `store`, and written back: the manifest first.
+fn lock_store[&h, &i, &f, &x, &c, &o, &s, &n, &g, &v, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, names: &n [byte], out: &o [byte], store: &s [byte], has: bool, git: &g [byte], rev: &v [byte], path: &p [byte], all: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    let read = clistore.read_manifest(heap, fs, store);
+    let clistore.Pins { records, why } = read;
+    var result = 0;
+    borrow why as &wb in {
+        if buffer.size(wb) > 0 {
+            say(heap, io, "", buffer.bytes(wb), "");
+            result = 3;
+        }
+    }
+    if result == 0 {
+        borrow records as &rb in {
+            result = lock_old(heap, io, fs, exec, clock, names, out, store, has, git, rev, path, all, buffer.bytes(rb));
+        }
+    }
+    buffer.drop(heap, records);
+    buffer.drop(heap, why);
+    return result;
+}
+
+// The lock that is already there, read.
+fn lock_old[&h, &i, &f, &x, &c, &o, &s, &n, &g, &v, &p, &m](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, names: &n [byte], out: &o [byte], store: &s [byte], has: bool, git: &g [byte], rev: &v [byte], path: &p [byte], all: bool, manifest: &m [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    let read = clistore.read_lock(heap, fs, out);
+    let clistore.Pins { records, why } = read;
+    var result = 0;
+    borrow why as &wb in {
+        if buffer.size(wb) > 0 {
+            say(heap, io, "", buffer.bytes(wb), "");
+            result = 3;
+        }
+    }
+    if result == 0 {
+        borrow records as &rb in {
+            result = lock_merge(heap, io, fs, exec, clock, names, out, store, has, git, rev, path, all, manifest, buffer.bytes(rb));
+        }
+    }
+    buffer.drop(heap, records);
+    buffer.drop(heap, why);
+    return result;
+}
+
+// The names pinned in the entries the lock has, and the lock written.
+fn lock_merge[&h, &i, &f, &x, &c, &o, &s, &n, &g, &v, &p, &m, &l](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, names: &n [byte], out: &o [byte], store: &s [byte], has: bool, git: &g [byte], rev: &v [byte], path: &p [byte], all: bool, manifest: &m [byte], old: &l [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_write, exec(""), clock, poll] int {
+    var ents = buffer.empty(heap, 256);
+    if len(old) > 0 {
+        if lc.at(old, 1) == '1' {
+            let bad = cliorigin.invalid(heap, clivcs.field_of(old, 3, 0), clivcs.field_of(old, 3, 1), clivcs.field_of(old, 3, 2));
+            var broken = false;
+            borrow bad as &bb in {
+                if buffer.size(bb) > 0 {
+                    let line = buffer.append(heap, cliorigin.message(heap, "cannot read lock file at `", out, "`: bad origin in lock file: "), buffer.bytes(bb));
+                    borrow line as &lb in {
+                        say(heap, io, "", buffer.bytes(lb), "");
+                    }
+                    buffer.drop(heap, line);
+                    broken = true;
+                }
+            }
+            buffer.drop(heap, bad);
+            if broken {
+                buffer.drop(heap, ents);
+                return 3;
+            }
+        }
+        ents = buffer.append(heap, ents, old[origin_end(old)..len(old) - 2]);
+        if len(old) - 2 > origin_end(old) && !same_origin(old, has, git, rev, path) {
+            buffer.drop(heap, ents);
+            say(heap, io, "`", out, "` already pins a different store; delete it to lock a new one, or pick another `-o`");
+            return 1;
+        }
+    }
+    let wanted = wanted_names(heap, manifest, names, all);
+    var result = 0;
+    borrow wanted as &wanted_buffer in {
+        let wb = buffer.bytes(wanted_buffer);
+        if len(wb) == 0 {
+            say(heap, io, "nothing is published at `", store, "`");
+            result = 1;
+        }
+        var at = 0;
+        while at < len(wb) && result == 0 {
+            let end = projfile.field_end(wb, at, len(wb));
+            let name = wb[at..end];
+            let found = named_in(manifest, name);
+            let (count, first) = found;
+            if count == 0 {
+                let line = buffer.append(heap, cliorigin.message(heap, "`", name, "` is not published at `"), store);
+                borrow line as &lb in {
+                    say(heap, io, "", buffer.bytes(lb), "`");
+                }
+                buffer.drop(heap, line);
+                result = 1;
+            } else if count > 1 {
+                var line = buffer.append(heap, cliorigin.message(heap, "`", name, "` is ambiguous at `"), store);
+                line = buffer.append(heap, line, "`: ");
+                let digits = number(heap, count);
+                borrow digits as &db in {
+                    line = buffer.append(heap, line, buffer.bytes(db));
+                }
+                buffer.drop(heap, digits);
+                line = buffer.append(heap, line, " declarations share that name");
+                borrow line as &lb in {
+                    say(heap, io, "", buffer.bytes(lb), "");
+                }
+                buffer.drop(heap, line);
+                result = 1;
+            } else {
+                var next = buffer.empty(heap, 0);
+                borrow ents as &entb in {
+                    buffer.drop(heap, next);
+                    next = without(heap, buffer.bytes(entb), name);
+                }
+                next = buffer.push(heap, buffer.append(heap, next, name), byte_of(0));
+                next = buffer.push(heap, buffer.append(heap, next, clivcs.field_of(manifest, first, 0)), byte_of(0));
+                next = buffer.push(heap, buffer.append(heap, next, clivcs.field_of(manifest, first, 2)), byte_of(0));
+                next = buffer.push(heap, buffer.append(heap, next, clivcs.field_of(manifest, first, 3)), byte_of(0));
+                buffer.drop(heap, ents);
+                ents = next;
+                console.write_all(io, "locked ");
+                console.write_all(io, name);
+                console.write_all(io, "\n");
+            }
+            at = end + 1;
+        }
+    }
+    buffer.drop(heap, wanted);
+    if result == 0 {
+        borrow ents as &eb in {
+            result = save(heap, io, fs, exec, clock, out, lock_text(heap, buffer.bytes(eb), has, git, rev, path));
+        }
+    }
+    buffer.drop(heap, ents);
+    return result;
+}
+
+// The decimal digits of `n`.
+fn number[&h](heap: &!h Heap, n: int) -> [heap] buffer.Buffer {
+    var digits = buffer.empty(heap, 20);
+    var rest = n;
+    if rest == 0 {
+        return buffer.push(heap, digits, byte_of('0'));
+    }
+    var reversed = buffer.empty(heap, 20);
+    while rest > 0 {
+        reversed = buffer.push(heap, reversed, byte_of('0' + rest % 10));
+        rest = rest / 10;
+    }
+    borrow reversed as &rb in {
+        var k = buffer.size(rb);
+        while k > 0 {
+            k = k - 1;
+            digits = buffer.push(heap, digits, buffer.bytes(rb)[k]);
+        }
+    }
+    buffer.drop(heap, reversed);
+    return digits;
+}
+
+// `text` (spent) written to `out` through `out.tmp`, the directory it is in made if it is not there: 0, or 3 and why.
+fn save[&h, &i, &f, &x, &c, &o](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, out: &o [byte], text: buffer.Buffer) -> [heap, err_write, fs_read(""), fs_write(""), file_write, exec(""), clock, poll] int {
+    var cut = len(out);
+    while cut > 0 && lc.at(out, cut - 1) != '/' {
+        cut = cut - 1;
+    }
+    var worked = true;
+    if cut > 1 {
+        let parent = out[0..cut - 1];
+        if !walk.is_directory(fs, parent) {
+            worked = cliorigin.tool(heap, io, exec, clock, "/bin/mkdir", "-p", parent);
+        }
+    }
+    if worked {
+        let temporary = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(out) + 8), out), ".tmp");
+        borrow temporary as &tb in {
+            borrow text as &xb in {
+                if filewrite.store(fs, buffer.bytes(tb), buffer.bytes(xb)) != 0 {
+                    worked = false;
+                }
+            }
+            if worked {
+                match fs_rename(fs, buffer.bytes(tb), out) {
+                    Done::Ok(moved) => {
+                    }
+                    Done::Failed(e) => {
+                        worked = false;
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, temporary);
+    }
+    buffer.drop(heap, text);
+    if !worked {
+        say(heap, io, "cannot write lock file at `", out, "`");
+        return 3;
+    }
+    return 0;
+}

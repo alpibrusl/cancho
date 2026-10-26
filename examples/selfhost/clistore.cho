@@ -223,16 +223,25 @@ fn requirement_record[&h, &j, &x](heap: &!h Heap, jm: &!j [int], src: &x [byte])
     let root = jm[1];
     let store_at = member(jm, src, root, "store");
     let lock = member(jm, src, root, "lock");
-    var out = buffer.empty(heap, 0);
-    if !is_text(jm, store_at) || lock < 0 || jsonread.kind(jm, lock) != jsonread.k_object() {
-        return out;
+    if !is_text(jm, store_at) || lock < 0 {
+        return buffer.empty(heap, 0);
+    }
+    return lock_record(heap, jm, src, lock, add_string(heap, buffer.empty(heap, 512), jm, src, store_at));
+}
+
+// The lock object `lock` (`{"origin": .., "entries": {..}}`) added to `rec` as the origin and the entries of a requirement record (see above). Empty if it is not a lock.
+fn lock_record[&h, &j, &x](heap: &!h Heap, jm: &!j [int], src: &x [byte], lock: int, start: buffer.Buffer) -> [heap] buffer.Buffer {
+    var rec = start;
+    if jsonread.kind(jm, lock) != jsonread.k_object() {
+        buffer.drop(heap, rec);
+        return buffer.empty(heap, 0);
     }
     let entries = member(jm, src, lock, "entries");
     if entries < 0 || jsonread.kind(jm, entries) != jsonread.k_object() {
-        return out;
+        buffer.drop(heap, rec);
+        return buffer.empty(heap, 0);
     }
     let origin = member(jm, src, lock, "origin");
-    var rec = add_string(heap, buffer.empty(heap, 512), jm, src, store_at);
     var good = true;
     if origin >= 0 && jsonread.kind(jm, origin) != jsonread.k_null() {
         let git_at = member(jm, src, origin, "git");
@@ -270,12 +279,54 @@ fn requirement_record[&h, &j, &x](heap: &!h Heap, jm: &!j [int], src: &x [byte])
     }
     if !good {
         buffer.drop(heap, rec);
-        return out;
+        return buffer.empty(heap, 0);
     }
     rec = buffer.push(heap, rec, byte_of(1));
     rec = buffer.push(heap, rec, byte_of(2));
-    buffer.drop(heap, out);
     return rec;
+}
+
+// The lock file at `path` as a record: the empty store `STORE` (a NUL), then what `lock_record` adds. A file that is not there is no record and no reason (`Lock::load` reads it as an
+// empty lock); a file that is there and cannot be read, or is not a lock, is a reason.
+pub fn read_lock[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] Pins {
+    let read = clibase.read_file(heap, fs, path);
+    let clibase.Contents { bytes, failed } = read;
+    var records = buffer.empty(heap, 0);
+    var trouble = buffer.empty(heap, 0);
+    if failed == 2 {
+        // ENOENT: no lock yet.
+        buffer.drop(heap, bytes);
+        return Pins { records: records, why: trouble };
+    }
+    if failed != 0 {
+        trouble = projfile.replaced(heap, trouble, cliorigin.message(heap, "cannot read lock file at `", path, "`"));
+        buffer.drop(heap, bytes);
+        return Pins { records: records, why: trouble };
+    }
+    var good = false;
+    borrow bytes as &yb in {
+        let src = buffer.bytes(yb);
+        let area = box_slice(heap, jsonread.size_for(src), 0);
+        borrow mut area as &!ab in {
+            let jm = contents(ab);
+            if parsed(jm, src) {
+                let rec = lock_record(heap, jm, src, jm[1], buffer.append(heap, buffer.empty(heap, 512), "\0"));
+                borrow rec as &rb in {
+                    good = buffer.size(rb) > 0;
+                    if good {
+                        records = buffer.append(heap, records, buffer.bytes(rb));
+                    }
+                }
+                buffer.drop(heap, rec);
+            }
+        }
+        unbox_slice(heap, area);
+    }
+    buffer.drop(heap, bytes);
+    if !good {
+        trouble = projfile.replaced(heap, trouble, cliorigin.message(heap, "cannot read lock file at `", path, "`: malformed lock file"));
+    }
+    return Pins { records: records, why: trouble };
 }
 
 // The requirements of the store in `dir`, in the order of their file names (`requires/N.json`), as `requirement_record`s. No `requires` directory is none.
