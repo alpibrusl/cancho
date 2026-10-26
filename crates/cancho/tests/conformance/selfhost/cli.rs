@@ -462,12 +462,7 @@ fn the_command_line_in_cancho_checks_like_cancho_check() {
         missed.len(),
         cases.len()
     );
-    assert_eq!(
-        missed,
-        ["examples/tls_nb/gaps/g17_conn_payload.cho".to_owned()]
-            .map(|p| repo_root().join(p).display().to_string()),
-        "the refusals the checker in cancho misses"
-    );
+    assert!(missed.is_empty(), "the refusals the checker in cancho misses: {missed:?}");
     assert!(
         accepted > 60 && agreed > 600,
         "the comparison covered {accepted} accepted and {agreed} refused programs"
@@ -495,7 +490,7 @@ fn with_library(name: &str) -> bool {
 /// `cli.cho ids` against `cancho ids`: the lines of identities, byte for byte, for the repository's programs and the programs of several
 /// files, and, for a tenth of them, with the standard library (`--std` of the Rust command, `--std-dir std` of this one, which does not carry
 /// the library: the files are read, in the order `--std` adds them, from the directory). A refused program is a status 1 and no lines. The checker
-/// in cancho does not make every refusal (`examples/tls_nb/gaps/g17_conn_payload.cho`), and a body it has no code for is let through.
+/// in cancho does not make every refusal (a program of several files), and a body it has no code for is let through.
 #[test]
 fn the_command_line_in_cancho_writes_the_identities_like_cancho_ids() {
     let exe = build("cli-ids", &with_front_end("cli.cho"));
@@ -567,15 +562,8 @@ fn the_command_line_in_cancho_writes_the_identities_like_cancho_ids() {
         missed.len()
     );
     // The refusals the checker in cancho does not make, or has no judgement of (a body it has no code for is let through): the program with
-    // a `spawn` of a connection, one reference that escapes through inference, and a program of several files.
-    let mut expected: Vec<String> = [
-        "examples/tls_nb/gaps/g17_conn_payload.cho",
-        "tests/reject/reference_escapes_via_inference.cho",
-    ]
-    .iter()
-    .map(|p| repo_root().join(p).display().to_string())
-    .collect();
-    expected.push("several files 39".to_owned());
+    // a program of several files.
+    let expected = vec!["several files 39".to_owned()];
     assert_eq!(missed, expected, "the refusals the checker in cancho does not make");
     assert!(
         written > 100 && with_std > 20,
@@ -1045,10 +1033,7 @@ fn the_command_line_in_cancho_reports_layout_like_cancho_layout() {
         different.len(),
         different.join("\n")
     );
-    // The one refusal the checker in cancho does not make (`docs/cli-in-cancho.md` section 12): a `spawn` of a connection.
-    let expected =
-        vec![repo_root().join("examples/tls_nb/gaps/g17_conn_payload.cho").display().to_string()];
-    assert_eq!(missed, expected, "the refusals the checker in cancho does not make");
+    assert!(missed.is_empty(), "the refusals the checker in cancho does not make: {missed:?}");
     // The programs run with the library are chosen by a hash of their names (`with_library`), so adding a fixture does not move which
     // they are; how many of them are programs that get a table and not a refusal is what the floor is under (19 when this was written).
     assert!(
