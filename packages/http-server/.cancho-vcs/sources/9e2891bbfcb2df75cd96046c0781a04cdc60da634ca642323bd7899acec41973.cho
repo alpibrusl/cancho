@@ -1857,9 +1857,9 @@ pub fn pending[&s](srv: &s Server, k: int) -> [] int {
     return contents(srv.core.state)[stride() * k + 2];
 }
 
-// How many more bytes of answer `k` can hold: what `respond` and `stream` may be given at once.
+// How many more bytes of answer `k` can hold: what `respond` and `stream` may be given at once (on either kind of server).
 pub fn space[&s](srv: &s Server, k: int) -> [] int {
-    if !live_slot(srv.core, k) {
+    if k < 0 || k >= srv.core.limit || contents(srv.core.state)[stride() * k + 4] != 1 {
         return 0;
     }
     return srv.core.osize - contents(srv.core.state)[stride() * k + 2];
@@ -1960,15 +1960,13 @@ pub fn detach[&s](srv: &!s Server, k: int) -> [] int {
     return 0;
 }
 
-// Part of the answer to a held request (`hold`): as many of `bytes` as the connection has room
-// for, appended to what is waiting, answering how many (the application offers the rest again
-// after `output` has made room), or -1 for a ticket that is not held (answered, or its
-// connection gone). The request stays held: nothing behind it is given out and the idle
-// timeout spares it while nothing is waiting to be sent; `answer` with the last of the bytes
-// (or none) ends it. This is how an answer larger than the output room is sent, the head first
-// and the body as the peer takes it. Only a byte-fed server has it; a socket server answers -1.
+// Part of the answer to a held request (`hold`): as many of `bytes` as the connection has room for, appended to what
+// is waiting, answering how many (offer the rest again once `output` (byte-fed) or `wait` (socket) has made room), or -1
+// for a ticket that is not held (answered, or its connection gone). The request stays held: nothing behind it is given
+// out and the idle timeout spares it while nothing is waiting to be sent; `answer` with the last of the bytes (or none)
+// ends it. The head first, then the body as the peer takes it (`docs/http-server.md` section 14).
 pub fn stream[&s, &a](srv: &!s Server, ticket: int, bytes: &a [byte]) -> [] int {
-    if srv.core.fed != 1 || ticket < 0 {
+    if ticket < 0 {
         return 0 - 1;
     }
     let k = ticket % ticket_span();
@@ -1994,6 +1992,9 @@ pub fn stream[&s, &a](srv: &!s Server, ticket: int, bytes: &a [byte]) -> [] int 
     st[p + 2] = st[p + 2] + n;
     if n > 0 {
         set_flag(st, p, 4);
+        if srv.core.fed == 0 {
+            enqueue(srv.core, k);
+        }
     }
     return n;
 }
