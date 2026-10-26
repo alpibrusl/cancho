@@ -290,24 +290,24 @@ fn same_origin[&r, &g, &v, &p](rec: &r [byte], has: bool, git: &g [byte], rev: &
     return bytes.equal(clivcs.field_of(rec, 3, 0), git) && bytes.equal(clivcs.field_of(rec, 3, 1), rev) && bytes.equal(clivcs.field_of(rec, 3, 2), path);
 }
 
-// The lock written: the origin if there is one, then the entries sorted by name.
-fn lock_text[&h, &e, &g, &v, &p](heap: &!h Heap, ents: &e [byte], has: bool, git: &g [byte], rev: &v [byte], path: &p [byte]) -> [heap] buffer.Buffer {
+// The lock written (its closing brace at the indentation of `base`, for a lock inside another file): the origin if there is one, then the entries sorted by name.
+pub fn lock_text[&h, &e, &g, &v, &p](heap: &!h Heap, ents: &e [byte], has: bool, git: &g [byte], rev: &v [byte], path: &p [byte], base: int) -> [heap] buffer.Buffer {
     var out = buffer.push(heap, buffer.empty(heap, 1024), byte_of(123));
     if has {
-        out = jsonwrite.key(heap, out, 1, "origin");
+        out = jsonwrite.key(heap, out, base + 1, "origin");
         out = buffer.push(heap, out, byte_of(123));
-        out = jsonwrite.key(heap, out, 2, "git");
+        out = jsonwrite.key(heap, out, base + 2, "git");
         out = jsonwrite.string(heap, out, git);
         out = buffer.push(heap, out, byte_of(44));
-        out = jsonwrite.key(heap, out, 2, "rev");
+        out = jsonwrite.key(heap, out, base + 2, "rev");
         out = jsonwrite.string(heap, out, rev);
         out = buffer.push(heap, out, byte_of(44));
-        out = jsonwrite.key(heap, out, 2, "path");
+        out = jsonwrite.key(heap, out, base + 2, "path");
         out = jsonwrite.string(heap, out, path);
-        out = jsonwrite.newline(heap, out, 1);
+        out = jsonwrite.newline(heap, out, base + 1);
         out = buffer.append(heap, out, "},");
     }
-    out = jsonwrite.key(heap, out, 1, "entries");
+    out = jsonwrite.key(heap, out, base + 1, "entries");
     out = buffer.push(heap, out, byte_of(123));
     var taken = 0 - 1;
     var wrote = false;
@@ -327,27 +327,27 @@ fn lock_text[&h, &e, &g, &v, &p](heap: &!h Heap, ents: &e [byte], has: bool, git
             if wrote {
                 out = buffer.push(heap, out, byte_of(44));
             }
-            out = jsonwrite.key(heap, out, 2, clivcs.field_of(ents, best, 0));
+            out = jsonwrite.key(heap, out, base + 2, clivcs.field_of(ents, best, 0));
             out = buffer.push(heap, out, byte_of(123));
-            out = jsonwrite.key(heap, out, 3, "sig_id");
+            out = jsonwrite.key(heap, out, base + 3, "sig_id");
             out = jsonwrite.string(heap, out, clivcs.field_of(ents, best, 1));
             out = buffer.push(heap, out, byte_of(44));
-            out = jsonwrite.key(heap, out, 3, "stage_id");
+            out = jsonwrite.key(heap, out, base + 3, "stage_id");
             out = jsonwrite.string(heap, out, clivcs.field_of(ents, best, 2));
             out = buffer.push(heap, out, byte_of(44));
-            out = jsonwrite.key(heap, out, 3, "source_hash");
+            out = jsonwrite.key(heap, out, base + 3, "source_hash");
             out = jsonwrite.string(heap, out, clivcs.field_of(ents, best, 3));
-            out = jsonwrite.newline(heap, out, 2);
+            out = jsonwrite.newline(heap, out, base + 2);
             out = buffer.push(heap, out, byte_of(125));
             wrote = true;
             taken = best;
         }
     }
     if wrote {
-        out = jsonwrite.newline(heap, out, 1);
+        out = jsonwrite.newline(heap, out, base + 1);
     }
     out = buffer.push(heap, out, byte_of(125));
-    out = jsonwrite.newline(heap, out, 0);
+    out = jsonwrite.newline(heap, out, base + 0);
     return buffer.push(heap, out, byte_of(125));
 }
 
@@ -488,7 +488,7 @@ fn lock_merge[&h, &i, &f, &x, &c, &o, &s, &n, &g, &v, &p, &m, &l](heap: &!h Heap
     buffer.drop(heap, wanted);
     if result == 0 {
         borrow ents as &eb in {
-            result = save(heap, io, fs, exec, clock, out, lock_text(heap, buffer.bytes(eb), has, git, rev, path));
+            result = save(heap, io, fs, exec, clock, out, lock_text(heap, buffer.bytes(eb), has, git, rev, path, 0));
         }
     }
     buffer.drop(heap, ents);
