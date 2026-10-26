@@ -572,7 +572,7 @@ pub fn is_word[&t, &w](ent: &t [byte], from: int, to: int, word: &w [byte]) -> [
 }
 
 // Is the `name` one of letters, digits, `-`, `_` and `.`, and not empty?
-fn name_ok[&n](name: &n [byte]) -> [] bool {
+pub fn name_ok[&n](name: &n [byte]) -> [] bool {
     if len(name) == 0 {
         return false;
     }

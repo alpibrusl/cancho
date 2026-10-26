@@ -13,6 +13,7 @@ import selfhost.driver;
 import selfhost.walk;
 import selfhost.satisfytext;
 import selfhost.projfile;
+import selfhost.filewrite;
 import selfhost.cliorigin;
 import selfhost.clistore;
 import selfhost.clibase;
@@ -649,10 +650,401 @@ pub fn install_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
     return result;
 }
 
-// `add` needs `vcs`, which this command line does not carry.
-pub fn add_command[&i](io: &!i Io) -> [err_write] int {
-    console.error_all(io, "this command line cannot judge `add` yet: it fetches the dependency, which is `vcs`, and that is not in it\n");
-    return 3;
+// ------------------------------------------------------------------------------------------------------------------------------------------ add ---
+
+// The words of an `add` command line: where (in the arguments) the name, the url, `--rev`, `--ref`, `--path`, `--cache` and `--std-dir` values are (-1 if not given), how
+// many words are not options, whether `--ignore-compiler-rev` was given, and `bad` (the status of a usage error that has been said).
+pub res struct Adding {
+    name_at: int,
+    url_at: int,
+    rev_at: int,
+    ref_at: int,
+    path_at: int,
+    cache_at: int,
+    std_dir: int,
+    words: int,
+    ignore: bool,
+    bad: int,
+}
+
+fn add_arguments[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args) -> [heap, err_write, args] Adding {
+    var name_at = 0 - 1;
+    var url_at = 0 - 1;
+    var rev_at = 0 - 1;
+    var ref_at = 0 - 1;
+    var path_at = 0 - 1;
+    var cache_at = 0 - 1;
+    var std_dir = 0 - 1;
+    var words = 0;
+    var ignore = false;
+    var bad = 0;
+    var n = 2;
+    while n < arg_count(args) && bad == 0 {
+        let word = arg(args, n);
+        let valued = bytes.equal(word, "--rev") || bytes.equal(word, "--ref") || bytes.equal(word, "--path") || bytes.equal(word, "--cache") || bytes.equal(word, "--std-dir");
+        if bytes.equal(word, "--ignore-compiler-rev") {
+            ignore = true;
+        } else if valued && n + 1 >= arg_count(args) {
+            var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 32), "`"), word);
+            m = buffer.append(heap, m, "` needs a value");
+            borrow m as &mb in {
+                bad = clibase.usage_error(heap, io, buffer.bytes(mb));
+            }
+            buffer.drop(heap, m);
+        } else if bytes.equal(word, "--rev") {
+            n = n + 1;
+            rev_at = n;
+        } else if bytes.equal(word, "--ref") {
+            n = n + 1;
+            ref_at = n;
+        } else if bytes.equal(word, "--path") {
+            n = n + 1;
+            path_at = n;
+        } else if bytes.equal(word, "--cache") {
+            n = n + 1;
+            if len(arg(args, n)) == 0 || lc.at(arg(args, n), 0) != '/' {
+                bad = clibase.usage_error(heap, io, "`--cache` needs an absolute directory");
+            } else {
+                cache_at = n;
+            }
+        } else if bytes.equal(word, "--std-dir") {
+            n = n + 1;
+            std_dir = n;
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            bad = clibase.unknown_option(heap, io, word);
+        } else {
+            if words == 0 {
+                name_at = n;
+            } else if words == 1 {
+                url_at = n;
+            }
+            words = words + 1;
+        }
+        n = n + 1;
+    }
+    return Adding { name_at: name_at, url_at: url_at, rev_at: rev_at, ref_at: ref_at, path_at: path_at, cache_at: cache_at, std_dir: std_dir, words: words, ignore: ignore, bad: bad };
+}
+
+// Is there a dependency called `name` in the records?
+fn has_dependency[&r, &n](recs: &r [byte], name: &n [byte]) -> [] bool {
+    var at = 0;
+    while at < len(recs) {
+        if lc.at(recs, at) == 'D' {
+            let from = at + 2;
+            let to = projfile.field_end(recs, from, len(recs));
+            if to - from == len(name) && bytes.equal(recs[from..to], name) {
+                return true;
+            }
+        }
+        at = after_record(recs, at);
+    }
+    return false;
+}
+
+// A quote, a backslash or a control character: nothing that would need escaping in the file.
+fn needs_escape[&t](text: &t [byte]) -> [] bool {
+    var at = 0;
+    while at < len(text) {
+        let c = lc.at(text, at);
+        if c == '"' || c == 92 || c < 32 || c == 127 {
+            return true;
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// The stores a directory of a repository holds one level down, for the message of `add` that says the path was not one: `PATH/NAME`, each followed by a NUL, in order.
+fn stores_below[&h, &f, &d, &p](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte], shown: &p [byte]) -> [heap, fs_read(""), dir_read] buffer.Buffer {
+    var found = buffer.empty(heap, 0);
+    let names = walk.subdirectories(heap, fs, dir, buffer.empty(heap, 0));
+    borrow names as &nb in {
+        let all = buffer.bytes(nb);
+        var at = 0;
+        while at < len(all) {
+            let end = projfile.field_end(all, at, len(all));
+            let inner = cliorigin.joined(heap, dir, all[at..end]);
+            borrow inner as &ib in {
+                let manifest = cliorigin.joined(heap, buffer.bytes(ib), "manifest.json");
+                borrow manifest as &mb in {
+                    if is_file(fs, buffer.bytes(mb)) {
+                        var trimmed = len(shown);
+                        while trimmed > 0 && lc.at(shown, trimmed - 1) == '/' {
+                            trimmed = trimmed - 1;
+                        }
+                        found = buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.append(heap, found, shown[0..trimmed]), "/"), all[at..end]), "\0");
+                    }
+                }
+                buffer.drop(heap, manifest);
+            }
+            buffer.drop(heap, inner);
+            at = end + 1;
+        }
+    }
+    buffer.drop(heap, names);
+    var ordered = buffer.empty(heap, 0);
+    borrow found as &fb in {
+        ordered = projfile.replaced(heap, ordered, projfile.sorted_paths(heap, buffer.bytes(fb)));
+    }
+    buffer.drop(heap, found);
+    return ordered;
+}
+
+// The project loaded again and installed (after `add` wrote the file): 0, or what has been said.
+fn reinstall[&h, &i, &x, &c, &f, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), args: &a Args, cache_at: int, std_dir: int) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    let project = load(heap, io, fs, exec, clock);
+    let Project { records, root, file, status } = project;
+    var result = status;
+    if result == 0 {
+        borrow records as &rb in {
+            borrow root as &rtb in {
+                let installed = install_for(heap, io, exec, clock, fs, buffer.bytes(rtb), buffer.bytes(rb), args, cache_at, std_dir);
+                let Installed { deps_files, outcome } = installed;
+                result = outcome;
+                buffer.drop(heap, deps_files);
+            }
+        }
+    }
+    buffer.drop(heap, records);
+    buffer.drop(heap, root);
+    buffer.drop(heap, file);
+    return result;
+}
+
+// `add NAME GIT-URL [--rev HASH | --ref NAME] [--path DIR]` (`docs/package-system.md` section 8.3): a dependency added to the project. A `--ref` (default `HEAD`) is resolved
+// once and the hash is what is written; the store is fetched and checked before the file is touched; the table is appended to `cancho.toml` (so that its comments survive) and
+// the project installed, and the file is put back if the install fails.
+pub fn add_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    let given = add_arguments(heap, io, args);
+    let Adding { name_at, url_at, rev_at, ref_at, path_at, cache_at, std_dir, words, ignore, bad } = given;
+    if bad != 0 {
+        return bad;
+    }
+    if words != 2 {
+        return clibase.usage_error(heap, io, "`add` needs a name and a git url: `cancho add <name> <git-url>`");
+    }
+    let name = arg(args, name_at);
+    let url = arg(args, url_at);
+    if !projfile.name_ok(name) {
+        var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 96), "`"), name);
+        m = buffer.append(heap, m, "` is not a dependency name (letters, digits, `-`, `_`, `.`)");
+        var said = 0;
+        borrow m as &mb in {
+            said = clibase.usage_error(heap, io, buffer.bytes(mb));
+        }
+        buffer.drop(heap, m);
+        return said;
+    }
+    let project = load(heap, io, fs, exec, clock);
+    let Project { records, root, file, status } = project;
+    var result = status;
+    if result == 0 {
+        borrow records as &rb in {
+            result = check_compiler(heap, io, buffer.bytes(rb), ignore);
+            if result == 0 && has_dependency(buffer.bytes(rb), name) {
+                var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 96), "`cancho.toml` already has a dependency `"), name);
+                m = buffer.append(heap, m, "`; edit its `rev` to move it");
+                borrow m as &mb in {
+                    say_error(heap, io, "", buffer.bytes(mb), "");
+                }
+                buffer.drop(heap, m);
+                result = 1;
+            }
+        }
+    }
+    buffer.drop(heap, records);
+    if result == 0 {
+        borrow root as &rtb in {
+            borrow file as &flb in {
+                result = add_dependency(heap, io, exec, clock, fs, args, buffer.bytes(rtb), buffer.bytes(flb), name, url, rev_at, ref_at, path_at, cache_at, std_dir);
+            }
+        }
+    }
+    buffer.drop(heap, root);
+    buffer.drop(heap, file);
+    return result;
+}
+
+// The rest of `add`, once the project is known and the name is free.
+fn add_dependency[&h, &i, &x, &c, &f, &a, &r, &p, &n, &u](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), args: &a Args, root: &r [byte], file: &p [byte], name: &n [byte], url: &u [byte], rev_at: int, ref_at: int, path_at: int, cache_at: int, std_dir: int) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    if rev_at >= 0 && ref_at >= 0 {
+        return clibase.usage_error(heap, io, "give `--rev` or `--ref`, not both");
+    }
+    var rev = buffer.empty(heap, 0);
+    if rev_at >= 0 {
+        rev = buffer.append(heap, rev, arg(args, rev_at));
+    } else {
+        var reference = "HEAD";
+        if ref_at >= 0 {
+            reference = arg(args, ref_at);
+        }
+        let resolved = cliorigin.resolve_ref(heap, io, exec, clock, url, reference);
+        let cliorigin.Step { said, failure } = resolved;
+        var failed = false;
+        borrow failure as &fb in {
+            if buffer.size(fb) > 0 {
+                say_error(heap, io, "", buffer.bytes(fb), "");
+                failed = true;
+            }
+        }
+        buffer.drop(heap, failure);
+        if failed {
+            buffer.drop(heap, said);
+            buffer.drop(heap, rev);
+            return 3;
+        }
+        borrow said as &sb in {
+            console.write_all(io, reference);
+            console.write_all(io, " is ");
+            console.write_all(io, buffer.bytes(sb));
+            console.write_all(io, "\n");
+        }
+        rev = projfile.replaced(heap, rev, said);
+    }
+    var path = ".cancho-vcs";
+    if path_at >= 0 {
+        path = arg(args, path_at);
+    }
+    var status = 0;
+    if needs_escape(url) {
+        status = clibase.usage_error(heap, io, "the git url cannot contain a quote, a backslash or a control character");
+    } else if needs_escape(path) {
+        status = clibase.usage_error(heap, io, "the path cannot contain a quote, a backslash or a control character");
+    }
+    if status == 0 {
+        borrow rev as &rvb in {
+            status = add_checked(heap, io, exec, clock, fs, args, root, file, name, url, buffer.bytes(rvb), path, cache_at, std_dir);
+        }
+    }
+    buffer.drop(heap, rev);
+    return status;
+}
+
+// The origin `url`, `rev`, `path` made a directory and checked to be a store, the dependency written and installed.
+fn add_checked[&h, &i, &x, &c, &f, &a, &r, &p, &n, &u, &v, &q](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), args: &a Args, root: &r [byte], file: &p [byte], name: &n [byte], url: &u [byte], rev: &v [byte], path: &q [byte], cache_at: int, std_dir: int) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    let bad = cliorigin.invalid(heap, url, rev, path);
+    var refused = false;
+    borrow bad as &bb in {
+        if buffer.size(bb) > 0 {
+            say_error(heap, io, "", buffer.bytes(bb), "");
+            refused = true;
+        }
+    }
+    buffer.drop(heap, bad);
+    if refused {
+        return 1;
+    }
+    var cache_given = "";
+    if cache_at >= 0 {
+        cache_given = arg(args, cache_at);
+    }
+    let cache = cliorigin.cache_root(heap, io, exec, clock, cache_given);
+    var outcome = 0;
+    borrow cache as &cb in {
+        let got = cliorigin.ensure(heap, io, exec, clock, fs, buffer.bytes(cb), url, rev, path);
+        let cliorigin.Checkout { dir, why, status } = got;
+        borrow why as &wb in {
+            if buffer.size(wb) > 0 {
+                say_error(heap, io, "", buffer.bytes(wb), "");
+                outcome = 3;
+            }
+        }
+        buffer.drop(heap, why);
+        if outcome == 0 {
+            borrow dir as &db in {
+                outcome = add_written(heap, io, exec, clock, fs, args, root, file, name, url, rev, path, buffer.bytes(db), cache_at, std_dir);
+            }
+        }
+        buffer.drop(heap, dir);
+    }
+    buffer.drop(heap, cache);
+    return outcome;
+}
+
+// The store directory `store` of the origin checked to be one, the dependency appended to the file (which is put back if the install fails) and installed.
+fn add_written[&h, &i, &x, &c, &f, &a, &r, &p, &n, &u, &v, &q, &s](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), args: &a Args, root: &r [byte], file: &p [byte], name: &n [byte], url: &u [byte], rev: &v [byte], path: &q [byte], store: &s [byte], cache_at: int, std_dir: int) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    let manifest = cliorigin.joined(heap, store, "manifest.json");
+    var is_store = false;
+    borrow manifest as &mb in {
+        is_store = is_file(fs, buffer.bytes(mb));
+    }
+    buffer.drop(heap, manifest);
+    if !is_store {
+        var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 160), "`"), path);
+        m = buffer.append(heap, buffer.append(heap, buffer.append(heap, m, "` in "), url), " is not a store");
+        let stores = stores_below(heap, fs, store, path);
+        borrow stores as &sb in {
+            let all = buffer.bytes(sb);
+            if len(all) > 0 {
+                m = buffer.append(heap, m, "; it holds stores at: ");
+                var at = 0;
+                var first = true;
+                while at < len(all) {
+                    let end = projfile.field_end(all, at, len(all));
+                    if !first {
+                        m = buffer.append(heap, m, ", ");
+                    }
+                    m = buffer.append(heap, m, all[at..end]);
+                    first = false;
+                    at = end + 1;
+                }
+                m = buffer.append(heap, m, ". Pick one with --path");
+            }
+        }
+        buffer.drop(heap, stores);
+        borrow m as &mb in {
+            say_error(heap, io, "", buffer.bytes(mb), "");
+        }
+        buffer.drop(heap, m);
+        return 1;
+    }
+    let read = clibase.read_file(heap, fs, file);
+    let clibase.Contents { bytes, failed } = read;
+    if failed != 0 {
+        buffer.drop(heap, bytes);
+        say_error(heap, io, "cannot read `", file, "`");
+        return 3;
+    }
+    var after = buffer.append(heap, buffer.empty(heap, 0), "");
+    borrow bytes as &bb in {
+        let before = buffer.bytes(bb);
+        after = buffer.append(heap, after, before);
+        if len(before) > 0 && lc.at(before, len(before) - 1) != 10 {
+            after = buffer.push(heap, after, byte_of(10));
+        }
+    }
+    after = buffer.append(heap, buffer.append(heap, buffer.append(heap, after, "\n[dependencies."), name), "]\ngit = \"");
+    after = buffer.append(heap, buffer.append(heap, buffer.append(heap, after, url), "\"\nrev = \""), rev);
+    after = buffer.append(heap, buffer.append(heap, buffer.append(heap, after, "\"\npath = \""), path), "\"\n");
+    var wrote = false;
+    borrow after as &ab in {
+        wrote = filewrite.store(fs, file, buffer.bytes(ab)) == 0;
+    }
+    buffer.drop(heap, after);
+    var result = 0;
+    if !wrote {
+        say_error(heap, io, "cannot write `", file, "`");
+        result = 3;
+    } else {
+        result = reinstall(heap, io, exec, clock, fs, args, cache_at, std_dir);
+        if result == 0 {
+            console.write_all(io, "added ");
+            console.write_all(io, name);
+            console.write_all(io, " (");
+            var short_end = len(rev);
+            if short_end > 12 {
+                short_end = 12;
+            }
+            console.write_all(io, rev[0..short_end]);
+            console.write_all(io, ") to cancho.toml\n");
+        } else {
+            borrow bytes as &bb in {
+                let put_back = filewrite.store(fs, file, buffer.bytes(bb));
+            }
+        }
+    }
+    buffer.drop(heap, bytes);
+    return result;
 }
 
 // A program of the project built: the files `files` (names, each followed by a NUL) and the library if `with_std` (from the directory `std_path`) made into the executable at `out`

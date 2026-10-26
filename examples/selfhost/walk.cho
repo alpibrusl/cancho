@@ -157,3 +157,40 @@ pub fn direct_with[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], f
 pub fn direct[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found: buffer.Buffer) -> [heap, fs_read(""), dir_read] buffer.Buffer {
     return direct_with(heap, fs, path, found, ".cho");
 }
+
+// The names of the directories directly in the directory at `path` (a link to one is one; a name that starts with a dot is one too), each followed by a NUL, added to `found`, in the
+// order the system lists them.
+pub fn subdirectories[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found: buffer.Buffer) -> [heap, fs_read(""), dir_read] buffer.Buffer {
+    var out = found;
+    if dotdot(path) {
+        return out;
+    }
+    match open_dir(fs, path) {
+        DirOpened::Failed(reason) => {
+            return out;
+        }
+        DirOpened::Ok(opened) => {
+            var dir = opened;
+            borrow dir as &d in {
+                let names = dirs.list(heap, d, 1000000);
+                borrow names as &n in {
+                    var k = 0;
+                    while k < dirs.count(n) {
+                        let name = dirs.name(n, k);
+                        let sub = child(heap, path, name);
+                        borrow sub as &s in {
+                            if is_directory(fs, buffer.bytes(s)) {
+                                out = buffer.push(heap, buffer.append(heap, out, name), byte_of(0));
+                            }
+                        }
+                        buffer.drop(heap, sub);
+                        k = k + 1;
+                    }
+                }
+                dirs.drop(heap, names);
+            }
+            dir_close(dir);
+        }
+    }
+    return out;
+}

@@ -48,7 +48,7 @@ fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f
         return cliproject.install_command(heap, io, args, fs, exec, clock);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "add") {
-        return cliproject.add_command(io);
+        return cliproject.add_command(heap, io, args, fs, exec, clock);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "build") && cliproject.wants_project(heap, io, args, fs, exec, clock, false) {
         return cliproject.build_command(heap, io, args, fs, exec, clock);
