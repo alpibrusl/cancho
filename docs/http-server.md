@@ -894,8 +894,9 @@ that is being read; **a held request whose peer never reads** leaves bytes waiti
 * `n = stream(srv, ticket, bytes)`: `n < len(bytes)` means the connection's answer room is full (a slow or stopped reader); the application offers the rest again later or ends the stream. **A message is
   sent only if `space(srv, ticket_slot(ticket)) >= len(message)`**, so no message is ever half in the room; that is the application's rule, `stream` takes what fits.
 * `-1`: the ticket is not held any more (answered, or the connection is gone). The application forgets the stream.
-* The head is the application's: `HTTP/1.1 200 OK`, a content type, **no `Content-Length`**, `Connection: close` (an unframed body ends with the connection). `answer(ticket, "")` ends it: with `Connection: close` in the head the
-  server closes after the waiting bytes are written.
+* The head is the application's: `HTTP/1.1 200 OK`, a content type and **`Transfer-Encoding: chunked`**, and the application frames each message as a chunk (`<hex length>\r\n<message>\r\n`). `answer(ticket, "0\r\n\r\n")` ends
+  the response, and the connection then goes on as the request said (keep-alive for HTTP/1.1). `Connection: close` in the head would *not* end the connection: `answer` reads whether to keep alive from the
+  **request** (`deliver_to`: `http.keeps_alive(parsed)`), not from the head the application wrote. *(The first draft of this section said the opposite; read from `deliver_to` before any code.)*
 * A request pipelined behind a held streaming request waits, as behind any held request (section 10).
 
 ### 14.4 Gates (fixed before the code)
@@ -913,5 +914,5 @@ that is being read; **a held request whose peer never reads** leaves bytes waiti
 
 ### 14.5 Not done
 
-TLS in front of a socket server (the byte-fed path is for that); chunked transfer coding of a streamed answer (the head says `Connection: close` instead; HTTP/1.1 clients read to the end); HTTP/2; a
+TLS in front of a socket server (the byte-fed path is for that); framing for the application (a helper that writes a chunk may come, once two applications write the same one); HTTP/2; a
 server-wide count of streams (the application keeps its own table).
