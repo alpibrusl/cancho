@@ -13,6 +13,8 @@ import selfhost.driver;
 import selfhost.walk;
 import selfhost.satisfytext;
 import selfhost.projfile;
+import selfhost.cliorigin;
+import selfhost.clistore;
 import selfhost.clibase;
 import selfhost.cliprog;
 import selfhost.clitest;
@@ -322,22 +324,147 @@ fn check_compiler[&h, &i, &r](heap: &!h Heap, io: &!i Io, recs: &r [byte], ignor
 }
 
 // A dependency is fetched by `vcs`, which this command line does not carry: the first one (in the order of names) is said, and the status is 3.
-fn needs_vcs[&h, &i, &r](heap: &!h Heap, io: &!i Io, recs: &r [byte]) -> [heap, err_write] int {
-    var at = 0;
-    while at < len(recs) {
-        if lc.at(recs, at) == 'D' {
-            let name_at = at + 2;
-            let name_end = projfile.field_end(recs, name_at, len(recs));
-            var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 128), "dependency `"), recs[name_at..name_end]);
-            borrow m as &mb in {
-                say_error(heap, io, buffer.bytes(mb), "`: this command line cannot judge a project with dependencies yet: it does not fetch them (that is ", "`vcs`, which it does not carry)");
-            }
-            buffer.drop(heap, m);
-            return 3;
+// What the installing of the dependencies of a project gave: the files in `build/deps` (each followed by a NUL, in the order of paths), and the status (0, or what has been said).
+res struct Installed {
+    deps_files: buffer.Buffer,
+    outcome: int,
+}
+
+// `more` added to the paths `collected` (each followed by a NUL), each once, in the order of paths.
+fn merged_paths[&h, &m](heap: &!h Heap, collected: buffer.Buffer, more: &m [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 0);
+    borrow collected as &ob in {
+        let both = buffer.append(heap, buffer.append(heap, buffer.empty(heap, buffer.size(ob) + len(more) + 1), buffer.bytes(ob)), more);
+        borrow both as &bb in {
+            out = projfile.replaced(heap, out, projfile.sorted_paths(heap, buffer.bytes(bb)));
         }
-        at = after_record(recs, at);
+        buffer.drop(heap, both);
     }
-    return 0;
+    buffer.drop(heap, collected);
+    return out;
+}
+
+// The dependency `name` fetched from the store directory `store` into `deps`: what it wrote (in `deps_files`) and the status, the words said.
+fn fetch_one[&h, &i, &x, &c, &f, &k, &s, &t, &d, &n, &g, &v, &p](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], std_path: &s [byte], store: &t [byte], deps: &d [byte], name: &n [byte], git: &g [byte], rev: &v [byte], path: &p [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] Installed {
+    let fetched = clistore.fetch_store(heap, io, exec, clock, fs, cache, std_path, store, deps);
+    let clistore.Fetched { files, why, status, needs_std } = fetched;
+    var short_end = len(rev);
+    if short_end > 12 {
+        short_end = 12;
+    }
+    if status == 0 {
+        var count = 0;
+        borrow files as &fb in {
+            var k = 0;
+            while k < buffer.size(fb) {
+                if lc.at(buffer.bytes(fb), k) == 0 {
+                    count = count + 1;
+                }
+                k = k + 1;
+            }
+        }
+        console.write_all(io, "installed ");
+        console.write_all(io, name);
+        console.write_all(io, " (");
+        console.write_all(io, rev[0..short_end]);
+        console.write_all(io, "): ");
+        let shown = buffer.push_nat(heap, buffer.empty(heap, 16), count);
+        borrow shown as &nb in {
+            console.write_all(io, buffer.bytes(nb));
+        }
+        buffer.drop(heap, shown);
+        console.write_all(io, " file(s)\n");
+        buffer.drop(heap, why);
+        return Installed { deps_files: files, outcome: 0 };
+    }
+    var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 128), "dependency `"), name);
+    if status == 4 {
+        m = buffer.append(heap, buffer.append(heap, buffer.append(heap, m, "`: nothing is published at `"), path), "` in ");
+        m = buffer.append(heap, buffer.append(heap, buffer.append(heap, m, git), " ("), rev[0..short_end]);
+        m = buffer.push(heap, m, byte_of(')'));
+    } else {
+        m = buffer.append(heap, m, "`: ");
+        borrow why as &tb in {
+            m = buffer.append(heap, m, buffer.bytes(tb));
+        }
+    }
+    borrow m as &mb in {
+        say_error(heap, io, "", buffer.bytes(mb), "");
+    }
+    buffer.drop(heap, m);
+    buffer.drop(heap, why);
+    var result = status;
+    if status == 4 {
+        result = 1;
+    }
+    return Installed { deps_files: files, outcome: result };
+}
+
+// `install_all` (`project.rs`, `docs/package-system.md` section 8.3): `build/deps` is cleared and made, then for each dependency its commit is made a directory by the
+// origin cache (`cache_given` is `--cache`, or nothing), its store fetched into `build/deps` and every pin of it, and of the stores it requires, checked (`clistore.fetch_store`;
+// a source that imports `std` needs `std_path`). Nothing is asked of the network when there is no dependency.
+fn install_all[&h, &i, &x, &c, &f, &r, &d, &k, &s](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), root: &r [byte], recs: &d [byte], cache_given: &k [byte], std_path: &s [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] Installed {
+    let deps = beneath(heap, root, "build/deps");
+    var collected = buffer.empty(heap, 0);
+    var result = 0;
+    borrow deps as &db in {
+        let gone = cliorigin.tool(heap, io, exec, clock, "/bin/rm", "-rf", buffer.bytes(db));
+        if !cliorigin.tool(heap, io, exec, clock, "/bin/mkdir", "-p", buffer.bytes(db)) {
+            say_error(heap, io, "cannot create `", buffer.bytes(db), "`");
+            result = 3;
+        }
+        var cache = buffer.empty(heap, 0);
+        var at = 0;
+        while at < len(recs) && result == 0 {
+            if lc.at(recs, at) == 'D' {
+                var cached = false;
+                borrow cache as &cb in {
+                    cached = buffer.size(cb) > 0;
+                }
+                if !cached {
+                    cache = projfile.replaced(heap, cache, cliorigin.cache_root(heap, io, exec, clock, cache_given));
+                }
+                let name_at = at + 2;
+                let name_end = projfile.field_end(recs, name_at, len(recs));
+                let git_at = name_end + 1;
+                let git_end = projfile.field_end(recs, git_at, len(recs));
+                let rev_at = git_end + 1;
+                let rev_end = projfile.field_end(recs, rev_at, len(recs));
+                let path_at = rev_end + 1;
+                var path_end = path_at;
+                while path_end < len(recs) && lc.at(recs, path_end) != 0 && lc.at(recs, path_end) != 2 {
+                    path_end = path_end + 1;
+                }
+                borrow cache as &cb in {
+                    let got = cliorigin.ensure(heap, io, exec, clock, fs, buffer.bytes(cb), recs[git_at..git_end], recs[rev_at..rev_end], recs[path_at..path_end]);
+                    let cliorigin.Checkout { dir, why, status } = got;
+                    borrow why as &wb in {
+                        if buffer.size(wb) > 0 {
+                            say_error(heap, io, "", buffer.bytes(wb), "");
+                            result = 3;
+                        }
+                    }
+                    buffer.drop(heap, why);
+                    if result == 0 {
+                        borrow dir as &sb in {
+                            let one = fetch_one(heap, io, exec, clock, fs, buffer.bytes(cb), std_path, buffer.bytes(sb), buffer.bytes(db), recs[name_at..name_end], recs[git_at..git_end], recs[rev_at..rev_end], recs[path_at..path_end]);
+                            let Installed { deps_files, outcome } = one;
+                            result = outcome;
+                            borrow deps_files as &fb in {
+                                collected = merged_paths(heap, collected, buffer.bytes(fb));
+                            }
+                            buffer.drop(heap, deps_files);
+                        }
+                    }
+                    buffer.drop(heap, dir);
+                }
+            }
+            at = after_record(recs, at);
+        }
+        buffer.drop(heap, cache);
+    }
+    buffer.drop(heap, deps);
+    return Installed { deps_files: collected, outcome: result };
 }
 
 // The options of `build` and `test` in a project: `--ignore-compiler-rev`, the name after `only_flag`, `--compiler PATH` (accepted and not used), and, of this command line, `--std-dir DIR`,
@@ -349,6 +476,7 @@ pub res struct Options {
     host: int,
     host_given: bool,
     clang_at: int,
+    cache_at: int,
     bad: int,
 }
 
@@ -359,12 +487,20 @@ fn options[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, only_flag: &st
     var host = 0;
     var host_given = false;
     var clang_at = 0 - 1;
+    var cache_at = 0 - 1;
     var bad = 0;
     var n = 2;
     while n < arg_count(args) && bad == 0 {
         let word = arg(args, n);
         if bytes.equal(word, "--ignore-compiler-rev") {
             ignore = true;
+        } else if bytes.equal(word, "--cache") {
+            n = n + 1;
+            if n >= arg_count(args) || len(arg(args, n)) == 0 || lc.at(arg(args, n), 0) != '/' {
+                bad = clibase.usage_error(heap, io, "`--cache` needs an absolute directory");
+            } else {
+                cache_at = n;
+            }
         } else if bytes.equal(word, only_flag) {
             n = n + 1;
             if n >= arg_count(args) {
@@ -418,7 +554,7 @@ fn options[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, only_flag: &st
         }
         n = n + 1;
     }
-    return Options { ignore: ignore, only: only, std_dir: std_dir, host: host, host_given: host_given, clang_at: clang_at, bad: bad };
+    return Options { ignore: ignore, only: only, std_dir: std_dir, host: host, host_given: host_given, clang_at: clang_at, cache_at: cache_at, bad: bad };
 }
 
 // Does `build` (with `test` false) or `test` (with `test` true) with these arguments mean the project, and not the files it is given? When the arguments are only flags (those
@@ -429,7 +565,7 @@ pub fn wants_project[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &
         let word = arg(args, n);
         if bytes.equal(word, "--ignore-compiler-rev") {
             n = n + 1;
-        } else if bytes.equal(word, "--std-dir") || bytes.equal(word, "--clang") || bytes.equal(word, "--host") {
+        } else if bytes.equal(word, "--std-dir") || bytes.equal(word, "--clang") || bytes.equal(word, "--host") || bytes.equal(word, "--cache") {
             n = n + 2;
         } else if !test && (bytes.equal(word, "--bin") || bytes.equal(word, "--compiler")) {
             n = n + 2;
@@ -451,13 +587,34 @@ pub fn wants_project[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &
     return above >= 0;
 }
 
+// `install_all` with the options of the command line: `--cache DIR` (or none) and `--std-dir DIR` (or none).
+fn install_for[&h, &i, &x, &c, &f, &r, &d, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), root: &r [byte], recs: &d [byte], args: &a Args, cache_at: int, std_dir: int) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] Installed {
+    var cache = "";
+    if cache_at >= 0 {
+        cache = arg(args, cache_at);
+    }
+    var std_path = "";
+    if std_dir >= 0 {
+        std_path = arg(args, std_dir);
+    }
+    return install_all(heap, io, exec, clock, fs, root, recs, cache, std_path);
+}
+
 // `install` (`docs/package-system.md` section 8.3): the project is read and the compiler checked; it has nothing to fetch if it has no dependency, and one that has is a status 3.
-pub fn install_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), file_read, exec(""), clock, poll] int {
+pub fn install_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
     var ignore = false;
+    var std_dir = 0 - 1;
+    var cache_at = 0 - 1;
     var n = 2;
     while n < arg_count(args) {
         if bytes.equal(arg(args, n), "--ignore-compiler-rev") {
             ignore = true;
+        } else if bytes.equal(arg(args, n), "--std-dir") && n + 1 < arg_count(args) {
+            n = n + 1;
+            std_dir = n;
+        } else if bytes.equal(arg(args, n), "--cache") && n + 1 < arg_count(args) && len(arg(args, n + 1)) > 0 && lc.at(arg(args, n + 1), 0) == '/' {
+            n = n + 1;
+            cache_at = n;
         } else {
             var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 96), "`install` takes no argument but `--ignore-compiler-rev`, found `"), arg(args, n));
             m = buffer.push(heap, m, byte_of('`'));
@@ -477,7 +634,12 @@ pub fn install_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
         borrow records as &rb in {
             result = check_compiler(heap, io, buffer.bytes(rb), ignore);
             if result == 0 {
-                result = needs_vcs(heap, io, buffer.bytes(rb));
+                borrow root as &rtb in {
+                    let installed = install_for(heap, io, exec, clock, fs, buffer.bytes(rtb), buffer.bytes(rb), args, cache_at, std_dir);
+                    let Installed { deps_files, outcome } = installed;
+                    result = outcome;
+                    buffer.drop(heap, deps_files);
+                }
             }
         }
     }
@@ -580,13 +742,14 @@ fn count_of[&r, &n](recs: &r [byte], kind: int, name: &n [byte], named: bool) ->
 // needs `--std-dir DIR` in this command line. 0, or the status of the first that failed.
 pub fn build_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
     let opts = options(heap, io, args, "--bin");
-    let Options { ignore, only, std_dir, host, host_given, clang_at, bad } = opts;
+    let Options { ignore, only, std_dir, host, host_given, clang_at, cache_at, bad } = opts;
     if bad != 0 {
         return bad;
     }
     let project = load(heap, io, fs, exec, clock);
     let Project { records, root, file, status } = project;
     var result = status;
+    var dep_files = buffer.empty(heap, 0);
     borrow records as &rb in {
         let recs = buffer.bytes(rb);
         if result == 0 {
@@ -601,7 +764,12 @@ pub fn build_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &
             result = 1;
         }
         if result == 0 {
-            result = needs_vcs(heap, io, recs);
+            borrow root as &rtb in {
+                let installed = install_for(heap, io, exec, clock, fs, buffer.bytes(rtb), recs, args, cache_at, std_dir);
+                let Installed { deps_files, outcome } = installed;
+                result = outcome;
+                dep_files = projfile.replaced(heap, dep_files, deps_files);
+            }
         }
         var at = 0;
         while at < len(recs) && result == 0 {
@@ -656,13 +824,20 @@ pub fn build_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &
                                         buffer.drop(heap, clang);
                                         clang = buffer.append(heap, buffer.empty(heap, 32), arg(args, clang_at));
                                     }
-                                    borrow listed as &pb in {
+                                    var inputs = buffer.empty(heap, 0);
+                                    borrow listed as &ib in {
+                                        borrow dep_files as &dfb in {
+                                            inputs = projfile.replaced(heap, inputs, buffer.append(heap, buffer.append(heap, buffer.empty(heap, buffer.size(ib) + buffer.size(dfb) + 1), buffer.bytes(ib)), buffer.bytes(dfb)));
+                                        }
+                                    }
+                                    borrow inputs as &pb in {
                                         borrow std_path as &sb in {
                                             borrow clang as &kb in {
                                                 result = build_files(heap, io, args, fs, exec, buffer.bytes(pb), std_flag, buffer.bytes(sb), host, host_given, buffer.bytes(ob), buffer.bytes(kb));
                                             }
                                         }
                                     }
+                                    buffer.drop(heap, inputs);
                                     buffer.drop(heap, std_path);
                                     buffer.drop(heap, clang);
                                 }
@@ -681,6 +856,7 @@ pub fn build_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &
             at = after_record(recs, at);
         }
     }
+    buffer.drop(heap, dep_files);
     buffer.drop(heap, records);
     buffer.drop(heap, root);
     buffer.drop(heap, file);
@@ -691,7 +867,7 @@ pub fn build_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &
 // every one passed, else the status of the first that did not. A set that cannot be made ready (a source that is not there, a `std = true` with no `--std-dir`) is said and ends the run.
 pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
     let opts = options(heap, io, args, "--test");
-    let Options { ignore, only, std_dir, host, host_given, clang_at, bad } = opts;
+    let Options { ignore, only, std_dir, host, host_given, clang_at, cache_at, bad } = opts;
     if bad != 0 {
         return bad;
     }
@@ -699,6 +875,7 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
     let Project { records, root, file, status } = project;
     var result = status;
     var first = 0;
+    var dep_files = buffer.empty(heap, 0);
     borrow records as &rb in {
         let recs = buffer.bytes(rb);
         if result == 0 {
@@ -713,7 +890,12 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
             result = 1;
         }
         if result == 0 {
-            result = needs_vcs(heap, io, recs);
+            borrow root as &rtb in {
+                let installed = install_for(heap, io, exec, clock, fs, buffer.bytes(rtb), recs, args, cache_at, std_dir);
+                let Installed { deps_files, outcome } = installed;
+                result = outcome;
+                dep_files = projfile.replaced(heap, dep_files, deps_files);
+            }
         }
         var at = 0;
         while at < len(recs) && result == 0 {
@@ -754,13 +936,20 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
                                 clang = buffer.append(heap, buffer.empty(heap, 32), arg(args, clang_at));
                             }
                             var ran = 0;
-                            borrow listed as &pb in {
+                            var inputs = buffer.empty(heap, 0);
+                            borrow listed as &ib in {
+                                borrow dep_files as &dfb in {
+                                    inputs = projfile.replaced(heap, inputs, buffer.append(heap, buffer.append(heap, buffer.empty(heap, buffer.size(ib) + buffer.size(dfb) + 1), buffer.bytes(ib)), buffer.bytes(dfb)));
+                                }
+                            }
+                            borrow inputs as &pb in {
                                 borrow std_path as &sb in {
                                     borrow clang as &kb in {
                                         ran = clitest.test_set(heap, io, args, fs, exec, clock, buffer.bytes(pb), std_flag, buffer.bytes(sb), host, host_given, buffer.bytes(kb));
                                     }
                                 }
                             }
+                            buffer.drop(heap, inputs);
                             buffer.drop(heap, std_path);
                             buffer.drop(heap, clang);
                             if ran != 0 && first == 0 {
@@ -777,6 +966,7 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
             at = after_record(recs, at);
         }
     }
+    buffer.drop(heap, dep_files);
     buffer.drop(heap, records);
     buffer.drop(heap, root);
     buffer.drop(heap, file);
