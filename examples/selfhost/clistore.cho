@@ -21,6 +21,10 @@ import selfhost.jsonread;
 import selfhost.walk;
 import selfhost.clibase;
 import selfhost.projfile;
+import selfhost.filewrite;
+import selfhost.satisfytext;
+import selfhost.driver;
+import selfhost.cliprog;
 import selfhost.cliorigin;
 
 // What reading a file of a store gave: the records, and why not (empty if it was read).
@@ -318,4 +322,1089 @@ pub fn read_requirements[&h, &f, &d](heap: &!h Heap, fs: &f Fs(""), dir: &d [byt
     }
     buffer.drop(heap, ordered);
     return Pins { records: records, why: trouble };
+}
+
+// ------------------------------------------------------------- the checks ---
+
+fn is_word_char(c: int) -> [] bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// Does the source `text` import from `std`? Read off the text with the comments and the string and character literals set aside, so that a comment or a string saying
+// `import std.json;` does not count (the Rust check reads the parsed imports).
+pub fn imports_std[&t](text: &t [byte]) -> [] bool {
+    var at = 0;
+    while at < len(text) {
+        let c = lc.at(text, at);
+        if c == '/' && at + 1 < len(text) && lc.at(text, at + 1) == '/' {
+            while at < len(text) && lc.at(text, at) != 10 {
+                at = at + 1;
+            }
+        } else if c == '"' || c == 39 {
+            at = at + 1;
+            while at < len(text) && lc.at(text, at) != c {
+                if lc.at(text, at) == 92 {
+                    at = at + 1;
+                }
+                at = at + 1;
+            }
+            at = at + 1;
+        } else if is_word_char(c) {
+            var end = at;
+            while end < len(text) && is_word_char(lc.at(text, end)) {
+                end = end + 1;
+            }
+            let before_ok = at == 0 || !is_word_char(lc.at(text, at - 1));
+            if before_ok && end - at == 6 && bytes.equal(text[at..end], "import") {
+                var next = end;
+                while next < len(text) && (lc.at(text, next) == ' ' || lc.at(text, next) == 9 || lc.at(text, next) == 10 || lc.at(text, next) == 13) {
+                    next = next + 1;
+                }
+                if next + 3 <= len(text) && bytes.equal(text[next..next + 3], "std") && (next + 3 == len(text) || !is_word_char(lc.at(text, next + 3))) {
+                    return true;
+                }
+            }
+            at = end;
+        } else {
+            at = at + 1;
+        }
+    }
+    return false;
+}
+
+// Where the last component starts in `out` (a run of `/NAME`), and whether it is `..`: the position of its `/`, or -1 if `out` is empty.
+fn last_component[&o](out: &o [byte]) -> [] (int, bool) {
+    if len(out) == 0 {
+        return (0 - 1, false);
+    }
+    var k = len(out);
+    while k > 0 && lc.at(out, k - 1) != '/' {
+        k = k - 1;
+    }
+    let at = k - 1;
+    return (at, bytes.equal(out[at + 1..len(out)], ".."));
+}
+
+// `path` with the `.` and `..` components taken out and the empty ones: an `Fs` traps on a path with `..` in it, and the Rust code asks the system to canonicalize. (A link
+// is not followed here.) A `..` that goes above the start of a relative path stays; above the root of an absolute one it is nothing.
+pub fn normalized[&h, &p](heap: &!h Heap, path: &p [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(path) + 2);
+    let rooted = len(path) > 0 && lc.at(path, 0) == '/';
+    var at = 0;
+    while at < len(path) {
+        var end = at;
+        while end < len(path) && lc.at(path, end) != '/' {
+            end = end + 1;
+        }
+        let part = path[at..end];
+        if len(part) == 0 || (len(part) == 1 && lc.at(part, 0) == '.') {
+            at = end + 1;
+        } else if len(part) == 2 && bytes.equal(part, "..") {
+            var cut = 0 - 1;
+            var up = false;
+            borrow out as &ob in {
+                let (position, dotdot) = last_component(buffer.bytes(ob));
+                cut = position;
+                up = dotdot;
+            }
+            if cut >= 0 && !up {
+                var kept = buffer.empty(heap, cut + 2);
+                borrow out as &ob in {
+                    kept = buffer.append(heap, kept, buffer.bytes(ob)[0..cut]);
+                }
+                buffer.drop(heap, out);
+                out = kept;
+            } else if !rooted {
+                out = buffer.append(heap, buffer.push(heap, out, byte_of('/')), "..");
+            }
+            at = end + 1;
+        } else {
+            out = buffer.append(heap, buffer.push(heap, out, byte_of('/')), part);
+            at = end + 1;
+        }
+    }
+    var result = buffer.empty(heap, 2);
+    borrow out as &ob in {
+        let shown = buffer.bytes(ob);
+        if rooted && len(shown) == 0 {
+            result = buffer.append(heap, result, "/");
+        } else if rooted {
+            result = buffer.append(heap, result, shown);
+        } else if len(shown) == 0 {
+            result = buffer.append(heap, result, ".");
+        } else {
+            result = buffer.append(heap, result, shown[1..len(shown)]);
+        }
+    }
+    buffer.drop(heap, out);
+    return result;
+}
+
+// Is the field `word` one of the fields (each followed by a NUL) of `list`?
+fn listed[&l, &w](list: &l [byte], word: &w [byte]) -> [] bool {
+    var at = 0;
+    while at < len(list) {
+        let end = projfile.field_end(list, at, len(list));
+        if end - at == len(word) && bytes.equal(list[at..end], word) {
+            return true;
+        }
+        at = end + 1;
+    }
+    return false;
+}
+
+// The end of the `k`th field (counting from 0) of the record that starts at `at`.
+fn field_at[&r](recs: &r [byte], at: int, k: int) -> [] int {
+    var p = at;
+    var seen = 0;
+    while seen < k {
+        p = projfile.field_end(recs, p, len(recs)) + 1;
+        seen = seen + 1;
+    }
+    return projfile.field_end(recs, p, len(recs));
+}
+
+// The start of the `k`th field of the record at `at`.
+fn field_from[&r](recs: &r [byte], at: int, k: int) -> [] int {
+    var p = at;
+    var seen = 0;
+    while seen < k {
+        p = projfile.field_end(recs, p, len(recs)) + 1;
+        seen = seen + 1;
+    }
+    return p;
+}
+
+// What a source was compiled to: the status (0 well, 2 a file that could not be read, 1 refused: the refusal has been said), and, if well, the signature and the body
+// of each declaration (`identity.pairs`, mode 14).
+res struct Compiled {
+    ran: int,
+    found: buffer.Buffer,
+}
+
+// The program of the files `files` (names, each followed by a NUL) checked, and, if it is, the pairs of identities of its declarations.
+fn compile[&h, &i, &f, &l, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), files: &l [byte], with_std: bool, std_path: &s [byte]) -> [heap, io_write, err_write, fs_read(""), file_read] Compiled {
+    let loaded = cliprog.load_files(heap, io, fs, buffer.append(heap, buffer.empty(heap, len(files) + 1), files), with_std, std_path, "", "");
+    let cliprog.Loaded { names, raw, laid, lens, count, read_status } = loaded;
+    var state = read_status;
+    var pairs = buffer.empty(heap, 0);
+    if state == 0 {
+        borrow raw as &r in {
+            let built = driver.run_many(heap, io, buffer.bytes(r), 10, 0);
+            borrow built as &b in {
+                borrow laid as &lt in {
+                    borrow mut lens as &!lb in {
+                        borrow names as &nm in {
+                            state = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to);
+                        }
+                    }
+                }
+            }
+            driver.discard(heap, built);
+            if state == 0 {
+                let again = driver.run_many(heap, io, buffer.bytes(r), 14, 0);
+                borrow again as &b2 in {
+                    if b2.status == 0 {
+                        pairs = projfile.replaced(heap, pairs, buffer.append(heap, buffer.empty(heap, 64), buffer.bytes(b2.ir)));
+                    } else {
+                        state = 1;
+                    }
+                }
+                driver.discard(heap, again);
+            }
+        }
+    }
+    buffer.drop(heap, raw);
+    buffer.drop(heap, laid);
+    buffer.drop(heap, names);
+    unbox_slice(heap, lens);
+    return Compiled { ran: state, found: pairs };
+}
+
+// A problem added to `problems`, after a blank line if there is one already.
+fn problem[&h, &m](heap: &!h Heap, problems: buffer.Buffer, text: &m [byte]) -> [heap] buffer.Buffer {
+    var out = problems;
+    var first = true;
+    borrow out as &ob in {
+        first = buffer.size(ob) == 0;
+    }
+    if !first {
+        out = buffer.append(heap, out, "\n\n");
+    }
+    return buffer.append(heap, out, text);
+}
+
+// The sources behind `selected` (`SIG NAME STAGE SOURCE`, each field followed by a NUL) of the store in `store`, each checked once with `context` (`HASH PATH STD`): re-read
+// and re-hashed, compiled again, and each declaration pinned in it must be produced again with the signature it is under and the body the manifest says. `good` is `HASH PATH STD`
+// for every source that held; `problems` is everything that did not, in words (and the refusals of the compiler, said on the standard error).
+pub res struct Verified {
+    good: buffer.Buffer,
+    problems: buffer.Buffer,
+}
+
+// `STORE/sources/HASH.cho`.
+fn blob_path[&h, &t, &w](heap: &!h Heap, store: &t [byte], hash: &w [byte]) -> [heap] buffer.Buffer {
+    var file = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(hash) + 8), hash), ".cho");
+    var out = buffer.empty(heap, 0);
+    let sources = cliorigin.joined(heap, store, "sources");
+    borrow sources as &sb in {
+        borrow file as &fb in {
+            out = projfile.replaced(heap, out, cliorigin.joined(heap, buffer.bytes(sb), buffer.bytes(fb)));
+        }
+    }
+    buffer.drop(heap, sources);
+    buffer.drop(heap, file);
+    return out;
+}
+
+// Does any of the sources of `context` import `std`? (The third field of each record.)
+fn context_uses_std[&c](context: &c [byte]) -> [] bool {
+    var at = 0;
+    while at < len(context) {
+        let flag = field_from(context, at, 2);
+        if lc.at(context, flag) == '1' {
+            return true;
+        }
+        at = projfile.field_end(context, flag, len(context)) + 1;
+    }
+    return false;
+}
+
+// The names of the files of `context`, each followed by a NUL.
+fn context_paths[&h, &c](heap: &!h Heap, context: &c [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 0);
+    var at = 0;
+    while at < len(context) {
+        let from = field_from(context, at, 1);
+        let to = projfile.field_end(context, from, len(context));
+        out = buffer.append(heap, buffer.append(heap, out, context[from..to]), "\0");
+        at = projfile.field_end(context, field_from(context, at, 2), len(context)) + 1;
+    }
+    return out;
+}
+
+// The body of the declaration whose signature is `sig` in `pairs` (`SIG BODY` a line each), or nothing.
+fn body_of[&p, &w](pairs: &p [byte], sig: &w [byte]) -> [] &p [byte] {
+    var at = 0;
+    while at + 129 <= len(pairs) {
+        if bytes.equal(pairs[at..at + 64], sig) {
+            return pairs[at + 65..at + 129];
+        }
+        at = at + 130;
+    }
+    return pairs[0..0];
+}
+
+// Check the source `hash` (`members` declarations of `selected` are pinned in it) and add what came of it to `before`.
+fn verify_group[&h, &i, &f, &t, &w, &s, &c, &x](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), store: &t [byte], hash: &w [byte], members: int, selected: &s [byte], context: &c [byte], std_path: &x [byte], before: Verified) -> [heap, io_write, err_write, fs_read(""), file_read] Verified {
+    let Verified { good, problems } = before;
+    var keep = good;
+    var said = problems;
+    let path = blob_path(heap, store, hash);
+    borrow path as &pb in {
+        let read = clibase.read_file(heap, fs, buffer.bytes(pb));
+        let clibase.Contents { bytes, failed } = read;
+        if failed == 2 {
+            var m = cliorigin.message(heap, "", hash, ": no source blob recorded for it (");
+            m = buffer.append(heap, buffer.push_nat(heap, m, members), " declaration(s))");
+            borrow m as &mb in {
+                said = problem(heap, said, buffer.bytes(mb));
+            }
+            buffer.drop(heap, m);
+        } else if failed != 0 {
+            let m = cliorigin.message(heap, "cannot read source blob `", hash, "`");
+            borrow m as &mb in {
+                said = problem(heap, said, buffer.bytes(mb));
+            }
+            buffer.drop(heap, m);
+        } else {
+            borrow bytes as &yb in {
+                let text = buffer.bytes(yb);
+                let computed = hash_hex(heap, text);
+                borrow computed as &cb in {
+                    if !bytes.equal(buffer.bytes(cb), hash) {
+                        var m = cliorigin.message(heap, "cannot read source blob `", hash, "`: blob claims hash ");
+                        m = buffer.append(heap, buffer.append(heap, buffer.append(heap, m, hash), " but its bytes hash to "), buffer.bytes(cb));
+                        borrow m as &mb in {
+                            said = problem(heap, said, buffer.bytes(mb));
+                        }
+                        buffer.drop(heap, m);
+                    } else {
+                        let uses = imports_std(text) || context_uses_std(context);
+                        if uses && len(std_path) == 0 {
+                            let m = cliorigin.message(heap, "", hash, " imports `std`: this command line needs `--std-dir DIR` to check it");
+                            borrow m as &mb in {
+                                said = problem(heap, said, buffer.bytes(mb));
+                            }
+                            buffer.drop(heap, m);
+                        } else {
+                            let others = context_paths(heap, context);
+                            var files = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 256), buffer.bytes(pb)), "\0");
+                            borrow others as &ob in {
+                                files = buffer.append(heap, files, buffer.bytes(ob));
+                            }
+                            buffer.drop(heap, others);
+                            var state = 2;
+                            var pairs = buffer.empty(heap, 0);
+                            borrow files as &fb in {
+                                let made = compile(heap, io, fs, buffer.bytes(fb), uses, std_path);
+                                let Compiled { ran, found } = made;
+                                state = ran;
+                                pairs = projfile.replaced(heap, pairs, found);
+                            }
+                            buffer.drop(heap, files);
+                            if state != 0 {
+                                let m = cliorigin.message(heap, "", hash, " no longer parses or type-checks");
+                                borrow m as &mb in {
+                                    said = problem(heap, said, buffer.bytes(mb));
+                                }
+                                buffer.drop(heap, m);
+                            } else {
+                                var sound = true;
+                                borrow pairs as &prb in {
+                                    var scan = 0;
+                                    while scan < len(selected) {
+                                        let sig_end = projfile.field_end(selected, scan, len(selected));
+                                        let name_at = sig_end + 1;
+                                        let name_end = projfile.field_end(selected, name_at, len(selected));
+                                        let stage_at = name_end + 1;
+                                        let stage_end = projfile.field_end(selected, stage_at, len(selected));
+                                        let source_at = stage_end + 1;
+                                        let source_end = projfile.field_end(selected, source_at, len(selected));
+                                        if source_end - source_at == len(hash) && bytes.equal(selected[source_at..source_end], hash) {
+                                            let body = body_of(buffer.bytes(prb), selected[scan..sig_end]);
+                                            if len(body) == 0 {
+                                                var m = cliorigin.message(heap, "", selected[name_at..name_end], ": signature ");
+                                                m = buffer.append(heap, buffer.append(heap, m, selected[scan..sig_end]), " is no longer produced by its own source");
+                                                borrow m as &mb in {
+                                                    said = problem(heap, said, buffer.bytes(mb));
+                                                }
+                                                buffer.drop(heap, m);
+                                                sound = false;
+                                            } else if !bytes.equal(body, selected[stage_at..stage_end]) {
+                                                var m = cliorigin.message(heap, "", selected[name_at..name_end], ": body moved from ");
+                                                m = buffer.append(heap, buffer.append(heap, buffer.append(heap, m, selected[stage_at..stage_end]), " to "), body);
+                                                m = buffer.append(heap, m, " -- the manifest's pin no longer matches");
+                                                borrow m as &mb in {
+                                                    said = problem(heap, said, buffer.bytes(mb));
+                                                }
+                                                buffer.drop(heap, m);
+                                                sound = false;
+                                            }
+                                        }
+                                        scan = source_end + 1;
+                                    }
+                                }
+                                if sound {
+                                    keep = buffer.append(heap, buffer.append(heap, buffer.append(heap, keep, hash), "\0"), buffer.bytes(pb));
+                                    keep = buffer.append(heap, keep, "\0");
+                                    if uses {
+                                        keep = buffer.append(heap, keep, "1\0");
+                                    } else {
+                                        keep = buffer.append(heap, keep, "0\0");
+                                    }
+                                }
+                            }
+                            buffer.drop(heap, pairs);
+                        }
+                    }
+                }
+                buffer.drop(heap, computed);
+            }
+        }
+        buffer.drop(heap, bytes);
+    }
+    buffer.drop(heap, path);
+    return Verified { good: keep, problems: said };
+}
+
+pub fn verify_selected[&h, &i, &f, &t, &s, &c, &x](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), store: &t [byte], selected: &s [byte], context: &c [byte], std_path: &x [byte]) -> [heap, io_write, err_write, fs_read(""), file_read] Verified {
+    var result = Verified { good: buffer.empty(heap, 0), problems: buffer.empty(heap, 0) };
+    var done = buffer.empty(heap, 0);
+    var at = 0;
+    while at < len(selected) {
+        let source_at = field_from(selected, at, 3);
+        let source_end = projfile.field_end(selected, source_at, len(selected));
+        let hash = selected[source_at..source_end];
+        var fresh = true;
+        borrow done as &db in {
+            fresh = !listed(buffer.bytes(db), hash);
+        }
+        if fresh {
+            done = buffer.append(heap, buffer.append(heap, done, hash), "\0");
+            var members = 0;
+            var scan = 0;
+            while scan < len(selected) {
+                let s_at = field_from(selected, scan, 3);
+                let s_end = projfile.field_end(selected, s_at, len(selected));
+                if s_end - s_at == len(hash) && bytes.equal(selected[s_at..s_end], hash) {
+                    members = members + 1;
+                }
+                scan = s_end + 1;
+            }
+            result = verify_group(heap, io, fs, store, hash, members, selected, context, std_path, result);
+        }
+        at = source_end + 1;
+    }
+    buffer.drop(heap, done);
+    return result;
+}
+
+// ------------------------------------------------------------- the closure ---
+
+// The manifest records (`SIG NAME STAGE SOURCE`) a lock `entries` (`NAME SIG STAGE SOURCE` each) pins, and why not: `lock_of_all` picks, for each name, the declaration whose
+// signature sorts last (a later `insert` replaces an earlier one), and `select_locked` is what a lock that names signatures gets. `missing` is the problems.
+res struct Chosen {
+    picked: buffer.Buffer,
+    missing: buffer.Buffer,
+}
+
+// For each name of `manifest`, the record with the greatest signature.
+fn select_all[&h, &m](heap: &!h Heap, manifest: &m [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 0);
+    var at = 0;
+    while at < len(manifest) {
+        let sig_end = projfile.field_end(manifest, at, len(manifest));
+        let name_at = sig_end + 1;
+        let name_end = projfile.field_end(manifest, name_at, len(manifest));
+        let rec_end = field_at(manifest, at, 3) + 1;
+        var last = true;
+        var other = 0;
+        while other < len(manifest) {
+            let o_sig_end = projfile.field_end(manifest, other, len(manifest));
+            let o_name_at = o_sig_end + 1;
+            let o_name_end = projfile.field_end(manifest, o_name_at, len(manifest));
+            if other != at && o_name_end - o_name_at == name_end - name_at && bytes.equal(manifest[o_name_at..o_name_end], manifest[name_at..name_end]) {
+                let order = satisfytext.compare(manifest[other..o_sig_end], manifest[at..sig_end]);
+                if order > 0 || (order == 0 && other < at) {
+                    last = false;
+                }
+            }
+            other = field_at(manifest, other, 3) + 1;
+        }
+        if last {
+            out = buffer.append(heap, out, manifest[at..rec_end]);
+        }
+        at = rec_end;
+    }
+    return out;
+}
+
+// The records of `manifest` (`SIG NAME STAGE SOURCE`) that the signatures of `lock` (`NAME SIG STAGE SOURCE` each) name, and a problem for each that is not there.
+fn select_locked[&h, &l, &m, &t](heap: &!h Heap, lock: &l [byte], manifest: &m [byte], store: &t [byte]) -> [heap] Chosen {
+    var picked = buffer.empty(heap, 0);
+    var missing = buffer.empty(heap, 0);
+    var at = 0;
+    while at < len(lock) {
+        let name_end = projfile.field_end(lock, at, len(lock));
+        let sig_at = name_end + 1;
+        let sig_end = projfile.field_end(lock, sig_at, len(lock));
+        var found = false;
+        var scan = 0;
+        while scan < len(manifest) {
+            let m_sig_end = projfile.field_end(manifest, scan, len(manifest));
+            let m_end = field_at(manifest, scan, 3) + 1;
+            if !found && m_sig_end - scan == sig_end - sig_at && bytes.equal(manifest[scan..m_sig_end], lock[sig_at..sig_end]) {
+                picked = buffer.append(heap, picked, manifest[scan..m_end]);
+                found = true;
+            }
+            scan = m_end;
+        }
+        if !found {
+            var m = cliorigin.message(heap, "", lock[at..name_end], ": sig_id ");
+            m = buffer.append(heap, buffer.append(heap, buffer.append(heap, m, lock[sig_at..sig_end]), " is no longer published at `"), store);
+            m = buffer.push(heap, m, byte_of('`'));
+            borrow m as &mb in {
+                missing = problem(heap, missing, buffer.bytes(mb));
+            }
+            buffer.drop(heap, m);
+        }
+        at = field_at(lock, at, 3) + 1;
+    }
+    return Chosen { picked: picked, missing: missing };
+}
+
+// `context` (`HASH PATH STD` each, sorted by hash) with the record `hash`, `path`, `std` added, unless the hash is there.
+fn context_add[&h, &c, &w, &p, &g](heap: &!h Heap, context: &c [byte], hash: &w [byte], path: &p [byte], flag: &g [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(context) + len(hash) + len(path) + 8);
+    var placed = false;
+    var at = 0;
+    while at < len(context) {
+        let end = field_at(context, at, 2) + 1;
+        let here_end = projfile.field_end(context, at, len(context));
+        let order = satisfytext.compare(context[at..here_end], hash);
+        if !placed && order >= 0 {
+            placed = true;
+            if order > 0 {
+                out = buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.append(heap, out, hash), "\0"), path), "\0");
+                out = buffer.append(heap, buffer.append(heap, out, flag), "\0");
+            }
+        }
+        out = buffer.append(heap, out, context[at..end]);
+        at = end;
+    }
+    if !placed {
+        out = buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.append(heap, out, hash), "\0"), path), "\0");
+        out = buffer.append(heap, buffer.append(heap, out, flag), "\0");
+    }
+    return out;
+}
+
+// All the records of `more` (`HASH PATH STD`) added to `context`.
+fn context_merge[&h, &m](heap: &!h Heap, context: buffer.Buffer, more: &m [byte]) -> [heap] buffer.Buffer {
+    var out = context;
+    var at = 0;
+    while at < len(more) {
+        let hash_end = projfile.field_end(more, at, len(more));
+        let path_at = hash_end + 1;
+        let path_end = projfile.field_end(more, path_at, len(more));
+        let flag_at = path_end + 1;
+        var next = buffer.empty(heap, 0);
+        borrow out as &ob in {
+            next = projfile.replaced(heap, next, context_add(heap, buffer.bytes(ob), more[at..hash_end], more[path_at..path_end], more[flag_at..flag_at + 1]));
+        }
+        out = projfile.replaced(heap, out, next);
+        at = flag_at + 2;
+    }
+    return out;
+}
+
+// What the walk over a store and the stores it requires has gathered: `ctx` the verified sources (`HASH PATH STD`, sorted by hash), `seen` the stores on the path from the
+// top (each followed by a NUL), `pins` the pins met (`STORE NAME SIG` each followed by a NUL), `bad` the problems (empty while there are none).
+pub res struct Walk {
+    ctx: buffer.Buffer,
+    seen: buffer.Buffer,
+    pins: buffer.Buffer,
+    bad: buffer.Buffer,
+}
+
+pub fn start_walk[&h, &t](heap: &!h Heap, top: &t [byte]) -> [heap] Walk {
+    return Walk { ctx: buffer.empty(heap, 0), seen: buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(top) + 2), top), "\0"), pins: buffer.empty(heap, 0), bad: buffer.empty(heap, 0) };
+}
+
+fn blank_walk[&b](bad: &b buffer.Buffer) -> [] bool {
+    return buffer.size(bad) == 0;
+}
+
+// The first `n` bytes of `b`.
+fn truncated[&h](heap: &!h Heap, b: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, n + 1);
+    borrow b as &bb in {
+        out = buffer.append(heap, out, buffer.bytes(bb)[0..n]);
+    }
+    buffer.drop(heap, b);
+    return out;
+}
+
+// The text of a cycle: the stores on the path, each in quotes, with an arrow between.
+fn path_text[&h, &s](heap: &!h Heap, seen: &s [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(seen) + 16);
+    var at = 0;
+    while at < len(seen) {
+        let end = projfile.field_end(seen, at, len(seen));
+        if at > 0 {
+            out = buffer.append(heap, out, " -> ");
+        }
+        out = buffer.push(heap, out, byte_of('`'));
+        out = buffer.append(heap, out, seen[at..end]);
+        out = buffer.push(heap, out, byte_of('`'));
+        at = end + 1;
+    }
+    return out;
+}
+
+// Where the requirement record at `at` ends (just after its byte 2), and where its entries start.
+fn requirement_span[&r](recs: &r [byte], at: int) -> [] (int, int) {
+    var from = field_from(recs, at, 2);
+    if lc.at(recs, field_from(recs, at, 1)) == '1' {
+        from = field_from(recs, at, 5);
+    }
+    var p = from;
+    while p < len(recs) && lc.at(recs, p) != 1 {
+        p = field_at(recs, p, 3) + 1;
+    }
+    return (p + 2, from);
+}
+
+// The pins in `pins` against the ones of `lock` met for the store `store`: a name met before with another signature is a diamond. `pins` grows by the new ones.
+res struct Diamond {
+    pinned_now: buffer.Buffer,
+    said_now: buffer.Buffer,
+}
+
+fn diamond_check[&h, &l, &t](heap: &!h Heap, pins: buffer.Buffer, bad: buffer.Buffer, lock: &l [byte], store: &t [byte]) -> [heap] Diamond {
+    var pinned = pins;
+    var said = bad;
+    var at = 0;
+    while at < len(lock) {
+        let name_end = projfile.field_end(lock, at, len(lock));
+        let sig_at = name_end + 1;
+        let sig_end = projfile.field_end(lock, sig_at, len(lock));
+        var met = false;
+        var prior = buffer.empty(heap, 0);
+        borrow pinned as &pb in {
+            let have = buffer.bytes(pb);
+            var scan = 0;
+            while scan < len(have) {
+                let s_end = projfile.field_end(have, scan, len(have));
+                let n_at = s_end + 1;
+                let n_end = projfile.field_end(have, n_at, len(have));
+                let g_at = n_end + 1;
+                let g_end = projfile.field_end(have, g_at, len(have));
+                if !met && bytes.equal(have[scan..s_end], store) && bytes.equal(have[n_at..n_end], lock[at..name_end]) {
+                    met = true;
+                    if !bytes.equal(have[g_at..g_end], lock[sig_at..sig_end]) {
+                        prior = buffer.append(heap, prior, have[g_at..g_end]);
+                    }
+                }
+                scan = g_end + 1;
+            }
+        }
+        var differs = false;
+        borrow prior as &rb in {
+            differs = buffer.size(rb) > 0;
+        }
+        var quiet = true;
+        borrow said as &qb in {
+            quiet = buffer.size(qb) == 0;
+        }
+        if differs && quiet {
+            var m = cliorigin.message(heap, "diamond dependency: `", lock[at..name_end], "` from `");
+            m = buffer.append(heap, buffer.append(heap, m, store), "` is pinned to two different heads (");
+            borrow prior as &rb in {
+                m = buffer.append(heap, m, buffer.bytes(rb));
+            }
+            m = buffer.append(heap, buffer.append(heap, m, " and "), lock[sig_at..sig_end]);
+            m = buffer.append(heap, m, ") by different paths through the dependency graph");
+            borrow m as &mb in {
+                said = problem(heap, said, buffer.bytes(mb));
+            }
+            buffer.drop(heap, m);
+        }
+        buffer.drop(heap, prior);
+        if !met {
+            pinned = buffer.append(heap, buffer.append(heap, buffer.append(heap, pinned, store), "\0"), lock[at..name_end]);
+            pinned = buffer.append(heap, buffer.append(heap, buffer.append(heap, pinned, "\0"), lock[sig_at..sig_end]), "\0");
+        }
+        at = field_at(lock, at, 3) + 1;
+    }
+    return Diamond { pinned_now: pinned, said_now: said };
+}
+
+// ---- the walk, a piece at a time ----
+
+fn replaced_verified[&h](heap: &!h Heap, old: Verified, new: Verified) -> [heap] Verified {
+    let Verified { good, problems } = old;
+    buffer.drop(heap, good);
+    buffer.drop(heap, problems);
+    return new;
+}
+
+fn walk_calm[&w](walk: &w Walk) -> [] bool {
+    return buffer.size(walk.bad) == 0;
+}
+
+fn walk_has_seen[&w, &t](walk: &w Walk, store: &t [byte]) -> [] bool {
+    return listed(buffer.bytes(walk.seen), store);
+}
+
+fn walk_seen_size[&w](walk: &w Walk) -> [] int {
+    return buffer.size(walk.seen);
+}
+
+// `text` added to the problems of the walk.
+fn walk_problem[&h, &m](heap: &!h Heap, walk: Walk, text: &m [byte]) -> [heap] Walk {
+    let Walk { ctx, seen, pins, bad } = walk;
+    return Walk { ctx: ctx, seen: seen, pins: pins, bad: problem(heap, bad, text) };
+}
+
+// `store` on the path.
+fn walk_push[&h, &t](heap: &!h Heap, walk: Walk, store: &t [byte]) -> [heap] Walk {
+    let Walk { ctx, seen, pins, bad } = walk;
+    return Walk { ctx: ctx, seen: buffer.append(heap, buffer.append(heap, seen, store), "\0"), pins: pins, bad: bad };
+}
+
+// The path cut back to its first `n` bytes.
+fn walk_pop[&h](heap: &!h Heap, walk: Walk, n: int) -> [heap] Walk {
+    let Walk { ctx, seen, pins, bad } = walk;
+    return Walk { ctx: ctx, seen: truncated(heap, seen, n), pins: pins, bad: bad };
+}
+
+// The pins of `lock` for `store` taken into the walk: a diamond is a problem.
+fn walk_pins[&h, &l, &t](heap: &!h Heap, walk: Walk, lock: &l [byte], store: &t [byte]) -> [heap] Walk {
+    let Walk { ctx, seen, pins, bad } = walk;
+    let checked = diamond_check(heap, pins, bad, lock, store);
+    let Diamond { pinned_now, said_now } = checked;
+    return Walk { ctx: ctx, seen: seen, pins: pinned_now, bad: said_now };
+}
+
+// The verified sources `more` (`HASH PATH STD`) taken into the context, and the problems `said`.
+fn walk_verified[&h](heap: &!h Heap, walk: Walk, verified: Verified) -> [heap] Walk {
+    let Walk { ctx, seen, pins, bad } = walk;
+    let Verified { good, problems } = verified;
+    var said = bad;
+    borrow problems as &pb in {
+        if buffer.size(pb) > 0 {
+            said = problem(heap, said, buffer.bytes(pb));
+        }
+    }
+    buffer.drop(heap, problems);
+    var merged = ctx;
+    borrow good as &gb in {
+        merged = context_merge(heap, merged, buffer.bytes(gb));
+    }
+    buffer.drop(heap, good);
+    return Walk { ctx: merged, seen: seen, pins: pins, bad: said };
+}
+
+// The text of the cycle that `store` closes on the path of the walk.
+fn walk_cycle[&h, &t](heap: &!h Heap, walk: Walk, store: &t [byte]) -> [heap] Walk {
+    var m = cliorigin.message(heap, "dependency cycle: `", store, "` is already on the path ");
+    borrow walk as &wk in {
+        let shown = path_text(heap, buffer.bytes(wk.seen));
+        borrow shown as &wb in {
+            m = buffer.append(heap, m, buffer.bytes(wb));
+        }
+        buffer.drop(heap, shown);
+    }
+    var out = walk;
+    borrow m as &mb in {
+        out = walk_problem(heap, out, buffer.bytes(mb));
+    }
+    buffer.drop(heap, m);
+    return out;
+}
+
+// The store `store` and everything it requires, checked: `lock` (`NAME SIG STAGE SOURCE` each) is what the requirer pinned in it. Each store on the way is on `seen` while it is
+// being walked (a store met again on the path is a cycle), and each name pinned is on `pins` (a name pinned to two signatures is a diamond). The first problem ends the walk.
+fn closure[&h, &i, &x, &c, &f, &k, &s, &t, &l](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], std_path: &s [byte], state: Walk, store: &t [byte], lock: &l [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, dir_read, exec(""), clock, poll] Walk {
+    var walk = state;
+    var cycle = false;
+    borrow walk as &wk in {
+        cycle = walk_has_seen(wk, store);
+    }
+    if cycle {
+        return walk_cycle(heap, walk, store);
+    }
+    walk = walk_pins(heap, walk, lock, store);
+    var calm = true;
+    borrow walk as &wk in {
+        calm = walk_calm(wk);
+    }
+    if !calm {
+        return walk;
+    }
+    var before = 0;
+    borrow walk as &wk in {
+        before = walk_seen_size(wk);
+    }
+    walk = walk_push(heap, walk, store);
+    let manifest = read_manifest(heap, fs, store);
+    let Pins { records, why } = manifest;
+    borrow why as &wb in {
+        if buffer.size(wb) > 0 {
+            walk = walk_problem(heap, walk, buffer.bytes(wb));
+            calm = false;
+        }
+    }
+    buffer.drop(heap, why);
+    var selected = buffer.empty(heap, 0);
+    if calm {
+        borrow records as &rb in {
+            let chosen = select_locked(heap, lock, buffer.bytes(rb), store);
+            let Chosen { picked, missing } = chosen;
+            selected = projfile.replaced(heap, selected, picked);
+            borrow missing as &mb in {
+                if buffer.size(mb) > 0 {
+                    walk = walk_problem(heap, walk, buffer.bytes(mb));
+                    calm = false;
+                }
+            }
+            buffer.drop(heap, missing);
+        }
+    }
+    buffer.drop(heap, records);
+    if calm {
+        walk = own_requirements(heap, io, exec, clock, fs, cache, std_path, walk, store);
+        borrow walk as &wk in {
+            calm = walk_calm(wk);
+        }
+    }
+    if calm {
+        var verified = Verified { good: buffer.empty(heap, 0), problems: buffer.empty(heap, 0) };
+        borrow selected as &sb in {
+            borrow walk as &wk in {
+                verified = replaced_verified(heap, verified, verify_selected(heap, io, fs, store, buffer.bytes(sb), buffer.bytes(wk.ctx), std_path));
+            }
+        }
+        walk = walk_verified(heap, walk, verified);
+    }
+    buffer.drop(heap, selected);
+    return walk_pop(heap, walk, before);
+}
+
+// What the walk of one requirement gave: its context merged into `gathered`, and the walk with an empty context again.
+res struct Collected {
+    gathered_now: buffer.Buffer,
+    walk_now: Walk,
+}
+
+fn walk_collect[&h](heap: &!h Heap, walk: Walk, gathered: buffer.Buffer) -> [heap] Collected {
+    let Walk { ctx, seen, pins, bad } = walk;
+    var merged = gathered;
+    borrow ctx as &cb in {
+        merged = context_merge(heap, merged, buffer.bytes(cb));
+    }
+    buffer.drop(heap, ctx);
+    return Collected { gathered_now: merged, walk_now: Walk { ctx: buffer.empty(heap, 0), seen: seen, pins: pins, bad: bad } };
+}
+
+// The walk with `context` as what it has gathered (what it had is dropped).
+fn walk_with_context[&h](heap: &!h Heap, walk: Walk, context: buffer.Buffer) -> [heap] Walk {
+    let Walk { ctx, seen, pins, bad } = walk;
+    buffer.drop(heap, ctx);
+    return Walk { ctx: context, seen: seen, pins: pins, bad: bad };
+}
+
+// Where a requirement's store is, and the walk with the problem if it could not be made a directory.
+res struct Located {
+    place: buffer.Buffer,
+    walked: Walk,
+}
+
+fn locate[&h, &i, &x, &c, &f, &k, &r, &t](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], recs: &r [byte], at: int, store: &t [byte], walk: Walk) -> [heap, err_write, fs_read(""), fs_write(""), exec(""), clock, poll] Located {
+    var out = walk;
+    var dep = buffer.empty(heap, 0);
+    if lc.at(recs, field_from(recs, at, 1)) == '1' {
+        let git_at = field_from(recs, at, 2);
+        let rev_at = field_from(recs, at, 3);
+        let path_at = field_from(recs, at, 4);
+        let got = cliorigin.ensure(heap, io, exec, clock, fs, cache, recs[git_at..projfile.field_end(recs, git_at, len(recs))], recs[rev_at..projfile.field_end(recs, rev_at, len(recs))], recs[path_at..projfile.field_end(recs, path_at, len(recs))]);
+        let cliorigin.Checkout { dir, why, status } = got;
+        dep = projfile.replaced(heap, dep, dir);
+        borrow why as &tb in {
+            if buffer.size(tb) > 0 {
+                out = walk_problem(heap, out, buffer.bytes(tb));
+            }
+        }
+        buffer.drop(heap, why);
+    } else {
+        let relative = cliorigin.joined(heap, store, recs[at..projfile.field_end(recs, at, len(recs))]);
+        borrow relative as &jb in {
+            dep = projfile.replaced(heap, dep, normalized(heap, buffer.bytes(jb)));
+        }
+        buffer.drop(heap, relative);
+    }
+    return Located { place: dep, walked: out };
+}
+
+// The stores that the store `store` requires (`requires/N.json`), each walked with what the requirement pinned in it. A requirement whose lock says where its store is
+// (`docs/package-system.md` section 7.3) is made a directory by the origin cache; any other is a path relative to `store`.
+fn own_requirements[&h, &i, &x, &c, &f, &k, &s, &t](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], std_path: &s [byte], state: Walk, store: &t [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, dir_read, exec(""), clock, poll] Walk {
+    var walk = state;
+    let read = read_requirements(heap, fs, store);
+    let Pins { records, why } = read;
+    borrow why as &wb in {
+        if buffer.size(wb) > 0 {
+            walk = walk_problem(heap, walk, buffer.bytes(wb));
+        }
+    }
+    buffer.drop(heap, why);
+    var gathered = buffer.empty(heap, 0);
+    borrow records as &rb in {
+        let recs = buffer.bytes(rb);
+        var at = 0;
+        var calm = true;
+        borrow walk as &wk in {
+            calm = walk_calm(wk);
+        }
+        while at < len(recs) && calm {
+            let (rec_end, entries_at) = requirement_span(recs, at);
+            let located = locate(heap, io, exec, clock, fs, cache, recs, at, store, walk);
+            let Located { place, walked } = located;
+            walk = walked;
+            borrow walk as &wk in {
+                calm = walk_calm(wk);
+            }
+            if calm {
+                borrow place as &db in {
+                    walk = closure(heap, io, exec, clock, fs, cache, std_path, walk, buffer.bytes(db), recs[entries_at..rec_end - 2]);
+                }
+                let collected = walk_collect(heap, walk, gathered);
+                let Collected { gathered_now, walk_now } = collected;
+                gathered = gathered_now;
+                walk = walk_now;
+                borrow walk as &wk in {
+                    calm = walk_calm(wk);
+                }
+            }
+            buffer.drop(heap, place);
+            at = rec_end;
+        }
+    }
+    buffer.drop(heap, records);
+    return walk_with_context(heap, walk, gathered);
+}
+
+// What fetching a store gave: the files written (their names, each followed by a NUL), why not, the status (0 well, 1 something the store pins did not hold, 3 the
+// environment, 4 nothing is published there), and whether any of the sources imports `std`.
+pub res struct Fetched {
+    files: buffer.Buffer,
+    why: buffer.Buffer,
+    status: int,
+    needs_std: bool,
+}
+
+res struct Copied {
+    written_names: buffer.Buffer,
+    copy_trouble: buffer.Buffer,
+}
+
+// Copy each source of `records` (`HASH PATH STD`) to `out/HASH.cho`; the names of what was written, each followed by a NUL, are added to `written`. The trouble is why not,
+// or nothing.
+fn copy_sources[&h, &f, &r, &o](heap: &!h Heap, fs: &f Fs(""), records: &r [byte], out: &o [byte], written: buffer.Buffer) -> [heap, fs_read(""), fs_write(""), file_read, file_write] Copied {
+    var names = written;
+    var trouble = buffer.empty(heap, 0);
+    var at = 0;
+    var going = true;
+    while at < len(records) && going {
+        let hash_end = projfile.field_end(records, at, len(records));
+        let path_at = hash_end + 1;
+        let path_end = projfile.field_end(records, path_at, len(records));
+        let file = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 80), records[at..hash_end]), ".cho");
+        var target = buffer.empty(heap, 0);
+        borrow file as &fb in {
+            target = projfile.replaced(heap, target, cliorigin.joined(heap, out, buffer.bytes(fb)));
+        }
+        buffer.drop(heap, file);
+        let read = clibase.read_file(heap, fs, records[path_at..path_end]);
+        let clibase.Contents { bytes, failed } = read;
+        var wrote = failed == 0;
+        if wrote {
+            borrow bytes as &bb in {
+                borrow target as &tb in {
+                    wrote = filewrite.store(fs, buffer.bytes(tb), buffer.bytes(bb)) == 0;
+                }
+            }
+        }
+        buffer.drop(heap, bytes);
+        if wrote {
+            borrow target as &tb in {
+                names = buffer.append(heap, buffer.append(heap, names, buffer.bytes(tb)), "\0");
+            }
+        } else {
+            borrow target as &tb in {
+                trouble = projfile.replaced(heap, trouble, cliorigin.message(heap, "cannot write `", buffer.bytes(tb), "`"));
+            }
+            going = false;
+        }
+        buffer.drop(heap, target);
+        at = path_end + 3;
+    }
+    return Copied { written_names: names, copy_trouble: trouble };
+}
+
+// The sources of the store `store` (a directory with an absolute path) fetched into `out`: everything its manifest holds (for a name published more than once, the declaration
+// whose signature sorts last), and everything the stores it requires pin, each checked as `verify_selected` does and written only if all of them hold.
+pub fn fetch_store[&h, &i, &x, &c, &f, &k, &s, &t, &o](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], std_path: &s [byte], store: &t [byte], out: &o [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] Fetched {
+    let manifest = read_manifest(heap, fs, store);
+    let Pins { records, why } = manifest;
+    var failed = false;
+    borrow why as &wb in {
+        failed = buffer.size(wb) > 0;
+    }
+    if failed {
+        buffer.drop(heap, records);
+        return Fetched { files: buffer.empty(heap, 0), why: why, status: 3, needs_std: false };
+    }
+    buffer.drop(heap, why);
+    var selected = buffer.empty(heap, 0);
+    borrow records as &rb in {
+        selected = projfile.replaced(heap, selected, select_all(heap, buffer.bytes(rb)));
+    }
+    buffer.drop(heap, records);
+    var nothing = false;
+    borrow selected as &sb in {
+        nothing = buffer.size(sb) == 0;
+    }
+    if nothing {
+        buffer.drop(heap, selected);
+        return Fetched { files: buffer.empty(heap, 0), why: buffer.empty(heap, 0), status: 4, needs_std: false };
+    }
+    let walked = own_requirements(heap, io, exec, clock, fs, cache, std_path, start_walk(heap, store), store);
+    var verified = Verified { good: buffer.empty(heap, 0), problems: buffer.empty(heap, 0) };
+    var context = buffer.empty(heap, 0);
+    var found_bad = buffer.empty(heap, 0);
+    let Walk { ctx, seen, pins, bad } = walked;
+    buffer.drop(heap, seen);
+    buffer.drop(heap, pins);
+    context = projfile.replaced(heap, context, ctx);
+    found_bad = projfile.replaced(heap, found_bad, bad);
+    var calm = false;
+    borrow found_bad as &bb in {
+        calm = buffer.size(bb) == 0;
+    }
+    if calm {
+        borrow selected as &sb in {
+            borrow context as &cb in {
+                verified = replaced_verified(heap, verified, verify_selected(heap, io, fs, store, buffer.bytes(sb), buffer.bytes(cb), std_path));
+            }
+        }
+    }
+    buffer.drop(heap, selected);
+    let Verified { good, problems } = verified;
+    borrow problems as &pb in {
+        if buffer.size(pb) > 0 {
+            found_bad = problem(heap, found_bad, buffer.bytes(pb));
+            calm = false;
+        }
+    }
+    buffer.drop(heap, problems);
+    if !calm {
+        buffer.drop(heap, good);
+        buffer.drop(heap, context);
+        return Fetched { files: buffer.empty(heap, 0), why: found_bad, status: 1, needs_std: false };
+    }
+    buffer.drop(heap, found_bad);
+    var status = 0;
+    var trouble = buffer.empty(heap, 0);
+    var written = buffer.empty(heap, 0);
+    var any_std = false;
+    borrow good as &gb in {
+        any_std = context_uses_std(buffer.bytes(gb));
+    }
+    borrow context as &cb in {
+        any_std = any_std || context_uses_std(buffer.bytes(cb));
+    }
+    if !cliorigin.tool(heap, io, exec, clock, "/bin/mkdir", "-p", out) {
+        trouble = projfile.replaced(heap, trouble, cliorigin.message(heap, "cannot create `", out, "`"));
+        status = 3;
+    } else {
+        borrow good as &gb in {
+            let first = copy_sources(heap, fs, buffer.bytes(gb), out, written);
+            let Copied { written_names, copy_trouble } = first;
+            written = written_names;
+            trouble = projfile.replaced(heap, trouble, copy_trouble);
+        }
+        var clean = false;
+        borrow trouble as &tb in {
+            clean = buffer.size(tb) == 0;
+        }
+        if clean {
+            borrow context as &cb in {
+                let second = copy_sources(heap, fs, buffer.bytes(cb), out, written);
+                let Copied { written_names, copy_trouble } = second;
+                written = written_names;
+                trouble = projfile.replaced(heap, trouble, copy_trouble);
+            }
+        }
+        borrow trouble as &tb in {
+            if buffer.size(tb) > 0 {
+                status = 3;
+            }
+        }
+    }
+    buffer.drop(heap, good);
+    buffer.drop(heap, context);
+    return Fetched { files: written, why: trouble, status: status, needs_std: any_std };
 }

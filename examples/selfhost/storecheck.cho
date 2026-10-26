@@ -3,12 +3,16 @@ edition 7;
 // storecheck.cho -- `clistore.cho` run on its own, for its differential test (`docs/cli-in-cancho.md` section 22):
 //
 //     storecheck manifest DIR      the declarations of the manifest of the store in DIR: `SIG NAME STAGE SOURCE`, a line each
+//     storecheck requires DIR      the requirements of the store; normalize PATH; std FILE (does it import `std`)
+//     storecheck fetch CACHE STD STORE OUT   the store fetched into OUT, as `install` fetches a dependency (STD is the directory of the library, or `-`): the names written, a line each;
+//                                  the problems on the standard error; the status is 0, 1 (a pin did not hold), 3 (the environment) or 4 (nothing is published)
 
 import std.buffer;
 import std.bytes;
 import std.io as console;
 import selfhost.lexcore as lc;
 import selfhost.clistore;
+import selfhost.clibase;
 
 // The records with each NUL a space and each record on a line (`fields` to a record).
 fn show[&i, &r](io: &!i Io, records: &r [byte], fields: int) -> [io_write] int {
@@ -33,7 +37,7 @@ fn show[&i, &r](io: &!i Io, records: &r [byte], fields: int) -> [io_write] int {
     return line;
 }
 
-fn run[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, err_write, args, fs_read(""), file_read, dir_read] int {
+fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
     if arg_count(args) == 3 && bytes.equal(arg(args, 1), "manifest") {
         let got = clistore.read_manifest(heap, fs, arg(args, 2));
         let clistore.Pins { records, why } = got;
@@ -85,7 +89,62 @@ fn run[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""))
         buffer.drop(heap, why);
         return status;
     }
-    console.error_all(io, "usage: storecheck (manifest DIR | requires DIR)\n");
+    if arg_count(args) == 3 && bytes.equal(arg(args, 1), "normalize") {
+        let n = clistore.normalized(heap, arg(args, 2));
+        borrow n as &nb in {
+            console.write_all(io, buffer.bytes(nb));
+            console.write_all(io, "\n");
+        }
+        buffer.drop(heap, n);
+        return 0;
+    }
+    if arg_count(args) == 3 && bytes.equal(arg(args, 1), "std") {
+        let text = clibase.read_file(heap, fs, arg(args, 2));
+        let clibase.Contents { bytes, failed } = text;
+        borrow bytes as &bb in {
+            if clistore.imports_std(buffer.bytes(bb)) {
+                console.write_all(io, "yes\n");
+            } else {
+                console.write_all(io, "no\n");
+            }
+        }
+        buffer.drop(heap, bytes);
+        return failed;
+    }
+    if arg_count(args) == 6 && bytes.equal(arg(args, 1), "fetch") {
+        var std_path = arg(args, 3);
+        if bytes.equal(std_path, "-") {
+            std_path = "";
+        }
+        let got = clistore.fetch_store(heap, io, exec, clock, fs, arg(args, 2), std_path, arg(args, 4), arg(args, 5));
+        let clistore.Fetched { files, why, status, needs_std } = got;
+        borrow files as &fb in {
+            let listed = buffer.bytes(fb);
+            var at = 0;
+            while at < len(listed) {
+                var end = at;
+                while lc.at(listed, end) != 0 {
+                    end = end + 1;
+                }
+                console.write_all(io, listed[at..end]);
+                console.write_all(io, "\n");
+                at = end + 1;
+            }
+        }
+        borrow why as &wb in {
+            if buffer.size(wb) > 0 {
+                console.error_all(io, buffer.bytes(wb));
+                console.error_all(io, "\n");
+            }
+        }
+        if needs_std {
+            console.write_all(io, "needs std\n");
+        }
+        buffer.drop(heap, files);
+        buffer.drop(heap, why);
+        return status;
+    }
+    console.error_all(io, "usage: storecheck (manifest DIR | requires DIR | normalize PATH | std FILE)\n");
     return 2;
 }
 
@@ -94,18 +153,22 @@ fn main(world: World) -> [] int {
     release(ffi);
     release(net);
     release(signals);
-    release(clock);
-    release(exec);
     var status = 0;
     borrow mut heap as &!h in {
         borrow mut io as &!i in {
             borrow args as &a in {
                 borrow fs as &f in {
-                    status = run(h, i, a, f);
+                    borrow exec as &x in {
+                        borrow clock as &k in {
+                            status = run(h, i, a, f, x, k);
+                        }
+                    }
                 }
             }
         }
     }
+    release(clock);
+    release(exec);
     release(fs);
     release(args);
     release(heap);

@@ -141,7 +141,7 @@ fn git_run[&h, &i, &x, &c, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
 }
 
 // `/bin/mkdir -p` or `/bin/rm -rf` on `path`: did it work? (`rm` is never asked for the empty path or `/`.)
-fn tool[&h, &i, &x, &c, &p](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &static [byte], flag: &static [byte], path: &p [byte]) -> [heap, err_write, exec(""), clock, poll] bool {
+pub fn tool[&h, &i, &x, &c, &p](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &static [byte], flag: &static [byte], path: &p [byte]) -> [heap, err_write, exec(""), clock, poll] bool {
     if len(path) == 0 || len(path) == 1 && lc.at(path, 0) == '/' {
         return false;
     }
