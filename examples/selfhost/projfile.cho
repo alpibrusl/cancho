@@ -754,7 +754,7 @@ fn check_records[&h, &r](heap: &!h Heap, recs: &r [byte], why: buffer.Buffer) ->
 // 0 the keys before any table), `name` is the name of a dependency, and `header_at` the offset of its header in the text. The keys are checked as the TOML library checks
 // them against the structure (an unknown one, one of the wrong type, one twice; then one the table needs and has not); `status` is 1 and `why` the message if one fails.
 // `old` is dropped and `new` is what is answered.
-fn replaced[&h](heap: &!h Heap, old: buffer.Buffer, new: buffer.Buffer) -> [heap] buffer.Buffer {
+pub fn replaced[&h](heap: &!h Heap, old: buffer.Buffer, new: buffer.Buffer) -> [heap] buffer.Buffer {
     buffer.drop(heap, old);
     return new;
 }

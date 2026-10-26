@@ -404,10 +404,12 @@ output (`cliprog.run_capture`), and the check of a program that needs no `main` 
 
 1. **`git` through `Exec`, with the settings of `vcs_origin.rs` unchanged** (`-c core.hooksPath=/dev/null`, only the five protocols the Rust code allows, `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0`),
    as `init`, `fetch --depth 1` of the commit (then all heads and tags if the server refuses), `checkout --detach`, `rev-parse HEAD` compared with `rev`, then the `.git` taken away (`/bin/rm -rf`)
-   and the directory renamed into the cache (`fs_rename`; a lost race is fine: the other directory is as good). `ls-remote` for `add --ref`. The program is `git` found on `PATH`, as the Rust command
-   finds it; `run_capture` gives the child `PATH=/usr/bin:/bin` and nothing else (§16), so the cache root is passed as an argument, not through the environment: `$CANCHO_CACHE`, else
-   `$XDG_CACHE_HOME/cancho`, else `$HOME/.cache/cancho` — and **the environment cannot be read from cancho** (`grep` for `getenv`, `env_var` and `environ` in `std/*.cho` finds none; the only `environ` in the repository is the WASI import list), so the third becomes
-   `--cache DIR` or, failing that, `HOME` through `/usr/bin/env` run once. Difference, stated now: `$CANCHO_CACHE` is spelt `--cache` in this command line.
+   and the directory renamed into the cache (`fs_rename`; a lost race is fine: the other directory is as good). `ls-remote` for `add --ref`. The program is `/usr/bin/git` (`run_capture` takes a path, and a name with no directory is looked for in the directory the command ran in). **Corrected after measuring:** a program started from cancho has only the environment it
+   is given, so `HOME` and `$CANCHO_CACHE` cannot be read by running `env` (it would show only what was passed to it), and `grep` for `getenv`, `env_var` and `environ` in `std/*.cho` finds nothing; this paragraph first said
+   `HOME` could be had "through `/usr/bin/env` run once", which is false. What was measured instead, on Linux with `env -i`: `/bin/sh -c 'echo "$HOME"'` is empty and `cd ~` fails (dash), and `/bin/bash -c 'echo ~'` prints the home
+   directory from the password file (`/root`). So the cache root is `--cache DIR` if given, else `.cache/cancho` in the home directory that `bash` finds; the darwin job of CI is what measures it there. Differences, stated now: `$CANCHO_CACHE`
+   and `$XDG_CACHE_HOME` are not read (`--cache` is the one way to move the cache), `git` has no `HOME`, no ssh agent and no credential helper (a private repository over ssh or https cannot be fetched from cancho; public https and `file://` can), and the half-made
+   neighbour is named with the clock in milliseconds where the Rust code has the process number.
 2. **The verification is the compiler in cancho, not a second implementation of it.** A source is checked with the closure and (if it imports `std`) the library as one program (mode 10); its identities
    are the listing of mode 13 **extended with the body hash** (one more column, `module\0name\0sig\0body\n`; `satisfy` and `ids` read the first three and are unchanged). The `imports_std` test reads the
    import lines of the source: a token scan in `testscan.cho`'s style, which skips comments and strings, as the Rust one reads the parsed imports and not the text. **Risk named:** the Rust
@@ -425,3 +427,17 @@ output (`cliprog.run_capture`), and the check of a program that needs no `main` 
 **What would show this design wrong:** a store in `packages/` for which `verify_selected` in cancho disagrees with Rust on whether the pins hold (the identities differ from `ids`, or a text the Rust parser accepts and the one in cancho
 refuses, the known gaps of the checker are the ones asserted in `the_command_line_in_cancho_checks_like_cancho_check`); a `git` that cannot be run with `PATH=/usr/bin:/bin` on a machine where it lives elsewhere; or a cache that two
 processes fill at once and break (the Rust code relies on `rename` onto an existing directory failing; `fs_rename` must be measured to do the same).
+
+## 23. Slice 14a: the origin cache
+
+`cliorigin.cho` (`ensure`, `resolve_ref`, `cache_root`, `invalid`) is a port of `vcs_origin.rs` as §22 designed it, with one change to `cliprog.cho`: `run_capture_in` is `run_capture` with the environment a caller gives (`run_capture` passes
+`PATH=/usr/bin:/bin` as before). `git` is run with the settings of the Rust code (hooks off, five protocols, no prompt, no optional lock); the checkout is made in `REV.tmp.MILLISECONDS` beside its place in the cache (`CACHE/git/REV`),
+the `.git` is removed with `/bin/rm -rf`, and the directory is renamed into place with `fs_rename` (if that fails and the destination is there, another process finished first and its directory is as good). `origincheck.cho` is the small
+program that runs it for the test; the commands that use it are the next slices.
+
+**Measured.** `selfhost::origin::the_origin_cache_in_cancho_makes_the_checkout_the_rust_code_makes` makes two commits of a local repository (`file://`) into a cache with `cancho add` (which fills the cache before it looks at the store) and with
+`origincheck ensure`, and compares the two caches: the same files, no `.git`, the same directory names; a second ask for a cached commit does not touch the repository (it is given a URL that is not there); five refusals say what the Rust
+code says (a path that is not in the commit, a revision that is not a hash, a commit that is not there, a path that leaves the repository, an absolute path); `ref` finds the hash of `HEAD` and of a tag as the Rust `--ref` does and refuses a ref that is
+not there with the same words, and a URL or a ref name that git would read as an option; and the root with no `--cache` is `$HOME/.cache/cancho` (2.7 s for the whole test). **Eight mutants of `cliorigin.cho`, seven killed:** the `.git` kept; the
+revision not checked; `..` allowed in the path; the half-made neighbour not removed (found only after the test compared the caches after a refusal); the ref name not checked; `ext::` allowed in a URL (the last two only after the test asserted the message and
+not just the status); the store directory not checked. **Not verified:** the branch for a lost race (`rename` fails and the destination is a directory): the mutant that removes it did not compile, and a test would need two processes filling one cache at once.

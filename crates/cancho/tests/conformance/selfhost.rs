@@ -20,6 +20,7 @@ mod bootstrap;
 mod cases;
 mod cli;
 mod compile;
+mod origin;
 mod parity;
 mod statics;
 use cases::BODY_EDGE;
@@ -326,6 +327,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "clitest.cho",
         "projfile.cho",
         "cliproject.cho",
+        "cliorigin.cho",
         "listing.cho",
         "checker.cho",
         "body.cho",

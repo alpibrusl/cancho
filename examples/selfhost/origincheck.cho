@@ -1,0 +1,99 @@
+edition 7;
+
+// origincheck.cho -- `cliorigin.cho` run on its own, for its differential test (`docs/cli-in-cancho.md` section 22):
+//
+//     origincheck ensure CACHE GIT REV PATH   the store directory of the origin, on the standard output; why not on the standard error, status 1 or 3
+//     origincheck ref URL NAME                the commit the name stands for
+//     origincheck root [CACHE]                the cache root
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.cliorigin;
+
+fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), exec(""), clock, poll] int {
+    if arg_count(args) == 6 && bytes.equal(arg(args, 1), "ensure") {
+        let got = cliorigin.ensure(heap, io, exec, clock, fs, arg(args, 2), arg(args, 3), arg(args, 4), arg(args, 5));
+        let cliorigin.Checkout { dir, why, status } = got;
+        borrow dir as &db in {
+            if buffer.size(db) > 0 {
+                console.write_all(io, buffer.bytes(db));
+                console.write_all(io, "\n");
+            }
+        }
+        borrow why as &wb in {
+            if buffer.size(wb) > 0 {
+                console.error_all(io, buffer.bytes(wb));
+                console.error_all(io, "\n");
+            }
+        }
+        buffer.drop(heap, dir);
+        buffer.drop(heap, why);
+        return status;
+    }
+    if arg_count(args) == 4 && bytes.equal(arg(args, 1), "ref") {
+        let got = cliorigin.resolve_ref(heap, io, exec, clock, arg(args, 2), arg(args, 3));
+        let cliorigin.Step { said, failure } = got;
+        var status = 0;
+        borrow said as &sb in {
+            if buffer.size(sb) > 0 {
+                console.write_all(io, buffer.bytes(sb));
+                console.write_all(io, "\n");
+            }
+        }
+        borrow failure as &fb in {
+            if buffer.size(fb) > 0 {
+                console.error_all(io, buffer.bytes(fb));
+                console.error_all(io, "\n");
+                status = 3;
+            }
+        }
+        buffer.drop(heap, said);
+        buffer.drop(heap, failure);
+        return status;
+    }
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "root") {
+        var given = "";
+        if arg_count(args) > 2 {
+            given = arg(args, 2);
+        }
+        let root = cliorigin.cache_root(heap, io, exec, clock, given);
+        borrow root as &rb in {
+            console.write_all(io, buffer.bytes(rb));
+            console.write_all(io, "\n");
+        }
+        buffer.drop(heap, root);
+        return 0;
+    }
+    console.error_all(io, "usage: origincheck (ensure CACHE GIT REV PATH | ref URL NAME | root [CACHE])\n");
+    return 2;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow fs as &f in {
+                    borrow exec as &x in {
+                        borrow clock as &k in {
+                            status = run(h, i, a, f, x, k);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(clock);
+    release(exec);
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
