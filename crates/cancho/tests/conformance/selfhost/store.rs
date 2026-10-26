@@ -4,7 +4,7 @@
 
 use super::*;
 
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(super) fn git(dir: &Path, args: &[&str]) -> String {
     let done = Command::new("git")
         .current_dir(dir)
         .args(["-c", "user.email=a@b", "-c", "user.name=n", "-c", "commit.gpgsign=false"])
@@ -15,7 +15,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&done.stdout).trim().to_owned()
 }
 
-fn copy_dir(from: &Path, to: &Path) {
+pub(super) fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).expect("a directory is made");
     for entry in std::fs::read_dir(from).expect("a directory is read") {
         let path = entry.expect("an entry").path();

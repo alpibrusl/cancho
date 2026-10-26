@@ -565,6 +565,42 @@ fn vcs_lock_in_cancho_pins_like_cancho_vcs_lock() {
             ]),
         },
     ];
+    // A repository whose store is at the default place, `.cancho-vcs` at its root: `--git` with no `--path`, and a lock whose origin does not say `path` (read as the default).
+    let plain = work.join("plain");
+    let _ = std::fs::remove_dir_all(&plain);
+    std::fs::create_dir_all(&plain).unwrap();
+    super::store::git(&plain, &["init", "--quiet", "."]);
+    super::store::copy_dir(&packages.join("net-sockets/.cancho-vcs"), &plain.join(".cancho-vcs"));
+    super::store::git(&plain, &["add", "-A"]);
+    super::store::git(&plain, &["commit", "--quiet", "-m", "store"]);
+    let plain_rev = super::store::git(&plain, &["rev-parse", "HEAD"]);
+    let plain_url = format!("file://{}", plain.display());
+    let no_path = format!(
+        "{{\n  \"origin\": {{\n    \"git\": \"{plain_url}\",\n    \"rev\": \"{plain_rev}\"\n  }},\n  \"entries\": {{\n    \"old\": {{\n      \"sig_id\": \"s\",\n      \"stage_id\": \"t\",\n      \"source_hash\": \"u\"\n    }}\n  }}\n}}"
+    );
+    let mut gits = gits;
+    gits.push(Lock {
+        name: "git, the default path",
+        files: vec![],
+        args: args(&["--git", &plain_url, "--rev", &plain_rev, "-o", "out.lock", "--all"]),
+    });
+    gits.push(Lock {
+        name: "git, the default path, ref",
+        files: vec![],
+        args: args(&["--git", &plain_url, "--ref", "HEAD", "-o", "out.lock", "bind"]),
+    });
+    gits.push(Lock {
+        name: "an origin with no path, the same",
+        files: vec![("out.lock", no_path.clone())],
+        args: args(&["--git", &plain_url, "--rev", &plain_rev, "-o", "out.lock", "bind"]),
+    });
+    gits.push(Lock {
+        name: "an origin with no path, another path",
+        files: vec![("out.lock", no_path)],
+        args: args(&[
+            "--git", &plain_url, "--rev", &plain_rev, "--path", "other", "-o", "out.lock", "bind",
+        ]),
+    });
     for case in &gits {
         if let Err(e) = lock_both(&exe, &work, case, &cache, &rust_cache) {
             failures.push(e);
