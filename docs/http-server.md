@@ -867,3 +867,74 @@ three mutations below each turned a gate red. The store was republished (`script
 | the CRLF completion removed (`extra_open` always false) | `test_a_missing_final_crlf_on_extra_is_supplied`; the server test (the 405 head runs into the body) |
 | the 500 fallback removed from `reply_as` and `reply_empty` (store republished, locks re-pinned) | the server test: the `/bare` answer arrives, then the process traps on `/bad` and the connection closes |
 | the guard loosened to take a bare LF as a line end | `test_valid_extra_refuses_everything_unsafe`, `a_misused_router_or_response_traps_instead_of_going_on` (`extra-bare-line-feed`), the server test |
+
+## 14. Streaming an answer on a socket server (`stream`)
+
+> **Status: BUILT** (2026-10-26, section 14.5); designed first, asked for by `cancho-industrial` (`docs/live.md` section 2a: a console that subscribes to a stream of readings). Numbers are measured
+> where they say so and **to measure** where they do not; a claim found false while building is corrected here, in place.
+
+### 14.1 What stops it, read from the source
+
+`stream` (section 11.2) is the byte-fed server's: `if srv.core.fed != 1 || ticket < 0 { return -1 }`, and its comment says a socket server answers -1. A socket server can `hold` a request and
+`answer` it once; the answer is over when `answer` returns (the request ends, the connection keeps alive or closes as the head said). So an application that wants a response that goes on --
+Server-Sent Events, a long download it produces as it goes -- cannot have one on `server.open`, only behind `open_bytes` with a TLS engine or a driver of its own. `cancho-industrial`'s platform serves
+with `server.open`.
+
+### 14.2 The change
+
+`stream` works on a socket server too: the same checks (the ticket is held, its generation is current, no refusal is recorded), the bytes appended to the connection's waiting answer as far as `space` allows,
+the number taken answered. On a socket server it then queues the connection (`enqueue`), so that the next `wait` visits it and writes what is waiting when the socket will take it, exactly as it
+does for an answer that did not fit in one write. `stream`'s effect row stays `[]` (it writes nothing itself; `wait` does, as it already does for every pending answer), so no consumer's authority changes.
+
+Nothing else changes: `hold`, `answer`, `space`, `pending`, `closing`, the idle rule ("a held request is spared while nothing is waiting to be sent"). The idle sweep does not close a held streaming request
+that is being read; **a held request whose peer never reads** leaves bytes waiting, and then the sweep does end it (**to measure**: that this is what the socket path does, not only the byte-fed one).
+
+### 14.3 What the application is told, and what it does
+
+* `n = stream(srv, ticket, bytes)`: `n < len(bytes)` means the connection's answer room is full (a slow or stopped reader); the application offers the rest again later or ends the stream. **A message is
+  sent only if `space(srv, ticket_slot(ticket)) >= len(message)`**, so no message is ever half in the room; that is the application's rule, `stream` takes what fits.
+* `-1`: the ticket is not held any more (answered, or the connection is gone). The application forgets the stream.
+* The head is the application's: `HTTP/1.1 200 OK`, a content type and **`Transfer-Encoding: chunked`**, and the application frames each message as a chunk (`<hex length>\r\n<message>\r\n`). `answer(ticket, "0\r\n\r\n")` ends
+  the response, and the connection then goes on as the request said (keep-alive for HTTP/1.1). `Connection: close` in the head would *not* end the connection: `answer` reads whether to keep alive from the
+  **request** (`deliver_to`: `http.keeps_alive(parsed)`), not from the head the application wrote. *(The first draft of this section said the opposite; read from `deliver_to` before any code.)*
+* A request pipelined behind a held streaming request waits, as behind any held request (section 10).
+
+### 14.4 Gates (fixed before the code)
+
+1. **A program and a test that fail first**, `tests/programs/server_stream.cho` and `conformance/http_server_stream.rs`: the program holds `GET /stream`, streams the head and one `data: <n>` event per round
+   until 5, then `answer(ticket, "")`; `GET /plain` is answered meanwhile. The test reads the events **one at a time with a pause between** (so a buffering implementation is seen), checks that `/plain` is
+   answered while the stream is open, that the stream ends with the connection, and that a client that closes mid-stream makes the next `stream` answer -1 and does not stop the loop. On `main` it fails: `stream` answers -1.
+2. A **slow reader**: a client that connects and never reads, against a program that streams until `stream` takes fewer bytes than offered; the count taken is the room, never more, no byte is lost or cut,
+   the loop answers others, and the idle sweep ends the connection (**to measure**: after how long).
+3. **The 8 existing tests of sections 10 to 12 and the byte-fed tests pass unchanged**, and `scripts/http_server_bytes_mutants.py`'s mutants are still killed (the change must not weaken them).
+4. **Mutants of the new code**, each killed by 1 or 2: the socket case not queued (the stream stalls until the next read); the generation not checked; a stream into a not-held request accepted; room ignored (a write past
+   the room); `stream` allowed after an answer.
+5. The store is republished (`scripts/publish_packages.py`) and `--check` passes; the locks that pin `packages/http-server` are re-pinned (`examples/api/server.lock`, `tests/programs/server_hold.lock`,
+   `server_upload.lock` ... as the republish says); `crates/cancho/tests/files.rs` passes (the file stays at most 2,000 lines).
+
+### 14.5 As built, and what building found
+
+> **Status: BUILT** (2026-10-26). The change to `server.cho` is nine lines and the file is 2,000 of 2,000: `stream` no longer refuses a socket server and queues its connection (`enqueue`) so that the next
+> `wait` writes what is waiting; `space` no longer answers 0 for a socket server. `stream`'s effect row is still `[]`, so no consumer's authority changed.
+
+* **`space` had the same gate** (`live_slot` is byte-fed only), which §14.2 did not say: an application could not ask a socket server how much room a connection had. Corrected in the build; `pending` is still byte-fed only.
+* **A response of five events, one every 100 ms,** arrives as head and first event at 0.0 s and then the events at 0.1, 0.2, 0.3 and 0.4 s and the end at 0.5 s (the reads of the test, loopback), not in one piece
+  (`events_arrive_while_the_stream_is_open_and_others_are_served`); another connection is answered meanwhile; the connection serves the next request after the end of the body.
+* **`queued` mattered:** without the `enqueue` the stream stalls (the mutant is killed), and with it a stream is written within the `wait` that follows, so an event is on the wire within one turn of the loop.
+* **A reader that never reads** is not stopped at the answer room (65,536 bytes) but at what the socket's buffers and the room hold together: on loopback **2,961,173 bytes** were taken before one offer did not fit, 0.8 s after the
+  stream began at a chunk of 4,007 bytes every turn. Ending that stream with `answer` when the room is full **closes the connection, and the 65,536 bytes waiting never reach the reader** (2,897,061 of 2,961,173 + 1,424 arrived;
+  what arrived is whole chunks and the start of one). So a slow reader is dropped, not served the rest: that is the rule an application that wants bounded memory should expect, and `Last-Event-ID` is how it resumes.
+* **An offer made without checking `space`** (a `stream` of a whole chunk into a room that holds 1,424 bytes of it) takes what fits, 1,424 bytes, and leaves the message cut: `stream` bounds the memory, the application bounds the message.
+* **A ticket of a connection that left** is refused (`-1`) even when another stream has taken its slot (`a_ticket_of_a_connection_that_left_does_not_reach_the_one_that_took_its_slot`); a ticket of a response that is over
+  is refused, and nothing was written to its connection (`/stale`).
+* **A request refused while it streams** (a declared body that stalls, with `limits`): the stream gets no more events and ends without the terminating chunk; the connection is closed.
+* **Not measured:** the idle sweep against a held streaming connection whose peer never reads (the 9-second idle of the test server is shorter than every test), TLS in front of a socket server, more than one stream at a time in the test program.
+
+**Tests** `conformance/http_server_stream.rs` (6: the five above and the store through `tests/programs/server_stream.lock`); on `main` they failed (`stream` answered -1). **Mutants** `scripts/http_server_stream_mutants.py`: 11, 10
+killed and one argued equivalent. The two older mutant scripts named the line this change replaced (`stream: a socket server's connection streamed to`, argued unreachable from `cancho test`: it is reachable and tested now, so it is gone; and the text of `stream: the answer's beginning not noted`); CI's `tls-assurance (mutants)` jobs caught it, and with the scripts fixed they pass here (79 of 89 and 215 of 232 killed) (a recorded refusal is cleared from the held state by the same `wait` that records it). The other tests of `conformance/http_server*.rs` (held requests, uploads, the byte-fed tests on both backends) and `net.rs`'s server pass unchanged. The store was republished and
+the locks of `examples/api`, `server_hold` and the new `server_stream` pinned.
+
+### 14.6 Not done
+
+TLS in front of a socket server (the byte-fed path is for that); framing for the application (a helper that writes a chunk may come, once two applications write the same one); HTTP/2; a
+server-wide count of streams (the application keeps its own table).

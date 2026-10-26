@@ -216,7 +216,7 @@ MUTANTS = [
     ("deliver_to: the request not ended", "    if st[p + 16] != 0 {\n        end_request(core, k);\n        return st[p + 2];\n    }", "    if st[p + 16] == 7 {\n        end_request(core, k);\n        return st[p + 2];\n    }"),
     ("answer_in: a streamed request parsed again", "    if st[p + 16] == 0 {\n        http.parse(", "    if st[p + 16] >= 0 {\n        http.parse("),
     ("stream: a request that is over streamed to", "st[p + 14] != ticket / ticket_span() || st[p + 25] != 0 {\n        return 0 - 1;\n    }\n    var n = srv.core.osize", "st[p + 14] != ticket / ticket_span() {\n        return 0 - 1;\n    }\n    var n = srv.core.osize"),
-    ("stream: the answer's beginning not noted", "    if n > 0 {\n        set_flag(st, p, 4);\n    }", "    if n > 100000 {\n        set_flag(st, p, 4);\n    }"),
+    ("stream: the answer's beginning not noted", "    if n > 0 {\n        set_flag(st, p, 4);\n        if srv.core.fed == 0 {", "    if n > 100000 {\n        set_flag(st, p, 4);\n        if srv.core.fed == 0 {"),
     # ---- the API ----
     ("limits: a maximum of 0 accepted", "    if max_body < 1 || piece < 1 || head_ms < 1 || body_ms < 1 {", "    if max_body < 0 || piece < 1 || head_ms < 1 || body_ms < 1 {"),
     ("limits: a piece of 0 accepted", "    if max_body < 1 || piece < 1 || head_ms < 1 || body_ms < 1 {", "    if max_body < 1 || piece < 0 || head_ms < 1 || body_ms < 1 {"),

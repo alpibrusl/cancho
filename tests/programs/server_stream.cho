@@ -1,0 +1,310 @@
+edition 5;
+
+// `http.server`'s `stream` on a socket server (`docs/http-server.md` section 14).
+//
+//     server_stream <port> [<body stall in ms>]
+//
+// `GET /stream` is held and answered in parts: the head (chunked), then one event `data: <n>` a turn of the loop (an event is sent at most every 100 ms) until 5, then the end of the
+// body and `answer`. `GET /flood` is held and offered a 4000-byte message every turn for as long as the connection's answer room takes it whole; the first turn it does not,
+// the stream is ended and `/stats` says how many bytes were taken and how many offers were refused. `GET /stale` offers a byte to the ticket of the last stream that is over, `GET /spare` asks for the room of a slot nobody used, `GET /gone` says how many times `stream` answered -1 (a ticket whose
+// connection was gone or that was answered already). Every other path is answered with itself, so a test can show that the loop serves others while a stream is open.
+
+import std.buffer;
+import std.bytes;
+import std.conns;
+import std.http;
+import http.server;
+
+fn number_of[&t](text: &t [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - 48);
+        i = i + 1;
+    }
+    return n;
+}
+
+// `message` as one chunk of a chunked body: its length in hex, CRLF, the message, CRLF.
+fn chunk[&h, &m](heap: &!h Heap, start: buffer.Buffer, message: &m [byte]) -> [heap] buffer.Buffer {
+    var out = start;
+    var digits = 1;
+    var rest = len(message) / 16;
+    while rest > 0 {
+        digits = digits + 1;
+        rest = rest / 16;
+    }
+    var place = digits;
+    while place > 0 {
+        var shift = place - 1;
+        var unit = 1;
+        while shift > 0 {
+            unit = unit * 16;
+            shift = shift - 1;
+        }
+        let d = len(message) / unit % 16;
+        if d < 10 {
+            out = buffer.push(heap, out, byte_of(48 + d));
+        } else {
+            out = buffer.push(heap, out, byte_of(87 + d));
+        }
+        place = place - 1;
+    }
+    out = buffer.append(heap, out, "\r\n");
+    out = buffer.append(heap, out, message);
+    out = buffer.append(heap, out, "\r\n");
+    return out;
+}
+
+fn event[&h](heap: &!h Heap, start: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    var text = buffer.append(heap, buffer.empty(heap, 32), "data: ");
+    text = buffer.push_nat(heap, text, n);
+    text = buffer.append(heap, text, "\n\n");
+    var framed = start;
+    borrow text as &tr in {
+        framed = chunk(heap, framed, buffer.bytes(tr));
+    }
+    buffer.drop(heap, text);
+    return framed;
+}
+
+fn run[&h, &k, &l](heap: &!h Heap, poller: Poller, clock: &k Clock, listener: &!l Listener, body_ms: int) -> [heap, conn_accept, conn_read, conn_write, clock] int {
+    var srv = server.open(heap, poller, listener, 16384, 0, 9);
+    if body_ms > 0 {
+        // A request whose body stalls is refused after `body_ms`, whatever is being streamed to it (section 14.4).
+        borrow mut srv as &!sw in {
+            server.limits(sw, 1048576, 4096, 5000, body_ms);
+        }
+    }
+    // One stream at a time: its ticket (or -1), what kind (1 events, 2 flood) and how many events were sent.
+    var ticket = 0 - 1;
+    var kind = 0;
+    var sent = 0;
+    var last_ms = clock_ms(clock);
+    var gone = 0;
+    var taken_total = 0;
+    var refused_offers = 0;
+    var last_ticket = 0 - 1;
+    var blind = 0;
+    var out = buffer.empty(heap, 256);
+    let big = box_slice(heap, 4000, byte_of(120));
+    while true {
+        srv = server.wait(heap, srv, clock, listener, 100);
+        // One step of the stream.
+        if ticket >= 0 && (kind == 2 || clock_ms(clock) - last_ms >= 100) {
+            last_ms = clock_ms(clock);
+            if kind == 1 {
+                var piece = buffer.empty(heap, 64);
+                if sent < 5 {
+                    piece = event(heap, piece, sent + 1);
+                } else {
+                    piece = buffer.append(heap, piece, "0\r\n\r\n");
+                }
+                var n = 0;
+                borrow mut srv as &!sw in {
+                    borrow piece as &pb in {
+                        if sent < 5 {
+                            n = server.stream(sw, ticket, buffer.bytes(pb));
+                        } else {
+                            n = server.answer(sw, ticket, buffer.bytes(pb));
+                        }
+                    }
+                }
+                buffer.drop(heap, piece);
+                if n < 0 {
+                    gone = gone + 1;
+                    last_ticket = ticket;
+                    ticket = 0 - 1;
+                } else if sent < 5 {
+                    sent = sent + 1;
+                } else {
+                    last_ticket = ticket;
+                    ticket = 0 - 1;
+                }
+            } else {
+                var piece = buffer.empty(heap, 4100);
+                borrow big as &bg in {
+                    piece = chunk(heap, piece, contents(bg));
+                }
+                var room = 0;
+                borrow srv as &sr in {
+                    room = server.space(sr, server.ticket_slot(ticket));
+                }
+                var n = 0;
+                var enough = false;
+                borrow piece as &pb in {
+                    enough = room >= len(buffer.bytes(pb));
+                    if enough {
+                        borrow mut srv as &!sw in {
+                            n = server.stream(sw, ticket, buffer.bytes(pb));
+                        }
+                    } else {
+                        // Offered anyway, as an application that ignores `space` would: it takes what the room holds, never more.
+                        borrow mut srv as &!sw in {
+                            blind = server.stream(sw, ticket, buffer.bytes(pb));
+                        }
+                    }
+                }
+                buffer.drop(heap, piece);
+                if enough && n >= 0 {
+                    taken_total = taken_total + n;
+                } else {
+                    if n < 0 {
+                        gone = gone + 1;
+                    } else {
+                        refused_offers = refused_offers + 1;
+                    }
+                    borrow mut srv as &!sw in {
+                        server.answer(sw, ticket, "0\r\n\r\n");
+                    }
+                    last_ticket = ticket;
+                    ticket = 0 - 1;
+                }
+            }
+        }
+        var more = true;
+        while more {
+            var slot = 0 - 1;
+            borrow mut srv as &!sw in {
+                slot = server.next(heap, sw);
+            }
+            if slot < 0 {
+                more = false;
+            } else {
+                var want = 0;
+                borrow mut out as &!ob in {
+                    buffer.clear(ob);
+                }
+                borrow srv as &sr in {
+                    let path = http.path(server.head(sr), server.parsed(sr));
+                    if bytes.equal(path, "/stream") {
+                        want = 1;
+                    } else if bytes.equal(path, "/flood") {
+                        want = 2;
+                    } else if bytes.equal(path, "/gone") {
+                        var text = buffer.push_nat(heap, buffer.empty(heap, 16), gone);
+                        borrow text as &tr in {
+                            out = server.reply(heap, out, 200, buffer.bytes(tr), true);
+                        }
+                        buffer.drop(heap, text);
+                    } else if bytes.equal(path, "/stale") {
+                        want = 3;
+                    } else if bytes.equal(path, "/spare") {
+                        // The room of a slot nobody has used.
+                        var text = buffer.push_nat(heap, buffer.empty(heap, 16), server.space(sr, 50));
+                        borrow text as &tr in {
+                            out = server.reply(heap, out, 200, buffer.bytes(tr), true);
+                        }
+                        buffer.drop(heap, text);
+                    } else if bytes.equal(path, "/stats") {
+                        var text = buffer.append(heap, buffer.empty(heap, 48), "taken=");
+                        text = buffer.push_nat(heap, text, taken_total);
+                        text = buffer.append(heap, text, " refused=");
+                        text = buffer.push_nat(heap, text, refused_offers);
+                        text = buffer.append(heap, text, " blind=");
+                        text = buffer.push_nat(heap, text, blind);
+                        borrow text as &tr in {
+                            out = server.reply(heap, out, 200, buffer.bytes(tr), true);
+                        }
+                        buffer.drop(heap, text);
+                    } else {
+                        out = server.reply(heap, out, 200, path, true);
+                    }
+                }
+                if want == 3 {
+                    // The ticket of the last stream that is over, offered one byte: the ticket is not held (any more), so -1.
+                    var offered = 0 - 2;
+                    borrow mut srv as &!sw in {
+                        offered = server.stream(sw, last_ticket, "x");
+                    }
+                    if offered < 0 {
+                        out = server.reply(heap, out, 200, "-1", true);
+                    } else {
+                        var text = buffer.push_nat(heap, buffer.empty(heap, 16), offered);
+                        borrow text as &tr in {
+                            out = server.reply(heap, out, 200, buffer.bytes(tr), true);
+                        }
+                        buffer.drop(heap, text);
+                    }
+                    want = 0;
+                }
+                if want > 0 {
+                    var held = 0 - 1;
+                    borrow mut srv as &!sw in {
+                        held = server.hold(sw);
+                        if ticket < 0 && held >= 0 {
+                            let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n";
+                            server.stream(sw, held, head);
+                        }
+                    }
+                    if ticket < 0 && held >= 0 {
+                        ticket = held;
+                        kind = want;
+                        sent = 0;
+                    }
+                } else {
+                    borrow mut srv as &!sw in {
+                        borrow out as &ob in {
+                            server.respond(sw, buffer.bytes(ob));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    server.close(heap, srv);
+    buffer.drop(heap, out);
+    unbox_slice(heap, big);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(fs);
+    release(ffi);
+    var port = 0 - 1;
+    var body_ms = 0;
+    borrow args as &g in {
+        if arg_count(g) > 2 {
+            body_ms = number_of(arg(g, 2));
+        }
+        if arg_count(g) > 1 {
+            port = number_of(arg(g, 1));
+        }
+    }
+    var status = 2;
+    if port > 0 {
+        status = 3;
+        borrow net as &nn in {
+            match tcp_listen(nn, port, 1024, 0) {
+                Listening::Ok(l) => {
+                    var listener = l;
+                    borrow mut listener as &!lh in {
+                        listener_nonblocking(lh);
+                        match poller_new() {
+                            Polling::Ok(p) => {
+                                borrow mut heap as &!h in {
+                                    borrow clock as &c in {
+                                        status = run(h, p, c, lh, body_ms);
+                                    }
+                                }
+                            }
+                            Polling::Failed(e) => {
+                                status = 4;
+                            }
+                        }
+                    }
+                    listener_close(listener);
+                }
+                Listening::Failed(e) => {
+                }
+            }
+        }
+    }
+    release(net);
+    release(clock);
+    release(args);
+    release(io);
+    release(heap);
+    return status;
+}
