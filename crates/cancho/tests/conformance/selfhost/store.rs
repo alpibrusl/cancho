@@ -349,3 +349,131 @@ fn a_store_that_does_not_hold_is_refused_in_cancho_as_cancho_install_refuses_it(
     let _ = std::fs::remove_dir_all(origin.parent().unwrap());
     let _ = std::fs::remove_dir_all(store.parent().unwrap());
 }
+
+/// A project that depends on `net-sockets` (a store inside a git repository), with a program and a set of tests that import it.
+fn project_with_dependency(dir: &Path, world: &World, path: &str) {
+    let _ = std::fs::remove_dir_all(dir);
+    for sub in ["src", "tests"] {
+        std::fs::create_dir_all(dir.join(sub)).unwrap();
+    }
+    std::fs::write(
+        dir.join("cancho.toml"),
+        format!(
+            "[package]\nname = \"p\"\n\n[dependencies.socks]\ngit = \"{}\"\nrev = \"{}\"\npath = \"{path}\"\n\n\
+             [[bin]]\nname = \"a\"\nsources = [\"src\"]\n\n[[test]]\nname = \"t\"\nsources = [\"tests\"]\n",
+            world.url, world.rev
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cho"),
+        "edition 7;\nimport net.sockets;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);\n    release(ffi);\n    release(net);\n    release(signals);\n    release(clock);\n    release(exec);\n    release(fs);\n    release(args);\n    release(heap);\n    release(io);\n    return 0;\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("tests/t.cho"),
+        "edition 7;\nimport net.sockets;\nfn test_one() -> [] int { return 0; }\n",
+    )
+    .unwrap();
+}
+
+/// `install`, `build` and `test` of a project with a dependency, by `cancho` and by `cli.cho`: the same status, the same words on the standard output and (where it is a
+/// refusal) error, and the same files in `build/deps`.
+#[test]
+fn the_command_line_in_cancho_installs_dependencies_like_cancho() {
+    let cli = build("cli-dependencies", &with_front_end("cli.cho"));
+    let work = scratch("selfhost-dependencies");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let packages = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages");
+    let tree = work.join("tree");
+    copy_dir(&packages.join("net-sockets"), &tree.join("net-sockets"));
+    let good = repository(&work, &tree, "good");
+    let empty_tree = work.join("empty-tree");
+    copy_dir(&tree, &empty_tree);
+    std::fs::write(empty_tree.join("net-sockets/.cancho-vcs/manifest.json"), "{\"entries\": {}}")
+        .unwrap();
+    let empty = repository(&work, &empty_tree, "empty");
+    let path = "packages/net-sockets/.cancho-vcs";
+    let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std").canonicalize().unwrap();
+    let project = work.join("project");
+    let (mut agreed, mut different) = (Vec::new(), Vec::new());
+    let cases: Vec<(&str, &World, &str, &str)> = vec![
+        ("install", &good, path, "install"),
+        ("install over a file an older install left", &good, path, "install"),
+        ("build", &good, path, "build"),
+        ("test", &good, path, "test"),
+        ("a directory that is not in the commit", &good, "packages/nowhere", "install"),
+        ("a store with nothing in it", &empty, path, "install"),
+    ];
+    for (name, world, at, command) in cases {
+        let mut seen = Vec::new();
+        for mine in [false, true] {
+            project_with_dependency(&project, world, at);
+            if name.contains("older install") {
+                std::fs::create_dir_all(project.join("build/deps")).unwrap();
+                std::fs::write(project.join("build/deps/old.cho"), "// an old pin\n").unwrap();
+            }
+            let mut run = Command::new(if mine { cli.as_path() } else { Path::new(BIN) });
+            run.current_dir(&project).arg(command).stdin(Stdio::null());
+            if mine {
+                run.args([
+                    "--cache",
+                    work.join("mine-cache").to_str().unwrap(),
+                    "--std-dir",
+                    std_dir.to_str().unwrap(),
+                ]);
+            } else {
+                run.env("CANCHO_CACHE", work.join("rust-cache")).arg("--ignore-compiler-rev");
+            }
+            let done = run.output().expect("the command runs");
+            let said = |bytes: &[u8]| {
+                String::from_utf8_lossy(bytes)
+                    .lines()
+                    .filter(|l| {
+                        !l.starts_with("building the compiler in cancho")
+                            && !l.starts_with("ld: warning:")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .replace(&project.display().to_string(), "DIR")
+                    .replace(&work.display().to_string(), "WORK")
+            };
+            if mine && done.status.code() == Some(0) {
+                assert!(
+                    work.join("mine-cache/git").is_dir(),
+                    "{name}: `--cache` is where the checkout went"
+                );
+            }
+            seen.push((
+                done.status.code(),
+                said(&done.stdout),
+                said(&done.stderr),
+                files_in(&project.join("build/deps")),
+                project.join("build/a").is_file(),
+            ));
+        }
+        // What git said is git's words and differs by the environment it was given; the refusals are compared by their first line.
+        let (theirs, mine) = (&seen[0], &seen[1]);
+        let same = theirs.0 == mine.0
+            && theirs.1 == mine.1
+            && theirs.3 == mine.3
+            && theirs.4 == mine.4
+            && theirs.2.lines().next() == mine.2.lines().next();
+        if same {
+            agreed.push(format!("{name}: {:?}", mine.0));
+        } else {
+            different.push(format!("{name}:\n  theirs {theirs:?}\n  mine   {mine:?}"));
+        }
+        let _ = std::fs::remove_dir_all(work.join("mine-cache"));
+        let _ = std::fs::remove_dir_all(work.join("rust-cache"));
+    }
+    eprintln!("agreed on: {}", agreed.join("; "));
+    assert!(
+        different.is_empty(),
+        "`cancho` and `cli.cho` disagree about a dependency in:\n{}",
+        different.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    let _ = std::fs::remove_dir_all(cli.parent().unwrap());
+}
