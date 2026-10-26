@@ -594,6 +594,25 @@ fn the_command_line_in_cancho_adds_dependencies_like_cancho() {
             false,
         ),
         (
+            "a url with a quote in it",
+            vec!["socks".into(), "file:///x\"y".into(), "--rev".into(), rev.clone()],
+            true,
+            false,
+        ),
+        (
+            "a path with a backslash in it",
+            vec![
+                "socks".into(),
+                url.clone(),
+                "--rev".into(),
+                rev.clone(),
+                "--path".into(),
+                "a\\b".into(),
+            ],
+            true,
+            false,
+        ),
+        (
             "--rev and --ref",
             vec![
                 "socks".into(),
