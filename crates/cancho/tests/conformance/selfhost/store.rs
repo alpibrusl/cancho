@@ -63,8 +63,10 @@ fn files_in(dir: &Path) -> Vec<(String, Vec<u8>)> {
     found
 }
 
+/// What a fetch gave: the status, what it said on the standard error, and the files it wrote.
+type Fetch = (Option<i32>, String, Vec<(String, Vec<u8>)>);
+
 struct World {
-    repo: PathBuf,
     url: String,
     rev: String,
 }
@@ -79,15 +81,11 @@ fn repository(work: &Path, tree: &Path, name: &str) -> World {
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "--quiet", "-m", "stores"]);
     let rev = git(&repo, &["rev-parse", "HEAD"]);
-    World { url: format!("file://{}", repo.display()), repo, rev }
+    World { url: format!("file://{}", repo.display()), rev }
 }
 
 /// `cancho install` of the dependency `path` of `world`: its status and the files it wrote to `build/deps`.
-fn rust_install(
-    work: &Path,
-    world: &World,
-    path: &str,
-) -> (Option<i32>, String, Vec<(String, Vec<u8>)>) {
+fn rust_install(work: &Path, world: &World, path: &str) -> Fetch {
     let project = work.join("project");
     let _ = std::fs::remove_dir_all(&project);
     std::fs::create_dir_all(&project).unwrap();
@@ -113,12 +111,7 @@ fn rust_install(
 }
 
 /// The same in cancho: the checkout by `origincheck`, the fetch by `storecheck`.
-fn mine_fetch(
-    tools: (&Path, &Path),
-    work: &Path,
-    world: &World,
-    path: &str,
-) -> (Option<i32>, String, Vec<(String, Vec<u8>)>) {
+fn mine_fetch(tools: (&Path, &Path), work: &Path, world: &World, path: &str) -> Fetch {
     let cache = work.join("mine-cache");
     let out = work.join("mine-out");
     let _ = std::fs::remove_dir_all(&out);
