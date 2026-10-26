@@ -92,16 +92,6 @@ fn words_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, fetching: boo
     return Words { lock_at: lock_at, store_at: store_at, out_at: out_at, cache_at: cache_at, std_at: std_at, bad: bad };
 }
 
-// A line on the standard error.
-fn say[&h, &i, &a, &b, &c](heap: &!h Heap, io: &!i Io, head: &a [byte], middle: &b [byte], tail: &c [byte]) -> [heap, err_write] int {
-    let line = buffer.push(heap, cliorigin.message(heap, head, middle, tail), byte_of(10));
-    borrow line as &lb in {
-        console.error_all(io, buffer.bytes(lb));
-    }
-    buffer.drop(heap, line);
-    return 0;
-}
-
 // The lock file at `path` read: its record (empty if there is no file), and 3 and the reason on the standard error if it could not be.
 res struct Locked {
     record: buffer.Buffer,
@@ -114,7 +104,7 @@ fn read_locked[&h, &i, &f, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: 
     var status = 0;
     borrow why as &wb in {
         if buffer.size(wb) > 0 {
-            say(heap, io, "", buffer.bytes(wb), "");
+            clilock.say(heap, io, "", buffer.bytes(wb), "");
             status = 3;
         }
     }
@@ -148,7 +138,7 @@ fn place[&h, &i, &x, &c, &f, &k, &r, &n](heap: &!h Heap, io: &!i Io, exec: &x Ex
     var outcome = 0;
     borrow why as &wb in {
         if buffer.size(wb) > 0 {
-            say(heap, io, "", buffer.bytes(wb), "");
+            clilock.say(heap, io, "", buffer.bytes(wb), "");
             outcome = 3;
         }
     }
@@ -232,7 +222,7 @@ fn fetch_in[&h, &i, &f, &x, &c, &k, &s, &t, &o, &e](heap: &!h Heap, io: &!i Io, 
     let clistore.Fetched { files, why, status, needs_std } = got;
     borrow why as &wb in {
         if buffer.size(wb) > 0 {
-            say(heap, io, "", buffer.bytes(wb), "");
+            clilock.say(heap, io, "", buffer.bytes(wb), "");
         }
     }
     if status == 0 {
@@ -324,7 +314,7 @@ fn resolve_in[&h, &i, &f, &x, &c, &k, &s, &t, &e, &l](heap: &!h Heap, io: &!i Io
     let clistore.Resolved { declarations, files, closure, why, status } = got;
     borrow why as &wb in {
         if buffer.size(wb) > 0 {
-            say(heap, io, "", buffer.bytes(wb), "");
+            clilock.say(heap, io, "", buffer.bytes(wb), "");
         }
     }
     buffer.drop(heap, why);
