@@ -265,7 +265,7 @@ fn without[&h, &e, &w](heap: &!h Heap, ents: &e [byte], name: &w [byte]) -> [hea
 }
 
 // What a lock record says about where its store is: `1` and the three fields at `from`, or `0`.
-fn origin_end[&r](rec: &r [byte]) -> [] int {
+pub fn origin_end[&r](rec: &r [byte]) -> [] int {
     if lc.at(rec, 1) != '1' {
         return 3;
     }

@@ -191,30 +191,52 @@ fn lock_both(
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         for (path, text) in &case.files {
+            if let Some(target) = path.strip_prefix("@tree:") {
+                super::store::copy_dir(Path::new(text), &dir.join(target));
+                continue;
+            }
             let at = dir.join(path);
             std::fs::create_dir_all(at.parent().unwrap()).unwrap();
             std::fs::write(at, text).unwrap();
         }
+        // `lock` is the command unless the arguments begin with `fetch` or `resolve`.
+        let (command, rest) = match case.args.first().map(String::as_str) {
+            Some(first @ ("fetch" | "resolve")) => (first, &case.args[1..]),
+            _ => ("lock", &case.args[..]),
+        };
         let said = if who == "rust" {
             said(
                 Command::new(BIN)
                     .current_dir(&dir)
                     .env("CANCHO_CACHE", rust_cache)
-                    .args(["vcs", "lock"])
-                    .args(&case.args)
+                    .args(["vcs", command])
+                    .args(rest)
                     .output()
                     .expect("cancho runs"),
             )
         } else {
-            let mut args: Vec<String> = case.args.clone();
-            if args.iter().any(|a| a == "--git") && args.last().is_some_and(|a| a != "--git") {
-                args.push("--cache".to_owned());
-                args.push(cache.display().to_string());
+            let mut args: Vec<String> = rest.to_vec();
+            if command == "lock" {
+                if args.iter().any(|a| a == "--git") && args.last().is_some_and(|a| a != "--git") {
+                    args.push("--cache".to_owned());
+                    args.push(cache.display().to_string());
+                }
+            } else {
+                // The library and the cache are named, where the Rust command has them inside it.
+                let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+                let mut extra = vec![
+                    "--cache".to_owned(),
+                    cache.display().to_string(),
+                    "--std-dir".to_owned(),
+                    std_dir.canonicalize().unwrap().display().to_string(),
+                ];
+                extra.extend(args);
+                args = extra;
             }
             said(
                 Command::new(exe)
                     .current_dir(&dir)
-                    .args(["vcs", "lock"])
+                    .args(["vcs", command])
                     .args(&args)
                     .output()
                     .expect("cli runs"),
@@ -229,6 +251,10 @@ fn lock_both(
             if let Some(end) = ticks.get(1) {
                 said.2.truncate(end + 1);
             }
+        }
+        // A pin that does not hold is said with the words of the compiler that found it, which differ.
+        if command != "lock" && said.0 == Some(1) {
+            said.2.clear();
         }
         results.push((said, files));
     }
@@ -609,6 +635,261 @@ fn vcs_lock_in_cancho_pins_like_cancho_vcs_lock() {
     assert!(
         failures.is_empty(),
         "`vcs lock` differs in {} cases:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+/// The lock the Rust command makes of `args` in `work`, as text.
+fn rust_lock(work: &Path, cache: &Path, args: &[&str]) -> String {
+    let dir = work.join("make-lock");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let done = Command::new(BIN)
+        .current_dir(&dir)
+        .env("CANCHO_CACHE", cache)
+        .args(["vcs", "lock", "-o", "made.lock"])
+        .args(args)
+        .output()
+        .expect("cancho runs");
+    assert_eq!(done.status.code(), Some(0), "{done:?}");
+    std::fs::read_to_string(dir.join("made.lock")).unwrap()
+}
+
+/// `vcs resolve` and `vcs fetch` by cancho and by Rust: four stores of `packages/` (the ones `store.rs` samples: no dependency, one dependency, a chain that imports `std`, four sources), whole and
+/// by lock, a lock that names a store by its origin, locks and stores that are not what they should be, and every command line the Rust command refuses. The status, the standard output, the
+/// first line of the standard error (not for a pin that does not hold) and every file written are compared.
+#[test]
+fn vcs_fetch_and_resolve_in_cancho_check_a_store_like_cancho_vcs() {
+    let exe = build("cli-vcs-fetch", &with_front_end("cli.cho"));
+    let work = scratch("selfhost-vcs-fetch");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let packages = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages")
+        .canonicalize()
+        .expect("packages/ is there");
+    // One cache for both commands: the words of the answer name it.
+    let cache = work.join("cache");
+    let rust_cache = cache.clone();
+    let mut failures = Vec::new();
+    let args = |list: &[&str]| list.iter().map(|a| (*a).to_owned()).collect::<Vec<String>>();
+    let s = |t: &str| t.to_owned();
+    // The sampled stores.
+    for relative in [
+        "net-sockets/.cancho-vcs",
+        "http-response/.cancho-vcs",
+        "x509/.cancho-vcs/x509_verify",
+        "tls/.cancho-vcs/tls_hello",
+    ] {
+        let store = packages.join(relative).display().to_string();
+        let lock = rust_lock(&work, &rust_cache, &["--store", &store, "--all"]);
+        let cases = vec![
+            Lock { name: "resolve, the store", files: vec![], args: args(&["resolve", &store]) },
+            Lock {
+                name: "resolve, its lock",
+                files: vec![("a.lock", lock.clone())],
+                args: args(&["resolve", "--lock", "a.lock", &store]),
+            },
+            Lock {
+                name: "fetch",
+                files: vec![("a.lock", lock.clone())],
+                args: args(&["fetch", "--lock", "a.lock", "--store", &store, "-o", "out"]),
+            },
+            Lock {
+                name: "fetch into a directory that is there",
+                files: vec![("a.lock", lock), ("out/old", s("kept"))],
+                args: args(&["fetch", "--lock", "a.lock", "--store", &store, "-o", "out/"]),
+            },
+        ];
+        for case in &cases {
+            if let Err(e) = lock_both(&exe, &work, case, &cache, &rust_cache) {
+                failures.push(format!("{relative}: {e}"));
+            }
+        }
+    }
+    let store = packages.join("net-sockets/.cancho-vcs");
+    let store_text = store.display().to_string();
+    let lock = rust_lock(&work, &rust_cache, &["--store", &store_text, "bind", "listen"]);
+    let sig = |c: char| c.to_string().repeat(64);
+    let empty_lock = "{\n  \"entries\": {}\n}".to_owned();
+    let stale = "{\n  \"entries\": {\n    \"gone\": {\n      \"sig_id\": \"SIG\",\n      \"stage_id\": \"t\",\n      \"source_hash\": \"u\"\n    }\n  }\n}".replace("SIG", &sig('9'));
+    let cases = vec![
+        // Subsets of the pins.
+        Lock {
+            name: "resolve, two pins",
+            files: vec![("a.lock", lock.clone())],
+            args: args(&["resolve", "--lock", "a.lock", &store_text]),
+        },
+        Lock {
+            name: "fetch, two pins",
+            files: vec![("a.lock", lock.clone())],
+            args: args(&["fetch", "--lock", "a.lock", "--store", &store_text, "-o", "deeper/out"]),
+        },
+        // Locks and stores that are not there, or not what they should be.
+        Lock {
+            name: "resolve, an empty lock",
+            files: vec![("a.lock", empty_lock.clone())],
+            args: args(&["resolve", "--lock", "a.lock", &store_text]),
+        },
+        Lock {
+            name: "fetch, an empty lock",
+            files: vec![("a.lock", empty_lock.clone())],
+            args: args(&["fetch", "--lock", "a.lock", "--store", &store_text, "-o", "out"]),
+        },
+        Lock {
+            name: "resolve, no lock file",
+            files: vec![],
+            args: args(&["resolve", "--lock", "absent.lock", &store_text]),
+        },
+        Lock {
+            name: "fetch, no lock file",
+            files: vec![],
+            args: args(&["fetch", "--lock", "absent.lock", "--store", &store_text, "-o", "out"]),
+        },
+        Lock {
+            name: "resolve, a lock that is not JSON",
+            files: vec![("a.lock", s("{"))],
+            args: args(&["resolve", "--lock", "a.lock", &store_text]),
+        },
+        Lock {
+            name: "fetch, a lock that is not JSON",
+            files: vec![("a.lock", s("{"))],
+            args: args(&["fetch", "--lock", "a.lock", "--store", &store_text, "-o", "out"]),
+        },
+        Lock {
+            name: "resolve, a pin that is not published",
+            files: vec![("a.lock", stale.clone())],
+            args: args(&["resolve", "--lock", "a.lock", &store_text]),
+        },
+        Lock {
+            name: "fetch, a pin that is not published",
+            files: vec![("a.lock", stale)],
+            args: args(&["fetch", "--lock", "a.lock", "--store", &store_text, "-o", "out"]),
+        },
+        Lock {
+            name: "resolve, a store with nothing in it",
+            files: vec![("st/manifest.json", manifest_text(&[]))],
+            args: args(&["resolve", "st"]),
+        },
+        Lock {
+            name: "resolve, no store directory",
+            files: vec![],
+            args: args(&["resolve", "absent"]),
+        },
+        Lock {
+            name: "resolve, a lock with no origin and no store",
+            files: vec![("a.lock", lock.clone())],
+            args: args(&["resolve", "--lock", "a.lock"]),
+        },
+        Lock {
+            name: "fetch, a lock with no origin and no store",
+            files: vec![("a.lock", lock.clone())],
+            args: args(&["fetch", "--lock", "a.lock", "-o", "out"]),
+        },
+        // The command lines.
+        Lock { name: "resolve, nothing", files: vec![], args: args(&["resolve"]) },
+        Lock { name: "resolve, two stores", files: vec![], args: args(&["resolve", "a", "b"]) },
+        Lock { name: "resolve, an option", files: vec![], args: args(&["resolve", "--bogus"]) },
+        Lock { name: "resolve, --lock last", files: vec![], args: args(&["resolve", "--lock"]) },
+        Lock { name: "resolve, --store", files: vec![], args: args(&["resolve", "--store", "x"]) },
+        Lock { name: "fetch, nothing", files: vec![], args: args(&["fetch"]) },
+        Lock {
+            name: "fetch, no -o",
+            files: vec![("a.lock", empty_lock.clone())],
+            args: args(&["fetch", "--lock", "a.lock"]),
+        },
+        Lock { name: "fetch, no --lock", files: vec![], args: args(&["fetch", "-o", "out"]) },
+        Lock { name: "fetch, a word", files: vec![], args: args(&["fetch", "word"]) },
+        Lock { name: "fetch, an option", files: vec![], args: args(&["fetch", "--bogus"]) },
+        Lock { name: "fetch, --lock last", files: vec![], args: args(&["fetch", "--lock"]) },
+        Lock { name: "fetch, --store last", files: vec![], args: args(&["fetch", "--store"]) },
+        Lock { name: "fetch, -o last", files: vec![], args: args(&["fetch", "-o"]) },
+    ];
+    for case in &cases {
+        if let Err(e) = lock_both(&exe, &work, case, &cache, &rust_cache) {
+            failures.push(e);
+        }
+    }
+    // A store changed after it was published: a source that is not what its name says, one that is gone, a pin that moved.
+    let made = work.join("tampered");
+    let _ = std::fs::remove_dir_all(&made);
+    super::store::copy_dir(&store, &made);
+    let sources = made.join("sources");
+    let first = std::fs::read_dir(&sources).unwrap().next().unwrap().unwrap().path();
+    let tampered_lock =
+        rust_lock(&work, &rust_cache, &["--store", &made.display().to_string(), "--all"]);
+    std::fs::write(&first, "module x;\n").unwrap();
+    let made_text = made.display().to_string();
+    let broken = vec![
+        Lock {
+            name: "resolve, a source changed",
+            files: vec![],
+            args: args(&["resolve", &made_text]),
+        },
+        Lock {
+            name: "fetch, a source changed",
+            files: vec![("a.lock", tampered_lock.clone())],
+            args: args(&["fetch", "--lock", "a.lock", "--store", &made_text, "-o", "out"]),
+        },
+    ];
+    for case in &broken {
+        if let Err(e) = lock_both(&exe, &work, case, &cache, &rust_cache) {
+            failures.push(e);
+        }
+    }
+    std::fs::remove_file(&first).unwrap();
+    let gone = vec![Lock {
+        name: "resolve, a source gone",
+        files: vec![],
+        args: args(&["resolve", &made_text]),
+    }];
+    for case in &gone {
+        if let Err(e) = lock_both(&exe, &work, case, &cache, &rust_cache) {
+            failures.push(e);
+        }
+    }
+    // A lock that says where its store is: a commit of a git repository.
+    let repo = super::store::repository(&work, &packages, "repository");
+    let origin_lock = rust_lock(
+        &work,
+        &rust_cache,
+        &[
+            "--git",
+            &repo.url,
+            "--rev",
+            &repo.rev,
+            "--path",
+            "packages/net-sockets/.cancho-vcs",
+            "--all",
+        ],
+    );
+    let origin_cases = vec![
+        Lock {
+            name: "resolve, by the origin",
+            files: vec![("a.lock", origin_lock.clone())],
+            args: args(&["resolve", "--lock", "a.lock"]),
+        },
+        Lock {
+            name: "fetch, by the origin",
+            files: vec![("a.lock", origin_lock.clone())],
+            args: args(&["fetch", "--lock", "a.lock", "-o", "out"]),
+        },
+        Lock {
+            name: "fetch, by the origin, the store named",
+            files: vec![("a.lock", origin_lock)],
+            args: args(&["fetch", "--lock", "a.lock", "--store", &store_text, "-o", "out"]),
+        },
+    ];
+    for case in &origin_cases {
+        if let Err(e) = lock_both(&exe, &work, case, &cache, &rust_cache) {
+            failures.push(e);
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "`vcs fetch`/`resolve` differ in {} cases:\n{}",
         failures.len(),
         failures.join("\n")
     );
