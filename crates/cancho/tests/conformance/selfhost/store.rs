@@ -477,3 +477,254 @@ fn the_command_line_in_cancho_installs_dependencies_like_cancho() {
     let _ = std::fs::remove_dir_all(&work);
     let _ = std::fs::remove_dir_all(cli.parent().unwrap());
 }
+
+/// `add` by `cancho` and by `cli.cho`, each in a project of its own that has a `cancho.toml` with a comment in it: the same status, the same standard output, the same first line
+/// of the standard error, the same `cancho.toml` afterwards (the file is put back if the install fails) and the same files in `build/deps`.
+#[test]
+fn the_command_line_in_cancho_adds_dependencies_like_cancho() {
+    let cli = build("cli-add", &with_front_end("cli.cho"));
+    let work = scratch("selfhost-add");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let packages = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages");
+    let tree = work.join("tree");
+    copy_dir(&packages.join("net-sockets"), &tree.join("net-sockets"));
+    // Two stores one level down, for the message that says where they are.
+    copy_dir(&tree.join("net-sockets/.cancho-vcs"), &tree.join("stores/a"));
+    copy_dir(&tree.join("net-sockets/.cancho-vcs"), &tree.join("stores/b"));
+    let good = repository(&work, &tree, "good");
+    git(&work.join("good"), &["tag", "v1"]);
+    let empty_tree = work.join("empty-tree");
+    copy_dir(&tree, &empty_tree);
+    std::fs::write(empty_tree.join("net-sockets/.cancho-vcs/manifest.json"), "{\"entries\": {}}")
+        .unwrap();
+    let empty = repository(&work, &empty_tree, "empty");
+    let url = good.url.clone();
+    let (rev, path) = (good.rev.clone(), "packages/net-sockets/.cancho-vcs".to_owned());
+    let empty_url = empty.url.clone();
+    let empty_rev = empty.rev.clone();
+    let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std").canonicalize().unwrap();
+    let project = work.join("project");
+    let to_strings =
+        |words: &[&str]| words.iter().map(|w| (*w).to_owned()).collect::<Vec<String>>();
+    // (name, the words after `add`, whether the project file is there, whether to add `socks` first)
+    let cases: Vec<(&str, Vec<String>, bool, bool)> = vec![
+        (
+            "a revision",
+            vec![
+                "socks".into(),
+                url.clone(),
+                "--rev".into(),
+                rev.clone(),
+                "--path".into(),
+                path.clone(),
+            ],
+            true,
+            false,
+        ),
+        (
+            "a tag",
+            vec![
+                "socks".into(),
+                url.clone(),
+                "--ref".into(),
+                "v1".into(),
+                "--path".into(),
+                path.clone(),
+            ],
+            true,
+            false,
+        ),
+        ("the head", vec!["socks".into(), url.clone(), "--path".into(), path.clone()], true, false),
+        (
+            "a name taken",
+            vec![
+                "socks".into(),
+                url.clone(),
+                "--rev".into(),
+                rev.clone(),
+                "--path".into(),
+                path.clone(),
+            ],
+            true,
+            true,
+        ),
+        (
+            "a directory that is not in the commit",
+            vec!["socks".into(), url.clone(), "--path".into(), "nowhere".into()],
+            true,
+            false,
+        ),
+        (
+            "a directory that is not a store",
+            vec!["socks".into(), url.clone(), "--path".into(), "packages/stores".into()],
+            true,
+            false,
+        ),
+        (
+            "a revision that is not a hash",
+            vec!["socks".into(), url.clone(), "--rev".into(), "abc".into()],
+            true,
+            false,
+        ),
+        (
+            "a ref that is not there",
+            vec![
+                "socks".into(),
+                url.clone(),
+                "--ref".into(),
+                "nope".into(),
+                "--path".into(),
+                path.clone(),
+            ],
+            true,
+            false,
+        ),
+        (
+            "a store with nothing in it",
+            vec![
+                "socks".into(),
+                empty_url.clone(),
+                "--rev".into(),
+                empty_rev.clone(),
+                "--path".into(),
+                path.clone(),
+            ],
+            true,
+            false,
+        ),
+        (
+            "a url with a quote in it",
+            vec!["socks".into(), "file:///x\"y".into(), "--rev".into(), rev.clone()],
+            true,
+            false,
+        ),
+        (
+            "a path with a backslash in it",
+            vec![
+                "socks".into(),
+                url.clone(),
+                "--rev".into(),
+                rev.clone(),
+                "--path".into(),
+                "a\\b".into(),
+            ],
+            true,
+            false,
+        ),
+        (
+            "--rev and --ref",
+            vec![
+                "socks".into(),
+                url.clone(),
+                "--rev".into(),
+                rev.clone(),
+                "--ref".into(),
+                "v1".into(),
+            ],
+            true,
+            false,
+        ),
+        (
+            "a name that is not one",
+            to_strings(&["a b"]).into_iter().chain([url.clone()]).collect(),
+            true,
+            false,
+        ),
+        ("no url", to_strings(&["socks"]), true, false),
+        (
+            "an option that is not one",
+            vec!["socks".into(), url.clone(), "--nope".into()],
+            true,
+            false,
+        ),
+        (
+            "no project",
+            vec![
+                "socks".into(),
+                url.clone(),
+                "--rev".into(),
+                rev.clone(),
+                "--path".into(),
+                path.clone(),
+            ],
+            false,
+            false,
+        ),
+    ];
+    let (mut agreed, mut different) = (Vec::new(), Vec::new());
+    for (name, words, has_project, add_first) in cases {
+        let mut seen = Vec::new();
+        for mine in [false, true] {
+            let _ = std::fs::remove_dir_all(&project);
+            std::fs::create_dir_all(&project).unwrap();
+            if has_project {
+                std::fs::write(project.join("cancho.toml"), "# a comment\n[package]\nname = \"p\"")
+                    .unwrap();
+            }
+            let run = |extra: &[String]| {
+                let mut command = Command::new(if mine { cli.as_path() } else { Path::new(BIN) });
+                command.current_dir(&project).arg("add").args(&words).stdin(Stdio::null());
+                if mine {
+                    command.args([
+                        "--cache",
+                        work.join("mine-cache").to_str().unwrap(),
+                        "--std-dir",
+                        std_dir.to_str().unwrap(),
+                    ]);
+                } else {
+                    command
+                        .env("CANCHO_CACHE", work.join("rust-cache"))
+                        .arg("--ignore-compiler-rev");
+                }
+                command.args(extra).output().expect("the command runs")
+            };
+            if add_first {
+                let first = run(&[]);
+                assert_eq!(first.status.code(), Some(0), "{name}: {first:?}");
+            }
+            let done = run(&[]);
+            let said = |bytes: &[u8]| {
+                String::from_utf8_lossy(bytes)
+                    .lines()
+                    .filter(|l| {
+                        !l.starts_with("building the compiler in cancho")
+                            && !l.starts_with("ld: warning:")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .replace(&project.display().to_string(), "DIR")
+                    .replace(&work.display().to_string(), "WORK")
+            };
+            seen.push((
+                done.status.code(),
+                said(&done.stdout),
+                said(&done.stderr),
+                std::fs::read_to_string(project.join("cancho.toml")).unwrap_or_default(),
+                files_in(&project.join("build/deps")),
+            ));
+        }
+        let (theirs, mine) = (&seen[0], &seen[1]);
+        // The `installed` line of the first add is in both; a refusal is compared by its first line (the usage text after it is Rust's).
+        let same = theirs.0 == mine.0
+            && theirs.1 == mine.1
+            && theirs.3 == mine.3
+            && theirs.4 == mine.4
+            && theirs.2.lines().next() == mine.2.lines().next();
+        if same {
+            agreed.push(format!("{name}: {:?}", mine.0));
+        } else {
+            different.push(format!("{name}:\n  theirs {theirs:?}\n  mine   {mine:?}"));
+        }
+        let _ = std::fs::remove_dir_all(work.join("mine-cache"));
+        let _ = std::fs::remove_dir_all(work.join("rust-cache"));
+    }
+    eprintln!("agreed on: {}", agreed.join("; "));
+    assert!(
+        different.is_empty(),
+        "`cancho add` and `cli.cho add` disagree about:\n{}",
+        different.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    let _ = std::fs::remove_dir_all(cli.parent().unwrap());
+}
