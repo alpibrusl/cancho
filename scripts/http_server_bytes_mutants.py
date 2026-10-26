@@ -120,7 +120,6 @@ MUTANTS = [
     ("deliver_to: the output room is the socket server's", 'let osize = core.osize;', 'let osize = output_size();'),
     ("produce: a refusal queued in the socket server's room", "pd[k * core.osize..(k + 1) * core.osize], st[p + 2]);\n        }\n        buffer.drop(heap, o);", "pd[k * output_size()..(k + 1) * output_size()], st[p + 2]);\n        }\n        buffer.drop(heap, o);"),
     ("connections: the socket table's count", "    if srv.core.fed == 1 {\n        return srv.core.nlive;\n    }", "    if srv.core.fed == 7 {\n        return srv.core.nlive;\n    }"),
-    ("stream: a socket server's connection streamed to", "    if srv.core.fed != 1 || ticket < 0 {\n        return 0 - 1;\n    }\n    let k = ticket % ticket_span();\n    if k >= srv.core.limit {", "    if ticket < 0 {\n        return 0 - 1;\n    }\n    let k = ticket % ticket_span();\n    if k >= srv.core.limit {"),
     ('stream: a ticket of another connection in the slot', 'st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() || st[p + 25] != 0 { return 0 - 1; } var n = srv.core.osize', 'st[p + 13] != 1 || st[p + 25] != 0 { return 0 - 1; } var n = srv.core.osize'),
     ('stream: a request that is not held', 'st[p + 4] != 1 || st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() || st[p + 25] != 0 { return 0 - 1; } var n = srv.core.osize', 'st[p + 4] != 1 || st[p + 14] != ticket / ticket_span() || st[p + 25] != 0 { return 0 - 1; } var n = srv.core.osize'),
     ('stream: a connection that has ended', 'st[p + 4] != 1 || st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() || st[p + 25] != 0 { return 0 - 1; } var n = srv.core.osize', 'st[p + 4] == 0 || st[p + 13] != 1 || st[p + 14] != ticket / ticket_span() || st[p + 25] != 0 { return 0 - 1; } var n = srv.core.osize'),
@@ -143,7 +142,6 @@ EQUIVALENT = {
     "detach: a ticket outlives the connection": "the in-use check refuses the ticket until the slot is taken again, and `init_slot` clears the flag then, with a new generation",
     "sweep_idle: an ended connection swept again": "`shut` on an ended connection sets what it already is",
     "stream: a connection that has ended": "an ended slot is not held (`shut` clears that), and `stream` refuses a request that is not held",
-    "stream: a socket server's connection streamed to": "NOT REACHABLE FROM `cancho test`: a socket server needs a `Listener`, which needs the `Net` capability a test is not given; the guard is one comparison",
 }
 
 

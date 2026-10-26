@@ -931,7 +931,7 @@ that is being read; **a held request whose peer never reads** leaves bytes waiti
 * **Not measured:** the idle sweep against a held streaming connection whose peer never reads (the 9-second idle of the test server is shorter than every test), TLS in front of a socket server, more than one stream at a time in the test program.
 
 **Tests** `conformance/http_server_stream.rs` (6: the five above and the store through `tests/programs/server_stream.lock`); on `main` they failed (`stream` answered -1). **Mutants** `scripts/http_server_stream_mutants.py`: 11, 10
-killed and one argued equivalent (a recorded refusal is cleared from the held state by the same `wait` that records it). The other tests of `conformance/http_server*.rs` (held requests, uploads, the byte-fed tests on both backends) and `net.rs`'s server pass unchanged. The store was republished and
+killed and one argued equivalent. The two older mutant scripts named the line this change replaced (`stream: a socket server's connection streamed to`, argued unreachable from `cancho test`: it is reachable and tested now, so it is gone; and the text of `stream: the answer's beginning not noted`); CI's `tls-assurance (mutants)` jobs caught it, and with the scripts fixed they pass here (79 of 89 and 215 of 232 killed) (a recorded refusal is cleared from the held state by the same `wait` that records it). The other tests of `conformance/http_server*.rs` (held requests, uploads, the byte-fed tests on both backends) and `net.rs`'s server pass unchanged. The store was republished and
 the locks of `examples/api`, `server_hold` and the new `server_stream` pinned.
 
 ### 14.6 Not done
