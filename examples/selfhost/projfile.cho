@@ -1182,3 +1182,79 @@ pub fn parse[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] Parsed {
     buffer.drop(heap, tests);
     return Parsed { records: records, status: status, why: why };
 }
+
+// `a` against `b` as paths are ordered: component by component (a `/` separates them, and an empty component is nothing): -1, 0 or 1.
+pub fn compare_paths[&a, &b](x: &a [byte], y: &b [byte]) -> [] int {
+    var i = 0;
+    var j = 0;
+    while true {
+        while i < len(x) && lc.at(x, i) == '/' {
+            i = i + 1;
+        }
+        while j < len(y) && lc.at(y, j) == '/' {
+            j = j + 1;
+        }
+        if i >= len(x) || j >= len(y) {
+            if i >= len(x) && j >= len(y) {
+                return 0;
+            }
+            if i >= len(x) {
+                return 0 - 1;
+            }
+            return 1;
+        }
+        var ie = i;
+        while ie < len(x) && lc.at(x, ie) != '/' {
+            ie = ie + 1;
+        }
+        var je = j;
+        while je < len(y) && lc.at(y, je) != '/' {
+            je = je + 1;
+        }
+        let c = satisfytext.compare(x[i..ie], y[j..je]);
+        if c != 0 {
+            return c;
+        }
+        i = ie;
+        j = je;
+    }
+    return 0;
+}
+
+// The paths of the list `paths` (each followed by a NUL), each once, in the order of paths.
+pub fn sorted_paths[&h, &p](heap: &!h Heap, paths: &p [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(paths) + 1);
+    var last_at = 0 - 1;
+    var more = true;
+    while more {
+        var best = 0 - 1;
+        var at = 0;
+        while at < len(paths) {
+            let e = field_end(paths, at, len(paths));
+            var after_last = true;
+            if last_at >= 0 {
+                let le = field_end(paths, last_at, len(paths));
+                after_last = compare_paths(paths[at..e], paths[last_at..le]) > 0;
+            }
+            if after_last {
+                var smaller = best < 0;
+                if !smaller {
+                    let be = field_end(paths, best, len(paths));
+                    smaller = compare_paths(paths[at..e], paths[best..be]) < 0;
+                }
+                if smaller {
+                    best = at;
+                }
+            }
+            at = e + 1;
+        }
+        if best < 0 {
+            more = false;
+        } else {
+            let be = field_end(paths, best, len(paths));
+            out = buffer.append(heap, out, paths[best..be + 1]);
+            last_at = best;
+        }
+    }
+    return out;
+}

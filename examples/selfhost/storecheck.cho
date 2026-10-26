@@ -1,0 +1,177 @@
+edition 7;
+
+// storecheck.cho -- `clistore.cho` run on its own, for its differential test (`docs/cli-in-cancho.md` section 22):
+//
+//     storecheck manifest DIR      the declarations of the manifest of the store in DIR: `SIG NAME STAGE SOURCE`, a line each
+//     storecheck requires DIR      the requirements of the store; normalize PATH; std FILE (does it import `std`)
+//     storecheck fetch CACHE STD STORE OUT   the store fetched into OUT, as `install` fetches a dependency (STD is the directory of the library, or `-`): the names written, a line each;
+//                                  the problems on the standard error; the status is 0, 1 (a pin did not hold), 3 (the environment) or 4 (nothing is published)
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.clistore;
+import selfhost.clibase;
+
+// The records with each NUL a space and each record on a line (`fields` to a record).
+fn show[&i, &r](io: &!i Io, records: &r [byte], fields: int) -> [io_write] int {
+    var seen = 0;
+    var at = 0;
+    var line = 0;
+    while at < len(records) {
+        var end = at;
+        while end < len(records) && lc.at(records, end) != 0 {
+            end = end + 1;
+        }
+        console.write_all(io, records[at..end]);
+        seen = seen + 1;
+        if seen % fields == 0 {
+            console.write_all(io, "\n");
+            line = line + 1;
+        } else {
+            console.write_all(io, " ");
+        }
+        at = end + 1;
+    }
+    return line;
+}
+
+fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    if arg_count(args) == 3 && bytes.equal(arg(args, 1), "manifest") {
+        let got = clistore.read_manifest(heap, fs, arg(args, 2));
+        let clistore.Pins { records, why } = got;
+        var status = 0;
+        borrow why as &wb in {
+            if buffer.size(wb) > 0 {
+                console.error_all(io, buffer.bytes(wb));
+                console.error_all(io, "\n");
+                status = 3;
+            }
+        }
+        borrow records as &rb in {
+            let shown = show(io, buffer.bytes(rb), 4);
+        }
+        buffer.drop(heap, records);
+        buffer.drop(heap, why);
+        return status;
+    }
+    if arg_count(args) == 3 && bytes.equal(arg(args, 1), "requires") {
+        let got = clistore.read_requirements(heap, fs, arg(args, 2));
+        let clistore.Pins { records, why } = got;
+        var status = 0;
+        borrow why as &wb in {
+            if buffer.size(wb) > 0 {
+                console.error_all(io, buffer.bytes(wb));
+                console.error_all(io, "\n");
+                status = 3;
+            }
+        }
+        borrow records as &rb in {
+            console.write_all(io, "(each NUL is a space, the byte 1 a bar and the byte 2 a newline)\n");
+            let r = buffer.bytes(rb);
+            var at = 0;
+            while at < len(r) {
+                let c = lc.at(r, at);
+                if c == 0 {
+                    console.write_all(io, " ");
+                } else if c == 1 {
+                    console.write_all(io, "|");
+                } else if c == 2 {
+                    console.write_all(io, "\n");
+                } else {
+                    console.write_all(io, r[at..at + 1]);
+                }
+                at = at + 1;
+            }
+        }
+        buffer.drop(heap, records);
+        buffer.drop(heap, why);
+        return status;
+    }
+    if arg_count(args) == 3 && bytes.equal(arg(args, 1), "normalize") {
+        let n = clistore.normalized(heap, arg(args, 2));
+        borrow n as &nb in {
+            console.write_all(io, buffer.bytes(nb));
+            console.write_all(io, "\n");
+        }
+        buffer.drop(heap, n);
+        return 0;
+    }
+    if arg_count(args) == 3 && bytes.equal(arg(args, 1), "std") {
+        let text = clibase.read_file(heap, fs, arg(args, 2));
+        let clibase.Contents { bytes, failed } = text;
+        borrow bytes as &bb in {
+            if clistore.imports_std(buffer.bytes(bb)) {
+                console.write_all(io, "yes\n");
+            } else {
+                console.write_all(io, "no\n");
+            }
+        }
+        buffer.drop(heap, bytes);
+        return failed;
+    }
+    if arg_count(args) == 6 && bytes.equal(arg(args, 1), "fetch") {
+        var std_path = arg(args, 3);
+        if bytes.equal(std_path, "-") {
+            std_path = "";
+        }
+        let got = clistore.fetch_store(heap, io, exec, clock, fs, arg(args, 2), std_path, arg(args, 4), arg(args, 5));
+        let clistore.Fetched { files, why, status, needs_std } = got;
+        borrow files as &fb in {
+            let listed = buffer.bytes(fb);
+            var at = 0;
+            while at < len(listed) {
+                var end = at;
+                while lc.at(listed, end) != 0 {
+                    end = end + 1;
+                }
+                console.write_all(io, listed[at..end]);
+                console.write_all(io, "\n");
+                at = end + 1;
+            }
+        }
+        borrow why as &wb in {
+            if buffer.size(wb) > 0 {
+                console.error_all(io, buffer.bytes(wb));
+                console.error_all(io, "\n");
+            }
+        }
+        if needs_std {
+            console.write_all(io, "needs std\n");
+        }
+        buffer.drop(heap, files);
+        buffer.drop(heap, why);
+        return status;
+    }
+    console.error_all(io, "usage: storecheck (manifest DIR | requires DIR | normalize PATH | std FILE)\n");
+    return 2;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow fs as &f in {
+                    borrow exec as &x in {
+                        borrow clock as &k in {
+                            status = run(h, i, a, f, x, k);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(clock);
+    release(exec);
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

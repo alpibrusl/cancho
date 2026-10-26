@@ -49,7 +49,7 @@ fn starts[&t](text: &t [byte], head: &static [byte]) -> [] bool {
     return len(text) >= len(head) && bytes.equal(text[0..len(head)], head);
 }
 
-fn message[&h, &a, &b, &c](heap: &!h Heap, head: &a [byte], middle: &b [byte], tail: &c [byte]) -> [heap] buffer.Buffer {
+pub fn message[&h, &a, &b, &c](heap: &!h Heap, head: &a [byte], middle: &b [byte], tail: &c [byte]) -> [heap] buffer.Buffer {
     return buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(head) + len(middle) + len(tail) + 8), head), middle), tail);
 }
 
@@ -141,7 +141,7 @@ fn git_run[&h, &i, &x, &c, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), cl
 }
 
 // `/bin/mkdir -p` or `/bin/rm -rf` on `path`: did it work? (`rm` is never asked for the empty path or `/`.)
-fn tool[&h, &i, &x, &c, &p](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &static [byte], flag: &static [byte], path: &p [byte]) -> [heap, err_write, exec(""), clock, poll] bool {
+pub fn tool[&h, &i, &x, &c, &p](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &static [byte], flag: &static [byte], path: &p [byte]) -> [heap, err_write, exec(""), clock, poll] bool {
     if len(path) == 0 || len(path) == 1 && lc.at(path, 0) == '/' {
         return false;
     }
@@ -256,7 +256,7 @@ fn fetch_into[&h, &i, &x, &c, &t, &g, &r](heap: &!h Heap, io: &!i Io, exec: &x E
 }
 
 // `base` and `part` joined by a `/`.
-fn joined[&h, &b, &p](heap: &!h Heap, base: &b [byte], part: &p [byte]) -> [heap] buffer.Buffer {
+pub fn joined[&h, &b, &p](heap: &!h Heap, base: &b [byte], part: &p [byte]) -> [heap] buffer.Buffer {
     var b = buffer.append(heap, buffer.empty(heap, len(base) + len(part) + 2), base);
     b = buffer.push(heap, b, byte_of('/'));
     return buffer.append(heap, b, part);

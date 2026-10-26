@@ -114,8 +114,9 @@ pub fn collect[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found
     return add(heap, found, path);
 }
 
-// The `.cho` files directly in the directory at `path` (a name that starts with a dot is one too; a directory is not), added to `found`, in bytewise order of name.
-pub fn direct[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found: buffer.Buffer) -> [heap, fs_read(""), dir_read] buffer.Buffer {
+// The files whose name ends with `suffix` directly in the directory at `path` (a name that starts with a dot is one too; a directory is not), added to `found`, in the order
+// the system lists them.
+pub fn direct_with[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found: buffer.Buffer, suffix: &static [byte]) -> [heap, fs_read(""), dir_read] buffer.Buffer {
     var out = found;
     if dotdot(path) {
         return out;
@@ -132,7 +133,7 @@ pub fn direct[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found:
                     var k = 0;
                     while k < dirs.count(n) {
                         let name = dirs.name(n, k);
-                        if len(name) > 4 && is_cho(name) {
+                        if len(name) > len(suffix) && len(name) >= len(suffix) && bytes.equal(name[len(name) - len(suffix)..len(name)], suffix) {
                             let sub = child(heap, path, name);
                             borrow sub as &s in {
                                 if !is_directory(fs, buffer.bytes(s)) {
@@ -150,4 +151,9 @@ pub fn direct[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found:
         }
     }
     return out;
+}
+
+// The `.cho` files directly in the directory at `path` (see `direct_with`).
+pub fn direct[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found: buffer.Buffer) -> [heap, fs_read(""), dir_read] buffer.Buffer {
+    return direct_with(heap, fs, path, found, ".cho");
 }
