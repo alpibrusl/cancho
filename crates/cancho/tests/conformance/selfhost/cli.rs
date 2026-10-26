@@ -1340,7 +1340,7 @@ fn the_command_line_in_cancho_works_in_a_project_like_cancho() {
         "`cancho` and `cli.cho` disagree in a project about:\n{}",
         different.join("\n")
     );
-    // A dependency that cannot be fetched (`.invalid` is not a host) is a status 3, said, and no program made; `add` is not built yet (§22).
+    // A dependency that cannot be fetched (`.invalid` is not a host) is a status 3, said, and no program made.
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).expect("the directory is made");
     std::fs::write(dir.join("src/main.cho"), main).expect("a source is written");
@@ -1367,8 +1367,9 @@ fn the_command_line_in_cancho_works_in_a_project_like_cancho() {
             "{command}: {done:?}"
         );
     }
+    // `add` is built (`selfhost::store`); with a name and no url it is the usage error it is in Rust.
     let added = Command::new(&exe).current_dir(&dir).args(["add", "x"]).output().expect("it runs");
-    assert_eq!(added.status.code(), Some(3));
+    assert_eq!(added.status.code(), Some(2));
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
 }
