@@ -94,7 +94,7 @@ fn lock_arguments[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args) -> [hea
 }
 
 // A line on the standard error: `head`, `middle`, `tail`.
-fn say[&h, &i, &a, &b, &c](heap: &!h Heap, io: &!i Io, head: &a [byte], middle: &b [byte], tail: &c [byte]) -> [heap, err_write] int {
+pub fn say[&h, &i, &a, &b, &c](heap: &!h Heap, io: &!i Io, head: &a [byte], middle: &b [byte], tail: &c [byte]) -> [heap, err_write] int {
     let line = buffer.push(heap, cliorigin.message(heap, head, middle, tail), byte_of(10));
     borrow line as &lb in {
         console.error_all(io, buffer.bytes(lb));
@@ -265,7 +265,7 @@ fn without[&h, &e, &w](heap: &!h Heap, ents: &e [byte], name: &w [byte]) -> [hea
 }
 
 // What a lock record says about where its store is: `1` and the three fields at `from`, or `0`.
-fn origin_end[&r](rec: &r [byte]) -> [] int {
+pub fn origin_end[&r](rec: &r [byte]) -> [] int {
     if lc.at(rec, 1) != '1' {
         return 3;
     }

@@ -1369,33 +1369,15 @@ fn copy_sources[&h, &f, &r, &o](heap: &!h Heap, fs: &f Fs(""), records: &r [byte
     return Copied { written_names: names, copy_trouble: trouble };
 }
 
-// The sources of the store `store` (a directory with an absolute path) fetched into `out`: everything its manifest holds (for a name published more than once, the declaration
-// whose signature sorts last), and everything the stores it requires pin, each checked as `verify_selected` does and written only if all of them hold.
-pub fn fetch_store[&h, &i, &x, &c, &f, &k, &s, &t, &o](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], std_path: &s [byte], store: &t [byte], out: &o [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] Fetched {
-    let manifest = read_manifest(heap, fs, store);
-    let Pins { records, why } = manifest;
-    var failed = false;
-    borrow why as &wb in {
-        failed = buffer.size(wb) > 0;
-    }
-    if failed {
-        buffer.drop(heap, records);
-        return Fetched { files: buffer.empty(heap, 0), why: why, status: 3, needs_std: false };
-    }
-    buffer.drop(heap, why);
-    var selected = buffer.empty(heap, 0);
-    borrow records as &rb in {
-        selected = projfile.replaced(heap, selected, select_all(heap, buffer.bytes(rb)));
-    }
-    buffer.drop(heap, records);
-    var nothing = false;
-    borrow selected as &sb in {
-        nothing = buffer.size(sb) == 0;
-    }
-    if nothing {
-        buffer.drop(heap, selected);
-        return Fetched { files: buffer.empty(heap, 0), why: buffer.empty(heap, 0), status: 4, needs_std: false };
-    }
+// What checking a selection against a store found: the files that held (`HASH PATH STD` each), the files its requirements added (the same), and why not (nothing, if every pin held).
+pub res struct Checked {
+    good: buffer.Buffer,
+    context: buffer.Buffer,
+    bad: buffer.Buffer,
+}
+
+// The records `selected` (`SIG NAME STAGE SOURCE` each) of the store `store` checked as `verify_selected` does, with the stores it requires walked first.
+pub fn verify_store[&h, &i, &x, &c, &f, &k, &s, &t, &e](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], std_path: &s [byte], store: &t [byte], selected: &e [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, dir_read, exec(""), clock, poll] Checked {
     let walked = own_requirements(heap, io, exec, clock, fs, cache, std_path, start_walk(heap, store), store);
     var verified = Verified { good: buffer.empty(heap, 0), problems: buffer.empty(heap, 0) };
     var context = buffer.empty(heap, 0);
@@ -1410,27 +1392,34 @@ pub fn fetch_store[&h, &i, &x, &c, &f, &k, &s, &t, &o](heap: &!h Heap, io: &!i I
         calm = buffer.size(bb) == 0;
     }
     if calm {
-        borrow selected as &sb in {
-            borrow context as &cb in {
-                verified = replaced_verified(heap, verified, verify_selected(heap, io, fs, store, buffer.bytes(sb), buffer.bytes(cb), std_path));
-            }
+        borrow context as &cb in {
+            verified = replaced_verified(heap, verified, verify_selected(heap, io, fs, store, selected, buffer.bytes(cb), std_path));
         }
     }
-    buffer.drop(heap, selected);
     let Verified { good, problems } = verified;
     borrow problems as &pb in {
         if buffer.size(pb) > 0 {
             found_bad = problem(heap, found_bad, buffer.bytes(pb));
-            calm = false;
         }
     }
     buffer.drop(heap, problems);
+    return Checked { good: good, context: context, bad: found_bad };
+}
+
+// The sources of what `selected` names in the store `store`, checked and written to `out` only if all of them hold.
+fn fetch_chosen[&h, &i, &x, &c, &f, &k, &s, &t, &o, &e](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], std_path: &s [byte], store: &t [byte], out: &o [byte], selected: &e [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] Fetched {
+    let checked = verify_store(heap, io, exec, clock, fs, cache, std_path, store, selected);
+    let Checked { good, context, bad } = checked;
+    var calm = false;
+    borrow bad as &bb in {
+        calm = buffer.size(bb) == 0;
+    }
     if !calm {
         buffer.drop(heap, good);
         buffer.drop(heap, context);
-        return Fetched { files: buffer.empty(heap, 0), why: found_bad, status: 1, needs_std: false };
+        return Fetched { files: buffer.empty(heap, 0), why: bad, status: 1, needs_std: false };
     }
-    buffer.drop(heap, found_bad);
+    buffer.drop(heap, bad);
     var status = 0;
     var trouble = buffer.empty(heap, 0);
     var written = buffer.empty(heap, 0);
@@ -1472,4 +1461,190 @@ pub fn fetch_store[&h, &i, &x, &c, &f, &k, &s, &t, &o](heap: &!h Heap, io: &!i I
     buffer.drop(heap, good);
     buffer.drop(heap, context);
     return Fetched { files: written, why: trouble, status: status, needs_std: any_std };
+}
+
+// The sources of the store `store` (a directory with an absolute path) fetched into `out`: everything its manifest holds (for a name published more than once, the declaration
+// whose signature sorts last), and everything the stores it requires pin, each checked as `verify_selected` does and written only if all of them hold.
+pub fn fetch_store[&h, &i, &x, &c, &f, &k, &s, &t, &o](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], std_path: &s [byte], store: &t [byte], out: &o [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] Fetched {
+    let manifest = read_manifest(heap, fs, store);
+    let Pins { records, why } = manifest;
+    var failed = false;
+    borrow why as &wb in {
+        failed = buffer.size(wb) > 0;
+    }
+    if failed {
+        buffer.drop(heap, records);
+        return Fetched { files: buffer.empty(heap, 0), why: why, status: 3, needs_std: false };
+    }
+    buffer.drop(heap, why);
+    var selected = buffer.empty(heap, 0);
+    borrow records as &rb in {
+        selected = projfile.replaced(heap, selected, select_all(heap, buffer.bytes(rb)));
+    }
+    buffer.drop(heap, records);
+    var nothing = false;
+    borrow selected as &sb in {
+        nothing = buffer.size(sb) == 0;
+    }
+    if nothing {
+        buffer.drop(heap, selected);
+        return Fetched { files: buffer.empty(heap, 0), why: buffer.empty(heap, 0), status: 4, needs_std: false };
+    }
+    var result = Fetched { files: buffer.empty(heap, 0), why: buffer.empty(heap, 0), status: 0, needs_std: false };
+    borrow selected as &sb in {
+        result = replaced_fetched(heap, result, fetch_chosen(heap, io, exec, clock, fs, cache, std_path, store, out, buffer.bytes(sb)));
+    }
+    buffer.drop(heap, selected);
+    return result;
+}
+
+fn replaced_fetched[&h](heap: &!h Heap, old: Fetched, new: Fetched) -> [heap] Fetched {
+    let Fetched { files, why, status, needs_std } = old;
+    buffer.drop(heap, files);
+    buffer.drop(heap, why);
+    return new;
+}
+
+// The sources of what the entries `lock` (`NAME SIG STAGE SOURCE` each) pin in the store `store`, and of everything the stores it requires pin, written to `out` if all of them hold. Status 1
+// and the reasons if a pin is no longer published or does not hold, 3 for the environment.
+pub fn fetch_pinned[&h, &i, &x, &c, &f, &k, &s, &t, &o, &l](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], std_path: &s [byte], store: &t [byte], out: &o [byte], lock: &l [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] Fetched {
+    let manifest = read_manifest(heap, fs, store);
+    let Pins { records, why } = manifest;
+    var failed = false;
+    borrow why as &wb in {
+        failed = buffer.size(wb) > 0;
+    }
+    if failed {
+        buffer.drop(heap, records);
+        return Fetched { files: buffer.empty(heap, 0), why: why, status: 3, needs_std: false };
+    }
+    buffer.drop(heap, why);
+    var chosen = Chosen { picked: buffer.empty(heap, 0), missing: buffer.empty(heap, 0) };
+    borrow records as &rb in {
+        chosen = replaced_chosen(heap, chosen, select_locked(heap, lock, buffer.bytes(rb), store));
+    }
+    buffer.drop(heap, records);
+    let Chosen { picked, missing } = chosen;
+    var absent = false;
+    borrow missing as &mb in {
+        absent = buffer.size(mb) > 0;
+    }
+    if absent {
+        buffer.drop(heap, picked);
+        return Fetched { files: buffer.empty(heap, 0), why: missing, status: 1, needs_std: false };
+    }
+    buffer.drop(heap, missing);
+    var result = Fetched { files: buffer.empty(heap, 0), why: buffer.empty(heap, 0), status: 0, needs_std: false };
+    borrow picked as &pb in {
+        result = replaced_fetched(heap, result, fetch_chosen(heap, io, exec, clock, fs, cache, std_path, store, out, buffer.bytes(pb)));
+    }
+    buffer.drop(heap, picked);
+    return result;
+}
+
+fn replaced_chosen[&h](heap: &!h Heap, old: Chosen, new: Chosen) -> [heap] Chosen {
+    let Chosen { picked, missing } = old;
+    buffer.drop(heap, picked);
+    buffer.drop(heap, missing);
+    return new;
+}
+
+// How many records of `count` fields each `recs` holds.
+pub fn records_in[&r](recs: &r [byte], count: int) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at < len(recs) {
+        at = field_from(recs, at, count);
+        n = n + 1;
+    }
+    return n;
+}
+
+// What `vcs resolve` found: how many declarations were checked, in how many files, how many files the stores it requires added, and why not.
+pub res struct Resolved {
+    declarations: int,
+    files: int,
+    closure: int,
+    why: buffer.Buffer,
+    status: int,
+}
+
+// The records of `manifest` that are to be checked: all of them, or those the entries `lock` pin.
+fn selection[&h, &m, &l, &t](heap: &!h Heap, manifest: &m [byte], use_lock: bool, lock: &l [byte], store: &t [byte]) -> [heap] Chosen {
+    if use_lock {
+        return select_locked(heap, lock, manifest, store);
+    }
+    return Chosen { picked: buffer.append(heap, buffer.empty(heap, len(manifest)), manifest), missing: buffer.empty(heap, 0) };
+}
+
+// Every record of the manifest of `store` (or, with `use_lock`, those the entries `lock` pin) checked as `verify_selected` does. Status 4 if the manifest has nothing in it, 5 if the lock has none.
+pub fn resolve_store[&h, &i, &x, &c, &f, &k, &s, &t, &l](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], std_path: &s [byte], store: &t [byte], use_lock: bool, lock: &l [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, dir_read, exec(""), clock, poll] Resolved {
+    let manifest = read_manifest(heap, fs, store);
+    let Pins { records, why } = manifest;
+    var failed = false;
+    borrow why as &wb in {
+        failed = buffer.size(wb) > 0;
+    }
+    if failed {
+        buffer.drop(heap, records);
+        return Resolved { declarations: 0, files: 0, closure: 0, why: why, status: 3 };
+    }
+    buffer.drop(heap, why);
+    var empty = false;
+    borrow records as &eb in {
+        empty = buffer.size(eb) == 0;
+    }
+    if empty {
+        buffer.drop(heap, records);
+        return Resolved { declarations: 0, files: 0, closure: 0, why: buffer.empty(heap, 0), status: 4 };
+    }
+    if use_lock && len(lock) == 0 {
+        buffer.drop(heap, records);
+        return Resolved { declarations: 0, files: 0, closure: 0, why: buffer.empty(heap, 0), status: 5 };
+    }
+    var chosen = Chosen { picked: buffer.empty(heap, 0), missing: buffer.empty(heap, 0) };
+    borrow records as &rb in {
+        chosen = replaced_chosen(heap, chosen, selection(heap, buffer.bytes(rb), use_lock, lock, store));
+    }
+    buffer.drop(heap, records);
+    let Chosen { picked, missing } = chosen;
+    var absent = false;
+    borrow missing as &mb in {
+        absent = buffer.size(mb) > 0;
+    }
+    if absent {
+        buffer.drop(heap, picked);
+        return Resolved { declarations: 0, files: 0, closure: 0, why: missing, status: 1 };
+    }
+    buffer.drop(heap, missing);
+    var declarations = 0;
+    var files = 0;
+    var closure = 0;
+    var status = 0;
+    var reasons = buffer.empty(heap, 0);
+    borrow picked as &pb in {
+        let checked = verify_store(heap, io, exec, clock, fs, cache, std_path, store, buffer.bytes(pb));
+        let Checked { good, context, bad } = checked;
+        var calm = false;
+        borrow bad as &bb in {
+            calm = buffer.size(bb) == 0;
+        }
+        if calm {
+            borrow good as &gb in {
+                borrow context as &cb in {
+                    declarations = records_in(buffer.bytes(pb), 4);
+                    files = records_in(buffer.bytes(gb), 3);
+                    closure = records_in(buffer.bytes(cb), 3);
+                }
+            }
+            buffer.drop(heap, bad);
+        } else {
+            reasons = projfile.replaced(heap, reasons, bad);
+            status = 1;
+        }
+        buffer.drop(heap, good);
+        buffer.drop(heap, context);
+    }
+    buffer.drop(heap, picked);
+    return Resolved { declarations: declarations, files: files, closure: closure, why: reasons, status: status };
 }
