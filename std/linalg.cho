@@ -1,0 +1,304 @@
+module std.linalg;
+
+import std.math;
+
+// `std.linalg` -- dense linear algebra on flat `[float]` slices, matrices row-major (`a[i * n + j]` is row `i` of an `m x n` matrix). `docs/linalg.md` is the design: what is here, what is not,
+// and what was measured.
+//
+// Every sum is sequential in increasing index, so the same inputs give the same bits on every platform (no vectorised reduction, no fused multiply-add the program did not write). That is a
+// choice, paid for in speed: these are the plain loops, not BLAS. A size that does not fit its slice traps like any out-of-range index; a *numerical* failure (a matrix that is not positive
+// definite, a singular one) is the function's integer answer: 0 for success, `k + 1` for the step `k` that failed.
+//
+//   dot, axpy, gemv, gemm, transpose
+//   cholesky, cholesky_solve        A = L L^T for symmetric positive definite A
+//   lu, lu_solve                    P A = L U, partial pivoting, for a square A
+//   lstsq                           min |A x - b| for m >= n, by Householder QR
+
+// the sum of a[i] * b[i] over the length of `a`
+pub fn dot[&a, &b](x: &a [float], y: &b [float]) -> [] float {
+    var s = 0.0;
+    var k = 0;
+    while k < len(x) {
+        s = s + x[k] * y[k];
+        k = k + 1;
+    }
+    return s;
+}
+
+// y = y + alpha * x
+pub fn axpy[&a, &b](alpha: float, x: &a [float], y: &!b [float]) -> [] int {
+    var k = 0;
+    while k < len(x) {
+        y[k] = y[k] + alpha * x[k];
+        k = k + 1;
+    }
+    return 0;
+}
+
+// y = A x for the m x n matrix `a`
+pub fn gemv[&a, &b, &c](m: int, n: int, a: &a [float], x: &b [float], y: &!c [float]) -> [] int {
+    var i = 0;
+    while i < m {
+        var s = 0.0;
+        var j = 0;
+        while j < n {
+            s = s + a[i * n + j] * x[j];
+            j = j + 1;
+        }
+        y[i] = s;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// C = A B for A m x k, B k x n, C m x n: c[i][j] is the sum over p = 0, 1, ... of a[i][p] * b[p][j]
+pub fn gemm[&a, &b, &c](m: int, k: int, n: int, a: &a [float], b: &b [float], c: &!c [float]) -> [] int {
+    var i = 0;
+    while i < m {
+        var j = 0;
+        while j < n {
+            var s = 0.0;
+            var p = 0;
+            while p < k {
+                s = s + a[i * k + p] * b[p * n + j];
+                p = p + 1;
+            }
+            c[i * n + j] = s;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// B = A^T for A m x n (B is n x m)
+pub fn transpose[&a, &b](m: int, n: int, a: &a [float], b: &!b [float]) -> [] int {
+    var i = 0;
+    while i < m {
+        var j = 0;
+        while j < n {
+            b[j * m + i] = a[i * n + j];
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// The Cholesky factor of the symmetric positive definite n x n `a`, in place: the lower triangle becomes L (A = L L^T) and the strict upper triangle is not touched or read.
+// 0, or k + 1 when the pivot of column k is not positive (the matrix is not positive definite).
+pub fn cholesky[&a](n: int, a: &!a [float]) -> [] int {
+    var j = 0;
+    while j < n {
+        var s = a[j * n + j];
+        var k = 0;
+        while k < j {
+            s = s - a[j * n + k] * a[j * n + k];
+            k = k + 1;
+        }
+        if !(s > 0.0) {
+            return j + 1;
+        }
+        let d = sqrt(s);
+        a[j * n + j] = d;
+        var i = j + 1;
+        while i < n {
+            var t = a[i * n + j];
+            var p = 0;
+            while p < j {
+                t = t - a[i * n + p] * a[j * n + p];
+                p = p + 1;
+            }
+            a[i * n + j] = t / d;
+            i = i + 1;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// Solve A x = b with the factor `l` that `cholesky` left in `a`; b is overwritten with x.
+pub fn cholesky_solve[&a, &b](n: int, l: &a [float], b: &!b [float]) -> [] int {
+    var i = 0;
+    while i < n {
+        var s = b[i];
+        var k = 0;
+        while k < i {
+            s = s - l[i * n + k] * b[k];
+            k = k + 1;
+        }
+        b[i] = s / l[i * n + i];
+        i = i + 1;
+    }
+    var r = n - 1;
+    while r >= 0 {
+        var s2 = b[r];
+        var q = r + 1;
+        while q < n {
+            s2 = s2 - l[q * n + r] * b[q];
+            q = q + 1;
+        }
+        b[r] = s2 / l[r * n + r];
+        r = r - 1;
+    }
+    return 0;
+}
+
+// LU with partial pivoting of the n x n `a`, in place: U on and above the diagonal, the multipliers of L (unit diagonal) below it; `piv[k]` is the row swapped with row k at step k (the first
+// of equal largest entries). 0, or k + 1 when every candidate pivot of column k is exactly 0 (the matrix is singular).
+pub fn lu[&a, &p](n: int, a: &!a [float], piv: &!p [int]) -> [] int {
+    var k = 0;
+    while k < n {
+        var best = k;
+        var big = math.fabs(a[k * n + k]);
+        var i = k + 1;
+        while i < n {
+            let v = math.fabs(a[i * n + k]);
+            if v > big {
+                big = v;
+                best = i;
+            }
+            i = i + 1;
+        }
+        if big == 0.0 {
+            return k + 1;
+        }
+        piv[k] = best;
+        if best != k {
+            var j = 0;
+            while j < n {
+                let t = a[k * n + j];
+                a[k * n + j] = a[best * n + j];
+                a[best * n + j] = t;
+                j = j + 1;
+            }
+        }
+        var r = k + 1;
+        while r < n {
+            let f = a[r * n + k] / a[k * n + k];
+            a[r * n + k] = f;
+            var c = k + 1;
+            while c < n {
+                a[r * n + c] = a[r * n + c] - f * a[k * n + c];
+                c = c + 1;
+            }
+            r = r + 1;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// Solve A x = b with the factors `lu` left in `a` and `piv`; b is overwritten with x.
+pub fn lu_solve[&a, &p, &b](n: int, a: &a [float], piv: &p [int], b: &!b [float]) -> [] int {
+    var k = 0;
+    while k < n {
+        let q = piv[k];
+        if q != k {
+            let t = b[k];
+            b[k] = b[q];
+            b[q] = t;
+        }
+        k = k + 1;
+    }
+    var i = 0;
+    while i < n {
+        var s = b[i];
+        var j = 0;
+        while j < i {
+            s = s - a[i * n + j] * b[j];
+            j = j + 1;
+        }
+        b[i] = s;
+        i = i + 1;
+    }
+    var r = n - 1;
+    while r >= 0 {
+        var s2 = b[r];
+        var c = r + 1;
+        while c < n {
+            s2 = s2 - a[r * n + c] * b[c];
+            c = c + 1;
+        }
+        b[r] = s2 / a[r * n + r];
+        r = r - 1;
+    }
+    return 0;
+}
+
+// The x that minimises |A x - b| for the m x n `a` (m >= n), by Householder reflections. `a` and `b` are overwritten: the first n entries of `b` are x, and the rest of `b` holds the residual
+// in the rotated basis (its norm is |A x - b|). 0, or k + 1 when column k is exactly 0 below the diagonal after the earlier reflections (the columns are linearly dependent).
+pub fn lstsq[&a, &b](m: int, n: int, a: &!a [float], b: &!b [float]) -> [] int {
+    var k = 0;
+    while k < n {
+        var norm2 = 0.0;
+        var i = k;
+        while i < m {
+            norm2 = norm2 + a[i * n + k] * a[i * n + k];
+            i = i + 1;
+        }
+        let norm = sqrt(norm2);
+        if norm == 0.0 {
+            return k + 1;
+        }
+        let x0 = a[k * n + k];
+        var alpha = norm;
+        if x0 > 0.0 {
+            alpha = 0.0 - norm;
+        }
+        // v = x - alpha e_k, kept in column k below the diagonal, with v_k in `head`
+        let head = x0 - alpha;
+        var vnorm2 = head * head;
+        i = k + 1;
+        while i < m {
+            vnorm2 = vnorm2 + a[i * n + k] * a[i * n + k];
+            i = i + 1;
+        }
+        // reflect the columns to the right of k, and b: x - 2 v (v . x) / (v . v)
+        var j = k + 1;
+        while j < n {
+            var d = head * a[k * n + j];
+            i = k + 1;
+            while i < m {
+                d = d + a[i * n + k] * a[i * n + j];
+                i = i + 1;
+            }
+            let f = 2.0 * d / vnorm2;
+            a[k * n + j] = a[k * n + j] - f * head;
+            i = k + 1;
+            while i < m {
+                a[i * n + j] = a[i * n + j] - f * a[i * n + k];
+                i = i + 1;
+            }
+            j = j + 1;
+        }
+        var db = head * b[k];
+        i = k + 1;
+        while i < m {
+            db = db + a[i * n + k] * b[i];
+            i = i + 1;
+        }
+        let fb = 2.0 * db / vnorm2;
+        b[k] = b[k] - fb * head;
+        i = k + 1;
+        while i < m {
+            b[i] = b[i] - fb * a[i * n + k];
+            i = i + 1;
+        }
+        a[k * n + k] = alpha;
+        k = k + 1;
+    }
+    // back substitution with R, the upper triangle of the first n rows
+    var r = n - 1;
+    while r >= 0 {
+        var s = b[r];
+        var c = r + 1;
+        while c < n {
+            s = s - a[r * n + c] * b[c];
+            c = c + 1;
+        }
+        b[r] = s / a[r * n + r];
+        r = r - 1;
+    }
+    return 0;
+}

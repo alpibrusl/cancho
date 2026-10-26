@@ -403,6 +403,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`structured-ingest.md`](structured-ingest.md) | The AST as JSON and back: `cancho print --output json` and `cancho ingest`, the ingest path an agent writes | built |
 | [`tty.md`](tty.md) | `Tty`, the serial-port capability (#422 T1): both measured termios ABIs, the surface, the labels — design |
 | [`crc.md`](crc.md) | `std.crc`: CRC-16/XMODEM, CRC-32/IEEE and two CRC-64s (XZ, and Redis's Jones), and the two-halves design | built |
+| [`linalg.md`](linalg.md) | `std.linalg`: dot, axpy, gemv, gemm, Cholesky, LU with pivoting and Householder least squares on flat row-major slices; measured against numpy | built |
 | [`net-bounds.md`](net-bounds.md) | Separate ways in and out, set-valued bounds, exact host matching (#362) | design; §2.4 is a report fix recommended first |
 | [`shared-store.md`](shared-store.md) | Several threads, one store: the answer is process-per-core, with the two missing primitives named (#354) | design; answered, topic closed |
 | [`agent-tools.md`](agent-tools.md) | A tool genuinely shaped for an agent's own loop | built (`examples/seek/`) |
