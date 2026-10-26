@@ -668,6 +668,16 @@ pub fn is_handle[&s](st: &!s [int], ty: int) -> [] bool {
     return is_prelude(st, ty) && tables.prelude_leaf(prelude_index(st, ty)) == 1;
 }
 
+// A prelude type a thread may be given or give back: the capabilities a program is handed, `File`, and `Net` -- not a
+// `Conn`, a `Listener`, a `Child` or the like, which only Rust's `crosses_to_a_thread` list leaves out.
+pub fn crosses_to_a_thread[&s](st: &!s [int], ty: int) -> [] bool {
+    if !is_prelude(st, ty) {
+        return true;
+    }
+    let i = prelude_index(st, ty);
+    return i == 1 || i == 2 || i == 3 || i == 4 || i == 6 || i == 8 || i == 11 || i == 23 || i == 53 || i == 54;
+}
+
 // A prelude enum (`Spawned`, `Opened`, `Read`): a tag and the payloads of its arms, one aggregate.
 pub fn is_penum[&s](st: &!s [int], ty: int) -> [] bool {
     return is_prelude(st, ty) && builtins.prelude_arm_count(prelude_index(st, ty)) > 0;

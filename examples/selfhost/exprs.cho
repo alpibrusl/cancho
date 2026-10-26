@@ -1643,7 +1643,7 @@ pub fn thread_call[&s, &x](st: &!s [int], text: &x [byte], id: int, spawning: bo
         // A `&!` given to a thread is lent to it until the handle is joined.
         scope.lease_spawn(st, scope.find(st, text, ast.get(st, ast.get(st, id, 6), 4)), from, to);
     }
-    if narrowing.cannot_cross(st, payload.ty) || narrowing.cannot_cross(st, result) {
+    if narrowing.cannot_cross(st, payload.ty) || narrowing.cannot_cross(st, result) || !types.crosses_to_a_thread(st, payload.ty) || !types.crosses_to_a_thread(st, result) {
         // More than one leaf: not something to give a real thread, or to take back from one, yet.
         ast.fail(st, rules.r_thread_payload_type(), from, to);
         return ex.nothing();
