@@ -1,0 +1,215 @@
+edition 5;
+// `std.linalg` (docs/linalg.md) on cases whose answers were worked out by hand, not by running it:
+//
+//   dot [1 2 3].[4 5 6] = 32;  [[1 2 3] [4 5 6]] [[7 8] [9 10] [11 12]] = [[58 64] [139 154]]
+//   Cholesky of A = L L^T for the integer L = [[2 0 0] [1 3 0] [4 2 5]]: A = [[4 2 8] [2 10 10] [8 10 45]], and A x = [32 52 163] has x = [1 2 3]
+//   [[1 2] [2 1]] is not positive definite (the second pivot is 1 - 4 < 0): the answer is 2
+//   LU with pivoting of [[2 1 1] [4 3 3] [8 7 9]], solving A x = [7 19 49]: x = [1 2 3]. [[1 2] [2 4]] is singular: the answer is 2
+//   gemv [[1 2 3] [4 5 6]] [1 1 1] = [6 15]; axpy [1 1 1] + 2 [1 2 3] = [3 5 7]; the transpose of the 2 x 3 matrix is [1 4 2 5 3 6]; [[1 1] [1 1]] has a zero second pivot, so it is not positive definite (2)
+//   LU of [[1 2] [1 3]]: the two candidates for the first pivot tie, the first one (row 0) is kept, so piv = [0 1]
+//   the Householder sign: the column [1, 1e-8] with b = [1, 1] has x = (1 + 1e-8) / (1 + 1e-16) = 1.00000001 (to 9 places), and reflecting to +|x| instead of -|x| would cancel 1 - 1 to nothing and lose the 1e-8 (x = 1)
+//   least squares of the line through (0,1) (1,2) (2,5) (3,7): the normal equations [[4 6] [6 14]] x = [15 33] give intercept 3/5 and slope 21/10, and the residuals
+//   1 - 0.6, 2 - 2.7, 5 - 4.8, 7 - 6.9 = 0.4 -0.7 0.2 0.1 have squares summing to 0.7. Printed times 10^9, rounded, so that a last-place difference does not matter.
+//~ STDOUT 32
+//~ STDOUT 58 64 139 154
+//~ STDOUT 2 0 0 1 3 0 4 2 5
+//~ STDOUT 1 2 3
+//~ STDOUT 2
+//~ STDOUT 1 2 3
+//~ STDOUT 2
+//~ STDOUT 600000000 2100000000 700000000
+//~ STDOUT 6 15
+//~ STDOUT 3 5 7
+//~ STDOUT 1 4 2 5 3 6
+//~ STDOUT 2
+//~ STDOUT 0 1
+//~ STDOUT 1000000010
+//~ EXIT 0
+import std.linalg;
+import std.math;
+
+fn print_int[&i](out: &!i Io, n: int) -> [io_write] int {
+    if n < 0 {
+        putchar(out, 45);
+        return print_int(out, 0 - n);
+    }
+    if n >= 10 {
+        print_int(out, n / 10);
+    }
+    putchar(out, 48 + n % 10);
+    return 0;
+}
+
+fn put[&a](a: &!a [float], i: int, v: float) -> [] int {
+    a[i] = v;
+    return 0;
+}
+
+fn show[&i, &a](out: &!i Io, a: &a [float], from: int, to: int) -> [io_write] int {
+    var k = from;
+    while k < to {
+        if k > from {
+            putchar(out, 32);
+        }
+        print_int(out, truncate(math.floor(a[k] + 0.5)));
+        k = k + 1;
+    }
+    putchar(out, 10);
+    return 0;
+}
+
+fn scaled[&i, &a](out: &!i Io, a: &a [float], k: int) -> [io_write] int {
+    print_int(out, truncate(math.floor(a[k] * 1000000000.0 + 0.5)));
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    borrow mut io as &!i in {
+        region r {
+            // dot
+            let u = alloc_slice[r](3, 0.0);
+            let v = alloc_slice[r](3, 0.0);
+            put(u, 0, 1.0);
+            put(u, 1, 2.0);
+            put(u, 2, 3.0);
+            put(v, 0, 4.0);
+            put(v, 1, 5.0);
+            put(v, 2, 6.0);
+            let d = alloc_slice[r](1, linalg.dot(u, v));
+            show(i, d, 0, 1);
+            // gemm
+            let a = alloc_slice[r](6, 0.0);
+            let b = alloc_slice[r](6, 0.0);
+            let c = alloc_slice[r](4, 0.0);
+            var k = 0;
+            while k < 6 {
+                put(a, k, float_of(k + 1));
+                put(b, k, float_of(k + 7));
+                k = k + 1;
+            }
+            linalg.gemm(2, 3, 2, a, b, c);
+            show(i, c, 0, 4);
+            // Cholesky
+            let m = alloc_slice[r](9, 0.0);
+            put(m, 0, 4.0);
+            put(m, 1, 2.0);
+            put(m, 2, 8.0);
+            put(m, 3, 2.0);
+            put(m, 4, 10.0);
+            put(m, 5, 10.0);
+            put(m, 6, 8.0);
+            put(m, 7, 10.0);
+            put(m, 8, 45.0);
+            let rhs = alloc_slice[r](3, 0.0);
+            put(rhs, 0, 32.0);
+            put(rhs, 1, 52.0);
+            put(rhs, 2, 163.0);
+            linalg.cholesky(3, m);
+            // the strict upper triangle is not touched: print the lower triangle with zeros
+            let lower = alloc_slice[r](9, 0.0);
+            var row = 0;
+            while row < 3 {
+                var col = 0;
+                while col <= row {
+                    put(lower, row * 3 + col, m[row * 3 + col]);
+                    col = col + 1;
+                }
+                row = row + 1;
+            }
+            show(i, lower, 0, 9);
+            linalg.cholesky_solve(3, m, rhs);
+            show(i, rhs, 0, 3);
+            let bad = alloc_slice[r](4, 1.0);
+            put(bad, 1, 2.0);
+            put(bad, 2, 2.0);
+            print_int(i, linalg.cholesky(2, bad));
+            putchar(i, 10);
+            // LU
+            let g = alloc_slice[r](9, 0.0);
+            put(g, 0, 2.0);
+            put(g, 1, 1.0);
+            put(g, 2, 1.0);
+            put(g, 3, 4.0);
+            put(g, 4, 3.0);
+            put(g, 5, 3.0);
+            put(g, 6, 8.0);
+            put(g, 7, 7.0);
+            put(g, 8, 9.0);
+            let piv = alloc_slice[r](3, 0);
+            let gb = alloc_slice[r](3, 0.0);
+            put(gb, 0, 7.0);
+            put(gb, 1, 19.0);
+            put(gb, 2, 49.0);
+            linalg.lu(3, g, piv);
+            linalg.lu_solve(3, g, piv, gb);
+            show(i, gb, 0, 3);
+            let sing = alloc_slice[r](4, 1.0);
+            put(sing, 1, 2.0);
+            put(sing, 2, 2.0);
+            put(sing, 3, 4.0);
+            let sp = alloc_slice[r](2, 0);
+            print_int(i, linalg.lu(2, sing, sp));
+            putchar(i, 10);
+            // least squares
+            let la = alloc_slice[r](8, 1.0);
+            put(la, 1, 0.0);
+            put(la, 3, 1.0);
+            put(la, 5, 2.0);
+            put(la, 7, 3.0);
+            let lb = alloc_slice[r](4, 0.0);
+            put(lb, 0, 1.0);
+            put(lb, 1, 2.0);
+            put(lb, 2, 5.0);
+            put(lb, 3, 7.0);
+            linalg.lstsq(4, 2, la, lb);
+            scaled(i, lb, 0);
+            putchar(i, 32);
+            scaled(i, lb, 1);
+            putchar(i, 32);
+            let tail = alloc_slice[r](1, lb[2] * lb[2] + lb[3] * lb[3]);
+            scaled(i, tail, 0);
+            putchar(i, 10);
+            // gemv, axpy, transpose
+            let x1 = alloc_slice[r](3, 1.0);
+            let y2 = alloc_slice[r](2, 0.0);
+            linalg.gemv(2, 3, a, x1, y2);
+            show(i, y2, 0, 2);
+            let y3 = alloc_slice[r](3, 1.0);
+            linalg.axpy(2.0, u, y3);
+            show(i, y3, 0, 3);
+            let at = alloc_slice[r](6, 0.0);
+            linalg.transpose(2, 3, a, at);
+            show(i, at, 0, 6);
+            // a zero pivot is not positive
+            let ones = alloc_slice[r](4, 1.0);
+            print_int(i, linalg.cholesky(2, ones));
+            putchar(i, 10);
+            // a tie between the pivot candidates
+            let tie = alloc_slice[r](4, 1.0);
+            put(tie, 1, 2.0);
+            put(tie, 3, 3.0);
+            let tp = alloc_slice[r](2, 0);
+            linalg.lu(2, tie, tp);
+            let tpf = alloc_slice[r](2, 0.0);
+            put(tpf, 0, float_of(tp[0]));
+            put(tpf, 1, float_of(tp[1]));
+            show(i, tpf, 0, 2);
+            // the sign of the reflection
+            let ca = alloc_slice[r](2, 1.0);
+            put(ca, 1, 0.00000001);
+            let cb = alloc_slice[r](2, 1.0);
+            linalg.lstsq(2, 1, ca, cb);
+            scaled(i, cb, 0);
+            putchar(i, 10);
+        }
+    }
+    release(io);
+    return 0;
+}

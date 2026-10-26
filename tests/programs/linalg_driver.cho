@@ -1,0 +1,158 @@
+edition 5;
+// `docs/linalg.md` §4: `std.linalg` driven from standard input, one JSON document per run, so `scripts/linalg_differential.py` can compare it with numpy.
+//
+//     {"op": "gemm", "m": M, "k": K, "n": N, "a": [...], "b": [...]}   -> {"status": 0, "out": [the M x N product]}
+//     {"op": "cholesky", "n": N, "a": [...], "b": [...]}               -> {"status": S, "out": [x of A x = b]}  (the factor with "factor": true)
+//     {"op": "lu", "n": N, "a": [...], "b": [...]}                     -> {"status": S, "out": [x of A x = b]}
+//     {"op": "lstsq", "m": M, "n": N, "a": [...], "b": [...]}          -> {"status": S, "out": [x], "residual": |A x - b|}
+import std.buffer;
+import std.json;
+import std.linalg;
+import std.math;
+
+fn floats[&s, &t, &o](src: &s [byte], tape: &t [int], node: int, out: &!o [float]) -> [] int {
+    var k = 0;
+    while k < json.count(tape, node) && k < len(out) {
+        out[k] = json.to_float(src, tape, json.at(tape, node, k));
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn field[&s, &t](src: &s [byte], tape: &t [int], name: &static [byte]) -> [] int {
+    let node = json.get(src, tape, 0, name);
+    if node < 0 {
+        return 0;
+    }
+    return json.to_int(src, tape, node);
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var input = buffer.empty(heap, 4096);
+    var c = getchar(io);
+    while c >= 0 {
+        input = buffer.push(heap, input, byte_of(c));
+        c = getchar(io);
+    }
+    var status = 0;
+    var w = json.writer(heap, 4096);
+    borrow input as &ir in {
+        let src = buffer.bytes(ir);
+        let tape = box_slice(heap, json.tape_len(src), 0);
+        borrow mut tape as &!tw in {
+            let t = contents(tw);
+            if json.parse(src, t) > 0 {
+                let m = field(src, t, "m");
+                let n = field(src, t, "n");
+                let k = field(src, t, "k");
+                let op = json.string_view(src, t, json.get(src, t, 0, "op"));
+                let a = box_slice(heap, 1 + m * n + m * k + n * n, 0.0);
+                let b = box_slice(heap, 1 + m * n + k * n + n + m, 0.0);
+                let out = box_slice(heap, 1 + m * n + n + m, 0.0);
+                var code = 0;
+                var residual = 0.0;
+                var count = 0;
+                borrow mut a as &!aw in {
+                    borrow mut b as &!bw in {
+                        borrow mut out as &!ow in {
+                            floats(src, t, json.get(src, t, 0, "a"), contents(aw));
+                            floats(src, t, json.get(src, t, 0, "b"), contents(bw));
+                            if len(op) == 4 && op[0] == byte_of('g') {
+                                code = linalg.gemm(m, k, n, contents(aw), contents(bw), contents(ow));
+                                count = m * n;
+                            } else if len(op) == 8 && op[0] == byte_of('c') {
+                                code = linalg.cholesky(n, contents(aw));
+                                if code == 0 {
+                                    linalg.cholesky_solve(n, contents(aw), contents(bw));
+                                }
+                                count = n;
+                                var j = 0;
+                                while j < n {
+                                    contents(ow)[j] = contents(bw)[j];
+                                    j = j + 1;
+                                }
+                            } else if len(op) == 2 {
+                                let piv = box_slice(heap, n + 1, 0);
+                                borrow mut piv as &!pw in {
+                                    code = linalg.lu(n, contents(aw), contents(pw));
+                                    if code == 0 {
+                                        linalg.lu_solve(n, contents(aw), contents(pw), contents(bw));
+                                    }
+                                }
+                                unbox_slice(heap, piv);
+                                count = n;
+                                var j2 = 0;
+                                while j2 < n {
+                                    contents(ow)[j2] = contents(bw)[j2];
+                                    j2 = j2 + 1;
+                                }
+                            } else {
+                                code = linalg.lstsq(m, n, contents(aw), contents(bw));
+                                count = n;
+                                var j3 = 0;
+                                while j3 < n {
+                                    contents(ow)[j3] = contents(bw)[j3];
+                                    j3 = j3 + 1;
+                                }
+                                var s2 = 0.0;
+                                var r = n;
+                                while r < m {
+                                    s2 = s2 + contents(bw)[r] * contents(bw)[r];
+                                    r = r + 1;
+                                }
+                                residual = sqrt(s2);
+                            }
+                        }
+                    }
+                }
+                w = json.begin_object(heap, w);
+                w = json.put_key(heap, w, "status");
+                w = json.put_int(heap, w, code);
+                w = json.put_key(heap, w, "out");
+                w = json.begin_array(heap, w);
+                borrow out as &or in {
+                    var q = 0;
+                    while q < count {
+                        w = json.put_float(heap, w, contents(or)[q]);
+                        q = q + 1;
+                    }
+                }
+                w = json.end_array(heap, w);
+                w = json.put_key(heap, w, "residual");
+                w = json.put_float(heap, w, residual);
+                w = json.end_object(heap, w);
+                unbox_slice(heap, a);
+                unbox_slice(heap, b);
+                unbox_slice(heap, out);
+            } else {
+                status = 2;
+            }
+        }
+        unbox_slice(heap, tape);
+    }
+    buffer.drop(heap, input);
+    let text = buffer.push(heap, json.finish(w), byte_of(10));
+    borrow text as &tr in {
+        buffer.write(io, tr);
+    }
+    buffer.drop(heap, text);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}
