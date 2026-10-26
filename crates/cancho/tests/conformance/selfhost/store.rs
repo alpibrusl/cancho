@@ -4,7 +4,7 @@
 
 use super::*;
 
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(super) fn git(dir: &Path, args: &[&str]) -> String {
     let done = Command::new("git")
         .current_dir(dir)
         .args(["-c", "user.email=a@b", "-c", "user.name=n", "-c", "commit.gpgsign=false"])
@@ -15,7 +15,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&done.stdout).trim().to_owned()
 }
 
-fn copy_dir(from: &Path, to: &Path) {
+pub(super) fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).expect("a directory is made");
     for entry in std::fs::read_dir(from).expect("a directory is read") {
         let path = entry.expect("an entry").path();
@@ -29,7 +29,7 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 /// Every directory beneath `dir` (and `dir`) that holds a `manifest.json`, as paths relative to `dir`.
-fn stores_in(dir: &Path, at: &Path, found: &mut Vec<String>) {
+pub(super) fn stores_in(dir: &Path, at: &Path, found: &mut Vec<String>) {
     if at.join("manifest.json").is_file() {
         found.push(at.strip_prefix(dir).unwrap().display().to_string());
     }
@@ -48,7 +48,7 @@ fn stores_in(dir: &Path, at: &Path, found: &mut Vec<String>) {
 }
 
 /// The files of a directory with their bytes, sorted by name.
-fn files_in(dir: &Path) -> Vec<(String, Vec<u8>)> {
+pub(super) fn files_in(dir: &Path) -> Vec<(String, Vec<u8>)> {
     let mut found = Vec::new();
     if let Ok(read) = std::fs::read_dir(dir) {
         for entry in read {
@@ -66,13 +66,13 @@ fn files_in(dir: &Path) -> Vec<(String, Vec<u8>)> {
 /// What a fetch gave: the status, what it said on the standard error, and the files it wrote.
 type Fetch = (Option<i32>, String, Vec<(String, Vec<u8>)>);
 
-struct World {
-    url: String,
-    rev: String,
+pub(super) struct World {
+    pub(super) url: String,
+    pub(super) rev: String,
 }
 
 /// A repository whose commit holds the directory `tree` as `packages` (a store that requires another by a relative path finds it there).
-fn repository(work: &Path, tree: &Path, name: &str) -> World {
+pub(super) fn repository(work: &Path, tree: &Path, name: &str) -> World {
     let repo = work.join(name);
     let _ = std::fs::remove_dir_all(&repo);
     std::fs::create_dir_all(&repo).unwrap();

@@ -1,0 +1,55 @@
+edition 7;
+module selfhost.jsonwrite;
+
+// jsonwrite.cho -- JSON text written as `serde_json::to_vec_pretty` writes it, for the files `vcs` makes (`docs/cli-in-cancho.md` section 28): two spaces to a level, `"key": value`,
+// no space before a colon, no final newline, a string with `"` and `\` escaped, the control characters as `\n \r \t \b \f` or `\u00XX`, and every other byte as it is.
+
+import std.buffer;
+
+// `text` between quotes, escaped.
+pub fn string[&h, &t](heap: &!h Heap, out: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    var line = buffer.push(heap, out, byte_of(34));
+    var at = 0;
+    while at < len(text) {
+        let c = int_of(text[at]);
+        if c == 34 {
+            line = buffer.append(heap, line, "\\\"");
+        } else if c == 92 {
+            line = buffer.append(heap, line, "\\\\");
+        } else if c == 10 {
+            line = buffer.append(heap, line, "\\n");
+        } else if c == 13 {
+            line = buffer.append(heap, line, "\\r");
+        } else if c == 9 {
+            line = buffer.append(heap, line, "\\t");
+        } else if c == 8 {
+            line = buffer.append(heap, line, "\\b");
+        } else if c == 12 {
+            line = buffer.append(heap, line, "\\f");
+        } else if c < 32 {
+            line = buffer.append(heap, line, "\\u00");
+            line = buffer.push(heap, line, "0123456789abcdef"[c / 16]);
+            line = buffer.push(heap, line, "0123456789abcdef"[c % 16]);
+        } else {
+            line = buffer.push(heap, line, text[at]);
+        }
+        at = at + 1;
+    }
+    return buffer.push(heap, line, byte_of(34));
+}
+
+// A newline and `levels` pairs of spaces.
+pub fn newline[&h](heap: &!h Heap, out: buffer.Buffer, levels: int) -> [heap] buffer.Buffer {
+    var line = buffer.push(heap, out, byte_of(10));
+    var n = 0;
+    while n < levels * 2 {
+        line = buffer.push(heap, line, byte_of(32));
+        n = n + 1;
+    }
+    return line;
+}
+
+// `"key": ` at the indentation of `levels`, on a line of its own.
+pub fn key[&h, &k](heap: &!h Heap, out: buffer.Buffer, levels: int, name: &k [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, string(heap, newline(heap, out, levels), name), ": ");
+}

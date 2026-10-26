@@ -24,6 +24,7 @@ mod origin;
 mod parity;
 mod statics;
 mod store;
+mod vcs;
 use cases::BODY_EDGE;
 
 #[allow(dead_code)]
@@ -328,6 +329,9 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "clitest.cho",
         "projfile.cho",
         "cliproject.cho",
+        "clivcs.cho",
+        "clilock.cho",
+        "jsonwrite.cho",
         "cliorigin.cho",
         "clistore.cho",
         "listing.cho",
