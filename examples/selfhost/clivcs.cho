@@ -1,0 +1,196 @@
+edition 7;
+module selfhost.clivcs;
+
+// clivcs.cho -- the `vcs` commands, a port of `crates/cancho/src/vcs_cli.rs` (`docs/cli-in-cancho.md` section 28). `vcs log` first: what a store has published, by name.
+//
+// Exit status as the Rust command's: 1 refused, 2 a bad command line, 3 the environment (a store that cannot be read).
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.projfile;
+import selfhost.clibase;
+import selfhost.clistore;
+import selfhost.cliorigin;
+
+// The words of a `vcs` command line that every one of its commands reads: where (in the arguments) the value of `--store` is (-1 if not given), whether a word was a file,
+// and `bad` (the status of a usage error that has been said).
+struct Words {
+    store_at: int,
+    files: bool,
+    bad: int,
+}
+
+// `--store`, `--dir`, `--requires` take a value and `--std` takes none, for every `vcs` command that does not read them; a word with a `-` that is none of them is refused.
+fn needs_what[&w](word: &w [byte]) -> [] &static [byte] {
+    if bytes.equal(word, "--store") {
+        return "`--store` needs a path";
+    }
+    if bytes.equal(word, "--dir") {
+        return "`--dir` needs a directory";
+    }
+    return "`--requires` needs `<lock-file>:<dep-store>`";
+}
+
+fn words_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, from: int) -> [heap, err_write, args] Words {
+    var store_at = 0 - 1;
+    var files = false;
+    var bad = 0;
+    var n = from;
+    while n < arg_count(args) && bad == 0 {
+        let word = arg(args, n);
+        if bytes.equal(word, "--store") || bytes.equal(word, "--dir") || bytes.equal(word, "--requires") {
+            if n + 1 >= arg_count(args) {
+                bad = clibase.usage_error(heap, io, needs_what(word));
+            } else {
+                n = n + 1;
+                if bytes.equal(word, "--store") {
+                    store_at = n;
+                }
+            }
+        } else if bytes.equal(word, "--std") {
+            files = files;
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            bad = clibase.unknown_option(heap, io, word);
+        } else {
+            files = true;
+        }
+        n = n + 1;
+    }
+    return Words { store_at: store_at, files: files, bad: bad };
+}
+
+// The end of the record that starts at `at`: five fields (`SIG NAME STAGE SOURCE STD`), each followed by a NUL.
+fn record_end[&r](recs: &r [byte], at: int) -> [] int {
+    var p = at;
+    var k = 0;
+    while k < 5 {
+        p = projfile.field_end(recs, p, len(recs)) + 1;
+        k = k + 1;
+    }
+    return p;
+}
+
+// The `k`th field of the record at `at`.
+fn field_of[&r](recs: &r [byte], at: int, k: int) -> [] &r [byte] {
+    var p = at;
+    var seen = 0;
+    while seen < k {
+        p = projfile.field_end(recs, p, len(recs)) + 1;
+        seen = seen + 1;
+    }
+    return recs[p..projfile.field_end(recs, p, len(recs))];
+}
+
+// Which of two records comes first: by name, and a name that is the same by where the record is (the order `vcs publish` keeps them in is by signature).
+fn before[&r](recs: &r [byte], a: int, b: int) -> [] bool {
+    let c = bytes.compare(field_of(recs, a, 1), field_of(recs, b, 1));
+    if c != 0 {
+        return c < 0;
+    }
+    return a < b;
+}
+
+// How many characters `text` has: the bytes that do not continue another (`{:<24}` pads to characters, not to bytes).
+fn characters[&t](text: &t [byte]) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at < len(text) {
+        if lc.at(text, at) / 64 != 2 {
+            n = n + 1;
+        }
+        at = at + 1;
+    }
+    return n;
+}
+
+// One row of the log: `{:<24} sig SIG  body STAGE` and two spaces and `std` if the declaration uses the library.
+fn row[&h, &r](heap: &!h Heap, out: buffer.Buffer, recs: &r [byte], at: int) -> [heap] buffer.Buffer {
+    var line = out;
+    let name = field_of(recs, at, 1);
+    line = buffer.append(heap, line, name);
+    var pad = characters(name);
+    while pad < 24 {
+        line = buffer.push(heap, line, byte_of(32));
+        pad = pad + 1;
+    }
+    line = buffer.append(heap, line, " sig ");
+    line = buffer.append(heap, line, field_of(recs, at, 0));
+    line = buffer.append(heap, line, "  body ");
+    line = buffer.append(heap, line, field_of(recs, at, 2));
+    if lc.at(field_of(recs, at, 4), 0) == '1' {
+        line = buffer.append(heap, line, "  std");
+    }
+    return buffer.push(heap, line, byte_of(10));
+}
+
+// `vcs log [--store DIR]`.
+pub fn log_command[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, err_write, args, fs_read(""), file_read] int {
+    let given = words_of(heap, io, args, 3);
+    let Words { store_at, files, bad } = given;
+    if bad != 0 {
+        return bad;
+    }
+    if files {
+        return clibase.usage_error(heap, io, "`vcs log` takes no input files, only `--store`");
+    }
+    var store = buffer.empty(heap, 32);
+    if store_at >= 0 {
+        store = buffer.append(heap, store, arg(args, store_at));
+    } else {
+        store = buffer.append(heap, store, ".cancho-vcs");
+    }
+    var status = 0;
+    borrow store as &sb in {
+        let got = clistore.read_manifest_with(heap, fs, buffer.bytes(sb), true);
+        let clistore.Pins { records, why } = got;
+        borrow why as &wb in {
+            if buffer.size(wb) > 0 {
+                console.error_all(io, buffer.bytes(wb));
+                console.error_all(io, "\n");
+                status = 3;
+            }
+        }
+        if status == 0 {
+            borrow records as &rb in {
+                status = rows(heap, io, buffer.bytes(sb), buffer.bytes(rb));
+            }
+        }
+        buffer.drop(heap, records);
+        buffer.drop(heap, why);
+    }
+    buffer.drop(heap, store);
+    return status;
+}
+
+// The rows of the log, by name: each pass takes the first record that comes after the one taken last.
+fn rows[&h, &i, &s, &r](heap: &!h Heap, io: &!i Io, store: &s [byte], recs: &r [byte]) -> [heap, io_write] int {
+    if len(recs) == 0 {
+        console.write_all(io, "nothing published yet at `");
+        console.write_all(io, store);
+        console.write_all(io, "`\n");
+        return 0;
+    }
+    var out = buffer.empty(heap, 4096);
+    var taken = 0 - 1;
+    var going = true;
+    while going {
+        var best = 0 - 1;
+        var at = 0;
+        while at < len(recs) {
+            if (taken < 0 || before(recs, taken, at)) && (best < 0 || before(recs, at, best)) {
+                best = at;
+            }
+            at = record_end(recs, at);
+        }
+        if best < 0 {
+            going = false;
+        } else {
+            out = row(heap, out, recs, best);
+            taken = best;
+        }
+    }
+    clibase.show(heap, io, out);
+    return 0;
+}

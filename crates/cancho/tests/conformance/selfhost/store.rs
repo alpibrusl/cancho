@@ -29,7 +29,7 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 /// Every directory beneath `dir` (and `dir`) that holds a `manifest.json`, as paths relative to `dir`.
-fn stores_in(dir: &Path, at: &Path, found: &mut Vec<String>) {
+pub(super) fn stores_in(dir: &Path, at: &Path, found: &mut Vec<String>) {
     if at.join("manifest.json").is_file() {
         found.push(at.strip_prefix(dir).unwrap().display().to_string());
     }

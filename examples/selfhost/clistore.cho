@@ -142,6 +142,11 @@ fn replaced_slurped[&h](heap: &!h Heap, old: Slurped, new: Slurped) -> [heap] Sl
 
 // The declarations of the manifest of the store in `dir`: `SIG NAME STAGE SOURCE` each, in the order of the file. No manifest is an empty one.
 pub fn read_manifest[&h, &f, &d](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte]) -> [heap, fs_read(""), file_read] Pins {
+    return read_manifest_with(heap, fs, dir, false);
+}
+
+// `read_manifest`, and with `with_std` a fifth field in each record: `1` if the declaration's `uses_std` is true, `0` if it is false or not there (as `serde(default)` reads it).
+pub fn read_manifest_with[&h, &f, &d](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte], with_std: bool) -> [heap, fs_read(""), file_read] Pins {
     let got = slurp(heap, fs, dir, "manifest.json", "the manifest");
     let Slurped { body, absent, why } = got;
     var records = buffer.empty(heap, 0);
@@ -177,6 +182,15 @@ pub fn read_manifest[&h, &f, &d](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte]) 
                             line = add_string(heap, line, jm, src, name_at);
                             line = add_string(heap, line, jm, src, stage_at);
                             line = add_string(heap, line, jm, src, source_at);
+                            if with_std {
+                                let std_at = member(jm, src, value, "uses_std");
+                                if std_at >= 0 && jsonread.kind(jm, std_at) == jsonread.k_true() {
+                                    line = buffer.append(heap, line, "1");
+                                } else {
+                                    line = buffer.append(heap, line, "0");
+                                }
+                                line = buffer.push(heap, line, byte_of(0));
+                            }
                             if is_text(jm, keyed) && is_text(jm, name_at) && is_text(jm, stage_at) && is_text(jm, source_at) {
                                 borrow line as &lb in {
                                     records = buffer.append(heap, records, buffer.bytes(lb));
