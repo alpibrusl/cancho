@@ -284,6 +284,17 @@ fn a_store_that_does_not_hold_is_refused_in_cancho_as_cancho_install_refuses_it(
             }),
         ),
         (
+            "a name published twice, the signature that sorts last being no longer produced",
+            Box::new(|at| {
+                let manifest = std::fs::read_to_string(at.join("manifest.json")).unwrap();
+                let mut value: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+                let entries = value["entries"].as_object_mut().unwrap();
+                let copy = entries.values().next().unwrap().clone();
+                entries.insert("f".repeat(64), copy);
+                std::fs::write(at.join("manifest.json"), value.to_string()).unwrap();
+            }),
+        ),
+        (
             "a manifest that is not JSON",
             Box::new(|at| std::fs::write(at.join("manifest.json"), "{").unwrap()),
         ),

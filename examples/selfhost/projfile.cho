@@ -1258,4 +1258,3 @@ pub fn sorted_paths[&h, &p](heap: &!h Heap, paths: &p [byte]) -> [heap] buffer.B
     }
     return out;
 }
-

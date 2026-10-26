@@ -327,7 +327,7 @@ pub fn read_requirements[&h, &f, &d](heap: &!h Heap, fs: &f Fs(""), dir: &d [byt
 // ------------------------------------------------------------- the checks ---
 
 fn is_word_char(c: int) -> [] bool {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+    return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_';
 }
 
 // Does the source `text` import from `std`? Read off the text with the comments and the string and character literals set aside, so that a comment or a string saying
@@ -397,7 +397,7 @@ pub fn normalized[&h, &p](heap: &!h Heap, path: &p [byte]) -> [heap] buffer.Buff
             end = end + 1;
         }
         let part = path[at..end];
-        if len(part) == 0 || (len(part) == 1 && lc.at(part, 0) == '.') {
+        if len(part) == 0 || len(part) == 1 && lc.at(part, 0) == '.' {
             at = end + 1;
         } else if len(part) == 2 && bytes.equal(part, "..") {
             var cut = 0 - 1;
@@ -776,7 +776,7 @@ fn select_all[&h, &m](heap: &!h Heap, manifest: &m [byte]) -> [heap] buffer.Buff
             let o_name_end = projfile.field_end(manifest, o_name_at, len(manifest));
             if other != at && o_name_end - o_name_at == name_end - name_at && bytes.equal(manifest[o_name_at..o_name_end], manifest[name_at..name_end]) {
                 let order = satisfytext.compare(manifest[other..o_sig_end], manifest[at..sig_end]);
-                if order > 0 || (order == 0 && other < at) {
+                if order > 0 || order == 0 && other < at {
                     last = false;
                 }
             }
