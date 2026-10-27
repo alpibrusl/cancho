@@ -549,8 +549,10 @@ pub fn note_row_args[&s, &x](st: &!s [int], text: &x [byte], open: int) -> [] bo
     return ok;
 }
 
-// The function being checked calls the foreign function `it`: kept (as a row with the label 100) for the symbols `cancho authority` lists.
-pub fn note_extern[&s](st: &!s [int], it: int) -> [] int {
+// The function being checked calls the foreign function `it`: it performs the labels of its row, with their arguments, and `cancho authority` lists the symbol (a row with the label 100).
+pub fn perform_extern[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int {
+    mark_arg(st);
+    followed(st, note_row_args(st, text, ast.get(st, it, 9)));
     if st[64] >= 0 {
         instances.note_label(st, st[64], 100, it);
     }
