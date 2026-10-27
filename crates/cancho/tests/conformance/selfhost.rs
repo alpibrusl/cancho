@@ -16,6 +16,7 @@
 
 use super::*;
 
+mod authority;
 mod bootstrap;
 mod cases;
 mod cli;
@@ -322,6 +323,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "prune.cho",
         "testscan.cho",
         "layoutrep.cho",
+        "authority.cho",
         "satisfytext.cho",
         "clibase.cho",
         "clifmt.cho",

@@ -73,6 +73,7 @@ fn own_source(root_module: &str) -> String {
         "prune",
         "testscan",
         "layoutrep",
+        "authority",
         "satisfytext",
         "driver",
     ] {

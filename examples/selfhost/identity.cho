@@ -1423,6 +1423,18 @@ fn hex_into[&h, &j](heap: &!h Heap, out: buffer.Buffer, d: &!j [int], from: int)
     return b;
 }
 
+// The string literal token `tok` once its escapes are read, added to `out`.
+pub fn decoded_text[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int], text: &x [byte], tok: int) -> [heap] buffer.Buffer {
+    var b = out;
+    let n = decoded_length(st, text, tok);
+    var i = 0;
+    while i < n {
+        b = buffer.push(heap, b, byte_of(decoded_byte(st, text, tok, i)));
+        i = i + 1;
+    }
+    return b;
+}
+
 // The module of the declaration `id` (its path, with the dots, and empty for the root), a NUL, its name, and a NUL, added to `out`.
 fn module_and_name[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int], text: &x [byte], id: int) -> [heap] buffer.Buffer {
     var b = out;
@@ -1444,7 +1456,7 @@ fn module_and_name[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int]
 }
 
 // The labels of the effect row whose `[` is token `open`, in the order they are written, each as `name` or `name("value")` (the value as the literal decodes) and a NUL, added to `out`.
-fn row_labels[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int], text: &x [byte], open: int) -> [heap] buffer.Buffer {
+pub fn row_labels[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int], text: &x [byte], open: int) -> [heap] buffer.Buffer {
     var b = out;
     var k = open + 1;
     while ast.code_at(st, k) != code(lc.Tok::RBracket) {

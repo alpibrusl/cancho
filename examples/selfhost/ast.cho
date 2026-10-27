@@ -155,10 +155,15 @@ pub fn const_region() -> [] int {
 }
 
 // What the instances of generic functions take in the state (`instances.cho`): a header of 16, four slots for each
-// of 1,024 instances, and the 65,536 slots their type arguments are written in; then 256 slots of scratch for the value of a float literal (`floats.cho`), and 1,100 for the expressions a `defer`
-// has waiting (`body.cho`): how many, then 1,024 of them.
+// of 1,024 instances, and the 65,536 slots their type arguments are written in; then 256 slots of scratch for the value of a float literal (`floats.cho`), 1,100 for the expressions a `defer`
+// has waiting (`body.cho`): how many, then 1,024 of them, and the rows of `auth_region`.
 pub fn inst_region() -> [] int {
-    return 16 + 4096 + 65536 + 256 + 1100;
+    return 16 + 4096 + 65536 + 256 + 1100 + auth_region();
+}
+
+// What `cancho authority` keeps of the labels with an argument a function performs (`instances.cho`): a count, and three slots for each of 8,192 of them.
+pub fn auth_region() -> [] int {
+    return 1 + 3 * 8192;
 }
 
 pub fn emit_per() -> [] int {

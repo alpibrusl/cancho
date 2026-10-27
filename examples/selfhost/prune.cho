@@ -75,7 +75,7 @@ fn key_at[&r](text: &r [byte], at: int) -> [] int {
 }
 
 // The key of the function defined by the line `from..eol`, or -1 if it defines none of ours.
-fn define_key[&r](text: &r [byte], from: int, eol: int) -> [] int {
+pub fn define_key[&r](text: &r [byte], from: int, eol: int) -> [] int {
     if !begins(text, from, "define ") {
         return 0 - 1;
     }

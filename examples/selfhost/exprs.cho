@@ -386,7 +386,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         if which == 12 {
             ex.push_value(st, second);
         }
-        atoms.push_prefix(st, text, c.ty, netcode.prelude_named("Fs"), from, to);
+        atoms.push_prefix(st, text, id, c.ty, netcode.prelude_named("Fs"), from, to);
         let v = filecode.on_path(st, which == 12);
         let done = types.make_prelude(st, netcode.prelude_named("Done"));
         return ex.in_reg(done, filecode.answer_enum(st, done, 0, v));
@@ -409,7 +409,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
             return ex.skip(st, from, to);
         }
         ex.push_value(st, path);
-        atoms.push_prefix(st, text, c.ty, netcode.prelude_named("Fs"), from, to);
+        atoms.push_prefix(st, text, id, c.ty, netcode.prelude_named("Fs"), from, to);
         ex.push_value(st, bytes);
         return ex.in_reg(1, filecode.fs_once(st, which == 9));
     }
@@ -428,7 +428,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
             return ex.skip(st, from, to);
         }
         ex.push_value(st, path);
-        atoms.push_prefix(st, text, c.ty, netcode.prelude_named("Fs"), from, to);
+        atoms.push_prefix(st, text, id, c.ty, netcode.prelude_named("Fs"), from, to);
         let v = filecode.open_path(st, which - 2);
         let opened = types.make_prelude(st, tables.prelude_opened());
         return ex.in_reg(opened, filecode.answer_enum(st, opened, 0, v));
@@ -475,7 +475,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
     if filecode.under(which) {
         atoms.push_under(st, text, c.ty, from, to);
     } else {
-        atoms.push_prefix(st, text, c.ty, netcode.prelude_named("Exec"), from, to);
+        atoms.push_prefix(st, text, id, c.ty, netcode.prelude_named("Exec"), from, to);
     }
     if !ast.ok(st) {
         return ex.nothing();
@@ -1442,7 +1442,7 @@ pub fn builtin_call[&s, &x](st: &!s [int], text: &x [byte], id: int, b: int) -> 
 
 // A call of a foreign function, in compile mode: its arguments against the declaration, then the call.
 pub fn extern_call[&s, &x](st: &!s [int], text: &x [byte], id: int, it: int) -> [] ex.Ex {
-    effects.mark_arg(st);
+    effects.perform_extern(st, text, it);
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
     let rk = externcode.return_kind(st, text, ast.get(st, it, 10));
@@ -1565,9 +1565,10 @@ pub fn net_call[&s, &x](st: &!s [int], text: &x [byte], id: int, number: int) ->
         return ex.nothing();
     }
     if holds_bound {
-        atoms.push_call_bound(st, text, cap, which, from, to);
+        atoms.push_call_bound(st, text, id, cap, which, from, to);
     }
     if which == 119 {
+        effects.note_signals(st, cap);
         emit.push_arg(st, 1, true, netcode.signal_bits(st, text, cap), 0 - 1);
     }
     if which == 36 {

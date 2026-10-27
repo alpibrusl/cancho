@@ -395,7 +395,7 @@ pub fn load_files[&h, &i, &f, &s, &e, &m](heap: &!h Heap, io: &!i Io, fs: &f Fs(
 // where `--std` of the Rust command finds it). It is checked and its code is written and thrown away, as `cancho build` would, by the build of
 // the compiler in cancho (`driver.run_many`, mode 5); `ids` then writes the identity of every declaration (mode 9). The target is the one `--host`
 // names (linux, darwin or linux-aarch64; the default is linux): a program cannot ask what it runs on.
-pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, ids: bool, layout: bool, build: bool, run: bool) -> [heap, io_read, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, ids: bool, layout: bool, build: bool, run: bool, authority: int) -> [heap, io_read, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
     var json = false;
     var forward = false;
     var host = 0;
@@ -410,7 +410,7 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
         let word = arg(args, n);
         if bytes.equal(word, "--output") {
             n = n + 1;
-            if !ids && !layout && !build && n < arg_count(args) && bytes.equal(arg(args, n), "json") {
+            if !ids && !layout && !build && authority != 2 && n < arg_count(args) && bytes.equal(arg(args, n), "json") {
                 json = true;
             } else {
                 return clibase.usage_error(heap, io, "`--output` needs a form: json (of `check`)");
@@ -516,16 +516,25 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             if layout {
                 mode = 12;
             }
+            if authority == 2 {
+                mode = 17;
+            }
+            if authority == 1 {
+                mode = 18;
+                if json {
+                    mode = 19;
+                }
+            }
             let built = driver.run_many(heap, io, buffer.bytes(r), mode, host);
             borrow built as &b in {
                 borrow laid as &lt in {
                     borrow mut lens as &!lb in {
                         borrow names as &nm in {
-                            status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), json, b.status, b.rule, b.from, b.to);
+                            status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), json && authority == 0, b.status, b.rule, b.from, b.to);
                         }
                     }
                 }
-                if status == 0 && layout {
+                if status == 0 && (layout || authority != 0) {
                     buffer.write(io, b.ir);
                 }
                 if status == 0 && build {

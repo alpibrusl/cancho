@@ -33,18 +33,20 @@ import selfhost.tables;
 // The prefix a capability was narrowed to, as the pointer and the length of its literal pushed on the stack
 // of arguments; a capability that was not narrowed is a null and 0, which every path is under. Using the capability
 // performs a label with an argument (the prefix).
-pub fn push_prefix[&s, &x](st: &!s [int], text: &x [byte], cap: int, want: int, from: int, to: int) -> [] int {
+pub fn push_prefix[&s, &x](st: &!s [int], text: &x [byte], id: int, cap: int, want: int, from: int, to: int) -> [] int {
     effects.mark_arg(st);
+    effects.followed(st, effects.note_call(st, text, id, cap));
     return push_bound(st, text, cap, want, from, to);
 }
 
 // The bound a call checks. For a dial (`connect`, `tcp_connect`, `tcp_connect_start`, `udp_connect`), from edition 10 its host half is
 // matched exactly (`docs/net-bounds.md` 2.3), which the runtime is told by a byte 1 ahead of the literal.
-pub fn push_call_bound[&s, &x](st: &!s [int], text: &x [byte], cap: int, which: int, from: int, to: int) -> [] int {
+pub fn push_call_bound[&s, &x](st: &!s [int], text: &x [byte], id: int, cap: int, which: int, from: int, to: int) -> [] int {
     if which != 33 && which != 37 && which != 110 && which != 129 {
-        return push_prefix(st, text, cap, 0 - 1, from, to);
+        return push_prefix(st, text, id, cap, 0 - 1, from, to);
     }
     effects.mark_arg(st);
+    effects.followed(st, effects.note_call(st, text, id, cap));
     var inner = cap;
     if types.is_ref(st, inner) {
         inner = types.ref_inner(st, inner);
