@@ -186,7 +186,15 @@ fn lock_both(
     cache: &Path,
     rust_cache: &Path,
 ) -> Result<(), String> {
-    steps_both(exe, work, case.name, &case.files, &[case.args.clone()], cache, rust_cache)
+    steps_both(
+        exe,
+        work,
+        case.name,
+        &case.files,
+        std::slice::from_ref(&case.args),
+        cache,
+        rust_cache,
+    )
 }
 
 /// A command run by both commands, one after the other in a directory each, made alike: each step is the arguments after `vcs` (`lock` unless the first is `fetch`, `resolve` or
@@ -985,8 +993,7 @@ fn vcs_publish_in_cancho_logs_a_file_like_cancho_vcs_publish() {
     let mut failures = Vec::new();
     let blob = |relative: &str| -> PathBuf {
         let dir = packages.join(relative).join("sources");
-        let first = std::fs::read_dir(dir).unwrap().next().unwrap().unwrap().path();
-        first
+        std::fs::read_dir(dir).unwrap().next().unwrap().unwrap().path()
     };
     let s = |t: &str| t.to_owned();
     // The stores of `packages/`, from their sources.
