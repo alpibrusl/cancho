@@ -20,6 +20,7 @@ import selfhost.cliorigin;
 import selfhost.clivcs;
 import selfhost.clilock;
 import selfhost.clifetch;
+import selfhost.cliproject;
 import selfhost.jsonwrite;
 
 // The words of a `vcs publish` command line: the store (-1 if `--store` was not given), the directory of `--dir`, the arguments of `--requires` and the files (each followed by a NUL),
@@ -543,22 +544,6 @@ fn require_walked[&h, &i, &f, &x, &c, &k, &s, &t, &l, &n](heap: &!h Heap, io: &!
 
 // ------------------------------------------------------------- the file ---
 
-// Is there a file at `path`?
-fn exists[&f, &p](fs: &f Fs(""), path: &p [byte]) -> [fs_read("")] bool {
-    if walk.dotdot(path) {
-        return false;
-    }
-    match open_read(fs, path) {
-        Opened::Ok(file) => {
-            file_close(file);
-            return true;
-        }
-        Opened::Failed(reason) => {
-            return false;
-        }
-    }
-}
-
 // `text` written to `path` through `path.tmp`: 0, or 1.
 fn put_file[&h, &f, &p, &b](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], text: &b [byte]) -> [heap, fs_write(""), file_write] int {
     let temporary = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(path) + 8), path), ".tmp");
@@ -585,7 +570,7 @@ fn put_new[&h, &f, &d, &n, &b](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte], na
     let path = cliorigin.joined(heap, dir, name);
     var result = 0;
     borrow path as &pb in {
-        if !exists(fs, buffer.bytes(pb)) {
+        if !cliproject.is_file(fs, buffer.bytes(pb)) {
             result = put_file(heap, fs, buffer.bytes(pb), text);
         }
     }
