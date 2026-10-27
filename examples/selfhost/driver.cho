@@ -688,9 +688,9 @@ fn identities[&h, &i, &s, &x](heap: &!h Heap, io: &!i Io, st: &!s [int], text: &
     return status;
 }
 
-// Mode 13: the functions of the parsed program with the identity of each signature, as `identity.listing` writes them (mode 14: `identity.pairs`, the signature and the body of each); `st[63]` is 1 if a literal of the program
+// Mode 13: the functions of the parsed program with the identity of each signature, as `identity.listing` writes them (mode 14: `identity.pairs`, the signature and the body of each; mode 15: `identity.published`, with the name and the declared row); `st[63]` is 1 if a literal of the program
 // is one whose bits are not worked out.
-fn identity_list[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte], tokens: int, both: bool) -> [heap] buffer.Buffer {
+fn identity_list[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte], tokens: int, which: int) -> [heap] buffer.Buffer {
     var items = 0;
     var at = st[15];
     while at >= 0 {
@@ -703,7 +703,9 @@ fn identity_list[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte], tok
         let d = contents(db);
         identity.layout(d, tokens, items);
         buffer.drop(heap, out);
-        if both {
+        if which == 2 {
+            out = identity.published(heap, st, text, d);
+        } else if which == 1 {
             out = identity.pairs(heap, st, text, d);
         } else {
             out = identity.listing(heap, st, text, d);
@@ -774,13 +776,13 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
             at = header_end(raw, at) + n;
             f = f + 1;
         }
-        if mode >= 3 && mode != 9 && mode != 11 && mode != 13 && mode != 14 {
+        if mode >= 3 && mode != 9 && mode != 11 && mode != 13 && mode != 14 && mode != 15 {
             // A string literal is one token and as many bytes, and its code is the bytes again, spelt out: the room the code is written in is
             // counted by the token, so it is raised by the length of the text.
             tokens = tokens + len(text) / 50;
         }
         var size = ast.size_for(tokens, files);
-        if mode == 9 || mode == 13 || mode == 14 {
+        if mode == 9 || mode == 13 || mode == 14 || mode == 15 {
             // The identities only need the room the printer works floats out in.
             size = size + ast.const_region() + ast.inst_region();
         } else if mode >= 3 && mode != 11 {
@@ -789,7 +791,7 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
         let state = box_slice(heap, size, 0);
         borrow mut state as &!b in {
             let st = contents(b);
-            if mode == 9 || mode == 13 || mode == 14 {
+            if mode == 9 || mode == 13 || mode == 14 || mode == 15 {
                 ast.layout(st, tokens, files);
                 st[62] = ast.size_for(tokens, files);
             } else if mode >= 3 && mode != 11 {
@@ -827,13 +829,13 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                 } else {
                     status = identities(heap, io, st, text, tokens);
                 }
-            } else if mode == 13 || mode == 14 {
+            } else if mode == 13 || mode == 14 || mode == 15 {
                 // The functions of the program with the identity of each signature (`identity.listing`), for `satisfy`; or, for a store being checked, the signature and the body of each.
                 if ast.parse(st, text) != 0 {
                     status = 1;
                 } else {
                     buffer.drop(heap, written);
-                    written = identity_list(heap, st, text, tokens, mode == 14);
+                    written = identity_list(heap, st, text, tokens, mode - 13);
                     status = st[63];
                 }
             } else if mode == 10 {

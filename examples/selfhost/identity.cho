@@ -1423,6 +1423,54 @@ fn hex_into[&h, &j](heap: &!h Heap, out: buffer.Buffer, d: &!j [int], from: int)
     return b;
 }
 
+// The module of the declaration `id` (its path, with the dots, and empty for the root), a NUL, its name, and a NUL, added to `out`.
+fn module_and_name[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int], text: &x [byte], id: int) -> [heap] buffer.Buffer {
+    var b = out;
+    let unit = ast.get(st, id, 13);
+    if unit > 0 {
+        let first = ast.module_first(st, unit);
+        var n = 0;
+        while n < ast.module_len(st, unit) {
+            if n > 0 {
+                b = buffer.push(heap, b, byte_of('.'));
+            }
+            b = buffer.append(heap, b, text[ast.tstart(st, first + 2 * n)..ast.tend(st, first + 2 * n)]);
+            n = n + 1;
+        }
+    }
+    b = buffer.push(heap, b, byte_of(0));
+    b = buffer.append(heap, b, text[ast.tstart(st, ast.get(st, id, 4))..ast.tend(st, ast.get(st, id, 4))]);
+    return buffer.push(heap, b, byte_of(0));
+}
+
+// The labels of the effect row whose `[` is token `open`, in the order they are written, each as `name` or `name("value")` (the value as the literal decodes) and a NUL, added to `out`.
+fn row_labels[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int], text: &x [byte], open: int) -> [heap] buffer.Buffer {
+    var b = out;
+    var k = open + 1;
+    while ast.code_at(st, k) != code(lc.Tok::RBracket) {
+        b = buffer.append(heap, b, text[ast.tstart(st, k)..ast.tend(st, k)]);
+        let name_token = k;
+        k = k + 1;
+        if ast.code_at(st, k) == code(lc.Tok::LParen) {
+            let literal = k + 1;
+            b = buffer.append(heap, b, "(\"");
+            let n = decoded_length(st, text, literal);
+            var i = 0;
+            while i < n {
+                b = buffer.push(heap, b, byte_of(decoded_byte(st, text, literal, i)));
+                i = i + 1;
+            }
+            b = buffer.append(heap, b, "\")");
+            k = k + 3;
+        }
+        b = buffer.push(heap, b, byte_of(0));
+        if ast.code_at(st, k) == code(lc.Tok::Comma) {
+            k = k + 1;
+        }
+    }
+    return b;
+}
+
 // For each function, foreign function and static of the program, in the order `print` writes them: the 64 hexadecimal digits of the identity of its signature, a space, the 64 of
 // its body, and a newline. This is what a published store records for a declaration (`sig_id` and `stage_id`, `docs/cli-in-cancho.md` section 22), so that it can be checked
 // without the module and the name. Empty, with `st[63]` 1, if a floating-point literal of the program is one whose bits are not worked out.
@@ -1461,6 +1509,50 @@ pub fn pairs[&h, &s, &x, &j](heap: &!h Heap, st: &!s [int], text: &x [byte], d: 
     return out;
 }
 
+// What a store records for each declaration, with the name it is published under: for each function, foreign function and static of the program, in the order `print` writes them,
+// `module`, a NUL, `name`, a NUL, the 64 hexadecimal digits of the identity of the signature, a NUL, the 64 of the body, a NUL, then the labels of the declared effect row (none for a
+// static), each as `row_labels` writes it, and a newline (`docs/cli-in-cancho.md` section 31). Empty, with `st[63]` 1, if a floating-point literal of the program is one whose bits are
+// not worked out.
+pub fn published[&h, &s, &x, &j](heap: &!h Heap, st: &!s [int], text: &x [byte], d: &!j [int]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    if !floats.all_literals_ok(st, text) {
+        st[63] = 1;
+        return out;
+    }
+    hash_all(st, text, d);
+    var id = st[15];
+    while id >= 0 {
+        if is_signature(st, id) {
+            let at = entry(st, text, d, d[34], ast.get(st, id, 13), ast.get(st, id, 4), false);
+            out = module_and_name(heap, out, st, text, id);
+            out = hex_into(heap, out, d, at + 3);
+            out = buffer.push(heap, out, byte_of(0));
+            if ast.is_kind(st, id, kinds.NK::IFn) {
+                hash_body(st, text, d, id);
+                out = hex_into(heap, out, d, 16);
+            } else {
+                out = hex_into(heap, out, d, at + 3);
+            }
+            out = buffer.push(heap, out, byte_of(0));
+            out = row_labels(heap, out, st, text, ast.get(st, id, 9));
+            out = buffer.push(heap, out, byte_of('\n'));
+        }
+        if ast.is_kind(st, id, kinds.NK::IStatic) {
+            out = module_and_name(heap, out, st, text, id);
+            hash_static_type(st, text, d, id);
+            out = hex_into(heap, out, d, 16);
+            out = buffer.push(heap, out, byte_of(0));
+            hash_static_body(st, text, d, id);
+            out = hex_into(heap, out, d, 16);
+            out = buffer.push(heap, out, byte_of(0));
+            out = buffer.push(heap, out, byte_of('\n'));
+        }
+        id = ast.next(st, id);
+    }
+    st[63] = 0;
+    return out;
+}
+
 // The functions of the program (the signatures of a function and of a foreign function), in the order they are declared, as `module`, a NUL, `name`, a NUL, the 64
 // hexadecimal digits of the identity of the signature, and a newline, for each; `satisfy` says which of them a candidate provides. The module is its path, with the dots, and
 // empty for the root. It is empty too if a floating-point literal of the program is one whose bits are not worked out (`st[63]` is 1 then).
@@ -1475,21 +1567,7 @@ pub fn listing[&h, &s, &x, &j](heap: &!h Heap, st: &!s [int], text: &x [byte], d
     while id >= 0 {
         if is_signature(st, id) {
             let at = entry(st, text, d, d[34], ast.get(st, id, 13), ast.get(st, id, 4), false);
-            let unit = ast.get(st, id, 13);
-            if unit > 0 {
-                let first = ast.module_first(st, unit);
-                var n = 0;
-                while n < ast.module_len(st, unit) {
-                    if n > 0 {
-                        out = buffer.push(heap, out, byte_of('.'));
-                    }
-                    out = buffer.append(heap, out, text[ast.tstart(st, first + 2 * n)..ast.tend(st, first + 2 * n)]);
-                    n = n + 1;
-                }
-            }
-            out = buffer.push(heap, out, byte_of(0));
-            out = buffer.append(heap, out, text[ast.tstart(st, ast.get(st, id, 4))..ast.tend(st, ast.get(st, id, 4))]);
-            out = buffer.push(heap, out, byte_of(0));
+            out = module_and_name(heap, out, st, text, id);
             out = hex_into(heap, out, d, at + 3);
             out = buffer.push(heap, out, byte_of('\n'));
         }

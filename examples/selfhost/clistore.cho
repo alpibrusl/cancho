@@ -542,32 +542,35 @@ pub fn field_from[&r](recs: &r [byte], at: int, k: int) -> [] int {
 
 // What a source was compiled to: the status (0 well, 2 a file that could not be read, 1 refused: the refusal has been said), and, if well, the signature and the body
 // of each declaration (`identity.pairs`, mode 14).
-res struct Compiled {
+pub res struct Compiled {
     ran: int,
     found: buffer.Buffer,
 }
 
-// The program of the files `files` (names, each followed by a NUL) checked, and, if it is, the pairs of identities of its declarations.
-fn compile[&h, &i, &f, &l, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), files: &l [byte], with_std: bool, std_path: &s [byte]) -> [heap, io_write, err_write, fs_read(""), file_read] Compiled {
+// The program of the files `files` (names, each followed by a NUL) checked (if `check`), and, if it is, what mode `last` of the driver lists for it: the pairs of identities (14), or
+// the names, identities and declared rows (15).
+pub fn compile[&h, &i, &f, &l, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), files: &l [byte], with_std: bool, std_path: &s [byte], check: bool, last: int) -> [heap, io_write, err_write, fs_read(""), file_read] Compiled {
     let loaded = cliprog.load_files(heap, io, fs, buffer.append(heap, buffer.empty(heap, len(files) + 1), files), with_std, std_path, "", "");
     let cliprog.Loaded { names, raw, laid, lens, count, read_status } = loaded;
     var state = read_status;
     var pairs = buffer.empty(heap, 0);
     if state == 0 {
         borrow raw as &r in {
-            let built = driver.run_many(heap, io, buffer.bytes(r), 10, 0);
-            borrow built as &b in {
-                borrow laid as &lt in {
-                    borrow mut lens as &!lb in {
-                        borrow names as &nm in {
-                            state = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to);
+            if check {
+                let built = driver.run_many(heap, io, buffer.bytes(r), 10, 0);
+                borrow built as &b in {
+                    borrow laid as &lt in {
+                        borrow mut lens as &!lb in {
+                            borrow names as &nm in {
+                                state = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to);
+                            }
                         }
                     }
                 }
+                driver.discard(heap, built);
             }
-            driver.discard(heap, built);
             if state == 0 {
-                let again = driver.run_many(heap, io, buffer.bytes(r), 14, 0);
+                let again = driver.run_many(heap, io, buffer.bytes(r), last, 0);
                 borrow again as &b2 in {
                     if b2.status == 0 {
                         pairs = projfile.replaced(heap, pairs, buffer.append(heap, buffer.empty(heap, 64), buffer.bytes(b2.ir)));
@@ -623,7 +626,7 @@ fn blob_path[&h, &t, &w](heap: &!h Heap, store: &t [byte], hash: &w [byte]) -> [
 }
 
 // Does any of the sources of `context` import `std`? (The third field of each record.)
-fn context_uses_std[&c](context: &c [byte]) -> [] bool {
+pub fn context_uses_std[&c](context: &c [byte]) -> [] bool {
     var at = 0;
     while at < len(context) {
         let flag = field_from(context, at, 2);
@@ -636,7 +639,7 @@ fn context_uses_std[&c](context: &c [byte]) -> [] bool {
 }
 
 // The names of the files of `context`, each followed by a NUL.
-fn context_paths[&h, &c](heap: &!h Heap, context: &c [byte]) -> [heap] buffer.Buffer {
+pub fn context_paths[&h, &c](heap: &!h Heap, context: &c [byte]) -> [heap] buffer.Buffer {
     var out = buffer.empty(heap, 0);
     var at = 0;
     while at < len(context) {
@@ -712,7 +715,7 @@ fn verify_group[&h, &i, &f, &t, &w, &s, &c, &x](heap: &!h Heap, io: &!i Io, fs: 
                             var state = 2;
                             var pairs = buffer.empty(heap, 0);
                             borrow files as &fb in {
-                                let made = compile(heap, io, fs, buffer.bytes(fb), uses, std_path);
+                                let made = compile(heap, io, fs, buffer.bytes(fb), uses, std_path, true, 14);
                                 let Compiled { ran, found } = made;
                                 state = ran;
                                 pairs = projfile.replaced(heap, pairs, found);
@@ -1065,7 +1068,7 @@ fn replaced_verified[&h](heap: &!h Heap, old: Verified, new: Verified) -> [heap]
     return new;
 }
 
-fn walk_calm[&w](walk: &w Walk) -> [] bool {
+pub fn walk_calm[&w](walk: &w Walk) -> [] bool {
     return buffer.size(walk.bad) == 0;
 }
 
@@ -1142,7 +1145,7 @@ fn walk_cycle[&h, &t](heap: &!h Heap, walk: Walk, store: &t [byte]) -> [heap] Wa
 
 // The store `store` and everything it requires, checked: `lock` (`NAME SIG STAGE SOURCE` each) is what the requirer pinned in it. Each store on the way is on `seen` while it is
 // being walked (a store met again on the path is a cycle), and each name pinned is on `pins` (a name pinned to two signatures is a diamond). The first problem ends the walk.
-fn closure[&h, &i, &x, &c, &f, &k, &s, &t, &l](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], std_path: &s [byte], state: Walk, store: &t [byte], lock: &l [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, dir_read, exec(""), clock, poll] Walk {
+pub fn closure[&h, &i, &x, &c, &f, &k, &s, &t, &l](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], std_path: &s [byte], state: Walk, store: &t [byte], lock: &l [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, dir_read, exec(""), clock, poll] Walk {
     var walk = state;
     var cycle = false;
     borrow walk as &wk in {
@@ -1209,12 +1212,12 @@ fn closure[&h, &i, &x, &c, &f, &k, &s, &t, &l](heap: &!h Heap, io: &!i Io, exec:
 }
 
 // What the walk of one requirement gave: its context merged into `gathered`, and the walk with an empty context again.
-res struct Collected {
+pub res struct Collected {
     gathered_now: buffer.Buffer,
     walk_now: Walk,
 }
 
-fn walk_collect[&h](heap: &!h Heap, walk: Walk, gathered: buffer.Buffer) -> [heap] Collected {
+pub fn walk_collect[&h](heap: &!h Heap, walk: Walk, gathered: buffer.Buffer) -> [heap] Collected {
     let Walk { ctx, seen, pins, bad } = walk;
     var merged = gathered;
     borrow ctx as &cb in {
