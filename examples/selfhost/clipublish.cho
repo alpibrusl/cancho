@@ -1,0 +1,914 @@
+edition 7;
+module selfhost.clipublish;
+
+// clipublish.cho -- `vcs publish FILE`, a port of `cmd_publish` and `publish_one` (`crates/cancho/src/vcs_cli.rs`, `docs/cli-in-cancho.md` section 31): the declarations of a file logged as
+// operations in a store, against the stores it requires.
+//
+// The store is written as the Rust code writes it (`jsonwrite.cho`): `ops/OPID.json` for each declaration, `sources/HASH.cho` for the file, `manifest.json`, and `requires/N.json` for
+// each store required. Exit status: 1 refused, 2 a bad command line, 3 the environment. `--cache DIR` (§23) and `--std-dir DIR` (§24) stand for what the Rust command has inside it.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.walk;
+import selfhost.filewrite;
+import selfhost.projfile;
+import selfhost.clibase;
+import selfhost.clistore;
+import selfhost.cliorigin;
+import selfhost.clivcs;
+import selfhost.clilock;
+import selfhost.clifetch;
+import selfhost.cliproject;
+import selfhost.jsonwrite;
+
+// The words of a `vcs publish` command line: the store (-1 if `--store` was not given), the directory of `--dir`, the arguments of `--requires` and the files (each followed by a NUL),
+// `--std`, the values of `--cache` and `--std-dir`, and `bad` (the status of a usage error that has been said).
+pub res struct Publishing {
+    requires: buffer.Buffer,
+    files: buffer.Buffer,
+    store_at: int,
+    dir_at: int,
+    cache_at: int,
+    std_at: int,
+    with_std: bool,
+    bad: int,
+}
+
+fn publish_words[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args) -> [heap, err_write, args] Publishing {
+    var requires = buffer.empty(heap, 0);
+    var files = buffer.empty(heap, 0);
+    var store_at = 0 - 1;
+    var dir_at = 0 - 1;
+    var cache_at = 0 - 1;
+    var std_at = 0 - 1;
+    var with_std = false;
+    var bad = 0;
+    var n = 3;
+    while n < arg_count(args) && bad == 0 {
+        let word = arg(args, n);
+        let valued = bytes.equal(word, "--store") || bytes.equal(word, "--dir") || bytes.equal(word, "--requires") || bytes.equal(word, "--cache") || bytes.equal(word, "--std-dir");
+        if valued && n + 1 >= arg_count(args) {
+            if bytes.equal(word, "--dir") {
+                bad = clibase.usage_error(heap, io, "`--dir` needs a directory");
+            } else if bytes.equal(word, "--requires") {
+                bad = clibase.usage_error(heap, io, "`--requires` needs `<lock-file>:<dep-store>`");
+            } else {
+                bad = clifetch.needs_value(heap, io, word);
+            }
+        } else if valued {
+            n = n + 1;
+            if bytes.equal(word, "--store") {
+                store_at = n;
+            } else if bytes.equal(word, "--dir") {
+                dir_at = n;
+            } else if bytes.equal(word, "--requires") {
+                requires = buffer.push(heap, buffer.append(heap, requires, arg(args, n)), byte_of(0));
+            } else if bytes.equal(word, "--std-dir") {
+                std_at = n;
+            } else if len(arg(args, n)) == 0 || lc.at(arg(args, n), 0) != '/' {
+                bad = clibase.usage_error(heap, io, "`--cache` needs an absolute directory");
+            } else {
+                cache_at = n;
+            }
+        } else if bytes.equal(word, "--std") {
+            with_std = true;
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            bad = clibase.unknown_option(heap, io, word);
+        } else {
+            files = buffer.push(heap, buffer.append(heap, files, word), byte_of(0));
+        }
+        n = n + 1;
+    }
+    return Publishing { requires: requires, files: files, store_at: store_at, dir_at: dir_at, cache_at: cache_at, std_at: std_at, with_std: with_std, bad: bad };
+}
+
+// A line on the standard error.
+fn complain[&h, &i, &a, &b, &c](heap: &!h Heap, io: &!i Io, head: &a [byte], middle: &b [byte], tail: &c [byte]) -> [heap, err_write] int {
+    return clilock.say(heap, io, head, middle, tail);
+}
+
+// `vcs publish [--store DIR] [--std] [--requires LOCK[:STORE]]... FILE`.
+pub fn publish_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    let given = publish_words(heap, io, args);
+    let Publishing { requires, files, store_at, dir_at, cache_at, std_at, with_std, bad } = given;
+    var status = bad;
+    if status == 0 {
+        borrow requires as &rb in {
+            borrow files as &fb in {
+                status = publish_checked(heap, io, args, fs, exec, clock, buffer.bytes(rb), buffer.bytes(fb), store_at, dir_at, cache_at, std_at, with_std);
+            }
+        }
+    }
+    buffer.drop(heap, requires);
+    buffer.drop(heap, files);
+    return status;
+}
+
+// How many words (each followed by a NUL) `list` has.
+fn words_in[&l](list: &l [byte]) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at < len(list) {
+        at = projfile.field_end(list, at, len(list)) + 1;
+        n = n + 1;
+    }
+    return n;
+}
+
+// The command line checked in the order the Rust command checks it.
+fn publish_checked[&h, &i, &a, &f, &x, &c, &r, &l](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, requires: &r [byte], files: &l [byte], store_at: int, dir_at: int, cache_at: int, std_at: int, with_std: bool) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    if dir_at >= 0 {
+        if len(files) > 0 || len(requires) > 0 {
+            return clibase.usage_error(heap, io, "`--dir` publishes a whole directory and works out each file's `--requires` from its imports; it cannot be combined with input files or `--requires`");
+        }
+        console.error_all(io, "`vcs publish --dir` is not ported to the command line in cancho yet\n");
+        return 3;
+    }
+    if len(files) == 0 {
+        return clibase.usage_error(heap, io, "no input file given");
+    }
+    if words_in(files) > 1 {
+        return clibase.usage_error(heap, io, "`vcs publish` takes exactly one file today; multi-file attribution (many-files.md) is not built yet");
+    }
+    let input = files[0..projfile.field_end(files, 0, len(files))];
+    var store = buffer.empty(heap, 32);
+    if store_at >= 0 {
+        store = buffer.append(heap, store, arg(args, store_at));
+    } else {
+        store = buffer.append(heap, store, ".cancho-vcs");
+    }
+    let cache = cliorigin.cache_root(heap, io, exec, clock, clifetch.value_of(args, cache_at));
+    var status = 0;
+    borrow store as &sb in {
+        borrow cache as &cb in {
+            status = publish_requires(heap, io, fs, exec, clock, buffer.bytes(cb), clifetch.value_of(args, std_at), requires, buffer.bytes(sb), input, with_std);
+        }
+    }
+    buffer.drop(heap, store);
+    buffer.drop(heap, cache);
+    return status;
+}
+
+// The first `:` of `pair`, or its length.
+fn colon_in[&p](pair: &p [byte]) -> [] int {
+    var at = 0;
+    while at < len(pair) && lc.at(pair, at) != ':' {
+        at = at + 1;
+    }
+    return at;
+}
+
+// Each lock named by `--requires` read, and the store it pins found (the first pass: what is wrong with them is said before anything is checked); then the stores walked.
+fn publish_requires[&h, &i, &f, &x, &c, &k, &s, &r, &t, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, cache: &k [byte], std_path: &s [byte], requires: &r [byte], store: &t [byte], input: &p [byte], with_std: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    var at = 0;
+    var status = 0;
+    while at < len(requires) && status == 0 {
+        let end = projfile.field_end(requires, at, len(requires));
+        let pair = requires[at..end];
+        let cut = colon_in(pair);
+        status = require_found(heap, io, fs, exec, clock, cache, pair[0..cut], pair[cut..len(pair)]);
+        at = end + 1;
+    }
+    if status != 0 {
+        return status;
+    }
+    var walk = clistore.start_walk(heap, "");
+    var texts = buffer.empty(heap, 0);
+    var brought = buffer.empty(heap, 0);
+    at = 0;
+    while at < len(requires) && status == 0 {
+        let end = projfile.field_end(requires, at, len(requires));
+        let pair = requires[at..end];
+        let cut = colon_in(pair);
+        let step = require_walked(heap, io, fs, exec, clock, cache, std_path, walk, texts, brought, store, pair[0..cut], pair[cut..len(pair)]);
+        let Stepped { next, written, gathered, said } = step;
+        walk = next;
+        texts = written;
+        brought = gathered;
+        status = said;
+        at = end + 1;
+    }
+    var result = status;
+    let clistore.Walk { ctx, seen, pins, bad } = walk;
+    buffer.drop(heap, ctx);
+    buffer.drop(heap, seen);
+    buffer.drop(heap, pins);
+    if result == 0 {
+        var problems = false;
+        borrow bad as &bb in {
+            if buffer.size(bb) > 0 {
+                console.error_all(io, buffer.bytes(bb));
+                console.error_all(io, "\n");
+                problems = true;
+            }
+        }
+        if problems {
+            result = 1;
+        } else {
+            borrow brought as &xb in {
+                borrow texts as &tb in {
+                    result = publish_source(heap, io, fs, exec, clock, cache, std_path, buffer.bytes(xb), buffer.bytes(tb), store, input, with_std);
+                }
+            }
+        }
+    }
+    buffer.drop(heap, bad);
+    buffer.drop(heap, brought);
+    buffer.drop(heap, texts);
+    return result;
+}
+
+// ------------------------------------------------------------- text ---
+
+// The components of `path` as `Path::components` has them, each followed by a NUL: `/` for the root, `.` for a leading current directory, and every other part as it is (a `..` too).
+fn components[&h, &p](heap: &!h Heap, path: &p [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(path) + 8);
+    var at = 0;
+    if len(path) > 0 && lc.at(path, 0) == '/' {
+        out = buffer.append(heap, out, "/\0");
+        at = 1;
+    } else if len(path) == 1 && lc.at(path, 0) == '.' || len(path) > 1 && lc.at(path, 0) == '.' && lc.at(path, 1) == '/' {
+        out = buffer.append(heap, out, ".\0");
+    }
+    while at < len(path) {
+        var end = at;
+        while end < len(path) && lc.at(path, end) != '/' {
+            end = end + 1;
+        }
+        let part = path[at..end];
+        if len(part) > 0 && !bytes.equal(part, ".") {
+            out = buffer.push(heap, buffer.append(heap, out, part), byte_of(0));
+        }
+        at = end + 1;
+    }
+    return out;
+}
+
+// A lexical relative path from the directory `base` to `target`, computed from the components alone (`relative_from`): `..` for each component of `base` that `target` does not share,
+// then the rest of `target`. `target` as it is if one is absolute and the other not.
+fn relative_from[&h, &b, &t](heap: &!h Heap, base: &b [byte], target: &t [byte]) -> [heap] buffer.Buffer {
+    let base_absolute = len(base) > 0 && lc.at(base, 0) == '/';
+    let target_absolute = len(target) > 0 && lc.at(target, 0) == '/';
+    if base_absolute != target_absolute {
+        return buffer.append(heap, buffer.empty(heap, len(target) + 1), target);
+    }
+    let from = components(heap, base);
+    let to = components(heap, target);
+    var out = buffer.empty(heap, len(target) + 16);
+    var any = false;
+    borrow from as &fb in {
+        borrow to as &tb in {
+            let a = buffer.bytes(fb);
+            let b = buffer.bytes(tb);
+            var pa = 0;
+            var pb = 0;
+            while pa < len(a) && pb < len(b) && bytes.equal(a[pa..projfile.field_end(a, pa, len(a))], b[pb..projfile.field_end(b, pb, len(b))]) {
+                pa = projfile.field_end(a, pa, len(a)) + 1;
+                pb = projfile.field_end(b, pb, len(b)) + 1;
+            }
+            while pa < len(a) {
+                if any {
+                    out = buffer.push(heap, out, byte_of('/'));
+                }
+                any = true;
+                out = buffer.append(heap, out, "..");
+                pa = projfile.field_end(a, pa, len(a)) + 1;
+            }
+            while pb < len(b) {
+                let end = projfile.field_end(b, pb, len(b));
+                if any {
+                    out = buffer.push(heap, out, byte_of('/'));
+                }
+                any = true;
+                out = buffer.append(heap, out, b[pb..end]);
+                pb = end + 1;
+            }
+        }
+    }
+    buffer.drop(heap, from);
+    buffer.drop(heap, to);
+    return out;
+}
+
+// A requirement file: the store as the publishing store reaches it (empty if the lock says where it is) and the lock, as `Requirement` is written.
+fn requirement_text[&h, &s, &r](heap: &!h Heap, relative: &s [byte], record: &r [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.push(heap, buffer.empty(heap, 1024), byte_of(123));
+    out = jsonwrite.key(heap, out, 1, "store");
+    out = jsonwrite.string(heap, out, relative);
+    out = buffer.push(heap, out, byte_of(44));
+    out = jsonwrite.key(heap, out, 1, "lock");
+    var has = false;
+    var git = record[0..0];
+    var rev = record[0..0];
+    var path = record[0..0];
+    if len(record) > 0 && lc.at(record, 1) == '1' {
+        has = true;
+        git = clivcs.field_of(record, 3, 0);
+        rev = clivcs.field_of(record, 3, 1);
+        path = clivcs.field_of(record, 3, 2);
+    }
+    let lock = clilock.lock_text(heap, clifetch.entries_of(record), has, git, rev, path, 1);
+    borrow lock as &lb in {
+        out = buffer.append(heap, out, buffer.bytes(lb));
+    }
+    buffer.drop(heap, lock);
+    out = jsonwrite.newline(heap, out, 0);
+    return buffer.push(heap, out, byte_of(125));
+}
+
+// The manifest `table` (`SIG NAME STAGE SOURCE STD` each) written, the entries sorted by signature.
+fn manifest_text[&h, &t](heap: &!h Heap, table: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.push(heap, buffer.empty(heap, 4096), byte_of(123));
+    out = jsonwrite.key(heap, out, 1, "entries");
+    out = buffer.push(heap, out, byte_of(123));
+    var taken = 0 - 1;
+    var wrote = false;
+    var going = true;
+    while going {
+        var best = 0 - 1;
+        var at = 0;
+        while at < len(table) {
+            if (taken < 0 || clivcs.before(table, taken, at, 0)) && (best < 0 || clivcs.before(table, at, best, 0)) {
+                best = at;
+            }
+            at = clivcs.record_end(table, at, 5);
+        }
+        if best < 0 {
+            going = false;
+        } else {
+            if wrote {
+                out = buffer.push(heap, out, byte_of(44));
+            }
+            out = jsonwrite.key(heap, out, 2, clivcs.field_of(table, best, 0));
+            out = buffer.push(heap, out, byte_of(123));
+            out = jsonwrite.key(heap, out, 3, "name");
+            out = jsonwrite.string(heap, out, clivcs.field_of(table, best, 1));
+            out = buffer.push(heap, out, byte_of(44));
+            out = jsonwrite.key(heap, out, 3, "stage_id");
+            out = jsonwrite.string(heap, out, clivcs.field_of(table, best, 2));
+            out = buffer.push(heap, out, byte_of(44));
+            out = jsonwrite.key(heap, out, 3, "source_hash");
+            out = jsonwrite.string(heap, out, clivcs.field_of(table, best, 3));
+            out = buffer.push(heap, out, byte_of(44));
+            out = jsonwrite.key(heap, out, 3, "uses_std");
+            if lc.at(clivcs.field_of(table, best, 4), 0) == '1' {
+                out = buffer.append(heap, out, "true");
+            } else {
+                out = buffer.append(heap, out, "false");
+            }
+            out = jsonwrite.newline(heap, out, 2);
+            out = buffer.push(heap, out, byte_of(125));
+            wrote = true;
+            taken = best;
+        }
+    }
+    if wrote {
+        out = jsonwrite.newline(heap, out, 1);
+    }
+    out = buffer.push(heap, out, byte_of(125));
+    out = jsonwrite.newline(heap, out, 0);
+    return buffer.push(heap, out, byte_of(125));
+}
+
+// The labels in `labels` (each followed by a NUL) sorted bytewise and without repeats, as a `BTreeSet<String>` has them.
+fn sorted_labels[&h, &l](heap: &!h Heap, labels: &l [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(labels) + 1);
+    var last = 0 - 1;
+    var going = true;
+    while going {
+        var best = 0 - 1;
+        var best_end = 0;
+        var at = 0;
+        while at < len(labels) {
+            let end = projfile.field_end(labels, at, len(labels));
+            let here = labels[at..end];
+            var after = true;
+            if last >= 0 {
+                after = bytes.compare(here, labels[last..projfile.field_end(labels, last, len(labels))]) > 0;
+            }
+            if after && (best < 0 || bytes.compare(here, labels[best..best_end]) < 0) {
+                best = at;
+                best_end = end;
+            }
+            at = end + 1;
+        }
+        if best < 0 {
+            going = false;
+        } else {
+            out = buffer.push(heap, buffer.append(heap, out, labels[best..best_end]), byte_of(0));
+            last = best;
+        }
+    }
+    return out;
+}
+
+// The array of the labels (sorted, without repeats, each followed by a NUL) at the nesting of `levels`: `[]` or one to a line.
+fn labels_array[&h, &l](heap: &!h Heap, out: buffer.Buffer, labels: &l [byte], levels: int) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, out, byte_of(91));
+    var at = 0;
+    while at < len(labels) {
+        let end = projfile.field_end(labels, at, len(labels));
+        if at > 0 {
+            b = buffer.push(heap, b, byte_of(44));
+        }
+        b = jsonwrite.string(heap, jsonwrite.newline(heap, b, levels + 1), labels[at..end]);
+        at = end + 1;
+    }
+    if len(labels) > 0 {
+        b = jsonwrite.newline(heap, b, levels);
+    }
+    return buffer.push(heap, b, byte_of(93));
+}
+
+// The bytes that give an operation its identity: the fields in the order `OperationKind` and `Operation` declare them, no spaces, `parents` always there.
+fn canonical_op[&h, &a, &b, &l](heap: &!h Heap, sig: &a [byte], stage: &b [byte], labels: &l [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buffer.empty(heap, 512), "{\"kind\":\"AddFunction\",\"sig_id\":");
+    out = jsonwrite.string(heap, out, sig);
+    out = buffer.append(heap, out, ",\"stage_id\":");
+    out = jsonwrite.string(heap, out, stage);
+    out = buffer.append(heap, out, ",\"effects\":[");
+    var at = 0;
+    while at < len(labels) {
+        let end = projfile.field_end(labels, at, len(labels));
+        if at > 0 {
+            out = buffer.push(heap, out, byte_of(44));
+        }
+        out = jsonwrite.string(heap, out, labels[at..end]);
+        at = end + 1;
+    }
+    return buffer.append(heap, out, "],\"parents\":[],\"edition\":1}");
+}
+
+// The file of an operation as `OpLog::put` writes it.
+fn op_text[&h, &i, &a, &b, &l](heap: &!h Heap, id: &i [byte], sig: &a [byte], stage: &b [byte], labels: &l [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.push(heap, buffer.empty(heap, 1024), byte_of(123));
+    out = jsonwrite.string(heap, jsonwrite.key(heap, out, 1, "op_id"), id);
+    out = buffer.push(heap, out, byte_of(44));
+    out = jsonwrite.key(heap, out, 1, "operation");
+    out = buffer.push(heap, out, byte_of(123));
+    out = jsonwrite.string(heap, jsonwrite.key(heap, out, 2, "kind"), "AddFunction");
+    out = buffer.push(heap, out, byte_of(44));
+    out = jsonwrite.string(heap, jsonwrite.key(heap, out, 2, "sig_id"), sig);
+    out = buffer.push(heap, out, byte_of(44));
+    out = jsonwrite.string(heap, jsonwrite.key(heap, out, 2, "stage_id"), stage);
+    out = buffer.push(heap, out, byte_of(44));
+    out = labels_array(heap, jsonwrite.key(heap, out, 2, "effects"), labels, 2);
+    out = buffer.push(heap, out, byte_of(44));
+    out = buffer.append(heap, jsonwrite.key(heap, out, 2, "edition"), "1");
+    out = jsonwrite.newline(heap, out, 1);
+    out = buffer.push(heap, out, byte_of(125));
+    out = jsonwrite.newline(heap, out, 0);
+    return buffer.push(heap, out, byte_of(125));
+}
+
+// ------------------------------------------------------------- the stores required ---
+
+// The directory of the store a lock pins: the one named after the colon (if there is a colon), else the one the lock's origin points at.
+fn found_dir[&h, &i, &x, &c, &f, &k, &r, &n](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], record: &r [byte], store_part: &n [byte]) -> [heap, err_write, fs_read(""), fs_write(""), exec(""), clock, poll] clifetch.Placed {
+    var named = store_part[0..0];
+    if len(store_part) > 0 {
+        named = store_part[1..len(store_part)];
+    }
+    return clifetch.place(heap, io, exec, clock, fs, cache, record, named, len(store_part) > 0);
+}
+
+// The lock `lock_path` read and the store it pins found: 0, or the status of what was wrong (said already).
+fn require_found[&h, &i, &f, &x, &c, &k, &l, &n](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, cache: &k [byte], lock_path: &l [byte], store_part: &n [byte]) -> [heap, err_write, fs_read(""), fs_write(""), file_read, exec(""), clock, poll] int {
+    let locked = clifetch.read_locked(heap, io, fs, lock_path);
+    let clifetch.Locked { record, status } = locked;
+    var result = status;
+    if result == 0 {
+        borrow record as &rb in {
+            let placed = found_dir(heap, io, exec, clock, fs, cache, buffer.bytes(rb), store_part);
+            let clifetch.Placed { dir, status } = placed;
+            result = status;
+            buffer.drop(heap, dir);
+        }
+    }
+    buffer.drop(heap, record);
+    return result;
+}
+
+// The walk, and the requirement texts (each followed by a NUL), after one more store required.
+res struct Stepped {
+    next: clistore.Walk,
+    written: buffer.Buffer,
+    gathered: buffer.Buffer,
+    said: int,
+}
+
+fn require_walked[&h, &i, &f, &x, &c, &k, &s, &t, &l, &n](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, cache: &k [byte], std_path: &s [byte], walk: clistore.Walk, texts: buffer.Buffer, gathered: buffer.Buffer, store: &t [byte], lock_path: &l [byte], store_part: &n [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, dir_read, exec(""), clock, poll] Stepped {
+    let locked = clifetch.read_locked(heap, io, fs, lock_path);
+    let clifetch.Locked { record, status } = locked;
+    if status != 0 {
+        buffer.drop(heap, record);
+        return Stepped { next: walk, written: texts, gathered: gathered, said: status };
+    }
+    var next = walk;
+    var written = texts;
+    var kept = gathered;
+    var said = 0;
+    borrow record as &rb in {
+        let placed = found_dir(heap, io, exec, clock, fs, cache, buffer.bytes(rb), store_part);
+        let clifetch.Placed { dir, status } = placed;
+        said = status;
+        if said == 0 {
+            borrow dir as &db in {
+                next = clistore.closure(heap, io, exec, clock, fs, cache, std_path, next, buffer.bytes(db), clifetch.entries_of(buffer.bytes(rb)));
+                // What this store brought is kept apart: walking the next store would otherwise drop it.
+                let collected = clistore.walk_collect(heap, next, kept);
+                let clistore.Collected { gathered_now, walk_now } = collected;
+                kept = gathered_now;
+                next = walk_now;
+                var relative = buffer.empty(heap, 0);
+                if lc.at(buffer.bytes(rb), 1) != '1' {
+                    relative = projfile.replaced(heap, relative, relative_from(heap, store, buffer.bytes(db)));
+                }
+                borrow relative as &lb in {
+                    let text = requirement_text(heap, buffer.bytes(lb), buffer.bytes(rb));
+                    borrow text as &xb in {
+                        written = buffer.push(heap, buffer.append(heap, written, buffer.bytes(xb)), byte_of(0));
+                    }
+                    buffer.drop(heap, text);
+                }
+                buffer.drop(heap, relative);
+            }
+        }
+        buffer.drop(heap, dir);
+    }
+    buffer.drop(heap, record);
+    return Stepped { next: next, written: written, gathered: kept, said: said };
+}
+
+// ------------------------------------------------------------- the file ---
+
+// `text` written to `path` through `path.tmp`: 0, or 1.
+fn put_file[&h, &f, &p, &b](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], text: &b [byte]) -> [heap, fs_write(""), file_write] int {
+    let temporary = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(path) + 8), path), ".tmp");
+    var result = 0;
+    borrow temporary as &tb in {
+        if filewrite.store(fs, buffer.bytes(tb), text) != 0 {
+            result = 1;
+        } else {
+            match fs_rename(fs, buffer.bytes(tb), path) {
+                Done::Ok(moved) => {
+                }
+                Done::Failed(e) => {
+                    result = 1;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, temporary);
+    return result;
+}
+
+// The file (`dir`, `name`) written unless it is there.
+fn put_new[&h, &f, &d, &n, &b](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte], name: &n [byte], text: &b [byte]) -> [heap, fs_read(""), fs_write(""), file_write] int {
+    let path = cliorigin.joined(heap, dir, name);
+    var result = 0;
+    borrow path as &pb in {
+        if !cliproject.is_file(fs, buffer.bytes(pb)) {
+            result = put_file(heap, fs, buffer.bytes(pb), text);
+        }
+    }
+    buffer.drop(heap, path);
+    return result;
+}
+
+// The file `input` compiled with what it requires (`context`, the files the stores it requires hold) and the library: the declarations of the program, as `identity.published` lists them.
+fn publish_source[&h, &i, &f, &x, &c, &k, &s, &e, &u, &t, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, cache: &k [byte], std_path: &s [byte], context: &e [byte], texts: &u [byte], store: &t [byte], input: &p [byte], with_std: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    let read = clibase.read_file(heap, fs, input);
+    let clibase.Contents { bytes, failed } = read;
+    if failed != 0 {
+        buffer.drop(heap, bytes);
+        clilock.say(heap, io, "cannot read `", input, "`");
+        return 3;
+    }
+    var status = 0;
+    borrow bytes as &bb in {
+        status = publish_listed(heap, io, fs, exec, clock, std_path, context, texts, store, input, buffer.bytes(bb), with_std);
+    }
+    buffer.drop(heap, bytes);
+    return status;
+}
+
+// The check run for the sake of what it says about the files `named` (each followed by a NUL): the status, 1.
+fn said_why[&h, &i, &f, &n](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), named: &n [byte]) -> [heap, io_write, err_write, fs_read(""), file_read] int {
+    let again = clistore.compile(heap, io, fs, named, false, "", true, 15);
+    let clistore.Compiled { ran, found } = again;
+    buffer.drop(heap, found);
+    return 1;
+}
+
+fn publish_listed[&h, &i, &f, &x, &c, &s, &e, &u, &t, &p, &b](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, std_path: &s [byte], context: &e [byte], texts: &u [byte], store: &t [byte], input: &p [byte], source: &b [byte], with_std: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    // The file alone, only parsed: its own names, whatever it needs to be checked.
+    let named = buffer.push(heap, buffer.append(heap, buffer.empty(heap, len(input) + 1), input), byte_of(0));
+    var status = 0;
+    borrow named as &nb in {
+        let alone = clistore.compile(heap, io, fs, buffer.bytes(nb), false, "", false, 15);
+        let clistore.Compiled { ran, found } = alone;
+        if ran != 0 {
+            // It does not parse (or has a literal the identities cannot work out): said as the check says it.
+            status = said_why(heap, io, fs, buffer.bytes(nb));
+        } else {
+            let uses = clistore.imports_std(source);
+            if (uses || clistore.context_uses_std(context)) && !with_std {
+                var line = cliorigin.message(heap, "`", input, "` imports `std` (directly or through a `--requires` package) but `vcs publish` was not given `--std`; ");
+                line = buffer.append(heap, line, "pass `--std` to publish against the library (docs/package-system.md §7)");
+                borrow line as &lb in {
+                    clilock.say(heap, io, "", buffer.bytes(lb), "");
+                }
+                buffer.drop(heap, line);
+                status = 1;
+            } else {
+                borrow found as &ob in {
+                    status = publish_merged(heap, io, fs, exec, clock, std_path, context, texts, store, buffer.bytes(nb), source, with_std, buffer.bytes(ob), uses);
+                }
+            }
+        }
+        buffer.drop(heap, found);
+    }
+    buffer.drop(heap, named);
+    return status;
+}
+
+// The file and what it requires (and the library) checked together, and the declarations of the whole listed.
+fn publish_merged[&h, &i, &f, &x, &c, &s, &e, &u, &t, &n, &b, &o](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, std_path: &s [byte], context: &e [byte], texts: &u [byte], store: &t [byte], named: &n [byte], source: &b [byte], with_std: bool, own: &o [byte], own_uses_std: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    let others = clistore.context_paths(heap, context);
+    let all = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(named) + 64), named), "");
+    var files = all;
+    borrow others as &ob in {
+        files = buffer.append(heap, files, buffer.bytes(ob));
+    }
+    buffer.drop(heap, others);
+    var status = 0;
+    borrow files as &fb in {
+        let merged = clistore.compile(heap, io, fs, buffer.bytes(fb), with_std, std_path, true, 15);
+        let clistore.Compiled { ran, found } = merged;
+        if ran != 0 {
+            status = 1;
+        } else {
+            borrow found as &mb in {
+                status = publish_write(heap, io, fs, exec, clock, texts, store, source, own, buffer.bytes(mb), own_uses_std);
+            }
+        }
+        buffer.drop(heap, found);
+    }
+    buffer.drop(heap, files);
+    return status;
+}
+
+// Is the declaration (`module`, `name`) one of those the file alone lists?
+fn is_own[&o, &m, &n](own: &o [byte], unit: &m [byte], name: &n [byte]) -> [] bool {
+    var at = 0;
+    while at < len(own) {
+        if bytes.equal(clivcs.field_of(own, at, 0), unit) && bytes.equal(clivcs.field_of(own, at, 1), name) {
+            return true;
+        }
+        at = next_declaration(own, at);
+    }
+    return false;
+}
+
+// Where the record of a declaration that starts at `at` ends: after the newline that ends its labels.
+fn next_declaration[&r](recs: &r [byte], at: int) -> [] int {
+    var p = clistore.field_from(recs, at, 4);
+    while p < len(recs) && lc.at(recs, p) != 10 {
+        p = p + 1;
+    }
+    return p + 1;
+}
+
+// The place in `table` (`SIG NAME STAGE SOURCE STD`) of the record whose signature is `sig`, or -1.
+fn in_table[&t, &s](table: &t [byte], sig: &s [byte]) -> [] int {
+    var at = 0;
+    while at < len(table) {
+        if bytes.equal(clivcs.field_of(table, at, 0), sig) {
+            return at;
+        }
+        at = clivcs.record_end(table, at, 5);
+    }
+    return 0 - 1;
+}
+
+// The store opened (its `ops` and `sources` made), its manifest read, the file kept as a source, and each declaration of the file that is new logged.
+fn publish_write[&h, &i, &f, &x, &c, &u, &t, &b, &o, &m](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, texts: &u [byte], store: &t [byte], source: &b [byte], own: &o [byte], merged: &m [byte], own_uses_std: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    let ops = cliorigin.joined(heap, store, "ops");
+    let sources = cliorigin.joined(heap, store, "sources");
+    var opened = false;
+    borrow ops as &ob in {
+        borrow sources as &sb in {
+            opened = cliorigin.tool(heap, io, exec, clock, "/bin/mkdir", "-p", buffer.bytes(ob)) && cliorigin.tool(heap, io, exec, clock, "/bin/mkdir", "-p", buffer.bytes(sb));
+        }
+    }
+    var status = 0;
+    if !opened {
+        clilock.say(heap, io, "cannot open store at `", store, "`");
+        status = 3;
+    } else {
+        let read = clistore.read_manifest_with(heap, fs, store, true);
+        let clistore.Pins { records, why } = read;
+        borrow why as &wb in {
+            if buffer.size(wb) > 0 {
+                clilock.say(heap, io, "", buffer.bytes(wb), "");
+                status = 3;
+            }
+        }
+        if status == 0 {
+            borrow records as &rb in {
+                borrow ops as &ob in {
+                    borrow sources as &sb in {
+                        status = publish_declarations(heap, io, fs, exec, clock, texts, store, buffer.bytes(ob), buffer.bytes(sb), source, own, merged, buffer.bytes(rb), own_uses_std);
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, records);
+        buffer.drop(heap, why);
+    }
+    buffer.drop(heap, ops);
+    buffer.drop(heap, sources);
+    return status;
+}
+
+// The record of a declaration added to `table`.
+fn added[&h, &a, &b, &c, &d](heap: &!h Heap, table: buffer.Buffer, sig: &a [byte], name: &b [byte], stage: &c [byte], source_hash: &d [byte], own_uses_std: bool) -> [heap] buffer.Buffer {
+    var out = buffer.push(heap, buffer.append(heap, table, sig), byte_of(0));
+    out = buffer.push(heap, buffer.append(heap, out, name), byte_of(0));
+    out = buffer.push(heap, buffer.append(heap, out, stage), byte_of(0));
+    out = buffer.push(heap, buffer.append(heap, out, source_hash), byte_of(0));
+    if own_uses_std {
+        out = buffer.append(heap, out, "1\0");
+    } else {
+        out = buffer.append(heap, out, "0\0");
+    }
+    return out;
+}
+
+// One declaration logged as an operation: its file in `ops`. 0, or 3 and why.
+fn logged[&h, &i, &f, &o, &a, &b, &l](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), ops_dir: &o [byte], sig: &a [byte], stage: &b [byte], labels: &l [byte]) -> [heap, err_write, fs_read(""), fs_write(""), file_write] int {
+    let canonical = canonical_op(heap, sig, stage, labels);
+    var result = 0;
+    borrow canonical as &cb in {
+        let id = clistore.hash_hex(heap, buffer.bytes(cb));
+        borrow id as &ib in {
+            let text = op_text(heap, buffer.bytes(ib), sig, stage, labels);
+            let name = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 80), buffer.bytes(ib)), ".json");
+            borrow text as &xb in {
+                borrow name as &nb in {
+                    if put_new(heap, fs, ops_dir, buffer.bytes(nb), buffer.bytes(xb)) != 0 {
+                        clilock.say(heap, io, "cannot write to store", "", "");
+                        result = 3;
+                    }
+                }
+            }
+            buffer.drop(heap, name);
+            buffer.drop(heap, text);
+        }
+        buffer.drop(heap, id);
+    }
+    buffer.drop(heap, canonical);
+    return result;
+}
+
+// The declarations of the program that are the file's own, in the order they are listed: one already published at the same body is left, one at another is refused, a new one is logged.
+fn publish_declarations[&h, &i, &f, &x, &c, &u, &t, &o, &s, &b, &w, &m, &r](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, texts: &u [byte], store: &t [byte], ops_dir: &o [byte], sources_dir: &s [byte], source: &b [byte], own: &w [byte], merged: &m [byte], manifest: &r [byte], own_uses_std: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_write, exec(""), clock, poll] int {
+    let hash = clistore.hash_hex(heap, source);
+    var status = 0;
+    borrow hash as &hb in {
+        let name = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 80), buffer.bytes(hb)), ".cho");
+        borrow name as &nb in {
+            if put_new(heap, fs, sources_dir, buffer.bytes(nb), source) != 0 {
+                clilock.say(heap, io, "cannot write to store", "", "");
+                status = 3;
+            }
+        }
+        buffer.drop(heap, name);
+        if status == 0 {
+            status = publish_listing(heap, io, fs, exec, clock, texts, store, ops_dir, buffer.bytes(hb), own, merged, manifest, own_uses_std);
+        }
+    }
+    buffer.drop(heap, hash);
+    return status;
+}
+
+fn publish_listing[&h, &i, &f, &x, &c, &u, &t, &o, &s, &w, &m, &r](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, texts: &u [byte], store: &t [byte], ops_dir: &o [byte], source_hash: &s [byte], own: &w [byte], merged: &m [byte], manifest: &r [byte], own_uses_std: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_write, exec(""), clock, poll] int {
+    var table = buffer.append(heap, buffer.empty(heap, len(manifest) + 512), manifest);
+    var published = 0;
+    var unchanged = 0;
+    var status = 0;
+    var at = 0;
+    while at < len(merged) && status == 0 {
+        let end = next_declaration(merged, at);
+        let name = clivcs.field_of(merged, at, 1);
+        let sig = clivcs.field_of(merged, at, 2);
+        let stage = clivcs.field_of(merged, at, 3);
+        if is_own(own, clivcs.field_of(merged, at, 0), name) {
+            var known = 0 - 1;
+            var same = false;
+            borrow table as &tb in {
+                known = in_table(buffer.bytes(tb), sig);
+                if known >= 0 {
+                    same = bytes.equal(clivcs.field_of(buffer.bytes(tb), known, 2), stage);
+                }
+            }
+            if known >= 0 {
+                if same {
+                    unchanged = unchanged + 1;
+                } else {
+                    clilock.say(heap, io, "`", name, "` already published at a different body (docs/vcs-publish.md §5: incremental publish is not built yet)");
+                    status = 1;
+                }
+            } else {
+                let sorted = sorted_labels(heap, merged[clistore.field_from(merged, at, 4)..end - 1]);
+                borrow sorted as &sb in {
+                    status = logged(heap, io, fs, ops_dir, sig, stage, buffer.bytes(sb));
+                }
+                buffer.drop(heap, sorted);
+                if status == 0 {
+                    table = added(heap, table, sig, name, stage, source_hash, own_uses_std);
+                    console.write_all(io, "published ");
+                    console.write_all(io, name);
+                    console.write_all(io, "\n");
+                    published = published + 1;
+                }
+            }
+        }
+        at = end;
+    }
+    if status == 0 {
+        borrow table as &tb in {
+            status = publish_finish(heap, io, fs, exec, clock, texts, store, buffer.bytes(tb));
+        }
+    }
+    buffer.drop(heap, table);
+    if status == 0 && published == 0 {
+        let count = clifetch.number(heap, unchanged);
+        borrow count as &cb in {
+            console.write_all(io, "nothing new (");
+            console.write_all(io, buffer.bytes(cb));
+            console.write_all(io, " declaration(s) unchanged)\n");
+        }
+        buffer.drop(heap, count);
+    }
+    return status;
+}
+
+// The manifest written, and the requirements of the store made what this publish says (the old ones are gone).
+fn publish_finish[&h, &i, &f, &x, &c, &u, &t, &m](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, texts: &u [byte], store: &t [byte], table: &m [byte]) -> [heap, err_write, fs_write(""), file_write, exec(""), clock, poll] int {
+    let path = cliorigin.joined(heap, store, "manifest.json");
+    let text = manifest_text(heap, table);
+    var status = 0;
+    borrow path as &pb in {
+        borrow text as &xb in {
+            if put_file(heap, fs, buffer.bytes(pb), buffer.bytes(xb)) != 0 {
+                clilock.say(heap, io, "cannot write manifest at `", store, "`");
+                status = 3;
+            }
+        }
+    }
+    buffer.drop(heap, path);
+    buffer.drop(heap, text);
+    if status != 0 {
+        return status;
+    }
+    let dir = cliorigin.joined(heap, store, "requires");
+    borrow dir as &db in {
+        let gone = cliorigin.tool(heap, io, exec, clock, "/bin/rm", "-rf", buffer.bytes(db));
+        if len(texts) > 0 {
+            if !cliorigin.tool(heap, io, exec, clock, "/bin/mkdir", "-p", buffer.bytes(db)) {
+                status = 3;
+            }
+            var at = 0;
+            var index = 0;
+            while at < len(texts) && status == 0 {
+                let end = projfile.field_end(texts, at, len(texts));
+                let digits = clifetch.number(heap, index);
+                borrow digits as &gb in {
+                    let name = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 24), buffer.bytes(gb)), ".json");
+                    borrow name as &nb in {
+                        let file = cliorigin.joined(heap, buffer.bytes(db), buffer.bytes(nb));
+                        borrow file as &fb in {
+                            if put_file(heap, fs, buffer.bytes(fb), texts[at..end]) != 0 {
+                                status = 3;
+                            }
+                        }
+                        buffer.drop(heap, file);
+                    }
+                    buffer.drop(heap, name);
+                }
+                buffer.drop(heap, digits);
+                at = end + 1;
+                index = index + 1;
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    if status != 0 {
+        clilock.say(heap, io, "cannot write requirements at `", store, "`");
+    }
+    return status;
+}
