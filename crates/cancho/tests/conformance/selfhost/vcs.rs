@@ -186,11 +186,26 @@ fn lock_both(
     cache: &Path,
     rust_cache: &Path,
 ) -> Result<(), String> {
+    steps_both(exe, work, case.name, &case.files, &[case.args.clone()], cache, rust_cache)
+}
+
+/// A command run by both commands, one after the other in a directory each, made alike: each step is the arguments after `vcs` (`lock` unless the first is `fetch`, `resolve` or
+/// `publish`), or `@write`, a path and a text, which changes a file between two commands. `{dir}` in an argument is the directory. What is compared: the status, the standard
+/// output and the first line of the standard error of each command, and every file left.
+fn steps_both(
+    exe: &Path,
+    work: &Path,
+    name: &str,
+    files: &[(&'static str, String)],
+    steps: &[Vec<String>],
+    cache: &Path,
+    rust_cache: &Path,
+) -> Result<(), String> {
     let mut results = Vec::new();
     for (who, dir) in [("rust", work.join("rust")), ("cho", work.join("cho"))] {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        for (path, text) in &case.files {
+        for (path, text) in files {
             if let Some(target) = path.strip_prefix("@tree:") {
                 super::store::copy_dir(Path::new(text), &dir.join(target));
                 continue;
@@ -199,69 +214,82 @@ fn lock_both(
             std::fs::create_dir_all(at.parent().unwrap()).unwrap();
             std::fs::write(at, text).unwrap();
         }
-        // `lock` is the command unless the arguments begin with `fetch` or `resolve`.
-        let (command, rest) = match case.args.first().map(String::as_str) {
-            Some(first @ ("fetch" | "resolve")) => (first, &case.args[1..]),
-            _ => ("lock", &case.args[..]),
-        };
-        let said = if who == "rust" {
-            said(
-                Command::new(BIN)
-                    .current_dir(&dir)
-                    .env("CANCHO_CACHE", rust_cache)
-                    .args(["vcs", command])
-                    .args(rest)
-                    .output()
-                    .expect("cancho runs"),
-            )
-        } else {
-            let mut args: Vec<String> = rest.to_vec();
-            if command == "lock" {
-                if args.iter().any(|a| a == "--git") && args.last().is_some_and(|a| a != "--git") {
-                    args.push("--cache".to_owned());
-                    args.push(cache.display().to_string());
-                }
+        let mut said_all = Vec::new();
+        for step in steps {
+            let step: Vec<String> =
+                step.iter().map(|a| a.replace("{dir}", &dir.display().to_string())).collect();
+            if step.first().is_some_and(|a| a == "@write") {
+                let at = dir.join(&step[1]);
+                std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+                std::fs::write(at, &step[2]).unwrap();
+                continue;
+            }
+            let (command, rest) = match step.first().map(String::as_str) {
+                Some(first @ ("fetch" | "resolve" | "publish")) => (first, &step[1..]),
+                _ => ("lock", &step[..]),
+            };
+            let said = if who == "rust" {
+                said(
+                    Command::new(BIN)
+                        .current_dir(&dir)
+                        .env("CANCHO_CACHE", rust_cache)
+                        .args(["vcs", command])
+                        .args(rest)
+                        .output()
+                        .expect("cancho runs"),
+                )
             } else {
-                // The library and the cache are named, where the Rust command has them inside it.
-                let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
-                let mut extra = vec![
-                    "--cache".to_owned(),
-                    cache.display().to_string(),
-                    "--std-dir".to_owned(),
-                    std_dir.canonicalize().unwrap().display().to_string(),
-                ];
-                extra.extend(args);
-                args = extra;
+                let mut args: Vec<String> = rest.to_vec();
+                if command == "lock" {
+                    if args.iter().any(|a| a == "--git")
+                        && args.last().is_some_and(|a| a != "--git")
+                    {
+                        args.push("--cache".to_owned());
+                        args.push(cache.display().to_string());
+                    }
+                } else {
+                    // The library and the cache are named, where the Rust command has them inside it.
+                    let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+                    let mut extra = vec![
+                        "--cache".to_owned(),
+                        cache.display().to_string(),
+                        "--std-dir".to_owned(),
+                        std_dir.canonicalize().unwrap().display().to_string(),
+                    ];
+                    extra.extend(args);
+                    args = extra;
+                }
+                said(
+                    Command::new(exe)
+                        .current_dir(&dir)
+                        .args(["vcs", command])
+                        .args(&args)
+                        .output()
+                        .expect("cli runs"),
+                )
+            };
+            // The words after the path of a file that could not be read are the JSON reader's, or the operating system's.
+            let mut said = said;
+            if said.2.starts_with("cannot read ") {
+                let ticks: Vec<usize> = said.2.match_indices('`').map(|(i, _)| i).collect();
+                if let Some(end) = ticks.get(1) {
+                    said.2.truncate(end + 1);
+                }
             }
-            said(
-                Command::new(exe)
-                    .current_dir(&dir)
-                    .args(["vcs", command])
-                    .args(&args)
-                    .output()
-                    .expect("cli runs"),
-            )
-        };
-        let mut files = Vec::new();
-        tree(&dir, &dir, &mut files);
-        // The words after the path of a file that could not be read are the JSON reader's, or the operating system's.
-        let mut said = said;
-        if said.2.starts_with("cannot read ") {
-            let ticks: Vec<usize> = said.2.match_indices('`').map(|(i, _)| i).collect();
-            if let Some(end) = ticks.get(1) {
-                said.2.truncate(end + 1);
+            // A pin that does not hold, or a program that is refused, is said with the words of the compiler that found it, which differ.
+            if command != "lock" && said.0 == Some(1) {
+                said.2.clear();
             }
+            said_all.push(said);
         }
-        // A pin that does not hold is said with the words of the compiler that found it, which differ.
-        if command != "lock" && said.0 == Some(1) {
-            said.2.clear();
-        }
-        results.push((said, files));
+        let mut found = Vec::new();
+        tree(&dir, &dir, &mut found);
+        results.push((said_all, found));
     }
     if results[0] == results[1] {
         Ok(())
     } else {
-        Err(format!("{}: rust {:?}, cho {:?}", case.name, results[0], results[1]))
+        Err(format!("{name}: rust {:?}, cho {:?}", results[0], results[1]))
     }
 }
 
@@ -890,6 +918,234 @@ fn vcs_fetch_and_resolve_in_cancho_check_a_store_like_cancho_vcs() {
     assert!(
         failures.is_empty(),
         "`vcs fetch`/`resolve` differ in {} cases:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+/// The `--requires` arguments (`LOCK:STORE`) the store at `relative` of `packages/` was published with: each requirement it records, its lock written to `locks/` of `work` and the store it
+/// names found (a path relative to the store, here made absolute).
+fn requires_of(work: &Path, packages: &Path, relative: &str) -> Vec<String> {
+    let store = packages.join(relative);
+    let mut names: Vec<String> = match std::fs::read_dir(store.join("requires")) {
+        Ok(read) => read.map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect(),
+        Err(_) => Vec::new(),
+    };
+    names.sort_by_key(|n| n.trim_end_matches(".json").parse::<u32>().unwrap());
+    let locks = work.join("locks");
+    std::fs::create_dir_all(&locks).unwrap();
+    let mut out = Vec::new();
+    for (i, name) in names.iter().enumerate() {
+        let text = std::fs::read_to_string(store.join("requires").join(name)).unwrap();
+        let at = text.find("\"lock\":").expect("a requirement has a lock") + "\"lock\":".len();
+        // The lock is the last member: the text from its brace to the closing brace of the file.
+        let lock = text[at..text.rfind('}').unwrap()].trim().to_owned();
+        let file = locks.join(format!("{}-{i}.lock", relative.replace('/', "_")));
+        std::fs::write(&file, lock).unwrap();
+        let store_at = text.find("\"store\": \"").unwrap() + "\"store\": \"".len();
+        let given = &text[store_at..store_at + text[store_at..].find('"').unwrap()];
+        out.push("--requires".to_owned());
+        if given.is_empty() {
+            out.push(file.display().to_string());
+        } else {
+            let found = store.join(given);
+            // Lexically, as the command does not follow links: `..` made out.
+            let mut parts: Vec<String> = Vec::new();
+            for part in found.display().to_string().split('/') {
+                match part {
+                    "" | "." => {}
+                    ".." => {
+                        parts.pop();
+                    }
+                    other => parts.push(other.to_owned()),
+                }
+            }
+            out.push(format!("{}:/{}", file.display(), parts.join("/")));
+        }
+    }
+    out
+}
+
+/// `vcs publish` by cancho and by Rust. Four stores of `packages/` (the ones `store.rs` samples) are published again from their sources into a store of the test, against the stores they
+/// require, without `--std` and then with it; then the source of `net-sockets` is changed in the ways a publish tells apart (a comment, a body, a new function, a new effect row, a second
+/// module, a file that does not parse, one that is refused, one that imports `std`), and the command lines the Rust command refuses are tried. The status, the standard output, the first line
+/// of the standard error (not for a program that is refused) and every file of the store are compared. (`--dir` and `sync` are not ported yet.)
+#[test]
+fn vcs_publish_in_cancho_logs_a_file_like_cancho_vcs_publish() {
+    let exe = build("cli-vcs-publish", &with_front_end("cli.cho"));
+    let work = scratch("selfhost-vcs-publish");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let packages = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages")
+        .canonicalize()
+        .expect("packages/ is there");
+    let cache = work.join("cache");
+    let mut failures = Vec::new();
+    let blob = |relative: &str| -> PathBuf {
+        let dir = packages.join(relative).join("sources");
+        let first = std::fs::read_dir(dir).unwrap().next().unwrap().unwrap().path();
+        first
+    };
+    let s = |t: &str| t.to_owned();
+    // The stores of `packages/`, from their sources.
+    for relative in [
+        "net-sockets/.cancho-vcs",
+        "http-response/.cancho-vcs",
+        "x509/.cancho-vcs/x509_verify",
+        "tls/.cancho-vcs/tls_hello",
+    ] {
+        let source = blob(relative).display().to_string();
+        let mut first = vec![s("publish"), s("--store"), s("{dir}/st")];
+        first.extend(requires_of(&work, &packages, relative));
+        first.push(source.clone());
+        let mut second = first.clone();
+        second.insert(1, s("--std"));
+        if let Err(e) = steps_both(&exe, &work, relative, &[], &[first, second], &cache, &cache) {
+            failures.push(e);
+        }
+    }
+    // The source of `net-sockets` changed.
+    let original = std::fs::read_to_string(blob("net-sockets/.cancho-vcs")).unwrap();
+    let write = |path: &str, text: &str| vec![s("@write"), s(path), s(text)];
+    let publish = |file: &str| vec![s("publish"), s("--store"), s("st"), s(file)];
+    let more = |extra: &str| format!("{original}\n{extra}\n");
+    let cases: Vec<(&str, Vec<Vec<String>>)> = vec![
+        (
+            "again, and a comment",
+            vec![
+                publish("a.cho"),
+                publish("a.cho"),
+                write("a.cho", &more("// a comment, nothing else")),
+                publish("a.cho"),
+            ],
+        ),
+        (
+            "a body changed",
+            vec![
+                publish("a.cho"),
+                write(
+                    "a.cho",
+                    &original.replace("return at + len(src);", "return at + len(src) + 0;"),
+                ),
+                publish("a.cho"),
+            ],
+        ),
+        (
+            "a new function",
+            vec![
+                publish("a.cho"),
+                write("a.cho", &more("pub fn twice(n: int) -> [] int {\n    return n + n;\n}")),
+                publish("a.cho"),
+                publish("a.cho"),
+            ],
+        ),
+        (
+            "a new effect row",
+            vec![
+                write(
+                    "a.cho",
+                    &more(
+                        "pub fn kept[&h](heap: &!h Heap) -> [heap] int {\n    let area = box_slice(heap, 4, 0);\n    unbox_slice(heap, area);\n    return 0;\n}",
+                    ),
+                ),
+                publish("a.cho"),
+            ],
+        ),
+        (
+            "a second module in the store",
+            vec![
+                publish("a.cho"),
+                write(
+                    "b.cho",
+                    "module lib.other;\n\npub fn same(n: int) -> [] int {\n    return n;\n}\n",
+                ),
+                publish("b.cho"),
+            ],
+        ),
+        ("a file that does not parse", vec![write("a.cho", &more("fn broken(")), publish("a.cho")]),
+        (
+            "a file that is refused",
+            vec![
+                write("a.cho", &more("pub fn bad() -> [] int {\n    return missing_name;\n}")),
+                publish("a.cho"),
+            ],
+        ),
+        (
+            "a file that imports std",
+            vec![
+                write(
+                    "a.cho",
+                    "module lib.s;\n\nimport std.bytes;\n\npub fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {\n    return bytes.equal(x, y);\n}\n",
+                ),
+                publish("a.cho"),
+                vec![s("publish"), s("--std"), s("--store"), s("st"), s("a.cho")],
+                vec![s("publish"), s("--std"), s("--store"), s("st"), s("a.cho")],
+            ],
+        ),
+        (
+            "the default store",
+            vec![
+                write("a.cho", &original),
+                vec![s("publish"), s("a.cho")],
+                vec![s("publish"), s("a.cho")],
+            ],
+        ),
+        (
+            "a store that is a file",
+            vec![write("st", "not a directory"), write("a.cho", &original), publish("a.cho")],
+        ),
+        (
+            "a manifest that is not JSON",
+            vec![write("a.cho", &original), write("st/manifest.json", "{"), publish("a.cho")],
+        ),
+        ("no file", vec![vec![s("publish")]]),
+        ("a file that is not there", vec![publish("absent.cho")]),
+        ("two files", vec![vec![s("publish"), s("a.cho"), s("b.cho")]]),
+        ("--dir with a file", vec![vec![s("publish"), s("--dir"), s("d"), s("a.cho")]]),
+        (
+            "--dir with --requires",
+            vec![vec![s("publish"), s("--dir"), s("d"), s("--requires"), s("x")]],
+        ),
+        (
+            "a lock that is not there, no store",
+            vec![
+                write("a.cho", &original),
+                vec![s("publish"), s("--requires"), s("absent.lock"), s("a.cho")],
+            ],
+        ),
+        (
+            "a lock that is not there, a store",
+            vec![
+                write("a.cho", &original),
+                vec![s("publish"), s("--requires"), s("absent.lock:st2"), s("a.cho")],
+            ],
+        ),
+        ("an option", vec![vec![s("publish"), s("--bogus")]]),
+        ("--store last", vec![vec![s("publish"), s("--store")]]),
+        ("--dir last", vec![vec![s("publish"), s("--dir")]]),
+        ("--requires last", vec![vec![s("publish"), s("--requires")]]),
+    ];
+    for (name, steps) in &cases {
+        let files = vec![("a.cho", original.clone())];
+        let files: &[(&'static str, String)] = if *name == "a file that does not parse"
+            || name.starts_with("a file that")
+            || *name == "a new effect row"
+            || *name == "a body changed"
+            || name.starts_with("a lock")
+        {
+            &[]
+        } else {
+            &files
+        };
+        if let Err(e) = steps_both(&exe, &work, name, files, steps, &cache, &cache) {
+            failures.push(e);
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "`vcs publish` differs in {} cases:\n{}",
         failures.len(),
         failures.join("\n")
     );
