@@ -84,7 +84,7 @@ fn key_order[&r, &q](ra: &r [byte], a: int, rb: &q [byte], b: int) -> [] int {
 }
 
 // The positions of the entries `starts` in `recs` in the order of their keys, entries with one key in the order they come in: a bottom-up merge sort over indices of `starts`.
-fn sorted_entries[&h, &r, &s](heap: &!h Heap, recs: &r [byte], starts: &s vec.Vec[int]) -> [heap] vec.Vec[int] {
+pub fn sorted_entries[&h, &r, &s](heap: &!h Heap, recs: &r [byte], starts: &s vec.Vec[int]) -> [heap] vec.Vec[int] {
     let n = vec.size(starts);
     var order = vec.empty(heap, n + 1, 0);
     var spare = vec.empty(heap, n + 1, 0);

@@ -312,7 +312,20 @@ fn steps_both(
                 said.1 = kept.join("\n").into_bytes();
             }
             // A pin that does not hold, or a program that is refused, is said with the words of the compiler that found it, which differ.
-            if command != "lock" && said.0 == Some(1) && !said.2.contains("was not given `--std`") {
+            // The refusals of `--dir` that are not the compiler's are said with the words of the Rust command.
+            let own = [
+                "modules import each other",
+                "module `",
+                "no file of",
+                "no `.cho` files",
+                "which is neither `std`",
+            ];
+            let kept = rest.iter().any(|a| a == "--dir") && own.iter().any(|p| said.2.contains(p));
+            if command != "lock"
+                && said.0 == Some(1)
+                && !said.2.contains("was not given `--std`")
+                && !kept
+            {
                 said.2.clear();
             }
             said_all.push(said);
@@ -1480,6 +1493,220 @@ fn vcs_sync_in_cancho_indexes_a_tree_like_cancho_vcs_sync() {
     assert!(
         failures.is_empty(),
         "`vcs sync` differs in {} cases:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+fn dir_module(name: &str, imports: &[&str], body: &str) -> String {
+    let mut text = format!("module {name};\n\n");
+    for import in imports {
+        text.push_str(&format!("import {import};\n"));
+    }
+    text.push_str(&format!("\n{body}\n"));
+    text
+}
+
+/// `vcs publish --dir` by cancho and by Rust: a chain and a diamond of modules published in the order of their imports (with a program, a text file and a directory beside them that are not), the same published again
+/// over the stores it made (cleared and made again), after a body changed, and over a store with a stranger in it; a module that imports the library; modules that import each other, themselves, or a module that
+/// is not there; two files that declare one module, one that declares two, one that does not parse, none that declares a module, no `.cho` file, a directory that is not there and one that is a file; (the real libraries of `packages/` are the next test). What is compared is as for the other `vcs` commands: status, standard output, first line of the standard error where the status is not
+/// 1, and every file left.
+#[test]
+fn vcs_publish_dir_in_cancho_publishes_a_library_like_cancho_vcs_publish() {
+    let exe = build("cli-vcs-publish-dir", &with_front_end("cli.cho"));
+    let work = scratch("selfhost-vcs-publish-dir");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let cache = work.join("cache");
+    let mut failures = Vec::new();
+    let s = |t: &str| t.to_owned();
+    let publish = |rest: &[&str]| -> Vec<String> {
+        let mut step = vec![s("publish")];
+        step.extend(rest.iter().map(|a| a.to_string()));
+        step
+    };
+    let write = |path: &str, text: &str| vec![s("@write"), s(path), s(text)];
+    let one = "pub fn one(n: int) -> [] int {\n    return n;\n}";
+    let two = "pub fn two(n: int) -> [] int {\n    return base.one(n) + 1;\n}";
+    let three = "pub fn three(n: int) -> [] int {\n    return mid.two(n) + base.one(n);\n}";
+    let chain = || -> Vec<(&'static str, String)> {
+        vec![
+            ("lib/base.cho", dir_module("lib.base", &[], one)),
+            ("lib/mid.cho", dir_module("lib.mid", &["lib.base"], two)),
+            ("lib/top.cho", dir_module("lib.top", &["lib.mid", "lib.base"], three)),
+            ("lib/prog.cho", s("fn main() -> [] int {\n    return 0;\n}\n")),
+            ("lib/notes.txt", s("not a source")),
+            ("lib/sub/deep.cho", dir_module("lib.deep", &[], one)),
+        ]
+    };
+    let dir = |extra: &[&str]| -> Vec<String> {
+        let mut rest = vec!["--dir", "lib", "--store", "st"];
+        rest.extend(extra);
+        publish(&rest)
+    };
+    let cases: Vec<SyncCase> = vec![
+        ("a chain", chain(), vec![dir(&[])]),
+        (
+            "a chain, again, and a body changed",
+            chain(),
+            vec![
+                dir(&[]),
+                dir(&[]),
+                write(
+                    "lib/base.cho",
+                    &dir_module("lib.base", &[], &one.replace("return n;", "return n + 5;")),
+                ),
+                dir(&[]),
+            ],
+        ),
+        (
+            "a store with a stranger in it",
+            chain(),
+            vec![dir(&[]), write("st/lib.base/stranger.txt", "left"), dir(&[])],
+        ),
+        ("a store that is a file", chain(), vec![write("st/lib.base", "a file"), dir(&[])]),
+        (
+            "a diamond",
+            vec![
+                ("lib/a.cho", dir_module("lib.a", &[], one)),
+                ("lib/b.cho", dir_module("lib.b", &["lib.a"], &two.replace("base.", "a."))),
+                (
+                    "lib/c.cho",
+                    dir_module(
+                        "lib.c",
+                        &["lib.a"],
+                        &three.replace("mid.two", "a.one").replace("base.", "a."),
+                    ),
+                ),
+                (
+                    "lib/d.cho",
+                    dir_module(
+                        "lib.d",
+                        &["lib.b", "lib.c"],
+                        "pub fn four(n: int) -> [] int {\n    return b.two(n) + c.three(n);\n}",
+                    ),
+                ),
+            ],
+            vec![dir(&[])],
+        ),
+        (
+            "the library",
+            vec![(
+                "lib/s.cho",
+                dir_module(
+                    "lib.s",
+                    &["std.bytes"],
+                    "pub fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {\n    return bytes.equal(x, y);\n}",
+                ),
+            )],
+            vec![dir(&[]), dir(&["--std"]), dir(&["--std"])],
+        ),
+        (
+            "modules that import each other",
+            vec![
+                ("lib/a.cho", dir_module("lib.a", &["lib.b"], one)),
+                ("lib/b.cho", dir_module("lib.b", &["lib.c"], one)),
+                ("lib/c.cho", dir_module("lib.c", &["lib.a"], one)),
+            ],
+            vec![dir(&[])],
+        ),
+        (
+            "a module that imports itself",
+            vec![("lib/a.cho", dir_module("lib.a", &["lib.a"], one))],
+            vec![dir(&[])],
+        ),
+        (
+            "a module that sorts before what it imports",
+            vec![
+                ("lib/a.cho", dir_module("lib.aaa", &["lib.mmm", "lib.zzz"], one)),
+                ("lib/m.cho", dir_module("lib.mmm", &[], one)),
+                ("lib/z.cho", dir_module("lib.zzz", &[], one)),
+            ],
+            vec![dir(&[])],
+        ),
+        (
+            "a module that is not there",
+            vec![("lib/a.cho", dir_module("lib.a", &["lib.gone"], one))],
+            vec![dir(&[])],
+        ),
+        (
+            "one module in two files",
+            vec![
+                ("lib/a.cho", dir_module("lib.a", &[], one)),
+                ("lib/b.cho", dir_module("lib.a", &[], one)),
+            ],
+            vec![dir(&[])],
+        ),
+        (
+            "two modules in a file",
+            vec![(
+                "lib/a.cho",
+                format!("{}{}", dir_module("lib.a", &[], one), dir_module("lib.b", &[], one)),
+            )],
+            vec![dir(&[])],
+        ),
+        (
+            "a file that does not parse",
+            vec![("lib/a.cho", s("module lib.a;\nfn broken("))],
+            vec![dir(&[])],
+        ),
+        (
+            "only programs",
+            vec![("lib/a.cho", s("fn main() -> [] int {\n    return 0;\n}\n"))],
+            vec![dir(&[])],
+        ),
+        ("no source", vec![("lib/notes.txt", s("x"))], vec![dir(&[])]),
+        ("a directory that is not there", vec![], vec![dir(&[])]),
+        ("a directory that is a file", vec![("lib", s("a file"))], vec![dir(&[])]),
+        (
+            "the default store",
+            chain(),
+            vec![publish(&["--dir", "lib"]), publish(&["--dir", "lib"])],
+        ),
+    ];
+    for (name, files, steps) in &cases {
+        if let Err(e) = steps_both(&exe, &work, name, files, steps, &cache, &cache) {
+            failures.push(e);
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "`vcs publish --dir` differs in {} cases:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+/// `vcs publish --dir` on the real libraries `packages/x509` and `packages/http-client`, each with the library, by cancho and by Rust (the slow half of the test above).
+#[test]
+fn vcs_publish_dir_in_cancho_publishes_the_libraries_of_packages() {
+    let exe = build("cli-vcs-publish-libs", &with_front_end("cli.cho"));
+    let work = scratch("selfhost-vcs-publish-libs");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let cache = work.join("cache");
+    let mut failures = Vec::new();
+    let dir = vec!["publish", "--dir", "lib", "--store", "st", "--std"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    // The libraries of `packages/`.
+    let packages = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages")
+        .canonicalize()
+        .expect("packages/ is there");
+    for library in ["x509", "http-client"] {
+        let files = [("@tree:lib", packages.join(library).display().to_string())];
+        let steps = [dir.clone()];
+        if let Err(e) = steps_both(&exe, &work, library, &files, &steps, &cache, &cache) {
+            failures.push(e);
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "`vcs publish --dir` differs in {} libraries:\n{}",
         failures.len(),
         failures.join("\n")
     );

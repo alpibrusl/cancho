@@ -1576,3 +1576,39 @@ pub fn listing[&h, &s, &x, &j](heap: &!h Heap, st: &!s [int], text: &x [byte], d
     st[63] = 0;
     return out;
 }
+
+// The modules the program declares (not the root): for each, its path with the dots and a NUL, then the path of each of its imports with the dots (an `as` left out) and a NUL, and a newline.
+// What `vcs publish --dir` reads off a file to put the files of a directory in the order of their imports (`docs/cli-in-cancho.md` section 33).
+pub fn modules[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    var m = 1;
+    while m < st[11] {
+        let first = ast.module_first(st, m);
+        var n = 0;
+        while n < ast.module_len(st, m) {
+            if n > 0 {
+                out = buffer.push(heap, out, byte_of('.'));
+            }
+            out = buffer.append(heap, out, text[ast.tstart(st, first + 2 * n)..ast.tend(st, first + 2 * n)]);
+            n = n + 1;
+        }
+        out = buffer.push(heap, out, byte_of(0));
+        var k = 0;
+        while k < st[12] {
+            if ast.import_module(st, k) == m {
+                var at = ast.import_keyword(st, k) + 1;
+                out = buffer.append(heap, out, text[ast.tstart(st, at)..ast.tend(st, at)]);
+                while ast.code_at(st, at + 1) == code(lc.Tok::Dot) {
+                    out = buffer.push(heap, out, byte_of('.'));
+                    out = buffer.append(heap, out, text[ast.tstart(st, at + 2)..ast.tend(st, at + 2)]);
+                    at = at + 2;
+                }
+                out = buffer.push(heap, out, byte_of(0));
+            }
+            k = k + 1;
+        }
+        out = buffer.push(heap, out, byte_of(10));
+        m = m + 1;
+    }
+    return out;
+}
