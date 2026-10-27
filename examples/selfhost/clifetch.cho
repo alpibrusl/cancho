@@ -29,7 +29,11 @@ struct Words {
     bad: int,
 }
 
+<<<<<<< HEAD
 pub fn needs_value[&h, &i, &w](heap: &!h Heap, io: &!i Io, word: &w [byte]) -> [heap, err_write] int {
+=======
+fn needs_value[&h, &i, &w](heap: &!h Heap, io: &!i Io, word: &w [byte]) -> [heap, err_write] int {
+>>>>>>> origin/main
     var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 32), "`"), word);
     m = buffer.append(heap, m, "` needs a path");
     var said = 0;
@@ -93,12 +97,20 @@ fn words_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, fetching: boo
 }
 
 // The lock file at `path` read: its record (empty if there is no file), and 3 and the reason on the standard error if it could not be.
+<<<<<<< HEAD
 pub res struct Locked {
+=======
+res struct Locked {
+>>>>>>> origin/main
     record: buffer.Buffer,
     status: int,
 }
 
+<<<<<<< HEAD
 pub fn read_locked[&h, &i, &f, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: &p [byte]) -> [heap, err_write, fs_read(""), file_read] Locked {
+=======
+fn read_locked[&h, &i, &f, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: &p [byte]) -> [heap, err_write, fs_read(""), file_read] Locked {
+>>>>>>> origin/main
     let read = clistore.read_lock(heap, fs, path);
     let clistore.Pins { records, why } = read;
     var status = 0;
@@ -113,7 +125,11 @@ pub fn read_locked[&h, &i, &f, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), pa
 }
 
 // The entries of a lock record (nothing for no lock).
+<<<<<<< HEAD
 pub fn entries_of[&r](record: &r [byte]) -> [] &r [byte] {
+=======
+fn entries_of[&r](record: &r [byte]) -> [] &r [byte] {
+>>>>>>> origin/main
     if len(record) == 0 {
         return record[0..0];
     }
@@ -121,12 +137,20 @@ pub fn entries_of[&r](record: &r [byte]) -> [] &r [byte] {
 }
 
 // The directory of the store a lock pins: the one named, else the one its origin points at, fetched into the cache if it is not there. The status 0, 2 (the lock says nowhere) or 3.
+<<<<<<< HEAD
 pub res struct Placed {
+=======
+res struct Placed {
+>>>>>>> origin/main
     dir: buffer.Buffer,
     status: int,
 }
 
+<<<<<<< HEAD
 pub fn place[&h, &i, &x, &c, &f, &k, &r, &n](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], record: &r [byte], named: &n [byte], is_named: bool) -> [heap, err_write, fs_read(""), fs_write(""), exec(""), clock, poll] Placed {
+=======
+fn place[&h, &i, &x, &c, &f, &k, &r, &n](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), cache: &k [byte], record: &r [byte], named: &n [byte], is_named: bool) -> [heap, err_write, fs_read(""), fs_write(""), exec(""), clock, poll] Placed {
+>>>>>>> origin/main
     if is_named {
         return Placed { dir: buffer.append(heap, buffer.empty(heap, len(named) + 8), named), status: 0 };
     }
@@ -147,7 +171,11 @@ pub fn place[&h, &i, &x, &c, &f, &k, &r, &n](heap: &!h Heap, io: &!i Io, exec: &
 }
 
 // The value of the argument `at`, or nothing if it was not given.
+<<<<<<< HEAD
 pub fn value_of[&a](args: &a Args, at: int) -> [args] &a [byte] {
+=======
+fn value_of[&a](args: &a Args, at: int) -> [args] &a [byte] {
+>>>>>>> origin/main
     if at >= 0 {
         return arg(args, at);
     }
@@ -287,7 +315,11 @@ fn resolve_locked[&h, &i, &a, &f, &x, &c, &r](heap: &!h Heap, io: &!i Io, args: 
     return result;
 }
 
+<<<<<<< HEAD
 pub fn number[&h](heap: &!h Heap, n: int) -> [heap] buffer.Buffer {
+=======
+fn number[&h](heap: &!h Heap, n: int) -> [heap] buffer.Buffer {
+>>>>>>> origin/main
     var reversed = buffer.empty(heap, 20);
     var rest = n;
     if rest == 0 {
