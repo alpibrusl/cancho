@@ -175,23 +175,26 @@ fn publish_requires[&h, &i, &f, &x, &c, &k, &s, &r, &t, &p](heap: &!h Heap, io: 
     }
     var walk = clistore.start_walk(heap, "");
     var texts = buffer.empty(heap, 0);
+    var brought = buffer.empty(heap, 0);
     at = 0;
     while at < len(requires) && status == 0 {
         let end = projfile.field_end(requires, at, len(requires));
         let pair = requires[at..end];
         let cut = colon_in(pair);
-        let step = require_walked(heap, io, fs, exec, clock, cache, std_path, walk, texts, store, pair[0..cut], pair[cut..len(pair)]);
-        let Stepped { next, written, said } = step;
+        let step = require_walked(heap, io, fs, exec, clock, cache, std_path, walk, texts, brought, store, pair[0..cut], pair[cut..len(pair)]);
+        let Stepped { next, written, gathered, said } = step;
         walk = next;
         texts = written;
+        brought = gathered;
         status = said;
         at = end + 1;
     }
     var result = status;
+    let clistore.Walk { ctx, seen, pins, bad } = walk;
+    buffer.drop(heap, ctx);
+    buffer.drop(heap, seen);
+    buffer.drop(heap, pins);
     if result == 0 {
-        let clistore.Walk { ctx, seen, pins, bad } = walk;
-        buffer.drop(heap, seen);
-        buffer.drop(heap, pins);
         var problems = false;
         borrow bad as &bb in {
             if buffer.size(bb) > 0 {
@@ -200,24 +203,18 @@ fn publish_requires[&h, &i, &f, &x, &c, &k, &s, &r, &t, &p](heap: &!h Heap, io: 
                 problems = true;
             }
         }
-        buffer.drop(heap, bad);
         if problems {
             result = 1;
         } else {
-            borrow ctx as &xb in {
+            borrow brought as &xb in {
                 borrow texts as &tb in {
                     result = publish_source(heap, io, fs, exec, clock, cache, std_path, buffer.bytes(xb), buffer.bytes(tb), store, input, with_std);
                 }
             }
         }
-        buffer.drop(heap, ctx);
-    } else {
-        let clistore.Walk { ctx, seen, pins, bad } = walk;
-        buffer.drop(heap, ctx);
-        buffer.drop(heap, seen);
-        buffer.drop(heap, pins);
-        buffer.drop(heap, bad);
     }
+    buffer.drop(heap, bad);
+    buffer.drop(heap, brought);
     buffer.drop(heap, texts);
     return result;
 }
@@ -497,18 +494,20 @@ fn require_found[&h, &i, &f, &x, &c, &k, &l, &n](heap: &!h Heap, io: &!i Io, fs:
 res struct Stepped {
     next: clistore.Walk,
     written: buffer.Buffer,
+    gathered: buffer.Buffer,
     said: int,
 }
 
-fn require_walked[&h, &i, &f, &x, &c, &k, &s, &t, &l, &n](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, cache: &k [byte], std_path: &s [byte], walk: clistore.Walk, texts: buffer.Buffer, store: &t [byte], lock_path: &l [byte], store_part: &n [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, dir_read, exec(""), clock, poll] Stepped {
+fn require_walked[&h, &i, &f, &x, &c, &k, &s, &t, &l, &n](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, cache: &k [byte], std_path: &s [byte], walk: clistore.Walk, texts: buffer.Buffer, gathered: buffer.Buffer, store: &t [byte], lock_path: &l [byte], store_part: &n [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, dir_read, exec(""), clock, poll] Stepped {
     let locked = clifetch.read_locked(heap, io, fs, lock_path);
     let clifetch.Locked { record, status } = locked;
     if status != 0 {
         buffer.drop(heap, record);
-        return Stepped { next: walk, written: texts, said: status };
+        return Stepped { next: walk, written: texts, gathered: gathered, said: status };
     }
     var next = walk;
     var written = texts;
+    var kept = gathered;
     var said = 0;
     borrow record as &rb in {
         let placed = found_dir(heap, io, exec, clock, fs, cache, buffer.bytes(rb), store_part);
@@ -517,6 +516,11 @@ fn require_walked[&h, &i, &f, &x, &c, &k, &s, &t, &l, &n](heap: &!h Heap, io: &!
         if said == 0 {
             borrow dir as &db in {
                 next = clistore.closure(heap, io, exec, clock, fs, cache, std_path, next, buffer.bytes(db), clifetch.entries_of(buffer.bytes(rb)));
+                // What this store brought is kept apart: walking the next store would otherwise drop it.
+                let collected = clistore.walk_collect(heap, next, kept);
+                let clistore.Collected { gathered_now, walk_now } = collected;
+                kept = gathered_now;
+                next = walk_now;
                 var relative = buffer.empty(heap, 0);
                 if lc.at(buffer.bytes(rb), 1) != '1' {
                     relative = projfile.replaced(heap, relative, relative_from(heap, store, buffer.bytes(db)));
@@ -534,7 +538,7 @@ fn require_walked[&h, &i, &f, &x, &c, &k, &s, &t, &l, &n](heap: &!h Heap, io: &!
         buffer.drop(heap, dir);
     }
     buffer.drop(heap, record);
-    return Stepped { next: next, written: written, said: said };
+    return Stepped { next: next, written: written, gathered: kept, said: said };
 }
 
 // ------------------------------------------------------------- the file ---

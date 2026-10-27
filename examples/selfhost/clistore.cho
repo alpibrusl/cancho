@@ -1212,12 +1212,12 @@ pub fn closure[&h, &i, &x, &c, &f, &k, &s, &t, &l](heap: &!h Heap, io: &!i Io, e
 }
 
 // What the walk of one requirement gave: its context merged into `gathered`, and the walk with an empty context again.
-res struct Collected {
+pub res struct Collected {
     gathered_now: buffer.Buffer,
     walk_now: Walk,
 }
 
-fn walk_collect[&h](heap: &!h Heap, walk: Walk, gathered: buffer.Buffer) -> [heap] Collected {
+pub fn walk_collect[&h](heap: &!h Heap, walk: Walk, gathered: buffer.Buffer) -> [heap] Collected {
     let Walk { ctx, seen, pins, bad } = walk;
     var merged = gathered;
     borrow ctx as &cb in {
