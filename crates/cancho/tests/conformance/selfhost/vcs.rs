@@ -1148,7 +1148,7 @@ fn vcs_publish_in_cancho_logs_a_file_like_cancho_vcs_publish() {
         failures.push(e);
     }
     let two = format!(
-        "{original}\npub fn two[&h, &c](heap: &!h Heap, clock: &c Clock) -> [heap, clock] int {{\n    let area = box_slice(heap, 4, 0);\n    unbox_slice(heap, area);\n    return clock_ms(clock);\n}}\n"
+        "{original}\npub fn two[&h, &i](heap: &!h Heap, io: &!i Io) -> [io_write, heap] int {{\n    let area = box_slice(heap, 4, 0);\n    unbox_slice(heap, area);\n    putchar(io, 65);\n    return 0;\n}}\n"
     );
     let files = [("a.cho", two)];
     if let Err(e) =
