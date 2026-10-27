@@ -131,9 +131,6 @@ fn take_file[&h, &i, &f, &p, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), file
                     console.write_all(io, "skipped ");
                     console.write_all(io, file);
                     console.write_all(io, " (no `module` declaration: a program, not a library module)\n");
-                } else if count > 1 {
-                    clilock.say(heap, io, "`", file, "` declares more than one `module`; a directory is published one module per file");
-                    status = 1;
                 } else {
                     let module_end = projfile.field_end(listed, 0, len(listed));
                     let unit = listed[0..module_end];

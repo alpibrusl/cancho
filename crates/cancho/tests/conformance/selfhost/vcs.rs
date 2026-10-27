@@ -312,7 +312,20 @@ fn steps_both(
                 said.1 = kept.join("\n").into_bytes();
             }
             // A pin that does not hold, or a program that is refused, is said with the words of the compiler that found it, which differ.
-            if command != "lock" && said.0 == Some(1) && !said.2.contains("was not given `--std`") {
+            // The refusals of `--dir` that are not the compiler's are said with the words of the Rust command.
+            let own = [
+                "modules import each other",
+                "module `",
+                "no file of",
+                "no `.cho` files",
+                "which is neither `std`",
+            ];
+            let kept = rest.iter().any(|a| a == "--dir") && own.iter().any(|p| said.2.contains(p));
+            if command != "lock"
+                && said.0 == Some(1)
+                && !said.2.contains("was not given `--std`")
+                && !kept
+            {
                 said.2.clear();
             }
             said_all.push(said);
@@ -1601,6 +1614,15 @@ fn vcs_publish_dir_in_cancho_publishes_a_library_like_cancho_vcs_publish() {
         (
             "a module that imports itself",
             vec![("lib/a.cho", dir_module("lib.a", &["lib.a"], one))],
+            vec![dir(&[])],
+        ),
+        (
+            "a module that sorts before what it imports",
+            vec![
+                ("lib/a.cho", dir_module("lib.aaa", &["lib.mmm", "lib.zzz"], one)),
+                ("lib/m.cho", dir_module("lib.mmm", &[], one)),
+                ("lib/z.cho", dir_module("lib.zzz", &[], one)),
+            ],
             vec![dir(&[])],
         ),
         (
