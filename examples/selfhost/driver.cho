@@ -776,13 +776,13 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
             at = header_end(raw, at) + n;
             f = f + 1;
         }
-        if mode >= 3 && mode != 9 && mode != 11 && mode != 13 && mode != 14 && mode != 15 {
+        if mode >= 3 && mode != 9 && mode != 11 && mode != 13 && mode != 14 && mode != 15 && mode != 16 {
             // A string literal is one token and as many bytes, and its code is the bytes again, spelt out: the room the code is written in is
             // counted by the token, so it is raised by the length of the text.
             tokens = tokens + len(text) / 50;
         }
         var size = ast.size_for(tokens, files);
-        if mode == 9 || mode == 13 || mode == 14 || mode == 15 {
+        if mode == 9 || mode == 13 || mode == 14 || mode == 15 || mode == 16 {
             // The identities only need the room the printer works floats out in.
             size = size + ast.const_region() + ast.inst_region();
         } else if mode >= 3 && mode != 11 {
@@ -791,7 +791,7 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
         let state = box_slice(heap, size, 0);
         borrow mut state as &!b in {
             let st = contents(b);
-            if mode == 9 || mode == 13 || mode == 14 || mode == 15 {
+            if mode == 9 || mode == 13 || mode == 14 || mode == 15 || mode == 16 {
                 ast.layout(st, tokens, files);
                 st[62] = ast.size_for(tokens, files);
             } else if mode >= 3 && mode != 11 {
@@ -828,6 +828,15 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                     status = refusal_line(io, st);
                 } else {
                     status = identities(heap, io, st, text, tokens);
+                }
+            } else if mode == 16 {
+                // The modules the file declares and what each imports (`identity.modules`), for `vcs publish --dir`.
+                if ast.parse(st, text) != 0 {
+                    status = 1;
+                } else {
+                    buffer.drop(heap, written);
+                    written = identity.modules(heap, st, text);
+                    status = 0;
                 }
             } else if mode == 13 || mode == 14 || mode == 15 {
                 // The functions of the program with the identity of each signature (`identity.listing`), for `satisfy`; or, for a store being checked, the signature and the body of each.

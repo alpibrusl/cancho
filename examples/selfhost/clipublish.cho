@@ -36,7 +36,7 @@ pub res struct Publishing {
     bad: int,
 }
 
-fn publish_words[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args) -> [heap, err_write, args] Publishing {
+pub fn publish_words[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args) -> [heap, err_write, args] Publishing {
     var requires = buffer.empty(heap, 0);
     var files = buffer.empty(heap, 0);
     var store_at = 0 - 1;
@@ -91,7 +91,11 @@ fn complain[&h, &i, &a, &b, &c](heap: &!h Heap, io: &!i Io, head: &a [byte], mid
 
 // `vcs publish [--store DIR] [--std] [--requires LOCK[:STORE]]... FILE`.
 pub fn publish_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
-    let given = publish_words(heap, io, args);
+    return publish_given(heap, io, args, fs, exec, clock, publish_words(heap, io, args));
+}
+
+// The command once its words are read.
+pub fn publish_given[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, given: Publishing) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
     let Publishing { requires, files, store_at, dir_at, cache_at, std_at, with_std, bad } = given;
     var status = bad;
     if status == 0 {
@@ -190,6 +194,11 @@ fn publish_requires[&h, &i, &f, &x, &c, &k, &s, &r, &t, &p](heap: &!h Heap, io: 
         status = said;
         at = end + 1;
     }
+    return publish_walked(heap, io, fs, exec, clock, cache, std_path, walk, texts, brought, store, input, with_std, status);
+}
+
+// What is left of a publish once the stores it requires have been walked (`status` is 0 if they all were): the walk's problems said, or the file published against what they brought.
+pub fn publish_walked[&h, &i, &f, &x, &c, &k, &s, &t, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, cache: &k [byte], std_path: &s [byte], walk: clistore.Walk, texts: buffer.Buffer, brought: buffer.Buffer, store: &t [byte], input: &p [byte], with_std: bool, status: int) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
     var result = status;
     let clistore.Walk { ctx, seen, pins, bad } = walk;
     buffer.drop(heap, ctx);
@@ -492,7 +501,7 @@ fn require_found[&h, &i, &f, &x, &c, &k, &l, &n](heap: &!h Heap, io: &!i Io, fs:
 }
 
 // The walk, and the requirement texts (each followed by a NUL), after one more store required.
-res struct Stepped {
+pub res struct Stepped {
     next: clistore.Walk,
     written: buffer.Buffer,
     gathered: buffer.Buffer,
@@ -506,40 +515,46 @@ fn require_walked[&h, &i, &f, &x, &c, &k, &s, &t, &l, &n](heap: &!h Heap, io: &!
         buffer.drop(heap, record);
         return Stepped { next: walk, written: texts, gathered: gathered, said: status };
     }
-    var next = walk;
-    var written = texts;
-    var kept = gathered;
-    var said = 0;
+    var stepped = Stepped { next: walk, written: texts, gathered: gathered, said: 0 };
     borrow record as &rb in {
         let placed = found_dir(heap, io, exec, clock, fs, cache, buffer.bytes(rb), store_part);
         let clifetch.Placed { dir, status } = placed;
-        said = status;
-        if said == 0 {
+        if status == 0 {
+            let Stepped { next, written, gathered, said } = stepped;
             borrow dir as &db in {
-                next = clistore.closure(heap, io, exec, clock, fs, cache, std_path, next, buffer.bytes(db), clifetch.entries_of(buffer.bytes(rb)));
-                // What this store brought is kept apart: walking the next store would otherwise drop it.
-                let collected = clistore.walk_collect(heap, next, kept);
-                let clistore.Collected { gathered_now, walk_now } = collected;
-                kept = gathered_now;
-                next = walk_now;
-                var relative = buffer.empty(heap, 0);
-                if lc.at(buffer.bytes(rb), 1) != '1' {
-                    relative = projfile.replaced(heap, relative, relative_from(heap, store, buffer.bytes(db)));
-                }
-                borrow relative as &lb in {
-                    let text = requirement_text(heap, buffer.bytes(lb), buffer.bytes(rb));
-                    borrow text as &xb in {
-                        written = buffer.push(heap, buffer.append(heap, written, buffer.bytes(xb)), byte_of(0));
-                    }
-                    buffer.drop(heap, text);
-                }
-                buffer.drop(heap, relative);
+                stepped = walk_required(heap, io, fs, exec, clock, cache, std_path, next, written, gathered, store, buffer.bytes(rb), buffer.bytes(db));
             }
+        } else {
+            let Stepped { next, written, gathered, said } = stepped;
+            stepped = Stepped { next: next, written: written, gathered: gathered, said: status };
         }
         buffer.drop(heap, dir);
     }
     buffer.drop(heap, record);
-    return Stepped { next: next, written: written, gathered: kept, said: said };
+    return stepped;
+}
+
+// One store required, its lock `record` and the directory `dir` it pins known: the walk goes through it, what it brings is kept apart, and its requirement text is added (the store written relative to `store`, unless the lock has an origin).
+pub fn walk_required[&h, &i, &f, &x, &c, &k, &s, &t, &r, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, cache: &k [byte], std_path: &s [byte], walk: clistore.Walk, texts: buffer.Buffer, gathered: buffer.Buffer, store: &t [byte], record: &r [byte], dir: &d [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, dir_read, exec(""), clock, poll] Stepped {
+    var next = clistore.closure(heap, io, exec, clock, fs, cache, std_path, walk, dir, clifetch.entries_of(record));
+    // What this store brought is kept apart: walking the next store would otherwise drop it.
+    let collected = clistore.walk_collect(heap, next, gathered);
+    let clistore.Collected { gathered_now, walk_now } = collected;
+    next = walk_now;
+    var relative = buffer.empty(heap, 0);
+    if lc.at(record, 1) != '1' {
+        relative = projfile.replaced(heap, relative, relative_from(heap, store, dir));
+    }
+    var written = texts;
+    borrow relative as &lb in {
+        let text = requirement_text(heap, buffer.bytes(lb), record);
+        borrow text as &xb in {
+            written = buffer.push(heap, buffer.append(heap, written, buffer.bytes(xb)), byte_of(0));
+        }
+        buffer.drop(heap, text);
+    }
+    buffer.drop(heap, relative);
+    return Stepped { next: next, written: written, gathered: gathered_now, said: 0 };
 }
 
 // ------------------------------------------------------------- the file ---
@@ -596,7 +611,7 @@ fn publish_source[&h, &i, &f, &x, &c, &k, &s, &e, &u, &t, &p](heap: &!h Heap, io
 }
 
 // The check run for the sake of what it says about the files `named` (each followed by a NUL): the status, 1.
-fn said_why[&h, &i, &f, &n](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), named: &n [byte]) -> [heap, io_write, err_write, fs_read(""), file_read] int {
+pub fn said_why[&h, &i, &f, &n](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), named: &n [byte]) -> [heap, io_write, err_write, fs_read(""), file_read] int {
     let again = clistore.compile(heap, io, fs, named, false, "", true, 15);
     let clistore.Compiled { ran, found } = again;
     buffer.drop(heap, found);

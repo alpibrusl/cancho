@@ -1,0 +1,528 @@
+edition 7;
+module selfhost.clidir;
+
+// clidir.cho -- `vcs publish --dir DIR`, a port of `publish_dir` (`crates/cancho/src/vcs_dir.rs`, `docs/cli-in-cancho.md` section 33): the files of a directory published one module to a store each, in the order of their
+// imports, each against the stores of the modules it imports.
+//
+// The modules and imports of each file come from mode 16 of the driver (`identity.modules`), read off the parse. A store is cleared and made again; what a file requires is a lock of everything the store of the module it
+// imports holds, made here from the manifest of that store. Exit status as for `publish`: 1 refused, 3 the environment.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import std.vec;
+import selfhost.lexcore as lc;
+import selfhost.walk;
+import selfhost.projfile;
+import selfhost.clistore;
+import selfhost.cliorigin;
+import selfhost.clilock;
+import selfhost.clifetch;
+import selfhost.clivcs;
+import selfhost.cliproject;
+import selfhost.clipublish;
+import selfhost.clisync;
+import selfhost.clibase;
+
+// The end of the import that starts at `at` in `imports` (each followed by a newline).
+fn import_end[&i](imports: &i [byte], at: int) -> [] int {
+    var p = at;
+    while p < len(imports) && lc.at(imports, p) != 10 {
+        p = p + 1;
+    }
+    return p;
+}
+
+// Where in `sorted` (places of records in `recs`, by module) the module `name` is, or -1.
+fn index_of[&r, &s, &n](recs: &r [byte], sorted: &s vec.Vec[int], name: &n [byte]) -> [] int {
+    var k = 0;
+    while k < vec.size(sorted) {
+        if bytes.equal(clivcs.field_of(recs, vec.get(sorted, k), 0), name) {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// ------------------------------------------------------------- the lock of a store ---
+
+// Every declaration the store at `store` holds as a lock record (`Lock` of `lock_of_all`): no origin, the entries by name (`NAME SIG STAGE SOURCE`), a name given twice standing for the last. The
+// status is 3, and the reason said, if the manifest cannot be read.
+fn lock_of_all[&h, &i, &f, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), store: &s [byte]) -> [heap, err_write, fs_read(""), file_read] clifetch.Locked {
+    let got = clistore.read_manifest_with(heap, fs, store, false);
+    let clistore.Pins { records, why } = got;
+    var rec = buffer.append(heap, buffer.empty(heap, 512), "\0");
+    var status = 0;
+    borrow why as &wb in {
+        if buffer.size(wb) > 0 {
+            clilock.say(heap, io, "", buffer.bytes(wb), "");
+            status = 3;
+        }
+    }
+    if status == 0 {
+        rec = buffer.append(heap, rec, "0\0");
+        borrow records as &rb in {
+            let recs = buffer.bytes(rb);
+            var taken = 0 - 1;
+            var going = true;
+            while going {
+                var best = 0 - 1;
+                var at = 0;
+                while at < len(recs) {
+                    if (taken < 0 || clivcs.before(recs, taken, at, 1)) && (best < 0 || clivcs.before(recs, at, best, 1)) {
+                        best = at;
+                    }
+                    at = clivcs.record_end(recs, at, 4);
+                }
+                if best < 0 {
+                    going = false;
+                } else {
+                    var later = false;
+                    var other = clivcs.record_end(recs, best, 4);
+                    while other < len(recs) && !later {
+                        if bytes.equal(clivcs.field_of(recs, other, 1), clivcs.field_of(recs, best, 1)) {
+                            later = true;
+                        }
+                        other = clivcs.record_end(recs, other, 4);
+                    }
+                    if !later {
+                        rec = buffer.push(heap, buffer.append(heap, rec, clivcs.field_of(recs, best, 1)), byte_of(0));
+                        rec = buffer.push(heap, buffer.append(heap, rec, clivcs.field_of(recs, best, 0)), byte_of(0));
+                        rec = buffer.push(heap, buffer.append(heap, rec, clivcs.field_of(recs, best, 2)), byte_of(0));
+                        rec = buffer.push(heap, buffer.append(heap, rec, clivcs.field_of(recs, best, 3)), byte_of(0));
+                    }
+                    taken = best;
+                }
+            }
+        }
+        rec = buffer.push(heap, buffer.push(heap, rec, byte_of(1)), byte_of(2));
+    }
+    buffer.drop(heap, records);
+    buffer.drop(heap, why);
+    return clifetch.Locked { record: rec, status: status };
+}
+
+// ------------------------------------------------------------- the files ---
+
+// The units found so far: `units` has, for each file that declares a module, `MODULE`, `FILE` and the imports that are not the library (each followed by a newline), each field followed by a NUL;
+// `starts` has the place of each; `status` is 0, or 1 or 3 if something was said and the rest is not to be done.
+pub res struct Units {
+    units: buffer.Buffer,
+    starts: vec.Vec[int],
+    status: int,
+}
+
+// The file `file` taken into the units: skipped if it declares no module, refused if it declares several, or if its module is one that a file before it declares.
+fn take_file[&h, &i, &f, &p, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), file: &p [byte], units: buffer.Buffer, starts: vec.Vec[int], std_path: &s [byte]) -> [heap, io_write, err_write, fs_read(""), file_read] Units {
+    var out = units;
+    var places = starts;
+    var status = 0;
+    let named = buffer.push(heap, buffer.append(heap, buffer.empty(heap, len(file) + 1), file), byte_of(0));
+    borrow named as &nb in {
+        let alone = clistore.compile(heap, io, fs, buffer.bytes(nb), false, "", false, 16);
+        let clistore.Compiled { ran, found } = alone;
+        if ran != 0 {
+            status = clipublish.said_why(heap, io, fs, buffer.bytes(nb));
+        } else {
+            borrow found as &fb in {
+                let listed = buffer.bytes(fb);
+                var count = 0;
+                var at = 0;
+                while at < len(listed) {
+                    if lc.at(listed, at) == 10 {
+                        count = count + 1;
+                    }
+                    at = at + 1;
+                }
+                if count == 0 {
+                    console.write_all(io, "skipped ");
+                    console.write_all(io, file);
+                    console.write_all(io, " (no `module` declaration: a program, not a library module)\n");
+                } else if count > 1 {
+                    clilock.say(heap, io, "`", file, "` declares more than one `module`; a directory is published one module per file");
+                    status = 1;
+                } else {
+                    let module_end = projfile.field_end(listed, 0, len(listed));
+                    let unit = listed[0..module_end];
+                    var other = 0;
+                    var clash = false;
+                    borrow out as &ob in {
+                        let have = buffer.bytes(ob);
+                        while other < len(have) && !clash {
+                            if bytes.equal(clivcs.field_of(have, other, 0), unit) {
+                                clash = true;
+                                let first = cliorigin.message(heap, "module `", unit, "` is declared by both `");
+                                var line = first;
+                                line = buffer.append(heap, line, clivcs.field_of(have, other, 1));
+                                line = buffer.append(heap, line, "` and `");
+                                line = buffer.append(heap, line, file);
+                                borrow line as &lb in {
+                                    clilock.say(heap, io, "", buffer.bytes(lb), "`");
+                                }
+                                buffer.drop(heap, line);
+                            }
+                            other = clivcs.record_end(have, other, 3);
+                        }
+                    }
+                    if clash {
+                        status = 1;
+                    } else {
+                        borrow out as &ob2 in {
+                            places = vec.push(heap, places, buffer.size(ob2));
+                        }
+                        out = buffer.push(heap, buffer.append(heap, out, unit), byte_of(0));
+                        out = buffer.push(heap, buffer.append(heap, out, file), byte_of(0));
+                        var p = module_end + 1;
+                        while p < len(listed) && lc.at(listed, p) != 10 {
+                            let end = projfile.field_end(listed, p, len(listed));
+                            let path = listed[p..end];
+                            let is_std = bytes.equal(path, "std") || len(path) > 4 && bytes.equal(path[0..4], "std.");
+                            if !is_std {
+                                out = buffer.push(heap, buffer.append(heap, out, path), byte_of(10));
+                            }
+                            p = end + 1;
+                        }
+                        out = buffer.push(heap, out, byte_of(0));
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, found);
+    }
+    buffer.drop(heap, named);
+    return Units { units: out, starts: places, status: status };
+}
+
+// Every file of the directory taken into the units, in the order of their names.
+fn take_files[&h, &i, &f, &d, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), files: &d [byte], std_path: &s [byte]) -> [heap, io_write, err_write, fs_read(""), file_read] Units {
+    var table = buffer.empty(heap, 256);
+    var spots = vec.empty(heap, 16, 0);
+    var state = 0;
+    var at = 0;
+    while at < len(files) && state == 0 {
+        let end = projfile.field_end(files, at, len(files));
+        let taken = take_file(heap, io, fs, files[at..end], table, spots, std_path);
+        let Units { units, starts, status } = taken;
+        table = units;
+        spots = starts;
+        state = status;
+        at = end + 1;
+    }
+    return Units { units: table, starts: spots, status: state };
+}
+
+// ------------------------------------------------------------- the order ---
+
+// The modules of `sorted` (places in `recs`, by module) in an order that has each after everything it imports, as places in `sorted`; the status is 1, and why said, if they import each other or one imports a module
+// that is not in the directory.
+pub res struct Ordered {
+    order: vec.Vec[int],
+    status: int,
+}
+
+// Is every import of every module one of the modules? The first that is not is said.
+fn imports_known[&h, &i, &r, &s, &d](heap: &!h Heap, io: &!i Io, recs: &r [byte], sorted: &s vec.Vec[int], dir: &d [byte]) -> [heap, err_write] int {
+    var k = 0;
+    while k < vec.size(sorted) {
+        let imports = clivcs.field_of(recs, vec.get(sorted, k), 2);
+        var at = 0;
+        while at < len(imports) {
+            let end = import_end(imports, at);
+            let name = imports[at..end];
+            if index_of(recs, sorted, name) < 0 {
+                var line = cliorigin.message(heap, "`", clivcs.field_of(recs, vec.get(sorted, k), 1), "` imports `");
+                line = buffer.append(heap, buffer.append(heap, line, name), "`, which is neither `std` nor a module of `");
+                line = buffer.append(heap, buffer.append(heap, line, dir), "`; a dependency in another repository is published as its own store and required with `vcs publish --requires`");
+                borrow line as &lb in {
+                    clilock.say(heap, io, "", buffer.bytes(lb), "");
+                }
+                buffer.drop(heap, line);
+                return 1;
+            }
+            at = end + 1;
+        }
+        k = k + 1;
+    }
+    return 0;
+}
+
+// A vector of `n` zeros.
+fn zeros[&h](heap: &!h Heap, n: int) -> [heap] vec.Vec[int] {
+    var v = vec.empty(heap, n + 1, 0);
+    var i = 0;
+    while i < n {
+        v = vec.push(heap, v, 0);
+        i = i + 1;
+    }
+    return v;
+}
+
+// The depth-first walk of `visit`, with a stack of frames (the module and how many of its imports are done) instead of calls: a module is done when all its imports are, and then goes to the order.
+fn dependency_order[&h, &i, &r, &s](heap: &!h Heap, io: &!i Io, recs: &r [byte], sorted: &s vec.Vec[int]) -> [heap, err_write] Ordered {
+    let n = vec.size(sorted);
+    var state = zeros(heap, n);
+    var order = zeros(heap, n);
+    var frame_module = zeros(heap, n);
+    var frame_done = zeros(heap, n);
+    var status = 0;
+    var emitted = 0;
+    borrow mut state as &!sb in {
+        borrow mut order as &!ob in {
+            borrow mut frame_module as &!fm in {
+                borrow mut frame_done as &!fd in {
+                    var depth = 0;
+                    var root = 0;
+                    while root < n && status == 0 {
+                        if vec.get(sb, root) == 0 {
+                            vec.set(sb, root, 1);
+                            vec.set(fm, 0, root);
+                            vec.set(fd, 0, 0);
+                            depth = 1;
+                            while depth > 0 && status == 0 {
+                                let top = depth - 1;
+                                let u = vec.get(fm, top);
+                                let imports = clivcs.field_of(recs, vec.get(sorted, u), 2);
+                                var at = 0;
+                                var c = 0;
+                                while c < vec.get(fd, top) && at < len(imports) {
+                                    at = import_end(imports, at) + 1;
+                                    c = c + 1;
+                                }
+                                if at >= len(imports) {
+                                    vec.set(sb, u, 2);
+                                    vec.set(ob, emitted, u);
+                                    emitted = emitted + 1;
+                                    depth = depth - 1;
+                                } else {
+                                    vec.set(fd, top, vec.get(fd, top) + 1);
+                                    let name = imports[at..import_end(imports, at)];
+                                    let j = index_of(recs, sorted, name);
+                                    if vec.get(sb, j) == 1 {
+                                        var line = buffer.append(heap, buffer.empty(heap, 64), "modules import each other: ");
+                                        var f = 0;
+                                        while f < depth {
+                                            line = buffer.append(heap, line, clivcs.field_of(recs, vec.get(sorted, vec.get(fm, f)), 0));
+                                            line = buffer.append(heap, line, " -> ");
+                                            f = f + 1;
+                                        }
+                                        line = buffer.append(heap, line, name);
+                                        borrow line as &lb in {
+                                            clilock.say(heap, io, "", buffer.bytes(lb), "");
+                                        }
+                                        buffer.drop(heap, line);
+                                        status = 1;
+                                    } else if vec.get(sb, j) == 0 {
+                                        vec.set(sb, j, 1);
+                                        vec.set(fm, depth, j);
+                                        vec.set(fd, depth, 0);
+                                        depth = depth + 1;
+                                    }
+                                }
+                            }
+                        }
+                        root = root + 1;
+                    }
+                }
+            }
+        }
+    }
+    vec.drop(heap, state);
+    vec.drop(heap, frame_module);
+    vec.drop(heap, frame_done);
+    return Ordered { order: order, status: status };
+}
+
+// ------------------------------------------------------------- publishing ---
+
+// 0 if the store at `dir` has a manifest that can be read, else 3 and why.
+fn manifest_status[&h, &i, &f, &d](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), dir: &d [byte]) -> [heap, err_write, fs_read(""), file_read] int {
+    let locked = lock_of_all(heap, io, fs, dir);
+    let clifetch.Locked { record, status } = locked;
+    buffer.drop(heap, record);
+    return status;
+}
+
+// The module at `place` of `recs` published into `root/MODULE`: the store cleared, the stores of what it imports read, and the file published against them. 0, or what was said.
+fn publish_unit[&h, &i, &f, &x, &c, &k, &s, &r, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, cache: &k [byte], std_path: &s [byte], recs: &r [byte], place: int, root: &t [byte], with_std: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    let unit = clivcs.field_of(recs, place, 0);
+    let file = clivcs.field_of(recs, place, 1);
+    let imports = clivcs.field_of(recs, place, 2);
+    let store = cliorigin.joined(heap, root, unit);
+    var status = 0;
+    borrow store as &sb in {
+        if walk.is_directory(fs, buffer.bytes(sb)) {
+            if !cliorigin.tool(heap, io, exec, clock, "/bin/rm", "-rf", buffer.bytes(sb)) {
+                clilock.say(heap, io, "cannot clear the store `", buffer.bytes(sb), "`");
+                status = 3;
+            }
+        } else if cliproject.is_file(fs, buffer.bytes(sb)) {
+            clilock.say(heap, io, "cannot clear the store `", buffer.bytes(sb), "`");
+            status = 3;
+        }
+        var at = 0;
+        while at < len(imports) && status == 0 {
+            let end = import_end(imports, at);
+            let dep = cliorigin.joined(heap, root, imports[at..end]);
+            borrow dep as &db in {
+                status = manifest_status(heap, io, fs, buffer.bytes(db));
+            }
+            buffer.drop(heap, dep);
+            at = end + 1;
+        }
+        if status == 0 {
+            console.write_all(io, "== ");
+            console.write_all(io, unit);
+            console.write_all(io, " (");
+            console.write_all(io, buffer.bytes(sb));
+            console.write_all(io, ")\n");
+            status = publish_against(heap, io, fs, exec, clock, cache, std_path, root, buffer.bytes(sb), file, imports, with_std);
+        }
+    }
+    buffer.drop(heap, store);
+    return status;
+}
+
+// `file` published into `store` against the stores of `imports` (each followed by a newline) under `root`.
+fn publish_against[&h, &i, &f, &x, &c, &k, &s, &r, &t, &p, &m](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, cache: &k [byte], std_path: &s [byte], root: &r [byte], store: &t [byte], file: &p [byte], imports: &m [byte], with_std: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    var walked = clistore.start_walk(heap, "");
+    var texts = buffer.empty(heap, 0);
+    var brought = buffer.empty(heap, 0);
+    var outcome = 0;
+    var at = 0;
+    while at < len(imports) && outcome == 0 {
+        let end = import_end(imports, at);
+        let dep = cliorigin.joined(heap, root, imports[at..end]);
+        borrow dep as &db in {
+            let locked = lock_of_all(heap, io, fs, buffer.bytes(db));
+            let clifetch.Locked { record, status } = locked;
+            if status != 0 {
+                outcome = status;
+            } else {
+                borrow record as &rb in {
+                    let step = clipublish.walk_required(heap, io, fs, exec, clock, cache, std_path, walked, texts, brought, store, buffer.bytes(rb), buffer.bytes(db));
+                    let clipublish.Stepped { next, written, gathered, said } = step;
+                    walked = next;
+                    texts = written;
+                    brought = gathered;
+                    outcome = said;
+                }
+            }
+            buffer.drop(heap, record);
+        }
+        buffer.drop(heap, dep);
+        at = end + 1;
+    }
+    return clipublish.publish_walked(heap, io, fs, exec, clock, cache, std_path, walked, texts, brought, store, file, with_std, outcome);
+}
+
+// `vcs publish --dir DIR [--store ROOT] [--std]`.
+pub fn publish_dir[&h, &i, &f, &x, &c, &k, &s, &d, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, cache: &k [byte], std_path: &s [byte], dir: &d [byte], root: &t [byte], with_std: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    if !walk.is_directory(fs, dir) {
+        clilock.say(heap, io, "cannot read directory `", dir, "`");
+        return 3;
+    }
+    let files = walk.direct(heap, fs, dir, buffer.empty(heap, 256));
+    var outcome = 0;
+    borrow files as &fb in {
+        if buffer.size(fb) == 0 {
+            clilock.say(heap, io, "no `.cho` files in `", dir, "`");
+            outcome = 1;
+        } else {
+            let taken = take_files(heap, io, fs, buffer.bytes(fb), std_path);
+            let Units { units, starts, status } = taken;
+            outcome = status;
+            var none = false;
+            borrow starts as &st0 in {
+                none = vec.size(st0) == 0;
+            }
+            if outcome == 0 && none {
+                clilock.say(heap, io, "no file of `", dir, "` declares a `module`");
+                outcome = 1;
+            }
+            if outcome == 0 {
+                borrow units as &ub in {
+                    borrow starts as &sb in {
+                        outcome = publish_all(heap, io, fs, exec, clock, cache, std_path, buffer.bytes(ub), sb, dir, root, with_std);
+                    }
+                }
+            }
+            buffer.drop(heap, units);
+            vec.drop(heap, starts);
+        }
+    }
+    buffer.drop(heap, files);
+    return outcome;
+}
+
+// The units in the order of their modules checked, ordered, and published.
+fn publish_all[&h, &i, &f, &x, &c, &k, &s, &r, &p, &d, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, cache: &k [byte], std_path: &s [byte], recs: &r [byte], starts: &p vec.Vec[int], dir: &d [byte], root: &t [byte], with_std: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    let by_module = clisync.sorted_entries(heap, recs, starts);
+    var sorted = zeros(heap, vec.size(starts));
+    borrow by_module as &bm in {
+        borrow mut sorted as &!so in {
+            var k = 0;
+            while k < vec.size(starts) {
+                vec.set(so, k, vec.get(starts, vec.get(bm, k)));
+                k = k + 1;
+            }
+        }
+    }
+    vec.drop(heap, by_module);
+    var outcome = 0;
+    borrow sorted as &sr in {
+        outcome = imports_known(heap, io, recs, sr, dir);
+        if outcome == 0 {
+            let ordered = dependency_order(heap, io, recs, sr);
+            let Ordered { order, status } = ordered;
+            outcome = status;
+            borrow order as &od in {
+                var k = 0;
+                while outcome == 0 && k < vec.size(sr) {
+                    outcome = publish_unit(heap, io, fs, exec, clock, cache, std_path, recs, vec.get(sr, vec.get(od, k)), root, with_std);
+                    k = k + 1;
+                }
+            }
+            vec.drop(heap, order);
+        }
+    }
+    vec.drop(heap, sorted);
+    return outcome;
+}
+
+// `vcs publish`: with `--dir` the directory, else the file (`clipublish.publish_given`).
+pub fn publish_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    let words = clipublish.publish_words(heap, io, args);
+    let clipublish.Publishing { requires, files, store_at, dir_at, cache_at, std_at, with_std, bad } = words;
+    if bad != 0 || dir_at < 0 {
+        return clipublish.publish_given(heap, io, args, fs, exec, clock, clipublish.Publishing { requires: requires, files: files, store_at: store_at, dir_at: dir_at, cache_at: cache_at, std_at: std_at, with_std: with_std, bad: bad });
+    }
+    var status = 0;
+    var others = false;
+    borrow requires as &rb in {
+        borrow files as &fb in {
+            others = buffer.size(rb) > 0 || buffer.size(fb) > 0;
+        }
+    }
+    if others {
+        status = clibase.usage_error(heap, io, "`--dir` publishes a whole directory and works out each file's `--requires` from its imports; it cannot be combined with input files or `--requires`");
+    } else {
+        var root = buffer.empty(heap, 32);
+        if store_at >= 0 {
+            root = buffer.append(heap, root, arg(args, store_at));
+        } else {
+            root = buffer.append(heap, root, ".cancho-vcs");
+        }
+        let cache = cliorigin.cache_root(heap, io, exec, clock, clifetch.value_of(args, cache_at));
+        borrow root as &rt in {
+            borrow cache as &cb in {
+                status = publish_dir(heap, io, fs, exec, clock, buffer.bytes(cb), clifetch.value_of(args, std_at), arg(args, dir_at), buffer.bytes(rt), with_std);
+            }
+        }
+        buffer.drop(heap, root);
+        buffer.drop(heap, cache);
+    }
+    buffer.drop(heap, requires);
+    buffer.drop(heap, files);
+    return status;
+}
