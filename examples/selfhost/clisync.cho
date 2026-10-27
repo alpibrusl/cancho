@@ -1,0 +1,753 @@
+edition 7;
+module selfhost.clisync;
+
+// clisync.cho -- `vcs sync`, a port of `cmd_sync` (`crates/cancho/src/vcs_sync.rs`, `docs/cli-in-cancho.md` section 32): the identity of every declaration of a tree of sources, written as
+// `.cancho/ids.txt` (one sorted line, `fn MODULE NAME SIG BODY`, to a declaration) with the operations that took the index there, and the semantic difference against the index the tree had.
+//
+// Exit status as the Rust command's: 1 for `--check` and a change, 2 a bad command line, 3 the environment. `--std-dir DIR` stands for the bundled library, as for `publish`.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import std.vec;
+import selfhost.lexcore as lc;
+import selfhost.walk;
+import selfhost.projfile;
+import selfhost.clibase;
+import selfhost.clistore;
+import selfhost.cliorigin;
+import selfhost.clilock;
+import selfhost.clifetch;
+import selfhost.clivcs;
+import selfhost.cliproject;
+import selfhost.clipublish;
+import selfhost.jsonwrite;
+
+// The words of a `vcs sync` command line: where `--dir` and `--std-dir` have their values (-1 if not given), `--std`, `--check`, and `bad` (the status of a usage error that has been said).
+struct Syncing {
+    dir_at: int,
+    std_at: int,
+    with_std: bool,
+    check: bool,
+    bad: int,
+}
+
+fn sync_words[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args) -> [heap, err_write, args] Syncing {
+    var dir_at = 0 - 1;
+    var std_at = 0 - 1;
+    var with_std = false;
+    var check = false;
+    var bad = 0;
+    var n = 3;
+    while n < arg_count(args) && bad == 0 {
+        let word = arg(args, n);
+        if bytes.equal(word, "--dir") || bytes.equal(word, "--std-dir") {
+            if n + 1 >= arg_count(args) {
+                if bytes.equal(word, "--dir") {
+                    bad = clibase.usage_error(heap, io, "`--dir` needs a directory");
+                } else {
+                    bad = clifetch.needs_value(heap, io, word);
+                }
+            } else {
+                n = n + 1;
+                if bytes.equal(word, "--dir") {
+                    dir_at = n;
+                } else {
+                    std_at = n;
+                }
+            }
+        } else if bytes.equal(word, "--std") {
+            with_std = true;
+        } else if bytes.equal(word, "--check") {
+            check = true;
+        } else {
+            let why = cliorigin.message(heap, "unknown `vcs sync` option `", word, "`");
+            borrow why as &wb in {
+                bad = clibase.usage_error(heap, io, buffer.bytes(wb));
+            }
+            buffer.drop(heap, why);
+        }
+        n = n + 1;
+    }
+    return Syncing { dir_at: dir_at, std_at: std_at, with_std: with_std, check: check, bad: bad };
+}
+
+// ------------------------------------------------------------- the entries ---
+
+// Which of two entries comes first: by module, then by name (the order of the `BTreeMap` of `(module, name)` the Rust code keeps). An entry is `MODULE SIG..` as fields, each followed by a NUL; `a` is where in `ra`.
+fn key_order[&r, &q](ra: &r [byte], a: int, rb: &q [byte], b: int) -> [] int {
+    let c = bytes.compare(clivcs.field_of(ra, a, 0), clivcs.field_of(rb, b, 0));
+    if c != 0 {
+        return c;
+    }
+    return bytes.compare(clivcs.field_of(ra, a, 1), clivcs.field_of(rb, b, 1));
+}
+
+// The positions of the entries `starts` in `recs` in the order of their keys, entries with one key in the order they come in: a bottom-up merge sort over indices of `starts`.
+fn sorted_entries[&h, &r, &s](heap: &!h Heap, recs: &r [byte], starts: &s vec.Vec[int]) -> [heap] vec.Vec[int] {
+    let n = vec.size(starts);
+    var order = vec.empty(heap, n + 1, 0);
+    var spare = vec.empty(heap, n + 1, 0);
+    var i = 0;
+    while i < n {
+        order = vec.push(heap, order, i);
+        spare = vec.push(heap, spare, 0);
+        i = i + 1;
+    }
+    var width = 1;
+    while width < n {
+        borrow mut order as &!o in {
+            borrow mut spare as &!w in {
+                var lo = 0;
+                while lo < n {
+                    var mid = lo + width;
+                    if mid > n {
+                        mid = n;
+                    }
+                    var hi = lo + 2 * width;
+                    if hi > n {
+                        hi = n;
+                    }
+                    var x = lo;
+                    var y = mid;
+                    var k = lo;
+                    while k < hi {
+                        if x < mid && (y >= hi || key_order(recs, vec.get(starts, vec.get(o, x)), recs, vec.get(starts, vec.get(o, y))) <= 0) {
+                            vec.set(w, k, vec.get(o, x));
+                            x = x + 1;
+                        } else {
+                            vec.set(w, k, vec.get(o, y));
+                            y = y + 1;
+                        }
+                        k = k + 1;
+                    }
+                    lo = hi;
+                }
+                var c = 0;
+                while c < n {
+                    vec.set(o, c, vec.get(w, c));
+                    c = c + 1;
+                }
+            }
+        }
+        width = width * 2;
+    }
+    vec.drop(heap, spare);
+    return order;
+}
+
+// For each key of the sorted `order`, the position in `recs` of the entry that stands for it: the first to have come (`last` false) or the last (`last` true).
+fn standing[&h, &r, &s, &o](heap: &!h Heap, recs: &r [byte], starts: &s vec.Vec[int], order: &o vec.Vec[int], last: bool) -> [heap] vec.Vec[int] {
+    var out = vec.empty(heap, vec.size(order) + 1, 0);
+    var k = 0;
+    while k < vec.size(order) {
+        let here = vec.get(starts, vec.get(order, k));
+        var end = k + 1;
+        while end < vec.size(order) && key_order(recs, here, recs, vec.get(starts, vec.get(order, end))) == 0 {
+            end = end + 1;
+        }
+        if last {
+            out = vec.push(heap, out, vec.get(starts, vec.get(order, end - 1)));
+        } else {
+            out = vec.push(heap, out, here);
+        }
+        k = end;
+    }
+    return out;
+}
+
+// For each entry of `starts` (by its place there): the place in `recs` of the first entry with its key, and 1 more, if that one has another identity (the fields 2 and 3), else 0.
+fn collisions[&h, &r, &s, &o](heap: &!h Heap, recs: &r [byte], starts: &s vec.Vec[int], order: &o vec.Vec[int]) -> [heap] vec.Vec[int] {
+    var out = vec.empty(heap, vec.size(order) + 1, 0);
+    var i = 0;
+    while i < vec.size(order) {
+        out = vec.push(heap, out, 0);
+        i = i + 1;
+    }
+    var k = 0;
+    while k < vec.size(order) {
+        let first = vec.get(starts, vec.get(order, k));
+        var end = k + 1;
+        while end < vec.size(order) && key_order(recs, first, recs, vec.get(starts, vec.get(order, end))) == 0 {
+            let other = vec.get(starts, vec.get(order, end));
+            if !bytes.equal(clivcs.field_of(recs, first, 2), clivcs.field_of(recs, other, 2)) || !bytes.equal(clivcs.field_of(recs, first, 3), clivcs.field_of(recs, other, 3)) {
+                borrow mut out as &!ob in {
+                    vec.set(ob, vec.get(order, end), first + 1);
+                }
+            }
+            end = end + 1;
+        }
+        k = end;
+    }
+    return out;
+}
+
+// `MODULE NAME SIG BODY` as the line of the index has it.
+fn index_line[&h, &r](heap: &!h Heap, out: buffer.Buffer, recs: &r [byte], at: int) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, "fn ");
+    b = buffer.append(heap, b, clivcs.field_of(recs, at, 0));
+    b = buffer.push(heap, b, byte_of(32));
+    b = buffer.append(heap, b, clivcs.field_of(recs, at, 1));
+    b = buffer.push(heap, b, byte_of(32));
+    b = buffer.append(heap, b, clivcs.field_of(recs, at, 2));
+    b = buffer.push(heap, b, byte_of(32));
+    b = buffer.append(heap, b, clivcs.field_of(recs, at, 3));
+    return buffer.push(heap, b, byte_of(10));
+}
+
+// `module::name`, or the name of the root module.
+fn qualified[&h, &r](heap: &!h Heap, recs: &r [byte], at: int) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 64);
+    if len(clivcs.field_of(recs, at, 0)) > 0 {
+        b = buffer.append(heap, b, clivcs.field_of(recs, at, 0));
+        b = buffer.append(heap, b, "::");
+    }
+    return buffer.append(heap, b, clivcs.field_of(recs, at, 1));
+}
+
+// ------------------------------------------------------------- reading the tree and the index ---
+
+// The entries so far: `events` is, in the order they were met, a `D` entry (`D`, a NUL, then module, name, signature, body and the file, each followed by a NUL) for a declaration and a `W`
+// entry (`W`, a NUL, the text, a NUL) for a file that could not be read; `starts` has the place of the module of each `D` entry in `events`.
+pub res struct Entered {
+    events: buffer.Buffer,
+    starts: vec.Vec[int],
+}
+
+// The lines of `listing` (mode 15 of the driver: module, name, signature, body, the labels, a newline) added to `evs` as `D` entries of `file`.
+fn enter[&h, &l, &p](heap: &!h Heap, evs: buffer.Buffer, sts: vec.Vec[int], listing: &l [byte], file: &p [byte]) -> [heap] Entered {
+    var out = buffer.append(heap, evs, "");
+    var places = sts;
+    var at = 0;
+    while at < len(listing) {
+        out = buffer.append(heap, out, "D\0");
+        borrow out as &ob in {
+            places = vec.push(heap, places, buffer.size(ob));
+        }
+        var k = 0;
+        var p = at;
+        while k < 4 {
+            let end = projfile.field_end(listing, p, len(listing));
+            out = buffer.push(heap, buffer.append(heap, out, listing[p..end]), byte_of(0));
+            p = end + 1;
+            k = k + 1;
+        }
+        out = buffer.push(heap, buffer.append(heap, out, file), byte_of(0));
+        while p < len(listing) && lc.at(listing, p) != 10 {
+            p = p + 1;
+        }
+        at = p + 1;
+    }
+    return Entered { events: out, starts: places };
+}
+
+// The file `file` taken into the entries: what it declares (compiled with the library if `with_std`, and not checked), or a warning if it is not accepted.
+fn scan_file[&h, &i, &f, &p, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), file: &p [byte], std_path: &s [byte], with_std: bool, evs: buffer.Buffer, sts: vec.Vec[int]) -> [heap, io_write, err_write, fs_read(""), file_read] Entered {
+    var out = evs;
+    var places = sts;
+    let named = buffer.push(heap, buffer.append(heap, buffer.empty(heap, len(file) + 1), file), byte_of(0));
+    borrow named as &nb in {
+        let alone = clistore.compile(heap, io, fs, buffer.bytes(nb), with_std, std_path, false, 15);
+        let clistore.Compiled { ran, found } = alone;
+        if ran != 0 {
+            out = buffer.push(heap, buffer.append(heap, buffer.append(heap, buffer.append(heap, out, "W\0"), file), " could not be parsed"), byte_of(0));
+        } else {
+            borrow found as &fb in {
+                let entered = enter(heap, out, places, buffer.bytes(fb), file);
+                let Entered { events, starts } = entered;
+                out = events;
+                places = starts;
+            }
+        }
+        buffer.drop(heap, found);
+    }
+    buffer.drop(heap, named);
+    return Entered { events: out, starts: places };
+}
+
+// The index the tree had, `fn MODULE NAME SIG BODY` to a line (a line that is not one is passed over, as the Rust command does): the entries as `MODULE NAME SIG BODY`, each followed by a NUL, and
+// the place of each. `failed` is 1 if the file is there and cannot be read.
+pub res struct Old {
+    recs: buffer.Buffer,
+    starts: vec.Vec[int],
+    failed: int,
+}
+
+fn old_index[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] Old {
+    if !cliproject.is_file(fs, path) {
+        return Old { recs: buffer.empty(heap, 0), starts: vec.empty(heap, 1, 0), failed: 0 };
+    }
+    let read = clibase.read_file(heap, fs, path);
+    let clibase.Contents { bytes, failed } = read;
+    if failed != 0 {
+        buffer.drop(heap, bytes);
+        return Old { recs: buffer.empty(heap, 0), starts: vec.empty(heap, 1, 0), failed: 1 };
+    }
+    return old_lines(heap, bytes);
+}
+
+// Every line of `bytes` that is an entry (see `old_line`), the buffer dropped.
+fn old_lines[&h](heap: &!h Heap, bytes: buffer.Buffer) -> [heap] Old {
+    var table = buffer.empty(heap, 256);
+    var spots = vec.empty(heap, 16, 0);
+    borrow bytes as &bb in {
+        let text = buffer.bytes(bb);
+        var at = 0;
+        while at < len(text) {
+            var stop = at;
+            while stop < len(text) && lc.at(text, stop) != 10 {
+                stop = stop + 1;
+            }
+            var line_end = stop;
+            if line_end > at && lc.at(text, line_end - 1) == 13 {
+                line_end = line_end - 1;
+            }
+            let added = old_line(heap, table, spots, text[at..line_end]);
+            let Old { recs, starts, failed } = added;
+            table = recs;
+            spots = starts;
+            at = stop + 1;
+        }
+    }
+    buffer.drop(heap, bytes);
+    return Old { recs: table, starts: spots, failed: 0 };
+}
+
+// The line `line` as an entry added to `recs`, if it is one: `fn `, then four fields between spaces, the name, the signature and the body not empty.
+fn old_line[&h, &l](heap: &!h Heap, recs: buffer.Buffer, places: vec.Vec[int], line: &l [byte]) -> [heap] Old {
+    var out = recs;
+    var found = places;
+    if len(line) >= 3 && bytes.equal(line[0..3], "fn ") {
+        var ends = vec.empty(heap, 4, 0);
+        var p = 3;
+        var k = 0;
+        var good = true;
+        while k < 4 && good {
+            if p > len(line) {
+                good = false;
+            } else {
+                var end = p;
+                while end < len(line) && lc.at(line, end) != 32 {
+                    end = end + 1;
+                }
+                ends = vec.push(heap, ends, end);
+                p = end + 1;
+                k = k + 1;
+            }
+        }
+        if good {
+            var a = 0;
+            var b = 0;
+            var c = 0;
+            var d = 0;
+            borrow ends as &eb in {
+                a = vec.get(eb, 0);
+                b = vec.get(eb, 1);
+                c = vec.get(eb, 2);
+                d = vec.get(eb, 3);
+            }
+            if b > a + 1 && c > b + 1 && d > c + 1 {
+                borrow out as &ob in {
+                    found = vec.push(heap, found, buffer.size(ob));
+                }
+                out = buffer.push(heap, buffer.append(heap, out, line[3..a]), byte_of(0));
+                out = buffer.push(heap, buffer.append(heap, out, line[a + 1..b]), byte_of(0));
+                out = buffer.push(heap, buffer.append(heap, out, line[b + 1..c]), byte_of(0));
+                out = buffer.push(heap, buffer.append(heap, out, line[c + 1..d]), byte_of(0));
+            }
+        }
+        vec.drop(heap, ends);
+    }
+    return Old { recs: out, starts: found, failed: 0 };
+}
+
+// ------------------------------------------------------------- the operations ---
+
+// An operation that is not an addition, as `OpLog::put` writes it to `dir`: `modify` (`ModifyBody`: the signature, the body before, the body after) or not (`RemoveFunction`: the signature, the body it had).
+// 0, or 3 and why.
+fn other_op[&h, &f, &o, &a, &b, &c](heap: &!h Heap, fs: &f Fs(""), ops_dir: &o [byte], modify: bool, sig: &a [byte], first: &b [byte], second: &c [byte]) -> [heap, fs_read(""), fs_write(""), file_write] int {
+    var kind = "RemoveFunction";
+    var key_one = "last_stage_id";
+    if modify {
+        kind = "ModifyBody";
+        key_one = "from_stage_id";
+    }
+    var canonical = buffer.append(heap, buffer.empty(heap, 512), "{\"kind\":\"");
+    canonical = jsonwrite.string(heap, buffer.append(heap, buffer.append(heap, canonical, kind), "\",\"sig_id\":"), sig);
+    canonical = jsonwrite.string(heap, buffer.append(heap, buffer.append(heap, buffer.append(heap, canonical, ",\""), key_one), "\":"), first);
+    if modify {
+        canonical = jsonwrite.string(heap, buffer.append(heap, canonical, ",\"to_stage_id\":"), second);
+    }
+    canonical = buffer.append(heap, canonical, ",\"parents\":[],\"edition\":1}");
+    var result = 0;
+    borrow canonical as &cb in {
+        let id = clistore.hash_hex(heap, buffer.bytes(cb));
+        borrow id as &ib in {
+            var text = buffer.push(heap, buffer.empty(heap, 1024), byte_of(123));
+            text = jsonwrite.string(heap, jsonwrite.key(heap, text, 1, "op_id"), buffer.bytes(ib));
+            text = buffer.push(heap, text, byte_of(44));
+            text = jsonwrite.key(heap, text, 1, "operation");
+            text = buffer.push(heap, text, byte_of(123));
+            text = jsonwrite.string(heap, jsonwrite.key(heap, text, 2, "kind"), kind);
+            text = buffer.push(heap, text, byte_of(44));
+            text = jsonwrite.string(heap, jsonwrite.key(heap, text, 2, "sig_id"), sig);
+            text = buffer.push(heap, text, byte_of(44));
+            text = jsonwrite.string(heap, jsonwrite.key(heap, text, 2, key_one), first);
+            text = buffer.push(heap, text, byte_of(44));
+            if modify {
+                text = jsonwrite.string(heap, jsonwrite.key(heap, text, 2, "to_stage_id"), second);
+                text = buffer.push(heap, text, byte_of(44));
+            }
+            text = buffer.append(heap, jsonwrite.key(heap, text, 2, "edition"), "1");
+            text = jsonwrite.newline(heap, text, 1);
+            text = buffer.push(heap, text, byte_of(125));
+            text = jsonwrite.newline(heap, text, 0);
+            text = buffer.push(heap, text, byte_of(125));
+            let name = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 80), buffer.bytes(ib)), ".json");
+            borrow text as &xb in {
+                borrow name as &nb in {
+                    if clipublish.put_new(heap, fs, ops_dir, buffer.bytes(nb), buffer.bytes(xb)) != 0 {
+                        result = 3;
+                    }
+                }
+            }
+            buffer.drop(heap, name);
+            buffer.drop(heap, text);
+        }
+        buffer.drop(heap, id);
+    }
+    buffer.drop(heap, canonical);
+    return result;
+}
+
+// The operations `todo` (`KIND`, then three fields, each followed by a NUL; 1 an addition, 2 a body modified, 3 a removal) written to `ops_dir`. 0, or 3 and why.
+fn write_ops[&h, &i, &f, &t, &o](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), todo: &t [byte], ops_dir: &o [byte]) -> [heap, err_write, fs_read(""), fs_write(""), file_write] int {
+    var at = 0;
+    var status = 0;
+    while at < len(todo) && status == 0 {
+        let kind = lc.at(todo, at);
+        let sig = clivcs.field_of(todo, at, 1);
+        let first = clivcs.field_of(todo, at, 2);
+        let second = clivcs.field_of(todo, at, 3);
+        if kind == '1' {
+            status = clipublish.logged(heap, io, fs, ops_dir, sig, first, "");
+        } else {
+            status = other_op(heap, fs, ops_dir, kind == '2', sig, first, second);
+        }
+        at = clivcs.record_end(todo, at, 4);
+    }
+    return status;
+}
+
+// An operation added to `todo`.
+fn want[&h, &a, &b, &c](heap: &!h Heap, todo: buffer.Buffer, kind: &static [byte], sig: &a [byte], first: &b [byte], second: &c [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, todo, kind);
+    out = buffer.push(heap, buffer.append(heap, out, sig), byte_of(0));
+    out = buffer.push(heap, buffer.append(heap, out, first), byte_of(0));
+    return buffer.push(heap, buffer.append(heap, out, second), byte_of(0));
+}
+
+// ------------------------------------------------------------- the difference ---
+
+// What changed between the index the tree had (`old`, the entries that stand for each key, at `olds` in `orecs`) and the one it has (`news` in `nrecs`): the operations it makes, and the counts of
+// declarations added, with a body changed, with a signature changed and removed.
+pub res struct Difference {
+    todo: buffer.Buffer,
+    counts: vec.Vec[int],
+}
+
+fn difference[&h, &r, &n, &q, &o](heap: &!h Heap, nrecs: &r [byte], news: &n vec.Vec[int], orecs: &q [byte], olds: &o vec.Vec[int]) -> [heap] Difference {
+    var todo = buffer.empty(heap, 256);
+    var counts = vec.empty(heap, 4, 0);
+    var added = 0;
+    var changed = 0;
+    var signed = 0;
+    var removed = 0;
+    var x = 0;
+    var y = 0;
+    while x < vec.size(news) || y < vec.size(olds) {
+        var order = 0;
+        if x >= vec.size(news) {
+            order = 1;
+        } else if y < vec.size(olds) {
+            order = key_order(nrecs, vec.get(news, x), orecs, vec.get(olds, y));
+        } else {
+            order = 0 - 1;
+        }
+        if order < 0 {
+            let at = vec.get(news, x);
+            added = added + 1;
+            todo = want(heap, todo, "1\0", clivcs.field_of(nrecs, at, 2), clivcs.field_of(nrecs, at, 3), "");
+            x = x + 1;
+        } else if order > 0 {
+            let at = vec.get(olds, y);
+            removed = removed + 1;
+            todo = want(heap, todo, "3\0", clivcs.field_of(orecs, at, 2), clivcs.field_of(orecs, at, 3), "");
+            y = y + 1;
+        } else {
+            let new_at = vec.get(news, x);
+            let old_at = vec.get(olds, y);
+            if bytes.equal(clivcs.field_of(nrecs, new_at, 2), clivcs.field_of(orecs, old_at, 2)) {
+                if !bytes.equal(clivcs.field_of(nrecs, new_at, 3), clivcs.field_of(orecs, old_at, 3)) {
+                    changed = changed + 1;
+                    todo = want(heap, todo, "2\0", clivcs.field_of(orecs, old_at, 2), clivcs.field_of(orecs, old_at, 3), clivcs.field_of(nrecs, new_at, 3));
+                }
+            } else {
+                signed = signed + 1;
+            }
+            x = x + 1;
+            y = y + 1;
+        }
+    }
+    counts = vec.push(heap, counts, added);
+    counts = vec.push(heap, counts, changed);
+    counts = vec.push(heap, counts, signed);
+    counts = vec.push(heap, counts, removed);
+    return Difference { todo: todo, counts: counts };
+}
+
+// `  N text` and a newline, if `n` is not 0.
+fn count_line[&h, &i](heap: &!h Heap, io: &!i Io, n: int, text: &static [byte]) -> [heap, io_write] int {
+    if n > 0 {
+        let digits = clifetch.number(heap, n);
+        borrow digits as &db in {
+            console.write_all(io, "  ");
+            console.write_all(io, buffer.bytes(db));
+            console.write_all(io, text);
+            console.write_all(io, "\n");
+        }
+        buffer.drop(heap, digits);
+    }
+    return 0;
+}
+
+// The report, whatever the mode: the semantic facts first.
+fn report[&h, &i, &c](heap: &!h Heap, io: &!i Io, counts: &c vec.Vec[int]) -> [heap, io_write] int {
+    if vec.get(counts, 0) + vec.get(counts, 1) + vec.get(counts, 2) + vec.get(counts, 3) == 0 {
+        console.write_all(io, "no semantic change: the index matches the source\n");
+        return 0;
+    }
+    console.write_all(io, "semantic diff against the committed index:\n");
+    count_line(heap, io, vec.get(counts, 0), " declaration(s) added");
+    count_line(heap, io, vec.get(counts, 1), " body change(s)");
+    count_line(heap, io, vec.get(counts, 2), " signature change(s) — callers by `SigId` affected; no op record is written (there is no op for it yet), so the index entry is overwritten in place");
+    count_line(heap, io, vec.get(counts, 3), " declaration(s) removed");
+    return 0;
+}
+
+// The warnings, in the order the files were met: a file that was not accepted, and a declaration that a file made with another identity than the first to make it; how many of the second.
+fn warnings[&h, &i, &e, &c](heap: &!h Heap, io: &!i Io, evs: &e [byte], flags: &c vec.Vec[int]) -> [heap, io_write] int {
+    var at = 0;
+    var d = 0;
+    var collided = 0;
+    while at < len(evs) {
+        if lc.at(evs, at) == 'W' {
+            let end = projfile.field_end(evs, at + 2, len(evs));
+            console.write_all(io, "warning: ");
+            console.write_all(io, evs[at + 2..end]);
+            console.write_all(io, "\n");
+            at = end + 1;
+        } else {
+            let flag = vec.get(flags, d);
+            if flag > 0 {
+                collided = collided + 1;
+                let name = qualified(heap, evs, at + 2);
+                borrow name as &nb in {
+                    console.write_all(io, "warning: collision: `");
+                    console.write_all(io, buffer.bytes(nb));
+                    console.write_all(io, "` is declared with a different identity in `");
+                    console.write_all(io, clivcs.field_of(evs, flag - 1, 4));
+                    console.write_all(io, "` and in `");
+                    console.write_all(io, clivcs.field_of(evs, at + 2, 4));
+                    console.write_all(io, "`; the index keeps the first\n");
+                }
+                buffer.drop(heap, name);
+            }
+            d = d + 1;
+            at = clivcs.record_end(evs, at + 2, 5);
+        }
+    }
+    return collided;
+}
+
+// ------------------------------------------------------------- the command ---
+
+// `vcs sync [--dir DIR] [--std] [--check]`.
+pub fn sync_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    let given = sync_words(heap, io, args);
+    let Syncing { dir_at, std_at, with_std, check, bad } = given;
+    if bad != 0 {
+        return bad;
+    }
+    var dir = buffer.empty(heap, 32);
+    if dir_at >= 0 {
+        dir = buffer.append(heap, dir, arg(args, dir_at));
+    } else {
+        dir = buffer.append(heap, dir, ".");
+    }
+    var status = 0;
+    borrow dir as &db in {
+        if !walk.is_directory(fs, buffer.bytes(db)) {
+            status = clilock.say(heap, io, "cannot walk `", buffer.bytes(db), "`") + 3;
+        } else {
+            status = sync_tree(heap, io, fs, exec, clock, buffer.bytes(db), clifetch.value_of(args, std_at), with_std, check);
+        }
+    }
+    buffer.drop(heap, dir);
+    return status;
+}
+
+// Every file of the tree taken into the entries, in the order the Rust command sorts them.
+fn scan_tree[&h, &i, &f, &d, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), dir: &d [byte], std_path: &s [byte], with_std: bool) -> [heap, io_write, err_write, fs_read(""), file_read, dir_read] Entered {
+    var evs = buffer.empty(heap, 4096);
+    var sts = vec.empty(heap, 64, 0);
+    let files = walk.tree(heap, fs, dir, buffer.empty(heap, 256));
+    borrow files as &fb in {
+        let all = buffer.bytes(fb);
+        var at = 0;
+        while at < len(all) {
+            let end = projfile.field_end(all, at, len(all));
+            let one = scan_file(heap, io, fs, all[at..end], std_path, with_std, evs, sts);
+            let Entered { events, starts } = one;
+            evs = events;
+            sts = starts;
+            at = end + 1;
+        }
+    }
+    buffer.drop(heap, files);
+    return Entered { events: evs, starts: sts };
+}
+
+fn sync_tree[&h, &i, &f, &x, &c, &d, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, dir: &d [byte], std_path: &s [byte], with_std: bool, check: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, dir_read, exec(""), clock, poll] int {
+    let scanned = scan_tree(heap, io, fs, dir, std_path, with_std);
+    let Entered { events, starts } = scanned;
+    let store = cliorigin.joined(heap, dir, ".cancho");
+    var status = 0;
+    borrow store as &sb in {
+        let index_path = cliorigin.joined(heap, buffer.bytes(sb), "ids.txt");
+        borrow index_path as &ib in {
+            borrow events as &eb in {
+                borrow starts as &stb in {
+                    status = sync_against(heap, io, fs, exec, clock, buffer.bytes(sb), buffer.bytes(ib), buffer.bytes(eb), stb, check);
+                }
+            }
+        }
+        buffer.drop(heap, index_path);
+    }
+    buffer.drop(heap, store);
+    buffer.drop(heap, events);
+    vec.drop(heap, starts);
+    return status;
+}
+
+// The entries `evs` against the index at `index_path`: the report, and, unless `check`, the index and the operations written under `store`.
+fn sync_against[&h, &i, &f, &x, &c, &t, &p, &e, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, store: &t [byte], index_path: &p [byte], evs: &e [byte], entries: &s vec.Vec[int], check: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    let older = old_index(heap, fs, index_path);
+    let Old { recs, starts, failed } = older;
+    var status = 0;
+    if failed != 0 {
+        clilock.say(heap, io, "cannot read `", index_path, "`");
+        status = 3;
+    } else {
+        let order = sorted_entries(heap, evs, entries);
+        borrow order as &ob in {
+            borrow recs as &rb in {
+                borrow starts as &osb in {
+                    status = sync_compare(heap, io, fs, exec, clock, store, index_path, evs, entries, ob, buffer.bytes(rb), osb, check);
+                }
+            }
+        }
+        vec.drop(heap, order);
+    }
+    buffer.drop(heap, recs);
+    vec.drop(heap, starts);
+    return status;
+}
+
+// The entries `evs` (at `entries`, sorted as `order`) against the index `orecs` (at `ostarts`): the report, and the writing.
+fn sync_compare[&h, &i, &f, &x, &c, &t, &p, &e, &s, &o, &r, &q](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, store: &t [byte], index_path: &p [byte], evs: &e [byte], entries: &s vec.Vec[int], order: &o vec.Vec[int], orecs: &r [byte], ostarts: &q vec.Vec[int], check: bool) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_write, exec(""), clock, poll] int {
+    let news = standing(heap, evs, entries, order, false);
+    let flags = collisions(heap, evs, entries, order);
+    let old_order = sorted_entries(heap, orecs, ostarts);
+    var status = 0;
+    borrow old_order as &oob in {
+        let olds = standing(heap, orecs, ostarts, oob, true);
+        borrow news as &nb in {
+            borrow olds as &lb in {
+                borrow flags as &fb in {
+                    let diff = difference(heap, evs, nb, orecs, lb);
+                    let Difference { todo, counts } = diff;
+                    borrow counts as &cb in {
+                        report(heap, io, cb);
+                        let collided = warnings(heap, io, evs, fb);
+                        let changed = vec.get(cb, 0) + vec.get(cb, 1) + vec.get(cb, 2) + vec.get(cb, 3);
+                        if check {
+                            if changed > 0 || collided > 0 {
+                                status = 1;
+                            }
+                        } else {
+                            borrow todo as &tb in {
+                                status = sync_write(heap, io, fs, exec, clock, store, index_path, evs, nb, buffer.bytes(tb));
+                            }
+                        }
+                    }
+                    buffer.drop(heap, todo);
+                    vec.drop(heap, counts);
+                }
+            }
+        }
+        vec.drop(heap, olds);
+    }
+    vec.drop(heap, old_order);
+    vec.drop(heap, news);
+    vec.drop(heap, flags);
+    return status;
+}
+
+// The index written to `index_path`, one line to a key that stands, and the operations `todo` to `STORE/ops`.
+fn sync_write[&h, &i, &f, &x, &c, &t, &p, &e, &n, &o](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, store: &t [byte], index_path: &p [byte], evs: &e [byte], news: &n vec.Vec[int], todo: &o [byte]) -> [heap, io_write, err_write, fs_read(""), fs_write(""), file_write, exec(""), clock, poll] int {
+    if !cliorigin.tool(heap, io, exec, clock, "/bin/mkdir", "-p", store) {
+        return clilock.say(heap, io, "cannot create `", store, "`") + 3;
+    }
+    var text = buffer.empty(heap, 4096);
+    var k = 0;
+    while k < vec.size(news) {
+        text = index_line(heap, text, evs, vec.get(news, k));
+        k = k + 1;
+    }
+    var status = 0;
+    borrow text as &xb in {
+        if clipublish.put_file(heap, fs, index_path, buffer.bytes(xb)) != 0 {
+            status = clilock.say(heap, io, "cannot write `", index_path, "`") + 3;
+        }
+    }
+    buffer.drop(heap, text);
+    if status != 0 {
+        return status;
+    }
+    let ops = cliorigin.joined(heap, store, "ops");
+    borrow ops as &ob in {
+        if !cliorigin.tool(heap, io, exec, clock, "/bin/mkdir", "-p", buffer.bytes(ob)) {
+            status = clilock.say(heap, io, "cannot open op log at `", store, "`") + 3;
+        } else if write_ops(heap, io, fs, todo, buffer.bytes(ob)) != 0 {
+            status = clilock.say(heap, io, "cannot write to the op log", "", "") + 3;
+        } else if len(todo) > 0 {
+            var count = 0;
+            var at = 0;
+            while at < len(todo) {
+                count = count + 1;
+                at = clivcs.record_end(todo, at, 4);
+            }
+            let digits = clifetch.number(heap, count);
+            borrow digits as &db in {
+                console.write_all(io, buffer.bytes(db));
+                console.write_all(io, " operation record(s) appended to ");
+                console.write_all(io, buffer.bytes(ob));
+                console.write_all(io, "\n");
+            }
+            buffer.drop(heap, digits);
+        }
+    }
+    buffer.drop(heap, ops);
+    return status;
+}

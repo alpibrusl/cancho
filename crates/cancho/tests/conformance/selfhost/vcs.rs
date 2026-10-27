@@ -146,7 +146,13 @@ fn tree(dir: &Path, at: &Path, into: &mut Vec<(String, Vec<u8>)>) {
     let mut paths: Vec<PathBuf> = read.map(|e| e.unwrap().path()).collect();
     paths.sort();
     for path in paths {
-        if path.is_dir() {
+        if path.is_symlink() {
+            let target = std::fs::read_link(&path).unwrap();
+            into.push((
+                path.strip_prefix(dir).unwrap().display().to_string(),
+                format!("-> {}", target.display()).into_bytes(),
+            ));
+        } else if path.is_dir() {
             tree(dir, &path, into);
         } else {
             into.push((
@@ -218,6 +224,10 @@ fn steps_both(
                 super::store::copy_dir(Path::new(text), &dir.join(target));
                 continue;
             }
+            if let Some(name) = path.strip_prefix("@link:") {
+                std::os::unix::fs::symlink(text, dir.join(name)).unwrap();
+                continue;
+            }
             let at = dir.join(path);
             std::fs::create_dir_all(at.parent().unwrap()).unwrap();
             std::fs::write(at, text).unwrap();
@@ -233,7 +243,7 @@ fn steps_both(
                 continue;
             }
             let (command, rest) = match step.first().map(String::as_str) {
-                Some(first @ ("fetch" | "resolve" | "publish")) => (first, &step[1..]),
+                Some(first @ ("fetch" | "resolve" | "publish" | "sync")) => (first, &step[1..]),
                 _ => ("lock", &step[..]),
             };
             let said = if who == "rust" {
@@ -258,12 +268,13 @@ fn steps_both(
                 } else {
                     // The library and the cache are named, where the Rust command has them inside it.
                     let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
-                    let mut extra = vec![
-                        "--cache".to_owned(),
-                        cache.display().to_string(),
-                        "--std-dir".to_owned(),
-                        std_dir.canonicalize().unwrap().display().to_string(),
-                    ];
+                    let mut extra = Vec::new();
+                    if command != "sync" {
+                        extra.push("--cache".to_owned());
+                        extra.push(cache.display().to_string());
+                    }
+                    extra.push("--std-dir".to_owned());
+                    extra.push(std_dir.canonicalize().unwrap().display().to_string());
                     extra.extend(args);
                     args = extra;
                 }
@@ -284,6 +295,22 @@ fn steps_both(
                     said.2.truncate(end + 1);
                 }
             }
+            // The parser's own rendering of a file `sync` could not read is on the standard output; the words of a warning about one differ.
+            if command == "sync" {
+                let text = String::from_utf8_lossy(&said.1).into_owned();
+                let kept: Vec<&str> = text
+                    .lines()
+                    .filter(|l| !l.starts_with("    ") && l.trim() != "^")
+                    .map(|l| {
+                        if l.starts_with("warning: ") && !l.starts_with("warning: collision:") {
+                            "warning:"
+                        } else {
+                            l
+                        }
+                    })
+                    .collect();
+                said.1 = kept.join("\n").into_bytes();
+            }
             // A pin that does not hold, or a program that is refused, is said with the words of the compiler that found it, which differ.
             if command != "lock" && said.0 == Some(1) && !said.2.contains("was not given `--std`") {
                 said.2.clear();
@@ -295,10 +322,36 @@ fn steps_both(
         results.push((said_all, found));
     }
     if results[0] == results[1] {
-        Ok(())
-    } else {
-        Err(format!("{name}: rust {:?}, cho {:?}", results[0], results[1]))
+        return Ok(());
     }
+    let (rust, cho) = (&results[0], &results[1]);
+    let mut why = Vec::new();
+    for (n, (a, b)) in rust.0.iter().zip(&cho.0).enumerate() {
+        if a != b {
+            why.push(format!(
+                "step {n}: rust {:?} {:?} {:?}; cho {:?} {:?} {:?}",
+                a.0,
+                String::from_utf8_lossy(&a.1),
+                a.2,
+                b.0,
+                String::from_utf8_lossy(&b.1),
+                b.2
+            ));
+        }
+    }
+    for (path, bytes) in &rust.1 {
+        match cho.1.iter().find(|(p, _)| p == path) {
+            None => why.push(format!("file {path} only in rust")),
+            Some((_, other)) if other != bytes => why.push(format!("file {path} differs")),
+            Some(_) => {}
+        }
+    }
+    for (path, _) in &cho.1 {
+        if !rust.1.iter().any(|(p, _)| p == path) {
+            why.push(format!("file {path} only in cho"));
+        }
+    }
+    Err(format!("{name}: {}", why.join("; ")))
 }
 
 /// `vcs lock` by cancho and by Rust: the stores of `packages/` pinned whole and by name, an existing lock extended and refused, the stores that are not there or not what they should be, a store
@@ -1166,6 +1219,267 @@ fn vcs_publish_in_cancho_logs_a_file_like_cancho_vcs_publish() {
     assert!(
         failures.is_empty(),
         "`vcs publish` differs in {} cases:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+/// A `vcs sync` case: its name, the files it starts with and its steps.
+type SyncCase<'a> = (&'a str, Vec<(&'static str, String)>, Vec<Vec<String>>);
+
+const SYNC_ONE: &str = "module lib.one;\n\npub fn same(n: int) -> [] int {\n    return n;\n}\n\npub fn twice(n: int) -> [] int {\n    return n + n;\n}\n";
+const SYNC_TWO: &str =
+    "module lib.two;\n\npub fn plus(a: int, b: int) -> [] int {\n    return a + b;\n}\n";
+
+/// `vcs sync` by cancho and by Rust: trees that are empty, new, unchanged and changed (a body, a signature, a declaration gone, one added), the directories that are not walked and the files
+/// that are not read, a declaration made twice (alike, and with two identities), a file that does not parse, the library (`--std`), an index with lines that are not entries, a directory
+/// that is not there, every command line the Rust command refuses, and the whole of `packages/` (every source of the 26 stores) synced, changed and synced again. The status, the
+/// standard output (a warning about a file that does not parse is only compared as a warning), and every file left (the index and the operations) are compared.
+#[test]
+fn vcs_sync_in_cancho_indexes_a_tree_like_cancho_vcs_sync() {
+    let exe = build("cli-vcs-sync", &with_front_end("cli.cho"));
+    let work = scratch("selfhost-vcs-sync");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let cache = work.join("cache");
+    let mut failures = Vec::new();
+    let s = |t: &str| t.to_owned();
+    let sync = |rest: &[&str]| -> Vec<String> {
+        let mut step = vec![s("sync")];
+        step.extend(rest.iter().map(|a| a.to_string()));
+        step
+    };
+    let write = |path: &str, text: &str| vec![s("@write"), s(path), s(text)];
+    let tree = || vec![("a.cho", s(SYNC_ONE)), ("sub/b.cho", s(SYNC_TWO))];
+    let changed = SYNC_ONE.replace("return n + n;", "return n * 2;");
+    let signed = SYNC_ONE.replace("twice(n: int)", "twice(n: int, m: int)");
+    let other_two =
+        "module lib.two;\n\npub fn minus(a: int, b: int) -> [] int {\n    return a - b;\n}\n";
+    let cases: Vec<SyncCase> = vec![
+        ("an empty directory", vec![], vec![sync(&[]), sync(&[]), sync(&["--check"])]),
+        ("new, again, checked", tree(), vec![sync(&[]), sync(&[]), sync(&["--check"])]),
+        ("checked before the first", tree(), vec![sync(&["--check"])]),
+        (
+            "a body changed",
+            tree(),
+            vec![sync(&[]), write("a.cho", &changed), sync(&["--check"]), sync(&[]), sync(&[])],
+        ),
+        (
+            "a signature changed",
+            tree(),
+            vec![sync(&[]), write("a.cho", &signed), sync(&["--check"]), sync(&[]), sync(&[])],
+        ),
+        (
+            "a declaration gone and one added",
+            tree(),
+            vec![sync(&[]), write("sub/b.cho", other_two), sync(&[]), sync(&["--check"])],
+        ),
+        (
+            "everything changed at once",
+            tree(),
+            vec![
+                sync(&[]),
+                write("a.cho", &changed),
+                write("sub/b.cho", other_two),
+                write("c.cho", SYNC_ONE.replace("lib.one", "lib.three").as_str()),
+                sync(&[]),
+            ],
+        ),
+        (
+            "what is walked",
+            vec![
+                ("a.cho", s(SYNC_ONE)),
+                (".git/g.cho", s(SYNC_TWO)),
+                ("target/t.cho", s(SYNC_TWO)),
+                (".cancho/c.cho", s(SYNC_TWO)),
+                (
+                    ".hid/h.cho",
+                    s("module lib.hid;\n\npub fn h(n: int) -> [] int {\n    return n;\n}\n"),
+                ),
+                (
+                    ".h.cho",
+                    s("module lib.dot;\n\npub fn d(n: int) -> [] int {\n    return n;\n}\n"),
+                ),
+                (".cho", s(SYNC_TWO)),
+                ("x.CHO", s(SYNC_TWO)),
+                ("notes.txt", s(SYNC_TWO)),
+                ("a/z.cho", s("module lib.z;\n\npub fn z(n: int) -> [] int {\n    return n;\n}\n")),
+                (
+                    "a.d/y.cho",
+                    s("module lib.y;\n\npub fn y(n: int) -> [] int {\n    return n;\n}\n"),
+                ),
+            ],
+            vec![sync(&[])],
+        ),
+        (
+            "links are not followed",
+            vec![
+                ("a.cho", s(SYNC_ONE)),
+                ("real/b.cho", s(SYNC_TWO)),
+                ("@link:file.cho", s("a.cho")),
+                ("@link:dir", s("real")),
+                ("@link:gone.cho", s("nowhere.cho")),
+            ],
+            vec![sync(&[])],
+        ),
+        (
+            "the root made twice, and not alike",
+            vec![
+                ("r.cho", s("fn helper(n: int) -> [] int {\n    return n;\n}\n")),
+                ("s.cho", s("fn helper(n: int) -> [] int {\n    return n + 1;\n}\n")),
+            ],
+            vec![sync(&[])],
+        ),
+        (
+            "no module, the root",
+            vec![(
+                "r.cho",
+                s(
+                    "fn helper(n: int) -> [] int {\n    return n;\n}\n\nfn main() -> [] int {\n    return 0;\n}\n",
+                ),
+            )],
+            vec![sync(&[]), sync(&["--check"])],
+        ),
+        (
+            "a declaration made twice, alike",
+            vec![("a.cho", s(SYNC_ONE)), ("b.cho", s(SYNC_ONE))],
+            vec![sync(&[]), sync(&["--check"])],
+        ),
+        (
+            "a declaration made twice, and not alike",
+            vec![("a.cho", s(SYNC_ONE)), ("b.cho", changed.clone())],
+            vec![sync(&[]), sync(&["--check"])],
+        ),
+        (
+            "a file that does not parse",
+            vec![("a.cho", s(SYNC_ONE)), ("b.cho", s("fn broken(")), ("c.cho", s(SYNC_TWO))],
+            vec![sync(&[]), sync(&["--check"])],
+        ),
+        (
+            "a collision and a file that does not parse",
+            vec![
+                ("a.cho", s(SYNC_ONE)),
+                ("b.cho", s("fn broken(")),
+                ("c.cho", changed.clone()),
+                ("d.cho", signed.clone()),
+            ],
+            vec![sync(&[])],
+        ),
+        (
+            "the library",
+            vec![(
+                "a.cho",
+                s(
+                    "module lib.s;\n\nimport std.bytes;\n\npub fn same[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {\n    return bytes.equal(x, y);\n}\n",
+                ),
+            )],
+            vec![sync(&["--std"]), sync(&["--std"]), sync(&[]), sync(&["--std", "--check"])],
+        ),
+        (
+            "an index with lines that are not entries",
+            vec![
+                ("a.cho", s(SYNC_ONE)),
+                (
+                    ".cancho/ids.txt",
+                    format!(
+                        "garbage\nfn lib.one same {a} {b}\r\nfn lib.one same {b} {a}\nfn  root {a} {b}\nfn lib.one short {a}\nfn lib.x  {a} {b}\nfn lib.x name {a} {b} extra\nfn lib.old gone {a} {b}\nfn \n\n",
+                        a = "a".repeat(64),
+                        b = "b".repeat(64)
+                    ),
+                ),
+            ],
+            vec![sync(&["--check"]), sync(&[]), sync(&["--check"])],
+        ),
+        (
+            "--dir",
+            tree(),
+            vec![
+                sync(&["--dir", "sub"]),
+                sync(&["--dir", "sub/"]),
+                sync(&["--dir", "sub", "--check"]),
+            ],
+        ),
+        ("a directory that is not there", tree(), vec![sync(&["--dir", "nowhere"])]),
+        ("a directory that is a file", tree(), vec![sync(&["--dir", "a.cho"])]),
+        ("an option", tree(), vec![sync(&["--bogus"])]),
+        ("a word", tree(), vec![sync(&["a.cho"])]),
+        ("--dir last", tree(), vec![sync(&["--dir"])]),
+    ];
+    // An index made by the Rust command for `SYNC_ONE`, with its last line repeated after a wrong one, and with every line ending in `\r\n`.
+    let probe = work.join("probe");
+    std::fs::create_dir_all(&probe).unwrap();
+    std::fs::write(probe.join("a.cho"), SYNC_ONE).unwrap();
+    let made = Command::new(BIN).current_dir(&probe).args(["vcs", "sync"]).output().unwrap();
+    assert!(made.status.success());
+    let real = std::fs::read_to_string(probe.join(".cancho/ids.txt")).unwrap();
+    let last = real.lines().last().unwrap().to_owned();
+    let parts: Vec<&str> = last.split(' ').collect();
+    let wrong = format!("{} {} {} {} {}", parts[0], parts[1], parts[2], parts[3], "d".repeat(64));
+    let repeated = format!("{wrong}\n{real}");
+    let carriage = real.replace('\n', "\r\n");
+    let more: Vec<SyncCase> = vec![
+        (
+            "a key twice in the index, the last right",
+            vec![("a.cho", s(SYNC_ONE)), (".cancho/ids.txt", repeated)],
+            vec![sync(&["--check"])],
+        ),
+        (
+            "an index with lines ending in \\r\\n",
+            vec![("a.cho", s(SYNC_ONE)), (".cancho/ids.txt", carriage)],
+            vec![sync(&["--check"])],
+        ),
+    ];
+    for (name, files, steps) in cases.iter().chain(more.iter()) {
+        if let Err(e) = steps_both(&exe, &work, name, files, steps, &cache, &cache) {
+            failures.push(e);
+        }
+    }
+    // Every source of the 26 stores of `packages/`, synced, changed and synced again.
+    let packages = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages")
+        .canonicalize()
+        .expect("packages/ is there");
+    let sources = work.join("src");
+    std::fs::create_dir_all(&sources).unwrap();
+    let mut stores = Vec::new();
+    for entry in std::fs::read_dir(&packages).unwrap() {
+        let root = entry.unwrap().path().join(".cancho-vcs");
+        if root.is_dir() {
+            stores_of(&root, &mut stores);
+        }
+    }
+    stores.sort();
+    let mut first = None;
+    for (n, store) in stores.iter().enumerate() {
+        for blob in std::fs::read_dir(store.join("sources")).unwrap() {
+            let blob = blob.unwrap().path();
+            let to = sources.join(format!("{n:02}")).join(blob.file_name().unwrap());
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::copy(&blob, &to).unwrap();
+            first.get_or_insert(format!("{n:02}/{}", blob.file_name().unwrap().to_string_lossy()));
+        }
+    }
+    let first = first.expect("a source");
+    let at = sources.join(&first);
+    let edited = format!(
+        "{}\npub fn extra_for_sync(n: int) -> [] int {{\n    return n;\n}}\n",
+        std::fs::read_to_string(&at).unwrap()
+    );
+    let all = [("@tree:src", sources.display().to_string())];
+    let steps = [
+        sync(&["--dir", "src"]),
+        sync(&["--dir", "src", "--check"]),
+        write(&format!("src/{first}"), &edited),
+        sync(&["--dir", "src"]),
+        sync(&["--dir", "src", "--check"]),
+    ];
+    if let Err(e) = steps_both(&exe, &work, "all of packages", &all, &steps, &cache, &cache) {
+        failures.push(e);
+    }
+    assert!(
+        failures.is_empty(),
+        "`vcs sync` differs in {} cases:\n{}",
         failures.len(),
         failures.join("\n")
     );
