@@ -1,132 +1,194 @@
-//! `cancho authority` in cancho (`examples/selfhost/authority.cho`, `docs/cli-in-cancho.md` section 34), against `cancho authority --output json`.
+//! `cancho authority` in cancho (`examples/selfhost/authority.cho`, `docs/cli-in-cancho.md` section 34), against `cancho authority`.
 
 use super::*;
 
-/// The functions a program reaches, as the compiler in cancho lists them (`cli.cho authority-reached`): for each, its name, whether it is pure, whether it performed a label that is not followed, and the labels.
-struct Reached {
-    name: String,
-    pure: bool,
-    untracked: bool,
-    labels: Vec<String>,
+/// The name of the module a file declares, and the modules it imports.
+fn module_and_imports(text: &str) -> (Option<String>, Vec<String>) {
+    let mut module = None;
+    let mut imports = Vec::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("module ") {
+            module = Some(rest.trim_end_matches(';').trim().to_owned());
+        } else if let Some(rest) = line.strip_prefix("import ") {
+            let path = rest.trim_end_matches(';').split_whitespace().next().unwrap_or("");
+            imports.push(path.to_owned());
+        }
+    }
+    (module, imports)
 }
 
-fn reached(exe: &Path, file: &Path, with_std: bool) -> Result<Vec<Reached>, i32> {
-    let mut command = Command::new(exe);
-    command.arg("authority-reached").arg(file);
-    if with_std {
-        command
-            .arg("--std-dir")
-            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std").canonicalize().unwrap());
-    }
-    let done = command.output().expect("cli runs");
-    if !done.status.success() {
-        return Err(done.status.code().unwrap_or(-1));
-    }
-    Ok(done
-        .stdout
-        .split(|b| *b == b'\n')
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            let fields: Vec<String> =
-                line.split(|b| *b == 0).map(|f| String::from_utf8_lossy(f).into_owned()).collect();
-            Reached {
-                name: fields[0].clone(),
-                pure: fields[1] == "1",
-                untracked: fields[2] == "1",
-                labels: fields[3..].iter().filter(|l| !l.is_empty()).cloned().collect(),
+/// The files of a program: `files`, and, for each module they import that none of them declares and the library does not have, the file of `packages/` that declares it (once, and what it imports in turn).
+fn with_packages(root: &Path, files: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut index: std::collections::BTreeMap<String, PathBuf> = std::collections::BTreeMap::new();
+    let mut packages: Vec<PathBuf> = Vec::new();
+    for dir in std::fs::read_dir(root.join("packages")).unwrap() {
+        let dir = dir.unwrap().path();
+        if dir.is_dir() {
+            for file in std::fs::read_dir(&dir).unwrap() {
+                let file = file.unwrap().path();
+                if file.extension().is_some_and(|e| e == "cho") {
+                    packages.push(file);
+                }
             }
-        })
-        .collect())
+        }
+    }
+    packages.sort();
+    for file in packages {
+        if let (Some(module), _) = module_and_imports(&std::fs::read_to_string(&file).unwrap()) {
+            index.entry(module).or_insert(file);
+        }
+    }
+    let mut files = files;
+    loop {
+        let mut declared = Vec::new();
+        let mut imported = Vec::new();
+        for file in &files {
+            let (module, imports) = module_and_imports(&std::fs::read_to_string(file).unwrap());
+            declared.extend(module);
+            imported.extend(imports);
+        }
+        let more: Vec<PathBuf> = imported
+            .iter()
+            .filter(|m| !declared.contains(m) && !m.starts_with("std"))
+            .filter_map(|m| index.get(m).cloned())
+            .filter(|f| !files.contains(f))
+            .collect();
+        if more.is_empty() {
+            return files;
+        }
+        for file in more {
+            if !files.contains(&file) {
+                files.push(file);
+            }
+        }
+    }
 }
 
-/// The programs of `examples/` that have a `main` and import nothing but the library: `cancho authority --output json` and the list of the compiler in cancho are compared for the number of functions, which of
-/// them are pure and the labels without an argument. A program in which the checker in cancho does not follow a label (one with an argument) is compared only for the number of functions, and has to be one for
-/// which the Rust command reports a label with an argument.
+/// Rust's report without the two counts the compiler in cancho does not make: `folded_operators` and `folded_calls` of the data form, and the lines of "evaluated at compile time" of the prose.
+fn without_folded(report: &str, json: bool) -> String {
+    let mut out = String::new();
+    let mut skipping = false;
+    for line in report.split_inclusive('\n') {
+        if json {
+            let t = line.trim_start();
+            if t.starts_with("\"folded_operators\":") || t.starts_with("\"folded_calls\":") {
+                continue;
+            }
+        } else if line.starts_with("evaluated at compile time") {
+            skipping = true;
+            continue;
+        } else if skipping && line.starts_with("    ") {
+            continue;
+        } else {
+            skipping = false;
+        }
+        out.push_str(line);
+    }
+    out
+}
+
+/// Programs the compiler in cancho answers status 3 for, and why: it has no code for them (`skip`), or one of them calls a function through a function value, whose labels it does not follow.
+const STATUS_3: [&str; 2] = ["aliasing_in_a_slice_of_references.cho", "function_value.cho"];
+
+/// `cancho authority` and `cli.cho authority` on the programs of the repository -- the programs of `examples/` (the ones of several files with the packages they import), and every program of
+/// `tests/accept/` that has a `main` -- in both forms: the output has to be the same byte for byte, but for the two counts of what compile-time evaluation folded, which the compiler in cancho does not make.
 #[test]
-fn authority_reached_in_cancho_agrees_with_cancho_authority() {
+fn authority_in_cancho_reports_like_cancho_authority() {
     let exe = build("cli-authority", &with_front_end("cli.cho"));
-    let examples =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples").canonicalize().unwrap();
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&examples)
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
+    let std_dir = root.join("std");
+    let mut programs: Vec<Vec<PathBuf>> = Vec::new();
+    let mut singles: Vec<PathBuf> = std::fs::read_dir(root.join("examples"))
         .unwrap()
         .map(|e| e.unwrap().path())
         .filter(|p| p.extension().is_some_and(|e| e == "cho"))
         .collect();
-    files.sort();
-    let mut failures = Vec::new();
-    let (mut compared, mut followed) = (0, 0);
-    for file in files {
-        let text = std::fs::read_to_string(&file).unwrap();
-        let lines: Vec<&str> = text.lines().collect();
-        let imports_only_std =
-            lines.iter().filter(|l| l.starts_with("import ")).all(|l| l.starts_with("import std"));
-        if !lines.iter().any(|l| l.starts_with("fn main")) || !imports_only_std {
-            continue;
-        }
-        let with_std = lines.iter().any(|l| l.starts_with("import std"));
-        let mut rust = Command::new(BIN);
-        rust.args(["authority", "--output", "json"]).arg(&file);
-        if with_std {
-            rust.arg("--std");
-        }
-        let done = rust.output().expect("cancho runs");
-        if !done.status.success() {
-            continue;
-        }
-        let json: serde_json::Value = serde_json::from_slice(&done.stdout).unwrap();
-        let name = file.file_name().unwrap().to_string_lossy().into_owned();
-        let Ok(list) = reached(&exe, &file, with_std) else {
-            failures.push(format!("{name}: the compiler in cancho answers a status"));
-            continue;
-        };
-        compared += 1;
-        if list.len() as u64 != json["functions"].as_u64().unwrap() {
-            failures.push(format!(
-                "{name}: {} functions, the Rust command {}",
-                list.len(),
-                json["functions"]
-            ));
-            continue;
-        }
-        let with_argument =
-            json["labels"].as_array().unwrap().iter().any(|l| !l["argument"].is_null());
-        let unfollowed = list.iter().any(|f| f.untracked);
-        if unfollowed != with_argument {
-            failures.push(format!(
-                "{name}: labels not followed {unfollowed}, the Rust command has labels with an argument {with_argument}"
-            ));
-            continue;
-        }
-        if unfollowed {
-            continue;
-        }
-        followed += 1;
-        let mut pure: Vec<&str> = list.iter().filter(|f| f.pure).map(|f| f.name.as_str()).collect();
-        pure.sort_unstable();
-        let rust_pure: Vec<&str> =
-            json["pure"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
-        if pure != rust_pure {
-            failures.push(format!("{name}: pure {pure:?}, the Rust command {rust_pure:?}"));
-        }
-        let mut labels: Vec<&str> =
-            list.iter().flat_map(|f| f.labels.iter().map(String::as_str)).collect();
-        labels.sort_unstable();
-        labels.dedup();
-        let rust_labels: Vec<&str> = json["labels"]
-            .as_array()
+    singles.extend(
+        std::fs::read_dir(root.join("tests/accept"))
             .unwrap()
-            .iter()
-            .map(|l| l["name"].as_str().unwrap())
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "cho")),
+    );
+    singles.sort();
+    for file in singles {
+        if std::fs::read_to_string(&file).unwrap().lines().any(|l| l.starts_with("fn main")) {
+            programs.push(vec![file]);
+        }
+    }
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(root.join("examples"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.is_dir())
+        .collect();
+    dirs.sort();
+    for dir in dirs {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "cho"))
             .collect();
-        if labels != rust_labels {
-            failures.push(format!("{name}: labels {labels:?}, the Rust command {rust_labels:?}"));
+        files.sort();
+        let files = with_packages(&root, files);
+        if !files.is_empty()
+            && files.iter().any(|f| {
+                std::fs::read_to_string(f).unwrap().lines().any(|l| l.starts_with("fn main"))
+            })
+        {
+            programs.push(files);
+        }
+    }
+    let mut failures = Vec::new();
+    let (mut compared, mut refused_by_rust, mut status_3) = (0, 0, 0);
+    for files in &programs {
+        let uses_std = files.iter().any(|f| {
+            std::fs::read_to_string(f).unwrap().lines().any(|l| l.starts_with("import std"))
+        });
+        let name = files[0].strip_prefix(&root).unwrap().display().to_string();
+        for json in [false, true] {
+            let mut rust = Command::new(BIN);
+            rust.arg("authority");
+            let mut mine = Command::new(&exe);
+            mine.arg("authority");
+            if json {
+                rust.args(["--output", "json"]);
+                mine.args(["--output", "json"]);
+            }
+            rust.args(files);
+            mine.args(files);
+            if uses_std {
+                rust.arg("--std");
+                mine.arg("--std-dir").arg(&std_dir);
+            }
+            let want = rust.output().expect("cancho runs");
+            if !want.status.success() {
+                refused_by_rust += 1;
+                continue;
+            }
+            let got = mine.output().expect("cli runs");
+            compared += 1;
+            if got.status.code() == Some(3) {
+                status_3 += 1;
+                if !STATUS_3.iter().any(|n| name.ends_with(n)) {
+                    failures.push(format!("{name}: status 3, which is not expected of it"));
+                }
+                continue;
+            }
+            let want = without_folded(&String::from_utf8_lossy(&want.stdout), json);
+            let got_text = String::from_utf8_lossy(&got.stdout).into_owned();
+            if !got.status.success() || got_text != want {
+                failures.push(format!(
+                    "{name} ({}): status {:?}\n--- rust\n{want}--- cho\n{got_text}",
+                    if json { "data" } else { "prose" },
+                    got.status.code()
+                ));
+            }
         }
     }
     assert!(
         failures.is_empty(),
-        "{} of {compared} programs differ ({followed} had every label followed):\n{}",
+        "{} of {compared} reports differ ({status_3} answered status 3, {refused_by_rust} were refused by the Rust command):\n{}",
         failures.len(),
         failures.join("\n")
     );
-    assert!(compared >= 16, "only {compared} programs were compared");
+    assert!(compared >= 300, "only {compared} reports were compared");
 }

@@ -440,22 +440,33 @@ fn auth_at[&s](st: &!s [int]) -> [] int {
     return base(st) + 16 + 4096 + 65536 + 256 + 1100;
 }
 
+// (Everything below touches the region only when the state has one: `st[40]` is set by the layout that has room for the code.)
 pub fn pending_reset[&s](st: &!s [int]) -> [] int {
-    st[base(st) + 12] = 0;
+    if st[40] != 0 {
+        st[base(st) + 12] = 0;
+    }
     return 0;
 }
 
 pub fn pending_add[&s](st: &!s [int], n: int) -> [] int {
-    st[base(st) + 12] = st[base(st) + 12] + n;
+    if st[40] != 0 {
+        st[base(st) + 12] = st[base(st) + 12] + n;
+    }
     return 0;
 }
 
 pub fn pending[&s](st: &!s [int]) -> [] int {
+    if st[40] == 0 {
+        return 0;
+    }
     return st[base(st) + 12];
 }
 
 // The function `item` performs the label `label` with the argument whose literal is the token `lit`. False if there is no room for one more.
 pub fn note_label[&s](st: &!s [int], item: int, label: int, lit: int) -> [] bool {
+    if st[40] == 0 {
+        return true;
+    }
     let count = st[auth_at(st)];
     var k = 0;
     while k < count {
@@ -477,6 +488,9 @@ pub fn note_label[&s](st: &!s [int], item: int, label: int, lit: int) -> [] bool
 }
 
 pub fn label_rows[&s](st: &!s [int]) -> [] int {
+    if st[40] == 0 {
+        return 0;
+    }
     return st[auth_at(st)];
 }
 
