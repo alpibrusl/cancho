@@ -162,7 +162,7 @@ pub fn usage_error[&h, &i, &w](heap: &!h Heap, io: &!i Io, why: &w [byte]) -> [h
 
 // Does `word` take the argument after it? (the flags of `check`)
 pub fn takes_value[&w](word: &w [byte], build: bool) -> [] bool {
-    if bytes.equal(word, "--output") || bytes.equal(word, "--host") || bytes.equal(word, "--backend") || bytes.equal(word, "--std-dir") {
+    if bytes.equal(word, "--output") || bytes.equal(word, "--host") || bytes.equal(word, "--backend") || bytes.equal(word, "--std-dir") || bytes.equal(word, "--target") {
         return true;
     }
     return build && (bytes.equal(word, "-o") || bytes.equal(word, "--emit") || bytes.equal(word, "-l") || bytes.equal(word, "-L") || bytes.equal(word, "--clang"));

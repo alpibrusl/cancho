@@ -11,6 +11,7 @@ import selfhost.ast;
 import selfhost.printing;
 import selfhost.jsonprint;
 import selfhost.driver;
+import selfhost.authwasi;
 import selfhost.formatting;
 import selfhost.rules;
 import selfhost.lexcore as lc;
@@ -399,6 +400,7 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
     var json = false;
     var forward = false;
     var host = 0;
+    var wasi = 0;
     var host_given = false;
     var out_at = 0 - 1;
     var obj = false;
@@ -464,6 +466,15 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                 return clibase.usage_error(heap, io, "`--clang` needs a path");
             }
             clang_at = n;
+        } else if authority == 1 && bytes.equal(word, "--target") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--target` needs a triple");
+            }
+            wasi = authwasi.variant_of(arg(args, n));
+            if wasi == 0 {
+                return clibase.usage_error(heap, io, "`--target` of `authority` takes wasm32-wasip1, wasm32-wasip2, wasm32-wasi or wasm32-wasip1-threads in this command line");
+            }
         } else if bytes.equal(word, "--std") || bytes.equal(word, "--target") {
             return clibase.usage_error(heap, io, "`--std` and `--target` are not available in this command line: `--std-dir DIR` adds the standard library from DIR");
         } else if len(word) > 0 && lc.at(word, 0) == '-' {
@@ -525,7 +536,7 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                     mode = 19;
                 }
             }
-            let built = driver.run_many(heap, io, buffer.bytes(r), mode, host);
+            let built = driver.run_many(heap, io, buffer.bytes(r), mode, host + 8 * wasi);
             borrow built as &b in {
                 borrow laid as &lt in {
                     borrow mut lens as &!lb in {
