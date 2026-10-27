@@ -192,3 +192,140 @@ fn authority_in_cancho_reports_like_cancho_authority() {
     );
     assert!(compared >= 300, "only {compared} reports were compared");
 }
+
+/// The head of a probe: `main` takes the world apart and gives back what the probe does not use.
+fn probe(keep: &str, body: &str) -> String {
+    let mut text = String::from(
+        "edition 10;\n\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);\n",
+    );
+    for name in ["io", "ffi", "fs", "heap", "args", "net", "clock", "signals", "exec", "tty"] {
+        if !keep.split(',').any(|k| k == name) {
+            text.push_str(&format!("    release({name});\n"));
+        }
+    }
+    text.push_str("    var code = 0;\n");
+    text.push_str(body);
+    text.push_str("    return code;\n}\n");
+    text
+}
+
+/// A probe that calls `call` on `/tmp` narrowed from the filesystem, and the shape of its answer.
+fn on_tmp(call: &str, answer: &str) -> String {
+    let (ok, failed) = match answer {
+        "Done" => ("Done::Ok(d) => {\n                code = 0;\n            }", "Done::Failed(e)"),
+        "Opened" => (
+            "Opened::Ok(f) => {\n                file_close(f);\n            }",
+            "Opened::Failed(e)",
+        ),
+        _ => (
+            "DirOpened::Ok(d) => {\n                dir_close(d);\n            }",
+            "DirOpened::Failed(e)",
+        ),
+    };
+    probe(
+        "fs",
+        &format!(
+            "    let tmp = narrow(fs, \"/tmp\");\n    borrow tmp as &t in {{\n        match {call} {{\n            {ok}\n            {failed} => {{\n                code = 1;\n            }}\n        }}\n    }}\n    release(tmp);\n"
+        ),
+    )
+}
+
+/// The probes of the families of builtins whose labels carry an argument, each a program of one call: the paths (`fs_read`, `fs_write`: every way to open, remove and rename), a listener and a dial
+/// (`net_in`, `net_out`), and a program started (`exec`). The programs of the repository do not call some of them, and a mapping nothing compares is a mapping nothing keeps.
+#[test]
+fn authority_in_cancho_reports_each_family_of_labels() {
+    let exe = build("cli-authority-families", &with_front_end("cli.cho"));
+    let work = scratch("selfhost-authority-families");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let mut probes: Vec<(String, String)> = vec![
+        ("fs_remove".into(), on_tmp("fs_remove(t, \"/tmp/cancho-probe\")", "Done")),
+        (
+            "fs_rename".into(),
+            on_tmp("fs_rename(t, \"/tmp/cancho-probe\", \"/tmp/cancho-probe2\")", "Done"),
+        ),
+        ("open_dir".into(), on_tmp("open_dir(t, \"/tmp\")", "DirOpened")),
+    ];
+    for open in ["open_read", "open_write", "open_append", "open_new", "open_rw"] {
+        probes.push((open.into(), on_tmp(&format!("{open}(t, \"/tmp/cancho-probe\")"), "Opened")));
+    }
+    probes.push((
+        "tcp_listen_on".into(),
+        probe(
+            "net",
+            "    let local = narrow(net, \"127.0.0.1\");\n    borrow local as &n in {\n        match tcp_listen_on(n, \"127.0.0.1\", 0, 8, 0) {\n            Listening::Ok(l) => {\n                listener_close(l);\n            }\n            Listening::Failed(e) => {\n                code = 1;\n            }\n        }\n    }\n    release(local);\n",
+        ),
+    ));
+    probes.push((
+        "tcp_connect".into(),
+        probe(
+            "net",
+            "    let local = narrow(net, \"127.0.0.1\");\n    borrow local as &n in {\n        match tcp_connect(n, \"127.0.0.1\", 1) {\n            Dialed::Ok(c) => {\n                conn_close(c);\n            }\n            Dialed::Failed(e) => {\n                code = 1;\n            }\n        }\n    }\n    release(local);\n",
+        ),
+    ));
+    probes.push((
+        "udp_bind".into(),
+        probe(
+            "net",
+            "    borrow net as &nb in {\n        match udp_bind(nb, 0, 0) {\n            UdpOpened::Ok(ua) => {\n                code = udp_close(ua);\n            }\n            UdpOpened::Failed(reason) => {\n                code = 2;\n            }\n        }\n    }\n    release(net);\n",
+        ),
+    ));
+    probes.push((
+        "exec_spawn".into(),
+        probe(
+            "exec",
+            "    let program = narrow(exec, \"/usr/bin/true\");\n    borrow program as &x in {\n        match exec_spawn(x, \"/usr/bin/true\", \"\", \"\", Stdio::Null, Stdio::Null, Stdio::Null) {\n            Spawned::Ok(child) => {\n                match child_wait(child) {\n                    Exited::Code(n) => {\n                        code = n;\n                    }\n                    Exited::Signaled(s) => {\n                        code = 100;\n                    }\n                    Exited::Failed(e) => {\n                        code = 101;\n                    }\n                }\n            }\n            Spawned::Failed(e) => {\n                code = 1;\n            }\n        }\n    }\n    release(program);\n",
+        ),
+    ));
+    // Generic functions instantiated at a tuple and at a `Box`: the names of the instances in the list of the pure functions (`second$(int__int)$int`, `pass$Box_int_`, `pass$Box__int__`).
+    let generic = "fn second[A: val, B: val](a: A, b: B) -> [] B {\n    return b;\n}\n\nfn pass[T](x: T) -> [] T {\n    return x;\n}\n\nfn size[&r](b: &r Box[[int]]) -> [] int {\n    return len(contents(b));\n}\n\n";
+    for (name, keep, body) in [
+        ("generic_tuple", "heap", "    code = second((1, 2), 5);\n    release(heap);\n"),
+        (
+            "generic_box",
+            "heap",
+            "    var pool = heap;\n    borrow mut pool as &!h in {\n        let b = pass(box(h, 7));\n        code = unbox(h, b);\n    }\n    release(pool);\n",
+        ),
+        (
+            "generic_run",
+            "heap",
+            "    var pool = heap;\n    borrow mut pool as &!h in {\n        let b = pass(box_slice(h, 4, 0));\n        borrow b as &r in {\n            code = size(r);\n        }\n        unbox_slice(h, b);\n    }\n    release(pool);\n",
+        ),
+    ] {
+        let text = probe(keep, body);
+        let at = text.find("fn main").unwrap();
+        probes.push((name.into(), format!("{}{generic}{}", &text[..at], &text[at..])));
+    }
+    let mut failures = Vec::new();
+    for (name, source) in &probes {
+        let file = work.join(format!("{name}.cho"));
+        std::fs::write(&file, source).unwrap();
+        for json in [false, true] {
+            let mut rust = Command::new(BIN);
+            rust.arg("authority");
+            let mut mine = Command::new(&exe);
+            mine.arg("authority");
+            if json {
+                rust.args(["--output", "json"]);
+                mine.args(["--output", "json"]);
+            }
+            let want = rust.arg(&file).output().expect("cancho runs");
+            let got = mine.arg(&file).output().expect("cli runs");
+            let (want_text, got_text) = (
+                without_folded(&String::from_utf8_lossy(&want.stdout), json),
+                String::from_utf8_lossy(&got.stdout).into_owned(),
+            );
+            if !want.status.success() || !got.status.success() || want_text != got_text {
+                failures.push(format!(
+                    "{name} ({}): rust {:?}, cho {:?}\n--- rust\n{want_text}{}\n--- cho\n{got_text}",
+                    if json { "data" } else { "prose" },
+                    want.status.code(),
+                    got.status.code(),
+                    String::from_utf8_lossy(&want.stderr)
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{} probes differ:\n{}", failures.len(), failures.join("\n"));
+    let _ = std::fs::remove_dir_all(&work);
+}
