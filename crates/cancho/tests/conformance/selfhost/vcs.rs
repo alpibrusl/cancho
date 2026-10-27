@@ -270,7 +270,7 @@ fn steps_both(
             };
             // The words after the path of a file that could not be read are the JSON reader's, or the operating system's.
             let mut said = said;
-            if said.2.starts_with("cannot read ") {
+            if said.2.starts_with("cannot ") {
                 let ticks: Vec<usize> = said.2.match_indices('`').map(|(i, _)| i).collect();
                 if let Some(end) = ticks.get(1) {
                     said.2.truncate(end + 1);
