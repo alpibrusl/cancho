@@ -545,7 +545,7 @@ fn require_walked[&h, &i, &f, &x, &c, &k, &s, &t, &l, &n](heap: &!h Heap, io: &!
 // ------------------------------------------------------------- the file ---
 
 // `text` written to `path` through `path.tmp`: 0, or 1.
-fn put_file[&h, &f, &p, &b](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], text: &b [byte]) -> [heap, fs_write(""), file_write] int {
+pub fn put_file[&h, &f, &p, &b](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], text: &b [byte]) -> [heap, fs_write(""), file_write] int {
     let temporary = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(path) + 8), path), ".tmp");
     var result = 0;
     borrow temporary as &tb in {
@@ -566,7 +566,7 @@ fn put_file[&h, &f, &p, &b](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], text
 }
 
 // The file (`dir`, `name`) written unless it is there.
-fn put_new[&h, &f, &d, &n, &b](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte], name: &n [byte], text: &b [byte]) -> [heap, fs_read(""), fs_write(""), file_write] int {
+pub fn put_new[&h, &f, &d, &n, &b](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte], name: &n [byte], text: &b [byte]) -> [heap, fs_read(""), fs_write(""), file_write] int {
     let path = cliorigin.joined(heap, dir, name);
     var result = 0;
     borrow path as &pb in {
@@ -749,7 +749,7 @@ fn added[&h, &a, &b, &c, &d](heap: &!h Heap, table: buffer.Buffer, sig: &a [byte
 }
 
 // One declaration logged as an operation: its file in `ops`. 0, or 3 and why.
-fn logged[&h, &i, &f, &o, &a, &b, &l](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), ops_dir: &o [byte], sig: &a [byte], stage: &b [byte], labels: &l [byte]) -> [heap, err_write, fs_read(""), fs_write(""), file_write] int {
+pub fn logged[&h, &i, &f, &o, &a, &b, &l](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), ops_dir: &o [byte], sig: &a [byte], stage: &b [byte], labels: &l [byte]) -> [heap, err_write, fs_read(""), fs_write(""), file_write] int {
     let canonical = canonical_op(heap, sig, stage, labels);
     var result = 0;
     borrow canonical as &cb in {
