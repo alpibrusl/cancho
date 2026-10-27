@@ -32,7 +32,7 @@ fn word_char(c: int) -> [] bool {
 }
 
 // The index of the newline that ends the line starting at `from`, or the length of the text.
-fn line_end[&r](text: &r [byte], from: int) -> [] int {
+pub fn line_end[&r](text: &r [byte], from: int) -> [] int {
     var p = from;
     while p < len(text) && lc.at(text, p) != 10 {
         p = p + 1;

@@ -22,16 +22,8 @@ import selfhost.clivcs;
 import selfhost.cliproject;
 import selfhost.clipublish;
 import selfhost.clisync;
+import selfhost.prune;
 import selfhost.clibase;
-
-// The end of the import that starts at `at` in `imports` (each followed by a newline).
-fn import_end[&i](imports: &i [byte], at: int) -> [] int {
-    var p = at;
-    while p < len(imports) && lc.at(imports, p) != 10 {
-        p = p + 1;
-    }
-    return p;
-}
 
 // Where in `sorted` (places of records in `recs`, by module) the module `name` is, or -1.
 fn index_of[&r, &s, &n](recs: &r [byte], sorted: &s vec.Vec[int], name: &n [byte]) -> [] int {
@@ -228,7 +220,7 @@ fn imports_known[&h, &i, &r, &s, &d](heap: &!h Heap, io: &!i Io, recs: &r [byte]
         let imports = clivcs.field_of(recs, vec.get(sorted, k), 2);
         var at = 0;
         while at < len(imports) {
-            let end = import_end(imports, at);
+            let end = prune.line_end(imports, at);
             let name = imports[at..end];
             if index_of(recs, sorted, name) < 0 {
                 var line = cliorigin.message(heap, "`", clivcs.field_of(recs, vec.get(sorted, k), 1), "` imports `");
@@ -286,7 +278,7 @@ fn dependency_order[&h, &i, &r, &s](heap: &!h Heap, io: &!i Io, recs: &r [byte],
                                 var at = 0;
                                 var c = 0;
                                 while c < vec.get(fd, top) && at < len(imports) {
-                                    at = import_end(imports, at) + 1;
+                                    at = prune.line_end(imports, at) + 1;
                                     c = c + 1;
                                 }
                                 if at >= len(imports) {
@@ -296,7 +288,7 @@ fn dependency_order[&h, &i, &r, &s](heap: &!h Heap, io: &!i Io, recs: &r [byte],
                                     depth = depth - 1;
                                 } else {
                                     vec.set(fd, top, vec.get(fd, top) + 1);
-                                    let name = imports[at..import_end(imports, at)];
+                                    let name = imports[at..prune.line_end(imports, at)];
                                     let j = index_of(recs, sorted, name);
                                     if vec.get(sb, j) == 1 {
                                         var line = buffer.append(heap, buffer.empty(heap, 64), "modules import each other: ");
@@ -362,7 +354,7 @@ fn publish_unit[&h, &i, &f, &x, &c, &k, &s, &r, &t](heap: &!h Heap, io: &!i Io, 
         }
         var at = 0;
         while at < len(imports) && status == 0 {
-            let end = import_end(imports, at);
+            let end = prune.line_end(imports, at);
             let dep = cliorigin.joined(heap, root, imports[at..end]);
             borrow dep as &db in {
                 status = manifest_status(heap, io, fs, buffer.bytes(db));
@@ -391,7 +383,7 @@ fn publish_against[&h, &i, &f, &x, &c, &k, &s, &r, &t, &p, &m](heap: &!h Heap, i
     var outcome = 0;
     var at = 0;
     while at < len(imports) && outcome == 0 {
-        let end = import_end(imports, at);
+        let end = prune.line_end(imports, at);
         let dep = cliorigin.joined(heap, root, imports[at..end]);
         borrow dep as &db in {
             let locked = lock_of_all(heap, io, fs, buffer.bytes(db));
