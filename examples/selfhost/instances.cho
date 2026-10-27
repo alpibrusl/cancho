@@ -429,3 +429,65 @@ pub fn name_suffix[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int]
     }
     return b;
 }
+
+// ------------------------------------------------------------------- labels with an argument (`cancho authority`) ---
+//
+// The header has, in slot 12, how many performances of a label with an argument the function being checked has marked and not yet followed. The rows are in a region of their own after the `defer`'s
+// (`ast.auth_region`): how many, then three slots each: the function, the label (the number of the builtin effect) and the token of the literal that is its argument (-1 for the empty one, which is a
+// capability that was not narrowed).
+
+fn auth_at[&s](st: &!s [int]) -> [] int {
+    return base(st) + 16 + 4096 + 65536 + 256 + 1100;
+}
+
+pub fn pending_reset[&s](st: &!s [int]) -> [] int {
+    st[base(st) + 12] = 0;
+    return 0;
+}
+
+pub fn pending_add[&s](st: &!s [int], n: int) -> [] int {
+    st[base(st) + 12] = st[base(st) + 12] + n;
+    return 0;
+}
+
+pub fn pending[&s](st: &!s [int]) -> [] int {
+    return st[base(st) + 12];
+}
+
+// The function `item` performs the label `label` with the argument whose literal is the token `lit`. False if there is no room for one more.
+pub fn note_label[&s](st: &!s [int], item: int, label: int, lit: int) -> [] bool {
+    let count = st[auth_at(st)];
+    var k = 0;
+    while k < count {
+        let row = auth_at(st) + 1 + 3 * k;
+        if st[row] == item && st[row + 1] == label && st[row + 2] == lit {
+            return true;
+        }
+        k = k + 1;
+    }
+    if count >= 8192 {
+        return false;
+    }
+    let row = auth_at(st) + 1 + 3 * count;
+    st[row] = item;
+    st[row + 1] = label;
+    st[row + 2] = lit;
+    st[auth_at(st)] = count + 1;
+    return true;
+}
+
+pub fn label_rows[&s](st: &!s [int]) -> [] int {
+    return st[auth_at(st)];
+}
+
+pub fn label_item[&s](st: &!s [int], k: int) -> [] int {
+    return st[auth_at(st) + 1 + 3 * k];
+}
+
+pub fn label_name[&s](st: &!s [int], k: int) -> [] int {
+    return st[auth_at(st) + 2 + 3 * k];
+}
+
+pub fn label_literal[&s](st: &!s [int], k: int) -> [] int {
+    return st[auth_at(st) + 3 + 3 * k];
+}

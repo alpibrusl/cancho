@@ -48,7 +48,7 @@ fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f
         return clifmt.fmt_command(heap, io, args, fs);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "check") {
-        return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, false, false, false);
+        return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, false, false, 0);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "install") {
         return cliproject.install_command(heap, io, args, fs, exec, clock);
@@ -78,10 +78,10 @@ fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f
         return cliproject.build_command(heap, io, args, fs, exec, clock);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "build") {
-        return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, true, false, false);
+        return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, true, false, 0);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "run") {
-        return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, true, true, false);
+        return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, true, true, 0);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "test") && cliproject.wants_project(heap, io, args, fs, exec, clock, true) {
         return cliproject.test_command(heap, io, args, fs, exec, clock);
@@ -93,13 +93,16 @@ fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f
         return clitest.satisfy_command(heap, io, args, fs, exec, clock);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "authority-reached") {
-        return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, false, false, true);
+        return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, false, false, 2);
+    }
+    if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "authority") {
+        return cliprog.program_command(heap, io, args, fs, exec, clock, false, false, false, false, 1);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "layout") {
-        return cliprog.program_command(heap, io, args, fs, exec, clock, false, true, false, false, false);
+        return cliprog.program_command(heap, io, args, fs, exec, clock, false, true, false, false, 0);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "ids") {
-        return cliprog.program_command(heap, io, args, fs, exec, clock, true, false, false, false, false);
+        return cliprog.program_command(heap, io, args, fs, exec, clock, true, false, false, false, 0);
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "print") {
         return clifmt.one_file_command(heap, io, args, fs, false);

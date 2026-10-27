@@ -1120,6 +1120,7 @@ fn check_item[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] int {
     st[37] = 0 - 1;
     st[39] = 0;
     st[54] = 0;
+    effects.begin(st);
     scope.lin_reset(st);
     st[60] = 0;
     if emit.on(st) {
@@ -1270,6 +1271,7 @@ pub fn check_static[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int
     st[37] = 0 - 1;
     st[39] = 0;
     st[54] = 0;
+    effects.begin(st);
     st[22] = ast.get(st, item, 13);
     st[23] = ast.get(st, item, 14);
     st[28] = 0 - 1;

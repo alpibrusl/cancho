@@ -858,6 +858,26 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                     written = layoutrep.report(heap, st, text);
                     status = st[63];
                 }
+            } else if mode == 18 || mode == 19 {
+                // The report of `authority`, as prose (18) or data (19), when the program is built as the build builds it (`authority.cho`); a program some label of which is not followed is `skip`.
+                status = answer(io, st, text, 5);
+                if status == 0 {
+                    let whole = prune.run(heap, module_bytes(heap, st));
+                    buffer.drop(heap, written);
+                    borrow whole as &w in {
+                        if authority.unfollowed(st, buffer.bytes(w)) {
+                            written = buffer.empty(heap, 0);
+                            ast.fail(st, rules.r_skip(), 0, 0);
+                            status = 1;
+                        } else {
+                            written = authority.report(heap, st, text, buffer.bytes(w), mode == 19);
+                        }
+                    }
+                    buffer.drop(heap, whole);
+                    if status == 0 {
+                        status = st[63];
+                    }
+                }
             } else if mode == 17 {
                 // The functions the program reaches, with their rows and whether each is pure (`authority.cho`), when it is built as the build builds it.
                 status = answer(io, st, text, 5);

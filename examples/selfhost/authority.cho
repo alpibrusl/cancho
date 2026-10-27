@@ -7,12 +7,14 @@ module selfhost.authority;
 // an instance, its type arguments, and so the name the Rust command gives it (`first$int$bool`), its row, and whether it is pure.
 
 import std.buffer;
+import std.bytes;
 import selfhost.lexcore as lc;
 import selfhost.ast;
 import selfhost.kinds;
 import selfhost.instances;
 import selfhost.prune;
 import selfhost.effects;
+import selfhost.identity;
 import selfhost.builtins;
 
 // Is there a unique reference in the type `t` (syntax): looking through references, slices, tuples and the arguments of a named type?
@@ -59,8 +61,8 @@ fn bit_name(n: int) -> [] &static [byte] {
     return builtins.effect_name(n);
 }
 
-// For each function the pruned module `pruned` defines: its name as the Rust command writes it, a NUL, `1` if it is pure and `0` if not, a NUL, `1` if it performed a label that is not followed (one with an
-// argument, one not known) and `0` if not, a NUL, the labels it performed (each followed by a NUL), and a newline.
+// For each function the pruned module `pruned` defines: its name as the Rust command writes it, a NUL, `1` if it is pure and `0` if not, a NUL, `1` if it performed a label that is not followed (one it called through a function value, or one with an
+// argument that was not kept) and `0` if not, a NUL, the labels it performed (each followed by a NUL; one with an argument as `name("argument")`), and a newline.
 pub fn reached[&h, &s, &x, &p](heap: &!h Heap, st: &!s [int], text: &x [byte], pruned: &p [byte]) -> [heap] buffer.Buffer {
     var out = buffer.empty(heap, 256);
     var line = 0;
@@ -86,7 +88,7 @@ pub fn reached[&h, &s, &x, &p](heap: &!h Heap, st: &!s [int], text: &x [byte], p
                 out = buffer.append(heap, out, "0");
             }
             out = buffer.push(heap, out, byte_of(0));
-            if mask / effects.two_to(st, 60) > 0 {
+            if mask / effects.two_to(st, 59) % 2 == 1 {
                 out = buffer.append(heap, out, "1");
             } else {
                 out = buffer.append(heap, out, "0");
@@ -99,9 +101,733 @@ pub fn reached[&h, &s, &x, &p](heap: &!h Heap, st: &!s [int], text: &x [byte], p
                 }
                 n = n + 1;
             }
+            var row = 0;
+            while row < instances.label_rows(st) {
+                if instances.label_item(st, row) == item && instances.label_name(st, row) < 100 {
+                    out = buffer.append(heap, out, effects.arg_label_name(instances.label_name(st, row)));
+                    out = buffer.append(heap, out, "(\"");
+                    if instances.label_literal(st, row) >= 0 {
+                        out = identity.decoded_text(heap, out, st, text, instances.label_literal(st, row));
+                    }
+                    out = buffer.push(heap, buffer.append(heap, out, "\")"), byte_of(0));
+                }
+                row = row + 1;
+            }
             out = buffer.push(heap, out, byte_of(10));
         }
         line = eol + 1;
     }
     return out;
+}
+
+// ------------------------------------------------------------- the report ---
+//
+// `cancho authority` (`print_authority` in `crates/cancho/src/main.rs`, without `folded_operators` and `folded_calls`, which the compiler in cancho does not count): what the program performs, what it never touches,
+// what bounds it and what does not, the functions that are pure and how many there are. The labels and the names are lists of strings, each followed by a NUL.
+
+// The label as a sortable string: its name, the byte 1, `0` if it has no argument (`1` and the argument if it has), which orders as the pair `(name, Option<argument>)` does: a name is a prefix of a longer one, and byte 1 is below every character a name has.
+fn label_key[&h, &n, &a](heap: &!h Heap, name: &n [byte], has: bool, arg: &a [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, buffer.append(heap, buffer.empty(heap, len(name) + len(arg) + 4), name), byte_of(1));
+    if has {
+        b = buffer.append(heap, buffer.push(heap, b, byte_of('1')), arg);
+    } else {
+        b = buffer.push(heap, b, byte_of('0'));
+    }
+    return buffer.push(heap, b, byte_of(0));
+}
+
+// The string at `at` of the list.
+fn item_end[&l](list: &l [byte], at: int) -> [] int {
+    var p = at;
+    while p < len(list) && lc.at(list, p) != 0 {
+        p = p + 1;
+    }
+    return p;
+}
+
+// Is `s` one of the strings of the list?
+fn has_item[&l, &s](list: &l [byte], s: &s [byte]) -> [] bool {
+    var at = 0;
+    while at < len(list) {
+        let end = item_end(list, at);
+        if bytes.equal(list[at..end], s) {
+            return true;
+        }
+        at = end + 1;
+    }
+    return false;
+}
+
+// The strings of `list` sorted bytewise (without repeats if `unique`), each followed by a NUL: each pass takes the least one that comes after the one taken last.
+fn sorted_items[&h, &l](heap: &!h Heap, list: &l [byte], unique: bool) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(list) + 1);
+    var last = 0 - 1;
+    var going = true;
+    while going {
+        var best = 0 - 1;
+        var best_end = 0;
+        var at = 0;
+        while at < len(list) {
+            let end = item_end(list, at);
+            var after = true;
+            if last >= 0 {
+                let c = bytes.compare(list[at..end], list[last..item_end(list, last)]);
+                after = c > 0 || c == 0 && !unique && at > last;
+            }
+            if after && (best < 0 || bytes.compare(list[at..end], list[best..best_end]) < 0) {
+                best = at;
+                best_end = end;
+            }
+            at = end + 1;
+        }
+        if best < 0 {
+            going = false;
+        } else {
+            out = buffer.push(heap, buffer.append(heap, out, list[best..best_end]), byte_of(0));
+            last = best;
+        }
+    }
+    return out;
+}
+
+// The name of the function of the pruned definition with this key, as the Rust command writes it.
+fn function_name[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int], text: &x [byte], key: int) -> [heap] buffer.Buffer {
+    var b = out;
+    let item = key / 4096;
+    let inst = key % 4096;
+    let name = ast.get(st, item, 4);
+    b = buffer.append(heap, b, text[ast.tstart(st, name)..ast.tend(st, name)]);
+    if inst > 0 {
+        b = instances.name_suffix(heap, b, st, text, inst - 1);
+    }
+    return b;
+}
+
+// Does `keys` (four bytes each) hold a function of this item?
+fn item_reached[&k](keys: &k [byte], item: int) -> [] bool {
+    var at = 0;
+    while at < len(keys) {
+        if key_at(keys, at) / 4096 == item {
+            return true;
+        }
+        at = at + 4;
+    }
+    return false;
+}
+
+// The keys of the functions the pruned module defines (item * 4096 + the instance, or 0), as four bytes each, most significant first.
+fn reached_keys[&h, &p](heap: &!h Heap, pruned: &p [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    var line = 0;
+    while line < len(pruned) {
+        let eol = prune.line_end(pruned, line);
+        let key = prune.define_key(pruned, line, eol);
+        if key >= 0 {
+            out = buffer.push(heap, out, byte_of(key / 16777216 % 256));
+            out = buffer.push(heap, out, byte_of(key / 65536 % 256));
+            out = buffer.push(heap, out, byte_of(key / 256 % 256));
+            out = buffer.push(heap, out, byte_of(key % 256));
+        }
+        line = eol + 1;
+    }
+    return out;
+}
+
+fn key_at[&k](keys: &k [byte], at: int) -> [] int {
+    return lc.at(keys, at) * 16777216 + lc.at(keys, at + 1) * 65536 + lc.at(keys, at + 2) * 256 + lc.at(keys, at + 3);
+}
+
+// The label strings (see `label_key`) of the labels the functions of `keys` performed: the plain ones from their sets, the ones with an argument from the rows kept for them.
+fn performed_labels[&h, &s, &x, &k](heap: &!h Heap, st: &!s [int], text: &x [byte], keys: &k [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    var at = 0;
+    while at < len(keys) {
+        let item = key_at(keys, at) / 4096;
+        var mask = ast.get(st, item, 15);
+        if mask < 0 {
+            mask = 0;
+        }
+        var n = 0;
+        while n < effects.label_count() {
+            if mask / effects.two_to(st, n) % 2 == 1 {
+                let key = label_key(heap, bit_name(n), false, "");
+                borrow key as &kb in {
+                    var present = false;
+                    borrow out as &ob in {
+                        present = has_item(buffer.bytes(ob), buffer.bytes(kb));
+                    }
+                    if !present {
+                        out = buffer.append(heap, out, buffer.bytes(kb));
+                    }
+                }
+                buffer.drop(heap, key);
+            }
+            n = n + 1;
+        }
+        var row = 0;
+        while row < instances.label_rows(st) {
+            if instances.label_item(st, row) == item && instances.label_name(st, row) < 100 {
+                var arg = buffer.empty(heap, 16);
+                if instances.label_literal(st, row) >= 0 {
+                    arg = identity.decoded_text(heap, arg, st, text, instances.label_literal(st, row));
+                }
+                if instances.label_name(st, row) == 5 {
+                    arg = canonical_set(heap, arg);
+                }
+                borrow arg as &ab in {
+                    let key = label_key(heap, effects.arg_label_name(instances.label_name(st, row)), true, buffer.bytes(ab));
+                    borrow key as &kb in {
+                        var present = false;
+                        borrow out as &ob in {
+                            present = has_item(buffer.bytes(ob), buffer.bytes(kb));
+                        }
+                        if !present {
+                            out = buffer.append(heap, out, buffer.bytes(kb));
+                        }
+                    }
+                    buffer.drop(heap, key);
+                }
+                buffer.drop(heap, arg);
+            }
+            row = row + 1;
+        }
+        at = at + 4;
+    }
+    return out;
+}
+
+// A set of signals as the Rust command writes it: the names (separated by commas) in alphabetical order.
+fn canonical_set[&h](heap: &!h Heap, set: buffer.Buffer) -> [heap] buffer.Buffer {
+    var names = buffer.empty(heap, 16);
+    borrow set as &sb in {
+        let all = buffer.bytes(sb);
+        var from = 0;
+        var at = 0;
+        while at <= len(all) {
+            if at == len(all) || lc.at(all, at) == ',' {
+                names = buffer.push(heap, buffer.append(heap, names, all[from..at]), byte_of(0));
+                from = at + 1;
+            }
+            at = at + 1;
+        }
+    }
+    buffer.drop(heap, set);
+    var out = buffer.empty(heap, 16);
+    borrow names as &nb in {
+        let sorted = sorted_items(heap, buffer.bytes(nb), false);
+        borrow sorted as &tb in {
+            let all = buffer.bytes(tb);
+            var at = 0;
+            while at < len(all) {
+                let end = item_end(all, at);
+                if at > 0 {
+                    out = buffer.push(heap, out, byte_of(','));
+                }
+                out = buffer.append(heap, out, all[at..end]);
+                at = end + 1;
+            }
+        }
+        buffer.drop(heap, sorted);
+    }
+    buffer.drop(heap, names);
+    return out;
+}
+
+// `bounds_its_domain`: `ffi` does not, `net_out` and `net_in` do not when their argument is empty (or there is none); every other label does.
+fn bounds_its_domain[&n, &a](name: &n [byte], has: bool, arg: &a [byte]) -> [] bool {
+    if bytes.equal(name, "ffi") {
+        return false;
+    }
+    if bytes.equal(name, "net_out") || bytes.equal(name, "net_in") {
+        return has && len(arg) > 0;
+    }
+    return true;
+}
+
+// The byte 1 of a label string, or its length.
+fn split_at[&k](key: &k [byte]) -> [] int {
+    var p = 0;
+    while p < len(key) && lc.at(key, p) != 1 {
+        p = p + 1;
+    }
+    return p;
+}
+
+// `name` or `name("argument")` for the label string `key`.
+fn label_text[&h, &k](heap: &!h Heap, out: buffer.Buffer, key: &k [byte]) -> [heap] buffer.Buffer {
+    let cut = split_at(key);
+    var b = buffer.append(heap, out, key[0..cut]);
+    if lc.at(key, cut + 1) == '1' {
+        b = buffer.append(heap, b, "(\"");
+        b = buffer.append(heap, b, key[cut + 2..len(key)]);
+        b = buffer.append(heap, b, "\")");
+    }
+    return b;
+}
+
+// The JSON string body of `s`.
+fn escaped[&h, &t](heap: &!h Heap, out: buffer.Buffer, s: &t [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    var i = 0;
+    while i < len(s) {
+        let c = lc.at(s, i);
+        if c == 92 {
+            b = buffer.append(heap, b, "\\\\");
+        } else if c == 34 {
+            b = buffer.append(heap, b, "\\\"");
+        } else if c == 10 {
+            b = buffer.append(heap, b, "\\n");
+        } else if c == 13 {
+            b = buffer.append(heap, b, "\\r");
+        } else if c == 9 {
+            b = buffer.append(heap, b, "\\t");
+        } else if c < 32 {
+            b = buffer.append(heap, b, "\\u00");
+            b = buffer.push(heap, b, "0123456789abcdef"[c / 16]);
+            b = buffer.push(heap, b, "0123456789abcdef"[c % 16]);
+        } else {
+            b = buffer.push(heap, b, s[i]);
+        }
+        i = i + 1;
+    }
+    return b;
+}
+
+// `"a", "b"` for the strings of the list.
+fn quoted_list[&h, &l](heap: &!h Heap, out: buffer.Buffer, list: &l [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    var at = 0;
+    while at < len(list) {
+        let end = item_end(list, at);
+        if at > 0 {
+            b = buffer.append(heap, b, ", ");
+        }
+        b = buffer.push(heap, escaped(heap, buffer.push(heap, b, byte_of(34)), list[at..end]), byte_of(34));
+        at = end + 1;
+    }
+    return b;
+}
+
+// The domains no label of the report touches (`untouched_domains`): each followed by a NUL.
+fn untouched[&h, &l](heap: &!h Heap, labels: &l [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 128);
+    var which = 0;
+    while which < 8 {
+        var what = "the console";
+        var names = "io_read\0io_write\0err_write\0";
+        if which == 1 {
+            what = "the filesystem";
+            names = "fs_read\0fs_write\0file_read\0file_write\0";
+        } else if which == 2 {
+            what = "the network";
+            names = "net_out\0net_in\0conn_accept\0conn_read\0conn_write\0";
+        } else if which == 3 {
+            what = "the heap";
+            names = "heap\0";
+        } else if which == 4 {
+            what = "the command line";
+            names = "args\0";
+        } else if which == 5 {
+            what = "signals";
+            names = "signals\0signals_read\0";
+        } else if which == 6 {
+            what = "other programs";
+            names = "exec\0exec_detached\0exec_under\0child_signal\0pipe_read\0pipe_write\0";
+        } else if which == 7 {
+            what = "foreign code";
+            names = "ffi\0";
+        }
+        var touched = false;
+        var at = 0;
+        while at < len(names) {
+            let end = item_end(names, at);
+            var l = 0;
+            while l < len(labels) {
+                let le = item_end(labels, l);
+                let label = labels[l..le];
+                let name = names[at..end];
+                if bytes.equal(label, name) || len(label) > len(name) && bytes.equal(label[0..len(name)], name) && lc.at(label, len(name)) == '(' {
+                    touched = true;
+                }
+                l = le + 1;
+            }
+            at = end + 1;
+        }
+        if !touched {
+            out = buffer.push(heap, buffer.append(heap, out, what), byte_of(0));
+        }
+        which = which + 1;
+    }
+    return out;
+}
+
+// The scope of the foreign function `it`: the argument of the `ffi` label of its row, or none.
+fn extern_scope[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int], text: &x [byte], it: int) -> [heap] buffer.Buffer {
+    var b = out;
+    var p = ast.get(st, it, 9) + 1;
+    var done = false;
+    while !done && ast.code_at(st, p) != lc.code(lc.Tok::RBracket) {
+        let name = p;
+        p = p + 1;
+        if ast.code_at(st, p) == lc.code(lc.Tok::LParen) {
+            if lc.spells(text, ast.tstart(st, name), ast.tend(st, name), "ffi") {
+                b = identity.decoded_text(heap, b, st, text, p + 1);
+                done = true;
+            }
+            p = p + 3;
+        }
+        if ast.code_at(st, p) == lc.code(lc.Tok::Comma) {
+            p = p + 1;
+        }
+    }
+    return b;
+}
+
+// The scope, the byte 1 and the symbol of every foreign function the functions of `keys` call (each followed by a NUL, repeats included).
+fn foreign_pairs[&h, &s, &x, &k](heap: &!h Heap, st: &!s [int], text: &x [byte], keys: &k [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    var row = 0;
+    while row < instances.label_rows(st) {
+        if instances.label_name(st, row) == 100 && item_reached(keys, instances.label_item(st, row)) {
+            let it = instances.label_literal(st, row);
+            out = extern_scope(heap, out, st, text, it);
+            out = buffer.push(heap, out, byte_of(1));
+            out = buffer.append(heap, out, text[ast.tstart(st, ast.get(st, it, 4))..ast.tend(st, ast.get(st, it, 4))]);
+            out = buffer.push(heap, out, byte_of(0));
+        }
+        row = row + 1;
+    }
+    return out;
+}
+
+// `n` in decimal.
+fn decimal[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    var digits = buffer.empty(heap, 20);
+    var rest = n;
+    if rest == 0 {
+        digits = buffer.push(heap, digits, byte_of('0'));
+    }
+    while rest > 0 {
+        digits = buffer.push(heap, digits, byte_of('0' + rest % 10));
+        rest = rest / 10;
+    }
+    var b = out;
+    borrow digits as &db in {
+        var k = buffer.size(db);
+        while k > 0 {
+            k = k - 1;
+            b = buffer.push(heap, b, buffer.bytes(db)[k]);
+        }
+    }
+    buffer.drop(heap, digits);
+    return b;
+}
+
+// The names of the pure functions of `keys` (each followed by a NUL, in the order they come) and how many functions there are.
+fn pure_names[&h, &s, &x, &k](heap: &!h Heap, st: &!s [int], text: &x [byte], keys: &k [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    var at = 0;
+    while at < len(keys) {
+        let item = key_at(keys, at) / 4096;
+        var mask = ast.get(st, item, 15);
+        if mask < 0 {
+            mask = 0;
+        }
+        if mask == 0 && !writes_through(st, item) {
+            out = function_name(heap, out, st, text, key_at(keys, at));
+            out = buffer.push(heap, out, byte_of(0));
+        }
+        at = at + 4;
+    }
+    return out;
+}
+
+// Everything the report says, as lists of strings (each followed by a NUL) and numbers: the label strings (see `label_key`) sorted, their text, the kinds, the `scope:symbol` pairs and the symbols, what
+// is unbounded by, the domains never touched, the names of the pure functions sorted, and how many functions there are.
+res struct Plan {
+    sorted: buffer.Buffer,
+    labels: buffer.Buffer,
+    kinds: buffer.Buffer,
+    symbols: buffer.Buffer,
+    unbounded_by: buffer.Buffer,
+    never: buffer.Buffer,
+    pure: buffer.Buffer,
+    open_network: buffer.Buffer,
+    bounded: bool,
+    foreign_bounded: bool,
+    total: int,
+}
+
+// The facts of the sorted label strings: their text, the kinds, whether each bounds its domain (and the unnarrowed network ones), and whether `ffi` is among them.
+fn plan_of[&h, &s, &x, &k](heap: &!h Heap, st: &!s [int], text: &x [byte], keys: &k [byte]) -> [heap] Plan {
+    let raw = performed_labels(heap, st, text, keys);
+    var sorted = buffer.empty(heap, 16);
+    borrow raw as &rb in {
+        buffer.drop(heap, sorted);
+        sorted = sorted_items(heap, buffer.bytes(rb), true);
+    }
+    buffer.drop(heap, raw);
+    var labels = buffer.empty(heap, 128);
+    var kinds = buffer.empty(heap, 64);
+    var open_network = buffer.empty(heap, 16);
+    var labels_bounded = true;
+    var ffi = false;
+    var last_name = buffer.empty(heap, 16);
+    borrow sorted as &sb in {
+        let all = buffer.bytes(sb);
+        var at = 0;
+        while at < len(all) {
+            let end = item_end(all, at);
+            let key = all[at..end];
+            let cut = split_at(key);
+            let name = key[0..cut];
+            let has = lc.at(key, cut + 1) == '1';
+            labels = buffer.push(heap, label_text(heap, labels, key), byte_of(0));
+            borrow last_name as &lb in {
+                if !bytes.equal(buffer.bytes(lb), name) {
+                    kinds = buffer.push(heap, buffer.append(heap, kinds, name), byte_of(0));
+                }
+            }
+            buffer.drop(heap, last_name);
+            last_name = buffer.append(heap, buffer.empty(heap, len(name) + 1), name);
+            if !bounds_its_domain(name, has, key[cut + 2..len(key)]) {
+                labels_bounded = false;
+                if bytes.equal(name, "net_out") || bytes.equal(name, "net_in") {
+                    open_network = buffer.append(heap, buffer.append(heap, open_network, name), "(\"\")");
+                    open_network = buffer.push(heap, open_network, byte_of(0));
+                }
+            }
+            if bytes.equal(name, "ffi") {
+                ffi = true;
+            }
+            at = end + 1;
+        }
+    }
+    buffer.drop(heap, last_name);
+    // The foreign functions reached.
+    let pairs = foreign_pairs(heap, st, text, keys);
+    var symbol_list = buffer.empty(heap, 32);
+    var scoped = buffer.empty(heap, 32);
+    borrow pairs as &pb in {
+        let all = buffer.bytes(pb);
+        var at = 0;
+        while at < len(all) {
+            let end = item_end(all, at);
+            let cut = split_at(all[at..end]);
+            symbol_list = buffer.push(heap, buffer.append(heap, symbol_list, all[at + cut + 1..end]), byte_of(0));
+            scoped = buffer.append(heap, scoped, all[at..at + cut]);
+            scoped = buffer.push(heap, buffer.append(heap, buffer.push(heap, scoped, byte_of(':')), all[at + cut + 1..end]), byte_of(0));
+            at = end + 1;
+        }
+    }
+    buffer.drop(heap, pairs);
+    var symbols = buffer.empty(heap, 16);
+    borrow symbol_list as &yb in {
+        buffer.drop(heap, symbols);
+        symbols = sorted_items(heap, buffer.bytes(yb), true);
+    }
+    buffer.drop(heap, symbol_list);
+    var unbounded_by = buffer.empty(heap, 16);
+    borrow scoped as &cb in {
+        buffer.drop(heap, unbounded_by);
+        unbounded_by = sorted_items(heap, buffer.bytes(cb), true);
+    }
+    buffer.drop(heap, scoped);
+    var none = false;
+    borrow unbounded_by as &ub in {
+        none = buffer.size(ub) == 0;
+    }
+    if none && ffi {
+        unbounded_by = buffer.append(heap, unbounded_by, "*\0");
+    }
+    let foreign_bounded = none && !ffi;
+    borrow open_network as &ob in {
+        unbounded_by = buffer.append(heap, unbounded_by, buffer.bytes(ob));
+    }
+    var never = buffer.empty(heap, 16);
+    borrow labels as &lb2 in {
+        buffer.drop(heap, never);
+        never = untouched(heap, buffer.bytes(lb2));
+    }
+    let pure_raw = pure_names(heap, st, text, keys);
+    var pure = buffer.empty(heap, 16);
+    borrow pure_raw as &prb in {
+        buffer.drop(heap, pure);
+        pure = sorted_items(heap, buffer.bytes(prb), false);
+    }
+    buffer.drop(heap, pure_raw);
+    return Plan { sorted: sorted, labels: labels, kinds: kinds, symbols: symbols, unbounded_by: unbounded_by, never: never, pure: pure, open_network: open_network, bounded: labels_bounded && foreign_bounded, foreign_bounded: foreign_bounded, total: len(keys) / 4 };
+}
+
+// Lines of text added to `out`: `indent`, each string of `list`, and a newline.
+fn lines[&h, &l, &i](heap: &!h Heap, out: buffer.Buffer, list: &l [byte], indent: &i [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    var at = 0;
+    while at < len(list) {
+        let end = item_end(list, at);
+        b = buffer.push(heap, buffer.append(heap, buffer.append(heap, b, indent), list[at..end]), byte_of(10));
+        at = end + 1;
+    }
+    return b;
+}
+
+// The prose of the report.
+fn prose[&h, &q](heap: &!h Heap, c: &q Plan) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 1024);
+    if !c.foreign_bounded {
+        b = buffer.append(heap, b, "UNBOUNDED: this program calls foreign code. The labels below bound it\neverywhere except through the symbols under \"unbounded by\", and what\na symbol does is the linked library's, not the language's.\nSee docs/foreign-authority.md.\n");
+    }
+    if buffer.size(c.open_network) > 0 {
+        b = buffer.append(heap, b, "UNBOUNDED: this program holds the network without narrowing it. A\nnet_out(\"\") reaches every host and port, a net_in(\"\") every port;\nnarrow the capability to name the ones it may use.\nSee docs/net-bounds.md.\n");
+    }
+    if buffer.size(c.labels) == 0 {
+        b = buffer.append(heap, b, "performs nothing\n");
+    } else {
+        b = buffer.append(heap, b, "performs\n");
+        let all = buffer.bytes(c.sorted);
+        var at = 0;
+        while at < len(all) {
+            let end = item_end(all, at);
+            let key = all[at..end];
+            let cut = split_at(key);
+            b = label_text(heap, buffer.append(heap, b, "    "), key);
+            if !bounds_its_domain(key[0..cut], lc.at(key, cut + 1) == '1', key[cut + 2..len(key)]) {
+                b = buffer.append(heap, b, "    <- unbounded");
+            }
+            b = buffer.push(heap, b, byte_of(10));
+            at = end + 1;
+        }
+    }
+    if buffer.size(c.never) > 0 {
+        b = lines(heap, buffer.append(heap, b, "never touches\n"), buffer.bytes(c.never), "    ");
+    }
+    if buffer.size(c.unbounded_by) > 0 {
+        b = lines(heap, buffer.append(heap, b, "unbounded by\n"), buffer.bytes(c.unbounded_by), "    ");
+    }
+    if buffer.size(c.pure) > 0 {
+        var count = 0;
+        let names = buffer.bytes(c.pure);
+        var at = 0;
+        while at < len(names) {
+            count = count + 1;
+            at = item_end(names, at) + 1;
+        }
+        b = buffer.append(heap, b, "provably pure (");
+        b = decimal(heap, b, count);
+        b = buffer.append(heap, b, " of ");
+        b = decimal(heap, b, c.total);
+        b = buffer.append(heap, b, ")\n");
+        b = lines(heap, b, names, "    ");
+    }
+    return b;
+}
+
+// The data form of the report (without `folded_operators` and `folded_calls`).
+fn data[&h, &q](heap: &!h Heap, c: &q Plan) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.empty(heap, 1024), "{\n  \"bounded\": ");
+    if c.bounded {
+        b = buffer.append(heap, b, "true,\n");
+    } else {
+        b = buffer.append(heap, b, "false,\n");
+    }
+    if buffer.size(c.unbounded_by) == 0 {
+        b = buffer.append(heap, b, "  \"unbounded_by\": [],\n");
+    } else {
+        b = buffer.append(heap, b, "  \"unbounded_by\": [\n");
+        let all = buffer.bytes(c.unbounded_by);
+        var at = 0;
+        while at < len(all) {
+            let end = item_end(all, at);
+            b = buffer.push(heap, escaped(heap, buffer.append(heap, b, "    \""), all[at..end]), byte_of(34));
+            if end + 1 < len(all) {
+                b = buffer.push(heap, b, byte_of(','));
+            }
+            b = buffer.push(heap, b, byte_of(10));
+            at = end + 1;
+        }
+        b = buffer.append(heap, b, "  ],\n");
+    }
+    b = buffer.append(heap, b, "  \"effects\": [");
+    b = quoted_list(heap, b, buffer.bytes(c.kinds));
+    b = buffer.append(heap, b, "],\n  \"labels\": [\n");
+    let all = buffer.bytes(c.sorted);
+    var at = 0;
+    while at < len(all) {
+        let end = item_end(all, at);
+        let key = all[at..end];
+        let cut = split_at(key);
+        let has = lc.at(key, cut + 1) == '1';
+        b = escaped(heap, buffer.append(heap, b, "    { \"name\": \""), key[0..cut]);
+        b = buffer.append(heap, b, "\", \"argument\": ");
+        if has {
+            b = buffer.push(heap, escaped(heap, buffer.push(heap, b, byte_of(34)), key[cut + 2..len(key)]), byte_of(34));
+        } else {
+            b = buffer.append(heap, b, "null");
+        }
+        b = buffer.append(heap, b, ", \"bounded\": ");
+        if bounds_its_domain(key[0..cut], has, key[cut + 2..len(key)]) {
+            b = buffer.append(heap, b, "true }");
+        } else {
+            b = buffer.append(heap, b, "false }");
+        }
+        if end + 1 < len(all) {
+            b = buffer.push(heap, b, byte_of(','));
+        }
+        b = buffer.push(heap, b, byte_of(10));
+        at = end + 1;
+    }
+    b = buffer.append(heap, b, "  ],\n  \"never_touches\": [");
+    b = quoted_list(heap, b, buffer.bytes(c.never));
+    b = buffer.append(heap, b, "],\n  \"foreign_symbols\": [");
+    b = quoted_list(heap, b, buffer.bytes(c.symbols));
+    b = buffer.append(heap, b, "],\n  \"pure\": [");
+    b = quoted_list(heap, b, buffer.bytes(c.pure));
+    b = buffer.append(heap, b, "],\n  \"functions\": ");
+    b = decimal(heap, b, c.total);
+    return buffer.append(heap, b, "\n}\n");
+}
+
+// The report of the program whose pruned module is `pruned`, as prose or (`json`) as data. `unfollowed` is true, and the answer empty, if a function of the program performed a label the compiler does not follow.
+pub fn report[&h, &s, &x, &p](heap: &!h Heap, st: &!s [int], text: &x [byte], pruned: &p [byte], json: bool) -> [heap] buffer.Buffer {
+    let keys = reached_keys(heap, pruned);
+    var out = buffer.empty(heap, 16);
+    borrow keys as &kb in {
+        let plan = plan_of(heap, st, text, buffer.bytes(kb));
+        buffer.drop(heap, out);
+        borrow plan as &pl in {
+            if json {
+                out = data(heap, pl);
+            } else {
+                out = prose(heap, pl);
+            }
+        }
+        let Plan { sorted, labels, kinds, symbols, unbounded_by, never, pure, open_network, bounded, foreign_bounded, total } = plan;
+        buffer.drop(heap, sorted);
+        buffer.drop(heap, labels);
+        buffer.drop(heap, kinds);
+        buffer.drop(heap, symbols);
+        buffer.drop(heap, unbounded_by);
+        buffer.drop(heap, never);
+        buffer.drop(heap, pure);
+        buffer.drop(heap, open_network);
+    }
+    buffer.drop(heap, keys);
+    return out;
+}
+
+// Did a function of the program perform a label the compiler does not follow (`reached` says which)?
+pub fn unfollowed[&s, &p](st: &!s [int], pruned: &p [byte]) -> [] bool {
+    var line = 0;
+    while line < len(pruned) {
+        let eol = prune.line_end(pruned, line);
+        let key = prune.define_key(pruned, line, eol);
+        if key >= 0 {
+            let mask = ast.get(st, key / 4096, 15);
+            if mask >= 0 && mask / effects.two_to(st, 59) % 2 == 1 {
+                return true;
+            }
+        }
+        line = eol + 1;
+    }
+    return false;
 }
