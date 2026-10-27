@@ -156,7 +156,13 @@ pub fn untracked[&s](st: &!s [int]) -> [] bool {
 
 // The function performed a label with an argument, which is untracked too (bit 62): an empty row declares none.
 pub fn mark_arg[&s](st: &!s [int]) -> [] int {
-    instances.pending_add(st, 1);
+    // An earlier performance that was never followed stays counted (bit 58); this one waits to be (bit 57).
+    if has(st, st[54], 57) && !has(st, st[54], 58) {
+        st[54] = st[54] + two_to(st, 58);
+    }
+    if !has(st, st[54], 57) {
+        st[54] = st[54] + two_to(st, 57);
+    }
     mark_untracked(st);
     if !has(st, st[54], 62) {
         st[54] = st[54] + two_to(st, 62);
@@ -388,13 +394,16 @@ pub fn record[&s](st: &!s [int], fn_item: int) -> [] int {
         mask = 0;
     }
     var n = 0;
-    while n < 63 {
+    while n < 56 || n >= 60 && n < 63 {
         if has(st, st[54], n) && !has(st, mask, n) {
             mask = mask + two_to(st, n);
         }
         n = n + 1;
+        if n == 56 {
+            n = 60;
+        }
     }
-    if (instances.pending(st) > 0 || has(st, st[54], 58)) && !has(st, mask, 59) {
+    if (has(st, st[54], 57) || has(st, st[54], 58) || has(st, st[54], 56)) && !has(st, mask, 59) {
         mask = mask + two_to(st, 59);
     }
     ast.put(st, fn_item, 15, mask);
@@ -403,21 +412,19 @@ pub fn record[&s](st: &!s [int], fn_item: int) -> [] int {
 
 // The function being checked called through a function value: what it did is not followed whatever the type of the value says (`cancho authority` answers that it did not follow it).
 pub fn mark_pointer[&s](st: &!s [int]) -> [] int {
-    if !has(st, st[54], 58) {
-        st[54] = st[54] + two_to(st, 58);
+    if !has(st, st[54], 56) {
+        st[54] = st[54] + two_to(st, 56);
     }
     return 0;
 }
 
-// A new function is checked: nothing it performed with an argument is waiting to be followed yet.
-pub fn begin[&s](st: &!s [int]) -> [] int {
-    return instances.pending_reset(st);
-}
-
 // The performance of a label with an argument that `mark_arg` counted is followed (`ok`: its labels were kept), or it stays counted, and `record` says the function has a label that was not followed.
 pub fn followed[&s](st: &!s [int], ok: bool) -> [] int {
-    if ok {
-        instances.pending_add(st, 0 - 1);
+    if has(st, st[54], 57) {
+        st[54] = st[54] - two_to(st, 57);
+        if !ok && !has(st, st[54], 58) {
+            st[54] = st[54] + two_to(st, 58);
+        }
     }
     return 0;
 }
@@ -466,7 +473,7 @@ fn label_bits[&x](text: &x [byte], from: int, to: int) -> [] int {
     if lc.spells(text, from, to, "connect") || lc.spells(text, from, to, "tcp_connect") || lc.spells(text, from, to, "tcp_connect_start") || lc.spells(text, from, to, "udp_connect") {
         return 8;
     }
-    if lc.spells(text, from, to, "bind") || lc.spells(text, from, to, "tcp_listen") || lc.spells(text, from, to, "tcp_listen_on") {
+    if lc.spells(text, from, to, "bind") || lc.spells(text, from, to, "udp_bind") || lc.spells(text, from, to, "tcp_listen") || lc.spells(text, from, to, "tcp_listen_on") {
         return 16;
     }
     if lc.spells(text, from, to, "tty_open") {

@@ -432,7 +432,7 @@ pub fn name_suffix[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int]
 
 // ------------------------------------------------------------------- labels with an argument (`cancho authority`) ---
 //
-// The header has, in slot 12, how many performances of a label with an argument the function being checked has marked and not yet followed. The rows are in a region of their own after the `defer`'s
+// The rows are in a region of their own after the `defer`'s
 // (`ast.auth_region`): how many, then three slots each: the function, the label (the number of the builtin effect) and the token of the literal that is its argument (-1 for the empty one, which is a
 // capability that was not narrowed).
 
@@ -441,27 +441,6 @@ fn auth_at[&s](st: &!s [int]) -> [] int {
 }
 
 // (Everything below touches the region only when the state has one: `st[40]` is set by the layout that has room for the code.)
-pub fn pending_reset[&s](st: &!s [int]) -> [] int {
-    if st[40] != 0 {
-        st[base(st) + 12] = 0;
-    }
-    return 0;
-}
-
-pub fn pending_add[&s](st: &!s [int], n: int) -> [] int {
-    if st[40] != 0 {
-        st[base(st) + 12] = st[base(st) + 12] + n;
-    }
-    return 0;
-}
-
-pub fn pending[&s](st: &!s [int]) -> [] int {
-    if st[40] == 0 {
-        return 0;
-    }
-    return st[base(st) + 12];
-}
-
 // The function `item` performs the label `label` with the argument whose literal is the token `lit`. False if there is no room for one more.
 pub fn note_label[&s](st: &!s [int], item: int, label: int, lit: int) -> [] bool {
     if st[40] == 0 {
