@@ -277,7 +277,7 @@ fn steps_both(
                 }
             }
             // A pin that does not hold, or a program that is refused, is said with the words of the compiler that found it, which differ.
-            if command != "lock" && said.0 == Some(1) {
+            if command != "lock" && said.0 == Some(1) && !said.2.contains("was not given `--std`") {
                 said.2.clear();
             }
             said_all.push(said);
@@ -1129,19 +1129,32 @@ fn vcs_publish_in_cancho_logs_a_file_like_cancho_vcs_publish() {
     ];
     for (name, steps) in &cases {
         let files = vec![("a.cho", original.clone())];
-        let files: &[(&'static str, String)] = if *name == "a file that does not parse"
-            || name.starts_with("a file that")
-            || *name == "a new effect row"
-            || *name == "a body changed"
-            || name.starts_with("a lock")
-        {
-            &[]
-        } else {
-            &files
-        };
-        if let Err(e) = steps_both(&exe, &work, name, files, steps, &cache, &cache) {
+        if let Err(e) = steps_both(&exe, &work, name, &files, steps, &cache, &cache) {
             failures.push(e);
         }
+    }
+    // A store that required another, published again with no requirement: the old ones go. And a program whose own row has two labels.
+    let net_store = packages.join("net-sockets/.cancho-vcs").display().to_string();
+    let net_lock = rust_lock(&work, &cache, &["--store", &net_store, "--all"]);
+    let required = format!("n.lock:{net_store}");
+    let tiny = "module lib.t;\n\npub fn one(n: int) -> [] int {\n    return n;\n}\n";
+    let again = [("a.cho", tiny.to_owned()), ("n.lock", net_lock)];
+    let steps = [
+        vec![s("publish"), s("--store"), s("st"), s("--requires"), required, s("a.cho")],
+        publish("a.cho"),
+    ];
+    if let Err(e) = steps_both(&exe, &work, "requirements dropped", &again, &steps, &cache, &cache)
+    {
+        failures.push(e);
+    }
+    let two = format!(
+        "{original}\npub fn two[&h, &c](heap: &!h Heap, clock: &c Clock) -> [heap, clock] int {{\n    let area = box_slice(heap, 4, 0);\n    unbox_slice(heap, area);\n    return clock_ms(clock);\n}}\n"
+    );
+    let files = [("a.cho", two)];
+    if let Err(e) =
+        steps_both(&exe, &work, "a row of two labels", &files, &[publish("a.cho")], &cache, &cache)
+    {
+        failures.push(e);
     }
     assert!(
         failures.is_empty(),
