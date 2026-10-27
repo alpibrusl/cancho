@@ -1497,8 +1497,7 @@ fn dir_module(name: &str, imports: &[&str], body: &str) -> String {
 
 /// `vcs publish --dir` by cancho and by Rust: a chain and a diamond of modules published in the order of their imports (with a program, a text file and a directory beside them that are not), the same published again
 /// over the stores it made (cleared and made again), after a body changed, and over a store with a stranger in it; a module that imports the library; modules that import each other, themselves, or a module that
-/// is not there; two files that declare one module, one that declares two, one that does not parse, none that declares a module, no `.cho` file, a directory that is not there and one that is a file; and the real
-/// libraries `packages/x509` and `packages/http-client` (with the library). What is compared is as for the other `vcs` commands: status, standard output, first line of the standard error where the status is not
+/// is not there; two files that declare one module, one that declares two, one that does not parse, none that declares a module, no `.cho` file, a directory that is not there and one that is a file; (the real libraries of `packages/` are the next test). What is compared is as for the other `vcs` commands: status, standard output, first line of the standard error where the status is not
 /// 1, and every file left.
 #[test]
 fn vcs_publish_dir_in_cancho_publishes_a_library_like_cancho_vcs_publish() {
@@ -1649,6 +1648,28 @@ fn vcs_publish_dir_in_cancho_publishes_a_library_like_cancho_vcs_publish() {
             failures.push(e);
         }
     }
+    assert!(
+        failures.is_empty(),
+        "`vcs publish --dir` differs in {} cases:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+/// `vcs publish --dir` on the real libraries `packages/x509` and `packages/http-client`, each with the library, by cancho and by Rust (the slow half of the test above).
+#[test]
+fn vcs_publish_dir_in_cancho_publishes_the_libraries_of_packages() {
+    let exe = build("cli-vcs-publish-libs", &with_front_end("cli.cho"));
+    let work = scratch("selfhost-vcs-publish-libs");
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
+    let cache = work.join("cache");
+    let mut failures = Vec::new();
+    let dir = vec!["publish", "--dir", "lib", "--store", "st", "--std"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
     // The libraries of `packages/`.
     let packages = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../packages")
@@ -1656,14 +1677,14 @@ fn vcs_publish_dir_in_cancho_publishes_a_library_like_cancho_vcs_publish() {
         .expect("packages/ is there");
     for library in ["x509", "http-client"] {
         let files = [("@tree:lib", packages.join(library).display().to_string())];
-        let steps = [dir(&["--std"])];
+        let steps = [dir.clone()];
         if let Err(e) = steps_both(&exe, &work, library, &files, &steps, &cache, &cache) {
             failures.push(e);
         }
     }
     assert!(
         failures.is_empty(),
-        "`vcs publish --dir` differs in {} cases:\n{}",
+        "`vcs publish --dir` differs in {} libraries:\n{}",
         failures.len(),
         failures.join("\n")
     );
