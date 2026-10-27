@@ -366,3 +366,22 @@ pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to
     }
     return 0;
 }
+
+// The labels the function `fn_item` performed, kept for `cancho authority` in slot 15 of the item (which the stamps of the walk over types use only for a struct and an enum): the set the body came to
+// before what the parameters own is taken off it, bit by bit as `st[54]` has them, the flags for a label with an argument, one that is not known, and one not followed included. A function checked
+// more than once (each instance of a generic function) keeps the union.
+pub fn record[&s](st: &!s [int], fn_item: int) -> [] int {
+    var mask = ast.get(st, fn_item, 15);
+    if mask < 0 {
+        mask = 0;
+    }
+    var n = 0;
+    while n < 63 {
+        if has(st, st[54], n) && !has(st, mask, n) {
+            mask = mask + two_to(st, n);
+        }
+        n = n + 1;
+    }
+    ast.put(st, fn_item, 15, mask);
+    return 0;
+}

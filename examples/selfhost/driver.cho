@@ -50,6 +50,7 @@ import selfhost.identity;
 import selfhost.prune;
 import selfhost.testscan;
 import selfhost.layoutrep;
+import selfhost.authority;
 
 // The line `ERR rule-tag start end`.
 fn err_line[&i](io: &!i Io, rule: int, from: int, to: int) -> [io_write] int {
@@ -855,6 +856,18 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                 if status == 0 {
                     buffer.drop(heap, written);
                     written = layoutrep.report(heap, st, text);
+                    status = st[63];
+                }
+            } else if mode == 17 {
+                // The functions the program reaches, with their rows and whether each is pure (`authority.cho`), when it is built as the build builds it.
+                status = answer(io, st, text, 5);
+                if status == 0 {
+                    let whole = prune.run(heap, module_bytes(heap, st));
+                    buffer.drop(heap, written);
+                    borrow whole as &w in {
+                        written = authority.reached(heap, st, text, buffer.bytes(w));
+                    }
+                    buffer.drop(heap, whole);
                     status = st[63];
                 }
             } else if mode == 11 {

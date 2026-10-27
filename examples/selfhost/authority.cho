@@ -1,0 +1,107 @@
+edition 7;
+module selfhost.authority;
+
+// authority.cho -- `cancho authority`: what a program can do, from the functions it reaches (`docs/cli-in-cancho.md` section 34).
+//
+// The functions the program reaches are the ones the pruned module defines (`prune.cho`): `@lexs_<item>`, and `@lexs_<item>i<k>` for the instance `k` of a generic function. Each gives back its declaration and, for
+// an instance, its type arguments, and so the name the Rust command gives it (`first$int$bool`), its row, and whether it is pure.
+
+import std.buffer;
+import selfhost.lexcore as lc;
+import selfhost.ast;
+import selfhost.kinds;
+import selfhost.instances;
+import selfhost.prune;
+import selfhost.effects;
+import selfhost.builtins;
+
+// Is there a unique reference in the type `t` (syntax): looking through references, slices, tuples and the arguments of a named type?
+fn unique_in[&s](st: &!s [int], t: int) -> [] bool {
+    if ast.is_kind(st, t, kinds.NK::TRef) {
+        return ast.get(st, t, 4) != 0 || unique_in(st, ast.get(st, t, 6));
+    }
+    if ast.is_kind(st, t, kinds.NK::TSlice) {
+        return unique_in(st, ast.get(st, t, 6));
+    }
+    if ast.is_kind(st, t, kinds.NK::TTuple) || ast.is_kind(st, t, kinds.NK::TName) {
+        var part = ast.get(st, t, 6);
+        var n = ast.get(st, t, 7);
+        while n > 0 && part >= 0 {
+            if unique_in(st, part) {
+                return true;
+            }
+            part = ast.next(st, part);
+            n = n - 1;
+        }
+    }
+    return false;
+}
+
+// Does the function `item` have a parameter with a unique reference in its type?
+fn writes_through[&s](st: &!s [int], item: int) -> [] bool {
+    var param = ast.get(st, item, 7);
+    var n = ast.get(st, item, 8);
+    while n > 0 && param >= 0 {
+        if unique_in(st, ast.get(st, param, 5)) {
+            return true;
+        }
+        param = ast.next(st, param);
+        n = n - 1;
+    }
+    return false;
+}
+
+// The label the bit `n` of a performed set stands for: the name of the builtin effect, or `conc`.
+fn bit_name(n: int) -> [] &static [byte] {
+    if n == builtins.effect_count() {
+        return "conc";
+    }
+    return builtins.effect_name(n);
+}
+
+// For each function the pruned module `pruned` defines: its name as the Rust command writes it, a NUL, `1` if it is pure and `0` if not, a NUL, `1` if it performed a label that is not followed (one with an
+// argument, one not known) and `0` if not, a NUL, the labels it performed (each followed by a NUL), and a newline.
+pub fn reached[&h, &s, &x, &p](heap: &!h Heap, st: &!s [int], text: &x [byte], pruned: &p [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    var line = 0;
+    while line < len(pruned) {
+        let eol = prune.line_end(pruned, line);
+        let key = prune.define_key(pruned, line, eol);
+        if key >= 0 {
+            let item = key / 4096;
+            let inst = key % 4096;
+            let name = ast.get(st, item, 4);
+            out = buffer.append(heap, out, text[ast.tstart(st, name)..ast.tend(st, name)]);
+            if inst > 0 {
+                out = instances.name_suffix(heap, out, st, text, inst - 1);
+            }
+            out = buffer.push(heap, out, byte_of(0));
+            var mask = ast.get(st, item, 15);
+            if mask < 0 {
+                mask = 0;
+            }
+            if mask == 0 && !writes_through(st, item) {
+                out = buffer.append(heap, out, "1");
+            } else {
+                out = buffer.append(heap, out, "0");
+            }
+            out = buffer.push(heap, out, byte_of(0));
+            if mask / effects.two_to(st, 60) > 0 {
+                out = buffer.append(heap, out, "1");
+            } else {
+                out = buffer.append(heap, out, "0");
+            }
+            out = buffer.push(heap, out, byte_of(0));
+            var n = 0;
+            while n < effects.label_count() {
+                if mask / effects.two_to(st, n) % 2 == 1 {
+                    out = buffer.push(heap, buffer.append(heap, out, bit_name(n)), byte_of(0));
+                }
+                n = n + 1;
+            }
+            out = buffer.push(heap, out, byte_of(10));
+        }
+        line = eol + 1;
+    }
+    return out;
+}

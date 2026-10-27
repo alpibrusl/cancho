@@ -1444,7 +1444,7 @@ fn module_and_name[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int]
 }
 
 // The labels of the effect row whose `[` is token `open`, in the order they are written, each as `name` or `name("value")` (the value as the literal decodes) and a NUL, added to `out`.
-fn row_labels[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int], text: &x [byte], open: int) -> [heap] buffer.Buffer {
+pub fn row_labels[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int], text: &x [byte], open: int) -> [heap] buffer.Buffer {
     var b = out;
     var k = open + 1;
     while ast.code_at(st, k) != code(lc.Tok::RBracket) {
