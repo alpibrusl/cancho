@@ -292,22 +292,22 @@ fn old_lines[&h](heap: &!h Heap, bytes: buffer.Buffer) -> [heap] Old {
     var spots = vec.empty(heap, 16, 0);
     borrow bytes as &bb in {
         let text = buffer.bytes(bb);
-    var at = 0;
-    while at < len(text) {
-        var stop = at;
-        while stop < len(text) && lc.at(text, stop) != 10 {
-            stop = stop + 1;
+        var at = 0;
+        while at < len(text) {
+            var stop = at;
+            while stop < len(text) && lc.at(text, stop) != 10 {
+                stop = stop + 1;
+            }
+            var line_end = stop;
+            if line_end > at && lc.at(text, line_end - 1) == 13 {
+                line_end = line_end - 1;
+            }
+            let added = old_line(heap, table, spots, text[at..line_end]);
+            let Old { recs, starts, failed } = added;
+            table = recs;
+            spots = starts;
+            at = stop + 1;
         }
-        var line_end = stop;
-        if line_end > at && lc.at(text, line_end - 1) == 13 {
-            line_end = line_end - 1;
-        }
-        let added = old_line(heap, table, spots, text[at..line_end]);
-        let Old { recs, starts, failed } = added;
-        table = recs;
-        spots = starts;
-        at = stop + 1;
-    }
     }
     buffer.drop(heap, bytes);
     return Old { recs: table, starts: spots, failed: 0 };
