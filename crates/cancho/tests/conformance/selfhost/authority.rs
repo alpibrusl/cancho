@@ -145,9 +145,12 @@ fn authority_in_cancho_reports_like_cancho_authority() {
         });
         let name = files[0].strip_prefix(&root).unwrap().display().to_string();
         // The two forms for the host, and each form once for a WASI target (`--target`): the imports the row licenses are a function of the labels alone, so one target of each spelling's family is a sample of the table.
-        for (json, target) in
-            [(false, None), (true, None), (false, Some("wasm32-wasi")), (true, Some("wasm32-wasip1"))]
-        {
+        for (json, target) in [
+            (false, None),
+            (true, None),
+            (false, Some("wasm32-wasi")),
+            (true, Some("wasm32-wasip1")),
+        ] {
             let mut rust = Command::new(BIN);
             rust.arg("authority");
             let mut mine = Command::new(&exe);
@@ -344,6 +347,18 @@ fn authority_in_cancho_reports_each_family_of_labels() {
                     String::from_utf8_lossy(&want.stderr)
                 ));
             }
+        }
+    }
+    // A target that is not WASI is a usage error of the command line in cancho (the Rust command reports the host's report unchanged), and so is a triple that is none.
+    let hello = work.join("generic_tuple.cho");
+    for triple in ["x86_64-unknown-linux-gnu", "no such triple"] {
+        let got = Command::new(&exe)
+            .args(["authority", "--target", triple])
+            .arg(&hello)
+            .output()
+            .expect("cli runs");
+        if got.status.code() != Some(2) {
+            failures.push(format!("--target {triple}: status {:?}, not 2", got.status.code()));
         }
     }
     assert!(failures.is_empty(), "{} probes differ:\n{}", failures.len(), failures.join("\n"));
