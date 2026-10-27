@@ -1,0 +1,105 @@
+edition 7;
+module selfhost.authwasi;
+
+// authwasi.cho -- what a program's effect row licenses a WASI module to import (`crates/cancho-ir/src/wasi_imports.rs`, `docs/wasm.md` W2b), for `authority --target`. The table is written out as the Rust one has it; `authority.cho` combines the rows of the labels a program performs.
+
+import std.bytes;
+
+// The target a spelling of `--target` names: 1 `wasm32-wasip1`, 2 `wasm32-wasip2`, 3 `wasm32-wasi` (which `wasm32-unknown-wasi` is also), 4 `wasm32-wasip1-threads`; 0 for any other. The Rust command writes the triple back as the parsed triple prints, which for these is the spelling given, `wasm32-unknown-wasi` aside.
+pub fn variant_of[&t](spelling: &t [byte]) -> [] int {
+    if bytes.equal(spelling, "wasm32-wasip1") {
+        return 1;
+    }
+    if bytes.equal(spelling, "wasm32-wasip2") {
+        return 2;
+    }
+    if bytes.equal(spelling, "wasm32-wasi") || bytes.equal(spelling, "wasm32-unknown-wasi") {
+        return 3;
+    }
+    if bytes.equal(spelling, "wasm32-wasip1-threads") {
+        return 4;
+    }
+    return 0;
+}
+
+pub fn triple(variant: int) -> [] &static [byte] {
+    if variant == 1 {
+        return "wasm32-wasip1";
+    }
+    if variant == 2 {
+        return "wasm32-wasip2";
+    }
+    if variant == 4 {
+        return "wasm32-wasip1-threads";
+    }
+    return "wasm32-wasi";
+}
+
+// What the label is to the target: 0 a row of the table, 1 refused, 2 unbounded (`ffi`), 3 not in the table.
+pub fn class_of[&l](label: &l [byte]) -> [] int {
+    if bytes.equal(label, "io_read") || bytes.equal(label, "io_write") || bytes.equal(label, "err_write") || bytes.equal(label, "heap") || bytes.equal(label, "args") || bytes.equal(label, "clock") {
+        return 0;
+    }
+    if bytes.equal(label, "fs_read") || bytes.equal(label, "fs_write") || bytes.equal(label, "file_read") || bytes.equal(label, "file_write") || bytes.equal(label, "dir_read") || bytes.equal(label, "dir_write") {
+        return 0;
+    }
+    if bytes.equal(label, "ffi") {
+        return 2;
+    }
+    if bytes.equal(label, "conc") || bytes.equal(label, "conn_accept") || bytes.equal(label, "conn_read") || bytes.equal(label, "conn_write") || bytes.equal(label, "udp_recv") || bytes.equal(label, "udp_send") || bytes.equal(label, "poll") {
+        return 1;
+    }
+    if bytes.equal(label, "signals") || bytes.equal(label, "signals_read") || bytes.equal(label, "child_signal") || bytes.equal(label, "exec_detached") || bytes.equal(label, "exec_under") || bytes.equal(label, "exec") || bytes.equal(label, "pipe_read") || bytes.equal(label, "pipe_write") {
+        return 1;
+    }
+    if bytes.equal(label, "net_out") || bytes.equal(label, "net_in") || bytes.equal(label, "tty_open") || bytes.equal(label, "tty_read") || bytes.equal(label, "tty_write") {
+        return 1;
+    }
+    return 3;
+}
+
+// What every builtin under the label imports, each name followed by a NUL.
+pub fn required[&l](label: &l [byte]) -> [] &static [byte] {
+    if bytes.equal(label, "io_read") {
+        return "fd_read\0";
+    }
+    if bytes.equal(label, "io_write") || bytes.equal(label, "err_write") {
+        return "fd_write\0";
+    }
+    if bytes.equal(label, "args") {
+        return "args_get\0args_sizes_get\0";
+    }
+    if bytes.equal(label, "clock") {
+        return "clock_time_get\0";
+    }
+    if bytes.equal(label, "fs_read") {
+        return "fd_close\0fd_fdstat_get\0fd_prestat_dir_name\0fd_prestat_get\0path_open\0";
+    }
+    if bytes.equal(label, "fs_write") {
+        return "fd_prestat_dir_name\0fd_prestat_get\0";
+    }
+    return "";
+}
+
+// Every function any builtin under the label can bring in, each name followed by a NUL.
+pub fn allowed[&l](label: &l [byte]) -> [] &static [byte] {
+    if bytes.equal(label, "fs_read") {
+        return "fd_close\0fd_fdstat_get\0fd_prestat_dir_name\0fd_prestat_get\0fd_read\0path_open\0";
+    }
+    if bytes.equal(label, "fs_write") {
+        return "fd_close\0fd_fdstat_get\0fd_prestat_dir_name\0fd_prestat_get\0fd_write\0path_open\0path_rename\0path_unlink_file\0";
+    }
+    if bytes.equal(label, "file_read") {
+        return "fd_pread\0fd_read\0fd_seek\0";
+    }
+    if bytes.equal(label, "file_write") {
+        return "fd_filestat_set_size\0fd_pwrite\0fd_sync\0fd_write\0";
+    }
+    if bytes.equal(label, "dir_read") {
+        return "fd_close\0fd_fdstat_get\0fd_prestat_dir_name\0fd_prestat_get\0fd_readdir\0path_filestat_get\0path_open\0";
+    }
+    if bytes.equal(label, "dir_write") {
+        return "fd_close\0fd_fdstat_get\0fd_prestat_dir_name\0fd_prestat_get\0fd_sync\0path_open\0path_remove_directory\0path_rename\0path_unlink_file\0";
+    }
+    return required(label);
+}

@@ -16,6 +16,7 @@ import selfhost.prune;
 import selfhost.effects;
 import selfhost.identity;
 import selfhost.builtins;
+import selfhost.authwasi;
 
 // Is there a unique reference in the type `t` (syntax): looking through references, slices, tuples and the arguments of a named type?
 fn unique_in[&s](st: &!s [int], t: int) -> [] bool {
@@ -723,7 +724,7 @@ fn prose[&h, &q](heap: &!h Heap, c: &q Plan) -> [heap] buffer.Buffer {
 }
 
 // The data form of the report (without `folded_operators` and `folded_calls`).
-fn data[&h, &q](heap: &!h Heap, c: &q Plan) -> [heap] buffer.Buffer {
+fn data[&h, &q, &w](heap: &!h Heap, c: &q Plan, wasi: &w [byte]) -> [heap] buffer.Buffer {
     var b = buffer.append(heap, buffer.empty(heap, 1024), "{\n  \"bounded\": ");
     if c.bounded {
         b = buffer.append(heap, b, "true,\n");
@@ -784,22 +785,131 @@ fn data[&h, &q](heap: &!h Heap, c: &q Plan) -> [heap] buffer.Buffer {
     b = quoted_list(heap, b, buffer.bytes(c.pure));
     b = buffer.append(heap, b, "],\n  \"functions\": ");
     b = decimal(heap, b, c.total);
-    return buffer.append(heap, b, "\n}\n");
+    return buffer.append(heap, buffer.append(heap, b, wasi), "\n}\n");
+}
+
+// What the labels `kinds` (each followed by a NUL) license a WASI module to import, by `which`: 0 required, 1 allowed (with `proc_exit`, which every program may), 2 refused, 3 unbounded, 4 not in the table. Sorted, without repeats, each followed by a NUL.
+fn wasi_list[&h, &k](heap: &!h Heap, kinds: &k [byte], which: int) -> [heap] buffer.Buffer {
+    var raw = buffer.empty(heap, 64);
+    if which == 1 {
+        raw = buffer.append(heap, raw, "proc_exit\0");
+    }
+    var at = 0;
+    while at < len(kinds) {
+        let end = item_end(kinds, at);
+        let label = kinds[at..end];
+        let class = authwasi.class_of(label);
+        if which == 0 && class == 0 {
+            raw = buffer.append(heap, raw, authwasi.required(label));
+        }
+        if which == 1 && class == 0 {
+            raw = buffer.append(heap, raw, authwasi.allowed(label));
+        }
+        if which >= 2 && class == which - 1 {
+            raw = buffer.push(heap, buffer.append(heap, raw, label), byte_of(0));
+        }
+        at = end + 1;
+    }
+    var out = buffer.empty(heap, 16);
+    borrow raw as &rb in {
+        buffer.drop(heap, out);
+        out = sorted_items(heap, buffer.bytes(rb), true);
+    }
+    buffer.drop(heap, raw);
+    return out;
+}
+
+// The names of `list` on one line, separated by spaces, or `nothing`.
+fn spaced[&h, &l](heap: &!h Heap, out: buffer.Buffer, list: &l [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    if len(list) == 0 {
+        return buffer.append(heap, b, "nothing");
+    }
+    var at = 0;
+    while at < len(list) {
+        let end = item_end(list, at);
+        if at > 0 {
+            b = buffer.push(heap, b, byte_of(32));
+        }
+        b = buffer.append(heap, b, list[at..end]);
+        at = end + 1;
+    }
+    return b;
+}
+
+// The line of prose about one of the lists that are not empty: the head, the names, the tail.
+fn wasi_line[&h, &l](heap: &!h Heap, out: buffer.Buffer, head: &static [byte], list: &l [byte], tail: &static [byte]) -> [heap] buffer.Buffer {
+    if len(list) == 0 {
+        return out;
+    }
+    return buffer.push(heap, buffer.append(heap, spaced(heap, buffer.append(heap, out, head), list), tail), byte_of(10));
+}
+
+// The section of the report about a WASI target (`variant` of `authwasi.variant_of`), as prose or (`json`) as the members of the object `wasi`.
+fn wasi_section[&h, &k](heap: &!h Heap, kinds: &k [byte], variant: int, json: bool) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 256);
+    if variant == 0 {
+        return b;
+    }
+    let required = wasi_list(heap, kinds, 0);
+    let allowed = wasi_list(heap, kinds, 1);
+    let refused = wasi_list(heap, kinds, 2);
+    let unbounded = wasi_list(heap, kinds, 3);
+    let unknown = wasi_list(heap, kinds, 4);
+    borrow required as &rq in {
+        borrow allowed as &al in {
+            borrow refused as &rf in {
+                borrow unbounded as &ub in {
+                    borrow unknown as &uk in {
+                        if json {
+                            b = buffer.append(heap, b, ",\n  \"wasi\": {\n    \"target\": \"");
+                            b = buffer.append(heap, b, authwasi.triple(variant));
+                            b = quoted_list(heap, buffer.append(heap, b, "\",\n    \"required\": ["), buffer.bytes(rq));
+                            b = quoted_list(heap, buffer.append(heap, b, "],\n    \"allowed\": ["), buffer.bytes(al));
+                            b = quoted_list(heap, buffer.append(heap, b, "],\n    \"refused\": ["), buffer.bytes(rf));
+                            b = quoted_list(heap, buffer.append(heap, b, "],\n    \"unbounded\": ["), buffer.bytes(ub));
+                            b = quoted_list(heap, buffer.append(heap, b, "],\n    \"unknown\": ["), buffer.bytes(uk));
+                            b = buffer.append(heap, b, "]\n  }");
+                        } else {
+                            b = buffer.append(heap, buffer.append(heap, buffer.append(heap, b, "a "), authwasi.triple(variant)), " module built from this program\n    must import ");
+                            b = spaced(heap, b, buffer.bytes(rq));
+                            b = buffer.append(heap, b, "\n    may import  ");
+                            b = spaced(heap, b, buffer.bytes(al));
+                            b = buffer.push(heap, b, byte_of(10));
+                            b = wasi_line(heap, b, "    REFUSED on this target: ", buffer.bytes(rf), " (`check --target` refuses the program)");
+                            b = wasi_line(heap, b, "    UNBOUNDED by ", buffer.bytes(ub), ": what foreign code imports is the library's, not the row's");
+                            b = wasi_line(heap, b, "    not in the table: ", buffer.bytes(uk), "");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, required);
+    buffer.drop(heap, allowed);
+    buffer.drop(heap, refused);
+    buffer.drop(heap, unbounded);
+    buffer.drop(heap, unknown);
+    return b;
 }
 
 // The report of the program whose pruned module is `pruned`, as prose or (`json`) as data. `unfollowed` is true, and the answer empty, if a function of the program performed a label the compiler does not follow.
-pub fn report[&h, &s, &x, &p](heap: &!h Heap, st: &!s [int], text: &x [byte], pruned: &p [byte], json: bool) -> [heap] buffer.Buffer {
+pub fn report[&h, &s, &x, &p](heap: &!h Heap, st: &!s [int], text: &x [byte], pruned: &p [byte], json: bool, wasi: int) -> [heap] buffer.Buffer {
     let keys = reached_keys(heap, pruned);
     var out = buffer.empty(heap, 16);
     borrow keys as &kb in {
         let plan = plan_of(heap, st, text, buffer.bytes(kb));
         buffer.drop(heap, out);
         borrow plan as &pl in {
-            if json {
-                out = data(heap, pl);
-            } else {
-                out = prose(heap, pl);
+            let section = wasi_section(heap, buffer.bytes(pl.kinds), wasi, json);
+            borrow section as &sc in {
+                if json {
+                    out = data(heap, pl, buffer.bytes(sc));
+                } else {
+                    out = buffer.append(heap, prose(heap, pl), buffer.bytes(sc));
+                }
             }
+            buffer.drop(heap, section);
         }
         let Plan { sorted, labels, kinds, symbols, unbounded_by, never, pure, open_network, bounded, foreign_bounded, total } = plan;
         buffer.drop(heap, sorted);

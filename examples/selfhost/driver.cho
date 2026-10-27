@@ -797,7 +797,7 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                 st[62] = ast.size_for(tokens, files);
             } else if mode >= 3 && mode != 11 {
                 ast.layout_emit(st, tokens, files);
-                st[61] = target;
+                st[61] = target % 8;
             } else {
                 ast.layout(st, tokens, files);
             }
@@ -870,7 +870,7 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                             ast.fail(st, rules.r_skip(), 0, 0);
                             status = 1;
                         } else {
-                            written = authority.report(heap, st, text, buffer.bytes(w), mode == 19);
+                            written = authority.report(heap, st, text, buffer.bytes(w), mode == 19, target / 8);
                         }
                     }
                     buffer.drop(heap, whole);
