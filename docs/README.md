@@ -401,6 +401,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`line-reading.md`](line-reading.md) | Whether `std` needs a line reader | measured — no; found and fixed a silent truncation bug |
 | [`agent-errors.md`](agent-errors.md) | Refusals a machine can read: stable rule tags, `check --output json` | settled and built |
 | [`refusals-by-example.md`](refusals-by-example.md) | A walkthrough of 13 refusals, one rule tag per chapter: the refused program, what the compiler says, the correction; checked by a test | built |
+| [`standalone-cancho.md`](standalone-cancho.md) | A `cancho` built by cancho: what the command line in cancho lacks (measured), the decisions for the first standalone release, the slices, installing | design |
 | [`structured-ingest.md`](structured-ingest.md) | The AST as JSON and back: `cancho print --output json` and `cancho ingest`, the ingest path an agent writes | built |
 | [`tty.md`](tty.md) | `Tty`, the serial-port capability (#422 T1): both measured termios ABIs, the surface, the labels — design |
 | [`crc.md`](crc.md) | `std.crc`: CRC-16/XMODEM, CRC-32/IEEE and two CRC-64s (XZ, and Redis's Jones), and the two-halves design | built |
