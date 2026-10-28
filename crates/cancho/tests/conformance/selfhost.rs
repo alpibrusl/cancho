@@ -353,6 +353,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "commandtree.cho",
         "diagnose.cho",
         "stdorder.cho",
+        "stdsource.cho",
         "walk.cho",
         "formatting.cho",
         "jsonprint.cho",

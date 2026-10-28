@@ -1202,9 +1202,6 @@ pub fn build_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &
                         let Sources { listed, broken } = found;
                         if broken != 0 {
                             result = 1;
-                        } else if std_flag && std_dir < 0 {
-                            say_error(heap, io, "`", name, "`: `std = true` needs `--std-dir DIR` in this command line");
-                            result = 2;
                         } else {
                             var entry = buffer.empty(heap, 0);
                             if has_out {
@@ -1325,9 +1322,6 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
                         let Sources { listed, broken } = found;
                         if broken != 0 {
                             result = 1;
-                        } else if std_flag && std_dir < 0 {
-                            say_error(heap, io, "`", name, "`: `std = true` needs `--std-dir DIR` in this command line");
-                            result = 2;
                         } else {
                             console.write_all(io, "== test ");
                             console.write_all(io, name);

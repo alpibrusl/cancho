@@ -1502,3 +1502,72 @@ fn the_stamp_script_refuses_what_is_not_a_commit() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `--std` (`docs/standalone-cancho.md` D3, slice 2): the command line in cancho carries the standard library (`stdsource.cho`) and reads it where `cancho --std` reads its table. For
+/// programs of `tests/accept` that import the library: `check`, `ids` and `build` with `--std` give what the Rust command gives (status, standard output, and for `build` the program's
+/// own output and status), `--std-dir std` gives what `--std` does, and a program that imports the library builds with no flag as it is refused by the Rust command.
+#[test]
+fn the_command_line_in_cancho_carries_the_standard_library() {
+    let exe = build("cli-std", &with_front_end("cli.cho"));
+    let dir = scratch("selfhost-std-embedded");
+    let std_dir = repo_root().join("std");
+    let programs = [
+        "assert",
+        "bitwise",
+        "bytes_library",
+        "collections",
+        "crc_check_values",
+        "flags",
+        "floating_point",
+        "math_floats",
+        "linalg_hand_checked",
+        "ed25519",
+    ];
+    let said = |binary: &Path, arguments: &[&str]| {
+        let done = Command::new(binary).args(arguments).output().expect("the command runs");
+        (
+            done.status.code(),
+            String::from_utf8_lossy(&done.stdout).into_owned(),
+            String::from_utf8_lossy(&done.stderr).into_owned(),
+        )
+    };
+    for name in programs {
+        let file = repo_root().join(format!("tests/accept/{name}.cho"));
+        let file = file.to_str().unwrap();
+        for command in ["check", "ids"] {
+            let theirs = said(Path::new(BIN), &[command, file, "--std"]);
+            let mine = said(&exe, &[command, file, "--std"]);
+            assert_eq!(theirs.0, Some(0), "{name} {command}: {theirs:?}");
+            assert_eq!(
+                theirs.1, mine.1,
+                "{name} {command} --std: the command line in cancho says something else"
+            );
+            assert_eq!((theirs.0, mine.2.as_str()), (mine.0, ""), "{name} {command}: {mine:?}");
+        }
+        // The directory gives what the binary carries.
+        let by_dir = said(&exe, &["ids", file, "--std-dir", std_dir.to_str().unwrap()]);
+        let by_flag = said(&exe, &["ids", file, "--std"]);
+        assert_eq!(by_dir, by_flag, "{name}: --std-dir std and --std differ");
+        // And it builds and does what the Rust build does.
+        let (theirs_exe, mine_exe) =
+            (dir.join(format!("{name}.rust")), dir.join(format!("{name}.cancho")));
+        let built_theirs =
+            said(Path::new(BIN), &["build", file, "--std", "-o", theirs_exe.to_str().unwrap()]);
+        let built_mine = said(&exe, &["build", file, "--std", "-o", mine_exe.to_str().unwrap()]);
+        assert_eq!(built_theirs.0, Some(0), "{name} build: {built_theirs:?}");
+        assert_eq!(built_mine.0, Some(0), "{name} build: {built_mine:?}");
+        let ran = |p: &Path| {
+            let done = Command::new(p).output().expect("the program runs");
+            (done.status.code(), done.stdout)
+        };
+        assert_eq!(ran(&theirs_exe), ran(&mine_exe), "{name}: the programs differ");
+    }
+    // A program that imports the library, with no `--std`: refused by both, for the same reason.
+    let file = repo_root().join("tests/accept/assert.cho");
+    let (theirs, mine) = (
+        said(Path::new(BIN), &["check", file.to_str().unwrap()]),
+        said(&exe, &["check", file.to_str().unwrap()]),
+    );
+    assert_eq!((theirs.0, mine.0), (Some(1), Some(1)), "{theirs:?} {mine:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

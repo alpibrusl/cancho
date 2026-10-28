@@ -112,10 +112,8 @@ fn command_tree_module_is_what_cancho_says() {
     check("commandtree.cho", &want, "command_tree_module_is_what_cancho_says");
 }
 
-/// The standard library files in the order `cancho --std` adds them to a program (`STD` in `crates/cancho/src/main.rs`), as the module
-/// `stdorder.cho`: the names, each followed by a NUL. The order is the order of the identities `cancho ids --std` writes.
-#[test]
-fn std_order_module_is_the_std_table_of_cancho() {
+/// The names of the standard library's files, in the order of the `STD` table of `crates/cancho/src/main.rs` (which is the order `--std` adds them), checked against `std/`.
+fn std_names() -> Vec<String> {
     let main = std::fs::read_to_string(repo_root().join("crates/cancho/src/main.rs"))
         .expect("main.rs is read");
     let table = main
@@ -125,9 +123,11 @@ fn std_order_module_is_the_std_table_of_cancho() {
         .split("];")
         .next()
         .expect("its end");
-    let names: Vec<&str> = table
+    let names: Vec<String> = table
         .lines()
-        .filter_map(|l| l.trim().strip_prefix("(\"<std>/")?.split(".cho\"").next())
+        .filter_map(|l| {
+            Some(l.trim().strip_prefix("(\"<std>/")?.split(".cho\"").next()?.to_owned())
+        })
         .collect();
     assert!(names.len() > 40, "only {} names in the STD table", names.len());
     // Every file of `std/` is in it, and nothing else is.
@@ -139,6 +139,14 @@ fn std_order_module_is_the_std_table_of_cancho() {
     let mut listed: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
     listed.sort();
     assert_eq!(listed, on_disk, "the STD table and std/");
+    names
+}
+
+/// The standard library files in the order `cancho --std` adds them to a program (`STD` in `crates/cancho/src/main.rs`), as the module
+/// `stdorder.cho`: the names, each followed by a NUL. The order is the order of the identities `cancho ids --std` writes.
+#[test]
+fn std_order_module_is_the_std_table_of_cancho() {
+    let names = std_names();
     let mut text = String::new();
     for name in &names {
         text.push_str(&format!("{name}\n"));
@@ -149,4 +157,38 @@ fn std_order_module_is_the_std_table_of_cancho() {
         "std_order_module_is_the_std_table_of_cancho",
     ) + &writer("names", &text.replace('\n', "\0"));
     check("stdorder.cho", &want, "std_order_module_is_the_std_table_of_cancho");
+}
+
+/// The standard library itself, as the module `stdsource.cho`: one function per file of `std/` that appends its text, and `find`, which answers the text of the file called NAME (the
+/// bytes of `std/NAME.cho`) or nothing. One literal to a file, since a literal is one line and a file of the library is 93 KB at most (measured: 776,796 bytes of source in all,
+/// compiled in 0.5 s, 0.8 MB added to an executable, `docs/standalone-cancho.md` D3). `cli.cho --std` reads it where `cancho --std` reads its `STD` table.
+#[test]
+fn std_source_module_is_the_std_directory() {
+    let names = std_names();
+    let mut want = header(
+        "stdsource",
+        "the files of the standard library, for `--std`",
+        "std_source_module_is_the_std_directory",
+    ) + "import std.bytes;\n";
+    let mut texts = Vec::new();
+    for (n, name) in names.iter().enumerate() {
+        let text = std::fs::read_to_string(repo_root().join(format!("std/{name}.cho")))
+            .expect("a file of std/ is read");
+        want.push_str(&format!(
+            "\nfn text_{n}[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {{\n    return buffer.append(heap, out, \"{}\");\n}}\n",
+            literal(&text)
+        ));
+        texts.push(text.len());
+    }
+    want.push_str(
+        "\npub fn find[&h, &n](heap: &!h Heap, name: &n [byte]) -> [heap] buffer.Buffer {\n",
+    );
+    for (n, name) in names.iter().enumerate() {
+        want.push_str(&format!(
+            "    if bytes.equal(name, \"{name}\") {{\n        return text_{n}(heap, buffer.empty(heap, {}));\n    }}\n",
+            texts[n] + 1
+        ));
+    }
+    want.push_str("    return buffer.empty(heap, 0);\n}\n");
+    check("stdsource.cho", &want, "std_source_module_is_the_std_directory");
 }
