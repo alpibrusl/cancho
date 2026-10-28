@@ -1427,8 +1427,10 @@ fn the_command_line_in_cancho_says_its_version_and_checks_the_pin_like_cancho() 
     assert!(refused.2.contains(&format!("and this compiler is {rev}")), "{refused:?}");
 
     // Stamped with another commit, it is not the Rust one: the line differs, and a project that names the Rust one is refused.
-    let wrong =
-        if rev.starts_with('0') { format!("1{}", &rev[1..]) } else { format!("0{}", &rev[1..]) };
+    let wrong = match rev.strip_prefix('0') {
+        Some(rest) => format!("1{rest}"),
+        None => format!("0{}", &rev[1..]),
+    };
     let elsewhere =
         build_stamped("cli-version-wrong", "cli.cho", &stamped_version("wrong", &wrong, &host));
     let said = Command::new(&elsewhere).arg("--version").output().expect("it runs");
