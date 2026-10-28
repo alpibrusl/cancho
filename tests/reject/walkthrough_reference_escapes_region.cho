@@ -1,0 +1,15 @@
+//~ ERROR this returns a reference into `a`, which is an arena in this
+//~ RULE reference-escapes-region
+
+struct Node { value: int }
+
+fn first[&q](fallback: &q Node) -> [] &q Node {
+    region a {
+        return alloc[a](Node { value: 1 });
+    }
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

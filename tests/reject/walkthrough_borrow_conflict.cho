@@ -1,0 +1,13 @@
+//~ ERROR `c` is borrowed by an enclosing `borrow`, so it cannot be assigned to
+//~ RULE borrow-conflict
+
+struct Counter { n: int }
+
+fn main(world: World) -> [] int {
+    release(world);
+    var c = Counter { n: 1 };
+    borrow c as &r in {
+        c = Counter { n: 2 };
+    }
+    return c.n;
+}

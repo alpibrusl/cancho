@@ -1,0 +1,21 @@
+//~ ERROR `t` has already been consumed; there is nothing left to borrow
+//~ RULE linear-use-after-move
+
+res struct Ticket { fd: int }
+
+fn close(t: Ticket) -> [] int {
+    let Ticket { fd } = t;
+    return fd;
+}
+
+fn audit(t: Ticket) -> [] int {
+    let fd = close(t);
+    borrow t as &r in {
+        return fd;
+    }
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

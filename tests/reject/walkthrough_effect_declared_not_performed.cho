@@ -1,0 +1,11 @@
+//~ ERROR `quiet` declares `io_write` but never performs it; a row is exact or
+//~ RULE effect-declared-not-performed
+
+fn quiet() -> [io_write] int {
+    return 1;
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return quiet();
+}
