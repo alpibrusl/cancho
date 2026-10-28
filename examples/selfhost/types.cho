@@ -351,7 +351,7 @@ pub fn boxslice_element[&s](st: &!s [int], ty: int) -> [] int {
 pub fn node_type[&s](st: &!s [int], node: int, ctx: int) -> [] int {
     if ast.is_kind(st, node, kinds.NK::TTuple) {
         let n = ast.get(st, node, 7);
-        if n < 2 || n > 8 {
+        if n < 2 || n > 64 {
             return 0;
         }
         var many = 0;

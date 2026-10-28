@@ -307,7 +307,7 @@ ones), then each struct and enum that has no type parameter, in the order they a
 a `byte` or `bool` 1; a reference is one pointer and, to a slice, a length; a `Box[[T]]` is two; a tuple its parts; a struct its fields; an enum a tag and every
 variant's payload. The rows the prelude declares come first, as a table of 48 names and leaf counts (`File` to `Ports`; every leaf of those is 8 wide, so
 `packed` is `size`); the line about what packing would save is the sum over all rows of `size - packed`, and is written only if it is not 0. A type with a field
-the compiler in cancho has no type for (`node_type` answers 0: a function-typed field, a tuple of more than eight) is a status 3 as in §14, saying where.
+the compiler in cancho has no type for (`node_type` answers 0: a function-typed field, a tuple of more than 64 parts) is a status 3 as in §14, saying where.
 
 **Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_reports_layout_like_cancho_layout` runs the repository's programs and the programs of
 several files with both commands, and with the standard library for a tenth of them (chosen by a hash of the program's name, so that adding a file to the repository does not change which): 107 runs (19 with the library) write the same table byte for byte, 887

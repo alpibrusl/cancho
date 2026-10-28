@@ -641,8 +641,8 @@ pub fn prelude_variant[&s, &x](st: &!s [int], text: &x [byte], id: int, index: i
     return ex.in_reg(whole, acc);
 }
 
-// `(a, b)`, `(a, b, c)` and tuples of up to eight parts: an aggregate of the parts, in the code. Parts that are slices
-// of a tuple of more than three, or that have nothing in the code beside others that have, have no code.
+// `(a, b)`, `(a, b, c)` and tuples of up to 64 parts: an aggregate of the parts, in the code. A tuple with a part that has
+// nothing in the code beside others that have has no code.
 pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
@@ -652,7 +652,7 @@ pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
         ast.fail(st, rules.r_pattern_shape(), from, to);
         return ex.nothing();
     }
-    if n > 8 {
+    if n > 64 {
         return ex.skip(st, from, to);
     }
     var a = ex.nothing();
@@ -664,10 +664,7 @@ pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     while k < n && ast.ok(st) {
         let one = expr(st, text, arg);
         if n > 3 && ast.ok(st) {
-            if types.is_slice_ref(st, one.ty) {
-                return ex.skip(st, from, to);
-            }
-            emit.push_arg(st, one.ty, one.known, one.value, one.reg);
+            ex.push_part(st, one);
         }
         if k == 0 {
             a = one;
@@ -710,8 +707,7 @@ pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     if n > 3 {
         k = 0;
         while k < n {
-            let part = ex.pushed(st, n - k);
-            acc = ex.put(st, whole, acc, k, part.ty, part);
+            acc = ex.put_pushed(st, whole, acc, k, n - k);
             k = k + 1;
         }
         st[52] = first;
@@ -1822,7 +1818,7 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
 // A reference a function lends, to a capability (a pointer to nothing in the code) or to a handle or another value
 // it holds: a pointer.
 fn lent[&s](st: &!s [int], ty: int) -> [] bool {
-    return types.is_ref(st, ty) && !types.is_slice_ref(st, ty) && (types.is_erased(st, types.ref_inner(st, ty)) || types.is_handle(st, types.ref_inner(st, ty)));
+    return types.is_ref(st, ty) && !types.is_slice_ref(st, ty) && (types.is_erased(st, types.ref_inner(st, ty)) || types.is_handle(st, types.ref_inner(st, ty)) || scope.aggregate_codable(st, types.ref_inner(st, ty)));
 }
 
 // A call of the function in the name `local`, of type `fn(A, B) -> R`.

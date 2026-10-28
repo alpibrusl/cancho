@@ -96,6 +96,21 @@ pub fn bind_value[&s](st: &!s [int], ty: int, v: Ex) -> [] int {
     return emit.store(st, ty, v.known, v.value, v.reg, st[39] - 1);
 }
 
+// Push a part of a tuple of more than three, a slice reference packed into one value so that a part is one entry of the stack.
+pub fn push_part[&s](st: &!s [int], v: Ex) -> [] int {
+    if types.is_slice_ref(st, v.ty) {
+        let packed = emit.pack_slice(st, v.reg, v.reg2 < 0, v.value, v.reg2);
+        return emit.push_arg(st, v.ty, false, 0, packed);
+    }
+    return emit.push_arg(st, v.ty, v.known, v.value, v.reg);
+}
+
+// Put the part pushed by `push_part`, `k` from the top, at `index` of `whole`.
+pub fn put_pushed[&s](st: &!s [int], whole: int, acc: int, index: int, k: int) -> [] int {
+    let part = pushed(st, k);
+    return emit.insert_at(st, whole, acc, index, part.ty, part.known, part.value, part.reg);
+}
+
 // The value pushed `k` from the top of the stack of arguments, as it was.
 pub fn pushed[&s](st: &!s [int], k: int) -> [] Ex {
     let at = st[51] + 4 * (st[52] - k);

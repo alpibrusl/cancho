@@ -808,8 +808,23 @@ into buffers that were not: it is code only, and `SKIP` elsewhere, as it was.
 `insertvalue`, taken apart with `extractvalue`, passed and returned as one operand; `.0` through a reference copies a
 `val` part and borrows a `res` one, as a field does, and `let (a, b) = e;` binds each part. A tuple of nothing in the
 code (the capabilities `narrow(fs, "/tmp", "/var")` returns) is nothing in the code. Tuples of more than three parts have
-no code yet. Along with them, the two builtins that open a file, read or write it once and close it (`fs_read` and
+no code in this stage; stage 4q-bis below has it. Along with them, the two builtins that open a file, read or write it once and close it (`fs_read` and
 `fs_write`) are one more call of the runtime.
+
+**Stage 4q-bis: the three gaps of #637.** Replaying the CI of the sibling repositories without the Rust fallback found three constructs
+the compiler in cancho had no code for (status 3), each of which was why a repository built only through the fallback. (1) A tuple of
+more than three parts with a part that is a reference to a slice: a tuple of that size is built from the parts pushed on the stack of
+arguments, which held a pointer and no length, so the part is now packed into one value (`ex.push_part`, `ex.put_pushed`) as
+`ex.put` packs it in a tuple of two or three. (2) A call that returns a reference to a `res` struct field, `fn entries[&m](m: &m
+Members) -> &m tar.Entries { return m.entries; }`: a reference to anything the code holds as an aggregate is a pointer, so `lent` in
+`exprs.cho` now accepts it where it accepted a reference to a capability or a handle only. (3) A tuple of more than eight parts: the
+table already held any number (`make_many` allocates `n / 3` extension entries), and the limit was a number in two places
+(`tuple_expr`, `node_type`), now 64, which the Rust compiler does not have; a larger tuple is a status 3 and builds through the
+fallback. **Measured (Linux x86-64).** `selfhost::compile::the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do` has
+10 more programs (`WIDE`: tuples of 9, 12, 16 and 40 parts and a ten-part one passed and returned; `SLICE_TUPLES`: three programs;
+`LENT`: two with a `res` part lent shared and unique), each built both ways and run to the same exit status; the test fails
+without the three changes (the compiler in cancho answers status 3). With the compiler in cancho alone (`CANCHO_COMPILER=auto`),
+`cancho-hdl`'s `scripts/build.sh`, `cancho-table`'s `table` and all eleven programs of `cancho-tools` build, which they did not.
 
 **Stage 4r: generics.** A function with type parameters is not compiled where it is declared: a call to it knows the types
 its parameters are (the checker solved them from the arguments), so the call asks for an *instance* and names it

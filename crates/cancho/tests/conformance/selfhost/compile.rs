@@ -687,6 +687,126 @@ fn run() -> [] int {
 }"#,
 ];
 
+/// Tuples of more than eight parts, made, passed, returned and taken apart.
+const WIDE: &[&str] = &[
+    r#"fn make() -> [] (int, bool, int, bool, int, bool, int, bool, int) { return (1, true, 3, true, 5, true, 7, true, 9); }
+fn run() -> [] int {
+    let t = make();
+    let (x0, x1, x2, x3, x4, x5, x6, x7, x8) = t;
+    var sum = 0;
+    if x1 { sum = sum + 1; }
+    if x7 { sum = sum + 2; }
+    return x0 + x2 + x8 + t.4 + sum;
+}"#,
+    r#"fn make() -> [] (int, bool, int, bool, int, bool, int, bool, int, bool, int, bool) { return (1, true, 3, true, 5, true, 7, true, 9, true, 11, true); }
+fn run() -> [] int {
+    let t = make();
+    let (x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11) = t;
+    var sum = 0;
+    if x1 { sum = sum + 1; }
+    if x11 { sum = sum + 2; }
+    return x0 + x2 + x10 + t.4 + sum;
+}"#,
+    r#"fn make() -> [] (int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool) { return (1, true, 3, true, 5, true, 7, true, 9, true, 11, true, 13, true, 15, true); }
+fn run() -> [] int {
+    let t = make();
+    let (x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15) = t;
+    var sum = 0;
+    if x1 { sum = sum + 1; }
+    if x15 { sum = sum + 2; }
+    return x0 + x2 + x14 + t.4 + sum;
+}"#,
+    r#"fn make() -> [] (int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool, int, bool) { return (1, true, 3, true, 5, true, 7, true, 9, true, 11, true, 13, true, 15, true, 17, true, 19, true, 21, true, 23, true, 25, true, 27, true, 29, true, 31, true, 33, true, 35, true, 37, true, 39, true); }
+fn run() -> [] int {
+    let t = make();
+    let (x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17, x18, x19, x20, x21, x22, x23, x24, x25, x26, x27, x28, x29, x30, x31, x32, x33, x34, x35, x36, x37, x38, x39) = t;
+    var sum = 0;
+    if x1 { sum = sum + 1; }
+    if x39 { sum = sum + 2; }
+    return x0 + x2 + x38 + t.4 + sum;
+}"#,
+    r#"fn pass(t: (int, int, int, int, int, int, int, int, int, int)) -> [] (int, int, int, int, int, int, int, int, int, int) {
+    return (t.9, t.8, t.7, t.6, t.5, t.4, t.3, t.2, t.1, t.0);
+}
+fn run() -> [] int {
+    let r = pass((1, 2, 3, 4, 5, 6, 7, 8, 9, 10));
+    let (a, b, c, d, e, f, g, h, i, j) = r;
+    return a * 1 + b * 2 + j * 3 + e;
+}"#,
+];
+
+/// Tuples of more than three parts that hold references to slices, in every place, made, returned and taken apart.
+const SLICE_TUPLES: &[&str] = &[
+    r#"fn kind(n: int) -> [] (bool, &static [byte], &static [byte], &static [byte]) {
+    if n == 1 { return (true, "read-only", "", ""); }
+    return (false, "", "x", "yz");
+}
+fn run() -> [] int {
+    let (a, b, c, d) = kind(1);
+    let (a2, b2, c2, d2) = kind(2);
+    var r = 0;
+    if a { r = r + 1; }
+    if !a2 { r = r + 2; }
+    return r * 100 + len(b) * 10 + len(c) + len(d) + len(b2) + len(c2) * 5 + len(d2) * 7;
+}"#,
+    r#"fn pick(n: int, s: &static [byte]) -> [] (int, &static [byte], bool, &static [byte], &static [byte]) {
+    if n == 1 { return (n, s, true, "xy", "abc"); }
+    return (n, "", false, s, "");
+}
+fn five() -> [] (bool, &static [byte], &static [byte], &static [byte], int) { return (true, "one", "", "three", 5); }
+fn run() -> [] int {
+    let (a, b, c, d, e) = pick(1, "hello");
+    let (a2, b2, c2, d2, e2) = pick(2, "hello");
+    let (p, q, s, t, u) = five();
+    var r = 0;
+    if c { r = r + 1; }
+    if p { r = r + 2; }
+    return r + a * 100 + a2 * 1000 + len(b) + len(d) * 3 + len(e) * 5 + len(b2) + len(d2) * 7 + len(e2) + len(q) * 11 + len(s) + len(t) * 13 + u;
+}"#,
+    r#"fn mixed(k: int) -> [] (&static [byte], int, &static [byte], bool, &static [byte], &static [byte]) {
+    return ("a", k, "bb", k > 1, "ccc", "dddd");
+}
+fn run() -> [] int {
+    let m = mixed(3);
+    let (a, k, b, flag, c, d) = m;
+    var r = len(a) + k * 10 + len(b) * 100 + len(c) * 1000 + len(d) * 10000;
+    if flag { r = r + 100000; }
+    return r + len(m.5) + m.1;
+}"#,
+];
+
+/// A function that lends a reference to a `res` part of a struct, shared or unique, and the references taken from it.
+const LENT: &[&str] = &[
+    r#"res struct Inner { a: int, b: int }
+res struct Outer { inner: Inner, n: int }
+fn inner_of[&m](m: &m Outer) -> [] &m Inner { return m.inner; }
+fn sum[&m](i: &m Inner) -> [] int { return i.a * 10 + i.b; }
+fn run() -> [] int {
+    var o = Outer { inner: Inner { a: 3, b: 4 }, n: 5 };
+    var r = 0;
+    borrow o as &q in {
+        let i = inner_of(q);
+        r = sum(i) + i.a;
+    }
+    let Outer { inner, n } = o;
+    let Inner { a, b } = inner;
+    return r + n + a + b;
+}"#,
+    r#"res struct Inner { a: int, b: int }
+res struct Outer { inner: Inner, n: int }
+fn inner_of[&m](m: &!m Outer) -> [] &!m Inner { return m.inner; }
+fn run() -> [] int {
+    var o = Outer { inner: Inner { a: 7, b: 8 }, n: 1 };
+    borrow mut o as &!q in {
+        let i = inner_of(q);
+        i.a = i.a + 100;
+    }
+    let Outer { inner, n } = o;
+    let Inner { a, b } = inner;
+    return a + b + n;
+}"#,
+];
+
 /// A variable whose type is what a later statement makes it: `var x = List::Empty;`.
 const LATE: &[&str] = &[
     r#"enum List[T] { Empty, Cons(T, int) }
@@ -790,6 +910,9 @@ fn the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do() {
         .chain(FNPTRS)
         .chain(LATE)
         .chain(QUADS)
+        .chain(WIDE)
+        .chain(SLICE_TUPLES)
+        .chain(LENT)
     {
         jobs.push((with_main(program), with_main(program)));
     }
