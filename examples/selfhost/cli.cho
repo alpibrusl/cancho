@@ -42,6 +42,7 @@ import selfhost.clifetch;
 import selfhost.clipublish;
 import selfhost.clisync;
 import selfhost.clidir;
+import selfhost.version;
 
 fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_read, io_write, err_write, args, fs_read(""), fs_write(""), dir_read, file_read, file_write, exec(""), clock, poll] int {
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "fmt") {
@@ -112,6 +113,17 @@ fn run[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f
     }
     if arg_count(args) >= 2 && (bytes.equal(arg(args, 1), "--help") || bytes.equal(arg(args, 1), "-h") || bytes.equal(arg(args, 1), "help")) {
         clibase.show(heap, io, commandtree.usage(heap, buffer.empty(heap, 12000)));
+        return 0;
+    }
+    if arg_count(args) >= 2 && (bytes.equal(arg(args, 1), "--version") || bytes.equal(arg(args, 1), "-V")) {
+        var line = buffer.append(heap, buffer.empty(heap, 128), "cancho ");
+        line = buffer.append(heap, line, version.crate_version());
+        line = buffer.append(heap, line, " (rev ");
+        line = buffer.append(heap, line, version.rev());
+        line = buffer.append(heap, line, ", host ");
+        line = buffer.append(heap, line, version.host());
+        line = buffer.append(heap, line, ")\n");
+        clibase.show(heap, io, line);
         return 0;
     }
     if arg_count(args) >= 2 && bytes.equal(arg(args, 1), "introspect") {

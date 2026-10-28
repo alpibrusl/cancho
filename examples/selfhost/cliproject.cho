@@ -12,6 +12,7 @@ import selfhost.lexcore as lc;
 import selfhost.driver;
 import selfhost.walk;
 import selfhost.satisfytext;
+import selfhost.version;
 import selfhost.projfile;
 import selfhost.filewrite;
 import selfhost.cliorigin;
@@ -295,8 +296,9 @@ fn sources_of[&h, &i, &f, &r, &n, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""),
     return Sources { listed: ordered, broken: 0 };
 }
 
-// A project that was written for a compiler (`[package] cancho`) is checked against this one, which does not know which commit it was built from (the Rust command stamps it at
-// build time): refused, unless `ignore`, which says so and goes on. 0, or 1.
+// A project that was written for a compiler (`[package] cancho`) is checked against the commit this command line was built from (`version.cho`, stamped by `scripts/stamp-version.sh`;
+// the Rust command stamps it at build time): the same commit is accepted, any other is refused unless `ignore`, which says so and goes on. An unstamped build (`unknown`) cannot be
+// checked and says that. 0, or 1.
 fn check_compiler[&h, &i, &r](heap: &!h Heap, io: &!i Io, recs: &r [byte], ignore: bool) -> [heap, err_write] int {
     let name_end = projfile.field_end(recs, 2, len(recs));
     if lc.at(recs, name_end + 1) != '1' {
@@ -308,17 +310,29 @@ fn check_compiler[&h, &i, &r](heap: &!h Heap, io: &!i Io, recs: &r [byte], ignor
         stop = stop + 1;
     }
     let want = recs[from..stop];
+    if bytes.equal(want, version.rev()) {
+        return 0;
+    }
     if ignore {
         var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 128), "note: this project was written for cancho "), want);
+        m = buffer.append(heap, m, "; this is ");
+        m = buffer.append(heap, m, version.rev());
+        m = buffer.append(heap, m, " (--ignore-compiler-rev)");
         borrow m as &mb in {
-            say_error(heap, io, buffer.bytes(mb), "; this is unknown (--ignore-compiler-rev)", "");
+            say_error(heap, io, buffer.bytes(mb), "", "");
         }
         buffer.drop(heap, m);
         return 0;
     }
     var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 256), "this project was written for cancho "), want);
+    if bytes.equal(version.rev(), "unknown") {
+        m = buffer.append(heap, m, ", and this compiler does not know which commit it was built from, so it cannot be checked (build it from a git checkout, or with CANCHO_REV set)");
+    } else {
+        m = buffer.append(heap, m, ", and this compiler is ");
+        m = buffer.append(heap, m, version.rev());
+    }
     borrow m as &mb in {
-        say_error(heap, io, buffer.bytes(mb), ", and this command line does not know which commit it was built from, so it cannot be checked; install that compiler, change `[package] cancho` after checking the sources against this one, or pass --ignore-compiler-rev", "");
+        say_error(heap, io, buffer.bytes(mb), "; install that compiler, change `[package] cancho` after checking the sources against this one, or pass --ignore-compiler-rev", "");
     }
     buffer.drop(heap, m);
     return 1;

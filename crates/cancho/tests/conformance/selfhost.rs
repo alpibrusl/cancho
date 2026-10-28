@@ -299,6 +299,46 @@ fn sources() -> Vec<(String, String)> {
     out
 }
 
+/// What the Rust command line says it was built from: the crate version, the commit and the host triple of `cancho --version`.
+pub(crate) fn rust_stamp() -> (String, String, String) {
+    let said = Command::new(BIN).arg("--version").output().expect("the compiler runs");
+    let line = String::from_utf8_lossy(&said.stdout).trim().to_owned();
+    let inner = line.strip_prefix("cancho ").unwrap_or_else(|| panic!("a version line: {line}"));
+    let (version, rest) =
+        inner.split_once(" (rev ").unwrap_or_else(|| panic!("a version line: {line}"));
+    let (rev, rest) =
+        rest.split_once(", host ").unwrap_or_else(|| panic!("a version line: {line}"));
+    (version.to_owned(), rev.to_owned(), rest.trim_end_matches(')').to_owned())
+}
+
+/// `version.cho` stamped (`scripts/stamp-version.sh`) with `rev` and `host`, written into a scratch directory of its own; the path.
+pub(crate) fn stamped_version(tag: &str, rev: &str, host: &str) -> PathBuf {
+    let dir = scratch(&format!("selfhost-stamp-{tag}"));
+    let out = dir.join("version.cho");
+    let done = Command::new("sh")
+        .arg(repo_root().join("scripts/stamp-version.sh"))
+        .args([rev, host])
+        .env("VERSION_CHO", &out)
+        .output()
+        .expect("the stamp script runs");
+    assert!(
+        done.status.success(),
+        "stamping {rev} {host}: {}",
+        String::from_utf8_lossy(&done.stderr)
+    );
+    out
+}
+
+/// A program built from `root`'s front end with `version.cho` replaced by the stamped copy at `version`.
+pub(crate) fn build_stamped(tag: &str, root: &'static str, version: &Path) -> PathBuf {
+    let files: Vec<String> = with_front_end(root)
+        .into_iter()
+        .map(|f| if f == "version.cho" { version.display().to_string() } else { f.to_owned() })
+        .collect();
+    let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+    build(tag, &refs)
+}
+
 /// The files of `parser.cho` and `check.cho`: the root, which says what to print, and the modules
 /// the two share.
 pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
@@ -338,6 +378,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "clipublish.cho",
         "clisync.cho",
         "clidir.cho",
+        "version.cho",
         "jsonwrite.cho",
         "cliorigin.cho",
         "clistore.cho",
