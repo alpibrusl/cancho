@@ -1097,6 +1097,10 @@ sources = ["tests/state_test.cho", "src/state.cho"]
 
 **Found along the way: the compiler needs more than libc.** `cancho build` is not a closed box: the LLVM backend emits IR and runs **`clang`** (the `CLANG` environment variable names another), then links with **`cc`** (`CC`). A released compiler binary (§7.5 step 5) therefore depends on a C toolchain being installed where it runs, and an image of the compiler for CI would be the place that bundles it. `ldd` on the compiler itself: libc and libgcc_s, 8.5 MB.
 
+### 8.9 The packages of this repository name their compiler
+
+Each directory of `packages/` has a `cancho.toml` with `[package] cancho = "<commit>"`: the compiler its sources were last checked against, `f4ead824f33b291a0ad7620a34a0c1346a7abe4f` (the merge of `authority --target`, the first commit at which every command exists in cancho). Measured on that commit with `CANCHO_COMPILER=auto` (the compiler in cancho alone, **no Rust fallback**): the 96 conformance tests that build or run the packages pass (x509, x509_verify, tls, tls_fuzz, tls_server, tls_auth, tls_client_auth, tls_echo, http_*, https_hello, api, key_tables), and 42 of the 45 programs of `tests/programs`, `tests/packages` and `examples/` that import a package build; the other 3 are not failures of the compiler: two need a module from another directory that my file list did not name, and `tls_client` needs `-l ssl`. `every_package_names_the_compiler_it_was_checked_against` keeps the nine pins equal and well-formed; it runs `install --ignore-compiler-rev`, because CI builds a later commit than the one named. The pin moves by hand, after the packages are checked against the newer compiler. The stores (`.cancho-vcs`) are not touched: an identity is a function of the source, not of the compiler (`scripts/publish_packages.py --check` still holds).
+
 ## 9. Prebuilt compilers
 
 ### 9.1 What asked for it

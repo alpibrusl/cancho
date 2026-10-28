@@ -519,3 +519,42 @@ fn test_with_files_is_still_the_test_runner_and_a_bad_test_set_is_refused() {
         assert!(!out.status.success() && stderr(&out).contains(why), "{what}: {}", stderr(&out));
     }
 }
+
+/// Every package of `packages/` names the compiler its sources were checked against (`docs/package-system.md` §8.9): one full commit,
+/// the same for all of them, and a project file the compiler reads (`install` accepts it with `--ignore-compiler-rev`, the pin being a
+/// commit this compiler was not built from).
+#[test]
+fn every_package_names_the_compiler_it_was_checked_against() {
+    let packages = repo_root().join("packages");
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&packages)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.is_dir())
+        .collect();
+    dirs.sort();
+    assert!(dirs.len() >= 9, "only {} packages", dirs.len());
+    let mut pins = std::collections::BTreeSet::new();
+    for dir in &dirs {
+        let text = std::fs::read_to_string(dir.join("cancho.toml"))
+            .unwrap_or_else(|_| panic!("{} has no cancho.toml", dir.display()));
+        let pin = text
+            .lines()
+            .find_map(|l| l.strip_prefix("cancho = \""))
+            .and_then(|l| l.strip_suffix('"'))
+            .unwrap_or_else(|| panic!("{} names no compiler", dir.display()));
+        assert!(
+            pin.len() == 40
+                && pin.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "{}: `{pin}` is not a full commit hash",
+            dir.display()
+        );
+        pins.insert(pin.to_owned());
+        let installed = Command::new(BIN)
+            .args(["install", "--ignore-compiler-rev"])
+            .current_dir(dir)
+            .output()
+            .expect("the compiler runs");
+        assert!(installed.status.success(), "{}: {}", dir.display(), stderr(&installed));
+    }
+    assert_eq!(pins.len(), 1, "the packages name different compilers: {pins:?}");
+}
