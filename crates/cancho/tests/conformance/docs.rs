@@ -238,3 +238,125 @@ fn agent_guidelines_prints_the_file() {
     let onedisk = std::fs::read_to_string(repo_root().join("AGENTS.md")).expect("readable");
     assert_eq!(printed, onedisk, "the embedded guidelines have drifted from the file");
 }
+
+/// `docs/refusals-by-example.md` is what the compiler says (#619).
+///
+/// The document walks through the refusals in the order they are met: for each, a refused program, the rule tag, message and
+/// explanation, and the corrected program. A document like that is a second copy of the compiler's behaviour, so it is held to it:
+/// each refused block must be the fixture it names (`tests/reject/walkthrough_*.cho`, less its `//~` header), the compiler must
+/// refuse that fixture with exactly the rule in the chapter's heading, the `rule`, `message` and `explanation` lines must be what
+/// `check --output json` prints, and every corrected block must pass `check`. A rule renamed in the compiler fails it.
+#[test]
+fn refusals_by_example_is_what_the_compiler_says() {
+    let root = repo_root();
+    let text = std::fs::read_to_string(root.join("docs/refusals-by-example.md"))
+        .expect("a readable document");
+    let lines: Vec<&str> = text.lines().collect();
+
+    // The fenced blocks, with their info strings, and the heading each one sits under.
+    struct Block {
+        info: String,
+        body: String,
+        chapter: String,
+    }
+    let mut blocks: Vec<Block> = Vec::new();
+    let mut chapter = String::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        if let Some(rest) = line.strip_prefix("### ") {
+            chapter = rest.to_owned();
+        }
+        if let Some(info) = line.strip_prefix("```") {
+            let mut body = String::new();
+            i += 1;
+            while i < lines.len() && !lines[i].starts_with("```") {
+                body.push_str(lines[i]);
+                body.push('\n');
+                i += 1;
+            }
+            blocks.push(Block { info: info.to_owned(), body, chapter: chapter.clone() });
+        }
+        i += 1;
+    }
+
+    let dir = scratch("refusals-by-example");
+    let mut refused = 0;
+    let mut fixed = 0;
+    let mut said = 0;
+    for (n, block) in blocks.iter().enumerate() {
+        // The rule of the chapter: the first backquoted word of its heading, `N. `rule`: title`.
+        let tag = block.chapter.split('`').nth(1).unwrap_or("").to_owned();
+        if let Some(path) = block.info.strip_prefix("cancho refused ") {
+            refused += 1;
+            let fixture =
+                std::fs::read_to_string(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"));
+            // The fixture less its `//~` header lines and the blank line after them.
+            let program: String = fixture
+                .lines()
+                .skip_while(|l| l.starts_with("//~") || l.is_empty())
+                .map(|l| format!("{l}\n"))
+                .collect();
+            assert_eq!(block.body, program, "chapter `{tag}` shows a program that is not {path}");
+            assert!(
+                fixture.contains(&format!("//~ RULE {tag}\n")),
+                "{path} does not expect the rule `{tag}` that its chapter is headed with"
+            );
+
+            let answer = Command::new(BIN)
+                .args(["check", "--output", "json"])
+                .arg(root.join(path))
+                .output()
+                .expect("the compiler runs");
+            assert_eq!(answer.status.code(), Some(1), "{path} should be refused");
+            let json: serde_json::Value =
+                serde_json::from_slice(&answer.stdout).expect("check --output json prints JSON");
+            let all = json["refused"].as_array().expect("a list of refusals");
+            assert_eq!(
+                all.len(),
+                1,
+                "{path} should be refused once, for the rule of its chapter: {json}"
+            );
+            assert_eq!(all[0]["rule"], tag.as_str(), "{path} is refused with another rule");
+
+            // The block that follows says what the compiler printed.
+            let said_block = blocks[n + 1..]
+                .iter()
+                .find(|b| b.info == "text")
+                .expect("a `text` block after each refused program");
+            let want = format!(
+                "rule: {}\nmessage: {}\nexplanation: {}\n",
+                all[0]["rule"].as_str().unwrap(),
+                all[0]["message"].as_str().unwrap(),
+                all[0]["explanation"].as_str().unwrap()
+            );
+            assert_eq!(
+                said_block.body, want,
+                "chapter `{tag}` quotes what the compiler no longer says"
+            );
+            said += 1;
+        } else if block.info == "cancho fixed" {
+            fixed += 1;
+            let source = dir.join(format!("fixed-{fixed}.cho"));
+            std::fs::write(&source, &block.body).expect("the corrected program is written");
+            let answer =
+                Command::new(BIN).arg("check").arg(&source).output().expect("the compiler runs");
+            assert!(
+                answer.status.success(),
+                "the corrected program of chapter `{tag}` is refused:\n{}\n{}",
+                block.body,
+                String::from_utf8_lossy(&answer.stderr)
+            );
+        }
+    }
+    assert!(
+        refused >= 13,
+        "the document should walk through at least thirteen rules, found {refused}"
+    );
+    assert_eq!(
+        (refused, fixed, said),
+        (refused, refused, refused),
+        "every chapter has a refusal, what is said, and a correction"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

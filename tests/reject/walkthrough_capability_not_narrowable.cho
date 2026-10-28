@@ -1,0 +1,14 @@
+//~ ERROR `libc` cannot be narrowed to `libc,libssl`: a capability is
+//~ RULE capability-not-narrowable
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(heap);
+    release(fs);
+    release(io);
+    let one = narrow(ffi, "libc");
+    let wider = narrow(one, "libc,libssl");
+    release(wider);
+    return 0;
+}

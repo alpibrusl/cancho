@@ -1,0 +1,13 @@
+//~ ERROR function `sign` can finish without returning a value
+//~ RULE missing-return
+
+fn sign(n: int) -> [] int {
+    if n > 0 {
+        return 1;
+    }
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return sign(5);
+}

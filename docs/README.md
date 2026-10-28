@@ -70,7 +70,7 @@ combines:
 | **A content-addressed op log** | `cancho vcs publish`/`log` — every declaration as a typed, gated operation | [`vcs.md`](vcs.md), [`vcs-publish.md`](vcs-publish.md) |
 | **Compile time** | Pure calls on constant arguments folded; `static` items whose bodies run during compilation | [`compile-time-data.md`](compile-time-data.md) |
 | **I/O** | The console in three directions, file handles as linear resources, bulk reads and writes, a `Net` capability for sockets | [`file-handles.md`](file-handles.md), [`bulk-io.md`](bulk-io.md), [`net.md`](net.md) |
-| **Refusals** | Every rule carries a stable tag; `check --output json` reports every independent one as data | [`agent-errors.md`](agent-errors.md) |
+| **Refusals** | Every rule carries a stable tag; `check --output json` reports every independent one as data | [`agent-errors.md`](agent-errors.md), [`refusals-by-example.md`](refusals-by-example.md) |
 | **Standard library** | Written in cancho, including shortest round-trip float printing and a UTF-8 decoder | [`standard-library.md`](standard-library.md) |
 | **Two backends** | Cranelift (dev) and LLVM (release, **default**) — an opt-in second backend became the default once nothing it refused had an asker left | [`llvm-backend.md`](llvm-backend.md) |
 
@@ -400,6 +400,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`gpu.md`](gpu.md) | Whether cancho can run on a GPU, and whether `lex-gpu` should exist | measured; decided |
 | [`line-reading.md`](line-reading.md) | Whether `std` needs a line reader | measured — no; found and fixed a silent truncation bug |
 | [`agent-errors.md`](agent-errors.md) | Refusals a machine can read: stable rule tags, `check --output json` | settled and built |
+| [`refusals-by-example.md`](refusals-by-example.md) | A walkthrough of 13 refusals, one rule tag per chapter: the refused program, what the compiler says, the correction; checked by a test | built |
 | [`structured-ingest.md`](structured-ingest.md) | The AST as JSON and back: `cancho print --output json` and `cancho ingest`, the ingest path an agent writes | built |
 | [`tty.md`](tty.md) | `Tty`, the serial-port capability (#422 T1): both measured termios ABIs, the surface, the labels — design |
 | [`crc.md`](crc.md) | `std.crc`: CRC-16/XMODEM, CRC-32/IEEE and two CRC-64s (XZ, and Redis's Jones), and the two-halves design | built |

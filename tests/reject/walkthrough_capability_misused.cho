@@ -1,0 +1,12 @@
+//~ ERROR `Io` is a capability and is destroyed by `release`, not by being
+//~ RULE capability-misused
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(heap);
+    release(fs);
+    release(ffi);
+    let Io { } = io;
+    return 0;
+}
