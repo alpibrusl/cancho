@@ -40,11 +40,14 @@ done < "$here/examples/selfhost/cancho.files"
 
 echo "stage 1: built by $cancho0 with the compiler in cancho" >&2
 CANCHO_COMPILER=auto "$cancho0" build $files --std -o "$out/stages/1/cancho"
+# The command line in cancho has no environment to read (a cancho program has no `getenv`), so `$CLANG` reaches it as `--clang PATH`, as an absolute path
+# (it runs `/usr/bin/clang` otherwise). The first release run found this: on ubuntu-22.04 stage 2 used clang 14, which cannot read the IR.
+clang=$(command -v "${CLANG:-clang}") || { echo "build-standalone: no ${CLANG:-clang} on PATH" >&2; exit 2; }
 echo "stage 2: built by stage 1" >&2
-"$out/stages/1/cancho" build $files --std -o "$out/stages/2/cancho"
+"$out/stages/1/cancho" build $files --std --clang "$clang" -o "$out/stages/2/cancho"
 echo "stage 3: built by stage 2" >&2
 name3=${STANDALONE_STAGE3_NAME:-cancho}
-"$out/stages/2/cancho" build $files --std -o "$out/stages/3/$name3"
+"$out/stages/2/cancho" build $files --std --clang "$clang" -o "$out/stages/3/$name3"
 if ! cmp -s "$out/stages/2/cancho" "$out/stages/3/$name3"; then
   echo "build-standalone: stage 2 and stage 3 differ: the command line in cancho does not reproduce itself" >&2
   exit 1
