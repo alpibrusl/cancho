@@ -22,6 +22,7 @@ import selfhost.commandtree;
 import selfhost.diagnose;
 import selfhost.stdorder;
 import selfhost.stdsource;
+import selfhost.version;
 import selfhost.testscan;
 import selfhost.satisfytext;
 import selfhost.clibase;
@@ -457,6 +458,9 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             std_dir = n;
         } else if bytes.equal(word, "--backend") {
             n = n + 1;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "cranelift") {
+                return clibase.not_in_this_build(heap, io, "--backend", "cranelift");
+            }
             if ids || layout || n >= arg_count(args) || !bytes.equal(arg(args, n), "llvm") {
                 return clibase.usage_error(heap, io, "`--backend`: only llvm is available in `check` of this command line");
             }
@@ -499,7 +503,13 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             // The library in this binary (`stdsource.cho`): the argument at `std_dir` is the word `--std` and not a directory.
             std_dir = n;
         } else if bytes.equal(word, "--target") {
-            return clibase.usage_error(heap, io, "`--target` is not available in this command line");
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--target` needs a triple");
+            }
+            if !(bytes.equal(arg(args, n), version.host()) && !bytes.equal(version.host(), "unknown")) {
+                return clibase.not_in_this_build(heap, io, "--target", arg(args, n));
+            }
         } else if len(word) > 0 && lc.at(word, 0) == '-' {
             return clibase.unknown_option(heap, io, word);
         } else {

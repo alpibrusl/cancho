@@ -147,6 +147,19 @@ pub fn show[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, i
     return buffer.drop(heap, text);
 }
 
+// A flag with a value that this build of `cancho` does not carry (`--backend cranelift`, `--target wasm32-wasip1`): said, with where it is, and status 2 as for a flag
+// this command line lacks (`docs/standalone-cancho.md` D1). A `--target` that spells the host this build was stamped with is the machine's own and is not refused.
+pub fn not_in_this_build[&h, &i, &f, &v](heap: &!h Heap, io: &!i Io, flag: &f [byte], value: &v [byte]) -> [heap, err_write] int {
+    var m = buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.empty(heap, 256), "`"), flag), " ");
+    m = buffer.append(heap, buffer.append(heap, m, value), "` is not in this build of cancho, which writes code for the machine it runs on with the LLVM backend; the Rust build has it (`cargo build --release -p cancho`, or the `cancho-rust` release asset; docs/standalone-cancho.md D1)");
+    var status = 0;
+    borrow m as &mb in {
+        status = usage_error(heap, io, buffer.bytes(mb));
+    }
+    buffer.drop(heap, m);
+    return status;
+}
+
 // A bad command line: what is wrong, then the usage, on the standard error. Status 2.
 pub fn usage_error[&h, &i, &w](heap: &!h Heap, io: &!i Io, why: &w [byte]) -> [heap, err_write] int {
     console.error_all(io, why);

@@ -95,10 +95,13 @@ and mutants where a gate is new.
 
 ## 4. Refusals added
 
-| rule | when | fixture |
-|---|---|---|
-| `unsupported-backend` | `--backend cranelift` to the command line built by cancho | `tests/reject/standalone_backend_cranelift.cho` is a program; the refusal is of the command, so its fixture is a conformance test that runs the command and reads the `--output json` of a refusal **[choice]** |
-| `unsupported-target-in-this-build` | `--target` with a triple the build cannot write | as above |
+**Corrected in slice 3.** This section said the two refusals of D1 are rules with a tag each (`unsupported-backend`, `unsupported-target-in-this-build`) and fixtures in `tests/reject`.
+That was the wrong layer: a rule tag names a refusal of a *program* by the checker (`rules.rs`, `check --output json`), and `--backend cranelift` is a refusal of a *flag*, like every
+flag this command line lacks, which is a usage error (status 2) with the sentence said and the usage printed. They are therefore sentences, not rules, and the test that pins them is a
+conformance test of the command line: `selfhost::cli::the_command_line_in_cancho_says_what_this_build_does_not_carry`. The sentence is
+"`FLAG VALUE` is not in this build of cancho, which writes code for the machine it runs on with the LLVM backend; the Rust build has it (`cargo build --release -p cancho`, or the
+`cancho-rust` release asset; docs/standalone-cancho.md D1)". `--target` is accepted when it spells the host this build was stamped with (the Rust command takes the host's own triple
+too) and refused otherwise; an unstamped build does not know its host, so it refuses every triple.
 
 ## 5. Installing
 

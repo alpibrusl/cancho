@@ -619,3 +619,11 @@ and standard output; the identities of the whole library line for line; the buil
 imports the library without the flag. Mutants: one byte of the embedded library changed, and a file of the library left out, each fail it.
 =======
 >>>>>>> origin/main
+
+## 38. Slice 18: what this build does not carry (`docs/standalone-cancho.md` D1, §4)
+
+`--backend cranelift` and a `--target` that is not the host this build was stamped with are refused on `build`, `check`, `run`, `test` and `ids`/`layout` with status 2 and one sentence that
+names the Rust build (`clibase.not_in_this_build`); `--backend llvm` and the stamped host's own triple are taken. (`authority --target` is the other thing: it takes the WASI spellings, §34, because
+it only reports what a WASI module may import and writes no code.) **Measured.** `the_command_line_in_cancho_says_what_this_build_does_not_carry` runs four commands against three refused
+values each (twelve refusals: status 2 and the sentence), the two accepted spellings against the Rust command (both build, and the programs exit 3), and an unstamped build against the host's triple
+(refused). One mutant (every `--target` accepted) fails it.
