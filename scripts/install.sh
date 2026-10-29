@@ -1,12 +1,16 @@
 #!/bin/sh
 # Install a prebuilt cancho compiler (docs/package-system.md §9).
 #
-#   install.sh <commit> [prefix]
+#   install.sh [<commit> [prefix]]
 #
-#   <commit>  the full commit hash, the value of `cancho = "..."` in cancho.toml
+#   <commit>  the full commit hash, the value of `cancho = "..."` in cancho.toml;
+#             left out, the latest release (the tag GitHub redirects `releases/latest` to; a release's tag is its commit)
 #   prefix    default $HOME/.local; the binary lands in <prefix>/bin/cancho
 #
+#   curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh
+#
 # Environment:
+#   CANCHO_REPO_URL  where `releases/latest` is asked (default https://github.com/alpibrusl/cancho); only used with no <commit>
 #   CANCHO_RELEASES  base URL of the release assets
 #                     (default https://github.com/alpibrusl/cancho/releases/download/<commit>;
 #                     a release's tag is the full commit hash)
@@ -16,8 +20,18 @@
 # Anything else is refused: a compiler that is not the pinned one is worse than none.
 set -eu
 
-rev=${1:-}
-[ -n "$rev" ] || { echo "usage: install.sh <commit> [prefix]" >&2; exit 2; }
+if [ "$#" -eq 0 ]; then
+  # Latest: the redirect of `releases/latest` ends at `releases/tag/<commit>`. Whatever it names is then held to the same checks as a commit
+  # given by hand (a full hash, the published sha256, the commit the binary reports).
+  repo=${CANCHO_REPO_URL:-https://github.com/alpibrusl/cancho}
+  final=$(curl --fail --silent --show-error --location --head --output /dev/null --write-out '%{url_effective}' "$repo/releases/latest") ||
+    { echo "could not find the latest release at $repo/releases/latest" >&2; exit 5; }
+  rev=${final##*/}
+  case $final in */releases/tag/*) ;; *) echo "no release yet at $repo (it redirected to $final)" >&2; exit 5 ;; esac
+else
+  rev=$1
+fi
+[ -n "$rev" ] || { echo "usage: install.sh [<commit> [prefix]]" >&2; exit 2; }
 prefix=${2:-$HOME/.local}
 case $rev in
   *[!0-9a-f]*|'') echo "not a full commit hash: $rev" >&2; exit 2 ;;
@@ -26,6 +40,7 @@ esac
 
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64)  target=linux-x86_64 ;;
+  Linux-aarch64|Linux-arm64) target=linux-aarch64 ;;
   Darwin-arm64)  target=darwin-aarch64 ;;
   *) echo "no prebuilt cancho for $(uname -s)-$(uname -m); build from source" >&2; exit 3 ;;
 esac

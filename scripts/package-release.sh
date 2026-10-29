@@ -4,7 +4,9 @@
 #   scripts/package-release.sh <target> [out-dir]
 #
 # Expects `cargo build --release -p cancho` to have been run from a checkout
-# (or CANCHO_BIN to name the binary).
+# (or CANCHO_BIN to name the binary, e.g. the one scripts/build-standalone.sh wrote).
+# CANCHO_ASSET (default `cancho`) is the asset's prefix: the release ships the standalone build as `cancho-<commit>-<target>`
+# and the Rust build, the backup, as `cancho-rust-<commit>-<target>` (docs/standalone-cancho.md D4).
 # Writes, into <out-dir> (default `dist`):
 #
 #   cancho-<commit>-<target>.tar.gz         bin/cancho, LICENSE, README.md
@@ -27,7 +29,8 @@ if [ -z "$rev" ]; then
   exit 1
 fi
 
-name="cancho-$rev-$target"
+case ${CANCHO_ASSET:-cancho} in cancho|cancho-rust) ;; *) echo "CANCHO_ASSET must be cancho or cancho-rust" >&2; exit 2 ;; esac
+name="${CANCHO_ASSET:-cancho}-$rev-$target"
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/$name/bin" "$out"

@@ -10,6 +10,8 @@ on:
       - ".github/workflows/release.yml"
       - "scripts/package-release.sh"
       - "scripts/install.sh"
+      - "scripts/build-standalone.sh"
+      - "scripts/stamp-version.sh"
   workflow_dispatch:
     inputs:
       publish:
@@ -34,10 +36,13 @@ jobs:
             target: linux-x86_64
           - os: macos-latest
             target: darwin-aarch64
+          - os: ubuntu-24.04-arm
+            target: linux-aarch64
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build
+      # Stage 0 of docs/standalone-cancho.md D5: the Rust build. It is shipped too, as `cancho-rust-…`, for Cranelift and WASI.
+      - name: Build the Rust compiler (stage 0, and the backup asset)
         run: cargo build --release -p cancho
 
       # The compiler's output is LLVM IR with opaque pointers, which clang 15 introduced; the 22.04 image's default is 14.
@@ -48,18 +53,28 @@ jobs:
           sudo apt-get install -y clang-15
           echo "CLANG=clang-15" >> "$GITHUB_ENV"
 
-      - name: Package
-        run: scripts/package-release.sh ${{ matrix.target }} dist
+      # The `cancho` of the release is built by cancho: stages 1 to 3, and stage 2 must equal stage 3.
+      - name: Build the standalone cancho (stages 1 to 3)
+        run: scripts/build-standalone.sh --out "$RUNNER_TEMP/standalone" --rev "$(git rev-parse HEAD)" --cancho0 "$PWD/target/release/cancho"
 
-      # What a consumer does, on the asset a consumer gets: install it by its
-      # hash, from a directory standing in for the release, and build with it.
+      - name: Package
+        run: |
+          CANCHO_BIN="$RUNNER_TEMP/standalone/cancho" scripts/package-release.sh ${{ matrix.target }} dist
+          CANCHO_ASSET=cancho-rust scripts/package-release.sh ${{ matrix.target }} dist
+
+      # What a consumer does, on the asset a consumer gets: install it by its hash, from a directory standing in for the
+      # release, with no Rust and no cache around it, and build with it. `--std` is the library carried in the binary.
       - name: Smoke — install.sh from the packaged asset, then build hello
         run: |
           rev=$(git rev-parse HEAD)
           CANCHO_RELEASES="file://$PWD/dist" scripts/install.sh "$rev" "$RUNNER_TEMP/prefix"
-          "$RUNNER_TEMP/prefix/bin/cancho" --version
-          "$RUNNER_TEMP/prefix/bin/cancho" build examples/hello.cho -o "$RUNNER_TEMP/hello"
-          test "$("$RUNNER_TEMP/hello")" = "Hello, world!"
+          cancho="$RUNNER_TEMP/prefix/bin/cancho"
+          "$cancho" --version
+          env -i PATH="/usr/bin:/bin:/usr/local/bin" HOME="$RUNNER_TEMP/home" CANCHO="$cancho" sh -c '
+            mkdir -p "$HOME" &&
+            "$CANCHO" build examples/hello.cho -o "$HOME/hello" &&
+            test "$("$HOME/hello")" = "Hello, world!" &&
+            "$CANCHO" check examples/hello.cho --std'
 
       - uses: actions/upload-artifact@v4
         with:
@@ -87,4 +102,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "cancho $GITHUB_SHA" \
-            --notes "Prebuilt cancho for commit $GITHUB_SHA. Install with scripts/install.sh $GITHUB_SHA"
+            --notes "Prebuilt cancho for commit $GITHUB_SHA, built by cancho (docs/standalone-cancho.md). cancho-rust-* is the Rust build, for Cranelift and WASI. Install: curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh"
