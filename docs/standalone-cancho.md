@@ -66,11 +66,14 @@ both are given. **[measured, slice 2]** A program of 808,893 bytes of literals (
 = "…"` in a project is that hash. A release adds a *kind* to the asset: `cancho-<commit>-<target>.tar.gz` stays the Rust-built binary until the
 first standalone release, after which it is the one built by cancho; the Rust binary moves to `cancho-rust-<commit>-<target>.tar.gz`. **[choice]**
 
-**D5. The first binary is built by the Rust one, the second by the first.** A standalone `cancho` cannot be built from nothing. The release
-build is: `cargo build --release -p cancho` (stage 0), `cancho0 build <the 75 files>` (stage 1), `cancho1 build <the 75 files>` (stage 2), and the
-build fails unless stage 1 and stage 2 are the same bytes (the fixed point of `docs/self-hosting.md` stage 4m, which is measured for the
-compiler and must be measured for the command line); stage 2 is what is shipped. **[choice]** Stage 0 is the only place Rust is needed, and only
-in the build of a release or of the repository, never to install or use one.
+**D5. The first binary is built by the Rust one, the second by the first, and the third must equal the second.** A standalone `cancho` cannot be built from nothing. The release
+build (`scripts/build-standalone.sh`) is: stage 0, the Rust `cancho` (`cargo build --release -p cancho`); stage 1, the 77 files of `examples/selfhost/cancho.files` (the import closure of
+`cli.cho`, stamped) built by stage 0 with the compiler in cancho; stage 2, the same files built by stage 1; stage 3, built by stage 2. The build fails unless stage 2 and stage 3 are the same
+bytes, and stage 2 is what is shipped. **[measured, slice 4]** (Linux x86-64, `env -i`, clang the only tool around): each stage takes 33 s and is 3.1 MB; **stage 1 differs from stage 2**
+(3,136,648 against 3,138,248 bytes: stage 1 was linked by stage 0's driver, stage 2 by the command line in cancho's own builder) **and stage 2 equals stage 3** once both are built under the
+same output name (the name of the object file is in the executable: built under two names, stages 2 and 3 differ in exactly one byte, `s2.ll` against `s3.ll`). So the fixed point is
+reached at the second stage and not the first, and the comparison is 2 against 3. Stage 0 is the only place Rust is needed, and only in the build of a release or of the repository, never to
+install or use one. **[choice]**
 
 ## 3. Slices
 
@@ -83,8 +86,8 @@ in the build of a release or of the repository, never to install or use one.
 3. **The refusals of D1.** `build --backend cranelift` and `build --target <wasm>` are refused with `unsupported-backend` and
    `unsupported-target-in-this-build`, with a fixture each, and the sentence names the Rust binary. Gate: the rule tags are in the catalogue and
    `tests/reject`.
-4. **The fixed point.** `scripts/build-standalone.sh` (stages 0 to 2 of D5) and a CI job that fails unless stage 1 equals stage 2, on the three
-   targets the release builds.
+4. **The fixed point.** `scripts/build-standalone.sh` (stages 0 to 3 of D5) and a test that fails unless stage 2 equals stage 3 and that the gate can fail; a CI job
+   that runs it on each target the release builds follows in slice 5.
 5. **The release.** `release.yml` builds and packages the standalone binary and the Rust one, smoke-tests `install.sh` on the packaged asset (it
    builds hello and a project with `cancho.toml`), and publishes on `workflow_dispatch`. `install.sh` gains a `latest` form (§5).
 6. **The repositories.** Each repository's pin moves to the release commit, its CI installs the release instead of building the compiler from
