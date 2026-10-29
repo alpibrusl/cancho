@@ -21,6 +21,7 @@ import selfhost.guidelines;
 import selfhost.commandtree;
 import selfhost.diagnose;
 import selfhost.stdorder;
+import selfhost.stdsource;
 import selfhost.testscan;
 import selfhost.satisfytext;
 import selfhost.clibase;
@@ -279,6 +280,19 @@ pub fn read_or_extra[&h, &f, &p, &e](heap: &!h Heap, fs: &f Fs(""), path: &p [by
     if is_extra {
         return clibase.Contents { bytes: buffer.append(heap, buffer.empty(heap, len(extra) + 1), extra), failed: 0 };
     }
+    if len(path) > 6 && lc.spells(path, 0, 6, "<std>/") {
+        // A file of the library in this binary: the name between `<std>/` and `.cho`.
+        let text = stdsource.find(heap, path[6..len(path) - 4]);
+        var found = 0;
+        borrow text as &tb in {
+            found = buffer.size(tb);
+        }
+        if found > 0 {
+            return clibase.Contents { bytes: text, failed: 0 };
+        }
+        buffer.drop(heap, text);
+        return clibase.Contents { bytes: buffer.empty(heap, 0), failed: 1 };
+    }
     return clibase.read_file(heap, fs, path);
 }
 
@@ -302,7 +316,7 @@ pub fn files_of_args[&h, &a](heap: &!h Heap, args: &a Args, build: bool, run: bo
         let word = arg(args, n);
         if clibase.takes_value(word, build) {
             n = n + 1;
-        } else if !(run && bytes.equal(word, "--stdin")) {
+        } else if !(run && bytes.equal(word, "--stdin")) && !bytes.equal(word, "--std") {
             names = buffer.append(heap, buffer.append(heap, names, word), "\0");
         }
         n = n + 1;
@@ -323,7 +337,9 @@ pub fn load_program[&h, &i, &a, &f, &e, &m](heap: &!h Heap, io: &!i Io, args: &a
 pub fn load_files[&h, &i, &f, &s, &e, &m](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), files: buffer.Buffer, with_std: bool, std_path: &s [byte], extra: &e [byte], extra_name: &m [byte]) -> [heap, err_write, fs_read(""), file_read] Loaded {
     var names = files;
     if with_std {
-        // The files of the standard library, in the order `--std` adds them, found in the directory.
+        // The files of the standard library, in the order `--std` adds them, found in the directory; or, with no directory (or the word `--std` where a directory goes), in this
+        // binary, under the names `<std>/NAME.cho` the Rust command gives them.
+        let embedded = len(std_path) == 0 || bytes.equal(std_path, "--std");
         let order = stdorder.names(heap, buffer.empty(heap, 600));
         borrow order as &o in {
             let all = buffer.bytes(o);
@@ -334,9 +350,13 @@ pub fn load_files[&h, &i, &f, &s, &e, &m](heap: &!h Heap, io: &!i Io, fs: &f Fs(
                 while lc.at(all, end) != 0 {
                     end = end + 1;
                 }
-                names = buffer.append(heap, names, std_path);
-                if len(std_path) > 0 && lc.at(std_path, len(std_path) - 1) != '/' {
-                    names = buffer.push(heap, names, byte_of('/'));
+                if embedded {
+                    names = buffer.append(heap, names, "<std>/");
+                } else {
+                    names = buffer.append(heap, names, std_path);
+                    if lc.at(std_path, len(std_path) - 1) != '/' {
+                        names = buffer.push(heap, names, byte_of('/'));
+                    }
                 }
                 names = buffer.append(heap, names, all[at..end]);
                 names = buffer.append(heap, names, ".cho\0");
@@ -475,8 +495,11 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             if wasi == 0 {
                 return clibase.usage_error(heap, io, "`--target` of `authority` takes wasm32-wasip1, wasm32-wasip2, wasm32-wasi or wasm32-wasip1-threads in this command line");
             }
-        } else if bytes.equal(word, "--std") || bytes.equal(word, "--target") {
-            return clibase.usage_error(heap, io, "`--std` and `--target` are not available in this command line: `--std-dir DIR` adds the standard library from DIR");
+        } else if bytes.equal(word, "--std") {
+            // The library in this binary (`stdsource.cho`): the argument at `std_dir` is the word `--std` and not a directory.
+            std_dir = n;
+        } else if bytes.equal(word, "--target") {
+            return clibase.usage_error(heap, io, "`--target` is not available in this command line");
         } else if len(word) > 0 && lc.at(word, 0) == '-' {
             return clibase.unknown_option(heap, io, word);
         } else {

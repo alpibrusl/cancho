@@ -59,9 +59,8 @@ that pins a compiler is refused by it unless `--ignore-compiler-rev` is given, a
 **D3. `--std` is the standard library carried in the binary.** **[choice]** The files of `std/` (46 files, 776,796 bytes of source, 2026-10-28)
 become a generated module of string literals in the order `stdorder.cho` already fixes (`std_order_module_is_the_std_table_of_cancho` is the
 precedent for a generated module that a test regenerates and compares). `--std-dir DIR` stays, for a library under development, and wins when
-both are given. **[measure]** Slice 2 measures what a program of 780 KB of literals costs the compiler in cancho (time, peak memory, size of the
-executable) before it is merged, and says so if the answer is "too much": the alternative is the library as a compressed blob, which is a different
-design.
+both are given. **[measured, slice 2]** A program of 808,893 bytes of literals (one per file) compiles in 0.5 s with the compiler in cancho and adds about 0.8 MB to the executable
+(`docs/cli-in-cancho.md` §37). It is not too much, and the compressed blob is not needed.
 
 **D4. A release is a commit, as now.** The tag is the full commit hash (`docs/package-system.md` §9, `.github/workflows/release.yml`), and `cancho
 = "…"` in a project is that hash. A release adds a *kind* to the asset: `cancho-<commit>-<target>.tar.gz` stays the Rust-built binary until the
