@@ -132,7 +132,7 @@ reproduce itself byte for byte (`docs/standalone-cancho.md`).
 
 Green on **linux-x86_64**, **linux-aarch64** and **darwin-aarch64**. `--backend llvm` is the
 default codegen path (LLVM via `clang`, no new build dependency);
-`--backend cranelift` is faster to iterate on and used the same way.
+`--backend cranelift` (the Rust build only) is faster to iterate on and used the same way.
 
 A project that pins a compiler (`cancho.toml`) installs the prebuilt one for
 that commit instead of building it:
