@@ -395,7 +395,6 @@ fn the_command_line_in_cancho_installs_dependencies_like_cancho() {
         .unwrap();
     let empty = repository(&work, &empty_tree, "empty");
     let path = "packages/net-sockets/.cancho-vcs";
-    let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std").canonicalize().unwrap();
     let project = work.join("project");
     let (mut agreed, mut different) = (Vec::new(), Vec::new());
     let cases: Vec<(&str, &World, &str, &str)> = vec![
@@ -417,12 +416,8 @@ fn the_command_line_in_cancho_installs_dependencies_like_cancho() {
             let mut run = Command::new(if mine { cli.as_path() } else { Path::new(BIN) });
             run.current_dir(&project).arg(command).stdin(Stdio::null());
             if mine {
-                run.args([
-                    "--cache",
-                    work.join("mine-cache").to_str().unwrap(),
-                    "--std-dir",
-                    std_dir.to_str().unwrap(),
-                ]);
+                // No `--std-dir`: a store that imports `std` is checked against the library in the binary (`docs/standalone-cancho.md` D3).
+                run.args(["--cache", work.join("mine-cache").to_str().unwrap()]);
             } else {
                 run.env("CANCHO_CACHE", work.join("rust-cache")).arg("--ignore-compiler-rev");
             }
@@ -503,7 +498,6 @@ fn the_command_line_in_cancho_adds_dependencies_like_cancho() {
     let (rev, path) = (good.rev.clone(), "packages/net-sockets/.cancho-vcs".to_owned());
     let empty_url = empty.url.clone();
     let empty_rev = empty.rev.clone();
-    let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std").canonicalize().unwrap();
     let project = work.join("project");
     let to_strings =
         |words: &[&str]| words.iter().map(|w| (*w).to_owned()).collect::<Vec<String>>();
@@ -666,12 +660,7 @@ fn the_command_line_in_cancho_adds_dependencies_like_cancho() {
                 let mut command = Command::new(if mine { cli.as_path() } else { Path::new(BIN) });
                 command.current_dir(&project).arg("add").args(&words).stdin(Stdio::null());
                 if mine {
-                    command.args([
-                        "--cache",
-                        work.join("mine-cache").to_str().unwrap(),
-                        "--std-dir",
-                        std_dir.to_str().unwrap(),
-                    ]);
+                    command.args(["--cache", work.join("mine-cache").to_str().unwrap()]);
                 } else {
                     command
                         .env("CANCHO_CACHE", work.join("rust-cache"))
