@@ -208,13 +208,15 @@ fn install_refuses_what_is_not_a_full_commit_and_what_is_not_there() {
     assert!(!prefix.exists());
 }
 
-/// A server that answers `/releases/latest` with a redirect to `/releases/tag/<tag>` and the tag page with 200, for as long as the test runs.
-fn release_server(tag: &'static str) -> String {
+/// A server that answers `/releases/latest` with a redirect to `/releases/tag/<tag>` and the tag page with 200, for the two requests `curl --location`
+/// makes. It listens on `127.0.0.2`, not `127.0.0.1`: the tests of `api.rs` find a free port on `127.0.0.1` by binding and dropping a listener, and a
+/// listener of this one on the same address could take the port they were about to start a server on. `None` where that address cannot be bound (macOS).
+fn release_server(tag: &'static str) -> Option<String> {
     use std::io::{Read, Write};
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.2:0").ok()?;
     let addr = listener.local_addr().unwrap();
     std::thread::spawn(move || {
-        for stream in listener.incoming() {
+        for stream in listener.incoming().take(2) {
             let Ok(mut stream) = stream else { return };
             let mut buf = [0u8; 2048];
             let n = stream.read(&mut buf).unwrap_or(0);
@@ -229,7 +231,7 @@ fn release_server(tag: &'static str) -> String {
             let _ = stream.write_all(reply.as_bytes());
         }
     });
-    format!("http://{addr}")
+    Some(format!("http://{addr}"))
 }
 
 /// `install.sh` with no commit (the form `curl … | sh` uses) installs the release `releases/latest` names, and holds it to the checks of a commit given by hand.
@@ -248,14 +250,18 @@ fn install_with_no_commit_installs_the_latest_release_and_checks_it() {
     };
     let home = root.join("home");
     let prefix = home.join(".local");
-    let out = run(&release_server(REV), &home);
+    let Some(server) = release_server(REV) else {
+        eprintln!("skipped: cannot listen on 127.0.0.2");
+        return;
+    };
+    let out = run(&server, &home);
     assert!(out.status.success(), "{}", stderr(&out));
     let installed = Command::new(prefix.join("bin/cancho")).arg("--version").output().unwrap();
     assert_eq!(String::from_utf8_lossy(&installed.stdout).trim(), version_line(REV));
 
     // A tag that is not a commit is refused (2), and so is a place with no release to ask (5); nothing is installed.
     let other = root.join("other");
-    let out = run(&release_server("nightly"), &other);
+    let out = run(&release_server("nightly").unwrap(), &other);
     assert_eq!(code(&out), 2, "{}", stderr(&out));
     let out = run("http://127.0.0.1:9", &other);
     assert_eq!(code(&out), 5, "{}", stderr(&out));
