@@ -1250,7 +1250,9 @@ fn project_cases() -> Vec<(&'static str, &'static str, Vec<&'static str>, &'stat
 /// compared) and leave the same files; a project with a dependency is a status 3 in `cli.cho`, which cannot fetch it.
 #[test]
 fn the_command_line_in_cancho_works_in_a_project_like_cancho() {
-    let exe = build("cli-project", &with_front_end("cli.cho"));
+    // Stamped with the commit and host the Rust command line reports, so that a pinned project is judged the same way by both.
+    let (_, rev, host) = rust_stamp();
+    let exe = build_stamped("cli-project", "cli.cho", &stamped_version("project", &rev, &host));
     let dir = scratch("selfhost-project-run");
     let plain = |text: &str| -> String {
         let kept: Vec<&str> = text
@@ -1307,9 +1309,9 @@ fn the_command_line_in_cancho_works_in_a_project_like_cancho() {
                 left,
             ));
         }
-        // The text of the TOML library's complaint and the commit the compiler was built from are not things `cli.cho` has: the status, the
-        // standard output and the files are compared there (`docs/cli-in-cancho.md` section 20).
-        if ["not toml", "compiler pin", "compiler pin ignored"].contains(&name) {
+        // The text of the TOML library's complaint is not something `cli.cho` has: the status, the standard output and the files are
+        // compared there (`docs/cli-in-cancho.md` section 20). The compiler pin is compared in full, words included.
+        if ["not toml"].contains(&name) {
             seen[0].2.clear();
             seen[1].2.clear();
         }
@@ -1357,4 +1359,146 @@ fn the_command_line_in_cancho_works_in_a_project_like_cancho() {
     assert_eq!(added.status.code(), Some(2));
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
+}
+
+/// `--version` and the compiler pin (`docs/standalone-cancho.md` D2, slice 1): a command line in cancho stamped with the commit and host of the Rust one says
+/// the same line, and judges a project's `[package] cancho` the same way; one stamped with another commit does not; an unstamped one says so.
+#[test]
+fn the_command_line_in_cancho_says_its_version_and_checks_the_pin_like_cancho() {
+    let (version, rev, host) = rust_stamp();
+    let line = format!("cancho {version} (rev {rev}, host {host})\n");
+    let stamped = build_stamped("cli-version", "cli.cho", &stamped_version("same", &rev, &host));
+    for flag in ["--version", "-V"] {
+        let theirs = Command::new(BIN).arg(flag).output().expect("the Rust command runs");
+        let mine = Command::new(&stamped).arg(flag).output().expect("the command in cancho runs");
+        assert_eq!(String::from_utf8_lossy(&theirs.stdout), line, "{flag}");
+        assert_eq!(
+            String::from_utf8_lossy(&mine.stdout),
+            line,
+            "{flag}: the command line in cancho says another line"
+        );
+        assert_eq!((mine.status.code(), mine.stderr.len()), (Some(0), 0), "{flag}");
+    }
+
+    // A project that names a commit: the same one, another one, and another one with `--ignore-compiler-rev`, by both.
+    let dir = scratch("selfhost-version-pin");
+    let project = |pin: &str| {
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).expect("the directory is made");
+        std::fs::write(
+            dir.join("src/main.cho"),
+            "edition 7;\nfn main(world: World) -> [] int { release(world); return 0; }\n",
+        )
+        .expect("a source");
+        std::fs::write(dir.join("cancho.toml"), format!("[package]\nname = \"demo\"\ncancho = \"{pin}\"\n\n[[bin]]\nname = \"a\"\nsources = [\"src\"]\n"))
+            .expect("the project file");
+    };
+    let asked = |binary: &Path, arguments: &[&str]| {
+        let done = Command::new(binary)
+            .current_dir(&dir)
+            .args(arguments)
+            .output()
+            .expect("the command runs");
+        (
+            done.status.code(),
+            String::from_utf8_lossy(&done.stdout).replace(&dir.display().to_string(), "DIR"),
+            String::from_utf8_lossy(&done.stderr)
+                .lines()
+                .filter(|l| !l.starts_with("building the compiler in cancho"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    };
+    let other = "0123456789abcdef0123456789abcdef01234567";
+    let mut cases =
+        vec![(other, vec!["install"]), (other, vec!["install", "--ignore-compiler-rev"])];
+    if !rev.ends_with("-dirty") && rev != "unknown" {
+        cases.push((rev.as_str(), vec!["install"]));
+    }
+    for (pin, arguments) in &cases {
+        project(pin);
+        let theirs = asked(Path::new(BIN), arguments);
+        let mine = asked(&stamped, arguments);
+        assert_eq!(theirs, mine, "pin {pin} with {arguments:?}");
+    }
+    project(other);
+    let refused = asked(&stamped, &["install"]);
+    assert_eq!(refused.0, Some(1), "{refused:?}");
+    assert!(refused.2.contains(&format!("and this compiler is {rev}")), "{refused:?}");
+
+    // Stamped with another commit, it is not the Rust one: the line differs, and a project that names the Rust one is refused.
+    let wrong = match rev.strip_prefix('0') {
+        Some(rest) => format!("1{rest}"),
+        None => format!("0{}", &rev[1..]),
+    };
+    let elsewhere =
+        build_stamped("cli-version-wrong", "cli.cho", &stamped_version("wrong", &wrong, &host));
+    let said = Command::new(&elsewhere).arg("--version").output().expect("it runs");
+    assert_ne!(String::from_utf8_lossy(&said.stdout), line);
+    if !rev.ends_with("-dirty") && rev != "unknown" {
+        project(&rev);
+        assert_eq!(
+            asked(&elsewhere, &["install"]).0,
+            Some(1),
+            "a compiler stamped with another commit must refuse a project pinned to this one"
+        );
+    }
+
+    // Unstamped, as the repository carries it: the line says `unknown`, and a pinned project cannot be checked.
+    let plain = build("cli-unstamped", &with_front_end("cli.cho"));
+    let said = Command::new(&plain).arg("--version").output().expect("it runs");
+    assert_eq!(
+        String::from_utf8_lossy(&said.stdout),
+        format!("cancho {version} (rev unknown, host unknown)\n")
+    );
+    project(other);
+    let refused = asked(&plain, &["install"]);
+    assert_eq!(refused.0, Some(1), "{refused:?}");
+    assert!(refused.2.contains("does not know which commit it was built from"), "{refused:?}");
+    let allowed = asked(&plain, &["install", "--ignore-compiler-rev"]);
+    assert_eq!(allowed.0, Some(0), "{allowed:?}");
+    assert!(allowed.2.contains("this is unknown (--ignore-compiler-rev)"), "{allowed:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `scripts/stamp-version.sh` writes a commit and a host or refuses: nothing that is not a full lowercase hash (with `-dirty` allowed) or a host triple.
+#[test]
+fn the_stamp_script_refuses_what_is_not_a_commit() {
+    let dir = scratch("selfhost-stamp-refusals");
+    let out = dir.join("version.cho");
+    let run = |args: &[&str]| {
+        Command::new("sh")
+            .arg(repo_root().join("scripts/stamp-version.sh"))
+            .args(args)
+            .env("VERSION_CHO", &out)
+            .output()
+            .expect("the script runs")
+    };
+    let good = "0123456789abcdef0123456789abcdef01234567";
+    for bad in [
+        "",
+        "abc",
+        "0123456789ABCDEF0123456789abcdef01234567",
+        "0123456789abcdef0123456789abcdef0123456",
+        "0123456789abcdef0123456789abcdef012345678",
+        "xyz23456789abcdef0123456789abcdef01234567",
+    ] {
+        let done = run(&[bad, "x86_64-unknown-linux-gnu"]);
+        assert_eq!(
+            done.status.code(),
+            Some(2),
+            "{bad:?}: {}",
+            String::from_utf8_lossy(&done.stderr)
+        );
+        assert!(!out.exists(), "{bad:?} wrote a stamp");
+    }
+    assert_eq!(run(&[good, "x86 64"]).status.code(), Some(2), "a host with a space");
+    assert_eq!(run(&[&format!("{good}-dirty"), "aarch64-apple-darwin"]).status.code(), Some(0));
+    let text = std::fs::read_to_string(&out).expect("the stamp is written");
+    assert!(
+        text.contains(&format!("return \"{good}-dirty\";"))
+            && text.contains("return \"aarch64-apple-darwin\";"),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

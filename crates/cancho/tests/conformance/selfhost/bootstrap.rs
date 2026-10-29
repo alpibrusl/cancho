@@ -74,6 +74,7 @@ fn own_source(root_module: &str) -> String {
         "testscan",
         "layoutrep",
         "authwasi",
+        "version",
         "authority",
         "satisfytext",
         "driver",
