@@ -70,9 +70,11 @@ jobs:
           CANCHO_RELEASES="file://$PWD/dist" scripts/install.sh "$rev" "$RUNNER_TEMP/prefix"
           cancho="$RUNNER_TEMP/prefix/bin/cancho"
           "$cancho" --version
-          env -i PATH="/usr/bin:/bin:/usr/local/bin" HOME="$RUNNER_TEMP/home" CANCHO="$cancho" sh -c '
+          # `--clang`, because the standalone cancho cannot read $CLANG (docs/standalone-cancho.md, slice 5).
+          clang=$(command -v "${CLANG:-clang}")
+          env -i PATH="/usr/bin:/bin:/usr/local/bin" HOME="$RUNNER_TEMP/home" CANCHO="$cancho" CLANG_PATH="$clang" sh -c '
             mkdir -p "$HOME" &&
-            "$CANCHO" build examples/hello.cho -o "$HOME/hello" &&
+            "$CANCHO" build examples/hello.cho --clang "$CLANG_PATH" -o "$HOME/hello" &&
             test "$("$HOME/hello")" = "Hello, world!" &&
             "$CANCHO" check examples/hello.cho --std'
 
