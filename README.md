@@ -8,6 +8,30 @@ effects are one system rather than two: a value is consumed exactly once,
 and reaching the outside world — the console, a file, a foreign library —
 requires holding a capability for it, checked at compile time.
 
+## Install
+
+You do not need Rust. A release is a `cancho` built by cancho, one file,
+checked against its published sha256 and against the commit it reports:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh
+cancho --version
+```
+
+That installs the latest release into `~/.local/bin` (Linux x86-64 and
+aarch64, macOS on Apple silicon). `install.sh <commit> [prefix]` installs
+the one a project pins. Building a program needs `clang` 15 or newer and
+`cc`; on a machine whose `clang` is older or not the first on `PATH`, name
+one with `cancho build … --clang /absolute/path/to/clang` (this build does
+not read `$CLANG`, which the Rust build does). The sha256 detects a damaged
+or mismatched download; it does not authenticate who published it, since the
+script and the archive both come from GitHub.
+
+What this build does not have: `--backend cranelift` and WASI targets
+(`--target wasm32-…`). The `cancho-rust-<commit>-<target>` asset of the same
+release is the Rust build, which has both
+(`docs/standalone-cancho.md`).
+
 ## An example
 
 ```
@@ -39,7 +63,7 @@ wants to, and `main`'s own row is `[]` even though it prints, because it
 *owns* the capability rather than borrowing one. Run it:
 
 ```sh
-cargo run -p cancho -- run examples/tour.cho --std
+cancho run examples/tour.cho --std
 ```
 
 ## What's deliberately not here
@@ -91,18 +115,27 @@ tracks what landed, what's next, and what each slice found out.
 
 ## Building
 
+Using cancho does not need this section (see Install). To work on the
+compiler, or to get the Rust build (Cranelift, WASI):
+
 ```sh
 git clone https://github.com/alpibrusl/cancho
 cd cancho
 cargo test --workspace   # the whole gate: fmt, clippy and every test
+cargo build --release -p cancho   # the Rust build, target/release/cancho
 ```
 
-Green on **linux-x86_64** and **darwin-aarch64**. `--backend llvm` is the
+The `cancho` of a release is built by `scripts/build-standalone.sh`: the
+Rust build compiles the command line written in cancho
+(`examples/selfhost/cli.cho`), which compiles itself twice more and must
+reproduce itself byte for byte (`docs/standalone-cancho.md`).
+
+Green on **linux-x86_64**, **linux-aarch64** and **darwin-aarch64**. `--backend llvm` is the
 default codegen path (LLVM via `clang`, no new build dependency);
 `--backend cranelift` is faster to iterate on and used the same way.
 
-A project that pins a compiler (`cancho.toml`) can install the prebuilt one
-instead of building it, once a release exists for that commit:
+A project that pins a compiler (`cancho.toml`) installs the prebuilt one for
+that commit instead of building it:
 
 ```sh
 scripts/install.sh <commit> [prefix]   # sha256 and the reported commit are both checked
