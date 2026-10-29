@@ -213,10 +213,12 @@ fn variant_arm[&s, &x](st: &!s [int], text: &x [byte], item: int, first: int, k:
 
 // `match` on a value of a prelude enum (`Spawned`, `Exited`, `Read`): in compile mode only, and the arms
 // are taken to be what Rust has checked: a flat chain of tests of the tag, as for an enum of the file.
-fn prelude_match[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int, s: ex.Ex) -> [] int {
-    let index = types.prelude_index(st, s.ty);
+// `held` is the enum, and `by_ref` says `s` is a reference to one (`unique` and `area` are its kind and region): the tag is read through it and a payload is
+// bound as a reference of the same kind, as `variant_arm` does for an enum of the program's own.
+fn prelude_match[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int, s: ex.Ex, held: int, by_ref: bool, unique: bool, area: int) -> [] int {
+    let index = types.prelude_index(st, held);
     let first = builtins.prelude_arm_first(index);
-    let tag = emit.extract_field(st, s.ty, s.reg, 0);
+    let tag = emit.tag_of(st, held, by_ref, s.reg);
     let end = emit.label(st);
     let count = ast.get(st, id, 6);
     var arm = ast.get(st, id, 5);
@@ -248,9 +250,15 @@ fn prelude_match[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int, s: e
                 if t == 0 {
                     ex.skip(st, ast.nstart(st, id), ast.nend(st, id));
                 } else if !pat_wild(st, name) {
-                    scope.bind(st, name, t, false, ast.nstart(st, id), ast.nend(st, id));
-                    if ast.ok(st) && !types.is_erased(st, t) {
-                        emit.store(st, t, false, 0, emit.extract_field(st, s.ty, s.reg, emit.penum_payload_index(st, index, number, i)), st[39] - 1);
+                    var bound = t;
+                    if by_ref {
+                        bound = types.make_ref(st, unique, area, t);
+                    }
+                    scope.bind(st, name, bound, false, ast.nstart(st, id), ast.nend(st, id));
+                    if ast.ok(st) && by_ref {
+                        emit.store(st, bound, false, 0, emit.field_address(st, held, s.reg, emit.penum_payload_index(st, index, number, i)), st[39] - 1);
+                    } else if ast.ok(st) && !types.is_erased(st, t) {
+                        emit.store(st, t, false, 0, emit.extract_field(st, held, s.reg, emit.penum_payload_index(st, index, number, i)), st[39] - 1);
                     }
                 }
                 i = i + 1;
@@ -297,8 +305,8 @@ fn match_stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] i
         area = types.ref_region(st, held);
         held = types.ref_inner(st, held);
     }
-    if emit.on(st) && !by_ref && types.is_penum(st, held) {
-        return prelude_match(st, text, id, ret, s);
+    if emit.on(st) && types.is_penum(st, held) {
+        return prelude_match(st, text, id, ret, s, held, by_ref, unique, area);
     }
     if types.is_prelude(st, held) {
         ex.skip(st, from, to);

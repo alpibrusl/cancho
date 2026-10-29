@@ -136,3 +136,14 @@ verifies the next release is possible once there is one binary, and is **not des
 After slice 6 the Rust code in `crates/` is a backup: it still builds, it is still tested, and it is what a project needs for Cranelift or WASI.
 Removing it (#486–#490) needs D1 reversed: the WASI changes ported to the compiler in cancho and a decision about Cranelift (port it, or retire the
 backend with a release note). Neither is in this document, and neither is done by it.
+
+## 7. What the repositories found (slice 6)
+
+Moving the sibling repositories to the release means their gates run on a `cancho` with no Rust to fall back to. Each difference below was found by a run on GitHub, reproduced locally with the released binary,
+fixed, and pinned by a test; a fix reaches the repositories with the next release, since they pin a commit.
+
+* **`..` in a path** (`cancho-web`): `tests/../examples/users/users.cho` was refused ("cannot read the file"), because an `Fs` traps on two dots in a row. The command line collapses `a/..` pairs before it reads
+  (`docs/cli-in-cancho.md` §40, #650). A leading `..`, directories and written paths are still refused.
+* **A prelude enum matched through a reference** (`cancho-gateway`, `gateway.cho:50`): `match l { Listening::Ok(x) => … }` with `l: &!l Listening` was a construct the compiler in cancho had no code for (status 3), and the
+  default build used to hand that to the Rust compiler. `prelude_match` now reads the tag through the reference and binds the payloads as references, as `variant_arm` does for the program's own enums.
+  `selfhost::compile` builds two programs with it, both ways, and they end the same.
