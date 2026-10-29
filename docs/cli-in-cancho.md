@@ -598,6 +598,27 @@ tree is clean) to this commit: status, standard output and standard error equal.
 and builds the unstamped form and requires `unknown` and the refusal that says so. Two mutants (the pin never compared; the host left out of the line) each fail it.
 `the_stamp_script_refuses_what_is_not_a_commit` pins the script's refusals. The project test (§20) now compares the pin cases in full, words included, where it cleared the standard error.
 
+## 37. Slice 17: `--std` (`docs/standalone-cancho.md` D3)
+
+`stdsource.cho` is the standard library, generated (`selfhost::statics::std_source_module_is_the_std_directory`, which fails if `std/` and the module differ; `CANCHO_REGENERATE=1` writes it):
+one function per file of `std/` that appends its text as **one literal**, and `find NAME`, which answers the text of `std/NAME.cho` or nothing. The other generated texts of this
+command line (§10, §11) are a literal to a line, in parts of forty lines; a library of 46 files and 776,796 bytes would be 20,000 lines of generated source, over the ceiling of
+2,000 for a file, and a literal of 93 KB (`p256_comb`, the largest) is accepted by the lexer, the formatter and both compilers (measured below), so each file is one literal.
+
+`--std` on `build`, `check`, `run`, `test`, `ids`, `authority`, `layout`, `satisfy` and `vcs publish`/`sync` now adds the library from the binary, in the order of `stdorder.cho`, under the
+names `<std>/NAME.cho` the Rust command gives them; `std = true` in `cancho.toml` needs no directory any more (the refusal that said it needs `--std-dir DIR` is gone). `--std-dir DIR` stays, for a
+library under development, and gives the same identities when DIR is `std/`. In the code the argument at `std_dir` names where the library is: a directory, or the word `--std`
+(`load_files` reads either; an empty path means the binary too, which is what `vcs publish --std` with no `--std-dir` always meant).
+
+**Measured (Linux x86-64, 2026-10-28).** The module is 808,893 bytes of source in 334 lines. A program that imports it and asks for one file builds in **0.5 s** (the compiler in cancho;
+0.7 s by the Rust one) to an executable of 811,816 bytes against 809,472 for the Rust one, so **the library costs about 0.8 MB** of the executable and no measurable compile time. The command line
+(75 files, then 77) goes from 2.3 MB to about 3.1 MB.
+`selfhost::cli::the_command_line_in_cancho_carries_the_standard_library` runs ten programs of `tests/accept` through `check`, `ids` and `build` with `--std` against the Rust command (same status
+and standard output; the identities of the whole library line for line; the built programs the same status and output), `--std-dir std` against `--std`, and the refusal of a program that
+imports the library without the flag. Mutants: one byte of the embedded library changed, and a file of the library left out, each fail it.
+=======
+>>>>>>> origin/main
+
 ## 38. Slice 18: what this build does not carry (`docs/standalone-cancho.md` D1, §4)
 
 `--backend cranelift` and a `--target` that is not the host this build was stamped with are refused on `build`, `check`, `run`, `test` and `ids`/`layout` with status 2 and one sentence that
