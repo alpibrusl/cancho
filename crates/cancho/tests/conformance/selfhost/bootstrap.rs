@@ -204,3 +204,117 @@ fn the_builder_in_cancho_builds_itself_with_no_help() {
     let ended = Command::new(&made).output().expect("the program runs");
     assert_eq!(ended.status.code(), Some(42));
 }
+
+/// The files of the command line in cancho, `examples/selfhost/cancho.files`: `cli.cho` and everything it imports, by the `module` line of each file (a file without one is
+/// named by its stem). `scripts/build-standalone.sh` reads the list, so it must be the closure: a module added to the command line and not to the list would be built
+/// by nobody. `CANCHO_REGENERATE=1` writes it.
+#[test]
+fn the_file_list_of_the_standalone_build_is_the_import_closure_of_cli() {
+    let dir = repo_root().join("examples/selfhost");
+    let mut by_module: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    for entry in std::fs::read_dir(&dir).expect("the directory is read") {
+        let path = entry.expect("an entry").path();
+        let Some(file) = path.file_name().and_then(|f| f.to_str()).map(str::to_owned) else {
+            continue;
+        };
+        if !file.ends_with(".cho") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("a file is read");
+        let module = text
+            .lines()
+            .find_map(|l| l.strip_prefix("module ").and_then(|m| m.strip_suffix(';')))
+            .map_or_else(|| file.trim_end_matches(".cho").to_owned(), str::to_owned);
+        by_module.insert(module, file);
+    }
+    let lookup = |m: &str| {
+        by_module.get(m).or_else(|| by_module.get(m.trim_start_matches("selfhost."))).cloned()
+    };
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut todo = vec!["cli".to_owned()];
+    while let Some(module) = todo.pop() {
+        let Some(file) = lookup(&module) else { continue };
+        if !seen.insert(file.clone()) {
+            continue;
+        }
+        let text = std::fs::read_to_string(dir.join(&file)).expect("a file is read");
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("import ") {
+                todo.push(rest.split([';', ' ']).next().unwrap_or("").to_owned());
+            }
+        }
+    }
+    let want: String = seen.iter().map(|f| format!("{f}\n")).collect();
+    let list = dir.join("cancho.files");
+    if std::env::var_os("CANCHO_REGENERATE").is_some() {
+        std::fs::write(&list, &want).expect("the list is written");
+    }
+    let have = std::fs::read_to_string(&list).expect("the list is read");
+    assert!(
+        have == want,
+        "examples/selfhost/cancho.files is not the import closure of cli.cho: run this test with CANCHO_REGENERATE=1 and commit the result"
+    );
+    assert!(seen.len() > 70, "only {} files in the closure", seen.len());
+}
+
+/// `scripts/build-standalone.sh` (`docs/standalone-cancho.md` D5, slice 4): the command line in cancho, stamped, is built by the Rust one (stage 1), by itself (stage 2) and
+/// by that (stage 3), and stage 2 and stage 3 are the same bytes. The binary it leaves reports the stamp, builds a program and a project, and is the second stage's. The gate can fail:
+/// with stage 3 written under another name (which changes one byte of the executable) the script refuses and leaves no `cancho`.
+#[test]
+fn the_standalone_build_reproduces_itself() {
+    let (_, rev, host) = rust_stamp();
+    let dir = scratch("selfhost-standalone");
+    let script = repo_root().join("scripts/build-standalone.sh");
+    let run = |out: &Path, name3: Option<&str>| {
+        let mut command = Command::new("sh");
+        command.arg(&script).arg("--out").arg(out).args([
+            "--rev",
+            &rev,
+            "--host",
+            &host,
+            "--cancho0",
+            BIN,
+        ]);
+        if let Some(name) = name3 {
+            command.env("STANDALONE_STAGE3_NAME", name);
+        }
+        command.env("CANCHO_CACHE", dir.join("cache")).output().expect("the script runs")
+    };
+    let good = dir.join("good");
+    let done = run(&good, None);
+    assert!(done.status.success(), "{}", String::from_utf8_lossy(&done.stderr));
+    let cancho = good.join("cancho");
+    let said = Command::new(&cancho).arg("--version").output().expect("the binary runs");
+    let (version, _, _) = rust_stamp();
+    assert_eq!(
+        String::from_utf8_lossy(&said.stdout),
+        format!("cancho {version} (rev {rev}, host {host})\n")
+    );
+    // It builds with its own embedded library, with nothing but the system around it, and the program runs.
+    let program = dir.join("p.cho");
+    std::fs::write(&program, "edition 7;\nimport std.math;\nfn main(world: World) -> [] int { release(world); return math.abs(0 - 4); }\n").expect("a program");
+    let exe = dir.join("p");
+    let built = Command::new(&cancho)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .arg("build")
+        .arg(&program)
+        .args(["--std", "-o"])
+        .arg(&exe)
+        .output()
+        .expect("the binary builds");
+    assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
+    assert_eq!(Command::new(&exe).status().expect("it runs").code(), Some(4));
+    let stages =
+        |n: u32| std::fs::read(good.join(format!("stages/{n}/cancho"))).expect("a stage is read");
+    assert_eq!(stages(2), stages(3), "stages 2 and 3 differ");
+    assert_eq!(std::fs::read(&cancho).expect("the result"), stages(2), "the result is not stage 2");
+    // The gate can fail.
+    let bad = dir.join("bad");
+    let refused = run(&bad, Some("other"));
+    assert_eq!(refused.status.code(), Some(1), "{}", String::from_utf8_lossy(&refused.stderr));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("does not reproduce itself"));
+    assert!(!bad.join("cancho").exists(), "a failed build left a cancho");
+    let _ = std::fs::remove_dir_all(&dir);
+}

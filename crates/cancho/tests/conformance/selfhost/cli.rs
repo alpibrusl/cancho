@@ -1571,3 +1571,68 @@ fn the_command_line_in_cancho_carries_the_standard_library() {
     assert_eq!((theirs.0, mine.0), (Some(1), Some(1)), "{theirs:?} {mine:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// What this build of the command line in cancho does not carry (`docs/standalone-cancho.md` D1, slice 3): `--backend cranelift` and a `--target` that is not the machine's own are said,
+/// with where the rest is, and are status 2 (as every flag this command line lacks); `--backend llvm` and the host's own triple are accepted and give what the Rust command gives.
+#[test]
+fn the_command_line_in_cancho_says_what_this_build_does_not_carry() {
+    let (_, rev, host) = rust_stamp();
+    let stamped =
+        build_stamped("cli-refusals", "cli.cho", &stamped_version("refusals", &rev, &host));
+    let dir = scratch("selfhost-refusals");
+    let program = dir.join("p.cho");
+    std::fs::write(
+        &program,
+        "edition 7;\nfn main(world: World) -> [] int { release(world); return 3; }\n",
+    )
+    .expect("a program");
+    let program = program.to_str().unwrap();
+    let said = |binary: &Path, arguments: &[&str]| {
+        let done = Command::new(binary).args(arguments).output().expect("the command runs");
+        (
+            done.status.code(),
+            String::from_utf8_lossy(&done.stdout).into_owned(),
+            String::from_utf8_lossy(&done.stderr).into_owned(),
+        )
+    };
+    let out = dir.join("out");
+    let out = out.to_str().unwrap();
+    for (command, extra) in
+        [("build", vec!["-o", out]), ("check", vec![]), ("run", vec![]), ("test", vec![])]
+    {
+        for (flag, value) in [
+            ("--backend", "cranelift"),
+            ("--target", "wasm32-wasip1"),
+            ("--target", "aarch64-unknown-freebsd"),
+        ] {
+            let mut arguments = vec![command, program, flag, value];
+            arguments.extend(extra.iter().copied());
+            let mine = said(&stamped, &arguments);
+            assert_eq!(mine.0, Some(2), "{command} {flag} {value}: {mine:?}");
+            assert!(
+                mine.2.contains(&format!("`{flag} {value}` is not in this build of cancho"))
+                    && mine.2.contains("cancho-rust"),
+                "{command} {flag} {value}: {}",
+                mine.2
+            );
+        }
+    }
+    // What it does carry: the LLVM backend, and the machine's own triple (as the Rust command takes it).
+    for arguments in [
+        vec!["build", program, "--backend", "llvm", "-o", out],
+        vec!["build", program, "--target", host.as_str(), "-o", out],
+    ] {
+        let theirs = said(Path::new(BIN), &arguments);
+        let mine = said(&stamped, &arguments);
+        assert_eq!((theirs.0, mine.0), (Some(0), Some(0)), "{arguments:?}: {theirs:?} {mine:?}");
+        let ran = Command::new(out).status().expect("the program runs");
+        assert_eq!(ran.code(), Some(3), "{arguments:?}");
+    }
+    let checked = said(&stamped, &["check", program, "--target", host.as_str()]);
+    assert_eq!(checked.0, Some(0), "{checked:?}");
+    // Unstamped, it does not know its own host, so a triple cannot be the machine's own.
+    let plain = build("cli-refusals-unstamped", &with_front_end("cli.cho"));
+    let refused = said(&plain, &["check", program, "--target", host.as_str()]);
+    assert_eq!(refused.0, Some(2), "{refused:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

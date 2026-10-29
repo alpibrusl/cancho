@@ -20,6 +20,7 @@ import selfhost.guidelines;
 import selfhost.commandtree;
 import selfhost.diagnose;
 import selfhost.stdorder;
+import selfhost.version;
 import selfhost.testscan;
 import selfhost.satisfytext;
 import selfhost.clibase;
@@ -399,6 +400,9 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
             std_dir = n;
         } else if bytes.equal(word, "--backend") {
             n = n + 1;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "cranelift") {
+                return clibase.not_in_this_build(heap, io, "--backend", "cranelift");
+            }
             if n >= arg_count(args) || !bytes.equal(arg(args, n), "llvm") {
                 return clibase.usage_error(heap, io, "`--backend`: only llvm is available in this command line");
             }
@@ -416,7 +420,13 @@ pub fn test_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
         } else if bytes.equal(word, "--std") {
             std_dir = n;
         } else if bytes.equal(word, "--target") {
-            return clibase.usage_error(heap, io, "`--target` is not available in this command line");
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--target` needs a triple");
+            }
+            if !(bytes.equal(arg(args, n), version.host()) && !bytes.equal(version.host(), "unknown")) {
+                return clibase.not_in_this_build(heap, io, "--target", arg(args, n));
+            }
         } else if bytes.equal(word, "-o") || bytes.equal(word, "--emit") || bytes.equal(word, "--output") {
             return clibase.usage_error(heap, io, "`test` does not take `-o`, `--emit` or `--output`");
         } else if len(word) > 0 && lc.at(word, 0) == '-' {

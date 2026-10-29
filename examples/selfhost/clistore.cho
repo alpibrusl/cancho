@@ -699,82 +699,74 @@ fn verify_group[&h, &i, &f, &t, &w, &s, &c, &x](heap: &!h Heap, io: &!i Io, fs: 
                         buffer.drop(heap, m);
                     } else {
                         let uses = imports_std(text) || context_uses_std(context);
-                        if uses && len(std_path) == 0 {
-                            let m = cliorigin.message(heap, "", hash, " imports `std`: this command line needs `--std-dir DIR` to check it");
+                        let others = context_paths(heap, context);
+                        var files = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 256), buffer.bytes(pb)), "\0");
+                        borrow others as &ob in {
+                            files = buffer.append(heap, files, buffer.bytes(ob));
+                        }
+                        buffer.drop(heap, others);
+                        var state = 2;
+                        var pairs = buffer.empty(heap, 0);
+                        borrow files as &fb in {
+                            let made = compile(heap, io, fs, buffer.bytes(fb), uses, std_path, true, 14);
+                            let Compiled { ran, found } = made;
+                            state = ran;
+                            pairs = projfile.replaced(heap, pairs, found);
+                        }
+                        buffer.drop(heap, files);
+                        if state != 0 {
+                            let m = cliorigin.message(heap, "", hash, " no longer parses or type-checks");
                             borrow m as &mb in {
                                 said = problem(heap, said, buffer.bytes(mb));
                             }
                             buffer.drop(heap, m);
                         } else {
-                            let others = context_paths(heap, context);
-                            var files = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 256), buffer.bytes(pb)), "\0");
-                            borrow others as &ob in {
-                                files = buffer.append(heap, files, buffer.bytes(ob));
-                            }
-                            buffer.drop(heap, others);
-                            var state = 2;
-                            var pairs = buffer.empty(heap, 0);
-                            borrow files as &fb in {
-                                let made = compile(heap, io, fs, buffer.bytes(fb), uses, std_path, true, 14);
-                                let Compiled { ran, found } = made;
-                                state = ran;
-                                pairs = projfile.replaced(heap, pairs, found);
-                            }
-                            buffer.drop(heap, files);
-                            if state != 0 {
-                                let m = cliorigin.message(heap, "", hash, " no longer parses or type-checks");
-                                borrow m as &mb in {
-                                    said = problem(heap, said, buffer.bytes(mb));
-                                }
-                                buffer.drop(heap, m);
-                            } else {
-                                var sound = true;
-                                borrow pairs as &prb in {
-                                    var scan = 0;
-                                    while scan < len(selected) {
-                                        let sig_end = projfile.field_end(selected, scan, len(selected));
-                                        let name_at = sig_end + 1;
-                                        let name_end = projfile.field_end(selected, name_at, len(selected));
-                                        let stage_at = name_end + 1;
-                                        let stage_end = projfile.field_end(selected, stage_at, len(selected));
-                                        let source_at = stage_end + 1;
-                                        let source_end = projfile.field_end(selected, source_at, len(selected));
-                                        if source_end - source_at == len(hash) && bytes.equal(selected[source_at..source_end], hash) {
-                                            let body = body_of(buffer.bytes(prb), selected[scan..sig_end]);
-                                            if len(body) == 0 {
-                                                var m = cliorigin.message(heap, "", selected[name_at..name_end], ": signature ");
-                                                m = buffer.append(heap, buffer.append(heap, m, selected[scan..sig_end]), " is no longer produced by its own source");
-                                                borrow m as &mb in {
-                                                    said = problem(heap, said, buffer.bytes(mb));
-                                                }
-                                                buffer.drop(heap, m);
-                                                sound = false;
-                                            } else if !bytes.equal(body, selected[stage_at..stage_end]) {
-                                                var m = cliorigin.message(heap, "", selected[name_at..name_end], ": body moved from ");
-                                                m = buffer.append(heap, buffer.append(heap, buffer.append(heap, m, selected[stage_at..stage_end]), " to "), body);
-                                                m = buffer.append(heap, m, " -- the manifest's pin no longer matches");
-                                                borrow m as &mb in {
-                                                    said = problem(heap, said, buffer.bytes(mb));
-                                                }
-                                                buffer.drop(heap, m);
-                                                sound = false;
+                            var sound = true;
+                            borrow pairs as &prb in {
+                                var scan = 0;
+                                while scan < len(selected) {
+                                    let sig_end = projfile.field_end(selected, scan, len(selected));
+                                    let name_at = sig_end + 1;
+                                    let name_end = projfile.field_end(selected, name_at, len(selected));
+                                    let stage_at = name_end + 1;
+                                    let stage_end = projfile.field_end(selected, stage_at, len(selected));
+                                    let source_at = stage_end + 1;
+                                    let source_end = projfile.field_end(selected, source_at, len(selected));
+                                    if source_end - source_at == len(hash) && bytes.equal(selected[source_at..source_end], hash) {
+                                        let body = body_of(buffer.bytes(prb), selected[scan..sig_end]);
+                                        if len(body) == 0 {
+                                            var m = cliorigin.message(heap, "", selected[name_at..name_end], ": signature ");
+                                            m = buffer.append(heap, buffer.append(heap, m, selected[scan..sig_end]), " is no longer produced by its own source");
+                                            borrow m as &mb in {
+                                                said = problem(heap, said, buffer.bytes(mb));
                                             }
+                                            buffer.drop(heap, m);
+                                            sound = false;
+                                        } else if !bytes.equal(body, selected[stage_at..stage_end]) {
+                                            var m = cliorigin.message(heap, "", selected[name_at..name_end], ": body moved from ");
+                                            m = buffer.append(heap, buffer.append(heap, buffer.append(heap, m, selected[stage_at..stage_end]), " to "), body);
+                                            m = buffer.append(heap, m, " -- the manifest's pin no longer matches");
+                                            borrow m as &mb in {
+                                                said = problem(heap, said, buffer.bytes(mb));
+                                            }
+                                            buffer.drop(heap, m);
+                                            sound = false;
                                         }
-                                        scan = source_end + 1;
                                     }
-                                }
-                                if sound {
-                                    keep = buffer.append(heap, buffer.append(heap, buffer.append(heap, keep, hash), "\0"), buffer.bytes(pb));
-                                    keep = buffer.append(heap, keep, "\0");
-                                    if uses {
-                                        keep = buffer.append(heap, keep, "1\0");
-                                    } else {
-                                        keep = buffer.append(heap, keep, "0\0");
-                                    }
+                                    scan = source_end + 1;
                                 }
                             }
-                            buffer.drop(heap, pairs);
+                            if sound {
+                                keep = buffer.append(heap, buffer.append(heap, buffer.append(heap, keep, hash), "\0"), buffer.bytes(pb));
+                                keep = buffer.append(heap, keep, "\0");
+                                if uses {
+                                    keep = buffer.append(heap, keep, "1\0");
+                                } else {
+                                    keep = buffer.append(heap, keep, "0\0");
+                                }
+                            }
                         }
+                        buffer.drop(heap, pairs);
                     }
                 }
                 buffer.drop(heap, computed);

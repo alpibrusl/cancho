@@ -66,11 +66,14 @@ both are given. **[measured, slice 2]** A program of 808,893 bytes of literals (
 = "…"` in a project is that hash. A release adds a *kind* to the asset: `cancho-<commit>-<target>.tar.gz` stays the Rust-built binary until the
 first standalone release, after which it is the one built by cancho; the Rust binary moves to `cancho-rust-<commit>-<target>.tar.gz`. **[choice]**
 
-**D5. The first binary is built by the Rust one, the second by the first.** A standalone `cancho` cannot be built from nothing. The release
-build is: `cargo build --release -p cancho` (stage 0), `cancho0 build <the 75 files>` (stage 1), `cancho1 build <the 75 files>` (stage 2), and the
-build fails unless stage 1 and stage 2 are the same bytes (the fixed point of `docs/self-hosting.md` stage 4m, which is measured for the
-compiler and must be measured for the command line); stage 2 is what is shipped. **[choice]** Stage 0 is the only place Rust is needed, and only
-in the build of a release or of the repository, never to install or use one.
+**D5. The first binary is built by the Rust one, the second by the first, and the third must equal the second.** A standalone `cancho` cannot be built from nothing. The release
+build (`scripts/build-standalone.sh`) is: stage 0, the Rust `cancho` (`cargo build --release -p cancho`); stage 1, the 77 files of `examples/selfhost/cancho.files` (the import closure of
+`cli.cho`, stamped) built by stage 0 with the compiler in cancho; stage 2, the same files built by stage 1; stage 3, built by stage 2. The build fails unless stage 2 and stage 3 are the same
+bytes, and stage 2 is what is shipped. **[measured, slice 4]** (Linux x86-64, `env -i`, clang the only tool around): each stage takes 33 s and is 3.1 MB; **stage 1 differs from stage 2**
+(3,136,648 against 3,138,248 bytes: stage 1 was linked by stage 0's driver, stage 2 by the command line in cancho's own builder) **and stage 2 equals stage 3** once both are built under the
+same output name (the name of the object file is in the executable: built under two names, stages 2 and 3 differ in exactly one byte, `s2.ll` against `s3.ll`). So the fixed point is
+reached at the second stage and not the first, and the comparison is 2 against 3. Stage 0 is the only place Rust is needed, and only in the build of a release or of the repository, never to
+install or use one. **[choice]**
 
 ## 3. Slices
 
@@ -83,8 +86,8 @@ in the build of a release or of the repository, never to install or use one.
 3. **The refusals of D1.** `build --backend cranelift` and `build --target <wasm>` are refused with `unsupported-backend` and
    `unsupported-target-in-this-build`, with a fixture each, and the sentence names the Rust binary. Gate: the rule tags are in the catalogue and
    `tests/reject`.
-4. **The fixed point.** `scripts/build-standalone.sh` (stages 0 to 2 of D5) and a CI job that fails unless stage 1 equals stage 2, on the three
-   targets the release builds.
+4. **The fixed point.** `scripts/build-standalone.sh` (stages 0 to 3 of D5) and a test that fails unless stage 2 equals stage 3 and that the gate can fail; a CI job
+   that runs it on each target the release builds follows in slice 5.
 5. **The release.** `release.yml` builds and packages the standalone binary and the Rust one, smoke-tests `install.sh` on the packaged asset (it
    builds hello and a project with `cancho.toml`), and publishes on `workflow_dispatch`. `install.sh` gains a `latest` form (§5).
 6. **The repositories.** Each repository's pin moves to the release commit, its CI installs the release instead of building the compiler from
@@ -95,10 +98,13 @@ and mutants where a gate is new.
 
 ## 4. Refusals added
 
-| rule | when | fixture |
-|---|---|---|
-| `unsupported-backend` | `--backend cranelift` to the command line built by cancho | `tests/reject/standalone_backend_cranelift.cho` is a program; the refusal is of the command, so its fixture is a conformance test that runs the command and reads the `--output json` of a refusal **[choice]** |
-| `unsupported-target-in-this-build` | `--target` with a triple the build cannot write | as above |
+**Corrected in slice 3.** This section said the two refusals of D1 are rules with a tag each (`unsupported-backend`, `unsupported-target-in-this-build`) and fixtures in `tests/reject`.
+That was the wrong layer: a rule tag names a refusal of a *program* by the checker (`rules.rs`, `check --output json`), and `--backend cranelift` is a refusal of a *flag*, like every
+flag this command line lacks, which is a usage error (status 2) with the sentence said and the usage printed. They are therefore sentences, not rules, and the test that pins them is a
+conformance test of the command line: `selfhost::cli::the_command_line_in_cancho_says_what_this_build_does_not_carry`. The sentence is
+"`FLAG VALUE` is not in this build of cancho, which writes code for the machine it runs on with the LLVM backend; the Rust build has it (`cargo build --release -p cancho`, or the
+`cancho-rust` release asset; docs/standalone-cancho.md D1)". `--target` is accepted when it spells the host this build was stamped with (the Rust command takes the host's own triple
+too) and refused otherwise; an unstamped build does not know its host, so it refuses every triple.
 
 ## 5. Installing
 

@@ -597,7 +597,6 @@ binary reports, builds the command line from it, and compares `--version`, `-V`,
 tree is clean) to this commit: status, standard output and standard error equal. It then stamps another commit and requires the line to differ and a project pinned to this one to be refused,
 and builds the unstamped form and requires `unknown` and the refusal that says so. Two mutants (the pin never compared; the host left out of the line) each fail it.
 `the_stamp_script_refuses_what_is_not_a_commit` pins the script's refusals. The project test (§20) now compares the pin cases in full, words included, where it cleared the standard error.
-<<<<<<< HEAD
 
 ## 37. Slice 17: `--std` (`docs/standalone-cancho.md` D3)
 
@@ -619,3 +618,22 @@ and standard output; the identities of the whole library line for line; the buil
 imports the library without the flag. Mutants: one byte of the embedded library changed, and a file of the library left out, each fail it.
 =======
 >>>>>>> origin/main
+
+## 38. Slice 18: what this build does not carry (`docs/standalone-cancho.md` D1, §4)
+
+`--backend cranelift` and a `--target` that is not the host this build was stamped with are refused on `build`, `check`, `run`, `test` and `ids`/`layout` with status 2 and one sentence that
+names the Rust build (`clibase.not_in_this_build`); `--backend llvm` and the stamped host's own triple are taken. (`authority --target` is the other thing: it takes the WASI spellings, §34, because
+it only reports what a WASI module may import and writes no code.) **Measured.** `the_command_line_in_cancho_says_what_this_build_does_not_carry` runs four commands against three refused
+values each (twelve refusals: status 2 and the sentence), the two accepted spellings against the Rust command (both build, and the programs exit 3), and an unstamped build against the host's triple
+(refused). One mutant (every `--target` accepted) fails it.
+
+## 39. Slice 19: the standalone build (`docs/standalone-cancho.md` D5)
+
+`examples/selfhost/cancho.files` lists the 77 files of this command line (the import closure of `cli.cho`; `selfhost::bootstrap::the_file_list_of_the_standalone_build_is_the_import_closure_of_cli` fails if
+it differs, and `CANCHO_REGENERATE=1` writes it). `scripts/build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH]` stamps `version.cho` (§36) and builds the files three times,
+as D5 says, and installs stage 2 as `DIR/cancho` only if stage 3 is the same bytes.
+
+**Measured (Linux x86-64, 2026-10-29).** Each stage 33 s, 3,136,648 to 3,138,248 bytes. Stage 2 was built from an `env -i PATH=/usr/bin:/bin` environment with no `cancho`, no Rust and an empty
+cache, with `--std` taken from the binary (§37): the command line in cancho builds itself with nothing around it but `clang`. Stage 1 and stage 2 differ; stage 2 and stage 3 are equal when built under the
+same name and differ in one byte (the object file's name) when not. `selfhost::bootstrap::the_standalone_build_reproduces_itself` runs the script, checks that the result reports the stamp, builds
+and runs a program that imports the library with a clean environment, and runs the script again with stage 3 under another name: it must refuse (status 1) and leave no `cancho`. The test takes about 4 minutes.
