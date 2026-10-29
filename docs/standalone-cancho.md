@@ -96,6 +96,13 @@ install or use one. **[choice]**
 Every slice is a pull request with the three gates of `CLAUDE.md`, a differential test against the Rust binary where the behaviour is shared,
 and mutants where a gate is new.
 
+**Slice 5, as built.** `release.yml` builds the Rust compiler (stage 0, still needed to build a release), runs `scripts/build-standalone.sh` with the commit it runs on, and packages two assets per target:
+`cancho-<commit>-<target>.tar.gz` (the standalone build, from `CANCHO_BIN`) and `cancho-rust-<commit>-<target>.tar.gz` (`CANCHO_ASSET=cancho-rust`, the backup for Cranelift and WASI); the targets gain `linux-aarch64`
+(`ubuntu-24.04-arm`, which `ci.yml` already uses). The smoke test installs the standalone asset with `install.sh` into a scratch prefix and, in an `env -i` environment with no Rust and no cache, builds `hello.cho` and
+checks a program with `--std`. `install.sh` with no argument asks `releases/latest`, takes the tag it redirects to, and holds it to the checks of a commit given by hand; exit 5 is "no release to be found".
+Pinned by `release::install_with_no_commit_installs_the_latest_release_and_checks_it` (a local server that redirects) and `release::the_rust_build_is_packaged_as_cancho_rust`. **Found by the first run on the runners:** the command line in cancho does not read `$CLANG` (a cancho program has no environment to read) and runs `/usr/bin/clang`, which is clang 14 on `ubuntu-22.04` and cannot read the IR; the Rust build reads `$CLANG`. `build-standalone.sh` now passes `--clang PATH` to stages 2 and 3. **A difference that slice 6 must state:** with the standalone `cancho`, a different clang is chosen with `--clang PATH` (an absolute path), not `CLANG=…`; a repository whose CI sets `CLANG=clang-15` passes the flag instead. **Not measured yet:** the release workflow end to end
+(it runs for the pull request that changes it, and nothing is published without a `workflow_dispatch` with `publish: true`), and the `linux-aarch64` leg of `build-standalone.sh`.
+
 ## 4. Refusals added
 
 **Corrected in slice 3.** This section said the two refusals of D1 are rules with a tag each (`unsupported-backend`, `unsupported-target-in-this-build`) and fixtures in `tests/reject`.

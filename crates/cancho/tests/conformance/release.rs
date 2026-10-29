@@ -207,3 +207,89 @@ fn install_refuses_what_is_not_a_full_commit_and_what_is_not_there() {
     assert!(!out.status.success(), "installed with no checksum");
     assert!(!prefix.exists());
 }
+
+/// A server that answers `/releases/latest` with a redirect to `/releases/tag/<tag>` and the tag page with 200, for the two requests `curl --location`
+/// makes. It listens on `127.0.0.2`, not `127.0.0.1`: the tests of `api.rs` find a free port on `127.0.0.1` by binding and dropping a listener, and a
+/// listener of this one on the same address could take the port they were about to start a server on. `None` where that address cannot be bound (macOS).
+fn release_server(tag: &'static str) -> Option<String> {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.2:0").ok()?;
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().take(2) {
+            let Ok(mut stream) = stream else { return };
+            let mut buf = [0u8; 2048];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let reply = if head.contains("/releases/latest") {
+                format!(
+                    "HTTP/1.1 302 Found\r\nLocation: /releases/tag/{tag}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+            } else {
+                "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
+            };
+            let _ = stream.write_all(reply.as_bytes());
+        }
+    });
+    Some(format!("http://{addr}"))
+}
+
+/// `install.sh` with no commit (the form `curl … | sh` uses) installs the release `releases/latest` names, and holds it to the checks of a commit given by hand.
+#[test]
+fn install_with_no_commit_installs_the_latest_release_and_checks_it() {
+    supported!();
+    let (root, dist) = released("release-latest");
+    // With no arguments the prefix is `$HOME/.local`, so each case has a home of its own.
+    let run = |url: &str, home: &Path| {
+        Command::new(script("install.sh"))
+            .env("HOME", home)
+            .env("CANCHO_REPO_URL", url)
+            .env("CANCHO_RELEASES", format!("file://{}", dist.display()))
+            .output()
+            .unwrap()
+    };
+    let home = root.join("home");
+    let prefix = home.join(".local");
+    let Some(server) = release_server(REV) else {
+        eprintln!("skipped: cannot listen on 127.0.0.2");
+        return;
+    };
+    let out = run(&server, &home);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let installed = Command::new(prefix.join("bin/cancho")).arg("--version").output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&installed.stdout).trim(), version_line(REV));
+
+    // A tag that is not a commit is refused (2), and so is a place with no release to ask (5); nothing is installed.
+    let other = root.join("other");
+    let out = run(&release_server("nightly").unwrap(), &other);
+    assert_eq!(code(&out), 2, "{}", stderr(&out));
+    let out = run("http://127.0.0.1:9", &other);
+    assert_eq!(code(&out), 5, "{}", stderr(&out));
+    assert!(!other.join(".local").exists());
+}
+
+/// The Rust build is packaged under its own name, the standalone one keeps `cancho-<commit>-<target>` (docs/standalone-cancho.md D4).
+#[test]
+fn the_rust_build_is_packaged_as_cancho_rust() {
+    supported!();
+    let root = scratch("release-rust-asset");
+    let bin = fake_compiler(&root.join("build"), &version_line(REV));
+    let target = target_name().unwrap();
+    let ok = Command::new(script("package-release.sh"))
+        .args([target, root.join("dist").to_str().unwrap()])
+        .env("CANCHO_BIN", &bin)
+        .env("CANCHO_ASSET", "cancho-rust")
+        .output()
+        .unwrap();
+    assert!(ok.status.success(), "{}", stderr(&ok));
+    assert!(root.join(format!("dist/cancho-rust-{REV}-{target}.tar.gz")).is_file());
+    assert!(!root.join(format!("dist/cancho-{REV}-{target}.tar.gz")).exists());
+    let bad = Command::new(script("package-release.sh"))
+        .args([target, root.join("dist2").to_str().unwrap()])
+        .env("CANCHO_BIN", &bin)
+        .env("CANCHO_ASSET", "../x")
+        .output()
+        .unwrap();
+    assert_eq!(code(&bad), 2);
+    assert!(!root.join("dist2").exists());
+}
