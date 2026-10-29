@@ -597,6 +597,7 @@ binary reports, builds the command line from it, and compares `--version`, `-V`,
 tree is clean) to this commit: status, standard output and standard error equal. It then stamps another commit and requires the line to differ and a project pinned to this one to be refused,
 and builds the unstamped form and requires `unknown` and the refusal that says so. Two mutants (the pin never compared; the host left out of the line) each fail it.
 `the_stamp_script_refuses_what_is_not_a_commit` pins the script's refusals. The project test (§20) now compares the pin cases in full, words included, where it cleared the standard error.
+<<<<<<< HEAD
 
 ## 37. Slice 17: `--std` (`docs/standalone-cancho.md` D3)
 
@@ -616,3 +617,5 @@ library under development, and gives the same identities when DIR is `std/`. In 
 `selfhost::cli::the_command_line_in_cancho_carries_the_standard_library` runs ten programs of `tests/accept` through `check`, `ids` and `build` with `--std` against the Rust command (same status
 and standard output; the identities of the whole library line for line; the built programs the same status and output), `--std-dir std` against `--std`, and the refusal of a program that
 imports the library without the flag. Mutants: one byte of the embedded library changed, and a file of the library left out, each fail it.
+=======
+>>>>>>> origin/main
