@@ -62,7 +62,7 @@ precedent for a generated module that a test regenerates and compares). `--std-d
 both are given. **[measured, slice 2]** A program of 808,893 bytes of literals (one per file) compiles in 0.5 s with the compiler in cancho and adds about 0.8 MB to the executable
 (`docs/cli-in-cancho.md` §37). It is not too much, and the compressed blob is not needed.
 
-**D4. A release is a commit, as now.** The tag is the full commit hash (`docs/package-system.md` §9, `.github/workflows/release.yml`), and `cancho
+**D4. A release is a commit, as now.** The tag is `cancho-` and the full commit hash (`docs/package-system.md` §9, `.github/workflows/release.yml`; corrected after the first publish was refused for a bare-hash tag), and `cancho
 = "…"` in a project is that hash. A release adds a *kind* to the asset: `cancho-<commit>-<target>.tar.gz` stays the Rust-built binary until the
 first standalone release, after which it is the one built by cancho; the Rust binary moves to `cancho-rust-<commit>-<target>.tar.gz`. **[choice]**
 
@@ -118,7 +118,7 @@ too) and refused otherwise; an unstamped build does not know its host, so it ref
 **`curl … | sh` works, and it is the way.** The installer already exists and already verifies what it fetches (`scripts/install.sh COMMIT [PREFIX]`:
 the tarball's published sha256 is checked before it is unpacked, and the installed binary must report the commit that was asked for). What it
 lacks for a quick start is a commit to ask for. **[choice]** `install.sh` with no commit resolves the latest release (the tag GitHub redirects
-`releases/latest` to; release tags are hashes, so the redirect *is* the commit), then proceeds as now:
+`releases/latest` to; release tags are `cancho-<commit>`, so the redirect names the commit), then proceeds as now:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh

@@ -4,7 +4,7 @@
 #   install.sh [<commit> [prefix]]
 #
 #   <commit>  the full commit hash, the value of `cancho = "..."` in cancho.toml;
-#             left out, the latest release (the tag GitHub redirects `releases/latest` to; a release's tag is its commit)
+#             left out, the latest release (the tag GitHub redirects `releases/latest` to, `cancho-<commit>`)
 #   prefix    default $HOME/.local; the binary lands in <prefix>/bin/cancho
 #
 #   curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh
@@ -13,7 +13,7 @@
 #   CANCHO_REPO_URL  where `releases/latest` is asked (default https://github.com/alpibrusl/cancho); only used with no <commit>
 #   CANCHO_RELEASES  base URL of the release assets
 #                     (default https://github.com/alpibrusl/cancho/releases/download/<commit>;
-#                     a release's tag is the full commit hash)
+#                     a release's tag is `cancho-<commit>`: GitHub refuses a tag that is a bare 40 or 64 hex digits)
 #
 # The tarball is checked against its published sha256 before it is unpacked,
 # and the installed binary must then report the commit that was asked for.
@@ -21,13 +21,13 @@
 set -eu
 
 if [ "$#" -eq 0 ]; then
-  # Latest: the redirect of `releases/latest` ends at `releases/tag/<commit>`. Whatever it names is then held to the same checks as a commit
+  # Latest: the redirect of `releases/latest` ends at `releases/tag/cancho-<commit>`. Whatever it names is then held to the same checks as a commit
   # given by hand (a full hash, the published sha256, the commit the binary reports).
   repo=${CANCHO_REPO_URL:-https://github.com/alpibrusl/cancho}
   final=$(curl --fail --silent --show-error --location --head --output /dev/null --write-out '%{url_effective}' "$repo/releases/latest") ||
     { echo "could not find the latest release at $repo/releases/latest" >&2; exit 5; }
-  rev=${final##*/}
-  case $final in */releases/tag/*) ;; *) echo "no release yet at $repo (it redirected to $final)" >&2; exit 5 ;; esac
+  case $final in */releases/tag/cancho-*) ;; *) echo "no release yet at $repo (it redirected to $final)" >&2; exit 5 ;; esac
+  rev=${final##*/cancho-}
 else
   rev=$1
 fi
@@ -46,7 +46,7 @@ case "$(uname -s)-$(uname -m)" in
 esac
 
 name=cancho-$rev-$target
-base=${CANCHO_RELEASES:-https://github.com/alpibrusl/cancho/releases/download/$rev}
+base=${CANCHO_RELEASES:-https://github.com/alpibrusl/cancho/releases/download/cancho-$rev}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 

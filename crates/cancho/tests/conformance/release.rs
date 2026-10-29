@@ -223,7 +223,7 @@ fn release_server(tag: &'static str) -> Option<String> {
             let head = String::from_utf8_lossy(&buf[..n]).into_owned();
             let reply = if head.contains("/releases/latest") {
                 format!(
-                    "HTTP/1.1 302 Found\r\nLocation: /releases/tag/{tag}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    "HTTP/1.1 302 Found\r\nLocation: /releases/tag/cancho-{tag}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                 )
             } else {
                 "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()

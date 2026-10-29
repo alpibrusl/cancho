@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish a release tagged with this commit's full hash (otherwise build and smoke-test only)"
+        description: "Publish a release tagged cancho-<this commit's full hash> (otherwise build and smoke-test only)"
         type: boolean
         default: false
 
@@ -100,7 +100,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -l dist
-          gh release create "$GITHUB_SHA" dist/* \
+          gh release create "cancho-$GITHUB_SHA" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "cancho $GITHUB_SHA" \
