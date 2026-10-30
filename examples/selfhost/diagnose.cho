@@ -139,13 +139,23 @@ pub fn render[&h, &p, &l, &n](heap: &!h Heap, out: buffer.Buffer, path: &p [byte
 }
 
 // An entry of the `refused` array of `check --output json`; `located` is false for a refusal about the program and not about a place in it.
-pub fn entry[&h, &p, &l, &n](heap: &!h Heap, out: buffer.Buffer, path: &p [byte], laid: &l [byte], lens: &n [int], rule: int, from: int, located: bool) -> [heap] buffer.Buffer {
+pub fn entry[&h, &p, &l, &n](heap: &!h Heap, out: buffer.Buffer, path: &p [byte], laid: &l [byte], lens: &n [int], rule: int, from: int, located: bool, detail: int) -> [heap] buffer.Buffer {
     let place = locate(laid, lens, from);
     let sentence = rules.sentence(rules.rule_tag(rule));
     var b = buffer.append(heap, out, "    {\n      \"rule\": ");
     b = json_string(heap, b, rules.rule_tag(rule));
     b = buffer.append(heap, b, ",\n      \"message\": ");
-    b = json_string(heap, b, sentence);
+    if !located && detail == 1 {
+        // A program with no `main`: worded as the Rust command words it, with the path in front.
+        var said = buffer.append(heap, buffer.empty(heap, 64), path);
+        said = buffer.append(heap, said, ": error: no `main` function");
+        borrow said as &sb in {
+            b = json_string(heap, b, buffer.bytes(sb));
+        }
+        buffer.drop(heap, said);
+    } else {
+        b = json_string(heap, b, sentence);
+    }
     b = buffer.append(heap, b, ",\n      \"explanation\": ");
     b = json_string(heap, b, sentence);
     if !located {
@@ -161,8 +171,11 @@ pub fn entry[&h, &p, &l, &n](heap: &!h Heap, out: buffer.Buffer, path: &p [byte]
 }
 
 // The text of a refusal about the program: the path and the sentence, with no place.
-pub fn render_program[&h, &p](heap: &!h Heap, out: buffer.Buffer, path: &p [byte], rule: int) -> [heap] buffer.Buffer {
+pub fn render_program[&h, &p](heap: &!h Heap, out: buffer.Buffer, path: &p [byte], rule: int, detail: int) -> [heap] buffer.Buffer {
     var b = buffer.append(heap, out, path);
     b = buffer.append(heap, b, ": error: ");
+    if detail == 1 {
+        return buffer.append(heap, b, "no `main` function");
+    }
     return buffer.append(heap, b, rules.sentence(rules.rule_tag(rule)));
 }

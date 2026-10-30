@@ -253,7 +253,7 @@ pub fn report_check[&h, &i, &y, &l, &n](heap: &!h Heap, io: &!i Io, names: &y [b
         return 3;
     }
     // A refusal about the program as a whole (no `main`) has no place; it is given at the first file.
-    let located = !(rule == rules.r_program_shape() && from == 0 && to == 0);
+    let located = !(rule == rules.r_program_shape() && from == 0 && to <= 1);
     var which = 0;
     if located {
         which = diagnose.locate(laid, lens, from).file;
@@ -261,7 +261,7 @@ pub fn report_check[&h, &i, &y, &l, &n](heap: &!h Heap, io: &!i Io, names: &y [b
     let path = name_at(names, which);
     if json {
         var out = buffer.append(heap, buffer.empty(heap, 512), "{\n  \"refused\": [\n");
-        out = diagnose.entry(heap, out, path, laid, lens, rule, from, located);
+        out = diagnose.entry(heap, out, path, laid, lens, rule, from, located, to);
         out = buffer.append(heap, out, "\n  ]\n}\n");
         show(heap, io, out);
     } else {
@@ -269,7 +269,7 @@ pub fn report_check[&h, &i, &y, &l, &n](heap: &!h Heap, io: &!i Io, names: &y [b
         if located {
             out = diagnose.render(heap, out, path, laid, lens, rule, from, to);
         } else {
-            out = diagnose.render_program(heap, out, path, rule);
+            out = diagnose.render_program(heap, out, path, rule, to);
         }
         out = buffer.push(heap, out, byte_of('\n'));
         borrow out as &t in {

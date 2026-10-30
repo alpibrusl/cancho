@@ -1692,3 +1692,33 @@ fn the_command_line_in_cancho_reads_a_path_with_dot_dot_like_cancho() {
     assert!(none.2.contains("cannot read the file"), "{none:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A program with no `main` (a module, a library file) is refused in the words the Rust command uses, `no `main` function`, in the text and in the `message` of
+/// `--output json`, with the catalogue sentence as the `explanation`. Found by `cancho-pg`, whose generator test checks a generated module and reads that
+/// one refusal as "it compiles".
+#[test]
+fn the_command_line_in_cancho_words_a_program_with_no_main_like_cancho() {
+    let cho = build("cli-no-main", &with_front_end("cli.cho"));
+    let dir = scratch("selfhost-no-main");
+    let module = dir.join("t.cho");
+    std::fs::write(&module, "edition 5;\nmodule t;\n\npub fn f() -> [] int {\n    return 1;\n}\n")
+        .expect("a module");
+    let module = module.to_str().unwrap();
+    let said = |binary: &Path, arguments: &[&str]| {
+        let done = Command::new(binary).args(arguments).output().expect("the command runs");
+        (
+            done.status.code(),
+            String::from_utf8_lossy(&done.stdout).into_owned(),
+            String::from_utf8_lossy(&done.stderr).into_owned(),
+        )
+    };
+    for arguments in [vec!["check", module], vec!["check", module, "--output", "json"]] {
+        let theirs = said(Path::new(BIN), &arguments);
+        let mine = said(&cho, &arguments);
+        assert_eq!(theirs, mine, "{arguments:?}");
+        assert_eq!(mine.0, Some(1), "{arguments:?}");
+    }
+    let mine = said(&cho, &["check", module]);
+    assert!(mine.2.contains("error: no `main` function"), "{mine:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
