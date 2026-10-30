@@ -509,9 +509,15 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     return 0;
 }
 
-// The module as bytes in a buffer: the string literals, a newline, then the rest.
+// The name the object file's symbol table gives the module: this, and not the name of the file the text was written to (which is the program's own, `out.ll`), so
+// that the same sources built under two names are the same bytes. LLVM wants it before anything else.
+fn module_name() -> [] &static [byte] {
+    return "source_filename = \"cancho\"\n";
+}
+
+// The module as bytes in a buffer: its name, the string literals, a newline, then the rest.
 fn module_bytes[&h, &s](heap: &!h Heap, st: &!s [int]) -> [heap] buffer.Buffer {
-    var out = buffer.empty(heap, st[57] + st[44] + 16);
+    var out = buffer.append(heap, buffer.empty(heap, st[57] + st[44] + 48), module_name());
     var at = 0;
     while at < st[57] {
         out = buffer.push(heap, out, byte_of(st[st[56] + at]));
@@ -526,8 +532,9 @@ fn module_bytes[&h, &s](heap: &!h Heap, st: &!s [int]) -> [heap] buffer.Buffer {
     return out;
 }
 
-// The module as it was written: the string literals, then the rest.
+// The module as it was written: its name, the string literals, then the rest.
 fn print_module[&i, &s](io: &!i Io, st: &!s [int]) -> [io_write] int {
+    console.write_all(io, module_name());
     var at = 0;
     while at < st[57] {
         putchar(io, st[st[56] + at]);

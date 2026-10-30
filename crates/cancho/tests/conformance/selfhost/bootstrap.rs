@@ -261,13 +261,14 @@ fn the_file_list_of_the_standalone_build_is_the_import_closure_of_cli() {
 
 /// `scripts/build-standalone.sh` (`docs/standalone-cancho.md` D5, slice 4): the command line in cancho, stamped, is built by the Rust one (stage 1), by itself (stage 2) and
 /// by that (stage 3), and stage 2 and stage 3 are the same bytes. The binary it leaves reports the stamp, builds a program and a project, and is the second stage's. The gate can fail:
-/// with stage 3 written under another name (which changes one byte of the executable) the script refuses and leaves no `cancho`.
+/// with a byte appended to stage 3 the script refuses and leaves no `cancho`; and the good build writes stage 3 under another name, which changes nothing (the symbol table of an
+/// executable once held the name of the file the module was written to).
 #[test]
 fn the_standalone_build_reproduces_itself() {
     let (_, rev, host) = rust_stamp();
     let dir = scratch("selfhost-standalone");
     let script = repo_root().join("scripts/build-standalone.sh");
-    let run = |out: &Path, name3: Option<&str>| {
+    let run = |out: &Path, name3: Option<&str>, corrupt: bool| {
         let mut command = Command::new("sh");
         command.arg(&script).arg("--out").arg(out).args([
             "--rev",
@@ -280,10 +281,13 @@ fn the_standalone_build_reproduces_itself() {
         if let Some(name) = name3 {
             command.env("STANDALONE_STAGE3_NAME", name);
         }
+        if corrupt {
+            command.env("STANDALONE_STAGE3_CORRUPT", "1");
+        }
         command.env("CANCHO_CACHE", dir.join("cache")).output().expect("the script runs")
     };
     let good = dir.join("good");
-    let done = run(&good, None);
+    let done = run(&good, Some("another-name"), false);
     assert!(done.status.success(), "{}", String::from_utf8_lossy(&done.stderr));
     let cancho = good.join("cancho");
     let said = Command::new(&cancho).arg("--version").output().expect("the binary runs");
@@ -307,13 +311,14 @@ fn the_standalone_build_reproduces_itself() {
         .expect("the binary builds");
     assert!(built.status.success(), "{}", String::from_utf8_lossy(&built.stderr));
     assert_eq!(Command::new(&exe).status().expect("it runs").code(), Some(4));
+    let stage3 = std::fs::read(good.join("stages/3/another-name")).expect("stage 3 is read");
     let stages =
         |n: u32| std::fs::read(good.join(format!("stages/{n}/cancho"))).expect("a stage is read");
-    assert_eq!(stages(2), stages(3), "stages 2 and 3 differ");
+    assert_eq!(stages(2), stage3, "stages 2 and 3 differ (stage 3 was written under another name)");
     assert_eq!(std::fs::read(&cancho).expect("the result"), stages(2), "the result is not stage 2");
     // The gate can fail.
     let bad = dir.join("bad");
-    let refused = run(&bad, Some("other"));
+    let refused = run(&bad, None, true);
     assert_eq!(refused.status.code(), Some(1), "{}", String::from_utf8_lossy(&refused.stderr));
     assert!(String::from_utf8_lossy(&refused.stderr).contains("does not reproduce itself"));
     assert!(!bad.join("cancho").exists(), "a failed build left a cancho");

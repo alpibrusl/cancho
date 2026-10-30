@@ -13,7 +13,9 @@
 # executable). Stage 2 must equal stage 3 byte for byte, or this fails: a compiler that does not reproduce itself is not shipped. Stage 2 is what is
 # installed. Stage 1 differs from stage 2 (it was linked by stage 0's driver) and is not compared.
 #
-# STANDALONE_STAGE3_NAME makes stage 3 be built under another name: it changes one byte, and the comparison must refuse (the gate's own test).
+# STANDALONE_STAGE3_NAME makes stage 3 be built under another name, which must change nothing: the module the compiler writes names itself `cancho`, not the file it was
+# written to (it did the second, and the executables differed in one byte of their symbol table). STANDALONE_STAGE3_CORRUPT=1 appends a byte to stage 3, and the
+# comparison must refuse (the gate's own test).
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 out=; rev=; host=; cancho0=cancho
@@ -48,6 +50,7 @@ echo "stage 2: built by stage 1" >&2
 echo "stage 3: built by stage 2" >&2
 name3=${STANDALONE_STAGE3_NAME:-cancho}
 "$out/stages/2/cancho" build $files --std --clang "$clang" -o "$out/stages/3/$name3"
+[ -z "${STANDALONE_STAGE3_CORRUPT:-}" ] || printf 'x' >> "$out/stages/3/$name3"
 if ! cmp -s "$out/stages/2/cancho" "$out/stages/3/$name3"; then
   echo "build-standalone: stage 2 and stage 3 differ: the command line in cancho does not reproduce itself" >&2
   exit 1
