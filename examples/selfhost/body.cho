@@ -751,6 +751,13 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
             if ast.ok(st) {
                 types.set_hint(st, scope.lower_type(st, text, note, st[28], 0 - 1));
             }
+        } else if emit.on(st) && note >= 0 && ast.is_kind(st, value, kinds.NK::EVariant) {
+            // The same inside a block, for a variant (`let o: Option[int] = Option::None;`), unless the type written names a region, which may be
+            // the block's own (that is judged below, and the variant is left without a hint as before).
+            pass1.resolve(st, text, note, st[22], st[23], st[28], true, false);
+            if ast.ok(st) && !scope.names_region(st, text, note) {
+                types.set_hint(st, scope.lower_type(st, text, note, st[28], 0 - 1));
+            }
         }
         var learn = false;
         if emit.on(st) && note < 0 && ast.is_kind(st, value, kinds.NK::EVariant) {

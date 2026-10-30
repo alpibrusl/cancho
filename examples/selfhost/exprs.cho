@@ -123,6 +123,15 @@ pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     return ex.skip(st, from, to);
 }
 
+// Is `arg` an expression that takes its type from the context, a variant of a declaration with parameters or a `box(heap, ..)` of one? Only
+// those are given the type expected (`types.hint`), so that it is not read by anything else.
+pub fn hinted[&s, &x](st: &!s [int], text: &x [byte], arg: int) -> [] bool {
+    if ast.is_kind(st, arg, kinds.NK::EVariant) {
+        return true;
+    }
+    return ast.is_kind(st, arg, kinds.NK::ECall) && pass1.is_word(st, text, ast.get(st, arg, 5), "box");
+}
+
 // `Enum::Variant(a, b)`: a value of a plain enum, each payload of the declared type.
 pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
@@ -181,7 +190,11 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex
     var left = ast.get(st, id, 8);
     var k = 0;
     while left > 0 && ast.ok(st) {
+        if emit.on(st) && hinted(st, text, arg) {
+            types.set_hint(st, scope.node_val(st, want, whole));
+        }
         let v = expr(st, text, arg);
+        types.set_hint(st, 0);
         if ast.ok(st) {
             scope.expect(st, text, scope.node_val(st, want, whole), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
             if emit.on(st) && ast.ok(st) {
@@ -224,7 +237,11 @@ pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: in
     var want = ast.get(st, variant, 5);
     var k = 0;
     while k < count && ast.ok(st) {
+        if hinted(st, text, arg) {
+            types.set_hint(st, scope.node_val(st, want, whole));
+        }
         let v = expr(st, text, arg);
+        types.set_hint(st, 0);
         if ast.ok(st) {
             scope.expect(st, text, scope.node_val(st, want, whole), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
             emit.push_arg(st, v.ty, v.known, v.value, v.reg);
@@ -562,8 +579,14 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
     }
     arg = ast.next(st, arg);
     if which == 4 {
-        // `box(heap, v)`: the value on the heap.
+        // `box(heap, v)`: the value on the heap. A variant given to it is expected to be what the box is expected to hold.
+        let outer = types.hint(st);
+        types.set_hint(st, 0);
+        if outer != 0 && types.is_box(st, types.shallow(st, outer)) && ast.is_kind(st, arg, kinds.NK::EVariant) {
+            types.set_hint(st, types.box_inner(st, types.shallow(st, outer)));
+        }
         let v = expr(st, text, arg);
+        types.set_hint(st, 0);
         if !ast.ok(st) {
             return ex.nothing();
         }
@@ -661,8 +684,19 @@ pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let first = st[52];
     var arg = ast.get(st, id, 4);
     var k = 0;
+    // The type expected of the tuple, if it is one: a variant among its parts is expected to be the part of that type.
+    let outer = types.hint(st);
+    types.set_hint(st, 0);
+    var shape = 0;
+    if emit.on(st) && outer != 0 && types.is_tuple(st, types.shallow(st, outer)) && types.tuple_size(st, types.shallow(st, outer)) == n {
+        shape = types.shallow(st, outer);
+    }
     while k < n && ast.ok(st) {
+        if shape != 0 && hinted(st, text, arg) {
+            types.set_hint(st, types.tuple_part(st, shape, k));
+        }
         let one = expr(st, text, arg);
+        types.set_hint(st, 0);
         if n > 3 && ast.ok(st) {
             ex.push_part(st, one);
         }
@@ -851,7 +885,12 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
             ast.fail(st, rules.r_field_order(), ast.nstart(st, value), ast.nend(st, value));
         } else {
             previous = index;
+            if emit.on(st) && hinted(st, text, value) {
+                // A variant of a generic declaration given for a field (`body: Option::None`) is expected to be the field's type.
+                types.set_hint(st, scope.field_type(st, types.make_named(st, item), index));
+            }
             let v = expr(st, text, value);
+            types.set_hint(st, 0);
             if ast.ok(st) {
                 scope.expect(st, text, scope.field_type(st, types.make_named(st, item), index), v.ty, ast.nstart(st, value), ast.nend(st, value));
                 if emit.on(st) && ast.ok(st) {
