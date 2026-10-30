@@ -63,6 +63,15 @@ if [ "$name3" != cancho ] && [ "$(uname -s)" = Darwin ]; then
 fi
 if ! same "$out/stages/2/cancho" "$out/stages/3/$name3"; then
   echo "build-standalone: stage 2 and stage 3 differ: the command line in cancho does not reproduce itself" >&2
+  # Where they differ goes to the log, so that a difference found on a machine nobody can reach is read from it rather than guessed at.
+  echo "build-standalone: $(cmp -l "$out/stages/2/cancho" "$out/stages/3/$name3" 2>&1 | wc -l | tr -d ' ') differing bytes; first offsets (decimal, then the two values in octal):" >&2
+  cmp -l "$out/stages/2/cancho" "$out/stages/3/$name3" 2>&1 | head -n 24 >&2 || true
+  if command -v otool >/dev/null 2>&1; then
+    otool -l "$out/stages/2/cancho" > "$out/stamped/l2.txt" 2>&1 || true
+    otool -l "$out/stages/3/$name3" > "$out/stamped/l3.txt" 2>&1 || true
+    echo "build-standalone: load commands that differ (otool -l):" >&2
+    diff "$out/stamped/l2.txt" "$out/stamped/l3.txt" 2>&1 | head -n 30 >&2 || true
+  fi
   exit 1
 fi
 cp "$out/stages/2/cancho" "$out/cancho"
