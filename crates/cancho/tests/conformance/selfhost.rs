@@ -419,6 +419,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "atoms.cho",
         "narrowing.cho",
         "allocs.cho",
+        "binops.cho",
         "filecode.cho",
     ]
 }

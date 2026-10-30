@@ -56,6 +56,7 @@ fn own_source(root_module: &str) -> String {
         "filecode",
         "narrowing",
         "allocs",
+        "binops",
         "exprs",
         "body",
         "listing",
