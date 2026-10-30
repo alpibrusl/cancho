@@ -97,7 +97,8 @@ listed repository's gate against it.
 * **The toolchain as an entry of the vcs store**, with a release's conformance result recorded beside it, so that
   `cancho install` resolves the compiler like a library and `vcs dependents` says which repositories a release
   touches. This is the larger change and the one that makes the store the first source of truth for the whole
-  dependency set; it waits for slice 1 to show what the lock needs to hold, and for a second asker.
+  dependency set; §8 designs it. It waits for slice 1 to show what the lock needs to hold; the two askers it
+  needs (§8.4) are `cancho-code` and `cancho-forge`.
 * **A compatibility ledger** (a release says: repository X at commit Y passed its gate with me). Slice 2's job
   produces exactly the data; whether it is recorded and signed is decided after it has run a few releases.
 * Version ranges, a registry, a channel that moves by itself. Refused, for the reason in §2.
@@ -130,3 +131,86 @@ A repository is done when G5 holds for it and its own CI is green on the install
 soon as release 3 exists; the pull requests that move to release 2 today (`cancho-code#101`, `cancho-forge#53`,
 `cancho-fetch#13`, and the sibling branches) are re-pinned once, by hand, to release 3 and then are the first to use
 the command.
+
+## 8. The vcs as the first source of truth, with GitHub as the public mirror and backup
+
+> **Status: design.** §8.1 is measured; the rest is a choice or open, as marked.
+
+### 8.1 What exists, measured
+
+On release 3 (`cancho-2bd251f7f9354fe43d48055b3d9fe4d4af007a5c`, the standalone built by cancho, installed with
+`scripts/install.sh`), on a one-function program, with no Rust on the machine:
+
+```
+cancho vcs publish --store s a.cho --std      # published twice
+cancho vcs log --store s                      # twice  sig 979ddf5d…  body c15779fc…
+cancho vcs lock --store s -o l.json --all     # locked twice
+cancho vcs resolve --lock l.json s            # 1 declaration(s) across 1 file(s) at `s` still resolve exactly as published
+cancho vcs fetch --lock l.json --store s -o out   # fetched out/6f76409a….cho
+```
+
+and `cancho vcs sync --dir . --std --check` reports "no semantic change". So the cycle a source of truth needs, publish,
+lock, re-verify and fetch, runs in the standalone. What it does not yet do is hold a toolchain, a binary, or a release.
+
+### 8.2 The roles (a choice)
+
+* **The store is the source of truth.** Identity is a hash (`SigId`, `StageId`, `OpId`); a record that disagrees with
+  its own payload is refused (`op_log.rs`); every fetch re-parses, re-typechecks and re-hashes (`vcs resolve`). A
+  mirror that altered a record would be caught, and one that withheld a record would be noticed as a missing pin.
+* **GitHub is the public mirror and the backup.** The store is loose, append-only files (`vcs.md` §8), so a git
+  repository holding it is a full copy, `git clone` plus `vcs resolve` is a restore, and a second host is
+  `git push --mirror`. Nothing needs GitHub to *decide* what is true.
+* **GitHub Releases keep the binaries**, and a store entry names them by sha256. The file is hosted there; which
+  file is the release is decided by the entry.
+
+### 8.3 Slice 3: a `releases` store (design, to be gated before built)
+
+One entry per release, written by the release workflow after it has published: commit, edition, per target the asset
+name and its sha256, and the result of slice 2's ecosystem job (which repositories, at which commits, passed). The
+store lives in its own git repository (`alpibrusl/cancho-releases`), so history, review and backup are git's.
+
+Fixed before the code, and each must be able to fail:
+
+* G6: `install.sh --from-store <dir> <commit>` installs only if the entry's sha256 matches the downloaded asset;
+  with the entry altered by one byte it refuses (exit 4) and installs nothing.
+* G7: an entry for a commit whose binary reports another commit is refused at publish, as `package-release.sh`
+  already refuses a `-dirty` build.
+* G8: with the store's repository cloned from a mirror that dropped a record, `vcs resolve` names the missing pin
+  and exits non-zero.
+* G9: restoring from `git clone` of the mirror alone gives, after `vcs resolve`, the same heads as the original.
+
+### 8.4 The two consumers: `cancho-code` and `cancho-forge`
+
+Read, not guessed (`cancho-code` and `cancho-forge` at the release-3 pin):
+
+* **`cancho-code`** keeps a numbered ring of copies of the project file (`src/snapshot.cho`) and restores "the
+  newest copy that type-checked"; it records one line per attempt (`src/trail.cho`); and `docs/design.md` §1 lists the
+  vcs store (cancho#403) as "filed, not built" and `docs/parity.md` says a unit's state is "a plain file next to the
+  plan" until it lands. It has no `cancho.toml`: it is built by scripts, and the compiler is `.cancho-rev`.
+  What the vcs gives it: the ring becomes ops, each gated by the same check the store applies (a candidate that does
+  not type-check is refused with the rule, not copied), and "restore the newest that checked" becomes `vcs resolve`.
+  The trail's attempts become the attestation log, hash-chained and sealable. And `cancho.toml` with a `[[bin]]`
+  gives it slice 1's pin and `cancho install` (a choice; a prerequisite for the rest).
+* **`cancho-forge`** keeps its own journal and refers to evidence by path and sha256 (`docs/architecture.md` §3);
+  it has a `cancho.toml` and no dependencies. What the vcs gives it: the *code* a worker changes, which the journal
+  records only as files, becomes ops with identities, so "which declaration did this task change" is a query, and
+  the evidence a task cites can name an `OpId`. The journal stays what it is: events are Forge's own and the
+  vcs is not asked to replace them.
+* **Not asked of either:** a new store format, a registry, or anything that makes the vcs a runtime dependency of
+  the product. Each repository adds a section to its own `docs/` first, with the gate written before the code.
+
+### 8.5 How they are given this (a choice)
+
+The contract is this document, in the repository that owns the vcs. Each project then gets a short design section in
+its own `docs/` (a pull request to it, draft, that cites §8.4 and states only what it will build and its gate), so the
+decision to adopt is made where the code is. A separate hand-off document is not written: it would drift from the
+vcs it describes.
+
+### 8.6 Open
+
+* Binaries in the store: a content-addressed field referenced by sha256; today it holds source blobs only.
+* A mirror list on an origin, so a lock can name a second host (`origin` has one URL).
+* The fetch cost: `--git` clones the repository; a shallow or sparse fetch is not measured.
+* The signing key: where it lives, how it rotates, and which entries are signed (attestations exist, Ed25519).
+* Whether `cancho-code`'s ring should keep its files while the ops are introduced beside it (safer, more code) or be
+  replaced (smaller, one step); to be decided in its own section.
