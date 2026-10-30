@@ -436,9 +436,14 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         }
         instance = instance + 1;
     }
-    if scope.shape_bad(st) || !has_main && entry == 0 {
+    if scope.shape_bad(st) {
         // The entry point is the one `main` of the whole program, taking the `World` and giving back the exit status.
         ast.fail(st, rules.r_program_shape(), 0, 0);
+        return 1;
+    }
+    if !has_main && entry == 0 {
+        // The same refusal, marked (`to` of 1, where a place would be) so that it is worded as the Rust command words it: "no `main` function".
+        ast.fail(st, rules.r_program_shape(), 0, 1);
         return 1;
     }
     emit.aim(st, 0);
