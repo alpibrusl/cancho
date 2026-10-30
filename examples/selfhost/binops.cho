@@ -1,0 +1,82 @@
+module selfhost.binops;
+
+// binops.cho -- the end of a binary expression once both sides are evaluated: the operator says what it accepts, the two agree, constant folding, and the code.
+// Split from `exprs.cho` for its length.
+
+import selfhost.ast;
+import selfhost.rules;
+import selfhost.types;
+import selfhost.scope;
+import selfhost.emit;
+import selfhost.fold;
+import selfhost.atoms;
+import selfhost.ex;
+
+// `l op r` with both sides evaluated (`op` as the parser numbers it; `short_reg` is the register of a finished `&&` or `||`, or -1). The sides are the
+// expressions `lhs_id` and `rhs_id`, which places the refusals.
+pub fn finish_binary[&s, &x](st: &!s [int], text: &x [byte], op: int, l: ex.Ex, r: ex.Ex, short_reg: int, lhs_id: int, rhs_id: int, from: int, to: int) -> [] ex.Ex {
+    let lf = ast.nstart(st, lhs_id);
+    let lt = ast.nend(st, lhs_id);
+    // Both sides agree first, then the operator says what it accepts. (Two function values are of one type, and no operator
+    // accepts it.)
+    if (op == 2 || op == 3) && (types.is_fnval(st, l.ty) || types.is_fnptr(st, l.ty)) && (types.is_fnval(st, r.ty) || types.is_fnptr(st, r.ty)) {
+        ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
+        return ex.nothing();
+    }
+    scope.expect(st, text, l.ty, r.ty, ast.nstart(st, rhs_id), ast.nend(st, rhs_id));
+    if !ast.ok(st) {
+        return ex.nothing();
+    }
+    let operand = l.ty;
+    let arithmetic = operand == 1 || operand == 3 || operand == 4;
+    if op >= 13 && op <= 16 {
+        if !arithmetic {
+            ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
+            return ex.nothing();
+        }
+    }
+    if op == 17 || op >= 8 && op <= 12 {
+        scope.expect(st, text, 1, operand, lf, lt);
+    }
+    if op == 0 || op == 1 {
+        scope.expect(st, text, 5, operand, lf, lt);
+    }
+    if op >= 4 && op <= 7 {
+        if !arithmetic {
+            ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
+            return ex.nothing();
+        }
+    }
+    // `==` and `!=` compare two scalars, and nothing else.
+    if op == 2 || op == 3 {
+        if (operand < 1 || operand > 5) && operand != 7 {
+            ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
+            return ex.nothing();
+        }
+    }
+    if !ast.ok(st) {
+        return ex.nothing();
+    }
+    // A comparison and a short-circuit answer a `bool`; the rest answer their operand.
+    var result = operand;
+    if op <= 7 {
+        result = 5;
+    }
+    if l.known && r.known && operand == 1 {
+        let f = fold.fold_int(op, l.value, r.value);
+        if f.trapped {
+            ast.fail(st, rules.r_constant_traps(), from, to);
+            return ex.nothing();
+        }
+        if result == 1 {
+            return ex.constant(f.value);
+        }
+    }
+    if short_reg >= 0 {
+        return ex.in_reg(5, short_reg);
+    }
+    if emit.on(st) {
+        return ex.in_reg(result, atoms.binary_code(st, op, operand, l, r));
+    }
+    return ex.plain(result);
+}

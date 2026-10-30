@@ -3,6 +3,7 @@ ast.cho
 atoms.cho
 authority.cho
 authwasi.cho
+binops.cho
 blake3.cho
 body.cho
 builtins.cho

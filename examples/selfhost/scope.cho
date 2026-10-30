@@ -799,12 +799,12 @@ pub fn item_codable[&s](st: &!s [int], ty: int, depth: int) -> [] bool {
 
 // A value of this type has code written for it: a struct (see `item_codable`).
 pub fn struct_codable[&s](st: &!s [int], ty: int) -> [] bool {
-    return types.is_named(st, ty) && ast.is_kind(st, types.named_item(st, ty), kinds.NK::IStruct) && item_codable(st, ty, 6);
+    return types.is_named(st, ty) && ast.is_kind(st, types.named_item(st, ty), kinds.NK::IStruct) && item_codable(st, ty, 16);
 }
 
 // The same for an enum.
 pub fn enum_codable[&s](st: &!s [int], ty: int) -> [] bool {
-    return types.is_named(st, ty) && ast.is_kind(st, types.named_item(st, ty), kinds.NK::IEnum) && item_codable(st, ty, 6);
+    return types.is_named(st, ty) && ast.is_kind(st, types.named_item(st, ty), kinds.NK::IEnum) && item_codable(st, ty, 16);
 }
 
 // Is this a struct or an enum declared `res`?

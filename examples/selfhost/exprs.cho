@@ -34,6 +34,7 @@ import selfhost.atoms;
 import selfhost.filecode;
 import selfhost.narrowing;
 import selfhost.allocs;
+import selfhost.binops;
 
 // ---------------------------------------------------------- expressions ---
 
@@ -123,6 +124,15 @@ pub fn expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     return ex.skip(st, from, to);
 }
 
+// Is `arg` an expression that takes its type from the context, a variant of a declaration with parameters or a `box(heap, ..)` of one? Only
+// those are given the type expected (`types.hint`), so that it is not read by anything else.
+pub fn hinted[&s, &x](st: &!s [int], text: &x [byte], arg: int) -> [] bool {
+    if ast.is_kind(st, arg, kinds.NK::EVariant) {
+        return true;
+    }
+    return ast.is_kind(st, arg, kinds.NK::ECall) && pass1.is_word(st, text, ast.get(st, arg, 5), "box");
+}
+
 // `Enum::Variant(a, b)`: a value of a plain enum, each payload of the declared type.
 pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
@@ -181,7 +191,11 @@ pub fn variant_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex
     var left = ast.get(st, id, 8);
     var k = 0;
     while left > 0 && ast.ok(st) {
+        if emit.on(st) && hinted(st, text, arg) {
+            types.set_hint(st, scope.node_val(st, want, whole));
+        }
         let v = expr(st, text, arg);
+        types.set_hint(st, 0);
         if ast.ok(st) {
             scope.expect(st, text, scope.node_val(st, want, whole), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
             if emit.on(st) && ast.ok(st) {
@@ -224,7 +238,11 @@ pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: in
     var want = ast.get(st, variant, 5);
     var k = 0;
     while k < count && ast.ok(st) {
+        if hinted(st, text, arg) {
+            types.set_hint(st, scope.node_val(st, want, whole));
+        }
         let v = expr(st, text, arg);
+        types.set_hint(st, 0);
         if ast.ok(st) {
             scope.expect(st, text, scope.node_val(st, want, whole), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
             emit.push_arg(st, v.ty, v.known, v.value, v.reg);
@@ -562,8 +580,14 @@ pub fn heap_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: int) ->
     }
     arg = ast.next(st, arg);
     if which == 4 {
-        // `box(heap, v)`: the value on the heap.
+        // `box(heap, v)`: the value on the heap. A variant given to it is expected to be what the box is expected to hold.
+        let outer = types.hint(st);
+        types.set_hint(st, 0);
+        if outer != 0 && types.is_box(st, types.shallow(st, outer)) && ast.is_kind(st, arg, kinds.NK::EVariant) {
+            types.set_hint(st, types.box_inner(st, types.shallow(st, outer)));
+        }
         let v = expr(st, text, arg);
+        types.set_hint(st, 0);
         if !ast.ok(st) {
             return ex.nothing();
         }
@@ -661,8 +685,19 @@ pub fn tuple_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let first = st[52];
     var arg = ast.get(st, id, 4);
     var k = 0;
+    // The type expected of the tuple, if it is one: a variant among its parts is expected to be the part of that type.
+    let outer = types.hint(st);
+    types.set_hint(st, 0);
+    var shape = 0;
+    if emit.on(st) && outer != 0 && types.is_tuple(st, types.shallow(st, outer)) && types.tuple_size(st, types.shallow(st, outer)) == n {
+        shape = types.shallow(st, outer);
+    }
     while k < n && ast.ok(st) {
+        if shape != 0 && hinted(st, text, arg) {
+            types.set_hint(st, types.tuple_part(st, shape, k));
+        }
         let one = expr(st, text, arg);
+        types.set_hint(st, 0);
         if n > 3 && ast.ok(st) {
             ex.push_part(st, one);
         }
@@ -851,7 +886,12 @@ pub fn struct_lit[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
             ast.fail(st, rules.r_field_order(), ast.nstart(st, value), ast.nend(st, value));
         } else {
             previous = index;
+            if emit.on(st) && hinted(st, text, value) {
+                // A variant of a generic declaration given for a field (`body: Option::None`) is expected to be the field's type.
+                types.set_hint(st, scope.field_type(st, types.make_named(st, item), index));
+            }
             let v = expr(st, text, value);
+            types.set_hint(st, 0);
             if ast.ok(st) {
                 scope.expect(st, text, scope.field_type(st, types.make_named(st, item), index), v.ty, ast.nstart(st, value), ast.nend(st, value));
                 if emit.on(st) && ast.ok(st) {
@@ -1087,8 +1127,6 @@ pub fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex 
     let op = ast.get(st, id, 4);
     let lhs_id = ast.get(st, id, 5);
     let rhs_id = ast.get(st, id, 6);
-    let lf = ast.nstart(st, lhs_id);
-    let lt = ast.nend(st, lhs_id);
     let l = expr(st, text, lhs_id);
     if !ast.ok(st) {
         return ex.nothing();
@@ -1108,68 +1146,7 @@ pub fn binary_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex 
     if short >= 0 {
         short_reg = emit.short_end(st, short, r.known, r.value, r.reg);
     }
-    // Both sides agree first, then the operator says what it accepts. (Two function values are of one type, and no operator
-    // accepts it.)
-    if (op == 2 || op == 3) && (types.is_fnval(st, l.ty) || types.is_fnptr(st, l.ty)) && (types.is_fnval(st, r.ty) || types.is_fnptr(st, r.ty)) {
-        ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
-        return ex.nothing();
-    }
-    scope.expect(st, text, l.ty, r.ty, ast.nstart(st, rhs_id), ast.nend(st, rhs_id));
-    if !ast.ok(st) {
-        return ex.nothing();
-    }
-    let operand = l.ty;
-    let arithmetic = operand == 1 || operand == 3 || operand == 4;
-    if op >= 13 && op <= 16 {
-        if !arithmetic {
-            ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
-            return ex.nothing();
-        }
-    }
-    if op == 17 || op >= 8 && op <= 12 {
-        scope.expect(st, text, 1, operand, lf, lt);
-    }
-    if op == 0 || op == 1 {
-        scope.expect(st, text, 5, operand, lf, lt);
-    }
-    if op >= 4 && op <= 7 {
-        if !arithmetic {
-            ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
-            return ex.nothing();
-        }
-    }
-    // `==` and `!=` compare two scalars, and nothing else.
-    if op == 2 || op == 3 {
-        if (operand < 1 || operand > 5) && operand != 7 {
-            ast.fail(st, rules.r_operator_type_mismatch(), lf, lt);
-            return ex.nothing();
-        }
-    }
-    if !ast.ok(st) {
-        return ex.nothing();
-    }
-    // A comparison and a short-circuit answer a `bool`; the rest answer their operand.
-    var result = operand;
-    if op <= 7 {
-        result = 5;
-    }
-    if l.known && r.known && operand == 1 {
-        let f = fold.fold_int(op, l.value, r.value);
-        if f.trapped {
-            ast.fail(st, rules.r_constant_traps(), from, to);
-            return ex.nothing();
-        }
-        if result == 1 {
-            return ex.constant(f.value);
-        }
-    }
-    if short_reg >= 0 {
-        return ex.in_reg(5, short_reg);
-    }
-    if emit.on(st) {
-        return ex.in_reg(result, atoms.binary_code(st, op, operand, l, r));
-    }
-    return ex.plain(result);
+    return binops.finish_binary(st, text, op, l, r, short_reg, lhs_id, rhs_id, from, to);
 }
 
 // `s[i]`: one element of a slice. The base is checked first, then the index.
