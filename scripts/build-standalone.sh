@@ -13,7 +13,9 @@
 # executable). Stage 2 must equal stage 3 byte for byte, or this fails: a compiler that does not reproduce itself is not shipped. Stage 2 is what is
 # installed. Stage 1 differs from stage 2 (it was linked by stage 0's driver) and is not compared.
 #
-# STANDALONE_STAGE3_NAME makes stage 3 be built under another name: it changes one byte, and the comparison must refuse (the gate's own test).
+# STANDALONE_STAGE3_NAME makes stage 3 be built under another name, which must change nothing: the module the compiler writes names itself `cancho`, not the file it was
+# written to (it did the second, and the executables differed in one byte of their symbol table). STANDALONE_STAGE3_CORRUPT=1 appends a byte to stage 3, and the
+# comparison must refuse (the gate's own test).
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
 out=; rev=; host=; cancho0=cancho
@@ -48,8 +50,46 @@ echo "stage 2: built by stage 1" >&2
 echo "stage 3: built by stage 2" >&2
 name3=${STANDALONE_STAGE3_NAME:-cancho}
 "$out/stages/2/cancho" build $files --std --clang "$clang" -o "$out/stages/3/$name3"
-if ! cmp -s "$out/stages/2/cancho" "$out/stages/3/$name3"; then
+[ -z "${STANDALONE_STAGE3_CORRUPT:-}" ] || printf 'x' >> "$out/stages/3/$name3"
+# On macOS the linker gives an executable a UUID, a size and an ad-hoc signature that depend on the name of the file it writes (the first run of the name
+# check there found 26,000 differing bytes, and none in the strings or the symbols). A stage 3 under another name is therefore compared by what the file
+# says (its code, its symbols and its strings); the build under the name `cancho`, which is what is shipped, is compared whole.
+same() { cmp -s "$1" "$2"; }
+if [ "$name3" != cancho ] && [ "$(uname -s)" = Darwin ]; then
+  same() {
+    otool -tv "$1" 2>&1 | sed '1d' > "$out/stamped/cmp.a"   # the first line names the file
+    otool -tv "$2" 2>&1 | sed '1d' > "$out/stamped/cmp.b"
+    cmp -s "$out/stamped/cmp.a" "$out/stamped/cmp.b" || return 1
+    for what in "nm -a" "strings -a"; do
+      $what "$1" > "$out/stamped/cmp.a" 2>&1
+      $what "$2" > "$out/stamped/cmp.b" 2>&1
+      cmp -s "$out/stamped/cmp.a" "$out/stamped/cmp.b" || return 1
+    done
+  }
+fi
+if ! same "$out/stages/2/cancho" "$out/stages/3/$name3"; then
   echo "build-standalone: stage 2 and stage 3 differ: the command line in cancho does not reproduce itself" >&2
+  # Where they differ goes to the log, so that a difference found on a machine nobody can reach is read from it rather than guessed at.
+  echo "build-standalone: $(cmp -l "$out/stages/2/cancho" "$out/stages/3/$name3" 2>&1 | wc -l | tr -d ' ') differing bytes; first offsets (decimal, then the two values in octal):" >&2
+  cmp -l "$out/stages/2/cancho" "$out/stages/3/$name3" 2>&1 | head -n 24 >&2 || true
+  if command -v otool >/dev/null 2>&1; then
+    otool -l "$out/stages/2/cancho" > "$out/stamped/l2.txt" 2>&1 || true
+    otool -l "$out/stages/3/$name3" > "$out/stamped/l3.txt" 2>&1 || true
+    echo "build-standalone: load commands that differ (otool -l):" >&2
+    diff "$out/stamped/l2.txt" "$out/stamped/l3.txt" 2>&1 | head -n 30 >&2 || true
+  fi
+  if command -v strings >/dev/null 2>&1; then
+    strings -a "$out/stages/2/cancho" > "$out/stamped/s2.txt" 2>&1 || true
+    strings -a "$out/stages/3/$name3" > "$out/stamped/s3.txt" 2>&1 || true
+    echo "build-standalone: strings that differ (strings -a):" >&2
+    diff "$out/stamped/s2.txt" "$out/stamped/s3.txt" 2>&1 | head -n 30 >&2 || true
+  fi
+  if command -v nm >/dev/null 2>&1; then
+    nm -a "$out/stages/2/cancho" > "$out/stamped/n2.txt" 2>&1 || true
+    nm -a "$out/stages/3/$name3" > "$out/stamped/n3.txt" 2>&1 || true
+    echo "build-standalone: symbols that differ (nm -a):" >&2
+    diff "$out/stamped/n2.txt" "$out/stamped/n3.txt" 2>&1 | head -n 30 >&2 || true
+  fi
   exit 1
 fi
 cp "$out/stages/2/cancho" "$out/cancho"
