@@ -72,6 +72,18 @@ if ! same "$out/stages/2/cancho" "$out/stages/3/$name3"; then
     echo "build-standalone: load commands that differ (otool -l):" >&2
     diff "$out/stamped/l2.txt" "$out/stamped/l3.txt" 2>&1 | head -n 30 >&2 || true
   fi
+  if command -v strings >/dev/null 2>&1; then
+    strings -a "$out/stages/2/cancho" > "$out/stamped/s2.txt" 2>&1 || true
+    strings -a "$out/stages/3/$name3" > "$out/stamped/s3.txt" 2>&1 || true
+    echo "build-standalone: strings that differ (strings -a):" >&2
+    diff "$out/stamped/s2.txt" "$out/stamped/s3.txt" 2>&1 | head -n 30 >&2 || true
+  fi
+  if command -v nm >/dev/null 2>&1; then
+    nm -a "$out/stages/2/cancho" > "$out/stamped/n2.txt" 2>&1 || true
+    nm -a "$out/stages/3/$name3" > "$out/stamped/n3.txt" 2>&1 || true
+    echo "build-standalone: symbols that differ (nm -a):" >&2
+    diff "$out/stamped/n2.txt" "$out/stamped/n3.txt" 2>&1 | head -n 30 >&2 || true
+  fi
   exit 1
 fi
 cp "$out/stages/2/cancho" "$out/cancho"
