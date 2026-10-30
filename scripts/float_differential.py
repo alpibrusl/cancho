@@ -194,6 +194,28 @@ def check_printing(exe, patterns):
     return len(patterns), bad
 
 
+def grisu_edges(r):
+    """The doubles a fast path is most likely to get wrong (docs/float-printing.md section 9): the neighbours of every power of two and of ten, the extreme mantissas of every binade, and decimals of 15 to 17 digits at every exponent."""
+    out = []
+    for e in range(-1074, 1024):
+        b = bits(2.0 ** e)
+        out += [b + d for d in (-2, -1, 1, 2)]
+    for k in range(-323, 309):
+        b = bits(float("1e%d" % k))
+        out += [b + d for d in range(-3, 4)]
+    for ex in range(0, 2047):
+        for raw in (0, 1, 2, 3, 0x7ffffffffffff, 0x8000000000000, 0xffffffffffffe, 0xfffffffffffff):
+            out.append(ex << 52 | raw)
+    for _ in range(20000):
+        width = r.choice([15, 16, 17])
+        digits = r.randint(10 ** (width - 1), 10 ** width - 1)
+        try:
+            out.append(bits(float("%de%d" % (digits, r.randint(-340, 290)))))
+        except (OverflowError, ValueError):
+            pass
+    return [b for b in out if 0 <= b < 0x7ff0000000000000]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cancho", default=os.path.join(ROOT, "target/release/cancho"))
@@ -220,6 +242,7 @@ def main():
     others = [r.getrandbits(64) for _ in range(a.count - len(ties))]
     others += [0x8000000000000000, 1, 0x000FFFFFFFFFFFFF, 0x0010000000000000, 0x7FEFFFFFFFFFFFFF, 0x7FF0000000000000, 0xFFF0000000000000]
     others += [bits(2.0 ** e) for e in range(-1074, 1024)] + [bits(2.0 ** -25), bits(5e-324), bits(1e23), bits(9.999999999999999e22)]
+    others += grisu_edges(r)
     allp = ties + others
     r.shuffle(allp)
     for part in range(0, len(allp), 100_000):
