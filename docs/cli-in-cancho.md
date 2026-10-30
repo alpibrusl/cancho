@@ -637,3 +637,11 @@ as D5 says, and installs stage 2 as `DIR/cancho` only if stage 3 is the same byt
 cache, with `--std` taken from the binary (§37): the command line in cancho builds itself with nothing around it but `clang`. Stage 1 and stage 2 differ; stage 2 and stage 3 are equal when built under the
 same name and differ in one byte (the object file's name) when not. `selfhost::bootstrap::the_standalone_build_reproduces_itself` runs the script, checks that the result reports the stamp, builds
 and runs a program that imports the library with a clean environment, and runs the script again with stage 3 under another name: it must refuse (status 1) and leave no `cancho`. The test takes about 4 minutes.
+
+## 40. A path with `..` (`docs/standalone-cancho.md`, slice 6)
+
+An `Fs` traps on a path with two dots in a row (`docs/filesystem.md` §4.1), so the command line in cancho refused `dir/sub/../p.cho` where the Rust command opens it. Found by `cancho-web`, whose
+end-to-end test builds `tests/../examples/users/users.cho`; the first sibling CI run on the standalone release failed there with "cannot read the file". `walk.collapse` takes every `a/..` pair out of a
+path before `clibase.read_file` opens it (lexically: a link in `a` is not looked through, which a shell does not do either), and a path with nothing in front of its `..` is refused as before, since there is
+no current directory to look it up in. **Not done:** the same for directories (`fmt dir/../x`, `is_directory`, `below`), for paths that are written (`-o`, `store`), and for a leading `..`, which the Rust command
+accepts. `selfhost::cli::the_command_line_in_cancho_reads_a_path_with_dot_dot_like_cancho` compares `check`, `fmt --check` and `build` on four spellings against the Rust command and pins the refusal of `../p.cho`.

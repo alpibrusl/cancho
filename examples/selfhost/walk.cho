@@ -45,6 +45,60 @@ pub fn dotdot[&p](path: &p [byte]) -> [] bool {
     return false;
 }
 
+// Is the segment `text[from..to]` exactly `..`?
+fn is_up[&t](text: &t [byte], from: int, to: int) -> [] bool {
+    return to - from == 2 && lc.at(text, from) == '.' && lc.at(text, from + 1) == '.';
+}
+
+// A copy of `path` with every `a/..` pair taken out (`x/y/../z` is `x/z`), the way a shell resolves a path before it opens a file. An `Fs` traps on `..` (see `dotdot`),
+// so the command line collapses before it asks. It is lexical: a link in `y` is not looked through. A `..` with nothing in front of it stays (there is no current
+// directory to look it up in), and the caller's `dotdot` check then refuses the path as before. `a/..` alone is `.`.
+pub fn collapse[&h, &p](heap: &!h Heap, path: &p [byte]) -> [heap] buffer.Buffer {
+    var cur = buffer.append(heap, buffer.empty(heap, len(path) + 1), path);
+    var again = true;
+    while again {
+        again = false;
+        var next = buffer.empty(heap, len(path) + 1);
+        borrow cur as &cb in {
+            let text = buffer.bytes(cb);
+            var before_from = 0 - 1;
+            var before_to = 0 - 1;
+            var from = 0;
+            var at = 0;
+            while at <= len(text) && !again {
+                if at == len(text) || lc.at(text, at) == '/' {
+                    if is_up(text, from, at) && before_from >= 0 && !is_up(text, before_from, before_to) {
+                        var rest = at;
+                        if at < len(text) {
+                            rest = at + 1;
+                        }
+                        next = buffer.append(heap, next, text[0..before_from]);
+                        next = buffer.append(heap, next, text[rest..len(text)]);
+                        if before_from == 0 && rest >= len(text) {
+                            next = buffer.push(heap, next, byte_of('.'));
+                        }
+                        again = true;
+                    } else {
+                        if at > from {
+                            before_from = from;
+                            before_to = at;
+                        }
+                        from = at + 1;
+                    }
+                }
+                at = at + 1;
+            }
+        }
+        if again {
+            buffer.drop(heap, cur);
+            cur = next;
+        } else {
+            buffer.drop(heap, next);
+        }
+    }
+    return cur;
+}
+
 // Is `path` a directory (or a link to one)?
 pub fn is_directory[&f, &p](fs: &f Fs(""), path: &p [byte]) -> [fs_read("")] bool {
     if dotdot(path) {

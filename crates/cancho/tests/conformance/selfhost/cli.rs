@@ -1636,3 +1636,59 @@ fn the_command_line_in_cancho_says_what_this_build_does_not_carry() {
     assert_eq!(refused.0, Some(2), "{refused:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A path with `..` in it (`dir/sub/../p.cho`) is read by the command line in cancho as the Rust command reads it: an `Fs` traps on `..`, so the
+/// command line collapses `a/..` pairs first (`walk.collapse`). Found by `cancho-web`, whose tests name `tests/../examples/users/users.cho`. A `..` with
+/// nothing in front of it cannot be collapsed (there is no current directory to look it up in) and is still refused, as it was.
+#[test]
+fn the_command_line_in_cancho_reads_a_path_with_dot_dot_like_cancho() {
+    let cho = build("cli-dotdot", &with_front_end("cli.cho"));
+    let dir = scratch("selfhost-dotdot");
+    std::fs::create_dir_all(dir.join("sub/deeper")).expect("directories");
+    let program = dir.join("p.cho");
+    std::fs::write(
+        &program,
+        "edition 7;\n\nfn main(world: World) -> [] int {\n    release(world);\n    return 3;\n}\n",
+    )
+    .expect("a program");
+    let said = |binary: &Path, arguments: &[&str]| {
+        let done = Command::new(binary).args(arguments).output().expect("the command runs");
+        (
+            done.status.code(),
+            String::from_utf8_lossy(&done.stdout).into_owned(),
+            String::from_utf8_lossy(&done.stderr).into_owned(),
+        )
+    };
+    let d = dir.to_str().unwrap();
+    let out = dir.join("out");
+    let out = out.to_str().unwrap();
+    for spelled in [
+        format!("{d}/sub/../p.cho"),
+        format!("{d}/sub/deeper/../../p.cho"),
+        format!("{d}/sub/../sub/../p.cho"),
+        format!("{d}/sub/deeper/../../sub/../p.cho"),
+    ] {
+        for arguments in [
+            vec!["check", spelled.as_str()],
+            vec!["fmt", "--check", spelled.as_str()],
+            vec!["build", spelled.as_str(), "-o", out],
+        ] {
+            let theirs = said(Path::new(BIN), &arguments);
+            let mine = said(&cho, &arguments);
+            assert_eq!(theirs, mine, "{arguments:?}");
+            assert_eq!(mine.0, Some(0), "{arguments:?}: {mine:?}");
+        }
+        let ran = Command::new(out).status().expect("the program runs");
+        assert_eq!(ran.code(), Some(3), "{spelled}");
+    }
+    // Nothing in front of the `..`: refused, as before, with the usual sentence.
+    let leading = said(
+        &cho,
+        &["check", &format!("{d}/../{}/p.cho", dir.file_name().unwrap().to_str().unwrap())],
+    );
+    assert_eq!(leading.0, Some(0), "{leading:?}");
+    let none = said(&cho, &["check", "../p.cho"]);
+    assert_eq!(none.0, Some(2), "{none:?}");
+    assert!(none.2.contains("cannot read the file"), "{none:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

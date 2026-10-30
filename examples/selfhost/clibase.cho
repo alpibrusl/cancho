@@ -56,7 +56,27 @@ pub res struct Contents {
     failed: int,
 }
 
+// A path with `..` in it is collapsed first (`walk.collapse`): the Rust command opens `a/b/../c.cho`, and an `Fs` here would trap on it.
 pub fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] Contents {
+    if walk.dotdot(path) {
+        let collapsed = walk.collapse(heap, path);
+        var out = buffer.empty(heap, 0);
+        var code = 22;
+        borrow collapsed as &cb in {
+            let Contents { bytes, failed } = read_exact(heap, fs, buffer.bytes(cb));
+            borrow bytes as &gb in {
+                out = buffer.append(heap, out, buffer.bytes(gb));
+            }
+            buffer.drop(heap, bytes);
+            code = failed;
+        }
+        buffer.drop(heap, collapsed);
+        return Contents { bytes: out, failed: code };
+    }
+    return read_exact(heap, fs, path);
+}
+
+fn read_exact[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] Contents {
     var out = buffer.empty(heap, 4096);
     var trouble = 0;
     if walk.dotdot(path) {
