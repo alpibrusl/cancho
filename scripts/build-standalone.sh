@@ -51,14 +51,20 @@ echo "stage 3: built by stage 2" >&2
 name3=${STANDALONE_STAGE3_NAME:-cancho}
 "$out/stages/2/cancho" build $files --std --clang "$clang" -o "$out/stages/3/$name3"
 [ -z "${STANDALONE_STAGE3_CORRUPT:-}" ] || printf 'x' >> "$out/stages/3/$name3"
-# On macOS the linker signs the executable ad hoc, and the signature names the file it was written to; a stage 3 under another name is compared without it (the
-# signature is the only part allowed to differ, and the build under the name `cancho` is compared whole). The first run of the name check on macOS found this.
+# On macOS the linker gives an executable a UUID, a size and an ad-hoc signature that depend on the name of the file it writes (the first run of the name
+# check there found 26,000 differing bytes, and none in the strings or the symbols). A stage 3 under another name is therefore compared by what the file
+# says (its code, its symbols and its strings); the build under the name `cancho`, which is what is shipped, is compared whole.
 same() { cmp -s "$1" "$2"; }
 if [ "$name3" != cancho ] && [ "$(uname -s)" = Darwin ]; then
   same() {
-    cp "$1" "$out/stamped/cmp.a"; cp "$2" "$out/stamped/cmp.b"
-    codesign --remove-signature "$out/stamped/cmp.a" "$out/stamped/cmp.b" 2>/dev/null || true
-    cmp -s "$out/stamped/cmp.a" "$out/stamped/cmp.b"
+    otool -tv "$1" 2>&1 | sed '1d' > "$out/stamped/cmp.a"   # the first line names the file
+    otool -tv "$2" 2>&1 | sed '1d' > "$out/stamped/cmp.b"
+    cmp -s "$out/stamped/cmp.a" "$out/stamped/cmp.b" || return 1
+    for what in "nm -a" "strings -a"; do
+      $what "$1" > "$out/stamped/cmp.a" 2>&1
+      $what "$2" > "$out/stamped/cmp.b" 2>&1
+      cmp -s "$out/stamped/cmp.a" "$out/stamped/cmp.b" || return 1
+    done
   }
 fi
 if ! same "$out/stages/2/cancho" "$out/stages/3/$name3"; then

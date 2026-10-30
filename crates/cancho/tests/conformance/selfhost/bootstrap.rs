@@ -314,7 +314,8 @@ fn the_standalone_build_reproduces_itself() {
     let stage3 = std::fs::read(good.join("stages/3/another-name")).expect("stage 3 is read");
     let stages =
         |n: u32| std::fs::read(good.join(format!("stages/{n}/cancho"))).expect("a stage is read");
-    // The script has compared them (without the signature macOS gives a file, which names the file); byte for byte only where there is none.
+    // The script has compared them: byte for byte, except on macOS, where the linker's UUID, sizes and signature depend on the file's name and the
+    // code, symbols and strings are compared instead.
     if !cfg!(target_os = "macos") {
         assert_eq!(
             stages(2),
