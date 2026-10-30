@@ -314,7 +314,14 @@ fn the_standalone_build_reproduces_itself() {
     let stage3 = std::fs::read(good.join("stages/3/another-name")).expect("stage 3 is read");
     let stages =
         |n: u32| std::fs::read(good.join(format!("stages/{n}/cancho"))).expect("a stage is read");
-    assert_eq!(stages(2), stage3, "stages 2 and 3 differ (stage 3 was written under another name)");
+    // The script has compared them (without the signature macOS gives a file, which names the file); byte for byte only where there is none.
+    if !cfg!(target_os = "macos") {
+        assert_eq!(
+            stages(2),
+            stage3,
+            "stages 2 and 3 differ (stage 3 was written under another name)"
+        );
+    }
     assert_eq!(std::fs::read(&cancho).expect("the result"), stages(2), "the result is not stage 2");
     // The gate can fail.
     let bad = dir.join("bad");

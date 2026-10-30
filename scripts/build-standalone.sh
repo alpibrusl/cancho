@@ -51,7 +51,17 @@ echo "stage 3: built by stage 2" >&2
 name3=${STANDALONE_STAGE3_NAME:-cancho}
 "$out/stages/2/cancho" build $files --std --clang "$clang" -o "$out/stages/3/$name3"
 [ -z "${STANDALONE_STAGE3_CORRUPT:-}" ] || printf 'x' >> "$out/stages/3/$name3"
-if ! cmp -s "$out/stages/2/cancho" "$out/stages/3/$name3"; then
+# On macOS the linker signs the executable ad hoc, and the signature names the file it was written to; a stage 3 under another name is compared without it (the
+# signature is the only part allowed to differ, and the build under the name `cancho` is compared whole). The first run of the name check on macOS found this.
+same() { cmp -s "$1" "$2"; }
+if [ "$name3" != cancho ] && [ "$(uname -s)" = Darwin ]; then
+  same() {
+    cp "$1" "$out/stamped/cmp.a"; cp "$2" "$out/stamped/cmp.b"
+    codesign --remove-signature "$out/stamped/cmp.a" "$out/stamped/cmp.b" 2>/dev/null || true
+    cmp -s "$out/stamped/cmp.a" "$out/stamped/cmp.b"
+  }
+fi
+if ! same "$out/stages/2/cancho" "$out/stages/3/$name3"; then
   echo "build-standalone: stage 2 and stage 3 differ: the command line in cancho does not reproduce itself" >&2
   exit 1
 fi
