@@ -50,6 +50,7 @@ mod compile_time;
 mod conn_peer;
 mod corpus;
 mod crypto_builtins;
+mod devices;
 mod differential;
 mod directory_handles;
 mod directory_listing;

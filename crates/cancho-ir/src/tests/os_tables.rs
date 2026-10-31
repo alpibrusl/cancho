@@ -169,13 +169,13 @@ fn only_wasi_refuses_anything_and_what_it_refuses_is_a_gap() {
     }
     assert_eq!(
         Builtin::ALL.iter().filter(|b| wasi_gap(**b).is_some()).count(),
-        79,
+        91,
         "the refused set moved: update docs/wasm.md with it"
     );
     // The total and the supported count too: a builtin added on WASI's
     // side of the line moves these and not the refused count, which is how
     // docs/wasm.md's numbers went stale before (#382 added four).
-    assert_eq!(Builtin::ALL.len(), 172, "the builtin count moved: update docs/wasm.md with it");
+    assert_eq!(Builtin::ALL.len(), 184, "the builtin count moved: update docs/wasm.md with it");
     assert_eq!(
         Builtin::ALL.iter().filter(|b| wasi_gap(**b).is_none()).count(),
         93,

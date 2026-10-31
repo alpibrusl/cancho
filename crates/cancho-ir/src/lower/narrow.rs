@@ -9,6 +9,15 @@ pub(super) fn is_net(which: usize) -> bool {
     which == PRELUDE_NET || which == PRELUDE_OUT || which == PRELUDE_PORTS
 }
 
+/// The device capabilities (`docs/tty.md` §4, `docs/camera.md` §4, `docs/audio.md` §4) are bounded by a device-path
+/// prefix, narrowed as `Fs`'s is.
+pub(super) fn is_device(which: usize) -> bool {
+    which == PRELUDE_TTY
+        || which == PRELUDE_CAMERA
+        || which == PRELUDE_MIC
+        || which == PRELUDE_SPEAKER
+}
+
 /// A `Net` bound as the run time reads it: the host half, matched as a prefix, and the port half, matched
 /// exactly (`crates/cancho-codegen/src/body/net.rs`, `connect_raw`, and `docs/connect.md` section 10.1). A bound
 /// with a `:` splits at the last one; bare digits are a port with no host (a listener's, `docs/listen.md`);
@@ -75,7 +84,7 @@ pub(super) fn check_narrowing(
     // plain textual prefix on `"host:port"`, the same way an `egress`
     // entry does, with no boundary character of its own.
     // `docs/processes.md` §4.1: `Exec`'s prefix is a path, with `Fs`'s rule.
-    if (which == PRELUDE_FS || which == PRELUDE_EXEC || which == PRELUDE_TTY)
+    if (which == PRELUDE_FS || which == PRELUDE_EXEC || is_device(which))
         && !extends_path(current, target)
     {
         return Err(Diagnostic::new(

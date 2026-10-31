@@ -93,9 +93,9 @@ listen.
 
 ## 5. Refusals
 
-As in `docs/tty.md` §5: a path outside the bound is a located compile-time refusal (new rule tags `mic-path` and `speaker-path`); a node
+As in `docs/tty.md` §5: a path outside the bound **traps at run time** (`path_escapes`), exactly as `tty_open`'s does, because the path is a run-time value: there are no `mic-path` or `speaker-path` rule tags. *(Corrected before any code, with `docs/camera.md` §5: `docs/tty.md` §5 promises a compile-time `tty-path` refusal, but the compiler has no such rule and `tty_open` checks at run time.)* a node
 that is not a PCM device, or will not open, is `Failed(errno)`; a rate the device does not offer is `EINVAL` before streaming starts; read or
-write on a closed stream is `-1`. Nothing here may reach a panic.
+write on a closed stream is `-1`. Nothing here may reach a panic other than that trap.
 
 ## 6. Edition and slices **[choice]**
 

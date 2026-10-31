@@ -61,7 +61,7 @@ camera and one serial device.
 
 ## 5. Refusals
 
-As in `docs/tty.md` §5: a path outside the bound is a located compile-time refusal (a new rule tag, `camera-path`); a device that is not a
+As in `docs/tty.md` §5: a path outside the bound **traps at run time** (`path_escapes`, `docs/filesystem.md` §4), exactly as `tty_open`'s does: the path is a run-time value, so there is no compile-time rule tag. *(Corrected before any code: the first version promised a compile-time `camera-path` refusal, copying `docs/tty.md` §5, which makes the same claim; `tty_open` is implemented with the run-time check, and `grep` finds no `tty-path` rule in the compiler.)* a device that is not a
 capture device, or will not open, is `Failed(errno)`; a size the device does not offer is `EINVAL` before streaming starts; read on a closed
 camera is `-1`.
 

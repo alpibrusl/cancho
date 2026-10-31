@@ -42,12 +42,13 @@ impl<'a> Parser<'a> {
             // edition 8 plus the word-at-a-time scan (`docs/word-scan.md`);
             // edition 10 is edition 9 plus exact host matching in a `Net` bound (`docs/net-bounds.md` §2.3); edition 11 is
             // edition 10 plus the `Net` split into `Out` and `Ports` (`docs/net-bounds.md` §3).
+            // edition 12 is edition 11 plus the camera, microphone and speaker capabilities (`docs/camera.md`, `docs/audio.md`).
             // Nothing later than that exists to opt into yet.
-            if !(1..=11).contains(&value) {
+            if !(1..=12).contains(&value) {
                 return Err(Diagnostic::new(
                     Rule::UnknownEdition,
                     format!(
-                        "unknown edition {value}; the only editions today are 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 and 11"
+                        "unknown edition {value}; the only editions today are 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 and 12"
                     ),
                     keyword.span.to(tok.span),
                 ));

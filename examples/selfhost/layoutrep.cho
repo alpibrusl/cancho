@@ -18,18 +18,18 @@ import selfhost.testscan;
 import selfhost.rules;
 import selfhost.lexcore as lc;
 
-// The names of the prelude's types from `File` (index 8) to `Ports` (index 55), each followed by a NUL, and the leaves of each, a digit apiece.
+// The names of the prelude's types from `File` (index 8) to `Split` (index 65), each followed by a NUL, and the leaves of each, a digit apiece.
 fn prelude_names() -> [] &static [byte] {
-    return "File\0Opened\0Read\0Net\0Split\0Thread\0Listener\0Conn\0Listening\0Accepted\0Received\0Sent\0Dialed\0Poller\0Polling\0Clock\0Split\0Attached\0Done\0Signals\0Split\0SignalWatch\0Watching\0Dir\0DirOpened\0DirList\0Listing\0Listed\0DirStat\0Exec\0Split\0Child\0Pipe\0ChildEnd\0Stdio\0Piped\0Spawned\0Exited\0Udp\0UdpOpened\0Datagram\0Tty\0Split\0Port\0TtyOpened\0Out\0Ports\0Split\0";
+    return "File\0Opened\0Read\0Net\0Split\0Thread\0Listener\0Conn\0Listening\0Accepted\0Received\0Sent\0Dialed\0Poller\0Polling\0Clock\0Split\0Attached\0Done\0Signals\0Split\0SignalWatch\0Watching\0Dir\0DirOpened\0DirList\0Listing\0Listed\0DirStat\0Exec\0Split\0Child\0Pipe\0ChildEnd\0Stdio\0Piped\0Spawned\0Exited\0Udp\0UdpOpened\0Datagram\0Tty\0Split\0Port\0TtyOpened\0Out\0Ports\0Split\0Camera\0Cam\0CameraOpened\0Mic\0Capture\0MicOpened\0Speaker\0Playback\0SpeakerOpened\0Split\0";
 }
 
 fn prelude_leaves() -> [] &static [byte] {
-    return "133001113333313003300131313450011134341340013000";
+    return "1330011133333130033001313134500111343413400130000130130130";
 }
 
 // The leaves of the prelude type of index `i`: 0 for the capabilities and for what is before `File`.
 fn prelude_leaf_count(i: int) -> [] int {
-    if i < 8 || i > 55 {
+    if i < 8 || i > 65 {
         return 0;
     }
     return int_of(prelude_leaves()[i - 8]) - '0';
