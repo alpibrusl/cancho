@@ -868,6 +868,18 @@ fn test_programs() -> Vec<(&'static str, Vec<(&'static str, String)>)> {
             ],
         ),
         (
+            // The second module with a second test: the scan looked its import up by the position of the alias counted over aliases and paths together,
+            // and read past the end of the list (found by `cancho-code`, whose tests are in two modules).
+            "two tests in the second module",
+            vec![
+                ("a.cho", module("lib.core", "test_core", true, 0)),
+                (
+                    "b.cho",
+                    "module lib.more;\n\npub fn test_one() -> [] int {\n    return 0;\n}\n\npub fn test_two() -> [] int {\n    return 3;\n}\n".to_owned(),
+                ),
+            ],
+        ),
+        (
             "two modules end the same",
             vec![
                 ("x.cho", "fn test_root() -> [] int {\n    return 0;\n}\n".to_owned()),
