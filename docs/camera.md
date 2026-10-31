@@ -67,8 +67,12 @@ camera is `-1`.
 
 ## 6. Edition and slices **[choice]**
 
-`Split` grows an eleventh field, `Camera`, behind the same gate as `Tty` (edition 8 or its successor, decided with the maintainer: this is
-an additive field, as `Tty` was). Slices, each with its acceptance written before it is built: T1 this document; T2 the verbs and the
+`Split` grows a twelfth field, `camera`, and that opens **edition 12**. *(Corrected before any code: the first version of this section put the
+field behind `Tty`'s edition 8 as "an additive field". It is not additive to a program: edition 8's `Split` has exactly ten fields, every
+edition-8 file destructures all ten, and `docs/editions.md` records the same reasoning for editions 7 and 11 (an older file's pattern is
+`arity-mismatch` against a longer `Split`). Edition 11, the latest, has eleven fields; edition 12 is edition 11 plus `camera`, and an older
+file's `split()` still answers the fields it did.)* If a microphone and speaker capability is to join the same `Split`, it should share this
+edition rather than open a thirteenth. Slices, each with its acceptance written before it is built: T1 this document; T2 the verbs and the
 refusals on both backends, with the aarch64 numbers measured on the robot; T3 `poller_add_camera`; T4 the example (`examples/camera_hello.cho`:
 open, configure 320x240, take 10 frames, print their mean grey level) and the report check; T5 cancho-hdl's `camfilter` drops `ffmpeg`.
 
