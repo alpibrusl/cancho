@@ -632,3 +632,17 @@ pub fn is_signals[&s](st: &!s [int], index: int) -> [] bool {
 pub fn cannot_cross[&s](st: &!s [int], ty: int) -> [] bool {
     return types.is_named(st, ty) || types.is_tuple(st, ty) || ty == 3 || ty == 4 || types.is_slice_ref(st, ty);
 }
+
+// The tuple of the capabilities `narrow` makes of four to eight literals (`lit` is the first of `n`): each is the
+// capability narrowed to its literal, which is nothing in the code, and the parts are in the order written.
+pub fn narrowed_many[&s](st: &!s [int], index: int, lit: int, n: int) -> [] int {
+    let id = types.make_many(st, n);
+    var each = lit;
+    var k = 0;
+    while k < n {
+        types.set_part(st, id, k, types.make_prelude_lit(st, index, ast.get(st, each, 4)));
+        each = ast.next(st, each);
+        k = k + 1;
+    }
+    return id;
+}

@@ -329,7 +329,7 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         if !narrowing.literals(st, arg, nargs) {
             return ex.nothing();
         }
-        if nargs > 4 {
+        if nargs > 9 {
             return ex.skip(st, from, to);
         }
         let c = expr(st, text, arg);
@@ -357,6 +357,9 @@ pub fn capability_call[&s, &x](st: &!s [int], text: &x [byte], id: int, which: i
         let second = types.make_prelude_lit(st, index, ast.get(st, second_lit, 4));
         if nargs == 3 {
             return ex.in_reg(types.make_pair(st, first, second), 0 - 1);
+        }
+        if nargs > 4 {
+            return ex.in_reg(narrowing.narrowed_many(st, index, lit, nargs - 1), 0 - 1);
         }
         let third = types.make_prelude_lit(st, index, ast.get(st, ast.next(st, second_lit), 4));
         return ex.in_reg(types.make_triple(st, first, second, third), 0 - 1);
