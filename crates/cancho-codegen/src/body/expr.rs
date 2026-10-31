@@ -175,6 +175,11 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                 let (prefix, args) = (prefix.clone(), args.clone());
                 self.tty_open(&prefix, &args)
             }
+            // `docs/camera.md` and `docs/audio.md`, edition 12.
+            Expr::DeviceOpen { device, prefix, args } => {
+                let (device, prefix, args) = (*device, prefix.clone(), args.clone());
+                self.device_open(device, &prefix, &args)
+            }
             Expr::PathOp { op, prefix, args } => {
                 let (op, prefix, args) = (*op, prefix.clone(), args.clone());
                 self.path_op(op, &prefix, &args)
@@ -864,6 +869,19 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::TtyWrite) => self.tty_write(&args),
                     Callee::Builtin(Builtin::TtyFlushInput) => self.tty_flush_input(&args),
                     Callee::Builtin(Builtin::PollerAddTty) => self.poller_ctl(&args, false, false),
+                    // `docs/camera.md` §3 and `docs/audio.md` §3, edition 12: the opens are `Expr::DeviceOpen`.
+                    Callee::Builtin(
+                        Builtin::CameraOpen | Builtin::MicOpen | Builtin::SpeakerOpen,
+                    ) => unreachable!("device opens are lowered as `Expr::DeviceOpen`"),
+                    Callee::Builtin(Builtin::CameraConfigure) => self.camera_configure(&args),
+                    Callee::Builtin(Builtin::CameraNext) => self.camera_next(&args),
+                    Callee::Builtin(Builtin::CameraClose) => self.camera_close(&args),
+                    Callee::Builtin(Builtin::MicConfigure) => self.mic_configure(&args),
+                    Callee::Builtin(Builtin::MicRead) => self.mic_read(&args),
+                    Callee::Builtin(Builtin::MicClose) => self.mic_close(&args),
+                    Callee::Builtin(Builtin::SpeakerConfigure) => self.speaker_configure(&args),
+                    Callee::Builtin(Builtin::SpeakerWrite) => self.speaker_write(&args),
+                    Callee::Builtin(Builtin::SpeakerClose) => self.speaker_close(&args),
                     Callee::Builtin(
                         Builtin::ConnClose
                         | Builtin::UdpClose

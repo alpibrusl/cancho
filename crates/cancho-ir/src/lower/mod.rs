@@ -6,6 +6,7 @@
 use crate::*;
 
 mod conc;
+mod device;
 mod expr;
 mod foreign;
 mod memory;
@@ -445,12 +446,12 @@ impl<'a> FnLowering<'a> {
             && which != PRELUDE_SIGNALS
             && which != PRELUDE_EXEC
             // `docs/tty.md` §4: a device-path prefix, `Fs`'s shape.
-            && which != PRELUDE_TTY
+            && !narrow::is_device(which)
         {
             return Err(Diagnostic::new(
                 Rule::CapabilityNotNarrowable,
                 format!(
-                    "`{}` carries no value to narrow; `Ffi`, `Fs`, `Net`, `Out`, `Ports`, `Signals`, `Exec` and `Tty` are the capabilities that name one",
+                    "`{}` carries no value to narrow; `Ffi`, `Fs`, `Net`, `Out`, `Ports`, `Signals`, `Exec`, `Tty`, `Camera`, `Mic` and `Speaker` are the capabilities that name one",
                     self.unifier.display(&resolved)
                 ),
                 span,

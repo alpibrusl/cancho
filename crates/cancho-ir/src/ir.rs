@@ -133,10 +133,44 @@ pub const PRELUDE_OUT: usize = 53;
 pub const PRELUDE_PORTS: usize = 54;
 pub const PRELUDE_SPLIT_PORTS: usize = 55;
 
+/// `docs/camera.md` and `docs/audio.md`, edition 12: the camera, microphone and speaker capabilities (leaf-free,
+/// indexed by a device-path prefix as `Tty` is), the stream each opens (`res`, one descriptor leaf, like `Port`),
+/// what opening one answers, and the fourteen-field `Split` that carries the three. Appended last so no earlier
+/// index moves.
+pub const PRELUDE_CAMERA: usize = 56;
+pub const PRELUDE_CAM: usize = 57;
+pub const PRELUDE_CAMERA_OPENED: usize = 58;
+pub const PRELUDE_MIC: usize = 59;
+pub const PRELUDE_CAPTURE: usize = 60;
+pub const PRELUDE_MIC_OPENED: usize = 61;
+pub const PRELUDE_SPEAKER: usize = 62;
+pub const PRELUDE_PLAYBACK: usize = 63;
+pub const PRELUDE_SPEAKER_OPENED: usize = 64;
+pub const PRELUDE_SPLIT_MEDIA: usize = 65;
+
 /// How many types the prelude declares. Written once, because a builtin's
 /// signature indexes this table and a stale slice is a panic rather than a
 /// diagnostic.
-pub const PRELUDE_COUNT: usize = 56;
+pub const PRELUDE_COUNT: usize = 66;
+
+/// Which device capability an [`Expr::DeviceOpen`] opens under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Device {
+    Camera,
+    Mic,
+    Speaker,
+}
+
+impl Device {
+    /// The label the open performs, with the capability's prefix as its argument.
+    pub fn label(self) -> &'static str {
+        match self {
+            Device::Camera => "camera_open",
+            Device::Mic => "mic_open",
+            Device::Speaker => "speaker_open",
+        }
+    }
+}
 
 /// Which path operation an [`Expr::PathOp`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -553,6 +587,15 @@ pub enum Expr {
     /// is the capability (zero-sized) and the path. What comes back is a
     /// `TtyOpened`, tagged.
     TtyOpen {
+        prefix: String,
+        args: Vec<Expr>,
+    },
+    /// `camera_open`, `mic_open` and `speaker_open` (`docs/camera.md` §3, `docs/audio.md` §3, edition 12):
+    /// [`Expr::TtyOpen`]'s shape for the three device capabilities. The prefix the capability was narrowed to
+    /// travels with the node for the same reason, `args` is the capability (zero-sized) and the path, and what
+    /// comes back is a `CameraOpened`, `MicOpened` or `SpeakerOpened`, tagged.
+    DeviceOpen {
+        device: Device,
         prefix: String,
         args: Vec<Expr>,
     },

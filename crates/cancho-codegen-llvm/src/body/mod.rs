@@ -8,8 +8,11 @@
 use crate::*;
 
 mod arith;
+mod audio;
+mod camera;
 mod control;
 mod crypto;
+mod device;
 mod dirs;
 mod expr;
 mod files;

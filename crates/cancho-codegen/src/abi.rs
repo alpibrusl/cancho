@@ -86,6 +86,10 @@ pub(crate) fn leaves_into(
                     // `docs/tty.md` §3, edition 8: the port handle, a
                     // descriptor and nothing else — `Udp`'s shape.
                     | cancho_ir::PRELUDE_PORT
+                    // `docs/camera.md` and `docs/audio.md`, edition 12: a descriptor each, `Port`'s shape.
+                    | cancho_ir::PRELUDE_CAM
+                    | cancho_ir::PRELUDE_CAPTURE
+                    | cancho_ir::PRELUDE_PLAYBACK
                     | cancho_ir::PRELUDE_SIGNAL_WATCH
                     // `docs/processes.md` §3.1: a pid, and two descriptors.
                     | cancho_ir::PRELUDE_CHILD

@@ -342,6 +342,11 @@ impl<'a> FuncEmitter<'a> {
                 let (prefix, args) = (prefix.clone(), args.clone());
                 self.tty_open(&prefix, &args)
             }
+            // `docs/camera.md` and `docs/audio.md`, edition 12.
+            Expr::DeviceOpen { device, prefix, args } => {
+                let (device, prefix, args) = (*device, prefix.clone(), args.clone());
+                self.device_open(device, &prefix, &args)
+            }
             // `docs/file-writes.md` section 7.
             Expr::PathOp { op, prefix, args } => {
                 let (op, prefix, args) = (*op, prefix.clone(), args.clone());
@@ -1371,6 +1376,46 @@ impl<'a> FuncEmitter<'a> {
             Callee::Builtin(Builtin::PollerAddTty) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
                 self.poller_ctl(&args, false, false)
+            }
+            // `docs/camera.md` §3 and `docs/audio.md` §3, edition 12: the opens are `Expr::DeviceOpen`.
+            Callee::Builtin(Builtin::CameraOpen | Builtin::MicOpen | Builtin::SpeakerOpen) => {
+                unreachable!("device opens are lowered as `Expr::DeviceOpen`")
+            }
+            Callee::Builtin(Builtin::CameraConfigure) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.camera_configure(&args)
+            }
+            Callee::Builtin(Builtin::CameraNext) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.camera_next(&args)
+            }
+            Callee::Builtin(Builtin::CameraClose) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.camera_close(&args)
+            }
+            Callee::Builtin(Builtin::MicConfigure) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.mic_configure(&args)
+            }
+            Callee::Builtin(Builtin::MicRead) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.mic_read(&args)
+            }
+            Callee::Builtin(Builtin::MicClose) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.mic_close(&args)
+            }
+            Callee::Builtin(Builtin::SpeakerConfigure) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.speaker_configure(&args)
+            }
+            Callee::Builtin(Builtin::SpeakerWrite) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.speaker_write(&args)
+            }
+            Callee::Builtin(Builtin::SpeakerClose) => {
+                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+                self.speaker_close(&args)
             }
             Callee::Builtin(Builtin::PollerAddListener) => {
                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();

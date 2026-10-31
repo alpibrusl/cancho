@@ -4,6 +4,8 @@
 
 use crate::*;
 
+mod audio;
+mod camera;
 mod control;
 mod dirs;
 mod expr;
