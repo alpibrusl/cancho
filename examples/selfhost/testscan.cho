@@ -221,11 +221,12 @@ pub fn scan[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte]) -> [heap
                         var same = true;
                         borrow imports as &imp in {
                             let all = buffer.bytes(imp);
+                            // The position among the entries, aliases and paths alike: the path of the alias is the entry after it.
                             let k = index_of(all, alias_of(st, text, unit));
                             if k >= 0 {
                                 var q = 0;
                                 var entry = 0;
-                                while entry < 2 * k + 1 {
+                                while entry < k + 1 {
                                     while lc.at(all, q) != 0 {
                                         q = q + 1;
                                     }
