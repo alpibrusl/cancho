@@ -21,6 +21,7 @@ mod bootstrap;
 mod cases;
 mod cli;
 mod compile;
+mod messages;
 mod origin;
 mod parity;
 mod statics;

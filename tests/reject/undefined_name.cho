@@ -1,6 +1,6 @@
-//~ ERROR `count` is not bound here
+//~ ERROR `no_such_name` is not bound here
 //~ RULE unknown-name
 
 fn main() -> [] int {
-    return count;
+    return no_such_name;
 }
