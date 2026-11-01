@@ -52,7 +52,13 @@ fn accepted_programs_build_and_run() {
         // example walker passes it: a declaration nobody calls emits
         // nothing (`docs/standard-library.md` §5.2), so it costs the
         // fixtures that ignore it exactly nothing.
-        let build = Command::new(BIN)
+        // The compiler in cancho writes no code for the edition-12 device verbs yet (#665), so an
+        // example that opens a camera, microphone or speaker is built by the Rust compiler.
+        let mut build = Command::new(BIN);
+        if ["camera_open(", "mic_open(", "speaker_open("].iter().any(|verb| source.contains(verb)) {
+            build.env("CANCHO_COMPILER", "rust");
+        }
+        let build = build
             .args([
                 "build".as_ref(),
                 path.as_os_str(),
@@ -253,7 +259,13 @@ fn every_example_runs_and_prints_what_it_says() {
         // safe precisely because of §5.2 -- a declaration nobody calls
         // emits nothing, and `std_declarations_cost_nothing_unless_called`
         // is that as a test rather than as a hope.
-        let build = Command::new(BIN)
+        // The compiler in cancho writes no code for the edition-12 device verbs yet (#665), so an
+        // example that opens a camera, microphone or speaker is built by the Rust compiler.
+        let mut build = Command::new(BIN);
+        if ["camera_open(", "mic_open(", "speaker_open("].iter().any(|verb| source.contains(verb)) {
+            build.env("CANCHO_COMPILER", "rust");
+        }
+        let build = build
             .args([
                 "build".as_ref(),
                 path.as_os_str(),
