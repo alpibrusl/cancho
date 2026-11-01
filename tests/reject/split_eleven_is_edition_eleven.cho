@@ -1,0 +1,11 @@
+//~ ERROR has 14 fields, but this pattern names 11
+//~ RULE arity-mismatch
+
+// From edition 12 `split` answers `camera`, `mic` and `speaker` after `tty`, so the edition-11 pattern no longer takes it apart. (`docs/camera.md` §6, `docs/audio.md` §6.)
+
+edition 12;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty } = split(world);
+    release(io);
+    return 0;
+}

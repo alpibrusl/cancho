@@ -200,6 +200,10 @@ fn leaves_into(ty: &Type, program: &Program, out: &mut Vec<LKind>) -> Result<(),
                     | cancho_ir::PRELUDE_UDP
                     // `docs/tty.md` §3, edition 8: `Udp`'s shape.
                     | cancho_ir::PRELUDE_PORT
+                    // `docs/camera.md` and `docs/audio.md`, edition 12: a descriptor each, `Port`'s shape.
+                    | cancho_ir::PRELUDE_CAM
+                    | cancho_ir::PRELUDE_CAPTURE
+                    | cancho_ir::PRELUDE_PLAYBACK
                     | cancho_ir::PRELUDE_POLLER
                     | cancho_ir::PRELUDE_SIGNAL_WATCH
                     // `docs/processes.md` §3.1: a pid, and two descriptors.
@@ -486,6 +490,10 @@ pub(crate) fn emit_module(
     declare_libc_unless_own(&mut text, "tcsetattr", "i32 @tcsetattr(i32, i32, ptr)");
     declare_libc_unless_own(&mut text, "tcflush", "i32 @tcflush(i32, i32)");
     declare_libc_unless_own(&mut text, "ioctl", "i32 @ioctl(i32, i32, ...)");
+    // The camera's buffers (`docs/device-backends.md` §3) and the zeroing of the device structs.
+    declare_libc_unless_own(&mut text, "mmap", "ptr @mmap(ptr, i64, i32, i32, i32, i64)");
+    declare_libc_unless_own(&mut text, "munmap", "i32 @munmap(ptr, i64)");
+    declare_libc_unless_own(&mut text, "memset", "ptr @memset(ptr, i32, i64)");
     declare_libc_unless_own(&mut text, "connect", "i32 @connect(i32, ptr, i32)");
     // The socket handles (`docs/native-sockets.md` §3). `fcntl` is declared
     // variadic, which is what it is: on Apple arm64 a variadic argument is

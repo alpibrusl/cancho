@@ -72,6 +72,12 @@ pub(crate) fn is_capability(def: DefId) -> bool {
             | PRELUDE_SPLIT_PORTS
             | PRELUDE_TTY
             | PRELUDE_SPLIT_TTY
+            // `docs/camera.md` and `docs/audio.md`, edition 12: the device capabilities and the `Split`
+            // that carries them, minted only by `split`.
+            | PRELUDE_CAMERA
+            | PRELUDE_MIC
+            | PRELUDE_SPEAKER
+            | PRELUDE_SPLIT_MEDIA
             // §8.2 again, and more sharply: a program that could write
             // `File { }` would be conjuring a descriptor, which is worse
             // than conjuring authority because the number would be someone
@@ -110,6 +116,9 @@ pub(crate) fn released_only(def: DefId) -> bool {
             // `docs/tty.md` §4: the serial-port capability, released the
             // way every root capability is.
             | PRELUDE_TTY
+            | PRELUDE_CAMERA
+            | PRELUDE_MIC
+            | PRELUDE_SPEAKER
     )
 }
 
@@ -129,6 +138,9 @@ pub(crate) fn closed_only(def: DefId) -> bool {
             | PRELUDE_CONN
             | PRELUDE_UDP
             | PRELUDE_TTY
+            | PRELUDE_CAMERA
+            | PRELUDE_MIC
+            | PRELUDE_SPEAKER
             | PRELUDE_POLLER
             | PRELUDE_SIGNAL_WATCH
             // `docs/processes.md` §4.7: a child is ended by `child_wait`, a

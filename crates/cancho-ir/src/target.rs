@@ -41,6 +41,8 @@ pub enum Gap {
     NoReplaceRename,
     /// `docs/tty.md` §9: no termios, and no third target is claimed.
     Termios,
+    /// `docs/camera.md` and `docs/audio.md`: no V4L2 or ALSA.
+    Devices,
 }
 
 impl Gap {
@@ -55,6 +57,7 @@ impl Gap {
             Gap::Permissions => "permission bits",
             Gap::NoReplaceRename => "no-replace renames",
             Gap::Termios => "serial ports",
+            Gap::Devices => "cameras, microphones and speakers",
         }
     }
 
@@ -79,6 +82,10 @@ impl Gap {
             }
             Gap::Termios => {
                 "WASI has no termios: a serial port is a host device (`docs/tty.md` §9)"
+            }
+            Gap::Devices => {
+                "WASI has no V4L2 or ALSA: a camera, a microphone and a speaker are host devices \
+                 (`docs/camera.md`, `docs/audio.md`)"
             }
         }
     }
@@ -145,6 +152,18 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::TtyFlushInput
         | B::TtyClose
         | B::PollerAddTty => Some(Gap::Termios),
+        B::CameraOpen
+        | B::CameraConfigure
+        | B::CameraNext
+        | B::CameraClose
+        | B::MicOpen
+        | B::MicConfigure
+        | B::MicRead
+        | B::MicClose
+        | B::SpeakerOpen
+        | B::SpeakerConfigure
+        | B::SpeakerWrite
+        | B::SpeakerClose => Some(Gap::Devices),
         B::FileLock => Some(Gap::Locks),
         B::DirMode | B::DirOwnMode | B::DirMkdir | B::DirOpenNewMode => Some(Gap::Permissions),
         B::DirRenameNew => Some(Gap::NoReplaceRename),
@@ -412,6 +431,7 @@ fn expr_gaps(e: &Expr, out: &mut Vec<(Gap, &'static str)>) {
         Expr::FileOp { args, .. }
         | Expr::OpenFile { args, .. }
         | Expr::TtyOpen { args, .. }
+        | Expr::DeviceOpen { args, .. }
         | Expr::PathOp { args, .. } => {
             args.iter().for_each(|a| expr_gaps(a, out));
         }

@@ -198,6 +198,9 @@ fn render() -> String {
         PRELUDE_CONN,
         PRELUDE_UDP,
         PRELUDE_PORT,
+        PRELUDE_CAM,
+        PRELUDE_CAPTURE,
+        PRELUDE_PLAYBACK,
         PRELUDE_POLLER,
         PRELUDE_SIGNAL_WATCH,
         PRELUDE_CHILD,
@@ -459,7 +462,8 @@ fn render_signatures() -> (String, String) {
     // The `Split` a file of an edition gets: the edition decides (`split` in `lower/net.rs`).
     let _ = writeln!(
         out,
-        "pub fn split_for(edition: int) -> [] int {{\n    if edition >= 11 {{\n        return {PRELUDE_SPLIT_PORTS};\n    }}\n    \
+        "pub fn split_for(edition: int) -> [] int {{\n    if edition >= 12 {{\n        return {PRELUDE_SPLIT_MEDIA};\n    }}\n    \
+         if edition >= 11 {{\n        return {PRELUDE_SPLIT_PORTS};\n    }}\n    \
          if edition >= 8 {{\n        return {PRELUDE_SPLIT_TTY};\n    }}\n    \
          if edition >= 7 {{\n        return {PRELUDE_SPLIT_EXEC};\n    }}\n    \
          if edition >= 6 {{\n        return {PRELUDE_SPLIT_SIGNALS};\n    }}\n    \

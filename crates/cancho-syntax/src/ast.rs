@@ -813,6 +813,22 @@ pub const PRELUDE: &[&str] = &[
     "Ports",
     "out",
     "ports",
+    // `docs/camera.md` and `docs/audio.md`, edition 12: the camera, the
+    // microphone and the speaker, the streams they open, what opening one
+    // answers, and the `Split` fields that carry the three capabilities.
+    // Appended last so no earlier symbol moves.
+    "Camera",
+    "Cam",
+    "CameraOpened",
+    "Mic",
+    "Capture",
+    "MicOpened",
+    "Speaker",
+    "Playback",
+    "SpeakerOpened",
+    "camera",
+    "mic",
+    "speaker",
 ];
 
 impl Ast {

@@ -1034,6 +1034,93 @@ impl Builtin {
                 Type::Int,
             ),
             Builtin::TtyClose => (vec![named(PRELUDE_PORT)], Type::Int),
+            // `docs/camera.md` §3 and `docs/audio.md` §3, edition 12: the capability's open is checked at the call
+            // site (`Expr::DeviceOpen`), so its written signature is never consulted.
+            Builtin::CameraOpen | Builtin::MicOpen | Builtin::SpeakerOpen => {
+                (Vec::new(), Type::Unit)
+            }
+            Builtin::CameraConfigure => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_CAM)),
+                    },
+                    Type::Int,
+                    Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::MicConfigure => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_CAPTURE)),
+                    },
+                    Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::SpeakerConfigure => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_PLAYBACK)),
+                    },
+                    Type::Int,
+                ],
+                Type::Int,
+            ),
+            Builtin::CameraNext => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_CAM)),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
+            Builtin::MicRead => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_CAPTURE)),
+                    },
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
+            Builtin::SpeakerWrite => (
+                vec![
+                    Type::Ref {
+                        unique: true,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_PLAYBACK)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                Type::Int,
+            ),
+            Builtin::CameraClose => (vec![named(PRELUDE_CAM)], Type::Int),
+            Builtin::MicClose => (vec![named(PRELUDE_CAPTURE)], Type::Int),
+            Builtin::SpeakerClose => (vec![named(PRELUDE_PLAYBACK)], Type::Int),
             Builtin::PollerAddTty => (
                 vec![
                     Type::Ref {

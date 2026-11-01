@@ -155,6 +155,15 @@ impl<'a> FuncEmitter<'a> {
                     | Builtin::TtyWrite
                     | Builtin::TtyFlushInput
                     | Builtin::TtyClose
+                    | Builtin::CameraConfigure
+                    | Builtin::CameraNext
+                    | Builtin::CameraClose
+                    | Builtin::MicConfigure
+                    | Builtin::MicRead
+                    | Builtin::MicClose
+                    | Builtin::SpeakerConfigure
+                    | Builtin::SpeakerWrite
+                    | Builtin::SpeakerClose
                     | Builtin::DirClose
                     | Builtin::DirListClose
                     | Builtin::ClockMs

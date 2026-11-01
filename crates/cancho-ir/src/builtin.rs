@@ -725,6 +725,34 @@ pub enum Builtin {
     /// `poller_add_tty(&!Poller, &Port, token, events) -> [poll] int`:
     /// `events` as `poller_add_conn`'s, the family's sixth member.
     PollerAddTty,
+    /// `camera_open(c: &Camera(bound), path: &[byte]) -> [camera_open(bound)] CameraOpened` --
+    /// `docs/camera.md` §3, edition 12 only. Lowered as [`Expr::DeviceOpen`], like [`Builtin::TtyOpen`].
+    CameraOpen,
+    /// `camera_configure(&!Cam, width: int, height: int) -> [] int` -- a size; the backend picks the pixel
+    /// format. `0`, or the `errno`; `EINVAL` for a size the device does not offer, before streaming starts.
+    CameraConfigure,
+    /// `camera_next(&!Cam, into: &![byte]) -> [camera_next] int` -- the newest frame's bytes that fit, as
+    /// 8-bit grey; never blocks; `0` when none is ready, `-1` on error.
+    CameraNext,
+    /// `camera_close(Cam) -> [] int` -- consumes the handle.
+    CameraClose,
+    /// `mic_open(m: &Mic(bound), path: &[byte]) -> [mic_open(bound)] MicOpened` -- `docs/audio.md` §3.
+    MicOpen,
+    /// `mic_configure(&!Capture, rate: int) -> [] int` -- mono, signed 16-bit; `EINVAL` for a rate the
+    /// device does not offer.
+    MicConfigure,
+    /// `mic_read(&!Capture, into: &![byte]) -> [mic_read] int` -- never blocks; `0` when none is ready.
+    MicRead,
+    /// `mic_close(Capture) -> [] int` -- consumes the handle.
+    MicClose,
+    /// `speaker_open(s: &Speaker(bound), path: &[byte]) -> [speaker_open(bound)] SpeakerOpened`.
+    SpeakerOpen,
+    /// `speaker_configure(&!Playback, rate: int) -> [] int` -- mono, signed 16-bit.
+    SpeakerConfigure,
+    /// `speaker_write(&!Playback, bytes: &[byte]) -> [speaker_write] int` -- whole or short; never blocks.
+    SpeakerWrite,
+    /// `speaker_close(Playback) -> [] int` -- consumes the handle.
+    SpeakerClose,
     /// `signals_watch(&Signals("S")) -> [signals("S")] Watching` --
     /// `docs/signals.md` section 2, edition 6 only: claim the signals `S` the
     /// capability was narrowed to. Checked at the call site (`Expr::Call`
@@ -1061,6 +1089,18 @@ impl Builtin {
         Builtin::TtyFlushInput,
         Builtin::TtyClose,
         Builtin::PollerAddTty,
+        Builtin::CameraOpen,
+        Builtin::CameraConfigure,
+        Builtin::CameraNext,
+        Builtin::CameraClose,
+        Builtin::MicOpen,
+        Builtin::MicConfigure,
+        Builtin::MicRead,
+        Builtin::MicClose,
+        Builtin::SpeakerOpen,
+        Builtin::SpeakerConfigure,
+        Builtin::SpeakerWrite,
+        Builtin::SpeakerClose,
         Builtin::SignalsWatch,
         Builtin::SignalsPending,
         Builtin::PollerAddSignals,
@@ -1240,6 +1280,18 @@ impl Builtin {
             Builtin::TtyFlushInput => "tty_flush_input",
             Builtin::TtyClose => "tty_close",
             Builtin::PollerAddTty => "poller_add_tty",
+            Builtin::CameraOpen => "camera_open",
+            Builtin::CameraConfigure => "camera_configure",
+            Builtin::CameraNext => "camera_next",
+            Builtin::CameraClose => "camera_close",
+            Builtin::MicOpen => "mic_open",
+            Builtin::MicConfigure => "mic_configure",
+            Builtin::MicRead => "mic_read",
+            Builtin::MicClose => "mic_close",
+            Builtin::SpeakerOpen => "speaker_open",
+            Builtin::SpeakerConfigure => "speaker_configure",
+            Builtin::SpeakerWrite => "speaker_write",
+            Builtin::SpeakerClose => "speaker_close",
             Builtin::SignalsWatch => "signals_watch",
             Builtin::SignalsPending => "signals_pending",
             Builtin::PollerAddSignals => "poller_add_signals",
@@ -1363,6 +1415,19 @@ impl Builtin {
             | Builtin::TtyFlushInput
             | Builtin::TtyClose
             | Builtin::PollerAddTty => 8,
+            // `docs/camera.md` §6 and `docs/audio.md` §6: edition 12, the edition that adds their `Split` fields.
+            Builtin::CameraOpen
+            | Builtin::CameraConfigure
+            | Builtin::CameraNext
+            | Builtin::CameraClose
+            | Builtin::MicOpen
+            | Builtin::MicConfigure
+            | Builtin::MicRead
+            | Builtin::MicClose
+            | Builtin::SpeakerOpen
+            | Builtin::SpeakerConfigure
+            | Builtin::SpeakerWrite
+            | Builtin::SpeakerClose => 12,
             // `docs/checked-output.md`: a name a program may already have
             // declared for itself, so it is visible from edition 5 only.
             Builtin::FlushOut => 5,
@@ -1573,7 +1638,13 @@ impl Builtin {
             | Builtin::PollerAddSignals
             | Builtin::PollerAddTty => 2,
             // The capability's region and the path's.
-            Builtin::TtyOpen => 2,
+            Builtin::TtyOpen | Builtin::CameraOpen | Builtin::MicOpen | Builtin::SpeakerOpen => 2,
+            // The handle's region and the buffer's.
+            Builtin::CameraNext | Builtin::MicRead | Builtin::SpeakerWrite => 2,
+            // The handle's region and nothing else (`camera_configure` takes two integers).
+            Builtin::CameraConfigure | Builtin::MicConfigure | Builtin::SpeakerConfigure => 1,
+            // Consumes the handle: no region.
+            Builtin::CameraClose | Builtin::MicClose | Builtin::SpeakerClose => 0,
             // The handle's region and the buffer's (or the capability's
             // and the path's, for `tty_open`).
             Builtin::TtyRead | Builtin::TtyWrite => 2,
@@ -1712,6 +1783,18 @@ impl Builtin {
             // prefix (`tcp_listen`'s shape) — the path is a run-time
             // value, the bound is in the capability's type.
             Builtin::TtyOpen => Effects::pure(),
+            // `docs/camera.md` §4 and `docs/audio.md` §4: opens are lowered as `Expr::DeviceOpen`, whose walk
+            // records the label with the capability's prefix; the stream's verbs are path-free.
+            Builtin::CameraOpen | Builtin::MicOpen | Builtin::SpeakerOpen => Effects::pure(),
+            Builtin::CameraNext => Effects::plain(["camera_next"]),
+            Builtin::MicRead => Effects::plain(["mic_read"]),
+            Builtin::SpeakerWrite => Effects::plain(["speaker_write"]),
+            Builtin::CameraConfigure
+            | Builtin::CameraClose
+            | Builtin::MicConfigure
+            | Builtin::MicClose
+            | Builtin::SpeakerConfigure
+            | Builtin::SpeakerClose => Effects::pure(),
             // The port's own verbs are path-free, the prefix spent at
             // `tty_open` (`udp_recv`'s shape): the *handle* carries no
             // argument, and it is reached only through the capability.

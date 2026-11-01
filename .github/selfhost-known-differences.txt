@@ -8,3 +8,7 @@ corpus::accepted_programs_build_and_run                                        #
 memory::the_layout_report_says_what_a_type_costs                               # a struct of bytes has another stride
 modules::std_declarations_cost_nothing_unless_called                           # Linux only: the size of the module
 wasm_target::build_refuses_too_not_only_check                                  # the WebAssembly target is the Rust compiler's (#486)
+devices::a_missing_device_is_a_value_not_a_crash                                                               # the compiler in cancho writes no code for the edition-12 device verbs yet (#665); the Rust compiler does
+devices::a_node_that_is_not_a_device_is_refused_when_configured                                                # the compiler in cancho writes no code for the edition-12 device verbs yet (#665); the Rust compiler does
+devices::a_size_or_rate_with_no_meaning_is_refused_before_the_device_is_touched                                # the compiler in cancho writes no code for the edition-12 device verbs yet (#665); the Rust compiler does
+devices::a_path_outside_the_bound_traps                                                                        # the compiler in cancho writes no code for the edition-12 device verbs yet (#665); the Rust compiler does

@@ -2,6 +2,7 @@
 //! the prelude's types and imports, and what a type's capabilities
 //! discharge.
 
+use crate::defs_media::{MediaNames, media_types};
 use crate::*;
 
 /// A function's signature: what a caller is checked against, and all a caller
@@ -350,6 +351,29 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
             ]),
             _ => Effects::plain(["tty_open", "tty_read", "tty_write"]),
         },
+        // `docs/camera.md` §4 and `docs/audio.md` §4: the same shape as `Tty`, argument-carrying
+        // and narrowable exactly as `fs_read` is.
+        PRELUDE_CAMERA => match args.first() {
+            Some(Type::Lit(prefix)) => Effects::new([
+                Label { name: "camera_open".to_owned(), argument: Some(prefix.clone()) },
+                Label { name: "camera_next".to_owned(), argument: Some(prefix.clone()) },
+            ]),
+            _ => Effects::plain(["camera_open", "camera_next"]),
+        },
+        PRELUDE_MIC => match args.first() {
+            Some(Type::Lit(prefix)) => Effects::new([
+                Label { name: "mic_open".to_owned(), argument: Some(prefix.clone()) },
+                Label { name: "mic_read".to_owned(), argument: Some(prefix.clone()) },
+            ]),
+            _ => Effects::plain(["mic_open", "mic_read"]),
+        },
+        PRELUDE_SPEAKER => match args.first() {
+            Some(Type::Lit(prefix)) => Effects::new([
+                Label { name: "speaker_open".to_owned(), argument: Some(prefix.clone()) },
+                Label { name: "speaker_write".to_owned(), argument: Some(prefix.clone()) },
+            ]),
+            _ => Effects::plain(["speaker_open", "speaker_write"]),
+        },
         // `docs/native-sockets.md` §4: observing handles already held, so
         // one plain label with nothing to narrow.
         PRELUDE_POLLER => Effects::plain(["poll"]),
@@ -624,6 +648,21 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let ports = symbol("Ports");
     let ports_field = symbol("ports");
     let split_ports = symbol("Split");
+    // `docs/camera.md` and `docs/audio.md`, edition 12: three capabilities, the stream each opens, what
+    // opening one answers, and the `Split` that carries them.
+    let camera = symbol("Camera");
+    let cam = symbol("Cam");
+    let camera_opened = symbol("CameraOpened");
+    let mic = symbol("Mic");
+    let capture = symbol("Capture");
+    let mic_opened = symbol("MicOpened");
+    let speaker = symbol("Speaker");
+    let playback = symbol("Playback");
+    let speaker_opened = symbol("SpeakerOpened");
+    let camera_field = symbol("camera");
+    let mic_field = symbol("mic");
+    let speaker_field = symbol("speaker");
+    let split_media = symbol("Split");
     let truncated_arm = symbol("Truncated");
     let null_arm = symbol("Null");
     let pipe_arm = symbol("Pipe");
@@ -724,8 +763,18 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
     let out_def = unifier.declare("Out");
     let ports_def = unifier.declare("Ports");
     let split_ports_def = unifier.declare("Split");
+    let camera_def = unifier.declare("Camera");
+    let cam_def = unifier.declare("Cam");
+    let camera_opened_def = unifier.declare("CameraOpened");
+    let mic_def = unifier.declare("Mic");
+    let capture_def = unifier.declare("Capture");
+    let mic_opened_def = unifier.declare("MicOpened");
+    let speaker_def = unifier.declare("Speaker");
+    let playback_def = unifier.declare("Playback");
+    let speaker_opened_def = unifier.declare("SpeakerOpened");
+    let split_media_def = unifier.declare("Split");
 
-    vec![
+    let mut defs = vec![
         TypeDef {
             name: world,
             def: world_def,
@@ -1548,7 +1597,63 @@ pub(crate) fn prelude_types(ast: &Ast, unifier: &mut Unifier) -> Vec<TypeDef> {
             span,
             since: 11,
         },
-    ]
+    ];
+    // `docs/camera.md` and `docs/audio.md`, edition 12: the three device capabilities, their streams and what
+    // opening one answers (`defs_media.rs`), then the `Split` that carries them.
+    defs.extend(media_types(
+        MediaNames {
+            camera,
+            cam,
+            camera_opened,
+            mic,
+            capture,
+            mic_opened,
+            speaker,
+            playback,
+            speaker_opened,
+            camera_def,
+            cam_def,
+            camera_opened_def,
+            mic_def,
+            capture_def,
+            mic_opened_def,
+            speaker_def,
+            playback_def,
+            speaker_opened_def,
+            prefix,
+            ok_arm,
+            failed_arm,
+        },
+        span,
+    ));
+    defs.push(TypeDef {
+        name: split_media,
+        def: split_media_def,
+        module: PRELUDE_MODULE,
+        public: true,
+        generics: Vec::new(),
+        bounds: Vec::new(),
+        declared_mode: None,
+        kind: DefKind::Struct(vec![
+            (io_field, Type::Named(io_def, Vec::new())),
+            (ffi_field, Type::Named(ffi_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            (fs_field, Type::Named(fs_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            (heap_field, Type::Named(heap_def, Vec::new())),
+            (args_field, Type::Named(args_def, Vec::new())),
+            (out_field, Type::Named(out_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            (ports_field, Type::Named(ports_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            (clock_field, Type::Named(clock_def, Vec::new())),
+            (signals_field, Type::Named(signals_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            (exec_field, Type::Named(exec_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            (tty_field, Type::Named(tty_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            (camera_field, Type::Named(camera_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            (mic_field, Type::Named(mic_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+            (speaker_field, Type::Named(speaker_def, vec![Type::Lit(FFI_ROOT.to_owned())])),
+        ]),
+        span,
+        since: 12,
+    });
+    defs
 }
 
 /// An edition-5 prelude enum (`docs/udp.md` §3): [`prelude_enum`] at the edition
@@ -1564,7 +1669,13 @@ fn edition_five_enum(
 
 /// A prelude resource with no fields a program can name, at an edition: a
 /// capability or a handle (`docs/processes.md` §3.1).
-fn resource(name: Symbol, def: DefId, generics: Vec<Symbol>, span: Span, since: u32) -> TypeDef {
+pub(crate) fn resource(
+    name: Symbol,
+    def: DefId,
+    generics: Vec<Symbol>,
+    span: Span,
+    since: u32,
+) -> TypeDef {
     TypeDef {
         name,
         def,
@@ -1580,7 +1691,12 @@ fn resource(name: Symbol, def: DefId, generics: Vec<Symbol>, span: Span, since: 
 }
 
 /// An edition-7 prelude enum (`docs/processes.md` §3.1).
-fn prelude_enum(name: Symbol, def: DefId, arms: Vec<(Symbol, Vec<Type>)>, span: Span) -> TypeDef {
+pub(crate) fn prelude_enum(
+    name: Symbol,
+    def: DefId,
+    arms: Vec<(Symbol, Vec<Type>)>,
+    span: Span,
+) -> TypeDef {
     TypeDef {
         name,
         def,

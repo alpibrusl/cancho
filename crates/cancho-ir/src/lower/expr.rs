@@ -844,6 +844,17 @@ impl<'a> FnLowering<'a> {
                 if resolved == Resolved::Builtin(Builtin::TtyOpen) {
                     return self.tty_open(args, span);
                 }
+                if let Resolved::Builtin(
+                    op @ (Builtin::CameraOpen | Builtin::MicOpen | Builtin::SpeakerOpen),
+                ) = resolved
+                {
+                    let device = match op {
+                        Builtin::CameraOpen => Device::Camera,
+                        Builtin::MicOpen => Device::Mic,
+                        _ => Device::Speaker,
+                    };
+                    return self.device_open(device, args, span);
+                }
                 if resolved == Resolved::Builtin(Builtin::SignalsWatch) {
                     return self.signals_watch(args, span);
                 }

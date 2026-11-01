@@ -12,7 +12,7 @@ module selfhost.tables;
 // Its index is its `DefId`, so the order is the Rust order.
 
 pub fn prelude_count() -> [] int {
-    return 56;
+    return 66;
 }
 
 pub fn prelude_box() -> [] int {
@@ -72,11 +72,11 @@ pub fn prelude_exited() -> [] int {
 }
 
 fn prelude_chars() -> [] &static [byte] {
-    return "WorldIoFfiFsHeapBoxArgsSplitFileOpenedReadNetSplitThreadListenerConnListeningAcceptedReceivedSentDialedPollerPollingClockSplitAttachedDoneSignalsSplitSignalWatchWatchingDirDirOpenedDirListListingListedDirStatExecSplitChildPipeChildEndStdioPipedSpawnedExitedUdpUdpOpenedDatagramTtySplitPortTtyOpenedOutPortsSplit";
+    return "WorldIoFfiFsHeapBoxArgsSplitFileOpenedReadNetSplitThreadListenerConnListeningAcceptedReceivedSentDialedPollerPollingClockSplitAttachedDoneSignalsSplitSignalWatchWatchingDirDirOpenedDirListListingListedDirStatExecSplitChildPipeChildEndStdioPipedSpawnedExitedUdpUdpOpenedDatagramTtySplitPortTtyOpenedOutPortsSplitCameraCamCameraOpenedMicCaptureMicOpenedSpeakerPlaybackSpeakerOpenedSplit";
 }
 
 static prelude_starts: [int] {
-    let t = alloc_slice[static](56, 0);
+    let t = alloc_slice[static](66, 0);
     t[1] = 5;
     t[2] = 7;
     t[3] = 10;
@@ -132,11 +132,21 @@ static prelude_starts: [int] {
     t[53] = 298;
     t[54] = 301;
     t[55] = 306;
+    t[56] = 311;
+    t[57] = 317;
+    t[58] = 320;
+    t[59] = 332;
+    t[60] = 335;
+    t[61] = 342;
+    t[62] = 351;
+    t[63] = 358;
+    t[64] = 366;
+    t[65] = 379;
     return t;
 }
 
 static prelude_lens: [int] {
-    let t = alloc_slice[static](56, 0);
+    let t = alloc_slice[static](66, 0);
     t[0] = 5;
     t[1] = 2;
     t[2] = 3;
@@ -193,11 +203,21 @@ static prelude_lens: [int] {
     t[53] = 3;
     t[54] = 5;
     t[55] = 5;
+    t[56] = 6;
+    t[57] = 3;
+    t[58] = 12;
+    t[59] = 3;
+    t[60] = 7;
+    t[61] = 9;
+    t[62] = 7;
+    t[63] = 8;
+    t[64] = 13;
+    t[65] = 5;
     return t;
 }
 
 static prelude_arities: [int] {
-    let t = alloc_slice[static](56, 0);
+    let t = alloc_slice[static](66, 0);
     t[2] = 1;
     t[3] = 1;
     t[5] = 1;
@@ -208,11 +228,14 @@ static prelude_arities: [int] {
     t[49] = 1;
     t[53] = 1;
     t[54] = 1;
+    t[56] = 1;
+    t[59] = 1;
+    t[62] = 1;
     return t;
 }
 
 static prelude_sinces: [int] {
-    let t = alloc_slice[static](56, 0);
+    let t = alloc_slice[static](66, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -269,11 +292,21 @@ static prelude_sinces: [int] {
     t[53] = 11;
     t[54] = 11;
     t[55] = 11;
+    t[56] = 12;
+    t[57] = 12;
+    t[58] = 12;
+    t[59] = 12;
+    t[60] = 12;
+    t[61] = 12;
+    t[62] = 12;
+    t[63] = 12;
+    t[64] = 12;
+    t[65] = 12;
     return t;
 }
 
 static prelude_publics: [int] {
-    let t = alloc_slice[static](56, 0);
+    let t = alloc_slice[static](66, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -330,11 +363,21 @@ static prelude_publics: [int] {
     t[53] = 1;
     t[54] = 1;
     t[55] = 1;
+    t[56] = 1;
+    t[57] = 1;
+    t[58] = 1;
+    t[59] = 1;
+    t[60] = 1;
+    t[61] = 1;
+    t[62] = 1;
+    t[63] = 1;
+    t[64] = 1;
+    t[65] = 1;
     return t;
 }
 
 static prelude_res_bits: [int] {
-    let t = alloc_slice[static](56, 0);
+    let t = alloc_slice[static](66, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 3;
@@ -383,15 +426,25 @@ static prelude_res_bits: [int] {
     t[53] = 3;
     t[54] = 3;
     t[55] = 1;
+    t[56] = 3;
+    t[57] = 1;
+    t[58] = 1;
+    t[59] = 3;
+    t[60] = 1;
+    t[61] = 1;
+    t[62] = 3;
+    t[63] = 1;
+    t[64] = 1;
+    t[65] = 1;
     return t;
 }
 
 fn prelude_label_chars() -> [] &static [byte] {
-    return "args child_signal clock conn_accept conn_read conn_write dir_read dir_write err_write exec= exec_detached exec_under ffi= file_read file_write fs_read= fs_write= heap io_read io_write net_in= net_out= pipe_read pipe_write poll signals= signals_read tty_open= tty_read tty_write udp_recv udp_senderr_write io_read io_writeffi*dir_read dir_write file_read file_write fs_read* fs_write*heapargsfile_read file_writeconn_accept conn_read conn_write net_in* net_out* poll udp_recv udp_sendconn_acceptconn_read conn_writepollclocksignals* signals_readsignals_readdir_read dir_writedir_readchild_signal exec* exec_detachedchild_signalpipe_read pipe_writeudp_recv udp_sendtty_open* tty_read* tty_write*conn_read conn_write net_out* poll udp_recv udp_sendconn_accept conn_read conn_write net_in* poll udp_recv udp_send";
+    return "args child_signal clock conn_accept conn_read conn_write dir_read dir_write err_write exec= exec_detached exec_under ffi= file_read file_write fs_read= fs_write= heap io_read io_write net_in= net_out= pipe_read pipe_write poll signals= signals_read tty_open= tty_read tty_write udp_recv udp_senderr_write io_read io_writeffi*dir_read dir_write file_read file_write fs_read* fs_write*heapargsfile_read file_writeconn_accept conn_read conn_write net_in* net_out* poll udp_recv udp_sendconn_acceptconn_read conn_writepollclocksignals* signals_readsignals_readdir_read dir_writedir_readchild_signal exec* exec_detachedchild_signalpipe_read pipe_writeudp_recv udp_sendtty_open* tty_read* tty_write*conn_read conn_write net_out* poll udp_recv udp_sendconn_accept conn_read conn_write net_in* poll udp_recv udp_sendcamera_next* camera_open*mic_open* mic_read*speaker_open* speaker_write*";
 }
 
 static prelude_label_starts: [int] {
-    let t = alloc_slice[static](56, 0);
+    let t = alloc_slice[static](66, 0);
     t[1] = 295;
     t[2] = 321;
     t[3] = 325;
@@ -447,11 +500,21 @@ static prelude_label_starts: [int] {
     t[53] = 693;
     t[54] = 745;
     t[55] = 808;
+    t[56] = 808;
+    t[57] = 833;
+    t[58] = 833;
+    t[59] = 833;
+    t[60] = 852;
+    t[61] = 852;
+    t[62] = 852;
+    t[63] = 880;
+    t[64] = 880;
+    t[65] = 880;
     return t;
 }
 
 static prelude_label_lens: [int] {
-    let t = alloc_slice[static](56, 0);
+    let t = alloc_slice[static](66, 0);
     t[0] = 295;
     t[1] = 26;
     t[2] = 4;
@@ -475,11 +538,14 @@ static prelude_label_lens: [int] {
     t[49] = 30;
     t[53] = 52;
     t[54] = 63;
+    t[56] = 25;
+    t[59] = 19;
+    t[62] = 28;
     return t;
 }
 
 static prelude_leaf_counts: [int] {
-    let t = alloc_slice[static](56, 0);
+    let t = alloc_slice[static](66, 0);
     t[8] = 1;
     t[14] = 1;
     t[15] = 1;
@@ -492,11 +558,14 @@ static prelude_leaf_counts: [int] {
     t[41] = 1;
     t[46] = 1;
     t[51] = 1;
+    t[57] = 1;
+    t[60] = 1;
+    t[63] = 1;
     return t;
 }
 
 static prelude_capabilities: [int] {
-    let t = alloc_slice[static](56, 0);
+    let t = alloc_slice[static](66, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -528,11 +597,15 @@ static prelude_capabilities: [int] {
     t[53] = 1;
     t[54] = 1;
     t[55] = 1;
+    t[56] = 1;
+    t[59] = 1;
+    t[62] = 1;
+    t[65] = 1;
     return t;
 }
 
 static prelude_bounds: [int] {
-    let t = alloc_slice[static](56, 0);
+    let t = alloc_slice[static](66, 0);
     return t;
 }
 
@@ -580,15 +653,15 @@ pub fn prelude_bound(i: int) -> [] int {
 }
 
 pub fn builtin_count() -> [] int {
-    return 172;
+    return 184;
 }
 
 fn builtin_chars() -> [] &static [byte] {
-    return "putcharwrite_byteswrite_errflush_outgetcharread_bytessplitreleasenarrowfork_heapfork_clockcopy_withincopy_intoindex_of_byteload_le64byte_mask64trailing_zerosleading_zerospopcountwrapping_addwrapping_subwrapping_mulvalue_barrierhw_aes_gcmaes_encrypt_blockaes_ctr32ghash_powersghash_updatemul_wideadd_carrysub_borrowgcm_taggcm_tag_diffhw_sha256sha256_blockssha256_block_wordslenbyte_ofint_offloat_oftruncateis_nansqrtbits_offloat_of_bitsf32_offloat_of32bits_of32f32_of_bitssqrt32f32_of_intint_of_f32fs_readfs_writeopen_readfile_readfile_closeopen_appendopen_writeopen_newopen_rwfile_writefile_pwritefile_preadfile_syncfile_truncatefile_sizefs_renamefs_removefile_lockboxunboxcontentsarg_countargbox_sliceunbox_sliceconnectbindlistenaccepttcp_listentcp_connecttcp_connect_starttcp_acceptpoller_newpoller_add_listenerpoller_add_connpoller_modifypoller_removepoller_waitpoller_closeclock_msclock_unix_msconn_detachconn_attachconn_readconn_writeconn_nonblockingconn_nodelayconn_peerconn_connect_statuslistener_nonblockingconn_closelistener_closeudp_connectudp_bindudp_recv_fromudp_send_toudp_recvudp_sendudp_local_portudp_peerudp_nonblockingudp_closeudp_detachudp_attachpoller_add_udptty_opentty_configuretty_readtty_writetty_flush_inputtty_closepoller_add_ttysignals_watchsignals_pendingpoller_add_signalssignals_closeopen_dirdir_enterdir_open_readdir_closedir_open_newdir_open_appenddir_renamedir_rename_newdir_removedir_mkdirdir_open_new_modedir_syncdir_listdir_nextdir_list_closedir_statdir_modedir_own_modepipe_openexec_spawnexec_spawn_inchild_waitchild_killchild_kill_groupexec_coversfs_coverspipe_readpipe_writepipe_nonblockingpipe_closechild_end_closepoller_add_pipepoller_add_childnull_ptrspawnjointraptcp_listen_onexec_spawn_detachedchild_releasechild_pidexec_spawn_underexec_spawn_detached_under";
+    return "putcharwrite_byteswrite_errflush_outgetcharread_bytessplitreleasenarrowfork_heapfork_clockcopy_withincopy_intoindex_of_byteload_le64byte_mask64trailing_zerosleading_zerospopcountwrapping_addwrapping_subwrapping_mulvalue_barrierhw_aes_gcmaes_encrypt_blockaes_ctr32ghash_powersghash_updatemul_wideadd_carrysub_borrowgcm_taggcm_tag_diffhw_sha256sha256_blockssha256_block_wordslenbyte_ofint_offloat_oftruncateis_nansqrtbits_offloat_of_bitsf32_offloat_of32bits_of32f32_of_bitssqrt32f32_of_intint_of_f32fs_readfs_writeopen_readfile_readfile_closeopen_appendopen_writeopen_newopen_rwfile_writefile_pwritefile_preadfile_syncfile_truncatefile_sizefs_renamefs_removefile_lockboxunboxcontentsarg_countargbox_sliceunbox_sliceconnectbindlistenaccepttcp_listentcp_connecttcp_connect_starttcp_acceptpoller_newpoller_add_listenerpoller_add_connpoller_modifypoller_removepoller_waitpoller_closeclock_msclock_unix_msconn_detachconn_attachconn_readconn_writeconn_nonblockingconn_nodelayconn_peerconn_connect_statuslistener_nonblockingconn_closelistener_closeudp_connectudp_bindudp_recv_fromudp_send_toudp_recvudp_sendudp_local_portudp_peerudp_nonblockingudp_closeudp_detachudp_attachpoller_add_udptty_opentty_configuretty_readtty_writetty_flush_inputtty_closepoller_add_ttycamera_opencamera_configurecamera_nextcamera_closemic_openmic_configuremic_readmic_closespeaker_openspeaker_configurespeaker_writespeaker_closesignals_watchsignals_pendingpoller_add_signalssignals_closeopen_dirdir_enterdir_open_readdir_closedir_open_newdir_open_appenddir_renamedir_rename_newdir_removedir_mkdirdir_open_new_modedir_syncdir_listdir_nextdir_list_closedir_statdir_modedir_own_modepipe_openexec_spawnexec_spawn_inchild_waitchild_killchild_kill_groupexec_coversfs_coverspipe_readpipe_writepipe_nonblockingpipe_closechild_end_closepoller_add_pipepoller_add_childnull_ptrspawnjointraptcp_listen_onexec_spawn_detachedchild_releasechild_pidexec_spawn_underexec_spawn_detached_under";
 }
 
 static builtin_starts: [int] {
-    let t = alloc_slice[static](172, 0);
+    let t = alloc_slice[static](184, 0);
     t[1] = 7;
     t[2] = 18;
     t[3] = 27;
@@ -714,57 +787,69 @@ static builtin_starts: [int] {
     t[123] = 1231;
     t[124] = 1240;
     t[125] = 1254;
-    t[126] = 1267;
-    t[127] = 1282;
-    t[128] = 1300;
-    t[129] = 1313;
-    t[130] = 1321;
-    t[131] = 1330;
-    t[132] = 1343;
-    t[133] = 1352;
-    t[134] = 1364;
-    t[135] = 1379;
-    t[136] = 1389;
-    t[137] = 1403;
-    t[138] = 1413;
-    t[139] = 1422;
-    t[140] = 1439;
-    t[141] = 1447;
-    t[142] = 1455;
-    t[143] = 1463;
-    t[144] = 1477;
-    t[145] = 1485;
-    t[146] = 1493;
-    t[147] = 1505;
-    t[148] = 1514;
-    t[149] = 1524;
-    t[150] = 1537;
-    t[151] = 1547;
-    t[152] = 1557;
-    t[153] = 1573;
-    t[154] = 1584;
-    t[155] = 1593;
-    t[156] = 1602;
-    t[157] = 1612;
-    t[158] = 1628;
-    t[159] = 1638;
-    t[160] = 1653;
-    t[161] = 1668;
-    t[162] = 1684;
-    t[163] = 1692;
-    t[164] = 1697;
-    t[165] = 1701;
-    t[166] = 1705;
-    t[167] = 1718;
-    t[168] = 1737;
-    t[169] = 1750;
-    t[170] = 1759;
-    t[171] = 1775;
+    t[126] = 1265;
+    t[127] = 1281;
+    t[128] = 1292;
+    t[129] = 1304;
+    t[130] = 1312;
+    t[131] = 1325;
+    t[132] = 1333;
+    t[133] = 1342;
+    t[134] = 1354;
+    t[135] = 1371;
+    t[136] = 1384;
+    t[137] = 1397;
+    t[138] = 1410;
+    t[139] = 1425;
+    t[140] = 1443;
+    t[141] = 1456;
+    t[142] = 1464;
+    t[143] = 1473;
+    t[144] = 1486;
+    t[145] = 1495;
+    t[146] = 1507;
+    t[147] = 1522;
+    t[148] = 1532;
+    t[149] = 1546;
+    t[150] = 1556;
+    t[151] = 1565;
+    t[152] = 1582;
+    t[153] = 1590;
+    t[154] = 1598;
+    t[155] = 1606;
+    t[156] = 1620;
+    t[157] = 1628;
+    t[158] = 1636;
+    t[159] = 1648;
+    t[160] = 1657;
+    t[161] = 1667;
+    t[162] = 1680;
+    t[163] = 1690;
+    t[164] = 1700;
+    t[165] = 1716;
+    t[166] = 1727;
+    t[167] = 1736;
+    t[168] = 1745;
+    t[169] = 1755;
+    t[170] = 1771;
+    t[171] = 1781;
+    t[172] = 1796;
+    t[173] = 1811;
+    t[174] = 1827;
+    t[175] = 1835;
+    t[176] = 1840;
+    t[177] = 1844;
+    t[178] = 1848;
+    t[179] = 1861;
+    t[180] = 1880;
+    t[181] = 1893;
+    t[182] = 1902;
+    t[183] = 1918;
     return t;
 }
 
 static builtin_lens: [int] {
-    let t = alloc_slice[static](172, 0);
+    let t = alloc_slice[static](184, 0);
     t[0] = 7;
     t[1] = 11;
     t[2] = 9;
@@ -890,58 +975,70 @@ static builtin_lens: [int] {
     t[122] = 15;
     t[123] = 9;
     t[124] = 14;
-    t[125] = 13;
-    t[126] = 15;
-    t[127] = 18;
-    t[128] = 13;
+    t[125] = 11;
+    t[126] = 16;
+    t[127] = 11;
+    t[128] = 12;
     t[129] = 8;
-    t[130] = 9;
-    t[131] = 13;
+    t[130] = 13;
+    t[131] = 8;
     t[132] = 9;
     t[133] = 12;
-    t[134] = 15;
-    t[135] = 10;
-    t[136] = 14;
-    t[137] = 10;
-    t[138] = 9;
-    t[139] = 17;
-    t[140] = 8;
+    t[134] = 17;
+    t[135] = 13;
+    t[136] = 13;
+    t[137] = 13;
+    t[138] = 15;
+    t[139] = 18;
+    t[140] = 13;
     t[141] = 8;
-    t[142] = 8;
-    t[143] = 14;
-    t[144] = 8;
-    t[145] = 8;
-    t[146] = 12;
-    t[147] = 9;
-    t[148] = 10;
-    t[149] = 13;
-    t[150] = 10;
-    t[151] = 10;
-    t[152] = 16;
-    t[153] = 11;
-    t[154] = 9;
-    t[155] = 9;
-    t[156] = 10;
-    t[157] = 16;
-    t[158] = 10;
-    t[159] = 15;
-    t[160] = 15;
-    t[161] = 16;
-    t[162] = 8;
-    t[163] = 5;
-    t[164] = 4;
-    t[165] = 4;
-    t[166] = 13;
-    t[167] = 19;
-    t[168] = 13;
-    t[169] = 9;
-    t[170] = 16;
-    t[171] = 25;
+    t[142] = 9;
+    t[143] = 13;
+    t[144] = 9;
+    t[145] = 12;
+    t[146] = 15;
+    t[147] = 10;
+    t[148] = 14;
+    t[149] = 10;
+    t[150] = 9;
+    t[151] = 17;
+    t[152] = 8;
+    t[153] = 8;
+    t[154] = 8;
+    t[155] = 14;
+    t[156] = 8;
+    t[157] = 8;
+    t[158] = 12;
+    t[159] = 9;
+    t[160] = 10;
+    t[161] = 13;
+    t[162] = 10;
+    t[163] = 10;
+    t[164] = 16;
+    t[165] = 11;
+    t[166] = 9;
+    t[167] = 9;
+    t[168] = 10;
+    t[169] = 16;
+    t[170] = 10;
+    t[171] = 15;
+    t[172] = 15;
+    t[173] = 16;
+    t[174] = 8;
+    t[175] = 5;
+    t[176] = 4;
+    t[177] = 4;
+    t[178] = 13;
+    t[179] = 19;
+    t[180] = 13;
+    t[181] = 9;
+    t[182] = 16;
+    t[183] = 25;
     return t;
 }
 
 static builtin_sinces: [int] {
-    let t = alloc_slice[static](172, 0);
+    let t = alloc_slice[static](184, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -1067,53 +1164,65 @@ static builtin_sinces: [int] {
     t[122] = 8;
     t[123] = 8;
     t[124] = 8;
-    t[125] = 6;
-    t[126] = 6;
-    t[127] = 6;
-    t[128] = 6;
-    t[129] = 6;
-    t[130] = 6;
-    t[131] = 6;
-    t[132] = 6;
-    t[133] = 6;
-    t[134] = 6;
-    t[135] = 6;
-    t[136] = 7;
+    t[125] = 12;
+    t[126] = 12;
+    t[127] = 12;
+    t[128] = 12;
+    t[129] = 12;
+    t[130] = 12;
+    t[131] = 12;
+    t[132] = 12;
+    t[133] = 12;
+    t[134] = 12;
+    t[135] = 12;
+    t[136] = 12;
     t[137] = 6;
-    t[138] = 9;
-    t[139] = 9;
+    t[138] = 6;
+    t[139] = 6;
     t[140] = 6;
     t[141] = 6;
     t[142] = 6;
     t[143] = 6;
     t[144] = 6;
-    t[145] = 7;
-    t[146] = 7;
-    t[147] = 7;
+    t[145] = 6;
+    t[146] = 6;
+    t[147] = 6;
     t[148] = 7;
-    t[149] = 7;
-    t[150] = 7;
-    t[151] = 7;
-    t[152] = 9;
-    t[153] = 9;
-    t[154] = 9;
-    t[155] = 7;
-    t[156] = 7;
+    t[149] = 6;
+    t[150] = 9;
+    t[151] = 9;
+    t[152] = 6;
+    t[153] = 6;
+    t[154] = 6;
+    t[155] = 6;
+    t[156] = 6;
     t[157] = 7;
     t[158] = 7;
     t[159] = 7;
     t[160] = 7;
     t[161] = 7;
-    t[162] = 3;
-    t[163] = 4;
-    t[164] = 4;
-    t[165] = 1;
+    t[162] = 7;
+    t[163] = 7;
+    t[164] = 9;
+    t[165] = 9;
     t[166] = 9;
-    t[167] = 9;
-    t[168] = 9;
-    t[169] = 9;
-    t[170] = 9;
-    t[171] = 9;
+    t[167] = 7;
+    t[168] = 7;
+    t[169] = 7;
+    t[170] = 7;
+    t[171] = 7;
+    t[172] = 7;
+    t[173] = 7;
+    t[174] = 3;
+    t[175] = 4;
+    t[176] = 4;
+    t[177] = 1;
+    t[178] = 9;
+    t[179] = 9;
+    t[180] = 9;
+    t[181] = 9;
+    t[182] = 9;
+    t[183] = 9;
     return t;
 }
 
@@ -1131,7 +1240,7 @@ pub fn rule_count() -> [] int {
 }
 
 fn rule_chars() -> [] &static [byte] {
-    return "ambiguous-typeA type the arguments do not settle must be written down; inference here is local and total, and never guesses.arity-mismatchA call, a pattern or a variant takes a fixed number of things, and this gave a different number.assign-to-immutableA `let` binding never changes after it is bound; `var` is the declaration that allows assignment.borrow-conflictA unique reference `&!` is the only way to reach its referent while it lives, so nothing else may read, write, move or consume that value meanwhile.builtin-redeclaredThe prelude's names — the capabilities, the builtins, the primitive types — belong to the language and a program may not redefine one.capability-misusedA capability is a value with exactly one way to use it: hold it, lend it, or end it with `release`. It is not taken apart, not written as a literal, and an operation it authorises reaches it through the parameter that names it.capability-not-narrowable`narrow` attenuates and never widens: the target must be strictly inside what the capability already grants, spelled as a literal so it can be checked where it is written.constant-trapsAn operation whose operands are all literals is evaluated during compilation, so one that would trap at run time cannot be compiled at all.duplicate-declarationA name is introduced once in the scope that holds it — a file, a signature, a struct, a pattern or a literal.effect-declared-not-performedAn effect row is exact in both directions: a label a function declares but never performs makes the row decoration rather than a contract.effect-not-declaredEvery effect a function's body performs appears in its row, and a function performs what the capability it was lent authorises.enum-has-no-variantsAn enum with no variants has no values, so nothing can ever construct or match one.field-orderA struct literal's fields are evaluated in declaration order, so writing them in another order would hide which expression runs first.foreign-boundary-typeA foreign parameter or result must have a layout both sides agree on: the scalars, and a slice by reference. Nothing else crosses.foreign-declarationA foreign declaration names one library and one symbol, and that pairing is unique in a program, and the function is reached only through the one `Ffi` capability that names that library.foreign-scopeThe scope of an `Ffi` is the set of libraries it names: letters, digits, `_`, `.`, `+` and `-`, comma separated, each once, such as `\"libc,libssl\"`.infinite-typeA type that contains itself has no finite size, so a `Box` has to sit somewhere on the path back to it.ingest-arityA known JSON node with a missing or wrongly typed field, or a negative tuple index, cannot become a tree.ingest-jsonThe JSON handed to `cancho ingest` has to be JSON, nested no deeper than the reader allows, with an object where the shape needs one (`docs/structured-ingest.md`).ingest-nodeA JSON node's `kind` has to name something the compiler builds. An unknown word is a vocabulary error, not a malformed one.internalThe compiler failed on a program it had accepted. The program is not at fault; the position is the function whose code could not be generated.linear-use-after-moveA `res` value is used exactly once. Once it has been moved or consumed there is nothing left to use, borrow or read.linear-value-taken-apartA `res` value is ended by the function that owns that job — `release`, `unbox`, a destructuring `let` — and never by reading a part out of it, which would leave the rest unaccounted for.linear-value-unconsumedA `res` value is consumed exactly once on every path: not dropped at the end of a block, not discarded by an assignment or a statement, and not left to differ between branches.listen-host`tcp_listen_on` names the address to listen on as a string literal holding a dotted-quad IPv4 address, and that address must be inside what the `Net` was narrowed to; the all-interfaces `tcp_listen` is refused on a `Net` narrowed to one host. No names, no IPv6, no host read at run time.literal-formA literal has one spelling — a string that does not span lines, a `0x` with digits after it, a float with a point — and this is not it.literal-out-of-rangeA literal must fit the type it is written at: `int` is 64-bit signed and `float` is IEEE-754 binary64.match-arm-unreachableEvery arm of a `match` must be able to run: no arm after one that already covers everything, and no variant matched twice.match-not-exhaustiveA `match` covers every variant of its enum, or has a `_`. There is no runtime failure for a value that matched nothing.match-on-a-non-enum`match` takes an enum or a reference to one. A struct is taken apart by destructuring instead.missing-fieldA struct literal gives every field: there is no default and no partial value.missing-returnEvery path out of a function returns a value of its declared type; falling off the end is not one of them.mode-bound-violated`res` and `val` are the two modes, and a container, a parameter or a declaration that promises `val` cannot hold a `res`: copying one would leave two values owing one obligation.module-not-importedA qualified name reaches another module only where this file has imported it.no-function-valuesA named, top-level function with no type parameters can be a value; a generic function, a builtin, an `extern fn`, or anything else in call position cannot.not-a-functionThe name in call position is not a function in this program: a local binding is a value, not something to call.not-a-placeAssignment writes to a place — a binding, or a field reached through a unique reference — and not to an arbitrary expression.not-a-referenceThis operation follows or writes through a reference, and the value it was given is not one.not-a-sliceIndexing and range-taking need a slice, and this value is not one.not-a-structField access, a struct literal or a destructuring `let` needs a struct, and this is not one.not-a-tupleA positional component or a `let (..)` needs a tuple, and this is not one.not-an-enumA variant is constructed or matched from an enum, and the name qualifying it here is not one.not-public`pub` is what makes a declaration reachable from another module, and a `pub` signature may not name something that is not.operator-type-mismatchAn operator is defined on the types that have the operation: arithmetic and ordering on the numbers, equality on the scalars.pattern-shapeA pattern says what it takes apart in one step, and the shapes it may take are fixed: there is no `()`, and a pattern does not nest.program-shapeA program has one `main` taking the `World` and returning `int`, and a file declares at most one module, first.reference-escapes-regionA reference may not outlive the region it points into — an arena, a `borrow` block, or a caller's region parameter.region-chunk-exceededA region is one 65,536-byte chunk, so one allocation whose size is known to be larger cannot be made in it; data that big belongs on the heap, in a `box_slice`.region-mismatchTwo regions are the same one or they are not, and a `where` clause is how a signature relates the ones it takes.region-not-in-scopeA region comes from a `[&r]` parameter or a `region r { .. }` block, and this name is neither.shared-reference-writtenA shared reference `&` promises its referent will not change, so it cannot be written through or turned into a unique one.signal-not-claimableA program may claim only the signals a request can be read from -- `HUP`, `INT`, `QUIT`, `TERM`, `USR1`, `USR2`, `ALRM` and `WINCH` -- named without the `SIG` prefix, comma-separated, each once; `KILL` and `STOP` cannot be caught and the faults (`SEGV`, `ILL`, `BUS`, `FPE`) are not requests.static-itemA `static` is compile-time data: a slice of scalars, evaluated during compilation, performing nothing and reading only `static`s declared before it.thread-payload-type`spawn`'s payload and `body`'s return type must each cross to a real OS thread as one pointer-width value -- `int`, `bool`, `c_ptr`, a reference, a function value, `()`, or an owned zero-leaf/one-leaf capability such as `Io` or `File` -- the same shape `pthread_create`'s own `void *(*)(void *)` start routine can carry.type-args-not-takenA type parameter stands for one type and is not itself generic, so it takes no type arguments.type-mismatchAn expression's type does not match what the context requires — a return type, an annotation, a parameter, or the mode of a reference.unexpected-characterA character that begins no token in this language, or that cannot appear where it does.unknown-editionA file's `edition N;` marker names one of the editions this compiler knows; a file with no marker is edition 1, and there is nothing later than edition 11 to name yet.unknown-escapeA string literal takes the six escapes `\\n`, `\\r`, `\\t`, `\\\\`, `\\\"` and `\\0`; there is no `\\x` and no `\\u`, and a source file is already UTF-8.unknown-nameThe name is not in scope, or the thing it is read out of does not have it.unreachable-statementA statement after one that always leaves the block — a `return`, or a loop that never ends — can never run.unsized-typeA slice type `[T]` has no size of its own, so it is used through a reference rather than as a value.unsupported-on-targetThe program reaches something this target cannot do -- threads, sockets, signals or processes on WASI. Build for the host, or remove the call; `docs/wasm.md` lists what each target supports.";
+    return "ambiguous-typeA type the arguments do not settle must be written down; inference here is local and total, and never guesses.arity-mismatchA call, a pattern or a variant takes a fixed number of things, and this gave a different number.assign-to-immutableA `let` binding never changes after it is bound; `var` is the declaration that allows assignment.borrow-conflictA unique reference `&!` is the only way to reach its referent while it lives, so nothing else may read, write, move or consume that value meanwhile.builtin-redeclaredThe prelude's names — the capabilities, the builtins, the primitive types — belong to the language and a program may not redefine one.capability-misusedA capability is a value with exactly one way to use it: hold it, lend it, or end it with `release`. It is not taken apart, not written as a literal, and an operation it authorises reaches it through the parameter that names it.capability-not-narrowable`narrow` attenuates and never widens: the target must be strictly inside what the capability already grants, spelled as a literal so it can be checked where it is written.constant-trapsAn operation whose operands are all literals is evaluated during compilation, so one that would trap at run time cannot be compiled at all.duplicate-declarationA name is introduced once in the scope that holds it — a file, a signature, a struct, a pattern or a literal.effect-declared-not-performedAn effect row is exact in both directions: a label a function declares but never performs makes the row decoration rather than a contract.effect-not-declaredEvery effect a function's body performs appears in its row, and a function performs what the capability it was lent authorises.enum-has-no-variantsAn enum with no variants has no values, so nothing can ever construct or match one.field-orderA struct literal's fields are evaluated in declaration order, so writing them in another order would hide which expression runs first.foreign-boundary-typeA foreign parameter or result must have a layout both sides agree on: the scalars, and a slice by reference. Nothing else crosses.foreign-declarationA foreign declaration names one library and one symbol, and that pairing is unique in a program, and the function is reached only through the one `Ffi` capability that names that library.foreign-scopeThe scope of an `Ffi` is the set of libraries it names: letters, digits, `_`, `.`, `+` and `-`, comma separated, each once, such as `\"libc,libssl\"`.infinite-typeA type that contains itself has no finite size, so a `Box` has to sit somewhere on the path back to it.ingest-arityA known JSON node with a missing or wrongly typed field, or a negative tuple index, cannot become a tree.ingest-jsonThe JSON handed to `cancho ingest` has to be JSON, nested no deeper than the reader allows, with an object where the shape needs one (`docs/structured-ingest.md`).ingest-nodeA JSON node's `kind` has to name something the compiler builds. An unknown word is a vocabulary error, not a malformed one.internalThe compiler failed on a program it had accepted. The program is not at fault; the position is the function whose code could not be generated.linear-use-after-moveA `res` value is used exactly once. Once it has been moved or consumed there is nothing left to use, borrow or read.linear-value-taken-apartA `res` value is ended by the function that owns that job — `release`, `unbox`, a destructuring `let` — and never by reading a part out of it, which would leave the rest unaccounted for.linear-value-unconsumedA `res` value is consumed exactly once on every path: not dropped at the end of a block, not discarded by an assignment or a statement, and not left to differ between branches.listen-host`tcp_listen_on` names the address to listen on as a string literal holding a dotted-quad IPv4 address, and that address must be inside what the `Net` was narrowed to; the all-interfaces `tcp_listen` is refused on a `Net` narrowed to one host. No names, no IPv6, no host read at run time.literal-formA literal has one spelling — a string that does not span lines, a `0x` with digits after it, a float with a point — and this is not it.literal-out-of-rangeA literal must fit the type it is written at: `int` is 64-bit signed and `float` is IEEE-754 binary64.match-arm-unreachableEvery arm of a `match` must be able to run: no arm after one that already covers everything, and no variant matched twice.match-not-exhaustiveA `match` covers every variant of its enum, or has a `_`. There is no runtime failure for a value that matched nothing.match-on-a-non-enum`match` takes an enum or a reference to one. A struct is taken apart by destructuring instead.missing-fieldA struct literal gives every field: there is no default and no partial value.missing-returnEvery path out of a function returns a value of its declared type; falling off the end is not one of them.mode-bound-violated`res` and `val` are the two modes, and a container, a parameter or a declaration that promises `val` cannot hold a `res`: copying one would leave two values owing one obligation.module-not-importedA qualified name reaches another module only where this file has imported it.no-function-valuesA named, top-level function with no type parameters can be a value; a generic function, a builtin, an `extern fn`, or anything else in call position cannot.not-a-functionThe name in call position is not a function in this program: a local binding is a value, not something to call.not-a-placeAssignment writes to a place — a binding, or a field reached through a unique reference — and not to an arbitrary expression.not-a-referenceThis operation follows or writes through a reference, and the value it was given is not one.not-a-sliceIndexing and range-taking need a slice, and this value is not one.not-a-structField access, a struct literal or a destructuring `let` needs a struct, and this is not one.not-a-tupleA positional component or a `let (..)` needs a tuple, and this is not one.not-an-enumA variant is constructed or matched from an enum, and the name qualifying it here is not one.not-public`pub` is what makes a declaration reachable from another module, and a `pub` signature may not name something that is not.operator-type-mismatchAn operator is defined on the types that have the operation: arithmetic and ordering on the numbers, equality on the scalars.pattern-shapeA pattern says what it takes apart in one step, and the shapes it may take are fixed: there is no `()`, and a pattern does not nest.program-shapeA program has one `main` taking the `World` and returning `int`, and a file declares at most one module, first.reference-escapes-regionA reference may not outlive the region it points into — an arena, a `borrow` block, or a caller's region parameter.region-chunk-exceededA region is one 65,536-byte chunk, so one allocation whose size is known to be larger cannot be made in it; data that big belongs on the heap, in a `box_slice`.region-mismatchTwo regions are the same one or they are not, and a `where` clause is how a signature relates the ones it takes.region-not-in-scopeA region comes from a `[&r]` parameter or a `region r { .. }` block, and this name is neither.shared-reference-writtenA shared reference `&` promises its referent will not change, so it cannot be written through or turned into a unique one.signal-not-claimableA program may claim only the signals a request can be read from -- `HUP`, `INT`, `QUIT`, `TERM`, `USR1`, `USR2`, `ALRM` and `WINCH` -- named without the `SIG` prefix, comma-separated, each once; `KILL` and `STOP` cannot be caught and the faults (`SEGV`, `ILL`, `BUS`, `FPE`) are not requests.static-itemA `static` is compile-time data: a slice of scalars, evaluated during compilation, performing nothing and reading only `static`s declared before it.thread-payload-type`spawn`'s payload and `body`'s return type must each cross to a real OS thread as one pointer-width value -- `int`, `bool`, `c_ptr`, a reference, a function value, `()`, or an owned zero-leaf/one-leaf capability such as `Io` or `File` -- the same shape `pthread_create`'s own `void *(*)(void *)` start routine can carry.type-args-not-takenA type parameter stands for one type and is not itself generic, so it takes no type arguments.type-mismatchAn expression's type does not match what the context requires — a return type, an annotation, a parameter, or the mode of a reference.unexpected-characterA character that begins no token in this language, or that cannot appear where it does.unknown-editionA file's `edition N;` marker names one of the editions this compiler knows; a file with no marker is edition 1, and there is nothing later than edition 12 to name yet.unknown-escapeA string literal takes the six escapes `\\n`, `\\r`, `\\t`, `\\\\`, `\\\"` and `\\0`; there is no `\\x` and no `\\u`, and a source file is already UTF-8.unknown-nameThe name is not in scope, or the thing it is read out of does not have it.unreachable-statementA statement after one that always leaves the block — a `return`, or a loop that never ends — can never run.unsized-typeA slice type `[T]` has no size of its own, so it is used through a reference rather than as a value.unsupported-on-targetThe program reaches something this target cannot do -- threads, sockets, signals or processes on WASI. Build for the host, or remove the call; `docs/wasm.md` lists what each target supports.";
 }
 
 static rule_tag_starts: [int] {
