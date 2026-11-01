@@ -88,8 +88,12 @@ fn without_folded(report: &str, json: bool) -> String {
 }
 
 /// Programs the compiler in cancho answers status 3 for, and why: it has no code for them (`skip`), or one of them calls a function through a function value, whose labels it does not follow. `camera_hello.cho` and `audio_hello.cho` open a device, which it has no code for yet (#665).
-const STATUS_3: [&str; 3] =
-    ["aliasing_in_a_slice_of_references.cho", "function_value.cho", "camera_hello.cho"];
+const STATUS_3: [&str; 4] = [
+    "aliasing_in_a_slice_of_references.cho",
+    "function_value.cho",
+    "camera_hello.cho",
+    "audio_hello.cho",
+];
 
 /// `cancho authority` and `cli.cho authority` on the programs of the repository -- the programs of `examples/` (the ones of several files with the packages they import), and every program of
 /// `tests/accept/` that has a `main` -- in both forms: the output has to be the same byte for byte, but for the two counts of what compile-time evaluation folded, which the compiler in cancho does not make.
