@@ -1,0 +1,107 @@
+//~ STDOUT usage: echo /dev/video0 | camera_hello > frame.pgm
+//~ EXIT 0
+// camera_hello.cho — the Camera capability's example (`docs/camera.md`).
+//
+// It reads a device path from the first line of standard input, opens that
+// camera, asks for 320x240, waits for the 40th frame (the first few come
+// out dark while the camera's auto-exposure settles) and writes it to
+// standard output as a binary PGM, so `echo /dev/video0 | camera_hello >
+// frame.pgm` makes a picture any viewer opens. The row says
+// `camera_open("/dev")` and `camera_next`, and the report has no `foreign`
+// line: no V4L2 call is a program's business under the capability.
+//
+// The path comes from standard input so that the example does not switch a
+// camera on when the test suite runs it: with no path it prints its usage
+// and exits 0. A device that will not open prints the errno and exits 3; one
+// that refuses 320x240 exits 4; one that stops answering exits 5.
+// Narrowing to `/dev` (not `/dev/video`) is deliberate: a bound is a
+// directory (`docs/device-backends.md` §11).
+edition 12;
+
+import std.io;
+
+fn main(world: World) -> [camera_open("/dev"), camera_next] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(out);
+    release(ports);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(mic);
+    release(speaker);
+
+    let device = narrow(camera, "/dev");
+    var code = 0;
+    borrow mut heap as &!hp in {
+        borrow mut io as &!o in {
+            region r {
+                let path = alloc_slice[r](256, byte_of(0));
+                var n = 0;
+                var c = getchar(o);
+                while c >= 0 && c != '\n' && n < 255 {
+                    path[n] = byte_of(c);
+                    n = n + 1;
+                    c = getchar(o);
+                }
+                if n == 0 {
+                    io.write_all(o, "usage: echo /dev/video0 | camera_hello > frame.pgm\n");
+                } else {
+                    borrow device as &d in {
+                        match camera_open(d, path[0..n]) {
+                            CameraOpened::Ok(cam) => {
+                                borrow mut cam as &!k in {
+                                    if camera_configure(k, 320, 240) != 0 {
+                                        code = 4;
+                                    } else {
+                                        let frame = box_slice(hp, 76800, byte_of(0));
+                                        borrow mut frame as &!fw in {
+                                            var got = 0;
+                                            var tries = 0;
+                                            while tries < 400000000 && got < 40 {
+                                                let m = camera_next(k, contents(fw));
+                                                if m == 76800 {
+                                                    got = got + 1;
+                                                }
+                                                if m < 0 {
+                                                    tries = 400000000;
+                                                }
+                                                tries = tries + 1;
+                                            }
+                                            if got < 40 {
+                                                code = 5;
+                                            } else {
+                                                io.write_all(o, "P5\n320 240\n255\n");
+                                                let px = contents(fw);
+                                                var i = 0;
+                                                while i < 76800 {
+                                                    putchar(o, int_of(px[i]));
+                                                    i = i + 1;
+                                                }
+                                            }
+                                        }
+                                        unbox_slice(hp, frame);
+                                    }
+                                }
+                                camera_close(cam);
+                            }
+                            CameraOpened::Failed(errno) => {
+                                io.write_all(o, "no camera (errno ");
+                                io.print_int(o, errno);
+                                io.write_all(o, ")\n");
+                                code = 3;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(device);
+    release(heap);
+    release(io);
+    return code;
+}
