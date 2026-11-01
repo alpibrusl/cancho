@@ -467,6 +467,10 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         // A program that opens a region has the stack of chunks its thread keeps for them.
         emit.str(st, runtime.region_text(st[61] == 1));
     }
+    if st[55] & 128 != 0 {
+        // A program that opens a camera has the verbs for it.
+        emit.str(st, runtime.camera_text(st[61] == 1));
+    }
     if st[55] & 16 != 0 {
         // A program that opens a serial port has the verbs for it.
         emit.str(st, runtime.tty_text(st[61] == 1));

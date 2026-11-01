@@ -3,8 +3,13 @@
 > **Status: the walk both backends implement** for `docs/camera.md` §3 and `docs/audio.md` §3. It exists so Cranelift
 > (`crates/cancho-codegen/src/body/camera.rs`, `audio.rs`) and LLVM (`crates/cancho-codegen-llvm/src/body/camera.rs`,
 > `audio.rs`) cannot disagree, as `cancho_ir::device` does for the numbers. Every number is in `cancho_ir::device`
-> (`v4l2` and `alsa` modules), measured with clang on Linux x86_64. Targets other than Linux are **not measured**: on them
-> the open answers `Failed(ENODEV)` and no ioctl is emitted.
+> (`v4l2` and `alsa` modules), measured with clang on Linux x86_64. The camera's (`v4l2`) are also measured on Linux aarch64
+> (a Raspberry Pi 5; identical), so the camera verbs run there; the ALSA numbers are x86_64 only. Targets other than these are
+> **not measured**: on them the open answers `Failed(ENODEV)` and no ioctl is emitted.
+>
+> **The compiler in cancho writes the camera verbs too** (`examples/selfhost/runtime/camera.c`, built into `camera_linux.ll` and
+> `camera_darwin.ll` by `runtime/make.sh`; builtins 141-144 in `codes.cho`, `netcode.cho`): the same walk, as C over byte offsets.
+> Microphone and speaker are still the Rust compiler's (#665).
 
 ## 1. The handle is a pointer to a state block
 

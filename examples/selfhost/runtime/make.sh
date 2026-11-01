@@ -36,3 +36,11 @@ for os in linux:0 darwin:1; do
     sed -e 's/ #[0-9]* {/ {/' -e 's/ #[0-9]*$//' -e 's/, !tbaa ![0-9]*//' -e 's/, !llvm.loop ![0-9]*//' -e 's/ noundef//g' -e 's/ dso_local//g' -e 's/ signext//g' -e 's/ zeroext//g' -e 's/ local_unnamed_addr//g' > tty_$name.ll
 done
 rm -f dirs.ll
+
+# The camera verbs (`docs/device-backends.md`). The Linux text has the V4L2 walk; the macOS text answers `Failed(ENODEV)`.
+for os in linux:0 darwin:1; do
+  name=${os%%:*}; flag=${os##*:}
+  clang -S -emit-llvm -O0 -Xclang -disable-O0-optnone -DDARWIN=$flag -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -fno-discard-value-names -target arm64-apple-macos camera.c -o - |
+    grep -v '^target \|^source_filename\|^!\|^attributes #\|^; ModuleID\|^declare i32 @openat(\|^declare i32 @close(\|^declare void @free(\|^declare ptr @calloc(\|^declare ptr @cancho_checked_path\|^declare ptr @cancho_errno_location\|^declare void @llvm\.' |
+    sed -e 's/ #[0-9]* {/ {/' -e 's/ #[0-9]*$//' -e 's/, !tbaa ![0-9]*//' -e 's/, !llvm.loop ![0-9]*//' -e 's/ noundef//g' -e 's/ dso_local//g' -e 's/ signext//g' -e 's/ zeroext//g' -e 's/ local_unnamed_addr//g' > camera_$name.ll
+done

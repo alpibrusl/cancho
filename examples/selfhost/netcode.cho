@@ -167,10 +167,10 @@ pub fn arity(which: int) -> [] int {
     if which == 131 {
         return 2;
     }
-    if which == 129 || which == 130 || which == 132 || which == 133 || which == 134 {
+    if which == 129 || which == 130 || which == 132 || which == 133 || which == 134 || which == 142 {
         return 3;
     }
-    if which >= 122 && which <= 125 || which == 127 || which == 138 {
+    if which >= 122 && which <= 125 || which == 127 || which == 138 || which == 141 || which == 143 {
         return 2;
     }
     if which == 106 || which == 108 {
@@ -211,12 +211,12 @@ pub fn arity(which: int) -> [] int {
 
 // Does the first argument, a capability narrowed to a bound, give the bound the call checks?
 pub fn holds_bound(which: int) -> [] bool {
-    return which == 32 || which == 33 || which == 36 || which == 37 || which == 54 || which == 110 || which == 122 || which == 129 || which == 130;
+    return which == 32 || which == 33 || which == 36 || which == 37 || which == 54 || which == 110 || which == 122 || which == 129 || which == 130 || which == 141;
 }
 
 // How many numbers the function answers in its cell: 0 when it answers one whole number.
 pub fn slots(which: int) -> [] int {
-    if which == 119 || which == 122 || which == 129 || which == 130 || which == 133 {
+    if which == 119 || which == 122 || which == 129 || which == 130 || which == 133 || which == 141 {
         return 3;
     }
     if which == 131 || which == 132 {
@@ -253,6 +253,9 @@ pub fn enum_name(which: int) -> [] &static [byte] {
     }
     if which == 122 {
         return "TtyOpened";
+    }
+    if which == 141 {
+        return "CameraOpened";
     }
     if which == 119 {
         return "Watching";
@@ -339,6 +342,18 @@ pub fn function(which: int) -> [] &static [byte] {
     }
     if which == 138 {
         return "cancho_child_kill_group";
+    }
+    if which == 141 {
+        return "cancho_camera_open";
+    }
+    if which == 142 {
+        return "cancho_camera_configure";
+    }
+    if which == 143 {
+        return "cancho_camera_next";
+    }
+    if which == 144 {
+        return "cancho_camera_close";
     }
     if which == 122 {
         return "cancho_tty_open";
