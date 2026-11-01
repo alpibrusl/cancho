@@ -400,6 +400,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`gpu.md`](gpu.md) | Whether cancho can run on a GPU, and whether `lex-gpu` should exist | measured; decided |
 | [`line-reading.md`](line-reading.md) | Whether `std` needs a line reader | measured — no; found and fixed a silent truncation bug |
 | [`agent-errors.md`](agent-errors.md) | Refusals a machine can read: stable rule tags, `check --output json` | settled and built |
+| [`diagnostic-messages.md`](diagnostic-messages.md) | The specific refusal message in the compiler in cancho (383 of 384 corpus messages are the rule's sentence there) | design, not built |
 | [`refusals-by-example.md`](refusals-by-example.md) | A walkthrough of 13 refusals, one rule tag per chapter: the refused program, what the compiler says, the correction; checked by a test | built |
 | [`standalone-cancho.md`](standalone-cancho.md) | A `cancho` built by cancho: what the command line in cancho lacks (measured), the decisions for the first standalone release, the slices, installing | design |
 | [`structured-ingest.md`](structured-ingest.md) | The AST as JSON and back: `cancho print --output json` and `cancho ingest`, the ingest path an agent writes | built |
