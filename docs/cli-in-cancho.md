@@ -181,7 +181,7 @@ accepted program is `{"refused": []}`, as Rust writes it. Exit status 0, 1 for a
 
 **Decided (the owner, in this session).** The `message` of a refusal is the **sentence of the rule**, the one the `explanation` already is: the
 Rust command has a hand-written message at each of about 350 sites and the checker in cancho has none, and the checker stops at the **first**
-refusal where Rust reports every independent one. Porting the messages is open work, not a decision against it.
+refusal where Rust reports every independent one. Porting the messages is open work, not a decision against it. `docs/diagnostic-messages.md` designs that work, and `selfhost::messages` is its ratchet: the fixtures of `tests/reject/` whose `message` does not yet contain their `//~ ERROR` text are listed in `message_gaps.txt`, and the list only shrinks.
 
 **Not available yet.** `--std` and `--target` (the standard library's text is not in the command line, and a WebAssembly target is the Rust
 backend's) answer a usage error; `--backend` takes `llvm` only. A cancho program cannot ask what it runs on, so `--host linux|darwin|linux-aarch64`
