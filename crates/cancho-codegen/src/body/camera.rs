@@ -22,6 +22,19 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         ) && matches!(self.module.isa().triple().architecture, target_lexicon::Architecture::X86_64)
     }
 
+    /// Whether the V4L2 numbers are measured for the target being compiled for: Linux x86_64 and Linux aarch64
+    /// (the robot's Raspberry Pi 5; `docs/camera.md` §2). The ALSA numbers are still x86_64 only, so audio keeps
+    /// `device_supported`.
+    pub(crate) fn camera_supported(&self) -> bool {
+        matches!(
+            self.module.isa().triple().operating_system,
+            target_lexicon::OperatingSystem::Linux
+        ) && matches!(
+            self.module.isa().triple().architecture,
+            target_lexicon::Architecture::X86_64 | target_lexicon::Architecture::Aarch64(_)
+        )
+    }
+
     fn const64(&mut self, value: i64) -> Value {
         self.builder.ins().iconst(types::I64, value)
     }
@@ -157,7 +170,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         prefix: &str,
         args: &[cancho_ir::Expr],
     ) -> Vec<Value> {
-        if !self.device_supported() {
+        if !self.camera_supported() {
             let tag = self.const64(1);
             let handle = self.const64(-1);
             let reason = self.const64(DEVICE_ENODEV);
@@ -233,7 +246,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
     /// `camera_configure(&!Cam, width, height)` -- `docs/device-backends.md` §3.
     pub(crate) fn camera_configure(&mut self, args: &[Value]) -> Vec<Value> {
-        if !self.device_supported() {
+        if !self.camera_supported() {
             return vec![self.const64(-1)];
         }
         let pointer = self.pointer;
@@ -350,7 +363,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
     /// `camera_next(&!Cam, into)` -- `docs/device-backends.md` §4: the newest ready frame as grey bytes.
     pub(crate) fn camera_next(&mut self, args: &[Value]) -> Vec<Value> {
-        if !self.device_supported() {
+        if !self.camera_supported() {
             return vec![self.const64(-1)];
         }
         let (into, length) = (args[1], args[2]);
@@ -447,7 +460,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
 
     /// `camera_close(Cam)` -- `docs/device-backends.md` §5. The argument is the block address.
     pub(crate) fn camera_close(&mut self, args: &[Value]) -> Vec<Value> {
-        if !self.device_supported() {
+        if !self.camera_supported() {
             return vec![self.const64(-1)];
         }
         let pointer = self.pointer;

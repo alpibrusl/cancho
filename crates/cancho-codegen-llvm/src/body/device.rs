@@ -12,6 +12,13 @@ impl FuncEmitter<'_> {
             && self.triple.architecture == Architecture::X86_64
     }
 
+    /// Whether the V4L2 numbers are measured for the target being compiled for: Linux x86_64 and Linux aarch64
+    /// (`docs/camera.md` §2). The ALSA numbers are still x86_64 only, so audio keeps `device_supported`.
+    pub(crate) fn camera_supported(&self) -> bool {
+        self.triple.operating_system == OperatingSystem::Linux
+            && matches!(self.triple.architecture, Architecture::X86_64 | Architecture::Aarch64(_))
+    }
+
     /// A number for labels, unique within the function.
     pub(crate) fn dev_n(&mut self) -> String {
         self.fresh().trim_start_matches('%').to_string()

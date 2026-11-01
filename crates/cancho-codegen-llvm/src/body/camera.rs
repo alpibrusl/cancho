@@ -15,7 +15,7 @@ impl FuncEmitter<'_> {
         prefix: &str,
         args: &[Expr],
     ) -> Result<Vec<LValue>, String> {
-        if !self.device_supported() {
+        if !self.camera_supported() {
             return Ok(vec![
                 LValue::Reg("1".to_string()),
                 LValue::Reg("-1".to_string()),
@@ -52,7 +52,7 @@ impl FuncEmitter<'_> {
 
     /// `camera_configure(&!Cam, width, height) -> int` (`docs/device-backends.md` §3).
     pub(crate) fn camera_configure(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
-        if !self.device_supported() {
+        if !self.camera_supported() {
             return Ok(vec![LValue::Reg("-1".to_string())]);
         }
         let block = self.dev_block_of_ref(&args[0]);
@@ -173,7 +173,7 @@ impl FuncEmitter<'_> {
 
     /// `camera_next(&!Cam, into: &![byte]) -> int` (`docs/device-backends.md` §4).
     pub(crate) fn camera_next(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
-        if !self.device_supported() {
+        if !self.camera_supported() {
             return Ok(vec![LValue::Reg("-1".to_string())]);
         }
         let block = self.dev_block_of_ref(&args[0]);
@@ -276,7 +276,7 @@ impl FuncEmitter<'_> {
 
     /// `camera_close(Cam) -> int` (`docs/device-backends.md` §5): the handle is the block's address.
     pub(crate) fn camera_close(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
-        if !self.device_supported() {
+        if !self.camera_supported() {
             return Ok(vec![LValue::Reg("-1".to_string())]);
         }
         let block = self.dev_block(&operand(&args[0]));
