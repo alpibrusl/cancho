@@ -1,0 +1,185 @@
+//~ STDOUT usage: printf '/dev/snd/pcmC0D0p\n/dev/snd/pcmC0D0c\n' | audio_hello
+//~ EXIT 0
+// audio_hello.cho — the Speaker and Mic capabilities' example (`docs/audio.md`).
+//
+// Line 1 of standard input names a playback node: the program plays one
+// second of a 440 Hz square wave on it. Line 2, if there is one, names a
+// capture node: the program takes one second of samples and prints the
+// loudest one (the peak of the absolute value, 0 to 32768). Either line
+// may be empty to skip that half. The row says `speaker_open("/dev")` and
+// `mic_open("/dev")` and the report has no `foreign` line; a program given
+// only the speaker would not type-check a call to `mic_read`.
+//
+// The device speaks stereo at one fixed rate (`docs/audio.md` §2); the
+// backend converts, so the program sees mono signed 16-bit little-endian
+// at the rate it names. 48000 is what the laptop's `hw:0,0` offers; a rate
+// the device does not offer prints the errno and exits 4. A node that will
+// not open exits 3.
+//
+// The paths come from standard input so that running the test suite never
+// plays a sound or opens a microphone: with no path it prints its usage
+// and exits 0. Narrowing is to `/dev`, a directory bound
+// (`docs/device-backends.md` §11). Stream calls never block, so both loops
+// retry until the second is done, bounded by a try count.
+edition 12;
+
+import std.io;
+
+fn read_line[&i, &b](o: &!i Io, buf: &!b [byte]) -> [io_read] int {
+    var n = 0;
+    var c = getchar(o);
+    while c >= 0 && c != '\n' && n < len(buf) {
+        buf[n] = byte_of(c);
+        n = n + 1;
+        c = getchar(o);
+    }
+    return n;
+}
+
+fn main(world: World) -> [speaker_open("/dev"), speaker_write, mic_open("/dev"), mic_read] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(out);
+    release(ports);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(camera);
+    release(heap);
+
+    let sp = narrow(speaker, "/dev");
+    let mc = narrow(mic, "/dev");
+    var code = 0;
+    borrow mut io as &!o in {
+        region r {
+            let play_path = alloc_slice[r](256, byte_of(0));
+            let rec_path = alloc_slice[r](256, byte_of(0));
+            let np = read_line(o, play_path);
+            let nr = read_line(o, rec_path);
+            if np == 0 && nr == 0 {
+                io.write_all(o, "usage: printf '/dev/snd/pcmC0D0p\\n/dev/snd/pcmC0D0c\\n' | audio_hello\n");
+            }
+            if np > 0 {
+                borrow sp as &s in {
+                    match speaker_open(s, play_path[0..np]) {
+                        SpeakerOpened::Ok(pb) => {
+                            borrow mut pb as &!p in {
+                                let e = speaker_configure(p, 48000);
+                                if e != 0 {
+                                    io.write_all(o, "speaker refuses 48000 Hz (errno ");
+                                    io.print_int(o, e);
+                                    io.write_all(o, ")\n");
+                                    code = 4;
+                                } else {
+                                    let chunk = alloc_slice[r](2048, byte_of(0));
+                                    var t = 0;
+                                    var sent = 0;
+                                    var tries = 0;
+                                    while sent < 96000 && tries < 50000000 {
+                                        var k = 0;
+                                        while k < 1024 {
+                                            var v = 8000;
+                                            if (t + k) % 109 >= 55 {
+                                                v = 0 - 8000;
+                                            }
+                                            if v < 0 {
+                                                v = v + 65536;
+                                            }
+                                            chunk[2 * k] = byte_of(v % 256);
+                                            chunk[2 * k + 1] = byte_of(v / 256);
+                                            k = k + 1;
+                                        }
+                                        let w = speaker_write(p, chunk);
+                                        if w < 0 {
+                                            tries = 50000000;
+                                        } else {
+                                            sent = sent + w;
+                                            t = t + w / 2;
+                                        }
+                                        tries = tries + 1;
+                                    }
+                                    if sent < 96000 {
+                                        code = 5;
+                                    }
+                                }
+                            }
+                            speaker_close(pb);
+                        }
+                        SpeakerOpened::Failed(errno) => {
+                            io.write_all(o, "no speaker (errno ");
+                            io.print_int(o, errno);
+                            io.write_all(o, ")\n");
+                            code = 3;
+                        }
+                    }
+                }
+            }
+            if nr > 0 && code == 0 {
+                borrow mc as &m in {
+                    match mic_open(m, rec_path[0..nr]) {
+                        MicOpened::Ok(cp) => {
+                            borrow mut cp as &!c in {
+                                let e = mic_configure(c, 48000);
+                                if e != 0 {
+                                    io.write_all(o, "mic refuses 48000 Hz (errno ");
+                                    io.print_int(o, e);
+                                    io.write_all(o, ")\n");
+                                    code = 4;
+                                } else {
+                                    let buf = alloc_slice[r](2048, byte_of(0));
+                                    var got = 0;
+                                    var peak = 0;
+                                    var tries = 0;
+                                    while got < 96000 && tries < 50000000 {
+                                        let n = mic_read(c, buf);
+                                        if n < 0 {
+                                            tries = 50000000;
+                                        } else {
+                                            var k = 0;
+                                            while k + 1 < n {
+                                                var s = int_of(buf[k]) + 256 * int_of(buf[k + 1]);
+                                                if s >= 32768 {
+                                                    s = s - 65536;
+                                                }
+                                                if s < 0 {
+                                                    s = 0 - s;
+                                                }
+                                                if s > peak {
+                                                    peak = s;
+                                                }
+                                                k = k + 2;
+                                            }
+                                            got = got + n;
+                                        }
+                                        tries = tries + 1;
+                                    }
+                                    if got < 96000 {
+                                        code = 5;
+                                    } else {
+                                        io.write_all(o, "peak ");
+                                        io.print_int(o, peak);
+                                        io.write_all(o, "\n");
+                                    }
+                                }
+                            }
+                            mic_close(cp);
+                        }
+                        MicOpened::Failed(errno) => {
+                            io.write_all(o, "no microphone (errno ");
+                            io.print_int(o, errno);
+                            io.write_all(o, ")\n");
+                            code = 3;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(sp);
+    release(mc);
+    release(io);
+    return code;
+}
