@@ -1677,7 +1677,9 @@ fn build(
                         "note: the compiler in cancho could not build this ({}); building it with the Rust compiler",
                         why.message.lines().next().unwrap_or("")
                     );
-                    warn_rust_compiler_deprecated("the compiler in cancho could not build this program");
+                    warn_rust_compiler_deprecated(
+                        "the compiler in cancho could not build this program",
+                    );
                     build_with_rust(inputs, output, emit, with_std, codegen, link_libs, link_paths)
                 }
                 selfhost_build::Built::NoCode(failure) | selfhost_build::Built::Broke(failure) => {
