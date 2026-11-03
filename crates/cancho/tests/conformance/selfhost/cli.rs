@@ -1167,6 +1167,7 @@ fn the_command_line_in_cancho_satisfies_like_cancho_satisfy() {
         let run = |binary: &Path| {
             let done = Command::new(binary)
                 .current_dir(&dir)
+                .env("CANCHO_NO_DEPRECATION_WARNING", "1") // only the Rust compiler's stderr has that warning; the CLI in cancho has nothing to compare
                 .arg("satisfy")
                 .args(&options)
                 .args(&names)

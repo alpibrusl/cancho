@@ -568,6 +568,14 @@ fn render_runtime(dir: &std::path::Path) -> String {
         &std::fs::read_to_string(dir.join("runtime/tty_darwin.ll"))
             .expect("examples/selfhost/runtime/tty_darwin.ll"),
     );
+    let camera_linux = escape(
+        &std::fs::read_to_string(dir.join("runtime/camera_linux.ll"))
+            .expect("examples/selfhost/runtime/camera_linux.ll"),
+    );
+    let camera_darwin = escape(
+        &std::fs::read_to_string(dir.join("runtime/camera_darwin.ll"))
+            .expect("examples/selfhost/runtime/camera_darwin.ll"),
+    );
     let process = escape(
         &std::fs::read_to_string(dir.join("runtime/process.ll"))
             .expect("examples/selfhost/runtime/process.ll"),
@@ -596,6 +604,9 @@ fn render_runtime(dir: &std::path::Path) -> String {
          // The serial-port verbs (`runtime/tty.c`).\n\
          pub fn tty_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{tty_darwin}\";\n    }}\n    \
          return \"{tty_linux}\";\n}}\n\n\
+         // The camera verbs (`runtime/camera.c`).\n\
+         pub fn camera_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{camera_darwin}\";\n    }}\n    \
+         return \"{camera_linux}\";\n}}\n\n\
          // The thread that reaps a released child (`runtime/process.ll`).\n\
          pub fn process_text() -> [] &static [byte] {{\n    return \"{process}\";\n}}\n\n\
          // The per-thread stack of region chunks (`cancho-codegen-llvm`'s `region_cache`).\n\

@@ -257,6 +257,18 @@ pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     if lc.spells(text, from, to, "dir_mkdir") {
         return 139;
     }
+    if lc.spells(text, from, to, "camera_open") {
+        return 141;
+    }
+    if lc.spells(text, from, to, "camera_configure") {
+        return 142;
+    }
+    if lc.spells(text, from, to, "camera_next") {
+        return 143;
+    }
+    if lc.spells(text, from, to, "camera_close") {
+        return 144;
+    }
     if lc.spells(text, from, to, "tty_open") {
         return 122;
     }

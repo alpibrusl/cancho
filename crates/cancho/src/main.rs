@@ -1612,6 +1612,21 @@ fn print_ids(inputs: &[PathBuf], with_std: bool) -> Result<(), Failure> {
     }
 }
 
+/// The Rust compiler is deprecated: the compiler written in cancho is the standard one (`docs/self-hosting.md`), and
+/// the Rust code generators will be removed once it writes code for everything they do. Said once per run, on standard
+/// error, whenever a build still goes through the Rust compiler; `CANCHO_NO_DEPRECATION_WARNING=1` silences it.
+fn warn_rust_compiler_deprecated(why: &str) {
+    static SAID: std::sync::Once = std::sync::Once::new();
+    if std::env::var_os("CANCHO_NO_DEPRECATION_WARNING").is_some() {
+        return;
+    }
+    SAID.call_once(|| {
+        eprintln!(
+            "warning: building with the Rust compiler, which is deprecated ({why}); the compiler written in cancho is the standard one"
+        );
+    });
+}
+
 /// Build a program with the compiler this run chooses (`selfhost_build::choose`): the one written in cancho by default,
 /// with the Rust front end checking first for now, or the Rust one when it is asked for or the build is one the other does
 /// not write code for.
@@ -1626,6 +1641,12 @@ fn build(
 ) -> Result<(), Failure> {
     match selfhost_build::choose(codegen.backend == Backend::Cranelift, codegen.target) {
         selfhost_build::Choice::Rust => {
+            let why = if codegen.backend == Backend::Cranelift {
+                "the Cranelift backend is the Rust compiler's"
+            } else {
+                "it was asked for (`--compiler rust`, `CANCHO_COMPILER=rust`) or the target is one the compiler in cancho does not write code for"
+            };
+            warn_rust_compiler_deprecated(why);
             build_with_rust(inputs, output, emit, with_std, codegen, link_libs, link_paths)
         }
         selfhost_build::Choice::Cancho { compiler, rust_checks_first, fall_back } => {
@@ -1646,12 +1667,18 @@ fn build(
                 // one builds it. Named on its own (`--compiler`, `CANCHO_COMPILER`), the compiler in cancho says what it
                 // cannot do.
                 selfhost_build::Built::NoCode(_) if fall_back => {
+                    warn_rust_compiler_deprecated(
+                        "the compiler in cancho has no code for something in this program",
+                    );
                     build_with_rust(inputs, output, emit, with_std, codegen, link_libs, link_paths)
                 }
                 selfhost_build::Built::Broke(why) if fall_back => {
                     eprintln!(
                         "note: the compiler in cancho could not build this ({}); building it with the Rust compiler",
                         why.message.lines().next().unwrap_or("")
+                    );
+                    warn_rust_compiler_deprecated(
+                        "the compiler in cancho could not build this program",
                     );
                     build_with_rust(inputs, output, emit, with_std, codegen, link_libs, link_paths)
                 }

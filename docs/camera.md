@@ -23,7 +23,11 @@ reach, not eleven libc symbol names and "never touches the filesystem" while it 
 | `v4l2_buffer` offsets | `bytesused` 8, `m` 64, `length` 72 |
 
 Consequence: capture on this driver is the streaming path, `REQBUFS` + `QUERYBUF` + `mmap` + `QBUF` + `STREAMON` + `DQBUF`. The numbers above
-are x86_64 Linux's; the aarch64 numbers (the robot's Raspberry Pi 5) and macOS's (AVFoundation, no V4L2 at all) are **not measured**.
+are x86_64 Linux's. **Measured on Linux aarch64** (the robot's Raspberry Pi 5, kernel 6.18, gcc against `<linux/videodev2.h>`, 2026-11-01):
+every size, request number and offset in the table above is the same, so the one walk serves both architectures. Run on the robot's three
+USB webcams (YUYV and MJPEG, 30 fps, all three streaming at once at up to 1920x1080 with `v4l2-ctl`), `examples/camera_hello.cho` opened each,
+configured 320x240 and returned 76,800 grey bytes of a real picture, built by the Rust compiler and by the compiler in cancho (`--compiler auto`).
+macOS's (AVFoundation, no V4L2 at all) are **not measured**.
 Not measured either: whether a frame in an `mmap`'d buffer can be copied into a cancho slice without a further foreign call. In a program
 today that copy is the hard part, and it is what the backend would own.
 
