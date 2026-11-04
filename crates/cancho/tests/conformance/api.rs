@@ -1,7 +1,7 @@
 //! `examples/api/` (`docs/server.md`): the server loop over real sockets.
 //!
-//! Every test starts the compiled server on a port the operating system
-//! said was free, talks to it from this process, and kills it. The things
+//! Every test starts the compiled server on a port from a range of its own
+//! (`free_port`), talks to it from this process, and kills it. The things
 //! worth testing about a server are not the routes (those are `std.route`'s
 //! tests) but what a loop around them can get wrong: a request split across
 //! segments, several in one, a client that goes silent, a client that
@@ -28,6 +28,8 @@ struct Server {
     child: std::process::Child,
     port: u16,
     dir: PathBuf,
+    /// Held open so that the server's standard error has a reader for as long as the server runs.
+    _stderr: std::process::ChildStderr,
 }
 
 impl Drop for Server {
@@ -38,43 +40,77 @@ impl Drop for Server {
     }
 }
 
-/// Start the server on a free port. The port is found by binding and dropping a listener, so another test can take it
-/// before the server does (the server then exits, having found it busy); a server that has exited is started again on a
-/// new port, up to five times. A slow start on a loaded host gets 30 seconds.
+/// A port for a server, from a range of this file's own: 20000 to 27999, below where an operating system hands
+/// out ports (Linux from 32768, macOS from 49152). Asking the system for one -- binding port 0 and dropping the
+/// listener -- hands the same port to whichever other test asks next, in the time the server takes to start,
+/// and on macOS a listener on 127.0.0.1 can sit beside the server's own on every address, so that this test's
+/// connections go to the other test's socket and the server announces itself all the same (issue #675).
+/// No other test binds from this range, so within a process no two servers are offered one port; another process
+/// on the same machine (a second `cargo test`) can be, and then the second server finds the port busy, which
+/// `start_on` sees. A port something answers on already is passed over.
+fn free_port() -> u16 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    loop {
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let port = 20_000 + (std::process::id().wrapping_mul(7919).wrapping_add(n) % 8_000) as u16;
+        if TcpStream::connect(("127.0.0.1", port)).is_err() {
+            return port;
+        }
+    }
+}
+
+/// Start the server on a free port.
 fn start(tag: &str, extra: &[&str]) -> Server {
     let (dir, exe) = build_example_paths(tag, &api_paths(tag), "api");
+    start_on(dir, &exe, extra, free_port)
+}
+
+/// Start the compiled server on the ports `pick` offers, one per attempt.
+///
+/// A port can be taken by another listener after it was picked and before the server listens on it. A connect
+/// that succeeds then reaches that listener, and the server this test started finds the port busy and exits, so
+/// a connect proves nothing about who is listening (issue #675: a test then talked to another test's server and
+/// saw it closed when that test ended). What does prove it is the server's own line on standard error,
+/// `listening on <port>`, which it writes only after its `listen` succeeded; a server that found the port busy
+/// exits without it. Such a server is started again on the next port, up to five times; a slow start on a
+/// loaded host gets 30 seconds.
+fn start_on(dir: PathBuf, exe: &Path, extra: &[&str], mut pick: impl FnMut() -> u16) -> Server {
     for attempt in 1..=5 {
-        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let child = Command::new(&exe)
+        let port = pick();
+        let mut child = Command::new(exe)
             .arg(port.to_string())
             .args(extra)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .expect("the compiled server runs");
-        let mut server = Server { child, port, dir: dir.clone() };
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            let exited = server.child.try_wait().unwrap().is_some();
-            if !exited && TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                // Still running after the connection: it is this server that is listening.
-                if server.child.try_wait().unwrap().is_none() {
-                    return server;
-                }
+        let mut stderr = child.stderr.take().expect("standard error was piped");
+        // The first line, or the end of the stream when the server exits first. A thread, so that a
+        // server that neither announces nor exits cannot hold the test past its deadline.
+        let (sent, line) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut first = Vec::new();
+            let mut byte = [0u8; 1];
+            while stderr.read(&mut byte).is_ok_and(|n| n == 1) && byte[0] != b'\n' {
+                first.push(byte[0]);
             }
-            if exited || Instant::now() >= deadline {
-                if attempt == 5 {
-                    panic!(
-                        "the server never listened on {port} (attempt {attempt}, exited: {exited})"
-                    );
-                }
-                // Keep the directory for the next attempt: `Server`'s drop would remove it.
-                let _ = server.child.kill();
-                let _ = server.child.wait();
-                server.dir = std::env::temp_dir().join(format!("cancho-api-retry-{tag}-{attempt}"));
-                break;
+            let _ = sent.send((first, stderr));
+        });
+        match line.recv_timeout(Duration::from_secs(30)) {
+            Ok((first, stderr)) if first == format!("listening on {port}").as_bytes() => {
+                return Server { child, port, dir, _stderr: stderr };
             }
-            std::thread::sleep(Duration::from_millis(20));
+            _ if attempt == 5 => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("the server never announced that it listens on {port} (attempt {attempt})");
+            }
+            // Port busy (the server exited without a word), or no word in time: another port.
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
         }
     }
     unreachable!("the loop above returns or panics")
@@ -738,4 +774,26 @@ fn a_buffer_the_server_cannot_honour_is_refused_at_start() {
         assert_eq!(status.code(), Some(2), "buffer {size}");
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// Issue #675. Another test's listener takes the port a test found free, between the test finding it and
+/// the server listening on it. The server then exits, finding the port busy; a connect to that port
+/// succeeds all the same, to the other listener. `start` used to take that for its own server and the
+/// test then talked to the wrong one, which the other test ended under it. Here the other listener is
+/// held open, so the collision is certain rather than a matter of timing.
+#[test]
+fn a_port_taken_by_another_listener_is_not_mistaken_for_the_server() {
+    let (dir, exe) = build_example_paths("api-port-taken", &api_paths("api-port-taken"), "api");
+    // As a server's own: every address (the server's own listener is no narrower, and a narrower one would
+    // not stop it listening on macOS).
+    let other = TcpListener::bind("0.0.0.0:0").unwrap();
+    let taken = other.local_addr().unwrap().port();
+    // `pop` takes from the end: the taken port first, then a free one.
+    let mut offered = vec![free_port(), taken];
+    let server = start_on(dir, &exe, &[], || offered.pop().expect("a port was offered"));
+    // The connect `start` once trusted does succeed: the other listener takes it.
+    assert!(TcpStream::connect(("127.0.0.1", taken)).is_ok());
+    assert_ne!(server.port, taken, "the server was taken to be where it is not");
+    let r = ask(&mut connect(&server), &get("/health"));
+    assert_eq!((r.status, r.body.as_str()), (200, "{\"ok\":true}"));
 }
