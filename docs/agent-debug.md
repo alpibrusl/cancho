@@ -1,6 +1,6 @@
 # `cancho trace`: a debugger an agent can use, and the debug information it needs
 
-> **Status: `-g` (§3.4) and `trace` (§10) are built; variables, the cause of a trap, `--hit` and `lldb` are not.** Written before the code. What was
+> **Status: `-g` (§3.4) and `trace` (§11, on an instrumented build; §10 is the first version, with `gdb`, replaced) are built; variables are not.** Written before the code. What was
 > measured is marked; everything else is a **gate** in §8, not a result.
 >
 > **Written in cancho.** `cancho trace` is a slice of the command line in
@@ -322,70 +322,104 @@ session does not.
 | Reverse execution / replay | `rr` is Linux x86-64 only |
 | Core files | a trap leaves none by default; `--on-trap` covers the case |
 
-## 10. `cancho trace`, as built (`clitrace.cho`)
+## 10. `cancho trace`, first version, with `gdb` (replaced by §11)
+
+The first `trace` built the program with `-g -O0` and ran `gdb --batch` under
+`timeout`, reading what `gdb` printed. It worked (a test passed in 56 s on
+Linux with gdb 15.1) and was replaced the same day, for reasons that were found
+by using it, not guessed:
+
+* **It needed two programs this repository does not install.** CI installs
+  `valgrind` in one job and nothing installs `gdb`; the test skipped without
+  it, so a green check would not have meant it ran.
+* **Linux only.** `lldb` was never tried and macOS has no `timeout`.
+* **It could not say why a program trapped**, only that `SIGILL` happened at a
+  line, because the cause is known to the compiler where it writes the check and
+  to nobody afterwards (the debug information had no variables either).
+* **A line with no code was moved by `gdb`** to the next that had one, and the
+  answer had to say so.
+* **`-O0` was required** for `break` by function name, since at `-O2` the
+  functions are inlined and `gdb` has no function of that name to stop in.
+
+## 11. Instrumented builds, and `cancho trace` on them (`ciinstr.cho`, `clitrace.cho`)
+
+The compiler writes the code, so it can make the program tell what happened,
+and there is nothing to attach to. A build with `--instrument trace` (an option
+of `build` of the command line in cancho, which `trace` runs for you) is the
+program plus a small run time:
+
+* `emit.cho`: `trap_if` takes a **kind** (1 overflow, 2 shift, 3 divide-by-zero,
+  4 bounds, 5 allocation, 6 conversion, 7 argument, 8 thread) and, only in this
+  build, notes it before the trap (`cancho_note`). Every call site was read and
+  given its kind; a trap with none (an `assert`, an explicit `trap()`) is
+  `explicit`.
+* `ciinstr.cho`, a pass over the module (before `cidebug.cho`): the markers of
+  `-g` become `cancho_i_enter(function)` at the top of each function of the
+  program, `cancho_i_leave()` before each `ret`, and `cancho_i_hit(statement)`
+  after each statement marker. Tables written at the end say the function, file,
+  line and weight (IR instructions) of each statement.
+* `runtime/instr.ll` (the text `instrtext.cho` is generated from it by
+  `statics.rs`): a stack of the function being run and the statement in each
+  (thread-local, 4,096 deep), a count for each statement, and a **report**
+  written to the file named by `CANCHO_TRACE_OUT`: on the statement and arrival
+  asked for (`--at`, `--hit`), or on `SIGILL`, `SIGTRAP`, `SIGFPE` or `SIGSEGV`
+  from a handler. Nothing is written for a program that ends; its status is the
+  child's.
 
 ```sh
-cancho trace [--std] [--std-dir DIR] [--at FILE:LINE] [--on-trap] [--timeout S] [--max-frames N] FILE... [-- ARGS...]
+cancho trace [--std] [--std-dir DIR] [--at FILE:LINE] [--hit N] [--unoptimized] [--timeout S] [--max-frames N] FILE... [-- ARGS...]
 ```
 
-In cancho (`examples/selfhost/clitrace.cho`, about 300 lines, a dispatch in
-`cli.cho`); no Rust. It builds the program with `-g -O0` (this command line, as
-a child), runs `gdb --batch -nx -q` under `/usr/bin/timeout -k 5 S`, with
-`break FILE:LINE` if `--at` is given, then `run` and `bt`, and reads what `gdb`
-printed. The program is built to `STEM.cancho-trace` beside where it is run and
-taken away.
-
 ```json
-{ "stopped": "breakpoint", "optimization": "O0",
-  "at": { "function": "write_all", "file": "hello.cho", "line": 30 },
-  "stack": [ { "function": "write_all", "file": "hello.cho", "line": 30 },
-             { "function": "main", "file": "hello.cho", "line": 52 } ],
+{ "stopped": "trap", "optimization": "O2", "signal": "SIGILL", "trap": "overflow",
+  "at": { "function": "grow", "file": "boom.cho", "line": 5 },
+  "stack": [ { "function": "grow", "file": "boom.cho", "line": 5 },
+             { "function": "main", "file": "boom.cho", "line": 18 } ],
   "exit_status": null }
 ```
 
-`stopped` is `breakpoint`, `trap` (with `signal`) or `exit` (with
-`exit_status`, which `gdb` prints in octal and this reads as such). `stack` holds
-the frames of the program's own files and of the library's; the entry wrapper and
-the C library are left out. A trap is an answer (exit 0).
+`stopped` is `breakpoint` (with `hits`), `trap` (with `signal` and `trap`),
+`exit` (with `exit_status`) or `signal` (killed by a signal the run time does not
+catch). **The default is the optimised binary** (`"optimization": "O2"`): the
+stack is the program's own functions whatever the optimiser inlined, which the
+`gdb` version could not give. `--unoptimized` builds with `-O0`. A trap is an
+answer (exit 0). The timeout is `process.capture_both`'s own, so nothing but
+this command line is started.
 
-**Differences from §4 to §5, found by building it:**
+**Rules** (standard error): `trace-no-line` (1: `--at` names a file that is not
+one of the program's, as it is named on the command line), `trace-not-reached`
+(1), `trace-timeout` (1), `trace-unreadable` (3), `trace-self-path` (3); a
+refused program is refused as `check` refuses it. A line with no statement
+**stops at the next line that has one** (the least statement line at or after it
+in that file, chosen when the tables are written), and `at` says which.
 
-* **No `locals`, no `hits`, no cause of a trap.** The debug information has no
-  variables (§3.4), so `info locals` has nothing; `--hit N` is not built; and
-  the cause of a trap (§4.1) is the line and the signal: an overflow in
-  `x = x * 3` is `SIGILL` at that line, which is all the debugger can say without
-  the artificial scopes of §4.1, not built.
-* **A line with no code is not an error.** `gdb` moves the breakpoint to the next
-  line that has code, and the answer's `at` says which line it stopped on
-  (`--at hello.cho:1` stopped at line 27). `trace-no-line` is only for a place
-  `gdb` rejects (a file that is not one of the program's). Corrects §5's "nearest
-  line in the finding".
-* **`--timeout` and `--max-frames` take 1 to 9999**; the timeout kills `gdb`,
-  and the program with it when it is `gdb`'s child (the test starts a loop that
-  never ends and sees it stopped).
-* **Linux only for now.** `lldb` (§4) is not tried; with no `gdb` the finding is
-  `trace-no-debugger`, exit 3.
-* **Run it by a path**, as `ci` and `profile` (`trace-self-path`, exit 3).
+**Measured (this document, Linux x86-64,
+`trace_in_cancho_answers_where_a_program_stopped_and_how`, 59 s, no program
+but this command line and the one it builds):** a breakpoint at the `putchar` line
+gives the stack `write_all`, `main` at the lines of the source and `hits: 1`;
+`--hit 3` gives `hits: 3`; `--max-frames 1` one frame; `--unoptimized` the same
+`at`; line 1 stops at the first statement; an overflow, a division by zero
+and an index outside a string are `overflow`, `divide-by-zero` and `bounds`; a
+program with no stop ends with its status (0, and 3); a place past the end is
+`trace-not-reached`; a bad `--at`, no file and `--timeout 0` are exit 2; a
+refused program is exit 1; an endless loop is `trace-timeout` inside 60 s;
+nothing is left beside the program.
 
-**Rules** (standard error, `RULE: sentence`): `trace-no-line` (1),
-`trace-not-reached` (1), `trace-timeout` (1), `trace-no-debugger` (3),
-`trace-unreadable` (3: `gdb` said something none of the cases reads),
-`trace-self-path` (3); a program that is refused is refused as `check` refuses
-it (1). A bad `--at` (not `FILE:LINE`, or a control character in it) is a usage
-error (2).
+**What it does not do, and said so:**
 
-**Measured (this document, Linux x86-64, gdb 15.1,
-`trace_in_cancho_answers_where_a_program_stopped_and_how`, 56 s):** a
-breakpoint at the `putchar` line of `hello.cho` gives the function, file and
-line of the source for both frames, exactly two frames, and `--max-frames 1`
-gives one; a program that overflows traps with `SIGILL` at the line of the
-multiplication, in `grow`, called from `main`; a program with no `--at` ends with
-its status (0, and 3 for a program that returns 3); a line past the end of the
-file is `trace-not-reached` (exit 1); five malformed `--at` values and no files
-and `--timeout 0` are exit 2; a refused program is exit 1; an endless loop is
-`trace-timeout` inside 60 s; nothing is left beside the program.
-
-**Not done:** §8 gates 3 (every sampled statement), 4 (the five trap causes), 5
-(locals), 7 (a fuzzer over the debugger's output) and 8 (the claim that this is
-cheaper than a REPL is a hypothesis with no transcript). `trace` is not in
-`--help` (its text is Rust's `USAGE`), but is in `introspect` and `skill` (`agent-ci.md` §10).
+* **No locals.** The run time knows the statement, not the variables; passing
+  the values of the scalars in scope to `cancho_i_hit` is the next step and
+  needs the emitter to say which they are.
+* **Threads share the counters** (the stack and the current statement are
+  thread-local, the counts are not, and are not atomic), so a threaded program's
+  counts are approximate.
+* **The run time declares `dprintf`, `getenv`, `creat`, `signal`, `atexit` and
+  `_exit`.** A program that declares one of them itself through `Ffi` gets a
+  duplicate declaration from `clang`. Not tried.
+* **A stack overflow** is `SIGSEGV` on the stack that has overflowed, where the
+  handler cannot run (no alternate stack): the answer is `signal`, not `trap`.
+* **The output of the program is not shown** (it is captured and dropped).
+* **It changes the binary** (the program is rebuilt for the question, about a
+  second for the small ones) and cannot debug code it did not compile, nor attach
+  to a process that is already running.
+* `trace` is **not in `--help`** but is in `introspect` and `skill`.

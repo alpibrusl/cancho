@@ -1,6 +1,6 @@
 # `cancho profile`: a profiler whose answer is a number an agent can gate on
 
-> **Status: slice 1 built (§9): the profile, the allocator section and the baseline. Gates 1, 4, 5 and 7 of §7 are not met.** Written before the code. Measured
+> **Status: slice 1 built (§9, on `valgrind`) and replaced as the default by an instrumented build (§10); `--machine` keeps §9.** Written before the code. Measured
 > facts are marked; everything else is a **gate** in §7, not a result.
 >
 > **Written in cancho.** `cancho profile` is a slice of the command line in
@@ -271,3 +271,59 @@ waited for, up to the day `run_capture` allows). Callgrind makes a program
 instructions and took 0.55 s with the build).
 
 `profile` is in `introspect` and `skill` of the command line in cancho (registered with `ci` and `trace`; `agent-ci.md` §10), and not in `--help`.
+
+## 10. The default is an instrumented build (`ciinstr.cho`, `cliprofile.cho`)
+
+§9 found that at `-O2` most of a hot loop has no line (73% of `spin.cho` was
+unattributed), so a profile of the shipped binary under `valgrind` could not say
+which function was hot, and that the tool needed `valgrind`, which CI installs in
+one job. The compiler can count what the program does itself
+(`agent-debug.md` §11 describes the build): each statement counts its
+executions; its weight is the number of IR instructions the emitter wrote for it
+(a static count); a function's cost is the sum over its statements of executions
+times weight; and the wrappers `cancho_i_malloc`, `cancho_i_calloc` and
+`cancho_i_region_take` count each call against the statement that made it. At
+exit the run time writes one line per function to the file named by
+`CANCHO_TRACE_OUT`.
+
+```sh
+cancho profile [--std] [--top N] [--record F] [--baseline F] [--factor F] [--strict] FILE... [-- ARGS]
+cancho profile --machine [--unoptimized] ...        # §9: machine instructions under valgrind
+```
+
+The answer is the one of §3 (`functions`, `other`, `unattributed`, `external`,
+`allocations`, `findings`), with **`"metric": "ir-instructions"`**, `unattributed`
+and `external` always 0 (the run time attributes every statement, and does not
+see the C library), and the baseline file in the same shape. **A baseline carries
+its metric** and is not read as the other (`profile-baseline-unreadable`), as
+the test checks.
+
+**Measured (this document, Linux x86-64):**
+
+| claim | result |
+|---|---|
+| attribution at `-O2` | `spin.cho`: `inner` 33,002,000 of 33,006,217 (2,000,800 statements), `outer` 4,209, `main` 8; **nothing unattributed**, where §9 had 73% |
+| §7.2, the same program counts the same | two runs give identical answers, and so do `-O2` and `--unoptimized`: the count is of the program and not of what `clang` made of it |
+| §7.5, allocations | `std.buffer` grown to 100,000 bytes: 17 calls at `reserve`, 1 at `empty` — the same as `valgrind` found; the `region` finding of #391 is still not reproduced (the wrapper for `cancho_region_take` exists and is not exercised) |
+| cost | `spin.cho` builds and profiles in 0.26 s in all; a run of 200 × 5,000 iterations takes 5 ms |
+| baseline | recorded, passes, twice the work is `profile-regressed` for `inner@spin.cho` and the total, as in §9 |
+| `--machine` | the answer of §9, unchanged; when `valgrind` is not there the test says so and does not try it |
+
+**What this metric is, and is not:**
+
+* **It is the work the program asks for, in the units of the IR the emitter
+  writes before `clang`.** It is deterministic, portable (no `valgrind`, no PMU,
+  macOS and aarch64 alike) and does not change with the optimiser. It does **not**
+  see what `clang` does (a loop it vectorises is as dear as one it does not), the
+  C library (`memcpy`, `write`) or the kernel. A regression in the *compiler's*
+  code quality (#489: 1.26 to 1.32 times on the P-256 rows) is invisible to it;
+  that is what `--machine` is for.
+* **Weights are static**: a statement in a loop that the program runs a million
+  times costs a million times its weight, but a call's cost is the callee's, not
+  the call's.
+* The counts are not atomic; threaded programs' are approximate.
+
+**Not done:** §7.1 (agreement with `tls_perf.py`; the two metrics differ by
+design), §7.6 beyond the bad baselines, §7.7, §7.8; the cost of the
+instrumentation on a larger program than `spin.cho` (the program runs 5 ms
+here); a `region` count on `https_hello`; a machine tag in a baseline.
