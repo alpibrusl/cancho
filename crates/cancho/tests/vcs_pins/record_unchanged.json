@@ -1,0 +1,23 @@
+{
+  "branch": "main",
+  "change": "935bbc0d2368232fda225992b8f72243683a17642df9ff5b5968fa2566699ecc",
+  "command": "record",
+  "decls": [],
+  "dry_run": false,
+  "edits": 1,
+  "gate": {
+    "checked": [],
+    "ran": true
+  },
+  "intent": {
+    "prompt": "Revert \"third: notes\"\n\nThis reverts change 3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e."
+  },
+  "ok": true,
+  "parents": [
+    "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e"
+  ],
+  "recorded": false,
+  "touched": [],
+  "tree": "9e43c746edc5bb2117c3e37bae9e27641258b9dce2f3614e9d494825f11665d3",
+  "unchanged": true
+}

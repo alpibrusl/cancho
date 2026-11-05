@@ -36,9 +36,14 @@ mod satisfy_cli;
 mod scratch;
 mod selfhost_build;
 mod test_cli;
+mod vcs_args;
 mod vcs_cli;
+mod vcs_decl;
 mod vcs_dir;
+mod vcs_git;
 mod vcs_origin;
+mod vcs_record;
+mod vcs_repo;
 mod vcs_sync;
 
 const USAGE: &str = "\

@@ -1,0 +1,33 @@
+{
+  "attestations": [
+    "gate:cancho-check:ok:0"
+  ],
+  "author": "Ada <ada@example.com>",
+  "change": "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e",
+  "command": "show",
+  "decls": [],
+  "edits": [
+    {
+      "new": "2\n",
+      "old": "two\n",
+      "path": "notes.md"
+    }
+  ],
+  "files": [
+    {
+      "path": "notes.md",
+      "state": "modified"
+    }
+  ],
+  "intent": {
+    "prompt": "third: notes"
+  },
+  "ok": true,
+  "parents": [
+    "9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442"
+  ],
+  "subject": "third: notes",
+  "time": 1002,
+  "tree": "0b9fb3eacb6833d07906e5d2e7ffc4a07888df759e72148fe3e926fe16052569",
+  "tz": "+0000"
+}

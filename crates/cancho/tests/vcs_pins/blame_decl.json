@@ -1,0 +1,18 @@
+{
+  "author": "Ada <ada@example.com>",
+  "change": "9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442",
+  "command": "blame",
+  "decl": "fn a.twice",
+  "intent": {
+    "issue": "7",
+    "prompt": "second"
+  },
+  "ok": true,
+  "parents": [
+    "960fd3a813e8e05e68c304a1ea92bf374b61dd07399c70166822fd6e6c7b716f"
+  ],
+  "path": "a.cho",
+  "subject": "second",
+  "time": 1001,
+  "tz": "+0000"
+}

@@ -1,0 +1,12 @@
+{
+  "command": "restore",
+  "dry_run": true,
+  "from": "935bbc0d2368232fda225992b8f72243683a17642df9ff5b5968fa2566699ecc",
+  "ok": true,
+  "restored": [
+    {
+      "path": "notes.md",
+      "was": "modified"
+    }
+  ]
+}

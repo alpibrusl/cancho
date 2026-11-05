@@ -1,0 +1,31 @@
+{
+  "attestations": [
+    "gate:cancho-check:ok:0"
+  ],
+  "author": "Ada <ada@example.com>",
+  "change": "cba3226822ba916c989fd1c9aeae161080adbc7ef0213105a0f378f0a9d22021",
+  "command": "show",
+  "decls": [],
+  "edits": [
+    {
+      "new": "c\nB\nd\n",
+      "old": "c\nb\nd\n",
+      "path": "f.txt"
+    }
+  ],
+  "files": [
+    {
+      "path": "f.txt",
+      "state": "modified"
+    }
+  ],
+  "intent": null,
+  "ok": true,
+  "parents": [
+    "16689dd912bcbd8173ddc8e2a6d4da9c2ba50493c881592e4a3dd5850e4b3118"
+  ],
+  "subject": "",
+  "time": 2,
+  "tree": "1e041f6e48419ab66c7ae22ead82585bf88cac0e4ee376557d0d132ceddbd88d",
+  "tz": "+0000"
+}
