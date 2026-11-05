@@ -165,9 +165,27 @@ fn free_port() -> u16 {
 
 fn scratch(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("cancho-conformance-{tag}"));
+    make_removable(&dir);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a writable temporary directory");
     dir
+}
+
+/// A test that made a directory with mode 0 (`directory_mkdir`) and stopped before it said so leaves one that
+/// `remove_dir_all` cannot read, so the next run found it there and its own `mkdir` of that name answered
+/// `EEXIST`. Give every directory under `dir` back its owner's permissions first.
+fn make_removable(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(meta) = std::fs::symlink_metadata(dir) else { return };
+    if !meta.is_dir() {
+        return;
+    }
+    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            make_removable(&entry.path());
+        }
+    }
 }
 
 /// `//~ TARGET <triple>`: the flags that make `check` ask a fixture's question
