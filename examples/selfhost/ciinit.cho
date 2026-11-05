@@ -62,14 +62,6 @@ fn safe[&w](word: &w [byte]) -> [] bool {
     return len(word) > 0;
 }
 
-fn refuse[&i](io: &!i Io, rule: &static [byte], sentence: &static [byte], code: int) -> [err_write] int {
-    console.error_all(io, rule);
-    console.error_all(io, ": ");
-    console.error_all(io, sentence);
-    console.error_all(io, "\n");
-    return code;
-}
-
 pub fn init_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
     // The command the workflow runs: the arguments, without `--init`.
     var command = buffer.empty(heap, 128);
@@ -83,19 +75,19 @@ pub fn init_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
             n = n + 1;
             if n >= arg_count(args) || !safe(arg(args, n)) {
                 buffer.drop(heap, command);
-                return refuse(io, "ci-init-unsafe-argument", "a file name for a workflow is letters, digits and `_ . / -` only", 1);
+                return clibase.refuse(io, "ci-init-unsafe-argument", "a file name for a workflow is letters, digits and `_ . / -` only", 1);
             }
             command = buffer.append(heap, buffer.append(heap, buffer.append(heap, command, " --test "), arg(args, n)), "");
         } else if bytes.equal(word, "--std-dir") {
             buffer.drop(heap, command);
-            return refuse(io, "ci-init-unsafe-argument", "`--std-dir` names a directory of this machine, which a workflow does not have", 1);
+            return clibase.refuse(io, "ci-init-unsafe-argument", "`--std-dir` names a directory of this machine, which a workflow does not have", 1);
         } else if len(word) > 0 && lc.at(word, 0) == '-' {
             buffer.drop(heap, command);
-            return refuse(io, "ci-init-unsafe-argument", "only `--test FILE` and FILEs go into a workflow", 1);
+            return clibase.refuse(io, "ci-init-unsafe-argument", "only `--test FILE` and FILEs go into a workflow", 1);
         } else {
             if !safe(word) {
                 buffer.drop(heap, command);
-                return refuse(io, "ci-init-unsafe-argument", "a file name for a workflow is letters, digits and `_ . / -` only", 1);
+                return clibase.refuse(io, "ci-init-unsafe-argument", "a file name for a workflow is letters, digits and `_ . / -` only", 1);
             }
             command = buffer.append(heap, buffer.append(heap, command, " "), word);
             files = files + 1;
@@ -122,14 +114,14 @@ pub fn init_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
     if !has_pin {
         buffer.drop(heap, rev);
         buffer.drop(heap, command);
-        return refuse(io, "ci-init-unpinned", "cancho.toml does not pin the compiler (`[package]` `cancho = \"<full commit>\"`); a workflow that installs whatever is newest would change when the compiler does", 1);
+        return clibase.refuse(io, "ci-init-unpinned", "cancho.toml does not pin the compiler (`[package]` `cancho = \"<full commit>\"`); a workflow that installs whatever is newest would change when the compiler does", 1);
     }
     let (there, there_failed) = cibase.read_path(heap, fs, ".github/workflows/cancho.yml");
     buffer.drop(heap, there);
     if there_failed != 2 {
         buffer.drop(heap, rev);
         buffer.drop(heap, command);
-        return refuse(io, "ci-init-exists", ".github/workflows/cancho.yml is there, or cannot be told not to be; it is not written over", 1);
+        return clibase.refuse(io, "ci-init-exists", ".github/workflows/cancho.yml is there, or cannot be told not to be; it is not written over", 1);
     }
     var text = buffer.append(heap, buffer.empty(heap, 1024), "name: cancho\non:\n  push:\n    branches: [main]\n  pull_request:\njobs:\n  ci:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Install the pinned compiler\n        run: |\n          curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/");
     borrow rev as &rb in {
@@ -159,7 +151,7 @@ pub fn init_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
     }
     buffer.drop(heap, text);
     if wrote != 0 {
-        return refuse(io, "ci-init-unwritable", ".github/workflows/cancho.yml could not be written", 3);
+        return clibase.refuse(io, "ci-init-unwritable", ".github/workflows/cancho.yml could not be written", 3);
     }
     console.error_all(io, "wrote .github/workflows/cancho.yml\n");
     return 0;

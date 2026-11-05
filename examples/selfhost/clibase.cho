@@ -212,6 +212,15 @@ pub fn unknown_option[&h, &i, &w](heap: &!h Heap, io: &!i Io, word: &w [byte]) -
     return said;
 }
 
+// `RULE: sentence` on the standard error, and `code`: the answer of a command that has no data to give.
+pub fn refuse[&i](io: &!i Io, rule: &static [byte], sentence: &static [byte], code: int) -> [err_write] int {
+    console.error_all(io, rule);
+    console.error_all(io, ": ");
+    console.error_all(io, sentence);
+    console.error_all(io, "\n");
+    return code;
+}
+
 // The `k`th name of a list of names, each followed by a NUL.
 pub fn name_at[&n](names: &n [byte], k: int) -> [] &n [byte] {
     var at = 0;

@@ -431,14 +431,6 @@ fn record_text[&h, &n, &y, &t](heap: &!h Heap, names: &n [byte], files: &y [byte
     return buffer.append(heap, out, "\n  }\n}\n");
 }
 
-fn refuse[&i](io: &!i Io, rule: &static [byte], sentence: &static [byte], code: int) -> [err_write] int {
-    console.error_all(io, rule);
-    console.error_all(io, ": ");
-    console.error_all(io, sentence);
-    console.error_all(io, "\n");
-    return code;
-}
-
 // One finding about the function `key`: `what`, the key, and the two counts.
 fn about[&h, &w, &k](heap: &!h Heap, items: buffer.Buffer, count: int, rule: &static [byte], what: &w [byte], key: &k [byte], was: int, is: int) -> [heap] (buffer.Buffer, int) {
     var message = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 96), what), key);
@@ -703,7 +695,7 @@ fn analyse[&h, &i, &f, &a, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: 
                     }
                     buffer.drop(heap, text);
                     if wrote != 0 {
-                        status = refuse(io, "profile-unwritable", "the file named by --record could not be written", 3);
+                        status = clibase.refuse(io, "profile-unwritable", "the file named by --record could not be written", 3);
                     }
                 }
             }
@@ -790,7 +782,7 @@ pub fn profile_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
         n = n + 1;
     }
     if clibase.contains(arg(args, 0), "..") {
-        return refuse(io, "profile-self-path", "`profile` runs this command line again, and cannot by a name with `..` in it; run it by a path without", 3);
+        return clibase.refuse(io, "profile-self-path", "`profile` runs this command line again, and cannot by a name with `..` in it; run it by a path without", 3);
     }
     if files == 0 {
         return clibase.usage_error(heap, io, "no file given");
@@ -871,16 +863,16 @@ pub fn profile_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
         buffer.drop(heap, run_words);
         if ran_kind == 5 {
             trouble = 2;
-            status = refuse(io, "profile-unavailable", "valgrind could not be started (/usr/bin/valgrind): install it, or there is no profile of instruction counts", 3);
+            status = clibase.refuse(io, "profile-unavailable", "valgrind could not be started (/usr/bin/valgrind): install it, or there is no profile of instruction counts", 3);
         } else if ran_kind != 0 || ran_value != 0 {
             trouble = 3;
-            status = refuse(io, "profile-failed", "the program did not end with 0 (or valgrind did not run it); a profile of a crash measures the crash, so there is none", 1);
+            status = clibase.refuse(io, "profile-failed", "the program did not end with 0 (or valgrind did not run it); a profile of a crash measures the crash, so there is none", 1);
         } else {
             borrow out_file as &ob in {
                 let (cg, failed) = cibase.read_path(heap, fs, buffer.bytes(ob));
                 if failed != 0 {
                     trouble = 4;
-                    status = refuse(io, "profile-failed", "valgrind wrote no profile that could be read", 1);
+                    status = clibase.refuse(io, "profile-failed", "valgrind wrote no profile that could be read", 1);
                 } else {
                     borrow cg as &cb in {
                         status = analyse(heap, io, fs, args, buffer.bytes(cb), top, record_at, baseline_at, factor, strict);
