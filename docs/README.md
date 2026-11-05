@@ -324,6 +324,7 @@ not repeated here; a doc's own header carries its own detail.
 |---|---|---|
 | [`linearity-and-effects.md`](linearity-and-effects.md) | Core type-system rules: linear/affine ownership, capability-typed effects, how they unify | settled and built ([#2](https://github.com/alpibrusl/cancho/issues/2)) |
 | [`bootstrap.md`](bootstrap.md) | Where self-hosting stands and how to use the compiler in cancho; below it, what M0 settled (host language, file extension, the M0 surface) | current; history below |
+| [`removing-rust.md`](removing-rust.md) | The plan to remove the Rust crates and make the compiler in cancho the repository's main code (epic #491): decisions, gates, phases, layout | design |
 | [`canonical-ast.md`](canonical-ast.md) | AST shape, canonicalisation, per-unit identity (`cancho ids`) | written and built |
 | `memory-model.md` | Regions/arenas, escape, the escape hatches | not written — settled piecemeal by `heap.md`/`sharing.md`; nothing left to write on its own |
 | [`strings.md`](strings.md) | A string is bytes, not an encoding; `byte` as storage | settled and built |
