@@ -72,12 +72,6 @@ usage:
     cancho vcs publish [--store <root>] [--std] --dir <dir>
     cancho vcs sync [--dir <dir>] [--std] [--check]
     cancho vcs log     [--store <dir>]
-    cancho vcs init [--branch <name>] [<dir>]
-    cancho vcs status | diff [<rev> [<rev>]] [<path>...] | log [<rev>] [--limit N] [--intent T] [--path P] | show <rev> [--patch] | blame <path> [--rev R] [--decl <name>] | verify | unlock
-    cancho vcs record (<path>... | --all) [--intent-prompt T] [--intent-model M] [--intent-session S] [--intent-issue I] [--expect <change>] [--no-gate] [--dry-run]
-    cancho vcs branch [list | create <name> [--from <rev>] | delete <name> --expect <change>]
-    cancho vcs switch <branch|rev> [--create] [--keep | --discard] | restore <path>... [--from <rev>] | revert <change> | apply <edits.json>
-    cancho vcs import-git <git-dir> | export-git <git-dir>      (every command takes --output json, --repo <dir>, --dry-run)
     cancho vcs resolve [--lock <file>] [<store-dir>]
     cancho vcs lock (--store <dir> | --git <url> (--rev <hash> | --ref <name>) [--path <dir>]) -o <file> (--all | <name>...)
     cancho vcs fetch --lock <file> [--store <dir>] -o <dir>
