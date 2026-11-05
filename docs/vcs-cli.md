@@ -1,6 +1,6 @@
 # `cancho vcs` as a complete version-control CLI, agents first
 
-> **Status: design, not built.** Written before the code (`CONTRIBUTING.md`). A claim marked
+> **Status: slice V1 (a local repository, section 9) is built; V2 onward is design.** Written before the code (`CONTRIBUTING.md`). A claim marked
 > *(measured)* was measured on the date given, in the repository named; a claim marked *(read)* was read
 > from the source; one marked *(designed)* is a proposal that a slice below must measure before it stands.
 > The first draft of this document assumed that a typed-AST store could stand in for git on a code
@@ -237,7 +237,14 @@ Each slice ends only when the gate in `CONTRIBUTING.md` passes, no file is over 
 by concern: `object`, `tree`, `change`, `refs`, `diff_text`, `diff_cho`, `merge`, `remote`, `bridge`), and every
 refusal in the table of tags below has a test that reaches it.
 
-Refusal tags *(designed; each gets a test in the slice that introduces it)*: `not-a-repository`, `path-escapes`,
+Refusal tags built in V1, each reached by `crates/cancho/tests/vcs_repo.rs`: `not-a-repository`,
+`path-escapes`, `file-too-large`, `gate-failed`, `ref-moved`, `ref-protected`, `dirty-working-copy`, `lock-held`,
+`object-corrupt`, `object-missing`, `anchor-not-found`, `anchor-ambiguous`, `nothing-selected`, `bad-ref-name`,
+`bad-revision`, `revert-conflict`, `revert-unsupported`, `git-unreadable`; also built, with a test of the
+library only or none yet: `bad-argument`, `path-unsupported`, `tree-invalid`, `binary-file`, `path-not-found`,
+`decl-not-found`, `submodule-unsupported`, `mode-unsupported`. An I/O failure is `io-error` and exits 3, not 1.
+Not yet built (V2 onward): `conflicts-open`, `merge-gate-failed`, `rename-edit`, `chain-broken`, `unsigned-change`,
+`intent-missing`, `remote-unreachable`, `remote-diverged`. The first list was *(designed)*: `not-a-repository`, `path-escapes`,
 `file-too-large`, `gate-failed`, `ref-moved`, `ref-protected`, `dirty-working-copy`, `lock-held`, `conflicts-open`,
 `merge-gate-failed`, `rename-edit`, `object-corrupt`, `chain-broken`, `unsigned-change`, `intent-missing`
 (only on a ref that requires it), `remote-unreachable`, `remote-diverged`.

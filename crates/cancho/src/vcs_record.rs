@@ -1,10 +1,10 @@
 //! `record` and `revert` (`docs/vcs-cli.md` sections 3 and 4): one change
 //! from the working copy, behind the built-in gate. The gate is `cancho
 //! check` (the library's `check_candidate`) of every `.cho` file the change
-//! adds or modifies, each as a program of its own with the standard library
-//! in scope when it imports it -- the same unit `vcs publish` checks. A file
-//! that only checks together with its siblings is not covered by this gate
-//! (V1; the open question R2 is what heavier gates cost). The first failure's
+//! adds or modifies, each with the files of the tree that declare the
+//! modules it imports and the standard library when it imports that. (The
+//! first version checked each file alone and refused half of `cancho-forge`'s
+//! files with `unknown-name`: R2 in `docs/vcs-cli.md`.) The first failure's
 //! rule tag is the refusal.
 
 use std::collections::BTreeMap;
@@ -35,21 +35,73 @@ pub(crate) fn intent(p: &Parsed) -> Option<Intent> {
     })
 }
 
-/// Check the `.cho` files `changes` adds or modifies; the first failure is the refusal.
+/// Every module a tree declares, as `module path -> files`, so an import
+/// can be followed to the files that declare it (`docs/modules.md`).
+fn module_index(repo: &Repo, tree: &Tree) -> VcsResult<BTreeMap<String, Vec<String>>> {
+    let mut index: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for e in tree.entries().iter().filter(|e| e.path.ends_with(".cho")) {
+        let Ok(text) = String::from_utf8(entry_bytes(repo, e)?) else { continue };
+        let Ok(ast) = cancho_syntax::parse(&text) else { continue };
+        for m in &ast.modules {
+            let name: Vec<&str> = m.path.iter().map(|s| ast.name_of(*s)).collect();
+            index.entry(name.join(".")).or_default().push(e.path.clone());
+        }
+    }
+    Ok(index)
+}
+
+/// Check the `.cho` files a change adds or modifies. Each is checked as the
+/// program it belongs to: itself, the files of the tree that declare the
+/// modules it imports (transitively), and the standard library when it
+/// imports that. The first failure is the refusal, tagged with its rule.
 fn gate(repo: &Repo, tree: &Tree, paths: &[String]) -> VcsResult<Vec<String>> {
     let mut checked = Vec::new();
+    let mut index: Option<BTreeMap<String, Vec<String>>> = None;
     for path in paths.iter().filter(|p| p.ends_with(".cho")) {
-        let Some(entry) = tree.get(path) else { continue };
-        let bytes = entry_bytes(repo, entry)?;
-        let text = String::from_utf8(bytes)
-            .map_err(|_| gate_failed(path, "program-shape", "the file is not UTF-8"))?;
-        let ast =
-            cancho_syntax::parse(&text).map_err(|d| gate_failed(path, d.rule.tag(), &d.message))?;
-        let mut files: Vec<(String, String)> = vec![(path.clone(), text)];
-        if crate::vcs_cli::imports_std(&ast) {
-            files.extend(crate::vcs_cli::std_texts());
+        if tree.get(path).is_none() {
+            continue;
         }
-        let refs: Vec<(&str, &str)> = files.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        let mut files: BTreeMap<String, String> = BTreeMap::new();
+        let mut queue = vec![path.clone()];
+        let mut with_std = false;
+        while let Some(p) = queue.pop() {
+            if files.contains_key(&p) {
+                continue;
+            }
+            let Some(entry) = tree.get(&p) else { continue };
+            let text = String::from_utf8(entry_bytes(repo, entry)?)
+                .map_err(|_| gate_failed(&p, "program-shape", "the file is not UTF-8"))?;
+            let ast = cancho_syntax::parse(&text)
+                .map_err(|d| gate_failed(&p, d.rule.tag(), &d.message))?;
+            for m in &ast.modules {
+                for i in &m.imports {
+                    let segs: Vec<&str> = i.path.iter().map(|s| ast.name_of(*s)).collect();
+                    if segs.first() == Some(&"std") {
+                        with_std = true;
+                        continue;
+                    }
+                    if index.is_none() {
+                        index = Some(module_index(repo, tree)?);
+                    }
+                    // The longest prefix of the import that names a module.
+                    for n in (1..=segs.len()).rev() {
+                        if let Some(found) =
+                            index.as_ref().and_then(|ix| ix.get(&segs[..n].join(".")))
+                        {
+                            queue.extend(found.iter().cloned());
+                            break;
+                        }
+                    }
+                }
+            }
+            files.insert(p, text);
+        }
+        let mut program: Vec<(String, String)> = files.into_iter().collect();
+        if with_std {
+            program.extend(crate::vcs_cli::std_texts());
+        }
+        let refs: Vec<(&str, &str)> =
+            program.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
         if let Err(diags) = cancho_vcs::check_candidate(&refs) {
             let first = diags.first();
             let rule = first.map_or("internal".to_owned(), |d| d.rule.to_string());
