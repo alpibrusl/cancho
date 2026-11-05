@@ -1,0 +1,31 @@
+{
+  "base": "59c7f29762cc5f4c9fc5f0eeed8a6e5fceac1c56ba3e16624928d3a8291cdcb6",
+  "change": "d5439ed48412e6b8423629f56d4b97b241570b946798ee39c91b1d07451eca6a",
+  "command": "merge",
+  "dry_run": false,
+  "gate": {
+    "checked": [
+      "m.cho"
+    ],
+    "external": [],
+    "ran": true
+  },
+  "in_progress": false,
+  "merged": true,
+  "merged_paths": [
+    {
+      "layer": "cho",
+      "path": "m.cho"
+    }
+  ],
+  "ok": true,
+  "op": "merge",
+  "open_conflicts": 0,
+  "ours": "854c5e5ea7c51c3c977ce9f5293b163e788162c1cd2562f2d382dfafc257ae7f",
+  "theirs": "9ad70a7343c69a801844ef309a5e923efa3caf340a4eb958d859ad432a52931d",
+  "touched": [
+    "m.cho"
+  ],
+  "tree": "8ca629d056327b900392e576d680f9a95e96667eb509ae77f1ae70433e948d74",
+  "would_record": false
+}

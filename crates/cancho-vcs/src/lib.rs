@@ -40,6 +40,10 @@ mod gitread;
 mod inflate;
 mod lock;
 mod manifest;
+mod merge;
+mod merge3;
+mod merge_cho;
+mod mergestate;
 mod object;
 mod op_log;
 mod operation;
@@ -65,6 +69,13 @@ pub use gate::{GateDiagnostic, check_candidate};
 pub use gitread::GitRepo;
 pub use lock::{Lock, LockEntry, LockError, Origin};
 pub use manifest::{Manifest, ManifestEntry, ManifestError};
+pub use merge::{
+    Base, Conflict, Inputs, Resolutions, Settled, TreeMerge, file_directory_clash, is_ancestor,
+    merge_base, merge_trees,
+};
+pub use merge_cho::{ChoMerge, Choice, DeclConflict, merge_cho};
+pub use merge3::{ConflictHunk, Merged, Settle, merge_text, merge_with};
+pub use mergestate::MergeState;
 pub use object::{Kind, MAX_BLOB, Store, is_id, object_id};
 pub use op_log::{OpLog, OpLogError};
 pub use operation::{

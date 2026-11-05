@@ -1,0 +1,18 @@
+{
+  "base": "d9a447d151f9dd0eeeff14697f24b5dc1c20d957ac456846d1db9d4c0d303bac",
+  "change": "d299495f159e882856b5040ef72c2af0ca79046b1005532f8b55d533c57e2fe3",
+  "command": "merge",
+  "dry_run": false,
+  "fast_forward": true,
+  "merged": true,
+  "ok": true,
+  "op": "merge",
+  "open_conflicts": 0,
+  "ours": "d9a447d151f9dd0eeeff14697f24b5dc1c20d957ac456846d1db9d4c0d303bac",
+  "theirs": "d299495f159e882856b5040ef72c2af0ca79046b1005532f8b55d533c57e2fe3",
+  "touched": [
+    "a.txt"
+  ],
+  "tree": "3ae6164b32f4165c74edd34a9d2e9bcf411919e21af1d393493caddf249aeac8",
+  "would_record": false
+}

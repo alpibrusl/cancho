@@ -1,0 +1,31 @@
+{
+  "base": "4a534995708303904cae52687a9276acb2bb22aa6ba48c8cd39c9a2677e5d295",
+  "change": "5365c107f5660ca6683033c07e04aad664df744842a0eef025b7f0e868c896d2",
+  "command": "merge",
+  "dry_run": true,
+  "gate": {
+    "checked": [
+      "m.cho"
+    ],
+    "external": [],
+    "ran": true
+  },
+  "merged": false,
+  "merged_paths": [
+    {
+      "layer": "text",
+      "path": "notes.md"
+    }
+  ],
+  "ok": true,
+  "op": "merge",
+  "open_conflicts": 0,
+  "ours": "6b5abdd553fabf0364b19abf9717f7773bd82474a702d21abafa51e874287cfd",
+  "theirs": "1b409d4daa7496841ccba4fb711ae634402400d4006b6147b01f6f8619e274ca",
+  "touched": [
+    "m.cho",
+    "notes.md"
+  ],
+  "tree": "78f9ab3ac93450f42e68267ad7aacb8170d57024bbed7d0614c583d60b4f0931",
+  "would_record": true
+}

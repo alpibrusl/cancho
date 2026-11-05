@@ -14,6 +14,9 @@ use serde_json::{Map, Value, json};
 
 use crate::{EXIT_ENVIRONMENT, EXIT_REFUSED, Failure, usage};
 
+/// A merge or replay stopped on conflicts (reported as data, nothing recorded).
+const EXIT_CONFLICTS: u8 = 2;
+
 pub(crate) struct Parsed {
     pub pos: Vec<String>,
     vals: HashMap<String, Vec<String>>,
@@ -23,6 +26,9 @@ pub(crate) struct Parsed {
 impl Parsed {
     pub fn value(&self, key: &str) -> Option<&str> {
         self.vals.get(key).and_then(|v| v.last()).map(String::as_str)
+    }
+    pub fn values(&self, key: &str) -> &[String] {
+        self.vals.get(key).map_or(&[], Vec::as_slice)
     }
     pub fn flag(&self, key: &str) -> bool {
         self.flags.contains(key)
@@ -88,8 +94,11 @@ pub(crate) fn run(
             if let Value::Object(m) = value {
                 obj.extend(m);
             }
+            // Open conflicts are data, not a refusal, but a script that only
+            // reads the exit status can tell them from a clean result.
+            let open = obj.get("open_conflicts").and_then(Value::as_u64).unwrap_or(0);
             println!("{}", serde_json::to_string_pretty(&Value::Object(obj)).unwrap_or_default());
-            Ok(ExitCode::SUCCESS)
+            Ok(if open > 0 { ExitCode::from(EXIT_CONFLICTS) } else { ExitCode::SUCCESS })
         }
         Err(r) => {
             let code = if r.environment { EXIT_ENVIRONMENT } else { EXIT_REFUSED };

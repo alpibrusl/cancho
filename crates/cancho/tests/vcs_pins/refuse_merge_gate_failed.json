@@ -1,0 +1,34 @@
+{
+  "command": "merge",
+  "ok": false,
+  "refused": {
+    "diagnostics": [
+      {
+        "message": "`a` takes 2 arguments, but 1 was given",
+        "rule": "arity-mismatch"
+      }
+    ],
+    "intents": {
+      "ours": {
+        "intent": {
+          "prompt": "main work",
+          "session": "s-main"
+        },
+        "prompt": "main work"
+      },
+      "theirs": {
+        "intent": {
+          "prompt": "topic work",
+          "session": "s-topic"
+        },
+        "prompt": "topic work"
+      }
+    },
+    "message": "m.cho: arity-mismatch: `a` takes 2 arguments, but 1 was given",
+    "path": "m.cho",
+    "rule": "arity-mismatch",
+    "searched": [],
+    "tag": "merge-gate-failed",
+    "unresolved_modules": []
+  }
+}

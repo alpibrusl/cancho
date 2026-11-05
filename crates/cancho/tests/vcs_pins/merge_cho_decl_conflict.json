@@ -1,0 +1,45 @@
+{
+  "base": "59c7f29762cc5f4c9fc5f0eeed8a6e5fceac1c56ba3e16624928d3a8291cdcb6",
+  "command": "merge",
+  "conflicts": [
+    {
+      "base": {
+        "blob": "4ec3d898c00ac92652010f5c2adffe4640587ae42a54642983d4dca3303b5cd1",
+        "mode": "100644"
+      },
+      "base_text": "module m;\n\npub fn a(x: int) -> [] int {\n    return x + 1;\n}\n\npub fn b(x: int) -> [] int {\n    return x + 2;\n}\n",
+      "decls": [
+        {
+          "base": "pub fn a(x: int) -> [] int {\n    return x + 1;\n}\n",
+          "decl": "fn m.a",
+          "ours": "pub fn a(x: int) -> [] int {\n    return x + 10;\n}\n",
+          "theirs": "pub fn a(x: int) -> [] int {\n    return x + 11;\n}\n"
+        }
+      ],
+      "detail": null,
+      "hunks": [],
+      "layer": "cho",
+      "ours": {
+        "blob": "527c62c01e22cb36300a96859177d74833d2bc628c1c7ead10662544151ac741",
+        "mode": "100644"
+      },
+      "ours_text": "module m;\n\npub fn a(x: int) -> [] int {\n    return x + 10;\n}\n\npub fn b(x: int) -> [] int {\n    return x + 20;\n}\n",
+      "path": "m.cho",
+      "tag": "decl-conflict",
+      "theirs": {
+        "blob": "d4e9a84eb78f6c3458fac81ba2a6faa48684540db1802147f204d04849b50a1e",
+        "mode": "100644"
+      },
+      "theirs_text": "module m;\n\npub fn a(x: int) -> [] int {\n    return x + 11;\n}\n\npub fn b(x: int) -> [] int {\n    return x + 2;\n}\n"
+    }
+  ],
+  "dry_run": false,
+  "in_progress": true,
+  "merged": false,
+  "merged_paths": [],
+  "ok": true,
+  "op": "merge",
+  "open_conflicts": 1,
+  "ours": "6ebad136235c277c479f50bd0c497b38bde82a130ecf2214157cb86280bd5b1d",
+  "theirs": "ceebcf9d48d06bb40ebd6cf2e71b0432d6b195b75e5e5de901dbbb49377dc39f"
+}

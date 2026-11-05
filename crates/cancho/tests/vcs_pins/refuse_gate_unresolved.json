@@ -1,0 +1,20 @@
+{
+  "command": "record",
+  "ok": false,
+  "refused": {
+    "diagnostics": [
+      {
+        "message": "no module `extlib` in this program; a module exists where a file declares it",
+        "rule": "unknown-name"
+      }
+    ],
+    "message": "use.cho: unknown-name: no module `extlib` in this program; a module exists where a file declares it",
+    "path": "use.cho",
+    "rule": "unknown-name",
+    "searched": [],
+    "tag": "gate-failed",
+    "unresolved_modules": [
+      "extlib"
+    ]
+  }
+}

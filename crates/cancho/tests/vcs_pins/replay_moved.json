@@ -1,0 +1,30 @@
+{
+  "base": "09ff4c56f84d86a5dede3804a0f226bc6f6a935c712af2c5e3bb4be8416d000b",
+  "change": "6304cd0ce9611581bf71e1d04fd26e3fe3f2b32dec1d766bb841bbaa06bfb080",
+  "command": "replay",
+  "dry_run": false,
+  "gate": {
+    "checked": [],
+    "external": [],
+    "ran": true
+  },
+  "in_progress": false,
+  "merged": true,
+  "merged_paths": [
+    {
+      "layer": "edits",
+      "path": "notes.md"
+    }
+  ],
+  "ok": true,
+  "op": "replay",
+  "open_conflicts": 0,
+  "ours": "5d1a8aacc2343e0f9e7d9c3687ff6bcfbe4e9e648703d496b7f95bfdf76468f4",
+  "result": "moved",
+  "theirs": "e16fe85096f87774bdcba5ac7e2d08d6cd5e03cad7d3a7d377bb8ccb66f6c40f",
+  "touched": [
+    "notes.md"
+  ],
+  "tree": "29b277aceba8788205a2a9c08ff44658e66592256bec159a2d25185ac9629861",
+  "would_record": false
+}

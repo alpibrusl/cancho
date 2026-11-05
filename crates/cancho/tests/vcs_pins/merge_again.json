@@ -1,0 +1,10 @@
+{
+  "command": "merge",
+  "merged": false,
+  "ok": true,
+  "op": "merge",
+  "open_conflicts": 0,
+  "ours": "5365c107f5660ca6683033c07e04aad664df744842a0eef025b7f0e868c896d2",
+  "theirs": "1b409d4daa7496841ccba4fb711ae634402400d4006b6147b01f6f8619e274ca",
+  "up_to_date": true
+}

@@ -1,0 +1,11 @@
+{
+  "command": "merge",
+  "ok": false,
+  "refused": {
+    "current": "df06ac23c08d0a2689f0039279c1f700a85fb3bee670cca43a36d6f7ea9be9b3",
+    "expected": "fc95abab7fb94dac1d2274e0e509c8d1bd770b18faae090dcd87bbd3949c991a",
+    "message": "`heads/main` is at df06ac23c08d0a2689f0039279c1f700a85fb3bee670cca43a36d6f7ea9be9b3, not where it was expected",
+    "ref": "heads/main",
+    "tag": "ref-moved"
+  }
+}

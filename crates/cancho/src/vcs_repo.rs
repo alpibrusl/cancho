@@ -19,7 +19,8 @@ use crate::vcs_args::{Done, Parsed, entry_bytes, open, parse, rel_path, run, sho
 use crate::vcs_decl::{decls_of, diff_decls};
 use crate::{Failure, vcs_git, vcs_record};
 
-const INTENT_FLAGS: [&str; 7] = [
+const INTENT_FLAGS: [&str; 8] = [
+    "--gate-path",
     "--intent-prompt",
     "--intent-model",
     "--intent-session",
@@ -27,6 +28,18 @@ const INTENT_FLAGS: [&str; 7] = [
     "--author",
     "--time",
     "--expect",
+];
+
+const INTENT_FLAGS_MERGE: [&str; 9] = [
+    "--gate-path",
+    "--intent-prompt",
+    "--intent-model",
+    "--intent-session",
+    "--intent-issue",
+    "--author",
+    "--time",
+    "--expect",
+    "--onto",
 ];
 
 pub(crate) fn dispatch(cmd: &str, args: &[String]) -> Result<ExitCode, Failure> {
@@ -90,6 +103,22 @@ pub(crate) fn dispatch(cmd: &str, args: &[String]) -> Result<ExitCode, Failure> 
         "apply" => {
             let p = parse(args, &[], &[])?;
             run(cmd, &p, || cmd_apply(&p))
+        }
+        "merge" => {
+            let p = parse(args, &INTENT_FLAGS_MERGE, &["--no-gate", "--no-ff", "--abort"])?;
+            run(cmd, &p, || crate::vcs_merge::cmd_merge(&p))
+        }
+        "replay" => {
+            let p = parse(args, &INTENT_FLAGS_MERGE, &["--no-gate"])?;
+            run(cmd, &p, || crate::vcs_merge::cmd_replay(&p))
+        }
+        "conflicts" => {
+            let p = parse(args, &[], &[])?;
+            run(cmd, &p, || crate::vcs_merge::cmd_conflicts(&p))
+        }
+        "resolve" => {
+            let p = parse(args, &["--take", "--with", "--decl", "--gate-path"], &[])?;
+            run(cmd, &p, || crate::vcs_merge::cmd_resolve(&p))
         }
         "import-git" => {
             let p = parse(args, &[], &["--no-checkout"])?;

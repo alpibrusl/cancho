@@ -1,0 +1,51 @@
+{
+  "base": "da7d439513a2df8d1a1f013f6dd62f6394f430d5a36790bd52e43f394df83e9d",
+  "command": "merge",
+  "conflicts": [
+    {
+      "base": {
+        "blob": "20e907f0a11705c2e627696e1d28e2666bc259d9176f2ae065a6eebb6e4f7ce5",
+        "mode": "100644"
+      },
+      "base_text": "# notes\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+      "decls": [],
+      "detail": null,
+      "hunks": [
+        {
+          "base_lines": [
+            "5\n"
+          ],
+          "base_start": 5,
+          "ours_lines": [
+            "main five\n"
+          ],
+          "theirs_lines": [
+            "topic five\n"
+          ]
+        }
+      ],
+      "layer": "text",
+      "ours": {
+        "blob": "db6de6b0562650b9a601479f5e4998fdd22ce22791cce435512ad33f51c09480",
+        "mode": "100644"
+      },
+      "ours_text": "# notes\n1\n2\n3\n4\nmain five\n6\n7\n8\n9\n",
+      "path": "notes.md",
+      "tag": "content-conflict",
+      "theirs": {
+        "blob": "6ff570660661434996cb3b6ec7903794cfc4766736e5407bc3ba05bd8464b62e",
+        "mode": "100644"
+      },
+      "theirs_text": "# notes\n1\n2\n3\n4\ntopic five\n6\n7\n8\n9\n"
+    }
+  ],
+  "dry_run": false,
+  "in_progress": true,
+  "merged": false,
+  "merged_paths": [],
+  "ok": true,
+  "op": "merge",
+  "open_conflicts": 1,
+  "ours": "1eadc3e821727e8ac28c4c2b6c969bee77b1e959b1d663df01739b3a928981a7",
+  "theirs": "73d84c6ea4e7d5e437008ba3ec789155c08c2b2742df2f4d4597eeded2fca7bc"
+}

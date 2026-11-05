@@ -99,8 +99,15 @@ pub fn cmd_vcs(args: &[String]) -> Result<ExitCode, Failure> {
         Some(
             cmd @ ("init" | "log" | "status" | "diff" | "record" | "show" | "blame" | "branch"
             | "switch" | "revert" | "restore" | "verify" | "unlock" | "import-git"
-            | "export-git" | "apply"),
+            | "export-git" | "apply" | "merge" | "conflicts" | "replay"),
         ) => crate::vcs_repo::dispatch(cmd, &args[1..]),
+        // `resolve` of an open merge's conflict carries `--take` or `--with`;
+        // the lock `resolve` (docs/vcs-publish.md) never does.
+        Some("resolve")
+            if args.iter().any(|a| a.starts_with("--take") || a.starts_with("--with")) =>
+        {
+            crate::vcs_repo::dispatch("resolve", &args[1..])
+        }
         Some("resolve") => cmd_resolve(&args[1..]),
         Some("lock") => cmd_lock(&args[1..]),
         Some("fetch") => cmd_fetch(&args[1..]),

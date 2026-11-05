@@ -13,6 +13,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 cancho-syntax.workspace = true
 cancho-ir.workspace = true
+cancho-id.workspace = true
 # `lex-os-audit`'s own choice (docs/vcs.md §5's "shares the idea and no
 # code" -- here, the same audited signing crate rather than a second
 # implementation of Ed25519 for a job this one already does correctly
@@ -22,6 +23,5 @@ ed25519-dalek = "2"
 hex = "0.4"
 
 [dev-dependencies]
-cancho-id.workspace = true
 serde_json = "1"
 hex = "0.4"
