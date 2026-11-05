@@ -198,7 +198,7 @@ pub fn takes_value[&w](word: &w [byte], build: bool) -> [] bool {
     if bytes.equal(word, "--output") || bytes.equal(word, "--host") || bytes.equal(word, "--backend") || bytes.equal(word, "--std-dir") || bytes.equal(word, "--target") {
         return true;
     }
-    return build && (bytes.equal(word, "-o") || bytes.equal(word, "--emit") || bytes.equal(word, "-l") || bytes.equal(word, "-L") || bytes.equal(word, "--clang"));
+    return build && (bytes.equal(word, "-o") || bytes.equal(word, "--emit") || bytes.equal(word, "-l") || bytes.equal(word, "-L") || bytes.equal(word, "--clang") || bytes.equal(word, "--instrument") || bytes.equal(word, "--at") || bytes.equal(word, "--hit"));
 }
 
 // A word that starts with a `-` and is none of the options of the command: said as the Rust command says it, with the usage. The status, 2.

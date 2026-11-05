@@ -1,0 +1,299 @@
+edition 7;
+module selfhost.ciinstr;
+
+// ciinstr.cho -- the instrumented build (`docs/agent-debug.md` section 11, `docs/agent-profile.md` section 10): a pass over the module the compiler wrote with `-g`.
+//
+// The markers the emitter leaves (`  ; @fn N`, `  ; @s N`) become calls into a small run time (`runtime/instr.ll`, `instrtext.cho`): `cancho_i_enter` at the top of each function of
+// the program and `cancho_i_leave` before each `ret`, which keep a stack of the functions being run; `cancho_i_hit` after each statement marker, which says which statement is
+// being run, counts it and, in a build for `trace`, stops at the one asked for; and the calls to the allocator are made through wrappers that count them against the statement
+// that made them. The tables the run time reads (the function and file of each statement, its line, how many instructions it is) are written at the end. A trap (a signal the
+// code stops with) is reported by the run time with the stack, and why the code trapped (`cancho_note`, written by `emit.trap_if` only in this build).
+//
+// The result goes through `cidebug.run` after this, which gives every instruction of the new code a location, so none of it is a call without one.
+
+import std.buffer;
+import selfhost.lexcore as lc;
+import selfhost.clibase;
+import selfhost.diagnose;
+import selfhost.prune;
+import selfhost.cidebug;
+import selfhost.instrtext;
+
+fn count_of[&r, &w](ir: &r [byte], word: &w [byte]) -> [] int {
+    var n = 0;
+    var line = 0;
+    while line < len(ir) {
+        if cidebug.begins(ir, line, word) {
+            n = n + 1;
+        }
+        line = prune.line_end(ir, line) + 1;
+    }
+    return n;
+}
+
+// The first place `word` is in `t`, or -1.
+fn find[&t, &w](t: &t [byte], word: &w [byte]) -> [] int {
+    var at = 0;
+    while at + len(word) <= len(t) {
+        if lc.spells(t, at, at + len(word), word) {
+            return at;
+        }
+        at = at + 1;
+    }
+    return 0 - 1;
+}
+
+// `text` with the first `from` in it written `to` (as it is if it has none).
+fn replaced[&h, &t, &f, &y](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], from: &f [byte], to: &y [byte]) -> [heap] buffer.Buffer {
+    let at = find(text, from);
+    if at < 0 {
+        return buffer.append(heap, out, text);
+    }
+    var b = buffer.append(heap, out, text[0..at]);
+    b = buffer.append(heap, b, to);
+    return buffer.append(heap, b, text[at + len(from)..len(text)]);
+}
+
+// `text` as the body of an LLVM string constant: letters, digits and a few signs as they are, every other byte as `\HH`.
+fn escaped[&h, &t](heap: &!h Heap, out: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    var k = 0;
+    while k < len(text) {
+        let c = lc.at(text, k);
+        if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '.' || c == '/' || c == '-' {
+            b = buffer.push(heap, b, text[k]);
+        } else {
+            b = buffer.push(heap, b, byte_of('\\'));
+            b = buffer.push(heap, b, "0123456789ABCDEF"[c / 16]);
+            b = buffer.push(heap, b, "0123456789ABCDEF"[c % 16]);
+        }
+        k = k + 1;
+    }
+    return b;
+}
+
+// `@<prefix><k> = private constant [N x i8] c"<text>\00"`.
+fn string_constant[&h, &p, &t](heap: &!h Heap, out: buffer.Buffer, prefix: &p [byte], k: int, text: &t [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, "@");
+    b = buffer.append(heap, b, prefix);
+    b = buffer.push_nat(heap, b, k);
+    b = buffer.append(heap, b, " = private constant [");
+    b = buffer.push_nat(heap, b, len(text) + 1);
+    b = buffer.append(heap, b, " x i8] c\"");
+    b = escaped(heap, b, text);
+    return buffer.append(heap, b, "\\00\"\n");
+}
+
+// `@<name> = <how> [N x <ty>] [<ty> v, ...]` for the first `n` ints of `values` starting at `from` (or `zeroinitializer` for none).
+fn table[&h, &v](heap: &!h Heap, out: buffer.Buffer, name: &static [byte], ty: &static [byte], values: &v [int], from: int, n: int) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.append(heap, out, "@"), name);
+    b = buffer.append(heap, b, " = constant [");
+    b = buffer.push_nat(heap, b, n);
+    b = buffer.append(heap, b, " x ");
+    b = buffer.append(heap, b, ty);
+    if n == 0 {
+        return buffer.append(heap, b, "] zeroinitializer\n");
+    }
+    b = buffer.append(heap, b, "] [");
+    var k = 0;
+    while k < n {
+        if k > 0 {
+            b = buffer.append(heap, b, ", ");
+        }
+        b = buffer.append(heap, buffer.append(heap, b, ty), " ");
+        b = buffer.push_nat(heap, b, values[from + k]);
+        k = k + 1;
+    }
+    return buffer.append(heap, b, "]\n");
+}
+
+fn counters[&h](heap: &!h Heap, out: buffer.Buffer, name: &static [byte], n: int) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.append(heap, out, "@"), name);
+    b = buffer.append(heap, b, " = global [");
+    b = buffer.push_nat(heap, b, n);
+    return buffer.append(heap, b, " x i64] zeroinitializer\n");
+}
+
+// An instruction of a function: not blank, not a comment, not a label, not the closing brace.
+fn is_instruction[&t](t: &t [byte]) -> [] bool {
+    return len(t) > 0 && lc.at(t, 0) != ';' && lc.at(t, 0) != '}' && !(lc.at(t, len(t) - 1) == ':' && !cidebug.has_space(t));
+}
+
+// The module `ir` instrumented. `mode` is 0 for `trace` and 1 for `profile`; `at_file`, `at_line` and `at_hit` say where `trace` stops (the file as an index among
+// `names`, or -1 for no stop, the line, and which arrival).
+pub fn run[&h, &r, &l, &n, &y](heap: &!h Heap, ir: &r [byte], laid: &l [byte], lens: &n [int], names: &y [byte], mode: int, at_file: int, at_line: int, at_hit: int) -> [heap] buffer.Buffer {
+    let statements = count_of(ir, "  ; @s ");
+    let functions = count_of(ir, "  ; @fn ");
+    let s1 = statements + 1;
+    let f1 = functions + 1;
+    // The arrays: for each statement its function, line, file and weight; for each function its line and file.
+    let area = box_slice(heap, 4 * s1 + 2 * f1, 0);
+    var out = buffer.empty(heap, len(ir) + len(ir) / 3 + 4096);
+    var fnames = buffer.empty(heap, 256);
+    var wrapped = 0;
+    borrow mut area as &!ab in {
+        let a = contents(ab);
+        var ns = 0;
+        var nf = 0;
+        var fid = 0 - 1;
+        var cur = 0 - 1;
+        var in_function = false;
+        var line = 0;
+        while line < len(ir) {
+            let eol = prune.line_end(ir, line);
+            let text = ir[line..eol];
+            let t = cidebug.trimmed(text);
+            if cidebug.begins(ir, line, "define ") && eol > line + 2 {
+                in_function = true;
+                fid = 0 - 1;
+                cur = 0 - 1;
+                let offset = cidebug.function_offset(ir, eol);
+                if offset >= 0 && lc.spells(ir, eol - 2, eol, " {") {
+                    let place = diagnose.locate(laid, lens, offset);
+                    fid = nf;
+                    a[4 * s1 + fid] = place.line;
+                    a[4 * s1 + f1 + fid] = place.file;
+                    let name = cidebug.name_at(heap, laid, offset);
+                    borrow name as &nb in {
+                        fnames = buffer.push(heap, buffer.append(heap, fnames, buffer.bytes(nb)), byte_of(0));
+                    }
+                    buffer.drop(heap, name);
+                    nf = nf + 1;
+                }
+                out = buffer.append(heap, buffer.append(heap, out, text), "\n");
+            } else if in_function && fid >= 0 && cidebug.marker_offset(ir, line, "  ; @fn ") >= 0 {
+                out = buffer.append(heap, buffer.append(heap, out, text), "\n");
+                out = buffer.append(heap, out, "  call void @cancho_i_enter(i32 ");
+                out = buffer.push(heap, buffer.push_nat(heap, out, fid), byte_of(')'));
+                out = buffer.push(heap, out, byte_of(10));
+            } else if in_function && fid >= 0 && cidebug.marker_offset(ir, line, "  ; @s ") >= 0 {
+                let place = diagnose.locate(laid, lens, cidebug.marker_offset(ir, line, "  ; @s "));
+                cur = ns;
+                a[cur] = fid;
+                a[s1 + cur] = place.line;
+                a[2 * s1 + cur] = place.file;
+                a[3 * s1 + cur] = 0;
+                ns = ns + 1;
+                out = buffer.append(heap, buffer.append(heap, out, text), "\n");
+                out = buffer.append(heap, out, "  call void @cancho_i_hit(i32 ");
+                out = buffer.push(heap, buffer.push_nat(heap, out, cur), byte_of(')'));
+                out = buffer.push(heap, out, byte_of(10));
+            } else {
+                if in_function && len(text) == 1 && lc.at(text, 0) == '}' {
+                    in_function = false;
+                    fid = 0 - 1;
+                    cur = 0 - 1;
+                }
+                if fid >= 0 && (cidebug.begins(t, 0, "ret ") || cidebug.begins(t, 0, "ret\n") || len(t) == 3 && lc.spells(t, 0, 3, "ret")) {
+                    out = buffer.append(heap, out, "  call void @cancho_i_leave()\n");
+                }
+                if fid >= 0 && is_instruction(t) && cur >= 0 {
+                    a[3 * s1 + cur] = a[3 * s1 + cur] + 1;
+                }
+                if fid >= 0 && find(text, "call ptr @malloc(") >= 0 {
+                    out = replaced(heap, out, text, "call ptr @malloc(", "call ptr @cancho_i_malloc(");
+                    wrapped = wrapped | 1;
+                } else if fid >= 0 && find(text, "call ptr @calloc(") >= 0 {
+                    out = replaced(heap, out, text, "call ptr @calloc(", "call ptr @cancho_i_calloc(");
+                    wrapped = wrapped | 2;
+                } else if fid >= 0 && find(text, "call ptr @cancho_region_take()") >= 0 {
+                    out = replaced(heap, out, text, "call ptr @cancho_region_take()", "call ptr @cancho_i_region_take()");
+                    wrapped = wrapped | 4;
+                } else {
+                    out = buffer.append(heap, out, text);
+                }
+                out = buffer.push(heap, out, byte_of(10));
+            }
+            line = eol + 1;
+        }
+        // The tables.
+        out = buffer.append(heap, out, "\n");
+        out = buffer.append(heap, out, "@cancho_i_dims = constant [4 x i64] [i64 ");
+        out = buffer.push_nat(heap, out, ns);
+        out = buffer.append(heap, out, ", i64 ");
+        out = buffer.push_nat(heap, out, nf);
+        out = buffer.append(heap, out, ", i64 ");
+        out = buffer.push_nat(heap, out, mode);
+        out = buffer.append(heap, out, ", i64 0]\n@cancho_i_bp = constant [3 x i64] [i64 ");
+        out = buffer.push_nat(heap, out, at_file);
+        out = buffer.append(heap, out, ", i64 ");
+        out = buffer.push_nat(heap, out, at_line);
+        out = buffer.append(heap, out, ", i64 ");
+        out = buffer.push_nat(heap, out, at_hit);
+        out = buffer.append(heap, out, "]\n");
+        out = table(heap, out, "cancho_i_s_fn", "i32", a, 0, ns);
+        out = table(heap, out, "cancho_i_s_line", "i32", a, s1, ns);
+        out = table(heap, out, "cancho_i_s_file", "i32", a, 2 * s1, ns);
+        out = table(heap, out, "cancho_i_s_w", "i32", a, 3 * s1, ns);
+        out = table(heap, out, "cancho_i_f_line", "i32", a, 4 * s1, nf);
+        out = counters(heap, out, "cancho_i_count", ns);
+        out = counters(heap, out, "cancho_i_alloc", ns);
+        out = counters(heap, out, "cancho_i_fs", nf);
+        out = counters(heap, out, "cancho_i_fi", nf);
+        out = counters(heap, out, "cancho_i_fa", nf);
+        // The names of the functions and of the files, as strings, and the tables of pointers to them.
+        var k = 0;
+        var at = 0;
+        borrow fnames as &fb in {
+            let listed = buffer.bytes(fb);
+            while k < nf {
+                var end = at;
+                while end < len(listed) && lc.at(listed, end) != 0 {
+                    end = end + 1;
+                }
+                out = string_constant(heap, out, "cancho_i_n", k, listed[at..end]);
+                at = end + 1;
+                k = k + 1;
+            }
+        }
+        var j = 0;
+        while j < len(lens) {
+            out = string_constant(heap, out, "cancho_i_p", j, clibase.name_at(names, j));
+            j = j + 1;
+        }
+        out = buffer.append(heap, out, "@cancho_i_f_name = constant [");
+        out = buffer.push_nat(heap, out, nf);
+        out = buffer.append(heap, out, " x ptr] ");
+        out = pointers(heap, out, "cancho_i_n", a, 0, nf, false, s1, f1);
+        out = buffer.append(heap, out, "\n@cancho_i_f_file = constant [");
+        out = buffer.push_nat(heap, out, nf);
+        out = buffer.append(heap, out, " x ptr] ");
+        out = pointers(heap, out, "cancho_i_p", a, 4 * s1 + f1, nf, true, s1, f1);
+        out = buffer.push(heap, out, byte_of(10));
+    }
+    unbox_slice(heap, area);
+    buffer.drop(heap, fnames);
+    out = instrtext.text(heap, out);
+    if wrapped & 1 != 0 {
+        out = buffer.append(heap, out, "\ndefine ptr @cancho_i_malloc(i64 %n) {\nentry:\n  call void @cancho_i_alloc_note()\n  %p = call ptr @malloc(i64 %n)\n  ret ptr %p\n}\n");
+    }
+    if wrapped & 2 != 0 {
+        out = buffer.append(heap, out, "\ndefine ptr @cancho_i_calloc(i64 %n, i64 %m) {\nentry:\n  call void @cancho_i_alloc_note()\n  %p = call ptr @calloc(i64 %n, i64 %m)\n  ret ptr %p\n}\n");
+    }
+    if wrapped & 4 != 0 {
+        out = buffer.append(heap, out, "\ndefine ptr @cancho_i_region_take() {\nentry:\n  call void @cancho_i_alloc_note()\n  %p = call ptr @cancho_region_take()\n  ret ptr %p\n}\n");
+    }
+    return out;
+}
+
+// `[ptr @<prefix>k, ...]`: the strings of the functions (`by_index` false: the k-th) or of the files (the file each function is in).
+fn pointers[&h, &v](heap: &!h Heap, out: buffer.Buffer, prefix: &static [byte], a: &v [int], from: int, n: int, by_index: bool, s1: int, f1: int) -> [heap] buffer.Buffer {
+    if n == 0 {
+        return buffer.append(heap, out, "zeroinitializer");
+    }
+    var b = buffer.append(heap, out, "[");
+    var k = 0;
+    while k < n {
+        if k > 0 {
+            b = buffer.append(heap, b, ", ");
+        }
+        b = buffer.append(heap, buffer.append(heap, b, "ptr @"), prefix);
+        if by_index {
+            b = buffer.push_nat(heap, b, a[from + k]);
+        } else {
+            b = buffer.push_nat(heap, b, k);
+        }
+        k = k + 1;
+    }
+    return buffer.append(heap, b, "]");
+}

@@ -818,6 +818,10 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                 if target / 1024 % 2 == 1 {
                     st[55] = st[55] | 65536;
                 }
+                // The target plus 2048: the build is instrumented (`ciinstr.cho`), which `emit.instrumenting` reads from bit 17 of `st[55]`.
+                if target / 2048 % 2 == 1 {
+                    st[55] = st[55] | 131072;
+                }
             } else {
                 ast.layout(st, tokens, files);
             }

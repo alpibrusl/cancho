@@ -11,6 +11,7 @@ checker.cho
 cibase.cho
 cidebug.cho
 ciinit.cho
+ciinstr.cho
 cli.cho
 clibase.cho
 clici.cho
@@ -51,6 +52,7 @@ guidelines.cho
 identity.cho
 ingest.cho
 instances.cho
+instrtext.cho
 jsonprint.cho
 jsonread.cho
 jsonwrite.cho

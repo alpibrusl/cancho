@@ -73,7 +73,7 @@ pub fn spawn_thread[&s](st: &!s [int], ty: int, known: bool, value: int, reg: in
     emit.str(st, "icmp ne i32 ");
     emit.temp(st, status);
     emit.str(st, ", 0\n");
-    emit.trap_if(st, failed);
+    emit.trap_if(st, failed, 8);
     count_thread(st, 1);
     let thread = emit.start(st);
     emit.str(st, "load ptr, ptr ");
@@ -110,7 +110,7 @@ pub fn join_thread[&s](st: &!s [int], ty: int, thread: int) -> [] int {
     emit.str(st, "icmp ne i32 ");
     emit.temp(st, status);
     emit.str(st, ", 0\n");
-    emit.trap_if(st, failed);
+    emit.trap_if(st, failed, 8);
     count_thread(st, 0 - 1);
     if types.is_erased(st, ty) {
         return 0 - 1;

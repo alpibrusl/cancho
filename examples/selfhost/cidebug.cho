@@ -19,12 +19,12 @@ import selfhost.clibase;
 import selfhost.diagnose;
 import selfhost.prune;
 
-fn begins[&r, &w](text: &r [byte], at: int, word: &w [byte]) -> [] bool {
+pub fn begins[&r, &w](text: &r [byte], at: int, word: &w [byte]) -> [] bool {
     return at + len(word) <= len(text) && lc.spells(text, at, at + len(word), word);
 }
 
 // The number written after `tag` in the marker line at `at`, or -1 if the line is not that marker.
-fn marker_offset[&r, &w](text: &r [byte], at: int, tag: &w [byte]) -> [] int {
+pub fn marker_offset[&r, &w](text: &r [byte], at: int, tag: &w [byte]) -> [] int {
     if !begins(text, at, tag) {
         return 0 - 1;
     }
@@ -43,7 +43,7 @@ fn marker_offset[&r, &w](text: &r [byte], at: int, tag: &w [byte]) -> [] int {
 }
 
 // The offset of the function marker among the two lines after the `define` at `eol` (`entry:` and then the marker), or -1.
-fn function_offset[&r](text: &r [byte], eol: int) -> [] int {
+pub fn function_offset[&r](text: &r [byte], eol: int) -> [] int {
     let entry = eol + 1;
     if !begins(text, entry, "entry:") {
         return 0 - 1;
@@ -52,7 +52,7 @@ fn function_offset[&r](text: &r [byte], eol: int) -> [] int {
 }
 
 // The name of the function whose declaration starts at `offset`: the word after `fn `, within the next 80 bytes.
-fn name_at[&h, &l](heap: &!h Heap, laid: &l [byte], offset: int) -> [heap] buffer.Buffer {
+pub fn name_at[&h, &l](heap: &!h Heap, laid: &l [byte], offset: int) -> [heap] buffer.Buffer {
     var out = buffer.empty(heap, 32);
     var k = offset;
     while k < len(laid) && k < offset + 80 && !begins(laid, k, "fn ") {
@@ -85,7 +85,7 @@ fn symbol_of[&h, &r](heap: &!h Heap, text: &r [byte], from: int, to: int) -> [he
 }
 
 // `t` without the spaces at its ends.
-fn trimmed[&t](t: &t [byte]) -> [] &t [byte] {
+pub fn trimmed[&t](t: &t [byte]) -> [] &t [byte] {
     var a = 0;
     var b = len(t);
     while a < b && (lc.at(t, a) == ' ' || lc.at(t, a) == 9) {
@@ -97,7 +97,7 @@ fn trimmed[&t](t: &t [byte]) -> [] &t [byte] {
     return t[a..b];
 }
 
-fn has_space[&t](t: &t [byte]) -> [] bool {
+pub fn has_space[&t](t: &t [byte]) -> [] bool {
     var k = 0;
     while k < len(t) {
         if lc.at(t, k) == ' ' {

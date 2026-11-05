@@ -46,14 +46,14 @@ fn room[&s](st: &!s [int], n: int, length: int, at: int, width: int) -> [] int {
     emit.str(st, ", ");
     emit.temp(st, short);
     emit.str(st, "\n");
-    emit.trap_if(st, failed);
+    emit.trap_if(st, failed, 7);
     return 0;
 }
 
 // `trap()`.
 pub fn stop[&s](st: &!s [int]) -> [] int {
     let always = line(st, "icmp eq i64 0, 0");
-    emit.trap_if(st, always);
+    emit.trap_if(st, always, 7);
     return 0;
 }
 
@@ -217,7 +217,7 @@ pub fn copy_within[&s](st: &!s [int]) -> [] int {
         failed = joined;
         k = k + 1;
     }
-    emit.trap_if(st, failed);
+    emit.trap_if(st, failed, 7);
     let to = emit.start(st);
     emit.str(st, "getelementptr i8, ptr ");
     emit.last_operand(st, 5, 0);

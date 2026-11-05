@@ -13,6 +13,7 @@ import selfhost.jsonprint;
 import selfhost.driver;
 import selfhost.authwasi;
 import selfhost.cidebug;
+import selfhost.ciinstr;
 import selfhost.formatting;
 import selfhost.rules;
 import selfhost.lexcore as lc;
@@ -434,6 +435,9 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
     var wasi = 0;
     var host_given = false;
     var debug = 0;
+    var instr = 0;
+    var at_spec = 0 - 1;
+    var hit_at = 0 - 1;
     var out_at = 0 - 1;
     var obj = false;
     var clang_at = 0 - 1;
@@ -495,6 +499,28 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             }
         } else if build && bytes.equal(word, "-g") {
             debug = 1;
+        } else if build && bytes.equal(word, "--instrument") {
+            n = n + 1;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "trace") {
+                instr = 1;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "profile") {
+                instr = 2;
+            } else {
+                return clibase.usage_error(heap, io, "`--instrument` needs trace or profile");
+            }
+            debug = 1;
+        } else if build && bytes.equal(word, "--at") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--at` needs FILE:LINE");
+            }
+            at_spec = n;
+        } else if build && bytes.equal(word, "--hit") {
+            n = n + 1;
+            if n >= arg_count(args) || len(arg(args, n)) == 0 || clibase.digits_end(arg(args, n), 0) != len(arg(args, n)) || clibase.value_of(arg(args, n), 0, len(arg(args, n))) < 1 {
+                return clibase.usage_error(heap, io, "`--hit` needs a number, 1 or more");
+            }
+            hit_at = n;
         } else if build && bytes.equal(word, "-O0") {
             n = n + 0;
         } else if run && bytes.equal(word, "--stdin") {
@@ -584,7 +610,11 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                     mode = 19;
                 }
             }
-            let built = driver.run_many(heap, io, buffer.bytes(r), mode, host + 8 * wasi + 1024 * debug);
+            var flags = 1024 * debug;
+            if instr > 0 {
+                flags = flags + 2048;
+            }
+            let built = driver.run_many(heap, io, buffer.bytes(r), mode, host + 8 * wasi + flags);
             borrow built as &b in {
                 borrow laid as &lt in {
                     borrow mut lens as &!lb in {
@@ -608,7 +638,38 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                             borrow mut lens as &!lb in {
                                 borrow names as &nm in {
                                     buffer.drop(heap, shipped);
-                                    shipped = cidebug.run(heap, buffer.bytes(b.ir), buffer.bytes(lt), contents(lb), buffer.bytes(nm));
+                                    if instr > 0 {
+                                        // The file `--at` names, as an index among the program's, and its line; no stop for `profile`.
+                                        var at_file = 0;
+                                        var at_line = 0;
+                                        var at_hits = 0;
+                                        if at_spec >= 0 && instr == 1 {
+                                            let spec = arg(args, at_spec);
+                                            var colon = len(spec) - 1;
+                                            while colon > 0 && lc.at(spec, colon) != ':' {
+                                                colon = colon - 1;
+                                            }
+                                            var j = 0;
+                                            while j < len(contents(lb)) {
+                                                if bytes.equal(clibase.name_at(buffer.bytes(nm), j), spec[0..colon]) {
+                                                    at_file = j;
+                                                    at_hits = 1;
+                                                    if hit_at >= 0 {
+                                                        at_hits = clibase.value_of(arg(args, hit_at), 0, len(arg(args, hit_at)));
+                                                    }
+                                                }
+                                                j = j + 1;
+                                            }
+                                            at_line = clibase.value_of(spec, colon + 1, len(spec));
+                                        }
+                                        let counted = ciinstr.run(heap, buffer.bytes(b.ir), buffer.bytes(lt), contents(lb), buffer.bytes(nm), instr - 1, at_file, at_line, at_hits);
+                                        borrow counted as &cb in {
+                                            shipped = cidebug.run(heap, buffer.bytes(cb), buffer.bytes(lt), contents(lb), buffer.bytes(nm));
+                                        }
+                                        buffer.drop(heap, counted);
+                                    } else {
+                                        shipped = cidebug.run(heap, buffer.bytes(b.ir), buffer.bytes(lt), contents(lb), buffer.bytes(nm));
+                                    }
                                 }
                             }
                         }
