@@ -7,6 +7,8 @@ module selfhost.vcsstorectl;
 //   init DIR [BRANCH]                    make DIR/.cancho/vcs                        prints `created` or `exists`
 //   put DIR KIND < FILE                  store the bytes of standard input           prints the id
 //   get DIR KIND ID                      the object's bytes on standard output       (nothing else is printed)
+//   head DIR                             the change HEAD is at (or `absent`)
+//   resolve DIR REV                      the id a revision names: HEAD, @, an id or a prefix of one, a branch or tag, any of them with ~N
 //   ref-read DIR NAME                    the id a ref holds                          prints the id, or `absent`
 //   ref-cas DIR NAME EXPECT NEW NOTE NOW move a ref: EXPECT is `any`, `absent` or an id; NOW is the time in seconds
 //
@@ -16,6 +18,7 @@ import std.io as console;
 import std.buffer;
 import std.bytes;
 import selfhost.vcsobj;
+import selfhost.vcsrepo;
 import selfhost.vcsstore;
 import selfhost.lexcore as lc;
 
@@ -31,7 +34,7 @@ fn number[&t](text: &t [byte]) -> [] int {
 
 fn say_refusal[&i](io: &!i Io, status: int, errno: int) -> [io_write] int {
     console.write_all(io, "refused ");
-    console.write_all(io, vcsstore.tag(status));
+    console.write_all(io, vcsrepo.tag(status));
     if status == 10 {
         console.write_all(io, " ");
         console.print_int(io, errno);
@@ -80,6 +83,10 @@ fn command[&h, &i, &a, &d](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Di
             buffer.drop(heap, raw);
         } else if bytes.equal(verb, "get") {
             code = answered(heap, io, vcsstore.get(heap, vcs, contents(s), arg(args, 3), arg(args, 4)), true);
+        } else if bytes.equal(verb, "head") {
+            code = answered(heap, io, vcsrepo.head_change(heap, vcs), false);
+        } else if bytes.equal(verb, "resolve") {
+            code = answered(heap, io, vcsrepo.resolve(heap, vcs, contents(s), arg(args, 3)), false);
         } else if bytes.equal(verb, "ref-read") {
             code = answered(heap, io, vcsstore.read_ref(heap, vcs, arg(args, 3)), false);
         } else if bytes.equal(verb, "ref-cas") {

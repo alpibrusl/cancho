@@ -123,7 +123,10 @@ command wrote:
 | b1 | `vcsobj.cho`: the object id, `is_id`, `check_path`, the text of a tree (check, find, walk) | **built**, below |
 | b2 | `vcschange.cho`: the change object (JSON in V1's field order, written and read) | **built**, below; refs, `HEAD` and `refs/*.log` move to b3 |
 | b3 | `vcsstore.cho`: **built**, below: refs, `HEAD`, the log; the store on disk: write an object atomically (temporary name, `file_sync`, `dir_rename`, `dir_sync`), read one and re-hash it; the ref compare-and-swap under a lock file; `init` | next; needs the primitives that exist, not the five of the issues |
-| b4 | `record` (snapshot of the working copy to a tree, no gate yet), `log`, `show`, `status` | next; `status` over links needs #685, over removed directories #684 |
+| b4a | `vcsrepo.cho`: HEAD and the resolution of a revision (`HEAD`, `@`, id, branch, tag, prefix, `~N`) | **built**, below |
+| b4b | the history of a change; the documents of `log` and `show` (sorted-key pretty JSON) | next |
+| b4c | `status`: the working copy scanned against HEAD's tree | next; over links it needs #685, over removed directories #684 |
+| b4d | `record` (snapshot of the working copy to a tree and a change, no gate yet) | next |
 
 Not in (b): `decls` (the declaration diff of a `.cho` file) and the gate, which need `ids` and `check` as functions over in-memory files (the `driver`
 refactor of §3, slice d), so a `record` that touches a `.cho` file does not reproduce V1's pins yet; the pins with only other files do.
@@ -159,3 +162,11 @@ fifth survived until a check of the first log line was added.
 Differences from the Rust command, on purpose (header of the file): the temporary file of an object is made beside the object, not in `tmp/`; the lock holds `0 TIME` because there
 is no process id (#688); no crash failpoints (#687), so the kill-at-every-write test of V1 is not reproduced here. **Not measured:** the speed of `put`/`get` (the path is
 `open`/`write`/`fsync`/`rename`, so a store of many small objects is bound by `fsync`, as the Rust one is: 94 s for the 826.9 MiB import).
+
+**b4a, measured.** `vcsrepo.cho` resolves a revision as `repo.rs` does. `examples/selfhost/vcsrepo_check.sh` records six changes with the Rust command, a branch (`side`) and a tag (`v1`)
+at the third (V1 has no `tag` command: a tag is a ref file), and compares, for 26 revisions (`HEAD`, `@`, `HEAD~1` to `~99`, `main`, `heads/main`, `main~2`, `side`, `tags/v1`, `v1`, `v1~1`, the
+full id, prefixes of 8, 6 and 5 digits, a name that does not exist, empty, `HEAD~`, `HEAD~x`, `HEAD~-1`, `..`, `heads/..`, and an ambiguous prefix), the change the Rust `show REV` names
+(or the refusal tag) with what `vcsrepo.resolve` answers: **31 checks, all passing**, also with the compiler in cancho alone; an empty repository has no `HEAD` change in both. The check
+first asserts that the branch and the tag are not at HEAD, so a comparison of two refusals cannot pass for the wrong reason (an earlier version of the script used a `vcs tag` command that
+does not exist and passed vacuously). Four mutants (the prefix length, the `~` count, the order of `heads/` and `tags/`, the `@` alias) fail it; the fifth (status 19 for 18) is the same refusal
+tag, which is all a command prints. The prefix search reads one fan-out directory; the ambiguous case was fabricated with two empty files named like changes.

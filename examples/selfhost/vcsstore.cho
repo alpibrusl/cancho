@@ -22,6 +22,7 @@ module selfhost.vcsstore;
 
 import std.buffer;
 import std.bytes;
+import std.dirs;
 import selfhost.filewrite;
 import selfhost.vcsobj;
 
@@ -435,7 +436,7 @@ fn ref_dir[&h, &n](heap: &!h Heap, name: &n [byte]) -> [heap] buffer.Buffer {
     return b;
 }
 
-fn trimmed[&t](text: &t [byte]) -> [] &t [byte] {
+pub fn trimmed[&t](text: &t [byte]) -> [] &t [byte] {
     var end = len(text);
     while end > 0 && (text[end - 1] == byte_of(10) || text[end - 1] == byte_of(13) || text[end - 1] == byte_of(32) || text[end - 1] == byte_of(9)) {
         end = end - 1;
@@ -817,4 +818,67 @@ pub fn init[&h, &d, &b](heap: &!h Heap, root: &d Dir, branch: &b [byte]) -> [hea
         }
     }
     return Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
+}
+
+// A file of the store itself (`HEAD`, `format`): its bytes in `bytes`; 2 if it is not there, 10 for another reason.
+pub fn read_text[&h, &d, &n](heap: &!h Heap, vcs: &d Dir, name: &n [byte]) -> [heap, dir_read, file_read] Object {
+    let read = slurp(heap, vcs, name);
+    let Contents { data, why } = read;
+    if why == 0 {
+        return Object { bytes: data, status: 0, errno: 0 };
+    }
+    buffer.drop(heap, data);
+    if why == enoent() {
+        return Object { bytes: buffer.empty(heap, 0), status: 2, errno: 0 };
+    }
+    return Object { bytes: buffer.empty(heap, 0), status: 10, errno: why };
+}
+
+// The ids of the objects of kind `kind` whose id starts with `prefix` (at least 2 digits of it, all of them lowercase hexadecimal): each 64 digits, one after the
+// other, in order. Reads one fan-out directory.
+pub fn with_prefix[&h, &d, &k, &p](heap: &!h Heap, vcs: &d Dir, kind: &k [byte], prefix: &p [byte]) -> [heap, dir_read, dir_write] Object {
+    var out = buffer.empty(heap, 0);
+    var status = 0;
+    var errno = 0;
+    if len(prefix) < 2 || len(prefix) > 64 {
+        return Object { bytes: out, status: 17, errno: 0 };
+    }
+    let path = fan_out(heap, kind, prefix);
+    borrow path as &pb in {
+        match walk(vcs, buffer.bytes(pb), false) {
+            DirOpened::Ok(sub0) => {
+                var sub = sub0;
+                borrow sub as &sd in {
+                    let names = dirs.list(heap, sd, 1000000);
+                    borrow names as &nr in {
+                        var i = 0;
+                        while i < dirs.count(nr) {
+                            let n = dirs.name(nr, i);
+                            if len(n) == 62 && bytes.starts_with(n, prefix[2..len(prefix)]) {
+                                out = buffer.append(heap, out, prefix[0..2]);
+                                out = buffer.append(heap, out, n);
+                            }
+                            i = i + 1;
+                        }
+                    }
+                    dirs.drop(heap, names);
+                }
+                dir_close(sub);
+            }
+            DirOpened::Failed(e) => {
+                if e != enoent() {
+                    status = 10;
+                    errno = e;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, path);
+    return Object { bytes: out, status: status, errno: errno };
+}
+
+// The three parts of an answer, for a caller that wants to name them (a pattern cannot rename a field).
+pub fn parts(o: Object) -> [] (buffer.Buffer, int, int) {
+    let Object { bytes, status, errno } = o;
+    return (bytes, status, errno);
 }
