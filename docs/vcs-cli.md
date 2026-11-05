@@ -60,6 +60,16 @@ and there is no database to corrupt).
   (derived at record time, stored so a reader never recomputes them: an `OpId` list), and `attestations`, the
   ids of the gate results that let it exist. An unattributed change is allowed and says so, as lex-vcs does;
   an intent that is present is never rewritten.
+* **Edit operation** (*designed*, not an object of its own: it is carried by a change and by `replay`): the
+  replay-able form of a text edit, `{path, old, new}`. It applies to a tree only if `old` occurs **exactly once**
+  in the file; zero occurrences refuses with the tag `anchor-not-found`, two or more with `anchor-ambiguous`. The
+  recorder derives each operation from a display diff hunk by widening `old` with the fewest surrounding lines
+  that make it unique in the base file. It is the analogue, for any text file, of a typed operation on a `.cho`
+  declaration: what was *done*, which can be re-applied to a different base, not the text of a patch with line
+  numbers. V1 records them for every touched non-`.cho` text file (`Change.edits`, derived and cached like
+  `ops`) and offers `apply` of one list to a tree; using them to merge or to `replay` is V2. R6 (section 8)
+  measured what they are worth as a merge: **not more than a line merge**, so they are proposed for `replay`
+  and for the intent record, not as the merge algorithm.
 * **Ref**: a branch or a tag, a file holding a change id. Moved by an atomic rename, only ever with
   `--expect <old id>`, so two agents racing on one branch cannot both win silently (compare-and-swap, section 5).
 
@@ -131,7 +141,11 @@ A merge works in three layers and reports in one structured document.
    by declaration can fail the gate (`vcs.md` section 4 predicted this and has not measured the rate).
    A gate failure after a clean merge is reported as `merge-gate-failed` with the rule tag and **both** changes'
    intents, which is more than the agent would get from a conflict marker.
-3. **Text layer** for every other file: a line-based three-way merge (diff3). A conflict is **data, not markers
+3. **Text layer** for every other file: a line-based three-way merge (diff3). *(R6, section 8, measured on the
+   historical merges of both repositories: no `json` or `toml` file was edited on both sides of any merge, so
+   there is nothing for a key-path layer to do on this data, and an anchored-operation merge conflicted at
+   least as often as the line merge. Format-aware layers stay deferred to V2 and need a counter-example in
+   a real history to be built at all.)* A conflict is **data, not markers
    written into the file**: `merge` leaves the working copy at "ours" for those paths and `conflicts` returns
    `{path, base, ours, theirs, hunks:[{base_lines, ours_lines, theirs_lines}]}`; `resolve --with <file>` or
    `--take` settles one. (An agent that edits a file full of `<<<<<<<` markers has to parse them; one that
@@ -173,8 +187,27 @@ start before V2: a worker that shells out to `git` today is not wrong, it is the
 
 Open questions, each with the measurement that closes it:
 
-* **R1: can the history be imported exactly?** Import `cancho-forge`'s 193 commits (59 of them merges) and `cancho`'s 545, export
+* **R1: can the history be imported exactly?** Import `cancho-forge`'s 194 commits (59 of them merges; the first
+  draft said 193, which was the count before the latest commit) and `cancho`'s 545, export
   them, compare every SHA. Closes V1. *Not measured.*
+* **R6: what do the non-`.cho` files look like, and which merge strategy would conflict on them?** *(measured
+  2026-11-05 with `scripts/vcs_r6.py`, which runs `git` to read the two repositories; the product never does.)*
+  File touches by type over every non-merge commit of `HEAD`: `cancho-forge`, 135 commits, 1,091 touches, of
+  which `.cho` 499, `md` 257, `sh` 187, `cancho.toml` 49, `py` 32, `txt` 22, `json` 8, other 37. `cancho`, 523
+  commits, 16,018 touches, of which `json` 4,721 (generated fixtures, 46 commits), `rs` 2,480, `ls` 2,421,
+  extensionless 1,949, `md` 1,678, `.cho` 1,666, `py` 391, `txt` 255. So the part that is not `.cho` is most of
+  the touches in `cancho` (90%) and half in `cancho-forge` (54%), and it is dominated by Markdown, shell and
+  Rust, not by structured data. Merges: for each two-parent merge, the non-`.cho` files changed on both sides
+  since the merge base. `cancho-forge`: 59 merges, 6 such files (2 `md`, 4 `sh`), a line three-way merge
+  conflicts on 4, anchored operations on 3. `cancho`: 22 merges, 64 such files (43 `rs`, 21 `md`), line
+  conflicts on 1, anchored operations on 3 (2 `rs`, 1 `md`). **No `json` or `toml` file was edited on both
+  sides of any merge in either history**, so a key-path merge would have had no case to decide.
+  Conclusions: (a) double-edited non-`.cho` files are rare (70 in 81 merges), (b) the line merge is already
+  rarely wrong on them (5 of 70), (c) anchored operations are **not** a better merge (6 of 70: a short
+  anchor is often ambiguous in a repetitive `sh` or `rs` file, which is the tag `anchor-ambiguous` doing its
+  job), (d) format-aware layers have no evidence behind them. Anchored operations stay as the form `replay`
+  re-applies, which a line merge cannot be. The merge-versus-real-result comparison (does a clean strategy
+  reproduce the file the human merge produced?) was not done.
 * **R2: what does the gate cost per record?** This repository's gate is 18 minutes on CI; a gate that runs on every `record`
   makes the agent loop unusable. Proposed: the built-in gate is the check of touched `.cho` files (seconds),
   heavier commands are attested **asynchronously** and a protected ref requires them at `merge`/`push`, not at `record`.
@@ -194,7 +227,7 @@ Open questions, each with the measurement that closes it:
 
 | slice | content | measured by |
 |---|---|---|
-| **V1: a local repository** | objects, trees, changes, refs; `init`, `status`, `diff`, `record` with intent and the built-in gate, `log`, `show`, `blame`, `branch`, `switch`, `revert`, `restore`, `verify`; `import-git` and `export-git` | R1 (SHA-exact round trip on two real repositories); a crash test at every write; two agents racing one ref (`ref-moved`, nobody loses an object); every command's JSON pinned by a test; `cancho` and `cancho-forge` histories open with `log` and `blame` |
+| **V1: a local repository** | objects, trees, changes (with recorded anchored edit operations, section 3), refs; `init`, `status`, `diff`, `record` with intent and the built-in gate, `log`, `show`, `blame`, `branch`, `switch`, `revert`, `restore`, `verify`; `import-git` and `export-git` | R1 (SHA-exact round trip on two real repositories); a crash test at every write; two agents racing one ref (`ref-moved`, nobody loses an object); every command's JSON pinned by a test; `cancho` and `cancho-forge` histories open with `log` and `blame` |
 | **V2: merge and replay** | the three layers, `conflicts`, `resolve`, `merge --abort`, `replay`; the body-level `.cho` diff | R3 (historical merges), R5; a merge of two branches that git merges clean produces the same tree, except where the declaration merge is finer, and the exceptions are listed |
 | **V3: path remotes** | `clone`, `fetch`, `pull`, `push`, `--expect` | two stores, interleaved pushes, an interrupted push leaves both sound (`verify` on each) |
 | **V4: HTTP remote and the GitHub bridge** | the gateway, `mirror`, `pull --from-git` | a pull request opened from a mirrored branch; a change pushed to GitHub by a person arrives as a change |
