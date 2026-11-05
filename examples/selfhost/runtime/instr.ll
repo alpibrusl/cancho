@@ -12,6 +12,8 @@ declare void @_exit(i32) noreturn
 @cancho_i_cur = thread_local global i32 0
 @cancho_i_kind = thread_local global i64 0
 @cancho_i_out = global i32 -1
+@cancho_i_detail = global i32 0
+@cancho_i_env_detail = private constant [24 x i8] c"CANCHO_TRACE_STATEMENTS\00"
 @cancho_i_hits = global i64 0
 @cancho_i_env = private constant [17 x i8] c"CANCHO_TRACE_OUT\00"
 @cancho_i_w_breakpoint = private constant [11 x i8] c"breakpoint\00"
@@ -19,7 +21,8 @@ declare void @_exit(i32) noreturn
 @cancho_i_f_stop = private constant [28 x i8] c"stop\09%s\0Asignal\09%d\0Akind\09%ld\0A\00"
 @cancho_i_f_hits = private constant [10 x i8] c"hits\09%ld\0A\00"
 @cancho_i_f_frame = private constant [16 x i8] c"frame\09%s\09%s\09%d\0A\00"
-@cancho_i_f_fn = private constant [25 x i8] c"fn\09%s\09%s\09%d\09%ld\09%ld\09%ld\0A\00"
+@cancho_i_f_fn = private constant [32 x i8] c"fn\09%s\09%s\09%d\09%ld\09%ld\09%ld\09%ld\09%d\0A\00"
+@cancho_i_f_st = private constant [17 x i8] c"st\09%d\09%d\09%ld\09%d\0A\00"
 
 define void @cancho_note(i64 %k) {
 entry:
@@ -29,6 +32,11 @@ entry:
 
 define void @cancho_i_enter(i32 %f) {
 entry:
+  %f64c = zext i32 %f to i64
+  %pcc = getelementptr i64, ptr @cancho_i_calls, i64 %f64c
+  %cc0 = load i64, ptr %pcc
+  %cc1 = add i64 %cc0, 1
+  store i64 %cc1, ptr %pcc
   %d0 = load i64, ptr @cancho_i_depth
   %d = add i64 %d0, 1
   store i64 %d, ptr @cancho_i_depth
@@ -229,7 +237,7 @@ fstart:
 floop:
   %f = phi i64 [ 0, %fstart ], [ %fnx, %fnext ]
   %fmore = icmp slt i64 %f, %nf
-  br i1 %fmore, label %fbody, label %done
+  br i1 %fmore, label %fbody, label %sstart
 fbody:
   %pst = getelementptr i64, ptr @cancho_i_fs, i64 %f
   %st = load i64, ptr %pst
@@ -247,11 +255,39 @@ print:
   %line = load i32, ptr %pln
   %pir = getelementptr i64, ptr @cancho_i_fi, i64 %f
   %ir = load i64, ptr %pir
-  %r = call i32 (i32, ptr, ...) @dprintf(i32 %fd, ptr @cancho_i_f_fn, ptr %name, ptr %file, i32 %line, i64 %ir, i64 %st, i64 %al)
+  %pcl = getelementptr i64, ptr @cancho_i_calls, i64 %f
+  %calls = load i64, ptr %pcl
+  %fid32 = trunc i64 %f to i32
+  %r = call i32 (i32, ptr, ...) @dprintf(i32 %fd, ptr @cancho_i_f_fn, ptr %name, ptr %file, i32 %line, i64 %ir, i64 %st, i64 %al, i64 %calls, i32 %fid32)
   br label %fnext
 fnext:
   %fnx = add i64 %f, 1
   br label %floop
+sstart:
+  %det = load i32, ptr @cancho_i_detail
+  %on = icmp ne i32 %det, 0
+  br i1 %on, label %sl, label %done
+sl:
+  %q = phi i64 [ 0, %sstart ], [ %qn, %snext ]
+  %qmore = icmp slt i64 %q, %ns
+  br i1 %qmore, label %sb, label %done
+sb:
+  %pqc = getelementptr i64, ptr @cancho_i_count, i64 %q
+  %qc = load i64, ptr %pqc
+  %qhit = icmp ne i64 %qc, 0
+  br i1 %qhit, label %sp, label %snext
+sp:
+  %pqf = getelementptr i32, ptr @cancho_i_s_fn, i64 %q
+  %qf = load i32, ptr %pqf
+  %pql = getelementptr i32, ptr @cancho_i_s_line, i64 %q
+  %ql = load i32, ptr %pql
+  %pqw = getelementptr i32, ptr @cancho_i_s_w, i64 %q
+  %qw = load i32, ptr %pqw
+  %rq = call i32 (i32, ptr, ...) @dprintf(i32 %fd, ptr @cancho_i_f_st, i32 %qf, i32 %ql, i64 %qc, i32 %qw)
+  br label %snext
+snext:
+  %qn = add i64 %q, 1
+  br label %sl
 done:
   ret void
 }
@@ -268,6 +304,10 @@ open:
   %b = call ptr @signal(i32 5, ptr @cancho_i_on_signal)
   %c = call ptr @signal(i32 8, ptr @cancho_i_on_signal)
   %d = call ptr @signal(i32 11, ptr @cancho_i_on_signal)
+  %dp = call ptr @getenv(ptr @cancho_i_env_detail)
+  %dnn = icmp ne ptr %dp, null
+  %dv = zext i1 %dnn to i32
+  store i32 %dv, ptr @cancho_i_detail
   %mode = load i64, ptr getelementptr (i64, ptr @cancho_i_dims, i64 2)
   %profiling = icmp eq i64 %mode, 1
   br i1 %profiling, label %reg, label %out

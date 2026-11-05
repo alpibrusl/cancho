@@ -22,6 +22,8 @@ fn text_0[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "@cancho_i_cur = thread_local global i32 0\n");
     b = buffer.append(heap, b, "@cancho_i_kind = thread_local global i64 0\n");
     b = buffer.append(heap, b, "@cancho_i_out = global i32 -1\n");
+    b = buffer.append(heap, b, "@cancho_i_detail = global i32 0\n");
+    b = buffer.append(heap, b, "@cancho_i_env_detail = private constant [24 x i8] c\"CANCHO_TRACE_STATEMENTS\\00\"\n");
     b = buffer.append(heap, b, "@cancho_i_hits = global i64 0\n");
     b = buffer.append(heap, b, "@cancho_i_env = private constant [17 x i8] c\"CANCHO_TRACE_OUT\\00\"\n");
     b = buffer.append(heap, b, "@cancho_i_w_breakpoint = private constant [11 x i8] c\"breakpoint\\00\"\n");
@@ -29,7 +31,8 @@ fn text_0[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "@cancho_i_f_stop = private constant [28 x i8] c\"stop\\09%s\\0Asignal\\09%d\\0Akind\\09%ld\\0A\\00\"\n");
     b = buffer.append(heap, b, "@cancho_i_f_hits = private constant [10 x i8] c\"hits\\09%ld\\0A\\00\"\n");
     b = buffer.append(heap, b, "@cancho_i_f_frame = private constant [16 x i8] c\"frame\\09%s\\09%s\\09%d\\0A\\00\"\n");
-    b = buffer.append(heap, b, "@cancho_i_f_fn = private constant [25 x i8] c\"fn\\09%s\\09%s\\09%d\\09%ld\\09%ld\\09%ld\\0A\\00\"\n");
+    b = buffer.append(heap, b, "@cancho_i_f_fn = private constant [32 x i8] c\"fn\\09%s\\09%s\\09%d\\09%ld\\09%ld\\09%ld\\09%ld\\09%d\\0A\\00\"\n");
+    b = buffer.append(heap, b, "@cancho_i_f_st = private constant [17 x i8] c\"st\\09%d\\09%d\\09%ld\\09%d\\0A\\00\"\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "define void @cancho_note(i64 %k) {\n");
     b = buffer.append(heap, b, "entry:\n");
@@ -39,7 +42,17 @@ fn text_0[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "define void @cancho_i_enter(i32 %f) {\n");
     b = buffer.append(heap, b, "entry:\n");
+    b = buffer.append(heap, b, "  %f64c = zext i32 %f to i64\n");
+    b = buffer.append(heap, b, "  %pcc = getelementptr i64, ptr @cancho_i_calls, i64 %f64c\n");
+    b = buffer.append(heap, b, "  %cc0 = load i64, ptr %pcc\n");
+    b = buffer.append(heap, b, "  %cc1 = add i64 %cc0, 1\n");
+    b = buffer.append(heap, b, "  store i64 %cc1, ptr %pcc\n");
     b = buffer.append(heap, b, "  %d0 = load i64, ptr @cancho_i_depth\n");
+    return b;
+}
+
+fn text_1[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    var b = out;
     b = buffer.append(heap, b, "  %d = add i64 %d0, 1\n");
     b = buffer.append(heap, b, "  store i64 %d, ptr @cancho_i_depth\n");
     b = buffer.append(heap, b, "  %ok = icmp ult i64 %d, 4096\n");
@@ -48,11 +61,6 @@ fn text_0[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "  %pf = getelementptr i32, ptr @cancho_i_fid, i64 %d\n");
     b = buffer.append(heap, b, "  store i32 %f, ptr %pf\n");
     b = buffer.append(heap, b, "  %ps = getelementptr i32, ptr @cancho_i_sid, i64 %d\n");
-    return b;
-}
-
-fn text_1[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
-    var b = out;
     b = buffer.append(heap, b, "  store i32 0, ptr %ps\n");
     b = buffer.append(heap, b, "  br label %out\n");
     b = buffer.append(heap, b, "out:\n");
@@ -85,6 +93,11 @@ fn text_1[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "  %v1 = add i64 %v, 1\n");
     b = buffer.append(heap, b, "  store i64 %v1, ptr %p\n");
     b = buffer.append(heap, b, "  br label %out\n");
+    return b;
+}
+
+fn text_2[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    var b = out;
     b = buffer.append(heap, b, "out:\n");
     b = buffer.append(heap, b, "  ret void\n");
     b = buffer.append(heap, b, "}\n");
@@ -93,11 +106,6 @@ fn text_1[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "entry:\n");
     b = buffer.append(heap, b, "  %fd = load i32, ptr @cancho_i_out\n");
     b = buffer.append(heap, b, "  %open = icmp sge i32 %fd, 0\n");
-    return b;
-}
-
-fn text_2[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
-    var b = out;
     b = buffer.append(heap, b, "  br i1 %open, label %go, label %done\n");
     b = buffer.append(heap, b, "go:\n");
     b = buffer.append(heap, b, "  %isbp = icmp eq i32 %why, 0\n");
@@ -130,6 +138,11 @@ fn text_2[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "  %pl = getelementptr i32, ptr @cancho_i_f_line, i64 %f64\n");
     b = buffer.append(heap, b, "  %l1 = load i32, ptr %pl\n");
     b = buffer.append(heap, b, "  br label %print\n");
+    return b;
+}
+
+fn text_3[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    var b = out;
     b = buffer.append(heap, b, "stline:\n");
     b = buffer.append(heap, b, "  %s = sub i32 %s1, 1\n");
     b = buffer.append(heap, b, "  %s64 = zext i32 %s to i64\n");
@@ -138,11 +151,6 @@ fn text_2[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "  br label %print\n");
     b = buffer.append(heap, b, "print:\n");
     b = buffer.append(heap, b, "  %line = phi i32 [ %l1, %fnline ], [ %l2, %stline ]\n");
-    return b;
-}
-
-fn text_3[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
-    var b = out;
     b = buffer.append(heap, b, "  %r3 = call i32 (i32, ptr, ...) @dprintf(i32 %fd, ptr @cancho_i_f_frame, ptr %name, ptr %file, i32 %line)\n");
     b = buffer.append(heap, b, "  br label %next\n");
     b = buffer.append(heap, b, "next:\n");
@@ -175,6 +183,11 @@ fn text_3[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "  br i1 %tracing, label %test, label %out\n");
     b = buffer.append(heap, b, "test:\n");
     b = buffer.append(heap, b, "  %pfl = getelementptr i32, ptr @cancho_i_s_file, i64 %s64\n");
+    return b;
+}
+
+fn text_4[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    var b = out;
     b = buffer.append(heap, b, "  %fl = load i32, ptr %pfl\n");
     b = buffer.append(heap, b, "  %pln = getelementptr i32, ptr @cancho_i_s_line, i64 %s64\n");
     b = buffer.append(heap, b, "  %ln = load i32, ptr %pln\n");
@@ -183,11 +196,6 @@ fn text_3[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "  %bf = load i64, ptr @cancho_i_bp\n");
     b = buffer.append(heap, b, "  %bl = load i64, ptr getelementptr (i64, ptr @cancho_i_bp, i64 1)\n");
     b = buffer.append(heap, b, "  %bn = load i64, ptr getelementptr (i64, ptr @cancho_i_bp, i64 2)\n");
-    return b;
-}
-
-fn text_4[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
-    var b = out;
     b = buffer.append(heap, b, "  %armed = icmp sgt i64 %bn, 0\n");
     b = buffer.append(heap, b, "  %samef = icmp eq i64 %fl64, %bf\n");
     b = buffer.append(heap, b, "  %samel = icmp eq i64 %ln64, %bl\n");
@@ -220,6 +228,11 @@ fn text_4[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "  %fd = load i32, ptr @cancho_i_out\n");
     b = buffer.append(heap, b, "  %open = icmp sge i32 %fd, 0\n");
     b = buffer.append(heap, b, "  br i1 %open, label %sum, label %done\n");
+    return b;
+}
+
+fn text_5[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    var b = out;
     b = buffer.append(heap, b, "sum:\n");
     b = buffer.append(heap, b, "  %ns = load i64, ptr @cancho_i_dims\n");
     b = buffer.append(heap, b, "  br label %sloop\n");
@@ -228,11 +241,6 @@ fn text_4[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "  %smore = icmp slt i64 %s, %ns\n");
     b = buffer.append(heap, b, "  br i1 %smore, label %sadd, label %fstart\n");
     b = buffer.append(heap, b, "sadd:\n");
-    return b;
-}
-
-fn text_5[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
-    var b = out;
     b = buffer.append(heap, b, "  %pfn = getelementptr i32, ptr @cancho_i_s_fn, i64 %s\n");
     b = buffer.append(heap, b, "  %fn32 = load i32, ptr %pfn\n");
     b = buffer.append(heap, b, "  %fn = zext i32 %fn32 to i64\n");
@@ -264,7 +272,12 @@ fn text_5[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "floop:\n");
     b = buffer.append(heap, b, "  %f = phi i64 [ 0, %fstart ], [ %fnx, %fnext ]\n");
     b = buffer.append(heap, b, "  %fmore = icmp slt i64 %f, %nf\n");
-    b = buffer.append(heap, b, "  br i1 %fmore, label %fbody, label %done\n");
+    b = buffer.append(heap, b, "  br i1 %fmore, label %fbody, label %sstart\n");
+    return b;
+}
+
+fn text_6[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    var b = out;
     b = buffer.append(heap, b, "fbody:\n");
     b = buffer.append(heap, b, "  %pst = getelementptr i64, ptr @cancho_i_fs, i64 %f\n");
     b = buffer.append(heap, b, "  %st = load i64, ptr %pst\n");
@@ -273,11 +286,6 @@ fn text_5[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "  %any = or i64 %st, %al\n");
     b = buffer.append(heap, b, "  %nz = icmp ne i64 %any, 0\n");
     b = buffer.append(heap, b, "  br i1 %nz, label %print, label %fnext\n");
-    return b;
-}
-
-fn text_6[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
-    var b = out;
     b = buffer.append(heap, b, "print:\n");
     b = buffer.append(heap, b, "  %pin = getelementptr ptr, ptr @cancho_i_f_name, i64 %f\n");
     b = buffer.append(heap, b, "  %name = load ptr, ptr %pin\n");
@@ -287,11 +295,44 @@ fn text_6[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "  %line = load i32, ptr %pln\n");
     b = buffer.append(heap, b, "  %pir = getelementptr i64, ptr @cancho_i_fi, i64 %f\n");
     b = buffer.append(heap, b, "  %ir = load i64, ptr %pir\n");
-    b = buffer.append(heap, b, "  %r = call i32 (i32, ptr, ...) @dprintf(i32 %fd, ptr @cancho_i_f_fn, ptr %name, ptr %file, i32 %line, i64 %ir, i64 %st, i64 %al)\n");
+    b = buffer.append(heap, b, "  %pcl = getelementptr i64, ptr @cancho_i_calls, i64 %f\n");
+    b = buffer.append(heap, b, "  %calls = load i64, ptr %pcl\n");
+    b = buffer.append(heap, b, "  %fid32 = trunc i64 %f to i32\n");
+    b = buffer.append(heap, b, "  %r = call i32 (i32, ptr, ...) @dprintf(i32 %fd, ptr @cancho_i_f_fn, ptr %name, ptr %file, i32 %line, i64 %ir, i64 %st, i64 %al, i64 %calls, i32 %fid32)\n");
     b = buffer.append(heap, b, "  br label %fnext\n");
     b = buffer.append(heap, b, "fnext:\n");
     b = buffer.append(heap, b, "  %fnx = add i64 %f, 1\n");
     b = buffer.append(heap, b, "  br label %floop\n");
+    b = buffer.append(heap, b, "sstart:\n");
+    b = buffer.append(heap, b, "  %det = load i32, ptr @cancho_i_detail\n");
+    b = buffer.append(heap, b, "  %on = icmp ne i32 %det, 0\n");
+    b = buffer.append(heap, b, "  br i1 %on, label %sl, label %done\n");
+    b = buffer.append(heap, b, "sl:\n");
+    b = buffer.append(heap, b, "  %q = phi i64 [ 0, %sstart ], [ %qn, %snext ]\n");
+    b = buffer.append(heap, b, "  %qmore = icmp slt i64 %q, %ns\n");
+    b = buffer.append(heap, b, "  br i1 %qmore, label %sb, label %done\n");
+    b = buffer.append(heap, b, "sb:\n");
+    b = buffer.append(heap, b, "  %pqc = getelementptr i64, ptr @cancho_i_count, i64 %q\n");
+    b = buffer.append(heap, b, "  %qc = load i64, ptr %pqc\n");
+    b = buffer.append(heap, b, "  %qhit = icmp ne i64 %qc, 0\n");
+    b = buffer.append(heap, b, "  br i1 %qhit, label %sp, label %snext\n");
+    b = buffer.append(heap, b, "sp:\n");
+    b = buffer.append(heap, b, "  %pqf = getelementptr i32, ptr @cancho_i_s_fn, i64 %q\n");
+    return b;
+}
+
+fn text_7[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    var b = out;
+    b = buffer.append(heap, b, "  %qf = load i32, ptr %pqf\n");
+    b = buffer.append(heap, b, "  %pql = getelementptr i32, ptr @cancho_i_s_line, i64 %q\n");
+    b = buffer.append(heap, b, "  %ql = load i32, ptr %pql\n");
+    b = buffer.append(heap, b, "  %pqw = getelementptr i32, ptr @cancho_i_s_w, i64 %q\n");
+    b = buffer.append(heap, b, "  %qw = load i32, ptr %pqw\n");
+    b = buffer.append(heap, b, "  %rq = call i32 (i32, ptr, ...) @dprintf(i32 %fd, ptr @cancho_i_f_st, i32 %qf, i32 %ql, i64 %qc, i32 %qw)\n");
+    b = buffer.append(heap, b, "  br label %snext\n");
+    b = buffer.append(heap, b, "snext:\n");
+    b = buffer.append(heap, b, "  %qn = add i64 %q, 1\n");
+    b = buffer.append(heap, b, "  br label %sl\n");
     b = buffer.append(heap, b, "done:\n");
     b = buffer.append(heap, b, "  ret void\n");
     b = buffer.append(heap, b, "}\n");
@@ -308,6 +349,10 @@ fn text_6[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "  %b = call ptr @signal(i32 5, ptr @cancho_i_on_signal)\n");
     b = buffer.append(heap, b, "  %c = call ptr @signal(i32 8, ptr @cancho_i_on_signal)\n");
     b = buffer.append(heap, b, "  %d = call ptr @signal(i32 11, ptr @cancho_i_on_signal)\n");
+    b = buffer.append(heap, b, "  %dp = call ptr @getenv(ptr @cancho_i_env_detail)\n");
+    b = buffer.append(heap, b, "  %dnn = icmp ne ptr %dp, null\n");
+    b = buffer.append(heap, b, "  %dv = zext i1 %dnn to i32\n");
+    b = buffer.append(heap, b, "  store i32 %dv, ptr @cancho_i_detail\n");
     b = buffer.append(heap, b, "  %mode = load i64, ptr getelementptr (i64, ptr @cancho_i_dims, i64 2)\n");
     b = buffer.append(heap, b, "  %profiling = icmp eq i64 %mode, 1\n");
     b = buffer.append(heap, b, "  br i1 %profiling, label %reg, label %out\n");
@@ -321,7 +366,7 @@ fn text_6[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     return b;
 }
 
-fn text_7[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+fn text_8[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
     b = buffer.append(heap, b, "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @cancho_i_init, ptr null }]\n");
     return b;
@@ -337,5 +382,6 @@ pub fn text[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = text_5(heap, b);
     b = text_6(heap, b);
     b = text_7(heap, b);
+    b = text_8(heap, b);
     return b;
 }

@@ -246,6 +246,7 @@ pub fn run[&h, &r, &l, &n, &y](heap: &!h Heap, ir: &r [byte], laid: &l [byte], l
         out = counters(heap, out, "cancho_i_fs", nf);
         out = counters(heap, out, "cancho_i_fi", nf);
         out = counters(heap, out, "cancho_i_fa", nf);
+        out = counters(heap, out, "cancho_i_calls", nf);
         // The names of the functions and of the files, as strings, and the tables of pointers to them.
         var k = 0;
         var at = 0;

@@ -27,6 +27,15 @@ cancho fmt --check src/ tests/            # is it canonical? (`fmt src/` rewrite
 cancho test tests/*.cho --std              # run every `fn test_*`; exit 4 if one failed (docs/testing.md)
 ```
 
+Three more are for an agent that has a program to judge, and answer one JSON object each. They run only in the command line written in cancho
+(`examples/selfhost`; `docs/agent-ci.md`, `docs/agent-profile.md`, `docs/agent-debug.md`):
+
+```sh
+cancho ci --output json src/main.cho --test src/lib.cho --test tests/lib_test.cho  # fmt, check, test and the authority baseline: one verdict
+cancho profile --advise src/main.cho      # where the instructions go: shares, the bound on a speedup, the hottest lines; it gives no advice
+cancho trace --at src/main.cho:42 src/main.cho  # why and where the program stopped or trapped, and its stack
+```
+
 `check` reports **every** independent refusal, not the first. On a
 failure, read the `rule` field rather than the sentence: it is a stable
 name, there are 58 of them, and `docs/agent-errors.md` is the contract.

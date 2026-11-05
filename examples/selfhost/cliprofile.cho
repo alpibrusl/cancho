@@ -716,9 +716,12 @@ fn analyse[&h, &i, &f, &a, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: 
 }
 
 // The program built instrumented, run with the report going to `out_file`, and the report as the answer.
-fn run_instrumented[&h, &i, &a, &f, &x, &c, &p, &o](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &a Args, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], out_file: &o [byte], program_args: int, top: int, record_at: int, baseline_at: int, factor: int, strict: bool) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+fn run_instrumented[&h, &i, &a, &f, &x, &c, &p, &o](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &a Args, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], out_file: &o [byte], program_args: int, top: int, record_at: int, baseline_at: int, factor: int, strict: bool, advise: bool) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
     var env = buffer.append(heap, buffer.empty(heap, 128), "PATH=/usr/bin:/bin\0CANCHO_TRACE_OUT=");
     env = buffer.append(heap, buffer.append(heap, env, out_file), "\0");
+    if advise {
+        env = buffer.append(heap, env, "CANCHO_TRACE_STATEMENTS=1\0");
+    }
     var run_words = buffer.empty(heap, 64);
     var n = program_args;
     while n < arg_count(args) {
@@ -747,7 +750,11 @@ fn run_instrumented[&h, &i, &a, &f, &x, &c, &p, &o](heap: &!h Heap, io: &!i Io, 
         status = clibase.refuse(io, "profile-failed", "the instrumented program wrote no report", 1);
     } else {
         borrow report as &rb in {
-            status = analyse_report(heap, io, fs, args, buffer.bytes(rb), top, record_at, baseline_at, factor, strict);
+            if advise {
+                status = advise_report(heap, io, fs, buffer.bytes(rb), top);
+            } else {
+                status = analyse_report(heap, io, fs, args, buffer.bytes(rb), top, record_at, baseline_at, factor, strict);
+            }
         }
     }
     buffer.drop(heap, report);
@@ -812,6 +819,290 @@ fn analyse_report[&h, &i, &f, &a, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""),
     return status;
 }
 
+// `num / den` written in decimal with `places` digits after the point, cut and not rounded; `null` if `den` is 0.
+fn decimal[&h](heap: &!h Heap, out: buffer.Buffer, num: int, den: int, places: int) -> [heap] buffer.Buffer {
+    if den <= 0 {
+        return buffer.append(heap, out, "null");
+    }
+    var b = buffer.push_nat(heap, out, num / den);
+    if places > 0 {
+        b = buffer.push(heap, b, byte_of('.'));
+        var rest = num % den;
+        var k = 0;
+        while k < places {
+            rest = rest * 10;
+            b = buffer.push(heap, b, byte_of('0' + rest / den));
+            rest = rest % den;
+            k = k + 1;
+        }
+    }
+    return b;
+}
+
+// The start of line `n` (1 is the first) of `text`, or the length of the text.
+fn line_start[&t](text: &t [byte], n: int) -> [] int {
+    var seen = 1;
+    var at = 0;
+    while at < len(text) && seen < n {
+        if lc.at(text, at) == 10 {
+            seen = seen + 1;
+        }
+        at = at + 1;
+    }
+    return at;
+}
+
+// Line `n` of `text` without the spaces before it, cut at 120 bytes.
+fn line_text[&t](text: &t [byte], n: int) -> [] &t [byte] {
+    var from = line_start(text, n);
+    while from < len(text) && (lc.at(text, from) == ' ' || lc.at(text, from) == 9) {
+        from = from + 1;
+    }
+    var to = from;
+    while to < len(text) && lc.at(text, to) != 10 && to - from < 120 {
+        to = to + 1;
+    }
+    return text[from..to];
+}
+
+// How many lines the function whose `fn` is on line `n` has: to the first line of the text that is only a `}`.
+fn extent[&t](text: &t [byte], n: int) -> [] int {
+    var line = n;
+    var at = line_start(text, n);
+    while at < len(text) {
+        let end = prune.line_end(text, at);
+        if end == at + 1 && lc.at(text, at) == '}' {
+            return line - n + 1;
+        }
+        at = end + 1;
+        line = line + 1;
+    }
+    return line - n;
+}
+
+// The report of the run time (`fn` lines, and `st` lines for each statement that ran) as the facts an agent needs to decide what to optimise, and nothing it
+// has to take on trust: no effort, no advice. `top` functions with the most instructions of their own.
+fn advise_report[&h, &i, &f, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), report: &t [byte], top: int) -> [heap, io_write, fs_read(""), file_read] int {
+    // One function to eight ints: its file, its line, its instructions, allocations, statements, calls, its number in the run time, and 0.
+    let table_area = box_slice(heap, 8 * 4096, 0);
+    let by_number = box_slice(heap, 65536, 0);
+    let events_area = box_slice(heap, 4 * (lines_in(report) + 1), 0);
+    var files = buffer.empty(heap, 128);
+    var names = buffer.empty(heap, 256);
+    var n_files = 0;
+    var count = 0;
+    var events = 0;
+    var total = 0;
+    borrow mut table_area as &!tb in {
+        borrow mut by_number as &!nb in {
+            borrow mut events_area as &!eb in {
+                let table = contents(tb);
+                let number = contents(nb);
+                let event = contents(eb);
+                var start = 0;
+                var at = 0;
+                while at <= len(report) {
+                    if at == len(report) || lc.at(report, at) == 10 {
+                        let line = report[start..at];
+                        let tag = clibase.tab_field(line, 0);
+                        if bytes.equal(tag, "fn") && count < 4096 {
+                            var file = 0 - 1;
+                            borrow files as &fb in {
+                                file = index_of(buffer.bytes(fb), clibase.tab_field(line, 2));
+                            }
+                            if file < 0 {
+                                file = n_files;
+                                n_files = n_files + 1;
+                                files = buffer.push(heap, buffer.append(heap, files, clibase.tab_field(line, 2)), byte_of(0));
+                            }
+                            names = buffer.push(heap, buffer.append(heap, names, clibase.tab_field(line, 1)), byte_of(0));
+                            table[8 * count] = file;
+                            table[8 * count + 1] = clibase.value_of(clibase.tab_field(line, 3), 0, len(clibase.tab_field(line, 3)));
+                            table[8 * count + 2] = clibase.value_of(clibase.tab_field(line, 4), 0, len(clibase.tab_field(line, 4)));
+                            table[8 * count + 3] = clibase.value_of(clibase.tab_field(line, 6), 0, len(clibase.tab_field(line, 6)));
+                            table[8 * count + 4] = clibase.value_of(clibase.tab_field(line, 5), 0, len(clibase.tab_field(line, 5)));
+                            table[8 * count + 5] = clibase.value_of(clibase.tab_field(line, 7), 0, len(clibase.tab_field(line, 7)));
+                            let fid = clibase.value_of(clibase.tab_field(line, 8), 0, len(clibase.tab_field(line, 8)));
+                            table[8 * count + 6] = fid;
+                            if fid < 65536 {
+                                number[fid] = count + 1;
+                            }
+                            total = total + table[8 * count + 2];
+                            count = count + 1;
+                        } else if bytes.equal(tag, "st") {
+                            let fid = clibase.value_of(clibase.tab_field(line, 1), 0, len(clibase.tab_field(line, 1)));
+                            if fid < 65536 && number[fid] > 0 {
+                                event[4 * events] = number[fid] - 1;
+                                event[4 * events + 1] = clibase.value_of(clibase.tab_field(line, 2), 0, len(clibase.tab_field(line, 2)));
+                                event[4 * events + 2] = clibase.value_of(clibase.tab_field(line, 3), 0, len(clibase.tab_field(line, 3)));
+                                event[4 * events + 3] = clibase.value_of(clibase.tab_field(line, 4), 0, len(clibase.tab_field(line, 4)));
+                                events = events + 1;
+                            }
+                        }
+                        start = at + 1;
+                    }
+                    at = at + 1;
+                }
+            }
+        }
+    }
+    var answer = buffer.append(heap, buffer.empty(heap, 2048), "{\n  \"metric\": \"ir-instructions\",\n  \"total\": ");
+    answer = buffer.push_nat(heap, answer, total);
+    answer = buffer.append(heap, answer, ",\n  \"functions\": ");
+    answer = buffer.push_nat(heap, answer, count);
+    answer = buffer.append(heap, answer, ",\n  \"candidates\": [");
+    var covered = 0;
+    var listed = 0;
+    borrow files as &pf in {
+        borrow names as &nm in {
+            borrow table_area as &tb in {
+                borrow events_area as &eb in {
+                    let table = contents(tb);
+                    let event = contents(eb);
+                    // The functions already taken, by their position.
+                    let taken_area = box_slice(heap, count + 1, 0);
+                    borrow mut taken_area as &!kb in {
+                        let taken = contents(kb);
+                        while listed < top && listed < count {
+                            var best = 0 - 1;
+                            var k = 0;
+                            while k < count {
+                                if taken[k] == 0 && table[8 * k + 2] > 0 && (best < 0 || table[8 * k + 2] > table[8 * best + 2]) {
+                                    best = k;
+                                }
+                                k = k + 1;
+                            }
+                            if best < 0 {
+                                listed = top;
+                            } else {
+                                taken[best] = 1;
+                                if listed > 0 {
+                                    answer = buffer.push(heap, answer, byte_of(','));
+                                }
+                                answer = candidate(heap, answer, fs, buffer.bytes(nm), buffer.bytes(pf), table, event, events, best, total);
+                                covered = covered + table[8 * best + 2];
+                                listed = listed + 1;
+                            }
+                        }
+                    }
+                    unbox_slice(heap, taken_area);
+                }
+            }
+        }
+    }
+    answer = buffer.append(heap, answer, "\n  ],\n  \"covered\": ");
+    answer = decimal(heap, answer, covered, total, 4);
+    answer = buffer.append(heap, answer, ",\n  \"basis\": {\n    \"metric\": \"the statements the program runs, each weighted by the IR instructions the compiler wrote for it: deterministic, and not time\",\n    \"share\": \"self / total\",\n    \"max_speedup\": \"total / (total - self): the most the program gains on this metric if the function cost nothing\",\n    \"if_halved\": \"the same if the function cost half\",\n    \"statements_per_call\": \"statements run inside the function / calls to it: a loop shows as a large number\",\n    \"hot_lines\": \"the lines with the most cost inside the function; executions is how often the statement ran, cost is executions times its IR instructions\"\n  },\n  \"limits\": [\"the C library and the kernel are not measured\", \"what clang does to the code (inlining, vectorising) is not seen\", \"the counts are not atomic: a program with threads is approximate\"]\n}\n");
+    clibase.show(heap, io, answer);
+    unbox_slice(heap, table_area);
+    unbox_slice(heap, by_number);
+    unbox_slice(heap, events_area);
+    buffer.drop(heap, files);
+    buffer.drop(heap, names);
+    return 0;
+}
+
+// One function of the table as an object of the report: its numbers, and its hottest lines with their text.
+fn candidate[&h, &f, &n, &y, &t, &e](heap: &!h Heap, out: buffer.Buffer, fs: &f Fs(""), names: &n [byte], files: &y [byte], table: &t [int], event: &e [int], events: int, k: int, total: int) -> [heap, fs_read(""), file_read] buffer.Buffer {
+    let self_cost = table[8 * k + 2];
+    let calls = table[8 * k + 5];
+    var b = buffer.append(heap, out, "\n    { \"function\": ");
+    b = jsonwrite.string(heap, b, clibase.name_at(names, k));
+    b = buffer.append(heap, b, ", \"file\": ");
+    b = jsonwrite.string(heap, b, clibase.name_at(files, table[8 * k]));
+    b = buffer.append(heap, b, ", \"line\": ");
+    b = buffer.push_nat(heap, b, table[8 * k + 1]);
+    let (source, failed) = cibase.read_source(heap, fs, clibase.name_at(files, table[8 * k]));
+    b = buffer.append(heap, b, ", \"size_lines\": ");
+    if failed == 0 {
+        borrow source as &sb in {
+            b = buffer.push_nat(heap, b, extent(buffer.bytes(sb), table[8 * k + 1]));
+        }
+    } else {
+        b = buffer.append(heap, b, "null");
+    }
+    b = buffer.append(heap, b, ",\n      \"self\": ");
+    b = buffer.push_nat(heap, b, self_cost);
+    b = buffer.append(heap, b, ", \"share\": ");
+    b = decimal(heap, b, self_cost, total, 4);
+    b = buffer.append(heap, b, ", \"max_speedup\": ");
+    b = decimal(heap, b, total, total - self_cost, 2);
+    b = buffer.append(heap, b, ", \"if_halved\": ");
+    b = decimal(heap, b, total, total - self_cost / 2, 2);
+    b = buffer.append(heap, b, ",\n      \"calls\": ");
+    b = buffer.push_nat(heap, b, calls);
+    b = buffer.append(heap, b, ", \"statements\": ");
+    b = buffer.push_nat(heap, b, table[8 * k + 4]);
+    b = buffer.append(heap, b, ", \"statements_per_call\": ");
+    b = decimal(heap, b, table[8 * k + 4], calls, 1);
+    b = buffer.append(heap, b, ", \"ir_per_call\": ");
+    b = decimal(heap, b, self_cost, calls, 1);
+    b = buffer.append(heap, b, ", \"allocations\": ");
+    b = buffer.push_nat(heap, b, table[8 * k + 3]);
+    b = buffer.append(heap, b, ", \"allocations_per_call\": ");
+    b = decimal(heap, b, table[8 * k + 3], calls, 5);
+    b = buffer.append(heap, b, ",\n      \"hot_lines\": [");
+    // The three lines with the most cost: the statements of the function that are on one line are one.
+    let used_area = box_slice(heap, events + 1, 0);
+    borrow mut used_area as &!ub in {
+        let used = contents(ub);
+        var shown = 0;
+        while shown < 3 {
+            var best_line = 0 - 1;
+            var best_cost = 0;
+            var q = 0;
+            while q < events {
+                if event[4 * q] == k && used[q] == 0 && event[4 * q + 2] * event[4 * q + 3] > best_cost {
+                    best_cost = event[4 * q + 2] * event[4 * q + 3];
+                    best_line = event[4 * q + 1];
+                }
+                q = q + 1;
+            }
+            if best_line < 0 {
+                shown = 3;
+            } else {
+                var cost = 0;
+                var runs = 0;
+                q = 0;
+                while q < events {
+                    if event[4 * q] == k && event[4 * q + 1] == best_line && used[q] == 0 {
+                        used[q] = 1;
+                        cost = cost + event[4 * q + 2] * event[4 * q + 3];
+                        if event[4 * q + 2] > runs {
+                            runs = event[4 * q + 2];
+                        }
+                    }
+                    q = q + 1;
+                }
+                if shown > 0 {
+                    b = buffer.push(heap, b, byte_of(','));
+                }
+                b = buffer.append(heap, b, "\n        { \"line\": ");
+                b = buffer.push_nat(heap, b, best_line);
+                b = buffer.append(heap, b, ", \"executions\": ");
+                b = buffer.push_nat(heap, b, runs);
+                b = buffer.append(heap, b, ", \"cost\": ");
+                b = buffer.push_nat(heap, b, cost);
+                b = buffer.append(heap, b, ", \"share_of_function\": ");
+                b = decimal(heap, b, cost, self_cost, 4);
+                b = buffer.append(heap, b, ", \"text\": ");
+                if failed == 0 {
+                    borrow source as &sb in {
+                        b = jsonwrite.string(heap, b, line_text(buffer.bytes(sb), best_line));
+                    }
+                } else {
+                    b = buffer.append(heap, b, "null");
+                }
+                b = buffer.append(heap, b, " }");
+                shown = shown + 1;
+            }
+        }
+    }
+    unbox_slice(heap, used_area);
+    buffer.drop(heap, source);
+    return buffer.append(heap, b, "\n      ] }");
+}
+
 // A child that was run: how it ended (as `cliprog.Captured` says) and what it wrote on standard error; what it wrote on standard output is dropped.
 fn after[&h](heap: &!h Heap, ran: cliprog.Captured) -> [heap] (int, int, buffer.Buffer) {
     let cliprog.Captured { out, err, kind, value } = ran;
@@ -827,6 +1118,8 @@ pub fn profile_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
     var strict = false;
     var unoptimized = false;
     var machine = false;
+    var advise = false;
+    var top_given = false;
     var library = false;
     var first = 0 - 1;
     var files = 0;
@@ -852,6 +1145,7 @@ pub fn profile_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                 return clibase.usage_error(heap, io, "`--top` needs a number from 1 to 9999");
             }
             top = clibase.value_of(arg(args, n), 0, len(arg(args, n)));
+            top_given = true;
         } else if bytes.equal(word, "--record") || bytes.equal(word, "--baseline") {
             n = n + 1;
             if n >= arg_count(args) || len(arg(args, n)) == 0 {
@@ -874,6 +1168,8 @@ pub fn profile_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             unoptimized = true;
         } else if bytes.equal(word, "--machine") {
             machine = true;
+        } else if bytes.equal(word, "--advise") {
+            advise = true;
         } else if bytes.equal(word, "--std") {
             library = true;
         } else if len(word) > 0 && lc.at(word, 0) == '-' {
@@ -885,6 +1181,12 @@ pub fn profile_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             files = files + 1;
         }
         n = n + 1;
+    }
+    if advise && (machine || record_at >= 0 || baseline_at >= 0) {
+        return clibase.usage_error(heap, io, "`--advise` is a report of its own: it does not go with --machine, --record or --baseline");
+    }
+    if advise && !top_given {
+        top = 5;
     }
     if clibase.contains(arg(args, 0), "..") {
         return clibase.refuse(io, "profile-self-path", "`profile` runs this command line again, and cannot by a name with `..` in it; run it by a path without", 3);
@@ -948,7 +1250,7 @@ pub fn profile_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
     if trouble == 0 && !machine {
         borrow exe as &eb in {
             borrow out_file as &ob in {
-                status = run_instrumented(heap, io, fs, args, exec, clock, buffer.bytes(eb), buffer.bytes(ob), program_args, top, record_at, baseline_at, factor, strict);
+                status = run_instrumented(heap, io, fs, args, exec, clock, buffer.bytes(eb), buffer.bytes(ob), program_args, top, record_at, baseline_at, factor, strict, advise);
             }
         }
     }
