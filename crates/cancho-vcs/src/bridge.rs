@@ -144,6 +144,7 @@ pub struct ImportReport {
     pub new_blobs: usize,
     pub branches: Vec<(String, String)>,
     pub tags: Vec<(String, String)>,
+    pub remotes: Vec<(String, String)>,
     pub mismatches: Vec<(String, String)>,
     pub refs_kept: Vec<String>,
 }
@@ -155,6 +156,7 @@ impl ImportReport {
             "already_imported": self.already_imported,
             "new_blobs": self.new_blobs,
             "branches": self.branches.iter().map(|(n, c)| json!({"name": n, "change": c})).collect::<Vec<_>>(),
+            "remotes": self.remotes.iter().map(|(n, c)| json!({"name": n, "change": c})).collect::<Vec<_>>(),
             "tags": self.tags.iter().map(|(n, c)| json!({"name": n, "change": c})).collect::<Vec<_>>(),
             "self_check_mismatches": self.mismatches.iter().map(|(g, c)| json!({"git": g, "recomputed": c})).collect::<Vec<_>>(),
             "refs_kept": self.refs_kept,
@@ -228,6 +230,7 @@ pub fn import_git(repo: &Repo, git: &GitRepo, dry: bool) -> Result<ImportReport>
         new_blobs: 0,
         branches: vec![],
         tags: vec![],
+        remotes: vec![],
         mismatches: vec![],
         refs_kept: vec![],
     };
@@ -313,6 +316,8 @@ pub fn import_git(repo: &Repo, git: &GitRepo, dry: bool) -> Result<ImportReport>
             (format!("heads/{b}"), &mut report.branches)
         } else if let Some(t) = name.strip_prefix("refs/tags/") {
             (format!("tags/{t}"), &mut report.tags)
+        } else if let Some(r) = name.strip_prefix("refs/remotes/") {
+            (format!("remotes/{r}"), &mut report.remotes)
         } else {
             continue;
         };
@@ -489,6 +494,7 @@ impl ExportReport {
 pub fn export_git(repo: &Repo, dir: &Path, dry: bool) -> Result<ExportReport> {
     let mut tips = refs::list_refs(&repo.vcs, "heads")?;
     tips.extend(refs::list_refs(&repo.vcs, "tags")?);
+    tips.extend(refs::list_refs(&repo.vcs, "remotes")?);
     if let Some(h) = repo.head_change_id()?
         && !tips.iter().any(|(_, id)| *id == h)
     {

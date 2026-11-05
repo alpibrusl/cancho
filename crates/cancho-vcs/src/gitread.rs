@@ -256,7 +256,7 @@ impl GitRepo {
         Ok(result)
     }
 
-    /// Branch and tag refs as `(full name, id)`, plus HEAD's target if it is a branch.
+    /// Branch, tag and remote-tracking refs as `(full name, id)`, plus HEAD's target if it is a branch.
     pub fn refs(&self) -> Result<Vec<(String, GitId)>> {
         let mut out: HashMap<String, GitId> = HashMap::new();
         if let Ok(text) = fs::read_to_string(self.git_dir.join("packed-refs")) {
@@ -266,6 +266,7 @@ impl GitRepo {
                 }
                 if let Some((h, n)) = line.split_once(' ')
                     && let Some(id) = parse_id(h)
+                    && ["refs/heads/", "refs/tags/", "refs/remotes/"].iter().any(|p| n.starts_with(p))
                 {
                     out.insert(n.to_owned(), id);
                 }
@@ -286,6 +287,7 @@ impl GitRepo {
         }
         walk(&self.git_dir.join("refs").join("heads"), "refs/heads/", &mut out);
         walk(&self.git_dir.join("refs").join("tags"), "refs/tags/", &mut out);
+        walk(&self.git_dir.join("refs").join("remotes"), "refs/remotes/", &mut out);
         let mut v: Vec<_> = out.into_iter().collect();
         v.sort();
         Ok(v)
