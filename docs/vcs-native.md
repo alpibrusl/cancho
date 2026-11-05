@@ -109,3 +109,29 @@ Issues: directory removal [#684](https://github.com/alpibrusl/cancho/issues/684)
 4. The git bridge (SHA-1, inflate, pack idx v2, deltas; the exporter with stored blocks).
 5. The gate (the `driver` refactor), then merge, `resolve`, `replay` and packs, with the Rust V2's R3 corpus as the oracle.
 6. Mark the Rust `vcs` deprecated; update the selfhost parity lists.
+
+## 6. Slice (b): the store, in pieces (2026-11-05)
+
+The format V1 writes is small and exact (`crates/cancho-vcs`, read for this section): an object file `objects/<kind>/<2 hex>/<62 hex>` holds the bytes and
+nothing else, named by BLAKE3 of the kind, a 0 byte and the bytes; a tree is lines `MODE BLOB PATH`; a change is one line of JSON in a fixed field order
+(`tree, parents, author, time, tz`, then `intent`, `decls`, `edits`, `attestations`, `git` when present); a ref is a file of one id, with `HEAD`
+(`ref: refs/heads/main`), `format` (`cancho-vcs 1`) and an append-only `refs/heads/NAME.log`. The pieces, each its own PR, each checked against stores the Rust
+command wrote:
+
+| piece | what | state |
+|---|---|---|
+| b1 | `vcsobj.cho`: the object id, `is_id`, `check_path`, the text of a tree (check, find, walk) | **built**, below |
+| b2 | the change object (JSON in V1's field order, read and written), `intent`, `time`/`tz`; refs and `HEAD`; `refs/*.log` | next |
+| b3 | the store on disk: write an object atomically (temporary name, `file_sync`, `dir_rename`, `dir_sync`), read one and re-hash it; the ref compare-and-swap under a lock file; `init` | next; needs the primitives that exist, not the five of the issues |
+| b4 | `record` (snapshot of the working copy to a tree, no gate yet), `log`, `show`, `status` | next; `status` over links needs #685, over removed directories #684 |
+
+Not in (b): `decls` (the declaration diff of a `.cho` file) and the gate, which need `ids` and `check` as functions over in-memory files (the `driver`
+refactor of §3, slice d), so a `record` that touches a `.cho` file does not reproduce V1's pins yet; the pins with only other files do.
+
+**b1, measured.** `vcsobj.cho` against the Rust command: a repository of **387 objects** (the `std/` and `docs/` of this tree, a 70,000-byte random file, an
+empty file and a one-byte file, 7,073,083 bytes) was recorded by V1; every object's name is the id `vcsobj.cho` computes from its kind and bytes (**0
+mismatches**), and the only tree in it (385 lines) is accepted by `tree_status`. `vcsobj_test.cho` pins the three blobs, the tree and the change of a
+three-file repository, the paths `check_path` refuses and the trees `tree_status` refuses (a short line, a mode, an id, a path, a duplicate, a file that is
+also a directory, an order), every prefix and every changed byte of a tree (a trap was found there and fixed: `tree_find` sliced a short line). Five mutants
+(the kind separator, the `..` test, the order, the link mode, the first-component test) each fail it. One difference from V1, on purpose, in the file's header:
+an unsorted tree is `object-corrupt` here and sorted silently there.

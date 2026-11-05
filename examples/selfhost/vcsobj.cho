@@ -1,0 +1,245 @@
+module selfhost.vcsobj;
+
+// vcsobj.cho -- the objects of `cancho vcs` (`docs/vcs-cli.md` section 3, `docs/vcs-native.md`), the part that is only bytes: how an object is
+// named, what a path may be, and what a tree is. A port of `crates/cancho-vcs/src/object.rs` (`object_id`, `is_id`) and `tree.rs` (`check_path`,
+// the text of a tree). Reading and writing the files of a store, the change object (JSON) and the refs are the next pieces; this one needs no
+// capability, so it is tested against the bytes the Rust command wrote.
+//
+//   object id   BLAKE3 of the kind's name, a 0 byte and the object's bytes, as 64 lowercase hexadecimal digits
+//   tree        one line for each file, in the order of the bytes of the paths: `MODE BLOB PATH` and a newline, where MODE is 100644, 100755 or
+//               120000, BLOB the 64 digits of an id, and PATH a relative path (`check_path`)
+//
+// A refusal is a status here, with the rule tag of the Rust command (`tag`): 1 path-escapes, 2 path-unsupported, 3 object-corrupt.
+//
+// One difference from the Rust command, on purpose: it sorts the lines of a tree it reads and accepts them in any order; here an unsorted tree is
+// `object-corrupt`, because the command that writes a tree writes it sorted and a line search needs it so (the Rust one only ever reads trees it
+// wrote). Say so before relying on a tree from elsewhere.
+
+import std.buffer;
+import std.bytes;
+import selfhost.blake3;
+
+// ---- naming ------------------------------------------------------------------------------------------------------------------
+
+// The words the scratch slice of `object_id` needs.
+pub fn scratch_size() -> [] int {
+    return blake3.size() + 8;
+}
+
+fn digit(n: int) -> [] int {
+    return int_of("0123456789abcdef"[n]);
+}
+
+// The id of an object of kind `kind` (`blob`, `tree` or `change`) with bytes `data`, appended to `out` as 64 lowercase hexadecimal digits.
+pub fn object_id[&h, &s, &k, &d](heap: &!h Heap, scratch: &!s [int], kind: &k [byte], data: &d [byte], out: buffer.Buffer) -> [heap] buffer.Buffer {
+    blake3.init(scratch, 0);
+    var i = 0;
+    while i < len(kind) {
+        blake3.byte(scratch, 0, int_of(kind[i]));
+        i = i + 1;
+    }
+    blake3.byte(scratch, 0, 0);
+    i = 0;
+    while i < len(data) {
+        blake3.byte(scratch, 0, int_of(data[i]));
+        i = i + 1;
+    }
+    blake3.finish(scratch, 0, blake3.size());
+    var b = out;
+    var w = 0;
+    while w < 8 {
+        var j = 0;
+        while j < 4 {
+            let octet = scratch[blake3.size() + w] >> 8 * j & 255;
+            b = buffer.push(heap, b, byte_of(digit(octet / 16)));
+            b = buffer.push(heap, b, byte_of(digit(octet % 16)));
+            j = j + 1;
+        }
+        w = w + 1;
+    }
+    return b;
+}
+
+// `text` is 64 lowercase hexadecimal digits.
+pub fn is_id[&t](text: &t [byte]) -> [] bool {
+    if len(text) != 64 {
+        return false;
+    }
+    var i = 0;
+    while i < 64 {
+        let c = int_of(text[i]);
+        if !(c >= 48 && c <= 57 || c >= 97 && c <= 102) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// ---- paths -------------------------------------------------------------------------------------------------------------------
+
+pub fn status_ok() -> [] int {
+    return 0;
+}
+
+pub fn status_path_escapes() -> [] int {
+    return 1;
+}
+
+pub fn status_path_unsupported() -> [] int {
+    return 2;
+}
+
+pub fn status_object_corrupt() -> [] int {
+    return 3;
+}
+
+// The rule tag of a status.
+pub fn tag(status: int) -> [] &static [byte] {
+    if status == 1 {
+        return "path-escapes";
+    }
+    if status == 2 {
+        return "path-unsupported";
+    }
+    if status == 3 {
+        return "object-corrupt";
+    }
+    return "";
+}
+
+// Whether a path may be in a tree (`tree.rs`: `check_path`): relative, no empty or dot component, not inside `.cancho` or `.git`, and no newline or NUL.
+pub fn check_path[&p](path: &p [byte]) -> [] int {
+    let n = len(path);
+    if n == 0 || path[0] == byte_of(47) {
+        return 1;
+    }
+    var start = 0;
+    var first = true;
+    var i = 0;
+    while i <= n {
+        if i == n || path[i] == byte_of(47) {
+            let part = path[start..i];
+            if len(part) == 0 {
+                return 1;
+            }
+            if bytes.equal(part, ".") || bytes.equal(part, "..") {
+                return 1;
+            }
+            if first && (bytes.equal(part, ".cancho") || bytes.equal(part, ".git")) {
+                return 1;
+            }
+            first = false;
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        if path[i] == byte_of(10) || path[i] == byte_of(0) {
+            return 2;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ---- trees -------------------------------------------------------------------------------------------------------------------
+
+// Where the line of a tree that starts at `at` ends (the index of its newline), or -1 when the line has none.
+fn line_end[&t](tree: &t [byte], at: int) -> [] int {
+    var i = at;
+    while i < len(tree) {
+        if tree[i] == byte_of(10) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn mode_known[&t](tree: &t [byte], at: int) -> [] bool {
+    let m = tree[at..at + 6];
+    return bytes.equal(m, "100644") || bytes.equal(m, "100755") || bytes.equal(m, "120000");
+}
+
+// The status of a tree's bytes: 0 when every line is `MODE BLOB PATH` with a known mode, an id and a path `check_path` accepts, the paths strictly
+// increasing in byte order, and no path both a file and the directory of the next; 3 (`object-corrupt`) otherwise. Reads every byte once.
+pub fn tree_status[&t](tree: &t [byte]) -> [] int {
+    var at = 0;
+    var prev_at = -1;
+    var prev_len = 0;
+    while at < len(tree) {
+        let end = line_end(tree, at);
+        if end < 0 || end - at < 73 {
+            return 3;
+        }
+        if !mode_known(tree, at) || tree[at + 6] != byte_of(32) || tree[at + 71] != byte_of(32) {
+            return 3;
+        }
+        if !is_id(tree[at + 7..at + 71]) {
+            return 3;
+        }
+        let path = tree[at + 72..end];
+        if check_path(path) != 0 {
+            return 3;
+        }
+        if prev_at >= 0 {
+            let before = tree[prev_at + 72..prev_at + 72 + prev_len];
+            if bytes.compare(before, path) >= 0 {
+                return 3;
+            }
+            if len(path) > prev_len && bytes.starts_with(path, before) && path[prev_len] == byte_of(47) {
+                return 3;
+            }
+        }
+        prev_at = at;
+        prev_len = end - at - 72;
+        at = end + 1;
+    }
+    return 0;
+}
+
+// The start of the line for `path`, or -1: total on any bytes (a line too short to be one ends the search), and only meaningful on a tree
+// that `tree_status` accepted.
+pub fn tree_find[&t, &p](tree: &t [byte], path: &p [byte]) -> [] int {
+    var at = 0;
+    while at < len(tree) {
+        let end = line_end(tree, at);
+        if end < 0 || end - at < 73 {
+            return -1;
+        }
+        let here = tree[at + 72..end];
+        let order = bytes.compare(here, path);
+        if order == 0 {
+            return at;
+        }
+        if order > 0 {
+            return -1;
+        }
+        at = end + 1;
+    }
+    return -1;
+}
+
+// The mode, blob id and path of the line at `at`.
+pub fn entry_mode[&t](tree: &t [byte], at: int) -> [] &t [byte] {
+    return tree[at..at + 6];
+}
+
+pub fn entry_blob[&t](tree: &t [byte], at: int) -> [] &t [byte] {
+    return tree[at + 7..at + 71];
+}
+
+pub fn entry_path[&t](tree: &t [byte], at: int) -> [] &t [byte] {
+    return tree[at + 72..line_end(tree, at)];
+}
+
+// The start of the line after the one at `at`, or -1 at the end of the tree.
+pub fn entry_next[&t](tree: &t [byte], at: int) -> [] int {
+    let end = line_end(tree, at);
+    if end < 0 || end + 1 >= len(tree) {
+        return -1;
+    }
+    return end + 1;
+}

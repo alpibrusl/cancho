@@ -7,8 +7,8 @@ set -e
 C=${1:-cancho}
 D=$(dirname "$0")
 status=0
-for t in sha1:sha1; do
+for t in sha1:sha1 vcsobj:vcsobj; do
     name=${t%%:*}
-    "$C" test "$D/${name}_test.cho" "$D/${name}.cho" "$D/hex.cho" --std || status=1
+    "$C" test "$D/${name}_test.cho" "$D/${name}.cho" "$D/hex.cho" "$D/blake3.cho" --std || status=1
 done
 exit $status
