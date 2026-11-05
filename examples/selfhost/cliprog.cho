@@ -574,7 +574,7 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                 borrow laid as &lt in {
                     borrow mut lens as &!lb in {
                         borrow names as &nm in {
-                            status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), json && authority == 0, b.status, b.rule, b.from, b.to);
+                            status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), json && authority == 0, b.status, b.rule, b.from, b.to, buffer.bytes(b.more));
                         }
                     }
                 }

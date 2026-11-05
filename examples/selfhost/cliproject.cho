@@ -1082,7 +1082,7 @@ fn build_files[&h, &i, &a, &f, &x, &l, &s, &o, &k](heap: &!h Heap, io: &!i Io, a
                 borrow laid as &lt in {
                     borrow mut lens as &!lb in {
                         borrow names as &nm in {
-                            status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to);
+                            status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to, buffer.bytes(b.more));
                         }
                     }
                 }

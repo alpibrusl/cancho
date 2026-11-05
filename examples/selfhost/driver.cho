@@ -672,8 +672,9 @@ fn run_one[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte], mode: int, t
 
 // A build whose module is not wanted: its status.
 pub fn discard[&h](heap: &!h Heap, built: Built) -> [heap] int {
-    let Built { ir, status, rule, from, to } = built;
+    let Built { ir, status, rule, from, to, more } = built;
     buffer.drop(heap, ir);
+    buffer.drop(heap, more);
     return status;
 }
 
@@ -684,6 +685,39 @@ pub res struct Built {
     rule: int,
     from: int,
     to: int,
+    // The refusals of the functions after the first one's, as text: `rule from to` and a newline each, in source order
+    // (empty when there are none, or when the first refusal is not in a function body).
+    more: buffer.Buffer,
+}
+
+// The function bodies after the one that holds `from` are each checked on their own, as the Rust checker does, and the
+// ones it refuses are written as `rule from to` lines. Only the first refusal of a function counts. A generic function
+// is judged at the types a call asks for, and a call from a function already refused is not seen, so those are left to
+// the first refusal's report.
+fn later_refusals[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte], from: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 0);
+    var item = st[15];
+    var after = false;
+    while item >= 0 {
+        if ast.is_kind(st, item, kinds.NK::IFn) {
+            if after {
+                let status = body.check_function(st, text, item);
+                st[44] = 0;
+                if status == 1 {
+                    out = buffer.push_nat(heap, out, st[3]);
+                    out = buffer.push(heap, out, byte_of(' '));
+                    out = buffer.push_nat(heap, out, st[4]);
+                    out = buffer.push(heap, out, byte_of(' '));
+                    out = buffer.push_nat(heap, out, st[5]);
+                    out = buffer.push(heap, out, byte_of('\n'));
+                }
+            } else if ast.nstart(st, item) <= from && from <= ast.nend(st, item) {
+                after = true;
+            }
+        }
+        item = ast.next(st, item);
+    }
+    return out;
 }
 
 // Mode 9: the identity of every declaration of the parsed program (`identity.cho`), one line each. Nothing is checked.
@@ -780,6 +814,7 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
     var rule = 0;
     var from = 0;
     var to = 0;
+    var more = buffer.empty(heap, 0);
     borrow laid as &t in {
         let text = buffer.bytes(t);
         var tokens = 0;
@@ -926,13 +961,17 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                     rule = st[3];
                     from = st[4];
                     to = st[5];
+                    if rule != rules.r_skip() {
+                        buffer.drop(heap, more);
+                        more = later_refusals(heap, st, text, from);
+                    }
                 }
             }
         }
         unbox_slice(heap, state);
     }
     buffer.drop(heap, laid);
-    return Built { ir: written, status: status, rule: rule, from: from, to: to };
+    return Built { ir: written, status: status, rule: rule, from: from, to: to, more: more };
 }
 
 // A line `TARGET darwin`, `TARGET linux` or `TARGET linux aarch64` in front of the input says what the code is for

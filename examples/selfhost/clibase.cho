@@ -229,8 +229,39 @@ pub fn name_at[&n](names: &n [byte], k: int) -> [] &n [byte] {
     return names[at..end];
 }
 
-// What is said of the first refusal `rule` at `from` to `to`, or of none: the answer of `check`, and its status.
-pub fn report_check[&h, &i, &y, &l, &n](heap: &!h Heap, io: &!i Io, names: &y [byte], laid: &l [byte], lens: &n [int], json: bool, refused: int, rule: int, from: int, to: int) -> [heap, io_write, err_write] int {
+// How many refusals `more` holds: one a line.
+pub fn count_lines[&m](more: &m [byte]) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at < len(more) {
+        if lc.at(more, at) == '\n' {
+            n = n + 1;
+        }
+        at = at + 1;
+    }
+    return n;
+}
+
+// The `k`th number of `more`, the lines `rule from to` that `driver.Built` carries for the functions after the first refusal's.
+pub fn more_nat[&m](more: &m [byte], k: int) -> [] int {
+    var at = 0;
+    var seen = 0;
+    while seen < k && at < len(more) {
+        if lc.at(more, at) == ' ' || lc.at(more, at) == '\n' {
+            seen = seen + 1;
+        }
+        at = at + 1;
+    }
+    var n = 0;
+    while at < len(more) && lc.is_digit(lc.at(more, at)) {
+        n = n * 10 + (lc.at(more, at) - '0');
+        at = at + 1;
+    }
+    return n;
+}
+
+// What is said of the first refusal `rule` at `from` to `to` and then of `more` (`driver.Built.more`), or of none: the answer of `check`, and its status.
+pub fn report_check[&h, &i, &y, &l, &n, &m](heap: &!h Heap, io: &!i Io, names: &y [byte], laid: &l [byte], lens: &n [int], json: bool, refused: int, rule: int, from: int, to: int, more: &m [byte]) -> [heap, io_write, err_write] int {
     if refused == 0 {
         if json {
             console.write_all(io, "{\n  \"refused\": []\n}\n");
@@ -262,6 +293,15 @@ pub fn report_check[&h, &i, &y, &l, &n](heap: &!h Heap, io: &!i Io, names: &y [b
     if json {
         var out = buffer.append(heap, buffer.empty(heap, 512), "{\n  \"refused\": [\n");
         out = diagnose.entry(heap, out, path, laid, lens, rule, from, located, to);
+        var k = 0;
+        while k < count_lines(more) {
+            out = buffer.append(heap, out, ",\n");
+            let r = more_nat(more, 3 * k);
+            let f = more_nat(more, 3 * k + 1);
+            let t = more_nat(more, 3 * k + 2);
+            out = diagnose.entry(heap, out, name_at(names, diagnose.locate(laid, lens, f).file), laid, lens, r, f, true, t);
+            k = k + 1;
+        }
         out = buffer.append(heap, out, "\n  ]\n}\n");
         show(heap, io, out);
     } else {
@@ -270,6 +310,13 @@ pub fn report_check[&h, &i, &y, &l, &n](heap: &!h Heap, io: &!i Io, names: &y [b
             out = diagnose.render(heap, out, path, laid, lens, rule, from, to);
         } else {
             out = diagnose.render_program(heap, out, path, rule, to);
+        }
+        var k = 0;
+        while k < count_lines(more) {
+            let f = more_nat(more, 3 * k + 1);
+            out = buffer.push(heap, out, byte_of('\n'));
+            out = diagnose.render(heap, out, name_at(names, diagnose.locate(laid, lens, f).file), laid, lens, more_nat(more, 3 * k), f, more_nat(more, 3 * k + 2));
+            k = k + 1;
         }
         out = buffer.push(heap, out, byte_of('\n'));
         borrow out as &t in {
