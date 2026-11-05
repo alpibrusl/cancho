@@ -75,6 +75,24 @@ same output name (**corrected, slice 6:** the name of the file the module was wr
 reached at the second stage and not the first, and the comparison is 2 against 3. Stage 0 is the only place Rust is needed, and only in the build of a release or of the repository, never to
 install or use one. **[choice]**
 
+**D6. Cranelift stays the Rust compiler's, frozen, and no program depends on it; it is retired with the Rust compiler, not ported.** **[choice]** What it is, from this repository:
+`cancho-codegen` is 1,835 lines of Rust and `cancho-codegen-llvm` 4,120; LLVM is the default (`docs/llvm-backend.md`) and the only backend the compiler in cancho writes (#523, `docs/self-hosting.md`
+stage 5q); Cranelift's limits are in `docs/backend-limits.md`. What it gives: a faster compile and a second, independent implementation, against which the conformance suites run programs and compare.
+**[measured, 2026-10-31]** (one machine, the four files of `cancho-code`'s unit tests, 13 tests, the least of three runs, no load control: a comparison of three numbers, not a benchmark): the Rust
+build with Cranelift 185 ms, the Rust build with LLVM 404 ms, the standalone 1,457 ms. The gap to the standalone is the compiler, not the backend. The rule, in four parts:
+
+1. **Frozen.** A language feature is lowered for LLVM, and for Cranelift only if it is needed there already; a second backend costs a second lowering and a second test of every feature, so it does not grow.
+2. **No program depends on it.** A command in a repository, a default of a tool or a CI file does not name `--backend cranelift`. `cancho-code` did (its default checker commands, its profile fixtures, its
+   tests, 39 files in all) and the standalone refused them. **[measured, 2026-10-31]** (release 5, a scratch copy, `CANCHO_PACKAGES` set; 39 test scripts of its gate): 14 pass with the flag, in a first run that lacked the
+   `packages` directory (so some of its failures are that run's own), and 27 pass with the flag removed, 11 fail and 1 times out. The failures that remain are not the flag: the standalone's
+   `check --output json` gives the rule's sentence as `message` where the Rust command gives the specific one, and `cancho-code`'s failure signature compares it. A person with the Rust build may still choose Cranelift, in a profile.
+3. **Not ported.** Machine-code generation in cancho for a backend the default path does not use would buy compile speed only, and the speed lost is mostly elsewhere (the compiler in cancho, not the backend).
+4. **Retired with the Rust compiler.** When #486–#490 remove `crates/`, Cranelift goes with them and the release note says so; until then it is a development aid and a differential-test oracle. How many
+   miscompiles the two-backend comparison has found is **not counted**, and the decision should be looked at again if a count says it has paid for itself. **Reverse this** if a repository shows a compile-time
+   budget that LLVM misses and that no work on the compiler in cancho will meet.
+
+The WASI target is a separate matter (D1): it rests on the Rust LLVM backend, and porting it is the item to schedule if wasm is a goal.
+
 ## 3. Slices
 
 1. **`--version` and the pin.** `version.cho`, `stamp-version.sh`, `cli.cho --version`, the pin check in `check_compiler`. Gate: the Rust and
@@ -134,8 +152,8 @@ verifies the next release is possible once there is one binary, and is **not des
 ## 6. What stays Rust, and what is next
 
 After slice 6 the Rust code in `crates/` is a backup: it still builds, it is still tested, and it is what a project needs for Cranelift or WASI.
-Removing it (#486–#490) needs D1 reversed: the WASI changes ported to the compiler in cancho and a decision about Cranelift (port it, or retire the
-backend with a release note). Neither is in this document, and neither is done by it.
+Removing it (#486–#490) needs D1 reversed: the WASI changes ported to the compiler in cancho and the decision about Cranelift, which is D6 (retire it with the Rust compiler,
+with a release note; do not port it). The WASI port is not in this document and is not done by it.
 
 ## 7. What the repositories found (slice 6)
 
