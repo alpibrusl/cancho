@@ -8,7 +8,8 @@
   "gate": {
     "checked": [],
     "external": [],
-    "ran": true
+    "ran": true,
+    "skipped": []
   },
   "intent": {
     "prompt": "third: notes"

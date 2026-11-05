@@ -21,7 +21,7 @@ def git(repo, *a):
     return p.returncode, p.stdout.decode("utf-8", "replace")
 
 
-def pairs(binary, repo, work, gm, n):
+def pairs(binary, repo, work, gm, n, gate=False):
     import random
     random.seed(20261105)
     commits = [c for c in git(repo, "rev-list", "--all")[1].split() if c in gm]
@@ -40,8 +40,9 @@ def pairs(binary, repo, work, gm, n):
         parts = out.split("\n\n")
         if rc != 0 and len(parts) > 1:
             g_conf = sorted(set(parts[0].splitlines()[1:]))
-        p = subprocess.run([binary, "vcs", "merge", gm[b], "--onto", gm[a], "--dry-run", "--no-gate", "--time", "1",
-                            "--intent-prompt", "r3", "--output", "json"], capture_output=True, cwd=work)
+        p = subprocess.run([binary, "vcs", "merge", gm[b], "--onto", gm[a], "--dry-run", "--time", "1",
+                            "--intent-prompt", "r3", "--output", "json"] + ([] if gate else ["--no-gate"]),
+                           capture_output=True, cwd=work)
         try:
             doc = json.loads(p.stdout)
         except Exception:
@@ -50,6 +51,9 @@ def pairs(binary, repo, work, gm, n):
         c["pairs"] += 1
         if not doc.get("ok"):
             c["cancho refused " + doc["refused"]["tag"]] += 1
+            if gate and doc["refused"]["tag"] == "merge-gate-failed":
+                c["gate failures of merges that git calls clean"] += rc == 0
+                bad.append((a[:10], b[:10], doc["refused"]["message"][:140]))
             continue
         cc = [(x["path"], x["tag"]) for x in doc.get("conflicts", [])]
         cclean = not cc
@@ -82,7 +86,7 @@ def main():
         a, b = line.split()
         gm[a] = b
     if "--pairs" in sys.argv:
-        pairs(binary, repo, work, gm, int(sys.argv[sys.argv.index("--pairs") + 1]))
+        pairs(binary, repo, work, gm, int(sys.argv[sys.argv.index("--pairs") + 1]), gate)
     merges = git(repo, "rev-list", "--merges", "HEAD")[1].split()
     rows = []
     env = dict(os.environ)

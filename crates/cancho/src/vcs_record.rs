@@ -72,6 +72,7 @@ pub(crate) struct Recorded {
     pub fresh: bool,
     pub checked: Vec<String>,
     pub external: Vec<String>,
+    pub skipped: Vec<String>,
 }
 
 /// Shared by `record` and `revert`: store `tree` as a change on HEAD's
@@ -91,11 +92,18 @@ pub(crate) fn commit_tree(
             Refusal::new("nothing-to-record", "the repository is empty and so is the working copy")
         })?;
         let change = repo.load_change(&id)?;
-        return Ok(Recorded { id, change, fresh: false, checked: vec![], external: vec![] });
+        return Ok(Recorded {
+            id,
+            change,
+            fresh: false,
+            checked: vec![],
+            external: vec![],
+            skipped: vec![],
+        });
     }
     let dry = p.flag("--dry-run");
     let gated = if p.flag("--no-gate") {
-        Gated { checked: vec![], external: vec![] }
+        Gated { checked: vec![], external: vec![], skipped: vec![] }
     } else {
         gate(repo, &tree, touched, &Pending::new(), &gate_roots(repo, p))?
     };
@@ -126,7 +134,14 @@ pub(crate) fn commit_tree(
     };
     let id = object_id(Kind::Change, &change.encode());
     if dry {
-        return Ok(Recorded { id, change, fresh: true, checked, external: gated.external });
+        return Ok(Recorded {
+            id,
+            change,
+            fresh: true,
+            checked,
+            external: gated.external,
+            skipped: gated.skipped,
+        });
     }
     let _lock = work_lock(&repo.vcs)?;
     // Re-read HEAD under the lock: the check above was before it.
@@ -153,7 +168,14 @@ pub(crate) fn commit_tree(
         Head::Branch(b) => repo.move_branch(&b, &id, &expect, note)?,
         Head::Detached(_) => repo.set_head(&Head::Detached(id.clone()))?,
     }
-    Ok(Recorded { id, change, fresh: true, checked, external: gated.external })
+    Ok(Recorded {
+        id,
+        change,
+        fresh: true,
+        checked,
+        external: gated.external,
+        skipped: gated.skipped,
+    })
 }
 
 pub(crate) fn cmd_record(p: &Parsed) -> VcsResult<Done> {
@@ -209,7 +231,7 @@ pub(crate) fn cmd_record(p: &Parsed) -> VcsResult<Done> {
         "touched": touched,
         "decls": c.decls,
         "edits": c.edits.len(),
-        "gate": {"ran": !p.flag("--no-gate"), "checked": rec.checked, "external": rec.external},
+        "gate": {"ran": !p.flag("--no-gate"), "checked": rec.checked, "external": rec.external, "skipped": rec.skipped},
         "intent": c.intent,
     }))
 }

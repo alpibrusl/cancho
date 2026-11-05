@@ -145,11 +145,13 @@ impl Src {
 pub(crate) struct Gated {
     pub checked: Vec<String>,
     pub external: Vec<String>,
+    /// Touched files the repository's `gate-skip` list excludes.
+    pub skipped: Vec<String>,
 }
 
 impl Gated {
     pub fn json(&self, ran: bool) -> Value {
-        json!({"ran": ran, "checked": self.checked, "external": self.external})
+        json!({"ran": ran, "checked": self.checked, "external": self.external, "skipped": self.skipped})
     }
 }
 
@@ -162,12 +164,21 @@ pub(crate) fn gate(
     pending: &Pending,
     roots: &[PathBuf],
 ) -> VcsResult<Gated> {
-    let mut out = Gated { checked: Vec::new(), external: Vec::new() };
+    let mut out = Gated { checked: Vec::new(), external: Vec::new(), skipped: Vec::new() };
+    // Paths a repository says are not programs to check: fixtures that are
+    // meant to be refused (`tests/reject/` in cancho). One prefix per line.
+    let skip: Vec<String> = std::fs::read_to_string(repo.vcs.join("gate-skip"))
+        .map(|t| t.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect())
+        .unwrap_or_default();
     let mut index: Option<BTreeMap<String, Vec<String>>> = None;
     let mut ext = External { roots: roots.to_vec(), index: None };
     let mut all_external: BTreeSet<String> = BTreeSet::new();
     for path in paths.iter().filter(|p| p.ends_with(".cho")) {
         if tree.get(path).is_none() {
+            continue;
+        }
+        if skip.iter().any(|s| path == s || path.starts_with(s.as_str())) {
+            out.skipped.push(path.clone());
             continue;
         }
         let mut files: BTreeMap<String, String> = BTreeMap::new();
@@ -193,12 +204,20 @@ pub(crate) fn gate(
             for m in &ast.modules {
                 for i in &m.imports {
                     let segs: Vec<&str> = i.path.iter().map(|s| ast.name_of(*s)).collect();
-                    if segs.first() == Some(&"std") {
-                        with_std = true;
-                        continue;
-                    }
                     if index.is_none() {
                         index = Some(module_index(repo, tree, pending)?);
+                    }
+                    // The standard library is the compiler's unless the tree
+                    // declares the module itself (cancho's own `std/`).
+                    if segs.first() == Some(&"std") {
+                        let own = (1..=segs.len()).rev().find_map(|n| {
+                            index.as_ref().and_then(|ix| ix.get(&segs[..n].join(".")))
+                        });
+                        match own {
+                            Some(fs) => queue.extend(fs.iter().cloned().map(Src::Tree)),
+                            None => with_std = true,
+                        }
+                        continue;
                     }
                     // The longest prefix of the import that names a module,
                     // in the tree first and then outside it.

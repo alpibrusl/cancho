@@ -287,7 +287,7 @@ fn finish(repo: &Repo, p: &Parsed, st: &MergeState, ev: Evaluated, dry: bool) ->
     let pending: Pending = ev.merge.new_blobs.clone();
     let touched: Vec<String> =
         diff_trees(&ev.ours_tree, &tree).into_iter().map(|c| c.path).collect();
-    let mut gated = Gated { checked: Vec::new(), external: Vec::new() };
+    let mut gated = Gated { checked: Vec::new(), external: Vec::new(), skipped: Vec::new() };
     if !st.no_gate {
         gated = match gate(repo, &tree, &touched, &pending, &gate_roots(repo, p)) {
             Ok(c) => c,

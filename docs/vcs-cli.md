@@ -1,6 +1,6 @@
 # `cancho vcs` as a complete version-control CLI, agents first
 
-> **Status: slice V1 (a local repository, section 9) is built; V2 onward is design.** Written before the code (`CONTRIBUTING.md`). A claim marked
+> **Status: slices V1 (a local repository) and V2 (merge, `resolve`, `replay`, a gate that resolves modules outside the tree; section 9) are built; V3 onward is design.** Written before the code (`CONTRIBUTING.md`). A claim marked
 > *(measured)* was measured on the date given, in the repository named; a claim marked *(read)* was read
 > from the source; one marked *(designed)* is a proposal that a slice below must measure before it stands.
 > The first draft of this document assumed that a typed-AST store could stand in for git on a code
@@ -67,9 +67,9 @@ and there is no database to corrupt).
   that make it unique in the base file. It is the analogue, for any text file, of a typed operation on a `.cho`
   declaration: what was *done*, which can be re-applied to a different base, not the text of a patch with line
   numbers. V1 records them for every touched non-`.cho` text file (`Change.edits`, derived and cached like
-  `ops`) and offers `apply` of one list to a tree; using them to merge or to `replay` is V2. R6 (section 8)
-  measured what they are worth as a merge: **not more than a line merge**, so they are proposed for `replay`
-  and for the intent record, not as the merge algorithm.
+  `ops`) and offers `apply` of one list to a tree. V2 uses them for `replay` (section 6) and not for merge: R6 (section 8)
+  measured what they are worth as a merge, **not more than a line merge**. An imported change has no recorded edits;
+  `replay` derives them from its diff when it needs them.
 * **Ref**: a branch or a tag, a file holding a change id. Moved by an atomic rename, only ever with
   `--expect <old id>`, so two agents racing on one branch cannot both win silently (compare-and-swap, section 5).
 
@@ -125,34 +125,66 @@ silently. (4) No command shells out: no `git`, no `diff`, no `patch`, no `tar` (
 diff and the three-way text merge are written in Rust in the crate, and the crash and race behaviour of (1) to (3) is
 exercised by a test that kills the process at every write, as `tests/conformance/crash_*` do in `cancho-forge`.
 
-## 6. Merge *(designed; the part with most risk)*
+## 6. Merge, `resolve`, `replay` *(built in V2; measured in section 8, R3)*
 
-A merge works in three layers and reports in one structured document.
+A merge works in three layers and reports in one structured document. Built as follows; what the first draft
+of this section claimed and V2 corrected is said where it differs.
 
-1. **Tree layer**: for each path, base/ours/theirs. Same on both sides, or changed on one side only, resolve
-   without reading content. Added/deleted/renamed handling by path and by blob identity (a rename is a delete
-   plus an add of the same blob; a rename with an edit is not detected in V2 and is a conflict with a tag
-   `rename-edit`, said rather than guessed).
-2. **`.cho` layer**: a file changed on both sides is merged **by declaration** (`vcs.md` section 4): a declaration
-   changed on one side only takes that side; added on both with identical identity is one; changed on both is a
-   conflict naming the declaration; order and layout are re-derived by the canonical printer, so a pure
-   reformat conflicts with nothing. Then the merged tree goes through the gate, which is where the cancho
-   difference lives: two edits that each check can together move a linear value twice, so a merge that is clean
-   by declaration can fail the gate (`vcs.md` section 4 predicted this and has not measured the rate).
-   A gate failure after a clean merge is reported as `merge-gate-failed` with the rule tag and **both** changes'
-   intents, which is more than the agent would get from a conflict marker.
-3. **Text layer** for every other file: a line-based three-way merge (diff3). *(R6, section 8, measured on the
-   historical merges of both repositories: no `json` or `toml` file was edited on both sides of any merge, so
-   there is nothing for a key-path layer to do on this data, and an anchored-operation merge conflicted at
-   least as often as the line merge. Format-aware layers stay deferred to V2 and need a counter-example in
-   a real history to be built at all.)* A conflict is **data, not markers
-   written into the file**: `merge` leaves the working copy at "ours" for those paths and `conflicts` returns
-   `{path, base, ours, theirs, hunks:[{base_lines, ours_lines, theirs_lines}]}`; `resolve --with <file>` or
-   `--take` settles one. (An agent that edits a file full of `<<<<<<<` markers has to parse them; one that
-   is given three versions does not.)
+1. **Tree layer** (`crates/cancho-vcs/src/merge.rs`): the merge base is the common ancestor that is not an ancestor
+   of another common ancestor (of several, the latest by time, then by id; the count is reported as
+   `base_candidates`; no common ancestor is `unrelated-histories`). For each path, base/ours/theirs: equal, or
+   changed on one side only, resolves without reading content, mode included. A path deleted on one side and
+   changed on the other is `delete-modify`, or `rename-edit` when the deleted blob is one the deleting side added
+   under another path (a rename with an edit is not followed: **said, not guessed**; git follows it, see R3);
+   added on both with different content is `add-add`; two modes is `mode-conflict`; a file where the other side
+   has a directory is the refusal `file-directory-conflict`. A merge whose `theirs` is an ancestor is
+   `up_to_date`; one whose `ours` is an ancestor is a fast-forward (a ref move, no new change) unless `--no-ff`.
+2. **`.cho` layer** (`merge_cho.rs`): a file changed on both sides, that parses on all three, is cut into
+   top-level declarations (each with the `//` lines directly above it); every declaration becomes one line of a
+   skeleton of the file, the skeleton is merged by line, and any region of the skeleton made only of
+   declarations is settled **declaration by declaration**: changed on one side takes that side, changed on both
+   alike is one, two declarations added at the same place keep both, changed on both differently (or changed on one
+   and deleted on the other) is a conflict tagged `decl-conflict` that names it (`fn m.a`). Two versions of one
+   function with the same `cancho-id` identity and the same comments are the same declaration, so a reformat of
+   a function conflicts with nothing. *Corrected from the first draft*: "order and layout are re-derived by the
+   canonical printer" is **not what is built**: layout and order come from the sides (a whole-file reformat
+   conflicts on every declaration both sides edited, unless its identity is unchanged), and no printer runs. Text between declarations
+   (imports, the `module` line, loose comments) is merged by line like any other file, and a conflict there
+   makes the file a text conflict. The merged tree then goes through the gate: a merge that is clean by
+   declaration and fails it is the refusal `merge-gate-failed`, carrying the rule tag, the diagnostics and **both
+   tips' intents**; nothing is recorded. `--no-gate` records it, unattested.
+3. **Text layer** (`merge3.rs`, `diff_text.rs`): a line-based three-way merge over the histogram diff, whose
+   hunks are slid to git's canonical place (found by R3: without it two sides that each append a block to a
+   file of repeated lines merged "clean" with the block twice). Hunks of the two sides that overlap **or touch**
+   conflict, as in git; an identical change on both sides is one. A conflict is **data, not markers**: the working
+   copy is not touched until the merge is recorded, and `conflicts` returns, per path, `{path, tag, layer,
+   base, ours, theirs, base_text, ours_text, theirs_text, hunks:[{base_start, base_lines, ours_lines,
+   theirs_lines}], decls:[{decl, base, ours, theirs}]}`. A file that is not text is `binary-conflict`.
+   *(R6, section 8: no `json` or `toml` file was edited on both sides of any merge, so there is no key-path layer.)*
 
 `merge` records a change with two parents only when every path is settled and the gate passes; otherwise it
-records nothing and says what is open. `merge --abort` is exact because nothing was recorded.
+records nothing, leaves `.cancho/vcs/merge-state.json` (the three changes and the resolutions so far; the merge
+is recomputed from them, deterministically) and **exits 2** with `open_conflicts` in the JSON (not a refusal:
+exit 1 is a refusal, 3 an I/O failure). `merge --abort` deletes the state and is exact because nothing was
+written; a state whose branch has moved since is dropped as stale. `resolve <path> --take ours|theirs|base`
+or `--with <file>` settles a path (`--decl <name>` settles one declaration of a `.cho` conflict; `--with` then
+holds the declaration's text); when the last path is settled the same command records the merge (so there is no
+`conflicts-open` tag: a merge is either recorded or reported open). `--dry-run` computes and writes nothing,
+and reports the tree and change id the real merge would record (the same ids, by test); `--onto <branch>` merges
+into a branch that is not checked out (the working copy does not move), `--onto <change>` with `--dry-run`
+merges any two changes (what R3 uses); `--expect <id>` is the compare-and-swap on the ref (`ref-moved`); the
+working copy must be clean (`dirty-working-copy`) when the checked-out branch is the target. Running a
+merge again is a no-op (`up_to_date`) or the same open conflicts; an intent can be given (`--intent-*`),
+else the merge's is `Merge <short id>` with the other tip's subject.
+
+**`replay <change> [--onto <branch>]`** re-applies one change onto another base: a merge whose base is the
+change's parent and whose "theirs" is the change, except that a text file the change edited is first tried by
+re-applying the change's **anchored edits** (section 3) to the onto side, so what was *done* lands where the text now
+is, and only then by the line merge. A `.cho` file goes through layer 2. The result is `exact` (the tree equals the
+change's), `moved`, or `unchanged` (already applied: nothing is recorded; replaying twice records once), the new change
+has one parent, keeps the original's intent and author, and carries the attestation `replay:<change id>`. An edit
+whose text is gone is a conflict tagged `anchor-not-found` (`anchor-ambiguous` if it now occurs twice), settled
+with `resolve` like any other. Only a change with exactly one parent can be replayed (`replay-unsupported`).
 
 ## 7. Remotes and the GitHub bridge *(designed)*
 
@@ -223,7 +255,9 @@ Open questions, each with the measurement that closes it:
   anchor is often ambiguous in a repetitive `sh` or `rs` file, which is the tag `anchor-ambiguous` doing its
   job), (d) format-aware layers have no evidence behind them. Anchored operations stay as the form `replay`
   re-applies, which a line merge cannot be. The merge-versus-real-result comparison (does a clean strategy
-  reproduce the file the human merge produced?) was not done.
+  reproduce the file the human merge produced?) was not done in V1 and is R3's second table. R6 counted 22
+  merges in `cancho`; `git rev-list --merges HEAD` gives 23 (the 82nd merge of the V2 corpus; the difference in
+  R6's script was not traced).
 * **R2: what does the gate cost per record?** This repository's gate is 18 minutes on CI; a gate that runs on every `record`
   makes the agent loop unusable. Proposed: the built-in gate is the check of touched `.cho` files (seconds),
   heavier commands are attested **asynchronously** and a protected ref requires them at `merge`/`push`, not at `record`.
@@ -235,23 +269,65 @@ Open questions, each with the measurement that closes it:
   import packages that `cancho.toml` installs (`http_client`, `tls`, `http.server`) and are not in the tree.
   Those need project-dependency resolution (V2) or `--no-gate`. The cost: `record --dry-run` of one forge file
   is 0.06 s wall (release). The heavier-gate and asynchronous-attestation parts of R2 are not built or measured.
-* **R3: how often does a clean declaration merge fail the gate?** Take the 59 merge commits of `cancho-forge`
-  (the PR merges) and replay each as a declaration merge; count conflicts and
-  gate failures, against what a text merge did. *Not measured; this is the claim of `vcs.md` section 4 and it decides
-  whether layer 2 of section 6 earns its complexity.*
+  **V2, corrected and measured (2026-11-05).** The V1 explanation was wrong: `cancho-forge`'s `cancho.toml` has no
+  `[dependencies]`, and `cancho install` installs nothing for it. The 14 files import `http_client`, `tls`
+  and `http.server` from the compiler's `packages/` directory, which forge's scripts pass on the command line
+  (`scripts/packages.sh`: `CANCHO_PACKAGES`, else `packages` next to the compiler). So no resolution *inside the
+  repository* can find them; the gate now looks in *module roots outside the tree*, in this order: `--gate-path <dir>`
+  (repeatable), the lines of `.cancho/vcs/gate-path`, `build/deps` (what `cancho install` fetched, when it
+  was run), `$CANCHO_PACKAGES` or the `packages` beside the compiler; dot directories and `build/` inside a root are
+  skipped (a package's `.cancho-vcs` holds stored copies of its own sources, which made `buffer` bound twice). Nothing is
+  fetched. A module found nowhere is the checker's `unknown-name`, and the refusal lists `unresolved_modules` and the
+  roots searched. A std module the tree declares itself (cancho's own `std/`) is used from the tree, not added twice,
+  and `.cancho/vcs/gate-skip` (one path prefix a line) excludes fixtures meant to be refused (`tests/reject/`).
+  Measured by touching each of the 182 `.cho` files of `cancho-forge` with a comment and `record --dry-run`:
+  **168 pass without a root (as in V1), 182 pass with `CANCHO_PACKAGES` set** (`/Users/alfonso/Workspace/alpibrusl/cancho/packages`).
+  The gate costs 0.1 s per merge on the historical merges (59 merges: 8 s with it, 6 s without).
+* **R3: how often does a clean declaration merge fail the gate, and how does the merge compare with git's?**
+  *(measured 2026-11-05 with `scripts/vcs_r3.py`: every two-parent merge reachable from `HEAD` of both repositories is
+  replayed with `cancho vcs merge --onto <first parent> <second parent> --dry-run` on an `import-git` of the repository and compared with
+  `git merge-tree --write-tree` and with the tree the human merge recorded; git is run by the script, never by the product.)*
+  **82 merges: 59 in `cancho-forge`, 23 in `cancho`.** Of them 46 are *trivial* (one parent contains the other: a fast-forward or
+  `up_to_date`), 28 are merges of divergent histories that cancho settles clean (16 and 12), and 8 conflict (4 and 4).
+  **git's verdict is the same on all 82: 74 clean (55 and 19), 8 conflicts, 0 disagreements**, and on every one of the 74
+  that git merges clean, **cancho's merged tree is the tree the human merge recorded** (and so is git's). The 8 conflicts
+  are the same merges in both tools: 5 text hunks in `cancho-forge`; 1 text and 6 `.cho` declarations in `cancho`. What
+  the corpus does not contain: the `.cho` layer settled **2 paths** of these merges (the corpus is mostly text), so the
+  historical merges say little about layer 2. To exercise it, 400 pairs of divergent commits of `cancho-forge` and 300
+  of `cancho` were drawn at random (seeded) from every ref and merged the same way (no human result exists; only the
+  verdict and the conflicted paths are compared): **`cancho-forge` 400 of 400 pairs agree with git on clean versus conflict
+  (163 clean, 237 conflict); `cancho` 299 of 300** (26 clean against git's 25). The one disagreement is the `.cho`
+  layer being finer than git, as designed: ours edited `run_clang` in `examples/selfhost/builder.cho` and theirs deleted the two functions
+  just above it; the hunks touch, git conflicts, the declarations do not. Where both conflict, the conflicted *paths* are the same in 171 of 237
+  (`cancho-forge`) and 160 of 274 (`cancho`) pairs; in the rest cancho conflicts on more paths in 49 and 20 (`rename-edit` and `delete-modify`
+  where git follows a rename and merges the edit: the price of the design's "said, not guessed") and on fewer in 3 and 12.
+  **The gate.** Of the 28 divergent clean merges, **26 pass the gate and 2 are refused for reasons that are not the merge**:
+  `spike/r1/ask.cho` imports `anthropic`, a module in no root searched, and `tests/programs/server_stream.cho` of `cancho` is refused
+  `duplicate-declaration` by the gate (a program that needs a build mode the gate does not model; not investigated further).
+  On the random pairs of `cancho-forge`, 152 of 163 clean merges pass and **the 11 refused are 8 `spike/r1/ask.cho` (the same
+  `anthropic`) and 3 `pilot/contract.cho` (a draft that does not parse at its own parent either)**. So **none of the 191 clean merges (28 + 163) failed the gate because two edits that each check do not check together**, and the claim of `vcs.md` section 4 is not
+  contradicted by the corpus, only unsupported by it. The gate *can* do it: the test `a_merge_that_is_clean_by_declaration_can_still_fail_the_gate`
+  builds one (one side adds a parameter to a function and updates its caller, the other adds a new caller of the old
+  shape) and gets `merge-gate-failed` with both intents. On this evidence layer 2 earns its place only as "finer than git on
+  adjacent declarations and on two additions at one place": it changes the verdict in 1 of 700 pairs and 0 of 82 merges, and conflicts on
+  fewer paths in 15 of the 511 pairs that conflict. That is small, and it is what is measured.
 * **R4: is a content-addressed store larger than git's?** No delta compression is planned in V1 (loose, zlib-free
   objects). Measure the repository sizes. If it is more than a few times git's, packs become V5, not never.
 * **R5: how much of `.cho` must the structural diff cover?** `vcs.md` section 4 sizes `compute_diff`+`diff_to_ops`+
   `body_merge` at about 1,500 lines for lex-lang and says cancho's differ in shape. V1 needs only a
   declaration-level diff (what `vcs sync` already does: it knows added, removed, signature-changed, body-changed
-  per declaration); the body-level diff is for merge and `replay` and is V2.
+  per declaration). **V2 built no body-level diff and found no need for one**: the declaration layer of the merge
+  compares a declaration's text and `cancho-id` identity, which settled every `.cho` merge of R3 that did not conflict; a
+  *finer* merge (two edits inside one function body) is where a body diff would act, and on the 6 `decl-conflict`s of the
+  historical merges git conflicts too. `replay` re-applies anchored text edits and the declaration merge, not typed
+  body operations. R5 stays open for typed `OpId`s.
 
 ## 9. Slices, and what measures each
 
 | slice | content | measured by |
 |---|---|---|
 | **V1: a local repository** | objects, trees, changes (with recorded anchored edit operations, section 3), refs; `init`, `status`, `diff`, `record` with intent and the built-in gate, `log`, `show`, `blame`, `branch`, `switch`, `revert`, `restore`, `verify`; `import-git` and `export-git` | R1 (SHA-exact round trip on two real repositories); a crash test at every write; two agents racing one ref (`ref-moved`, nobody loses an object); every command's JSON pinned by a test; `cancho` and `cancho-forge` histories open with `log` and `blame` |
-| **V2: merge and replay** | the three layers, `conflicts`, `resolve`, `merge --abort`, `replay`; the body-level `.cho` diff | R3 (historical merges), R5; a merge of two branches that git merges clean produces the same tree, except where the declaration merge is finer, and the exceptions are listed |
+| **V2: merge and replay** *(built)* | the three layers, `conflicts`, `resolve`, `merge --abort`, `replay`; a gate that resolves modules outside the tree; compressed objects and packs (R4); the body-level `.cho` diff is **not** built | R3 (82 historical merges and 700 random pairs, against `git merge-tree`), R5, R2 again (182 of 182 files gate), a kill at every write of `merge`; a merge of two branches that git merges clean produces the same tree, except where the declaration merge is finer, and the exceptions are listed |
 | **V3: path remotes** | `clone`, `fetch`, `pull`, `push`, `--expect` | two stores, interleaved pushes, an interrupted push leaves both sound (`verify` on each) |
 | **V4: HTTP remote and the GitHub bridge** | the gateway, `mirror`, `pull --from-git` | a pull request opened from a mirrored branch; a change pushed to GitHub by a person arrives as a change |
 | **V5: forge** | `vcs: "cancho"` rows, workers and pins, packs if R4 says | `cancho-forge` conformance scripts run unchanged against a cancho-VCS repo; one real pilot step end to end |
@@ -266,8 +342,14 @@ Refusal tags built in V1, each reached by `crates/cancho/tests/vcs_repo.rs`: `no
 `bad-revision`, `revert-conflict`, `revert-unsupported`, `git-unreadable`; also built, with a test of the
 library only or none yet: `bad-argument`, `path-unsupported`, `tree-invalid`, `binary-file`, `path-not-found`,
 `decl-not-found`, `submodule-unsupported`, `mode-unsupported`. An I/O failure is `io-error` and exits 3, not 1.
-Not yet built (V2 onward): `conflicts-open`, `merge-gate-failed`, `rename-edit`, `chain-broken`, `unsigned-change`,
-`intent-missing`, `remote-unreachable`, `remote-diverged`. The first list was *(designed)*: `not-a-repository`, `path-escapes`,
+Built in V2, each reached by `crates/cancho/tests/vcs_merge.rs` (but `unrelated-histories`, reached by a test of the library): the
+refusals `merge-gate-failed`, `merge-in-progress`, `no-merge-in-progress`, `not-in-conflict`, `decl-not-found` (also for
+`resolve --decl`), `unrelated-histories`, `replay-unsupported`, `file-directory-conflict`, `ref-moved` (of `merge --expect`),
+`gate-failed` (with `unresolved_modules`); and the conflict tags a merge reports as data: `content-conflict`, `decl-conflict`,
+`delete-modify`, `rename-edit`, `add-add`, `binary-conflict`, `mode-conflict`, `anchor-not-found` and `anchor-ambiguous`
+(a replayed edit; every one is in the tests but `mode-conflict` and `anchor-ambiguous`). `conflicts-open` is not a tag:
+open conflicts are not a refusal (exit 2). Not yet built: `chain-broken`, `unsigned-change`, `intent-missing`,
+`remote-unreachable`, `remote-diverged`. The first list was *(designed)*: `not-a-repository`, `path-escapes`,
 `file-too-large`, `gate-failed`, `ref-moved`, `ref-protected`, `dirty-working-copy`, `lock-held`, `conflicts-open`,
 `merge-gate-failed`, `rename-edit`, `object-corrupt`, `chain-broken`, `unsigned-change`, `intent-missing`
 (only on a ref that requires it), `remote-unreachable`, `remote-diverged`.
@@ -280,9 +362,14 @@ Not yet built (V2 onward): `conflicts-open`, `merge-gate-failed`, `rename-edit`,
 * It does not offer history rewriting. A mistake is a `revert` or a `reset-ref` (logged), not a lost change.
 * It does not run on its own authority: like every cancho program it is checked for the effects it uses, and
   the CLI performs file and (V3 onward) network effects only, never starts another program.
-* V1 is built; R1 did not show its scope to be wrong. Not built, said plainly: `merge`, `conflicts`, `resolve`,
-  `replay`, `tag`, `reset-ref`, `gc`, `keys`, remotes, `clone`, signatures and attestation chains on changes,
-  `.cho` body-level diff, hunk-level recording, format-aware merge layers, compression. `switch` and `restore`
+* V1 and V2 are built; R1 did not show V1's scope to be wrong. Not built, said plainly: `tag`, `reset-ref`, `keys`,
+  remotes, `clone`, signatures and attestation chains on changes, the `.cho` body-level diff, typed `OpId`s, hunk-level
+  recording, format-aware merge layers, rename detection in merge (`rename-edit` is a conflict, git merges it), the
+  canonical-printer re-layout of a merged `.cho` file, `revert` of a merge change, blame through the second parent
+  of a merge, and the `vcs` section of `cancho --help` and of the compiler in `examples/selfhost` (the commands exist,
+  their usage text does not). `merge` into a detached HEAD works; a kill between the ref move and the working-copy
+  write of a merge leaves a working copy that `status` shows as differing from HEAD (`restore --from HEAD` fixes it),
+  which the kill test accepts. `switch` and `restore`
   work on whole files; `blame` follows first parents only; the histogram diff falls back to one replacement
   when no line occurs 64 times or fewer. `.canchoignore` supports names, `dir/`, `*suffix` and path prefixes
   only. Edit operations are derived at `record` and not for imported changes. A kill leaves a lock that

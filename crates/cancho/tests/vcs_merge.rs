@@ -552,3 +552,15 @@ fn a_merge_cannot_be_replayed_and_a_file_cannot_meet_a_directory() {
         "file-directory-conflict",
     );
 }
+
+#[test]
+fn a_gate_skip_list_excludes_fixtures_that_are_meant_to_be_refused() {
+    let s = Sandbox::new();
+    s.pin_quiet(&["init"]);
+    s.write("tests/reject/bad.cho", "module bad;\npub fn f() -> [] int { return nope; }\n");
+    s.refuse(None, &["record", "--all", "--time", "1"], "gate-failed");
+    fs::write(s.path().join(".cancho/vcs/gate-skip"), "tests/reject/\n").unwrap();
+    let ok = s.pin_quiet(&["record", "--all", "--time", "1"]);
+    assert_eq!(ok["gate"]["skipped"], json!(["tests/reject/bad.cho"]));
+    assert_eq!(ok["gate"]["checked"], json!([]));
+}
