@@ -114,3 +114,26 @@ Parallel with phase 1: phase 2's independent items (#684 to #688 primitives, #68
 ## 9. What this document does not do
 
 It moves no file and deletes nothing. Every phase is a PR of its own, and none merges without the owner's word.
+
+## 10. What the open work adds to the removal (2026-11-05, from #491's comments and the open PRs)
+
+`main` has not moved since #683 (the audit). Two open pieces change what the removal carries:
+
+- **#681 (draft: `ci`, `profile`, `trace`, `-g`)** adds no compiler Rust but +955 lines in `crates/` (`acli.rs` +90 and 865 of tests) and 4,891 lines in
+  `examples/selfhost`. Its comment on #491 names what the removal must do for it: (1) the command tree (`commandtree.cho`, `--help`, `introspect`,
+  `skill`) is **generated from the Rust binary's own output**, with the three commands advertised only under `CANCHO_ACLI_EXTRAS`, so the generator
+  moves to the cancho side; (2) its four tests (`ci.rs`, `debug.rs`, `profile.rs`, `trace.rs`, ~850 lines) are the only tests of those commands, and
+  need process spawning and a JSON reader in a cancho test (both exist: `std.process`, `std.json`); (3) `debug.rs` needs `gdb`, `llvm-dwarfdump` and
+  `objdump` and very likely **skips on CI**, so green does not mean it ran; (4) three generated modules (`commandtree.cho`, `guidelines.cho`,
+  `instrtext.cho`) have Rust generators in `statics.rs`; (5) **every new `.cho` file is listed twice**, in `cancho.files` and in `with_front_end()` in
+  `selfhost.rs`: the plan needs `cancho.files` as the only list; (6) `-g`, `--instrument`, `-O0` exist only in the compiler in cancho, so the Rust
+  compiler cannot be their oracle.
+- **#691 (`std.flate`) and #690/#692 (SHA-1, `vcsobj.cho`)** add one line of Rust (the std table in `main.rs`, registration only) and no compiler code; each
+  new std module costs that line until `main.rs`'s `STD` table is generated from `std/` (or read from `stdorder.cho`): add it to phase 2.
+
+**Moving `examples/selfhost` to the root now** (the goal stated 2026-11-05) conflicts with these: #681 touches 22 files there, #690 and #692 add files
+there, and `selfhost_build.rs` and about a dozen tests name the path (`include_str!`, `selfhost.rs`, `bootstrap.rs`, `statics.rs`). A `git mv` is one
+PR, but any open PR touching the directory has to be rebased onto the new paths. The order that costs least: merge or rebase #681, #690, #691 and
+#692 first; then the move as one PR that changes the path constants and nothing else (measured by `cancho.files` regenerating to the same list and
+the `selfhost::` group passing); then the deletions of phase 5. The move itself does not remove Rust, so it can wait for phase 3 without blocking
+anything; the new code written meanwhile (`examples/selfhost/test.sh`, the `vcs*.cho` files) uses paths relative to its own directory so it moves with it.
