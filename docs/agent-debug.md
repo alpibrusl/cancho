@@ -1,6 +1,6 @@
 # `cancho trace`: a debugger an agent can use, and the debug information it needs
 
-> **Status: design. Nothing is built.** Written before the code. What was
+> **Status: design; §3.3 is the one gate answered (8.2). No code.** Written before the code. What was
 > measured is marked; everything else is a **gate** in §8, not a result.
 >
 > **Written in cancho.** `cancho trace` is a slice of the command line in
@@ -59,6 +59,49 @@ each node's source position, and `cancho-syntax` keeps spans in side tables
 keyed by node id (`span.rs`), so whether the emitter in cancho still has
 them at emission is **not known**. Gate §8.2 reads it before anything else
 is written, and this document is corrected if it is false.
+
+### 3.3 Gate 8.2 answered: do positions reach the emitter? (2026-11-05)
+
+**Yes, as byte offsets; no, as lines or files.** The emitter in cancho
+(`emit.cho`) writes LLVM text *while the checker walks* (`emit.cho` header),
+and every node it has is a record with `nstart(st, id)` and `nend(st, id)`:
+offsets into the program's text. `header_start(st, item, inst, ret_ty)` is
+handed the function's node. It has no line and no file name: those are made
+**outside** the checker, from the laid-out text and the length of each file
+(`clibase.report_check` takes `names`, `laid`, `lens`), which is how
+refusals get their `file:line:column` today.
+
+Two measured facts (clang 18.1.3, this host) that change §3.1:
+
+* **The verifier requires a `!dbg` on every call in a function that has
+  debug info, when the callee has debug info too.** Measured with a two
+  function module: `inlinable function call in a function with debug info
+  must have a !dbg location`.
+* **Clang then drops all the debug info and exits 0.** The message is a
+  warning (`ignoring invalid debug info`), the object is written, and the
+  line tables are gone. A partial annotation therefore does not fail; it
+  silently yields a binary with no lines. Any build of `-g` must be checked
+  by reading the object back (`llvm-dwarfdump --debug-line` or `gdb`), never
+  by its exit status. This is gate 3 below made mandatory for every build.
+
+**Design that follows (replaces the "per statement `DILocation` in the
+emitter" of §3.1):**
+
+1. With `-g`, the emitter writes **offset markers as comments**, which are
+   legal IR and change nothing: `; @fn <offset>` on the line before a
+   `define`, and `; @<offset>` at the start of each statement.
+2. A **text pass in the command line** (`cidebug.cho`, beside `prune.cho`,
+   which already works on `define` lines) reads the markers, turns each
+   offset into `(file, line)` from `laid` and `lens`, appends `, !dbg !N` to
+   **every** instruction of a function (so no call is missed), and appends
+   the `DICompileUnit`, `DIFile`, `DISubprogram` and `DILocation` nodes.
+3. Without `-g` no marker is written, so the module is byte for byte what it
+   is now (gate 1 holds by construction, and is still tested).
+
+Left to decide, and not decided here: **how `-g` reaches the emitter.** The
+driver is run in numbered modes over one input stream each
+(`cli-in-cancho.md` §1); a flag is either a new mode number or a byte in
+the stream's header. The second is smaller and does not renumber anything.
 
 ### 3.2 Variables, and the `-O2` problem
 
