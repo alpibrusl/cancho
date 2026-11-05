@@ -81,7 +81,7 @@ Per `docs/standard-library.md` §5 a feature needs two askers, counted by readin
 | `exit(n)` / abort at a point | `cancho vcs` crash test | the design cites forge's `tests/conformance/crash_*`; not read | one, a second unverified |
 | process id | `cancho vcs` locks | not found | one |
 
-The issues for the five rows are to be opened by the person who owns the standard library's backlog (the session that wrote this could not create them: see the PR).
+Issues: directory removal [#684](https://github.com/alpibrusl/cancho/issues/684), symlink/readlink [#685](https://github.com/alpibrusl/cancho/issues/685), absolute cwd [#686](https://github.com/alpibrusl/cancho/issues/686), exit at a point [#687](https://github.com/alpibrusl/cancho/issues/687), process id [#688](https://github.com/alpibrusl/cancho/issues/688).
 
 ## 5. What is built next, in order, as far as this allows
 
