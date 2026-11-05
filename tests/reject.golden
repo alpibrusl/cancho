@@ -1,0 +1,400 @@
+# tests/reject.golden: what `cancho check --output json` says about each program of tests/reject.
+# file<TAB>rule<TAB>line:column<TAB>message. Recorded from the Rust front end (2026-11-05, main 4fafbef2).
+# scripts/reject_golden.py check CANCHO compares; do not regenerate from the compiler under test.
+and_on_ints.cho	type-mismatch	5:8	expected `bool`, found `int`
+annotation_mismatch.cho	type-mismatch	5:18	expected `int`, found `bool`
+arena_holds_res.cho	mode-bound-violated	31:26	`Ticket` is `res`, and an arena holds `val` data only: releasing one reclaims memory and runs nothing, so a linear obligation put inside would be dropped rather than discharged
+arg_written_through.cho	shared-reference-written	21:9	this is a shared slice `&`, which promises its elements will not change; `alloc_slice` hands back a unique one
+args_effect_undeclared.cho	effect-not-declared	11:1	`verbose` performs `args`, which its row [] does not declare; narrow the body or widen the row
+args_without_capability.cho	type-mismatch	26:27	expected `Args`, found `Io`
+argument_type_mismatch.cho	type-mismatch	9:17	expected `int`, found `bool`
+arithmetic_on_a_type_parameter.cho	type-mismatch	7:16	expected `T`, found `int`
+arithmetic_on_bool.cho	operator-type-mismatch	5:12	`bool` has no arithmetic (`int`, `float` and `f32` do)
+assign_field_of_local.cho	not-a-reference	16:5	`Counter` is not a reference, so this would write one field and leave the rest; assign the whole value instead
+assign_over_live_res.cho	linear-value-unconsumed	20:5	assigning to `f` would discard the `res` value it still holds; consume it first
+assign_to_a_literal.cho	not-a-place	12:5	this cannot be assigned to; a place is a binding or a field reached through a unique reference
+assign_to_let.cho	assign-to-immutable	6:5	`x` is immutable; declare it with `var` to assign to it
+assign_to_param.cho	assign-to-immutable	5:5	`n` is immutable; declare it with `var` to assign to it
+assign_while_frozen.cho	borrow-conflict	13:9	`c` is borrowed by an enclosing `borrow`, so it cannot be assigned to here
+assignment_type_mismatch.cho	type-mismatch	6:9	expected `int`, found `bool`
+binding_repeated_in_pattern.cho	duplicate-declaration	7:5	`w` is bound twice in this pattern
+bitwise_on_a_bool.cho	type-mismatch	17:8	expected `int`, found `bool`
+bitwise_on_a_byte.cho	type-mismatch	18:15	expected `int`, found `byte`
+borrow_after_move.cho	linear-use-after-move	16:5	`f` has already been consumed; there is nothing left to borrow
+borrow_mode_mismatch.cho	pattern-shape	11:22	`borrow mut` binds a unique reference; write `as &!r`
+box_destructured.cho	linear-value-taken-apart	22:9	`Box` owns an allocation and is ended by `unbox`, not by being taken apart; what it holds comes back out of `unbox`
+box_leaked.cho	linear-value-unconsumed	26:9	`b` is still live at the end of this block; nothing consumes it
+box_used_after_unbox.cho	linear-use-after-move	23:31	`b` has already been consumed; a `res` value is used exactly once
+box_without_heap.cho	capability-misused	24:21	`&!i Io` is not a uniquely borrowed `Heap`; allocating is reached through the capability that authorises it
+boxed_slice_leaked.cho	linear-value-unconsumed	20:9	`buffer` is still live at the end of this block; nothing consumes it
+boxed_slice_of_res.cho	mode-bound-violated	26:36	`Ticket` is `res`, and a boxed slice holds `val` data only: the fill is copied into every element, and a linear value cannot be copied at all
+branches_disagree.cho	linear-value-unconsumed	19:5	the branches disagree about `f`: one consumes it and another does not
+bulk_write_without_capability.cho	effect-not-declared	14:1	`shout` performs `io_write`, which its row [] does not declare; narrow the body or widen the row
+byte_arithmetic.cho	operator-type-mismatch	16:12	`byte` has no arithmetic (`int`, `float` and `f32` do)
+byte_mask64_needs_a_byte.cho	type-mismatch	20:95	expected `byte`, found `int`
+call_a_local_binding.cho	not-a-function	14:12	`value` is a local binding, not a function
+camera_is_edition_twelve.cho	not-a-function	10:12	`camera_close` is not a function in this program
+capability_destructured.cho	capability-misused	20:5	`Io` is a capability and is destroyed by `release`, not by being taken apart; authority is a resource and the function that ends one is named
+capability_leaked.cho	linear-value-unconsumed	17:5	`io` is still live here; a `res` value must be consumed on every path
+capability_redeclared.cho	builtin-redeclared	8:1	`Io` is a built-in type and cannot be redeclared
+capability_used_after_release.cho	linear-use-after-move	22:5	`io` has already been consumed; there is nothing left to borrow
+character_literal_bad_escape.cho	unknown-escape	16:19	`\\q` is not an escape; a character literal takes `\\n`, `\\r`, `\\t`, `\\\\`, `\\'` and `\\0`
+character_literal_empty.cho	literal-form	16:19	a character literal holds exactly one character; `''` holds none
+character_literal_not_ascii.cho	literal-form	17:20	`é` is not ASCII, and a character literal is one byte; write the code point, or the bytes of its encoding
+character_literal_two.cho	literal-form	15:15	a character literal holds exactly one character; a longer run of text is a string, written with `"`
+character_literal_unterminated.cho	literal-form	15:16	unterminated character literal
+child_end_kept.cho	linear-value-unconsumed	13:5	`theirs` is still live at the end of this block; nothing consumes it
+child_kill_group_is_edition_nine.cho	not-a-function	10:12	`child_kill_group` is not a function in this program
+child_kill_group_on_wasi.cho	unsupported-on-target	19:1	`main` uses `child_wait`, and processes and pipes do not exist on `wasm32-wasip1`: WASI has no processes and no `pipe` (docs/wasm.md)
+child_kill_group_on_wasi.cho	unsupported-on-target	11:1	`begin` uses `exec_spawn`, and processes and pipes do not exist on `wasm32-wasip1`: WASI has no processes and no `pipe` (docs/wasm.md)
+child_kill_group_on_wasi.cho	unsupported-on-target	15:1	`stop` uses `child_kill_group`, and processes and pipes do not exist on `wasm32-wasip1`: WASI has no processes and no `pipe` (docs/wasm.md)
+child_kill_group_undeclared.cho	effect-not-declared	8:1	`stop` performs `child_signal`, which its row [] does not declare; narrow the body or widen the row
+child_release_is_edition_nine.cho	not-a-function	14:37	`child_release` is not a function in this program
+child_release_undeclared.cho	effect-not-declared	8:1	`drop_it` performs `exec_detached`, which its row [] does not declare; narrow the body or widen the row
+child_released_then_used.cho	linear-use-after-move	15:28	`child` has already been consumed; a `res` value is used exactly once
+child_taken_apart.cho	linear-value-taken-apart	13:37	`Child` owns a process that has not been reaped and is ended by `child_wait`, not by being taken apart
+child_unwaited.cho	linear-value-unconsumed	13:9	`child` is still live at the end of this block; nothing consumes it
+clock_not_declared.cho	effect-not-declared	10:1	`now` performs `clock`, which its row [] does not declare; narrow the body or widen the row
+compare_mixed_types.cho	type-mismatch	5:13	expected `int`, found `bool`
+compare_two_structs.cho	operator-type-mismatch	9:8	`Point` cannot be compared with `==` (`int`, `byte`, `bool`, `float`, `f32` and `c_ptr` can)
+condition_must_be_bool.cho	type-mismatch	5:8	expected `bool`, found `int`
+conn_read_not_declared.cho	effect-not-declared	9:1	`pull` performs `conn_read`, which its row [] does not declare; narrow the body or widen the row
+constant_division_by_zero.cho	constant-traps	14:12	this divides by zero; the operands are literals, so this can only trap
+constant_overflow.cho	constant-traps	19:24	this arithmetic overflows; the operands are literals, so this can only trap
+constant_shift_past_the_width.cho	constant-traps	17:12	this shifts by an amount outside `0..64`; the operands are literals, so this can only trap
+constant_trap_on_a_dead_branch.cho	constant-traps	23:21	this divides by zero; the operands are literals, so this can only trap
+consume_in_loop.cho	linear-value-unconsumed	17:5	`f` is consumed inside this loop; the next iteration would use it again
+contents_escapes_its_borrow.cho	reference-escapes-region	25:16	this returns a reference into `r`, which is a `borrow` block in this function; a reference may not outlive its region
+copy_into_is_edition_five.cho	not-a-function	21:13	`copy_into` is not a function in this program
+defer_consumes_twice.cho	linear-use-after-move	32:17	`f` has already been consumed; a `res` value is used exactly once
+defer_leaks_its_value.cho	linear-value-unconsumed	22:11	the value this `defer` produced is `res` (`Ticket`), so it cannot be discarded; name the function that consumes it
+defer_on_a_frozen_value.cho	borrow-conflict	30:21	`f` is frozen by an enclosing `borrow`, so it cannot be moved or consumed here
+defunctionalized_row_is_the_union.cho	effect-not-declared	30:1	`report` performs `err_write`, which its row [io_write] does not declare; narrow the body or widen the row
+deref_a_non_reference.cho	not-a-reference	19:13	`int` is not a reference, so there is nothing for `*` to follow
+deref_a_res.cho	linear-value-taken-apart	19:13	`Ticket` is `res`, so `*` would copy it and leave two values where one obligation is owed; borrow it further or name a field instead
+destructure_a_non_tuple.cho	not-a-tuple	11:18	`int` is not a tuple, so it is not taken apart with `let (..)`
+destructure_partial.cho	arity-mismatch	15:5	`Pair` has 2 fields, but this pattern names 1; destructuring takes the whole value apart
+dial_through_ports.cho	capability-misused	20:27	`&p Ports("")` is not a borrowed `Out` (or `Net`); the network is reached through the capability that names what it may touch
+dir_builtins_are_edition_six.cho	not-a-function	20:18	`open_dir` is not a function in this program
+dir_handle_taken_apart.cho	linear-value-taken-apart	21:17	`Dir` owns an open descriptor and is ended by `dir_close`, not by being taken apart
+dir_handle_unclosed.cho	linear-value-unconsumed	18:9	`d` is still live at the end of this block; nothing consumes it
+dir_list_is_edition_six.cho	not-a-function	19:12	`dir_list` is not a function in this program
+dir_list_taken_apart.cho	linear-value-taken-apart	25:29	`DirList` owns an open descriptor and is ended by `dir_list_close`, not by being taken apart
+dir_list_unclosed.cho	linear-value-unconsumed	22:21	`l` is still live at the end of this block; nothing consumes it
+dir_mkdir_is_edition_nine.cho	not-a-function	11:11	`dir_mkdir` is not a function in this program
+dir_mkdir_not_declared.cho	effect-not-declared	10:1	`make` performs `dir_write`, which its row [dir_read] does not declare; narrow the body or widen the row
+dir_mkdir_on_wasi.cho	unsupported-on-target	13:1	`main` uses `dir_mkdir`, and permission bits do not exist on `wasm32-wasip1`: WASI's stat has no permission bits (wasi-libc's `st_mode` carries the file type and nothing else), so `dir_mode` would answer 0 for every file, and the mode `dir_mkdir` and `dir_open_new_mode` are given would be ignored (docs/wasm.md)
+dir_mode_is_edition_seven.cho	not-a-function	11:11	`dir_mode` is not a function in this program
+dir_mode_not_declared.cho	effect-not-declared	10:1	`permissions_of` performs `dir_read`, which its row [] does not declare; narrow the body or widen the row
+dir_mode_on_wasi.cho	unsupported-on-target	15:1	`main` uses `dir_own_mode`, and permission bits do not exist on `wasm32-wasip1`: WASI's stat has no permission bits (wasi-libc's `st_mode` carries the file type and nothing else), so `dir_mode` would answer 0 for every file, and the mode `dir_mkdir` and `dir_open_new_mode` are given would be ignored (docs/wasm.md)
+dir_next_not_declared.cho	effect-not-declared	10:1	`next` performs `dir_read`, which its row [] does not declare; narrow the body or widen the row
+dir_open_new_mode_is_edition_nine.cho	not-a-function	11:11	`dir_open_new_mode` is not a function in this program
+dir_open_new_mode_not_declared.cho	effect-not-declared	10:1	`make` performs `dir_write`, which its row [dir_read] does not declare; narrow the body or widen the row
+dir_open_new_mode_on_wasi.cho	unsupported-on-target	13:1	`main` uses `dir_open_new_mode`, and permission bits do not exist on `wasm32-wasip1`: WASI's stat has no permission bits (wasi-libc's `st_mode` carries the file type and nothing else), so `dir_mode` would answer 0 for every file, and the mode `dir_mkdir` and `dir_open_new_mode` are given would be ignored (docs/wasm.md)
+dir_read_not_declared.cho	effect-not-declared	11:1	`peek` performs `dir_read`, which its row [] does not declare; narrow the body or widen the row
+dir_rename_new_is_edition_seven.cho	not-a-function	11:11	`dir_rename_new` is not a function in this program
+dir_rename_new_not_declared.cho	effect-not-declared	10:1	`publish` performs `dir_write`, which its row [dir_read] does not declare; narrow the body or widen the row
+dir_rename_new_on_wasi.cho	unsupported-on-target	14:1	`main` uses `dir_rename_new`, and no-replace renames do not exist on `wasm32-wasip1`: WASI's `path_rename` replaces an existing destination and has no no-replace flag, so `dir_rename_new` could only look and then rename, the window it exists to close (docs/wasm.md)
+dir_stat_not_declared.cho	effect-not-declared	10:1	`size_of` performs `dir_read`, which its row [] does not declare; narrow the body or widen the row
+dir_write_not_declared.cho	effect-not-declared	11:1	`tidy` performs `dir_write`, which its row [dir_read] does not declare; narrow the body or widen the row
+duplicate_function.cho	duplicate-declaration	8:1	function `f` is defined twice
+duplicate_type_parameter.cho	duplicate-declaration	4:1	type parameter `T` is declared twice
+effect_declared_not_performed.cho	effect-declared-not-performed	11:1	`pure_after_all` declares `io_write` but never performs it; a row is exact or it is decoration
+effect_not_propagated.cho	effect-not-declared	20:1	`caller` performs `io_write`, which its row [] does not declare; narrow the body or widen the row
+effect_row_required.cho	type-mismatch	9:18	expected `[`, found an identifier
+effect_widened.cho	capability-not-narrowable	25:17	`libcrypto` cannot be narrowed to `libc`: a capability is attenuated, never widened, and a program must not be able to grant itself a library it was not given
+empty_tuple_type.cho	pattern-shape	17:20	a tuple has two components or more; `(T)` is grouping, and neither `(T,)` nor `()` is a tuple
+enum_used_as_struct.cho	not-a-struct	7:13	`Shape` is an enum, not a struct
+enum_without_variants.cho	enum-has-no-variants	4:1	enum `Void` has no variants, so no value of it can ever exist
+err_write_without_capability.cho	effect-not-declared	14:1	`complain` performs `err_write`, which its row [] does not declare; narrow the body or widen the row
+exec_covers_arity.cho	arity-mismatch	8:12	`exec_covers` takes 2 arguments -- the borrowed capability and the path -- but 1 were given
+exec_covers_is_edition_nine.cho	not-a-function	9:12	`exec_covers` is not a function in this program
+exec_covers_not_an_exec.cho	capability-misused	9:24	`&c Fs("/bin")` is not a borrowed `Exec`; a program is started through the capability that names which programs may be
+exec_covers_on_wasi.cho	unsupported-on-target	10:1	`allowed` uses `exec_covers`, and processes and pipes do not exist on `wasm32-wasip1`: WASI has no processes and no `pipe` (docs/wasm.md)
+exec_effect_undeclared.cho	effect-not-declared	9:1	`start` performs `exec("/bin")`, which its row [] does not declare; narrow the body or widen the row
+exec_is_edition_seven.cho	unknown-name	8:23	unknown type `Exec`
+exec_owned_prefix_covers_sibling.cho	effect-not-declared	22:1	`owner` performs `exec("/binevil")`, which its row [] does not declare; narrow the body or widen the row
+exec_sibling_prefix.cho	capability-not-narrowable	12:21	`/opt/tools` cannot be narrowed to `/opt/toolsevil`: a path prefix extends at a `/`, and `/opt/toolsevil` is a different name that merely starts with the same bytes
+exec_spawn_detached_on_wasi.cho	unsupported-on-target	9:1	`start` uses `exec_spawn`, and processes and pipes do not exist on `wasm32-wasip1`: WASI has no processes and no `pipe` (docs/wasm.md)
+exec_spawn_detached_undeclared.cho	effect-not-declared	8:1	`start` performs `exec_detached`, which its row [exec("/bin")] does not declare; narrow the body or widen the row
+exec_spawn_detached_under_arity.cho	arity-mismatch	8:11	`exec_spawn_detached_under` takes 8 arguments -- the borrowed capability, the borrowed `Dir` to start in, the path, the arguments, the environment and the three streams -- but 3 were given
+exec_spawn_detached_under_is_edition_nine.cho	not-a-function	8:11	`exec_spawn_detached_under` is not a function in this program
+exec_spawn_detached_under_narrowed.cho	capability-misused	8:37	`exec_spawn_detached_under` needs the `Exec` that bounds nothing: a program found beneath a directory chosen at run time cannot be shown to lie under `/bin`, and spawning it would widen the capability (`docs/processes.md` §4.14)
+exec_spawn_detached_under_not_a_dir.cho	type-mismatch	8:43	expected `Dir`, found `[byte]`
+exec_spawn_detached_under_undeclared.cho	effect-not-declared	7:1	`start` performs `exec_detached`, which its row [exec_under] does not declare; narrow the body or widen the row
+exec_spawn_detached_under_undeclared.cho	effect-declared-not-performed	20:1	`main` declares `exec_under` but never performs it; a row is exact or it is decoration
+exec_spawn_in_arity.cho	arity-mismatch	19:15	`exec_spawn_in` takes 8 arguments -- the borrowed capability, the borrowed `Dir` to start in, the path, the arguments, the environment and the three streams -- but 7 were given
+exec_spawn_in_owned_dir.cho	type-mismatch	22:44	expected `&?r1 Dir`, found `Dir`
+exec_spawn_under_arity.cho	arity-mismatch	8:11	`exec_spawn_under` takes 8 arguments -- the borrowed capability, the borrowed `Dir` to start in, the path, the arguments, the environment and the three streams -- but 3 were given
+exec_spawn_under_is_edition_nine.cho	not-a-function	8:11	`exec_spawn_under` is not a function in this program
+exec_spawn_under_narrowed.cho	capability-misused	8:28	`exec_spawn_under` needs the `Exec` that bounds nothing: a program found beneath a directory chosen at run time cannot be shown to lie under `/bin`, and spawning it would widen the capability (`docs/processes.md` §4.14)
+exec_spawn_under_not_a_dir.cho	type-mismatch	8:34	expected `Dir`, found `[byte]`
+exec_spawn_under_not_an_exec.cho	capability-misused	8:28	`&x Fs("")` is not a borrowed `Exec`; a program is started through the capability that names which programs may be
+exec_spawn_under_on_wasi.cho	unsupported-on-target	9:1	`start` uses `exec_spawn`, and processes and pipes do not exist on `wasm32-wasip1`: WASI has no processes and no `pipe` (docs/wasm.md)
+exec_spawn_under_undeclared.cho	effect-not-declared	7:1	`start` performs `exec_under`, which its row [] does not declare; narrow the body or widen the row
+exec_widened.cho	capability-not-narrowable	12:17	`/opt/tools` cannot be narrowed to `/opt`: a capability is attenuated, never widened, and a program must not be able to grant itself what it was not given
+exec_without_capability.cho	capability-misused	12:22	`Io` is not a borrowed `Exec`; a program is started through the capability that names which programs may be
+f32_cannot_be_redeclared.cho	builtin-redeclared	9:1	`f32` is a built-in type and cannot be redeclared
+f32_conversions_are_edition_six.cho	not-a-function	19:13	`f32_of` is not a function in this program
+f32_in_a_static.cho	static-item	10:1	`static table` holds `f32`, and a `static` holds scalars: `int`, `byte`, `bool` or `float` (`docs/compile-time-data.md` §6)
+f32_int_conversions_are_edition_six.cho	not-a-function	19:13	`f32_of_int` is not a function in this program
+f32_literal_bad_suffix.cho	unexpected-character	20:16	unexpected character in a floating-point literal; the only suffix is `f32`
+f32_literal_does_not_fit.cho	literal-out-of-range	20:13	floating-point literal does not fit in `f32` (IEEE-754 binary32)
+f32_literal_is_edition_six.cho	literal-form	19:13	an `f32` literal needs `edition 6;` or later
+f32_of_int_of_a_float.cho	type-mismatch	18:24	expected `int`, found `float`
+f32_of_int_of_an_f32.cho	type-mismatch	18:24	expected `int`, found `f32`
+f32_plus_float.cho	type-mismatch	22:17	expected `f32`, found `float`
+f32_plus_int.cho	type-mismatch	20:17	expected `f32`, found `int`
+f32_suffix_needs_a_point.cho	unexpected-character	21:14	unexpected character in an integer literal
+f32_type_is_edition_six.cho	unknown-name	18:12	unknown type `f32`
+f32_where_float_is_expected.cho	type-mismatch	20:18	expected `float`, found `f32`
+ffi_without_capability.cho	effect-not-declared	12:1	`labs` declares `ffi("libc")` but holds no capability that authorises it; a foreign call is reached through the capability that names its library
+field_access_on_an_enum.cho	match-on-a-non-enum	8:12	`Shape` is an enum; its payload is read by matching on it, not with `.`
+field_on_a_non_struct.cho	unknown-name	6:12	`int` has no fields
+field_that_does_not_exist.cho	unknown-name	8:12	`Point` has no field `z`
+file_handle_taken_apart.cho	linear-value-taken-apart	21:17	`File` owns an open descriptor and is ended by `file_close`, not by being taken apart
+file_handle_unclosed.cho	linear-value-unconsumed	24:9	`f` is still live at the end of this block; nothing consumes it
+file_read_not_declared.cho	effect-not-declared	13:1	`peek` performs `file_read`, which its row [] does not declare; narrow the body or widen the row
+float_literal_needs_digits.cho	type-mismatch	17:18	expected an identifier, found `;`
+float_of_bits_is_edition_seven.cho	not-a-function	11:13	`float_of_bits` is not a function in this program
+float_where_f32_is_expected.cho	type-mismatch	20:18	expected `f32`, found `float`
+float_without_conversion.cho	type-mismatch	17:23	expected `float`, found `int`
+flush_out_is_edition_five.cho	not-a-function	17:9	`flush_out` is not a function in this program
+foreign_declaration_shadows_a_builtin.cho	foreign-declaration	10:1	`len` is a builtin and cannot be declared foreign
+foreign_effect_undeclared.cho	effect-not-declared	13:1	`labs` borrows a capability authorising `ffi("libc")`, which its row [] does not declare
+foreign_result_is_a_pointer.cho	foreign-boundary-type	22:1	`getenv` returns `&r1 [byte]`, which has no agreed layout across a foreign boundary; a foreign result is `int`, `bool` or `c_ptr`, and a C function that returns nothing is declared `int` and its result discarded
+foreign_scope.cho	foreign-scope	14:16	`libc:statx` is not a library name: `:` is not allowed. A library is named with letters, digits, `_`, `.`, `+` and `-`, as in `libc` or `libstdc++`
+foreign_without_capability.cho	foreign-declaration	9:1	`system` borrows 0 `Ffi` capabilities, and a foreign function borrows exactly one: the one that names the library it calls into, such as `ffi: &f Ffi("libc")`
+fork_clock_after_release.cho	linear-use-after-move	18:5	`clock` has already been consumed; there is nothing left to borrow
+fork_heap_after_release.cho	linear-use-after-move	18:5	`heap` has already been consumed; there is nothing left to borrow
+fork_heap_child_reused.cho	linear-use-after-move	19:13	`child` has already been consumed; a `res` value is used exactly once
+fork_heap_from_shared_borrow.cho	capability-misused	18:31	`&h Heap` is not a uniquely borrowed `Heap`; allocating is reached through the capability that authorises it
+fs_covers_is_edition_nine.cho	not-a-function	9:12	`fs_covers` is not a function in this program
+fs_covers_is_edition_nine.cho	arity-mismatch	13:5	`Split` has 7 fields, but this pattern names 8; destructuring takes the whole value apart
+fs_covers_not_an_fs.cho	capability-misused	8:22	`&x Exec("/bin")` is not a borrowed `Fs`; reading or writing a file is reached through the capability that names the path it may touch
+fs_effect_undeclared.cho	effect-not-declared	13:1	`read_config` performs `fs_read("/tmp/app")`, which its row [] does not declare; narrow the body or widen the row
+fs_owned_prefix_covers_sibling.cho	effect-not-declared	18:1	`owner` performs `fs_read("/tmpevil")`, which its row [] does not declare; narrow the body or widen the row
+fs_sibling_prefix.cho	capability-not-narrowable	22:20	`/tmp` cannot be narrowed to `/tmpevil`: a path prefix extends at a `/`, and `/tmpevil` is a different name that merely starts with the same bytes
+fs_widened.cho	capability-not-narrowable	24:17	`/tmp/app` cannot be narrowed to `/tmp`: a capability is attenuated, never widened, and a program must not be able to grant itself what it was not given
+fs_without_capability.cho	capability-misused	28:28	`&!i Io` is not a borrowed `Fs`; reading or writing a file is reached through the capability that names the path it may touch
+function_as_value.cho	no-function-values	18:13	`helper` cannot be a value; only a written function with no type parameters can (`docs/function-values.md` §4.2)
+function_value_compared.cho	operator-type-mismatch	22:8	`fn(int) -> [] int` cannot be compared with `==` (`int`, `byte`, `bool`, `float`, `f32` and `c_ptr` can)
+function_value_row_undeclared.cho	effect-not-declared	15:1	`call_it` performs `io_write`, which its row [] does not declare; narrow the body or widen the row
+function_value_wrong_arity.cho	arity-mismatch	14:12	`h` takes 1 argument, but 2 were given
+function_value_wrong_type.cho	type-mismatch	14:14	expected `int`, found `bool`
+generic_argument_type_mismatch.cho	type-mismatch	16:23	expected `int`, found `bool`
+generic_array_over_a_resource.cho	mode-bound-violated	28:50	`T` is `res`, and a boxed slice holds `val` data only: the fill is copied into every element, and a linear value cannot be copied at all
+generic_body_checked_when_unused.cho	type-mismatch	7:12	expected `int`, found `bool`
+getchar_without_capability.cho	arity-mismatch	13:12	`getchar` takes 1 argument, but 0 were given
+heap_effect_undeclared.cho	effect-not-declared	12:1	`stash` performs `heap`, which its row [] does not declare; narrow the body or widen the row
+import_unknown_module.cho	unknown-name	15:1	no module `nowhere.at.all` in this program; a module exists where a file declares it
+index_of_byte_is_edition_five.cho	not-a-function	18:12	`index_of_byte` is not a function in this program
+inner_region_stored_in_outer.cho	reference-escapes-region	20:20	`i` does not outlive `o`, so a reference valid for the first cannot be used where the second is expected
+int_of_f32_of_a_float.cho	type-mismatch	18:24	expected `f32`, found `float`
+int_of_f32_of_an_int.cho	type-mismatch	18:24	expected `f32`, found `int`
+io_read_undeclared.cho	effect-not-declared	12:1	`quiet` performs `io_read`, which its row [] does not declare; narrow the body or widen the row
+io_write_does_not_cover_err_write.cho	effect-not-declared	16:1	`complain` performs `err_write`, which its row [io_write] does not declare; narrow the body or widen the row
+io_write_does_not_cover_io_read.cho	effect-not-declared	16:1	`sink` performs `io_read`, which its row [io_write] does not declare; narrow the body or widen the row
+listen_all_interfaces_on_a_host_bound.cho	listen-host	11:26	`tcp_listen` binds every interface, but this `Net` is narrowed to `127.0.0.1:8080`, which names a host; use `tcp_listen_on` with an address that bound covers, or narrow to the bare port to say "every interface"
+listen_host_not_a_literal.cho	listen-host	12:32	`tcp_listen_on` takes the address as a string literal, so the authority report can say which one; choose between literals instead of computing it
+listen_host_not_ipv4.cho	listen-host	12:32	`localhost` is not an IPv4 address (each octet is one to three decimal digits); a listener's address is a dotted quad such as `"127.0.0.1"` or `"0.0.0.0"`, with no names and no IPv6
+listen_host_outside_the_bound.cho	listen-host	11:32	this `Net` is narrowed to `127.0.0.1:8080`, which does not grant listening on `0.0.0.0`; a bound names one address exactly, and `0.0.0.0` in a bound grants every address
+listen_through_out.cho	capability-misused	20:26	`&o Out("")` is not a borrowed `Ports` (or `Net`); the network is reached through the capability that names what it may touch
+main_must_return_int.cho	program-shape	-	tests/reject/main_must_return_int.cho: error: `main` returns `int`, the process exit status
+main_takes_the_world.cho	program-shape	-	tests/reject/main_takes_the_world.cho: error: `main` takes one argument, the `World` the runtime hands it
+match_arm_after_wildcard.cho	match-arm-unreachable	7:5	this arm is unreachable: `_` above it already matches everything
+match_not_exhaustive.cho	match-not-exhaustive	7:5	this `match` does not cover `Shape::Rect`
+match_on_a_non_enum.cho	match-on-a-non-enum	5:11	`int` cannot be matched; `match` takes an enum, or a reference to one
+match_on_a_struct.cho	match-on-a-non-enum	9:12	`Point` is a struct, not an enum; there is nothing to match on
+match_redundant_wildcard.cho	match-arm-unreachable	7:5	this `_` is unreachable: every variant of `Shape` is already matched
+match_reference_binding_escapes.cho	reference-escapes-region	22:38	this returns a reference into `r`, which is a `borrow` block in this function; a reference may not outlive its region
+match_reference_payload_consumed.cho	type-mismatch	24:36	expected `Box[?0]`, found `&l Box[List]`
+match_variant_twice.cho	match-arm-unreachable	7:5	`Shape::Circle` is matched twice
+missing_return.cho	missing-return	4:1	function `main` can finish without returning a value
+missing_semicolon.cho	type-mismatch	6:1	expected `;`, found `}`
+module_not_first.cho	program-shape	15:1	a `module` declaration is the first item in its file
+module_not_imported.cho	module-not-imported	13:9	`io` is not an imported module here; `import` it to reach what is in it
+move_while_frozen.cho	borrow-conflict	16:24	`f` is frozen by an enclosing `borrow`, so it cannot be moved or consumed here
+mutually_recursive_structs.cho	infinite-type	4:1	type `A` contains itself, so it has no finite size; put a `Box` on the path back to it
+narrow_many_borrowed.cho	capability-not-narrowable	8:18	`Fs("")` is borrowed, and narrowing consumes what it attenuates; narrow the capability itself, before lending it
+narrow_many_child_not_released.cho	linear-value-unconsumed	12:5	`b` is still live here; a `res` value must be consumed on every path
+narrow_many_equal_literals.cho	capability-not-narrowable	10:41	`narrow` into several capabilities needs unrelated paths, and `/etc/ssl` and `/etc/ssl` are the same path, so the second grants nothing the first does not
+narrow_many_literal_equals_parent.cho	capability-not-narrowable	11:44	this narrows `/etc/pg` to itself, which grants nothing new
+narrow_many_literal_outside_parent.cho	capability-not-narrowable	11:49	`/etc/pg` cannot be narrowed to `/dev/urandom`: a capability is attenuated, never widened, and a program must not be able to grant itself what it was not given
+narrow_many_literal_sibling_prefix.cho	capability-not-narrowable	11:40	`/tmp` cannot be narrowed to `/tmpevil`: a path prefix extends at a `/`, and `/tmpevil` is a different name that merely starts with the same bytes
+narrow_many_nested_by_root_literal.cho	capability-not-narrowable	10:38	`narrow` into several capabilities needs unrelated paths, and `/etc/` and `/etc/ssl` are nested, so the inner one grants nothing the outer one does not
+narrow_many_nested_literals.cho	capability-not-narrowable	10:45	`narrow` into several capabilities needs unrelated paths, and `/var/lib/app` and `/var/lib/app/cache` are nested, so the inner one grants nothing the outer one does not
+narrow_many_nested_literals_reversed.cho	capability-not-narrowable	10:51	`narrow` into several capabilities needs unrelated paths, and `/var/lib/app/cache` and `/var/lib/app` are nested, so the inner one grants nothing the outer one does not
+narrow_many_net_equal_bounds.cho	capability-not-narrowable	10:46	`narrow` into several capabilities needs unrelated bounds, and `127.0.0.1:80` and `127.0.0.1:80` are the same bound, so the second grants nothing the first does not
+narrow_many_net_nested_bounds.cho	capability-not-narrowable	11:46	`narrow` into several capabilities needs unrelated bounds, and `127.0.0.1:80` and `127.0.0.10:80` are nested, so the inner one grants nothing the outer one does not
+narrow_many_net_wildcard_nested.cho	capability-not-narrowable	11:43	`narrow` into several capabilities needs unrelated bounds, and `*.0.0.1:9` and `127.0.0.1:9` are nested, so the inner one grants nothing the outer one does not
+narrow_many_non_literal.cho	capability-not-narrowable	11:45	`narrow` takes a literal, so the refinement can be checked where it is written
+narrow_many_on_a_world.cho	capability-not-narrowable	10:18	`Heap` carries no value to narrow; `Ffi`, `Fs`, `Net`, `Out`, `Ports`, `Signals`, `Exec`, `Tty`, `Camera`, `Mic` and `Speaker` are the capabilities that name one
+narrow_many_on_ffi.cho	capability-not-narrowable	10:18	`narrow` into several capabilities is for `Fs`, `Exec` and `Net`; `Ffi` narrows to a set in one capability: `narrow(ffi, "libc,libm")` (`docs/foreign-authority.md` section 5.2)
+narrow_many_on_signals.cho	capability-not-narrowable	11:18	`narrow` into several capabilities is for `Fs`, `Exec` and `Net`; `Signals` narrows to a set in one capability: `narrow(signals, "TERM,INT")` (`docs/signals.md` section 2.1)
+narrow_many_one_child_used_twice.cho	linear-use-after-move	11:25	`a` has already been consumed; a `res` value is used exactly once
+narrow_many_use_after_move.cho	linear-use-after-move	11:20	`fs` has already been consumed; a `res` value is used exactly once
+narrow_net_exact_host_widens.cho	capability-not-narrowable	12:13	`127.0.0.1:9` cannot be narrowed to `127.0.0.10:9`: a `Net` bound's port is exact, and from edition 10 so is its host, and `127.0.0.10:9` admits what `127.0.0.1:9` does not, which would widen it
+narrow_net_widens_port.cho	capability-not-narrowable	12:13	`127.0.0.1:80` cannot be narrowed to `127.0.0.1:8080`: a `Net` bound's port is exact, and from edition 10 so is its host, and `127.0.0.1:8080` admits what `127.0.0.1:80` does not, which would widen it
+narrow_net_wildcard_from_exact.cho	capability-not-narrowable	12:13	`127.0.0.1:9` cannot be narrowed to `*.0.0.1:9`: a `Net` bound's port is exact, and from edition 10 so is its host, and `*.0.0.1:9` admits what `127.0.0.1:9` does not, which would widen it
+narrow_net_wildcard_two_labels.cho	capability-not-narrowable	12:13	`*.0.0.1:9` cannot be narrowed to `*.127.0.0.1:9`: a `Net` bound's port is exact, and from edition 10 so is its host, and `*.127.0.0.1:9` admits what `*.0.0.1:9` does not, which would widen it
+narrow_ports_widens.cho	capability-not-narrowable	20:13	`5353` cannot be narrowed to `53530`: a `Net` bound's port is exact, and from edition 10 so is its host, and `53530` admits what `5353` does not, which would widen it
+narrow_without_a_literal.cho	arity-mismatch	10:13	`narrow` takes a capability and one or more literals, but no literal was given
+negate_a_bool.cho	operator-type-mismatch	5:13	`bool` cannot be negated (`int`, `float` and `f32` can)
+nested_tuple_pattern.cho	pattern-shape	22:10	a pattern does not nest; bind the inner tuple to a name here and take it apart in the next statement
+no_ambient_capability.cho	capability-misused	14:14	`Io` is a capability and has no literal form; authority comes from the `World` the runtime hands `main`, and from nowhere else
+no_main.cho	program-shape	-	tests/reject/no_main.cho: error: no `main` function
+not_on_int.cho	type-mismatch	5:9	expected `bool`, found `int`
+one_tuple.cho	pattern-shape	14:13	a tuple has two components or more; `(e)` is grouping, and neither `(e,)` nor `()` is a tuple
+opaque_pointer_arithmetic.cho	operator-type-mismatch	13:8	`c_ptr` has no arithmetic (`int`, `float` and `f32` do)
+opaque_pointer_coerces_to_nothing.cho	type-mismatch	14:18	expected `int`, found `c_ptr`
+opaque_pointer_is_not_a_general_type.cho	unknown-name	13:17	unknown type `c_ptr`
+ordering_on_bool.cho	operator-type-mismatch	5:8	`bool` has no ordering (`int`, `float` and `f32` do)
+oversized_literal.cho	literal-out-of-range	5:12	integer literal does not fit in `int` (64-bit signed)
+pattern_from_another_enum.cho	unknown-name	8:5	expected a variant of `A`, found one of `B`
+pattern_wrong_arity.cho	arity-mismatch	7:5	`Shape::Rect` carries 2 values, but the pattern binds 1
+poller_add_child_effect_undeclared.cho	effect-not-declared	8:1	`watch` performs `poll`, which its row [] does not declare; narrow the body or widen the row
+poller_add_child_is_edition_seven.cho	not-a-function	11:12	`poller_add_child` is not a function in this program
+rc_clone_from_a_borrow.cho	type-mismatch	30:23	expected `Box[Cell]`, found `&r Box[Cell]`
+rc_cloned_twice.cho	linear-use-after-move	38:63	`held` has already been consumed; a `res` value is used exactly once
+rc_declared_val.cho	mode-bound-violated	27:1	`Rc` is declared `val`, but it holds `Box[Cell]`, which is `res`
+read_bytes_is_edition_nine.cho	not-a-function	12:15	`read_bytes` is not a function in this program
+read_while_locked.cho	borrow-conflict	17:20	`c` is uniquely borrowed here, so nothing else may read it; the reference is the only way to reach it
+recursive_enum.cho	infinite-type	4:1	type `List` contains itself, so it has no finite size; put a `Box` on the path back to it
+recursive_struct.cho	infinite-type	4:1	type `Node` contains itself, so it has no finite size; put a `Box` on the path back to it
+recursive_without_box.cho	infinite-type	12:1	type `Tree` contains itself, so it has no finite size; put a `Box` on the path back to it
+redeclare_a_builtin_type.cho	builtin-redeclared	4:1	`int` is a built-in type and cannot be redeclared
+redefine_builtin.cho	builtin-redeclared	4:1	`putchar` is a builtin and cannot be redefined
+reference_escapes_arena.cho	reference-escapes-region	19:16	this returns a reference into `a`, which is an arena in this function; a reference may not outlive its region
+reference_escapes_borrow.cho	reference-escapes-region	17:16	this returns a reference into `r`, which is a `borrow` block in this function; a reference may not outlive its region
+reference_escapes_via_inference.cho	reference-escapes-region	23:5	`hole` would hold a reference into `r`, which is a `borrow` block it outlives
+region_byte_slice_over_chunk.cho	region-chunk-exceeded	16:17	`alloc_slice` of 65537 `byte` is 65537 bytes, and a region holds 65536 bytes in all (one chunk); allocate data this big on the heap with `box_slice` instead (AGENTS.md)
+region_not_in_scope.cho	region-not-in-scope	10:28	`r` is not a region in scope; a region comes from a `[&r]` parameter or a `borrow` block
+region_param_unsatisfied.cho	reference-escapes-region	24:21	`copy_into` requires `src <= dst`, but here `inner` does not outlive `outer`
+region_slice_over_chunk.cho	region-chunk-exceeded	18:17	`alloc_slice` of 8193 `int` is 65544 bytes, and a region holds 65536 bytes in all (one chunk); allocate data this big on the heap with `box_slice` instead (AGENTS.md)
+region_slice_over_chunk_folded.cho	region-chunk-exceeded	16:17	`alloc_slice` of 8193 `int` is 65544 bytes, and a region holds 65536 bytes in all (one chunk); allocate data this big on the heap with `box_slice` instead (AGENTS.md)
+remainder_on_a_float.cho	type-mismatch	18:16	expected `int`, found `float`
+remainder_on_an_f32.cho	type-mismatch	19:13	expected `int`, found `f32`
+res_bound_is_not_a_thing.cho	mode-bound-violated	12:9	there is no `res` bound: an unbounded parameter is already checked as `res`, which is the stronger obligation
+res_bound_on_a_type.cho	mode-bound-violated	12:22	there is no `res` bound: an unbounded parameter is already checked as `res`, which is the stronger obligation
+res_copied.cho	linear-use-after-move	14:28	`f` has already been consumed; a `res` value is used exactly once
+res_discarded.cho	linear-value-unconsumed	14:5	this value is `res` (`Ticket`), so it cannot be discarded; name the function that consumes it
+res_field_read.cho	linear-value-taken-apart	16:13	`Ticket` is `res`, so a field cannot be read out of it; take the whole value apart with a destructuring `let` (a non-owning read is a borrow, which is §5)
+res_field_read_through_reference.cho	type-mismatch	32:24	expected `Box[?0]`, found `&r Box[int]`
+res_matched_by_wildcard.cho	linear-value-unconsumed	15:11	the value matched here is `res` (`Slot`), so it cannot be discarded; name the function that consumes it
+res_payload_ignored.cho	linear-value-unconsumed	15:5	this payload is `res` (`Ticket`), so it cannot be discarded; name the function that consumes it
+res_tuple_component_read.cho	linear-value-taken-apart	26:18	`(Box[int], int)` is `res`, so a component cannot be read out of it; take the whole value apart with a destructuring `let` (a non-owning read is a borrow, which is §5)
+res_tuple_component_through_reference.cho	type-mismatch	23:24	expected `Box[?0]`, found `&p Box[int]`
+return_type_mismatch.cho	type-mismatch	5:12	expected `int`, found `bool`
+self_referential_binding.cho	unknown-name	5:13	`x` is not bound here
+shadow_a_live_parameter.cho	linear-value-unconsumed	22:5	`t` still holds a `res` value; shadowing it here would put that value out of reach with its obligation undischarged. Consume it first
+shadow_over_live_res.cho	linear-value-unconsumed	27:9	`held` still holds a `res` value; shadowing it here would put that value out of reach with its obligation undischarged. Consume it first
+shadow_over_live_res_destructured.cho	linear-value-unconsumed	31:9	`left` still holds a `res` value; shadowing it here would put that value out of reach with its obligation undischarged. Consume it first
+signal_not_claimable.cho	signal-not-claimable	15:35	`KILL` cannot be caught: the kernel does not let a program have it. The signals a program may claim are ALRM, HUP, INT, QUIT, TERM, USR1, USR2, WINCH
+slice_bound_is_not_an_int.cho	type-mismatch	20:24	expected `int`, found `bool`
+slice_escapes_its_region.cho	reference-escapes-region	23:23	`r` does not outlive `static`, so a reference valid for the first cannot be used where the second is expected
+slice_holds_res.cho	mode-bound-violated	27:41	`Ticket` is `res`, and an arena holds `val` data only: the fill is copied into every element, and a linear value cannot be copied at all
+slice_of_a_non_slice.cho	not-a-slice	17:16	`int` is not a slice, so it has no elements to index or take a range of
+socket_builtins_are_edition_five.cho	not-a-function	19:15	`tcp_listen` is not a function in this program
+socket_handle_forged.cho	capability-misused	19:13	`Conn` is a capability and has no literal form; authority comes from the `World` the runtime hands `main`, and from nowhere else
+socket_handle_taken_apart.cho	linear-value-taken-apart	9:5	`Conn` owns an open descriptor and is ended by `conn_close`, not by being taken apart
+socket_handle_unclosed.cho	linear-value-unconsumed	18:9	`l` is still live at the end of this block; nothing consumes it
+spawn_handle_escapes_borrow.cho	reference-escapes-region	25:16	this returns a reference into `r`, which is a `borrow` block in this function; a reference may not outlive its region
+spawn_on_wasi.cho	unsupported-on-target	19:1	`main` uses `spawn`, and threads do not exist on `wasm32-wasip1`: WASI preview 1 has no threads (wasi-threads is experimental) (docs/wasm.md)
+spawn_owned_capability_reused.cho	linear-use-after-move	31:13	`io` has already been consumed; a `res` value is used exactly once
+spawn_payload_type_not_supported.cho	thread-payload-type	23:19	`spawn`'s payload has type `Point`, which cannot cross to a real thread yet
+spawn_same_unique_twice.cho	borrow-conflict	22:24	the `&!` reference `r` reaches is lent to a thread that has not been joined, so it cannot be used again here; a `&!` is the only way to write its object, and two threads writing through copies of it race. Join the first thread before using it again
+spawn_two_copies_of_unique.cho	borrow-conflict	28:24	the `&!` reference `r` reaches is lent to a thread that has not been joined, so it cannot be used again here; a `&!` is the only way to write its object, and two threads writing through copies of it race. Join the first thread before using it again
+spawn_unique_branches_disagree.cho	borrow-conflict	28:9	the branches disagree about whether a thread still holds a `&!`: one joins it and another does not
+spawn_unique_loop_lease_survives.cho	borrow-conflict	28:9	a thread spawned in this loop is still holding a `&!` when the next iteration starts; join it inside the loop
+spawn_unique_used_while_lent.cho	borrow-conflict	22:9	the `&!` reference `r` reaches is lent to a thread that has not been joined, so it cannot be used again here; a `&!` is the only way to write its object, and two threads writing through copies of it race. Join the first thread before using it again
+split_eleven_is_edition_eleven.cho	arity-mismatch	8:5	`Split` has 14 fields, but this pattern names 11; destructuring takes the whole value apart
+split_net_is_edition_ten.cho	arity-mismatch	8:5	`Split` has 11 fields, but this pattern names 10; destructuring takes the whole value apart
+sqrt32_of_a_float.cho	type-mismatch	18:20	expected `f32`, found `float`
+static_alloc_outside_a_static.cho	reference-escapes-region	18:17	`alloc` in the `static` region is only legal inside a `static` item;                  elsewhere `static` is read-only data a program cannot add to
+static_holds_a_slice.cho	static-item	10:1	`static limit` must be a slice — `[int]`, `[byte]`, `[bool]` or `[float]`; a `static` is for data, and a scalar constant is already folded where it is written (`docs/compile-time.md` §3)
+static_that_traps.cho	constant-traps	11:1	`static bad` cannot be evaluated: it traps: the operation has no value, and a `static` that cannot be computed cannot be compiled
+string_escapes_its_region.cho	reference-escapes-region	16:16	this returns a reference into `a`, which is an arena in this function; a reference may not outlive its region
+string_literal_is_shared.cho	shared-reference-written	22:5	this is a shared slice `&`, which promises its elements will not change; `alloc_slice` hands back a unique one
+string_literal_spans_lines.cho	literal-form	9:13	a string literal may not span lines
+string_literal_trailing_backslash.cho	literal-form	8:43	unterminated string literal
+struct_declared_twice.cho	duplicate-declaration	5:1	type `Point` is declared twice
+struct_field_declared_twice.cho	duplicate-declaration	4:1	field `x` is declared twice in `Point`
+struct_field_given_twice.cho	duplicate-declaration	7:13	field `x` is given twice
+struct_field_type_mismatch.cho	type-mismatch	7:24	expected `int`, found `bool`
+struct_fields_out_of_order.cho	field-order	30:45	field `first` is written after `second`, but `Pair` declares it before; a struct literal's fields run in declaration order, so writing them in another order would hide what runs first
+struct_literal_of_unknown_name.cho	not-a-struct	5:13	`Nope` is not a struct
+struct_missing_field.cho	missing-field	7:13	missing field `y` in `Point`
+struct_unknown_field.cho	unknown-name	7:13	`Point` has no field `z`
+struct_used_as_enum.cho	not-an-enum	7:13	`Point` is a struct, not an enum
+tcp_listen_on_is_edition_nine.cho	not-a-function	10:15	`tcp_listen_on` is not a function in this program
+truncate_of_an_f32.cho	type-mismatch	18:22	expected `float`, found `f32`
+tty_narrow_widens.cho	capability-not-narrowable	20:18	`/dev/serial` cannot be narrowed to `/dev/ttyACM0`: a capability is attenuated, never widened, and a program must not be able to grant itself what it was not given
+tuple_arity_mismatch.cho	arity-mismatch	23:5	this tuple has 3 components, but the pattern names 2; destructuring takes the whole value apart
+tuple_index_past_the_end.cho	unknown-name	18:12	this tuple has 2 components, so there is no `.2`; they are numbered from 0
+tuple_leaked.cho	linear-value-unconsumed	21:9	`pair` is still live at the end of this block; nothing consumes it
+tuple_type_mismatch.cho	type-mismatch	24:24	expected `int`, found `bool`
+two_module_declarations.cho	program-shape	14:1	a file declares at most one module
+two_unique_borrows.cho	borrow-conflict	15:9	`c` is already uniquely borrowed; a `&!` reference is the only way to reach a value, so there is at most one
+type_bound_violated.cho	mode-bound-violated	22:12	`Vec` bounds `T` by `val`, and `Ticket` is `res`
+type_parameter_named_int.cho	builtin-redeclared	4:1	`int` is a built-in type and cannot be a type parameter
+type_parameter_takes_no_arguments.cho	type-args-not-taken	4:12	type parameter `T` takes no type arguments
+type_takes_no_arguments.cho	arity-mismatch	4:17	`int` takes no type arguments
+udp_builtins_are_edition_five.cho	not-a-function	18:15	`udp_connect` is not a function in this program
+udp_handle_forged.cho	capability-misused	18:13	`Udp` is a capability and has no literal form; authority comes from the `World` the runtime hands `main`, and from nowhere else
+udp_handle_taken_apart.cho	linear-value-taken-apart	9:5	`Udp` owns an open descriptor and is ended by `udp_close`, not by being taken apart
+udp_handle_unclosed.cho	linear-value-unconsumed	18:9	`u` is still live at the end of this block; nothing consumes it
+udp_recv_not_declared.cho	effect-not-declared	9:1	`pull` performs `udp_recv`, which its row [] does not declare; narrow the body or widen the row
+udp_send_to_not_declared.cho	effect-not-declared	9:1	`reply` performs `udp_send`, which its row [] does not declare; narrow the body or widen the row
+unbounded_generic_drops_its_parameter.cho	linear-value-unconsumed	28:5	`x` is still live here; a `res` value must be consumed on every path
+unbox_a_boxed_slice_wrongly.cho	unsized-type	22:29	`[byte]` is unsized, so `unbox` has nothing to hand back; `unbox_slice` frees a boxed slice and answers how many elements it freed
+unconsumed_at_scope_end.cho	linear-value-unconsumed	15:9	`f` is still live at the end of this block; nothing consumes it
+unconsumed_on_one_path.cho	linear-value-unconsumed	18:9	`f` is still live here; a `res` value must be consumed on every path
+undeclared_effect.cho	effect-not-declared	12:1	`quiet` performs `io_write`, which its row [] does not declare; narrow the body or widen the row
+undefined_name.cho	unknown-name	5:12	`no_such_name` is not bound here
+ungrounded_effect_label.cho	effect-declared-not-performed	11:1	`weird` declares `telepathy` but never performs it; a row is exact or it is decoration
+uninferable_type_argument.cho	ambiguous-type	12:13	cannot tell what `T` is in this call to `make`; it is not determined by the arguments
+unique_borrow_of_frozen.cho	borrow-conflict	15:9	`c` is already borrowed by an enclosing `borrow`, so it cannot be borrowed uniquely here
+unknown_character.cho	unexpected-character	13:14	unexpected character `@`
+unknown_edition.cho	unknown-edition	19:1	unknown edition 13; the only editions today are 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 and 12
+unknown_escape.cho	unknown-escape	22:19	`\\q` is not an escape; a string literal takes `\\n`, `\\r`, `\\t`, `\\\\`, `\\"` and `\\0`
+unknown_type.cho	unknown-name	4:17	unknown type `i32`
+unknown_variant.cho	unknown-name	11:12	`Shape` has no variant `Blob`
+unreachable_statement.cho	unreachable-statement	6:5	this statement is unreachable
+unrelated_regions.cho	reference-escapes-region	25:29	`b` does not outlive `a`, so a reference valid for the first cannot be used where the second is expected
+unsized_slice_value.cho	unsized-type	13:14	`[T]` has no size of its own, so it cannot be used as a value; write `&r [T]` or `&!r [T]`, which is a slice
+use_after_move.cho	linear-use-after-move	15:18	`f` has already been consumed; a `res` value is used exactly once
+val_bound_violated_at_the_call_site.cho	mode-bound-violated	32:12	`sink` needs `T` to be `val`, and `Ticket` is `res`
+val_contains_res.cho	mode-bound-violated	9:1	`Wrapper` is declared `val`, but it holds `Ticket`, which is `res`
+val_declaration_rebounds_its_parameter.cho	mode-bound-violated	16:25	a `val` declaration already bounds its parameters: `val struct X[T]` means `T` is `val`, so the bound says nothing new; a `res` or undeclared one is where writing it means something
+val_generic_copied.cho	linear-use-after-move	36:17	`w` has already been consumed; a `res` value is used exactly once
+val_generic_holding_a_res.cho	linear-value-unconsumed	41:9	`w` is still live at the end of this block; nothing consumes it
+value_barrier_is_edition_six.cho	not-a-function	18:12	`value_barrier` is not a function in this program
+var_destructure.cho	pattern-shape	13:15	a destructuring binding takes a value apart once; write `let`, not `var`
+variant_declared_twice.cho	duplicate-declaration	4:1	variant `One` is declared twice in `A`
+variant_of_a_struct.cho	not-an-enum	14:13	`Point` is a struct, not an enum
+variant_payload_type_mismatch.cho	type-mismatch	7:26	expected `int`, found `bool`
+variant_wrong_arity.cho	arity-mismatch	7:12	`Shape::Rect` carries 2 values, but 1 was given
+walkthrough_assign_to_immutable.cho	assign-to-immutable	7:5	`total` is immutable; declare it with `var` to assign to it
+walkthrough_borrow_conflict.cho	borrow-conflict	10:9	`c` is borrowed by an enclosing `borrow`, so it cannot be assigned to here
+walkthrough_capability_misused.cho	capability-misused	10:5	`Io` is a capability and is destroyed by `release`, not by being taken apart; authority is a resource and the function that ends one is named
+walkthrough_capability_not_narrowable.cho	capability-not-narrowable	11:17	`libc` cannot be narrowed to `libc,libssl`: a capability is attenuated, never widened, and a program must not be able to grant itself a library it was not given
+walkthrough_effect_declared_not_performed.cho	effect-declared-not-performed	4:1	`quiet` declares `io_write` but never performs it; a row is exact or it is decoration
+walkthrough_effect_not_declared.cho	effect-not-declared	4:1	`verbose` performs `args`, which its row [] does not declare; narrow the body or widen the row
+walkthrough_linear_use_after_move.cho	linear-use-after-move	13:5	`t` has already been consumed; there is nothing left to borrow
+walkthrough_linear_value_unconsumed.cho	linear-value-unconsumed	18:5	assigning to `t` would discard the `res` value it still holds; consume it first
+walkthrough_match_not_exhaustive.cho	match-not-exhaustive	7:5	this `match` does not cover `Shape::Rect`
+walkthrough_missing_return.cho	missing-return	4:1	function `sign` can finish without returning a value
+walkthrough_reference_escapes_region.cho	reference-escapes-region	8:16	this returns a reference into `a`, which is an arena in this function; a reference may not outlive its region
+walkthrough_shared_reference_written.cho	shared-reference-written	10:9	this is a shared reference `&`, which promises its referent will not change; `borrow mut` binds one that may be written through
+walkthrough_type_mismatch.cho	type-mismatch	10:19	expected `int`, found `bool`
+where_names_an_unknown_region.cho	region-mismatch	8:1	`b` is not a region parameter of `pick`; a `where` clause relates the regions the declaration takes
+while_condition_must_be_bool.cho	type-mismatch	5:11	expected `bool`, found `int`
+wide_multiply_is_edition_seven.cho	not-a-function	20:20	`mul_wide` is not a function in this program
+word_scan_is_edition_nine.cho	not-a-function	20:12	`load_le64` is not a function in this program
+world_leaked.cho	linear-value-unconsumed	8:5	`world` is still live here; a `res` value must be consumed on every path
+write_through_shared.cho	shared-reference-written	15:9	this is a shared reference `&`, which promises its referent will not change; `borrow mut` binds one that may be written through
+write_through_shared_deref.cho	shared-reference-written	12:6	this is a shared reference `&`, which promises its referent will not change; `borrow mut` hands back a unique one
+write_through_shared_slice.cho	shared-reference-written	13:5	this is a shared slice `&`, which promises its elements will not change; `alloc_slice` hands back a unique one
+wrong_arity.cho	arity-mismatch	9:12	`add` takes 2 arguments, but 1 was given
+wrong_type_argument_count.cho	arity-mismatch	7:12	`Pair` takes 2 type arguments, but 1 was given

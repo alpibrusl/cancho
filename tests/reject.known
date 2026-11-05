@@ -1,0 +1,10 @@
+# Programs scripts/reject_golden.py check skips: the compiler in cancho cannot refuse them yet. One per line, `name  # reason`.
+child_kill_group_on_wasi.cho  # target wasm has no compiler in cancho (#486)
+dir_mkdir_on_wasi.cho  # target wasm has no compiler in cancho (#486)
+dir_mode_on_wasi.cho  # target wasm has no compiler in cancho (#486)
+dir_open_new_mode_on_wasi.cho  # target wasm has no compiler in cancho (#486)
+dir_rename_new_on_wasi.cho  # target wasm has no compiler in cancho (#486)
+exec_covers_on_wasi.cho  # target wasm has no compiler in cancho (#486)
+exec_spawn_detached_on_wasi.cho  # target wasm has no compiler in cancho (#486)
+exec_spawn_under_on_wasi.cho  # target wasm has no compiler in cancho (#486)
+spawn_on_wasi.cho  # target wasm has no compiler in cancho (#486)
