@@ -139,6 +139,7 @@ fn profile_in_cancho_counts_instructions_by_function_and_gates_on_a_baseline() {
     );
 
     // `--advise`: the facts an agent needs to decide what to optimise, and no judgement of ours (no effort, no advice).
+    write("spin.cho", SPIN);
     let (code, advice, said) = profile(&exe, &dir, &["--advise", "spin.cho"]);
     assert_eq!(code, 0, "{said}");
     let advice = advice.expect("JSON");
