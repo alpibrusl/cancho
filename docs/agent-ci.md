@@ -1,6 +1,6 @@
 # `cancho ci`: the gate as one command, and the authority baseline
 
-> **Status: design. Nothing is built.** Written before the code, as
+> **Status: slice 1 built (§10); the authority baseline (§3) and `--init` (§5) are not.** Written before the code, as
 > `CONTRIBUTING.md` asks. Every number below is either marked *measured
 > (this document)* with how, or is a **gate**: a figure the built thing
 > must meet, not a result. A claim that turns out false is corrected here,
@@ -226,3 +226,73 @@ program, and this section is corrected here.
 | Should `ci` also run `satisfy` for a contract file | no asker; `satisfy.md` is a loop, not a gate |
 | A `cancho ci --since REV` that checks only what changed | needs a dependency graph per program; `ids` has the hashes, nothing consumes them |
 | Per-label baseline expiry | a widening accepted "until" a date; no asker |
+
+## 10. Slice 1, as built (`examples/selfhost/clici.cho`)
+
+```sh
+cancho ci [--output json] [--std-dir DIR] [--test FILE]... FILE...
+```
+
+`fmt`, `check` and `test` are built; the `authority` step, `--strict`,
+`--accept-authority` and `--init` are not. The code is `clici.cho` (about 340
+lines) and a three-line dispatch in `cli.cho`; **no line of Rust in
+`crates/cancho/src/`**. The test is `selfhost/ci.rs`.
+
+**What building it changed in this document** (corrected in place, as the
+header promises):
+
+* **A finding's key is `rule`, not `tag`**, for `ci`'s own findings and
+  `check`'s alike, so a consumer reads one key (§4's example is amended
+  below). `check`'s findings are spliced in unchanged, with their
+  `explanation` and `position`.
+* **Findings sit inside their step**, as `steps[i].findings`, not in one
+  top-level list. A step with no findings has no `findings` key.
+* **There are `--test` files.** `cancho test` takes the files of one run in
+  full (the library and the tests), so `ci` takes them the same way:
+  `--test lib.cho --test t.cho`. Without a `--test` the step is `skipped`
+  with `because: "no-tests"`.
+* **`check` needs a `main`.** With only `--test` files it is `skipped`
+  with `because: "no-program"` and the test step still runs (before, the
+  design had it fail as `program-shape`; measured on a library with tests).
+* **The steps are runs of this command line**, found by the name it was run
+  by (`arg 0`). A name with `..` in it **trapped** (`Illegal instruction`,
+  exit 132) before this was found, under `Exec`, outside a debugger: with
+  `../cli` the parent died after opening its pipes, and the same command
+  under `gdb` ran, because `gdb` runs it by an absolute path. It is now the
+  finding `ci-self-path`, exit 3, on standard error. The trap in `Exec` for
+  such a name is a defect of its own and is not fixed here.
+
+```json
+{ "ok": false, "steps": [
+  { "name": "fmt", "status": "pass" },
+  { "name": "check", "status": "fail", "findings": [
+    { "rule": "effect-not-declared", "message": "...", "explanation": "...",
+      "position": { "file": "bad.cho", "line": 11, "column": 1 } } ] },
+  { "name": "test", "status": "skipped", "because": "check" } ] }
+```
+
+**Rules slice 1 can raise:** `ci-not-formatted`, `ci-fmt-refused`,
+`ci-test-failed`, `ci-test-refused`, `ci-no-tests`, `ci-step-unrunnable`,
+`ci-check-unreadable`, and on standard error `ci-self-path`.
+
+**Measured (this document, Linux x86-64).** One test builds the command line
+and runs `ci` on a passing program, a badly formatted one, a refused one, a
+library with a passing test, a library with a failing one, and the two
+combined: the status of each step, the rules, the exit statuses (0, 1, 4, 1 —
+the first failing step wins) and that every answer is accepted by
+`serde_json`. `ci_in_cancho_says_what_fmt_check_and_test_say`: passes, 46 s
+(almost all of it building the command line).
+
+**Not done, and said so:**
+
+* `ci` is **not in `introspect` or `--help`**. Those are checked
+  byte-for-byte against the Rust binary (`cli.rs`, the `introspect` and
+  `--help` tests), and the Rust binary has no `ci`. Registering it in
+  `commandtree.cho` alone would turn that test red; registering it in
+  `src/acli.rs` is the Rust change this design avoids. Until that is
+  decided, an agent finds `ci` here and in `agent-guidelines`, not in the
+  generated surface, which is the drift `agent-cli.md` exists to prevent.
+  **Decision for the user.**
+* Not run on a project (`cancho.toml`): files are named.
+* Not measured: the cost of a `ci` over the cost of its three steps (gate 5).
+* Gates 2 to 4 of §8 are the authority baseline's and wait for it.

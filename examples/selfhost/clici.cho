@@ -1,0 +1,409 @@
+edition 7;
+module selfhost.clici;
+
+// clici.cho -- `cancho ci`, written in cancho (`docs/agent-ci.md`, slice 1): the gate as one command.
+//
+//     ci [--output json] [--std-dir DIR] [--test FILE]... FILE...
+//
+// Three steps, each a run of this same command line as a child, so that `ci` says what `fmt --check`, `check --output json` and `test` say and nothing
+// they do not: `fmt` over every file named, `check` over the program (the FILEs; skipped, because `no-program`, when only `--test` files are named), and `test` over the
+// `--test` files (named in full, as `cancho test` takes them). The test step is skipped, not failed a second time, when `check` failed, and it is skipped
+// when no `--test` file is named. Every step that can run does.
+//
+// The answer is one object: `ok`, and the steps, each with its `status` (`pass`, `fail`, `skipped`) and, for a failure, its `findings`. A finding of
+// `ci`'s own is `{ "rule": "ci-...", "message": "..." }`; a finding of `check` is the refusal `check --output json` printed, unchanged. Without
+// `--output json` the same steps are one line each.
+//
+// Exit status: 0 every step passed, 1 a finding, 2 the command line was wrong, 3 a step could not be run, 4 `test` failed and nothing before it did
+// (the first failing step's status wins, in the order fmt, check, test).
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.jsonwrite;
+import selfhost.clibase;
+import selfhost.cliprog;
+
+// One step: its JSON object, its status (0 pass, 1 fail, 2 skipped) and the exit status it contributes (0, 1, 3 or 4).
+pub res struct Step {
+    json: buffer.Buffer,
+    status: int,
+    code: int,
+}
+
+// `{ "rule": R, "message": M }` appended to `items` (a comma first if it is not the first of `count`).
+fn finding[&h, &r, &m](heap: &!h Heap, items: buffer.Buffer, count: int, rule: &r [byte], message: &m [byte]) -> [heap] (buffer.Buffer, int) {
+    var out = items;
+    if count > 0 {
+        out = buffer.append(heap, out, ", ");
+    }
+    out = buffer.append(heap, out, "{ \"rule\": ");
+    out = jsonwrite.string(heap, out, rule);
+    out = buffer.append(heap, out, ", \"message\": ");
+    out = jsonwrite.string(heap, out, message);
+    out = buffer.append(heap, out, " }");
+    return (out, count + 1);
+}
+
+// Each non-empty line of `text` (that has `only` in it, if that is not empty) as a finding of `rule`.
+fn lines_into[&h, &t, &r, &o](heap: &!h Heap, items: buffer.Buffer, count: int, text: &t [byte], rule: &r [byte], only: &o [byte]) -> [heap] (buffer.Buffer, int) {
+    var out = items;
+    var n = count;
+    var start = 0;
+    var at = 0;
+    while at <= len(text) {
+        if at == len(text) || int_of(text[at]) == 10 {
+            if at > start && (len(only) == 0 || clibase.contains(text[start..at], only)) {
+                let (o, k) = finding(heap, out, n, rule, text[start..at]);
+                out = o;
+                n = k;
+            }
+            start = at + 1;
+        }
+        at = at + 1;
+    }
+    return (out, n);
+}
+
+// `{ "name": N, "status": S, "findings": [ ITEMS ] }`, or for a skipped step `{ "name": N, "status": "skipped", "because": B }`.
+fn step_object[&h, &n, &s, &b](heap: &!h Heap, name: &n [byte], status: &s [byte], items: buffer.Buffer, because: &b [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buffer.empty(heap, 256), "{ \"name\": ");
+    out = jsonwrite.string(heap, out, name);
+    out = buffer.append(heap, out, ", \"status\": ");
+    out = jsonwrite.string(heap, out, status);
+    if len(because) > 0 {
+        out = buffer.append(heap, out, ", \"because\": ");
+        out = jsonwrite.string(heap, out, because);
+    } else if bytes.equal(status, "fail") {
+        out = buffer.append(heap, out, ", \"findings\": [ ");
+        borrow items as &ib in {
+            out = buffer.append(heap, out, buffer.bytes(ib));
+        }
+        out = buffer.append(heap, out, " ]");
+    }
+    buffer.drop(heap, items);
+    return buffer.append(heap, out, " }");
+}
+
+fn skipped[&h, &n, &b](heap: &!h Heap, name: &n [byte], because: &b [byte]) -> [heap] Step {
+    return Step { json: step_object(heap, name, "skipped", buffer.empty(heap, 0), because), status: 2, code: 0 };
+}
+
+// The words of a child's command line, each followed by a NUL: `command` (already NUL-terminated words), then `--std-dir D` if given, then the files
+// `which` selects: 0 the FILEs, 1 the `--test` files, 2 both.
+fn words[&h, &a, &c](heap: &!h Heap, args: &a Args, command: &c [byte], which: int) -> [heap, args] buffer.Buffer {
+    var out = buffer.append(heap, buffer.empty(heap, 256), command);
+    var n = 2;
+    var testing = false;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--output") {
+            n = n + 1;
+        } else if bytes.equal(word, "--std-dir") {
+            n = n + 1;
+            out = buffer.append(heap, buffer.append(heap, out, "--std-dir\0"), arg(args, n));
+            out = buffer.append(heap, out, "\0");
+        } else if bytes.equal(word, "--test") {
+            n = n + 1;
+            if which >= 1 {
+                out = buffer.append(heap, buffer.append(heap, out, arg(args, n)), "\0");
+            }
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            testing = testing;
+        } else if which != 1 {
+            out = buffer.append(heap, buffer.append(heap, out, word), "\0");
+        }
+        n = n + 1;
+    }
+    return out;
+}
+
+// This command line, run as a child with `argv`: what it wrote and how it ended (`cliprog.Captured`).
+fn child_run[&h, &i, &x, &c, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, args: &a Args, argv: buffer.Buffer) -> [heap, err_write, args, exec(""), clock, poll] cliprog.Captured {
+    var held_out = buffer.empty(heap, 0);
+    var held_err = buffer.empty(heap, 0);
+    var held_kind = 5;
+    var held_value = 0;
+    borrow argv as &ab in {
+        let got = cliprog.run_capture(heap, io, exec, clock, arg(args, 0), "", buffer.bytes(ab));
+        let cliprog.Captured { out, err, kind, value } = got;
+        buffer.drop(heap, held_out);
+        buffer.drop(heap, held_err);
+        held_out = out;
+        held_err = err;
+        held_kind = kind;
+        held_value = value;
+    }
+    buffer.drop(heap, argv);
+    return cliprog.Captured { out: held_out, err: held_err, kind: held_kind, value: held_value };
+}
+
+// A step whose child did not run to an exit status: status 3 and one finding.
+fn unrunnable[&h, &n](heap: &!h Heap, name: &n [byte]) -> [heap] Step {
+    let (items, count) = finding(heap, buffer.empty(heap, 128), 0, "ci-step-unrunnable", "the step could not be run or did not end by itself");
+    return Step { json: step_object(heap, name, "fail", items, ""), status: 1, code: 3 };
+}
+
+fn fmt_step[&h, &i, &x, &c, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, args: &a Args) -> [heap, err_write, args, exec(""), clock, poll] Step {
+    let got = child_run(heap, io, exec, clock, args, words(heap, args, "fmt\0--check\0", 2));
+    let cliprog.Captured { out, err, kind, value } = got;
+    var body = buffer.empty(heap, 0);
+    var st = 0;
+    var cd = 0;
+    if kind != 0 || value > 1 {
+        buffer.drop(heap, body);
+        let (ub, us, uc) = unpack(unrunnable(heap, "fmt"));
+        body = ub;
+        st = us;
+        cd = uc;
+    } else if value == 0 {
+        buffer.drop(heap, body);
+        body = step_object(heap, "fmt", "pass", buffer.empty(heap, 0), "");
+        st = 0;
+        cd = 0;
+    } else {
+        var items = buffer.empty(heap, 256);
+        var count = 0;
+        borrow out as &ob in {
+            let (o, k) = lines_into(heap, items, count, buffer.bytes(ob), "ci-not-formatted", "");
+            items = o;
+            count = k;
+        }
+        borrow err as &eb in {
+            let (o, k) = lines_into(heap, items, count, buffer.bytes(eb), "ci-fmt-refused", "");
+            items = o;
+            count = k;
+        }
+        buffer.drop(heap, body);
+        body = step_object(heap, "fmt", "fail", items, "");
+        st = 1;
+        cd = 1;
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return Step { json: body, status: st, code: cd };
+}
+
+// The array inside `check --output json`'s answer (from its first `[` to its last `]`), as findings; the whole answer as one finding if it has none.
+fn check_findings[&h, &t](heap: &!h Heap, items: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    var first = 0 - 1;
+    var last = 0 - 1;
+    var at = 0;
+    while at < len(text) {
+        if int_of(text[at]) == 91 && first < 0 {
+            first = at;
+        }
+        if int_of(text[at]) == 93 {
+            last = at;
+        }
+        at = at + 1;
+    }
+    if first >= 0 && last > first + 1 {
+        return buffer.append(heap, items, text[first + 1..last]);
+    }
+    let (o, k) = finding(heap, items, 0, "ci-check-unreadable", text);
+    return o;
+}
+
+fn check_step[&h, &i, &x, &c, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, args: &a Args, files: int) -> [heap, err_write, args, exec(""), clock, poll] Step {
+    if files == 0 {
+        return skipped(heap, "check", "no-program");
+    }
+    let got = child_run(heap, io, exec, clock, args, words(heap, args, "check\0--output\0json\0", 0));
+    let cliprog.Captured { out, err, kind, value } = got;
+    var body = buffer.empty(heap, 0);
+    var st = 0;
+    var cd = 0;
+    if kind != 0 || value > 1 {
+        buffer.drop(heap, body);
+        let (ub, us, uc) = unpack(unrunnable(heap, "check"));
+        body = ub;
+        st = us;
+        cd = uc;
+    } else if value == 0 {
+        buffer.drop(heap, body);
+        body = step_object(heap, "check", "pass", buffer.empty(heap, 0), "");
+        st = 0;
+        cd = 0;
+    } else {
+        var items = buffer.empty(heap, 256);
+        borrow out as &ob in {
+            items = check_findings(heap, items, buffer.bytes(ob));
+        }
+        buffer.drop(heap, body);
+        body = step_object(heap, "check", "fail", items, "");
+        st = 1;
+        cd = 1;
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return Step { json: body, status: st, code: cd };
+}
+
+fn test_step[&h, &i, &x, &c, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, args: &a Args) -> [heap, err_write, args, exec(""), clock, poll] Step {
+    let got = child_run(heap, io, exec, clock, args, words(heap, args, "test\0", 1));
+    let cliprog.Captured { out, err, kind, value } = got;
+    var body = buffer.empty(heap, 0);
+    var st = 0;
+    var cd = 0;
+    if kind != 0 || value == 3 || value > 4 {
+        buffer.drop(heap, body);
+        let (ub, us, uc) = unpack(unrunnable(heap, "test"));
+        body = ub;
+        st = us;
+        cd = uc;
+    } else if value == 0 {
+        buffer.drop(heap, body);
+        body = step_object(heap, "test", "pass", buffer.empty(heap, 0), "");
+        st = 0;
+        cd = 0;
+    } else {
+        var rule = "ci-test-failed";
+        if value == 1 {
+            rule = "ci-test-refused";
+        } else if value == 2 {
+            rule = "ci-no-tests";
+        }
+        var items = buffer.empty(heap, 256);
+        var count = 0;
+        borrow out as &ob in {
+            let (o, k) = lines_into(heap, items, count, buffer.bytes(ob), rule, " ... FAILED");
+            items = o;
+            count = k;
+        }
+        borrow err as &eb in {
+            let (o, k) = lines_into(heap, items, count, buffer.bytes(eb), rule, "");
+            items = o;
+            count = k;
+        }
+        if count == 0 {
+            let (o, k) = finding(heap, items, count, rule, "the test run failed and said nothing");
+            items = o;
+            count = k;
+        }
+        var code = 1;
+        if value == 4 {
+            code = 4;
+        }
+        buffer.drop(heap, body);
+        body = step_object(heap, "test", "fail", items, "");
+        st = 1;
+        cd = code;
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return Step { json: body, status: st, code: cd };
+}
+
+fn unpack(step: Step) -> [] (buffer.Buffer, int, int) {
+    let Step { json, status, code } = step;
+    return (json, status, code);
+}
+
+// The test step if `check` passed and there are test files, else the reason it is not run.
+fn test_or_skip[&h, &i, &x, &c, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, args: &a Args, check_status: int, tests: int) -> [heap, err_write, args, exec(""), clock, poll] Step {
+    if check_status == 1 {
+        return skipped(heap, "test", "check");
+    }
+    if tests == 0 {
+        return skipped(heap, "test", "no-tests");
+    }
+    return test_step(heap, io, exec, clock, args);
+}
+
+fn status_word(status: int) -> [] &static [byte] {
+    if status == 0 {
+        return "pass";
+    }
+    if status == 1 {
+        return "fail";
+    }
+    return "skipped";
+}
+
+pub fn ci_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, exec(""), clock, poll] int {
+    var json = false;
+    var files = 0;
+    var tests = 0;
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--output") {
+            n = n + 1;
+            if n < arg_count(args) && bytes.equal(arg(args, n), "json") {
+                json = true;
+            } else {
+                return clibase.usage_error(heap, io, "`--output` needs `json`");
+            }
+        } else if bytes.equal(word, "--std-dir") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--std-dir` needs a directory");
+            }
+        } else if bytes.equal(word, "--test") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--test` needs a file");
+            }
+            tests = tests + 1;
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            return clibase.unknown_option(heap, io, word);
+        } else {
+            files = files + 1;
+        }
+        n = n + 1;
+    }
+    // The steps are runs of this command line, found by the name it was run by; a name with `..` in it is refused by `Exec` (`docs/cli-in-cancho.md` section 40).
+    if clibase.contains(arg(args, 0), "..") {
+        console.error_all(io, "ci-self-path: `ci` runs this command line again, and cannot by a name with `..` in it; run it by a path without\n");
+        return 3;
+    }
+    if files + tests == 0 {
+        return clibase.usage_error(heap, io, "no file given");
+    }
+    let (fj, fst, fc) = unpack(fmt_step(heap, io, exec, clock, args));
+    let (cj, cst, cc) = unpack(check_step(heap, io, exec, clock, args, files));
+    let (tj, tst, tc) = unpack(test_or_skip(heap, io, exec, clock, args, cst, tests));
+    var status = tc;
+    if fc != 0 {
+        status = fc;
+    } else if cc != 0 {
+        status = cc;
+    }
+    var report = buffer.empty(heap, 512);
+    if json {
+        report = buffer.append(heap, report, "{ \"ok\": ");
+        if status == 0 {
+            report = buffer.append(heap, report, "true");
+        } else {
+            report = buffer.append(heap, report, "false");
+        }
+        report = buffer.append(heap, report, ", \"steps\": [ ");
+        borrow fj as &fb in {
+            report = buffer.append(heap, report, buffer.bytes(fb));
+        }
+        report = buffer.append(heap, report, ", ");
+        borrow cj as &cb in {
+            report = buffer.append(heap, report, buffer.bytes(cb));
+        }
+        report = buffer.append(heap, report, ", ");
+        borrow tj as &tb in {
+            report = buffer.append(heap, report, buffer.bytes(tb));
+        }
+        report = buffer.append(heap, report, " ] }\n");
+    } else {
+        report = buffer.append(heap, report, "fmt ");
+        report = buffer.append(heap, report, status_word(fst));
+        report = buffer.append(heap, report, "\ncheck ");
+        report = buffer.append(heap, report, status_word(cst));
+        report = buffer.append(heap, report, "\ntest ");
+        report = buffer.append(heap, report, status_word(tst));
+        report = buffer.append(heap, report, "\n");
+    }
+    buffer.drop(heap, fj);
+    buffer.drop(heap, cj);
+    buffer.drop(heap, tj);
+    clibase.show(heap, io, report);
+    return status;
+}

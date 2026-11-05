@@ -19,6 +19,7 @@ use super::*;
 mod authority;
 mod bootstrap;
 mod cases;
+mod ci;
 mod cli;
 mod compile;
 mod messages;
@@ -380,6 +381,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "clipublish.cho",
         "clisync.cho",
         "clidir.cho",
+        "clici.cho",
         "version.cho",
         "jsonwrite.cho",
         "cliorigin.cho",

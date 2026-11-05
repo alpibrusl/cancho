@@ -10,6 +10,7 @@ builtins.cho
 checker.cho
 cli.cho
 clibase.cho
+clici.cho
 clidir.cho
 clifetch.cho
 clifmt.cho
