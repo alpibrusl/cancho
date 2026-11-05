@@ -130,7 +130,7 @@ which has no `-g`. The parts:
   on the `define` of each function that has a marker, and `, !dbg !L` on
   every indented non-comment line after it, and takes the markers out. The
   name in the `DISubprogram` is read from the program's text (the word after
-  `fn `), the symbol (`lexs_<item>`) is its `linkageName`. The kind is
+  `fn `),. The kind is
   `LineTablesOnly`, language `DW_LANG_C99` (there is no cancho code).
 * `cliprog.cho`: the `-g` flag of `build` (and not of `check`); the pass runs
   on the module just before `clang`.

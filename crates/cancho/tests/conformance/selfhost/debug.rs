@@ -41,7 +41,8 @@ fn a_program_built_with_g_has_line_tables() {
             String::from_utf8_lossy(&done.stderr)
         );
     };
-    cli(&["build", "-g", "-o", "hello_g", "hello.cho"]);
+    // `-O0`: at `-O2` the optimiser has put `write_all` into `main` and `gdb` has no function of that name to stop in (it has the lines).
+    cli(&["build", "-g", "-O0", "-o", "hello_g", "hello.cho"]);
     cli(&["build", "-g", "-o", "chain_g", "chain.cho"]);
     cli(&["build", "-o", "chain_n", "chain.cho"]);
 

@@ -166,10 +166,6 @@ pub fn run[&h, &r, &l, &n, &y](heap: &!h Heap, ir: &r [byte], laid: &l [byte], l
                 borrow name as &nb in {
                     meta = jsonwrite.string(heap, meta, buffer.bytes(nb));
                 }
-                meta = buffer.append(heap, meta, ", linkageName: ");
-                borrow symbol as &sb in {
-                    meta = jsonwrite.string(heap, meta, buffer.bytes(sb));
-                }
                 meta = buffer.append(heap, meta, ", scope: !");
                 meta = buffer.push_nat(heap, meta, 4 + place.file);
                 meta = buffer.append(heap, meta, ", file: !");
