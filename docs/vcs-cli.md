@@ -87,7 +87,7 @@ question of section 8, R2: this repository's gate is 18 minutes.)*
 
 ## 4. The command surface *(designed)*
 
-Agent-first means, for every command: `--output json` is the stable interface (text is a rendering of it); every
+Agent-first means, for every command: `--output json` is the only output form (V1 has no text rendering: an agent reads JSON, and a second form is a second thing to keep in step); every
 refusal carries a **rule tag** and exit code (the repository's rule), and the same refusal is the same tag on
 every run; nothing is interactive, nothing opens an editor or a pager, nothing asks a question; every command
 that changes state is **idempotent** (running it twice records once) and has `--dry-run`; every command that

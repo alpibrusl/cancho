@@ -27,9 +27,6 @@ impl Parsed {
     pub fn flag(&self, key: &str) -> bool {
         self.flags.contains(key)
     }
-    pub fn json(&self) -> bool {
-        self.value("--output") == Some("json")
-    }
 }
 
 /// `--output`, `--repo` and `--dry-run` are accepted by every command.
@@ -61,8 +58,8 @@ pub(crate) fn parse(
                     it.next().cloned().ok_or_else(|| usage(format!("`{key}` needs a value")))?
                 }
             };
-            if key == "--output" && v != "json" && v != "text" {
-                return Err(usage("`--output` is `json` or `text`"));
+            if key == "--output" && v != "json" {
+                return Err(usage("`--output` is `json`, the only form"));
             }
             p.vals.entry(key.to_owned()).or_default().push(v);
         } else if flags.contains(&key) || key == "--dry-run" {
@@ -74,49 +71,36 @@ pub(crate) fn parse(
     Ok(p)
 }
 
-pub(crate) type Done = (Value, String);
+pub(crate) type Done = Value;
 
-/// Run one command body and print its result in the requested form.
+/// Run one command body and print its result: one JSON document, the only
+/// output form (agents read JSON; there is no text rendering to keep in step).
 pub(crate) fn run(
     name: &str,
-    p: &Parsed,
+    _p: &Parsed,
     body: impl FnOnce() -> VcsResult<Done>,
 ) -> Result<ExitCode, Failure> {
     match body() {
-        Ok((value, text)) => {
-            if p.json() {
-                let mut obj = Map::new();
-                obj.insert("ok".into(), json!(true));
-                obj.insert("command".into(), json!(name));
-                if let Value::Object(m) = value {
-                    obj.extend(m);
-                }
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&Value::Object(obj)).unwrap_or_default()
-                );
-            } else {
-                print!("{text}");
-                if !text.ends_with('\n') && !text.is_empty() {
-                    println!();
-                }
+        Ok(value) => {
+            let mut obj = Map::new();
+            obj.insert("ok".into(), json!(true));
+            obj.insert("command".into(), json!(name));
+            if let Value::Object(m) = value {
+                obj.extend(m);
             }
+            println!("{}", serde_json::to_string_pretty(&Value::Object(obj)).unwrap_or_default());
             Ok(ExitCode::SUCCESS)
         }
         Err(r) => {
             let code = if r.environment { EXIT_ENVIRONMENT } else { EXIT_REFUSED };
-            if p.json() {
-                let mut refused = Map::new();
-                refused.insert("tag".into(), json!(r.tag));
-                refused.insert("message".into(), json!(r.message));
-                if let Value::Object(m) = r.detail {
-                    refused.extend(m);
-                }
-                let doc = json!({"ok": false, "command": name, "refused": Value::Object(refused)});
-                println!("{}", serde_json::to_string_pretty(&doc).unwrap_or_default());
-            } else {
-                eprintln!("refused [{}]: {}", r.tag, r.message);
+            let mut refused = Map::new();
+            refused.insert("tag".into(), json!(r.tag));
+            refused.insert("message".into(), json!(r.message));
+            if let Value::Object(m) = r.detail {
+                refused.extend(m);
             }
+            let doc = json!({"ok": false, "command": name, "refused": Value::Object(refused)});
+            println!("{}", serde_json::to_string_pretty(&doc).unwrap_or_default());
             Ok(ExitCode::from(code))
         }
     }

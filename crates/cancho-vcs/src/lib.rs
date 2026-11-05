@@ -57,7 +57,7 @@ pub use blobs::{BlobError, Blobs};
 pub use bridge::{ExportReport, ImportReport, export_git, import_git, load_gitmap};
 pub use canonical::canonical_bytes;
 pub use change::{Bytes, Change, DeclChange, Edit, GitCommit, Intent};
-pub use diff_text::{Hunk, UnifiedHunk, diff_lines, render_unified, split_lines, unified};
+pub use diff_text::{Hunk, UnifiedHunk, diff_lines, split_lines, unified};
 pub use ed25519_dalek::{SigningKey, VerifyingKey};
 pub use error::{Refusal, Result as VcsResult};
 pub use fsx::failpoints_passed;

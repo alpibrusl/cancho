@@ -41,13 +41,7 @@ pub(crate) fn cmd_import(p: &Parsed) -> VcsResult<Done> {
     let mut doc = report.to_json();
     doc["dry_run"] = json!(dry);
     doc["checked_out"] = json!(checked_out);
-    let text = format!(
-        "imported {} commit(s) ({} already there), {} self-check mismatch(es)\n",
-        report.commits,
-        report.already_imported,
-        report.mismatches.len()
-    );
-    Ok((doc, text))
+    Ok(doc)
 }
 
 pub(crate) fn cmd_export(p: &Parsed) -> VcsResult<Done> {
@@ -61,11 +55,5 @@ pub(crate) fn cmd_export(p: &Parsed) -> VcsResult<Done> {
     let report = export_git(&repo, Path::new(dir), p.flag("--dry-run"))?;
     let mut doc = report.to_json();
     doc["dry_run"] = json!(p.flag("--dry-run"));
-    let text = format!(
-        "exported {} commit(s); {} of {} imported commit(s) kept their id\n",
-        report.commits,
-        report.compared - report.mismatches.len(),
-        report.compared
-    );
-    Ok((doc, text))
+    Ok(doc)
 }

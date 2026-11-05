@@ -52,13 +52,13 @@ fn unified_has_context_and_counts() {
     let u = unified(a, b, 2);
     assert_eq!(u.len(), 1);
     assert_eq!((u[0].old_start, u[0].old_lines, u[0].new_start, u[0].new_lines), (3, 5, 3, 5));
-    let text = render_unified("a", "b", &u);
-    assert!(text.contains("@@ -3,5 +3,5 @@\n 3\n 4\n-5\n+FIVE\n 6\n 7\n"), "{text}");
+    let ops: String = u[0].lines.iter().map(|(c, _)| *c).collect();
+    assert_eq!(ops, "  -+  ");
 }
 
 #[test]
 fn a_missing_final_newline_is_a_difference() {
     let u = unified("a\nb", "a\nb\n", 1);
     assert_eq!(u.len(), 1);
-    assert!(render_unified("a", "b", &u).contains("No newline"));
+    assert!(u[0].lines.iter().any(|(c, l)| *c == '-' && l == "b"));
 }

@@ -15,7 +15,7 @@ use cancho_vcs::{
 };
 use serde_json::{Value, json};
 
-use crate::vcs_args::{Done, Parsed, entry_bytes, rel_path, short};
+use crate::vcs_args::{Done, Parsed, entry_bytes, rel_path};
 use crate::vcs_decl::{decls_of, diff_decls};
 
 pub(crate) fn author(p: &Parsed) -> String {
@@ -275,33 +275,20 @@ pub(crate) fn cmd_record(p: &Parsed) -> VcsResult<Done> {
         Head::Branch(b) => json!(b.strip_prefix("heads/").unwrap_or(&b)),
         Head::Detached(_) => Value::Null,
     };
-    let text = if rec.fresh {
-        format!(
-            "{}recorded {} {}\n",
-            if p.flag("--dry-run") { "would have " } else { "" },
-            short(&rec.id),
-            c.subject()
-        )
-    } else {
-        format!("nothing to record; HEAD is {}\n", short(&rec.id))
-    };
-    Ok((
-        json!({
-            "recorded": rec.fresh && !p.flag("--dry-run"),
-            "dry_run": p.flag("--dry-run"),
-            "unchanged": !rec.fresh,
-            "change": rec.id,
-            "tree": c.tree,
-            "parents": c.parents,
-            "branch": branch,
-            "touched": touched,
-            "decls": c.decls,
-            "edits": c.edits.len(),
-            "gate": {"ran": !p.flag("--no-gate"), "checked": rec.checked},
-            "intent": c.intent,
-        }),
-        text,
-    ))
+    Ok(json!({
+        "recorded": rec.fresh && !p.flag("--dry-run"),
+        "dry_run": p.flag("--dry-run"),
+        "unchanged": !rec.fresh,
+        "change": rec.id,
+        "tree": c.tree,
+        "parents": c.parents,
+        "branch": branch,
+        "touched": touched,
+        "decls": c.decls,
+        "edits": c.edits.len(),
+        "gate": {"ran": !p.flag("--no-gate"), "checked": rec.checked},
+        "intent": c.intent,
+    }))
 }
 
 pub(crate) fn cmd_revert(p: &Parsed) -> VcsResult<Done> {
@@ -374,9 +361,6 @@ pub(crate) fn cmd_revert(p: &Parsed) -> VcsResult<Done> {
             }
         }
     }
-    Ok((
-        json!({"reverted": target, "change": rec.id, "unchanged": !rec.fresh, "touched": touched,
-               "dry_run": p.flag("--dry-run")}),
-        format!("reverted {} as {}\n", short(&target), short(&rec.id)),
-    ))
+    Ok(json!({"reverted": target, "change": rec.id, "unchanged": !rec.fresh, "touched": touched,
+               "dry_run": p.flag("--dry-run")}))
 }

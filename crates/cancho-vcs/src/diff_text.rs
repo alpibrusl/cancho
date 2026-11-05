@@ -172,28 +172,6 @@ pub fn unified(a: &str, b: &str, context: usize) -> Vec<UnifiedHunk> {
     out
 }
 
-/// Text form of `unified`.
-pub fn render_unified(old_name: &str, new_name: &str, hunks: &[UnifiedHunk]) -> String {
-    if hunks.is_empty() {
-        return String::new();
-    }
-    let mut s = format!("--- {old_name}\n+++ {new_name}\n");
-    for h in hunks {
-        s.push_str(&format!(
-            "@@ -{},{} +{},{} @@\n",
-            h.old_start, h.old_lines, h.new_start, h.new_lines
-        ));
-        for (c, l) in &h.lines {
-            s.push(*c);
-            s.push_str(l);
-            if !l.ends_with('\n') {
-                s.push_str("\n\\ No newline at end of file\n");
-            }
-        }
-    }
-    s
-}
-
 #[cfg(test)]
 #[path = "tests/diff_text.rs"]
 mod tests;
