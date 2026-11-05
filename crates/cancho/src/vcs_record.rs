@@ -10,12 +10,12 @@
 use std::collections::BTreeMap;
 
 use cancho_vcs::{
-    Change, DeclChange, Edit, Entry, Expect, Head, Intent, Kind, Refusal, Repo, Tree, VcsResult, derive_edits,
-    diff_trees, now, object_id, work_lock,
+    Change, DeclChange, Edit, Entry, Expect, Head, Intent, Kind, Refusal, Repo, Tree, VcsResult,
+    derive_edits, diff_trees, now, object_id, work_lock,
 };
 use serde_json::{Value, json};
 
-use crate::vcs_args::{Done, Parsed, rel_path, short};
+use crate::vcs_args::{Done, Parsed, entry_bytes, rel_path, short};
 use crate::vcs_decl::{decls_of, diff_decls};
 
 pub(crate) fn author(p: &Parsed) -> String {
@@ -40,11 +40,11 @@ fn gate(repo: &Repo, tree: &Tree, paths: &[String]) -> VcsResult<Vec<String>> {
     let mut checked = Vec::new();
     for path in paths.iter().filter(|p| p.ends_with(".cho")) {
         let Some(entry) = tree.get(path) else { continue };
-        let bytes = repo.store.get(Kind::Blob, &entry.blob)?;
+        let bytes = entry_bytes(repo, entry)?;
         let text = String::from_utf8(bytes)
             .map_err(|_| gate_failed(path, "program-shape", "the file is not UTF-8"))?;
-        let ast = cancho_syntax::parse(&text)
-            .map_err(|d| gate_failed(path, d.rule.tag(), &d.message))?;
+        let ast =
+            cancho_syntax::parse(&text).map_err(|d| gate_failed(path, d.rule.tag(), &d.message))?;
         let mut files: Vec<(String, String)> = vec![(path.clone(), text)];
         if crate::vcs_cli::imports_std(&ast) {
             files.extend(crate::vcs_cli::std_texts());
@@ -54,8 +54,10 @@ fn gate(repo: &Repo, tree: &Tree, paths: &[String]) -> VcsResult<Vec<String>> {
             let first = diags.first();
             let rule = first.map_or("internal".to_owned(), |d| d.rule.to_string());
             let message = first.map_or(String::new(), |d| d.message.clone());
-            let all: Vec<Value> =
-                diags.iter().map(|d| json!({"rule": d.rule.to_string(), "message": d.message})).collect();
+            let all: Vec<Value> = diags
+                .iter()
+                .map(|d| json!({"rule": d.rule.to_string(), "message": d.message}))
+                .collect();
             return Err(Refusal::new("gate-failed", format!("{path}: {rule}: {message}"))
                 .with(json!({"path": path, "rule": rule, "diagnostics": all})));
         }
@@ -65,8 +67,9 @@ fn gate(repo: &Repo, tree: &Tree, paths: &[String]) -> VcsResult<Vec<String>> {
 }
 
 fn gate_failed(path: &str, rule: &str, message: &str) -> Refusal {
-    Refusal::new("gate-failed", format!("{path}: {rule}: {message}"))
-        .with(json!({"path": path, "rule": rule, "diagnostics": [{"rule": rule, "message": message}]}))
+    Refusal::new("gate-failed", format!("{path}: {rule}: {message}")).with(
+        json!({"path": path, "rule": rule, "diagnostics": [{"rule": rule, "message": message}]}),
+    )
 }
 
 /// Declarations and edit operations of the move from `old` to `new`.
@@ -76,7 +79,7 @@ fn derive(repo: &Repo, old: &Tree, new: &Tree) -> VcsResult<(Vec<DeclChange>, Ve
         let load = |e: &Option<Entry>| -> VcsResult<Option<String>> {
             match e {
                 Some(e) if e.mode != cancho_vcs::Mode::Link => {
-                    Ok(String::from_utf8(repo.store.get(Kind::Blob, &e.blob)?).ok())
+                    Ok(String::from_utf8(entry_bytes(repo, e)?).ok())
                 }
                 _ => Ok(None),
             }
@@ -114,7 +117,9 @@ pub(crate) fn commit_tree(
     let head = repo.head_change_id()?;
     let head_tree = repo.tree_of(head.as_deref())?;
     if tree == head_tree {
-        let id = head.ok_or_else(|| Refusal::new("nothing-to-record", "the repository is empty and so is the working copy"))?;
+        let id = head.ok_or_else(|| {
+            Refusal::new("nothing-to-record", "the repository is empty and so is the working copy")
+        })?;
         let change = repo.load_change(&id)?;
         return Ok(Recorded { id, change, fresh: false, checked: vec![] });
     }
@@ -122,7 +127,9 @@ pub(crate) fn commit_tree(
     let checked = if p.flag("--no-gate") { vec![] } else { gate(repo, &tree, touched)? };
     let (decls, edits) = derive(repo, &head_tree, &tree)?;
     let time = match p.value("--time") {
-        Some(t) => t.parse::<i64>().map_err(|_| Refusal::new("bad-argument", "`--time` is unix seconds"))?,
+        Some(t) => t
+            .parse::<i64>()
+            .map_err(|_| Refusal::new("bad-argument", "`--time` is unix seconds"))?,
         None => now(),
     };
     let tree_bytes = tree.encode();
@@ -213,11 +220,16 @@ pub(crate) fn cmd_record(p: &Parsed) -> VcsResult<Done> {
     let rec = commit_tree(&repo, tree, &touched, intent(p), p, "record")?;
     let c = &rec.change;
     let branch = match repo.head()? {
-        Head::Branch(b) => json!(b),
+        Head::Branch(b) => json!(b.strip_prefix("heads/").unwrap_or(&b)),
         Head::Detached(_) => Value::Null,
     };
     let text = if rec.fresh {
-        format!("{}recorded {} {}\n", if p.flag("--dry-run") { "would have " } else { "" }, short(&rec.id), c.subject())
+        format!(
+            "{}recorded {} {}\n",
+            if p.flag("--dry-run") { "would have " } else { "" },
+            short(&rec.id),
+            c.subject()
+        )
     } else {
         format!("nothing to record; HEAD is {}\n", short(&rec.id))
     };
@@ -254,8 +266,13 @@ pub(crate) fn cmd_revert(p: &Parsed) -> VcsResult<Done> {
         ));
     }
     if !repo.status()?.is_empty() {
-        return Err(Refusal::new("dirty-working-copy", "record or restore the working copy before a revert")
-            .with(json!({"paths": repo.status()?.iter().map(|s| s.path.clone()).collect::<Vec<_>>()})));
+        return Err(Refusal::new(
+            "dirty-working-copy",
+            "record or restore the working copy before a revert",
+        )
+        .with(
+            json!({"paths": repo.status()?.iter().map(|s| s.path.clone()).collect::<Vec<_>>()}),
+        ));
     }
     let parent_tree = repo.tree_of(Some(&tc.parents[0]))?;
     let target_tree = Tree::load(&repo.store, &tc.tree)?;

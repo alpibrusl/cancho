@@ -1,0 +1,17 @@
+{
+  "branch": "main",
+  "changes": [
+    {
+      "path": "a.cho",
+      "state": "added"
+    },
+    {
+      "path": "notes.md",
+      "state": "added"
+    }
+  ],
+  "clean": false,
+  "command": "status",
+  "head": null,
+  "ok": true
+}

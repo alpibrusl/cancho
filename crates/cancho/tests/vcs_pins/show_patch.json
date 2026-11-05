@@ -1,0 +1,84 @@
+{
+  "attestations": [
+    "gate:cancho-check:ok:1"
+  ],
+  "author": "Ada <ada@example.com>",
+  "change": "9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442",
+  "command": "show",
+  "decls": [
+    {
+      "kind": "added",
+      "name": "fn a.thrice",
+      "path": "a.cho"
+    },
+    {
+      "kind": "body-changed",
+      "name": "fn a.twice",
+      "path": "a.cho"
+    }
+  ],
+  "edits": [],
+  "files": [
+    {
+      "path": "a.cho",
+      "state": "modified"
+    }
+  ],
+  "intent": {
+    "issue": "7",
+    "prompt": "second"
+  },
+  "ok": true,
+  "parents": [
+    "960fd3a813e8e05e68c304a1ea92bf374b61dd07399c70166822fd6e6c7b716f"
+  ],
+  "patch": [
+    {
+      "binary": false,
+      "decls": [
+        {
+          "kind": "added",
+          "name": "fn a.thrice",
+          "path": "a.cho"
+        },
+        {
+          "kind": "body-changed",
+          "name": "fn a.twice",
+          "path": "a.cho"
+        }
+      ],
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": " ",
+              "text": "module a;\n"
+            },
+            {
+              "op": "-",
+              "text": "pub fn twice(n: int) -> [] int { return n + n; }\n"
+            },
+            {
+              "op": "+",
+              "text": "pub fn twice(n: int) -> [] int { return n + n + 0; }\n"
+            },
+            {
+              "op": "+",
+              "text": "pub fn thrice(n: int) -> [] int { return n * 3; }\n"
+            }
+          ],
+          "new_lines": 3,
+          "new_start": 1,
+          "old_lines": 2,
+          "old_start": 1
+        }
+      ],
+      "path": "a.cho",
+      "status": "modified"
+    }
+  ],
+  "subject": "second",
+  "time": 1001,
+  "tree": "9e43c746edc5bb2117c3e37bae9e27641258b9dce2f3614e9d494825f11665d3",
+  "tz": "+0000"
+}

@@ -83,13 +83,26 @@ impl Repo {
         let created = !vcs.join("format").is_file();
         if created {
             for d in ["objects", "refs/heads", "refs/tags", "tmp"] {
-                fs::create_dir_all(vcs.join(d)).map_err(|e| Refusal::io("cannot create the store", &e))?;
+                fs::create_dir_all(vcs.join(d))
+                    .map_err(|e| Refusal::io("cannot create the store", &e))?;
             }
-            fsx::write_atomic(&vcs.join("tmp"), &vcs.join("HEAD"), format!("ref: refs/heads/{branch}\n").as_bytes(), false, true)
-                .map_err(|e| Refusal::io("cannot write HEAD", &e))?;
+            fsx::write_atomic(
+                &vcs.join("tmp"),
+                &vcs.join("HEAD"),
+                format!("ref: refs/heads/{branch}\n").as_bytes(),
+                false,
+                true,
+            )
+            .map_err(|e| Refusal::io("cannot write HEAD", &e))?;
             // The format file is written last: a store without it is "not a repository".
-            fsx::write_atomic(&vcs.join("tmp"), &vcs.join("format"), FORMAT.as_bytes(), false, true)
-                .map_err(|e| Refusal::io("cannot write the format file", &e))?;
+            fsx::write_atomic(
+                &vcs.join("tmp"),
+                &vcs.join("format"),
+                FORMAT.as_bytes(),
+                false,
+                true,
+            )
+            .map_err(|e| Refusal::io("cannot write the format file", &e))?;
         }
         Ok((Repo { root: root.to_path_buf(), store: Store::new(&vcs), vcs }, created))
     }
@@ -100,7 +113,10 @@ impl Repo {
             let vcs = dir.join(".cancho").join("vcs");
             if let Ok(f) = fs::read_to_string(vcs.join("format")) {
                 if f != FORMAT {
-                    return Err(Refusal::new("not-a-repository", format!("unknown store format `{}`", f.trim())));
+                    return Err(Refusal::new(
+                        "not-a-repository",
+                        format!("unknown store format `{}`", f.trim()),
+                    ));
                 }
                 return Ok(Repo { root: dir, store: Store::new(&vcs), vcs });
             }
@@ -118,7 +134,8 @@ impl Repo {
     }
 
     pub fn head(&self) -> Result<Head> {
-        let text = fs::read_to_string(self.vcs.join("HEAD")).map_err(|e| Refusal::io("cannot read HEAD", &e))?;
+        let text = fs::read_to_string(self.vcs.join("HEAD"))
+            .map_err(|e| Refusal::io("cannot read HEAD", &e))?;
         let text = text.trim();
         if let Some(r) = text.strip_prefix("ref: refs/") {
             Ok(Head::Branch(r.to_owned()))
@@ -134,8 +151,14 @@ impl Repo {
             Head::Branch(b) => format!("ref: refs/{b}\n"),
             Head::Detached(id) => format!("{id}\n"),
         };
-        fsx::write_atomic(&self.vcs.join("tmp"), &self.vcs.join("HEAD"), text.as_bytes(), false, true)
-            .map_err(|e| Refusal::io("cannot write HEAD", &e))
+        fsx::write_atomic(
+            &self.vcs.join("tmp"),
+            &self.vcs.join("HEAD"),
+            text.as_bytes(),
+            false,
+            true,
+        )
+        .map_err(|e| Refusal::io("cannot write HEAD", &e))
     }
 
     pub fn head_change_id(&self) -> Result<Option<String>> {
@@ -163,7 +186,11 @@ impl Repo {
     /// `HEAD`, `HEAD~2`, a branch or tag name, a full id, or a unique id prefix (6+ hex).
     pub fn resolve(&self, spec: &str) -> Result<String> {
         let (base, back) = match spec.split_once('~') {
-            Some((b, n)) => (b, n.parse::<usize>().map_err(|_| Refusal::new("bad-revision", format!("`{spec}`")))?),
+            Some((b, n)) => (
+                b,
+                n.parse::<usize>()
+                    .map_err(|_| Refusal::new("bad-revision", format!("`{spec}`")))?,
+            ),
             None => (spec, 0),
         };
         let mut id = self.resolve_one(base)?;
@@ -193,8 +220,12 @@ impl Repo {
             }
         }
         if name.len() >= 6 && name.bytes().all(|b| b.is_ascii_hexdigit()) {
-            let hits: Vec<String> =
-                self.store.list(Kind::Change)?.into_iter().filter(|i| i.starts_with(name)).collect();
+            let hits: Vec<String> = self
+                .store
+                .list(Kind::Change)?
+                .into_iter()
+                .filter(|i| i.starts_with(name))
+                .collect();
             match hits.len() {
                 1 => return Ok(hits[0].clone()),
                 0 => {}
@@ -211,7 +242,8 @@ impl Repo {
     pub fn history(&self, from: &str) -> Result<Vec<(String, Change)>> {
         let mut seen = HashSet::new();
         let mut heap = BinaryHeap::new();
-        let mut loaded: std::collections::HashMap<String, Change> = std::collections::HashMap::new();
+        let mut loaded: std::collections::HashMap<String, Change> =
+            std::collections::HashMap::new();
         let mut out = Vec::new();
         let c = self.load_change(from)?;
         heap.push((c.time, from.to_owned()));
@@ -241,33 +273,53 @@ impl Repo {
     }
 
     fn scan_dir(&self, dir: &Path, rel: &str, ig: &Ignore, out: &mut Vec<Entry>) -> Result<()> {
-        let rd = fs::read_dir(dir).map_err(|e| Refusal::io(format!("cannot read {}", dir.display()), &e))?;
+        let rd = fs::read_dir(dir)
+            .map_err(|e| Refusal::io(format!("cannot read {}", dir.display()), &e))?;
         for entry in rd {
             let entry = entry.map_err(|e| Refusal::io("cannot read a directory entry", &e))?;
             let name = entry.file_name();
             let Some(name) = name.to_str() else {
-                return Err(Refusal::new("path-unsupported", format!("a non-UTF-8 name under `{rel}`")));
+                return Err(Refusal::new(
+                    "path-unsupported",
+                    format!("a non-UTF-8 name under `{rel}`"),
+                ));
             };
             let path = if rel.is_empty() { name.to_owned() } else { format!("{rel}/{name}") };
-            let meta = fs::symlink_metadata(entry.path()).map_err(|e| Refusal::io(format!("cannot stat {path}"), &e))?;
+            let meta = fs::symlink_metadata(entry.path())
+                .map_err(|e| Refusal::io(format!("cannot stat {path}"), &e))?;
             if ig.skips(&path, meta.is_dir()) {
                 continue;
             }
             if meta.is_dir() {
                 self.scan_dir(&entry.path(), &path, ig, out)?;
             } else if meta.file_type().is_symlink() {
-                let target = fs::read_link(entry.path()).map_err(|e| Refusal::io(format!("cannot read link {path}"), &e))?;
-                let t = target.to_str().ok_or_else(|| Refusal::new("path-unsupported", format!("link target of `{path}`")))?;
+                let target = fs::read_link(entry.path())
+                    .map_err(|e| Refusal::io(format!("cannot read link {path}"), &e))?;
+                let t = target.to_str().ok_or_else(|| {
+                    Refusal::new("path-unsupported", format!("link target of `{path}`"))
+                })?;
                 check_path(&path)?;
-                out.push(Entry { path, mode: Mode::Link, blob: object_id(Kind::Blob, t.as_bytes()) });
+                out.push(Entry {
+                    path,
+                    mode: Mode::Link,
+                    blob: object_id(Kind::Blob, t.as_bytes()),
+                });
             } else if meta.is_file() {
                 if meta.len() as usize > MAX_BLOB {
-                    return Err(Refusal::new("file-too-large", format!("`{path}` is {} bytes", meta.len()))
-                        .with(json!({"path": path})));
+                    return Err(Refusal::new(
+                        "file-too-large",
+                        format!("`{path}` is {} bytes", meta.len()),
+                    )
+                    .with(json!({"path": path})));
                 }
-                let bytes = fs::read(entry.path()).map_err(|e| Refusal::io(format!("cannot read {path}"), &e))?;
+                let bytes = fs::read(entry.path())
+                    .map_err(|e| Refusal::io(format!("cannot read {path}"), &e))?;
                 check_path(&path)?;
-                out.push(Entry { path, mode: file_mode(&meta), blob: object_id(Kind::Blob, &bytes) });
+                out.push(Entry {
+                    path,
+                    mode: file_mode(&meta),
+                    blob: object_id(Kind::Blob, &bytes),
+                });
             }
         }
         Ok(())
@@ -297,7 +349,10 @@ impl Repo {
         };
         let id = self.store.put(Kind::Blob, &bytes)?;
         if id != entry.blob {
-            return Err(Refusal::new("dirty-working-copy", format!("`{}` changed while it was being recorded", entry.path)));
+            return Err(Refusal::new(
+                "dirty-working-copy",
+                format!("`{}` changed while it was being recorded", entry.path),
+            ));
         }
         Ok(())
     }
@@ -313,7 +368,8 @@ impl Repo {
             {
                 let target = String::from_utf8_lossy(&bytes).into_owned();
                 if let Some(p) = abs.parent() {
-                    fs::create_dir_all(p).map_err(|e| Refusal::io("cannot create a directory", &e))?;
+                    fs::create_dir_all(p)
+                        .map_err(|e| Refusal::io("cannot create a directory", &e))?;
                 }
                 let _ = fs::remove_file(&abs);
                 return std::os::unix::fs::symlink(&target, &abs)
@@ -336,14 +392,16 @@ impl Repo {
             if let Ok(m) = fs::symlink_metadata(dir)
                 && !m.is_dir()
             {
-                fs::remove_file(dir).map_err(|e| Refusal::io("cannot replace a file by a directory", &e))?;
+                fs::remove_file(dir)
+                    .map_err(|e| Refusal::io("cannot replace a file by a directory", &e))?;
             }
             p = dir.parent();
         }
         if let Ok(m) = fs::symlink_metadata(abs)
             && m.is_dir()
         {
-            fs::remove_dir_all(abs).map_err(|e| Refusal::io("cannot replace a directory by a file", &e))?;
+            fs::remove_dir_all(abs)
+                .map_err(|e| Refusal::io("cannot replace a directory by a file", &e))?;
         }
         Ok(())
     }

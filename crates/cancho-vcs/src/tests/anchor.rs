@@ -15,7 +15,7 @@ fn an_anchor_is_widened_until_it_is_unique() {
     // `b` occurs twice, so the edit of the second one carries its neighbours.
     let edits = derive_edits("f", "a\nb\nc\nb\nd\n", "a\nb\nc\nB\nd\n");
     assert_eq!(edits.len(), 1);
-    assert_eq!(edits[0].old.matches('\n').count() >= 2, true);
+    assert!(edits[0].old.matches('\n').count() >= 2);
     assert_eq!(edits[0].old.matches("c\nb\n").count(), 1);
 }
 
@@ -32,5 +32,8 @@ fn replaying_onto_a_moved_base_still_lands() {
     let base = "one\ntwo\nthree\n";
     let edits = derive_edits("f", base, "one\n2\nthree\n");
     // The other side added lines elsewhere; the anchor is still unique.
-    assert_eq!(apply_edits("zero\none\ntwo\nthree\nfour\n", &edits).unwrap(), "zero\none\n2\nthree\nfour\n");
+    assert_eq!(
+        apply_edits("zero\none\ntwo\nthree\nfour\n", &edits).unwrap(),
+        "zero\none\n2\nthree\nfour\n"
+    );
 }

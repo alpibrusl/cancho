@@ -64,7 +64,14 @@ pub fn diff_lines(a: &[&str], b: &[&str]) -> Vec<Hunk> {
 }
 
 /// The common block whose first line is rarest in `a`, longest among ties.
-fn best_match(a: &[&str], b: &[&str], a0: usize, a1: usize, b0: usize, b1: usize) -> Option<(usize, usize, usize)> {
+fn best_match(
+    a: &[&str],
+    b: &[&str],
+    a0: usize,
+    a1: usize,
+    b0: usize,
+    b1: usize,
+) -> Option<(usize, usize, usize)> {
     let mut at: HashMap<&str, Vec<usize>> = HashMap::new();
     for (i, line) in a.iter().enumerate().take(a1).skip(a0) {
         let v = at.entry(line).or_default();
@@ -117,7 +124,9 @@ pub fn unified(a: &str, b: &str, context: usize) -> Vec<UnifiedHunk> {
     let mut out: Vec<UnifiedHunk> = Vec::new();
     let mut group: Vec<Hunk> = Vec::new();
     let flush = |group: &mut Vec<Hunk>, out: &mut Vec<UnifiedHunk>| {
-        let (Some(first), Some(last)) = (group.first().copied(), group.last().copied()) else { return };
+        let (Some(first), Some(last)) = (group.first().copied(), group.last().copied()) else {
+            return;
+        };
         let a_from = first.a_start.saturating_sub(context);
         let b_from = first.b_start - (first.a_start - a_from);
         let a_to = (last.a_start + last.a_len + context).min(al.len());
@@ -170,7 +179,10 @@ pub fn render_unified(old_name: &str, new_name: &str, hunks: &[UnifiedHunk]) -> 
     }
     let mut s = format!("--- {old_name}\n+++ {new_name}\n");
     for h in hunks {
-        s.push_str(&format!("@@ -{},{} +{},{} @@\n", h.old_start, h.old_lines, h.new_start, h.new_lines));
+        s.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n",
+            h.old_start, h.old_lines, h.new_start, h.new_lines
+        ));
         for (c, l) in &h.lines {
             s.push(*c);
             s.push_str(l);

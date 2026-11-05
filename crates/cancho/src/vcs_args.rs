@@ -33,7 +33,11 @@ impl Parsed {
 }
 
 /// `--output`, `--repo` and `--dry-run` are accepted by every command.
-pub(crate) fn parse(args: &[String], with_value: &[&str], flags: &[&str]) -> Result<Parsed, Failure> {
+pub(crate) fn parse(
+    args: &[String],
+    with_value: &[&str],
+    flags: &[&str],
+) -> Result<Parsed, Failure> {
     let mut p = Parsed { pos: vec![], vals: HashMap::new(), flags: HashSet::new() };
     let mut it = args.iter();
     let mut options = true;
@@ -53,7 +57,9 @@ pub(crate) fn parse(args: &[String], with_value: &[&str], flags: &[&str]) -> Res
         if with_value.contains(&key) || key == "--output" || key == "--repo" {
             let v = match inline {
                 Some(v) => v,
-                None => it.next().cloned().ok_or_else(|| usage(format!("`{key}` needs a value")))?,
+                None => {
+                    it.next().cloned().ok_or_else(|| usage(format!("`{key}` needs a value")))?
+                }
             };
             if key == "--output" && v != "json" && v != "text" {
                 return Err(usage("`--output` is `json` or `text`"));
@@ -85,7 +91,10 @@ pub(crate) fn run(
                 if let Value::Object(m) = value {
                     obj.extend(m);
                 }
-                println!("{}", serde_json::to_string_pretty(&Value::Object(obj)).unwrap_or_default());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&Value::Object(obj)).unwrap_or_default()
+                );
             } else {
                 print!("{text}");
                 if !text.ends_with('\n') && !text.is_empty() {
@@ -121,7 +130,8 @@ pub(crate) fn open(p: &Parsed) -> VcsResult<Repo> {
 /// arguments are taken from the current directory, `..` is resolved
 /// lexically, and leaving the root is `path-escapes`. The root itself is "".
 pub(crate) fn rel_path(repo: &Repo, arg: &str) -> VcsResult<String> {
-    let cwd = std::env::current_dir().map_err(|e| Refusal::io("cannot read the current directory", &e))?;
+    let cwd = std::env::current_dir()
+        .map_err(|e| Refusal::io("cannot read the current directory", &e))?;
     let cwd = std::fs::canonicalize(&cwd).unwrap_or(cwd);
     let joined = if Path::new(arg).is_absolute() { PathBuf::from(arg) } else { cwd.join(arg) };
     let mut parts: Vec<std::ffi::OsString> = Vec::new();
@@ -138,10 +148,37 @@ pub(crate) fn rel_path(repo: &Repo, arg: &str) -> VcsResult<String> {
     let rel = normal
         .strip_prefix(&repo.root)
         .map_err(|_| Refusal::new("path-escapes", format!("`{arg}` is outside the repository")))?;
-    let s = rel.to_str().ok_or_else(|| Refusal::new("path-unsupported", "a path that is not UTF-8"))?;
+    let s =
+        rel.to_str().ok_or_else(|| Refusal::new("path-unsupported", "a path that is not UTF-8"))?;
     Ok(s.replace('\\', "/"))
 }
 
 pub(crate) fn short(id: &str) -> &str {
     &id[..id.len().min(12)]
+}
+
+/// The bytes of a tree entry: from the store, or, for an entry that only
+/// exists in the working copy so far, from its file (checked against the
+/// entry's id). Reading never writes to the store.
+pub(crate) fn entry_bytes(repo: &Repo, e: &cancho_vcs::Entry) -> VcsResult<Vec<u8>> {
+    if repo.store.has(cancho_vcs::Kind::Blob, &e.blob) {
+        return repo.store.get(cancho_vcs::Kind::Blob, &e.blob);
+    }
+    let abs = repo.root.join(&e.path);
+    let bytes = if e.mode == cancho_vcs::Mode::Link {
+        std::fs::read_link(&abs)
+            .map_err(|er| Refusal::io(format!("cannot read link {}", e.path), &er))?
+            .to_string_lossy()
+            .into_owned()
+            .into_bytes()
+    } else {
+        std::fs::read(&abs).map_err(|er| Refusal::io(format!("cannot read {}", e.path), &er))?
+    };
+    if cancho_vcs::object_id(cancho_vcs::Kind::Blob, &bytes) != e.blob {
+        return Err(Refusal::new(
+            "dirty-working-copy",
+            format!("`{}` changed while it was being read", e.path),
+        ));
+    }
+    Ok(bytes)
 }

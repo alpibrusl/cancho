@@ -44,8 +44,14 @@ pub fn load_gitmap(repo: &Repo) -> HashMap<String, String> {
 fn save_gitmap(repo: &Repo, map: &HashMap<String, String>) -> Result<()> {
     let mut lines: Vec<String> = map.iter().map(|(g, c)| format!("{g} {c}\n")).collect();
     lines.sort();
-    fsx::write_atomic(&repo.vcs.join("tmp"), &gitmap_path(repo), lines.concat().as_bytes(), false, true)
-        .map_err(|e| Refusal::io("cannot write the git map", &e))
+    fsx::write_atomic(
+        &repo.vcs.join("tmp"),
+        &gitmap_path(repo),
+        lines.concat().as_bytes(),
+        false,
+        true,
+    )
+    .map_err(|e| Refusal::io("cannot write the git map", &e))
 }
 
 struct Importer<'a> {
@@ -97,7 +103,10 @@ impl Importer<'_> {
                     }
                 }
                 0o160000 => {
-                    return Err(Refusal::new("submodule-unsupported", format!("`{name}` is a submodule")));
+                    return Err(Refusal::new(
+                        "submodule-unsupported",
+                        format!("`{name}` is a submodule"),
+                    ));
                 }
                 _ => {
                     let m = match mode {
@@ -182,7 +191,11 @@ pub fn import_git(repo: &Repo, git: &GitRepo, dry: bool) -> Result<ImportReport>
                 }
                 GitKind::Tag => {
                     let text = String::from_utf8_lossy(&body);
-                    let Some(next) = text.lines().next().and_then(|l| l.strip_prefix("object ")).and_then(crate::gitread::parse_id)
+                    let Some(next) = text
+                        .lines()
+                        .next()
+                        .and_then(|l| l.strip_prefix("object "))
+                        .and_then(crate::gitread::parse_id)
                     else {
                         break;
                     };
@@ -209,7 +222,10 @@ pub fn import_git(repo: &Repo, git: &GitRepo, dry: bool) -> Result<ImportReport>
             done.insert(id);
             let (kind, body) = git.read(&id)?;
             if kind != GitKind::Commit {
-                return Err(Refusal::new("git-unreadable", format!("{} is not a commit", hex(&id))));
+                return Err(Refusal::new(
+                    "git-unreadable",
+                    format!("{} is not a commit", hex(&id)),
+                ));
             }
             let c = parse_commit(&body)?;
             stack.push((id, true));
@@ -223,7 +239,14 @@ pub fn import_git(repo: &Repo, git: &GitRepo, dry: bool) -> Result<ImportReport>
     }
 
     let mut gitmap = load_gitmap(repo);
-    let mut imp = Importer { git, store: &repo.store, dry, blobs: HashMap::new(), trees: HashMap::new(), new_blobs: 0 };
+    let mut imp = Importer {
+        git,
+        store: &repo.store,
+        dry,
+        blobs: HashMap::new(),
+        trees: HashMap::new(),
+        new_blobs: 0,
+    };
     let mut report = ImportReport {
         commits: 0,
         already_imported: 0,
@@ -247,12 +270,24 @@ pub fn import_git(repo: &Repo, git: &GitRepo, dry: bool) -> Result<ImportReport>
         }
         let c = &commits[gid];
         let flat = imp.flatten(&c.tree)?;
-        let tree = Tree::new(flat.iter().map(|(p, m, b)| Entry { path: p.clone(), mode: *m, blob: b.clone() }).collect())?;
-        let tree_id = if dry { crate::object::object_id(Kind::Tree, &tree.encode()) } else { tree.save(&repo.store)? };
+        let tree = Tree::new(
+            flat.iter()
+                .map(|(p, m, b)| Entry { path: p.clone(), mode: *m, blob: b.clone() })
+                .collect(),
+        )?;
+        let tree_id = if dry {
+            crate::object::object_id(Kind::Tree, &tree.encode())
+        } else {
+            tree.save(&repo.store)?
+        };
         let parents: Vec<String> = c
             .parents
             .iter()
-            .map(|p| ids.get(p).cloned().ok_or_else(|| Refusal::new("git-unreadable", "a parent was not imported first")))
+            .map(|p| {
+                ids.get(p).cloned().ok_or_else(|| {
+                    Refusal::new("git-unreadable", "a parent was not imported first")
+                })
+            })
             .collect::<Result<_>>()?;
         let (author, time, tz) = author_fields(&c.headers);
         let change = Change {
@@ -270,9 +305,16 @@ pub fn import_git(repo: &Repo, git: &GitRepo, dry: bool) -> Result<ImportReport>
             decls: vec![],
             edits: vec![],
             attestations: vec![],
-            git: Some(GitCommit { headers: crate::change::Bytes(c.headers.clone()), message: crate::change::Bytes(c.message.clone()) }),
+            git: Some(GitCommit {
+                headers: crate::change::Bytes(c.headers.clone()),
+                message: crate::change::Bytes(c.message.clone()),
+            }),
         };
-        let cid = if dry { crate::object::object_id(Kind::Change, &change.encode()) } else { change.save(&repo.store)? };
+        let cid = if dry {
+            crate::object::object_id(Kind::Change, &change.encode())
+        } else {
+            change.save(&repo.store)?
+        };
         // The self-check: this change must render as the commit it came from.
         let git_ids: Vec<GitId> = c.parents.clone();
         let recomputed = id_of(GitKind::Commit, &commit_bytes(&change, &c.tree, &git_ids));
@@ -306,7 +348,12 @@ pub fn import_git(repo: &Repo, git: &GitRepo, dry: bool) -> Result<ImportReport>
             if kind != GitKind::Tag {
                 break;
             }
-            match String::from_utf8_lossy(&body).lines().next().and_then(|l| l.strip_prefix("object ")).and_then(crate::gitread::parse_id) {
+            match String::from_utf8_lossy(&body)
+                .lines()
+                .next()
+                .and_then(|l| l.strip_prefix("object "))
+                .and_then(crate::gitread::parse_id)
+            {
                 Some(n) => cur = n,
                 None => break,
             }
@@ -326,7 +373,9 @@ pub fn import_git(repo: &Repo, git: &GitRepo, dry: bool) -> Result<ImportReport>
             continue;
         }
         match refs::read_ref(&repo.vcs, &short)? {
-            Some(existing) if existing != change => report.refs_kept.push(format!("{short}: already at {existing}")),
+            Some(existing) if existing != change => {
+                report.refs_kept.push(format!("{short}: already at {existing}"))
+            }
             _ => {
                 refs::update_ref(&repo.vcs, &short, &change, &Expect::Any, "import-git")?;
                 bucket.push((short, change));
@@ -374,7 +423,10 @@ fn native_message(change: &Change) -> String {
         m.push_str(i.prompt.trim_end());
         m.push('\n');
     }
-    let mut trailers = vec![format!("Cancho-Change: {}", crate::object::object_id(Kind::Change, &change.encode()))];
+    let mut trailers = vec![format!(
+        "Cancho-Change: {}",
+        crate::object::object_id(Kind::Change, &change.encode())
+    )];
     if let Some(i) = &change.intent {
         if let Some(s) = &i.session {
             trailers.push(format!("Cancho-Session: {s}"));
@@ -410,8 +462,14 @@ impl Exporter<'_> {
             if !path.exists() {
                 let mut raw = format!("{} {}\0", kind.name(), body.len()).into_bytes();
                 raw.extend_from_slice(body);
-                fsx::write_atomic(&self.git_dir.join("objects").join("tmp"), &path, &zlib_store(&raw), false, false)
-                    .map_err(|e| Refusal::io(format!("cannot write git object {name}"), &e))?;
+                fsx::write_atomic(
+                    &self.git_dir.join("objects").join("tmp"),
+                    &path,
+                    &zlib_store(&raw),
+                    false,
+                    false,
+                )
+                .map_err(|e| Refusal::io(format!("cannot write git object {name}"), &e))?;
                 self.objects_written += 1;
             }
         }
@@ -437,7 +495,12 @@ impl Exporter<'_> {
             match rest.find('/') {
                 None => {
                     let id = self.blob(&entries[i].blob)?;
-                    rows.push((rest.as_bytes().to_vec(), entries[i].mode.octal().to_owned(), rest.as_bytes().to_vec(), id));
+                    rows.push((
+                        rest.as_bytes().to_vec(),
+                        entries[i].mode.octal().to_owned(),
+                        rest.as_bytes().to_vec(),
+                        id,
+                    ));
                     i += 1;
                 }
                 Some(slash) => {
@@ -502,18 +565,34 @@ pub fn export_git(repo: &Repo, dir: &Path, dry: bool) -> Result<ExportReport> {
     }
     if !dry {
         for d in ["objects/tmp", "refs/heads", "refs/tags"] {
-            fs::create_dir_all(dir.join(d)).map_err(|e| Refusal::io("cannot create the git directory", &e))?;
+            fs::create_dir_all(dir.join(d))
+                .map_err(|e| Refusal::io("cannot create the git directory", &e))?;
         }
         let write_new = |name: &str, text: &str| -> Result<()> {
             if dir.join(name).exists() {
                 return Ok(());
             }
-            fsx::write_atomic(&dir.join("objects").join("tmp"), &dir.join(name), text.as_bytes(), false, true)
-                .map_err(|e| Refusal::io(format!("cannot write {name}"), &e))
+            fsx::write_atomic(
+                &dir.join("objects").join("tmp"),
+                &dir.join(name),
+                text.as_bytes(),
+                false,
+                true,
+            )
+            .map_err(|e| Refusal::io(format!("cannot write {name}"), &e))
         };
-        write_new("config", "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = true\n")?;
+        write_new(
+            "config",
+            "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = true\n",
+        )?;
     }
-    let mut ex = Exporter { repo, git_dir: dir, written: HashSet::new(), blob_ids: HashMap::new(), objects_written: 0 };
+    let mut ex = Exporter {
+        repo,
+        git_dir: dir,
+        written: HashSet::new(),
+        blob_ids: HashMap::new(),
+        objects_written: 0,
+    };
     let mut git_of: HashMap<String, GitId> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -553,23 +632,41 @@ pub fn export_git(repo: &Repo, dir: &Path, dry: bool) -> Result<ExportReport> {
         let g = if dry { id_of(GitKind::Commit, &body) } else { ex.write(GitKind::Commit, &body)? };
         git_of.insert(id.clone(), g);
     }
-    let mut report = ExportReport { commits: order.len(), objects_written: ex.objects_written, refs: vec![], compared: 0, mismatches: vec![] };
+    let mut report = ExportReport {
+        commits: order.len(),
+        objects_written: ex.objects_written,
+        refs: vec![],
+        compared: 0,
+        mismatches: vec![],
+    };
     if !dry {
         for (name, id) in &tips {
             if name == "HEAD" {
                 continue;
             }
             let g = hex(&git_of[id]);
-            fsx::write_atomic(&dir.join("objects").join("tmp"), &dir.join("refs").join(name), format!("{g}\n").as_bytes(), false, true)
-                .map_err(|e| Refusal::io("cannot write a git ref", &e))?;
+            fsx::write_atomic(
+                &dir.join("objects").join("tmp"),
+                &dir.join("refs").join(name),
+                format!("{g}\n").as_bytes(),
+                false,
+                true,
+            )
+            .map_err(|e| Refusal::io("cannot write a git ref", &e))?;
             report.refs.push((format!("refs/{name}"), g));
         }
         let head = match repo.head()? {
             crate::repo::Head::Branch(b) => format!("ref: refs/{b}\n"),
             crate::repo::Head::Detached(id) => format!("{}\n", hex(&git_of[&id])),
         };
-        fsx::write_atomic(&dir.join("objects").join("tmp"), &dir.join("HEAD"), head.as_bytes(), false, true)
-            .map_err(|e| Refusal::io("cannot write git HEAD", &e))?;
+        fsx::write_atomic(
+            &dir.join("objects").join("tmp"),
+            &dir.join("HEAD"),
+            head.as_bytes(),
+            false,
+            true,
+        )
+        .map_err(|e| Refusal::io("cannot write git HEAD", &e))?;
     }
     // Every imported commit must come back with its original id.
     for (orig, cid) in load_gitmap(repo) {

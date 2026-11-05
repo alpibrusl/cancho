@@ -50,32 +50,32 @@ mod sha1;
 mod tree;
 
 pub use anchor::{MAX_EDIT_BYTES, apply_edits, derive_edits};
-pub use bridge::{ExportReport, ImportReport, export_git, import_git, load_gitmap};
-pub use change::{Bytes, Change, DeclChange, Edit, GitCommit, Intent};
-pub use diff_text::{Hunk, UnifiedHunk, diff_lines, render_unified, split_lines, unified};
-pub use error::{Refusal, Result as VcsResult};
-pub use fsx::failpoints_passed;
-pub use gitread::GitRepo;
-pub use object::{Kind, MAX_BLOB, Store, is_id, object_id};
-pub use refs::{
-    Expect, LockGuard, check_ref_name, delete_ref, list_refs, locks, now, read_log, read_ref, update_ref,
-    work_lock,
-};
-pub use repo::{FORMAT, Head, Ignore, Repo, StatusEntry};
-pub use tree::{ChangeKind, Entry, Mode, PathChange, Tree, check_path, diff_trees};
 pub use attestation::{
     AttestationEvent, BrokenAt, Chain, ChainPayload, Entry as AttestationEntry, GENESIS, Seal,
 };
 pub use blobs::{BlobError, Blobs};
+pub use bridge::{ExportReport, ImportReport, export_git, import_git, load_gitmap};
 pub use canonical::canonical_bytes;
+pub use change::{Bytes, Change, DeclChange, Edit, GitCommit, Intent};
+pub use diff_text::{Hunk, UnifiedHunk, diff_lines, render_unified, split_lines, unified};
 pub use ed25519_dalek::{SigningKey, VerifyingKey};
+pub use error::{Refusal, Result as VcsResult};
+pub use fsx::failpoints_passed;
 pub use gate::{GateDiagnostic, check_candidate};
+pub use gitread::GitRepo;
 pub use lock::{Lock, LockEntry, LockError, Origin};
 pub use manifest::{Manifest, ManifestEntry, ManifestError};
+pub use object::{Kind, MAX_BLOB, Store, is_id, object_id};
 pub use op_log::{OpLog, OpLogError};
 pub use operation::{
     EffectSet, ModuleRef, OpId, Operation, OperationKind, OperationRecord, SigId, StageId,
 };
+pub use refs::{
+    Expect, LockGuard, check_ref_name, delete_ref, list_refs, locks, now, read_log, read_ref,
+    update_ref, work_lock,
+};
+pub use repo::{FORMAT, Head, Ignore, Repo, StatusEntry};
 pub use requirement::{
     Requirement, RequirementError, load_all as load_requirements, save_all as save_requirements,
 };
+pub use tree::{ChangeKind, Entry, Mode, PathChange, Tree, check_path, diff_trees};

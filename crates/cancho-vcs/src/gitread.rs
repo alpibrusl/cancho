@@ -60,7 +60,8 @@ struct Pack {
 impl Pack {
     fn fanout(&self, i: usize) -> usize {
         let at = 8 + i * 4;
-        u32::from_be_bytes([self.idx[at], self.idx[at + 1], self.idx[at + 2], self.idx[at + 3]]) as usize
+        u32::from_be_bytes([self.idx[at], self.idx[at + 1], self.idx[at + 2], self.idx[at + 3]])
+            as usize
     }
     fn sha_at(&self, n: usize) -> &[u8] {
         let at = 8 + 256 * 4 + n * 20;
@@ -92,12 +93,14 @@ impl Pack {
     }
 }
 
+type Cache = HashMap<(usize, usize), (GitKind, std::rc::Rc<Vec<u8>>)>;
+
 pub struct GitRepo {
     git_dir: PathBuf,
     object_dirs: Vec<PathBuf>,
     packs: Vec<Pack>,
     /// Resolved pack objects by (pack, offset), bounded.
-    cache: RefCell<(HashMap<(usize, usize), (GitKind, std::rc::Rc<Vec<u8>>)>, usize)>,
+    cache: RefCell<(Cache, usize)>,
 }
 
 impl GitRepo {
@@ -125,19 +128,30 @@ impl GitRepo {
         let mut packs = Vec::new();
         for od in &object_dirs {
             let Ok(rd) = fs::read_dir(od.join("pack")) else { continue };
-            let mut names: Vec<PathBuf> =
-                rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "idx")).collect();
+            let mut names: Vec<PathBuf> = rd
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "idx"))
+                .collect();
             names.sort();
             for idx_path in names {
                 let pack_path = idx_path.with_extension("pack");
-                let idx = fs::read(&idx_path).map_err(|e| Refusal::io(format!("cannot read {}", idx_path.display()), &e))?;
-                let data = fs::read(&pack_path).map_err(|e| Refusal::io(format!("cannot read {}", pack_path.display()), &e))?;
+                let idx = fs::read(&idx_path)
+                    .map_err(|e| Refusal::io(format!("cannot read {}", idx_path.display()), &e))?;
+                let data = fs::read(&pack_path)
+                    .map_err(|e| Refusal::io(format!("cannot read {}", pack_path.display()), &e))?;
                 if idx.len() < 8 + 1024 || idx[..8] != [0xff, b't', b'O', b'c', 0, 0, 0, 2] {
-                    return Err(bad(format!("{} is not a version 2 pack index", idx_path.display())));
+                    return Err(bad(format!(
+                        "{} is not a version 2 pack index",
+                        idx_path.display()
+                    )));
                 }
-                let count =
-                    u32::from_be_bytes([idx[8 + 255 * 4], idx[8 + 255 * 4 + 1], idx[8 + 255 * 4 + 2], idx[8 + 255 * 4 + 3]])
-                        as usize;
+                let count = u32::from_be_bytes([
+                    idx[8 + 255 * 4],
+                    idx[8 + 255 * 4 + 1],
+                    idx[8 + 255 * 4 + 2],
+                    idx[8 + 255 * 4 + 3],
+                ]) as usize;
                 if idx.len() < 8 + 1024 + count * 28 + 40 {
                     return Err(bad(format!("{} is truncated", idx_path.display())));
                 }
@@ -165,11 +179,19 @@ impl GitRepo {
         for od in &self.object_dirs {
             let p = od.join(&name[..2]).join(&name[2..]);
             if let Ok(raw) = fs::read(&p) {
-                let (data, _) = zlib_decode(&raw, MAX_OBJECT).map_err(|e| bad(format!("{name}: {}", e.0)))?;
-                let nul = data.iter().position(|&b| b == 0).ok_or_else(|| bad(format!("{name}: no header")))?;
+                let (data, _) =
+                    zlib_decode(&raw, MAX_OBJECT).map_err(|e| bad(format!("{name}: {}", e.0)))?;
+                let nul = data
+                    .iter()
+                    .position(|&b| b == 0)
+                    .ok_or_else(|| bad(format!("{name}: no header")))?;
                 let header = &data[..nul];
-                let sp = header.iter().position(|&b| b == b' ').ok_or_else(|| bad(format!("{name}: bad header")))?;
-                let kind = GitKind::parse(&header[..sp]).ok_or_else(|| bad(format!("{name}: unknown kind")))?;
+                let sp = header
+                    .iter()
+                    .position(|&b| b == b' ')
+                    .ok_or_else(|| bad(format!("{name}: bad header")))?;
+                let kind = GitKind::parse(&header[..sp])
+                    .ok_or_else(|| bad(format!("{name}: unknown kind")))?;
                 let len: usize = std::str::from_utf8(&header[sp + 1..])
                     .ok()
                     .and_then(|s| s.parse().ok())
@@ -188,7 +210,12 @@ impl GitRepo {
         Err(bad(format!("object {name} not found")))
     }
 
-    fn read_at(&self, pi: usize, off: usize, depth: usize) -> Result<(GitKind, std::rc::Rc<Vec<u8>>)> {
+    fn read_at(
+        &self,
+        pi: usize,
+        off: usize,
+        depth: usize,
+    ) -> Result<(GitKind, std::rc::Rc<Vec<u8>>)> {
         if depth > 5000 {
             return Err(bad("delta chain too deep"));
         }
@@ -217,8 +244,10 @@ impl GitRepo {
         }
         let result = match ty {
             1..=4 => {
-                let kind = [GitKind::Commit, GitKind::Tree, GitKind::Blob, GitKind::Tag][ty as usize - 1];
-                let (body, _) = zlib_decode(&data[p..], size).map_err(|e| bad(format!("pack object: {}", e.0)))?;
+                let kind =
+                    [GitKind::Commit, GitKind::Tree, GitKind::Blob, GitKind::Tag][ty as usize - 1];
+                let (body, _) = zlib_decode(&data[p..], size)
+                    .map_err(|e| bad(format!("pack object: {}", e.0)))?;
                 if body.len() != size {
                     return Err(bad("pack object length mismatch"));
                 }
@@ -232,16 +261,26 @@ impl GitRepo {
                     while c & 0x80 != 0 {
                         c = *data.get(p).ok_or_else(|| bad("truncated"))?;
                         p += 1;
-                        dist = dist.checked_add(1).and_then(|d| d.checked_shl(7)).ok_or_else(|| bad("bad offset"))? | (c & 0x7f) as usize;
+                        dist = dist
+                            .checked_add(1)
+                            .and_then(|d| d.checked_shl(7))
+                            .ok_or_else(|| bad("bad offset"))?
+                            | (c & 0x7f) as usize;
                     }
-                    let base_off = off.checked_sub(dist).ok_or_else(|| bad("delta base before the pack"))?;
+                    let base_off =
+                        off.checked_sub(dist).ok_or_else(|| bad("delta base before the pack"))?;
                     self.read_at(pi, base_off, depth + 1)?
                 } else {
-                    let id: GitId = data.get(p..p + 20).ok_or_else(|| bad("truncated"))?.try_into().map_err(|_| bad("truncated"))?;
+                    let id: GitId = data
+                        .get(p..p + 20)
+                        .ok_or_else(|| bad("truncated"))?
+                        .try_into()
+                        .map_err(|_| bad("truncated"))?;
                     p += 20;
                     self.read_rc(&id)?
                 };
-                let (delta, _) = zlib_decode(&data[p..], size).map_err(|e| bad(format!("delta: {}", e.0)))?;
+                let (delta, _) =
+                    zlib_decode(&data[p..], size).map_err(|e| bad(format!("delta: {}", e.0)))?;
                 (base_kind, std::rc::Rc::new(apply_delta(&base, &delta)?))
             }
             _ => return Err(bad(format!("unknown pack object type {ty}"))),
@@ -266,7 +305,9 @@ impl GitRepo {
                 }
                 if let Some((h, n)) = line.split_once(' ')
                     && let Some(id) = parse_id(h)
-                    && ["refs/heads/", "refs/tags/", "refs/remotes/"].iter().any(|p| n.starts_with(p))
+                    && ["refs/heads/", "refs/tags/", "refs/remotes/"]
+                        .iter()
+                        .any(|p| n.starts_with(p))
                 {
                     out.insert(n.to_owned(), id);
                 }
@@ -295,7 +336,8 @@ impl GitRepo {
 
     /// The commit HEAD names, if it is a branch that exists or a detached id.
     pub fn head(&self) -> Result<Option<(Option<String>, GitId)>> {
-        let text = fs::read_to_string(self.git_dir.join("HEAD")).map_err(|e| Refusal::io("cannot read git HEAD", &e))?;
+        let text = fs::read_to_string(self.git_dir.join("HEAD"))
+            .map_err(|e| Refusal::io("cannot read git HEAD", &e))?;
         let text = text.trim();
         if let Some(r) = text.strip_prefix("ref: ") {
             let refs = self.refs()?;
@@ -343,20 +385,24 @@ fn apply_delta(base: &[u8], delta: &[u8]) -> Result<Vec<u8>> {
             let (mut off, mut len) = (0usize, 0usize);
             for i in 0..4 {
                 if op & (1 << i) != 0 {
-                    off |= (*delta.get(p).ok_or_else(|| bad("truncated delta"))? as usize) << (8 * i);
+                    off |=
+                        (*delta.get(p).ok_or_else(|| bad("truncated delta"))? as usize) << (8 * i);
                     p += 1;
                 }
             }
             for i in 0..3 {
                 if op & (0x10 << i) != 0 {
-                    len |= (*delta.get(p).ok_or_else(|| bad("truncated delta"))? as usize) << (8 * i);
+                    len |=
+                        (*delta.get(p).ok_or_else(|| bad("truncated delta"))? as usize) << (8 * i);
                     p += 1;
                 }
             }
             if len == 0 {
                 len = 0x10000;
             }
-            let chunk = base.get(off..off.checked_add(len).ok_or_else(|| bad("bad copy"))?).ok_or_else(|| bad("copy out of range"))?;
+            let chunk = base
+                .get(off..off.checked_add(len).ok_or_else(|| bad("bad copy"))?)
+                .ok_or_else(|| bad("copy out of range"))?;
             out.extend_from_slice(chunk);
         } else if op != 0 {
             let n = op as usize;
@@ -400,14 +446,22 @@ pub fn parse_commit(body: &[u8]) -> Result<GitCommitData> {
         if tree.is_none() && line.starts_with(b"tree ") {
             tree = parse_id(std::str::from_utf8(&line[5..]).unwrap_or("").trim());
         } else if headers_at.is_none() && line.starts_with(b"parent ") {
-            parents.push(parse_id(std::str::from_utf8(&line[7..]).unwrap_or("").trim()).ok_or_else(|| bad("bad parent line"))?);
+            parents.push(
+                parse_id(std::str::from_utf8(&line[7..]).unwrap_or("").trim())
+                    .ok_or_else(|| bad("bad parent line"))?,
+            );
         } else if headers_at.is_none() {
             headers_at = Some(pos);
         }
         pos = end;
     }
     let headers = headers_at.map_or_else(Vec::new, |at| head[at..].to_vec());
-    Ok(GitCommitData { tree: tree.ok_or_else(|| bad("commit without a tree"))?, parents, headers, message })
+    Ok(GitCommitData {
+        tree: tree.ok_or_else(|| bad("commit without a tree"))?,
+        parents,
+        headers,
+        message,
+    })
 }
 
 /// Tree entries: `(mode, name, id)`.
@@ -415,13 +469,19 @@ pub fn parse_tree(body: &[u8]) -> Result<Vec<(u32, Vec<u8>, GitId)>> {
     let mut out = Vec::new();
     let mut p = 0;
     while p < body.len() {
-        let sp = body[p..].iter().position(|&b| b == b' ').ok_or_else(|| bad("bad tree entry"))? + p;
+        let sp =
+            body[p..].iter().position(|&b| b == b' ').ok_or_else(|| bad("bad tree entry"))? + p;
         let mode = std::str::from_utf8(&body[p..sp])
             .ok()
             .and_then(|s| u32::from_str_radix(s, 8).ok())
             .ok_or_else(|| bad("bad tree mode"))?;
-        let nul = body[sp..].iter().position(|&b| b == 0).ok_or_else(|| bad("bad tree entry"))? + sp;
-        let id: GitId = body.get(nul + 1..nul + 21).ok_or_else(|| bad("truncated tree"))?.try_into().map_err(|_| bad("truncated tree"))?;
+        let nul =
+            body[sp..].iter().position(|&b| b == 0).ok_or_else(|| bad("bad tree entry"))? + sp;
+        let id: GitId = body
+            .get(nul + 1..nul + 21)
+            .ok_or_else(|| bad("truncated tree"))?
+            .try_into()
+            .map_err(|_| bad("truncated tree"))?;
         out.push((mode, body[sp + 1..nul].to_vec(), id));
         p = nul + 21;
     }

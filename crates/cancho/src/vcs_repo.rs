@@ -9,18 +9,25 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use cancho_vcs::{
-    Change, ChangeKind, Edit, Entry, Expect, Head, Kind, Refusal, Repo, Tree, VcsResult, apply_edits,
-    check_ref_name, delete_ref, diff_lines, diff_trees, is_id, list_refs, locks, read_ref, render_unified,
-    split_lines, unified, update_ref, work_lock,
+    Change, ChangeKind, Edit, Entry, Expect, Head, Kind, Refusal, Repo, Tree, VcsResult,
+    apply_edits, check_ref_name, delete_ref, diff_lines, diff_trees, is_id, list_refs, locks,
+    read_ref, render_unified, split_lines, unified, update_ref, work_lock,
 };
 use serde_json::{Value, json};
 
-use crate::vcs_args::{Done, Parsed, open, parse, rel_path, run, short};
+use crate::vcs_args::{Done, Parsed, entry_bytes, open, parse, rel_path, run, short};
 use crate::vcs_decl::{decls_of, diff_decls};
 use crate::{Failure, vcs_git, vcs_record};
 
-const INTENT_FLAGS: [&str; 7] =
-    ["--intent-prompt", "--intent-model", "--intent-session", "--intent-issue", "--author", "--time", "--expect"];
+const INTENT_FLAGS: [&str; 7] = [
+    "--intent-prompt",
+    "--intent-model",
+    "--intent-session",
+    "--intent-issue",
+    "--author",
+    "--time",
+    "--expect",
+];
 
 pub(crate) fn dispatch(cmd: &str, args: &[String]) -> Result<ExitCode, Failure> {
     match cmd {
@@ -45,7 +52,11 @@ pub(crate) fn dispatch(cmd: &str, args: &[String]) -> Result<ExitCode, Failure> 
             run(cmd, &p, || vcs_record::cmd_revert(&p))
         }
         "log" => {
-            let p = parse(args, &["--limit", "--intent", "--session", "--issue", "--path", "--author"], &[])?;
+            let p = parse(
+                args,
+                &["--limit", "--intent", "--session", "--issue", "--path", "--author"],
+                &[],
+            )?;
             run(cmd, &p, || cmd_log(&p))
         }
         "show" => {
@@ -101,20 +112,30 @@ fn cmd_init(p: &Parsed) -> VcsResult<Done> {
     let branch = p.value("--branch").unwrap_or("main");
     if p.flag("--dry-run") {
         let exists = Repo::open(Path::new(dir)).is_ok();
-        return Ok((json!({"created": false, "would_create": !exists, "branch": branch}), String::new()));
+        return Ok((
+            json!({"created": false, "would_create": !exists, "branch": branch}),
+            String::new(),
+        ));
     }
     fs::create_dir_all(dir).map_err(|e| Refusal::io("cannot create the directory", &e))?;
-    let root = fs::canonicalize(dir).map_err(|e| Refusal::io("cannot resolve the directory", &e))?;
+    let root =
+        fs::canonicalize(dir).map_err(|e| Refusal::io("cannot resolve the directory", &e))?;
     let (repo, created) = Repo::init(&root, branch)?;
     Ok((
         json!({"created": created, "root": repo.root.display().to_string(), "branch": branch}),
-        format!("{} {}\n", if created { "initialised" } else { "already a repository:" }, repo.root.display()),
+        format!(
+            "{} {}\n",
+            if created { "initialised" } else { "already a repository:" },
+            repo.root.display()
+        ),
     ))
 }
 
 fn head_json(repo: &Repo) -> VcsResult<(Value, Value)> {
     Ok(match repo.head()? {
-        Head::Branch(b) => (json!(b.strip_prefix("heads/").unwrap_or(&b)), json!(repo.head_change_id()?)),
+        Head::Branch(b) => {
+            (json!(b.strip_prefix("heads/").unwrap_or(&b)), json!(repo.head_change_id()?))
+        }
         Head::Detached(id) => (Value::Null, json!(id)),
     })
 }
@@ -144,7 +165,7 @@ fn is_text(bytes: &[u8]) -> bool {
 fn blob_of(repo: &Repo, e: &Option<Entry>) -> VcsResult<Option<Vec<u8>>> {
     match e {
         None => Ok(None),
-        Some(e) => repo.store.get(Kind::Blob, &e.blob).map(Some),
+        Some(e) => entry_bytes(repo, e).map(Some),
     }
 }
 
@@ -159,7 +180,9 @@ fn diff_files(
     let mut files = Vec::new();
     for c in changes {
         if !filter.is_empty()
-            && !filter.iter().any(|f| f.is_empty() || c.path == *f || c.path.starts_with(&format!("{f}/")))
+            && !filter
+                .iter()
+                .any(|f| f.is_empty() || c.path == *f || c.path.starts_with(&format!("{f}/")))
         {
             continue;
         }
@@ -184,7 +207,11 @@ fn diff_files(
                 }
             }
             let hunks = unified(ot, nt, context);
-            text_out.push_str(&render_unified(&format!("a/{}", c.path), &format!("b/{}", c.path), &hunks));
+            text_out.push_str(&render_unified(
+                &format!("a/{}", c.path),
+                &format!("b/{}", c.path),
+                &hunks,
+            ));
             file["hunks"] = json!(
                 hunks
                     .iter()
@@ -196,7 +223,11 @@ fn diff_files(
                     .collect::<Vec<_>>()
             );
         } else {
-            text_out.push_str(&format!("{}: {}\n", c.path, if binary { "binary file differs" } else { "mode changed" }));
+            text_out.push_str(&format!(
+                "{}: {}\n",
+                c.path,
+                if binary { "binary file differs" } else { "mode changed" }
+            ));
         }
         files.push(file);
     }
@@ -205,7 +236,9 @@ fn diff_files(
 
 fn cmd_diff(p: &Parsed) -> VcsResult<Done> {
     let repo = open(p)?;
-    let context: usize = p.value("--context").map_or(Ok(3), |c| c.parse().map_err(|_| bad("`--context` is a count")))?;
+    let context: usize = p
+        .value("--context")
+        .map_or(Ok(3), |c| c.parse().map_err(|_| bad("`--context` is a count")))?;
     // Arguments that name a revision are revisions; the rest are paths.
     let mut revs = Vec::new();
     let mut paths = Vec::new();
@@ -217,28 +250,20 @@ fn cmd_diff(p: &Parsed) -> VcsResult<Done> {
         }
     }
     let (from_name, to_name, a, b) = match revs.as_slice() {
-        [] => ("HEAD".to_owned(), "working copy".to_owned(), repo.head_tree()?, Tree::new(repo.scan()?)?),
-        [x] => (x.clone(), "working copy".to_owned(), repo.tree_of(Some(x))?, Tree::new(repo.scan()?)?),
+        [] => (
+            "HEAD".to_owned(),
+            "working copy".to_owned(),
+            repo.head_tree()?,
+            Tree::new(repo.scan()?)?,
+        ),
+        [x] => {
+            (x.clone(), "working copy".to_owned(), repo.tree_of(Some(x))?, Tree::new(repo.scan()?)?)
+        }
         [x, y] => (x.clone(), y.clone(), repo.tree_of(Some(x))?, repo.tree_of(Some(y))?),
         _ => unreachable!("at most two revisions are taken"),
     };
-    let work_side = revs.len() < 2;
-    // The working copy's blobs are not in the store: read them from disk.
     let mut text = String::new();
-    let changes = diff_trees(&a, &b);
-    let files = if work_side {
-        let staged: Vec<_> = changes.clone();
-        for c in &staged {
-            if let Some(e) = &c.new
-                && !repo.store.has(Kind::Blob, &e.blob)
-            {
-                repo.store_working_blob(e)?;
-            }
-        }
-        diff_files(&repo, changes, &paths, context, &mut text)?
-    } else {
-        diff_files(&repo, changes, &paths, context, &mut text)?
-    };
+    let files = diff_files(&repo, diff_trees(&a, &b), &paths, context, &mut text)?;
     Ok((json!({"from": from_name, "to": to_name, "files": files}), text))
 }
 
@@ -266,7 +291,9 @@ fn cmd_log(p: &Parsed) -> VcsResult<Done> {
             None => return Ok((json!({"changes": []}), "no changes yet\n".to_owned())),
         },
     };
-    let limit: usize = p.value("--limit").map_or(Ok(usize::MAX), |l| l.parse().map_err(|_| bad("`--limit` is a count")))?;
+    let limit: usize = p
+        .value("--limit")
+        .map_or(Ok(usize::MAX), |l| l.parse().map_err(|_| bad("`--limit` is a count")))?;
     let path = p.value("--path").map(|a| rel_path(&repo, a)).transpose()?;
     let mut rows = Vec::new();
     let mut text = String::new();
@@ -300,8 +327,14 @@ fn cmd_show(p: &Parsed) -> VcsResult<Done> {
     let new = Tree::load(&repo.store, &c.tree)?;
     let old = repo.tree_of(c.parents.first().map(String::as_str))?;
     let changes = diff_trees(&old, &new);
-    let summary: Vec<Value> = changes.iter().map(|x| json!({"path": x.path, "state": x.kind.name()})).collect();
-    let mut text = format!("change {id}\nauthor {}\ntime {}\n\n{}\n\n", c.author, c.time, c.intent.as_ref().map_or("", |i| i.prompt.as_str()));
+    let summary: Vec<Value> =
+        changes.iter().map(|x| json!({"path": x.path, "state": x.kind.name()})).collect();
+    let mut text = format!(
+        "change {id}\nauthor {}\ntime {}\n\n{}\n\n",
+        c.author,
+        c.time,
+        c.intent.as_ref().map_or("", |i| i.prompt.as_str())
+    );
     for s in &changes {
         text.push_str(&format!("  {:<9} {}\n", s.kind.name(), s.path));
     }
@@ -336,7 +369,9 @@ fn cmd_blame(p: &Parsed) -> VcsResult<Done> {
         }
     };
     let top = repo.load_change(&start)?;
-    let final_text = content(&top)?.ok_or_else(|| Refusal::new("path-not-found", format!("`{path}` is not in {}", short(&start))))?;
+    let final_text = content(&top)?.ok_or_else(|| {
+        Refusal::new("path-not-found", format!("`{path}` is not in {}", short(&start)))
+    })?;
     if let Some(decl) = p.value("--decl") {
         return blame_decl(&repo, &start, &path, decl, &final_text);
     }
@@ -410,7 +445,6 @@ fn cmd_blame(p: &Parsed) -> VcsResult<Done> {
     Ok((json!({"path": path, "rev": start, "lines": rows}), out))
 }
 
-
 /// The change that last touched a declaration: walk the first parents while
 /// the declaration is the same as at `start`.
 fn blame_decl(repo: &Repo, start: &str, path: &str, decl: &str, text: &str) -> VcsResult<Done> {
@@ -423,14 +457,14 @@ fn blame_decl(repo: &Repo, start: &str, path: &str, decl: &str, text: &str) -> V
     })?;
     let mut id = start.to_owned();
     let mut change = repo.load_change(&id)?;
-    loop {
-        let Some(pid) = change.parents.first().cloned() else { break };
+    while let Some(pid) = change.parents.first().cloned() {
         let parent = repo.load_change(&pid)?;
         let ptext = Tree::load(&repo.store, &parent.tree)?
             .get(path)
             .and_then(|e| repo.store.get(Kind::Blob, &e.blob).ok())
             .and_then(|b| String::from_utf8(b).ok());
-        let same = ptext.as_deref().and_then(decls_of).and_then(|d| key(&d)).is_some_and(|d| d == want);
+        let same =
+            ptext.as_deref().and_then(decls_of).and_then(|d| key(&d)).is_some_and(|d| d == want);
         if !same {
             break;
         }
@@ -460,7 +494,12 @@ fn cmd_branch(p: &Parsed) -> VcsResult<Done> {
             let branches = list_refs(&repo.vcs, "heads")?;
             let mut text = String::new();
             for (n, id) in &branches {
-                text.push_str(&format!("{} {} {}\n", if current.as_deref() == Some(n) { "*" } else { " " }, n.trim_start_matches("heads/"), short(id)));
+                text.push_str(&format!(
+                    "{} {} {}\n",
+                    if current.as_deref() == Some(n) { "*" } else { " " },
+                    n.trim_start_matches("heads/"),
+                    short(id)
+                ));
             }
             Ok((
                 json!({"current": current.as_deref().map(|c| c.trim_start_matches("heads/")),
@@ -473,31 +512,59 @@ fn cmd_branch(p: &Parsed) -> VcsResult<Done> {
             let target = repo.resolve(p.value("--from").unwrap_or("HEAD"))?;
             let existing = read_ref(&repo.vcs, &format!("heads/{n}"))?;
             if existing.as_deref() == Some(target.as_str()) {
-                return Ok((json!({"branch": n, "change": target, "created": false}), format!("{n} already at {}\n", short(&target))));
+                return Ok((
+                    json!({"branch": n, "change": target, "created": false}),
+                    format!("{n} already at {}\n", short(&target)),
+                ));
             }
             if p.flag("--dry-run") {
-                return Ok((json!({"branch": n, "change": target, "created": false, "dry_run": true}), String::new()));
+                return Ok((
+                    json!({"branch": n, "change": target, "created": false, "dry_run": true}),
+                    String::new(),
+                ));
             }
-            update_ref(&repo.vcs, &format!("heads/{n}"), &target, &Expect::Absent, "branch create")?;
-            Ok((json!({"branch": n, "change": target, "created": true}), format!("created {n} at {}\n", short(&target))))
+            update_ref(
+                &repo.vcs,
+                &format!("heads/{n}"),
+                &target,
+                &Expect::Absent,
+                "branch create",
+            )?;
+            Ok((
+                json!({"branch": n, "change": target, "created": true}),
+                format!("created {n} at {}\n", short(&target)),
+            ))
         }
         "delete" => {
             let n = name(p.pos.get(1))?;
             if repo.head()? == Head::Branch(format!("heads/{n}")) {
-                return Err(Refusal::new("ref-protected", "the checked-out branch cannot be deleted"));
+                return Err(Refusal::new(
+                    "ref-protected",
+                    "the checked-out branch cannot be deleted",
+                ));
             }
             let Some(cur) = read_ref(&repo.vcs, &format!("heads/{n}"))? else {
                 return Ok((json!({"branch": n, "deleted": false}), format!("no branch {n}\n")));
             };
             let expect = match p.value("--expect") {
                 Some(e) => Expect::Id(repo.resolve(e)?),
-                None => return Err(bad("deleting a branch needs --expect <change> (the change you believe it is at)")),
+                None => {
+                    return Err(bad(
+                        "deleting a branch needs --expect <change> (the change you believe it is at)",
+                    ));
+                }
             };
             if p.flag("--dry-run") {
-                return Ok((json!({"branch": n, "deleted": false, "dry_run": true, "change": cur}), String::new()));
+                return Ok((
+                    json!({"branch": n, "deleted": false, "dry_run": true, "change": cur}),
+                    String::new(),
+                ));
             }
             delete_ref(&repo.vcs, &format!("heads/{n}"), &expect)?;
-            Ok((json!({"branch": n, "deleted": true, "change": cur}), format!("deleted {n} (was {})\n", short(&cur))))
+            Ok((
+                json!({"branch": n, "deleted": true, "change": cur}),
+                format!("deleted {n} (was {})\n", short(&cur)),
+            ))
         }
         other => Err(bad(&format!("`branch {other}`: expected list, create or delete"))),
     }
@@ -505,10 +572,17 @@ fn cmd_branch(p: &Parsed) -> VcsResult<Done> {
 
 /// Bring the working copy from `old` to `new`; a path that is dirty and also
 /// differs between them blocks unless `discard`.
-fn move_working_copy(repo: &Repo, old: &Tree, new: &Tree, p: &Parsed, dry: bool) -> VcsResult<Vec<String>> {
+fn move_working_copy(
+    repo: &Repo,
+    old: &Tree,
+    new: &Tree,
+    p: &Parsed,
+    dry: bool,
+) -> VcsResult<Vec<String>> {
     let dirty: BTreeSet<String> = repo.status()?.into_iter().map(|s| s.path).collect();
     let moving = diff_trees(old, new);
-    let in_the_way: Vec<String> = moving.iter().filter(|c| dirty.contains(&c.path)).map(|c| c.path.clone()).collect();
+    let in_the_way: Vec<String> =
+        moving.iter().filter(|c| dirty.contains(&c.path)).map(|c| c.path.clone()).collect();
     let blocked = if p.flag("--discard") {
         vec![]
     } else if p.flag("--keep") {
@@ -540,12 +614,17 @@ fn cmd_switch(p: &Parsed) -> VcsResult<Done> {
     let branch_ref = format!("heads/{target}");
     let (new_head, change) = if p.flag("--create") {
         check_ref_name(&branch_ref)?;
-        let at = repo.head_change_id()?.ok_or_else(|| Refusal::new("bad-revision", "there is no change to branch from yet"))?;
+        let at = repo
+            .head_change_id()?
+            .ok_or_else(|| Refusal::new("bad-revision", "there is no change to branch from yet"))?;
         if !dry {
             update_ref(&repo.vcs, &branch_ref, &at, &Expect::Absent, "switch --create")?;
         }
         (Head::Branch(branch_ref.clone()), at)
-    } else if !p.flag("--detach") && check_ref_name(&branch_ref).is_ok() && read_ref(&repo.vcs, &branch_ref)?.is_some() {
+    } else if !p.flag("--detach")
+        && check_ref_name(&branch_ref).is_ok()
+        && read_ref(&repo.vcs, &branch_ref)?.is_some()
+    {
         let id = read_ref(&repo.vcs, &branch_ref)?.unwrap_or_default();
         (Head::Branch(branch_ref.clone()), id)
     } else {
@@ -580,8 +659,11 @@ fn cmd_restore(p: &Parsed) -> VcsResult<Done> {
     let dry = p.flag("--dry-run");
     let _lock = if dry { None } else { Some(work_lock(&repo.vcs)?) };
     let work = Tree::new(repo.scan()?)?;
-    let selected: Vec<String> = p.pos.iter().map(|a| rel_path(&repo, a)).collect::<VcsResult<_>>()?;
-    let covers = |path: &str| selected.iter().any(|s| s.is_empty() || path == s || path.starts_with(&format!("{s}/")));
+    let selected: Vec<String> =
+        p.pos.iter().map(|a| rel_path(&repo, a)).collect::<VcsResult<_>>()?;
+    let covers = |path: &str| {
+        selected.iter().any(|s| s.is_empty() || path == s || path.starts_with(&format!("{s}/")))
+    };
     let mut restored = Vec::new();
     for c in diff_trees(&work, &want) {
         if !covers(&c.path) {
@@ -609,22 +691,28 @@ fn cmd_unlock(p: &Parsed) -> VcsResult<Done> {
             fs::remove_file(path).map_err(|e| Refusal::io("cannot remove a lock", &e))?;
         }
     }
-    Ok((json!({"removed": removed, "dry_run": p.flag("--dry-run")}), format!("{} lock(s)\n", found.len())))
+    Ok((
+        json!({"removed": removed, "dry_run": p.flag("--dry-run")}),
+        format!("{} lock(s)\n", found.len()),
+    ))
 }
 
 fn cmd_apply(p: &Parsed) -> VcsResult<Done> {
     let repo = open(p)?;
     let [file] = p.pos.as_slice() else { return Err(bad("`apply` takes a JSON file of edits")) };
-    let text = fs::read_to_string(file).map_err(|e| Refusal::io(format!("cannot read {file}"), &e))?;
+    let text =
+        fs::read_to_string(file).map_err(|e| Refusal::io(format!("cannot read {file}"), &e))?;
     let edits: Vec<Edit> = serde_json::from_str(&text).map_err(|e| bad(&format!("{file}: {e}")))?;
-    let mut by_path: std::collections::BTreeMap<String, Vec<Edit>> = std::collections::BTreeMap::new();
+    let mut by_path: std::collections::BTreeMap<String, Vec<Edit>> =
+        std::collections::BTreeMap::new();
     for e in edits {
         by_path.entry(rel_path(&repo, &e.path)?).or_default().push(e);
     }
     let _lock = work_lock(&repo.vcs)?;
     let mut results = Vec::new();
     for (path, es) in &by_path {
-        let old = fs::read_to_string(repo.root.join(path)).map_err(|e| Refusal::io(format!("cannot read {path}"), &e))?;
+        let old = fs::read_to_string(repo.root.join(path))
+            .map_err(|e| Refusal::io(format!("cannot read {path}"), &e))?;
         let new = apply_edits(&old, es)?;
         results.push((path.clone(), new));
     }
@@ -632,7 +720,8 @@ fn cmd_apply(p: &Parsed) -> VcsResult<Done> {
     if !p.flag("--dry-run") {
         for (path, new) in &results {
             let mode = fs::metadata(repo.root.join(path)).map(|m| m.permissions()).ok();
-            fs::write(repo.root.join(path), new).map_err(|e| Refusal::io(format!("cannot write {path}"), &e))?;
+            fs::write(repo.root.join(path), new)
+                .map_err(|e| Refusal::io(format!("cannot write {path}"), &e))?;
             if let Some(m) = mode {
                 let _ = fs::set_permissions(repo.root.join(path), m);
             }
@@ -669,7 +758,10 @@ fn cmd_verify(p: &Parsed) -> VcsResult<Done> {
                         Ok(t) => {
                             for e in t.entries() {
                                 if !repo.store.has(Kind::Blob, &e.blob) {
-                                    problem("object-missing", format!("blob {} (in tree {id}, {})", e.blob, e.path));
+                                    problem(
+                                        "object-missing",
+                                        format!("blob {} (in tree {id}, {})", e.blob, e.path),
+                                    );
                                 }
                             }
                         }
@@ -678,11 +770,17 @@ fn cmd_verify(p: &Parsed) -> VcsResult<Done> {
                         Err(_) => problem("object-corrupt", format!("change {id}")),
                         Ok(c) => {
                             if !repo.store.has(Kind::Tree, &c.tree) {
-                                problem("object-missing", format!("tree {} (of change {id})", c.tree));
+                                problem(
+                                    "object-missing",
+                                    format!("tree {} (of change {id})", c.tree),
+                                );
                             }
                             for par in &c.parents {
                                 if !repo.store.has(Kind::Change, par) {
-                                    problem("object-missing", format!("change {par} (parent of {id})"));
+                                    problem(
+                                        "object-missing",
+                                        format!("change {par} (parent of {id})"),
+                                    );
                                 }
                             }
                         }
@@ -716,11 +814,18 @@ fn cmd_verify(p: &Parsed) -> VcsResult<Done> {
             "object-missing" => "object-missing",
             _ => "object-corrupt",
         };
-        return Err(Refusal::new(tag, format!("{} problem(s); first: {}", problems.len(), problems[0]["object"]))
-            .with(json!({"problems": problems, "objects": counts})));
+        return Err(Refusal::new(
+            tag,
+            format!("{} problem(s); first: {}", problems.len(), problems[0]["object"]),
+        )
+        .with(json!({"problems": problems, "objects": counts})));
     }
     Ok((
         json!({"sound": true, "objects": counts, "refs": refs_checked, "locks": stale, "tmp_garbage": garbage}),
-        format!("sound: {} refs, {} lock(s), {garbage} temporary file(s)\n", refs_checked, stale.len()),
+        format!(
+            "sound: {} refs, {} lock(s), {garbage} temporary file(s)\n",
+            refs_checked,
+            stale.len()
+        ),
     ))
 }

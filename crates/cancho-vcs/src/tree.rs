@@ -52,14 +52,20 @@ pub fn check_path(path: &str) -> Result<()> {
     }
     for (i, part) in path.split('/').enumerate() {
         if part.is_empty() || part == "." || part == ".." {
-            return Err(Refusal::new("path-escapes", format!("`{path}` has an empty or dot component")));
+            return Err(Refusal::new(
+                "path-escapes",
+                format!("`{path}` has an empty or dot component"),
+            ));
         }
         if i == 0 && (part == ".cancho" || part == ".git") {
             return Err(Refusal::new("path-escapes", format!("`{path}` is inside `{part}`")));
         }
     }
     if path.chars().any(|c| c == '\n' || c == '\0') {
-        return Err(Refusal::new("path-unsupported", "a path with a newline or NUL cannot be stored"));
+        return Err(Refusal::new(
+            "path-unsupported",
+            "a path with a newline or NUL cannot be stored",
+        ));
     }
     Ok(())
 }

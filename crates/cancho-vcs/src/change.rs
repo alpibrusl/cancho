@@ -118,7 +118,10 @@ impl Change {
         let c: Change = serde_json::from_slice(&bytes)
             .map_err(|e| Refusal::new("object-corrupt", format!("change {id}: {e}")))?;
         if !is_id(&c.tree) || c.parents.iter().any(|p| !is_id(p)) || c.parents.len() > 2 {
-            return Err(Refusal::new("object-corrupt", format!("change {id}: bad tree or parents")));
+            return Err(Refusal::new(
+                "object-corrupt",
+                format!("change {id}: bad tree or parents"),
+            ));
         }
         Ok(c)
     }

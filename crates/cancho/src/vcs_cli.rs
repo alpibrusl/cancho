@@ -97,8 +97,9 @@ pub fn cmd_vcs(args: &[String]) -> Result<ExitCode, Failure> {
             cmd_log(&args[1..])
         }
         Some(
-            cmd @ ("init" | "log" | "status" | "diff" | "record" | "show" | "blame" | "branch" | "switch"
-            | "revert" | "restore" | "verify" | "unlock" | "import-git" | "export-git" | "apply"),
+            cmd @ ("init" | "log" | "status" | "diff" | "record" | "show" | "blame" | "branch"
+            | "switch" | "revert" | "restore" | "verify" | "unlock" | "import-git"
+            | "export-git" | "apply"),
         ) => crate::vcs_repo::dispatch(cmd, &args[1..]),
         Some("resolve") => cmd_resolve(&args[1..]),
         Some("lock") => cmd_lock(&args[1..]),

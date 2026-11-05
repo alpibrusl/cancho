@@ -1,0 +1,8 @@
+{
+  "command": "restore",
+  "ok": false,
+  "refused": {
+    "message": "`../elsewhere` is outside the repository",
+    "tag": "path-escapes"
+  }
+}

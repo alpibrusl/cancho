@@ -18,11 +18,17 @@ pub fn apply_edits(text: &str, edits: &[Edit]) -> Result<String> {
     let mut text = text.to_owned();
     for e in edits {
         if e.old.is_empty() {
-            return Err(Refusal::new("anchor-not-found", format!("an empty anchor in `{}`", e.path)));
+            return Err(Refusal::new(
+                "anchor-not-found",
+                format!("an empty anchor in `{}`", e.path),
+            ));
         }
         let mut found = text.match_indices(e.old.as_str());
         let Some((at, _)) = found.next() else {
-            return Err(Refusal::new("anchor-not-found", format!("the old text of an edit is not in `{}`", e.path)));
+            return Err(Refusal::new(
+                "anchor-not-found",
+                format!("the old text of an edit is not in `{}`", e.path),
+            ));
         };
         if found.next().is_some() {
             return Err(Refusal::new(
@@ -52,7 +58,9 @@ pub fn derive_edits(path: &str, base: &str, new: &str) -> Vec<Edit> {
             let from = lo.saturating_sub(k);
             let to = (hi + k).min(al.len());
             let old: String = al[from..to].concat();
-            if (to > from && base.matches(old.as_str()).count() == 1) || (from == 0 && to == al.len()) {
+            if (to > from && base.matches(old.as_str()).count() == 1)
+                || (from == 0 && to == al.len())
+            {
                 break (from, to);
             }
             k += 1;

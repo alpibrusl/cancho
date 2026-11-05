@@ -1,0 +1,13 @@
+{
+  "branch": "main",
+  "changes": [
+    {
+      "path": "notes.md",
+      "state": "modified"
+    }
+  ],
+  "clean": false,
+  "command": "status",
+  "head": "9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442",
+  "ok": true
+}

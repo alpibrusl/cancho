@@ -25,7 +25,11 @@ pub(crate) fn cmd_import(p: &Parsed) -> VcsResult<Done> {
     };
     let report = import_git(&repo, &git, dry)?;
     let mut checked_out = 0;
-    if !dry && !p.flag("--no-checkout") && repo.head_change_id()?.is_some() && repo.scan()?.is_empty() {
+    if !dry
+        && !p.flag("--no-checkout")
+        && repo.head_change_id()?.is_some()
+        && repo.scan()?.is_empty()
+    {
         let want = repo.head_tree()?;
         for c in diff_trees(&Tree::default(), &want) {
             if let Some(e) = &c.new {
@@ -49,7 +53,10 @@ pub(crate) fn cmd_import(p: &Parsed) -> VcsResult<Done> {
 pub(crate) fn cmd_export(p: &Parsed) -> VcsResult<Done> {
     let repo = open(p)?;
     let [dir] = p.pos.as_slice() else {
-        return Err(Refusal::new("bad-argument", "`export-git` takes a directory for the git repository"));
+        return Err(Refusal::new(
+            "bad-argument",
+            "`export-git` takes a directory for the git repository",
+        ));
     };
     let report = export_git(&repo, Path::new(dir), p.flag("--dry-run"))?;
     let mut doc = report.to_json();

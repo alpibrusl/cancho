@@ -15,7 +15,11 @@ pub(crate) fn decls_of(source: &str) -> Option<Decls> {
     let ids = cancho_id::identify(&ast);
     let mut out = Decls::new();
     for f in &ids.functions {
-        let key = if f.module.is_empty() { format!("fn {}", f.name) } else { format!("fn {}.{}", f.module, f.name) };
+        let key = if f.module.is_empty() {
+            format!("fn {}", f.name)
+        } else {
+            format!("fn {}.{}", f.module, f.name)
+        };
         out.insert(key, (f.sig.to_hex(), f.body.to_hex()));
     }
     for t in &ids.types {
@@ -30,7 +34,11 @@ pub(crate) fn diff_decls(path: &str, old: Option<&Decls>, new: Option<&Decls>) -
     let (old, new) = (old.unwrap_or(&empty), new.unwrap_or(&empty));
     let mut out = Vec::new();
     let mut push = |name: &str, kind: &str| {
-        out.push(DeclChange { path: path.to_owned(), name: name.to_owned(), kind: kind.to_owned() });
+        out.push(DeclChange {
+            path: path.to_owned(),
+            name: name.to_owned(),
+            kind: kind.to_owned(),
+        });
     };
     for (name, (sig, body)) in new {
         match old.get(name) {

@@ -36,12 +36,17 @@ pub fn check_ref_name(name: &str) -> Result<()> {
         && name.len() <= 200
         && !name.ends_with(".lock")
         && !name.ends_with(".log")
+        && !name.contains("..")
         && name.split('/').all(|p| {
             !p.is_empty()
                 && !p.starts_with('.')
                 && p.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
         });
-    if ok { Ok(()) } else { Err(Refusal::new("bad-ref-name", format!("`{name}` is not a ref name"))) }
+    if ok {
+        Ok(())
+    } else {
+        Err(Refusal::new("bad-ref-name", format!("`{name}` is not a ref name")))
+    }
 }
 
 fn ref_path(vcs: &Path, name: &str) -> PathBuf {
@@ -60,7 +65,9 @@ pub fn read_ref(vcs: &Path, name: &str) -> Result<Option<String>> {
     check_ref_name(name)?;
     match read_trimmed(&ref_path(vcs, name))? {
         Some(id) if is_id(&id) => Ok(Some(id)),
-        Some(_) => Err(Refusal::new("object-corrupt", format!("ref `{name}` does not hold a change id"))),
+        Some(_) => {
+            Err(Refusal::new("object-corrupt", format!("ref `{name}` does not hold a change id")))
+        }
         None => Ok(None),
     }
 }
@@ -73,7 +80,8 @@ pub struct LockGuard {
 impl LockGuard {
     pub fn acquire(path: &Path) -> Result<LockGuard> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| Refusal::io("cannot create the lock directory", &e))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| Refusal::io("cannot create the lock directory", &e))?;
         }
         match OpenOptions::new().write(true).create_new(true).open(path) {
             Ok(mut f) => {
@@ -203,7 +211,8 @@ pub fn list_refs(vcs: &Path, prefix: &str) -> Result<Vec<(String, String)>> {
 /// The ref log of `name`, oldest first: `(old, new, time, note)`.
 pub fn read_log(vcs: &Path, name: &str) -> Result<Vec<(String, String, i64, String)>> {
     check_ref_name(name)?;
-    let text = fs::read_to_string(ref_path(vcs, name).with_extension_suffix("log")).unwrap_or_default();
+    let text =
+        fs::read_to_string(ref_path(vcs, name).with_extension_suffix("log")).unwrap_or_default();
     Ok(text
         .lines()
         .filter_map(|l| {
@@ -226,7 +235,9 @@ pub fn locks(vcs: &Path) -> Vec<(PathBuf, Option<u32>, Option<i64>)> {
             let p = e.path();
             if p.is_dir() {
                 walk(&p, out);
-            } else if p.file_name().is_some_and(|n| n == "lock") || p.to_string_lossy().ends_with(".lock") {
+            } else if p.file_name().is_some_and(|n| n == "lock")
+                || p.to_string_lossy().ends_with(".lock")
+            {
                 out.push(p);
             }
         }
