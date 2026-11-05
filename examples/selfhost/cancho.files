@@ -9,6 +9,7 @@ body.cho
 builtins.cho
 checker.cho
 cibase.cho
+ciinit.cho
 cli.cho
 clibase.cho
 clici.cho

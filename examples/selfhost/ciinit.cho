@@ -1,0 +1,166 @@
+edition 7;
+module selfhost.ciinit;
+
+// ciinit.cho -- `cancho ci --init [--test FILE]... FILE...` (`docs/agent-ci.md` section 5): the workflow that runs `cancho ci` on GitHub, and nothing else.
+//
+// It installs the compiler the project pins (`cancho = "<commit>"` in cancho.toml: `scripts/install.sh` checks the checksum and the commit it reports) and
+// runs the command it was given. All the logic is in the command, so the file has none to drift. It is not written over another, and it is not written
+// without a pin: an unpinned workflow would change when the compiler does.
+//
+// Findings go to standard error as `RULE: sentence`; exit 1 for `ci-init-exists`, `ci-init-unpinned` and `ci-init-unsafe-argument`, 3 if it cannot write.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.clibase;
+import selfhost.cliprog;
+import selfhost.cibase;
+import selfhost.filewrite;
+
+fn is_hex(c: int) -> [] bool {
+    return c >= 48 && c <= 57 || c >= 97 && c <= 102;
+}
+
+// The commit `cancho.toml` pins: the text between the quotes of a line `cancho = "..."`, if it is 40 or 64 hexadecimal digits; else empty.
+fn pinned[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    var start = 0;
+    var at = 0;
+    while at <= len(text) {
+        if at == len(text) || int_of(text[at]) == 10 {
+            let line = text[start..at];
+            if len(line) > 10 && lc.spells(line, 0, 10, "cancho = \"") {
+                var end = 10;
+                var hex = true;
+                while end < len(line) && int_of(line[end]) != 34 {
+                    hex = hex && is_hex(int_of(line[end]));
+                    end = end + 1;
+                }
+                if end < len(line) && hex && (end - 10 == 40 || end - 10 == 64) {
+                    buffer.drop(heap, out);
+                    out = buffer.append(heap, buffer.empty(heap, 64), line[10..end]);
+                }
+            }
+            start = at + 1;
+        }
+        at = at + 1;
+    }
+    return out;
+}
+
+// A word safe to put in a shell line inside a workflow: letters, digits and `_ . / -`, and not starting with `-`.
+fn safe[&w](word: &w [byte]) -> [] bool {
+    var at = 0;
+    while at < len(word) {
+        let c = int_of(word[at]);
+        if !(c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122 || c == 95 || c == 46 || c == 47 || c == 45) {
+            return false;
+        }
+        at = at + 1;
+    }
+    return len(word) > 0;
+}
+
+fn refuse[&i](io: &!i Io, rule: &static [byte], sentence: &static [byte], code: int) -> [err_write] int {
+    console.error_all(io, rule);
+    console.error_all(io, ": ");
+    console.error_all(io, sentence);
+    console.error_all(io, "\n");
+    return code;
+}
+
+pub fn init_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    // The command the workflow runs: the arguments, without `--init`.
+    var command = buffer.empty(heap, 128);
+    var files = 0;
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--init") {
+            n = n + 0;
+        } else if bytes.equal(word, "--test") {
+            n = n + 1;
+            if n >= arg_count(args) || !safe(arg(args, n)) {
+                buffer.drop(heap, command);
+                return refuse(io, "ci-init-unsafe-argument", "a file name for a workflow is letters, digits and `_ . / -` only", 1);
+            }
+            command = buffer.append(heap, buffer.append(heap, buffer.append(heap, command, " --test "), arg(args, n)), "");
+        } else if bytes.equal(word, "--std-dir") {
+            buffer.drop(heap, command);
+            return refuse(io, "ci-init-unsafe-argument", "`--std-dir` names a directory of this machine, which a workflow does not have", 1);
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            buffer.drop(heap, command);
+            return refuse(io, "ci-init-unsafe-argument", "only `--test FILE` and FILEs go into a workflow", 1);
+        } else {
+            if !safe(word) {
+                buffer.drop(heap, command);
+                return refuse(io, "ci-init-unsafe-argument", "a file name for a workflow is letters, digits and `_ . / -` only", 1);
+            }
+            command = buffer.append(heap, buffer.append(heap, command, " "), word);
+            files = files + 1;
+        }
+        n = n + 1;
+    }
+    if files == 0 {
+        buffer.drop(heap, command);
+        return clibase.usage_error(heap, io, "`--init` needs the files `ci` is to be run on");
+    }
+    let (toml, toml_failed) = cibase.read_path(heap, fs, "cancho.toml");
+    var rev = buffer.empty(heap, 0);
+    if toml_failed == 0 {
+        borrow toml as &tb in {
+            buffer.drop(heap, rev);
+            rev = pinned(heap, buffer.bytes(tb));
+        }
+    }
+    buffer.drop(heap, toml);
+    var has_pin = false;
+    borrow rev as &rb in {
+        has_pin = buffer.size(rb) > 0;
+    }
+    if !has_pin {
+        buffer.drop(heap, rev);
+        buffer.drop(heap, command);
+        return refuse(io, "ci-init-unpinned", "cancho.toml does not pin the compiler (`[package]` `cancho = \"<full commit>\"`); a workflow that installs whatever is newest would change when the compiler does", 1);
+    }
+    let (there, there_failed) = cibase.read_path(heap, fs, ".github/workflows/cancho.yml");
+    buffer.drop(heap, there);
+    if there_failed != 2 {
+        buffer.drop(heap, rev);
+        buffer.drop(heap, command);
+        return refuse(io, "ci-init-exists", ".github/workflows/cancho.yml is there, or cannot be told not to be; it is not written over", 1);
+    }
+    var text = buffer.append(heap, buffer.empty(heap, 1024), "name: cancho\non:\n  push:\n    branches: [main]\n  pull_request:\njobs:\n  ci:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Install the pinned compiler\n        run: |\n          curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/");
+    borrow rev as &rb in {
+        text = buffer.append(heap, text, buffer.bytes(rb));
+    }
+    text = buffer.append(heap, text, "/scripts/install.sh | sh -s -- ");
+    borrow rev as &rb in {
+        text = buffer.append(heap, text, buffer.bytes(rb));
+    }
+    // `ci` runs this command line again by the name it was run by, and a bare name is looked for in the directory it is run in, so it is run by its path.
+    text = buffer.append(heap, text, "\n      - name: Gate\n        run: $HOME/.local/bin/cancho ci --output json");
+    borrow command as &cb in {
+        text = buffer.append(heap, text, buffer.bytes(cb));
+    }
+    text = buffer.append(heap, text, "\n");
+    buffer.drop(heap, rev);
+    buffer.drop(heap, command);
+    let made = cliprog.run_capture(heap, io, exec, clock, "/bin/mkdir", "", "-p\0.github/workflows\0");
+    let cliprog.Captured { out, err, kind, value } = made;
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    var wrote = 1;
+    if kind == 0 && value == 0 {
+        borrow text as &xb in {
+            wrote = filewrite.store(fs, ".github/workflows/cancho.yml", buffer.bytes(xb));
+        }
+    }
+    buffer.drop(heap, text);
+    if wrote != 0 {
+        return refuse(io, "ci-init-unwritable", ".github/workflows/cancho.yml could not be written", 3);
+    }
+    console.error_all(io, "wrote .github/workflows/cancho.yml\n");
+    return 0;
+}

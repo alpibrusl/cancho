@@ -126,6 +126,7 @@ fn ci_in_cancho_says_what_fmt_check_and_test_say() {
     assert_eq!(status(&answer, "fmt"), "fail");
 
     authority_baseline(&exe, &dir, &good);
+    init_workflow(&exe, &dir);
 
     // Nothing to do is a usage error, and a name with `..` is refused rather than reaching `Exec`.
     let none = Command::new(&exe).current_dir(&dir).arg("ci").output().expect("runs");
@@ -215,4 +216,70 @@ fn authority_baseline(exe: &Path, base: &Path, hello: &str) {
         assert_eq!(code, 1, "{bad:?}");
         assert_eq!(std::fs::read_to_string(&baseline).expect("a baseline"), bad);
     }
+}
+
+/// `ci --init` (`docs/agent-ci.md` section 5): the workflow is written once, from the pin, and only for arguments that are safe in a shell line.
+fn init_workflow(exe: &Path, base: &Path) {
+    let dir = base.join("init");
+    std::fs::create_dir_all(&dir).expect("the directory is made");
+    let init = |arguments: &[&str]| {
+        let done = Command::new(exe)
+            .current_dir(&dir)
+            .arg("ci")
+            .arg("--init")
+            .args(arguments)
+            .output()
+            .expect("runs");
+        (done.status.code(), String::from_utf8_lossy(&done.stderr).into_owned())
+    };
+    let workflow = dir.join(".github/workflows/cancho.yml");
+    let (code, said) = init(&["good.cho"]);
+    assert_eq!(code, Some(1), "{said}");
+    assert!(said.contains("ci-init-unpinned"), "{said}");
+    assert!(!workflow.exists());
+
+    let pin = "0123456789abcdef0123456789abcdef01234567";
+    for bad in [
+        "cancho = \"main\"",
+        "cancho = \"0123abc\"",
+        "cancho = \"0123456789ABCDEF0123456789ABCDEF01234567\"",
+    ] {
+        std::fs::write(dir.join("cancho.toml"), format!("[package]\nname = \"x\"\n{bad}\n"))
+            .expect("a file");
+        assert_eq!(init(&["good.cho"]).0, Some(1), "{bad}");
+        assert!(!workflow.exists(), "{bad}");
+    }
+    std::fs::write(
+        dir.join("cancho.toml"),
+        format!("[package]\nname = \"x\"\ncancho = \"{pin}\"\n"),
+    )
+    .expect("a file");
+    for unsafe_word in [
+        vec!["a b.cho"],
+        vec!["$(id).cho"],
+        vec!["--std-dir", "x", "good.cho"],
+        vec!["-x", "good.cho"],
+        vec!["--test", "a;b.cho", "good.cho"],
+    ] {
+        let (code, said) = init(&unsafe_word);
+        assert_eq!(code, Some(1), "{unsafe_word:?}: {said}");
+        assert!(said.contains("ci-init-unsafe-argument"), "{said}");
+        assert!(!workflow.exists(), "{unsafe_word:?}");
+    }
+    assert_eq!(init(&[]).0, Some(2));
+
+    let (code, said) = init(&["--test", "lib.cho", "good.cho"]);
+    assert_eq!(code, Some(0), "{said}");
+    let text = std::fs::read_to_string(&workflow).expect("the workflow");
+    assert!(text.contains(&format!("scripts/install.sh | sh -s -- {pin}")), "{text}");
+    assert!(
+        text.contains("$HOME/.local/bin/cancho ci --output json --test lib.cho good.cho"),
+        "{text}"
+    );
+    // Written once: a second run leaves what is there.
+    std::fs::write(&workflow, "mine\n").expect("a file");
+    let (code, said) = init(&["good.cho"]);
+    assert_eq!(code, Some(1), "{said}");
+    assert!(said.contains("ci-init-exists"), "{said}");
+    assert_eq!(std::fs::read_to_string(&workflow).expect("the workflow"), "mine\n");
 }

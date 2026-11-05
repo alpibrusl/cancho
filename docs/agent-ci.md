@@ -1,6 +1,6 @@
 # `cancho ci`: the gate as one command, and the authority baseline
 
-> **Status: slices 1 and 2 built (§10, §11); `--init` (§5), project mode and the baseline of several programs are not.** Written before the code, as
+> **Status: slices 1 to 3 built (§10 to §12); project mode and the baseline of several programs are not.** Written before the code, as
 > `CONTRIBUTING.md` asks. Every number below is either marked *measured
 > (this document)* with how, or is a **gate**: a figure the built thing
 > must meet, not a result. A claim that turns out false is corrected here,
@@ -368,3 +368,51 @@ files so far) and 4 (mutants) of §8; the cost of §8.5. Two limits worth
 knowing: a `foreign_symbols` or `never_touches` string containing a quote is
 cut at the quote (the report does not produce one today), and the baseline's
 program name is the stem, so `a/prog.cho` and `b/prog.cho` share one.
+
+## 12. Slice 3, as built: `--init` (`ciinit.cho`)
+
+```sh
+cancho ci --init [--test FILE]... FILE...
+```
+
+Writes `.github/workflows/cancho.yml` and nothing else (`mkdir -p` of the
+directory by `/bin/mkdir`, as `cliproject.cho` does). The file installs the
+compiler `cancho.toml` pins with `scripts/install.sh` at that commit, then
+runs `$HOME/.local/bin/cancho ci --output json` **with the arguments given
+to `--init`**: the workflow runs exactly the command that was run to make it.
+
+**Differences from §5, found by building it:**
+
+* **`--init` takes the files**, because `ci` needs them and a workflow has
+  nowhere else to learn them.
+* **The command is run by its path**, not by `cancho`. `ci` runs this command
+  line again by the name it was run by, and a bare name is looked for in the
+  *current directory* (`cliprog.run_capture_in` prefixes `./`), so
+  `cancho ci` from a `PATH` would look for `./cancho`. This is a limit of
+  `ci` itself and is not fixed here: **`ci` cannot be run from `PATH` by a
+  bare name** (as it cannot by a name with `..`, §10).
+* **Only safe words go into the file.** A file name outside letters, digits
+  and `_ . / -` (or one that starts with `-`), `--std-dir` (a directory of
+  this machine), and any other option are `ci-init-unsafe-argument`. The
+  file is YAML and the line is a shell line; the commit is checked to be
+  40 or 64 lower-case hexadecimal digits before it is put in.
+* **The pin is read by a line scan** for `cancho = "..."`, not by the project
+  parser (`projfile.cho`), which `init` has no need of. `cancho = "main"`,
+  a short hash and upper-case digits are not pins.
+
+Rules (standard error, as `RULE: sentence`): `ci-init-unpinned` (1),
+`ci-init-exists` (1; also when the file cannot be told not to exist, so
+an unreadable one is never overwritten), `ci-init-unsafe-argument` (1),
+`ci-init-unwritable` (3).
+
+**Measured (this document).** The same test: no `cancho.toml` (nothing
+written); three pins that are not pins; five unsafe command lines; no
+files (exit 2); then a pinned project, where the file contains the install
+line with the pin twice and the run line with the arguments; a second
+`--init` leaves a hand-written file byte for byte. The file was also read by
+PyYAML once (`steps[2]` is the `Gate` step); that is not in the test, which
+has no YAML reader.
+
+**Not measured:** that the workflow *runs on GitHub*. It cannot be, from here;
+`release.yml` is the nearest evidence that `install.sh` works on the runner it
+names, and the first real run of this file is the test of it.

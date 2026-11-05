@@ -16,3 +16,9 @@ pub fn read[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, fs_read(""), file_r
     let clibase.Contents { bytes, failed } = clibase.read_file(heap, fs, "cancho.authority.json");
     return (bytes, failed);
 }
+
+// The file at `path`: its text, and 0 or why it could not be read (2 is a file that is not there).
+pub fn read_path[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] (buffer.Buffer, int) {
+    let clibase.Contents { bytes, failed } = clibase.read_file(heap, fs, path);
+    return (bytes, failed);
+}
