@@ -191,8 +191,8 @@ Open questions, each with the measurement that closes it:
   draft said 193, which was the count before the latest commit), export them, compare every SHA. Closes V1.
   **Measured 2026-11-05, V1 as built (`scripts/vcs_r1.sh`, release build, macOS arm64): passed, no mismatch.**
   `cancho-forge`: 228 commits reachable from any branch or remote-tracking ref (194 from `HEAD`, 59 merges there),
-  all 228 re-exported with their original SHA; `cancho`: 1,338 commits (545 from `HEAD`, 22 merges there; 494+16
-  carry PGP or SSH signatures), all 1,338 identical. The export passes `git fsck --strict`, `git rev-list --all`
+  all 228 re-exported with their original SHA; `cancho`: 1,338 commits (545 from `HEAD`, 22 merges there; of those 545, 494
+  carry a PGP and 16 an SSH signature), all 1,338 identical. The export passes `git fsck --strict`, `git rev-list --all`
   gives the same set in both, and every branch and remote-tracking ref points at the same SHA (the
   `refs/remotes/*/HEAD` symbolic refs are not imported). The two repositories are read from loose objects and
   18 (`cancho`) and 1 (`cancho-forge`) pack files with delta chains; nothing was run but `cancho`. What had to be
