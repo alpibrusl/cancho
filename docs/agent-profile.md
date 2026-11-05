@@ -327,3 +327,36 @@ the test checks.
 design), §7.6 beyond the bad baselines, §7.7, §7.8; the cost of the
 instrumentation on a larger program than `spin.cho` (the program runs 5 ms
 here); a `region` count on `https_hello`; a machine tag in a baseline.
+
+## 11. `--advise`: the facts for deciding what to optimise, and no judgement
+
+```sh
+cancho profile --advise [--std] [--top N] FILE... [-- ARGS]      # N is 5 unless given
+```
+
+The question was whether the profiler could say how much effort an optimisation would be. **It does not, by decision (the user's, 2026-11-05):** the agent
+estimates the effort from the output, as it reads the code; the profiler measures. So the report has no `effort`, no advice and no verdict, and a test
+fails if one of those words appears in it. What it has, for each of the functions with the most instructions of their own:
+
+| field | what it is |
+|---|---|
+| `function`, `file`, `line`, `size_lines` | where it is and how long it is (to the first line that is only `}`) |
+| `self`, `share` | its instructions, and `self / total` |
+| `max_speedup`, `if_halved` | `total / (total - self)` and `total / (total - self/2)`: **arithmetic on the counts**, the most the program gains on this metric if the function cost nothing, or half |
+| `calls`, `statements`, `statements_per_call`, `ir_per_call` | a loop shows as a large number of statements a call; a function called a million times for little shows as many calls and a small `ir_per_call` |
+| `allocations`, `allocations_per_call` | allocator calls made from its statements |
+| `hot_lines` | up to three lines with the most cost inside it (`executions`, `cost`, `share_of_function`) and **the text of the line**, so the agent need not open the file |
+
+and, for the whole report: `total`, `functions` (how many ran), `covered` (the share the listed functions make up, so a flat profile is visible as a small number), `basis` (what each field means,
+in a sentence) and `limits` (what is not measured: the C library and the kernel, what `clang` does to the code, and the threads' races).
+
+It is the same run as `profile`, with one more thing from the run time: `CANCHO_TRACE_STATEMENTS` in the environment makes the exit dump also write a line for each statement that ran (`st`
+lines), and the call counter of each function (`cancho_i_enter`) is in the `fn` line. `--advise` does not go with `--machine`, `--record` or `--baseline` (exit 2).
+
+**Measured (this document):** `spin.cho`: `inner` is 0.9998 of the run, `max_speedup` 7826.94, 200 calls, 10,004.0 statements a call, its two hottest lines are `total = total + i % 7;` (1,000,000
+executions, 0.6969 of the function) and `i = i + 1;`; `grow.cho` with the library: `push`, `fill` and `reserve` each take 0.30 to 0.39, `reserve` makes 17 allocations in 100,000 calls (so `allocations_per_call`
+has five decimals), and no function is dominant (`covered` 0.9999 with three listed). The test checks the bound against the counts, the share, the lines and their text, the library's names and that the report
+contains no word of advice.
+
+**Not done:** an `ci` step that runs `--advise` when the baseline regresses (the diagnosis with the failure); callers (which function called a hot function most), which needs an edge counter in
+`cancho_i_enter`; the cost of the instrumentation on a program larger than `spin.cho`.

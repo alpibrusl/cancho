@@ -98,6 +98,7 @@ fn cmd_profile() -> CommandInfo {
     .add_argument("file", "string[]", "the .cho files of the program; program arguments follow `--`", true)
     .add_option("std", "bool", "make the standard library's source available", None)
     .add_option("std-dir", "string", "the directory of the standard library's files", None)
+    .add_option("advise", "bool", "report the facts for deciding what to optimise (shares, the speedup bound, calls, statements and allocations a call, the hottest lines with their text); no effort or advice is given", None)
     .add_option("machine", "bool", "count machine instructions under valgrind (needs valgrind; line attribution is lost where the optimiser removes it)", None)
     .add_option("unoptimized", "bool", "build with -O0 (with --machine, more of the run has a line)", None)
     .add_option("top", "string", "how many functions to list (default 20)", None)
@@ -108,6 +109,7 @@ fn cmd_profile() -> CommandInfo {
     .with_examples(vec![
         ("Profile a program", "cancho profile app.cho"),
         ("Gate on a baseline", "cancho profile --baseline perf.json app.cho"),
+        ("Where to look for a speedup", "cancho profile --advise app.cho"),
     ])
     .with_see_also(vec!["trace", "build"])
 }

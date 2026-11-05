@@ -24,6 +24,10 @@ fn profile(exe: &Path, dir: &Path, arguments: &[&str]) -> (i32, Option<serde_jso
     )
 }
 
+fn line_of_source(text: &str, needle: &str) -> u64 {
+    text.lines().position(|l| l.contains(needle)).expect("the line is there") as u64 + 1
+}
+
 fn rules(answer: &serde_json::Value) -> Vec<String> {
     answer["findings"]
         .as_array()
@@ -133,6 +137,64 @@ fn profile_in_cancho_counts_instructions_by_function_and_gates_on_a_baseline() {
         by.iter().any(|f| f["name"] == "reserve" && f["file"] == "<std>/buffer.cho"),
         "{grown}"
     );
+
+    // `--advise`: the facts an agent needs to decide what to optimise, and no judgement of ours (no effort, no advice).
+    let (code, advice, said) = profile(&exe, &dir, &["--advise", "spin.cho"]);
+    assert_eq!(code, 0, "{said}");
+    let advice = advice.expect("JSON");
+    assert_eq!(advice["metric"], "ir-instructions");
+    let lead = &advice["candidates"][0];
+    assert_eq!(
+        (lead["function"].as_str(), lead["file"].as_str(), lead["line"].as_u64()),
+        (Some("inner"), Some("spin.cho"), Some(1))
+    );
+    assert_eq!(lead["calls"], 200);
+    assert_eq!(lead["allocations"], 0);
+    assert_eq!(lead["size_lines"], 9, "{advice}");
+    // The bound is arithmetic on the counts: total / (total - self), and the share is self / total.
+    let (self_cost, all) =
+        (lead["self"].as_f64().expect("self"), advice["total"].as_f64().expect("total"));
+    assert!(
+        (lead["max_speedup"].as_f64().expect("bound") - all / (all - self_cost)).abs()
+            < 0.01 * all / (all - self_cost)
+    );
+    assert!((lead["share"].as_f64().expect("share") - self_cost / all).abs() < 0.0002);
+    // The loop shows as many statements a call, and the hottest lines are the lines of the loop, with their text.
+    assert!(lead["statements_per_call"].as_f64().expect("per call") > 1000.0);
+    let hot = lead["hot_lines"].as_array().expect("hot lines");
+    assert_eq!(hot[0]["line"], line_of_source(SPIN, "total = total + i % 7"));
+    assert_eq!(hot[0]["text"], "total = total + i % 7;");
+    assert_eq!(hot[0]["executions"], 1_000_000);
+    assert!(hot[0]["cost"].as_u64() >= hot[1]["cost"].as_u64());
+    assert!(advice["covered"].as_f64().expect("covered") > 0.999);
+    // Nothing in it is our estimate of the effort.
+    let text = advice.to_string();
+    for word in ["effort", "advice", "recommend", "should"] {
+        assert!(!text.contains(word), "the report says `{word}`: {text}");
+    }
+    // The library's functions are named, with the allocations a call makes counted against them.
+    let (code, grown_advice, said) = profile(&exe, &dir, &["--advise", "--std", "grow.cho"]);
+    assert_eq!(code, 0, "{said}");
+    let grown_advice = grown_advice.expect("JSON");
+    let reserve = grown_advice["candidates"]
+        .as_array()
+        .expect("candidates")
+        .iter()
+        .find(|c| c["function"] == "reserve")
+        .expect("reserve is a candidate");
+    assert_eq!(
+        (reserve["file"].as_str(), reserve["allocations"].as_u64()),
+        (Some("<std>/buffer.cho"), Some(17))
+    );
+    assert!(grown_advice["candidates"].as_array().map(Vec::len) <= Some(5));
+    // It is a report of its own.
+    for other in [
+        vec!["--advise", "--machine", "spin.cho"],
+        vec!["--advise", "--record", "x.json", "spin.cho"],
+        vec!["--advise", "--baseline", "base.json", "spin.cho"],
+    ] {
+        assert_eq!(profile(&exe, &dir, &other).0, 2, "{other:?}");
+    }
 
     // The count of machine instructions under valgrind, when valgrind is there: the same functions, and the parts add up.
     if have_valgrind() {
