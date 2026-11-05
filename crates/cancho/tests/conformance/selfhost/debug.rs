@@ -46,21 +46,25 @@ fn a_program_built_with_g_has_line_tables() {
     cli(&["build", "-g", "-o", "chain_g", "chain.cho"]);
     cli(&["build", "-o", "chain_n", "chain.cho"]);
 
-    // Where `gdb` stops, and what it calls the frames.
-    let stopped = said(Command::new("gdb").current_dir(&dir).args([
+    // Where `gdb` stops at a line of the source, and what it calls the frames: the names the programmer wrote.
+    let putchar = line_of(&hello, "putchar(io");
+    let call = line_of(&hello, "written = write_all");
+    let at = format!("break hello.cho:{putchar}");
+    let stopped = said(
+        Command::new("gdb")
+            .current_dir(&dir)
+            .args(["-batch", "-ex", &at, "-ex", "run", "-ex", "bt", "hello_g"]),
+    );
+    assert!(stopped.contains(&format!("write_all () at hello.cho:{putchar}")), "{stopped}");
+    assert!(stopped.contains(&format!("main () at hello.cho:{call}")), "{stopped}");
+    // And by the name of the function, in the file it is in.
+    let named = said(Command::new("gdb").current_dir(&dir).args([
         "-batch",
         "-ex",
         "break write_all",
-        "-ex",
-        "run",
-        "-ex",
-        "bt",
         "hello_g",
     ]));
-    let putchar = line_of(&hello, "putchar(io");
-    let call = line_of(&hello, "written = write_all");
-    assert!(stopped.contains(&format!("write_all () at hello.cho:{putchar}")), "{stopped}");
-    assert!(stopped.contains(&format!("main () at hello.cho:{call}")), "{stopped}");
+    assert!(named.contains("file hello.cho"), "{named}");
 
     // A function is at the line of its declaration, whatever the optimiser did to it.
     let located = said(Command::new("gdb").current_dir(&dir).args([
