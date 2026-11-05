@@ -126,6 +126,7 @@ fn ci_in_cancho_says_what_fmt_check_and_test_say() {
     assert_eq!(status(&answer, "fmt"), "fail");
 
     authority_baseline(&exe, &dir, &good);
+    advertised(&exe);
     init_workflow(&exe, &dir);
 
     // Nothing to do is a usage error, and a name with `..` is refused rather than reaching `Exec`.
@@ -282,4 +283,52 @@ fn init_workflow(exe: &Path, base: &Path) {
     assert_eq!(code, Some(1), "{said}");
     assert!(said.contains("ci-init-exists"), "{said}");
     assert_eq!(std::fs::read_to_string(&workflow).expect("the workflow"), "mine\n");
+}
+
+/// `ci`, `profile` and `trace` are in the command tree of the command line in cancho (`introspect` and `skill`), with their options, and the Rust binary
+/// does not advertise commands it does not run.
+fn advertised(exe: &Path) {
+    let names = |binary: &Path, extras: bool| -> Vec<String> {
+        let mut command = Command::new(binary);
+        command.current_dir(scratch("selfhost-advertised")).args([
+            "introspect",
+            "--output",
+            "json",
+        ]);
+        if extras {
+            command.env("CANCHO_ACLI_EXTRAS", "1");
+        }
+        let done = command.output().expect("introspect runs");
+        let tree: serde_json::Value = serde_json::from_slice(&done.stdout).expect("JSON");
+        tree["data"]["commands"]
+            .as_array()
+            .expect("commands")
+            .iter()
+            .map(|c| c["name"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    };
+    let mine = names(exe, false);
+    for command in ["ci", "profile", "trace"] {
+        assert!(
+            mine.iter().any(|n| n == command),
+            "`introspect` does not list `{command}`: {mine:?}"
+        );
+        assert!(
+            !names(Path::new(BIN), false).iter().any(|n| n == command),
+            "the Rust binary advertises `{command}`, which it does not run"
+        );
+    }
+    let skill = Command::new(exe)
+        .current_dir(scratch("selfhost-advertised"))
+        .arg("skill")
+        .output()
+        .expect("skill runs");
+    let text = String::from_utf8_lossy(&skill.stdout);
+    assert!(
+        text.contains("cancho ci")
+            && text.contains("--accept-authority")
+            && text.contains("cancho trace")
+            && text.contains("--unoptimized"),
+        "{text}"
+    );
 }

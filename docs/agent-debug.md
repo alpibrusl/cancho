@@ -166,7 +166,7 @@ not written), and the test does not compare it with an earlier compiler.
   `switch` takes its location after the `]`). Even so the optimiser leaves
   line 0 on what it hoists or merges (`agent-profile.md` §9).
 * **`-g` is `build` only**, not `run` or `test`; and not in
-  `introspect`/`--help` (the same reason as `ci`, `agent-ci.md` §10).
+  `--help` or `introspect` (it is a flag of `build`, which the Rust binary advertises without it).
 * **Quadratic.** Each location asks `diagnose.locate` for a line, which
   counts from the start of the file. Not measured on a large program;
   `cli.cho` itself (80 files) is the case to time.
@@ -388,4 +388,4 @@ and `--timeout 0` are exit 2; a refused program is exit 1; an endless loop is
 **Not done:** §8 gates 3 (every sampled statement), 4 (the five trap causes), 5
 (locals), 7 (a fuzzer over the debugger's output) and 8 (the claim that this is
 cheaper than a REPL is a hypothesis with no transcript). `trace` is not in
-`introspect` or `--help`, for the reason given for `ci` (`agent-ci.md` §10).
+`--help` (its text is Rust's `USAGE`), but is in `introspect` and `skill` (`agent-ci.md` §10).

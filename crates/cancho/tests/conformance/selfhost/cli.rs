@@ -284,6 +284,7 @@ fn the_command_line_in_cancho_answers_help_and_the_command_tree_like_cancho() {
         let dir = scratch("selfhost-tree-run");
         let _ = std::fs::remove_file(dir.join("out.md"));
         let done = Command::new(binary)
+            .env("CANCHO_ACLI_EXTRAS", "1")
             .current_dir(&dir)
             .args(arguments)
             .output()

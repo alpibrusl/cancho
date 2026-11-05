@@ -285,14 +285,13 @@ the first failing step wins) and that every answer is accepted by
 
 **Not done, and said so:**
 
-* `ci` is **not in `introspect` or `--help`**. Those are checked
-  byte-for-byte against the Rust binary (`cli.rs`, the `introspect` and
-  `--help` tests), and the Rust binary has no `ci`. Registering it in
-  `commandtree.cho` alone would turn that test red; registering it in
-  `src/acli.rs` is the Rust change this design avoids. Until that is
-  decided, an agent finds `ci` here and in `agent-guidelines`, not in the
-  generated surface, which is the drift `agent-cli.md` exists to prevent.
-  **Decision for the user.**
+* **Corrected: `ci` is in `introspect` and `skill`** (decided, 2026-11-05; the first version of this section said it was not and asked). The
+  command tree is registered once, in `crates/cancho/src/acli.rs`, and `examples/selfhost/commandtree.cho` is generated from the Rust binary's
+  output; the Rust binary is held by `agent_cli.rs` to advertising only what it runs. So `ci`, `profile` and `trace` are registered there as data
+  (`extra_commands()`, no logic) and **advertised only when `CANCHO_ACLI_EXTRAS` is set**, which the generator and the parity test set. The
+  command line in cancho shows them; the Rust binary does not. They are **not in `--help`**: its text is the `USAGE` constant of `main.rs`,
+  which the Rust binary prints for itself. `ci_in_cancho_says_what_fmt_check_and_test_say` checks both (`introspect` lists the three, the Rust
+  binary lists none, `skill` carries their options).
 * Not run on a project (`cancho.toml`): files are named.
 * Not measured: the cost of a `ci` over the cost of its three steps (gate 5).
 * Gates 2 to 4 of §8 are the authority baseline's and wait for it.

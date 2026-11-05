@@ -46,7 +46,90 @@ pub fn build_app() -> AcliApp {
     for cmd in commands() {
         app.register_command(cmd);
     }
+    // The commands that only the command line written in cancho runs (`examples/selfhost`, `docs/agent-ci.md`) are advertised when this is
+    // asked for: this binary does not dispatch them, and `tests/conformance/agent_cli.rs` holds it to advertising only what it runs. The test
+    // that writes `examples/selfhost/commandtree.cho` and the one that compares that command line with this binary ask.
+    if std::env::var_os("CANCHO_ACLI_EXTRAS").is_some() {
+        for cmd in extra_commands() {
+            app.register_command(cmd);
+        }
+    }
     app
+}
+
+/// The commands of the command line in cancho that this binary does not have: `ci`, `profile` and `trace`.
+fn extra_commands() -> Vec<CommandInfo> {
+    vec![cmd_ci(), cmd_profile(), cmd_trace()]
+}
+
+fn cmd_ci() -> CommandInfo {
+    CommandInfo::new(
+        "ci",
+        "the gate as one command: fmt --check, check, test and the authority baseline, answered as one JSON verdict \
+         (exit 0 = every step passed, 1 = a finding, 2 = bad command line, 3 = a step could not be run, 4 = only `test` failed; \
+         only in the command line written in cancho; docs/agent-ci.md)",
+    )
+    .idempotent(false)
+    .add_argument("file", "string[]", "the .cho files of the program; checked, formatted and compared with cancho.authority.json", false)
+    .add_argument("--test <file>", "string[]", "a file of the test run, named in full as `cancho test` takes them (repeatable)", false)
+    .add_option("std-dir", "string", "the directory of the standard library's files, passed to each step", None)
+    .add_option("output", "enum[json]", "the verdict as data rather than one line a step", None)
+    .add_option("strict", "bool", "a narrowing of the authority is a failure too", None)
+    .add_option("accept-authority", "bool", "write cancho.authority.json from this run, recording what widened (needs --reason)", None)
+    .add_option("reason", "string", "why the authority widened, written beside what it admits", None)
+    .add_option("init", "bool", "write .github/workflows/cancho.yml for the pinned compiler, running this command", None)
+    .with_examples(vec![
+        ("Run the gate", "cancho ci --output json src/main.cho src/lib.cho --test src/lib.cho --test tests/lib_test.cho"),
+        ("Admit a widening of the authority", "cancho ci --accept-authority --reason \"fetch the index\" src/main.cho"),
+        ("Write the GitHub workflow", "cancho ci --init src/main.cho"),
+    ])
+    .with_see_also(vec!["check", "test", "authority", "fmt"])
+}
+
+fn cmd_profile() -> CommandInfo {
+    CommandInfo::new(
+        "profile",
+        "where the instructions of a program go, counted under valgrind and answered as JSON; with --baseline, which function got dearer \
+         (exit 0 = a profile, 1 = the program did not end with 0 or a function regressed, 2 = bad command line, 3 = it could not be run; \
+         only in the command line written in cancho; docs/agent-profile.md)",
+    )
+    .idempotent(false)
+    .add_argument("file", "string[]", "the .cho files of the program; program arguments follow `--`", true)
+    .add_option("std", "bool", "make the standard library's source available", None)
+    .add_option("std-dir", "string", "the directory of the standard library's files", None)
+    .add_option("unoptimized", "bool", "build with -O0 so that more of the run has a line (counts then differ from the shipped binary)", None)
+    .add_option("top", "string", "how many functions to list (default 20)", None)
+    .add_option("record", "string", "write a baseline from this run", None)
+    .add_option("baseline", "string", "compare with a baseline and fail on a regression", None)
+    .add_option("factor", "string", "how much dearer is a regression, in hundredths (default 1.3)", None)
+    .add_option("strict", "bool", "an improvement is a failure too (re-record the baseline)", None)
+    .with_examples(vec![
+        ("Profile a program", "cancho profile --unoptimized app.cho"),
+        ("Gate on a baseline", "cancho profile --unoptimized --baseline perf.json app.cho"),
+    ])
+    .with_see_also(vec!["trace", "build"])
+}
+
+fn cmd_trace() -> CommandInfo {
+    CommandInfo::new(
+        "trace",
+        "one run of a program under gdb and one answer: why it stopped, where, and the stack of its own functions \
+         (exit 0 = an answer, a trap included, 1 = the place was not reached, has no code or the time ran out, 2 = bad command line, \
+         3 = it could not be run; only in the command line written in cancho; docs/agent-debug.md)",
+    )
+    .idempotent(false)
+    .add_argument("file", "string[]", "the .cho files of the program; program arguments follow `--`", true)
+    .add_option("std", "bool", "make the standard library's source available", None)
+    .add_option("std-dir", "string", "the directory of the standard library's files", None)
+    .add_option("at", "string", "stop at FILE:LINE (without it, at the first trap)", None)
+    .add_option("on-trap", "bool", "stop at the first trap (the default)", None)
+    .add_option("timeout", "string", "seconds before the run is stopped (default 30)", None)
+    .add_option("max-frames", "string", "how many frames of the stack to give (default 32)", None)
+    .with_examples(vec![
+        ("Where does it trap?", "cancho trace app.cho"),
+        ("Stop at a line", "cancho trace --at src/app.cho:42 src/app.cho"),
+    ])
+    .with_see_also(vec!["profile", "run"])
 }
 
 fn commands() -> Vec<CommandInfo> {

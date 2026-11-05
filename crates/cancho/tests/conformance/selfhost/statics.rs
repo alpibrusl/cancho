@@ -65,6 +65,7 @@ fn check(file: &str, want: &str, test: &str) {
 fn said(arguments: &[&str]) -> String {
     // Run from a scratch directory: `introspect` and `skill` of the Rust binary write a `.cli/` directory beside where they are run.
     let run = Command::new(BIN)
+        .env("CANCHO_ACLI_EXTRAS", "1")
         .current_dir(scratch("selfhost-said"))
         .args(arguments)
         .output()

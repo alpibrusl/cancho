@@ -269,3 +269,5 @@ read standard input (`--stdin`); a timeout (a program that does not end is
 waited for, up to the day `run_capture` allows). Callgrind makes a program
 20 to 50 times slower (not measured here: `spin.cho` is 15 million
 instructions and took 0.55 s with the build).
+
+`profile` is in `introspect` and `skill` of the command line in cancho (registered with `ci` and `trace`; `agent-ci.md` §10), and not in `--help`.
