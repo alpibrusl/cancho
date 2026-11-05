@@ -221,6 +221,26 @@ pub fn refuse[&i](io: &!i Io, rule: &static [byte], sentence: &static [byte], co
     return code;
 }
 
+// Where the digits that start at `at` in `t` end.
+pub fn digits_end[&t](t: &t [byte], at: int) -> [] int {
+    var k = at;
+    while k < len(t) && lc.at(t, k) >= '0' && lc.at(t, k) <= '9' {
+        k = k + 1;
+    }
+    return k;
+}
+
+// The number written in `t` from `from` to `to`.
+pub fn value_of[&t](t: &t [byte], from: int, to: int) -> [] int {
+    var n = 0;
+    var k = from;
+    while k < to {
+        n = n * 10 + (lc.at(t, k) - '0');
+        k = k + 1;
+    }
+    return n;
+}
+
 // The `k`th name of a list of names, each followed by a NUL.
 pub fn name_at[&n](names: &n [byte], k: int) -> [] &n [byte] {
     var at = 0;

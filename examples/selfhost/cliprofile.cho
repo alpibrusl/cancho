@@ -28,24 +28,6 @@ import selfhost.clici;
 import selfhost.filewrite;
 import selfhost.prune;
 
-fn digits_end[&t](t: &t [byte], at: int) -> [] int {
-    var k = at;
-    while k < len(t) && lc.at(t, k) >= '0' && lc.at(t, k) <= '9' {
-        k = k + 1;
-    }
-    return k;
-}
-
-fn value_of[&t](t: &t [byte], from: int, to: int) -> [] int {
-    var n = 0;
-    var k = from;
-    while k < to {
-        n = n * 10 + (lc.at(t, k) - '0');
-        k = k + 1;
-    }
-    return n;
-}
-
 // The name callgrind gave a source file without the `./` it put before it; empty if it is not a file of the program (`.cho`, or `<std>/...` of the library).
 fn source_name[&t](t: &t [byte]) -> [] &t [byte] {
     var name = t;
@@ -135,15 +117,15 @@ fn parse[&h, &t, &s, &a](heap: &!h Heap, text: &t [byte], selfs: &!s [int], allo
                 to_allocator = is_allocator(line[4..len(line)]);
             } else if clici.starts(line, "calls=") {
                 after_calls = true;
-                calls = value_of(line, 6, digits_end(line, 6));
+                calls = clibase.value_of(line, 6, clibase.digits_end(line, 6));
             } else if clici.starts(line, "summary: ") {
-                total = value_of(line, 9, digits_end(line, 9));
+                total = clibase.value_of(line, 9, clibase.digits_end(line, 9));
             } else if len(line) > 0 && lc.at(line, 0) >= '0' && lc.at(line, 0) <= '9' {
-                let lend = digits_end(line, 0);
+                let lend = clibase.digits_end(line, 0);
                 if lend < len(line) && lc.at(line, lend) == ' ' {
-                    let cend = digits_end(line, lend + 1);
-                    let place = value_of(line, 0, lend);
-                    let cost = value_of(line, lend + 1, cend);
+                    let cend = clibase.digits_end(line, lend + 1);
+                    let place = clibase.value_of(line, 0, lend);
+                    let cost = clibase.value_of(line, lend + 1, cend);
                     if after_calls {
                         after_calls = false;
                         if to_allocator && file >= 0 {
@@ -370,13 +352,13 @@ fn recorded[&h, &t, &v](heap: &!h Heap, text: &t [byte], values: &!v [int], capa
                     close = close + 1;
                 }
                 if close + 2 < len(t) && lc.at(t, close + 1) == ':' && lc.at(t, close + 2) == ' ' {
-                    let number = digits_end(t, close + 3);
+                    let number = clibase.digits_end(t, close + 3);
                     if number > close + 3 {
                         if bytes.equal(t[1..close], "total") {
-                            total = value_of(t, close + 3, number);
+                            total = clibase.value_of(t, close + 3, number);
                         } else if count < capacity {
                             keys = buffer.push(heap, buffer.append(heap, keys, t[1..close]), byte_of(0));
-                            values[count] = value_of(t, close + 3, number);
+                            values[count] = clibase.value_of(t, close + 3, number);
                             count = count + 1;
                         }
                     }
@@ -745,10 +727,10 @@ pub fn profile_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             }
         } else if bytes.equal(word, "--top") {
             n = n + 1;
-            if n >= arg_count(args) || len(arg(args, n)) == 0 || digits_end(arg(args, n), 0) != len(arg(args, n)) || value_of(arg(args, n), 0, len(arg(args, n))) < 1 || len(arg(args, n)) > 4 {
+            if n >= arg_count(args) || len(arg(args, n)) == 0 || clibase.digits_end(arg(args, n), 0) != len(arg(args, n)) || clibase.value_of(arg(args, n), 0, len(arg(args, n))) < 1 || len(arg(args, n)) > 4 {
                 return clibase.usage_error(heap, io, "`--top` needs a number from 1 to 9999");
             }
-            top = value_of(arg(args, n), 0, len(arg(args, n)));
+            top = clibase.value_of(arg(args, n), 0, len(arg(args, n)));
         } else if bytes.equal(word, "--record") || bytes.equal(word, "--baseline") {
             n = n + 1;
             if n >= arg_count(args) || len(arg(args, n)) == 0 {

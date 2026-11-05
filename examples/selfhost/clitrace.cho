@@ -22,24 +22,6 @@ import selfhost.cliprog;
 import selfhost.cibase;
 import selfhost.clici;
 
-fn digits_end[&t](t: &t [byte], at: int) -> [] int {
-    var k = at;
-    while k < len(t) && lc.at(t, k) >= '0' && lc.at(t, k) <= '9' {
-        k = k + 1;
-    }
-    return k;
-}
-
-fn value_of[&t](t: &t [byte], from: int, to: int) -> [] int {
-    var n = 0;
-    var k = from;
-    while k < to {
-        n = n * 10 + (lc.at(t, k) - '0');
-        k = k + 1;
-    }
-    return n;
-}
-
 // The last place `word` is in `t`, or -1.
 fn last_of[&t, &w](t: &t [byte], word: &w [byte]) -> [] int {
     var at = len(t) - len(word);
@@ -70,7 +52,7 @@ fn frame[&h, &t](heap: &!h Heap, line: &t [byte]) -> [heap] buffer.Buffer {
     if len(line) < 3 || lc.at(line, 0) != '#' {
         return out;
     }
-    var k = digits_end(line, 1);
+    var k = clibase.digits_end(line, 1);
     while k < len(line) && lc.at(line, k) == ' ' {
         k = k + 1;
     }
@@ -92,7 +74,7 @@ fn frame[&h, &t](heap: &!h Heap, line: &t [byte]) -> [heap] buffer.Buffer {
         return out;
     }
     let file = place[0..colon];
-    let number = digits_end(place, colon + 1);
+    let number = clibase.digits_end(place, colon + 1);
     let source = len(file) > 4 && lc.spells(file, len(file) - 4, len(file), ".cho");
     let library = len(file) > 6 && lc.spells(file, 0, 6, "<std>/");
     if !source && !library || number == colon + 1 {
@@ -103,7 +85,7 @@ fn frame[&h, &t](heap: &!h Heap, line: &t [byte]) -> [heap] buffer.Buffer {
     out = buffer.append(heap, out, ", \"file\": ");
     out = jsonwrite.string(heap, out, file);
     out = buffer.append(heap, out, ", \"line\": ");
-    out = buffer.push_nat(heap, out, value_of(place, colon + 1, number));
+    out = buffer.push_nat(heap, out, clibase.value_of(place, colon + 1, number));
     return buffer.append(heap, out, " }");
 }
 
@@ -246,13 +228,13 @@ pub fn trace_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &
             at_spec = n;
         } else if bytes.equal(word, "--timeout") || bytes.equal(word, "--max-frames") {
             n = n + 1;
-            if n >= arg_count(args) || len(arg(args, n)) == 0 || len(arg(args, n)) > 4 || digits_end(arg(args, n), 0) != len(arg(args, n)) || value_of(arg(args, n), 0, len(arg(args, n))) < 1 {
+            if n >= arg_count(args) || len(arg(args, n)) == 0 || len(arg(args, n)) > 4 || clibase.digits_end(arg(args, n), 0) != len(arg(args, n)) || clibase.value_of(arg(args, n), 0, len(arg(args, n))) < 1 {
                 return clibase.usage_error(heap, io, "`--timeout` and `--max-frames` need a number from 1 to 9999");
             }
             if bytes.equal(word, "--timeout") {
-                timeout = value_of(arg(args, n), 0, len(arg(args, n)));
+                timeout = clibase.value_of(arg(args, n), 0, len(arg(args, n)));
             } else {
-                max_frames = value_of(arg(args, n), 0, len(arg(args, n)));
+                max_frames = clibase.value_of(arg(args, n), 0, len(arg(args, n)));
             }
         } else if bytes.equal(word, "--output") {
             n = n + 1;
@@ -368,7 +350,7 @@ pub fn trace_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &
 // `FILE:LINE`: something, a colon, and a line number that ends it, and no control character.
 fn location_ok[&t](t: &t [byte]) -> [] bool {
     let colon = last_of(t, ":");
-    if colon < 1 || colon + 1 >= len(t) || digits_end(t, colon + 1) != len(t) {
+    if colon < 1 || colon + 1 >= len(t) || clibase.digits_end(t, colon + 1) != len(t) {
         return false;
     }
     var k = 0;
