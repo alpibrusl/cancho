@@ -1,0 +1,221 @@
+# `cancho vcs` as a complete version-control CLI, agents first
+
+> **Status: design, not built.** Written before the code (`CONTRIBUTING.md`). A claim marked
+> *(measured)* was measured on the date given, in the repository named; a claim marked *(read)* was read
+> from the source; one marked *(designed)* is a proposal that a slice below must measure before it stands.
+> The first draft of this document assumed that a typed-AST store could stand in for git on a code
+> repository. Section 2 measures that assumption and it fails; the design below is what the measurement left.
+
+## 1. What is asked, and what exists
+
+Asked: `cancho vcs` should be a complete command-line tool for the whole code-development cycle, the
+equivalent of git, with an agent as the first-class user: start work, change files, see the change,
+record it with the reason, branch, merge, review, publish, fetch, go back, find who changed what and why.
+
+Exists *(read, 2026-11-05)*: `crates/cancho-vcs` (1,341 lines of library) and four CLI files in
+`crates/cancho/src` (`vcs_cli.rs` 1,114, `vcs_sync.rs` 355, `vcs_dir.rs` 189, `vcs_origin.rs` 158):
+typed `Operation`s with BLAKE3 identity and an edition tag, the always-valid gate (`gate::check_candidate`),
+a loose-file op log, a hash-chained Ed25519-sealable attestation log, a content-addressed blob store for
+one file's source, and a per-file `Manifest`. The commands are `vcs publish` (one store per file, `--requires`
+locks between them), `vcs log`, `vcs sync` (an `ids.txt` index in `.cancho/`) and a fetch of a locked store
+through **a `git` checkout** (`vcs_origin.rs`, `vcs_dir.rs`). So the present system is a *package publisher*
+that sits on top of git. It has no working copy, no commit, no branch, no merge, no remote, no history of its
+own. `docs/vcs.md` section 8 lists merge, merge sessions, issues and predicate branches as not started.
+
+## 2. The measurement that changes the design
+
+If the store versions only `.cho` declarations, how much of a real change does it see? Two repositories
+written in cancho, the last 150 non-merge commits of each, files read from `git show --name-only`
+*(measured 2026-11-05)*:
+
+| repository | commits touching only `.cho` | touching `.cho` and other files | touching no `.cho` |
+|---|---|---|---|
+| `cancho-forge` | **3** (2%) | 87 | 44 |
+| `cancho` | **1** (1%) | 106 | 43 |
+
+In `cancho-forge`, 496 of the 1,084 files those commits touched are `.cho`; the rest are `sh`, `md`, `txt`,
+`json`, `tsv`, `pem`, `py`, the manifest `cancho.toml`, CI. The tracked tree is 335 files, 182 of them `.cho`.
+
+**Consequence.** A store of declarations cannot replace git on a code repository: 98% of the commits
+carry something it cannot hold, and the change that matters (a source file, its test, the script that runs
+it, the document that states it) is one change. The unit of version control has to be the **whole tree**.
+What cancho adds is not a different unit but a **different reading of the part that is cancho**: for a `.cho`
+file the diff, the merge and the blame are by declaration, and a commit is refused unless the tree it makes
+still checks. Everything below follows from this one choice.
+
+## 3. The model *(designed)*
+
+Four kinds of object, all content-addressed (BLAKE3, as `cancho-id` and `OpId` already are), all immutable,
+all stored as plain files beneath `.cancho/vcs/` (so the store is inspectable with the tools an agent has,
+and there is no database to corrupt).
+
+* **Blob**: the bytes of a file, any bytes. (`blobs.rs` stores one file's UTF-8 source today; it generalises
+  to bytes.) A file over a bound (default 16 MiB) is refused with a tag, not silently stored.
+* **Tree**: a sorted list of `(path, mode, blob)`; a directory is not an object, the paths carry it. Modes are
+  exactly three: file, executable file, symbolic link (the target is the blob). Nothing else is versioned,
+  which is also why there are no submodules (section 9).
+* **Change** (the commit; named *change* because it carries more than a snapshot): `tree`, `parents` (0, 1 or 2),
+  `author`, `time`, and the part git has no field for, **`intent`**: `{prompt, model, session, issue?}`.
+  Also `ops`, the typed operations the diff against the first parent produced for the `.cho` files in it
+  (derived at record time, stored so a reader never recomputes them: an `OpId` list), and `attestations`, the
+  ids of the gate results that let it exist. An unattributed change is allowed and says so, as lex-vcs does;
+  an intent that is present is never rewritten.
+* **Ref**: a branch or a tag, a file holding a change id. Moved by an atomic rename, only ever with
+  `--expect <old id>`, so two agents racing on one branch cannot both win silently (compare-and-swap, section 5).
+
+What is *derived and never authoritative*: the per-declaration index (`SigId`/`StageId`, today's `ids.txt`),
+the operations, the rendered diff, blame. They can be recomputed from trees and are cached; a cache that
+disagrees with the trees is deleted, not trusted.
+
+**Always-valid head.** A branch ref moves only to a change whose tree passes the branch's *gate*. The built-in
+gate is `cancho check` over every `.cho` file the change touches (the rule tag of the first failure is the
+refusal). A repository may add commands to its gate (`scripts/gate.sh` for this one); a command's exit status
+and the hash of its output are recorded as an attestation on the change, so "this head passed the gate at
+this tree" is a fact in the store and not a claim in a CI log. `record --no-gate` exists and writes an
+unattested change to a ref that is not protected; a protected ref refuses it. *(The gate cost is the open
+question of section 8, R2: this repository's gate is 18 minutes.)*
+
+## 4. The command surface *(designed)*
+
+Agent-first means, for every command: `--output json` is the stable interface (text is a rendering of it); every
+refusal carries a **rule tag** and exit code (the repository's rule), and the same refusal is the same tag on
+every run; nothing is interactive, nothing opens an editor or a pager, nothing asks a question; every command
+that changes state is **idempotent** (running it twice records once) and has `--dry-run`; every command that
+moves a ref takes `--expect`. There is **no staging area**: a person stages to compose a commit by hand, an
+agent knows the paths it changed, and `record <paths>` (or `record --all`) says them. (Git's index is its
+largest source of state an agent can get wrong; omitting it is a decision, with the cost that a partial hunk
+cannot be recorded. Hunk-level recording is not offered; a change is made of whole files.)
+
+| group | commands | notes |
+|---|---|---|
+| start | `init`, `clone <url\|path>`, `import-git <dir>` | `import-git` reads a git repository's objects **in cancho** (loose objects and packs; zlib and delta decoding are the work), never by running `git`; it makes the whole history, one change per commit, with the commit message as the unattributed intent prompt |
+| see | `status`, `diff [a [b]]`, `show <change>`, `log`, `blame <path\|decl>` | `diff` is by declaration for a `.cho` file (added, removed, signature-changed, body-changed, renamed) and by lines for anything else, in one JSON document; `log` filters by `--intent`, `--session`, `--path`, `--decl`, `--issue`; `blame` names the change **and its intent** that last touched a line or a declaration |
+| record | `record [paths] --intent-prompt .. --intent-model .. --intent-session ..` | runs the gate; refuses on failure with the tag; returns the change id |
+| undo | `revert <change>`, `restore <paths> [--from <change>]`, `reset-ref <ref> --expect <id> --to <change>` | `revert` records a new change that undoes one; nothing rewrites history, there is no `rebase` (a replay is `replay`, below) |
+| branch | `branch {list,create,delete}`, `switch <ref>`, `tag` | `switch` refuses over uncommitted changes unless `--keep` (carry) or `--discard` |
+| combine | `merge <ref>`, `conflicts`, `resolve <path\|decl> --take {ours,theirs,base} \| --with <file>`, `merge --abort` | section 6 |
+| replay | `replay <change> --onto <ref>` | re-applies a change's **operations** (not its text) onto another base and gates the result; the agent's answer to cherry-pick and rebase; reports `exact` (same tree) or `moved` |
+| share | `remote {add,list}`, `push`, `pull`, `fetch` | section 7 |
+| bridge | `export-git <dir>`, `mirror <git-url>` | section 7; one-way, derived |
+| keep | `verify` (re-hash everything, check the attestation chain), `gc`, `keys {new,sign}` | `verify` is the single command that says the store is sound |
+
+Not offered, on purpose, and said so: staging area and `add -p`, interactive rebase, stash (a branch and
+`switch --keep` do it), submodules, hooks (the gate is the hook), `reflog` (refs have an append-only
+`refs/<name>.log` instead, one line per move, so a lost head is recoverable), worktrees (a second working copy
+is a second `clone` of a local path, which is cheap because objects are content-addressed and hard-linked).
+
+## 5. Concurrency and failure *(designed)*
+
+Agents run in parallel on one machine, so this is not optional. (1) Objects are written to a temporary name,
+fsynced, and renamed to their hash; a crash leaves garbage that `gc` removes and never a wrong object.
+(2) A ref move is a rename under a lock file, with `--expect`; the loser gets the tag `ref-moved` and the
+winner's id and can `merge` or `replay`. (3) The working copy has one lock (`.cancho/vcs/lock`), taken by
+`switch`, `merge`, `restore` and `record`; a stale lock is reported with the pid and age, never broken
+silently. (4) No command shells out: no `git`, no `diff`, no `patch`, no `tar` (the project rule). The text
+diff and the three-way text merge are written in Rust in the crate, and the crash and race behaviour of (1) to (3) is
+exercised by a test that kills the process at every write, as `tests/conformance/crash_*` do in `cancho-forge`.
+
+## 6. Merge *(designed; the part with most risk)*
+
+A merge works in three layers and reports in one structured document.
+
+1. **Tree layer**: for each path, base/ours/theirs. Same on both sides, or changed on one side only, resolve
+   without reading content. Added/deleted/renamed handling by path and by blob identity (a rename is a delete
+   plus an add of the same blob; a rename with an edit is not detected in V2 and is a conflict with a tag
+   `rename-edit`, said rather than guessed).
+2. **`.cho` layer**: a file changed on both sides is merged **by declaration** (`vcs.md` section 4): a declaration
+   changed on one side only takes that side; added on both with identical identity is one; changed on both is a
+   conflict naming the declaration; order and layout are re-derived by the canonical printer, so a pure
+   reformat conflicts with nothing. Then the merged tree goes through the gate, which is where the cancho
+   difference lives: two edits that each check can together move a linear value twice, so a merge that is clean
+   by declaration can fail the gate (`vcs.md` section 4 predicted this and has not measured the rate).
+   A gate failure after a clean merge is reported as `merge-gate-failed` with the rule tag and **both** changes'
+   intents, which is more than the agent would get from a conflict marker.
+3. **Text layer** for every other file: a line-based three-way merge (diff3). A conflict is **data, not markers
+   written into the file**: `merge` leaves the working copy at "ours" for those paths and `conflicts` returns
+   `{path, base, ours, theirs, hunks:[{base_lines, ours_lines, theirs_lines}]}`; `resolve --with <file>` or
+   `--take` settles one. (An agent that edits a file full of `<<<<<<<` markers has to parse them; one that
+   is given three versions does not.)
+
+`merge` records a change with two parents only when every path is settled and the gate passes; otherwise it
+records nothing and says what is open. `merge --abort` is exact because nothing was recorded.
+
+## 7. Remotes and the GitHub bridge *(designed)*
+
+Our PRs, CI and merges are on GitHub, which speaks git only. So the system has two relations to git:
+
+* **Out**: `export-git` renders every change as a git commit (tree exact, message = intent prompt, trailers
+  `Cancho-Change`, `Cancho-Intent`, `Cancho-Session`), and `mirror` pushes it. Derived and one-way, as lex-vcs's
+  mirror; git SHAs are a function of the changes, so they are stable (author and time are stored, which the
+  lex-vcs mirror's SHAs were not). This is how a pull request still exists.
+* **In**: `import-git` (above) for a repository's history, and `pull --from-git <url>` to take what a person
+  pushed to GitHub as new changes (unattributed intent, the commit message as prompt). The round trip
+  `import-git` then `export-git` must reproduce every original commit SHA; that equality is the V1 acceptance test.
+
+Between cancho stores: a **path** remote (a directory, objects copied by content address, refs by
+compare-and-swap) in V3, and an **HTTP** remote in V4 (the shape `docs/vcs-publish.md` section 5 left open: a thin
+gateway, objects by id, `push` is "here are the objects the other side lacks, then move the ref with
+`--expect`"). Nothing about transport needs git. TLS and HTTP are packages cancho already has in `.cho`; the
+Rust CLI uses the crate's own client or the packages, decided in V4 on what is measured then.
+
+Where signatures matter (a branch that only accepts signed changes) the existing Ed25519 attestation chain
+signs the change id; `verify` checks it.
+
+## 8. What `cancho-forge` gets, and the open questions
+
+Forge's uses of git today *(read)*: `repo.change` takes a checkout and a base and returns a patch;
+`repo.publish` makes a commit on a branch; `repo.authority` runs `git show` and `git -C` on a published
+commit; `compiler_rev` and company steps pin a 40-hex commit; the operator file names a git checkout. With
+this CLI a `repo` row gains `vcs: "cancho"`, and the pins become change ids; the patch a builder returns
+becomes a `Change` proposed against a base (its tree, not a text patch), the publish a ref move, and the
+review step reads the change's ops and intent rather than a text diff. None of that is built, and it should not
+start before V2: a worker that shells out to `git` today is not wrong, it is the next thing to replace.
+
+Open questions, each with the measurement that closes it:
+
+* **R1: can the history be imported exactly?** Import `cancho-forge`'s 193 commits (59 of them merges) and `cancho`'s 545, export
+  them, compare every SHA. Closes V1. *Not measured.*
+* **R2: what does the gate cost per record?** This repository's gate is 18 minutes on CI; a gate that runs on every `record`
+  makes the agent loop unusable. Proposed: the built-in gate is the check of touched `.cho` files (seconds),
+  heavier commands are attested **asynchronously** and a protected ref requires them at `merge`/`push`, not at `record`.
+  Measure the check time of a typical change in `cancho-forge`. *Not measured.*
+* **R3: how often does a clean declaration merge fail the gate?** Take the 59 merge commits of `cancho-forge`
+  (the PR merges) and replay each as a declaration merge; count conflicts and
+  gate failures, against what a text merge did. *Not measured; this is the claim of `vcs.md` section 4 and it decides
+  whether layer 2 of section 6 earns its complexity.*
+* **R4: is a content-addressed store larger than git's?** No delta compression is planned in V1 (loose, zlib-free
+  objects). Measure the repository sizes. If it is more than a few times git's, packs become V5, not never.
+* **R5: how much of `.cho` must the structural diff cover?** `vcs.md` section 4 sizes `compute_diff`+`diff_to_ops`+
+  `body_merge` at about 1,500 lines for lex-lang and says cancho's differ in shape. V1 needs only a
+  declaration-level diff (what `vcs sync` already does: it knows added, removed, signature-changed, body-changed
+  per declaration); the body-level diff is for merge and `replay` and is V2.
+
+## 9. Slices, and what measures each
+
+| slice | content | measured by |
+|---|---|---|
+| **V1: a local repository** | objects, trees, changes, refs; `init`, `status`, `diff`, `record` with intent and the built-in gate, `log`, `show`, `blame`, `branch`, `switch`, `revert`, `restore`, `verify`; `import-git` and `export-git` | R1 (SHA-exact round trip on two real repositories); a crash test at every write; two agents racing one ref (`ref-moved`, nobody loses an object); every command's JSON pinned by a test; `cancho` and `cancho-forge` histories open with `log` and `blame` |
+| **V2: merge and replay** | the three layers, `conflicts`, `resolve`, `merge --abort`, `replay`; the body-level `.cho` diff | R3 (historical merges), R5; a merge of two branches that git merges clean produces the same tree, except where the declaration merge is finer, and the exceptions are listed |
+| **V3: path remotes** | `clone`, `fetch`, `pull`, `push`, `--expect` | two stores, interleaved pushes, an interrupted push leaves both sound (`verify` on each) |
+| **V4: HTTP remote and the GitHub bridge** | the gateway, `mirror`, `pull --from-git` | a pull request opened from a mirrored branch; a change pushed to GitHub by a person arrives as a change |
+| **V5: forge** | `vcs: "cancho"` rows, workers and pins, packs if R4 says | `cancho-forge` conformance scripts run unchanged against a cancho-VCS repo; one real pilot step end to end |
+
+Each slice ends only when the gate in `CONTRIBUTING.md` passes, no file is over 2,000 lines (the crate is split
+by concern: `object`, `tree`, `change`, `refs`, `diff_text`, `diff_cho`, `merge`, `remote`, `bridge`), and every
+refusal in the table of tags below has a test that reaches it.
+
+Refusal tags *(designed; each gets a test in the slice that introduces it)*: `not-a-repository`, `path-escapes`,
+`file-too-large`, `gate-failed`, `ref-moved`, `ref-protected`, `dirty-working-copy`, `lock-held`, `conflicts-open`,
+`merge-gate-failed`, `rename-edit`, `object-corrupt`, `chain-broken`, `unsigned-change`, `intent-missing`
+(only on a ref that requires it), `remote-unreachable`, `remote-diverged`.
+
+## 10. What this does not do
+
+* It does not replace GitHub: pull requests, CI and reviews stay there, fed by `mirror`.
+* It does not version a file's meaning across languages: only `.cho` is read structurally; a `.py` or `.sh`
+  file is bytes and lines.
+* It does not offer history rewriting. A mistake is a `revert` or a `reset-ref` (logged), not a lost change.
+* It does not run on its own authority: like every cancho program it is checked for the effects it uses, and
+  the CLI performs file and (V3 onward) network effects only, never starts another program.
+* It is not started. The first thing to do is R1 on paper: write the `import-git` pack reader and see whether
+  `cancho-forge`'s own history round-trips; if it does not, V1's scope is wrong and this document is corrected here.

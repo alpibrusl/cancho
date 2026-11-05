@@ -136,6 +136,7 @@
 
 - [What cancho-vcs would need](vcs.md)
 - [The first publish](vcs-publish.md)
+- [A complete VCS CLI, agents first](vcs-cli.md)
 - [A package system](package-system.md)
 
 # Backend and performance
