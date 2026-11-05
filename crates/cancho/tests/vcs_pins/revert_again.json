@@ -1,0 +1,9 @@
+{
+  "change": "935bbc0d2368232fda225992b8f72243683a17642df9ff5b5968fa2566699ecc",
+  "command": "revert",
+  "dry_run": false,
+  "ok": true,
+  "reverted": "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e",
+  "touched": [],
+  "unchanged": true
+}

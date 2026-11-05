@@ -1,0 +1,8 @@
+{
+  "applied": [
+    "f.txt"
+  ],
+  "command": "apply",
+  "dry_run": false,
+  "ok": true
+}

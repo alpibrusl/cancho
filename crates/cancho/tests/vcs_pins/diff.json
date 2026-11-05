@@ -1,0 +1,86 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": false,
+      "decls": [
+        {
+          "kind": "added",
+          "name": "fn a.thrice",
+          "path": "a.cho"
+        },
+        {
+          "kind": "body-changed",
+          "name": "fn a.twice",
+          "path": "a.cho"
+        }
+      ],
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": " ",
+              "text": "module a;\n"
+            },
+            {
+              "op": "-",
+              "text": "pub fn twice(n: int) -> [] int { return n + n; }\n"
+            },
+            {
+              "op": "+",
+              "text": "pub fn twice(n: int) -> [] int { return n + n + 0; }\n"
+            },
+            {
+              "op": "+",
+              "text": "pub fn thrice(n: int) -> [] int { return n * 3; }\n"
+            }
+          ],
+          "new_lines": 3,
+          "new_start": 1,
+          "old_lines": 2,
+          "old_start": 1
+        }
+      ],
+      "path": "a.cho",
+      "status": "modified"
+    },
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": " ",
+              "text": "# notes\n"
+            },
+            {
+              "op": " ",
+              "text": "one\n"
+            },
+            {
+              "op": "-",
+              "text": "two\n"
+            },
+            {
+              "op": "+",
+              "text": "2\n"
+            },
+            {
+              "op": " ",
+              "text": "three\n"
+            }
+          ],
+          "new_lines": 4,
+          "new_start": 1,
+          "old_lines": 4,
+          "old_start": 1
+        }
+      ],
+      "path": "notes.md",
+      "status": "modified"
+    }
+  ],
+  "from": "HEAD",
+  "ok": true,
+  "to": "working copy"
+}

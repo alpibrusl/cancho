@@ -49,7 +49,7 @@ pub(crate) fn parse_texts(
 /// Whether any module of `ast` imports from `std` (`docs/package-system.md`
 /// §7). Read off the parsed imports, never off the source text, so a
 /// comment or a string saying `import std.json;` does not count.
-fn imports_std(ast: &cancho_syntax::Ast) -> bool {
+pub(crate) fn imports_std(ast: &cancho_syntax::Ast) -> bool {
     ast.modules
         .iter()
         .flat_map(|m| &m.imports)
@@ -73,7 +73,7 @@ fn declares_static(ast: &cancho_syntax::Ast, module: &str, name: &str) -> bool {
 /// The library as named texts, for a package that imports it. The same
 /// bytes `--std` hands `build`, so a store's identities and a consumer's
 /// agree on what `std.json` is.
-fn std_texts() -> Vec<(String, String)> {
+pub(crate) fn std_texts() -> Vec<(String, String)> {
     crate::STD.iter().map(|(n, t)| ((*n).to_owned(), (*t).to_owned())).collect()
 }
 
@@ -88,7 +88,19 @@ pub fn cmd_vcs(args: &[String]) -> Result<ExitCode, Failure> {
     match args.first().map(String::as_str) {
         Some("publish") => cmd_publish(&args[1..]),
         Some("sync") => crate::vcs_sync::cmd_sync(&args[1..]),
-        Some("log") => cmd_log(&args[1..]),
+        // The manifest log of `vcs publish` keeps its meaning: it is the
+        // one when `--store` is named or when no repository is in reach.
+        Some("log")
+            if args.iter().any(|a| a == "--store" || a.starts_with("--store="))
+                || !cancho_vcs::Repo::exists_at(std::path::Path::new(".")) =>
+        {
+            cmd_log(&args[1..])
+        }
+        Some(
+            cmd @ ("init" | "log" | "status" | "diff" | "record" | "show" | "blame" | "branch"
+            | "switch" | "revert" | "restore" | "verify" | "unlock" | "import-git"
+            | "export-git" | "apply"),
+        ) => crate::vcs_repo::dispatch(cmd, &args[1..]),
         Some("resolve") => cmd_resolve(&args[1..]),
         Some("lock") => cmd_lock(&args[1..]),
         Some("fetch") => cmd_fetch(&args[1..]),
