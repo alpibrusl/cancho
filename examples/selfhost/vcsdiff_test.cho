@@ -1,0 +1,151 @@
+module selfhost.vcsdiff_test;
+
+// vcsdiff_test.cho -- tests of `vcsdiff.cho`, run by `examples/selfhost/test.sh`. The differential against the Rust command (thousands of pairs of texts) is
+// `vcsdiff_check.py`; these are the cases a script cannot reach: what `apply_edits` refuses, the texts that get no edits, and a few results worked by hand.
+
+import std.buffer;
+import std.bytes;
+import selfhost.vcsdiff;
+
+// The list of edits from `base` to `new` has `count` edits, the first being `old` -> `new_text`.
+fn first_edit_is[&h, &b, &n, &o, &t](heap: &!h Heap, base: &b [byte], new: &n [byte], count: int, old: &o [byte], new_text: &t [byte]) -> [heap] bool {
+    let edits = vcsdiff.derive_edits(heap, base, new);
+    var ok = false;
+    borrow edits as &eb in {
+        let list = buffer.bytes(eb);
+        var seen = 0;
+        var at = 0;
+        while at < len(list) {
+            seen = seen + 1;
+            at = vcsdiff.edit_next(list, at);
+        }
+        ok = seen == count;
+        if ok && count > 0 {
+            ok = bytes.equal(vcsdiff.edit_old(list, 0), old) && bytes.equal(vcsdiff.edit_new(list, 0), new_text);
+        }
+    }
+    buffer.drop(heap, edits);
+    return ok;
+}
+
+pub fn test_equal_empty_and_one_megabyte_texts_get_no_edits[&h](heap: &!h Heap) -> [heap] int {
+    if !first_edit_is(heap, "a\nb\n", "a\nb\n", 0, "", "") {
+        return 1;
+    }
+    if !first_edit_is(heap, "", "a\n", 0, "", "") {
+        return 2;
+    }
+    let big = box_slice(heap, 1048577, byte_of(97));
+    var code = 0;
+    borrow big as &bw in {
+        if !first_edit_is(heap, "x\n", contents(bw), 0, "", "") {
+            code = 3;
+        }
+        if !first_edit_is(heap, contents(bw), "x\n", 0, "", "") {
+            code = 4;
+        }
+    }
+    unbox_slice(heap, big);
+    return code;
+}
+
+pub fn test_results_worked_by_hand[&h](heap: &!h Heap) -> [heap] int {
+    // one line changed, and it is unique, so it is the anchor
+    if !first_edit_is(heap, "a\nb\nc\n", "a\nX\nc\n", 1, "b\n", "X\n") {
+        return 1;
+    }
+    // a line added at the end: the anchor is the line before it (the empty old text of the insertion needs a neighbour)
+    if !first_edit_is(heap, "a\nb\n", "a\nb\nc\n", 1, "b\n", "b\nc\n") {
+        return 2;
+    }
+    // a line removed from the start (checked against the Rust command: old "a\n", new empty)
+    if !first_edit_is(heap, "a\nb\n", "b\n", 1, "a\n", "") {
+        return 3;
+    }
+    // a missing newline at the end is a difference like any other
+    if !first_edit_is(heap, "a\nb\n", "a\nb", 1, "b\n", "b") {
+        return 4;
+    }
+    // a changed line that occurs twice is widened until the old text is unique
+    if !first_edit_is(heap, "x\ny\nx\nz\n", "x\ny\nx\nw\n", 1, "z\n", "w\n") {
+        return 5;
+    }
+    if !first_edit_is(heap, "x\ny\nx\nz\n", "q\ny\nx\nz\n", 1, "x\ny\n", "q\ny\n") {
+        return 6;
+    }
+    return 0;
+}
+
+fn applied[&h, &t, &e](heap: &!h Heap, text: &t [byte], edits: &e [byte]) -> [heap] (buffer.Buffer, int) {
+    return vcsdiff.apply_edits(heap, text, edits);
+}
+
+// A list with one edit, as `derive_edits` writes them.
+fn one_edit[&h, &o, &n](heap: &!h Heap, old: &o [byte], new: &n [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 16);
+    b = buffer.push(heap, b, byte_of(0));
+    b = buffer.push(heap, b, byte_of(0));
+    b = buffer.push(heap, b, byte_of(0));
+    b = buffer.push(heap, b, byte_of(len(old)));
+    b = buffer.append(heap, b, old);
+    b = buffer.push(heap, b, byte_of(0));
+    b = buffer.push(heap, b, byte_of(0));
+    b = buffer.push(heap, b, byte_of(0));
+    b = buffer.push(heap, b, byte_of(len(new)));
+    return buffer.append(heap, b, new);
+}
+
+pub fn test_apply_edits_wants_an_old_text_that_occurs_exactly_once[&h](heap: &!h Heap) -> [heap] int {
+    var code = 0;
+    let once = one_edit(heap, "b\n", "X\n");
+    let none = one_edit(heap, "q\n", "X\n");
+    let twice = one_edit(heap, "a\n", "X\n");
+    let empty = one_edit(heap, "", "X\n");
+    borrow once as &o1 in {
+        let (r, s) = applied(heap, "a\nb\nc\n", buffer.bytes(o1));
+        borrow r as &rb in {
+            if s != 0 || !bytes.equal(buffer.bytes(rb), "a\nX\nc\n") {
+                code = 1;
+            }
+        }
+        buffer.drop(heap, r);
+    }
+    borrow none as &o2 in {
+        let (r, s) = applied(heap, "a\nb\nc\n", buffer.bytes(o2));
+        if s != 1 {
+            code = 2;
+        }
+        buffer.drop(heap, r);
+    }
+    borrow twice as &o3 in {
+        let (r, s) = applied(heap, "a\nb\na\n", buffer.bytes(o3));
+        if s != 2 {
+            code = 3;
+        }
+        buffer.drop(heap, r);
+    }
+    borrow empty as &o4 in {
+        let (r, s) = applied(heap, "a\n", buffer.bytes(o4));
+        if s != 1 {
+            code = 4;
+        }
+        buffer.drop(heap, r);
+    }
+    // matches do not overlap, as `str::match_indices` finds them: "aa" occurs once in "aaa" and is replaced at the first place
+    let overlap = one_edit(heap, "aa", "X");
+    borrow overlap as &o5 in {
+        let (r, s) = applied(heap, "aaa", buffer.bytes(o5));
+        borrow r as &rb in {
+            if s != 0 || !bytes.equal(buffer.bytes(rb), "Xa") {
+                code = 5;
+            }
+        }
+        buffer.drop(heap, r);
+    }
+    buffer.drop(heap, once);
+    buffer.drop(heap, none);
+    buffer.drop(heap, twice);
+    buffer.drop(heap, empty);
+    buffer.drop(heap, overlap);
+    return code;
+}

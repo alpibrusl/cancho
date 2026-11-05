@@ -1,0 +1,71 @@
+edition 9;
+module selfhost.vcsdifftool;
+
+// vcsdifftool.cho -- `vcsdiff.cho` as a filter, for checking it against the Rust command (`examples/selfhost/vcsdiff_check.py`): standard input is the length of the
+// base in decimal and a newline, then the base, then the new text; standard output is the edits `derive_edits` makes, as a JSON array of `[old, new]` pairs.
+
+import std.io as console;
+import std.buffer;
+import selfhost.jsonwrite;
+import selfhost.vcsdiff;
+import selfhost.lexcore as lc;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            let raw = lc.slurp(h, i);
+            borrow raw as &r in {
+                let all = buffer.bytes(r);
+                var nl = 0;
+                var n = 0;
+                while nl < len(all) && all[nl] != byte_of(10) {
+                    n = n * 10 + (int_of(all[nl]) - 48);
+                    nl = nl + 1;
+                }
+                if nl + 1 + n > len(all) {
+                    code = 2;
+                } else {
+                    let base = all[nl + 1..nl + 1 + n];
+                    let new = all[nl + 1 + n..len(all)];
+                    let edits = vcsdiff.derive_edits(h, base, new);
+                    borrow edits as &eb in {
+                        let list = buffer.bytes(eb);
+                        var out = buffer.push(h, buffer.empty(h, 256), byte_of(91));
+                        var at = 0;
+                        while at < len(list) {
+                            if at > 0 {
+                                out = buffer.push(h, out, byte_of(44));
+                            }
+                            out = buffer.push(h, out, byte_of(91));
+                            out = jsonwrite.string(h, out, vcsdiff.edit_old(list, at));
+                            out = buffer.push(h, out, byte_of(44));
+                            out = jsonwrite.string(h, out, vcsdiff.edit_new(list, at));
+                            out = buffer.push(h, out, byte_of(93));
+                            at = vcsdiff.edit_next(list, at);
+                        }
+                        out = buffer.push(h, out, byte_of(93));
+                        borrow out as &ob in {
+                            buffer.write(i, ob);
+                        }
+                        buffer.drop(h, out);
+                    }
+                    buffer.drop(h, edits);
+                }
+            }
+            buffer.drop(h, raw);
+        }
+    }
+    release(heap);
+    release(io);
+    return code;
+}

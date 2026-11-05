@@ -1,0 +1,558 @@
+edition 9;
+module selfhost.vcsdiff;
+
+// vcsdiff.cho -- the line diff and the anchored edits of `cancho vcs` (`docs/vcs-cli.md` section 3, `docs/vcs-native.md` section 6, slice b4d): a port of
+// `crates/cancho-vcs/src/diff_text.rs` (`split_lines`, `diff_lines`: the histogram algorithm of `git diff --histogram`) and `anchor.rs` (`derive_edits`,
+// `apply_edits`). The Rust command and this one must make the same hunks and the same edits for the same two texts, because an edit is recorded in a change and
+// hashed into its id.
+//
+// Lines keep their terminator, so a missing newline at the end of a file is a difference like any other. A text is `&[byte]`; its lines are described by an array
+// of `starts` (where each begins, then the length of the text). The lines of both texts are first numbered so that equal lines have one number (`intern`), and
+// the diff works on numbers, in arrays of integers.
+//
+// Limits, as in Rust: an input of more than 200,000 lines is one replacement; a region in which every line occurs 65 times or more is one replacement (git falls
+// back to Myers there); a file over 1 MiB, an empty base, or two equal texts get no edits.
+//
+// A list of edits is a buffer of records: the length of `old` in 4 bytes, most significant first, `old`, the length of `new` in 4 bytes, `new`.
+
+import std.buffer;
+import std.bytes;
+
+fn max_lines() -> [] int {
+    return 200000;
+}
+
+fn max_occurrences() -> [] int {
+    return 64;
+}
+
+// Files over this many bytes get no edit list (`anchor.rs`: `MAX_EDIT_BYTES`).
+pub fn max_edit_bytes() -> [] int {
+    return 1048576;
+}
+
+// ---- lines -------------------------------------------------------------------------------------------------------------------
+
+// How many lines `text` has (`split_inclusive('\n')`: a last line without a newline counts, an empty text has none).
+pub fn count_lines[&t](text: &t [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n + 1;
+        while i < len(text) && text[i] != byte_of(10) {
+            i = i + 1;
+        }
+        if i < len(text) {
+            i = i + 1;
+        }
+    }
+    return n;
+}
+
+// Where each line starts, then the end of the text, written into `starts` from `slot` on, each as `offset` + its place in the text; answers the number of lines.
+// (`starts` holds `slot + count_lines(text) + 1` integers.)
+pub fn fill_starts[&t, &s](text: &t [byte], starts: &!s [int], slot: int, offset: int) -> [] int {
+    var k = 0;
+    var i = 0;
+    while i < len(text) {
+        starts[slot + k] = offset + i;
+        k = k + 1;
+        while i < len(text) && text[i] != byte_of(10) {
+            i = i + 1;
+        }
+        if i < len(text) {
+            i = i + 1;
+        }
+    }
+    starts[slot + k] = offset + len(text);
+    return k;
+}
+
+// ---- numbering the lines -----------------------------------------------------------------------------------------------------
+//
+// The two texts are put one after the other in one buffer, `all`, and their lines are numbered together: line `r` is `all[st[r]..st[r + 1]]`, the lines of the
+// first text are `0..na` and those of the second `na..na + nb` (`st` has `na + nb + 1` integers; the first text ends where the second begins).
+
+fn line_at[&t, &x](all: &t [byte], st: &x [int], r: int) -> [] &t [byte] {
+    return all[st[r]..st[r + 1]];
+}
+
+// One pass of a merge sort of line numbers by the bytes of their lines.
+fn sort_pass[&t, &x, &f, &o](all: &t [byte], st: &x [int], from: &f [int], to: &!o [int], n: int, width: int) -> [] int {
+    var lo = 0;
+    while lo < n {
+        var mid = lo + width;
+        if mid > n {
+            mid = n;
+        }
+        var hi = lo + 2 * width;
+        if hi > n {
+            hi = n;
+        }
+        var i = lo;
+        var j = mid;
+        var k = lo;
+        while i < mid && j < hi {
+            if bytes.compare(line_at(all, st, from[i]), line_at(all, st, from[j])) <= 0 {
+                to[k] = from[i];
+                i = i + 1;
+            } else {
+                to[k] = from[j];
+                j = j + 1;
+            }
+            k = k + 1;
+        }
+        while i < mid {
+            to[k] = from[i];
+            i = i + 1;
+            k = k + 1;
+        }
+        while j < hi {
+            to[k] = from[j];
+            j = j + 1;
+            k = k + 1;
+        }
+        lo = lo + 2 * width;
+    }
+    return 0;
+}
+
+// Number the `n` lines so that equal lines have the same number in `ids`; answers how many different lines there are.
+fn intern[&h, &t, &x, &d](heap: &!h Heap, all: &t [byte], st: &x [int], n: int, ids: &!d [int]) -> [heap] int {
+    if n == 0 {
+        return 0;
+    }
+    let first = box_slice(heap, n, 0);
+    let second = box_slice(heap, n, 0);
+    var distinct = 0;
+    borrow mut first as &!fa in {
+        borrow mut second as &!fb in {
+            let a = contents(fa);
+            let b = contents(fb);
+            var k = 0;
+            while k < n {
+                a[k] = k;
+                k = k + 1;
+            }
+            var width = 1;
+            var in_a = true;
+            while width < n {
+                if in_a {
+                    sort_pass(all, st, a, b, n, width);
+                } else {
+                    sort_pass(all, st, b, a, n, width);
+                }
+                in_a = !in_a;
+                width = width * 2;
+            }
+            k = 0;
+            var previous = 0 - 1;
+            while k < n {
+                var r = a[k];
+                if !in_a {
+                    r = b[k];
+                }
+                if previous >= 0 && !bytes.equal(line_at(all, st, previous), line_at(all, st, r)) {
+                    distinct = distinct + 1;
+                }
+                ids[r] = distinct;
+                previous = r;
+                k = k + 1;
+            }
+            distinct = distinct + 1;
+        }
+    }
+    unbox_slice(heap, first);
+    unbox_slice(heap, second);
+    return distinct;
+}
+
+// ---- the histogram diff ------------------------------------------------------------------------------------------------------
+
+// The common block of `a[a0..a1]` and `b[b0..b1]` whose first line is rarest in `a`, longest among ties (`diff_text.rs`: `best_match`): the start in a, the
+// start in b and the length, in `found[0..3]`; the length is 0 when nothing is common. `work` holds, for each line number, how many times it occurs in the region of
+// `a` (up to 65), the call that last wrote it, and the first and last place it occurs, then for each line of `a` the next place of the same line.
+fn best_match[&a, &b, &w, &f](ida: &a [int], idb: &b [int], na: int, nid: int, a0: int, a1: int, b0: int, b1: int, call: int, work: &!w [int], found: &!f [int]) -> [] int {
+    let cnt = 0;
+    let stamp = nid;
+    let head = 2 * nid;
+    let tail = 3 * nid;
+    let next = 4 * nid;
+    var i = a0;
+    while i < a1 {
+        let id = ida[i];
+        if work[stamp + id] != call {
+            work[stamp + id] = call;
+            work[cnt + id] = 0;
+            work[head + id] = 0 - 1;
+            work[tail + id] = 0 - 1;
+        }
+        if work[cnt + id] <= max_occurrences() {
+            if work[head + id] < 0 {
+                work[head + id] = i;
+            } else {
+                work[next + work[tail + id]] = i;
+            }
+            work[next + i] = 0 - 1;
+            work[tail + id] = i;
+            work[cnt + id] = work[cnt + id] + 1;
+        }
+        i = i + 1;
+    }
+    var have = false;
+    var best_count = 0;
+    var best_i = 0;
+    var best_j = 0;
+    var best_len = 0;
+    var j = b0;
+    while j < b1 {
+        let id = idb[j];
+        if work[stamp + id] == call && work[cnt + id] > 0 {
+            let count = work[cnt + id];
+            if !(count > max_occurrences() || have && count > best_count) {
+                var p = work[head + id];
+                while p >= 0 {
+                    var si = p;
+                    var sj = j;
+                    while si > a0 && sj > b0 && ida[si - 1] == idb[sj - 1] {
+                        si = si - 1;
+                        sj = sj - 1;
+                    }
+                    var ei = p + 1;
+                    var ej = j + 1;
+                    while ei < a1 && ej < b1 && ida[ei] == idb[ej] {
+                        ei = ei + 1;
+                        ej = ej + 1;
+                    }
+                    let length = ei - si;
+                    if !have || count < best_count || count == best_count && length > best_len {
+                        have = true;
+                        best_count = count;
+                        best_i = si;
+                        best_j = sj;
+                        best_len = length;
+                    }
+                    p = work[next + p];
+                }
+            }
+        }
+        j = j + 1;
+    }
+    found[0] = best_i;
+    found[1] = best_j;
+    found[2] = 0;
+    if have {
+        found[2] = best_len;
+    }
+    return 0;
+}
+
+// The hunks: each four integers (start in a, length in a, start in b, length in b), in order, in a box; and how many.
+pub res struct Hunks {
+    data: Box[[int]],
+    count: int,
+}
+
+pub fn hunks_free[&h](heap: &!h Heap, hunks: Hunks) -> [heap] int {
+    let Hunks { data, count } = hunks;
+    unbox_slice(heap, data);
+    return count;
+}
+
+// The differing line ranges between the `na` lines `ida` and the `nb` lines `idb` (numbered together, `nid` different lines), in order.
+pub fn diff_lines[&h, &a, &b](heap: &!h Heap, ida: &a [int], idb: &b [int], na: int, nb: int, nid: int) -> [heap] Hunks {
+    let room = 4 * (na + nb + 2);
+    var out = box_slice(heap, room, 0);
+    var count = 0;
+    if na > max_lines() || nb > max_lines() {
+        var same = na == nb;
+        var k = 0;
+        while same && k < na {
+            if ida[k] != idb[k] {
+                same = false;
+            }
+            k = k + 1;
+        }
+        if !same {
+            borrow mut out as &!ow in {
+                let o = contents(ow);
+                o[0] = 0;
+                o[1] = na;
+                o[2] = 0;
+                o[3] = nb;
+            }
+            count = 1;
+        }
+        return Hunks { data: out, count: count };
+    }
+    let stack = box_slice(heap, 4 * (2 * (na + nb) + 4), 0);
+    let work = box_slice(heap, 4 * nid + na + 1, 0);
+    let found = box_slice(heap, 3, 0);
+    borrow mut out as &!ow in {
+        borrow mut stack as &!sw in {
+            borrow mut work as &!ww in {
+                borrow mut found as &!fw in {
+                    let o = contents(ow);
+                    let s = contents(sw);
+                    let w = contents(ww);
+                    let f = contents(fw);
+                    s[0] = 0;
+                    s[1] = na;
+                    s[2] = 0;
+                    s[3] = nb;
+                    var top = 1;
+                    var call = 0;
+                    while top > 0 {
+                        top = top - 1;
+                        var a0 = s[4 * top];
+                        var a1 = s[4 * top + 1];
+                        var b0 = s[4 * top + 2];
+                        var b1 = s[4 * top + 3];
+                        while a0 < a1 && b0 < b1 && ida[a0] == idb[b0] {
+                            a0 = a0 + 1;
+                            b0 = b0 + 1;
+                        }
+                        while a0 < a1 && b0 < b1 && ida[a1 - 1] == idb[b1 - 1] {
+                            a1 = a1 - 1;
+                            b1 = b1 - 1;
+                        }
+                        if a0 == a1 && b0 == b1 {
+                        } else if a0 == a1 || b0 == b1 {
+                            o[4 * count] = a0;
+                            o[4 * count + 1] = a1 - a0;
+                            o[4 * count + 2] = b0;
+                            o[4 * count + 3] = b1 - b0;
+                            count = count + 1;
+                        } else {
+                            call = call + 1;
+                            best_match(ida, idb, na, nid, a0, a1, b0, b1, call, w, f);
+                            if f[2] > 0 {
+                                s[4 * top] = a0;
+                                s[4 * top + 1] = f[0];
+                                s[4 * top + 2] = b0;
+                                s[4 * top + 3] = f[1];
+                                s[4 * top + 4] = f[0] + f[2];
+                                s[4 * top + 5] = a1;
+                                s[4 * top + 6] = f[1] + f[2];
+                                s[4 * top + 7] = b1;
+                                top = top + 2;
+                            } else {
+                                o[4 * count] = a0;
+                                o[4 * count + 1] = a1 - a0;
+                                o[4 * count + 2] = b0;
+                                o[4 * count + 3] = b1 - b0;
+                                count = count + 1;
+                            }
+                        }
+                    }
+                    // In order of (start in a, start in b): an insertion sort, the hunks being few.
+                    var x = 1;
+                    while x < count {
+                        let ka = o[4 * x];
+                        let la = o[4 * x + 1];
+                        let kb = o[4 * x + 2];
+                        let lb = o[4 * x + 3];
+                        var y = x;
+                        while y > 0 && (o[4 * (y - 1)] > ka || o[4 * (y - 1)] == ka && o[4 * (y - 1) + 2] > kb) {
+                            o[4 * y] = o[4 * (y - 1)];
+                            o[4 * y + 1] = o[4 * (y - 1) + 1];
+                            o[4 * y + 2] = o[4 * (y - 1) + 2];
+                            o[4 * y + 3] = o[4 * (y - 1) + 3];
+                            y = y - 1;
+                        }
+                        o[4 * y] = ka;
+                        o[4 * y + 1] = la;
+                        o[4 * y + 2] = kb;
+                        o[4 * y + 3] = lb;
+                        x = x + 1;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, stack);
+    unbox_slice(heap, work);
+    unbox_slice(heap, found);
+    return Hunks { data: out, count: count };
+}
+
+// ---- anchored edits ----------------------------------------------------------------------------------------------------------
+
+fn put32[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    var b = out;
+    var shift = 24;
+    while shift >= 0 {
+        b = buffer.push(heap, b, byte_of(n >> shift & 255));
+        shift = shift - 8;
+    }
+    return b;
+}
+
+fn get32[&t](edits: &t [byte], at: int) -> [] int {
+    return int_of(edits[at]) << 24 | int_of(edits[at + 1]) << 16 | int_of(edits[at + 2]) << 8 | int_of(edits[at + 3]);
+}
+
+// One record appended to a list of edits.
+fn add_edit[&h, &o, &n](heap: &!h Heap, edits: buffer.Buffer, old: &o [byte], new: &n [byte]) -> [heap] buffer.Buffer {
+    var b = put32(heap, edits, len(old));
+    b = buffer.append(heap, b, old);
+    b = put32(heap, b, len(new));
+    return buffer.append(heap, b, new);
+}
+
+// The edit that starts at `at` in a list: its `old`, its `new`, and where the next one starts (`edit_next`).
+pub fn edit_old[&t](edits: &t [byte], at: int) -> [] &t [byte] {
+    return edits[at + 4..at + 4 + get32(edits, at)];
+}
+
+pub fn edit_new[&t](edits: &t [byte], at: int) -> [] &t [byte] {
+    let from = at + 4 + get32(edits, at);
+    return edits[from + 4..from + 4 + get32(edits, from)];
+}
+
+pub fn edit_next[&t](edits: &t [byte], at: int) -> [] int {
+    let from = at + 4 + get32(edits, at);
+    return from + 4 + get32(edits, from);
+}
+
+// How many times `old` occurs in `text` without overlapping (what `str::matches` counts), stopping at 2.
+fn matches_up_to_two[&t, &n](text: &t [byte], old: &n [byte]) -> [] int {
+    var found = 0;
+    var from = 0;
+    while found < 2 && from <= len(text) {
+        let at = bytes.find(text[from..len(text)], old);
+        if at < 0 {
+            return found;
+        }
+        found = found + 1;
+        from = from + at + len(old);
+    }
+    return found;
+}
+
+// The text with the edits applied in order, each `old` having to occur exactly once (`anchor.rs`: `apply_edits`): in `bytes`, status 0; 1 `anchor-not-found`
+// (an empty or absent `old`), 2 `anchor-ambiguous`. The status is an integer in the second part.
+pub fn apply_edits[&h, &t, &e](heap: &!h Heap, text: &t [byte], edits: &e [byte]) -> [heap] (buffer.Buffer, int) {
+    var current = buffer.append(heap, buffer.empty(heap, len(text) + 16), text);
+    var at = 0;
+    var status = 0;
+    while at < len(edits) && status == 0 {
+        let old = edit_old(edits, at);
+        let new = edit_new(edits, at);
+        var next = buffer.empty(heap, 0);
+        borrow current as &cb in {
+            let t2 = buffer.bytes(cb);
+            if len(old) == 0 {
+                status = 1;
+            } else {
+                let first = bytes.find(t2, old);
+                if first < 0 {
+                    status = 1;
+                } else if bytes.find(t2[first + len(old)..len(t2)], old) >= 0 {
+                    status = 2;
+                } else {
+                    next = buffer.append(heap, next, t2[0..first]);
+                    next = buffer.append(heap, next, new);
+                    next = buffer.append(heap, next, t2[first + len(old)..len(t2)]);
+                }
+            }
+        }
+        if status == 0 {
+            buffer.drop(heap, current);
+            current = next;
+        } else {
+            buffer.drop(heap, next);
+        }
+        at = edit_next(edits, at);
+    }
+    return (current, status);
+}
+
+// The edits that turn `base` into `new`: one for each hunk of the diff, widened with the fewest lines around it that make its old text occur once in `base`;
+// if applying them does not give `new` (anchors that overlap), one edit for the whole file instead. Nothing for equal texts, an empty base, or a file over
+// 1 MiB.
+pub fn derive_edits[&h, &b, &n](heap: &!h Heap, base: &b [byte], new: &n [byte]) -> [heap] buffer.Buffer {
+    var edits = buffer.empty(heap, 0);
+    if bytes.equal(base, new) || len(base) == 0 || len(base) > max_edit_bytes() || len(new) > max_edit_bytes() {
+        return edits;
+    }
+    let na = count_lines(base);
+    let nb = count_lines(new);
+    let all = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(base) + len(new)), base), new);
+    let starts = box_slice(heap, na + nb + 1, 0);
+    let ids = box_slice(heap, na + nb, 0);
+    borrow all as &ab in {
+        let text = buffer.bytes(ab);
+        borrow mut starts as &!sw in {
+            borrow mut ids as &!iw in {
+                let st = contents(sw);
+                let id = contents(iw);
+                fill_starts(base, st, 0, 0);
+                fill_starts(new, st, na, len(base));
+                let distinct = intern(heap, text, st, na + nb, id);
+                let hunks = diff_lines(heap, id[0..na], id[na..na + nb], na, nb, distinct);
+                let Hunks { data, count } = hunks;
+                borrow data as &hbox in {
+                    let hd = contents(hbox);
+                    var h = 0;
+                    while h < count {
+                        let a_start = hd[4 * h];
+                        let a_len = hd[4 * h + 1];
+                        let b_start = hd[4 * h + 2];
+                        let b_len = hd[4 * h + 3];
+                        let lo = a_start;
+                        let hi = a_start + a_len;
+                        var from = lo;
+                        var to = hi;
+                        var k = 0;
+                        var searching = true;
+                        while searching {
+                            from = lo - k;
+                            if from < 0 {
+                                from = 0;
+                            }
+                            to = hi + k;
+                            if to > na {
+                                to = na;
+                            }
+                            if to > from && matches_up_to_two(base, text[st[from]..st[to]]) == 1 || from == 0 && to == na {
+                                searching = false;
+                            } else {
+                                k = k + 1;
+                            }
+                        }
+                        var replacement = buffer.append(heap, buffer.empty(heap, 64), text[st[from]..st[lo]]);
+                        replacement = buffer.append(heap, replacement, text[st[na + b_start]..st[na + b_start + b_len]]);
+                        replacement = buffer.append(heap, replacement, text[st[hi]..st[to]]);
+                        borrow replacement as &rb in {
+                            edits = add_edit(heap, edits, text[st[from]..st[to]], buffer.bytes(rb));
+                        }
+                        buffer.drop(heap, replacement);
+                        h = h + 1;
+                    }
+                }
+                unbox_slice(heap, data);
+            }
+        }
+    }
+    buffer.drop(heap, all);
+    unbox_slice(heap, starts);
+    unbox_slice(heap, ids);
+    // The edits must reproduce `new` from `base`; if they do not (overlapping anchors), the whole file is one edit.
+    var good = false;
+    borrow edits as &eb in {
+        let applied = apply_edits(heap, base, buffer.bytes(eb));
+        let (result, status) = applied;
+        if status == 0 {
+            borrow result as &rb in {
+                good = bytes.equal(buffer.bytes(rb), new);
+            }
+        }
+        buffer.drop(heap, result);
+    }
+    if !good {
+        buffer.drop(heap, edits);
+        return add_edit(heap, buffer.empty(heap, 0), base, new);
+    }
+    return edits;
+}
