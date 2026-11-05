@@ -101,6 +101,7 @@ pub fn cmd_vcs(args: &[String]) -> Result<ExitCode, Failure> {
             | "switch" | "revert" | "restore" | "verify" | "unlock" | "import-git"
             | "export-git" | "apply"),
         ) => crate::vcs_repo::dispatch(cmd, &args[1..]),
+        Some("gc") => crate::vcs_repo::dispatch("gc", &args[1..]),
         Some("resolve") => cmd_resolve(&args[1..]),
         Some("lock") => cmd_lock(&args[1..]),
         Some("fetch") => cmd_fetch(&args[1..]),

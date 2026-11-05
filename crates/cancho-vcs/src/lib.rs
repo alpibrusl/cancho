@@ -32,6 +32,8 @@ mod blobs;
 mod bridge;
 mod canonical;
 mod change;
+mod deflate;
+mod delta;
 mod diff_text;
 mod error;
 mod fsx;
@@ -43,7 +45,9 @@ mod manifest;
 mod object;
 mod op_log;
 mod operation;
+mod pack;
 mod refs;
+mod repack;
 mod repo;
 mod requirement;
 mod sha1;
@@ -74,6 +78,7 @@ pub use refs::{
     Expect, LockGuard, check_ref_name, delete_ref, list_refs, locks, now, read_log, read_ref,
     update_ref, work_lock,
 };
+pub use repack::{GcReport, gc};
 pub use repo::{FORMAT, Head, Ignore, Repo, StatusEntry};
 pub use requirement::{
     Requirement, RequirementError, load_all as load_requirements, save_all as save_requirements,
