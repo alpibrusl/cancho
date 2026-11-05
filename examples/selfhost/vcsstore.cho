@@ -882,3 +882,8 @@ pub fn parts(o: Object) -> [] (buffer.Buffer, int, int) {
     let Object { bytes, status, errno } = o;
     return (bytes, status, errno);
 }
+
+// The `.cancho/vcs` directory of the repository whose root is `root`.
+pub fn enter_vcs[&d](root: &d Dir) -> [dir_read, dir_write] DirOpened {
+    return walk(root, ".cancho/vcs", false);
+}

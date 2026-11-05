@@ -17,13 +17,13 @@ check() { # name, command...
     if "$@"; then echo "ok   $name"; else echo "FAIL $name"; fail=1; fi
 }
 
-"$C" build "$D/vcsstorectl.cho" "$D/vcsstore.cho" "$D/vcsrepo.cho" "$D/vcschange.cho" "$D/jsonread.cho" "$D/jsonwrite.cho" "$D/rules.cho" "$D/tables.cho" "$D/vcsobj.cho" "$D/blake3.cho" "$D/filewrite.cho" "$D/lexcore.cho" --std -o "$W/ctl" >/dev/null || { echo "FAIL build"; exit 1; }
+"$C" build "$D/vcsstorectl.cho" "$D/vcsstore.cho" "$D/vcsrepo.cho" "$D/vcsscan.cho" "$D/vcschange.cho" "$D/jsonread.cho" "$D/jsonwrite.cho" "$D/rules.cho" "$D/tables.cho" "$D/vcsobj.cho" "$D/blake3.cho" "$D/filewrite.cho" "$D/lexcore.cho" --std -o "$W/ctl" >/dev/null || { echo "FAIL build"; exit 1; }
 CTL="$W/ctl"
 export CANCHO_AUTHOR="Ada <ada@example.com>"
 
 # --- the oracle's store: a text tree with a large file, an empty one and a one-byte one, recorded by the Rust command
 mkdir "$W/rust" && cd "$W/rust" || exit 1
-cp -R "$D/../../std" std && cp -R "$D/../../docs" docs
+cp -RL "$D/../../std" std && cp -RL "$D/../../docs" docs
 head -c 70000 /dev/urandom > blob.bin && : > empty.txt && printf a > one.txt
 "$C" vcs init --output json > /dev/null
 "$C" vcs record --all --no-gate --time 1000 --intent-prompt "first" --output json > "$W/record.json" || exit 1
