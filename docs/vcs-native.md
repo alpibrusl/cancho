@@ -122,7 +122,7 @@ command wrote:
 |---|---|---|
 | b1 | `vcsobj.cho`: the object id, `is_id`, `check_path`, the text of a tree (check, find, walk) | **built**, below |
 | b2 | `vcschange.cho`: the change object (JSON in V1's field order, written and read) | **built**, below; refs, `HEAD` and `refs/*.log` move to b3 |
-| b3 | refs, `HEAD`, the log; the store on disk: write an object atomically (temporary name, `file_sync`, `dir_rename`, `dir_sync`), read one and re-hash it; the ref compare-and-swap under a lock file; `init` | next; needs the primitives that exist, not the five of the issues |
+| b3 | `vcsstore.cho`: **built**, below: refs, `HEAD`, the log; the store on disk: write an object atomically (temporary name, `file_sync`, `dir_rename`, `dir_sync`), read one and re-hash it; the ref compare-and-swap under a lock file; `init` | next; needs the primitives that exist, not the five of the issues |
 | b4 | `record` (snapshot of the working copy to a tree, no gate yet), `log`, `show`, `status` | next; `status` over links needs #685, over removed directories #684 |
 
 Not in (b): `decls` (the declaration diff of a `.cho` file) and the gate, which need `ids` and `check` as functions over in-memory files (the `driver`
@@ -144,3 +144,18 @@ computes from them, and each field reads back. Every prefix and every changed by
 two intent parts, a key, the parent bound, the `\r` before a newline, the empty-is-absent rule, the sign of a time) each fail the tests; one survived at first
 (the `\r\n` subject) and a test was added. Not here: the `git` part of a change (the bridge's) and the decoded form of a string (strings are answered as written,
 which is what `log` and `show` print).
+
+**b3, measured.** `vcsstore.cho` is `object.rs`/`refs.rs` on a `Dir` handle (edition 9: `dir_enter`, `dir_mkdir`, `dir_open_new_mode`, `dir_rename_new`, `file_sync`,
+`dir_sync`, `dir_open_append`, `dir_remove`), with no path spent and no program run: `init`, `put`, `get` (hashed again: `object-corrupt`, `object-missing`, `bad-id`),
+`read_ref`, and `update_ref` (compare-and-swap under `NAME.lock`, the `NAME.log` line, `ref-moved` naming the winner, `lock-held` that is never broken). The tests are a
+script, `examples/selfhost/vcsstore_check.sh`, because a `cancho test` is given a heap and an io and no file system; it builds `vcsstorectl.cho` and uses the Rust command
+as the oracle: **26 checks, all passing** (also with the compiler in cancho alone). The Rust command recorded a store of **387 objects** (std and docs of this tree, a 70 KB random
+file, an empty one, a one-byte one): `get` reads every one back byte for byte; `put` of every one into a fresh store makes an object directory that is `diff -r`-identical
+(names, bytes, mode 644); `init` makes the Rust layout and the same `HEAD` and `format` bytes; the Rust `vcs log` still reads the store after cancho moved its ref; ten
+racing writers on one ref give **one winner and nine refusals** (six runs). Five mutants of `vcsstore.cho` (the re-hash, the expectation, the lock, the rename that
+refuses to replace, the dash of a first log line) were tried: the first three fail the checks, the fourth is equivalent (two writers of one object write the same bytes) and the
+fifth survived until a check of the first log line was added.
+
+Differences from the Rust command, on purpose (header of the file): the temporary file of an object is made beside the object, not in `tmp/`; the lock holds `0 TIME` because there
+is no process id (#688); no crash failpoints (#687), so the kill-at-every-write test of V1 is not reproduced here. **Not measured:** the speed of `put`/`get` (the path is
+`open`/`write`/`fsync`/`rename`, so a store of many small objects is bound by `fsync`, as the Rust one is: 94 s for the 826.9 MiB import).

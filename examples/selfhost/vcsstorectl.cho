@@ -1,0 +1,165 @@
+edition 9;
+module selfhost.vcsstorectl;
+
+// vcsstorectl.cho -- `vcsstore.cho` as a command, for checking it against a store the Rust command wrote and for the crash-free races of
+// `examples/selfhost/test.sh` (`docs/vcs-native.md` section 6). Not a user command: `cancho vcs` is built on `vcsstore.cho`, not on this.
+//
+//   init DIR [BRANCH]                    make DIR/.cancho/vcs                        prints `created` or `exists`
+//   put DIR KIND < FILE                  store the bytes of standard input           prints the id
+//   get DIR KIND ID                      the object's bytes on standard output       (nothing else is printed)
+//   ref-read DIR NAME                    the id a ref holds                          prints the id, or `absent`
+//   ref-cas DIR NAME EXPECT NEW NOTE NOW move a ref: EXPECT is `any`, `absent` or an id; NOW is the time in seconds
+//
+// DIR is the `.cancho/vcs` directory (the repository root for `init`). A refusal prints `refused TAG` and exits 1; an io failure `refused io ERRNO`, exit 3.
+
+import std.io as console;
+import std.buffer;
+import std.bytes;
+import selfhost.vcsobj;
+import selfhost.vcsstore;
+import selfhost.lexcore as lc;
+
+fn number[&t](text: &t [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - 48);
+        i = i + 1;
+    }
+    return n;
+}
+
+fn say_refusal[&i](io: &!i Io, status: int, errno: int) -> [io_write] int {
+    console.write_all(io, "refused ");
+    console.write_all(io, vcsstore.tag(status));
+    if status == 10 {
+        console.write_all(io, " ");
+        console.print_int(io, errno);
+    }
+    console.newline(io);
+    if status == 10 {
+        return 3;
+    }
+    return 1;
+}
+
+// What the command did with the answer of the store: the id or bytes it holds are printed (or written), the refusal said.
+fn answered[&h, &i](heap: &!h Heap, io: &!i Io, done: vcsstore.Object, quiet: bool) -> [heap, io_write] int {
+    let vcsstore.Object { bytes, status, errno } = done;
+    var code = 0;
+    if status == 0 {
+        borrow bytes as &b in {
+            if quiet {
+                buffer.write(io, b);
+            } else {
+                buffer.write(io, b);
+                console.newline(io);
+            }
+        }
+    } else if status == 2 {
+        console.write_all(io, "absent");
+        console.newline(io);
+        code = 0;
+    } else {
+        code = say_refusal(io, status, errno);
+    }
+    buffer.drop(heap, bytes);
+    return code;
+}
+
+fn command[&h, &i, &a, &d](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir) -> [heap, io_read, io_write, args, dir_read, dir_write, file_read, file_write] int {
+    let verb = arg(args, 1);
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    var code = 0;
+    borrow mut scratch as &!s in {
+        if bytes.equal(verb, "put") {
+            let raw = lc.slurp(heap, io);
+            borrow raw as &r in {
+                code = answered(heap, io, vcsstore.put(heap, vcs, contents(s), arg(args, 3), buffer.bytes(r), 1), false);
+            }
+            buffer.drop(heap, raw);
+        } else if bytes.equal(verb, "get") {
+            code = answered(heap, io, vcsstore.get(heap, vcs, contents(s), arg(args, 3), arg(args, 4)), true);
+        } else if bytes.equal(verb, "ref-read") {
+            code = answered(heap, io, vcsstore.read_ref(heap, vcs, arg(args, 3)), false);
+        } else if bytes.equal(verb, "ref-cas") {
+            var kind = vcsstore.expect_id();
+            if bytes.equal(arg(args, 4), "any") {
+                kind = vcsstore.expect_any();
+            } else if bytes.equal(arg(args, 4), "absent") {
+                kind = vcsstore.expect_absent();
+            }
+            code = answered(heap, io, vcsstore.update_ref(heap, vcs, arg(args, 3), kind, arg(args, 4), arg(args, 5), arg(args, 6), number(arg(args, 7))), false);
+        } else {
+            console.write_all(io, "usage: init|put|get|ref-read|ref-cas DIR ...");
+            console.newline(io);
+            code = 2;
+        }
+    }
+    unbox_slice(heap, scratch);
+    return code;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow fs as &f in {
+                    if arg_count(a) < 3 {
+                        console.write_all(i, "usage: init|put|get|ref-read|ref-cas DIR ...");
+                        console.newline(i);
+                        code = 2;
+                    } else {
+                        match open_dir(f, arg(a, 2)) {
+                            DirOpened::Ok(opened) => {
+                                var vcs = opened;
+                                borrow vcs as &d in {
+                                    if bytes.equal(arg(a, 1), "init") {
+                                        var branch = "main";
+                                        if arg_count(a) > 3 {
+                                            branch = arg(a, 3);
+                                        }
+                                        let made = vcsstore.init(h, d, branch);
+                                        let vcsstore.Object { bytes, status, errno } = made;
+                                        buffer.drop(h, bytes);
+                                        if status != 0 {
+                                            code = say_refusal(i, status, errno);
+                                        } else if errno == 1 {
+                                            console.write_all(i, "created");
+                                            console.newline(i);
+                                        } else {
+                                            console.write_all(i, "exists");
+                                            console.newline(i);
+                                        }
+                                    } else {
+                                        code = command(h, i, a, d);
+                                    }
+                                }
+                                dir_close(vcs);
+                            }
+                            DirOpened::Failed(e) => {
+                                console.write_all(i, "refused io ");
+                                console.print_int(i, e);
+                                console.newline(i);
+                                code = 3;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(args);
+    release(fs);
+    release(heap);
+    release(io);
+    return code;
+}
