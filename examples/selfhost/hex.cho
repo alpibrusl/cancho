@@ -1,6 +1,6 @@
 module selfhost.hex;
 
-// hex.cho -- the value of a hexadecimal digit (either case), shared by the tests of `sha1.cho` and `zlib.cho` (and later of the store): a
+// hex.cho -- the value of a hexadecimal digit (either case), shared by the tests of `sha1.cho` (and later of the store): a
 // digit that is none answers 0, so a malformed expected value fails the comparison it is in rather than a trap.
 
 pub fn value(c: int) -> [] int {
