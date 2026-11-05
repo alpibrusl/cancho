@@ -347,3 +347,7 @@ pub fn file_directory_clash(entries: Vec<Entry>) -> Result<Tree> {
     Tree::new(entries)
         .map_err(|e| Refusal::new("file-directory-conflict", e.message).with(serde_json::json!({})))
 }
+
+#[cfg(test)]
+#[path = "tests/merge.rs"]
+mod tests;

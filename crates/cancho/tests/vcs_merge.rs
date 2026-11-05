@@ -538,3 +538,17 @@ fn the_gate_finds_modules_outside_the_tree_in_the_roots_it_is_given() {
     let ok = s.pin_quiet(&["record", "--all", "--time", "1001"]);
     assert_eq!(ok["gate"]["external"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn a_merge_cannot_be_replayed_and_a_file_cannot_meet_a_directory() {
+    let s = forked(&[("k", "k\n")], &[("b.txt", "b\n")], &[("c.txt", "c\n")]);
+    s.pin_quiet(&["merge", "topic", "--time", "1003"]);
+    s.refuse(Some("refuse_replay_unsupported"), &["replay", "HEAD"], "replay-unsupported");
+    // ours adds the file `p`, theirs adds `p/q`: no tree can hold both.
+    let s = forked(&[("k", "k\n")], &[("p", "file\n")], &[("p/q", "under\n")]);
+    s.refuse(
+        Some("refuse_file_directory"),
+        &["merge", "topic", "--time", "1003"],
+        "file-directory-conflict",
+    );
+}

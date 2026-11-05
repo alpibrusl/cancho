@@ -1,0 +1,8 @@
+{
+  "command": "replay",
+  "ok": false,
+  "refused": {
+    "message": "only a change with exactly one parent can be replayed (a merge has none to replay from)",
+    "tag": "replay-unsupported"
+  }
+}

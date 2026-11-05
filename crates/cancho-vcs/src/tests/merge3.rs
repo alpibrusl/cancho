@@ -73,3 +73,17 @@ fn a_missing_final_newline_is_a_difference_like_any_other() {
     assert_eq!(m.text, "a\nb\n");
     assert!(m.conflicts.is_empty());
 }
+
+#[test]
+fn insertions_into_a_run_of_repeated_lines_are_seen_at_one_place() {
+    // Found by `scripts/vcs_r3.py` on cancho-forge's `cancho.toml`: ours appends one
+    // `[[test]]` block, theirs appends the same block and two more; the repeated
+    // `std = true` lines let a diff write each insertion at a different offset,
+    // and the merge was "clean" with the first block twice. git conflicts.
+    let block = |n: &str| format!("\n[[test]]\nname = \"{n}\"\nstd = true\n");
+    let base = format!("x\n{}", block("a"));
+    let ours = format!("{base}{}", block("run"));
+    let theirs = format!("{base}{}{}", block("run"), block("more"));
+    let m = merge_text(&base, &ours, &theirs);
+    assert_eq!(m.conflicts.len(), 1, "{}", m.text);
+}

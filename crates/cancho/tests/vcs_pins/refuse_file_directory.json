@@ -1,0 +1,8 @@
+{
+  "command": "merge",
+  "ok": false,
+  "refused": {
+    "message": "`p` is both a file and a directory",
+    "tag": "file-directory-conflict"
+  }
+}

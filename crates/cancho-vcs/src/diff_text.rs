@@ -60,7 +60,39 @@ pub fn diff_lines(a: &[&str], b: &[&str]) -> Vec<Hunk> {
         }
     }
     hunks.sort_by_key(|h| (h.a_start, h.b_start));
+    slide(a, b, &mut hunks);
     hunks
+}
+
+/// Move each pure insertion or deletion as far down as the lines allow, as
+/// git does (`xdl_change_compact`): an insertion of a block into a run of
+/// repeated lines can be written at several places, and two sides that
+/// each inserted there must be seen at the *same* place or a merge applies
+/// both (the duplicated `[[test]]` that `scripts/vcs_r3.py` found). It also
+/// makes the diff shown to a reader the one git shows.
+fn slide(a: &[&str], b: &[&str], hunks: &mut [Hunk]) {
+    for i in 0..hunks.len() {
+        let (next_a, next_b) =
+            hunks.get(i + 1).map_or((a.len(), b.len()), |n| (n.a_start, n.b_start));
+        let h = &mut hunks[i];
+        if h.a_len == 0 && h.b_len > 0 {
+            while h.b_start + h.b_len < next_b
+                && h.a_start < next_a
+                && b[h.b_start] == b[h.b_start + h.b_len]
+            {
+                h.b_start += 1;
+                h.a_start += 1;
+            }
+        } else if h.b_len == 0 && h.a_len > 0 {
+            while h.a_start + h.a_len < next_a
+                && h.b_start < next_b
+                && a[h.a_start] == a[h.a_start + h.a_len]
+            {
+                h.a_start += 1;
+                h.b_start += 1;
+            }
+        }
+    }
 }
 
 /// The common block whose first line is rarest in `a`, longest among ties.

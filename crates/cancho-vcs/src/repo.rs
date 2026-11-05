@@ -412,7 +412,13 @@ impl Repo {
         let abs = self.root.join(path);
         match fs::remove_file(&abs) {
             Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            // A parent that has become a file (a directory replaced by a file
+            // earlier in the same switch) leaves nothing to delete.
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) => {}
             Err(e) => return Err(Refusal::io(format!("cannot delete {path}"), &e)),
         }
         let mut p = abs.parent().map(Path::to_path_buf);
