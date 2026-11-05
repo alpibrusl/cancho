@@ -127,3 +127,15 @@ the same staleness this document opened with could hide. `introspect`/
 |---|---|
 | `agent_cli::every_dispatched_command_is_documented` | every command `main.rs` dispatches is in both the `usage:` block and `cancho skill`'s command list — sourced from the dispatch table itself, not a curated second list |
 | `agent_cli::introspect_names_every_registered_command` | `cancho introspect --output json` parses as JSON and names every top-level command |
+
+---
+
+## Commands only the command line in cancho has (2026-11-05)
+
+`ci`, `profile` and `trace` (`agent-ci.md`, `agent-profile.md`, `agent-debug.md`) are written in cancho and the Rust binary does not
+run them. `tests/conformance/agent_cli.rs` holds the Rust binary to advertising what it dispatches, and `commandtree.cho` is generated from
+the Rust binary's `introspect`, so they are registered in `src/acli.rs` as data (`extra_commands()`) and advertised only when
+`CANCHO_ACLI_EXTRAS` is set. The generator (`statics.rs`) and the parity test (`cli.rs`) set it; a person does not, so the Rust
+binary's `introspect` and `skill` are what they were, and the command line in cancho's list the three. `--help` is the exception: it is the
+`USAGE` constant of `main.rs`, printed by the Rust binary for itself, and does not list them. When the Rust binary goes (#491), the registration
+moves with `commandtree.cho` and the variable with it.

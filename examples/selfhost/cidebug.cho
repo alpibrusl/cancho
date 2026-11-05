@@ -1,0 +1,260 @@
+edition 7;
+module selfhost.cidebug;
+
+// cidebug.cho -- the line tables of `-g` (`docs/agent-debug.md` section 3.3): a pass over the module the compiler wrote.
+//
+// With `-g` the emitter leaves comment lines in the code it writes: `  ; @fn N` at the top of each function and `  ; @s N` before each statement, N being
+// an offset in the program's text (`laid`). This pass turns them into LLVM debug information: a `!DISubprogram` for each function, a `!DILocation` for each
+// marker, and `, !dbg !L` on EVERY instruction after it. Every instruction, because the verifier wants a location on each call once the callee has debug
+// information, and when one is missing clang does not fail: it drops all the debug information with a warning and exits 0 (measured, section 3.3). The
+// markers are taken out. A module with no markers comes out as it went in, so a build without `-g` is unchanged.
+//
+// The metadata numbers are: 0 the compile unit, 1 the module flags, 2 and 3 the one subroutine type, 4 and on a `!DIFile` for each file, then the
+// subprograms and the locations in the order they are met.
+
+import std.buffer;
+import selfhost.lexcore as lc;
+import selfhost.jsonwrite;
+import selfhost.clibase;
+import selfhost.diagnose;
+import selfhost.prune;
+
+pub fn begins[&r, &w](text: &r [byte], at: int, word: &w [byte]) -> [] bool {
+    return at + len(word) <= len(text) && lc.spells(text, at, at + len(word), word);
+}
+
+// The number written after `tag` in the marker line at `at`, or -1 if the line is not that marker.
+pub fn marker_offset[&r, &w](text: &r [byte], at: int, tag: &w [byte]) -> [] int {
+    if !begins(text, at, tag) {
+        return 0 - 1;
+    }
+    var k = at + len(tag);
+    var n = 0;
+    var any = false;
+    while k < len(text) && lc.at(text, k) >= '0' && lc.at(text, k) <= '9' {
+        n = n * 10 + (lc.at(text, k) - '0');
+        any = true;
+        k = k + 1;
+    }
+    if any {
+        return n;
+    }
+    return 0 - 1;
+}
+
+// The offset of the function marker among the two lines after the `define` at `eol` (`entry:` and then the marker), or -1.
+pub fn function_offset[&r](text: &r [byte], eol: int) -> [] int {
+    let entry = eol + 1;
+    if !begins(text, entry, "entry:") {
+        return 0 - 1;
+    }
+    return marker_offset(text, prune.line_end(text, entry) + 1, "  ; @fn ");
+}
+
+// The name of the function whose declaration starts at `offset`: the word after `fn `, within the next 80 bytes.
+pub fn name_at[&h, &l](heap: &!h Heap, laid: &l [byte], offset: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 32);
+    var k = offset;
+    while k < len(laid) && k < offset + 80 && !begins(laid, k, "fn ") {
+        k = k + 1;
+    }
+    if !begins(laid, k, "fn ") {
+        return buffer.append(heap, out, "fn");
+    }
+    k = k + 3;
+    while k < len(laid) && (lc.at(laid, k) >= 'a' && lc.at(laid, k) <= 'z' || lc.at(laid, k) >= 'A' && lc.at(laid, k) <= 'Z' || lc.at(laid, k) >= '0' && lc.at(laid, k) <= '9' || lc.at(laid, k) == '_') {
+        out = buffer.push(heap, out, laid[k]);
+        k = k + 1;
+    }
+    return out;
+}
+
+// `@lexs_<item>[i<k>]` on the define line, without the `@`.
+fn symbol_of[&h, &r](heap: &!h Heap, text: &r [byte], from: int, to: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 24);
+    var k = from;
+    while k < to && lc.at(text, k) != '@' {
+        k = k + 1;
+    }
+    k = k + 1;
+    while k < to && lc.at(text, k) != '(' {
+        out = buffer.push(heap, out, text[k]);
+        k = k + 1;
+    }
+    return out;
+}
+
+// `t` without the spaces at its ends.
+pub fn trimmed[&t](t: &t [byte]) -> [] &t [byte] {
+    var a = 0;
+    var b = len(t);
+    while a < b && (lc.at(t, a) == ' ' || lc.at(t, a) == 9) {
+        a = a + 1;
+    }
+    while b > a && (lc.at(t, b - 1) == ' ' || lc.at(t, b - 1) == 13) {
+        b = b - 1;
+    }
+    return t[a..b];
+}
+
+pub fn has_space[&t](t: &t [byte]) -> [] bool {
+    var k = 0;
+    while k < len(t) {
+        if lc.at(t, k) == ' ' {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// A location node for the offset: `!<id> = !DILocation(line: L, column: C, scope: !SP)`.
+fn location[&h, &l, &n](heap: &!h Heap, meta: buffer.Buffer, id: int, laid: &l [byte], lens: &n [int], offset: int, scope: int) -> [heap] buffer.Buffer {
+    let place = diagnose.locate(laid, lens, offset);
+    var out = buffer.append(heap, meta, "!");
+    out = buffer.push_nat(heap, out, id);
+    out = buffer.append(heap, out, " = !DILocation(line: ");
+    out = buffer.push_nat(heap, out, place.line);
+    out = buffer.append(heap, out, ", column: ");
+    out = buffer.push_nat(heap, out, place.column);
+    out = buffer.append(heap, out, ", scope: !");
+    out = buffer.push_nat(heap, out, scope);
+    return buffer.append(heap, out, ")\n");
+}
+
+// The module `ir` with line tables, from the markers in it.
+pub fn run[&h, &r, &l, &n, &y](heap: &!h Heap, ir: &r [byte], laid: &l [byte], lens: &n [int], names: &y [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(ir) + len(ir) / 4 + 4096);
+    var meta = buffer.empty(heap, 4096);
+    let files = len(lens);
+    var next = 5 + files;
+    var scope = 0 - 1;
+    var here = 0 - 1;
+    var in_function = false;
+    var line = 0;
+    var annotated = false;
+    var in_switch = false;
+    while line < len(ir) {
+        let eol = prune.line_end(ir, line);
+        let text = ir[line..eol];
+        if begins(ir, line, "define ") && eol > line + 2 {
+            in_function = true;
+            scope = 0 - 1;
+            here = 0 - 1;
+            let offset = function_offset(ir, eol);
+            if lc.spells(ir, eol - 2, eol, " {") {
+                // A function of the program, from its marker, or else one of the support code (the entry, the traps, the runtime): a subprogram of its own in
+                // a file called `<cancho runtime>`, because code of the program that is inlined into a function with none loses its lines.
+                var place = diagnose.Place { file: files, line: 1, column: 1, line_from: 0, line_to: 0 };
+                var name = buffer.empty(heap, 0);
+                let symbol = symbol_of(heap, ir, line, eol);
+                if offset >= 0 {
+                    place = diagnose.locate(laid, lens, offset);
+                    buffer.drop(heap, name);
+                    name = name_at(heap, laid, offset);
+                } else {
+                    borrow symbol as &sb0 in {
+                        buffer.drop(heap, name);
+                        name = buffer.append(heap, buffer.empty(heap, 16), buffer.bytes(sb0));
+                    }
+                }
+                scope = next;
+                next = next + 1;
+                meta = buffer.append(heap, meta, "!");
+                meta = buffer.push_nat(heap, meta, scope);
+                meta = buffer.append(heap, meta, " = distinct !DISubprogram(name: ");
+                borrow name as &nb in {
+                    meta = jsonwrite.string(heap, meta, buffer.bytes(nb));
+                }
+                meta = buffer.append(heap, meta, ", scope: !");
+                meta = buffer.push_nat(heap, meta, 4 + place.file);
+                meta = buffer.append(heap, meta, ", file: !");
+                meta = buffer.push_nat(heap, meta, 4 + place.file);
+                meta = buffer.append(heap, meta, ", line: ");
+                meta = buffer.push_nat(heap, meta, place.line);
+                meta = buffer.append(heap, meta, ", type: !2, scopeLine: ");
+                meta = buffer.push_nat(heap, meta, place.line);
+                meta = buffer.append(heap, meta, ", spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !0)\n");
+                buffer.drop(heap, name);
+                buffer.drop(heap, symbol);
+                out = buffer.append(heap, out, ir[line..eol - 2]);
+                out = buffer.append(heap, out, " !dbg !");
+                out = buffer.push_nat(heap, out, scope);
+                out = buffer.append(heap, out, " {\n");
+                annotated = true;
+                if offset < 0 {
+                    // The support code has no statements: one location, the top of its file.
+                    here = next;
+                    next = next + 1;
+                    meta = buffer.append(heap, meta, "!");
+                    meta = buffer.push_nat(heap, meta, here);
+                    meta = buffer.append(heap, meta, " = !DILocation(line: 1, column: 1, scope: !");
+                    meta = buffer.push_nat(heap, meta, scope);
+                    meta = buffer.append(heap, meta, ")\n");
+                }
+            } else {
+                out = buffer.append(heap, buffer.append(heap, out, text), "\n");
+            }
+        } else if in_function && scope >= 0 && marker_offset(ir, line, "  ; @fn ") >= 0 {
+            here = next;
+            next = next + 1;
+            meta = location(heap, meta, here, laid, lens, marker_offset(ir, line, "  ; @fn "), scope);
+        } else if in_function && scope >= 0 && marker_offset(ir, line, "  ; @s ") >= 0 {
+            here = next;
+            next = next + 1;
+            meta = location(heap, meta, here, laid, lens, marker_offset(ir, line, "  ; @s "), scope);
+        } else {
+            if in_function && len(text) == 1 && lc.at(text, 0) == '}' {
+                in_function = false;
+                scope = 0 - 1;
+            }
+            out = buffer.append(heap, out, text);
+            // An instruction: a line that is not blank, a comment or a label (`name:`, no space in it), however it is indented (the library's code is written
+            // with none). It gets the location of the statement it is in. A `switch` is written over several lines and the location goes after its `]`.
+            if in_function && scope >= 0 && here >= 0 {
+                let t = trimmed(text);
+                var instruction = len(t) > 0 && lc.at(t, 0) != ';' && !(lc.at(t, len(t) - 1) == ':' && !has_space(t));
+                let ends = len(t) > 0 && lc.at(t, len(t) - 1) == ']';
+                if in_switch {
+                    instruction = ends;
+                    if ends {
+                        in_switch = false;
+                    }
+                } else if instruction && begins(t, 0, "switch ") && !ends {
+                    in_switch = true;
+                    instruction = false;
+                }
+                if instruction {
+                    out = buffer.append(heap, out, ", !dbg !");
+                    out = buffer.push_nat(heap, out, here);
+                }
+            }
+            out = buffer.push(heap, out, byte_of(10));
+        }
+        line = eol + 1;
+    }
+    if !annotated {
+        buffer.drop(heap, meta);
+        return out;
+    }
+    out = buffer.append(heap, out, "\n!llvm.dbg.cu = !{!0}\n!llvm.module.flags = !{!1}\n");
+    out = buffer.append(heap, out, "!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !4, producer: \"cancho\", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug)\n");
+    out = buffer.append(heap, out, "!1 = !{i32 2, !\"Debug Info Version\", i32 3}\n!2 = !DISubroutineType(types: !3)\n!3 = !{null}\n");
+    var f = 0;
+    while f < files {
+        out = buffer.append(heap, out, "!");
+        out = buffer.push_nat(heap, out, 4 + f);
+        out = buffer.append(heap, out, " = !DIFile(filename: ");
+        out = jsonwrite.string(heap, out, clibase.name_at(names, f));
+        out = buffer.append(heap, out, ", directory: \".\")\n");
+        f = f + 1;
+    }
+    out = buffer.append(heap, out, "!");
+    out = buffer.push_nat(heap, out, 4 + files);
+    out = buffer.append(heap, out, " = !DIFile(filename: \"<cancho runtime>\", directory: \".\")\n");
+    borrow meta as &mb in {
+        out = buffer.append(heap, out, buffer.bytes(mb));
+    }
+    buffer.drop(heap, meta);
+    return out;
+}

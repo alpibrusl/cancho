@@ -65,6 +65,7 @@ fn check(file: &str, want: &str, test: &str) {
 fn said(arguments: &[&str]) -> String {
     // Run from a scratch directory: `introspect` and `skill` of the Rust binary write a `.cli/` directory beside where they are run.
     let run = Command::new(BIN)
+        .env("CANCHO_ACLI_EXTRAS", "1")
         .current_dir(scratch("selfhost-said"))
         .args(arguments)
         .output()
@@ -110,6 +111,20 @@ fn command_tree_module_is_what_cancho_says() {
     want.push_str(&writer("skill_json_head", &json[..at]));
     want.push_str(&writer("skill_json_tail", &json[at + "null".len()..]));
     check("commandtree.cho", &want, "command_tree_module_is_what_cancho_says");
+}
+
+/// The support code of an instrumented build (`docs/agent-debug.md` section 11): `runtime/instr.ll` as the text `ciinstr.cho` puts in the module.
+#[test]
+fn instrumentation_runtime_module_is_what_instr_ll_says() {
+    let ll = std::fs::read_to_string(repo_root().join("examples/selfhost/runtime/instr.ll"))
+        .expect("instr.ll is read");
+    let mut want = header(
+        "instrtext",
+        "the support code of an instrumented build, from `runtime/instr.ll`",
+        "instrumentation_runtime_module_is_what_instr_ll_says",
+    );
+    want.push_str(&writer("text", &ll));
+    check("instrtext.cho", &want, "instrumentation_runtime_module_is_what_instr_ll_says");
 }
 
 /// The names of the standard library's files, in the order of the `STD` table of `crates/cancho/src/main.rs` (which is the order `--std` adds them), checked against `std/`.

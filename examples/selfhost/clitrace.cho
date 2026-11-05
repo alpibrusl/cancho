@@ -1,0 +1,408 @@
+edition 7;
+module selfhost.clitrace;
+
+// clitrace.cho -- `cancho trace`, written in cancho (`docs/agent-debug.md` section 11): one run of a program, and one answer.
+//
+//     trace [--std] [--std-dir DIR] [--at FILE:LINE] [--hit N] [--unoptimized] [--timeout SECONDS] [--max-frames N] FILE... [-- ARGS...]
+//
+// The program is built instrumented (`build --instrument trace`, this command line as a child: `ciinstr.cho` puts a stack of the functions being run, a note of the statement
+// being run and, if `--at` asks, a stop at one of them into the code) and run, with the name of a file in the environment for the run time to report to. No debugger is
+// needed, and the frames are the program's own functions whatever the optimiser did. What the run time wrote is read: why it stopped (`breakpoint`, or `trap`, with the signal and
+// why the code trapped), where, and the stack; or, if it wrote nothing, that the program ended, and with what status.
+//
+// Exit status: 0 an answer (a trap in the program is an answer, not a failure of the tool), 1 `trace-no-line`, `trace-not-reached` or `trace-timeout` or a program that is
+// refused, 2 the command line was wrong, 3 it could not be run (a program this command line cannot build).
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.jsonwrite;
+import selfhost.clibase;
+import selfhost.cliprog;
+import selfhost.cibase;
+import selfhost.clici;
+
+fn signal_name[&h](heap: &!h Heap, number: int) -> [heap] buffer.Buffer {
+    if number == 4 {
+        return buffer.append(heap, buffer.empty(heap, 8), "SIGILL");
+    }
+    if number == 5 {
+        return buffer.append(heap, buffer.empty(heap, 8), "SIGTRAP");
+    }
+    if number == 8 {
+        return buffer.append(heap, buffer.empty(heap, 8), "SIGFPE");
+    }
+    if number == 11 {
+        return buffer.append(heap, buffer.empty(heap, 8), "SIGSEGV");
+    }
+    return buffer.push_nat(heap, buffer.append(heap, buffer.empty(heap, 8), "SIG"), number);
+}
+
+// Why the code trapped, by the number `emit.trap_if` gave (0 is a trap the compiler has no reason for: an `assert`, an explicit `trap()`).
+fn trap_name(kind: int) -> [] &static [byte] {
+    if kind == 1 {
+        return "overflow";
+    }
+    if kind == 2 {
+        return "shift";
+    }
+    if kind == 3 {
+        return "divide-by-zero";
+    }
+    if kind == 4 {
+        return "bounds";
+    }
+    if kind == 5 {
+        return "allocation";
+    }
+    if kind == 6 {
+        return "conversion";
+    }
+    if kind == 7 {
+        return "argument";
+    }
+    if kind == 8 {
+        return "thread";
+    }
+    return "explicit";
+}
+
+// What the run time wrote, as the answer. 0 an answer was given.
+fn answer[&h, &i, &t](heap: &!h Heap, io: &!i Io, report: &t [byte], max_frames: int, optimization: &static [byte]) -> [heap, io_write] int {
+    var word = "";
+    var signal = 0;
+    var kind = 0;
+    var hits = 0;
+    var stack = buffer.empty(heap, 128);
+    var first = buffer.empty(heap, 0);
+    var shown = 0;
+    var start = 0;
+    var at = 0;
+    while at <= len(report) {
+        if at == len(report) || lc.at(report, at) == 10 {
+            let line = report[start..at];
+            let tag = clibase.tab_field(line, 0);
+            if bytes.equal(tag, "stop") {
+                if bytes.equal(clibase.tab_field(line, 1), "breakpoint") {
+                    word = "breakpoint";
+                } else {
+                    word = "trap";
+                }
+            } else if bytes.equal(tag, "signal") {
+                signal = clibase.value_of(clibase.tab_field(line, 1), 0, len(clibase.tab_field(line, 1)));
+            } else if bytes.equal(tag, "kind") {
+                kind = clibase.value_of(clibase.tab_field(line, 1), 0, len(clibase.tab_field(line, 1)));
+            } else if bytes.equal(tag, "hits") {
+                hits = clibase.value_of(clibase.tab_field(line, 1), 0, len(clibase.tab_field(line, 1)));
+            } else if bytes.equal(tag, "frame") && shown < max_frames {
+                var f = buffer.append(heap, buffer.empty(heap, 64), "{ \"function\": ");
+                f = jsonwrite.string(heap, f, clibase.tab_field(line, 1));
+                f = buffer.append(heap, f, ", \"file\": ");
+                f = jsonwrite.string(heap, f, clibase.tab_field(line, 2));
+                f = buffer.append(heap, f, ", \"line\": ");
+                f = buffer.push_nat(heap, f, clibase.value_of(clibase.tab_field(line, 3), 0, len(clibase.tab_field(line, 3))));
+                f = buffer.append(heap, f, " }");
+                if shown > 0 {
+                    stack = buffer.append(heap, stack, ",\n    ");
+                }
+                borrow f as &fb in {
+                    if shown == 0 {
+                        buffer.drop(heap, first);
+                        first = buffer.append(heap, buffer.empty(heap, 64), buffer.bytes(fb));
+                    }
+                    stack = buffer.append(heap, stack, buffer.bytes(fb));
+                }
+                buffer.drop(heap, f);
+                shown = shown + 1;
+            }
+            start = at + 1;
+        }
+        at = at + 1;
+    }
+    var text = buffer.append(heap, buffer.empty(heap, 256), "{\n  \"stopped\": \"");
+    text = buffer.append(heap, text, word);
+    text = buffer.append(heap, text, "\",\n  \"optimization\": \"");
+    text = buffer.append(heap, text, optimization);
+    text = buffer.append(heap, text, "\"");
+    if bytes.equal(word, "trap") {
+        let name = signal_name(heap, signal);
+        text = buffer.append(heap, text, ",\n  \"signal\": ");
+        borrow name as &nb in {
+            text = jsonwrite.string(heap, text, buffer.bytes(nb));
+        }
+        buffer.drop(heap, name);
+        text = buffer.append(heap, text, ",\n  \"trap\": ");
+        text = jsonwrite.string(heap, text, trap_name(kind));
+    } else {
+        text = buffer.append(heap, text, ",\n  \"hits\": ");
+        text = buffer.push_nat(heap, text, hits);
+    }
+    text = buffer.append(heap, text, ",\n  \"at\": ");
+    if shown > 0 {
+        borrow first as &fb in {
+            text = buffer.append(heap, text, buffer.bytes(fb));
+        }
+    } else {
+        text = buffer.append(heap, text, "null");
+    }
+    text = buffer.append(heap, text, ",\n  \"stack\": [");
+    if shown > 0 {
+        text = buffer.append(heap, text, "\n    ");
+        borrow stack as &sb in {
+            text = buffer.append(heap, text, buffer.bytes(sb));
+        }
+        text = buffer.append(heap, text, "\n  ");
+    }
+    text = buffer.append(heap, text, "],\n  \"exit_status\": null\n}\n");
+    buffer.drop(heap, first);
+    buffer.drop(heap, stack);
+    clibase.show(heap, io, text);
+    return 0;
+}
+
+// A child that was run: how it ended and what it wrote on standard output and error.
+fn after(ran: cliprog.Captured) -> [] (int, int, buffer.Buffer, buffer.Buffer) {
+    let cliprog.Captured { out, err, kind, value } = ran;
+    return (kind, value, out, err);
+}
+
+// `FILE:LINE`: something, a colon, and a line number that ends it, and no control character.
+fn location_ok[&t](t: &t [byte]) -> [] bool {
+    var colon = len(t) - 1;
+    while colon > 0 && lc.at(t, colon) != ':' {
+        colon = colon - 1;
+    }
+    if colon < 1 || colon + 1 >= len(t) || clibase.digits_end(t, colon + 1) != len(t) {
+        return false;
+    }
+    var k = 0;
+    while k < len(t) {
+        if lc.at(t, k) < 32 {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+pub fn trace_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, exec(""), clock, poll] int {
+    var at_spec = 0 - 1;
+    var hit_at = 0 - 1;
+    var timeout = 30;
+    var max_frames = 32;
+    var library = false;
+    var unoptimized = false;
+    var first = 0 - 1;
+    var files = 0;
+    var program_args = arg_count(args);
+    var n = 2;
+    while n < arg_count(args) && program_args == arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--") {
+            program_args = n + 1;
+        } else if bytes.equal(word, "--std") {
+            library = true;
+        } else if bytes.equal(word, "--unoptimized") {
+            unoptimized = true;
+        } else if bytes.equal(word, "--on-trap") {
+            n = n + 0;
+        } else if bytes.equal(word, "--std-dir") {
+            n = n + 1;
+            if n >= arg_count(args) {
+                return clibase.usage_error(heap, io, "`--std-dir` needs a directory");
+            }
+        } else if bytes.equal(word, "--at") {
+            n = n + 1;
+            if n >= arg_count(args) || !location_ok(arg(args, n)) {
+                return clibase.usage_error(heap, io, "`--at` needs FILE:LINE (a file of the program, a colon and a line number)");
+            }
+            at_spec = n;
+        } else if bytes.equal(word, "--hit") || bytes.equal(word, "--timeout") || bytes.equal(word, "--max-frames") {
+            n = n + 1;
+            if n >= arg_count(args) || len(arg(args, n)) == 0 || len(arg(args, n)) > 4 || clibase.digits_end(arg(args, n), 0) != len(arg(args, n)) || clibase.value_of(arg(args, n), 0, len(arg(args, n))) < 1 {
+                return clibase.usage_error(heap, io, "`--hit`, `--timeout` and `--max-frames` need a number from 1 to 9999");
+            }
+            if bytes.equal(word, "--hit") {
+                hit_at = n;
+            } else if bytes.equal(word, "--timeout") {
+                timeout = clibase.value_of(arg(args, n), 0, len(arg(args, n)));
+            } else {
+                max_frames = clibase.value_of(arg(args, n), 0, len(arg(args, n)));
+            }
+        } else if bytes.equal(word, "--output") {
+            n = n + 1;
+            if n >= arg_count(args) || !bytes.equal(arg(args, n), "json") {
+                return clibase.usage_error(heap, io, "`--output` needs `json`");
+            }
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            return clibase.unknown_option(heap, io, word);
+        } else {
+            if first < 0 {
+                first = n;
+            }
+            files = files + 1;
+        }
+        n = n + 1;
+    }
+    if clibase.contains(arg(args, 0), "..") {
+        return clibase.refuse(io, "trace-self-path", "`trace` runs this command line again, and cannot by a name with `..` in it; run it by a path without", 3);
+    }
+    if files == 0 {
+        return clibase.usage_error(heap, io, "no file given");
+    }
+    if hit_at >= 0 && at_spec < 0 {
+        return clibase.usage_error(heap, io, "`--hit` is for `--at`");
+    }
+    // The place must be in a file of the program, as it was named.
+    if at_spec >= 0 {
+        let spec = arg(args, at_spec);
+        var colon = len(spec) - 1;
+        while colon > 0 && lc.at(spec, colon) != ':' {
+            colon = colon - 1;
+        }
+        var known = false;
+        n = 2;
+        while n < program_args && n < arg_count(args) {
+            if bytes.equal(arg(args, n), spec[0..colon]) {
+                known = true;
+            }
+            n = n + 1;
+        }
+        if !known {
+            return clibase.refuse(io, "trace-no-line", "the file named by --at is not one of the files of the program (name it as it is named on the command line)", 1);
+        }
+    }
+    var exe = buffer.append(heap, buffer.empty(heap, 64), clibase.stem(arg(args, first)));
+    exe = buffer.append(heap, exe, ".cancho-trace");
+    var out_file = buffer.append(heap, buffer.empty(heap, 64), clibase.stem(arg(args, first)));
+    out_file = buffer.append(heap, out_file, ".cancho-trace.out");
+    var build_words = buffer.append(heap, buffer.empty(heap, 128), "build\0--instrument\0trace\0");
+    if unoptimized {
+        build_words = buffer.append(heap, build_words, "-O0\0");
+    }
+    if library {
+        build_words = buffer.append(heap, build_words, "--std\0");
+    }
+    if at_spec >= 0 {
+        build_words = buffer.append(heap, buffer.append(heap, buffer.append(heap, build_words, "--at\0"), arg(args, at_spec)), "\0");
+    }
+    if hit_at >= 0 {
+        build_words = buffer.append(heap, buffer.append(heap, buffer.append(heap, build_words, "--hit\0"), arg(args, hit_at)), "\0");
+    }
+    build_words = buffer.append(heap, build_words, "-o\0");
+    borrow exe as &eb in {
+        build_words = buffer.append(heap, buffer.append(heap, build_words, buffer.bytes(eb)), "\0");
+    }
+    n = 2;
+    while n < program_args && n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--") {
+            n = program_args;
+        } else if bytes.equal(word, "--std-dir") {
+            build_words = buffer.append(heap, buffer.append(heap, buffer.append(heap, build_words, "--std-dir\0"), arg(args, n + 1)), "\0");
+            n = n + 1;
+        } else if bytes.equal(word, "--at") || bytes.equal(word, "--hit") || bytes.equal(word, "--timeout") || bytes.equal(word, "--max-frames") || bytes.equal(word, "--output") {
+            n = n + 1;
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            n = n + 0;
+        } else {
+            build_words = buffer.append(heap, buffer.append(heap, build_words, word), "\0");
+        }
+        n = n + 1;
+    }
+    let built = clici.child_run(heap, io, exec, clock, args, build_words);
+    let (built_kind, built_value, built_out, built_err) = after(built);
+    buffer.drop(heap, built_out);
+    var status = 0;
+    if built_kind != 0 || built_value != 0 {
+        borrow built_err as &be in {
+            console.error_all(io, buffer.bytes(be));
+        }
+        status = 3;
+        if built_kind == 0 && built_value == 1 {
+            status = 1;
+        }
+    }
+    buffer.drop(heap, built_err);
+    if status == 0 {
+        var env = buffer.append(heap, buffer.empty(heap, 128), "PATH=/usr/bin:/bin\0CANCHO_TRACE_OUT=");
+        borrow out_file as &ob in {
+            env = buffer.append(heap, env, buffer.bytes(ob));
+        }
+        env = buffer.append(heap, env, "\0");
+        var run_words = buffer.empty(heap, 64);
+        n = program_args;
+        while n < arg_count(args) {
+            run_words = buffer.append(heap, buffer.append(heap, run_words, arg(args, n)), "\0");
+            n = n + 1;
+        }
+        var ran_kind = 5;
+        var ran_value = 0;
+        borrow env as &nb in {
+            borrow run_words as &rw in {
+                borrow exe as &eb in {
+                    let ran = cliprog.run_capture_for(heap, io, exec, clock, buffer.bytes(eb), "", buffer.bytes(rw), buffer.bytes(nb), timeout * 1000);
+                    let (kind, value, out, err) = after(ran);
+                    buffer.drop(heap, out);
+                    buffer.drop(heap, err);
+                    ran_kind = kind;
+                    ran_value = value;
+                }
+            }
+        }
+        buffer.drop(heap, env);
+        buffer.drop(heap, run_words);
+        var optimization = "O2";
+        if unoptimized {
+            optimization = "O0";
+        }
+        if ran_kind == 2 {
+            status = clibase.refuse(io, "trace-timeout", "the program did not stop or end in the time --timeout allows", 1);
+        } else if ran_kind == 5 || ran_kind == 4 {
+            status = clibase.refuse(io, "trace-unreadable", "the program could not be started or watched", 3);
+        } else {
+            borrow out_file as &ob in {
+                let (report, failed) = cibase.read_path(heap, fs, buffer.bytes(ob));
+                var stopped = false;
+                if failed == 0 {
+                    borrow report as &rb in {
+                        stopped = clici.starts(buffer.bytes(rb), "stop\t");
+                        if stopped {
+                            status = answer(heap, io, buffer.bytes(rb), max_frames, optimization);
+                        }
+                    }
+                }
+                buffer.drop(heap, report);
+                if !stopped {
+                    if at_spec >= 0 {
+                        status = clibase.refuse(io, "trace-not-reached", "the program ended before it reached the place named by --at (a line with no statement stops at the next that has one, so this is a place that is not run)", 1);
+                    } else if ran_kind == 1 {
+                        var text = buffer.append(heap, buffer.empty(heap, 128), "{\n  \"stopped\": \"signal\",\n  \"optimization\": \"");
+                        text = buffer.append(heap, text, optimization);
+                        text = buffer.append(heap, text, "\",\n  \"signal\": ");
+                        text = buffer.push_nat(heap, text, ran_value);
+                        text = buffer.append(heap, text, ",\n  \"at\": null,\n  \"stack\": [],\n  \"exit_status\": null\n}\n");
+                        clibase.show(heap, io, text);
+                    } else {
+                        var text = buffer.append(heap, buffer.empty(heap, 128), "{\n  \"stopped\": \"exit\",\n  \"optimization\": \"");
+                        text = buffer.append(heap, text, optimization);
+                        text = buffer.append(heap, text, "\",\n  \"at\": null,\n  \"stack\": [],\n  \"exit_status\": ");
+                        text = buffer.push_nat(heap, text, ran_value);
+                        text = buffer.append(heap, text, "\n}\n");
+                        clibase.show(heap, io, text);
+                    }
+                }
+            }
+        }
+    }
+    borrow exe as &eb in {
+        fs_remove(fs, buffer.bytes(eb));
+    }
+    borrow out_file as &ob in {
+        fs_remove(fs, buffer.bytes(ob));
+    }
+    buffer.drop(heap, exe);
+    buffer.drop(heap, out_file);
+    return status;
+}

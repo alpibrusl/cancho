@@ -82,21 +82,21 @@ fn is_unordered[&s](st: &!s [int], ty: int, x: int) -> [] int {
 // `truncate` and `int_of_f32`: toward zero, trapping on NaN and on 2^63 and beyond either way, since `fptosi`
 // is undefined there.
 fn float_to_int[&s](st: &!s [int], ty: int, x: int) -> [] int {
-    emit.trap_if(st, is_unordered(st, ty, x));
+    emit.trap_if(st, is_unordered(st, ty, x), 6);
     let high = emit.start(st);
     emit.str(st, "fcmp oge ");
     emit.llvm_type(st, ty);
     emit.str(st, " ");
     emit.temp(st, x);
     emit.str(st, ", 0x43E0000000000000\n");
-    emit.trap_if(st, high);
+    emit.trap_if(st, high, 6);
     let low = emit.start(st);
     emit.str(st, "fcmp ole ");
     emit.llvm_type(st, ty);
     emit.str(st, " ");
     emit.temp(st, x);
     emit.str(st, ", 0xC3E0000000000000\n");
-    emit.trap_if(st, low);
+    emit.trap_if(st, low, 6);
     let n = emit.start(st);
     emit.str(st, "fptosi ");
     emit.llvm_type(st, ty);

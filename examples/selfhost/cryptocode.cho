@@ -17,7 +17,7 @@ fn trap_when[&s](st: &!s [int], n: int, cond: &static [byte], k: int, what: int)
     emit.str(st, ", ");
     emit.nat(st, what);
     emit.str(st, "\n");
-    emit.trap_if(st, flag);
+    emit.trap_if(st, flag, 7);
     return 0;
 }
 
@@ -49,7 +49,7 @@ fn check_round_keys[&s](st: &!s [int], n: int, keys: int, rounds: int) -> [] int
     emit.str(st, "xor i1 ");
     emit.temp(st, flags);
     emit.str(st, ", true\n");
-    emit.trap_if(st, unknown);
+    emit.trap_if(st, unknown, 7);
     let blocks = emit.start(st);
     emit.str(st, "add i64 ");
     emit.last_operand(st, n, rounds);
@@ -64,7 +64,7 @@ fn check_round_keys[&s](st: &!s [int], n: int, keys: int, rounds: int) -> [] int
     emit.str(st, ", ");
     emit.temp(st, want);
     emit.str(st, "\n");
-    emit.trap_if(st, bad);
+    emit.trap_if(st, bad, 7);
     return 0;
 }
 
@@ -118,7 +118,7 @@ pub fn ctr32[&s](st: &!s [int]) -> [] int {
     emit.str(st, ", ");
     emit.last_operand(st, 10, 9);
     emit.str(st, "\n");
-    emit.trap_if(st, unequal);
+    emit.trap_if(st, unequal, 7);
     emit.str(st, "  call void @cancho_aes_ctr32(");
     ptr_arg(st, 10, 0);
     emit.str(st, ", ");
@@ -150,7 +150,7 @@ pub fn ghash_update[&s](st: &!s [int]) -> [] int {
     emit.str(st, "icmp ne i64 ");
     emit.temp(st, rest);
     emit.str(st, ", 0\n");
-    emit.trap_if(st, ragged);
+    emit.trap_if(st, ragged, 7);
     let blocks = emit.start(st);
     emit.str(st, "lshr i64 ");
     emit.last_operand(st, 6, 5);
@@ -240,7 +240,7 @@ pub fn sha_blocks[&s](st: &!s [int]) -> [] int {
     emit.str(st, "icmp ne i64 ");
     emit.temp(st, rest);
     emit.str(st, ", 0\n");
-    emit.trap_if(st, ragged);
+    emit.trap_if(st, ragged, 7);
     let blocks = emit.start(st);
     emit.str(st, "lshr i64 ");
     emit.last_operand(st, 4, 3);

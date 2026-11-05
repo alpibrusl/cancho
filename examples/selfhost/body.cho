@@ -742,6 +742,9 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
         ex.skip(st, from, to);
         return 0;
     }
+    if emit.on(st) && emit.debugging(st) {
+        emit.marker(st, "s ", from);
+    }
     if ast.is_kind(st, id, kinds.NK::SLet) {
         let value = ast.get(st, id, 7);
         let note = ast.get(st, id, 6);

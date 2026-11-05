@@ -1,7 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 12 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15; `test`, §16; `layout`, §17; `satisfy`, §18); the rest is design (epic #491,
-issue #485). The numbers quoted are from the tree at the time of writing and are the only
+Status: **slices 1 to 23 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15; `test`, §16; `layout`, §17; `satisfy`, §18; the project and its dependencies, §19 to §26; `vcs`, §28 to §33; `authority`, §34; the standalone build, §36 to §40; and, written for agents, `ci`, `-g`, `profile` and `trace`, §41 to §44); issue #485 and epic #491. The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
 ## 1. What is left of the Rust binary
@@ -616,8 +615,6 @@ library under development, and gives the same identities when DIR is `std/`. In 
 `selfhost::cli::the_command_line_in_cancho_carries_the_standard_library` runs ten programs of `tests/accept` through `check`, `ids` and `build` with `--std` against the Rust command (same status
 and standard output; the identities of the whole library line for line; the built programs the same status and output), `--std-dir std` against `--std`, and the refusal of a program that
 imports the library without the flag. Mutants: one byte of the embedded library changed, and a file of the library left out, each fail it.
-=======
->>>>>>> origin/main
 
 ## 38. Slice 18: what this build does not carry (`docs/standalone-cancho.md` D1, §4)
 
@@ -645,3 +642,38 @@ end-to-end test builds `tests/../examples/users/users.cho`; the first sibling CI
 path before `clibase.read_file` opens it (lexically: a link in `a` is not looked through, which a shell does not do either), and a path with nothing in front of its `..` is refused as before, since there is
 no current directory to look it up in. **Not done:** the same for directories (`fmt dir/../x`, `is_directory`, `below`), for paths that are written (`-o`, `store`), and for a leading `..`, which the Rust command
 accepts. `selfhost::cli::the_command_line_in_cancho_reads_a_path_with_dot_dot_like_cancho` compares `check`, `fmt --check` and `build` on four spellings against the Rust command and pins the refusal of `../p.cho`.
+
+## 41. Slice 20: `ci` (`docs/agent-ci.md`)
+
+`clici.cho`, `cibase.cho`, `ciinit.cho`. `ci [--output json] [--std-dir D] [--test F]... FILE...` runs `fmt --check`, `check --output json`, `test` and the authority baseline
+(`cancho.authority.json`) as children of this command line and answers one JSON verdict; `--accept-authority --reason WHY` records a widening; `--init` writes the GitHub workflow. No Rust
+is called. Tests: `selfhost/ci.rs`. The designs, what differs from them, and the measurements are in `agent-ci.md` §10 to §12.
+
+## 42. Slice 21: `build -g` and the instrumented build (`docs/agent-debug.md` §3.4, §11)
+
+`cidebug.cho` turns the markers the emitter leaves with `-g` (`emit.debugging`, `emit.marker`, `body.stmt`) into LLVM debug information; `ciinstr.cho` turns the same markers into calls to a small run
+time (`runtime/instr.ll`, generated into `instrtext.cho`) for `build --instrument trace|profile [--at FILE:LINE] [--hit N]`. `emit.trap_if` takes a kind (why the code trapped). The flags travel in
+the target given to `driver.run_many` (`+ 1024` for `-g`, `+ 2048` for instrumented; bits 16 and 17 of `st[55]`), because the header of the state array has no free slot. `build -O0` is a flag of this
+command line only. Tests: `selfhost/debug.rs`, `trace.rs`, `profile.rs`.
+
+## 43. Slice 22: `profile` (`docs/agent-profile.md`)
+
+`cliprofile.cho`. The default counts the statements of an instrumented build, weighted by their IR instructions, and attributes them to functions, with the allocator calls; `--advise` reports the
+facts for deciding what to optimise (shares, the bound on the speedup, calls, statements and allocations a call, the hottest lines with their text) and no judgement of effort; `--machine` counts machine
+instructions under `valgrind`. `--record` and `--baseline` gate on a recorded profile. Tests: `selfhost/profile.rs`.
+
+## 44. Slice 23: `trace` (`docs/agent-debug.md` §11)
+
+`clitrace.cho`. One run of an instrumented build, and one answer: a stop at `--at FILE:LINE` (the Nth arrival with `--hit`), or a trap with its signal and why, the stack of the program's own functions,
+or the status it ended with. No debugger. Tests: `selfhost/trace.rs`.
+
+## 45. What the Rust side holds for slices 20 to 23, for the removal of Rust (#491)
+
+The commands are cancho. The Rust that exists for them is registration and tests, listed in the comment of #491 of 2026-11-05 and here so that the removal carries it:
+
+* `crates/cancho/src/acli.rs`: `extra_commands()` with `cmd_ci`, `cmd_profile` and `cmd_trace`, and the environment variable `CANCHO_ACLI_EXTRAS` read in `build_app()`. `commandtree.cho` is generated from the output of the
+  Rust binary, so the commands appear in `introspect` and `skill` only because they are registered there. **When the Rust binary goes, the registration and the generator move to the cancho side.**
+* `crates/cancho/tests/conformance/selfhost/`: `ci.rs`, `debug.rs`, `profile.rs`, `trace.rs`; `statics.rs` (`instrumentation_runtime_module_is_what_instr_ll_says` generates `instrtext.cho`; `said()` sets
+  `CANCHO_ACLI_EXTRAS`); `cli.rs` (the tree test sets it for the Rust binary); `selfhost.rs` (`mod` lines, and the files of the slices in `with_front_end`).
+* The generated `.cho` modules these slices add or change: `commandtree.cho`, `instrtext.cho`, `guidelines.cho`; and `cancho.files`, regenerated by `bootstrap.rs`.
+
