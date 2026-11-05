@@ -1,0 +1,1597 @@
+edition 7;
+
+module std.flate;
+
+// `archive.flate` -- DEFLATE (RFC 1951), gzip (RFC 1952) and CRC-32, in memory.
+//
+// cancho's `std` has none of these (docs/archive.md section 2), so they are
+// written here and move into `std` when a second program wants them. The reader
+// is `puff`'s algorithm (zlib's reference decoder): canonical Huffman codes
+// decoded a bit at a time from a count-and-symbol table, simple enough to check
+// against the RFC line by line and slow enough that its speed is reported, not
+// claimed. The writer is a greedy LZ77 (a 32 KiB window, a hash chain of at most
+// 16 candidates) coded with the fixed Huffman code of the RFC, one block, so its
+// output is a function of its input alone.
+//
+// Everything is bounded by what the caller passes: `inflate` stops at `limit`
+// bytes of output, and answers a status instead of trapping on any input.
+//
+// Statuses of `inflate` and `gunzip` (the tool maps them to rules):
+//   0 ok
+//   1 the DEFLATE stream is invalid
+//   2 the input ended inside the stream
+//   3 the output would pass the limit
+//  10 not a gzip stream (no magic)
+//  11 a gzip header that cannot be read (method, reserved flags)
+//  12 the input ended inside the gzip header or trailer
+//  13 the CRC-32 of the data is not the trailer's
+//  14 the length of the data is not the trailer's
+//  15 bytes follow the one gzip member
+
+import std.buffer;
+import std.crc;
+import std.math;
+
+// ---- the bit reader --------------------------------------------------------------
+
+pub struct Bits {
+    at: int,
+    buf: int,
+    count: int,
+    short: bool,
+}
+
+// `n` bits (at most 16), least significant first. `short` is set, and stays set,
+// when the input ends first.
+pub fn take[&s](src: &s [byte], end: int, b: Bits, n: int) -> [] (Bits, int) {
+    var at = b.at;
+    var buf = b.buf;
+    var count = b.count;
+    while count < n && at < end {
+        buf = buf | int_of(src[at]) << count;
+        count = count + 8;
+        at = at + 1;
+    }
+    if count < n {
+        return (Bits { at: at, buf: buf, count: count, short: true }, 0);
+    }
+    let value = buf & (1 << n) - 1;
+    return (Bits { at: at, buf: buf >> n, count: count - n, short: b.short }, value);
+}
+
+// ---- Huffman tables ----------------------------------------------------------------
+//
+// One `[int]` of 320: counts of each code length at 0..16, offsets at 16..32, and the
+// symbols in code order from 32.
+
+pub fn table_size() -> [] int {
+    return 320;
+}
+
+// Build the table for `n` symbols whose code lengths are `lengths[at..at + n]`. Answers 0
+// for a complete code, a negative number for an over-subscribed one and a positive one
+// for an incomplete one.
+pub fn construct[&t, &l](table: &!t [int], lengths: &l [int], at: int, n: int) -> [] int {
+    var i = 0;
+    while i < 32 {
+        table[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        let length = lengths[at + i];
+        table[length] = table[length] + 1;
+        i = i + 1;
+    }
+    if table[0] == n {
+        return 0;
+    }
+    var left = 1;
+    var length = 1;
+    while length <= 15 {
+        left = (left << 1) - table[length];
+        if left < 0 {
+            return left;
+        }
+        length = length + 1;
+    }
+    table[17] = 0;
+    length = 1;
+    while length < 15 {
+        table[17 + length] = table[16 + length] + table[length];
+        length = length + 1;
+    }
+    i = 0;
+    while i < n {
+        let l = lengths[at + i];
+        if l != 0 {
+            table[32 + table[16 + l]] = i;
+            table[16 + l] = table[16 + l] + 1;
+        }
+        i = i + 1;
+    }
+    return left;
+}
+
+// Whether `construct`'s answer is usable: a complete code, or the one incomplete
+// code the RFC allows, a single code of length one.
+pub fn usable[&t](table: &t [int], n: int, answer: int) -> [] bool {
+    if answer == 0 {
+        return true;
+    }
+    return answer > 0 && n - table[0] - table[1] == 0;
+}
+
+// The lookup table of a code `construct` built: entry `i`, for the next `bits` bits of input (least significant first), is
+// `symbol << 4 | length` when a code of at most `bits` bits begins them, else 0 (a longer code, or no code). Decoding a
+// symbol is then one read of this table instead of a loop over its bits.
+pub fn build_fast[&t, &f](table: &t [int], fast: &!f [int], bits: int) -> [] int {
+    let size = 1 << bits;
+    var i = 0;
+    while i < size {
+        fast[i] = 0;
+        i = i + 1;
+    }
+    var code = 0;
+    var index = 0;
+    var length = 1;
+    while length <= bits {
+        let count = table[length];
+        var k = 0;
+        while k < count {
+            let symbol = table[32 + index + k];
+            var j = reversed(code + k, length);
+            while j < size {
+                fast[j] = symbol << 4 | length;
+                j = j + (1 << length);
+            }
+            k = k + 1;
+        }
+        index = index + count;
+        code = code + count << 1;
+        length = length + 1;
+    }
+    return 0;
+}
+
+// The next symbol, or -1 when the bits run out or are not a code of the table.
+pub fn decode[&s, &t](src: &s [byte], end: int, b: Bits, table: &t [int]) -> [] (Bits, int) {
+    var cur = b;
+    var code = 0;
+    var first = 0;
+    var index = 0;
+    var length = 1;
+    var symbol = 0 - 1;
+    while length <= 15 && symbol < 0 && !cur.short {
+        let (next, bit) = take(src, end, cur, 1);
+        cur = next;
+        code = code | bit;
+        let count = table[length];
+        if code - count < first {
+            symbol = table[32 + index + (code - first)];
+        } else {
+            index = index + count;
+            first = first + count << 1;
+            code = code << 1;
+            length = length + 1;
+        }
+    }
+    return (cur, symbol);
+}
+
+// Length and distance codes (RFC 1951 3.2.5): base at 0, extra bits at 32 for lengths of
+// codes 257..285 (index 0..28), and the same at 64 and 96 for the 30 distance codes.
+pub fn fill_codes[&c](codes: &!c [int]) -> [] int {
+    var i = 0;
+    var base = 3;
+    while i < 28 {
+        var extra = 0;
+        if i >= 8 {
+            extra = (i - 4) / 4;
+        }
+        codes[i] = base;
+        codes[32 + i] = extra;
+        base = base + (1 << extra);
+        i = i + 1;
+    }
+    codes[28] = 258;
+    codes[60] = 0;
+    i = 0;
+    base = 1;
+    while i < 30 {
+        var extra = 0;
+        if i >= 4 {
+            extra = (i - 2) / 2;
+        }
+        codes[64 + i] = base;
+        codes[96 + i] = extra;
+        base = base + (1 << extra);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ---- inflate ------------------------------------------------------------------------------
+
+struct Block {
+    bits: Bits,
+    produced: int,
+    status: int,
+}
+
+// The symbols of one compressed block, into `out`.
+fn codes[&h, &s, &a, &t, &d, &f, &g](heap: &!h Heap, src: &s [byte], end: int, bits: Bits, lit: &a [int], dist: &t [int], consts: &d [int], flit: &f [int], fdist: &g [int], out: buffer.Buffer, produced: int, limit: int) -> [heap] (buffer.Buffer, Block) {
+    var o = out;
+    // The bit buffer is kept in these four, not in a `Bits` passed and returned for each symbol: that was half the time.
+    var at = bits.at;
+    var buf = bits.buf;
+    var count = bits.count;
+    var short = bits.short;
+    var made = produced;
+    var status = 0;
+    var going = true;
+    while going {
+        // Room for the longest match after the last byte written; the output is written straight into the buffer's
+        // allocation, and this loop comes back here to grow it when it is nearly full.
+        o = buffer.reserve(heap, o, 300);
+        let buffer.Buffer { held, used } = o;
+        borrow mut held as &!w in {
+            let s = contents(w);
+            let stop = len(s) - 259;
+            while going && made < stop {
+                while count <= 48 && at < end {
+                    buf = buf | int_of(src[at]) << count;
+                    count = count + 8;
+                    at = at + 1;
+                }
+                var symbol = 0;
+                var extra = 0;
+                var far = 0;
+                var more = 0;
+                if count >= 48 {
+                    // 48 bits are enough for a literal/length code (15), its extra bits (5), a distance code (15) and its
+                    // extra bits (13), so none of the reads below can run out of input.
+                    let e = flit[buf & 1023];
+                    if e != 0 {
+                        symbol = e >> 4;
+                        buf = buf >> (e & 15);
+                        count = count - (e & 15);
+                    } else {
+                        let (nb, sy) = decode(src, end, Bits { at: at, buf: buf, count: count, short: short }, lit);
+                        at = nb.at;
+                        buf = nb.buf;
+                        count = nb.count;
+                        short = nb.short;
+                        symbol = sy;
+                    }
+                    if symbol > 256 && symbol <= 285 {
+                        let k = symbol - 257;
+                        let width = consts[32 + k];
+                        extra = buf & (1 << width) - 1;
+                        buf = buf >> width;
+                        count = count - width;
+                        let e2 = fdist[buf & 255];
+                        if e2 != 0 {
+                            far = e2 >> 4;
+                            buf = buf >> (e2 & 15);
+                            count = count - (e2 & 15);
+                        } else {
+                            let (nb, sy) = decode(src, end, Bits { at: at, buf: buf, count: count, short: short }, dist);
+                            at = nb.at;
+                            buf = nb.buf;
+                            count = nb.count;
+                            short = nb.short;
+                            far = sy;
+                        }
+                        if far >= 0 && far < 30 {
+                            let width2 = consts[96 + far];
+                            more = buf & (1 << width2) - 1;
+                            buf = buf >> width2;
+                            count = count - width2;
+                        }
+                    }
+                } else {
+                    // The last bytes of the input: the careful way, which knows what running out means.
+                    var bb = Bits { at: at, buf: buf, count: count, short: short };
+                    let (b1, sy) = decode(src, end, bb, lit);
+                    bb = b1;
+                    symbol = sy;
+                    if symbol > 256 && symbol <= 285 {
+                        let (a1, ex) = take(src, end, bb, consts[32 + symbol - 257]);
+                        bb = a1;
+                        extra = ex;
+                        let (a2, fr) = decode(src, end, bb, dist);
+                        bb = a2;
+                        far = fr;
+                        if far >= 0 && far < 30 {
+                            let (a3, mo) = take(src, end, bb, consts[96 + far]);
+                            bb = a3;
+                            more = mo;
+                        }
+                    }
+                    at = bb.at;
+                    buf = bb.buf;
+                    count = bb.count;
+                    short = bb.short;
+                }
+                if symbol < 0 {
+                    going = false;
+                    if short {
+                        status = 2;
+                    } else {
+                        status = 1;
+                    }
+                } else if symbol < 256 {
+                    if made >= limit {
+                        going = false;
+                        status = 3;
+                    } else {
+                        s[made] = byte_of(symbol);
+                        made = made + 1;
+                    }
+                } else if symbol == 256 {
+                    going = false;
+                } else if symbol > 285 {
+                    going = false;
+                    status = 1;
+                } else if far < 0 || far >= 30 {
+                    going = false;
+                    if short {
+                        status = 2;
+                    } else {
+                        status = 1;
+                    }
+                } else {
+                    let length = consts[symbol - 257] + extra;
+                    let distance = consts[64 + far] + more;
+                    if short {
+                        going = false;
+                        status = 2;
+                    } else if distance > made {
+                        going = false;
+                        status = 1;
+                    } else if made + length > limit {
+                        going = false;
+                        status = 3;
+                    } else {
+                        var n = 0;
+                        while n < length {
+                            s[made] = s[made - distance];
+                            made = made + 1;
+                            n = n + 1;
+                        }
+                    }
+                }
+            }
+        }
+        o = buffer.Buffer { held: held, used: made };
+    }
+    return (o, Block { bits: Bits { at: at, buf: buf, count: count, short: short }, produced: made, status: status });
+}
+
+pub fn fixed_lengths[&l](lengths: &!l [int]) -> [] int {
+    var i = 0;
+    while i < 288 {
+        if i < 144 {
+            lengths[i] = 8;
+        } else if i < 256 {
+            lengths[i] = 9;
+        } else if i < 280 {
+            lengths[i] = 7;
+        } else {
+            lengths[i] = 8;
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while i < 30 {
+        lengths[288 + i] = 5;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// The order of the code length code's own lengths (RFC 1951 3.2.7), as letters: 'A' is 0.
+fn order_of(i: int) -> [] int {
+    return int_of("QRSAIHJGKFLEMDNCOBP"[i]) - 65;
+}
+
+// A dynamic block's tables, read into `lit` and `dist`. Answers 0, or a status.
+pub fn dynamic_tables[&s, &a, &t, &l](src: &s [byte], end: int, bits: Bits, lit: &!a [int], dist: &!t [int], lengths: &!l [int]) -> [] (Bits, int) {
+    var b = bits;
+    let (a1, hlit) = take(src, end, b, 5);
+    let (a2, hdist) = take(src, end, a1, 5);
+    let (a3, hclen) = take(src, end, a2, 4);
+    b = a3;
+    if b.short {
+        return (b, 2);
+    }
+    let nlen = hlit + 257;
+    let ndist = hdist + 1;
+    let ncode = hclen + 4;
+    if nlen > 286 || ndist > 30 {
+        return (b, 1);
+    }
+    var i = 0;
+    while i < 19 {
+        lengths[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while i < ncode {
+        let (next, value) = take(src, end, b, 3);
+        b = next;
+        lengths[order_of(i)] = value;
+        i = i + 1;
+    }
+    if b.short {
+        return (b, 2);
+    }
+    // The code length code goes into `dist`'s table for the moment.
+    let answer = construct(dist, lengths, 0, 19);
+    if !usable(dist, 19, answer) {
+        return (b, 1);
+    }
+    var index = 0;
+    var status = 0;
+    while index < nlen + ndist && status == 0 {
+        let (next, symbol) = decode(src, end, b, dist);
+        b = next;
+        if symbol < 0 {
+            if b.short {
+                status = 2;
+            } else {
+                status = 1;
+            }
+        } else if symbol < 16 {
+            lengths[19 + index] = symbol;
+            index = index + 1;
+        } else {
+            var previous = 0;
+            var repeat = 0;
+            if symbol == 16 {
+                if index == 0 {
+                    status = 1;
+                } else {
+                    previous = lengths[19 + index - 1];
+                }
+                let (n2, extra) = take(src, end, b, 2);
+                b = n2;
+                repeat = 3 + extra;
+            } else if symbol == 17 {
+                let (n2, extra) = take(src, end, b, 3);
+                b = n2;
+                repeat = 3 + extra;
+            } else {
+                let (n2, extra) = take(src, end, b, 7);
+                b = n2;
+                repeat = 11 + extra;
+            }
+            if b.short {
+                status = 2;
+            } else if status == 0 {
+                if index + repeat > nlen + ndist {
+                    status = 1;
+                } else {
+                    var k = 0;
+                    while k < repeat {
+                        lengths[19 + index] = previous;
+                        index = index + 1;
+                        k = k + 1;
+                    }
+                }
+            }
+        }
+    }
+    if status != 0 {
+        return (b, status);
+    }
+    // The end-of-block code must have a length.
+    if lengths[19 + 256] == 0 {
+        return (b, 1);
+    }
+    let a_lit = construct(lit, lengths, 19, nlen);
+    if !usable(lit, nlen, a_lit) {
+        return (b, 1);
+    }
+    let a_dist = construct(dist, lengths, 19 + nlen, ndist);
+    if !usable(dist, ndist, a_dist) {
+        return (b, 1);
+    }
+    return (b, 0);
+}
+
+// Inflate the DEFLATE stream `src[start..end]`, producing at most `limit` bytes. Answers
+// the output, a status, and the offset in `src` just after the stream.
+pub fn inflate[&h, &s](heap: &!h Heap, src: &s [byte], start: int, end: int, limit: int) -> [heap] (buffer.Buffer, int, int) {
+    var out = buffer.empty(heap, 4096);
+    var b = Bits { at: start, buf: 0, count: 0, short: false };
+    var made = 0;
+    var status = 0;
+    var last = false;
+    let lit = box_slice(heap, table_size(), 0);
+    let dist = box_slice(heap, table_size(), 0);
+    // The code lengths (at 0), then the lookup tables of the literal/length code (at 400, 1024 entries) and the distance code
+    // (at 1424, 256 entries).
+    let lengths = box_slice(heap, 1680, 0);
+    let consts = box_slice(heap, 128, 0);
+    borrow mut consts as &!cw in {
+        fill_codes(contents(cw));
+    }
+    borrow mut lit as &!lw in {
+        borrow mut dist as &!dw in {
+            borrow mut lengths as &!gw in {
+                borrow consts as &cr in {
+                    while !last && status == 0 {
+                        let (n1, is_final) = take(src, end, b, 1);
+                        let (n2, kind) = take(src, end, n1, 2);
+                        b = n2;
+                        last = is_final == 1;
+                        if b.short {
+                            status = 2;
+                        } else if kind == 0 {
+                            // Stored: drop the bits of the current byte, give back whole
+                            // bytes the reader took ahead, and copy.
+                            let spare = b.count / 8;
+                            var at = b.at - spare;
+                            b = Bits { at: at, buf: 0, count: 0, short: false };
+                            if at + 4 > end {
+                                status = 2;
+                            } else {
+                                let size = int_of(src[at]) | int_of(src[at + 1]) << 8;
+                                let inverse = int_of(src[at + 2]) | int_of(src[at + 3]) << 8;
+                                at = at + 4;
+                                if size ^ inverse != 0xffff {
+                                    status = 1;
+                                } else if at + size > end {
+                                    status = 2;
+                                } else if made + size > limit {
+                                    status = 3;
+                                } else {
+                                    out = buffer.append(heap, out, src[at..at + size]);
+                                    made = made + size;
+                                    b = Bits { at: at + size, buf: 0, count: 0, short: false };
+                                }
+                            }
+                        } else if kind == 3 {
+                            status = 1;
+                        } else {
+                            var ready = true;
+                            if kind == 1 {
+                                fixed_lengths(contents(gw));
+                                construct(contents(lw), contents(gw), 0, 288);
+                                construct(contents(dw), contents(gw), 288, 30);
+                            } else {
+                                let (after, why) = dynamic_tables(src, end, b, contents(lw), contents(dw), contents(gw));
+                                b = after;
+                                if why != 0 {
+                                    status = why;
+                                    ready = false;
+                                }
+                            }
+                            if ready {
+                                build_fast(contents(lw), contents(gw)[400..1424], 10);
+                                build_fast(contents(dw), contents(gw)[1424..1680], 8);
+                                let (grown, block) = codes(heap, src, end, b, contents(lw), contents(dw), contents(cr), contents(gw)[400..1424], contents(gw)[1424..1680], out, made, limit);
+                                out = grown;
+                                b = block.bits;
+                                made = block.produced;
+                                status = block.status;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, lit);
+    unbox_slice(heap, dist);
+    unbox_slice(heap, lengths);
+    unbox_slice(heap, consts);
+    // Whole bytes taken ahead but not used are not part of the stream.
+    return (out, status, b.at - b.count / 8);
+}
+
+// ---- gunzip ---------------------------------------------------------------------------------
+
+pub res struct Gunzipped {
+    data: buffer.Buffer,
+    status: int,
+    // The name in the header (FNAME) as a range of the input, or 0 and 0.
+    name_at: int,
+    name_len: int,
+}
+
+pub fn le32[&s](src: &s [byte], at: int) -> [] int {
+    return int_of(src[at]) | int_of(src[at + 1]) << 8 | int_of(src[at + 2]) << 16 | int_of(src[at + 3]) << 24;
+}
+
+// Whether `src` starts like a gzip stream.
+pub fn is_gzip[&s](src: &s [byte]) -> [] bool {
+    return len(src) >= 2 && int_of(src[0]) == 0x1f && int_of(src[1]) == 0x8b;
+}
+
+// Read one gzip member that is all of `src`, producing at most `limit` bytes.
+pub fn gunzip[&h, &s](heap: &!h Heap, src: &s [byte], limit: int) -> [heap] Gunzipped {
+    let n = len(src);
+    if !is_gzip(src) {
+        return Gunzipped { data: buffer.empty(heap, 1), status: 10, name_at: 0, name_len: 0 };
+    }
+    if n < 18 {
+        return Gunzipped { data: buffer.empty(heap, 1), status: 12, name_at: 0, name_len: 0 };
+    }
+    let flags = int_of(src[3]);
+    if int_of(src[2]) != 8 || flags & 0xe0 != 0 {
+        return Gunzipped { data: buffer.empty(heap, 1), status: 11, name_at: 0, name_len: 0 };
+    }
+    var at = 10;
+    var short = false;
+    if flags & 4 != 0 {
+        if at + 2 > n {
+            short = true;
+        } else {
+            at = at + 2 + (int_of(src[at]) | int_of(src[at + 1]) << 8);
+        }
+    }
+    var name_at = 0;
+    var name_len = 0;
+    if flags & 8 != 0 && !short {
+        name_at = at;
+        while at < n && int_of(src[at]) != 0 {
+            at = at + 1;
+        }
+        name_len = at - name_at;
+        at = at + 1;
+    }
+    if flags & 16 != 0 && !short {
+        while at < n && int_of(src[at]) != 0 {
+            at = at + 1;
+        }
+        at = at + 1;
+    }
+    if flags & 2 != 0 && !short {
+        at = at + 2;
+    }
+    if short || at + 8 > n {
+        return Gunzipped { data: buffer.empty(heap, 1), status: 12, name_at: 0, name_len: 0 };
+    }
+    let (out, status, next) = inflate(heap, src, at, n - 8, limit);
+    if status != 0 {
+        return Gunzipped { data: out, status: status, name_at: 0, name_len: 0 };
+    }
+    // The trailer follows the stream, and nothing follows the trailer.
+    if next + 8 > n {
+        return Gunzipped { data: out, status: 12, name_at: 0, name_len: 0 };
+    }
+    if next + 8 < n {
+        return Gunzipped { data: out, status: 15, name_at: 0, name_len: 0 };
+    }
+    var sum = 0;
+    borrow out as &o in {
+        sum = crc.crc32_of(buffer.bytes(o));
+    }
+    var size = 0;
+    borrow out as &o in {
+        size = buffer.size(o);
+    }
+    if sum != le32(src, next) {
+        return Gunzipped { data: out, status: 13, name_at: 0, name_len: 0 };
+    }
+    if size & 0xffffffff != le32(src, next + 4) {
+        return Gunzipped { data: out, status: 14, name_at: 0, name_len: 0 };
+    }
+    return Gunzipped { data: out, status: 0, name_at: name_at, name_len: name_len };
+}
+
+// `gunzip`'s answer as a tuple: the data, the status, and the header name's range.
+pub fn gunzip_parts[&h, &s](heap: &!h Heap, src: &s [byte], limit: int) -> [heap] (buffer.Buffer, int, int, int) {
+    let Gunzipped { data, status, name_at, name_len } = gunzip(heap, src, limit);
+    return (data, status, name_at, name_len);
+}
+
+// ---- deflate --------------------------------------------------------------------------------------
+
+fn reversed(code: int, n: int) -> [] int {
+    var r = 0;
+    var i = 0;
+    var c = code;
+    while i < n {
+        r = r << 1 | c & 1;
+        c = c >> 1;
+        i = i + 1;
+    }
+    return r;
+}
+
+fn hash3[&s](src: &s [byte], at: int) -> [] int {
+    return (int_of(src[at]) << 10 ^ int_of(src[at + 1]) << 5 ^ int_of(src[at + 2])) & 0x7fff;
+}
+
+// The longest earlier match of `src[at..]` within the window, as (length, distance); length 0
+// when there is none of at least 3. A candidate that differs from `src[at..]` at the byte just past the best length so
+// far cannot beat it, and is passed over without the comparison; once the best is the longest possible, nothing can.
+fn longest[&s, &x, &y](src: &s [byte], head: &x [int], prev: &y [int], at: int) -> [] (int, int) {
+    var best = 0;
+    var far = 0;
+    if at + 2 >= len(src) {
+        return (0, 0);
+    }
+    let most = math.min(258, len(src) - at);
+    var candidate = head[hash3(src, at)] - 1;
+    var depth = 0;
+    while candidate >= 0 && at - candidate <= 32768 && depth < 16 && best < most {
+        if src[candidate + best] == src[at + best] {
+            var l = 0;
+            while l < most && src[candidate + l] == src[at + l] {
+                l = l + 1;
+            }
+            if l > best {
+                best = l;
+                far = at - candidate;
+            }
+        }
+        let next = prev[candidate & 32767] - 1;
+        if next >= candidate {
+            candidate = 0 - 1;
+        } else {
+            candidate = next;
+        }
+        depth = depth + 1;
+    }
+    if best < 3 {
+        return (0, 0);
+    }
+    return (best, far);
+}
+
+// The tables the writer reads, in one `[int]` (`deflate`): at 0 the fixed code of each of the 288 literal/length symbols
+// reversed for writing (bit 0 first), at 288 its length, at 576 the length code (0..28) of each length 3..258, at 840 the
+// distance code of each distance 1..256 and, from 256 on, of 128 * j + 1 for j = 2..255 (a distance past 256 is found by
+// `(distance - 1) >> 7`), and at 1360 the reversed 5-bit distance codes.
+fn writer_tables[&t, &c](tab: &!t [int], consts: &c [int]) -> [] int {
+    var sym = 0;
+    while sym < 288 {
+        var code = 0xc0 + sym - 280;
+        var width = 8;
+        if sym < 144 {
+            code = 0x30 + sym;
+        } else if sym < 256 {
+            code = 0x190 + sym - 144;
+            width = 9;
+        } else if sym < 280 {
+            code = sym - 256;
+            width = 7;
+        }
+        tab[sym] = reversed(code, width);
+        tab[288 + sym] = width;
+        sym = sym + 1;
+    }
+    var l = 3;
+    while l <= 258 {
+        var code = 28;
+        while consts[code] > l {
+            code = code - 1;
+        }
+        tab[576 + l] = code;
+        l = l + 1;
+    }
+    var i = 0;
+    while i < 512 {
+        var d = i + 1;
+        if i >= 256 {
+            d = (i - 256) * 128 + 1;
+        }
+        var code = 29;
+        while code > 0 && consts[64 + code] > d {
+            code = code - 1;
+        }
+        tab[840 + i] = code;
+        i = i + 1;
+    }
+    i = 0;
+    while i < 30 {
+        tab[1360 + i] = reversed(i, 5);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ---- dynamic Huffman blocks ---------------------------------------------------------------------
+//
+// The writer's working state is one `[int]` (`w`), addressed by these offsets, so that a function can read one part
+// and write another without two borrows of the same array.
+
+fn w_lfreq() -> [] int {
+    return 0;
+}
+
+fn w_dfreq() -> [] int {
+    return 288;
+}
+
+fn w_llen() -> [] int {
+    return 320;
+}
+
+fn w_dlen() -> [] int {
+    return 608;
+}
+
+fn w_lcode() -> [] int {
+    return 640;
+}
+
+fn w_dcode() -> [] int {
+    return 928;
+}
+
+fn w_lens() -> [] int {
+    return 960;
+}
+
+fn w_rles() -> [] int {
+    return 1280;
+}
+
+fn w_rlex() -> [] int {
+    return 1600;
+}
+
+fn w_clfreq() -> [] int {
+    return 1920;
+}
+
+fn w_cllen() -> [] int {
+    return 1944;
+}
+
+fn w_clcode() -> [] int {
+    return 1968;
+}
+
+fn w_blcount() -> [] int {
+    return 1992;
+}
+
+fn w_next() -> [] int {
+    return 2008;
+}
+
+// Scratch of `huffman_lengths`: the weights as scaled, the symbols in weight order, the nodes' weights and parents, depths.
+fn w_hw() -> [] int {
+    return 2100;
+}
+
+fn w_size() -> [] int {
+    return 4600;
+}
+
+// Code lengths for the `n` symbols whose frequencies are `w[freq_at..]`, none longer than `limit`, written to `w[out_at..]`.
+// A tree is built from the symbols that occur (the two lightest nodes joined, over and over); if it is deeper than `limit` the
+// frequencies are halved (to at least 1) and it is built again, which ends because a tree of equal weights is shallow. Fewer
+// than two symbols would make an incomplete code, which some decoders refuse, so symbols are added until there are two
+// (they get a length and are never written), as zlib does.
+fn huffman_lengths[&x](w: &!x [int], freq_at: int, out_at: int, n: int, limit: int) -> [] int {
+    let sf = w_hw();
+    let order = w_hw() + 300;
+    let weight = w_hw() + 600;
+    let parent = w_hw() + 1200;
+    let depth = w_hw() + 1800;
+    var i = 0;
+    while i < n {
+        w[sf + i] = w[freq_at + i];
+        i = i + 1;
+    }
+    var m = 0;
+    i = 0;
+    while i < n {
+        if w[sf + i] > 0 {
+            m = m + 1;
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while m < 2 && i < n {
+        if w[sf + i] == 0 {
+            w[sf + i] = 1;
+            m = m + 1;
+        }
+        i = i + 1;
+    }
+    var done = false;
+    while !done {
+        m = 0;
+        i = 0;
+        while i < n {
+            w[out_at + i] = 0;
+            if w[sf + i] > 0 {
+                // Insertion into the symbols in weight order (ties by symbol).
+                var j = m;
+                while j > 0 && w[sf + w[order + j - 1]] > w[sf + i] {
+                    w[order + j] = w[order + j - 1];
+                    j = j - 1;
+                }
+                w[order + j] = i;
+                m = m + 1;
+            }
+            i = i + 1;
+        }
+        i = 0;
+        while i < m {
+            w[weight + i] = w[sf + w[order + i]];
+            i = i + 1;
+        }
+        var li = 0;
+        var ni = m;
+        var made = m;
+        while made < 2 * m - 1 {
+            var a = 0;
+            if li < m && (ni >= made || w[weight + li] <= w[weight + ni]) {
+                a = li;
+                li = li + 1;
+            } else {
+                a = ni;
+                ni = ni + 1;
+            }
+            var b = 0;
+            if li < m && (ni >= made || w[weight + li] <= w[weight + ni]) {
+                b = li;
+                li = li + 1;
+            } else {
+                b = ni;
+                ni = ni + 1;
+            }
+            w[weight + made] = w[weight + a] + w[weight + b];
+            w[parent + a] = made;
+            w[parent + b] = made;
+            made = made + 1;
+        }
+        w[depth + 2 * m - 2] = 0;
+        var node = 2 * m - 3;
+        while node >= 0 {
+            w[depth + node] = w[depth + w[parent + node]] + 1;
+            node = node - 1;
+        }
+        var deepest = 0;
+        i = 0;
+        while i < m {
+            if w[depth + i] > deepest {
+                deepest = w[depth + i];
+            }
+            i = i + 1;
+        }
+        if deepest <= limit {
+            i = 0;
+            while i < m {
+                w[out_at + w[order + i]] = w[depth + i];
+                i = i + 1;
+            }
+            done = true;
+        } else {
+            i = 0;
+            while i < n {
+                if w[sf + i] > 1 {
+                    w[sf + i] = (w[sf + i] + 1) / 2;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    return 0;
+}
+
+// The canonical code of each symbol with a length (RFC 1951 3.2.2), written to `w[codes_at..]` reversed, ready to be written
+// least significant bit first.
+fn assign_codes[&x](w: &!x [int], lens_at: int, codes_at: int, n: int) -> [] int {
+    let count = w_blcount();
+    let next = w_next();
+    var i = 0;
+    while i < 16 {
+        w[count + i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        w[count + w[lens_at + i]] = w[count + w[lens_at + i]] + 1;
+        i = i + 1;
+    }
+    w[count] = 0;
+    var code = 0;
+    var bits = 1;
+    while bits <= 15 {
+        code = code + w[count + bits - 1] << 1;
+        w[next + bits] = code;
+        bits = bits + 1;
+    }
+    i = 0;
+    while i < n {
+        let l = w[lens_at + i];
+        if l > 0 {
+            w[codes_at + i] = reversed(w[next + l], l);
+            w[next + l] = w[next + l] + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// The header of a dynamic block for the code lengths in `w[w_llen()..]` and `w[w_dlen()..]`: their run-length encoding (symbols
+// 0..15 as they are, 16 repeat the last, 17 and 18 runs of zeros) into `w_rles`/`w_rlex`, the code of that alphabet, and the
+// size of it all in bits. Answers (bits, the code length code's lengths to send, the number of run-length symbols).
+fn build_header[&x](w: &!x [int], nlit: int, ndist: int) -> [] (int, int, int) {
+    let total = nlit + ndist;
+    var i = 0;
+    while i < nlit {
+        w[w_lens() + i] = w[w_llen() + i];
+        i = i + 1;
+    }
+    i = 0;
+    while i < ndist {
+        w[w_lens() + nlit + i] = w[w_dlen() + i];
+        i = i + 1;
+    }
+    i = 0;
+    while i < 19 {
+        w[w_clfreq() + i] = 0;
+        i = i + 1;
+    }
+    var count = 0;
+    i = 0;
+    while i < total {
+        let l = w[w_lens() + i];
+        var run = 1;
+        while i + run < total && w[w_lens() + i + run] == l {
+            run = run + 1;
+        }
+        var r = run;
+        if l == 0 {
+            while r >= 11 {
+                var take = r;
+                if take > 138 {
+                    take = 138;
+                }
+                w[w_rles() + count] = 18;
+                w[w_rlex() + count] = take - 11;
+                count = count + 1;
+                r = r - take;
+            }
+            if r >= 3 {
+                w[w_rles() + count] = 17;
+                w[w_rlex() + count] = r - 3;
+                count = count + 1;
+                r = 0;
+            }
+            while r > 0 {
+                w[w_rles() + count] = 0;
+                w[w_rlex() + count] = 0;
+                count = count + 1;
+                r = r - 1;
+            }
+        } else {
+            w[w_rles() + count] = l;
+            w[w_rlex() + count] = 0;
+            count = count + 1;
+            r = run - 1;
+            while r >= 3 {
+                var take = r;
+                if take > 6 {
+                    take = 6;
+                }
+                w[w_rles() + count] = 16;
+                w[w_rlex() + count] = take - 3;
+                count = count + 1;
+                r = r - take;
+            }
+            while r > 0 {
+                w[w_rles() + count] = l;
+                w[w_rlex() + count] = 0;
+                count = count + 1;
+                r = r - 1;
+            }
+        }
+        i = i + run;
+    }
+    i = 0;
+    while i < count {
+        w[w_clfreq() + w[w_rles() + i]] = w[w_clfreq() + w[w_rles() + i]] + 1;
+        i = i + 1;
+    }
+    huffman_lengths(w, w_clfreq(), w_cllen(), 19, 7);
+    assign_codes(w, w_cllen(), w_clcode(), 19);
+    var ncl = 19;
+    while ncl > 4 && w[w_cllen() + order_of(ncl - 1)] == 0 {
+        ncl = ncl - 1;
+    }
+    // 5 + 5 + 4 bits of counts, 3 for each code length code length, then each run-length symbol and its extra bits.
+    var bits = 14 + 3 * ncl;
+    i = 0;
+    while i < count {
+        let sym = w[w_rles() + i];
+        bits = bits + w[w_cllen() + sym];
+        if sym == 16 {
+            bits = bits + 2;
+        } else if sym == 17 {
+            bits = bits + 3;
+        } else if sym == 18 {
+            bits = bits + 7;
+        }
+        i = i + 1;
+    }
+    return (bits, ncl, count);
+}
+
+// `bits` bits of `value` (at most 56, the pending bits included in what fits), least significant first, into `o` at `pos`.
+// Answers the new (position, pending bits, how many).
+fn emit[&o](o: &!o [byte], pos: int, acc: int, nbits: int, value: int, width: int) -> [] (int, int, int) {
+    var p = pos;
+    var a = acc | value << nbits;
+    var n = nbits + width;
+    while n >= 8 {
+        o[p] = byte_of(a & 255);
+        p = p + 1;
+        a = a >> 8;
+        n = n - 8;
+    }
+    return (p, a, n);
+}
+
+// One block: the `ntok` tokens `tk` (a literal is its byte, a match is `length << 16 | distance`) that stand for
+// `src[bstart..bend]`, as whichever of a stored block, a fixed-code block and a dynamic-code block is smallest. `final` marks
+// the last block of the stream. Answers the new (position, pending bits, how many).
+fn write_block[&o, &x, &t, &q, &k, &s](o: &!o [byte], pos0: int, acc0: int, nbits0: int, w: &!x [int], tab: &t [int], c: &q [int], tk: &k [int], ntok: int, src: &s [byte], bstart: int, bend: int, final: bool) -> [] (int, int, int) {
+    var pos = pos0;
+    var acc = acc0;
+    var nbits = nbits0;
+    var i = 0;
+    while i < 288 {
+        w[w_lfreq() + i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while i < 32 {
+        w[w_dfreq() + i] = 0;
+        i = i + 1;
+    }
+    var extra = 0;
+    i = 0;
+    while i < ntok {
+        let t = tk[i];
+        if t < 256 {
+            w[w_lfreq() + t] = w[w_lfreq() + t] + 1;
+        } else {
+            let length = t >> 16;
+            let far = t & 0xffff;
+            let lc = tab[576 + length];
+            var dc = 0;
+            if far <= 256 {
+                dc = tab[840 + far - 1];
+            } else {
+                dc = tab[840 + 256 + (far - 1 >> 7)];
+            }
+            w[w_lfreq() + 257 + lc] = w[w_lfreq() + 257 + lc] + 1;
+            w[w_dfreq() + dc] = w[w_dfreq() + dc] + 1;
+            extra = extra + c[32 + lc] + c[96 + dc];
+        }
+        i = i + 1;
+    }
+    w[w_lfreq() + 256] = 1;
+    huffman_lengths(w, w_lfreq(), w_llen(), 286, 15);
+    huffman_lengths(w, w_dfreq(), w_dlen(), 30, 15);
+    var nlit = 286;
+    while nlit > 257 && w[w_llen() + nlit - 1] == 0 {
+        nlit = nlit - 1;
+    }
+    var ndist = 30;
+    while ndist > 1 && w[w_dlen() + ndist - 1] == 0 {
+        ndist = ndist - 1;
+    }
+    let (hbits, ncl, nrle) = build_header(w, nlit, ndist);
+    var dynamic_bits = 3 + hbits + extra;
+    var fixed_bits = 3 + extra;
+    i = 0;
+    while i < 286 {
+        dynamic_bits = dynamic_bits + w[w_lfreq() + i] * w[w_llen() + i];
+        fixed_bits = fixed_bits + w[w_lfreq() + i] * tab[288 + i];
+        i = i + 1;
+    }
+    i = 0;
+    while i < 30 {
+        dynamic_bits = dynamic_bits + w[w_dfreq() + i] * w[w_dlen() + i];
+        fixed_bits = fixed_bits + w[w_dfreq() + i] * 5;
+        i = i + 1;
+    }
+    let span = bend - bstart;
+    let chunks = (span + 65534) / 65535;
+    let stored_bits = span * 8 + chunks * 40 + 8;
+    var flag = 0;
+    if final {
+        flag = 1;
+    }
+    if span > 0 && stored_bits < dynamic_bits && stored_bits < fixed_bits {
+        // Stored: each piece its own block, a header, the rest of the byte skipped, the length, its complement and the bytes.
+        var from = bstart;
+        while from < bend {
+            var piece = bend - from;
+            if piece > 65535 {
+                piece = 65535;
+            }
+            var last = 0;
+            if final && from + piece == bend {
+                last = 1;
+            }
+            let (p1, a1, n1) = emit(o, pos, acc, nbits, last, 3);
+            pos = p1;
+            acc = a1;
+            nbits = n1;
+            if nbits > 0 {
+                o[pos] = byte_of(acc & 255);
+                pos = pos + 1;
+                acc = 0;
+                nbits = 0;
+            }
+            o[pos] = byte_of(piece & 255);
+            o[pos + 1] = byte_of(piece >> 8);
+            o[pos + 2] = byte_of(65535 - piece & 255);
+            o[pos + 3] = byte_of(65535 - piece >> 8);
+            pos = pos + 4;
+            var k = 0;
+            while k < piece {
+                o[pos + k] = src[from + k];
+                k = k + 1;
+            }
+            pos = pos + piece;
+            from = from + piece;
+        }
+        return (pos, acc, nbits);
+    }
+    if fixed_bits <= dynamic_bits {
+        i = 0;
+        while i < 288 {
+            w[w_lcode() + i] = tab[i];
+            w[w_llen() + i] = tab[288 + i];
+            i = i + 1;
+        }
+        i = 0;
+        while i < 30 {
+            w[w_dcode() + i] = tab[1360 + i];
+            w[w_dlen() + i] = 5;
+            i = i + 1;
+        }
+        let (p1, a1, n1) = emit(o, pos, acc, nbits, flag | 1 << 1, 3);
+        pos = p1;
+        acc = a1;
+        nbits = n1;
+    } else {
+        assign_codes(w, w_llen(), w_lcode(), 286);
+        assign_codes(w, w_dlen(), w_dcode(), 30);
+        let (p1, a1, n1) = emit(o, pos, acc, nbits, flag | 2 << 1, 3);
+        let (p2, a2, n2) = emit(o, p1, a1, n1, nlit - 257 | ndist - 1 << 5 | ncl - 4 << 10, 14);
+        pos = p2;
+        acc = a2;
+        nbits = n2;
+        i = 0;
+        while i < ncl {
+            let (p3, a3, n3) = emit(o, pos, acc, nbits, w[w_cllen() + order_of(i)], 3);
+            pos = p3;
+            acc = a3;
+            nbits = n3;
+            i = i + 1;
+        }
+        i = 0;
+        while i < nrle {
+            let sym = w[w_rles() + i];
+            var width = 0;
+            if sym == 16 {
+                width = 2;
+            } else if sym == 17 {
+                width = 3;
+            } else if sym == 18 {
+                width = 7;
+            }
+            let (p3, a3, n3) = emit(o, pos, acc, nbits, w[w_clcode() + sym] | w[w_rlex() + i] << w[w_cllen() + sym], w[w_cllen() + sym] + width);
+            pos = p3;
+            acc = a3;
+            nbits = n3;
+            i = i + 1;
+        }
+    }
+    // The tokens, then the end of the block, with the codes in `w`.
+    i = 0;
+    while i < ntok {
+        let t = tk[i];
+        var value = 0;
+        var width = 0;
+        if t < 256 {
+            value = w[w_lcode() + t];
+            width = w[w_llen() + t];
+        } else {
+            let length = t >> 16;
+            let far = t & 0xffff;
+            let lc = tab[576 + length];
+            var dc = 0;
+            if far <= 256 {
+                dc = tab[840 + far - 1];
+            } else {
+                dc = tab[840 + 256 + (far - 1 >> 7)];
+            }
+            value = w[w_lcode() + 257 + lc] | length - c[lc] << w[w_llen() + 257 + lc];
+            width = w[w_llen() + 257 + lc] + c[32 + lc];
+            value = value | w[w_dcode() + dc] << width;
+            width = width + w[w_dlen() + dc];
+            value = value | far - c[64 + dc] << width;
+            width = width + c[96 + dc];
+        }
+        acc = acc | value << nbits;
+        nbits = nbits + width;
+        while nbits >= 8 {
+            o[pos] = byte_of(acc & 255);
+            pos = pos + 1;
+            acc = acc >> 8;
+            nbits = nbits - 8;
+        }
+        i = i + 1;
+    }
+    let (p4, a4, n4) = emit(o, pos, acc, nbits, w[w_lcode() + 256], w[w_llen() + 256]);
+    return (p4, a4, n4);
+}
+
+// Insert position `p` in the hash chains.
+fn insert[&s, &x, &y](src: &s [byte], head: &!x [int], prev: &!y [int], p: int) -> [] int {
+    if p + 2 < len(src) {
+        let h = hash3(src, p);
+        prev[p & 32767] = head[h];
+        head[h] = p + 1;
+    }
+    return 0;
+}
+
+// The raw DEFLATE stream of `src`.
+//
+// The input is turned into tokens (a literal byte, or a match `length << 16 | distance`) by lazy matching: a match is
+// held back for one byte when the next position has a longer one, which is what a good compressor does and the first-match
+// writer did not. Every 32,768 tokens, and at the end, the tokens become a block, stored, fixed-code or dynamic-code,
+// whichever is smallest (`write_block`). The output is written straight into a buffer reserved for the worst case.
+pub fn deflate[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] buffer.Buffer {
+    let out = buffer.reserve(heap, buffer.empty(heap, 16), len(src) + len(src) / 8 + 4096);
+    let buffer.Buffer { held, used } = out;
+    var pos = used;
+    var acc = 0;
+    var nbits = 0;
+    let n = len(src);
+    let consts = box_slice(heap, 128, 0);
+    let tab = box_slice(heap, 1400, 0);
+    let work = box_slice(heap, w_size(), 0);
+    let tokens = box_slice(heap, 32768, 0);
+    let head = box_slice(heap, 32768, 0);
+    let prev = box_slice(heap, 32768, 0);
+    borrow mut consts as &!cw in {
+        fill_codes(contents(cw));
+    }
+    borrow consts as &cr in {
+        borrow mut tab as &!tw in {
+            writer_tables(contents(tw), contents(cr));
+        }
+    }
+    borrow mut held as &!ow in {
+        let o = contents(ow);
+        borrow consts as &cr in {
+            borrow tab as &tr in {
+                borrow mut work as &!ww in {
+                    borrow mut tokens as &!kw in {
+                        borrow mut head as &!hw in {
+                            borrow mut prev as &!pw in {
+                                let c = contents(cr);
+                                let t = contents(tr);
+                                let wk = contents(ww);
+                                let tk = contents(kw);
+                                let hs = contents(hw);
+                                let ps = contents(pw);
+                                var at = 0;
+                                var bstart = 0;
+                                var ntok = 0;
+                                var cur_len = 0;
+                                var cur_far = 0;
+                                var have = false;
+                                while at < n {
+                                    if !have {
+                                        let (l0, f0) = longest(src, hs, ps, at);
+                                        cur_len = l0;
+                                        cur_far = f0;
+                                    }
+                                    have = false;
+                                    // A match of three bytes far away costs more than the three literals.
+                                    let worth = cur_len >= 3 && !(cur_len == 3 && cur_far > 4096);
+                                    if worth && cur_len < 16 && at + 1 < n {
+                                        insert(src, hs, ps, at);
+                                        let (l1, f1) = longest(src, hs, ps, at + 1);
+                                        if l1 > cur_len {
+                                            tk[ntok] = int_of(src[at]);
+                                            ntok = ntok + 1;
+                                            at = at + 1;
+                                            cur_len = l1;
+                                            cur_far = f1;
+                                            have = true;
+                                        } else {
+                                            tk[ntok] = cur_len << 16 | cur_far;
+                                            ntok = ntok + 1;
+                                            var k = 1;
+                                            while k < cur_len {
+                                                insert(src, hs, ps, at + k);
+                                                k = k + 1;
+                                            }
+                                            at = at + cur_len;
+                                        }
+                                    } else if worth {
+                                        tk[ntok] = cur_len << 16 | cur_far;
+                                        ntok = ntok + 1;
+                                        var k = 0;
+                                        while k < cur_len {
+                                            insert(src, hs, ps, at + k);
+                                            k = k + 1;
+                                        }
+                                        at = at + cur_len;
+                                    } else {
+                                        tk[ntok] = int_of(src[at]);
+                                        ntok = ntok + 1;
+                                        insert(src, hs, ps, at);
+                                        at = at + 1;
+                                    }
+                                    if ntok >= 32768 || at >= n {
+                                        let (p1, a1, n1) = write_block(o, pos, acc, nbits, wk, t, c, tk, ntok, src, bstart, at, at >= n);
+                                        pos = p1;
+                                        acc = a1;
+                                        nbits = n1;
+                                        ntok = 0;
+                                        bstart = at;
+                                    }
+                                }
+                                if n == 0 {
+                                    let (p1, a1, n1) = write_block(o, pos, acc, nbits, wk, t, c, tk, 0, src, 0, 0, true);
+                                    pos = p1;
+                                    acc = a1;
+                                    nbits = n1;
+                                }
+                                if nbits > 0 {
+                                    o[pos] = byte_of(acc & 255);
+                                    pos = pos + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, consts);
+    unbox_slice(heap, tab);
+    unbox_slice(heap, work);
+    unbox_slice(heap, tokens);
+    unbox_slice(heap, head);
+    unbox_slice(heap, prev);
+    return buffer.Buffer { held: held, used: pos };
+}
+
+fn put_le32[&h](heap: &!h Heap, b: buffer.Buffer, value: int) -> [heap] buffer.Buffer {
+    var o = b;
+    o = buffer.push(heap, o, byte_of(value & 255));
+    o = buffer.push(heap, o, byte_of(value >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(value >> 16 & 255));
+    return buffer.push(heap, o, byte_of(value >> 24 & 255));
+}
+
+// `src` as one gzip member: no name, mtime 0, OS 255 (unknown), so the header carries no
+// fact of the machine and the same data gives the same bytes.
+pub fn gzip[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(src) / 2 + 64);
+    // Magic, deflate, no flags, mtime 0, no extra flags, OS 255.
+    out = buffer.push(heap, out, byte_of(0x1f));
+    out = buffer.push(heap, out, byte_of(0x8b));
+    out = buffer.push(heap, out, byte_of(8));
+    var zeros = 0;
+    while zeros < 6 {
+        out = buffer.push(heap, out, byte_of(0));
+        zeros = zeros + 1;
+    }
+    out = buffer.push(heap, out, byte_of(0xff));
+    let body = deflate(heap, src);
+    borrow body as &r in {
+        out = buffer.append(heap, out, buffer.bytes(r));
+    }
+    buffer.drop(heap, body);
+    out = put_le32(heap, out, crc.crc32_of(src));
+    out = put_le32(heap, out, len(src) & 0xffffffff);
+    return out;
+}
+
+// ---- zlib (RFC 1950) -------------------------------------------------------------------------
+//
+// A two-byte header, a DEFLATE stream and the Adler-32 of the data, big-endian. This is what git writes for every object, loose or in a
+// pack, and what PNG, HTTP `deflate` and most formats that say "zlib" carry.
+//
+// Statuses of `unzlib`, besides those of `inflate` (1 invalid stream, 2 input ended, 3 over the limit):
+//  20 not a zlib header (the method is not 8, the window is over 32 KiB, or the two bytes are not a multiple of 31)
+//  21 the header asks for a preset dictionary, which is not supported
+//  22 the Adler-32 of the data is not the trailer's
+
+// The state before any byte: the sum 1 in the low half, 0 in the high half.
+pub fn adler32_start() -> [] int {
+    return 1;
+}
+
+// Feed `data` into a running Adler-32. Both halves are reduced every 5552 bytes, the longest run before a 32-bit sum could overflow in the
+// reference; an integer here is 64 bits, so the reduction only keeps the answer the same as everyone's.
+pub fn adler32_update[&d](state: int, data: &d [byte]) -> [] int {
+    var a = state & 65535;
+    var b = state >> 16 & 65535;
+    var k = 0;
+    var run = 0;
+    while k < len(data) {
+        a = a + int_of(data[k]);
+        b = b + a;
+        k = k + 1;
+        run = run + 1;
+        if run == 5552 {
+            a = a % 65521;
+            b = b % 65521;
+            run = 0;
+        }
+    }
+    return b % 65521 << 16 | a % 65521;
+}
+
+// The Adler-32 of `data` in one call.
+pub fn adler32_of[&d](data: &d [byte]) -> [] int {
+    return adler32_update(adler32_start(), data);
+}
+
+fn put_be32[&h](heap: &!h Heap, o: buffer.Buffer, value: int) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, o, byte_of(value >> 24 & 255));
+    b = buffer.push(heap, b, byte_of(value >> 16 & 255));
+    b = buffer.push(heap, b, byte_of(value >> 8 & 255));
+    return buffer.push(heap, b, byte_of(value & 255));
+}
+
+// Read the zlib stream `src[start..end]`, producing at most `limit` bytes. Answers the output, a status, and the offset just after the
+// four bytes of the trailer (when the stream is read to its end; otherwise where it stopped).
+pub fn unzlib[&h, &s](heap: &!h Heap, src: &s [byte], start: int, end: int, limit: int) -> [heap] (buffer.Buffer, int, int) {
+    if start + 2 > end {
+        return (buffer.empty(heap, 0), 2, start);
+    }
+    let cmf = int_of(src[start]);
+    let flg = int_of(src[start + 1]);
+    if cmf % 16 != 8 || cmf / 16 > 7 || (cmf * 256 + flg) % 31 != 0 {
+        return (buffer.empty(heap, 0), 20, start);
+    }
+    if flg / 32 % 2 == 1 {
+        return (buffer.empty(heap, 0), 21, start);
+    }
+    let (out, status, after) = inflate(heap, src, start + 2, end, limit);
+    if status != 0 {
+        return (out, status, after);
+    }
+    if after + 4 > end {
+        return (out, 2, after);
+    }
+    var sum = 1;
+    borrow out as &o in {
+        sum = adler32_of(buffer.bytes(o));
+    }
+    let want = int_of(src[after]) << 24 | int_of(src[after + 1]) << 16 | int_of(src[after + 2]) << 8 | int_of(src[after + 3]);
+    if want != sum {
+        return (out, 22, after + 4);
+    }
+    return (out, 0, after + 4);
+}
+
+// `src` as one zlib stream: the header `78 9c`, `deflate`'s blocks, the Adler-32. The same data gives the same bytes.
+pub fn zlib[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(src) / 2 + 64);
+    out = buffer.push(heap, out, byte_of(0x78));
+    out = buffer.push(heap, out, byte_of(0x9c));
+    let body = deflate(heap, src);
+    borrow body as &r in {
+        out = buffer.append(heap, out, buffer.bytes(r));
+    }
+    buffer.drop(heap, body);
+    return put_be32(heap, out, adler32_of(src));
+}
