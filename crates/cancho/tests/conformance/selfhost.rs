@@ -22,6 +22,7 @@ mod cases;
 mod ci;
 mod cli;
 mod compile;
+mod debug;
 mod messages;
 mod origin;
 mod parity;

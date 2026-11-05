@@ -1,6 +1,6 @@
 # `cancho trace`: a debugger an agent can use, and the debug information it needs
 
-> **Status: design; §3.3 is the one gate answered (8.2). No code.** Written before the code. What was
+> **Status: `-g` (§3.4) is built as line tables; variables, `trace` and the trap names are not.** Written before the code. What was
 > measured is marked; everything else is a **gate** in §8, not a result.
 >
 > **Written in cancho.** `cancho trace` is a slice of the command line in
@@ -102,6 +102,70 @@ Left to decide, and not decided here: **how `-g` reaches the emitter.** The
 driver is run in numbered modes over one input stream each
 (`cli-in-cancho.md` §1); a flag is either a new mode number or a byte in
 the stream's header. The second is smaller and does not renumber anything.
+
+### 3.4 `-g`, as built (2026-11-05)
+
+```sh
+cancho build -g [--emit obj] [-o OUT] FILE...
+```
+
+Built by the command line in cancho (`cli.cho`), not by the Rust binary,
+which has no `-g`. The parts:
+
+* `emit.cho`: `debugging(st)` and `marker(st, tag, offset)`. With `-g` the
+  checker writes `  ; @fn N` after `entry:` of each function and `  ; @s N`
+  before each statement (`body.cho`, `stmt`); `N` is `ast.nstart` of the
+  function or statement. **Nothing is written without `-g`.**
+* `driver.cho`: the target given to `run_many` is `host + 8 * wasi + 1024 *
+  debug`; bit 16 of `st[55]` (which already holds which runtime support a
+  program used) carries it to the emitter. **Decided: not a header byte**
+  as §3.3 proposed. The header of the state array is 65 slots, every one
+  used, and the token table starts at 65 in `ast.cho` and in `ingest.cho`;
+  and `st[61]`, the target, is compared with `== 0` and `== 1` in eleven
+  places. The `target` argument already carried a second value (`wasi`), so
+  a third was the smaller change.
+* `cidebug.cho`: the pass. It numbers the metadata (0 compile unit, 1
+  module flags, 2 and 3 the subroutine type, 4 on one `DIFile` for each
+  file, then the subprograms and locations as they are met), puts `!dbg !N`
+  on the `define` of each function that has a marker, and `, !dbg !L` on
+  every indented non-comment line after it, and takes the markers out. The
+  name in the `DISubprogram` is read from the program's text (the word after
+  `fn `), the symbol (`lexs_<item>`) is its `linkageName`. The kind is
+  `LineTablesOnly`, language `DW_LANG_C99` (there is no cancho code).
+* `cliprog.cho`: the `-g` flag of `build` (and not of `check`); the pass runs
+  on the module just before `clang`.
+
+**Measured (this document, Linux x86-64, `a_program_built_with_g_has_line_tables`,
+51 s):** `examples/hello.cho` built with `-g`: `gdb` stops at `break
+write_all` in `write_all () at hello.cho:30` with `main () at hello.cho:52`
+above it, the lines of `putchar(io` and of the call in the source. A
+three-function program: `info line twice` says the line of `fn twice`; the
+debug information has `add_one` and `twice`; **the disassembly of `.text` is
+identical with and without `-g`** (so the claim of `agent-profile.md` gate 3
+holds for the code, though not for the file: 24,600 bytes against 23,848).
+Without `-g` the module is the bytes it was by construction (the markers are
+not written), and the test does not compare it with an earlier compiler.
+
+**What it does not do, and said so:**
+
+* **Statements, not expressions.** A location is the statement's first
+  token: a call in the middle of a long statement has the statement's line,
+  and `column` is the statement's. An instruction before the first marker of
+  a function (the `alloca`s) has the line of the function.
+* **No variables.** `trace`'s `locals` needs §3.2.
+* **A function folded into the C `main` has no subprogram.** `main` of the
+  three-function program is optimised into the entry wrapper (which has no
+  debug information), and `LineTablesOnly` keeps no inlined-subroutine DIEs,
+  so `gdb` cannot break on it by name; its lines are in the line table.
+  Under `-O0` (`trace`'s build) nothing is inlined.
+* **`-g` is `build` only**, not `run` or `test`; and not in
+  `introspect`/`--help` (the same reason as `ci`, `agent-ci.md` §10).
+* **Quadratic.** Each location asks `diagnose.locate` for a line, which
+  counts from the start of the file. Not measured on a large program;
+  `cli.cho` itself (80 files) is the case to time.
+* The `directory` of each `DIFile` is `"."`: a program has no way to ask for
+  the working directory without running `pwd`. `gdb` found the source by the
+  relative name from where it was run.
 
 ### 3.2 Variables, and the `-O2` problem
 

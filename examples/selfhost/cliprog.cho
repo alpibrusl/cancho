@@ -318,7 +318,7 @@ pub fn files_of_args[&h, &a](heap: &!h Heap, args: &a Args, build: bool, run: bo
         let word = arg(args, n);
         if clibase.takes_value(word, build) {
             n = n + 1;
-        } else if !(run && bytes.equal(word, "--stdin")) && !bytes.equal(word, "--std") {
+        } else if !(run && bytes.equal(word, "--stdin")) && !bytes.equal(word, "--std") && !(build && bytes.equal(word, "-g")) {
             names = buffer.append(heap, buffer.append(heap, names, word), "\0");
         }
         n = n + 1;
@@ -606,21 +606,21 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                         shipped = buffer.append(heap, buffer.empty(heap, buffer.size(b.ir)), buffer.bytes(b.ir));
                     }
                     borrow shipped as &modb in {
-                    borrow target as &tp in {
-                        status = make_binary(heap, io, args, fs, exec, buffer.bytes(modb), buffer.bytes(tp), clang, obj);
-                        if status == 0 && run {
-                            var input = buffer.empty(heap, 0);
-                            if forward {
+                        borrow target as &tp in {
+                            status = make_binary(heap, io, args, fs, exec, buffer.bytes(modb), buffer.bytes(tp), clang, obj);
+                            if status == 0 && run {
+                                var input = buffer.empty(heap, 0);
+                                if forward {
+                                    buffer.drop(heap, input);
+                                    input = lc.slurp(heap, io);
+                                }
+                                borrow input as &ip in {
+                                    status = run_built(heap, io, exec, clock, buffer.bytes(tp), buffer.bytes(ip));
+                                }
                                 buffer.drop(heap, input);
-                                input = lc.slurp(heap, io);
+                                fs_remove(fs, buffer.bytes(tp));
                             }
-                            borrow input as &ip in {
-                                status = run_built(heap, io, exec, clock, buffer.bytes(tp), buffer.bytes(ip));
-                            }
-                            buffer.drop(heap, input);
-                            fs_remove(fs, buffer.bytes(tp));
                         }
-                    }
                     }
                     buffer.drop(heap, shipped);
                 }
