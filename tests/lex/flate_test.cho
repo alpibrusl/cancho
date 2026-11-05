@@ -1,0 +1,516 @@
+edition 7;
+
+import std.buffer;
+import std.bytes;
+import std.test;
+import std.crc;
+import std.flate;
+
+// Pseudo-random bytes from a linear congruential generator: `n` of them, `spread` distinct values.
+fn noise[&h](heap: &!h Heap, n: int, spread: int, seed: int) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, n);
+    var x = seed;
+    var i = 0;
+    while i < n {
+        x = x * 1103515245 + 12345 & 0x7fffffff;
+        b = buffer.push(heap, b, byte_of((x >> 8) % spread));
+        i = i + 1;
+    }
+    return b;
+}
+
+// gunzip(gzip(data)) is data.
+fn round_trips[&h, &d](heap: &!h Heap, input: &d [byte]) -> [heap] bool {
+    let zipped = flate.gzip(heap, input);
+    var same = false;
+    borrow zipped as &z in {
+        let flate.Gunzipped { data, status, name_at, name_len } = flate.gunzip(heap, buffer.bytes(z), 1073741824);
+        borrow data as &o in {
+            same = status == 0 && bytes.equal(buffer.bytes(o), input);
+        }
+        buffer.drop(heap, data);
+    }
+    buffer.drop(heap, zipped);
+    return same;
+}
+
+pub fn test_crc32_of_std_crc_is_the_published_value_the_gzip_trailer_uses() -> [] int {
+    test.assert_eq(crc.crc32_of("123456789"), 0xcbf43926);
+    test.assert_eq(crc.crc32_of(""), 0);
+    test.assert_eq(crc.crc32_of("a"), 0xe8b7be43);
+    return 0;
+}
+
+pub fn test_small_inputs_round_trip[&h](heap: &!h Heap) -> [heap] int {
+    test.assert(round_trips(heap, ""));
+    test.assert(round_trips(heap, "a"));
+    test.assert(round_trips(heap, "ab"));
+    test.assert(round_trips(heap, "abc"));
+    test.assert(round_trips(heap, "abcabcabcabcabcabcabcabcabcabc"));
+    test.assert(round_trips(heap, "the quick brown fox jumps over the lazy dog, the quick brown fox jumps over the lazy dog"));
+    return 0;
+}
+
+pub fn test_repetitive_and_random_inputs_round_trip[&h](heap: &!h Heap) -> [heap] int {
+    // Long runs (matches of 258 with distance 1), a short alphabet (many matches), and
+    // noise (almost none), at sizes either side of the 32 KiB window.
+    var sizes = box_slice(heap, 6, 0);
+    borrow mut sizes as &!w in {
+        contents(w)[0] = 1000;
+        contents(w)[1] = 32767;
+        contents(w)[2] = 32768;
+        contents(w)[3] = 32769;
+        contents(w)[4] = 70000;
+        contents(w)[5] = 200000;
+    }
+    var k = 0;
+    while k < 6 {
+        var n = 0;
+        borrow sizes as &r in {
+            n = contents(r)[k];
+        }
+        var spread = 1;
+        while spread <= 256 {
+            let data = noise(heap, n, spread, 7 + k + spread);
+            borrow data as &d in {
+                test.assert(round_trips(heap, buffer.bytes(d)));
+            }
+            buffer.drop(heap, data);
+            spread = spread * 4;
+        }
+        k = k + 1;
+    }
+    unbox_slice(heap, sizes);
+    return 0;
+}
+
+pub fn test_a_run_compresses_a_lot[&h](heap: &!h Heap) -> [heap] int {
+    let zeros = noise(heap, 1000000, 1, 1);
+    var small = 0;
+    borrow zeros as &z in {
+        let zipped = flate.gzip(heap, buffer.bytes(z));
+        borrow zipped as &g in {
+            small = buffer.size(g);
+        }
+        buffer.drop(heap, zipped);
+    }
+    buffer.drop(heap, zeros);
+    // 1,000,000 zero bytes are 3,876 matches of 258 at 13 bits each (the length-258 code is 8 bits in
+    // the fixed code, the distance 5): about 6.3 KB, where a dynamic code gets under 1 KB.
+    test.assert(small < 6600);
+    return 0;
+}
+
+pub fn test_a_stored_block_is_read[&h](heap: &!h Heap) -> [heap] int {
+    // final stored block, LEN 5, NLEN ~5, "hello"
+    var s = buffer.empty(heap, 16);
+    s = buffer.push(heap, s, byte_of(1));
+    s = buffer.push(heap, s, byte_of(5));
+    s = buffer.push(heap, s, byte_of(0));
+    s = buffer.push(heap, s, byte_of(0xfa));
+    s = buffer.push(heap, s, byte_of(0xff));
+    s = buffer.append(heap, s, "hello");
+    borrow s as &r in {
+        let (out, status, next) = flate.inflate(heap, buffer.bytes(r), 0, buffer.size(r), 100);
+        test.assert_eq(status, 0);
+        test.assert_eq(next, 10);
+        borrow out as &o in {
+            test.assert(bytes.equal(buffer.bytes(o), "hello"));
+        }
+        buffer.drop(heap, out);
+        // The same with room for four bytes only.
+        let (cut, status2, unused) = flate.inflate(heap, buffer.bytes(r), 0, buffer.size(r), 4);
+        test.assert_eq(status2, 3);
+        buffer.drop(heap, cut);
+        // And with the NLEN broken.
+        let (bad, status3, unused2) = flate.inflate(heap, buffer.bytes(r)[0..3], 0, 3, 100);
+        test.assert_eq(status3, 2);
+        buffer.drop(heap, bad);
+    }
+    buffer.drop(heap, s);
+    return 0;
+}
+
+// A gzip of 1000 bytes of noise, to damage.
+fn sample[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    let data = noise(heap, 1000, 16, 3);
+    var z = buffer.empty(heap, 1);
+    borrow data as &d in {
+        buffer.drop(heap, z);
+        z = flate.gzip(heap, buffer.bytes(d));
+    }
+    buffer.drop(heap, data);
+    return z;
+}
+
+// The status of gunzipping `zipped`.
+fn status_of[&h, &z](heap: &!h Heap, zipped: &z [byte], limit: int) -> [heap] int {
+    let flate.Gunzipped { data, status, name_at, name_len } = flate.gunzip(heap, zipped, limit);
+    buffer.drop(heap, data);
+    return status;
+}
+
+// `zipped` with byte `at` set to `value`, gunzipped: the status.
+fn status_with[&h, &z](heap: &!h Heap, zipped: &z [byte], at: int, value: int, limit: int) -> [heap] int {
+    var copy = buffer.empty(heap, len(zipped));
+    copy = buffer.append(heap, copy, zipped);
+    var status = 0;
+    borrow copy as &c in {
+        let mutated = box_slice(heap, len(zipped), byte_of(0));
+        borrow mut mutated as &!w in {
+            var i = 0;
+            while i < len(zipped) {
+                contents(w)[i] = buffer.bytes(c)[i];
+                i = i + 1;
+            }
+            if at >= 0 {
+                contents(w)[at] = byte_of(value);
+            }
+        }
+        borrow mutated as &m in {
+            status = status_of(heap, contents(m), limit);
+        }
+        unbox_slice(heap, mutated);
+    }
+    buffer.drop(heap, copy);
+    return status;
+}
+
+pub fn test_damage_is_a_status_never_a_trap[&h](heap: &!h Heap) -> [heap] int {
+    let z = sample(heap);
+    borrow z as &r in {
+        let n = buffer.size(r);
+        let bytes_of = buffer.bytes(r);
+        test.assert_eq(status_with(heap, bytes_of, 0 - 1, 0, 1000000), 0);
+        // not gzip
+        test.assert_eq(status_with(heap, bytes_of, 0, 0x50, 1000000), 10);
+        // method
+        test.assert_eq(status_with(heap, bytes_of, 2, 7, 1000000), 11);
+        // reserved flag
+        test.assert_eq(status_with(heap, bytes_of, 3, 0x20, 1000000), 11);
+        // the CRC and the length in the trailer
+        test.assert_eq(status_with(heap, bytes_of, n - 8, 1 ^ int_of(bytes_of[n - 8]), 1000000), 13);
+        test.assert_eq(status_with(heap, bytes_of, n - 4, 1 ^ int_of(bytes_of[n - 4]), 1000000), 14);
+        // the limit
+        test.assert_eq(status_with(heap, bytes_of, 0 - 1, 0, 999), 3);
+        // too short to be a member
+        test.assert_eq(status_of(heap, bytes_of[0..17], 1000000), 12);
+        // every cut inside is a status
+        var cut = 18;
+        while cut < n {
+            test.assert(status_of(heap, bytes_of[0..cut], 1000000) != 0);
+            cut = cut + 7;
+        }
+        // trailing bytes after the member
+        var longer = buffer.empty(heap, n + 1);
+        longer = buffer.append(heap, longer, bytes_of);
+        longer = buffer.push(heap, longer, byte_of(0));
+        borrow longer as &l in {
+            test.assert_eq(status_of(heap, buffer.bytes(l), 1000000), 15);
+        }
+        buffer.drop(heap, longer);
+        // every single-byte change in the deflate body is a status, whatever it is
+        var at = 10;
+        while at < n - 8 {
+            let s = status_with(heap, bytes_of, at, 0xff ^ int_of(bytes_of[at]), 1000000);
+            test.assert(s == 0 || s == 1 || s == 2 || s == 3 || s == 13 || s == 14 || s == 15 || s == 12);
+            at = at + 1;
+        }
+    }
+    buffer.drop(heap, z);
+    return 0;
+}
+
+pub fn test_a_match_may_not_pass_the_output_cap[&h](heap: &!h Heap) -> [heap] int {
+    // A thousand equal bytes are one literal and matches of up to 258 bytes: a cap inside a match is refused, not overrun.
+    var run = buffer.empty(heap, 1000);
+    var i = 0;
+    while i < 1000 {
+        run = buffer.push(heap, run, byte_of('a'));
+        i = i + 1;
+    }
+    var zipped = buffer.empty(heap, 1);
+    borrow run as &r in {
+        buffer.drop(heap, zipped);
+        zipped = flate.gzip(heap, buffer.bytes(r));
+    }
+    borrow zipped as &z in {
+        test.assert_eq(status_of(heap, buffer.bytes(z), 1000), 0);
+        test.assert_eq(status_of(heap, buffer.bytes(z), 999), 3);
+        test.assert_eq(status_of(heap, buffer.bytes(z), 100), 3);
+        test.assert_eq(status_of(heap, buffer.bytes(z), 258), 3);
+    }
+    buffer.drop(heap, zipped);
+    buffer.drop(heap, run);
+    return 0;
+}
+
+// ---- zlib (RFC 1950) ------------------------------------------------------------------------------------------------------------------
+//
+// Seven streams written once by Python's `zlib` (empty; "hello\n"; 1000 x 'a'; 300 bytes that do not compress; a repeated sentence; a
+// quadratic ramp; the 300 bytes stored by level 0): between them a stored, a fixed-code and a dynamic-code block. `plain` rebuilds each text.
+
+fn plain(c: int, i: int) -> [] int {
+    if c == 1 {
+        let s = "hello\n";
+        return int_of(s[i]);
+    }
+    if c == 2 {
+        return 97;
+    }
+    if c == 3 || c == 6 {
+        return i * 7 + 3 & 255;
+    }
+    if c == 4 {
+        let s = "the quick brown fox jumps over the lazy dog\n";
+        return int_of(s[i % 44]);
+    }
+    if c == 5 {
+        return i * i >> 3 & 255;
+    }
+    return 0;
+}
+
+fn plain_length(c: int) -> [] int {
+    if c == 1 {
+        return 6;
+    }
+    if c == 2 {
+        return 1000;
+    }
+    if c == 3 || c == 6 {
+        return 300;
+    }
+    if c == 4 {
+        return 3520;
+    }
+    if c == 5 {
+        return 5000;
+    }
+    return 0;
+}
+
+fn stream(c: int) -> [] &static [byte] {
+    if c == 0 {
+        return "789c030000000001";
+    }
+    if c == 1 {
+        return "789ccb48cdc9c9e70200084b021f";
+    }
+    if c == 2 {
+        return "789c4b4c1c05a360140c770000f9d87af8";
+    }
+    if c == 3 {
+        return "789c63e612949057d335b176f20c088f4bcd29ae6aece89f3677c9ea4d3b0f1c3f77f5cee3571f7ffc67e3159156d23430b773f5098e4accc82fab6de99e3473c1f2755bf71c3e75f1c6fd676fbffc66e214109753d531b672f4f00f8b4dc92eaa6c68ef9b3a67f1aa8d3bf61f3b7be5f6a3971fbeff63e5119652d4d037b375f10e8a4c48cf2bad69ee9a3863feb2b55b761f3a79e1fabda76f3eff62e4e0179355d136b27470f70b8d49ce2aaca86feb9d327bd1ca0ddbf71d3d73f9d6c317efbffd65e116925450d733b571f60a8c884fcb2da96eea9c307dded2359b771d3c71fedadd27af3ffd6460e7139551d632b4b077f30d894eca2c28af6bed993c6be18af5dbf61e397de9e683e7efbefe6126c1ff00a0b492e3";
+    }
+    if c == 4 {
+        return "78daedcab70180301004c19c2aae358cf0e841bc70d54317241bcf781fb4e5a19e54253ba35abb34e665dd654748f28fe7f2b9d558573897cbe572b95c2e97cbe5727fbb2fc113013c";
+    }
+    if c == 5 {
+        return "78daedd361634a7b0080f123e120242184bf842124c31092701092300c9310864908c391701092108624843009214cc24148c2302421846408e1defb25eeabf33c9fe10741503952797245b80aa506ad368309d8196d789df94264b06c8c7c6abe06c50cdbac875d17f060e99be46f980e38597da4e3f316625b6c27bc77c309880ada0b8729e661db1d1783af521490898c55ad2a74e2cfcaaab2ba4894a8b9e87ae417bd2d222fd8eabc1523037ef65ce331ff3bb8b968a2764f7118028209dabdbed7702bf12ce3c992341029d7391fa659c84cd3b948656e366a0ffc600d54efc293cc7eaa9d7819106bf605ff724663a7a2b584b32d01889bbbd1fb853d023b1b6f2c5de18e0319763ed922c788ffc99c6e7d44455077a2a57c47a83aa2f57ce7cdb047418ef93e6d88fe06dc577799d40b2d8604e825526fdd557880fe0e6db8b91428ec1f78f33d24647da881fc60220bc5a9a3acef3397e0b49c03c9ee5808e4b92b4877c7bb620fd873bc35738b2089e5b37053b413f698b334d84ce3076abca1ea1a53853752df642d0864a025dcd5916ea68f88353dd2594de90305251d8d9fc487e0c9bea6da17020b945bdc44fb52b41f9ee66f67fc9aed01bad82067dd82087294be28d2bf8881c62467586bcbc6e1bcc24aaaa7880be85393823d1df5b16f8a7bc2e3c000e587877a3bd8ea603ff39e4baf643980095e9c9c522ac57bb85a5beb19603495ff56fe44761bf1f24ff38e64d8402163336d03650dbc92bc9cb40c42ff7d1969397925bc86b281b69951086c194778a7f95ee4b6ec89fc6d7e0a850df5acad5d3d7069e994e462d8041c5957a4cff37e62756c1dbc43c3f990011c17de537cc3ea3b7a0627a5f4c0853c55552ae4e1e3cad6b2ce486228a3a87f6411fd281229a8eb1c14d3014ff657633bff3478bfe8a5b649712e6411bcd036f54d860f893f193b9614009fb29a7364da8a7c34758bace696a0198105ac9bea46b88a794dd5105703bfa6597029e731d629ba49f8d922818a726b7ae7b01f605de3bba515dc792084754f1ec8a1e14b32df5b475171342b7150de20b41e2179e6f33ed815a0d43c9c76473f00beaaeb4dba840aa062b417e9b2ae2f7c433f8476df9c03a2f619bcef1e2d523db443de32e14611ea23ebf4cc3fb831a745f23c260371f70a69e3f8596c04fb8b77632e170a58660b6b454f61a3397f83fb34625086ef54f56326f15dea81ac1f013b9acdad1c39679a89b0d20f9deb9422902e39699c256e05bff6edd54e1000285cbc473b51d41c7ee73f669c9bcd07e4d82de7d60239d296fe2b72bdc88c2a255d5855cb9ee1cec255aab14826a0a45e052f3ab663f314c384ed01154a84ef7a4fd8b6600bf3c64bfb6471001dfe9d7c531ac42fb80e5bb7193054933f553e46361811f23bf3da64b00193519b56835205ae482e4f2a07fd17e19ff04ff827fc13fe09ff847fc23fe19ff04ff827fc13fe09ff84ffffc9ff3f45622dd8";
+    }
+    if c == 6 {
+        return "7801012c01d3fe030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930373e454c535a61686f767d848b9299a0a7aeb5bcc3cad1d8dfe6edf4fb020910171e252c333a41484f565d646b727980878e959ca3aab1b8bfc6cdd4dbe2e9f0f7fe050c131a21282f363d444b525960676e757c838a91989fa6adb4bbc2c9d0d7dee5ecf3fa01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dae1e8eff6fd040b121920272e353c434a51585f666d747b828990979ea5acb3bac1c8cfd6dde4ebf2f900070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9e0e7eef5fc030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dce3eaf1f8ff060d141b222930a0b492e3";
+    }
+    return "";
+}
+
+fn digit(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+fn unhex[&h, &t](heap: &!h Heap, hex: &t [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, len(hex) / 2 + 1);
+    var i = 0;
+    while i + 1 < len(hex) {
+        b = buffer.push(heap, b, byte_of(digit(int_of(hex[i])) * 16 + digit(int_of(hex[i + 1]))));
+        i = i + 2;
+    }
+    return b;
+}
+
+// The status `unzlib` gives the stream written in hexadecimal in `hex`, with an output limit.
+fn zlib_status[&h, &t](heap: &!h Heap, hex: &t [byte], limit: int) -> [heap] int {
+    let z = unhex(heap, hex);
+    var got = -1;
+    borrow z as &zr in {
+        let (out, status, next) = flate.unzlib(heap, buffer.bytes(zr), 0, buffer.size(zr), limit);
+        got = status;
+        buffer.drop(heap, out);
+    }
+    buffer.drop(heap, z);
+    return got;
+}
+
+pub fn test_zlib_streams_of_python_inflate_to_their_text[&h](heap: &!h Heap) -> [heap] int {
+    var c = 0;
+    while c < 7 {
+        let z = unhex(heap, stream(c));
+        var code = 0;
+        borrow z as &zr in {
+            let (out, status, next) = flate.unzlib(heap, buffer.bytes(zr), 0, buffer.size(zr), 1000000);
+            if status != 0 {
+                code = 100 * (c + 1) + status;
+            } else if next != buffer.size(zr) {
+                code = 100 * (c + 1) + 50;
+            } else {
+                borrow out as &o in {
+                    let all = buffer.bytes(o);
+                    if len(all) != plain_length(c) {
+                        code = 100 * (c + 1) + 60;
+                    } else {
+                        var i = 0;
+                        while i < len(all) {
+                            if int_of(all[i]) != plain(c, i) {
+                                code = 100 * (c + 1) + 70;
+                                i = len(all);
+                            }
+                            i = i + 1;
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, out);
+        }
+        buffer.drop(heap, z);
+        if code != 0 {
+            return code;
+        }
+        c = c + 1;
+    }
+    return 0;
+}
+
+// Adler-32 of "Wikipedia" is 0x11E60398 (300286872), of nothing 1; in two parts the same; and past several reductions against one step at a time.
+pub fn test_adler32[&h](heap: &!h Heap) -> [heap] int {
+    test.assert_eq(flate.adler32_of("Wikipedia"), 300286872);
+    test.assert_eq(flate.adler32_of(""), 1);
+    test.assert_eq(flate.adler32_update(flate.adler32_update(flate.adler32_start(), "Wiki"), "pedia"), 300286872);
+    let big = box_slice(heap, 20000, byte_of(255));
+    borrow big as &w in {
+        var a = 1;
+        var b = 0;
+        var k = 0;
+        while k < 20000 {
+            a = (a + 255) % 65521;
+            b = (b + a) % 65521;
+            k = k + 1;
+        }
+        test.assert_eq(flate.adler32_of(contents(w)), b * 65536 + a);
+    }
+    unbox_slice(heap, big);
+    return 0;
+}
+
+// What `zlib` writes `unzlib` reads, and a stream that `zlib` wrote is a stream Python read (the `78 9c` header and the trailer are checked by
+// the first test above, which reads Python's).
+pub fn test_zlib_round_trips[&h](heap: &!h Heap) -> [heap] int {
+    var k = 0;
+    while k < 6 {
+        var n = 0;
+        if k == 1 {
+            n = 1;
+        }
+        if k == 2 {
+            n = 1000;
+        }
+        if k == 3 {
+            n = 65535;
+        }
+        if k == 4 {
+            n = 100000;
+        }
+        if k == 5 {
+            n = 300000;
+        }
+        let src = noise(heap, n, 7, 5 + k);
+        var ok = false;
+        borrow src as &sr in {
+            let z = flate.zlib(heap, buffer.bytes(sr));
+            borrow z as &zr in {
+                let (out, status, next) = flate.unzlib(heap, buffer.bytes(zr), 0, buffer.size(zr), 1073741824);
+                borrow out as &o in {
+                    ok = status == 0 && next == buffer.size(zr) && bytes.equal(buffer.bytes(o), buffer.bytes(sr));
+                }
+                buffer.drop(heap, out);
+            }
+            buffer.drop(heap, z);
+        }
+        buffer.drop(heap, src);
+        test.assert(ok);
+        k = k + 1;
+    }
+    return 0;
+}
+
+// The refusals, each with its status: 2 input ended, 3 over the limit, 20 header, 21 dictionary, 22 checksum, 1 invalid stream.
+pub fn test_zlib_refusals[&h](heap: &!h Heap) -> [heap] int {
+    test.assert_eq(zlib_status(heap, "", 1000000), 2);
+    test.assert_eq(zlib_status(heap, "78", 1000000), 2);
+    test.assert_eq(zlib_status(heap, "7801", 1000000), 2);
+    // 78 02: not a multiple of 31; 88 1c: a multiple of 31 and method 8, but a window of 64 KiB.
+    test.assert_eq(zlib_status(heap, "78020300", 1000000), 20);
+    test.assert_eq(zlib_status(heap, "881c0300", 1000000), 20);
+    // 78 bb: a multiple of 31, with FDICT set.
+    test.assert_eq(zlib_status(heap, "78bb00000000", 1000000), 21);
+    // a block of type 3, and a stored block whose length and complement disagree.
+    test.assert_eq(zlib_status(heap, "780107000000", 1000000), 1);
+    test.assert_eq(zlib_status(heap, "7801010100000000", 1000000), 1);
+    // "hello\n" with its checksum changed in the last nibble, then right.
+    test.assert_eq(zlib_status(heap, "789ccb48cdc9c9e70200084b0210", 1000000), 22);
+    test.assert_eq(zlib_status(heap, stream(1), 1000000), 0);
+    // the limit: 999 is over by one, 1000 is exact.
+    test.assert_eq(zlib_status(heap, stream(2), 999), 3);
+    test.assert_eq(zlib_status(heap, stream(2), 1000), 0);
+    return 0;
+}
+
+// Every case cut at every length and every byte changed to several other values: a status or a text, and the run reaches its end.
+pub fn test_a_damaged_zlib_stream_is_a_status_never_a_trap[&h](heap: &!h Heap) -> [heap] int {
+    var c = 3;
+    while c < 7 {
+        let z = unhex(heap, stream(c));
+        var size = 0;
+        borrow z as &zs in {
+            size = buffer.size(zs);
+        }
+        let copy = box_slice(heap, size, byte_of(0));
+        borrow z as &zr in {
+            let n = buffer.size(zr);
+            borrow mut copy as &!w in {
+                let s = contents(w);
+                var i = 0;
+                while i < n {
+                    s[i] = buffer.bytes(zr)[i];
+                    i = i + 1;
+                }
+                var cut = 0;
+                while cut < n {
+                    let (out, status, next) = flate.unzlib(heap, s[0..cut], 0, cut, 100000);
+                    buffer.drop(heap, out);
+                    cut = cut + 1;
+                }
+                i = 0;
+                while i < n {
+                    var v = 1;
+                    while v < 256 {
+                        let was = s[i];
+                        s[i] = byte_of(int_of(was) ^ v);
+                        let (out, status, next) = flate.unzlib(heap, s, 0, n, 100000);
+                        buffer.drop(heap, out);
+                        s[i] = was;
+                        v = v * 3 + 1;
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+        unbox_slice(heap, copy);
+        buffer.drop(heap, z);
+        c = c + 1;
+    }
+    return 0;
+}
