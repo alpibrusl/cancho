@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 19 built** (the later ones, §14 to §40, are listed in their own sections; the list here stops at slice 12) (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15; `test`, §16; `layout`, §17; `satisfy`, §18); the rest is design (epic #491,
+Status: **slices 1 to 19 built** (the later ones, §14 to §40, are listed in their own sections; the list here stops at slice 12) (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15; `test`, §16; `layout`, §17; `satisfy`, §18); what follows is built or designed in its own section (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
