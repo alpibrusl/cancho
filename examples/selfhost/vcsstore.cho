@@ -1,0 +1,820 @@
+edition 9;
+module selfhost.vcsstore;
+
+// vcsstore.cho -- the store of `cancho vcs` on disk, beneath a `Dir` (`docs/vcs-cli.md` section 5, `docs/vcs-native.md` section 6, slice b3): objects
+// written atomically and read back re-hashed, refs moved by compare-and-swap under a lock file, with the ref log. A port of `object.rs` (`put`, `get`)
+// and `refs.rs` (`read_ref`, `update_ref`) of `crates/cancho-vcs`, on the same layout, so the Rust command and this one read each other's stores.
+//
+//   objects/KIND/AB/CDEF..   the bytes of the object (the id is `AB` and the rest)
+//   refs/heads/NAME          the id and a newline;  refs/heads/NAME.lock  held while it moves;  refs/heads/NAME.log  one line for each move
+//
+// Everything is done with a handle on a directory and one component at a time (`dir_enter`, `dir_open_new_mode`, `dir_rename_new`, `dir_mkdir`): no
+// path is spent, no program is run, no link is followed.
+//
+// A status, where a function answers one: 0 ok; 2 absent (a ref that is not there: not an error); 3 object-corrupt; 10 io (the errno is in `errno`);
+// 11 object-missing; 13 file-too-large; 14 ref-moved; 15 lock-held; 16 bad-ref-name; 17 bad-id. `tag` names each as the Rust command does.
+//
+// What differs from the Rust command, on purpose:
+//   * the temporary file of an object is made beside the object (`AB/.tmp-...`), not in `tmp/`: `dir_rename_new` renames within one directory. A
+//     crash leaves a `.tmp-` file there, which a listing of a fan-out directory skips (an object's name is 62 hexadecimal digits).
+//   * the lock file holds `0 TIME` (the process id is not known: there is no such builtin, #688); the Rust command writes `PID TIME`.
+//   * no crash failpoints yet (#687).
+
+import std.buffer;
+import std.bytes;
+import selfhost.filewrite;
+import selfhost.vcsobj;
+
+// A file of more bytes than this is not stored as a blob (`object.rs`: `MAX_BLOB`).
+pub fn max_blob() -> [] int {
+    return 16777216;
+}
+
+fn enoent() -> [] int {
+    return 2;
+}
+
+fn eexist() -> [] int {
+    return 17;
+}
+
+// The rule tag of a status.
+pub fn tag(status: int) -> [] &static [byte] {
+    if status == 3 {
+        return "object-corrupt";
+    }
+    if status == 10 {
+        return "io";
+    }
+    if status == 11 {
+        return "object-missing";
+    }
+    if status == 13 {
+        return "file-too-large";
+    }
+    if status == 14 {
+        return "ref-moved";
+    }
+    if status == 15 {
+        return "lock-held";
+    }
+    if status == 16 {
+        return "bad-ref-name";
+    }
+    if status == 17 {
+        return "bad-id";
+    }
+    return "";
+}
+
+// ---- directories -------------------------------------------------------------------------------------------------------------
+
+// The child directory `name` of `dir`, made (mode 0755) if it is not there and `make`.
+fn enter[&d, &n](dir: &d Dir, name: &n [byte], make: bool) -> [dir_read, dir_write] DirOpened {
+    match dir_enter(dir, name) {
+        DirOpened::Ok(child) => {
+            return DirOpened::Ok(child);
+        }
+        DirOpened::Failed(e) => {
+            if e != enoent() || !make {
+                return DirOpened::Failed(e);
+            }
+        }
+    }
+    match dir_mkdir(dir, name, 493) {
+        Done::Ok(n) => {
+        }
+        Done::Failed(e) => {
+            if e != eexist() {
+                return DirOpened::Failed(e);
+            }
+        }
+    }
+    return dir_enter(dir, name);
+}
+
+// The directory at the relative path `path` (components between `/`, none empty) beneath `dir`, each made if `make`.
+fn walk[&d, &p](dir: &d Dir, path: &p [byte], make: bool) -> [dir_read, dir_write] DirOpened {
+    var cut = 0;
+    while cut < len(path) && path[cut] != byte_of(47) {
+        cut = cut + 1;
+    }
+    match enter(dir, path[0..cut], make) {
+        DirOpened::Ok(child) => {
+            if cut >= len(path) {
+                return DirOpened::Ok(child);
+            }
+            var below = DirOpened::Failed(0);
+            borrow child as &c in {
+                match below {
+                    DirOpened::Ok(d) => {
+                        dir_close(d);
+                    }
+                    DirOpened::Failed(e) => {
+                    }
+                }
+                below = walk(c, path[cut + 1..len(path)], make);
+            }
+            dir_close(child);
+            return below;
+        }
+        DirOpened::Failed(e) => {
+            return DirOpened::Failed(e);
+        }
+    }
+}
+
+// ---- files -------------------------------------------------------------------------------------------------------------------
+
+// What a file holds, and the errno (0 when it was read to its end).
+res struct Contents {
+    data: buffer.Buffer,
+    why: int,
+}
+
+// The rest of `file`, in chunks of 64 KiB, appended to `out`.
+fn read_all[&h, &w](heap: &!h Heap, file: &!w File, out: buffer.Buffer) -> [heap, file_read] Contents {
+    var bytes = out;
+    var chunk = buffer.empty(heap, 65536);
+    var errno = 0;
+    var going = true;
+    while going {
+        var got = 0;
+        borrow mut chunk as &!c in {
+            match file_read(file, buffer.room(c)) {
+                Read::Got(n) => {
+                    got = n;
+                    buffer.filled(c, n);
+                }
+                Read::End => {
+                    going = false;
+                }
+                Read::Failed(e) => {
+                    going = false;
+                    errno = e;
+                    if errno == 0 {
+                        errno = 1;
+                    }
+                }
+            }
+        }
+        if got > 0 {
+            borrow chunk as &c in {
+                bytes = buffer.append(heap, bytes, buffer.bytes(c));
+            }
+            borrow mut chunk as &!c in {
+                buffer.clear(c);
+            }
+        }
+    }
+    buffer.drop(heap, chunk);
+    return Contents { data: bytes, why: errno };
+}
+
+// The file `name` of `dir`, read whole: its bytes and 0, or `absent` (the errno is ENOENT) or another errno.
+fn slurp[&h, &d, &n](heap: &!h Heap, dir: &d Dir, name: &n [byte]) -> [heap, dir_read, file_read] Contents {
+    match dir_open_read(dir, name) {
+        Opened::Ok(opened) => {
+            var file = opened;
+            var read = Contents { data: buffer.empty(heap, 0), why: 0 };
+            borrow mut file as &!f in {
+                let r = read_all(heap, f, buffer.empty(heap, 4096));
+                let Contents { data, why } = read;
+                buffer.drop(heap, data);
+                read = r;
+            }
+            file_close(file);
+            return read;
+        }
+        Opened::Failed(e) => {
+            var errno = e;
+            if errno == 0 {
+                errno = 1;
+            }
+            return Contents { data: buffer.empty(heap, 0), why: errno };
+        }
+    }
+}
+
+// `bytes` written whole to a new file `name` of `dir` (it must not be there), synced: 0, or the errno.
+fn make_file[&d, &n, &b](dir: &d Dir, name: &n [byte], bytes: &b [byte]) -> [dir_write, file_write] int {
+    match dir_open_new_mode(dir, name, 420) {
+        Opened::Ok(opened) => {
+            var file = opened;
+            var errno = 0;
+            borrow mut file as &!f in {
+                errno = filewrite.write_all(f, bytes);
+                if errno == 0 {
+                    match file_sync(f) {
+                        Done::Ok(n) => {
+                        }
+                        Done::Failed(e) => {
+                            errno = e;
+                        }
+                    }
+                }
+            }
+            file_close(file);
+            return errno;
+        }
+        Opened::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+// ---- objects -----------------------------------------------------------------------------------------------------------------
+
+// What `put` and `get` answer: the id (put) or the bytes (get), a status, and the errno of an `io`.
+pub res struct Object {
+    bytes: buffer.Buffer,
+    status: int,
+    errno: int,
+}
+
+// `objects/KIND/AB` as a path.
+fn fan_out[&h, &k, &i](heap: &!h Heap, kind: &k [byte], id: &i [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.empty(heap, 32), "objects/");
+    b = buffer.append(heap, b, kind);
+    b = buffer.push(heap, b, byte_of(47));
+    return buffer.append(heap, b, id[0..2]);
+}
+
+// Store `data` as an object of kind `kind` beneath `vcs` (the `.cancho/vcs` directory): the id in `bytes`. A name already there is left alone (the same
+// bytes, as the name is their hash). `scratch` is `vcsobj.scratch_size()` integers; `nonce` makes the temporary name unique among writers.
+pub fn put[&h, &d, &s, &k, &b](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], kind: &k [byte], data: &b [byte], nonce: int) -> [heap, dir_read, dir_write, file_write] Object {
+    if bytes.equal(kind, "blob") && len(data) > max_blob() {
+        return Object { bytes: buffer.empty(heap, 0), status: 13, errno: 0 };
+    }
+    let id = vcsobj.object_id(heap, scratch, kind, data, buffer.empty(heap, 64));
+    var status = 0;
+    var errno = 0;
+    borrow id as &ib in {
+        let name = buffer.bytes(ib);
+        let path = fan_out(heap, kind, name);
+        borrow path as &pb in {
+            match walk(vcs, buffer.bytes(pb), true) {
+                DirOpened::Ok(sub0) => {
+                    var sub = sub0;
+                    borrow sub as &sd in {
+                        let rest = name[2..64];
+                        var present = false;
+                        match dir_open_read(sd, rest) {
+                            Opened::Ok(f) => {
+                                file_close(f);
+                                present = true;
+                            }
+                            Opened::Failed(e) => {
+                                if e != enoent() {
+                                    status = 10;
+                                    errno = e;
+                                }
+                            }
+                        }
+                        if status == 0 && !present {
+                            var temporary = buffer.append(heap, buffer.empty(heap, 40), ".tmp-");
+                            temporary = buffer.append(heap, temporary, rest[0..16]);
+                            temporary = buffer.push(heap, temporary, byte_of(45));
+                            temporary = buffer.push_nat(heap, temporary, nonce);
+                            borrow temporary as &tb in {
+                                let made = make_file(sd, buffer.bytes(tb), data);
+                                if made != 0 {
+                                    status = 10;
+                                    errno = made;
+                                } else {
+                                    match dir_rename_new(sd, buffer.bytes(tb), rest) {
+                                        Done::Ok(n) => {
+                                        }
+                                        Done::Failed(e) => {
+                                            // Another writer finished the same object first: the bytes are the same.
+                                            dir_remove(sd, buffer.bytes(tb));
+                                            if e != eexist() {
+                                                status = 10;
+                                                errno = e;
+                                            }
+                                        }
+                                    }
+                                    if status == 0 {
+                                        match dir_sync(sd) {
+                                            Done::Ok(n) => {
+                                            }
+                                            Done::Failed(e) => {
+                                                status = 10;
+                                                errno = e;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            buffer.drop(heap, temporary);
+                        }
+                    }
+                    dir_close(sub);
+                }
+                DirOpened::Failed(e) => {
+                    status = 10;
+                    errno = e;
+                }
+            }
+        }
+        buffer.drop(heap, path);
+    }
+    if status != 0 {
+        buffer.drop(heap, id);
+        return Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
+    }
+    return Object { bytes: id, status: 0, errno: 0 };
+}
+
+// The bytes of the object `id` of kind `kind`, hashed again: 17 for a name that is not an id, 11 if it is not there, 3 if the bytes are not what the
+// name says.
+pub fn get[&h, &d, &s, &k, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], kind: &k [byte], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] Object {
+    if !vcsobj.is_id(id) {
+        return Object { bytes: buffer.empty(heap, 0), status: 17, errno: 0 };
+    }
+    var out = buffer.empty(heap, 0);
+    var status = 0;
+    var errno = 0;
+    let path = fan_out(heap, kind, id);
+    borrow path as &pb in {
+        match walk(vcs, buffer.bytes(pb), false) {
+            DirOpened::Ok(sub0) => {
+                var sub = sub0;
+                borrow sub as &sd in {
+                    let read = slurp(heap, sd, id[2..64]);
+                    let Contents { data, why } = read;
+                    if why == enoent() {
+                        status = 11;
+                        buffer.drop(heap, data);
+                    } else if why != 0 {
+                        status = 10;
+                        errno = why;
+                        buffer.drop(heap, data);
+                    } else {
+                        buffer.drop(heap, out);
+                        out = data;
+                    }
+                }
+                dir_close(sub);
+            }
+            DirOpened::Failed(e) => {
+                if e == enoent() {
+                    status = 11;
+                } else {
+                    status = 10;
+                    errno = e;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, path);
+    if status != 0 {
+        buffer.drop(heap, out);
+        return Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
+    }
+    var same = false;
+    borrow out as &ob in {
+        let again = vcsobj.object_id(heap, scratch, kind, buffer.bytes(ob), buffer.empty(heap, 64));
+        borrow again as &ab in {
+            same = bytes.equal(buffer.bytes(ab), id);
+        }
+        buffer.drop(heap, again);
+    }
+    if !same {
+        buffer.drop(heap, out);
+        return Object { bytes: buffer.empty(heap, 0), status: 3, errno: 0 };
+    }
+    return Object { bytes: out, status: 0, errno: 0 };
+}
+
+// ---- refs --------------------------------------------------------------------------------------------------------------------
+
+fn name_byte(c: int) -> [] bool {
+    return c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122 || c == 46 || c == 95 || c == 45;
+}
+
+// `heads/main`, `tags/v1`: a ref name below `refs/` (`refs.rs`: `check_ref_name`): at most 200 bytes, no `..`, not ending in `.lock` or `.log`, and
+// every component non-empty, not starting with a dot, of letters, digits, `.`, `_` and `-`.
+pub fn check_ref_name[&n](name: &n [byte]) -> [] bool {
+    if len(name) == 0 || len(name) > 200 || bytes.ends_with(name, ".lock") || bytes.ends_with(name, ".log") || bytes.find(name, "..") >= 0 {
+        return false;
+    }
+    var start = 0;
+    var i = 0;
+    while i <= len(name) {
+        if i == len(name) || name[i] == byte_of(47) {
+            if i == start || name[start] == byte_of(46) {
+                return false;
+            }
+            start = i + 1;
+        } else if !name_byte(int_of(name[i])) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Where the last `/` of `name` is (the leaf starts after it).
+fn leaf_at[&n](name: &n [byte]) -> [] int {
+    var i = len(name);
+    while i > 0 && name[i - 1] != byte_of(47) {
+        i = i - 1;
+    }
+    return i;
+}
+
+// The path `refs/` and the directory part of `name` (without its last `/`).
+fn ref_dir[&h, &n](heap: &!h Heap, name: &n [byte]) -> [heap] buffer.Buffer {
+    let at = leaf_at(name);
+    var b = buffer.append(heap, buffer.empty(heap, 32), "refs");
+    if at > 1 {
+        b = buffer.push(heap, b, byte_of(47));
+        b = buffer.append(heap, b, name[0..at - 1]);
+    }
+    return b;
+}
+
+fn trimmed[&t](text: &t [byte]) -> [] &t [byte] {
+    var end = len(text);
+    while end > 0 && (text[end - 1] == byte_of(10) || text[end - 1] == byte_of(13) || text[end - 1] == byte_of(32) || text[end - 1] == byte_of(9)) {
+        end = end - 1;
+    }
+    var start = 0;
+    while start < end && (text[start] == byte_of(10) || text[start] == byte_of(13) || text[start] == byte_of(32) || text[start] == byte_of(9)) {
+        start = start + 1;
+    }
+    return text[start..end];
+}
+
+// The change id the ref `name` holds, in `bytes`: status 0; 2 if the ref is not there; 3 if the file is not an id; 16 for a bad name.
+pub fn read_ref[&h, &d, &n](heap: &!h Heap, vcs: &d Dir, name: &n [byte]) -> [heap, dir_read, dir_write, file_read] Object {
+    if !check_ref_name(name) {
+        return Object { bytes: buffer.empty(heap, 0), status: 16, errno: 0 };
+    }
+    var out = buffer.empty(heap, 0);
+    var status = 0;
+    var errno = 0;
+    let dirpath = ref_dir(heap, name);
+    borrow dirpath as &pb in {
+        match walk(vcs, buffer.bytes(pb), false) {
+            DirOpened::Ok(rd0) => {
+                var rd = rd0;
+                borrow rd as &rr in {
+                    let read = slurp(heap, rr, name[leaf_at(name)..len(name)]);
+                    let Contents { data, why } = read;
+                    if why == enoent() {
+                        status = 2;
+                        buffer.drop(heap, data);
+                    } else if why != 0 {
+                        status = 10;
+                        errno = why;
+                        buffer.drop(heap, data);
+                    } else {
+                        borrow data as &db in {
+                            let id = trimmed(buffer.bytes(db));
+                            if vcsobj.is_id(id) {
+                                buffer.drop(heap, out);
+                                out = buffer.append(heap, buffer.empty(heap, 64), id);
+                            } else {
+                                status = 3;
+                            }
+                        }
+                        buffer.drop(heap, data);
+                    }
+                }
+                dir_close(rd);
+            }
+            DirOpened::Failed(e) => {
+                if e == enoent() {
+                    status = 2;
+                } else {
+                    status = 10;
+                    errno = e;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, dirpath);
+    if status != 0 {
+        buffer.drop(heap, out);
+        return Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
+    }
+    return Object { bytes: out, status: 0, errno: 0 };
+}
+
+pub fn expect_any() -> [] int {
+    return 0;
+}
+
+pub fn expect_absent() -> [] int {
+    return 1;
+}
+
+pub fn expect_id() -> [] int {
+    return 2;
+}
+
+// `leaf` + `suffix` as a name.
+fn suffixed[&h, &l](heap: &!h Heap, leaf: &l [byte], suffix: &static [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(leaf) + 24), leaf), suffix);
+}
+
+// Move the ref `name` to `new` if it holds what `expect` says (`expect_any`, `expect_absent`, or `expect_id` with `want` the id), under its lock, and add
+// a line `OLD NEW TIME NOTE` to its log. 14 `ref-moved` (the current id is in `bytes`), 15 `lock-held`, 16, 17, 10. `now` is the time in seconds (a
+// `Clock` reads it; the caller holds that capability).
+pub fn update_ref[&h, &d, &n, &w, &m, &t](heap: &!h Heap, vcs: &d Dir, name: &n [byte], expect: int, want: &w [byte], new: &m [byte], note: &t [byte], now: int) -> [heap, dir_read, dir_write, file_read, file_write] Object {
+    if !check_ref_name(name) {
+        return Object { bytes: buffer.empty(heap, 0), status: 16, errno: 0 };
+    }
+    if !vcsobj.is_id(new) || expect == 2 && !vcsobj.is_id(want) {
+        return Object { bytes: buffer.empty(heap, 0), status: 17, errno: 0 };
+    }
+    var out = buffer.empty(heap, 0);
+    var status = 0;
+    var errno = 0;
+    let dirpath = ref_dir(heap, name);
+    borrow dirpath as &pb in {
+        match walk(vcs, buffer.bytes(pb), true) {
+            DirOpened::Ok(rd0) => {
+                var rd = rd0;
+                borrow rd as &rr in {
+                    let leaf = name[leaf_at(name)..len(name)];
+                    let lock = suffixed(heap, leaf, ".lock");
+                    borrow lock as &lb in {
+                        var stamp = buffer.append(heap, buffer.empty(heap, 24), "0 ");
+                        stamp = buffer.push_nat(heap, stamp, now);
+                        var held = false;
+                        match dir_open_new(rr, buffer.bytes(lb)) {
+                            Opened::Ok(opened) => {
+                                var f = opened;
+                                borrow mut f as &!fw in {
+                                    borrow stamp as &sb in {
+                                        errno = filewrite.write_all(fw, buffer.bytes(sb));
+                                    }
+                                }
+                                file_close(f);
+                                held = true;
+                                if errno != 0 {
+                                    status = 10;
+                                }
+                            }
+                            Opened::Failed(e) => {
+                                if e == eexist() {
+                                    status = 15;
+                                } else {
+                                    status = 10;
+                                    errno = e;
+                                }
+                            }
+                        }
+                        buffer.drop(heap, stamp);
+                        if held && status == 0 {
+                            // Under the lock: what is the ref now?
+                            let read = slurp(heap, rr, leaf);
+                            let Contents { data, why } = read;
+                            var current = buffer.empty(heap, 0);
+                            var has = false;
+                            if why == 0 {
+                                borrow data as &db in {
+                                    let id = trimmed(buffer.bytes(db));
+                                    if vcsobj.is_id(id) {
+                                        current = buffer.append(heap, current, id);
+                                        has = true;
+                                    } else {
+                                        status = 3;
+                                    }
+                                }
+                            } else if why != enoent() {
+                                status = 10;
+                                errno = why;
+                            }
+                            buffer.drop(heap, data);
+                            if status == 0 {
+                                var agrees = true;
+                                borrow current as &cb in {
+                                    if expect == 1 {
+                                        agrees = !has;
+                                    } else if expect == 2 {
+                                        agrees = has && bytes.equal(buffer.bytes(cb), want);
+                                    }
+                                    if !agrees {
+                                        status = 14;
+                                    } else if has && bytes.equal(buffer.bytes(cb), new) {
+                                        // Already there: nothing to write, nothing to log.
+                                        status = 0;
+                                    } else {
+                                        // The new value through a temporary, then the log.
+                                        var temporary = suffixed(heap, leaf, ".tmp-");
+                                        temporary = buffer.push_nat(heap, temporary, now);
+                                        var line = buffer.append(heap, buffer.empty(heap, 64), new);
+                                        line = buffer.push(heap, line, byte_of(10));
+                                        borrow temporary as &tb in {
+                                            borrow line as &ln in {
+                                                let made = make_file(rr, buffer.bytes(tb), buffer.bytes(ln));
+                                                if made != 0 {
+                                                    status = 10;
+                                                    errno = made;
+                                                } else {
+                                                    match dir_rename(rr, buffer.bytes(tb), leaf) {
+                                                        Done::Ok(k) => {
+                                                        }
+                                                        Done::Failed(e) => {
+                                                            status = 10;
+                                                            errno = e;
+                                                            dir_remove(rr, buffer.bytes(tb));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        buffer.drop(heap, line);
+                                        buffer.drop(heap, temporary);
+                                        if status == 0 {
+                                            match dir_sync(rr) {
+                                                Done::Ok(k) => {
+                                                }
+                                                Done::Failed(e) => {
+                                                    status = 10;
+                                                    errno = e;
+                                                }
+                                            }
+                                        }
+                                        if status == 0 {
+                                            let logname = suffixed(heap, leaf, ".log");
+                                            var entry = buffer.empty(heap, 192);
+                                            if has {
+                                                entry = buffer.append(heap, entry, buffer.bytes(cb));
+                                            } else {
+                                                entry = buffer.push(heap, entry, byte_of(45));
+                                            }
+                                            entry = buffer.push(heap, entry, byte_of(32));
+                                            entry = buffer.append(heap, entry, new);
+                                            entry = buffer.push(heap, entry, byte_of(32));
+                                            entry = buffer.push_nat(heap, entry, now);
+                                            entry = buffer.push(heap, entry, byte_of(32));
+                                            var k = 0;
+                                            while k < len(note) {
+                                                if note[k] == byte_of(10) {
+                                                    entry = buffer.push(heap, entry, byte_of(32));
+                                                } else {
+                                                    entry = buffer.push(heap, entry, note[k]);
+                                                }
+                                                k = k + 1;
+                                            }
+                                            entry = buffer.push(heap, entry, byte_of(10));
+                                            borrow logname as &gb in {
+                                                borrow entry as &eb in {
+                                                    match dir_open_append(rr, buffer.bytes(gb)) {
+                                                        Opened::Ok(opened) => {
+                                                            var f = opened;
+                                                            borrow mut f as &!fw in {
+                                                                errno = filewrite.write_all(fw, buffer.bytes(eb));
+                                                                if errno == 0 {
+                                                                    match file_sync(fw) {
+                                                                        Done::Ok(k2) => {
+                                                                        }
+                                                                        Done::Failed(e) => {
+                                                                            errno = e;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            file_close(f);
+                                                            if errno != 0 {
+                                                                status = 10;
+                                                            }
+                                                        }
+                                                        Opened::Failed(e) => {
+                                                            status = 10;
+                                                            errno = e;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            buffer.drop(heap, entry);
+                                            buffer.drop(heap, logname);
+                                        }
+                                    }
+                                    if status == 14 {
+                                        buffer.drop(heap, out);
+                                        out = buffer.append(heap, buffer.empty(heap, 64), buffer.bytes(cb));
+                                    }
+                                }
+                            }
+                            buffer.drop(heap, current);
+                        }
+                        if held {
+                            dir_remove(rr, buffer.bytes(lb));
+                        }
+                    }
+                    buffer.drop(heap, lock);
+                }
+                dir_close(rd);
+            }
+            DirOpened::Failed(e) => {
+                status = 10;
+                errno = e;
+            }
+        }
+    }
+    buffer.drop(heap, dirpath);
+    return Object { bytes: out, status: status, errno: errno };
+}
+
+// ---- init --------------------------------------------------------------------------------------------------------------------
+
+// `NAME` in `dir`, written whole through `NAME.tmp-0` and renamed, so a reader sees it whole or not at all.
+fn put_whole[&h, &d, &n, &b](heap: &!h Heap, dir: &d Dir, name: &n [byte], text: &b [byte]) -> [heap, dir_write, file_write] int {
+    let temporary = suffixed(heap, name, ".tmp-0");
+    var errno = 0;
+    borrow temporary as &tb in {
+        errno = make_file(dir, buffer.bytes(tb), text);
+        if errno == 0 {
+            match dir_rename(dir, buffer.bytes(tb), name) {
+                Done::Ok(k) => {
+                }
+                Done::Failed(e) => {
+                    errno = e;
+                    dir_remove(dir, buffer.bytes(tb));
+                }
+            }
+        }
+    }
+    buffer.drop(heap, temporary);
+    return errno;
+}
+
+// Make the store in `root` (`.cancho/vcs`, beneath it `objects`, `refs/heads`, `refs/tags`, `tmp`, then `HEAD`, and `format` last: a store without it is
+// not a repository). Status 0 and `errno` 1 when it was made, 0 when it was already there (`format` exists); `branch` is the name HEAD points at.
+pub fn init[&h, &d, &b](heap: &!h Heap, root: &d Dir, branch: &b [byte]) -> [heap, dir_read, dir_write, file_read, file_write] Object {
+    if !check_ref_name(branch) || bytes.find(branch, "/") >= 0 {
+        return Object { bytes: buffer.empty(heap, 0), status: 16, errno: 0 };
+    }
+    var status = 0;
+    var errno = 0;
+    match walk(root, ".cancho/vcs", true) {
+        DirOpened::Ok(v0) => {
+            var v = v0;
+            borrow v as &vd in {
+                let existing = slurp(heap, vd, "format");
+                let Contents { data, why } = existing;
+                buffer.drop(heap, data);
+                if why == enoent() {
+                    var k = 0;
+                    while k < 4 && status == 0 {
+                        var path = "objects";
+                        if k == 1 {
+                            path = "refs/heads";
+                        }
+                        if k == 2 {
+                            path = "refs/tags";
+                        }
+                        if k == 3 {
+                            path = "tmp";
+                        }
+                        match walk(vd, path, true) {
+                            DirOpened::Ok(sub) => {
+                                dir_close(sub);
+                            }
+                            DirOpened::Failed(e) => {
+                                status = 10;
+                                errno = e;
+                            }
+                        }
+                        k = k + 1;
+                    }
+                    if status == 0 {
+                        var head = buffer.append(heap, buffer.empty(heap, 40), "ref: refs/heads/");
+                        head = buffer.append(heap, head, branch);
+                        head = buffer.push(heap, head, byte_of(10));
+                        borrow head as &hb in {
+                            errno = put_whole(heap, vd, "HEAD", buffer.bytes(hb));
+                        }
+                        buffer.drop(heap, head);
+                        if errno == 0 {
+                            errno = put_whole(heap, vd, "format", "cancho-vcs 1\n");
+                        }
+                        if errno != 0 {
+                            status = 10;
+                        }
+                    }
+                } else if why != 0 {
+                    status = 10;
+                    errno = why;
+                }
+                if status == 0 && why == enoent() {
+                    errno = 1;
+                } else if status == 0 {
+                    errno = 0;
+                }
+            }
+            dir_close(v);
+        }
+        DirOpened::Failed(e) => {
+            status = 10;
+            errno = e;
+        }
+    }
+    return Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
+}
