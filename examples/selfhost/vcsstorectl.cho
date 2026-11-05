@@ -70,6 +70,60 @@ fn answered[&h, &i](heap: &!h Heap, io: &!i Io, done: vcsstore.Object, quiet: bo
     return code;
 }
 
+fn failed_answer[&h](heap: &!h Heap) -> [heap] vcsstore.Object {
+    return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+}
+
+// `log DIR [--limit N] [REV]` and `show DIR [REV]`: the document, or the refusal document, as the Rust command prints them.
+fn document[&h, &i, &a, &d, &s](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir, scratch: &!s [int], log: bool) -> [heap, io_write, args, dir_read, dir_write, file_read] int {
+    var spec = "";
+    var have = false;
+    var limit = 0 - 1;
+    var k = 3;
+    while k < arg_count(args) {
+        if bytes.equal(arg(args, k), "--limit") && k + 1 < arg_count(args) {
+            limit = number(arg(args, k + 1));
+            k = k + 2;
+        } else {
+            spec = arg(args, k);
+            have = true;
+            k = k + 1;
+        }
+    }
+    var command = "show";
+    var answer = failed_answer(heap);
+    if log {
+        command = "log";
+        let (old, os, oe) = vcsstore.parts(answer);
+        buffer.drop(heap, old);
+        answer = vcsrepo.log_command(heap, vcs, scratch, spec, have, limit);
+    } else {
+        let (old, os, oe) = vcsstore.parts(answer);
+        buffer.drop(heap, old);
+        answer = vcsrepo.show_command(heap, vcs, scratch, spec);
+    }
+    let (doc, status, errno) = vcsstore.parts(answer);
+    var code = 0;
+    if status == 0 {
+        borrow doc as &db in {
+            buffer.write(io, db);
+        }
+    } else if status >= 18 && status <= 22 {
+        borrow doc as &cb in {
+            let refusal = vcsrepo.refusal_document(heap, command, status, spec, buffer.bytes(cb));
+            borrow refusal as &rb in {
+                buffer.write(io, rb);
+            }
+            buffer.drop(heap, refusal);
+        }
+        code = 1;
+    } else {
+        code = say_refusal(io, status, errno);
+    }
+    buffer.drop(heap, doc);
+    return code;
+}
+
 fn command[&h, &i, &a, &d](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir) -> [heap, io_read, io_write, args, dir_read, dir_write, file_read, file_write] int {
     let verb = arg(args, 1);
     let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
@@ -83,6 +137,8 @@ fn command[&h, &i, &a, &d](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Di
             buffer.drop(heap, raw);
         } else if bytes.equal(verb, "get") {
             code = answered(heap, io, vcsstore.get(heap, vcs, contents(s), arg(args, 3), arg(args, 4)), true);
+        } else if bytes.equal(verb, "log") || bytes.equal(verb, "show") {
+            code = document(heap, io, args, vcs, contents(s), bytes.equal(verb, "log"));
         } else if bytes.equal(verb, "head") {
             code = answered(heap, io, vcsrepo.head_change(heap, vcs), false);
         } else if bytes.equal(verb, "resolve") {
