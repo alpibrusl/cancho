@@ -26,12 +26,17 @@ and `test`; a standalone `cancho` written in it reproduces itself (stage 2 equal
 built that way is published. What Rust still does: stage 0 of that build, the oracle, Cranelift and WebAssembly, `authority`, the V1
 `vcs`, and the CI gate (`cargo fmt`, `clippy`, `test`).
 
-## 3. Decisions to take first (each with a date and an owner in #491)
+## 3. Decisions (taken 2026-11-05 by the owner; recorded in #491)
+
+**D1 remove the crates; D2 retire Cranelift and port WebAssembly to `emit.cho` (#486); D3 `cancho test` replaces `cargo test`, no Rust shell; D4
+Windows out of scope.** The options each decision chose among are kept below.
 
 - **D1. Remove, not keep.** `standalone-cancho.md` §6 calls the crates "a backup". Keeping them means two implementations to hold equal for
   ever. This plan assumes removal; if D1 is "keep", only §5 phases 0 to 2 apply and the repository layout of §6 does not change.
 - **D2. Cranelift is retired with the Rust compiler** (#666 says so; it is open). WebAssembly: port to `emit.cho` (#486) or retire with it.
-  Both change what a release promises, so each needs a release note.
+  Both change what a release promises, so each needs a release note. **Decided: port WebAssembly.** So `cancho-codegen-llvm` and `cancho-ir`
+  (which carry the WebAssembly target today) cannot be deleted before the port: only `cancho-codegen` (Cranelift) can go first, and phase 5's order
+  changes accordingly. Nine programs of `tests/reject` (`*_on_wasi`) are refused by the Rust compiler only, and are listed in `tests/reject.known` until then.
 - **D3. The oracle's shape.** The 726 conformance tests run `cancho` and compare output. Two ways: (a) `cancho test` runs them as cancho
   programs with a `.expected` file each, no Rust anywhere; (b) a small Rust shell stays as the test runner only. (a) is the goal; (b) is
   allowed as a stage, with a date for its end.
@@ -45,12 +50,27 @@ A crate is deleted in a PR by itself, only when:
 3. the goldens (§5, phase 1) stand in for what it was the oracle of;
 4. the fixed point holds: stage 2 equals stage 3, built from the seed.
 
+**The open pull requests (a gate for every deletion and for the move).** No crate is deleted, and `examples/selfhost` is not moved, while an open
+pull request touches what the change deletes or moves: each is merged, closed, or rebased onto the new layout first, by its owner's word, and the
+deleting pull request lists the check. The check is `gh pr list --state open` with `gh pr diff N --name-only` filtered on the paths; measured
+2026-11-05 on 19 open pull requests:
+
+| touches | pull requests |
+|---|---|
+| `crates/` | #681 (8 files, draft), #700, #699 (draft), #494 (draft), #476 (draft, 3), #413 (draft, 3) |
+| `examples/selfhost/` | #681 (22, draft), #701 (8), #698 (4), #697 (6), #696 (5), #694 (3), #692 (6), #690 (5), #699 (1) |
+| neither | #695, #693, #689, #666, #656, #350 |
+
+The drafts that are old (#413, #476, #494) either rebase or are closed before phase 5; closing is the owner's decision, not this plan's. The six
+`vcs-native` pull requests (#690 to #692, #694, #696, #698, #701) are the continuing port of `cancho vcs` (#680) and keep landing in
+`examples/selfhost`, so the move of phase 6 waits for that series to pause, or it is rebased once.
+
 ## 5. Phases
 
 **Phase 0: housekeeping and the decisions (days).** Take D1 to D4. Correct the stale numbers (#491's body, `bootstrap.md` "22,000 lines",
 the conflict marker at `docs/cli-in-cancho.md:619-620`). Close the primitives that block ports: #684 to #688.
 
-**Phase 1: the seed and the goldens (#488).** (a) A committed seed: the LLVM IR or object of the standalone compiler for each target with
+**Phase 1: the seed and the goldens (#488; the seed's design is [`seed.md`](seed.md)).** (a) A committed seed: the LLVM IR or object of the standalone compiler for each target with
 a recorded BLAKE3, reproducible from `cancho.files` plus `clang`; a script `scripts/reseed.sh` that rebuilds it and a CI check that the
 seed rebuilds itself to the same bytes. (b) Golden outputs: for every test whose expected value is "what the Rust compiler writes" (parity,
 identities, IR, refusals), record the output once and compare to the file. After this the Rust compiler is no longer the only way to know
@@ -99,7 +119,7 @@ sources), `CANCHO_SELFHOST_SOURCES`, `docs/*.md` links (a link checker belongs i
 
 - **No oracle but the compiler itself.** A bug present in the seed and in the compiler passes the fixed point. Measured by: the goldens
   (phase 1) and the reject corpus (339 of 339 today), kept and not regenerated from the new compiler.
-- **Seed rot.** A seed nobody rebuilds stops matching the source. CI rebuilds it every PR that touches `compiler/`, and fails on a diff.
+- **Seed rot.** A seed nobody rebuilds stops matching the source. The rule, and what CI checks, is in [`seed.md`](seed.md) §5.
 - **Code quality.** Measured once and again with `-O2` (`bootstrap.md`: within 1.3 on 36 rows; the P-256 rows 1.03 to 1.05). The
   `tls-perf` job is pinned to the Rust compiler; its baseline must be re-recorded with the compiler in cancho **before** phase 5.
 - **Compile time and `clang`.** 33 s a stage for the 77-file command line. The compiler still needs `clang` (#489); say so in the install docs.
