@@ -52,10 +52,15 @@ wall (about 60 MB/s)**.
 
 | what | measured |
 |---|---|
-| `sha1.cho`, `sha1sum` over 20 MB of random bytes on standard input | **0.35 s** (about 57 MB/s, reading included); `shasum -a 1` takes 0.05 s. The 826.9 MiB of the `cancho` import is about **15 s** of SHA-1, and about 17 s of BLAKE3 on top: both are paid once per object |
-| `zlib.cho` `inflate` of a 6.0 MB stream (level 6) to 20 MB of text | **0.45 s** (about 44 MB/s of output, reading and writing included); Python's `zlib` (C) takes 0.013 s |
-| `zlib.cho` `inflate` of 20 MB stored (level 0) | 0.57 s (the copy through `Buffer` and the write dominate) |
-| `zlib_stored` of 20 MB | 0.56 s |
+| `sha1.cho` over 20 MiB **in memory** (`sha1mem`, no I/O) | **0.087 s, about 240 MB/s** (best of 2 warm runs; the first run 0.32 s). OpenSSL's SHA-1 through Python takes 0.008 s (hardware instructions). The 826.9 MiB of the `cancho` import is about **3.6 s** of SHA-1 |
+| `zlib.cho` `inflate` of a 6.0 MB level-6 stream to 20 MB of text, **excluding the read of the stream** (best of 7 runs, total minus the 0.082 s the program takes to read 6 MB and refuse it) | **0.093 s, about 215 MB/s of output** |
+| the same stream through `archive.flate.inflate` of cancho-tools (a lookup table for the short codes), same harness | 0.049 s, about **410 MB/s**: its inflater is **1.9 times as fast** as this one |
+| reading standard input (`lexcore.slurp`) | **20 MB takes 0.275 s (about 73 MB/s)**: this, and not the hash or the inflate, is what the first version of this table measured |
+| `zlib_stored` of 20 MB, through `zlibtool` | 0.56 s, of which the read is 0.275 s and the write (`buffer.write` to the console) most of the rest |
+
+**Corrected in place (2026-11-05, after the first version of this table).** It said SHA-1 ran at about 57 MB/s and inflate at about 44 MB/s. Those were
+the whole run of a program that reads 20 MB (or 6 MB) from standard input and writes 20 MB, and the read alone is 0.275 s for 20 MB; the
+hash and the inflate were 4 and 5 times faster than the table said. Nothing in the libraries changed.
 
 Correctness, against independent implementations: `sha1.cho` against `hashlib` for 19 sizes from 0 to 1,000,003 bytes (every size around a block:
 55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 129) and a table of the lengths 0 to 130 in `sha1_test.cho`; `zlib.cho` against Python's
@@ -64,8 +69,10 @@ stored, fixed and dynamic blocks) with no difference, and `zlib_stored` read bac
 `zlib.cho` (a distance base, the Adler-32 modulus, the stored-length check, the distance bound, the end-code check) each fail the tests.
 Both libraries pass under the compiler in cancho alone (`CANCHO_COMPILER=auto`). They run with ``examples/selfhost/test.sh`.
 
-Inflate is the slow, short form (`puff.c`: one bit at a time); at 44 MB/s the 826.9 MiB import is about 19 s of inflate, not the 94 s of the Rust
-import (which is mostly `fsync`). Neither number was measured for the whole import, only per megabyte.
+Inflate here is `puff.c` (one bit at a time, no lookup table). cancho-tools' `archive.flate` (`tools/archive/flate.cho`) has the same algorithm with
+a table for the short codes and is 1.9 times as fast on this input; it also has a compressor (LZ77 with a hash chain and dynamic Huffman blocks,
+within 0.1 % of `gzip`'s size on its own measurement) and readers of bzip2, xz and zstd. At 215 MB/s the inflate of 826.9 MiB is about 4 s;
+the whole import was not measured, only per megabyte.
 
 ## 3. What the missing primitives block, and what does not
 
