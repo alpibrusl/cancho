@@ -171,6 +171,9 @@
 
 - [Related work](related-work.md)
 - [Self-hosting, measured](self-hosting.md)
+- [`cancho ci` and the authority baseline](agent-ci.md)
+- [`cancho profile`](agent-profile.md)
+- [`cancho trace` and debug information](agent-debug.md)
 
 ---
 
