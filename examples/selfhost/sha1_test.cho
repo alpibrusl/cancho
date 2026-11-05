@@ -1,0 +1,153 @@
+module selfhost.sha1_test;
+
+// sha1_test.cho -- tests of `sha1.cho`, run by `cancho test examples/selfhost/sha1_test.cho examples/selfhost/sha1.cho examples/selfhost/hex.cho --std`.
+//
+// The oracles are fixed: the vectors of FIPS 180-4 and the digest of a git blob ("hello\n" is `ce01362...`, what `git hash-object` says),
+// and a table of the digests of the messages of 0 to 130 bytes (`byte i = i * 7 + 3`), written once by Python's `hashlib`, which covers every
+// length around the block (55, 56, 63, 64, 65, 119, 120).
+
+import selfhost.hex;
+import selfhost.sha1;
+
+// The 20 bytes of `out` are the digest written as 40 hexadecimal digits in `want` from `at`.
+fn same[&o, &w](out: &o [byte], want: &w [byte], at: int) -> [] bool {
+    var i = 0;
+    while i < 20 {
+        let x = hex.value(int_of(want[at + 2 * i])) * 16 + hex.value(int_of(want[at + 2 * i + 1]));
+        if x != int_of(out[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn of_text[&h, &t](heap: &!h Heap, text: &t [byte], want: &t [byte]) -> [heap] bool {
+    let area = box_slice(heap, sha1.size(), 0);
+    let out = box_slice(heap, 20, byte_of(0));
+    var ok = false;
+    borrow mut area as &!a in {
+        borrow mut out as &!o in {
+            let st = contents(a);
+            let digest = contents(o);
+            sha1.init(st, 0);
+            sha1.update(st, 0, text);
+            sha1.finish(st, 0, digest);
+            ok = same(digest, want, 0);
+        }
+    }
+    unbox_slice(heap, area);
+    unbox_slice(heap, out);
+    return ok;
+}
+
+pub fn test_fips_vectors[&h](heap: &!h Heap) -> [heap] int {
+    if !of_text(heap, "", "da39a3ee5e6b4b0d3255bfef95601890afd80709") {
+        return 1;
+    }
+    if !of_text(heap, "abc", "a9993e364706816aba3e25717850c26c9cd0d89d") {
+        return 2;
+    }
+    if !of_text(heap, "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", "84983e441c3bd26ebaae4aa1f95129e5e54670f1") {
+        return 3;
+    }
+    return 0;
+}
+
+pub fn test_a_git_blob[&h](heap: &!h Heap) -> [heap] int {
+    // "blob 6\0hello\n"
+    if !of_text(heap, "blob 6\0hello\n", "ce013625030ba8dba906f756967f9e9ca394464a") {
+        return 1;
+    }
+    return 0;
+}
+
+// A million 'a', in runs of 1000 (so `update` meets the buffer full, empty and in between) and then the same by single bytes.
+pub fn test_a_million_a[&h](heap: &!h Heap) -> [heap] int {
+    let area = box_slice(heap, sha1.size(), 0);
+    let out = box_slice(heap, 20, byte_of(0));
+    let run = box_slice(heap, 1000, byte_of(97));
+    var code = 0;
+    borrow mut area as &!a in {
+        borrow mut out as &!o in {
+            borrow mut run as &!r in {
+                let st = contents(a);
+                let digest = contents(o);
+                let chunk = contents(r);
+                sha1.init(st, 0);
+                var k = 0;
+                while k < 1000 {
+                    sha1.update(st, 0, chunk);
+                    k = k + 1;
+                }
+                sha1.finish(st, 0, digest);
+                if !same(digest, "34aa973cd4c4daa4f61eeb2bdbad27316534016f", 0) {
+                    code = 1;
+                }
+                sha1.init(st, 0);
+                k = 0;
+                while k < 1000000 {
+                    sha1.byte(st, 0, 97);
+                    k = k + 1;
+                }
+                sha1.finish(st, 0, digest);
+                if !same(digest, "34aa973cd4c4daa4f61eeb2bdbad27316534016f", 0) {
+                    code = 2;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, area);
+    unbox_slice(heap, out);
+    unbox_slice(heap, run);
+    return code;
+}
+
+// Every length from 0 to 130, whole, against `hashlib`, and cut in two at every point for the lengths up to 130 (the split changes where the
+// block boundary falls in `update`).
+pub fn test_every_length_against_hashlib[&h](heap: &!h Heap) -> [heap] int {
+    let table = "da39a3ee5e6b4b0d3255bfef95601890afd807099842926af7ca0a8cca12604f945414f07b01e13d1f5ae6b976eaa448d6756c593ceb816ac8799ef14201de9f98cb0a9b8cf52398be7802b55d45266aa9ca94e2a9be52cdcef145facf2bad04e553cb0b941f194daa0adbdf8582dbf3691a6288329d2be6984329883856c39f7dd78b88bcfb49eefc9be9898f61e051db8f5bfa67d8eff0c40cf868f68e70bbcef03cc4db41ecf2c7956e8b06dc6b0b8015f2606cad7098fc6c42a32b5fe6536f157ff570772cd0a00e488320a5f5536afc79a976ec22cf7aebbd970a3a1e6ce197c09607b8ddc9637dcaa22345918274c2e2bfd179cc0901f88ca7b8bed52ebcd7d8495b656bff036821f5174daba9580c139a6d74da150b32b3246891c1ce11d68e4b5e803490a7cd1b63b02b80eaa1a78b076120457b296be0d347eeb1943bbec6217ac9bf7c9c4642b1bdeb3ae68d99f7872dbde31cfe98dd4a93eb056f157f8cabb01db4435cd1599bbf20aa54712f37bd18ae4b464c59d29990226ee11311d80cfae27605808403960856e50d57ab1094cc2a57d9f64818d2eb92750aab1bf177565cce1992fa0e88bf04e798764a6d2d26ea1dc3b7f16efc74e3224c94bc344c6bafabb7e11d977afa9329dda1c904fb2c9ef99cdd87561526d809131aae7a798319ed16a198e92401e7eed36cd1a51b9ade5333be4a9674e7ac5b12ddac8240f7783da26d3ce948a92cfb30d8c9da8af8a088154549e0ea78440d05a24e2b53d2ee8a66c6d9507fc42cc431c9a77289303864dc3e15adf071745fef286a70b296fb3a3053d47fd59e775fd21c27c3835f164188a97984db177660175eea1dbe18dbc376808b5ee3d21a51503aa50e23029493030a1d0704a84cb2ea64b5168088b6692cfd749ab0b699a8b5b225189b66f198bd988723981464f3e589667631c29d174dd828aab123a8df09bb66c6ff5d46e444e52225d820d1062373e60ddb02daf0a2bb9dc4893a5a3482e84e44766b5f4cb28f9005a9bcc61f0414f7723f66787c668baba43a4574ca4db54cbb65f78fd9d5b82977dee0782cb1c424be3ca1b6fefa60ac600c9ac81eef4e53dfd5df78dc615f4685c18957b291211f8d2930f827e5c7a66cd81d79c1d2df12ea6b07db78a9a0bf346e34553dedd45854cb36df8185bc152a0c16257c31d861e4de5788878b02e1885042ffa53d886bdf8abb72fe633ec6bb176fca104790963fb5f385b944c30a85cedc11f0c775314a297e5ad6079ab50b53bd400c0bed369f5cca092881d23cd18dc6bb13fc18b37318035169d7daf3ecda5e3cf47f3d208b1dceb06f8a37e58236e5ad2fc09aa97c403db44000cf9601a20a6e0d4fe4e94a01f873554e96c4fd00c3b3446c74005afe81d85b22996be45cd0e8a24b6eb052c5b174bad6c2151f033e0ea15235a8dd08343c0ecbb2f7a3974f521857937beca28580f3ff31d4ef88653801349179ac7af163c6b4b97324d118ed451c94625aef0d0a6fb60617d0e2db51b03d5d09c217b3fe0643ed6d152fddf57317ef34bfee3b6df83d359098930eb278bca0d492bb0fc889d0eca3bc137066ab6f4f74f36911a02dcf95859677a62e75024067c22b165d890f3d6024b3f7b1c01a5c62497022ea6e33b89d2cf35850f256241b06d25bc20b9dc85d7944ce96fa1a4a72dc48088734d6ee17cccbb158de29744e973392b2db0c849997e88b21b8a509eecaa46f00c6b8363c4d8b28918eacfb4b945bafd31cb62997a5cdc55856749bef509bdfe6bfebfc7bf4e793e82132bede92be29c3874e1b54ddc77988d606fc857a8eb05a80522b053d6dc7e0a517d0e70212c7dad11f13e53bec6f6ee5a157a4f62ad14f702bf9f6d1678d39d341da28ed21be3ca08ec2cfb6c4a4be99ed3efec55489106fcde5552290bb4bc2bcda30f9ba831e22c83fef344e627b1d20181d77d0984fafea3e7e19ea8f559bd1f5c97e46f0ae082c4bcd6244b4d320ff238a99c0963778c340387bc1c61f5cd7191cf09722d8a449820c9c66b122b8434a68dceac2234319c0056fe3d74053e1ce14faf00dee5df42e96fc5182863f989f79ed28c46558295030d50d0afbbbe6e731ab70338bf972766211eacffd0e794486860ad2702b492f17e07e43d99474964a63487ad89da645724916b0e70f8db3fb48382d9708672a013aba1ee3deceddcdc2ed426f3bc26be4f94b6a6dfd5130d56d92374a53d0c03356da772a10aade25ce79b8cf13016c12d081f399f9b427af4cbbc73933e543f4daeceb08b990f257a61e6139f039a0e9c80c67a1cc955341e50b6006b0690eaa880722d464b043d3c8eb9025cb7497e4eacfe0aadb961f2c174a3687d3b1118a138779f254273fc78f6cbd7be1e0cdb0a911bae7eef171d31bafb47435e856e1fe537ae2c59e52eeee83b5efa9185b15dc5c2e114dfa3f54bf19f2d132aa8ec7521ef722bd35b0c561b691887c08a09879869f578afc6248b36a2b5f3e1bfd79e003926a6d743cb85c7543fed63c08e751b39f177186ac60873de02326e05b785eb694afe1d3144f0288e2f3e86a2c831d6e5b1fd3652fefc0ee2f4f40f5946efe1ddcdeefd137c1c36d9410400eed4b3c11fc722cdd6211d33b4043e6cbcd7e7ea8dce332643b93d8899454c5e2ee5434da9e7bd6ac0eb591be8919e506dbf0725cb84a432edec7fa16b8b6ec5a3515e4a746d0d66c2bdb44e13a4f06a74c1e38308a0a8af4ecd22ccfc6d129485c546fb0ff4593361b19b8f5eb2a9d36cf790911cf19877413ac8cb6c116536f3b8ea85523e6303ebe7fd41586f415665d261af19613a4ba6f4346bb2ae428c5f5dfaff2dd18ce373895c4b0f63e71a48b258ff38e0bec341461fe7a389c58e94a6902ff6c31104718ea0d8a5dddb0999465f4af5b5bbf91dfaa234fa35d3d5fc1b197a297e1cc85c4a7a4748f9a47272286be5b250b61a5b15f90b85caf6ac3bfd965ad51f29ca661470907f62394cd17b0c4e97f5936f7be3cf34d607cfce675b831d27af2aa6823ecf83dabecb06b2b768dd0cd86ce1210e9e8e15e48479854b5991bf840e23f7bbe55535e67a23c37e815835e4c8b9642d3b628de7051502befa59a4a01b1272627e5be00f57bc3c3029c23a452e62954c08c2a0ed21de25e3d8606c3929454eb1d3f8b9f359093c0426170a6d53fdfb89679b592d8ebac02a464094db5da39cf309cd80cf96dd18465599dfe35da50128fed6999d312c58d79f2324ecba58d11ee9de3ca106edcfcecc00f160d97e6b0cc33f790b79e0bc3eb8d92af29b371e44e16d91a98cfa155bfbde27c9acb13670a70e765a687b2da3435fc504e27376a6e0f0dba8295b85cb25dc4dfa17d2382134b02fb3f702491be9bed581eeab59334acb2f004a54c50aa3705ccc2f03f21016ca6a25755cbcfca83c0711fd2164e886c60ec33b69a7e9a68f04753b07e7c0e0d418bed1370adca81d099a41e883132eb444ed5ea62a86fb0a5a1159550e16ee30ea46f230aaf987f4db2bb3501116392e684d29b7635f63e21348461ef967e9f37207a56e62701218e34d5e582029e9b9b85b2febe31da3db7cdabaaeaa09133e6730ffe899efb70204cb5646cd5dc24ee808aea332ce367541d37adae7f94e59c5c1a934e6e95f38fbdd38454ab4370ca87d628b526515950";
+    let area = box_slice(heap, sha1.size(), 0);
+    let out = box_slice(heap, 20, byte_of(0));
+    let msg = box_slice(heap, 131, byte_of(0));
+    var code = 0;
+    borrow mut area as &!a in {
+        borrow mut out as &!o in {
+            borrow mut msg as &!m in {
+                let st = contents(a);
+                let digest = contents(o);
+                let data = contents(m);
+                var i = 0;
+                while i < 131 {
+                    data[i] = byte_of(i * 7 + 3 & 255);
+                    i = i + 1;
+                }
+                var n = 0;
+                while n < 131 {
+                    sha1.init(st, 0);
+                    sha1.update(st, 0, data[0..n]);
+                    sha1.finish(st, 0, digest);
+                    if !same(digest, table, 40 * n) {
+                        code = 1000 + n;
+                    }
+                    var cut = 0;
+                    while cut <= n {
+                        sha1.init(st, 0);
+                        sha1.update(st, 0, data[0..cut]);
+                        sha1.update(st, 0, data[cut..n]);
+                        sha1.finish(st, 0, digest);
+                        if !same(digest, table, 40 * n) {
+                            code = 100000 + 1000 * n + cut;
+                        }
+                        cut = cut + 1;
+                    }
+                    n = n + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, area);
+    unbox_slice(heap, out);
+    unbox_slice(heap, msg);
+    return code;
+}

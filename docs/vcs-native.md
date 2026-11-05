@@ -31,8 +31,8 @@
 | Arguments | yes | the `Args` capability; the CLI is `selfhost.cli*`, `clivcs.cho` is the publish side |
 | Run another program (the gate does not need one) | yes | `Exec` |
 | **SHA-1** (git object ids, V1's `import-git`/`export-git`) | **no** | a library, `examples/selfhost/sha1.cho`; no compiler change |
-| **zlib inflate** (reading git objects) | **no** | a library; no compiler change |
-| **zlib deflate** (git export writes stored blocks; the store may compress) | **no** | a library; stored blocks first, LZ77 and Huffman when R4 asks |
+| **zlib inflate** (reading git objects) | **no** | a library: `std.flate` (#691) |
+| **zlib deflate** (git export writes stored blocks; the store may compress) | **no** | a library: `std.flate` (#691), which compresses; stored blocks first, LZ77 and Huffman when R4 asks |
 | Histogram diff, anchored edits, diff3, declaration merge, canonical JSON of a change | **no** | libraries, the Rust V1/V2 as the algorithm |
 | Remove a directory | **no** | `dir_remove` is `unlinkat(.., 0)`; an empty directory cannot be removed (`directory-handles.md` §2) |
 | Create or read a symbolic link | **no** | none of `symlink`/`readlink` is a builtin (`Builtin` table, 185 entries, read) |
@@ -46,9 +46,26 @@
 Throughput decides whether the V1 `import-git` of `cancho` (826.9 MiB of objects, `docs/vcs-cli.md` R4) is bearable in
 cancho code. BLAKE3, `blake3sum` built from `examples/selfhost/blake3.cho` with the Rust compiler, 20 MB of random
 bytes, standard input: **0.69 s wall, 0.40 s user (about 50 MB/s of hashing)**, which puts the 826.9 MiB at about 17 s. `std.crypto.sha256` over 20 MB in memory: **0.33 s
-wall (about 60 MB/s)**; SHA-1's round function is smaller, so the same order is expected, not measured until it is
-written. Neither hash is what makes the import slow in Rust (94 s for `cancho`, mostly fsync and inflate); an inflate in
-cancho is the part to measure first (slice 2).
+wall (about 60 MB/s)**.
+
+**Slice (a), written and measured (2026-11-05, macOS aarch64, the Rust compiler's build of each program).**
+
+| what | measured |
+|---|---|
+| `sha1.cho` over 20 MiB **in memory** (`sha1mem`, no I/O) | **0.087 s, about 240 MB/s** (best of 2 warm runs; the first run 0.32 s). OpenSSL's SHA-1 through Python takes 0.008 s (hardware instructions). The 826.9 MiB of the `cancho` import is about **3.6 s** of SHA-1 |
+| reading standard input (`lexcore.slurp`) | **20 MB takes 0.275 s (about 73 MB/s)**; writing 20 MB with `buffer.write` is about as slow. Not investigated |
+| compression | **`std.flate`** (#691, `docs/flate.md`): inflate about 410 MB/s of output, deflate within 0.9 to 4.3 % of zlib level 6 and about as fast as Python's `zlib` on 20 MB of text |
+
+**Corrected in place (2026-11-05).** The first version of this table said SHA-1 ran at about 57 MB/s and inflate at about 44 MB/s. Those were the whole
+run of a program that reads 20 MB (or 6 MB) from standard input and writes 20 MB, and the read alone is 0.275 s for 20 MB; the hash and the inflate
+were 4 and 5 times faster than the table said. The first inflate written for this port (`puff.c`, a bit at a time, 215 MB/s) was also half as fast as
+the one cancho-tools' `archive` already had (410 MB/s, a table for the short codes, plus a compressor): it was dropped, and `archive.flate` moved into
+`std` as `std.flate`, with a zlib layer, because `cancho vcs` is its second asker (`docs/flate.md` §1).
+
+Correctness of `sha1.cho`, against independent implementations: `hashlib` for 19 sizes from 0 to 1,000,003 bytes (every size around a block: 55, 56,
+57, 63, 64, 65, 119, 120, 121, 127, 128, 129), and a table of the lengths 0 to 130, each whole and cut at every point, in `sha1_test.cho`, with the
+FIPS 180-4 vectors and a git blob (`ce01362...`). A mutant (a round constant) fails all four tests. It passes under the compiler in cancho alone
+(`CANCHO_COMPILER=auto`). `examples/selfhost/test.sh` runs the tests.
 
 ## 3. What the missing primitives block, and what does not
 
@@ -85,8 +102,8 @@ Issues: directory removal [#684](https://github.com/alpibrusl/cancho/issues/684)
 
 ## 5. What is built next, in order, as far as this allows
 
-1. **This audit** (this PR).
-2. SHA-1 and inflate (library, `examples/selfhost`), the object store, `init`, `record`, `log`, `show`, `status`, refs with
+1. **This audit** (#683, merged).
+2. **Slice (a), built:** `sha1.cho` (#690) and `std.flate` (inflate, deflate, gzip, zlib; #691), their tests and measurements (§2). Next: the object store, `init`, `record`, `log`, `show`, `status`, refs with
    compare-and-swap, against the V1 pins. Blocked for `status`/`restore` over directories and links until the issues above are answered.
 3. Crash and race tests (blocked on `exit`, or on a deliberate trap).
 4. The git bridge (SHA-1, inflate, pack idx v2, deltas; the exporter with stored blocks).

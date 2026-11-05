@@ -1,0 +1,50 @@
+module selfhost.sha1sum;
+
+// sha1sum.cho -- the SHA-1 of standard input, in lowercase hexadecimal: the program that measures `sha1.cho` (`docs/vcs-native.md`), and checks
+// it against `sha1sum`, with messages of any size.
+//
+//     cancho run examples/selfhost/sha1sum.cho examples/selfhost/sha1.cho examples/selfhost/lexcore.cho --std < f
+
+import std.io as console;
+import std.buffer;
+import selfhost.sha1;
+import selfhost.lexcore as lc;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            let raw = lc.slurp(h, i);
+            let area = box_slice(h, sha1.size(), 0);
+            let out = box_slice(h, 20, byte_of(0));
+            borrow mut area as &!a in {
+                borrow mut out as &!o in {
+                    let state = contents(a);
+                    let digest = contents(o);
+                    sha1.init(state, 0);
+                    borrow raw as &r in {
+                        sha1.update(state, 0, buffer.bytes(r));
+                    }
+                    sha1.finish(state, 0, digest);
+                    var k = 0;
+                    while k < 20 {
+                        let octet = int_of(digest[k]);
+                        console.putchar(i, int_of("0123456789abcdef"[octet / 16]));
+                        console.putchar(i, int_of("0123456789abcdef"[octet % 16]));
+                        k = k + 1;
+                    }
+                    console.newline(i);
+                }
+            }
+            unbox_slice(h, area);
+            unbox_slice(h, out);
+            buffer.drop(h, raw);
+        }
+    }
+    release(heap);
+    release(io);
+    return 0;
+}
