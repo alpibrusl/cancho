@@ -5,6 +5,9 @@ Status: **design, written before any `seed/` directory exists.** Phase 1a of [`r
 2026-11-05 (the tree of #697, stage 0 a debug Rust build); everything else is a decision proposed here. A claim that turns out false is
 corrected here, in place.
 
+**Measured so far:** macOS aarch64 (2026-11-05) and Linux aarch64 (2026-11-06, a Debian 13 container on the same Mac, clang 19.1.7, `main` at `56a1ad84`).
+**Not measured:** Linux x86-64 (the container is aarch64; the x86-64 runner or `gram` is needed).
+
 ## 1. The problem
 
 `scripts/build-standalone.sh` starts from a Rust `cancho` (stage 0, `--cancho0`) that builds stage 1 with the compiler in cancho; stage 1
@@ -25,15 +28,24 @@ Why IR and not a binary: it is text a person or a tool can read and diff; it nee
 the one trusted thing is a file format (LLVM IR), not an executable of unknown origin. Why not a pinned release binary: it needs a network
 and trusts whoever built it. Why not the whole compiler's source in another language: that is the Rust we are removing.
 
-*Measured* (the 77-file command line, `--std`): **22,140,821 bytes, 288,887 lines, 2,126 functions** of IR; gzip -9 **1.89 MB**, xz -9
-**1.07 MB**. `clang -O2` on the IR alone: 8 s. Stage 2 from stage 1: 10 s.
+*Measured* (the 77-file command line, `--std`):
+
+| | IR bytes | gzip -9 | xz -9 | `clang -O2` from the IR | stage 2 from stage 1 |
+|---|---|---|---|---|---|
+| macOS aarch64 (tree of #697) | 22,140,821 (288,887 lines, 2,126 functions) | 1.89 MB | 1.07 MB | 8 s | 10 s |
+| Linux aarch64 (`main` at `56a1ad84`) | 22,540,267 | 1.91 MB | not run | not timed | not timed |
+
+**The fixed point on IR holds on Linux aarch64.** The IR written by stage 1 (built by the Rust compiler) and the IR written by stage 2 (built by
+stage 1) are the same file, SHA-256 `3cd382d9c0f57d5e78d410d7f1b51f3ed1482bf2745623ef12688610027bc106`, 22,540,267 bytes; stage 2 equals stage 3
+byte for byte; and **`clang -O2` on that IR alone, in another directory, gives an executable byte-identical to stage 3**. So on Linux the seed
+needs no special comparison. (On macOS the same experiment differs by 48 bytes, §3 S4.) This is what check 2 of §5 depends on.
 
 ## 3. Decisions
 
 - **S1. Targets.** Three files, `seed/aarch64-apple-darwin.ll.gz`, `seed/x86_64-unknown-linux-gnu.ll.gz`, `seed/aarch64-unknown-linux-gnu.ll.gz`
   (the matrix of `removing-rust.md` §4; Windows is out, D4). The IR differs per target (the `TARGET` line picks runtime files and
-  constants). *Not measured:* the two Linux files, which have to be written on Linux: the standalone build refuses a `--target` that is not its
-  own host (`cli-in-cancho.md` §38).
+  constants). Linux aarch64 is measured (above); Linux x86-64 is not. Each has to be written on its own Linux: the standalone build refuses a
+  `--target` that is not its own host (`cli-in-cancho.md` §38).
 - **S2. Compression: gzip.** `gzip` is on every machine that has `clang`; xz saves 0.8 MB a target and adds a dependency. 3 targets: about
   5.7 MB a reseed, against about 3.2 MB with xz. **[open]** if the repository's size is the worse cost.
 - **S3. The recorded hash** is SHA-256 of the **uncompressed** IR, in `seed/<target>.sha256` (not BLAKE3: `shasum` is on both platforms and
@@ -69,8 +81,8 @@ with one rule and three checks:
 - **Check 3, scheduled (weekly) and before each release:** the same as check 2 on the head of `main`. It fails when the seed is so old that
   `main`'s IR differs from it, which is the signal to reseed; it does not block a pull request.
 
-*Not measured:* whether the IR written by stage 1 equals the IR written by stage 2 (the fixed point on IR, not on the executable). Check 2
-depends on it; if it is false the reseed has to use stage 2's output, which is what S5 assumes.
+The fixed point on IR (stage 1 against stage 2) is **measured true on Linux aarch64**; on macOS and Linux x86-64 it is not yet measured. If it
+were false the reseed would have to use stage 2's output, which is what S5 assumes.
 
 ## 6. Risks
 
@@ -85,5 +97,5 @@ depends on it; if it is false the reseed has to use stage 2's output, which is w
 
 ## 7. What this does not do
 
-It commits no seed, writes no script and changes no workflow. Phase 1a is: (1) the Linux measurements and the IR fixed point above, (2) the two
+It commits no seed, writes no script and changes no workflow. Phase 1a is: (1) the Linux x86-64 and macOS measurements of the IR fixed point (Linux aarch64 is done), (2) the two
 scripts and `seed/` for one target, (3) the other two, (4) the checks in CI, each its own pull request. Phase 4 uses it.
