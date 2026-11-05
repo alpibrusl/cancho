@@ -10,7 +10,7 @@ D=$(cd "$(dirname "$0")" && pwd)
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 fail=0
-"$C" build "$D/vcsstorectl.cho" "$D/vcsstore.cho" "$D/vcsrepo.cho" "$D/vcschange.cho" "$D/jsonread.cho" "$D/jsonwrite.cho" "$D/rules.cho" "$D/tables.cho" "$D/vcsobj.cho" "$D/blake3.cho" "$D/filewrite.cho" "$D/lexcore.cho" --std -o "$W/ctl" >/dev/null || { echo "FAIL build"; exit 1; }
+"$C" build "$D/vcsstorectl.cho" "$D/vcsstore.cho" "$D/vcsrepo.cho" "$D/vcsscan.cho" "$D/vcschange.cho" "$D/jsonread.cho" "$D/jsonwrite.cho" "$D/rules.cho" "$D/tables.cho" "$D/vcsobj.cho" "$D/blake3.cho" "$D/filewrite.cho" "$D/lexcore.cho" --std -o "$W/ctl" >/dev/null || { echo "FAIL build"; exit 1; }
 export CANCHO_AUTHOR="Ada <ada@example.com>"
 
 # same REPO NAME ARGS...: the Rust command in REPO and the cancho one on REPO/.cancho/vcs give the same bytes and status
@@ -53,7 +53,7 @@ for spec in "" side main "side~1" "HEAD~2" "--limit 3" "side --limit 2"; do same
 for spec in side HEAD "side~2" "HEAD~4"; do same "$B" "B: show $spec" show $spec; done
 
 # C: one change with many files (the std and docs of this tree), a large one, an empty one
-Cc="$W/c"; mkdir "$Cc"; ( cd "$Cc" && "$C" vcs init --output json > /dev/null ); cp -R "$D/../../std" "$Cc/std"; cp -R "$D/../../docs" "$Cc/docs"
+Cc="$W/c"; mkdir "$Cc"; ( cd "$Cc" && "$C" vcs init --output json > /dev/null ); cp -RL "$D/../../std" "$Cc/std"; cp -RL "$D/../../docs" "$Cc/docs"
 head -c 70000 /dev/urandom > "$Cc/blob.bin"; : > "$Cc/empty.txt"
 rec "$Cc" 3000 big --no-gate
 same "$Cc" "C: show (about 400 files added)" show

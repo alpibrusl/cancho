@@ -125,7 +125,7 @@ command wrote:
 | b3 | `vcsstore.cho`: **built**, below: refs, `HEAD`, the log; the store on disk: write an object atomically (temporary name, `file_sync`, `dir_rename`, `dir_sync`), read one and re-hash it; the ref compare-and-swap under a lock file; `init` | next; needs the primitives that exist, not the five of the issues |
 | b4a | `vcsrepo.cho`: HEAD and the resolution of a revision (`HEAD`, `@`, id, branch, tag, prefix, `~N`) | **built**, below |
 | b4b | `vcsrepo.cho`: the history of a change; the documents of `log` and `show` (sorted-key pretty JSON), and the refusal document of `bad-revision` | **built**, below; without the `log` filters and `show --patch` |
-| b4c | `status`: the working copy scanned against HEAD's tree | next; over links it needs #685, over removed directories #684 |
+| b4c | `vcsscan.cho` and `status`: the working copy scanned against HEAD's tree | **built**, below; a symbolic link is refused until #685 (`readlink`) |
 | b4d | `record` (snapshot of the working copy to a tree and a change, no gate yet) | next |
 
 Not in (b): `decls` (the declaration diff of a `.cho` file) and the gate, which need `ids` and `check` as functions over in-memory files (the `driver`
@@ -184,3 +184,15 @@ Six mutants (the order of the frontier, a state name, the `--limit 0` rule, an i
 One bug found by the check and fixed: `show` parsed the change into its scratch space twice but read it once, and answered from zeros (a trap). It showed as exit 132 on every `show` of a change with a tree, and
 a debugging harness of mine had also trapped on a relative path through `..`, which an `Fs` traps on (the checks pass absolute paths). **Not done:** `log --path|--intent|--session|--issue|--author`, `show --patch`, the
 refusals other than `bad-revision` as documents (they are printed as `refused TAG`); the history keeps its set of reached changes as a list (quadratic; not measured at scale).
+
+**b4c, measured.** `vcsscan.cho` is `Repo::scan` and `Ignore` on a directory handle: it lists each directory (`std.dirs`), skips what `.canchoignore` says (all four kinds of rule) and `.cancho`/`.git` at the top, reads and
+names each file by its blob id with the mode from its execute bits (`dir_mode`), and sorts the lines by path (a merge sort: the order of names is not the order of paths, `a.b` < `a/b` < `a0`). `vcsrepo.status_command`
+diffs that against HEAD's tree and prints the `status` document (`branch` is `null` when HEAD is detached, `head` is `null` before the first change). `examples/selfhost/vcsstatus_check.sh` compares standard output and
+exit status with the Rust `vcs status` for the states of a working copy below: an empty repository, new files before any change, clean, modified/deleted/added, a mode change (also from the execute bit of "others" only, 0645),
+paths that sort differently from names, binary and 100 KB files, an empty directory, every kind of `.canchoignore` rule with comments, blank lines and a trimmed rule, `.git` at the top and in a subdirectory, a detached
+HEAD, and about 400 files clean and then changed; and the tag of the refusals for a file over 16 MiB and a name with a newline: **20 checks, all passing**, also with the compiler in cancho alone. Six mutants (the
+execute bits, the directory-only rule, the suffix rule, the path rule, the `.git` skip, the order of the sort) each fail it.
+
+**A difference, said by a status and not hidden:** a symbolic link makes `status` answer `refused symlink` (30). The Rust command makes a tree entry of it (mode 120000, the blob of the target); the target cannot be read until
+there is a `readlink` (#685). A name that is not UTF-8 is not refused here (the Rust command refuses it). **Speed**, 654 files and 12.3 MB (the std, docs and examples of this tree), best of 5: the Rust `vcs status`
+0.021 s, `vcsstorectl status` 0.105 s (about 117 MB/s with the reads; BLAKE3 in cancho is the cost, `docs/vcs-native.md` §2). Whole files are read into memory (at most 16 MiB each).

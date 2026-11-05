@@ -7,6 +7,7 @@ module selfhost.vcsstorectl;
 //   init DIR [BRANCH]                    make DIR/.cancho/vcs                        prints `created` or `exists`
 //   put DIR KIND < FILE                  store the bytes of standard input           prints the id
 //   get DIR KIND ID                      the object's bytes on standard output       (nothing else is printed)
+//   status ROOT                          the working copy at ROOT against HEAD, as the `status` document
 //   head DIR                             the change HEAD is at (or `absent`)
 //   resolve DIR REV                      the id a revision names: HEAD, @, an id or a prefix of one, a branch or tag, any of them with ~N
 //   ref-read DIR NAME                    the id a ref holds                          prints the id, or `absent`
@@ -19,6 +20,7 @@ import std.buffer;
 import std.bytes;
 import selfhost.vcsobj;
 import selfhost.vcsrepo;
+import selfhost.vcsscan;
 import selfhost.vcsstore;
 import selfhost.lexcore as lc;
 
@@ -124,6 +126,28 @@ fn document[&h, &i, &a, &d, &s](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: 
     return code;
 }
 
+// `status ROOT`: the status document of the working copy at ROOT (the store is ROOT/.cancho/vcs).
+fn status_of[&h, &i, &r](heap: &!h Heap, io: &!i Io, root: &r Dir) -> [heap, io_write, dir_read, dir_write, file_read] int {
+    var code = 0;
+    match vcsstore.enter_vcs(root) {
+        DirOpened::Ok(opened) => {
+            var vcs = opened;
+            let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+            borrow vcs as &vd in {
+                borrow mut scratch as &!s in {
+                    code = answered(heap, io, vcsrepo.status_command(heap, root, vd, contents(s)), true);
+                }
+            }
+            unbox_slice(heap, scratch);
+            dir_close(vcs);
+        }
+        DirOpened::Failed(e) => {
+            code = say_refusal(io, 10, e);
+        }
+    }
+    return code;
+}
+
 fn command[&h, &i, &a, &d](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir) -> [heap, io_read, io_write, args, dir_read, dir_write, file_read, file_write] int {
     let verb = arg(args, 1);
     let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
@@ -202,6 +226,8 @@ fn main(world: World) -> [] int {
                                             console.write_all(i, "exists");
                                             console.newline(i);
                                         }
+                                    } else if bytes.equal(arg(a, 1), "status") {
+                                        code = status_of(h, i, d);
                                     } else {
                                         code = command(h, i, a, d);
                                     }

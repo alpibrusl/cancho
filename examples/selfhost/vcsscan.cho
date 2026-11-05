@@ -1,0 +1,371 @@
+edition 9;
+module selfhost.vcsscan;
+
+// vcsscan.cho -- the working copy as a tree (`docs/vcs-native.md` section 6, slice b4c): a port of `Repo::scan` and `Ignore` of `crates/cancho-vcs/src/repo.rs`.
+// Every file under a directory handle is read and named by its blob id, with its mode (100755 if any execute bit is set, else 100644), and the answer is the
+// text of a tree (`vcsobj.cho`: lines `MODE BLOB PATH`) in the order of the bytes of the paths, nothing written.
+//
+// `.canchoignore` at the root, one rule to a line (blank lines and lines starting with `#` are skipped): `NAME/` a directory of that name anywhere, `*SUFFIX` a
+// name that ends so (anywhere, directories too), `A/B` a path (and what is under it), `NAME` an entry of that name anywhere; `.cancho` and `.git` at the top
+// are never versioned. Only ASCII white space is trimmed from a rule (the Rust command trims what Unicode calls white space).
+//
+// A status: 0 ok; 1 `path-escapes` and 31 `path-unsupported` (a path `vcsobj.check_path` refuses); 10 io; 13 `file-too-large`; 30 `symlink`: a symbolic link is
+// met, whose target cannot be read (there is no `readlink` builtin: #685), so a tree of a working copy with a link is not made. The Rust command makes it
+// (mode 120000, the blob of the target); that is a difference until #685, said by the status. A name that is not UTF-8 is not refused here (the Rust command
+// refuses it as `path-unsupported`).
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import selfhost.vcsobj;
+import selfhost.vcsstore;
+
+pub fn tag(status: int) -> [] &static [byte] {
+    if status == 1 {
+        return vcsobj.tag(1);
+    }
+    if status == 31 {
+        return vcsobj.tag(2);
+    }
+    if status == 30 {
+        return "symlink";
+    }
+    return vcsstore.tag(status);
+}
+
+// ---- .canchoignore -----------------------------------------------------------------------------------------------------------
+
+fn white(c: int) -> [] bool {
+    return c == 32 || c == 9 || c == 13 || c == 10;
+}
+
+fn trimmed_line[&t](text: &t [byte]) -> [] &t [byte] {
+    var start = 0;
+    var end = len(text);
+    while start < end && white(int_of(text[start])) {
+        start = start + 1;
+    }
+    while end > start && white(int_of(text[end - 1])) {
+        end = end - 1;
+    }
+    return text[start..end];
+}
+
+fn has_slash[&t](text: &t [byte]) -> [] bool {
+    var i = 0;
+    while i < len(text) {
+        if text[i] == byte_of(47) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Whether the rules `ig` skip the entry `rel` (a relative path; `is_dir` says if it is a directory).
+pub fn skips[&g, &r](ig: &g [byte], rel: &r [byte], is_dir: bool) -> [] bool {
+    if bytes.equal(rel, ".cancho") || bytes.equal(rel, ".git") {
+        return true;
+    }
+    var cut = len(rel);
+    while cut > 0 && rel[cut - 1] != byte_of(47) {
+        cut = cut - 1;
+    }
+    let name = rel[cut..len(rel)];
+    var at = 0;
+    while at <= len(ig) {
+        var end = at;
+        while end < len(ig) && ig[end] != byte_of(10) {
+            end = end + 1;
+        }
+        let line = trimmed_line(ig[at..end]);
+        if len(line) > 0 && line[0] != byte_of(35) {
+            if line[len(line) - 1] == byte_of(47) {
+                if is_dir && bytes.equal(name, line[0..len(line) - 1]) {
+                    return true;
+                }
+            } else if line[0] == byte_of(42) {
+                if bytes.ends_with(name, line[1..len(line)]) {
+                    return true;
+                }
+            } else if has_slash(line) {
+                var from = 0;
+                while from < len(line) && line[from] == byte_of(47) {
+                    from = from + 1;
+                }
+                let p = line[from..len(line)];
+                if bytes.equal(rel, p) || len(rel) > len(p) && bytes.starts_with(rel, p) && rel[len(p)] == byte_of(47) {
+                    return true;
+                }
+            } else if bytes.equal(name, line) {
+                return true;
+            }
+        }
+        at = end + 1;
+    }
+    return false;
+}
+
+// ---- the scan ----------------------------------------------------------------------------------------------------------------
+
+// The kind of the entry `name` of `dir`: the listing's, or `dir_stat`'s when the file system did not say.
+fn kind_of[&d, &n](dir: &d Dir, name: &n [byte], listed: int) -> [dir_read] int {
+    if listed != 0 {
+        return listed;
+    }
+    match dir_stat(dir, name) {
+        DirStat::Ok(kind, size, mtime) => {
+            return kind;
+        }
+        DirStat::Failed(e) => {
+            return 4;
+        }
+    }
+}
+
+// One line of a tree: the mode, the blob id of `content`, the path.
+fn add_entry[&h, &s, &c, &p](heap: &!h Heap, scratch: &!s [int], out: buffer.Buffer, mode: &static [byte], content: &c [byte], rel: &p [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, buffer.append(heap, out, mode), byte_of(32));
+    b = vcsobj.object_id(heap, scratch, "blob", content, b);
+    b = buffer.append(heap, buffer.push(heap, b, byte_of(32)), rel);
+    return buffer.push(heap, b, byte_of(10));
+}
+
+// The file `name` of `dir` as a line of a tree (its mode from the execute bits), or the status that stopped it: 13, 10, or those of `check_path`.
+fn file_entry[&h, &d, &s, &n, &p](heap: &!h Heap, dir: &d Dir, scratch: &!s [int], out: buffer.Buffer, name: &n [byte], rel: &p [byte]) -> [heap, dir_read, file_read] (buffer.Buffer, int, int) {
+    let read = vcsstore.read_text(heap, dir, name);
+    let (content, status, errno) = vcsstore.parts(read);
+    var b = out;
+    var code = status;
+    var why = errno;
+    if status == 0 {
+        var big = false;
+        var mode = "100644";
+        borrow content as &cb in {
+            big = len(buffer.bytes(cb)) > vcsstore.max_blob();
+            if !big {
+                match dir_mode(dir, name) {
+                    Done::Ok(bits) => {
+                        if bits & 73 != 0 {
+                            mode = "100755";
+                        }
+                    }
+                    Done::Failed(e) => {
+                        code = 10;
+                        why = e;
+                    }
+                }
+                let paths = vcsobj.check_path(rel);
+                if paths == 1 {
+                    code = 1;
+                } else if paths == 2 {
+                    // `vcsstore` uses 2 for "absent", so `path-unsupported` is 31 here.
+                    code = 31;
+                }
+                if code == 0 {
+                    b = add_entry(heap, scratch, b, mode, buffer.bytes(cb), rel);
+                }
+            }
+        }
+        if big {
+            code = 13;
+        }
+    }
+    buffer.drop(heap, content);
+    return (b, code, why);
+}
+
+// The entries under `dir` (a directory whose path from the root is `prefix`, empty for the root): lines are appended to `out` in no particular order.
+fn scan_dir[&h, &d, &s, &p, &g](heap: &!h Heap, dir: &d Dir, prefix: &p [byte], ig: &g [byte], scratch: &!s [int], out: buffer.Buffer) -> [heap, dir_read, file_read] (buffer.Buffer, int, int) {
+    let names = dirs.list(heap, dir, 100000000);
+    var b = out;
+    var code = 0;
+    var why = 0;
+    borrow names as &nr in {
+        if dirs.failed(nr) != 0 {
+            code = 10;
+            why = dirs.failed(nr);
+        }
+        var i = 0;
+        while i < dirs.count(nr) && code == 0 {
+            let name = dirs.name(nr, i);
+            let kind = kind_of(dir, name, dirs.kind(nr, i));
+            var rel = buffer.empty(heap, len(prefix) + len(name) + 1);
+            if len(prefix) > 0 {
+                rel = buffer.push(heap, buffer.append(heap, rel, prefix), byte_of(47));
+            }
+            rel = buffer.append(heap, rel, name);
+            borrow rel as &rb in {
+                let path = buffer.bytes(rb);
+                if skips(ig, path, kind == 2) {
+                } else if kind == 2 {
+                    match dir_enter(dir, name) {
+                        DirOpened::Ok(child) => {
+                            borrow child as &cd in {
+                                let (more, c, w) = scan_dir(heap, cd, path, ig, scratch, b);
+                                b = more;
+                                code = c;
+                                why = w;
+                            }
+                            dir_close(child);
+                        }
+                        DirOpened::Failed(e) => {
+                            code = 10;
+                            why = e;
+                        }
+                    }
+                } else if kind == 3 {
+                    code = 30;
+                } else if kind == 1 {
+                    let (more, c, w) = file_entry(heap, dir, scratch, b, name, path);
+                    b = more;
+                    code = c;
+                    why = w;
+                }
+            }
+            buffer.drop(heap, rel);
+            i = i + 1;
+        }
+    }
+    dirs.drop(heap, names);
+    return (b, code, why);
+}
+
+// ---- order -------------------------------------------------------------------------------------------------------------------
+
+// Where the line that starts at `at` ends (its newline).
+fn line_end[&t](text: &t [byte], at: int) -> [] int {
+    var i = at;
+    while i < len(text) && text[i] != byte_of(10) {
+        i = i + 1;
+    }
+    return i;
+}
+
+fn order_of[&t](text: &t [byte], a: int, b: int) -> [] int {
+    return bytes.compare(text[a + 72..line_end(text, a)], text[b + 72..line_end(text, b)]);
+}
+
+// One pass of a merge sort: runs of `width` lines of `from` (their starts) merged two by two into `to`.
+fn merge_pass[&t, &f, &o](text: &t [byte], from: &f [int], to: &!o [int], n: int, width: int) -> [] int {
+    var lo = 0;
+    while lo < n {
+        var mid = lo + width;
+        if mid > n {
+            mid = n;
+        }
+        var hi = lo + 2 * width;
+        if hi > n {
+            hi = n;
+        }
+        var i = lo;
+        var j = mid;
+        var k = lo;
+        while i < mid && j < hi {
+            if order_of(text, from[i], from[j]) <= 0 {
+                to[k] = from[i];
+                i = i + 1;
+            } else {
+                to[k] = from[j];
+                j = j + 1;
+            }
+            k = k + 1;
+        }
+        while i < mid {
+            to[k] = from[i];
+            i = i + 1;
+            k = k + 1;
+        }
+        while j < hi {
+            to[k] = from[j];
+            j = j + 1;
+            k = k + 1;
+        }
+        lo = lo + 2 * width;
+    }
+    return 0;
+}
+
+// The lines of `text` in the order of the bytes of their paths (a tree must be so).
+pub fn sorted[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    var n = 0;
+    var at = 0;
+    while at < len(text) {
+        n = n + 1;
+        at = line_end(text, at) + 1;
+    }
+    var out = buffer.empty(heap, len(text) + 1);
+    if n == 0 {
+        return out;
+    }
+    let first = box_slice(heap, n, 0);
+    let second = box_slice(heap, n, 0);
+    borrow mut first as &!fa in {
+        borrow mut second as &!fb in {
+            let a = contents(fa);
+            let b = contents(fb);
+            var k = 0;
+            at = 0;
+            while at < len(text) {
+                a[k] = at;
+                k = k + 1;
+                at = line_end(text, at) + 1;
+            }
+            var width = 1;
+            var in_a = true;
+            while width < n {
+                if in_a {
+                    merge_pass(text, a, b, n, width);
+                } else {
+                    merge_pass(text, b, a, n, width);
+                }
+                in_a = !in_a;
+                width = width * 2;
+            }
+            k = 0;
+            while k < n {
+                var start = a[k];
+                if !in_a {
+                    start = b[k];
+                }
+                out = buffer.append(heap, out, text[start..line_end(text, start) + 1]);
+                k = k + 1;
+            }
+        }
+    }
+    unbox_slice(heap, first);
+    unbox_slice(heap, second);
+    return out;
+}
+
+// The working copy beneath `root` as the text of a tree, sorted. `scratch` is `vcsobj.scratch_size()` integers.
+pub fn scan[&h, &d, &s](heap: &!h Heap, root: &d Dir, scratch: &!s [int]) -> [heap, dir_read, file_read] vcsstore.Object {
+    let ignore = vcsstore.read_text(heap, root, ".canchoignore");
+    let (rules, rs, re) = vcsstore.parts(ignore);
+    if rs != 0 && rs != 2 {
+        buffer.drop(heap, rules);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: rs, errno: re };
+    }
+    var lines = buffer.empty(heap, 0);
+    var code = 0;
+    var why = 0;
+    borrow rules as &rb in {
+        let (found, c, w) = scan_dir(heap, root, "", buffer.bytes(rb), scratch, buffer.empty(heap, 4096));
+        buffer.drop(heap, lines);
+        lines = found;
+        code = c;
+        why = w;
+    }
+    buffer.drop(heap, rules);
+    if code != 0 {
+        buffer.drop(heap, lines);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: code, errno: why };
+    }
+    var tree = buffer.empty(heap, 0);
+    borrow lines as &lb in {
+        buffer.drop(heap, tree);
+        tree = sorted(heap, buffer.bytes(lb));
+    }
+    buffer.drop(heap, lines);
+    return vcsstore.Object { bytes: tree, status: 0, errno: 0 };
+}
