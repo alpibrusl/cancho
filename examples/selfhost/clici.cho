@@ -37,7 +37,7 @@ pub res struct Step {
 }
 
 // `{ "rule": R, "message": M }` appended to `items` (a comma first if it is not the first of `count`).
-fn finding[&h, &r, &m](heap: &!h Heap, items: buffer.Buffer, count: int, rule: &r [byte], message: &m [byte]) -> [heap] (buffer.Buffer, int) {
+pub fn finding[&h, &r, &m](heap: &!h Heap, items: buffer.Buffer, count: int, rule: &r [byte], message: &m [byte]) -> [heap] (buffer.Buffer, int) {
     var out = items;
     if count > 0 {
         out = buffer.append(heap, out, ", ");
@@ -128,7 +128,7 @@ fn words[&h, &a, &c](heap: &!h Heap, args: &a Args, command: &c [byte], which: i
 }
 
 // This command line, run as a child with `argv`: what it wrote and how it ended (`cliprog.Captured`).
-fn child_run[&h, &i, &x, &c, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, args: &a Args, argv: buffer.Buffer) -> [heap, err_write, args, exec(""), clock, poll] cliprog.Captured {
+pub fn child_run[&h, &i, &x, &c, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, args: &a Args, argv: buffer.Buffer) -> [heap, err_write, args, exec(""), clock, poll] cliprog.Captured {
     var held_out = buffer.empty(heap, 0);
     var held_err = buffer.empty(heap, 0);
     var held_kind = 5;
@@ -326,12 +326,12 @@ fn test_or_skip[&h, &i, &x, &c, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""
 // line of text (`bounded=true`, `label:{ "name": ... }`, `never:the heap`, `symbol:...`, `unbounded:...`), and a change is a fact in one set and not the other.
 // `pure`, `functions`, `effects` and the folding counts are not facts: they move with every refactor, and the labels they would restate are kept.
 
-fn starts[&t, &w](t: &t [byte], word: &w [byte]) -> [] bool {
+pub fn starts[&t, &w](t: &t [byte], word: &w [byte]) -> [] bool {
     return len(t) >= len(word) && lc.spells(t, 0, len(word), word);
 }
 
 // `t` without the spaces at its ends and a carriage return.
-fn trim[&t](t: &t [byte]) -> [] &t [byte] {
+pub fn trim[&t](t: &t [byte]) -> [] &t [byte] {
     var a = 0;
     var b = len(t);
     while a < b && (int_of(t[a]) == 32 || int_of(t[a]) == 9) {
@@ -343,7 +343,7 @@ fn trim[&t](t: &t [byte]) -> [] &t [byte] {
     return t[a..b];
 }
 
-fn no_comma[&t](t: &t [byte]) -> [] &t [byte] {
+pub fn no_comma[&t](t: &t [byte]) -> [] &t [byte] {
     if len(t) > 0 && int_of(t[len(t) - 1]) == 44 {
         return t[0..len(t) - 1];
     }
@@ -436,7 +436,7 @@ fn no_return[&t](t: &t [byte]) -> [] &t [byte] {
 }
 
 // Whether `line` is one whole line of `set`.
-fn has_line[&s, &l](set: &s [byte], line: &l [byte]) -> [] bool {
+pub fn has_line[&s, &l](set: &s [byte], line: &l [byte]) -> [] bool {
     var start = 0;
     var at = 0;
     while at <= len(set) {
@@ -566,7 +566,7 @@ fn old_accepted[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer
     return out;
 }
 
-fn valid_json[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] bool {
+pub fn valid_json[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] bool {
     let area = box_slice(heap, jsonread.size_for(text), 0);
     var good = false;
     borrow mut area as &!ab in {

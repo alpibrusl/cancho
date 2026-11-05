@@ -6,6 +6,7 @@ module selfhost.cibase;
 
 import std.buffer;
 import selfhost.clibase;
+import selfhost.cliprog;
 
 pub fn file_name() -> [] &static [byte] {
     return "cancho.authority.json";
@@ -20,5 +21,11 @@ pub fn read[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, fs_read(""), file_r
 // The file at `path`: its text, and 0 or why it could not be read (2 is a file that is not there).
 pub fn read_path[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] (buffer.Buffer, int) {
     let clibase.Contents { bytes, failed } = clibase.read_file(heap, fs, path);
+    return (bytes, failed);
+}
+
+// A source file of a program as `-g` names it (`hello.cho`, or `<std>/io.cho` for the library in this binary): its text, and 0 or why not.
+pub fn read_source[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] (buffer.Buffer, int) {
+    let clibase.Contents { bytes, failed } = cliprog.read_or_extra(heap, fs, path, false, "");
     return (bytes, failed);
 }

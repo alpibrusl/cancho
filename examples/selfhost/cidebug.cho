@@ -84,6 +84,30 @@ fn symbol_of[&h, &r](heap: &!h Heap, text: &r [byte], from: int, to: int) -> [he
     return out;
 }
 
+// `t` without the spaces at its ends.
+fn trimmed[&t](t: &t [byte]) -> [] &t [byte] {
+    var a = 0;
+    var b = len(t);
+    while a < b && (lc.at(t, a) == ' ' || lc.at(t, a) == 9) {
+        a = a + 1;
+    }
+    while b > a && (lc.at(t, b - 1) == ' ' || lc.at(t, b - 1) == 13) {
+        b = b - 1;
+    }
+    return t[a..b];
+}
+
+fn has_space[&t](t: &t [byte]) -> [] bool {
+    var k = 0;
+    while k < len(t) {
+        if lc.at(t, k) == ' ' {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
 // A location node for the offset: `!<id> = !DILocation(line: L, column: C, scope: !SP)`.
 fn location[&h, &l, &n](heap: &!h Heap, meta: buffer.Buffer, id: int, laid: &l [byte], lens: &n [int], offset: int, scope: int) -> [heap] buffer.Buffer {
     let place = diagnose.locate(laid, lens, offset);
@@ -103,12 +127,13 @@ pub fn run[&h, &r, &l, &n, &y](heap: &!h Heap, ir: &r [byte], laid: &l [byte], l
     var out = buffer.empty(heap, len(ir) + len(ir) / 4 + 4096);
     var meta = buffer.empty(heap, 4096);
     let files = len(lens);
-    var next = 4 + files;
+    var next = 5 + files;
     var scope = 0 - 1;
     var here = 0 - 1;
     var in_function = false;
     var line = 0;
     var annotated = false;
+    var in_switch = false;
     while line < len(ir) {
         let eol = prune.line_end(ir, line);
         let text = ir[line..eol];
@@ -117,11 +142,22 @@ pub fn run[&h, &r, &l, &n, &y](heap: &!h Heap, ir: &r [byte], laid: &l [byte], l
             scope = 0 - 1;
             here = 0 - 1;
             let offset = function_offset(ir, eol);
-            if offset >= 0 && lc.spells(ir, eol - 2, eol, " {") {
-                // A function of the program: its subprogram, and the define line says so.
-                let place = diagnose.locate(laid, lens, offset);
+            if lc.spells(ir, eol - 2, eol, " {") {
+                // A function of the program, from its marker, or else one of the support code (the entry, the traps, the runtime): a subprogram of its own in
+                // a file called `<cancho runtime>`, because code of the program that is inlined into a function with none loses its lines.
+                var place = diagnose.Place { file: files, line: 1, column: 1, line_from: 0, line_to: 0 };
+                var name = buffer.empty(heap, 0);
                 let symbol = symbol_of(heap, ir, line, eol);
-                let name = name_at(heap, laid, offset);
+                if offset >= 0 {
+                    place = diagnose.locate(laid, lens, offset);
+                    buffer.drop(heap, name);
+                    name = name_at(heap, laid, offset);
+                } else {
+                    borrow symbol as &sb0 in {
+                        buffer.drop(heap, name);
+                        name = buffer.append(heap, buffer.empty(heap, 16), buffer.bytes(sb0));
+                    }
+                }
                 scope = next;
                 next = next + 1;
                 meta = buffer.append(heap, meta, "!");
@@ -150,6 +186,16 @@ pub fn run[&h, &r, &l, &n, &y](heap: &!h Heap, ir: &r [byte], laid: &l [byte], l
                 out = buffer.push_nat(heap, out, scope);
                 out = buffer.append(heap, out, " {\n");
                 annotated = true;
+                if offset < 0 {
+                    // The support code has no statements: one location, the top of its file.
+                    here = next;
+                    next = next + 1;
+                    meta = buffer.append(heap, meta, "!");
+                    meta = buffer.push_nat(heap, meta, here);
+                    meta = buffer.append(heap, meta, " = !DILocation(line: 1, column: 1, scope: !");
+                    meta = buffer.push_nat(heap, meta, scope);
+                    meta = buffer.append(heap, meta, ")\n");
+                }
             } else {
                 out = buffer.append(heap, buffer.append(heap, out, text), "\n");
             }
@@ -167,10 +213,25 @@ pub fn run[&h, &r, &l, &n, &y](heap: &!h Heap, ir: &r [byte], laid: &l [byte], l
                 scope = 0 - 1;
             }
             out = buffer.append(heap, out, text);
-            // An instruction: indented, and not a comment. It gets the location of the statement it is in.
-            if in_function && scope >= 0 && here >= 0 && len(text) > 2 && lc.at(text, 0) == ' ' && lc.at(text, 1) == ' ' && lc.at(text, 2) != ';' {
-                out = buffer.append(heap, out, ", !dbg !");
-                out = buffer.push_nat(heap, out, here);
+            // An instruction: a line that is not blank, a comment or a label (`name:`, no space in it), however it is indented (the library's code is written
+            // with none). It gets the location of the statement it is in. A `switch` is written over several lines and the location goes after its `]`.
+            if in_function && scope >= 0 && here >= 0 {
+                let t = trimmed(text);
+                var instruction = len(t) > 0 && lc.at(t, 0) != ';' && !(lc.at(t, len(t) - 1) == ':' && !has_space(t));
+                let ends = len(t) > 0 && lc.at(t, len(t) - 1) == ']';
+                if in_switch {
+                    instruction = ends;
+                    if ends {
+                        in_switch = false;
+                    }
+                } else if instruction && begins(t, 0, "switch ") && !ends {
+                    in_switch = true;
+                    instruction = false;
+                }
+                if instruction {
+                    out = buffer.append(heap, out, ", !dbg !");
+                    out = buffer.push_nat(heap, out, here);
+                }
             }
             out = buffer.push(heap, out, byte_of(10));
         }
@@ -181,7 +242,7 @@ pub fn run[&h, &r, &l, &n, &y](heap: &!h Heap, ir: &r [byte], laid: &l [byte], l
         return out;
     }
     out = buffer.append(heap, out, "\n!llvm.dbg.cu = !{!0}\n!llvm.module.flags = !{!1}\n");
-    out = buffer.append(heap, out, "!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !4, producer: \"cancho\", isOptimized: true, runtimeVersion: 0, emissionKind: LineTablesOnly)\n");
+    out = buffer.append(heap, out, "!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !4, producer: \"cancho\", isOptimized: true, runtimeVersion: 0, emissionKind: FullDebug)\n");
     out = buffer.append(heap, out, "!1 = !{i32 2, !\"Debug Info Version\", i32 3}\n!2 = !DISubroutineType(types: !3)\n!3 = !{null}\n");
     var f = 0;
     while f < files {
@@ -192,6 +253,9 @@ pub fn run[&h, &r, &l, &n, &y](heap: &!h Heap, ir: &r [byte], laid: &l [byte], l
         out = buffer.append(heap, out, ", directory: \".\")\n");
         f = f + 1;
     }
+    out = buffer.append(heap, out, "!");
+    out = buffer.push_nat(heap, out, 4 + files);
+    out = buffer.append(heap, out, " = !DIFile(filename: \"<cancho runtime>\", directory: \".\")\n");
     borrow meta as &mb in {
         out = buffer.append(heap, out, buffer.bytes(mb));
     }

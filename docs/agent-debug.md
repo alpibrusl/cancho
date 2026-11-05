@@ -153,11 +153,18 @@ not written), and the test does not compare it with an earlier compiler.
   and `column` is the statement's. An instruction before the first marker of
   a function (the `alloca`s) has the line of the function.
 * **No variables.** `trace`'s `locals` needs §3.2.
-* **A function folded into the C `main` has no subprogram.** `main` of the
-  three-function program is optimised into the entry wrapper (which has no
-  debug information), and `LineTablesOnly` keeps no inlined-subroutine DIEs,
-  so `gdb` cannot break on it by name; its lines are in the line table.
-  Under `-O0` (`trace`'s build) nothing is inlined.
+* **Corrected (by `agent-profile.md` §9): every function has a subprogram.**
+  This section first said a function folded into the C `main` had none, and
+  the cause was that the entry wrapper and the support code had no debug
+  information, so the program's code inlined into them lost its lines
+  (valgrind saw `fl=???`). `cidebug.cho` now gives each `define` a subprogram
+  (the support code in a file called `<cancho runtime>`, line 1), the kind is
+  `FullDebug` and not `LineTablesOnly`, and every instruction that is not a
+  comment or a label carries a location, whatever its indentation (the
+  library's crypto code is written with none, and `clang` dropped all debug
+  information for a `--std` program until that was found; a multi-line
+  `switch` takes its location after the `]`). Even so the optimiser leaves
+  line 0 on what it hoists or merges (`agent-profile.md` §9).
 * **`-g` is `build` only**, not `run` or `test`; and not in
   `introspect`/`--help` (the same reason as `ci`, `agent-ci.md` §10).
 * **Quadratic.** Each location asks `diagnose.locate` for a line, which

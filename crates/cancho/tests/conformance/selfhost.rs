@@ -26,6 +26,7 @@ mod debug;
 mod messages;
 mod origin;
 mod parity;
+mod profile;
 mod statics;
 mod store;
 mod vcs;
@@ -386,6 +387,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "cibase.cho",
         "ciinit.cho",
         "cidebug.cho",
+        "cliprofile.cho",
         "version.cho",
         "jsonwrite.cho",
         "cliorigin.cho",

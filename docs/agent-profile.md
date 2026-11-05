@@ -1,6 +1,6 @@
 # `cancho profile`: a profiler whose answer is a number an agent can gate on
 
-> **Status: design. Nothing is built.** Written before the code. Measured
+> **Status: slice 1 built (§9): the profile, the allocator section and the baseline. Gates 1, 4, 5 and 7 of §7 are not met.** Written before the code. Measured
 > facts are marked; everything else is a **gate** in §7, not a result.
 >
 > **Written in cancho.** `cancho profile` is a slice of the command line in
@@ -189,3 +189,83 @@ a program that did not complete. A slow program is not a failure.
 | Sampling (`perf`) on hosts without valgrind | no PMU in the VMs the project used; a `--metric time` fallback is what exists |
 | Memory high-water (`massif`) | `allocations` is calls and bytes; peak is a different question with no asker |
 | Profile-guided optimisation | the backend always runs `-O2`, and a profile consumed by the compiler is a design of its own |
+
+## 9. Slice 1, as built (`cliprofile.cho`)
+
+```sh
+cancho profile [--std] [--std-dir DIR] [--unoptimized] [--top N] [--record FILE] [--baseline FILE]
+               [--factor F] [--strict] FILE... [-- ARGS...]
+```
+
+In cancho (`examples/selfhost/cliprofile.cho`, about 800 lines, a dispatch in
+`cli.cho`); no Rust. It builds the program with `-g` as a child of this command
+line, runs it under `valgrind --tool=callgrind --compress-strings=no
+--compress-pos=no`, reads the file callgrind wrote, and answers once. The
+program and the profile are written beside where it is run and taken away, also
+when the run fails (the test looks).
+
+**What building it changed in this document** (corrected in place):
+
+* **Callgrind's function names say nothing, and its inclusive costs are
+  gone.** The optimiser puts the whole program into the C `main` (the call
+  tree of `spin.cho` is `main` and libc, measured), so `fn=` names the
+  entry and nothing else, and `--read-inline-info=yes` changed nothing for
+  callgrind. What survives inlining is the *line*: each cost line carries a
+  `.cho` file and a line. So the profile attributes the cost of a line to
+  **the function whose `fn` it is under**, found by reading the source file
+  (`fn ` or `pub fn ` at the start of a line; the library's files are read
+  from the copy in this binary). Consequences: §3's `inclusive` and `calls` per
+  function are **not** in the answer (they would need the call tree), and
+  neither is `bytes` in `allocations` (callgrind does not count them).
+  A function with the same name twice in a file is two entries.
+* **At `-O2` most of a hot loop has no line.** Measured on `spin.cho` (a
+  loop of `i % 7`): of 15,118,961 instructions, **11,001,012 (73%) are at
+  line 0** or in the support file, which is where the optimiser puts what it
+  hoists, merges or vectorises; 4,000,000 are attributed. §2's "a profile of
+  the shipped binary is what is wanted" is true and does not help when the
+  shipped binary has lost its lines. So the answer has an `unattributed`
+  section, the finding `profile-mostly-unattributed` when it is over half, and
+  `--unoptimized`, which builds with `-O0` (`build -O0`, a flag of this command
+  line only): the same program is 44,123,661 instructions, 6,000,809 (14%)
+  unattributed, and `inner` is 38,001,600 of them. The counts then differ from
+  the shipped binary's by a factor (2.9 here), and a baseline is only
+  comparable with one recorded the same way.
+* **A baseline records `name@file`** (a line number would change with every
+  edit above it) and the total, one function to a line.
+* **Run it by a path**, not by a bare name or one with `..` (the finding
+  `profile-self-path`, exit 3), as `ci` (`agent-ci.md` §12).
+
+**Rules** (`rule` in `findings`; standard error as `RULE: sentence` for the
+ones with no answer to give): `profile-regressed`, `profile-improved`
+(a failure under `--strict`), `profile-new-hot` (a function over a hundredth of
+the run that the baseline lacks), `profile-baseline-missing`,
+`profile-baseline-unreadable`, `profile-mostly-unattributed`; on standard
+error `profile-unavailable` (no `/usr/bin/valgrind`, exit 3),
+`profile-failed` (the program did not end with 0, or no profile was written,
+exit 1), `profile-unwritable` (3), `profile-self-path` (3). A function is
+compared when it is a hundredth of the run or more; `--factor` is in hundredths
+(`1.3`, default; at least 1).
+
+**Measured (this document, Linux x86-64,
+`profile_in_cancho_counts_instructions_by_function_and_gates_on_a_baseline`,
+64 s, valgrind 3.22):**
+
+| claim | result |
+|---|---|
+| §7.2 the same program counts the same | two runs of `spin.cho` give byte-identical answers |
+| the parts add up | functions + `other` + `unattributed` + `external` equals the total, at `-O0`, at `-O2`, and with the library |
+| §7.4 attribution | `inner` is the first function, at its line, with over 80% of the run (a hand count of the loop is not made) |
+| §7.5 allocations | `std.buffer` grown to 100,000 bytes: 18 allocator calls, **17 at `reserve`** of `<std>/buffer.cho` and 1 at `empty` (doubling), found without being told where to look; the `region` finding of #391 is *not* reproduced (§7.5 stands open) |
+| baseline | the same run: no finding; twice the work: `profile-regressed` for `inner@spin.cho` and the total, exit 1; half: `profile-improved`, exit 0, exit 1 under `--strict`; `--factor 3` lets the slower run pass; a missing file, `not json`, `{}`, an empty file, a file with no functions and one with metric `seconds` are findings, never a crash |
+| `-g` finding that this needed | with the library, `clang` dropped all debug information (a call in the crypto support code had no `!dbg`: that text is not indented); `cidebug.cho` now annotates every instruction that is not a comment or a label (`agent-debug.md` §3.4) |
+
+**Not done:** §7.1 (agreement with `tls_perf.py`), §7.3 (counts with and
+without `-g`: the disassembly is the same, `agent-debug.md` §3.4, but the
+counts were not compared), §7.6 beyond the six bad baselines (no fuzzer, no
+`callgrind.out` fuzz), §7.7 (`cancho authority` of the tool), §7.8; `--metric
+time`; a machine tag in the baseline (a baseline recorded on aarch64 is
+read on x86-64 and says everything regressed or improved); programs that
+read standard input (`--stdin`); a timeout (a program that does not end is
+waited for, up to the day `run_capture` allows). Callgrind makes a program
+20 to 50 times slower (not measured here: `spin.cho` is 15 million
+instructions and took 0.55 s with the build).
