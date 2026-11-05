@@ -1,0 +1,308 @@
+module selfhost.vcschange;
+
+// vcschange.cho -- the change object of `cancho vcs` (`docs/vcs-cli.md` section 3, `docs/vcs-native.md` section 6): one line of JSON in a fixed order, which
+// is what is hashed, so the writer must be byte for byte the one of `crates/cancho-vcs/src/change.rs` (serde_json, no spaces):
+//
+//   {"tree":T,"parents":[P,..],"author":A,"time":N,"tz":Z[,"intent":{"prompt":S[,"model":S][,"session":S][,"issue":S]}]
+//    [,"decls":[{"path":S,"name":S,"kind":S},..]][,"edits":[{"path":S,"old":S,"new":S},..]][,"attestations":[S,..]]}
+//
+// An optional part is left out when it is empty, so adding a part later does not change the id of an old change. The `git` part (what a git commit
+// has that a change must keep to get the same git id) is the bridge's and is not written or read here yet.
+//
+// Writing: `open`, then in this order `intent`, `decls_open` with one `decl` each and `list_close`, `edits_open`/`edit`/`list_close`,
+// `attestations_open`/`attestation`/`list_close`, then `close`. A text is escaped as serde_json escapes it (`jsonwrite.string`: `"` `\`, the
+// control characters as `\n \r \t \b \f` or `\u00XX`, every other byte, UTF-8 included, as it is). An optional text that is empty is absent.
+//
+// Reading: `read` parses and checks what `Change::load` checks (an object with a 64-digit tree, at most two parents of 64 digits, an author and a tz that
+// are strings, a time that is an integer); the accessors then answer spans of the source text. **A string is answered as it is written, escapes
+// included**: written back with no change it is the same bytes serde_json would write for the same text, which is all `log` and `show` need; a
+// caller that must compare the text decodes it first (`jsonread.decode_into`).
+
+import std.buffer;
+import std.bytes;
+import selfhost.jsonread;
+import selfhost.jsonwrite;
+import selfhost.vcsobj;
+
+// ---- writing -----------------------------------------------------------------------------------------------------------------
+
+fn key[&h, &k](heap: &!h Heap, out: buffer.Buffer, name: &k [byte]) -> [heap] buffer.Buffer {
+    var b = jsonwrite.string(heap, out, name);
+    return buffer.push(heap, b, byte_of(58));
+}
+
+fn number[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    if n < 0 {
+        return buffer.push_nat(heap, buffer.push(heap, out, byte_of(45)), 0 - n);
+    }
+    return buffer.push_nat(heap, out, n);
+}
+
+// `{"tree":..,"parents":[..],"author":..,"time":..,"tz":..`: `parents` is the ids one after the other, 64 digits each (none, one or two).
+pub fn open[&h, &t, &p, &a, &z](heap: &!h Heap, out: buffer.Buffer, tree: &t [byte], parents: &p [byte], author: &a [byte], time: int, tz: &z [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, "{\"tree\":");
+    b = jsonwrite.string(heap, b, tree);
+    b = buffer.append(heap, b, ",\"parents\":[");
+    var k = 0;
+    while k * 64 < len(parents) {
+        if k > 0 {
+            b = buffer.push(heap, b, byte_of(44));
+        }
+        b = jsonwrite.string(heap, b, parents[k * 64..k * 64 + 64]);
+        k = k + 1;
+    }
+    b = buffer.append(heap, b, "],\"author\":");
+    b = jsonwrite.string(heap, b, author);
+    b = buffer.append(heap, b, ",\"time\":");
+    b = number(heap, b, time);
+    b = buffer.append(heap, b, ",\"tz\":");
+    return jsonwrite.string(heap, b, tz);
+}
+
+fn optional[&h, &k, &v](heap: &!h Heap, out: buffer.Buffer, name: &k [byte], value: &v [byte]) -> [heap] buffer.Buffer {
+    if len(value) == 0 {
+        return out;
+    }
+    var b = buffer.push(heap, out, byte_of(44));
+    b = key(heap, b, name);
+    return jsonwrite.string(heap, b, value);
+}
+
+// `,"intent":{"prompt":..` and the model, session and issue that are not empty.
+pub fn intent[&h, &p, &m, &s, &i](heap: &!h Heap, out: buffer.Buffer, prompt: &p [byte], model: &m [byte], session: &s [byte], issue: &i [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, ",\"intent\":{\"prompt\":");
+    b = jsonwrite.string(heap, b, prompt);
+    b = optional(heap, b, "model", model);
+    b = optional(heap, b, "session", session);
+    b = optional(heap, b, "issue", issue);
+    return buffer.push(heap, b, byte_of(125));
+}
+
+// A list of objects or strings, under the key `name`: `,"name":[`, the items (each says whether it is the first), then `]`.
+pub fn list_open[&h, &k](heap: &!h Heap, out: buffer.Buffer, name: &k [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, out, byte_of(44));
+    b = key(heap, b, name);
+    return buffer.push(heap, b, byte_of(91));
+}
+
+pub fn list_close[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    return buffer.push(heap, out, byte_of(93));
+}
+
+fn separator[&h](heap: &!h Heap, out: buffer.Buffer, first: bool) -> [heap] buffer.Buffer {
+    if first {
+        return out;
+    }
+    return buffer.push(heap, out, byte_of(44));
+}
+
+pub fn decls_open[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    return list_open(heap, out, "decls");
+}
+
+pub fn edits_open[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    return list_open(heap, out, "edits");
+}
+
+pub fn attestations_open[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    return list_open(heap, out, "attestations");
+}
+
+// What a change did to one declaration: `kind` is `added`, `removed`, `signature-changed` or `body-changed`.
+pub fn decl[&h, &p, &n, &k](heap: &!h Heap, out: buffer.Buffer, first: bool, path: &p [byte], name: &n [byte], kind: &k [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, separator(heap, out, first), "{\"path\":");
+    b = jsonwrite.string(heap, b, path);
+    b = buffer.append(heap, b, ",\"name\":");
+    b = jsonwrite.string(heap, b, name);
+    b = buffer.append(heap, b, ",\"kind\":");
+    b = jsonwrite.string(heap, b, kind);
+    return buffer.push(heap, b, byte_of(125));
+}
+
+// An anchored edit: `old` occurs exactly once in the file and is replaced by `new`.
+pub fn edit[&h, &p, &o, &n](heap: &!h Heap, out: buffer.Buffer, first: bool, path: &p [byte], old: &o [byte], new: &n [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, separator(heap, out, first), "{\"path\":");
+    b = jsonwrite.string(heap, b, path);
+    b = buffer.append(heap, b, ",\"old\":");
+    b = jsonwrite.string(heap, b, old);
+    b = buffer.append(heap, b, ",\"new\":");
+    b = jsonwrite.string(heap, b, new);
+    return buffer.push(heap, b, byte_of(125));
+}
+
+pub fn attestation[&h, &t](heap: &!h Heap, out: buffer.Buffer, first: bool, text: &t [byte]) -> [heap] buffer.Buffer {
+    return jsonwrite.string(heap, separator(heap, out, first), text);
+}
+
+pub fn close[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    return buffer.push(heap, out, byte_of(125));
+}
+
+// ---- reading -----------------------------------------------------------------------------------------------------------------
+
+pub fn status_ok() -> [] int {
+    return 0;
+}
+
+// `object-corrupt`, the tag of `vcsobj.tag(3)`.
+pub fn status_corrupt() -> [] int {
+    return 3;
+}
+
+// The value of the member `name` of the object `obj` of `jm`, or -1.
+fn field[&j, &x, &k](jm: &!j [int], src: &x [byte], obj: int, name: &k [byte]) -> [] int {
+    if jsonread.kind(jm, obj) != jsonread.k_object() {
+        return 0 - 1;
+    }
+    var m = jsonread.first(jm, obj);
+    while m >= 0 {
+        let k = jm[16 + 6 * m + 3];
+        if len(name) == jsonread.end(jm, k) - jsonread.start(jm, k) - 2 && bytes.equal(src[jsonread.start(jm, k) + 1..jsonread.end(jm, k) - 1], name) {
+            return jm[16 + 6 * m + 4];
+        }
+        m = jsonread.next(jm, m);
+    }
+    return 0 - 1;
+}
+
+fn is_text[&j](jm: &!j [int], id: int) -> [] bool {
+    return id >= 0 && jsonread.kind(jm, id) == jsonread.k_string();
+}
+
+// The raw text of the string `id` (without its quotes).
+fn raw[&j, &x](jm: &!j [int], src: &x [byte], id: int) -> [] &x [byte] {
+    return src[jsonread.start(jm, id) + 1..jsonread.end(jm, id) - 1];
+}
+
+// Whether the string `id` is an id (64 digits; no escape can be part of one).
+fn is_id_text[&j, &x](jm: &!j [int], src: &x [byte], id: int) -> [] bool {
+    return is_text(jm, id) && vcsobj.is_id(raw(jm, src, id));
+}
+
+// Parse `src` into `jm` (`jsonread.size_for(src)` integers) and check it is a change: 0, or 3 (`object-corrupt`).
+pub fn read[&j, &x](jm: &!j [int], src: &x [byte]) -> [] int {
+    if jsonread.read(jm, src) != 0 {
+        return 3;
+    }
+    let root = jm[1];
+    if jsonread.kind(jm, root) != jsonread.k_object() {
+        return 3;
+    }
+    if !is_id_text(jm, src, field(jm, src, root, "tree")) {
+        return 3;
+    }
+    let parents = field(jm, src, root, "parents");
+    if parents < 0 || jsonread.kind(jm, parents) != jsonread.k_array() || jsonread.count(jm, parents) > 2 {
+        return 3;
+    }
+    var p = jsonread.first(jm, parents);
+    while p >= 0 {
+        if !is_id_text(jm, src, p) {
+            return 3;
+        }
+        p = jsonread.next(jm, p);
+    }
+    if !is_text(jm, field(jm, src, root, "author")) || !is_text(jm, field(jm, src, root, "tz")) {
+        return 3;
+    }
+    let time = field(jm, src, root, "time");
+    if time < 0 || jsonread.kind(jm, time) != jsonread.k_int() {
+        return 3;
+    }
+    return 0;
+}
+
+pub fn tree[&j, &x](jm: &!j [int], src: &x [byte]) -> [] &x [byte] {
+    return raw(jm, src, field(jm, src, jm[1], "tree"));
+}
+
+pub fn author[&j, &x](jm: &!j [int], src: &x [byte]) -> [] &x [byte] {
+    return raw(jm, src, field(jm, src, jm[1], "author"));
+}
+
+pub fn tz[&j, &x](jm: &!j [int], src: &x [byte]) -> [] &x [byte] {
+    return raw(jm, src, field(jm, src, jm[1], "tz"));
+}
+
+// The time, as the reader keeps an integer.
+pub fn time[&j, &x](jm: &!j [int], src: &x [byte]) -> [] int {
+    return jsonread.first(jm, field(jm, src, jm[1], "time"));
+}
+
+pub fn parent_count[&j, &x](jm: &!j [int], src: &x [byte]) -> [] int {
+    return jsonread.count(jm, field(jm, src, jm[1], "parents"));
+}
+
+// The `n`th parent (counting from 0) of a change that `read` accepted and that has more than `n`.
+pub fn parent[&j, &x](jm: &!j [int], src: &x [byte], n: int) -> [] &x [byte] {
+    var p = jsonread.first(jm, field(jm, src, jm[1], "parents"));
+    var k = 0;
+    while k < n && p >= 0 {
+        p = jsonread.next(jm, p);
+        k = k + 1;
+    }
+    return raw(jm, src, p);
+}
+
+// Whether the change carries an intent, and its parts: the raw text of one that is a string, empty when absent.
+pub fn has_intent[&j, &x](jm: &!j [int], src: &x [byte]) -> [] bool {
+    return jsonread.kind(jm, field(jm, src, jm[1], "intent")) == jsonread.k_object();
+}
+
+pub fn intent_part[&j, &x, &k](jm: &!j [int], src: &x [byte], name: &k [byte]) -> [] &x [byte] {
+    let id = field(jm, src, field(jm, src, jm[1], "intent"), name);
+    if !is_text(jm, id) {
+        return src[0..0];
+    }
+    return raw(jm, src, id);
+}
+
+// How many items the list `name` (`decls`, `edits`, `attestations`) has; 0 when absent.
+pub fn list_count[&j, &x, &k](jm: &!j [int], src: &x [byte], name: &k [byte]) -> [] int {
+    let id = field(jm, src, jm[1], name);
+    if jsonread.kind(jm, id) != jsonread.k_array() {
+        return 0;
+    }
+    return jsonread.count(jm, id);
+}
+
+// The raw text of string `part` of item `n` of the list `name`, or the item itself when `part` is empty (an attestation is a string).
+pub fn list_item[&j, &x, &k, &q](jm: &!j [int], src: &x [byte], name: &k [byte], n: int, part: &q [byte]) -> [] &x [byte] {
+    var item = jsonread.first(jm, field(jm, src, jm[1], name));
+    var k = 0;
+    while k < n && item >= 0 {
+        item = jsonread.next(jm, item);
+        k = k + 1;
+    }
+    if len(part) == 0 {
+        if is_text(jm, item) {
+            return raw(jm, src, item);
+        }
+        return src[0..0];
+    }
+    let id = field(jm, src, item, part);
+    if !is_text(jm, id) {
+        return src[0..0];
+    }
+    return raw(jm, src, id);
+}
+
+// The first line of the intent prompt as written (the part up to the first `\n` escape, without a `\r` escape before it): what `log` lists.
+pub fn subject[&j, &x](jm: &!j [int], src: &x [byte]) -> [] &x [byte] {
+    let p = intent_part(jm, src, "prompt");
+    var i = 0;
+    while i < len(p) {
+        if p[i] == byte_of(92) && i + 1 < len(p) {
+            if p[i + 1] == byte_of(110) {
+                if i >= 2 && p[i - 2] == byte_of(92) && p[i - 1] == byte_of(114) {
+                    return p[0..i - 2];
+                }
+                return p[0..i];
+            }
+            i = i + 2;
+        } else {
+            i = i + 1;
+        }
+    }
+    return p;
+}

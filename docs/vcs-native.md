@@ -121,8 +121,8 @@ command wrote:
 | piece | what | state |
 |---|---|---|
 | b1 | `vcsobj.cho`: the object id, `is_id`, `check_path`, the text of a tree (check, find, walk) | **built**, below |
-| b2 | the change object (JSON in V1's field order, read and written), `intent`, `time`/`tz`; refs and `HEAD`; `refs/*.log` | next |
-| b3 | the store on disk: write an object atomically (temporary name, `file_sync`, `dir_rename`, `dir_sync`), read one and re-hash it; the ref compare-and-swap under a lock file; `init` | next; needs the primitives that exist, not the five of the issues |
+| b2 | `vcschange.cho`: the change object (JSON in V1's field order, written and read) | **built**, below; refs, `HEAD` and `refs/*.log` move to b3 |
+| b3 | refs, `HEAD`, the log; the store on disk: write an object atomically (temporary name, `file_sync`, `dir_rename`, `dir_sync`), read one and re-hash it; the ref compare-and-swap under a lock file; `init` | next; needs the primitives that exist, not the five of the issues |
 | b4 | `record` (snapshot of the working copy to a tree, no gate yet), `log`, `show`, `status` | next; `status` over links needs #685, over removed directories #684 |
 
 Not in (b): `decls` (the declaration diff of a `.cho` file) and the gate, which need `ids` and `check` as functions over in-memory files (the `driver`
@@ -135,3 +135,12 @@ three-file repository, the paths `check_path` refuses and the trees `tree_status
 also a directory, an order), every prefix and every changed byte of a tree (a trap was found there and fixed: `tree_find` sliced a short line). Five mutants
 (the kind separator, the `..` test, the order, the link mode, the first-component test) each fail it. One difference from V1, on purpose, in the file's header:
 an unsorted tree is `object-corrupt` here and sorted silently there.
+
+**b2, measured.** `vcschange.cho` writes a change as `change.rs` does (serde_json: fixed field order, no spaces, `intent` parts, `decls`, `edits`, `attestations`
+left out when empty, serde's escapes, UTF-8 as it is) and reads one with the checks of `Change::load`. Against the Rust command: three changes it wrote
+(a model and a session; an issue and a prompt with quotes, a backslash, a tab, a newline and non-ASCII letters, two declarations and an attestation; an
+anchored edit; two authors, one with a non-ASCII name) are reproduced **byte for byte from their values**, their names are the BLAKE3 ids `vcsobj.cho`
+computes from them, and each field reads back. Every prefix and every changed byte of the three gives a status or an answer, never a trap. Seven mutants (the order of
+two intent parts, a key, the parent bound, the `\r` before a newline, the empty-is-absent rule, the sign of a time) each fail the tests; one survived at first
+(the `\r\n` subject) and a test was added. Not here: the `git` part of a change (the bridge's) and the decoded form of a string (strings are answered as written,
+which is what `log` and `show` print).
