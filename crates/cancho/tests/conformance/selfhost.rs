@@ -382,6 +382,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "clisync.cho",
         "clidir.cho",
         "clici.cho",
+        "cibase.cho",
         "version.cho",
         "jsonwrite.cho",
         "cliorigin.cho",

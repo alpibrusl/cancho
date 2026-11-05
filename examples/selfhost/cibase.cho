@@ -1,0 +1,18 @@
+edition 7;
+module selfhost.cibase;
+
+// cibase.cho -- the authority baseline's file for `ci` (`docs/agent-ci.md` section 3): read, in a module that does not import `std.bytes`, because a
+// destructuring `let` names its fields, and the field of `clibase.Contents` is called `bytes`.
+
+import std.buffer;
+import selfhost.clibase;
+
+pub fn file_name() -> [] &static [byte] {
+    return "cancho.authority.json";
+}
+
+// The baseline's text, and 0 or why it could not be read (2 is a file that is not there).
+pub fn read[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, fs_read(""), file_read] (buffer.Buffer, int) {
+    let clibase.Contents { bytes, failed } = clibase.read_file(heap, fs, "cancho.authority.json");
+    return (bytes, failed);
+}

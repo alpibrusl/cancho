@@ -8,6 +8,7 @@ blake3.cho
 body.cho
 builtins.cho
 checker.cho
+cibase.cho
 cli.cho
 clibase.cho
 clici.cho

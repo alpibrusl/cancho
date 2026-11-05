@@ -1,6 +1,6 @@
 # `cancho ci`: the gate as one command, and the authority baseline
 
-> **Status: slice 1 built (§10); the authority baseline (§3) and `--init` (§5) are not.** Written before the code, as
+> **Status: slices 1 and 2 built (§10, §11); `--init` (§5), project mode and the baseline of several programs are not.** Written before the code, as
 > `CONTRIBUTING.md` asks. Every number below is either marked *measured
 > (this document)* with how, or is a **gate**: a figure the built thing
 > must meet, not a result. A claim that turns out false is corrected here,
@@ -296,3 +296,75 @@ the first failing step wins) and that every answer is accepted by
 * Not run on a project (`cancho.toml`): files are named.
 * Not measured: the cost of a `ci` over the cost of its three steps (gate 5).
 * Gates 2 to 4 of §8 are the authority baseline's and wait for it.
+
+## 11. Slice 2, as built: the authority baseline (`clici.cho`, `cibase.cho`)
+
+```sh
+cancho ci [--strict] FILE...
+cancho ci --accept-authority --reason "<why>" FILE...
+```
+
+A fourth step, `authority`, after `test`: `authority --output json` of the
+program, compared with `cancho.authority.json` in the current directory.
+It runs when there are FILEs and `check` passed; otherwise it is `skipped`
+(`no-program`, `check`).
+
+**What differs from §3, because of what was built:**
+
+* **One program per baseline file.** The file has `"program": "<stem of the
+  first FILE>"` at its top level, not a `programs` map. The map needs
+  `[[bin]]` names, which project mode will give; until then a baseline
+  that names another program is `ci-authority-baseline-stale`. The format
+  is `1` now and a map would be format `2`.
+* **`effects` is not stored**; the labels say the same and a second copy
+  could disagree. Kept: `bounded`, `unbounded_by`, `labels`,
+  `never_touches`, `foreign_symbols`, and `accepted`.
+* **The comparison is on lines.** `authority --output json` prints one
+  label, one symbol and one `unbounded_by` entry to a line, and the baseline
+  is written in the same lines (the kept lines of the run, verbatim), so
+  both are read by one scanner into *facts* and a change is a fact on one
+  side only. `never_touches` is read the other way round (a domain that is
+  gone is a widening). Nothing needs a JSON value to be built; the file is
+  checked to be JSON by the reader in cancho (`jsonread.cho`) and for the
+  `format` and `program` lines.
+* **A finding names the fact**, e.g. `authority widened: label:{ "name":
+  "io_read", ... }`.
+
+**Verdicts, as built** (the tag is the `rule`):
+
+| when | rule | status |
+|---|---|---|
+| a label, symbol or `unbounded_by` entry not in the baseline, or a `never_touches` domain gone | `ci-authority-widened` | fail, exit 1 |
+| `bounded` true to false | `ci-authority-unbounded` | fail |
+| the reverse of either | `ci-authority-narrowed` | pass, fail with `--strict` |
+| no baseline | `ci-authority-baseline-missing` | fail |
+| another program's | `ci-authority-baseline-stale` | fail |
+| not JSON, no `"format": 1`, empty | `ci-baseline-unreadable` | fail |
+| `--accept-authority` wrote it | `ci-authority-accepted` | pass |
+| the write failed | `ci-authority-unwritable` | fail, exit 3 |
+| `--accept-authority` without `--reason` | `ci-accept-needs-reason` | exit 2, standard error |
+
+**Accepting.** `--accept-authority --reason WHY` writes the baseline from
+the run. Every fact that widened is appended to `accepted` as `{ "fact":
+..., "reason": WHY }`, and the entries already there are kept. A baseline
+that is unreadable or another program's is **not** overwritten by an
+acceptance (the test reads it back byte for byte): an agent that has been
+told "fix the baseline" cannot make a broken one disappear. The first record
+has nothing to compare with and so has an empty `accepted`. A failing run
+never touches the file.
+
+**Measured (this document, Linux x86-64).** In the same test
+(`ci_in_cancho_says_what_fmt_check_and_test_say`, 46 s): record, pass,
+add `io_read` (exactly one finding, `ci-authority-widened`, naming it;
+baseline unchanged), accept with a reason (one `accepted` entry carrying the
+reason and the fact; passes), remove it again (`ci-authority-narrowed`, pass;
+exit 1 under `--strict`), re-record (the earlier entry is kept), another
+program's baseline, and four files that are not baselines. The hand run of the
+widening gave the same answer.
+
+**Not done:** the baseline of several programs and project mode;
+`--init`; gates 3 (a fuzzer over the baseline: only the four hand-made bad
+files so far) and 4 (mutants) of §8; the cost of §8.5. Two limits worth
+knowing: a `foreign_symbols` or `never_touches` string containing a quote is
+cut at the quote (the report does not produce one today), and the baseline's
+program name is the stem, so `a/prog.cho` and `b/prog.cho` share one.

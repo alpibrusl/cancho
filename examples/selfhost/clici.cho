@@ -24,6 +24,9 @@ import selfhost.lexcore as lc;
 import selfhost.jsonwrite;
 import selfhost.clibase;
 import selfhost.cliprog;
+import selfhost.cibase;
+import selfhost.filewrite;
+import selfhost.jsonread;
 
 // One step: its JSON object, its status (0 pass, 1 fail, 2 skipped) and the exit status it contributes (0, 1, 3 or 4).
 pub res struct Step {
@@ -72,10 +75,14 @@ fn step_object[&h, &n, &s, &b](heap: &!h Heap, name: &n [byte], status: &s [byte
     out = jsonwrite.string(heap, out, name);
     out = buffer.append(heap, out, ", \"status\": ");
     out = jsonwrite.string(heap, out, status);
+    var has = false;
+    borrow items as &hb in {
+        has = buffer.size(hb) > 0;
+    }
     if len(because) > 0 {
         out = buffer.append(heap, out, ", \"because\": ");
         out = jsonwrite.string(heap, out, because);
-    } else if bytes.equal(status, "fail") {
+    } else if has || bytes.equal(status, "fail") {
         out = buffer.append(heap, out, ", \"findings\": [ ");
         borrow items as &ib in {
             out = buffer.append(heap, out, buffer.bytes(ib));
@@ -98,7 +105,7 @@ fn words[&h, &a, &c](heap: &!h Heap, args: &a Args, command: &c [byte], which: i
     var testing = false;
     while n < arg_count(args) {
         let word = arg(args, n);
-        if bytes.equal(word, "--output") {
+        if bytes.equal(word, "--output") || bytes.equal(word, "--reason") {
             n = n + 1;
         } else if bytes.equal(word, "--std-dir") {
             n = n + 1;
@@ -312,6 +319,433 @@ fn test_or_skip[&h, &i, &x, &c, &a](heap: &!h Heap, io: &!i Io, exec: &x Exec(""
     return test_step(heap, io, exec, clock, args);
 }
 
+// ---- the authority baseline (`docs/agent-ci.md` section 3) ----
+//
+// `authority --output json` prints one key to a line, and the baseline is written in the same lines, so both are read the same way: as FACTS, one to a
+// line of text (`bounded=true`, `label:{ "name": ... }`, `never:the heap`, `symbol:...`, `unbounded:...`), and a change is a fact in one set and not the other.
+// `pure`, `functions`, `effects` and the folding counts are not facts: they move with every refactor, and the labels they would restate are kept.
+
+fn starts[&t, &w](t: &t [byte], word: &w [byte]) -> [] bool {
+    return len(t) >= len(word) && lc.spells(t, 0, len(word), word);
+}
+
+// `t` without the spaces at its ends and a carriage return.
+fn trim[&t](t: &t [byte]) -> [] &t [byte] {
+    var a = 0;
+    var b = len(t);
+    while a < b && (int_of(t[a]) == 32 || int_of(t[a]) == 9) {
+        a = a + 1;
+    }
+    while b > a && (int_of(t[b - 1]) == 32 || int_of(t[b - 1]) == 13) {
+        b = b - 1;
+    }
+    return t[a..b];
+}
+
+fn no_comma[&t](t: &t [byte]) -> [] &t [byte] {
+    if len(t) > 0 && int_of(t[len(t) - 1]) == 44 {
+        return t[0..len(t) - 1];
+    }
+    return t;
+}
+
+// Each string between quotes after the first `[` of `t`, as a fact with `prefix`.
+fn quoted_facts[&h, &t, &p](heap: &!h Heap, facts: buffer.Buffer, t: &t [byte], prefix: &p [byte]) -> [heap] buffer.Buffer {
+    var out = facts;
+    var i = 0;
+    while i < len(t) && int_of(t[i]) != 91 {
+        i = i + 1;
+    }
+    var open = false;
+    var from = 0;
+    while i < len(t) {
+        if int_of(t[i]) == 34 {
+            if open {
+                out = buffer.push(heap, buffer.append(heap, buffer.append(heap, out, prefix), t[from..i]), byte_of(10));
+                open = false;
+            } else {
+                open = true;
+                from = i + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fn fact[&h, &p, &t](heap: &!h Heap, facts: buffer.Buffer, prefix: &p [byte], t: &t [byte]) -> [heap] buffer.Buffer {
+    return buffer.push(heap, buffer.append(heap, buffer.append(heap, facts, prefix), t), byte_of(10));
+}
+
+// The facts of `text` (a report or a baseline), and the lines of it that belong in a baseline, as they are.
+fn scan[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] (buffer.Buffer, buffer.Buffer) {
+    var facts = buffer.empty(heap, 256);
+    var kept = buffer.empty(heap, 256);
+    var section = 0;
+    var start = 0;
+    var at = 0;
+    while at <= len(text) {
+        if at == len(text) || int_of(text[at]) == 10 {
+            let line = text[start..at];
+            let t = trim(line);
+            if starts(t, "\"bounded\": ") {
+                facts = fact(heap, facts, "bounded=", no_comma(t[11..len(t)]));
+                kept = buffer.push(heap, buffer.append(heap, kept, no_return(line)), byte_of(10));
+            } else if starts(t, "\"unbounded_by\": [") {
+                kept = buffer.push(heap, buffer.append(heap, kept, no_return(line)), byte_of(10));
+                if int_of(no_comma(t)[len(no_comma(t)) - 1]) == 91 {
+                    section = 1;
+                }
+            } else if starts(t, "\"labels\": [") {
+                kept = buffer.push(heap, buffer.append(heap, kept, no_return(line)), byte_of(10));
+                section = 2;
+            } else if starts(t, "\"never_touches\": [") {
+                kept = buffer.push(heap, buffer.append(heap, kept, no_return(line)), byte_of(10));
+                facts = quoted_facts(heap, facts, t, "never:");
+            } else if starts(t, "\"foreign_symbols\": [") {
+                kept = buffer.push(heap, buffer.append(heap, kept, no_return(line)), byte_of(10));
+                facts = quoted_facts(heap, facts, t, "symbol:");
+            } else if section == 1 && len(t) > 0 {
+                kept = buffer.push(heap, buffer.append(heap, kept, no_return(line)), byte_of(10));
+                if int_of(t[0]) == 93 {
+                    section = 0;
+                } else {
+                    facts = fact(heap, facts, "unbounded:", no_comma(t));
+                }
+            } else if section == 2 && len(t) > 0 {
+                kept = buffer.push(heap, buffer.append(heap, kept, no_return(line)), byte_of(10));
+                if int_of(t[0]) == 93 {
+                    section = 0;
+                } else if int_of(t[0]) == 123 {
+                    facts = fact(heap, facts, "label:", no_comma(t));
+                }
+            }
+            start = at + 1;
+        }
+        at = at + 1;
+    }
+    return (facts, kept);
+}
+
+fn no_return[&t](t: &t [byte]) -> [] &t [byte] {
+    if len(t) > 0 && int_of(t[len(t) - 1]) == 13 {
+        return t[0..len(t) - 1];
+    }
+    return t;
+}
+
+// Whether `line` is one whole line of `set`.
+fn has_line[&s, &l](set: &s [byte], line: &l [byte]) -> [] bool {
+    var start = 0;
+    var at = 0;
+    while at <= len(set) {
+        if at == len(set) || int_of(set[at]) == 10 {
+            if at - start == len(line) && lc.spells(set, start, at, line) {
+                return true;
+            }
+            start = at + 1;
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// What comparing a baseline with a run found: the findings, the entries of `accepted` for what widened, and how many widened and narrowed.
+res struct Diff {
+    items: buffer.Buffer,
+    accepted: buffer.Buffer,
+    count: int,
+    widened: int,
+    narrowed: int,
+}
+
+// One fact that is in one set and not the other: `added` if it is in the run and not in the baseline. A domain in `never_touches` is the other way
+// round: one that is no longer there is a widening.
+fn classify[&h, &l, &r](heap: &!h Heap, diff: Diff, line: &l [byte], added: bool, reason: &r [byte]) -> [heap] Diff {
+    let Diff { items, accepted, count, widened, narrowed } = diff;
+    var kind = 0;
+    if starts(line, "never:") {
+        if added {
+            kind = 2;
+        } else {
+            kind = 1;
+        }
+    } else if starts(line, "bounded=") {
+        if added && starts(line, "bounded=false") {
+            kind = 3;
+        } else if added {
+            kind = 2;
+        }
+    } else if added {
+        kind = 1;
+    } else {
+        kind = 2;
+    }
+    var more_items = items;
+    var more_accepted = accepted;
+    var n = count;
+    var wide = widened;
+    var narrow = narrowed;
+    if kind == 1 || kind == 3 {
+        var message = buffer.append(heap, buffer.empty(heap, 64), "authority widened: ");
+        if starts(line, "never:") {
+            message = buffer.append(heap, message, "no longer proven out of reach: ");
+        }
+        message = buffer.append(heap, message, line);
+        var rule = "ci-authority-widened";
+        if kind == 3 {
+            rule = "ci-authority-unbounded";
+        }
+        borrow message as &mb in {
+            let (o, k) = finding(heap, more_items, n, rule, buffer.bytes(mb));
+            more_items = o;
+            n = k;
+        }
+        buffer.drop(heap, message);
+        if wide > 0 {
+            more_accepted = buffer.append(heap, more_accepted, ",\n    ");
+        }
+        more_accepted = buffer.append(heap, more_accepted, "{ \"fact\": ");
+        more_accepted = jsonwrite.string(heap, more_accepted, line);
+        more_accepted = buffer.append(heap, more_accepted, ", \"reason\": ");
+        more_accepted = jsonwrite.string(heap, more_accepted, reason);
+        more_accepted = buffer.append(heap, more_accepted, " }");
+        wide = wide + 1;
+    } else if kind == 2 {
+        var message = buffer.append(heap, buffer.empty(heap, 64), "authority narrowed: ");
+        message = buffer.append(heap, message, line);
+        borrow message as &mb in {
+            let (o, k) = finding(heap, more_items, n, "ci-authority-narrowed", buffer.bytes(mb));
+            more_items = o;
+            n = k;
+        }
+        buffer.drop(heap, message);
+        narrow = narrow + 1;
+    }
+    return Diff { items: more_items, accepted: more_accepted, count: n, widened: wide, narrowed: narrow };
+}
+
+// Every line of `from` that `other` lacks.
+fn pass[&h, &f, &o, &r](heap: &!h Heap, diff: Diff, from: &f [byte], other: &o [byte], added: bool, reason: &r [byte]) -> [heap] Diff {
+    var now = diff;
+    var start = 0;
+    var at = 0;
+    while at <= len(from) {
+        if at == len(from) || int_of(from[at]) == 10 {
+            if at > start && !has_line(other, from[start..at]) {
+                now = classify(heap, now, from[start..at], added, reason);
+            }
+            start = at + 1;
+        }
+        at = at + 1;
+    }
+    return now;
+}
+
+// The entries of `accepted` a baseline already has, each as it is, joined by the separator the file uses.
+fn old_accepted[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    var first = true;
+    var start = 0;
+    var at = 0;
+    while at <= len(text) {
+        if at == len(text) || int_of(text[at]) == 10 {
+            let t = trim(text[start..at]);
+            if starts(t, "{ \"fact\"") {
+                if !first {
+                    out = buffer.append(heap, out, ",\n    ");
+                }
+                out = buffer.append(heap, out, no_comma(t));
+                first = false;
+            }
+            start = at + 1;
+        }
+        at = at + 1;
+    }
+    return out;
+}
+
+fn valid_json[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] bool {
+    let area = box_slice(heap, jsonread.size_for(text), 0);
+    var good = false;
+    borrow mut area as &!ab in {
+        let jm = contents(ab);
+        good = jsonread.read(jm, text) == 0;
+    }
+    unbox_slice(heap, area);
+    return good;
+}
+
+// The baseline file for `name`: the kept lines of a run, and the entries of `accepted`.
+fn baseline_text[&h, &n, &k, &o, &e](heap: &!h Heap, name: &n [byte], kept: &k [byte], old: &o [byte], fresh: &e [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buffer.empty(heap, 1024), "{\n  \"format\": 1,\n  \"program\": ");
+    out = jsonwrite.string(heap, out, name);
+    out = buffer.append(heap, out, ",\n");
+    out = buffer.append(heap, out, kept);
+    if len(old) + len(fresh) == 0 {
+        return buffer.append(heap, out, "  \"accepted\": []\n}\n");
+    }
+    out = buffer.append(heap, out, "  \"accepted\": [\n    ");
+    out = buffer.append(heap, out, old);
+    if len(old) > 0 && len(fresh) > 0 {
+        out = buffer.append(heap, out, ",\n    ");
+    }
+    out = buffer.append(heap, out, fresh);
+    return buffer.append(heap, out, "\n  ]\n}\n");
+}
+
+// The authority step: the run's facts against the baseline's, or the baseline written (`--accept-authority`).
+fn judge[&h, &f, &n, &r](heap: &!h Heap, fs: &f Fs(""), name: &n [byte], facts: buffer.Buffer, kept: buffer.Buffer, strict: bool, accept: bool, reason: &r [byte]) -> [heap, fs_read(""), fs_write(""), file_read, file_write] Step {
+    let (base, failed) = cibase.read(heap, fs);
+    var diff = Diff { items: buffer.empty(heap, 256), accepted: buffer.empty(heap, 64), count: 0, widened: 0, narrowed: 0 };
+    var old = buffer.empty(heap, 0);
+    // 0 there is no baseline, 1 it cannot be read, 2 it is another program's, 3 it is this one's.
+    var state = 0;
+    if failed == 2 {
+        state = 0;
+    } else if failed != 0 {
+        state = 1;
+    } else {
+        borrow base as &bb in {
+            let text = buffer.bytes(bb);
+            var expected = buffer.append(heap, buffer.empty(heap, 64), "  \"program\": ");
+            expected = jsonwrite.string(heap, expected, name);
+            expected = buffer.append(heap, expected, ",");
+            if !valid_json(heap, text) || !has_line(text, "  \"format\": 1,") {
+                state = 1;
+            } else {
+                var same = false;
+                borrow expected as &xb in {
+                    same = has_line(text, buffer.bytes(xb));
+                }
+                if same {
+                    state = 3;
+                    let (base_facts, base_kept) = scan(heap, text);
+                    buffer.drop(heap, base_kept);
+                    buffer.drop(heap, old);
+                    old = old_accepted(heap, text);
+                    borrow base_facts as &bf in {
+                        borrow facts as &cf in {
+                            diff = pass(heap, diff, buffer.bytes(cf), buffer.bytes(bf), true, reason);
+                            diff = pass(heap, diff, buffer.bytes(bf), buffer.bytes(cf), false, reason);
+                        }
+                    }
+                    buffer.drop(heap, base_facts);
+                } else {
+                    state = 2;
+                }
+            }
+            buffer.drop(heap, expected);
+        }
+    }
+    buffer.drop(heap, base);
+    let Diff { items, accepted, count, widened, narrowed } = diff;
+    var shown = items;
+    var n = count;
+    var fail = false;
+    var code = 1;
+    if state == 1 {
+        let (o, k) = finding(heap, shown, n, "ci-baseline-unreadable", "cancho.authority.json is not a baseline this command line reads (format 1)");
+        shown = o;
+        n = k;
+        fail = true;
+    } else if state == 2 {
+        let (o, k) = finding(heap, shown, n, "ci-authority-baseline-stale", "cancho.authority.json is the baseline of another program");
+        shown = o;
+        n = k;
+        fail = true;
+    } else if accept {
+        // What widened is the record in `accepted`; the findings of the comparison are not an answer to an acceptance.
+        buffer.drop(heap, shown);
+        shown = buffer.empty(heap, 128);
+        n = 0;
+        var out = buffer.empty(heap, 0);
+        borrow kept as &kb in {
+            borrow old as &ob in {
+                borrow accepted as &ab in {
+                    buffer.drop(heap, out);
+                    out = baseline_text(heap, name, buffer.bytes(kb), buffer.bytes(ob), buffer.bytes(ab));
+                }
+            }
+        }
+        var wrote = 1;
+        borrow out as &wb in {
+            wrote = filewrite.store(fs, cibase.file_name(), buffer.bytes(wb));
+        }
+        buffer.drop(heap, out);
+        if wrote != 0 {
+            let (o, k) = finding(heap, shown, n, "ci-authority-unwritable", "cancho.authority.json could not be written");
+            shown = o;
+            n = k;
+            fail = true;
+            code = 3;
+        } else {
+            let (o, k) = finding(heap, shown, n, "ci-authority-accepted", "cancho.authority.json written from this run");
+            shown = o;
+            n = k;
+        }
+    } else if state == 0 {
+        let (o, k) = finding(heap, shown, n, "ci-authority-baseline-missing", "no cancho.authority.json; record one with `ci --accept-authority --reason WHY`");
+        shown = o;
+        n = k;
+        fail = true;
+    } else if widened > 0 || strict && narrowed > 0 {
+        fail = true;
+    }
+    buffer.drop(heap, accepted);
+    buffer.drop(heap, old);
+    buffer.drop(heap, facts);
+    buffer.drop(heap, kept);
+    if fail {
+        return Step { json: step_object(heap, "authority", "fail", shown, ""), status: 1, code: code };
+    }
+    return Step { json: step_object(heap, "authority", "pass", shown, ""), status: 0, code: 0 };
+}
+
+fn authority_step[&h, &i, &x, &c, &a, &f, &r](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, args: &a Args, fs: &f Fs(""), files: int, check_status: int, strict: bool, accept: bool, reason: &r [byte]) -> [heap, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] Step {
+    if files == 0 {
+        return skipped(heap, "authority", "no-program");
+    }
+    if check_status != 0 {
+        return skipped(heap, "authority", "check");
+    }
+    let got = child_run(heap, io, exec, clock, args, words(heap, args, "authority\0--output\0json\0", 0));
+    let cliprog.Captured { out, err, kind, value } = got;
+    buffer.drop(heap, err);
+    if kind != 0 || value != 0 {
+        buffer.drop(heap, out);
+        return unrunnable(heap, "authority");
+    }
+    var facts = buffer.empty(heap, 0);
+    var kept = buffer.empty(heap, 0);
+    borrow out as &ob in {
+        let (fa, ke) = scan(heap, buffer.bytes(ob));
+        buffer.drop(heap, facts);
+        buffer.drop(heap, kept);
+        facts = fa;
+        kept = ke;
+    }
+    buffer.drop(heap, out);
+    return judge(heap, fs, clibase.stem(arg(args, first_file(args))), facts, kept, strict, accept, reason);
+}
+
+// Where the first FILE is among the arguments (it is there: `ci` has refused a command line with none).
+fn first_file[&a](args: &a Args) -> [args] int {
+    var n = 2;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--output") || bytes.equal(word, "--std-dir") || bytes.equal(word, "--test") || bytes.equal(word, "--reason") {
+            n = n + 1;
+        } else if len(word) > 0 && lc.at(word, 0) == '-' {
+            n = n + 0;
+        } else {
+            return n;
+        }
+        n = n + 1;
+    }
+    return 2;
+}
+
 fn status_word(status: int) -> [] &static [byte] {
     if status == 0 {
         return "pass";
@@ -322,8 +756,11 @@ fn status_word(status: int) -> [] &static [byte] {
     return "skipped";
 }
 
-pub fn ci_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, exec(""), clock, poll] int {
+pub fn ci_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
     var json = false;
+    var strict = false;
+    var accept = false;
+    var reason_at = 0 - 1;
     var files = 0;
     var tests = 0;
     var n = 2;
@@ -341,6 +778,16 @@ pub fn ci_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a A
             if n >= arg_count(args) {
                 return clibase.usage_error(heap, io, "`--std-dir` needs a directory");
             }
+        } else if bytes.equal(word, "--strict") {
+            strict = true;
+        } else if bytes.equal(word, "--accept-authority") {
+            accept = true;
+        } else if bytes.equal(word, "--reason") {
+            n = n + 1;
+            if n >= arg_count(args) || len(arg(args, n)) == 0 {
+                return clibase.usage_error(heap, io, "`--reason` needs the reason, as text");
+            }
+            reason_at = n;
         } else if bytes.equal(word, "--test") {
             n = n + 1;
             if n >= arg_count(args) {
@@ -362,14 +809,28 @@ pub fn ci_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a A
     if files + tests == 0 {
         return clibase.usage_error(heap, io, "no file given");
     }
+    if accept && reason_at < 0 {
+        console.error_all(io, "ci-accept-needs-reason: `--accept-authority` needs `--reason WHY`, which is written beside what it admits\n");
+        return 2;
+    }
+    if reason_at >= 0 && !accept {
+        return clibase.usage_error(heap, io, "`--reason` is for `--accept-authority`");
+    }
+    var reason = "";
+    if reason_at >= 0 {
+        reason = arg(args, reason_at);
+    }
     let (fj, fst, fc) = unpack(fmt_step(heap, io, exec, clock, args));
     let (cj, cst, cc) = unpack(check_step(heap, io, exec, clock, args, files));
     let (tj, tst, tc) = unpack(test_or_skip(heap, io, exec, clock, args, cst, tests));
-    var status = tc;
+    let (aj, ast, ac) = unpack(authority_step(heap, io, exec, clock, args, fs, files, cst, strict, accept, reason));
+    var status = ac;
     if fc != 0 {
         status = fc;
     } else if cc != 0 {
         status = cc;
+    } else if tc != 0 {
+        status = tc;
     }
     var report = buffer.empty(heap, 512);
     if json {
@@ -391,6 +852,10 @@ pub fn ci_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a A
         borrow tj as &tb in {
             report = buffer.append(heap, report, buffer.bytes(tb));
         }
+        report = buffer.append(heap, report, ", ");
+        borrow aj as &ab in {
+            report = buffer.append(heap, report, buffer.bytes(ab));
+        }
         report = buffer.append(heap, report, " ] }\n");
     } else {
         report = buffer.append(heap, report, "fmt ");
@@ -399,11 +864,14 @@ pub fn ci_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a A
         report = buffer.append(heap, report, status_word(cst));
         report = buffer.append(heap, report, "\ntest ");
         report = buffer.append(heap, report, status_word(tst));
+        report = buffer.append(heap, report, "\nauthority ");
+        report = buffer.append(heap, report, status_word(ast));
         report = buffer.append(heap, report, "\n");
     }
     buffer.drop(heap, fj);
     buffer.drop(heap, cj);
     buffer.drop(heap, tj);
+    buffer.drop(heap, aj);
     clibase.show(heap, io, report);
     return status;
 }
