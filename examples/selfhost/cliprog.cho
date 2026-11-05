@@ -12,6 +12,7 @@ import selfhost.printing;
 import selfhost.jsonprint;
 import selfhost.driver;
 import selfhost.authwasi;
+import selfhost.cidebug;
 import selfhost.formatting;
 import selfhost.rules;
 import selfhost.lexcore as lc;
@@ -423,6 +424,7 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
     var host = 0;
     var wasi = 0;
     var host_given = false;
+    var debug = 0;
     var out_at = 0 - 1;
     var obj = false;
     var clang_at = 0 - 1;
@@ -482,6 +484,8 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             if n >= arg_count(args) {
                 return clibase.usage_error(heap, io, "`-l` and `-L` need a value");
             }
+        } else if build && bytes.equal(word, "-g") {
+            debug = 1;
         } else if run && bytes.equal(word, "--stdin") {
             forward = true;
         } else if build && bytes.equal(word, "--clang") {
@@ -569,7 +573,7 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                     mode = 19;
                 }
             }
-            let built = driver.run_many(heap, io, buffer.bytes(r), mode, host + 8 * wasi);
+            let built = driver.run_many(heap, io, buffer.bytes(r), mode, host + 8 * wasi + 1024 * debug);
             borrow built as &b in {
                 borrow laid as &lt in {
                     borrow mut lens as &!lb in {
@@ -586,8 +590,24 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                     if clang_at >= 0 {
                         clang = arg(args, clang_at);
                     }
+                    // `-g`: the markers the emitter left become line tables (`cidebug.cho`); without it the module goes as it is.
+                    var shipped = buffer.empty(heap, 0);
+                    if debug == 1 {
+                        borrow laid as &lt in {
+                            borrow mut lens as &!lb in {
+                                borrow names as &nm in {
+                                    buffer.drop(heap, shipped);
+                                    shipped = cidebug.run(heap, buffer.bytes(b.ir), buffer.bytes(lt), contents(lb), buffer.bytes(nm));
+                                }
+                            }
+                        }
+                    } else {
+                        buffer.drop(heap, shipped);
+                        shipped = buffer.append(heap, buffer.empty(heap, buffer.size(b.ir)), buffer.bytes(b.ir));
+                    }
+                    borrow shipped as &modb in {
                     borrow target as &tp in {
-                        status = make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(tp), clang, obj);
+                        status = make_binary(heap, io, args, fs, exec, buffer.bytes(modb), buffer.bytes(tp), clang, obj);
                         if status == 0 && run {
                             var input = buffer.empty(heap, 0);
                             if forward {
@@ -601,6 +621,8 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                             fs_remove(fs, buffer.bytes(tp));
                         }
                     }
+                    }
+                    buffer.drop(heap, shipped);
                 }
             }
             driver.discard(heap, built);

@@ -814,6 +814,10 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
             } else if mode >= 3 && mode != 11 {
                 ast.layout_emit(st, tokens, files);
                 st[61] = target % 8;
+                // `-g`: the target plus 1024 asks for debug information (the authority variants of `wasi` use the bits below) (`docs/agent-debug.md` section 3.3); `emit.debugging` reads it from bit 16 of `st[55]`.
+                if target / 1024 % 2 == 1 {
+                    st[55] = st[55] | 65536;
+                }
             } else {
                 ast.layout(st, tokens, files);
             }

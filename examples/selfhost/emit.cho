@@ -27,6 +27,21 @@ pub fn on[&s](st: &!s [int]) -> [] bool {
     return st[40] != 0;
 }
 
+// Whether the code is written for `-g` (`docs/agent-debug.md` section 3.3): bit 16 of `st[55]`, which the driver sets from the target it is given. Only then
+// are the offset markers written, so a build without `-g` is the text it was.
+pub fn debugging[&s](st: &!s [int]) -> [] bool {
+    return st[55] & 65536 != 0;
+}
+
+// A comment line with the offset in the program's text of a function (`fn `) or a statement (`s `), for the pass that makes the line tables.
+pub fn marker[&s](st: &!s [int], tag: &static [byte], offset: int) -> [] int {
+    str(st, "  ; @");
+    str(st, tag);
+    nat(st, offset);
+    str(st, "\n");
+    return 0;
+}
+
 // Write to buffer `target`.
 // Has a buffer of the code been written past its end? Each of the four holds `st[50]` bytes, and a byte
 // past the end of one is in the next, so an answer of the code is no good once this is true.
@@ -1832,6 +1847,10 @@ pub fn header_param[&s](st: &!s [int], ty: int, index: int) -> [] int {
 
 pub fn header_end[&s](st: &!s [int]) -> [] int {
     str(st, ") {\nentry:\n");
+    // With `-g`, where the function is in the program's text (`docs/agent-debug.md` section 3.3); `st[64]` is its node.
+    if debugging(st) && st[64] >= 0 {
+        marker(st, "fn ", ast.nstart(st, st[64]));
+    }
     clear(st, 1);
     clear(st, 2);
     st[41] = 0;
