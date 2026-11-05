@@ -9,7 +9,7 @@ stage-by-stage record and the measurements, and the plan to finish is epic
 
 ## Where it stands
 
-- **The compiler in cancho** is `examples/selfhost/`: about 22,000 lines of cancho. It reads
+- **The compiler in cancho** is `examples/selfhost/`: 97 files, about 49,700 lines of cancho (plus about 17,400 lines of `runtime/`; `wc -l`, 2026-11-05). It reads
   a program and writes LLVM IR; `clang` finishes the build.
 - **It is the default.** `cancho build`, `run` and `test` write the code with it on macOS and
   Linux (x86-64 and aarch64), and it refuses a program by its own checks (see below). It is built once, from sources
