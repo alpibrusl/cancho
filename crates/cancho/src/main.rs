@@ -41,6 +41,7 @@ mod vcs_cli;
 mod vcs_decl;
 mod vcs_dir;
 mod vcs_gate;
+mod vcs_gc;
 mod vcs_git;
 mod vcs_merge;
 mod vcs_origin;

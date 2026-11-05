@@ -108,6 +108,7 @@ pub fn cmd_vcs(args: &[String]) -> Result<ExitCode, Failure> {
         {
             crate::vcs_repo::dispatch("resolve", &args[1..])
         }
+        Some("gc") => crate::vcs_repo::dispatch("gc", &args[1..]),
         Some("resolve") => cmd_resolve(&args[1..]),
         Some("lock") => cmd_lock(&args[1..]),
         Some("fetch") => cmd_fetch(&args[1..]),

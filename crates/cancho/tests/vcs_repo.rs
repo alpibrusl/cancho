@@ -407,6 +407,60 @@ fn a_kill_at_every_write_leaves_a_sound_store() {
     }
 }
 
+/// `gc` (`docs/vcs-cli.md` R4): every object moves into one pack, the store
+/// reads the same before and after, a second `gc` does nothing, and a kill
+/// at every write of a `gc` leaves a store `verify` calls sound that a
+/// re-run packs to the same pack.
+#[test]
+fn gc_packs_the_store_and_survives_a_kill_at_every_write() {
+    let s = two_changes();
+    s.pin_quiet(&["record", "--all", "--intent-prompt", "second", "--time", "1001"]);
+    let log_before = s.pin_quiet(&["log"]);
+    let verify_before = s.pin_quiet(&["verify"]);
+    let dry = s.pin_quiet(&["gc", "--dry-run"]);
+    assert_eq!(dry["dry_run"], json!(true));
+    assert!(s.path().join(".cancho/vcs/objects/blob").read_dir().unwrap().next().is_some());
+    let base = Sandbox::new();
+    copy_dir(s.path(), base.path());
+
+    let done = s.pin("gc", &["gc"]);
+    let pack = done["pack"].clone();
+    assert!(pack.is_string());
+    assert_eq!(done["removed_loose"], done["loose_before"]);
+    assert_eq!(s.pin_quiet(&["log"]), log_before, "the same history, read from the pack");
+    assert_eq!(s.pin_quiet(&["verify"])["objects"], verify_before["objects"]);
+    assert!(s.pin_quiet(&["status"])["clean"].as_bool().unwrap());
+    let again = s.pin_quiet(&["gc"]);
+    assert_eq!((again["pack"].clone(), again["removed_loose"].clone()), (pack.clone(), json!(0)));
+    // A record after gc writes loose objects beside the pack; both are read.
+    s.write("notes.md", "after gc\n");
+    s.pin_quiet(&["record", "--all", "--intent-prompt", "after", "--time", "1002"]);
+    assert_eq!(s.pin_quiet(&["verify"])["sound"], json!(true));
+    assert_eq!(s.pin_quiet(&["show", "HEAD~1"])["change"], log_before["changes"][0]["change"]);
+
+    let mut killed = 0;
+    for n in 1..500 {
+        let work = Sandbox::new();
+        copy_dir(base.path(), work.path());
+        let (code, _, _) = run_in(work.path(), &["gc"], &[("CANCHO_VCS_CRASH_AT", &n.to_string())]);
+        if code != 137 {
+            assert_eq!(code, 0, "gc at n={n}");
+            break;
+        }
+        killed += 1;
+        work.pin_quiet(&["unlock"]);
+        let v = work.pin_quiet(&["verify"]);
+        assert_eq!(v["sound"], json!(true), "gc killed at {n}: {v}");
+        assert_eq!(v["objects"], verify_before["objects"], "gc killed at {n}");
+        assert_eq!(work.pin_quiet(&["log"]), log_before, "gc killed at {n}");
+        let r = work.pin_quiet(&["gc"]);
+        assert_eq!(r["pack"], pack, "gc killed at {n}, run again");
+        assert_eq!(work.pin_quiet(&["verify"])["sound"], json!(true));
+        assert_eq!(work.pin_quiet(&["gc"])["removed_loose"], json!(0), "idempotent");
+    }
+    assert!(killed >= 10, "gc has at least 10 write points, saw {killed}");
+}
+
 /// Two agents move one ref from the same base at the same moment.
 #[test]
 fn two_writers_racing_one_ref_have_one_winner() {

@@ -41,7 +41,7 @@ fn two_declarations_added_at_the_same_place_are_both_kept() {
 #[test]
 fn a_reformat_of_one_side_conflicts_with_nothing() {
     let ours = BASE.replace("x + 1", "x+1");
-    let theirs = BASE.replace("x + 1", "x + 1").replace("fn b", "fn b").replace("x + 2", "x + 20");
+    let theirs = BASE.replace("x + 2", "x + 20");
     let m = merge_cho(BASE, &ours, &theirs, &none()).unwrap();
     assert!(m.conflicts.is_empty());
 }

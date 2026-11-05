@@ -1,0 +1,15 @@
+{
+  "bytes_after": 1520,
+  "bytes_before": 976,
+  "command": "gc",
+  "deltas": 0,
+  "dry_run": false,
+  "loose_before": 8,
+  "objects": 8,
+  "ok": true,
+  "pack": "2ebdfcb44818f35af7991d99c11fb563a50b7665d62f126b5a8902d378417a38",
+  "packs_before": 0,
+  "removed_loose": 8,
+  "removed_packs": 0,
+  "removed_tmp": 0
+}

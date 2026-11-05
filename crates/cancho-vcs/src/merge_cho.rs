@@ -263,7 +263,7 @@ pub fn merge_cho(
         if let Some(rest) = line.strip_prefix('\u{1}').and_then(|r| r.strip_suffix('\n')) {
             if let Some((key, _)) = rest.split_once('\u{3}') {
                 let c = conflicts.borrow();
-                let Some(c) = c.get(key) else { return None };
+                let c = c.get(key)?;
                 let chosen = match choices.get(key) {
                     Some(Choice::Ours) | None => c.ours.clone(),
                     Some(Choice::Theirs) => c.theirs.clone(),

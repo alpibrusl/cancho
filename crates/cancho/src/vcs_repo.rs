@@ -128,6 +128,7 @@ pub(crate) fn dispatch(cmd: &str, args: &[String]) -> Result<ExitCode, Failure> 
             let p = parse(args, &[], &[])?;
             run(cmd, &p, || vcs_git::cmd_export(&p))
         }
+        "gc" => crate::vcs_gc::dispatch(args),
         other => Err(crate::usage(format!("unknown `vcs` subcommand `{other}`"))),
     }
 }

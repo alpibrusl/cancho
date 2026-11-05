@@ -47,7 +47,13 @@ still checks. Everything below follows from this one choice.
 
 Four kinds of object, all content-addressed (BLAKE3, as `cancho-id` and `OpId` already are), all immutable,
 all stored as plain files beneath `.cancho/vcs/` (so the store is inspectable with the tools an agent has,
-and there is no database to corrupt).
+and there is no database to corrupt). *(Corrected after R4, section 8: V1 wrote each object's bytes as they
+are, `objects/<kind>/<2 hex>/<62 hex>`, and that store was 5 to 14 times git's. A new object is now written
+as one standard zlib stream, `<62 hex>.z`, which any zlib reader opens; V1's uncompressed files are still
+read. `gc` moves every object into a pack, `objects/pack/pack-<h>.pack` with an index `pack-<h>.idx`,
+most objects as a git-format copy/insert delta against a similar one; the formats are described at the top
+of `crates/cancho-vcs/src/pack.rs`. Still files and no database, but a packed object is no longer readable
+with `cat`: `cancho vcs` is the reader.)*
 
 * **Blob**: the bytes of a file, any bytes. (`blobs.rs` stores one file's UTF-8 source today; it generalises
   to bytes.) A file over a bound (default 16 MiB) is refused with a tag, not silently stored.
@@ -118,6 +124,10 @@ is a second `clone` of a local path, which is cheap because objects are content-
 
 Agents run in parallel on one machine, so this is not optional. (1) Objects are written to a temporary name,
 fsynced, and renamed to their hash; a crash leaves garbage that `gc` removes and never a wrong object.
+*(Built: `gc` removes files in `tmp/` older than a day, which no running write can still own, and a pack
+whose index never landed. `gc` itself writes the pack, then its index, reads every object back from the
+new pack and re-hashes it, and only then removes loose files and older packs; the crash test kills it at
+each of those writes and removals and `verify` finds the store sound after every one.)*
 (2) A ref move is a rename under a lock file, with `--expect`; the loser gets the tag `ref-moved` and the
 winner's id and can `merge` or `replay`. (3) The working copy has one lock (`.cancho/vcs/lock`), taken by
 `switch`, `merge`, `restore` and `record`; a stale lock is reported with the pid and age, never broken
@@ -238,6 +248,31 @@ Open questions, each with the measurement that closes it:
   MiB (13.7x).** The store has no compression and no deltas; `cancho` versions generated JSON fixtures many
   times. The bound in the question ("more than a few times") is exceeded, so compression and packs move from
   "V5 if R4 says" to a planned slice; V1 stays uncompressed.
+  **Then built, and measured again: the claim was "bring it down"; it is now smaller than git's.** *(Measured
+  2026-11-05, `scripts/vcs_r1.sh`, which now runs `vcs gc` after the import and prints the sizes in the same
+  units, release build, macOS arm64; the same two repositories, `cancho` having grown since.)* Loose objects
+  are zlib streams written by the crate's own deflate (LZ77 with hash chains and lazy matching, dynamic
+  Huffman blocks; within 0.4% of Python's zlib at level 6 on `cancho-forge`'s 1,503 objects, and every one
+  inflates with Python's zlib); `gc` packs them with deltas (blobs sorted by a path a tree gives them, then
+  size, a window of 10, chains of at most 50). Apparent bytes of `.cancho/vcs/objects`:
+
+  | repository | V1 (raw) | loose, compressed | after `gc` | git `.git` | git's packs alone (`count-objects`) |
+  |---|---|---|---|---|---|
+  | `cancho-forge` (228 commits, 1,503 objects) | 30.9 MiB | 9.9 MiB | **2.1 MiB** | 6.1 MiB | 1.7 MiB (1,196 objects) |
+  | `cancho` (1,352 commits, 17,028 objects) | 826.9 MiB | 319.6 MiB | **25.4 MiB** | 60.4 to 105.2 MiB | 46.5 MiB (19 packs) |
+
+  So the packed store is a third of `.git` for `cancho-forge` and under half for `cancho`; against git's
+  pack files alone (leaving out the loose objects git has not yet packed itself) it is 1.24 times for
+  `cancho-forge` and 0.55 times for `cancho` (whose 19 packs git has not repacked). The `.git` figure moves
+  between runs because other sessions write to these repositories: `cancho`'s grew from 60.4 to 105.2 MiB of
+  loose objects during the day, and `cancho-forge`'s from 6.1 to 28.4 MiB between two runs 20 minutes apart
+  at the same 228 commits; the 6.1 MiB is the run nearest the import. R1 passed again on the packed store
+  (every commit id and ref identical after `export-git` read it). The compressed loose layout alone, before
+  any `gc`, is still 1.6 (`cancho-forge`) and 5 (`cancho`) times `.git`: `import-git` does not pack by
+  itself, so `gc` after it is part of the procedure. Time (wall, on a machine shared with other builds, so
+  approximate): `cancho-forge` import 10.7 s, `gc` 1.2 s, export 1.2 s, verify 0.2 s; `cancho` import 134.7 s
+  (V1: 94 s; the deflate runs at about 45 MB/s), `gc` 21.5 s, export 13.5 s (V1: 9 s), verify 22.5 s; a
+  second `gc` does nothing in 0.2 s.
 * **R6: what do the non-`.cho` files look like, and which merge strategy would conflict on them?** *(measured
   2026-11-05 with `scripts/vcs_r6.py`, which runs `git` to read the two repositories; the product never does.)*
   File touches by type over every non-merge commit of `HEAD`: `cancho-forge`, 135 commits, 1,091 touches, of
@@ -313,6 +348,7 @@ Open questions, each with the measurement that closes it:
   fewer paths in 15 of the 511 pairs that conflict. That is small, and it is what is measured.
 * **R4: is a content-addressed store larger than git's?** No delta compression is planned in V1 (loose, zlib-free
   objects). Measure the repository sizes. If it is more than a few times git's, packs become V5, not never.
+  *(Measured above: it was 5 and 14 times git's, so compression and packs were built before V2, not in V5.)*
 * **R5: how much of `.cho` must the structural diff cover?** `vcs.md` section 4 sizes `compute_diff`+`diff_to_ops`+
   `body_merge` at about 1,500 lines for lex-lang and says cancho's differ in shape. V1 needs only a
   declaration-level diff (what `vcs sync` already does: it knows added, removed, signature-changed, body-changed
@@ -330,7 +366,7 @@ Open questions, each with the measurement that closes it:
 | **V2: merge and replay** *(built)* | the three layers, `conflicts`, `resolve`, `merge --abort`, `replay`; a gate that resolves modules outside the tree; compressed objects and packs (R4); the body-level `.cho` diff is **not** built | R3 (82 historical merges and 700 random pairs, against `git merge-tree`), R5, R2 again (182 of 182 files gate), a kill at every write of `merge`; a merge of two branches that git merges clean produces the same tree, except where the declaration merge is finer, and the exceptions are listed |
 | **V3: path remotes** | `clone`, `fetch`, `pull`, `push`, `--expect` | two stores, interleaved pushes, an interrupted push leaves both sound (`verify` on each) |
 | **V4: HTTP remote and the GitHub bridge** | the gateway, `mirror`, `pull --from-git` | a pull request opened from a mirrored branch; a change pushed to GitHub by a person arrives as a change |
-| **V5: forge** | `vcs: "cancho"` rows, workers and pins, packs if R4 says | `cancho-forge` conformance scripts run unchanged against a cancho-VCS repo; one real pilot step end to end |
+| **V5: forge** | `vcs: "cancho"` rows, workers and pins (packs: built early, R4) | `cancho-forge` conformance scripts run unchanged against a cancho-VCS repo; one real pilot step end to end |
 
 Each slice ends only when the gate in `CONTRIBUTING.md` passes, no file is over 2,000 lines (the crate is split
 by concern: `object`, `tree`, `change`, `refs`, `diff_text`, `diff_cho`, `merge`, `remote`, `bridge`), and every
@@ -368,8 +404,14 @@ open conflicts are not a refusal (exit 2). Not yet built: `chain-broken`, `unsig
   canonical-printer re-layout of a merged `.cho` file, `revert` of a merge change, blame through the second parent
   of a merge, and the `vcs` section of `cancho --help` and of the compiler in `examples/selfhost` (the commands exist,
   their usage text does not). `merge` into a detached HEAD works; a kill between the ref move and the working-copy
-  write of a merge leaves a working copy that `status` shows as differing from HEAD (`restore --from HEAD` fixes it),
-  which the kill test accepts. `switch` and `restore`
+  write of a merge leaves a working copy that `status` shows as differing from HEAD (`restore` of those paths fixes it),
+  which the kill test accepts. Compression and `gc` with delta packs are built (R4); of them,
+  `import-git` does not pack by itself (run `gc` after it, as `scripts/vcs_r1.sh` does); `gc`
+  rewrites the whole store into one pack each time it has anything to do (no incremental repack), holding
+  the new pack in memory; `verify` re-hashes every packed object but does not check a pack's own trailing
+  hash; `has` does not re-read the pack directory, so a process that started before another's `gc` may
+  write a loose copy of an object that is already packed (harmless; the next `gc` removes it); `export-git`
+  still writes git's loose objects as stored, uncompressed zlib. `switch` and `restore`
   work on whole files; `blame` follows first parents only; the histogram diff falls back to one replacement
   when no line occurs 64 times or fewer. `.canchoignore` supports names, `dir/`, `*suffix` and path prefixes
   only. Edit operations are derived at `record` and not for imported changes. A kill leaves a lock that
