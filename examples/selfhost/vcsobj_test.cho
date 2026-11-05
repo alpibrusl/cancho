@@ -1,0 +1,224 @@
+module selfhost.vcsobj_test;
+
+// vcsobj_test.cho -- tests of `vcsobj.cho`, run by `examples/selfhost/test.sh` (`cancho test vcsobj_test.cho vcsobj.cho blake3.cho --std`).
+//
+// The oracle is the Rust `cancho vcs` (`crates/cancho-vcs`): a repository of three files (`notes.md`, an executable `run.sh`, `sub/f.txt`) was
+// recorded by it (`record --all --no-gate`, author `Ada <ada@example.com>`), and every id below is the name of a file it wrote under
+// `.cancho/vcs/objects`, which is BLAKE3 of the kind, a 0 byte and the bytes. The bytes of the tree and of the change are the files' contents.
+
+import std.buffer;
+import std.bytes;
+import selfhost.vcsobj;
+
+fn tree_text() -> [] &static [byte] {
+    return "100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 notes.md\n100755 a4dcf045875bb94fd741259286d529a76acc91f5632a338f2d0d66a01bea6415 run.sh\n100644 f1a5c1f20995146b14bee63fb3fb1f8008ed765007929f1b6ff815add2c7a300 sub/f.txt\n";
+}
+
+fn change_text() -> [] &static [byte] {
+    return "{\"tree\":\"0cf31d7060b5ce90124a001bd71445c57c3655decfd8ca5d28e2c06238b56d71\",\"parents\":[],\"author\":\"Ada <ada@example.com>\",\"time\":1793912405,\"tz\":\"+0000\",\"intent\":{\"prompt\":\"first\",\"model\":\"m1\"}}";
+}
+
+// The id of `data` as kind `kind` is `want`.
+fn named[&h, &k, &d, &w](heap: &!h Heap, kind: &k [byte], data: &d [byte], want: &w [byte]) -> [heap] bool {
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    var ok = false;
+    borrow mut scratch as &!s in {
+        let id = vcsobj.object_id(heap, contents(s), kind, data, buffer.empty(heap, 64));
+        borrow id as &r in {
+            ok = bytes.equal(buffer.bytes(r), want);
+        }
+        buffer.drop(heap, id);
+    }
+    unbox_slice(heap, scratch);
+    return ok;
+}
+
+pub fn test_the_ids_the_rust_command_wrote[&h](heap: &!h Heap) -> [heap] int {
+    if !named(heap, "blob", "one\ntwo\n", "426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85") {
+        return 1;
+    }
+    if !named(heap, "blob", "#!/bin/sh\n", "a4dcf045875bb94fd741259286d529a76acc91f5632a338f2d0d66a01bea6415") {
+        return 2;
+    }
+    if !named(heap, "blob", "x", "f1a5c1f20995146b14bee63fb3fb1f8008ed765007929f1b6ff815add2c7a300") {
+        return 3;
+    }
+    if !named(heap, "tree", tree_text(), "0cf31d7060b5ce90124a001bd71445c57c3655decfd8ca5d28e2c06238b56d71") {
+        return 4;
+    }
+    if !named(heap, "change", change_text(), "be91ab6a2cb4d7a0a88fd91ee687e7371996288064a6503f5eb9439ae89ed152") {
+        return 5;
+    }
+    // the kind is part of the name
+    if named(heap, "blob", tree_text(), "0cf31d7060b5ce90124a001bd71445c57c3655decfd8ca5d28e2c06238b56d71") {
+        return 6;
+    }
+    return 0;
+}
+
+pub fn test_is_id() -> [] int {
+    if !vcsobj.is_id("be91ab6a2cb4d7a0a88fd91ee687e7371996288064a6503f5eb9439ae89ed152") {
+        return 1;
+    }
+    if vcsobj.is_id("") || vcsobj.is_id("be91") {
+        return 2;
+    }
+    // uppercase, a digit that is not hexadecimal, 63 and 65 digits
+    if vcsobj.is_id("BE91ab6a2cb4d7a0a88fd91ee687e7371996288064a6503f5eb9439ae89ed152") {
+        return 3;
+    }
+    if vcsobj.is_id("ge91ab6a2cb4d7a0a88fd91ee687e7371996288064a6503f5eb9439ae89ed152") {
+        return 4;
+    }
+    if vcsobj.is_id("e91ab6a2cb4d7a0a88fd91ee687e7371996288064a6503f5eb9439ae89ed152") {
+        return 5;
+    }
+    if vcsobj.is_id("0be91ab6a2cb4d7a0a88fd91ee687e7371996288064a6503f5eb9439ae89ed152") {
+        return 6;
+    }
+    return 0;
+}
+
+pub fn test_paths() -> [] int {
+    if vcsobj.check_path("a") != 0 || vcsobj.check_path("a/b/c.cho") != 0 || vcsobj.check_path("a.b/.c") != 0 {
+        return 1;
+    }
+    // the escapes
+    if vcsobj.check_path("") != 1 || vcsobj.check_path("/a") != 1 || vcsobj.check_path("a//b") != 1 || vcsobj.check_path("a/") != 1 {
+        return 2;
+    }
+    if vcsobj.check_path(".") != 1 || vcsobj.check_path("..") != 1 || vcsobj.check_path("a/./b") != 1 || vcsobj.check_path("a/../b") != 1 {
+        return 3;
+    }
+    // inside `.cancho` or `.git` only as the first component
+    if vcsobj.check_path(".cancho") != 1 || vcsobj.check_path(".git/config") != 1 || vcsobj.check_path(".cancho/vcs/HEAD") != 1 {
+        return 4;
+    }
+    if vcsobj.check_path("a/.git") != 0 || vcsobj.check_path(".gitignore") != 0 {
+        return 5;
+    }
+    // what a line-based tree cannot hold
+    if vcsobj.check_path("a\nb") != 2 || vcsobj.check_path("a\0b") != 2 {
+        return 6;
+    }
+    if !bytes.equal(vcsobj.tag(1), "path-escapes") || !bytes.equal(vcsobj.tag(2), "path-unsupported") || !bytes.equal(vcsobj.tag(3), "object-corrupt") {
+        return 7;
+    }
+    return 0;
+}
+
+pub fn test_a_tree_of_the_rust_command_is_accepted_and_searched() -> [] int {
+    let t = tree_text();
+    if vcsobj.tree_status(t) != 0 {
+        return 1;
+    }
+    if vcsobj.tree_status("") != 0 {
+        return 2;
+    }
+    let a = vcsobj.tree_find(t, "run.sh");
+    if a < 0 || !bytes.equal(vcsobj.entry_mode(t, a), "100755") || !bytes.equal(vcsobj.entry_path(t, a), "run.sh") {
+        return 3;
+    }
+    if !bytes.equal(vcsobj.entry_blob(t, a), "a4dcf045875bb94fd741259286d529a76acc91f5632a338f2d0d66a01bea6415") {
+        return 4;
+    }
+    if vcsobj.tree_find(t, "sub/f.txt") < 0 || vcsobj.tree_find(t, "notes.md") != 0 {
+        return 5;
+    }
+    // absent, before the first, between two, after the last, a prefix of one
+    if vcsobj.tree_find(t, "a") >= 0 || vcsobj.tree_find(t, "z") >= 0 || vcsobj.tree_find(t, "run") >= 0 || vcsobj.tree_find(t, "sub") >= 0 {
+        return 6;
+    }
+    // a link, the third mode
+    if vcsobj.tree_status("120000 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 l\n") != 0 {
+        return 8;
+    }
+    // walking the lines
+    var n = 0;
+    var at = 0;
+    while at >= 0 {
+        n = n + 1;
+        at = vcsobj.entry_next(t, at);
+    }
+    if n != 3 {
+        return 7;
+    }
+    return 0;
+}
+
+// Each is a tree the Rust command's `decode` refuses (or, for the last, one it would sort and this refuses).
+pub fn test_a_damaged_tree_is_object_corrupt() -> [] int {
+    let id = "426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85";
+    // no newline at the end of a line, a short line, an unknown mode, an id that is not one, no space where one is due
+    if vcsobj.tree_status("100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 a") != 3 {
+        return 1;
+    }
+    if vcsobj.tree_status("100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85\n") != 3 {
+        return 2;
+    }
+    if vcsobj.tree_status("100664 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 a\n") != 3 {
+        return 3;
+    }
+    if vcsobj.tree_status("100644 G26fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 a\n") != 3 {
+        return 4;
+    }
+    if vcsobj.tree_status("100644_426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 a\n") != 3 {
+        return 5;
+    }
+    // a path the tree may not hold
+    if vcsobj.tree_status("100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 ../a\n") != 3 {
+        return 6;
+    }
+    if vcsobj.tree_status("100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 .git/x\n") != 3 {
+        return 7;
+    }
+    // the same path twice, a file that is also a directory, and an order that is not the bytes' (`b` before `a`)
+    if vcsobj.tree_status("100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 a\n100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 a\n") != 3 {
+        return 8;
+    }
+    if vcsobj.tree_status("100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 a\n100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 a/b\n") != 3 {
+        return 9;
+    }
+    if vcsobj.tree_status("100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 b\n100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 a\n") != 3 {
+        return 10;
+    }
+    // `a.b` sorts before `a/b` (46 before 47), so `a`, `a.b`, `a/b` is the order and `a` is not the directory of `a.b`
+    if vcsobj.tree_status("100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 a.b\n100644 426fd2dcce6e230bb69bb49a2de828bd463e2e3849b1c72b7645928fa9b9ef85 a/b\n") != 0 {
+        return 11;
+    }
+    return 0;
+}
+
+// Every prefix of the tree of the Rust command and every byte of it changed: a status, never a trap.
+pub fn test_no_input_is_a_trap[&h](heap: &!h Heap) -> [heap] int {
+    let t = tree_text();
+    let copy = box_slice(heap, len(t), byte_of(0));
+    borrow mut copy as &!w in {
+        let s = contents(w);
+        var i = 0;
+        while i < len(t) {
+            s[i] = t[i];
+            i = i + 1;
+        }
+        var cut = 0;
+        while cut <= len(t) {
+            vcsobj.tree_status(s[0..cut]);
+            cut = cut + 1;
+        }
+        i = 0;
+        while i < len(t) {
+            var v = 1;
+            while v < 256 {
+                let was = s[i];
+                s[i] = byte_of(int_of(was) ^ v);
+                vcsobj.tree_status(s);
+                vcsobj.tree_find(s, "run.sh");
+                s[i] = was;
+                v = v * 3 + 1;
+            }
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, copy);
+    return 0;
+}

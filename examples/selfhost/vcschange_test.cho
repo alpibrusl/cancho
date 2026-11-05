@@ -1,0 +1,356 @@
+module selfhost.vcschange_test;
+
+// vcschange_test.cho -- tests of `vcschange.cho`, run by `examples/selfhost/test.sh`.
+//
+// The oracle is the Rust `cancho vcs` (`crates/cancho-vcs/src/change.rs`): a repository of a `.cho` file and a text file was recorded three times by it
+// (author `Ada <ada@example.com>`, then `Zoë <z@x.org>`; times 1000 to 1002), and the three change objects below are the files it wrote, whose names are
+// their ids. They have a model and a session; an issue, a prompt with quotes, a backslash, a tab, a newline and non-ASCII letters, two declarations and a
+// gate attestation; and an anchored edit. The writer must reproduce each byte for byte from the values, and the reader must read each back.
+
+import std.buffer;
+import std.bytes;
+import selfhost.jsonread;
+import selfhost.vcschange;
+import selfhost.vcsobj;
+
+fn change_0() -> [] &static [byte] {
+    return "{\"tree\":\"c4758271a5cce0b1365acdbffe60ade1d68dfe6c00ac8da38e56ae9de6cf1adb\",\"parents\":[],\"author\":\"Ada <ada@example.com>\",\"time\":1000,\"tz\":\"+0000\",\"intent\":{\"prompt\":\"first\",\"model\":\"m1\",\"session\":\"s1\"},\"decls\":[{\"path\":\"a.cho\",\"name\":\"fn a.twice\",\"kind\":\"added\"}],\"attestations\":[\"gate:cancho-check:ok:1\"]}";
+}
+
+fn id_0() -> [] &static [byte] {
+    return "23ced74628e1f0f5e8d0449406aeddcf8951239864e75449cd310e27c708518a";
+}
+
+fn change_1() -> [] &static [byte] {
+    return "{\"tree\":\"aea15ec86c07bc25492866d6a6bf889a70728ddbf7a3ef716e10b71697d08ba8\",\"parents\":[\"23ced74628e1f0f5e8d0449406aeddcf8951239864e75449cd310e27c708518a\"],\"author\":\"Ada <ada@example.com>\",\"time\":1001,\"tz\":\"+0000\",\"intent\":{\"prompt\":\"second: ünï \\\"q\\\" \\\\ tab\\tx\\nline two\",\"issue\":\"7\"},\"decls\":[{\"path\":\"a.cho\",\"name\":\"fn a.thrice\",\"kind\":\"added\"},{\"path\":\"a.cho\",\"name\":\"fn a.twice\",\"kind\":\"body-changed\"}],\"attestations\":[\"gate:cancho-check:ok:1\"]}";
+}
+
+fn id_1() -> [] &static [byte] {
+    return "137e6e20ae9ab403bf0214b1cbcfdb072a8659bca80e8dfc891ff849c4037add";
+}
+
+fn change_2() -> [] &static [byte] {
+    return "{\"tree\":\"805e2092f569408ef3dc79158fa0db533d1db6328b3a78ced65aa393dfae7c27\",\"parents\":[\"137e6e20ae9ab403bf0214b1cbcfdb072a8659bca80e8dfc891ff849c4037add\"],\"author\":\"Zoë <z@x.org>\",\"time\":1002,\"tz\":\"+0000\",\"intent\":{\"prompt\":\"third\"},\"edits\":[{\"path\":\"notes.md\",\"old\":\"two\\n\",\"new\":\"2\\n\"}],\"attestations\":[\"gate:cancho-check:ok:0\"]}";
+}
+
+fn id_2() -> [] &static [byte] {
+    return "73dd9bb9801facaa223090e71e400c60b8bd25beff9cdccc9a5955c282292c3b";
+}
+
+fn change_text(n: int) -> [] &static [byte] {
+    if n == 0 {
+        return change_0();
+    }
+    if n == 1 {
+        return change_1();
+    }
+    return change_2();
+}
+
+fn change_id(n: int) -> [] &static [byte] {
+    if n == 0 {
+        return id_0();
+    }
+    if n == 1 {
+        return id_1();
+    }
+    return id_2();
+}
+
+fn tree_of(n: int) -> [] &static [byte] {
+    if n == 0 {
+        return "c4758271a5cce0b1365acdbffe60ade1d68dfe6c00ac8da38e56ae9de6cf1adb";
+    }
+    if n == 1 {
+        return "aea15ec86c07bc25492866d6a6bf889a70728ddbf7a3ef716e10b71697d08ba8";
+    }
+    return "805e2092f569408ef3dc79158fa0db533d1db6328b3a78ced65aa393dfae7c27";
+}
+
+fn same[&h, &a](heap: &!h Heap, built: buffer.Buffer, want: &a [byte]) -> [heap] bool {
+    var ok = false;
+    borrow built as &r in {
+        ok = bytes.equal(buffer.bytes(r), want);
+    }
+    buffer.drop(heap, built);
+    return ok;
+}
+
+fn prompt_two() -> [] &static [byte] {
+    return "second: ünï \"q\" \\ tab\tx\nline two";
+}
+
+// The writer, from the values of each change.
+pub fn test_the_writer_makes_the_bytes_the_rust_command_wrote[&h](heap: &!h Heap) -> [heap] int {
+    var b = vcschange.open(heap, buffer.empty(heap, 64), tree_of(0), "", "Ada <ada@example.com>", 1000, "+0000");
+    b = vcschange.intent(heap, b, "first", "m1", "s1", "");
+    b = vcschange.decls_open(heap, b);
+    b = vcschange.decl(heap, b, true, "a.cho", "fn a.twice", "added");
+    b = vcschange.list_close(heap, b);
+    b = vcschange.attestations_open(heap, b);
+    b = vcschange.attestation(heap, b, true, "gate:cancho-check:ok:1");
+    b = vcschange.list_close(heap, b);
+    b = vcschange.close(heap, b);
+    if !same(heap, b, change_0()) {
+        return 1;
+    }
+    var c = vcschange.open(heap, buffer.empty(heap, 64), tree_of(1), id_0(), "Ada <ada@example.com>", 1001, "+0000");
+    c = vcschange.intent(heap, c, prompt_two(), "", "", "7");
+    c = vcschange.decls_open(heap, c);
+    c = vcschange.decl(heap, c, true, "a.cho", "fn a.thrice", "added");
+    c = vcschange.decl(heap, c, false, "a.cho", "fn a.twice", "body-changed");
+    c = vcschange.list_close(heap, c);
+    c = vcschange.attestations_open(heap, c);
+    c = vcschange.attestation(heap, c, true, "gate:cancho-check:ok:1");
+    c = vcschange.list_close(heap, c);
+    c = vcschange.close(heap, c);
+    if !same(heap, c, change_1()) {
+        return 2;
+    }
+    var d = vcschange.open(heap, buffer.empty(heap, 64), tree_of(2), id_1(), "Zoë <z@x.org>", 1002, "+0000");
+    d = vcschange.intent(heap, d, "third", "", "", "");
+    d = vcschange.edits_open(heap, d);
+    d = vcschange.edit(heap, d, true, "notes.md", "two\n", "2\n");
+    d = vcschange.list_close(heap, d);
+    d = vcschange.attestations_open(heap, d);
+    d = vcschange.attestation(heap, d, true, "gate:cancho-check:ok:0");
+    d = vcschange.list_close(heap, d);
+    d = vcschange.close(heap, d);
+    if !same(heap, d, change_2()) {
+        return 3;
+    }
+    // two parents, as a merge has, and a negative time
+    var e = vcschange.open(heap, buffer.empty(heap, 64), tree_of(0), "", "x", 0 - 5, "-0130");
+    e = vcschange.close(heap, e);
+    if !same(heap, e, "{\"tree\":\"c4758271a5cce0b1365acdbffe60ade1d68dfe6c00ac8da38e56ae9de6cf1adb\",\"parents\":[],\"author\":\"x\",\"time\":-5,\"tz\":\"-0130\"}") {
+        return 4;
+    }
+    return 0;
+}
+
+// The three are named by the BLAKE3 of `change`, a 0 byte and these bytes.
+pub fn test_the_names_are_the_ids[&h](heap: &!h Heap) -> [heap] int {
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    var code = 0;
+    borrow mut scratch as &!s in {
+        var n = 0;
+        while n < 3 {
+            let id = vcsobj.object_id(heap, contents(s), "change", change_text(n), buffer.empty(heap, 64));
+            if !same(heap, id, change_id(n)) {
+                code = 1 + n;
+            }
+            n = n + 1;
+        }
+    }
+    unbox_slice(heap, scratch);
+    return code;
+}
+
+fn parents_of(n: int) -> [] int {
+    if n == 0 {
+        return 0;
+    }
+    return 1;
+}
+
+// What a change that `read` accepted answers, field by field.
+pub fn test_the_reader_reads_each_field[&h](heap: &!h Heap) -> [heap] int {
+    var n = 0;
+    while n < 3 {
+        let src = change_text(n);
+        let jm = box_slice(heap, jsonread.size_for(src), 0);
+        var code = 0;
+        borrow mut jm as &!w in {
+            let m = contents(w);
+            if vcschange.read(m, src) != 0 {
+                code = 10 + n;
+            } else if !bytes.equal(vcschange.tree(m, src), tree_of(n)) || vcschange.time(m, src) != 1000 + n || !bytes.equal(vcschange.tz(m, src), "+0000") {
+                code = 20 + n;
+            } else if vcschange.parent_count(m, src) != parents_of(n) {
+                code = 30 + n;
+            }
+            if code == 0 && n == 1 {
+                if !bytes.equal(vcschange.parent(m, src, 0), id_0()) || !bytes.equal(vcschange.author(m, src), "Ada <ada@example.com>") {
+                    code = 40;
+                } else if !bytes.equal(vcschange.intent_part(m, src, "issue"), "7") || len(vcschange.intent_part(m, src, "model")) != 0 {
+                    code = 41;
+                } else if !bytes.equal(vcschange.intent_part(m, src, "prompt"), "second: ünï \\\"q\\\" \\\\ tab\\tx\\nline two") {
+                    code = 42;
+                } else if !bytes.equal(vcschange.subject(m, src), "second: ünï \\\"q\\\" \\\\ tab\\tx") {
+                    code = 43;
+                } else if vcschange.list_count(m, src, "decls") != 2 || vcschange.list_count(m, src, "edits") != 0 {
+                    code = 44;
+                } else if !bytes.equal(vcschange.list_item(m, src, "decls", 1, "name"), "fn a.twice") || !bytes.equal(vcschange.list_item(m, src, "decls", 1, "kind"), "body-changed") {
+                    code = 45;
+                } else if !bytes.equal(vcschange.list_item(m, src, "attestations", 0, ""), "gate:cancho-check:ok:1") {
+                    code = 46;
+                }
+            }
+            if code == 0 && n == 2 {
+                if !bytes.equal(vcschange.author(m, src), "Zoë <z@x.org>") || !bytes.equal(vcschange.subject(m, src), "third") {
+                    code = 50;
+                } else if !bytes.equal(vcschange.list_item(m, src, "edits", 0, "old"), "two\\n") || !bytes.equal(vcschange.list_item(m, src, "edits", 0, "new"), "2\\n") || !bytes.equal(vcschange.list_item(m, src, "edits", 0, "path"), "notes.md") {
+                    code = 51;
+                }
+            }
+            if code == 0 && n == 0 {
+                if !bytes.equal(vcschange.intent_part(m, src, "model"), "m1") || !bytes.equal(vcschange.intent_part(m, src, "session"), "s1") || !vcschange.has_intent(m, src) {
+                    code = 60;
+                }
+            }
+        }
+        unbox_slice(heap, jm);
+        if code != 0 {
+            return code;
+        }
+        n = n + 1;
+    }
+    return 0;
+}
+
+fn refused[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] bool {
+    let jm = box_slice(heap, jsonread.size_for(text), 0);
+    var status = 0;
+    borrow mut jm as &!w in {
+        status = vcschange.read(contents(w), text);
+    }
+    unbox_slice(heap, jm);
+    return status == 3;
+}
+
+// What `Change::load` refuses: not JSON, not an object, no tree, a tree or a parent that is not an id, three parents, a time that is not an integer.
+pub fn test_what_is_not_a_change_is_object_corrupt[&h](heap: &!h Heap) -> [heap] int {
+    if !refused(heap, "") || !refused(heap, "[]") || !refused(heap, "{") || !refused(heap, "{}") || !refused(heap, "null") {
+        return 1;
+    }
+    if !refused(heap, "{\"parents\":[],\"author\":\"a\",\"time\":1,\"tz\":\"+0000\"}") {
+        return 2;
+    }
+    if !refused(heap, "{\"tree\":\"abc\",\"parents\":[],\"author\":\"a\",\"time\":1,\"tz\":\"+0000\"}") {
+        return 3;
+    }
+    if !refused(heap, "{\"tree\":\"c4758271a5cce0b1365acdbffe60ade1d68dfe6c00ac8da38e56ae9de6cf1adb\",\"parents\":[\"x\"],\"author\":\"a\",\"time\":1,\"tz\":\"+0000\"}") {
+        return 4;
+    }
+    let p = "\"c4758271a5cce0b1365acdbffe60ade1d68dfe6c00ac8da38e56ae9de6cf1adb\"";
+    var three = buffer.append(heap, buffer.empty(heap, 64), "{\"tree\":");
+    three = buffer.append(heap, three, p);
+    three = buffer.append(heap, three, ",\"parents\":[");
+    three = buffer.append(heap, three, p);
+    three = buffer.append(heap, three, ",");
+    three = buffer.append(heap, three, p);
+    three = buffer.append(heap, three, ",");
+    three = buffer.append(heap, three, p);
+    three = buffer.append(heap, three, "],\"author\":\"a\",\"time\":1,\"tz\":\"+0000\"}");
+    var bad = false;
+    borrow three as &r in {
+        bad = refused(heap, buffer.bytes(r));
+    }
+    buffer.drop(heap, three);
+    if !bad {
+        return 5;
+    }
+    if !refused(heap, "{\"tree\":\"c4758271a5cce0b1365acdbffe60ade1d68dfe6c00ac8da38e56ae9de6cf1adb\",\"parents\":[],\"author\":\"a\",\"time\":\"1\",\"tz\":\"+0000\"}") {
+        return 6;
+    }
+    if !refused(heap, "{\"tree\":\"c4758271a5cce0b1365acdbffe60ade1d68dfe6c00ac8da38e56ae9de6cf1adb\",\"parents\":[],\"author\":1,\"time\":1,\"tz\":\"+0000\"}") {
+        return 7;
+    }
+    return 0;
+}
+
+// Every prefix and every changed byte of the three: a status, and the accessors of one that was accepted answer without a trap.
+pub fn test_no_input_is_a_trap[&h](heap: &!h Heap) -> [heap] int {
+    var n = 0;
+    while n < 3 {
+        let t = change_text(n);
+        let copy = box_slice(heap, len(t), byte_of(0));
+        borrow mut copy as &!w in {
+            let s = contents(w);
+            var i = 0;
+            while i < len(t) {
+                s[i] = t[i];
+                i = i + 1;
+            }
+            var cut = 0;
+            while cut <= len(t) {
+                refused(heap, s[0..cut]);
+                cut = cut + 1;
+            }
+            i = 0;
+            while i < len(t) {
+                var v = 1;
+                while v < 256 {
+                    let was = s[i];
+                    s[i] = byte_of(int_of(was) ^ v);
+                    let jm = box_slice(heap, jsonread.size_for(s), 0);
+                    borrow mut jm as &!x in {
+                        let m = contents(x);
+                        if vcschange.read(m, s) == 0 {
+                            vcschange.tree(m, s);
+                            vcschange.author(m, s);
+                            vcschange.tz(m, s);
+                            vcschange.time(m, s);
+                            vcschange.subject(m, s);
+                            vcschange.intent_part(m, s, "model");
+                            vcschange.list_count(m, s, "decls");
+                            vcschange.list_item(m, s, "decls", 0, "name");
+                            vcschange.list_item(m, s, "attestations", 0, "");
+                            vcschange.parent_count(m, s);
+                        }
+                    }
+                    unbox_slice(heap, jm);
+                    s[i] = was;
+                    v = v * 3 + 1;
+                }
+                i = i + 1;
+            }
+        }
+        unbox_slice(heap, copy);
+        n = n + 1;
+    }
+    return 0;
+}
+
+// A subject is the first line: `lines()` of the Rust command also drops a `\r` before the newline, and a backslash before an `n` is not a newline.
+pub fn test_the_subject_is_the_first_line[&h](heap: &!h Heap) -> [heap] int {
+    var code = 0;
+    var k = 0;
+    while k < 4 {
+        var prompt = "ab\r\ncd";
+        var want = "ab";
+        if k == 1 {
+            prompt = "ab\ncd";
+        }
+        if k == 2 {
+            prompt = "a\\nb";
+            want = "a\\\\nb";
+        }
+        if k == 3 {
+            prompt = "";
+            want = "";
+        }
+        var b = vcschange.open(heap, buffer.empty(heap, 64), tree_of(0), "", "x", 1, "+0000");
+        b = vcschange.intent(heap, b, prompt, "", "", "");
+        b = vcschange.close(heap, b);
+        borrow b as &r in {
+            let src = buffer.bytes(r);
+            let jm = box_slice(heap, jsonread.size_for(src), 0);
+            borrow mut jm as &!w in {
+                let m = contents(w);
+                if vcschange.read(m, src) != 0 {
+                    code = 10 + k;
+                } else if !bytes.equal(vcschange.subject(m, src), want) {
+                    code = 20 + k;
+                }
+            }
+            unbox_slice(heap, jm);
+        }
+        buffer.drop(heap, b);
+        if code != 0 {
+            return code;
+        }
+        k = k + 1;
+    }
+    return 0;
+}

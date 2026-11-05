@@ -1,0 +1,54 @@
+module selfhost.vcsid;
+
+// vcsid.cho -- the id `cancho vcs` gives an object, from standard input: the first line is the kind (`blob`, `tree` or `change`) and the rest the
+// object's bytes; for a tree it adds a space and the status of `tree_status`. The program that checks `vcsobj.cho` against a store written by the Rust command (`docs/vcs-native.md` section 2).
+//
+//     cancho run examples/selfhost/vcsid.cho examples/selfhost/vcsobj.cho examples/selfhost/blake3.cho examples/selfhost/lexcore.cho --std < f
+
+import std.io as console;
+import std.buffer;
+import std.bytes;
+import selfhost.vcsobj;
+import selfhost.lexcore as lc;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    var code = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            let raw = lc.slurp(h, i);
+            let scratch = box_slice(h, vcsobj.scratch_size(), 0);
+            borrow raw as &r in {
+                let all = buffer.bytes(r);
+                var nl = 0;
+                while nl < len(all) && all[nl] != byte_of(10) {
+                    nl = nl + 1;
+                }
+                if nl >= len(all) {
+                    code = 2;
+                } else {
+                    borrow mut scratch as &!s in {
+                        let id = vcsobj.object_id(h, contents(s), all[0..nl], all[nl + 1..len(all)], buffer.empty(h, 64));
+                        borrow id as &d in {
+                            buffer.write(i, d);
+                        }
+                        buffer.drop(h, id);
+                        if bytes.equal(all[0..nl], "tree") {
+                            console.putchar(i, 32);
+                            console.putchar(i, 48 + vcsobj.tree_status(all[nl + 1..len(all)]));
+                        }
+                    }
+                    console.newline(i);
+                }
+            }
+            unbox_slice(h, scratch);
+            buffer.drop(h, raw);
+        }
+    }
+    release(heap);
+    release(io);
+    return code;
+}
