@@ -15,6 +15,11 @@ patterns, and for exact ties between two shortest decimals (the value ends in a 
 Rule: shortest that reads back, then the closest to the exact value, then the even last digit. Every output also reads back
 to the same bits.
 
+FIXED. `std.fmt.float_fixed_into` (docs/float-printing.md section 10) against Python's `'%.*f'` (correctly rounded from the exact
+binary value, ties to even): random bit patterns at precisions 0 to 30, exact ties at the precision (`t / 2^(p+1)` for odd `t`), the
+neighbours of every power of two and of ten at several precisions, carries through nines, the subnormals and the extremes at up to
+1100 places, and `NaN`, `inf` and `-inf`.
+
 Exit 1 on any difference; the first few are printed with the input, the answer and the oracle.
 """
 import argparse, json, os, random, struct, subprocess, sys, tempfile
@@ -194,6 +199,67 @@ def check_printing(exe, patterns):
     return len(patterns), bad
 
 
+def fixed_cases(r, n):
+    """(bits, precision) pairs for `float_fixed_into`: see the module docstring."""
+    out = []
+    for _ in range(n):
+        out.append((r.getrandbits(64), r.randint(0, 30)))
+    for p in range(0, 31):                                      # exact ties: t / 2^(p+1), t odd, so x * 10^p is an integer and a half
+        for _ in range(max(n // 100, 50)):
+            t = r.getrandbits(r.randint(1, 52)) | 1
+            out.append((bits(t / 2.0 ** (p + 1)), p))
+            out.append((bits(-t / 2.0 ** (p + 1)), p))
+    for p in (0, 1, 2, 3, 5, 9, 17, 30, 340, 1100):
+        for e in range(-1074, 1024, 3):
+            b = bits(2.0 ** e)
+            for d in (-1, 0, 1):
+                out.append((b + d, p))
+        for k in range(-323, 309, 5):
+            b = bits(float("1e%d" % k))
+            for d in (-1, 0, 1):
+                out.append((b + d, p))
+        for raw in (0, 1, 2, 0x7ffffffffffff, 0xfffffffffffff):
+            for ex in (0, 1, 2, 1022, 1023, 1024, 2045, 2046):
+                out.append((ex << 52 | raw, p))
+    for p in range(0, 8):                                       # carries through nines: 9.5, 99.5, 0.995, 999.9995 ...
+        for digits in range(1, 8):
+            for tail in ("5", "49999999", "50000001", "9", "99999999"):
+                v = float(("9" * digits) + "." + ("9" * p) + tail)
+                out.append((bits(v), p))
+                out.append((bits(-v), p))
+    for v in (0.0, -0.0, 0.5, 1.5, 2.5, 3.5, -0.5, -2.5, 0.125, 0.375, 1e22, 1e23, 5e-324, 1.7976931348623157e308, 0.1, 0.01, 0.001):
+        for p in (0, 1, 2, 3, 20, 400, 1100):
+            out.append((bits(v), p))
+    for b in (0x7FF8000000000000, 0xFFF8000000000001, 0x7FF0000000000000, 0xFFF0000000000000):
+        for p in (0, 2, 30):
+            out.append((b, p))
+    return [(b if b < 2 ** 63 else b - 2 ** 64, p) for b, p in out]
+
+
+def fixed_oracle(b, p):
+    x = double(b & (2 ** 64 - 1))
+    if x != x:
+        return "NaN"
+    if x == float("inf"):
+        return "inf"
+    if x == float("-inf"):
+        return "-inf"
+    return "%.*f" % (p, x)
+
+
+def check_fixed(exe, cases):
+    flat = []
+    for b, p in cases:
+        flat += [b, p]
+    out = run([exe], ("[" + ",".join(map(str, flat)) + "]").encode())
+    bad = []
+    for (b, p), line in zip(cases, out):
+        want = fixed_oracle(b, p)
+        if line != want:
+            bad.append(("fixed", hex(b & (2 ** 64 - 1)), p, line[:80], want[:80]))
+    return len(cases), bad
+
+
 def grisu_edges(r):
     """The doubles a fast path is most likely to get wrong (docs/float-printing.md section 9): the neighbours of every power of two and of ten, the extreme mantissas of every binade, and decimals of 15 to 17 digits at every exponent."""
     out = []
@@ -221,12 +287,14 @@ def main():
     ap.add_argument("--cancho", default=os.path.join(ROOT, "target/release/cancho"))
     ap.add_argument("--read", type=int, default=1_000_000)
     ap.add_argument("--print", dest="count", type=int, default=1_000_000)
+    ap.add_argument("--fixed", type=int, default=200_000, help="cases of float_fixed_into (0 skips them)")
     ap.add_argument("--seed", type=int, default=1)
     a = ap.parse_args()
     r = random.Random(a.seed)
     d = tempfile.mkdtemp()
     reader, printer = os.path.join(d, "read"), os.path.join(d, "print")
-    for src, exe in (("json_floats.cho", reader), ("float_print.cho", printer)):
+    fixer = os.path.join(d, "fixed")
+    for src, exe in (("json_floats.cho", reader), ("float_print.cho", printer), ("float_fixed.cho", fixer)):
         p = subprocess.run([a.cancho, "build", os.path.join(ROOT, "tests/programs", src), "--std", "-o", exe], capture_output=True)
         if p.returncode:
             sys.exit(p.stderr.decode())
@@ -252,6 +320,15 @@ def main():
             print("   ", *b)
         failed |= bool(bad)
     print("tie doubles among them: %d" % len(ties))
+    if a.fixed:
+        cases = fixed_cases(r, a.fixed)
+        r.shuffle(cases)
+        for part in range(0, len(cases), 50_000):
+            n, bad = check_fixed(fixer, cases[part:part + 50_000])
+            print("fixed  %7d values, %d wrong" % (n, len(bad)))
+            for b in bad[:5]:
+                print("   ", *b)
+            failed |= bool(bad)
     sys.exit(1 if failed else 0)
 
 

@@ -805,3 +805,173 @@ fn grisu(x: float) -> [] (int, int) {
     }
     return result;
 }
+
+// ---- a precision (`float-printing.md` §10) -------------------------------------------------------------------------------------------------
+
+// Write `x` into `out` with exactly `prec` digits after the point, and answer
+// how many bytes that took (`prec == 0` writes no point). The value is the
+// exact binary value of `x`, rounded half to even at `prec` places: `0.125`
+// with two places is `0.12`, `2.5` with none is `2`, `0.375` with two is
+// `0.38`. A negative value that rounds to zero keeps its sign (`-0.00`), as
+// does `-0.0`; `NaN`, `inf` and `-inf` are written as they are whatever
+// `prec` is. Answers -1 if `out` is too short or `prec` is negative, and
+// refuses a `prec` the buffer cannot hold (`prec > len(out) - 2`) before any
+// work is done.
+//
+// With `x = m * 2^e` the number printed is `N = round(R / S)` for integers
+// `R` and `S`: `R = m * 2^e * 10^prec`, `S = 1` for a non-negative `e`, else
+// `R = m * 10^prec`, `S = 2^-e`. There is no division: `S` is scaled by ten
+// while the next scaling still fits under `R`, which gives `q`, the number of
+// digits of `R / S`, and then each digit is at most nine subtractions
+// (§3.2). What is left over is `frac(R / S) = r / S`, so `2r` against `S`
+// decides the rounding, and a carry through nines may make the number one
+// digit longer. The point goes `prec` digits from the right.
+pub fn float_fixed_into[&o](out: &!o [byte], x: float, prec: int) -> [] int {
+    if prec < 0 || prec > 0 && prec > len(out) - 2 {
+        return 0 - 1;
+    }
+    if is_nan(x) {
+        return put(out, 0, "NaN");
+    }
+    let bits = bits_of(x);
+    var at = 0;
+    if bits < 0 {
+        at = put(out, 0, "-");
+        if at < 0 {
+            return 0 - 1;
+        }
+    }
+    if bits & 0x7fffffffffffffff == 0x7ff0000000000000 {
+        return put(out, at, "inf");
+    }
+
+    let m = mantissa(bits);
+    let e = exponent_of(bits);
+    // How wide R and S can get, in bits: m * 2^e (or m), times 10^prec at
+    // 3.33 bits a place, or 2^-e; four limbs of slack for scaling S by ten.
+    var wide = 54;
+    if e > 0 {
+        wide = 54 + e;
+    }
+    if 0 - e + 2 > wide {
+        wide = 0 - e + 2;
+    }
+    let n = (wide + 4 * prec) / 32 + 4;
+
+    var written = 0 - 1;
+    region a {
+        let r = alloc_slice[a](n, 0);
+        let s = alloc_slice[a](n, 0);
+        let t = alloc_slice[a](n, 0);
+        // The digits of N: at most 309 before the point, `prec` after, and
+        // one more if a carry runs through all of them.
+        let digits = alloc_slice[a](prec + 330, 0);
+
+        bignum.set(r, m);
+        bignum.set(s, 1);
+        if e >= 0 {
+            bignum.shift_left(r, e);
+            bignum.mul_pow10(r, prec);
+        } else {
+            bignum.mul_pow10(r, prec);
+            bignum.shift_left(s, 0 - e);
+        }
+
+        // S becomes S * 10^(q-1), the largest such that it is still at most
+        // R, or S itself if R is smaller: R / S is then in [1, 10) or below 1.
+        var q = 1;
+        var scaling = true;
+        while scaling {
+            bignum.copy(t, s);
+            bignum.mul_small(t, 10);
+            if bignum.compare(t, r) <= 0 {
+                bignum.copy(s, t);
+                q = q + 1;
+            } else {
+                scaling = false;
+            }
+        }
+
+        var i = 0;
+        while i < q {
+            var d = 0;
+            while bignum.compare(r, s) >= 0 {
+                bignum.subtract(r, s);
+                d = d + 1;
+            }
+            digits[i] = d;
+            if i + 1 < q {
+                bignum.mul_small(r, 10);
+            }
+            i = i + 1;
+        }
+
+        // What is left is below S: its double against S is the rounding.
+        bignum.copy(t, r);
+        bignum.mul_small(t, 2);
+        let c = bignum.compare(t, s);
+        if c > 0 || c == 0 && digits[q - 1] % 2 == 1 {
+            var j = q - 1;
+            var carrying = true;
+            while carrying && j >= 0 {
+                if digits[j] == 9 {
+                    digits[j] = 0;
+                    j = j - 1;
+                } else {
+                    digits[j] = digits[j] + 1;
+                    carrying = false;
+                }
+            }
+            if carrying {
+                var k = q;
+                while k > 0 {
+                    digits[k] = digits[k - 1];
+                    k = k - 1;
+                }
+                digits[0] = 1;
+                q = q + 1;
+            }
+        }
+
+        // N has q digits; `prec` of them follow the point, with zeros in
+        // front when there are fewer.
+        var whole = 1;
+        if q > prec {
+            whole = q - prec;
+        }
+        var total = at + whole;
+        if prec > 0 {
+            total = total + 1 + prec;
+        }
+        if total <= len(out) {
+            var p = at;
+            if q > prec {
+                var w = 0;
+                while w < whole {
+                    p = put_digit(out, p, digits[w]);
+                    w = w + 1;
+                }
+            } else {
+                p = put_digit(out, p, 0);
+            }
+            if prec > 0 {
+                p = put(out, p, ".");
+                var f = 0;
+                while f < prec {
+                    // Fraction digit f is digit (whole + f) of N, or a zero
+                    // while that is before N's first digit.
+                    var d = 0;
+                    if q > prec {
+                        d = digits[whole + f];
+                    } else if f >= prec - q {
+                        d = digits[f - (prec - q)];
+                    }
+                    p = put_digit(out, p, d);
+                    f = f + 1;
+                }
+            }
+            written = p;
+        }
+    }
+    return written;
+}

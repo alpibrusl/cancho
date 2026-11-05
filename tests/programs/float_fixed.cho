@@ -1,0 +1,89 @@
+// `docs/float-printing.md` §10: the differential driver for `std.fmt.float_fixed_into`.
+//
+// Reads one JSON array of integers on standard input, in pairs: the 64 bits of a double as a signed `int`, then the number of
+// decimals. Prints for each pair one line: `float_fixed_into` of `float_of_bits(bits)` with that precision, or `short` when the
+// 1500-byte buffer refused it. `float_text.rs` and `scripts/float_differential.py` write the array and compare every line with
+// Rust's `{:.*}` and with Python's `%.*f`.
+edition 7;
+
+import std.buffer;
+import std.fmt;
+import std.io;
+import std.json;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn show[&i](io: &!i Io, x: float, prec: int) -> [io_write] int {
+    region a {
+        let buf = alloc_slice[a](1500, byte_of(0));
+        let n = fmt.float_fixed_into(buf, x, prec);
+        if n < 0 {
+            io.write_all(io, "short");
+        } else {
+            io.write_all(io, buf[0..n]);
+        }
+        io.newline(io);
+    }
+    return 0;
+}
+
+fn report[&i, &s, &t](io: &!i Io, src: &s [byte], tape: &t [int], nodes: int) -> [io_write] int {
+    var j = 1;
+    while j < nodes {
+        let bits = json.to_int(src, tape, j);
+        j = json.skip(tape, j);
+        let prec = json.to_int(src, tape, j);
+        j = json.skip(tape, j);
+        show(io, float_of_bits(bits), prec);
+    }
+    return 0;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var text = buffer.empty(heap, 4096);
+    text = read_stdin(heap, io, text);
+    var status = 0;
+    borrow text as &b in {
+        let src = buffer.bytes(b);
+        let tape = box_slice(heap, json.tape_len(src), 0);
+        borrow mut tape as &!w in {
+            let nodes = json.parse(src, contents(w));
+            if nodes < 0 {
+                status = 1;
+            } else {
+                report(io, src, contents(w), nodes);
+            }
+        }
+        unbox_slice(heap, tape);
+    }
+    buffer.drop(heap, text);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}
