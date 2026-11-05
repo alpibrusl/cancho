@@ -21,12 +21,6 @@ fn trace(exe: &Path, dir: &Path, arguments: &[&str]) -> (i32, Option<serde_json:
 
 #[test]
 fn trace_in_cancho_answers_where_a_program_stopped_and_how() {
-    if Command::new("gdb").arg("--version").output().is_err()
-        || Command::new("timeout").arg("--version").output().is_err()
-    {
-        eprintln!("skipped: needs gdb and timeout");
-        return;
-    }
     let exe = build("cli-trace", &with_front_end("cli.cho"));
     let dir = exe.parent().expect("a scratch directory").join("t");
     std::fs::create_dir_all(&dir).expect("the directory is made");
@@ -45,7 +39,8 @@ fn trace_in_cancho_answers_where_a_program_stopped_and_how() {
     assert_eq!(code, 0, "{said}");
     let answer = answer.expect("JSON");
     assert_eq!(answer["stopped"], "breakpoint");
-    assert_eq!(answer["optimization"], "O0");
+    assert_eq!(answer["optimization"], "O2");
+    assert_eq!(answer["hits"], 1);
     assert_eq!(
         answer["at"],
         serde_json::json!({"function": "write_all", "file": "hello.cho", "line": putchar})
@@ -63,6 +58,21 @@ fn trace_in_cancho_answers_where_a_program_stopped_and_how() {
     assert!(answer["exit_status"].is_null());
     let (_, one, _) = trace(&exe, &dir, &["--at", &place, "--max-frames", "1", "hello.cho"]);
     assert_eq!(one.expect("JSON")["stack"].as_array().map(Vec::len), Some(1));
+    // The third arrival at a line, and the same run unoptimised.
+    let (_, third, _) = trace(&exe, &dir, &["--at", &place, "--hit", "3", "hello.cho"]);
+    assert_eq!(third.expect("JSON")["hits"], 3);
+    let (_, plain, _) = trace(&exe, &dir, &["--unoptimized", "--at", &place, "hello.cho"]);
+    let plain = plain.expect("JSON");
+    assert_eq!((plain["optimization"].as_str(), &plain["at"]), (Some("O0"), &answer["at"]));
+    // A line with no statement stops at the next one that has.
+    let (code, early, said) = trace(&exe, &dir, &["--at", "hello.cho:1", "hello.cho"]);
+    assert_eq!(code, 0, "{said}");
+    let early = early.expect("JSON");
+    assert_eq!(early["stopped"], "breakpoint");
+    assert!(
+        early["at"]["line"].as_u64() > Some(1) && early["at"]["line"].as_u64() <= Some(putchar),
+        "{early}"
+    );
 
     // A trap is an answer (exit 0), with the signal and the line of the statement that trapped.
     let (code, trap, said) = trace(&exe, &dir, &["boom.cho"]);
@@ -73,9 +83,29 @@ fn trace_in_cancho_answers_where_a_program_stopped_and_how() {
         (Some("trap"), Some("SIGILL")),
         "{trap}"
     );
+    assert_eq!(trap["trap"], "overflow");
     assert_eq!(trap["at"]["function"], "grow");
     assert_eq!(trap["at"]["line"], line_of(BOOM, "x = x * 3"));
     assert_eq!(trap["stack"][1]["function"], "main");
+
+    // Why the code trapped, by the cause the compiler knew where it wrote the check.
+    let main = "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args);\n    release(heap);\n    release(fs);\n    release(ffi);\n    release(io);\n    let r = HERE;\n    if r > 0 {\n        return 0;\n    }\n    return 1;\n}\n";
+    let helper = "fn five() -> [] int {\n    var i = 0;\n    while i < 5 {\n        i = i + 1;\n    }\n    return i;\n}\n\nfn zero() -> [] int {\n    var i = 5;\n    while i > 0 {\n        i = i - 1;\n    }\n    return i;\n}\n\nfn pick(n: int) -> [] int {\n    let s = \"abc\";\n    return int_of(s[n]);\n}\n\n";
+    for (what, expression) in [
+        ("divide-by-zero", "10 / zero()"),
+        ("bounds", "pick(five())"),
+        ("overflow", "five() * 4611686018427387904"),
+    ] {
+        write("cause.cho", &format!("{helper}{}", main.replace("HERE", expression)));
+        let (code, cause, said) = trace(&exe, &dir, &["cause.cho"]);
+        assert_eq!(code, 0, "{what}: {said}");
+        let cause = cause.expect("JSON");
+        assert_eq!(
+            (cause["stopped"].as_str(), cause["trap"].as_str()),
+            (Some("trap"), Some(what)),
+            "{cause}"
+        );
+    }
 
     // No place asked for and no trap: the program ends, with its status.
     let (code, ended, _) = trace(&exe, &dir, &["hello.cho"]);

@@ -217,7 +217,22 @@ pub fn run[&h, &r, &l, &n, &y](heap: &!h Heap, ir: &r [byte], laid: &l [byte], l
         out = buffer.append(heap, out, ", i64 0]\n@cancho_i_bp = constant [3 x i64] [i64 ");
         out = buffer.push_nat(heap, out, at_file);
         out = buffer.append(heap, out, ", i64 ");
-        out = buffer.push_nat(heap, out, at_line);
+        // A line with no statement stops at the next one that has: the line asked for, or the least line of the file that is after it.
+        var want = at_line;
+        if at_hit > 0 {
+            var best = 0 - 1;
+            var q = 0;
+            while q < ns {
+                if a[2 * s1 + q] == at_file && a[s1 + q] >= at_line && (best < 0 || a[s1 + q] < best) {
+                    best = a[s1 + q];
+                }
+                q = q + 1;
+            }
+            if best >= 0 {
+                want = best;
+            }
+        }
+        out = buffer.push_nat(heap, out, want);
         out = buffer.append(heap, out, ", i64 ");
         out = buffer.push_nat(heap, out, at_hit);
         out = buffer.append(heap, out, "]\n");

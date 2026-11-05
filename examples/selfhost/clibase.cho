@@ -241,6 +241,24 @@ pub fn value_of[&t](t: &t [byte], from: int, to: int) -> [] int {
     return n;
 }
 
+// The `k`th field of a line whose fields are separated by tabs.
+pub fn tab_field[&t](t: &t [byte], k: int) -> [] &t [byte] {
+    var start = 0;
+    var seen = 0;
+    var at = 0;
+    while at <= len(t) {
+        if at == len(t) || lc.at(t, at) == 9 {
+            if seen == k {
+                return t[start..at];
+            }
+            seen = seen + 1;
+            start = at + 1;
+        }
+        at = at + 1;
+    }
+    return t[0..0];
+}
+
 // The `k`th name of a list of names, each followed by a NUL.
 pub fn name_at[&n](names: &n [byte], k: int) -> [] &n [byte] {
     var at = 0;

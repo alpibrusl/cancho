@@ -116,7 +116,8 @@ fn command_tree_module_is_what_cancho_says() {
 /// The support code of an instrumented build (`docs/agent-debug.md` section 11): `runtime/instr.ll` as the text `ciinstr.cho` puts in the module.
 #[test]
 fn instrumentation_runtime_module_is_what_instr_ll_says() {
-    let ll = std::fs::read_to_string(repo_root().join("examples/selfhost/runtime/instr.ll")).expect("instr.ll is read");
+    let ll = std::fs::read_to_string(repo_root().join("examples/selfhost/runtime/instr.ll"))
+        .expect("instr.ll is read");
     let mut want = header(
         "instrtext",
         "the support code of an instrumented build, from `runtime/instr.ll`",

@@ -11,6 +11,7 @@ fn have_valgrind() -> bool {
     Command::new("valgrind").arg("--version").output().is_ok()
 }
 
+/// The count of the metric that stays with the program: `profile` with no flag counts what the instrumented program runs (`docs/agent-profile.md` section 10).
 /// What `profile` said: its exit status, standard output as JSON (if it is), and standard error.
 fn profile(exe: &Path, dir: &Path, arguments: &[&str]) -> (i32, Option<serde_json::Value>, String) {
     let done =
@@ -46,10 +47,6 @@ fn accounted(answer: &serde_json::Value) -> u64 {
 
 #[test]
 fn profile_in_cancho_counts_instructions_by_function_and_gates_on_a_baseline() {
-    if !have_valgrind() {
-        eprintln!("skipped: needs valgrind");
-        return;
-    }
     let exe = build("cli-profile", &with_front_end("cli.cho"));
     let dir = exe.parent().expect("a scratch directory").join("p");
     std::fs::create_dir_all(&dir).expect("the directory is made");
@@ -59,69 +56,54 @@ fn profile_in_cancho_counts_instructions_by_function_and_gates_on_a_baseline() {
     write("spin.cho", SPIN);
     write("grow.cho", GROW);
 
-    // The same program counts the same: valgrind's instruction count does not depend on the clock or the load.
-    let (code, first, said) = profile(&exe, &dir, &["--unoptimized", "spin.cho"]);
+    // The same program counts the same: the count is of what the instrumented program runs, so it does not depend on the clock or the load.
+    let (code, first, said) = profile(&exe, &dir, &["spin.cho"]);
     assert_eq!(code, 0, "{said}");
     let first = first.expect("JSON");
-    let (_, second, _) = profile(&exe, &dir, &["--unoptimized", "spin.cho"]);
+    let (_, second, _) = profile(&exe, &dir, &["spin.cho"]);
     assert_eq!(Some(&first), second.as_ref(), "two runs of one program differ");
-    assert_eq!(first["metric"], "instructions");
+    assert_eq!(first["metric"], "ir-instructions");
+    assert_eq!(
+        (first["unattributed"]["self"].as_u64(), first["external"]["self"].as_u64()),
+        (Some(0), Some(0))
+    );
     let total = first["total"].as_u64().expect("total");
     assert_eq!(accounted(&first), total, "the parts do not add up to the total: {first}");
     let top = &first["functions"][0];
     assert_eq!((top["name"].as_str(), top["file"].as_str()), (Some("inner"), Some("spin.cho")));
     assert_eq!(top["line"], 1);
-    // 200 times 5000 iterations of a loop of 38 instructions at -O0: most of the run, and none of it in another function.
+    // 200 times 5000 iterations of the loop: most of the run, and none of it in another function.
     assert!(top["self"].as_u64().expect("self") * 100 > total * 80, "{first}");
-    // The shipped binary: counts are fewer, the parts still add up, and what the optimiser lost is said and not hidden.
-    let (code, optimised, said) = profile(&exe, &dir, &["spin.cho"]);
+    // What the optimiser does to the code does not change what is counted.
+    let (code, plain, said) = profile(&exe, &dir, &["--unoptimized", "spin.cho"]);
     assert_eq!(code, 0, "{said}");
-    let optimised = optimised.expect("JSON");
-    assert_eq!(accounted(&optimised), optimised["total"].as_u64().expect("total"), "{optimised}");
-    assert!(optimised["total"].as_u64() < first["total"].as_u64());
+    assert_eq!(Some(&first), plain.as_ref(), "the count depends on the optimiser");
 
     // A baseline: the same run passes; a run that does the work twice is a regression in `inner` and in the total; half the work is an improvement.
-    let (code, _, said) =
-        profile(&exe, &dir, &["--unoptimized", "--record", "base.json", "spin.cho"]);
+    let (code, _, said) = profile(&exe, &dir, &["--record", "base.json", "spin.cho"]);
     assert_eq!(code, 0, "{said}");
     let recorded = std::fs::read_to_string(dir.join("base.json")).expect("a baseline");
     let parsed: serde_json::Value = serde_json::from_str(&recorded).expect("a baseline is JSON");
     assert_eq!(parsed["functions"]["inner@spin.cho"].as_u64(), top["self"].as_u64());
-    let (code, same, _) =
-        profile(&exe, &dir, &["--unoptimized", "--baseline", "base.json", "spin.cho"]);
+    let (code, same, _) = profile(&exe, &dir, &["--baseline", "base.json", "spin.cho"]);
     assert_eq!(code, 0);
     assert_eq!(rules(&same.expect("JSON")), Vec::<String>::new());
     write("spin.cho", &SPIN.replace("k < 200", "k < 400"));
-    let (code, slower, _) =
-        profile(&exe, &dir, &["--unoptimized", "--baseline", "base.json", "spin.cho"]);
+    let (code, slower, _) = profile(&exe, &dir, &["--baseline", "base.json", "spin.cho"]);
     assert_eq!(code, 1);
     let slower = slower.expect("JSON");
     assert_eq!(rules(&slower), ["profile-regressed", "profile-regressed"], "{slower}");
     assert!(slower["findings"].to_string().contains("inner@spin.cho"), "{slower}");
     write("spin.cho", &SPIN.replace("k < 200", "k < 100"));
-    let (code, faster, _) =
-        profile(&exe, &dir, &["--unoptimized", "--baseline", "base.json", "spin.cho"]);
+    let (code, faster, _) = profile(&exe, &dir, &["--baseline", "base.json", "spin.cho"]);
     assert_eq!(code, 0);
     assert_eq!(rules(&faster.expect("JSON")), ["profile-improved", "profile-improved"]);
-    assert_eq!(
-        profile(&exe, &dir, &["--unoptimized", "--strict", "--baseline", "base.json", "spin.cho"])
-            .0,
-        1
-    );
+    assert_eq!(profile(&exe, &dir, &["--strict", "--baseline", "base.json", "spin.cho"]).0, 1);
     // A factor that allows it.
     write("spin.cho", &SPIN.replace("k < 200", "k < 400"));
-    assert_eq!(
-        profile(
-            &exe,
-            &dir,
-            &["--unoptimized", "--factor", "3", "--baseline", "base.json", "spin.cho"]
-        )
-        .0,
-        0
-    );
+    assert_eq!(profile(&exe, &dir, &["--factor", "3", "--baseline", "base.json", "spin.cho"]).0, 0);
     // A baseline that is not there, and ones that are not baselines: findings, never a crash.
-    let (code, missing, _) =
-        profile(&exe, &dir, &["--unoptimized", "--baseline", "nope.json", "spin.cho"]);
+    let (code, missing, _) = profile(&exe, &dir, &["--baseline", "nope.json", "spin.cho"]);
     assert_eq!(
         (code, rules(&missing.expect("JSON"))),
         (1, vec!["profile-baseline-missing".to_owned()])
@@ -134,14 +116,13 @@ fn profile_in_cancho_counts_instructions_by_function_and_gates_on_a_baseline() {
         "{\n  \"format\": 1,\n  \"metric\": \"seconds\",\n  \"total\": 1\n}",
     ] {
         write("bad.json", bad);
-        let (code, answer, _) =
-            profile(&exe, &dir, &["--unoptimized", "--baseline", "bad.json", "spin.cho"]);
+        let (code, answer, _) = profile(&exe, &dir, &["--baseline", "bad.json", "spin.cho"]);
         assert_eq!(code, 1, "{bad:?}");
         assert_eq!(rules(&answer.expect("JSON")), ["profile-baseline-unreadable"], "{bad:?}");
     }
 
     // The allocator is counted, and found at the function that asked: `reserve` of `std.buffer` grows the buffer by doubling.
-    let (code, grown, said) = profile(&exe, &dir, &["--std", "--unoptimized", "grow.cho"]);
+    let (code, grown, said) = profile(&exe, &dir, &["--std", "grow.cho"]);
     assert_eq!(code, 0, "{said}");
     let grown = grown.expect("JSON");
     assert_eq!(accounted(&grown), grown["total"].as_u64().expect("total"), "{grown}");
@@ -152,6 +133,27 @@ fn profile_in_cancho_counts_instructions_by_function_and_gates_on_a_baseline() {
         by.iter().any(|f| f["name"] == "reserve" && f["file"] == "<std>/buffer.cho"),
         "{grown}"
     );
+
+    // The count of machine instructions under valgrind, when valgrind is there: the same functions, and the parts add up.
+    if have_valgrind() {
+        let (code, machine, said) =
+            profile(&exe, &dir, &["--machine", "--unoptimized", "spin.cho"]);
+        assert_eq!(code, 0, "{said}");
+        let machine = machine.expect("JSON");
+        assert_eq!(machine["metric"], "instructions");
+        assert_eq!(machine["functions"][0]["name"], "inner");
+        assert_eq!(accounted(&machine), machine["total"].as_u64().expect("total"), "{machine}");
+        // A baseline recorded with one metric is not read as the other.
+        let (code, mixed, _) = profile(
+            &exe,
+            &dir,
+            &["--machine", "--unoptimized", "--baseline", "base.json", "spin.cho"],
+        );
+        assert_eq!(code, 1);
+        assert_eq!(rules(&mixed.expect("JSON")), ["profile-baseline-unreadable"]);
+    } else {
+        eprintln!("the machine metric was not tried: needs valgrind");
+    }
 
     // A program that does not end with 0 has no profile, a refused one is refused as `check` refuses it, and nothing is left beside the program.
     write("fails.cho", &SPIN.replace("if r > 0", "if r < 0"));

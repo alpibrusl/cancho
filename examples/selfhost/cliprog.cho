@@ -231,6 +231,11 @@ pub fn run_capture[&h, &i, &x, &c, &p, &n, &v](heap: &!h Heap, io: &!i Io, exec:
 
 // `run_capture` with the environment `env` (each entry followed by a NUL): the child has no more than it is given.
 pub fn run_capture_in[&h, &i, &x, &c, &p, &n, &v, &e](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte], argv: &v [byte], env: &e [byte]) -> [heap, err_write, exec(""), clock, poll] Captured {
+    return run_capture_for(heap, io, exec, clock, exe, input, argv, env, 86400000);
+}
+
+// `run_capture_in` that ends the program after `timeout` milliseconds (`kind` 2).
+pub fn run_capture_for[&h, &i, &x, &c, &p, &n, &v, &e](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte], argv: &v [byte], env: &e [byte], timeout: int) -> [heap, err_write, exec(""), clock, poll] Captured {
     var named = buffer.empty(heap, len(exe) + 3);
     if len(exe) > 0 && lc.at(exe, 0) != '/' && lc.at(exe, 0) != '.' {
         // A name with no directory is looked for in `PATH` by the system; this one is in the directory the command was run in.
@@ -255,7 +260,7 @@ pub fn run_capture_in[&h, &i, &x, &c, &p, &n, &v, &e](heap: &!h Heap, io: &!i Io
                         console.error_all(io, "cannot start the program\n");
                     }
                     Spawned::Ok(child) => {
-                        let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 67108864, 67108864, 86400000);
+                        let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 67108864, 67108864, timeout);
                         buffer.drop(heap, out);
                         buffer.drop(heap, err);
                         out = got;

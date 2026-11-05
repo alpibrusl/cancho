@@ -89,7 +89,8 @@ fn cmd_ci() -> CommandInfo {
 fn cmd_profile() -> CommandInfo {
     CommandInfo::new(
         "profile",
-        "where the instructions of a program go, counted under valgrind and answered as JSON; with --baseline, which function got dearer \
+        "where the instructions of a program go, counted by an instrumented build of it (no other tool) and answered as JSON; with --baseline, which function \
+         got dearer (--machine counts machine instructions under valgrind instead) \
          (exit 0 = a profile, 1 = the program did not end with 0 or a function regressed, 2 = bad command line, 3 = it could not be run; \
          only in the command line written in cancho; docs/agent-profile.md)",
     )
@@ -97,15 +98,16 @@ fn cmd_profile() -> CommandInfo {
     .add_argument("file", "string[]", "the .cho files of the program; program arguments follow `--`", true)
     .add_option("std", "bool", "make the standard library's source available", None)
     .add_option("std-dir", "string", "the directory of the standard library's files", None)
-    .add_option("unoptimized", "bool", "build with -O0 so that more of the run has a line (counts then differ from the shipped binary)", None)
+    .add_option("machine", "bool", "count machine instructions under valgrind (needs valgrind; line attribution is lost where the optimiser removes it)", None)
+    .add_option("unoptimized", "bool", "build with -O0 (with --machine, more of the run has a line)", None)
     .add_option("top", "string", "how many functions to list (default 20)", None)
     .add_option("record", "string", "write a baseline from this run", None)
     .add_option("baseline", "string", "compare with a baseline and fail on a regression", None)
     .add_option("factor", "string", "how much dearer is a regression, in hundredths (default 1.3)", None)
     .add_option("strict", "bool", "an improvement is a failure too (re-record the baseline)", None)
     .with_examples(vec![
-        ("Profile a program", "cancho profile --unoptimized app.cho"),
-        ("Gate on a baseline", "cancho profile --unoptimized --baseline perf.json app.cho"),
+        ("Profile a program", "cancho profile app.cho"),
+        ("Gate on a baseline", "cancho profile --baseline perf.json app.cho"),
     ])
     .with_see_also(vec!["trace", "build"])
 }
@@ -113,20 +115,23 @@ fn cmd_profile() -> CommandInfo {
 fn cmd_trace() -> CommandInfo {
     CommandInfo::new(
         "trace",
-        "one run of a program under gdb and one answer: why it stopped, where, and the stack of its own functions \
-         (exit 0 = an answer, a trap included, 1 = the place was not reached, has no code or the time ran out, 2 = bad command line, \
+        "one run of an instrumented build of a program (no debugger) and one answer: why it stopped (a line asked for, or a trap and its cause), where, \
+         and the stack of its own functions \
+         (exit 0 = an answer, a trap included, 1 = the place was not reached, is not in the program or the time ran out, 2 = bad command line, \
          3 = it could not be run; only in the command line written in cancho; docs/agent-debug.md)",
     )
     .idempotent(false)
     .add_argument("file", "string[]", "the .cho files of the program; program arguments follow `--`", true)
     .add_option("std", "bool", "make the standard library's source available", None)
     .add_option("std-dir", "string", "the directory of the standard library's files", None)
-    .add_option("at", "string", "stop at FILE:LINE (without it, at the first trap)", None)
+    .add_option("at", "string", "stop at FILE:LINE, the file as named on the command line (a line with no statement stops at the next)", None)
+    .add_option("hit", "string", "with --at, stop at the Nth arrival (default 1)", None)
     .add_option("on-trap", "bool", "stop at the first trap (the default)", None)
+    .add_option("unoptimized", "bool", "build with -O0", None)
     .add_option("timeout", "string", "seconds before the run is stopped (default 30)", None)
     .add_option("max-frames", "string", "how many frames of the stack to give (default 32)", None)
     .with_examples(vec![
-        ("Where does it trap?", "cancho trace app.cho"),
+        ("Where does it trap, and why?", "cancho trace app.cho"),
         ("Stop at a line", "cancho trace --at src/app.cho:42 src/app.cho"),
     ])
     .with_see_also(vec!["profile", "run"])

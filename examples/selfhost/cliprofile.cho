@@ -387,8 +387,10 @@ fn function_object[&h, &n, &y, &t](heap: &!h Heap, out: buffer.Buffer, names: &n
 }
 
 // The baseline written for this run: one function to a line, so that a change is one changed line.
-fn record_text[&h, &n, &y, &t](heap: &!h Heap, names: &n [byte], files: &y [byte], table: &t [int], count: int, total: int) -> [heap] buffer.Buffer {
-    var out = buffer.append(heap, buffer.empty(heap, 1024), "{\n  \"format\": 1,\n  \"metric\": \"instructions\",\n  \"total\": ");
+fn record_text[&h, &n, &y, &t](heap: &!h Heap, names: &n [byte], files: &y [byte], table: &t [int], count: int, total: int, metric: &static [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buffer.empty(heap, 1024), "{\n  \"format\": 1,\n  \"metric\": \"");
+    out = buffer.append(heap, out, metric);
+    out = buffer.append(heap, out, "\",\n  \"total\": ");
     out = buffer.push_nat(heap, out, total);
     out = buffer.append(heap, out, ",\n  \"functions\": {");
     var first = true;
@@ -499,6 +501,160 @@ fn lines_in[&t](text: &t [byte]) -> [] int {
     return n;
 }
 
+// The table of functions as the answer, and the files `--record` and `--baseline` name: the status.
+fn render[&h, &i, &f, &a, &p, &n, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &a Args, files_names: &p [byte], fn_names: &n [byte], table: &t [int], fn_count: int, fn_dropped: int, total_ir: int, external_ir: int, lost_ir: int, top: int, record_at: int, baseline_at: int, factor: int, strict: bool, metric: &static [byte]) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write] int {
+    var status = 0;
+    var answer = buffer.empty(heap, 1024);
+    // Everything listed or not, in the units of the file: a copy of the table to take the heaviest from.
+    let copy_area = box_slice(heap, 4 * 4096, 0);
+    borrow mut copy_area as &!cb in {
+        let copy = contents(cb);
+        var k = 0;
+        while k < 4 * fn_count {
+            copy[k] = table[k];
+            k = k + 1;
+        }
+        answer = buffer.append(heap, answer, "{\n  \"metric\": \"");
+        answer = buffer.append(heap, answer, metric);
+        answer = buffer.append(heap, answer, "\",\n  \"total\": ");
+        answer = buffer.push_nat(heap, answer, total_ir);
+        answer = buffer.append(heap, answer, ",\n  \"functions\": [");
+        var listed = 0;
+        var listed_self = 0;
+        while listed < top && listed < fn_count {
+            let best = heaviest(copy, fn_count);
+            if best >= 0 {
+                if listed > 0 {
+                    answer = buffer.push(heap, answer, byte_of(','));
+                }
+                answer = buffer.append(heap, answer, "\n    ");
+                answer = function_object(heap, answer, fn_names, files_names, table, best);
+                listed_self = listed_self + table[4 * best + 2];
+                copy[4 * best + 2] = 0 - 1;
+            }
+            listed = listed + 1;
+        }
+        answer = buffer.append(heap, answer, "\n  ],\n  \"other\": { \"self\": ");
+        var in_source = 0;
+        k = 0;
+        while k < fn_count {
+            in_source = in_source + table[4 * k + 2];
+            k = k + 1;
+        }
+        answer = buffer.push_nat(heap, answer, in_source - listed_self + fn_dropped);
+        answer = buffer.append(heap, answer, ", \"functions\": ");
+        answer = buffer.push_nat(heap, answer, fn_count - listed);
+        answer = buffer.append(heap, answer, " },\n  \"unattributed\": { \"self\": ");
+        answer = buffer.push_nat(heap, answer, lost_ir);
+        answer = buffer.append(heap, answer, " },\n  \"external\": { \"self\": ");
+        answer = buffer.push_nat(heap, answer, external_ir);
+        answer = buffer.append(heap, answer, " },\n  \"allocations\": { \"calls\": ");
+        var calls = 0;
+        k = 0;
+        while k < fn_count {
+            calls = calls + table[4 * k + 3];
+            k = k + 1;
+        }
+        answer = buffer.push_nat(heap, answer, calls);
+        answer = buffer.append(heap, answer, ", \"by\": [");
+        var shown = 0;
+        k = 0;
+        while k < fn_count && shown < 20 {
+            if table[4 * k + 3] > 0 {
+                if shown > 0 {
+                    answer = buffer.push(heap, answer, byte_of(','));
+                }
+                answer = buffer.append(heap, answer, "\n      ");
+                answer = function_object(heap, answer, fn_names, files_names, table, k);
+                shown = shown + 1;
+            }
+            k = k + 1;
+        }
+        answer = buffer.append(heap, answer, " ] }");
+    }
+    unbox_slice(heap, copy_area);
+    // The baseline, if one is asked for.
+    var items = buffer.empty(heap, 128);
+    var found = 0;
+    if baseline_at >= 0 {
+        let (text, failed) = cibase.read_path(heap, fs, arg(args, baseline_at));
+        if failed == 2 {
+            let (o, c) = clici.finding(heap, items, found, "profile-baseline-missing", "the file named by --baseline is not there; record one with --record");
+            items = o;
+            found = c;
+            status = 1;
+            buffer.drop(heap, text);
+        } else {
+            borrow text as &xb in {
+                let base_text = buffer.bytes(xb);
+                let area = box_slice(heap, len(base_text) / 4 + 16, 0);
+                var readable = failed == 0 && clici.valid_json(heap, base_text) && clici.has_line(base_text, "  \"format\": 1,") && metric_line_ok(heap, base_text, metric);
+                borrow mut area as &!vb in {
+                    let r = recorded(heap, base_text, contents(vb), len(base_text) / 4 + 16);
+                    let Recorded { keys, count, total, good } = r;
+                    if !readable || !good {
+                        let (o, c) = clici.finding(heap, items, found, "profile-baseline-unreadable", "the baseline is not a baseline this command line reads (format 1, metric instructions)");
+                        items = o;
+                        found = c;
+                        status = 1;
+                    } else {
+                        borrow keys as &kb in {
+                            let (o, c, failing) = judge(heap, items, fn_names, files_names, table, fn_count, total_ir, buffer.bytes(kb), contents(vb), total, factor, strict);
+                            items = o;
+                            found = c;
+                            if failing > 0 {
+                                status = 1;
+                            }
+                        }
+                    }
+                    buffer.drop(heap, keys);
+                }
+                unbox_slice(heap, area);
+            }
+            buffer.drop(heap, text);
+        }
+    }
+    // Most of an optimised run is in lines the optimiser lost (a loop that was vectorised, a merged block): say so, and say what to do.
+    if lost_ir * 2 > total_ir {
+        let (o, c) = clici.finding(heap, items, found, "profile-mostly-unattributed", "over half of the instructions are in code the optimiser left no line for; profile with --unoptimized for lines (counts then differ from the shipped binary)");
+        items = o;
+        found = c;
+    }
+    answer = buffer.append(heap, answer, ",\n  \"findings\": [ ");
+    borrow items as &ib in {
+        answer = buffer.append(heap, answer, buffer.bytes(ib));
+    }
+    answer = buffer.append(heap, answer, " ]");
+    buffer.drop(heap, items);
+    answer = buffer.append(heap, answer, "\n}\n");
+    if record_at >= 0 {
+        let text = record_text(heap, fn_names, files_names, table, fn_count, total_ir, metric);
+        var wrote = 1;
+        borrow text as &xb in {
+            wrote = filewrite.store(fs, arg(args, record_at), buffer.bytes(xb));
+        }
+        buffer.drop(heap, text);
+        if wrote != 0 {
+            status = clibase.refuse(io, "profile-unwritable", "the file named by --record could not be written", 3);
+        }
+    }
+    clibase.show(heap, io, answer);
+    return status;
+}
+
+// Whether `text` has the line that says the baseline is of `metric`.
+fn metric_line_ok[&h, &t](heap: &!h Heap, text: &t [byte], metric: &static [byte]) -> [heap] bool {
+    var want = buffer.append(heap, buffer.empty(heap, 48), "  \"metric\": \"");
+    want = buffer.append(heap, want, metric);
+    want = buffer.append(heap, want, "\",");
+    var good = false;
+    borrow want as &wb in {
+        good = clici.has_line(text, buffer.bytes(wb));
+    }
+    buffer.drop(heap, want);
+    return good;
+}
+
 // The profile in `cg` as the answer, and the files `--record` and `--baseline` name: the status.
 fn analyse[&h, &i, &f, &a, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &a Args, cg: &t [byte], top: int, record_at: int, baseline_at: int, factor: int, strict: bool) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write] int {
     let lines = lines_in(cg);
@@ -544,151 +700,115 @@ fn analyse[&h, &i, &f, &a, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: 
         }
     }
     var status = 0;
-    var answer = buffer.empty(heap, 1024);
     borrow parsed_files as &pf in {
         borrow fn_names as &nm in {
             borrow table_area as &tb in {
-                let table = contents(tb);
-                // Everything listed or not, in the units of the file: a copy of the table to take the heaviest from.
-                let copy_area = box_slice(heap, 4 * 4096, 0);
-                borrow mut copy_area as &!cb in {
-                    let copy = contents(cb);
-                    var k = 0;
-                    while k < 4 * fn_count {
-                        copy[k] = table[k];
-                        k = k + 1;
-                    }
-                    answer = buffer.append(heap, answer, "{\n  \"metric\": \"instructions\",\n  \"total\": ");
-                    answer = buffer.push_nat(heap, answer, total_ir);
-                    answer = buffer.append(heap, answer, ",\n  \"functions\": [");
-                    var listed = 0;
-                    var listed_self = 0;
-                    while listed < top && listed < fn_count {
-                        let best = heaviest(copy, fn_count);
-                        if best >= 0 {
-                            if listed > 0 {
-                                answer = buffer.push(heap, answer, byte_of(','));
-                            }
-                            answer = buffer.append(heap, answer, "\n    ");
-                            answer = function_object(heap, answer, buffer.bytes(nm), buffer.bytes(pf), table, best);
-                            listed_self = listed_self + table[4 * best + 2];
-                            copy[4 * best + 2] = 0 - 1;
-                        }
-                        listed = listed + 1;
-                    }
-                    answer = buffer.append(heap, answer, "\n  ],\n  \"other\": { \"self\": ");
-                    var in_source = 0;
-                    k = 0;
-                    while k < fn_count {
-                        in_source = in_source + table[4 * k + 2];
-                        k = k + 1;
-                    }
-                    answer = buffer.push_nat(heap, answer, in_source - listed_self + fn_dropped);
-                    answer = buffer.append(heap, answer, ", \"functions\": ");
-                    answer = buffer.push_nat(heap, answer, fn_count - listed);
-                    answer = buffer.append(heap, answer, " },\n  \"unattributed\": { \"self\": ");
-                    answer = buffer.push_nat(heap, answer, lost_ir);
-                    answer = buffer.append(heap, answer, " },\n  \"external\": { \"self\": ");
-                    answer = buffer.push_nat(heap, answer, external_ir);
-                    answer = buffer.append(heap, answer, " },\n  \"allocations\": { \"calls\": ");
-                    var calls = 0;
-                    k = 0;
-                    while k < fn_count {
-                        calls = calls + table[4 * k + 3];
-                        k = k + 1;
-                    }
-                    answer = buffer.push_nat(heap, answer, calls);
-                    answer = buffer.append(heap, answer, ", \"by\": [");
-                    var shown = 0;
-                    k = 0;
-                    while k < fn_count && shown < 20 {
-                        if table[4 * k + 3] > 0 {
-                            if shown > 0 {
-                                answer = buffer.push(heap, answer, byte_of(','));
-                            }
-                            answer = buffer.append(heap, answer, "\n      ");
-                            answer = function_object(heap, answer, buffer.bytes(nm), buffer.bytes(pf), table, k);
-                            shown = shown + 1;
-                        }
-                        k = k + 1;
-                    }
-                    answer = buffer.append(heap, answer, " ] }");
-                }
-                unbox_slice(heap, copy_area);
-                // The baseline, if one is asked for.
-                var items = buffer.empty(heap, 128);
-                var found = 0;
-                if baseline_at >= 0 {
-                    let (text, failed) = cibase.read_path(heap, fs, arg(args, baseline_at));
-                    if failed == 2 {
-                        let (o, c) = clici.finding(heap, items, found, "profile-baseline-missing", "the file named by --baseline is not there; record one with --record");
-                        items = o;
-                        found = c;
-                        status = 1;
-                        buffer.drop(heap, text);
-                    } else {
-                        borrow text as &xb in {
-                            let base_text = buffer.bytes(xb);
-                            let area = box_slice(heap, len(base_text) / 4 + 16, 0);
-                            var readable = failed == 0 && clici.valid_json(heap, base_text) && clici.has_line(base_text, "  \"format\": 1,") && clici.has_line(base_text, "  \"metric\": \"instructions\",");
-                            borrow mut area as &!vb in {
-                                let r = recorded(heap, base_text, contents(vb), len(base_text) / 4 + 16);
-                                let Recorded { keys, count, total, good } = r;
-                                if !readable || !good {
-                                    let (o, c) = clici.finding(heap, items, found, "profile-baseline-unreadable", "the baseline is not a baseline this command line reads (format 1, metric instructions)");
-                                    items = o;
-                                    found = c;
-                                    status = 1;
-                                } else {
-                                    borrow keys as &kb in {
-                                        let (o, c, failing) = judge(heap, items, buffer.bytes(nm), buffer.bytes(pf), table, fn_count, total_ir, buffer.bytes(kb), contents(vb), total, factor, strict);
-                                        items = o;
-                                        found = c;
-                                        if failing > 0 {
-                                            status = 1;
-                                        }
-                                    }
-                                }
-                                buffer.drop(heap, keys);
-                            }
-                            unbox_slice(heap, area);
-                        }
-                        buffer.drop(heap, text);
-                    }
-                }
-                // Most of an optimised run is in lines the optimiser lost (a loop that was vectorised, a merged block): say so, and say what to do.
-                if lost_ir * 2 > total_ir {
-                    let (o, c) = clici.finding(heap, items, found, "profile-mostly-unattributed", "over half of the instructions are in code the optimiser left no line for; profile with --unoptimized for lines (counts then differ from the shipped binary)");
-                    items = o;
-                    found = c;
-                }
-                answer = buffer.append(heap, answer, ",\n  \"findings\": [ ");
-                borrow items as &ib in {
-                    answer = buffer.append(heap, answer, buffer.bytes(ib));
-                }
-                answer = buffer.append(heap, answer, " ]");
-                buffer.drop(heap, items);
-                answer = buffer.append(heap, answer, "\n}\n");
-                if record_at >= 0 {
-                    let text = record_text(heap, buffer.bytes(nm), buffer.bytes(pf), table, fn_count, total_ir);
-                    var wrote = 1;
-                    borrow text as &xb in {
-                        wrote = filewrite.store(fs, arg(args, record_at), buffer.bytes(xb));
-                    }
-                    buffer.drop(heap, text);
-                    if wrote != 0 {
-                        status = clibase.refuse(io, "profile-unwritable", "the file named by --record could not be written", 3);
-                    }
-                }
+                status = render(heap, io, fs, args, buffer.bytes(pf), buffer.bytes(nm), contents(tb), fn_count, fn_dropped, total_ir, external_ir, lost_ir, top, record_at, baseline_at, factor, strict, "instructions");
             }
         }
     }
-    clibase.show(heap, io, answer);
     buffer.drop(heap, fn_names);
     buffer.drop(heap, parsed_files);
     unbox_slice(heap, self_area);
     unbox_slice(heap, alloc_area);
     unbox_slice(heap, table_area);
+    return status;
+}
+
+// The program built instrumented, run with the report going to `out_file`, and the report as the answer.
+fn run_instrumented[&h, &i, &a, &f, &x, &c, &p, &o](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &a Args, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], out_file: &o [byte], program_args: int, top: int, record_at: int, baseline_at: int, factor: int, strict: bool) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
+    var env = buffer.append(heap, buffer.empty(heap, 128), "PATH=/usr/bin:/bin\0CANCHO_TRACE_OUT=");
+    env = buffer.append(heap, buffer.append(heap, env, out_file), "\0");
+    var run_words = buffer.empty(heap, 64);
+    var n = program_args;
+    while n < arg_count(args) {
+        run_words = buffer.append(heap, buffer.append(heap, run_words, arg(args, n)), "\0");
+        n = n + 1;
+    }
+    var ran_kind = 5;
+    var ran_value = 0;
+    borrow env as &nb in {
+        borrow run_words as &rw in {
+            let ran = cliprog.run_capture_in(heap, io, exec, clock, exe, "", buffer.bytes(rw), buffer.bytes(nb));
+            let (kind, value, ran_err) = after(heap, ran);
+            buffer.drop(heap, ran_err);
+            ran_kind = kind;
+            ran_value = value;
+        }
+    }
+    buffer.drop(heap, env);
+    buffer.drop(heap, run_words);
+    if ran_kind != 0 || ran_value != 0 {
+        return clibase.refuse(io, "profile-failed", "the program did not end with 0; a profile of a crash measures the crash, so there is none", 1);
+    }
+    var status = 0;
+    let (report, failed) = cibase.read_path(heap, fs, out_file);
+    if failed != 0 {
+        status = clibase.refuse(io, "profile-failed", "the instrumented program wrote no report", 1);
+    } else {
+        borrow report as &rb in {
+            status = analyse_report(heap, io, fs, args, buffer.bytes(rb), top, record_at, baseline_at, factor, strict);
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+// The lines `fn NAME FILE LINE INSTRUCTIONS STATEMENTS ALLOCATIONS` (separated by tabs) the run time wrote, as the answer.
+fn analyse_report[&h, &i, &f, &a, &t](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &a Args, report: &t [byte], top: int, record_at: int, baseline_at: int, factor: int, strict: bool) -> [heap, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write] int {
+    let table_area = box_slice(heap, 4 * 4096, 0);
+    var files = buffer.empty(heap, 128);
+    var names = buffer.empty(heap, 256);
+    var n_files = 0;
+    var count = 0;
+    var dropped = 0;
+    var total = 0;
+    borrow mut table_area as &!tb in {
+        let table = contents(tb);
+        var start = 0;
+        var at = 0;
+        while at <= len(report) {
+            if at == len(report) || lc.at(report, at) == 10 {
+                let line = report[start..at];
+                if bytes.equal(clibase.tab_field(line, 0), "fn") {
+                    let instructions = clibase.value_of(clibase.tab_field(line, 4), 0, len(clibase.tab_field(line, 4)));
+                    total = total + instructions;
+                    if count < 4096 {
+                        var file = 0 - 1;
+                        borrow files as &fb in {
+                            file = index_of(buffer.bytes(fb), clibase.tab_field(line, 2));
+                        }
+                        if file < 0 {
+                            file = n_files;
+                            n_files = n_files + 1;
+                            files = buffer.push(heap, buffer.append(heap, files, clibase.tab_field(line, 2)), byte_of(0));
+                        }
+                        names = buffer.push(heap, buffer.append(heap, names, clibase.tab_field(line, 1)), byte_of(0));
+                        table[4 * count] = file;
+                        table[4 * count + 1] = clibase.value_of(clibase.tab_field(line, 3), 0, len(clibase.tab_field(line, 3)));
+                        table[4 * count + 2] = instructions;
+                        table[4 * count + 3] = clibase.value_of(clibase.tab_field(line, 6), 0, len(clibase.tab_field(line, 6)));
+                        count = count + 1;
+                    } else {
+                        dropped = dropped + instructions;
+                    }
+                }
+                start = at + 1;
+            }
+            at = at + 1;
+        }
+    }
+    var status = 0;
+    borrow files as &pf in {
+        borrow names as &nm in {
+            borrow table_area as &tb in {
+                status = render(heap, io, fs, args, buffer.bytes(pf), buffer.bytes(nm), contents(tb), count, dropped, total, 0, 0, top, record_at, baseline_at, factor, strict, "ir-instructions");
+            }
+        }
+    }
+    unbox_slice(heap, table_area);
+    buffer.drop(heap, files);
+    buffer.drop(heap, names);
     return status;
 }
 
@@ -706,6 +826,7 @@ pub fn profile_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
     var factor = 130;
     var strict = false;
     var unoptimized = false;
+    var machine = false;
     var library = false;
     var first = 0 - 1;
     var files = 0;
@@ -751,6 +872,8 @@ pub fn profile_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             strict = true;
         } else if bytes.equal(word, "--unoptimized") {
             unoptimized = true;
+        } else if bytes.equal(word, "--machine") {
+            machine = true;
         } else if bytes.equal(word, "--std") {
             library = true;
         } else if len(word) > 0 && lc.at(word, 0) == '-' {
@@ -776,7 +899,11 @@ pub fn profile_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
     out_file = buffer.append(heap, out_file, ".cancho-profile.cg");
     // 1 the program could not be built, 2 valgrind is not there, 3 the program did not end with 0, 4 the profile could not be read, 0 all is well.
     var trouble = 0;
-    var build_words = buffer.append(heap, buffer.empty(heap, 128), "build\0-g\0");
+    var build_words = buffer.append(heap, buffer.empty(heap, 128), "build\0--instrument\0profile\0");
+    if machine {
+        buffer.drop(heap, build_words);
+        build_words = buffer.append(heap, buffer.empty(heap, 128), "build\0-g\0");
+    }
     if unoptimized {
         build_words = buffer.append(heap, build_words, "-O0\0");
     }
@@ -818,7 +945,14 @@ pub fn profile_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
         }
     }
     buffer.drop(heap, built_err);
-    if trouble == 0 {
+    if trouble == 0 && !machine {
+        borrow exe as &eb in {
+            borrow out_file as &ob in {
+                status = run_instrumented(heap, io, fs, args, exec, clock, buffer.bytes(eb), buffer.bytes(ob), program_args, top, record_at, baseline_at, factor, strict);
+            }
+        }
+    }
+    if trouble == 0 && machine {
         var run_words = buffer.append(heap, buffer.empty(heap, 256), "--tool=callgrind\0--callgrind-out-file=");
         borrow out_file as &ob in {
             run_words = buffer.append(heap, run_words, buffer.bytes(ob));
