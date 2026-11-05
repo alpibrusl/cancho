@@ -46,9 +46,26 @@
 Throughput decides whether the V1 `import-git` of `cancho` (826.9 MiB of objects, `docs/vcs-cli.md` R4) is bearable in
 cancho code. BLAKE3, `blake3sum` built from `examples/selfhost/blake3.cho` with the Rust compiler, 20 MB of random
 bytes, standard input: **0.69 s wall, 0.40 s user (about 50 MB/s of hashing)**, which puts the 826.9 MiB at about 17 s. `std.crypto.sha256` over 20 MB in memory: **0.33 s
-wall (about 60 MB/s)**; SHA-1's round function is smaller, so the same order is expected, not measured until it is
-written. Neither hash is what makes the import slow in Rust (94 s for `cancho`, mostly fsync and inflate); an inflate in
-cancho is the part to measure first (slice 2).
+wall (about 60 MB/s)**.
+
+**Slice (a), written and measured (2026-11-05, macOS aarch64, the Rust compiler's build of each program, one run each):**
+
+| what | measured |
+|---|---|
+| `sha1.cho`, `sha1sum` over 20 MB of random bytes on standard input | **0.35 s** (about 57 MB/s, reading included); `shasum -a 1` takes 0.05 s. The 826.9 MiB of the `cancho` import is about **15 s** of SHA-1, and about 17 s of BLAKE3 on top: both are paid once per object |
+| `zlib.cho` `inflate` of a 6.0 MB stream (level 6) to 20 MB of text | **0.45 s** (about 44 MB/s of output, reading and writing included); Python's `zlib` (C) takes 0.013 s |
+| `zlib.cho` `inflate` of 20 MB stored (level 0) | 0.57 s (the copy through `Buffer` and the write dominate) |
+| `zlib_stored` of 20 MB | 0.56 s |
+
+Correctness, against independent implementations: `sha1.cho` against `hashlib` for 19 sizes from 0 to 1,000,003 bytes (every size around a block:
+55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 129) and a table of the lengths 0 to 130 in `sha1_test.cho`; `zlib.cho` against Python's
+`zlib` for 95 cases (empty, 1, 100, 5,000, 100,000 and 1,000,000 bytes of text, random bytes and zeros, at levels 0, 1, 6 and 9, which are
+stored, fixed and dynamic blocks) with no difference, and `zlib_stored` read back by Python's `zlib` in 19 of them. Five mutants of
+`zlib.cho` (a distance base, the Adler-32 modulus, the stored-length check, the distance bound, the end-code check) each fail the tests.
+Both libraries pass under the compiler in cancho alone (`CANCHO_COMPILER=auto`). They run with ``examples/selfhost/test.sh`.
+
+Inflate is the slow, short form (`puff.c`: one bit at a time); at 44 MB/s the 826.9 MiB import is about 19 s of inflate, not the 94 s of the Rust
+import (which is mostly `fsync`). Neither number was measured for the whole import, only per megabyte.
 
 ## 3. What the missing primitives block, and what does not
 
@@ -85,8 +102,8 @@ Issues: directory removal [#684](https://github.com/alpibrusl/cancho/issues/684)
 
 ## 5. What is built next, in order, as far as this allows
 
-1. **This audit** (this PR).
-2. SHA-1 and inflate (library, `examples/selfhost`), the object store, `init`, `record`, `log`, `show`, `status`, refs with
+1. **This audit** (#683, merged).
+2. **Slice (a), built:** `sha1.cho`, `zlib.cho` (Adler-32, inflate, stored-block deflate), their tests and measurements (§2). Next: the object store, `init`, `record`, `log`, `show`, `status`, refs with
    compare-and-swap, against the V1 pins. Blocked for `status`/`restore` over directories and links until the issues above are answered.
 3. Crash and race tests (blocked on `exit`, or on a deliberate trap).
 4. The git bridge (SHA-1, inflate, pack idx v2, deltas; the exporter with stored blocks).

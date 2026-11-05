@@ -1,0 +1,52 @@
+module selfhost.zlibtool;
+
+// zlibtool.cho -- `zlib.cho` as a filter, for measuring it and for checking it against Python's `zlib` and `zlib-flate`:
+// standard input is a zlib stream, and standard output is what it inflates to (status 0), or standard input is anything and the output
+// a zlib stream of stored blocks when the program is built with `store` in place of `inflate` below. One program, the mode read from the first
+// byte of input: `u` then a zlib stream = inflate it; `s` then bytes = store them. A refusal is its status as the exit code (1 to 9, `zlib.cho`).
+//
+//     cancho run examples/selfhost/zlibtool.cho examples/selfhost/zlib.cho examples/selfhost/lexcore.cho --std < f
+
+import std.io as console;
+import std.buffer;
+import selfhost.zlib;
+import selfhost.lexcore as lc;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    var code = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            let raw = lc.slurp(h, i);
+            borrow raw as &r in {
+                let all = buffer.bytes(r);
+                if len(all) == 0 {
+                    code = 10;
+                } else if all[0] == byte_of(117) {
+                    let rs = zlib.unzlib(h, all[1..len(all)], 0, buffer.empty(h, 1048576), 1073741824);
+                    let zlib.Inflated { out, status, end } = rs;
+                    code = status;
+                    if status == 0 {
+                        borrow out as &o in {
+                            buffer.write(i, o);
+                        }
+                    }
+                    buffer.drop(h, out);
+                } else {
+                    let z = zlib.zlib_stored(h, all[1..len(all)], buffer.empty(h, 1048576));
+                    borrow z as &zr in {
+                        buffer.write(i, zr);
+                    }
+                    buffer.drop(h, z);
+                }
+            }
+            buffer.drop(h, raw);
+        }
+    }
+    release(heap);
+    release(io);
+    return code;
+}
