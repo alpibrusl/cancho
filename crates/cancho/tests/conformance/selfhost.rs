@@ -29,6 +29,7 @@ mod parity;
 mod profile;
 mod statics;
 mod store;
+mod trace;
 mod vcs;
 use cases::BODY_EDGE;
 
@@ -388,6 +389,7 @@ pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
         "ciinit.cho",
         "cidebug.cho",
         "cliprofile.cho",
+        "clitrace.cho",
         "version.cho",
         "jsonwrite.cho",
         "cliorigin.cho",
