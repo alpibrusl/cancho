@@ -1,6 +1,6 @@
 # The command line in cancho
 
-Status: **slices 1 to 12 built** (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15; `test`, §16; `layout`, §17; `satisfy`, §18); the rest is design (epic #491,
+Status: **slices 1 to 19 built** (the later ones, §14 to §40, are listed in their own sections; the list here stops at slice 12) (`fmt [--check] PATH...`, §7, §8; `print`, `ingest`, §9; `agent-guidelines`, §10; `--help`, `introspect`, `skill`, §11; `check`, §12; `ids`, §13; `build`, §14; `run`, §15; `test`, §16; `layout`, §17; `satisfy`, §18); the rest is design (epic #491,
 issue #485). The numbers quoted are from the tree at the time of writing and are the only
 ones claimed.
 
@@ -616,8 +616,6 @@ library under development, and gives the same identities when DIR is `std/`. In 
 `selfhost::cli::the_command_line_in_cancho_carries_the_standard_library` runs ten programs of `tests/accept` through `check`, `ids` and `build` with `--std` against the Rust command (same status
 and standard output; the identities of the whole library line for line; the built programs the same status and output), `--std-dir std` against `--std`, and the refusal of a program that
 imports the library without the flag. Mutants: one byte of the embedded library changed, and a file of the library left out, each fail it.
-=======
->>>>>>> origin/main
 
 ## 38. Slice 18: what this build does not carry (`docs/standalone-cancho.md` D1, §4)
 
