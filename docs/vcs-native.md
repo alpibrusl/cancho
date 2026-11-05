@@ -124,7 +124,7 @@ command wrote:
 | b2 | `vcschange.cho`: the change object (JSON in V1's field order, written and read) | **built**, below; refs, `HEAD` and `refs/*.log` move to b3 |
 | b3 | `vcsstore.cho`: **built**, below: refs, `HEAD`, the log; the store on disk: write an object atomically (temporary name, `file_sync`, `dir_rename`, `dir_sync`), read one and re-hash it; the ref compare-and-swap under a lock file; `init` | next; needs the primitives that exist, not the five of the issues |
 | b4a | `vcsrepo.cho`: HEAD and the resolution of a revision (`HEAD`, `@`, id, branch, tag, prefix, `~N`) | **built**, below |
-| b4b | the history of a change; the documents of `log` and `show` (sorted-key pretty JSON) | next |
+| b4b | `vcsrepo.cho`: the history of a change; the documents of `log` and `show` (sorted-key pretty JSON), and the refusal document of `bad-revision` | **built**, below; without the `log` filters and `show --patch` |
 | b4c | `status`: the working copy scanned against HEAD's tree | next; over links it needs #685, over removed directories #684 |
 | b4d | `record` (snapshot of the working copy to a tree and a change, no gate yet) | next |
 
@@ -170,3 +170,17 @@ full id, prefixes of 8, 6 and 5 digits, a name that does not exist, empty, `HEAD
 first asserts that the branch and the tag are not at HEAD, so a comparison of two refusals cannot pass for the wrong reason (an earlier version of the script used a `vcs tag` command that
 does not exist and passed vacuously). Four mutants (the prefix length, the `~` count, the order of `heads/` and `tags/`, the `@` alias) fail it; the fifth (status 19 for 18) is the same refusal
 tag, which is all a command prints. The prefix search reads one fan-out directory; the ambiguous case was fabricated with two empty files named like changes.
+
+**b4b, measured.** `vcsrepo.cho` walks the history as `repo.rs` does (the greatest `(time, id)` of what has been reached, a parent only once its child was taken) and prints the `log` and `show`
+documents as `serde_json::to_string_pretty` prints them: keys in byte order, `[]` for an empty array, a refusal as `{command, ok: false, refused: {candidates?, message, tag}}`. `examples/selfhost/vcslog_check.sh`
+builds five repositories with the Rust command and compares standard output **and exit status, byte for byte**, with `vcsstorectl log|show`: **51 checks, all passing**, also with the compiler in cancho alone.
+The repositories: (A) four changes with declarations, an anchored edit, a gate attestation, a model, a session, an issue, a prompt with quotes, a backslash, a tab, a newline and non-ASCII letters, an empty
+model, two authors, a mode change, a deletion and an edit; (B) a history that forks, read from the branch, from `HEAD~n` and with `--limit`; (C) one change that adds about 400 files and a 70 KB one (`show` is 7,561
+lines); (D) an empty repository; (E) a history **with a merge**, imported by the Rust command from a git repository (git only made the fixture: times 1, 3, 5, 9, 10), because only a change with two parents
+makes the order of the history depend on `(time, id)`: a chain and a fork never have more than one change waiting. The refusals compared are an unknown name, an ambiguous prefix with its candidates, `HEAD~99` and `HEAD~x`.
+Six mutants (the order of the frontier, a state name, the `--limit 0` rule, an intent key, the indentation of an entry, the order of a tree diff) each fail it; the frontier one passed until scenario E was added.
+`log --limit 0` lists one change, as the Rust command does (it stops after pushing a row).
+
+One bug found by the check and fixed: `show` parsed the change into its scratch space twice but read it once, and answered from zeros (a trap). It showed as exit 132 on every `show` of a change with a tree, and
+a debugging harness of mine had also trapped on a relative path through `..`, which an `Fs` traps on (the checks pass absolute paths). **Not done:** `log --path|--intent|--session|--issue|--author`, `show --patch`, the
+refusals other than `bad-revision` as documents (they are printed as `refused TAG`); the history keeps its set of reached changes as a list (quadratic; not measured at scale).

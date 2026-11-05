@@ -7,19 +7,22 @@ module selfhost.vcsrepo;
 // A revision is `HEAD` or `@`, a change id, a branch or tag (`heads/NAME`, `tags/NAME`, then NAME as a ref), or a prefix of at least six hexadecimal digits of
 // a change id, with `~N` after it for N changes back along first parents.
 //
-// A status: 0 ok; those of `vcsstore.tag`; 18 `bad-revision`; 19 `bad-revision` for a prefix more than one change starts with (their ids are in `bytes`).
+// A status: 0 ok; those of `vcsstore.tag`; and the `bad-revision` ones, which differ in the message the Rust command gives: 18 a name that names no change, branch or
+// tag; 19 a prefix more than one change starts with (their ids are in `bytes`); 20 HEAD has no change yet; 21 a `~N` that goes back past the first change; 22 a `~` that
+// is not followed by a count.
 //
 // Next (b4b): the history of a change, and the documents of `log` and `show`. Not here: `record`, `status`, the gate.
 
 import std.buffer;
 import std.bytes;
 import selfhost.jsonread;
+import selfhost.jsonwrite;
 import selfhost.vcschange;
 import selfhost.vcsobj;
 import selfhost.vcsstore;
 
 pub fn tag(status: int) -> [] &static [byte] {
-    if status == 18 || status == 19 {
+    if status >= 18 && status <= 22 {
         return "bad-revision";
     }
     return vcsstore.tag(status);
@@ -122,7 +125,7 @@ fn resolve_one[&h, &d, &s, &n](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], 
         let (id, status, errno) = vcsstore.parts(head);
         if status == 2 {
             buffer.drop(heap, id);
-            return failed(heap, 18);
+            return failed(heap, 20);
         }
         return vcsstore.Object { bytes: id, status: status, errno: errno };
     }
@@ -175,7 +178,7 @@ fn first_parent[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int],
             if vcschange.read(m, src) != 0 {
                 code = 3;
             } else if vcschange.parent_count(m, src) == 0 {
-                code = 18;
+                code = 21;
             } else {
                 out = buffer.append(heap, out, vcschange.parent(m, src, 0));
             }
@@ -201,13 +204,13 @@ pub fn resolve[&h, &d, &s, &n](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], 
     if cut < len(spec) {
         let digits = spec[cut + 1..len(spec)];
         if len(digits) == 0 || len(digits) > 9 {
-            return failed(heap, 18);
+            return failed(heap, 22);
         }
         var k = 0;
         while k < len(digits) {
             let c = int_of(digits[k]);
             if c < 48 || c > 57 {
-                return failed(heap, 18);
+                return failed(heap, 22);
             }
             back = back * 10 + (c - 48);
             k = k + 1;
@@ -238,4 +241,729 @@ pub fn resolve[&h, &d, &s, &n](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], 
         step = step + 1;
     }
     return vcsstore.Object { bytes: id, status: 0, errno: 0 };
+}
+
+// ---- history -----------------------------------------------------------------------------------------------------------------
+
+// What the history needs of a change: its parents (their ids one after the other) and its time.
+res struct Meta {
+    parents: buffer.Buffer,
+    time: int,
+    status: int,
+}
+
+fn meta_parts(m: Meta) -> [] (buffer.Buffer, int, int) {
+    let Meta { parents, time, status } = m;
+    return (parents, time, status);
+}
+
+fn change_meta[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] Meta {
+    let got = vcsstore.get(heap, vcs, scratch, "change", id);
+    let (data, status, errno) = vcsstore.parts(got);
+    var parents = buffer.empty(heap, 0);
+    var time = 0;
+    var code = status;
+    if status == 0 {
+        borrow data as &db in {
+            let src = buffer.bytes(db);
+            let jm = box_slice(heap, jsonread.size_for(src), 0);
+            borrow mut jm as &!w in {
+                let m = contents(w);
+                if vcschange.read(m, src) != 0 {
+                    code = 3;
+                } else {
+                    time = vcschange.time(m, src);
+                    var k = 0;
+                    while k < vcschange.parent_count(m, src) {
+                        parents = buffer.append(heap, parents, vcschange.parent(m, src, k));
+                        k = k + 1;
+                    }
+                }
+            }
+            unbox_slice(heap, jm);
+        }
+    }
+    buffer.drop(heap, data);
+    return Meta { parents: parents, time: time, status: code };
+}
+
+fn contains[&s, &i](ids: &s [byte], id: &i [byte]) -> [] bool {
+    var k = 0;
+    while k + 64 <= len(ids) {
+        if bytes.equal(ids[k..k + 64], id) {
+            return true;
+        }
+        k = k + 64;
+    }
+    return false;
+}
+
+// A frontier entry: the time in 8 bytes, most significant first, then the id, so that the bytes of an entry order as (time, id) does.
+fn push_record[&h, &i](heap: &!h Heap, frontier: buffer.Buffer, time: int, id: &i [byte]) -> [heap] buffer.Buffer {
+    var b = frontier;
+    var shift = 56;
+    var t = time;
+    if t < 0 {
+        t = 0;
+    }
+    while shift >= 0 {
+        b = buffer.push(heap, b, byte_of(t >> shift & 255));
+        shift = shift - 8;
+    }
+    return buffer.append(heap, b, id);
+}
+
+// The index of the greatest entry.
+fn greatest[&f](frontier: &f [byte]) -> [] int {
+    var best = 0;
+    var k = 1;
+    while (k + 1) * 72 <= len(frontier) {
+        if bytes.compare(frontier[k * 72..k * 72 + 72], frontier[best * 72..best * 72 + 72]) > 0 {
+            best = k;
+        }
+        k = k + 1;
+    }
+    return best;
+}
+
+// The entry `at` is replaced by the last one and the frontier is one entry shorter.
+fn remove_record(frontier: buffer.Buffer, at: int) -> [] buffer.Buffer {
+    let buffer.Buffer { held, used } = frontier;
+    var kept = held;
+    borrow mut kept as &!w in {
+        let s = contents(w);
+        var k = 0;
+        while k < 72 {
+            s[at * 72 + k] = s[used - 72 + k];
+            k = k + 1;
+        }
+    }
+    return buffer.Buffer { held: kept, used: used - 72 };
+}
+
+// The parents of the change `id` that were not reached yet are added to `seen` and to the frontier; 0, or the status of a change that could not be read.
+fn expand[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte], seen: buffer.Buffer, frontier: buffer.Buffer) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, buffer.Buffer, int) {
+    var reached = seen;
+    var edge = frontier;
+    var code = 0;
+    let m = change_meta(heap, vcs, scratch, id);
+    let (parents, time, status) = meta_parts(m);
+    if status != 0 {
+        code = status;
+    } else {
+        borrow parents as &pb in {
+            let all = buffer.bytes(pb);
+            var k = 0;
+            while k + 64 <= len(all) && code == 0 {
+                let p = all[k..k + 64];
+                var new = false;
+                borrow reached as &rb in {
+                    new = !contains(buffer.bytes(rb), p);
+                }
+                if new {
+                    let pm = change_meta(heap, vcs, scratch, p);
+                    let (grand, pt, ps) = meta_parts(pm);
+                    buffer.drop(heap, grand);
+                    if ps != 0 {
+                        code = ps;
+                    } else {
+                        reached = buffer.append(heap, reached, p);
+                        edge = push_record(heap, edge, pt, p);
+                    }
+                }
+                k = k + 64;
+            }
+        }
+    }
+    buffer.drop(heap, parents);
+    return (reached, edge, code);
+}
+
+// The changes reachable from `from`, in `bytes` as ids one after the other, the greatest (time, id) first, as `repo.rs`'s `history` makes them: a parent is
+// reached only once the change before it was taken. 11 `object-missing` if a change is not in the store.
+pub fn history[&h, &d, &s, &f](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], from: &f [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    let first = change_meta(heap, vcs, scratch, from);
+    let (parents, time, status) = meta_parts(first);
+    buffer.drop(heap, parents);
+    if status != 0 {
+        return failed(heap, status);
+    }
+    var seen = buffer.append(heap, buffer.empty(heap, 64), from);
+    var frontier = push_record(heap, buffer.empty(heap, 72), time, from);
+    var out = buffer.empty(heap, 64);
+    var code = 0;
+    var going = true;
+    while going && code == 0 {
+        var n = 0;
+        var at = 0;
+        var current = buffer.empty(heap, 64);
+        borrow frontier as &fb in {
+            n = len(buffer.bytes(fb)) / 72;
+            if n > 0 {
+                at = greatest(buffer.bytes(fb));
+                current = buffer.append(heap, current, buffer.bytes(fb)[at * 72 + 8..at * 72 + 72]);
+            }
+        }
+        if n == 0 {
+            going = false;
+        } else {
+            frontier = remove_record(frontier, at);
+            borrow current as &cb in {
+                out = buffer.append(heap, out, buffer.bytes(cb));
+                let (more_seen, more_edge, why) = expand(heap, vcs, scratch, buffer.bytes(cb), seen, frontier);
+                seen = more_seen;
+                frontier = more_edge;
+                code = why;
+            }
+        }
+        buffer.drop(heap, current);
+    }
+    buffer.drop(heap, seen);
+    buffer.drop(heap, frontier);
+    if code != 0 {
+        buffer.drop(heap, out);
+        return failed(heap, code);
+    }
+    return vcsstore.Object { bytes: out, status: 0, errno: 0 };
+}
+
+// ---- documents ---------------------------------------------------------------------------------------------------------------
+
+fn quoted[&h, &t](heap: &!h Heap, out: buffer.Buffer, raw: &t [byte]) -> [heap] buffer.Buffer {
+    return buffer.push(heap, buffer.append(heap, buffer.push(heap, out, byte_of(34)), raw), byte_of(34));
+}
+
+// The next member of an object whose members are at `levels`: a comma unless it is the first, a newline, the indentation, `"name": `.
+fn member[&h, &k](heap: &!h Heap, out: buffer.Buffer, levels: int, first: bool, name: &k [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    if !first {
+        b = buffer.push(heap, b, byte_of(44));
+    }
+    return jsonwrite.key(heap, b, levels, name);
+}
+
+// `[]` or the ids of the parents, one to a line, the array's members at `levels + 1`.
+fn emit_parents[&h, &j, &x](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
+    let n = vcschange.parent_count(jm, src);
+    if n == 0 {
+        return buffer.append(heap, out, "[]");
+    }
+    var b = buffer.push(heap, out, byte_of(91));
+    var k = 0;
+    while k < n {
+        if k > 0 {
+            b = buffer.push(heap, b, byte_of(44));
+        }
+        b = quoted(heap, jsonwrite.newline(heap, b, levels + 1), vcschange.parent(jm, src, k));
+        k = k + 1;
+    }
+    return buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(93));
+}
+
+// `null` or the intent as an object, its parts in the order of their names.
+fn emit_intent[&h, &j, &x](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
+    if !vcschange.has_intent(jm, src) {
+        return buffer.append(heap, out, "null");
+    }
+    var b = buffer.push(heap, out, byte_of(123));
+    var first = true;
+    var k = 0;
+    while k < 4 {
+        var name = "issue";
+        if k == 1 {
+            name = "model";
+        }
+        if k == 2 {
+            name = "prompt";
+        }
+        if k == 3 {
+            name = "session";
+        }
+        if vcschange.has_part(jm, src, name) {
+            b = member(heap, b, levels + 1, first, name);
+            b = quoted(heap, b, vcschange.intent_part(jm, src, name));
+            first = false;
+        }
+        k = k + 1;
+    }
+    return buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(125));
+}
+
+// A list of strings (`attestations`), as an array.
+fn emit_strings[&h, &j, &x, &l](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte], list: &l [byte]) -> [heap] buffer.Buffer {
+    let n = vcschange.list_count(jm, src, list);
+    if n == 0 {
+        return buffer.append(heap, out, "[]");
+    }
+    var b = buffer.push(heap, out, byte_of(91));
+    var k = 0;
+    while k < n {
+        if k > 0 {
+            b = buffer.push(heap, b, byte_of(44));
+        }
+        b = quoted(heap, jsonwrite.newline(heap, b, levels + 1), vcschange.list_item(jm, src, list, k, ""));
+        k = k + 1;
+    }
+    return buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(93));
+}
+
+// A list of objects with three string parts (`decls`: kind, name, path; `edits`: new, old, path), as an array of objects with those keys.
+fn emit_items[&h, &j, &x, &l, &a, &b2, &c](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte], list: &l [byte], p1: &a [byte], p2: &b2 [byte], p3: &c [byte]) -> [heap] buffer.Buffer {
+    let n = vcschange.list_count(jm, src, list);
+    if n == 0 {
+        return buffer.append(heap, out, "[]");
+    }
+    var b = buffer.push(heap, out, byte_of(91));
+    var k = 0;
+    while k < n {
+        if k > 0 {
+            b = buffer.push(heap, b, byte_of(44));
+        }
+        b = buffer.push(heap, jsonwrite.newline(heap, b, levels + 1), byte_of(123));
+        b = quoted(heap, member(heap, b, levels + 2, true, p1), vcschange.list_item(jm, src, list, k, p1));
+        b = quoted(heap, member(heap, b, levels + 2, false, p2), vcschange.list_item(jm, src, list, k, p2));
+        b = quoted(heap, member(heap, b, levels + 2, false, p3), vcschange.list_item(jm, src, list, k, p3));
+        b = buffer.push(heap, jsonwrite.newline(heap, b, levels + 1), byte_of(125));
+        k = k + 1;
+    }
+    return buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(93));
+}
+
+// A change as `log` lists it, an object whose members are at `levels + 1` (the `{` is already written).
+fn emit_entry[&h, &j, &x, &i](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte], id: &i [byte]) -> [heap] buffer.Buffer {
+    let at = levels + 1;
+    var b = quoted(heap, member(heap, out, at, true, "author"), vcschange.author(jm, src));
+    b = quoted(heap, member(heap, b, at, false, "change"), id);
+    b = emit_intent(heap, member(heap, b, at, false, "intent"), at, jm, src);
+    b = emit_parents(heap, member(heap, b, at, false, "parents"), at, jm, src);
+    b = quoted(heap, member(heap, b, at, false, "subject"), vcschange.subject(jm, src));
+    b = vcschange.number(heap, member(heap, b, at, false, "time"), vcschange.time(jm, src));
+    b = quoted(heap, member(heap, b, at, false, "tz"), vcschange.tz(jm, src));
+    return buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(125));
+}
+
+// The change `id` read and parsed, and `emit` run on it: see the callers. Answers the document so far and a status.
+fn log_one[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte], out: buffer.Buffer, levels: int) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, int) {
+    let got = vcsstore.get(heap, vcs, scratch, "change", id);
+    let (data, status, errno) = vcsstore.parts(got);
+    var b = out;
+    var code = status;
+    if status == 0 {
+        borrow data as &db in {
+            let src = buffer.bytes(db);
+            let jm = box_slice(heap, jsonread.size_for(src), 0);
+            borrow mut jm as &!w in {
+                let m = contents(w);
+                if vcschange.read(m, src) != 0 {
+                    code = 3;
+                } else {
+                    b = emit_entry(heap, b, levels, m, src, id);
+                }
+            }
+            unbox_slice(heap, jm);
+        }
+    }
+    buffer.drop(heap, data);
+    return (b, code);
+}
+
+// The `log` document for the changes `ids` (64 digits each, in order), at most `limit` of them (a negative limit is no limit).
+pub fn log_document[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], ids: &i [byte], limit: int) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    var count = len(ids) / 64;
+    // The Rust command stops after pushing a row once it has `limit` of them, so a limit of 0 still lists one.
+    if limit >= 0 && limit < count {
+        count = limit;
+        if count == 0 {
+            count = 1;
+        }
+    }
+    var b = member(heap, buffer.push(heap, buffer.empty(heap, 256), byte_of(123)), 1, true, "changes");
+    var code = 0;
+    if count == 0 {
+        b = buffer.append(heap, b, "[]");
+    } else {
+        b = buffer.push(heap, b, byte_of(91));
+        var k = 0;
+        while k < count && code == 0 {
+            if k > 0 {
+                b = buffer.push(heap, b, byte_of(44));
+            }
+            b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(123));
+            let (more, why) = log_one(heap, vcs, scratch, ids[k * 64..k * 64 + 64], b, 2);
+            b = more;
+            code = why;
+            k = k + 1;
+        }
+        b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(93));
+    }
+    b = buffer.append(heap, member(heap, b, 1, false, "command"), "\"log\"");
+    b = buffer.append(heap, member(heap, b, 1, false, "ok"), "true");
+    b = buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+    if code != 0 {
+        buffer.drop(heap, b);
+        return failed(heap, code);
+    }
+    return vcsstore.Object { bytes: b, status: 0, errno: 0 };
+}
+
+// ---- show --------------------------------------------------------------------------------------------------------------------
+
+// The tree text of the tree of the change `parent_id`, checked.
+fn parent_tree[&h, &d, &s, &p](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], parent_id: &p [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    let ti = tree_id_of(heap, vcs, scratch, parent_id);
+    let (tid, st, er) = vcsstore.parts(ti);
+    if st != 0 {
+        buffer.drop(heap, tid);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: st, errno: er };
+    }
+    var out = failed(heap, 3);
+    borrow tid as &tb in {
+        let (old, os, oe) = vcsstore.parts(out);
+        buffer.drop(heap, old);
+        out = tree_text(heap, vcs, scratch, buffer.bytes(tb));
+    }
+    buffer.drop(heap, tid);
+    return out;
+}
+
+// The tree text of the tree object `tree_id`, checked: 3 `object-corrupt` if it is not a tree.
+fn tree_text[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], tree_id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    let got = vcsstore.get(heap, vcs, scratch, "tree", tree_id);
+    let (text, status, errno) = vcsstore.parts(got);
+    if status != 0 {
+        buffer.drop(heap, text);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
+    }
+    var bad = false;
+    borrow text as &tb in {
+        bad = vcsobj.tree_status(buffer.bytes(tb)) != 0;
+    }
+    if bad {
+        buffer.drop(heap, text);
+        return failed(heap, 3);
+    }
+    return vcsstore.Object { bytes: text, status: 0, errno: 0 };
+}
+
+// The id of the tree of the change `id`.
+fn tree_id_of[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    let got = vcsstore.get(heap, vcs, scratch, "change", id);
+    let (data, status, errno) = vcsstore.parts(got);
+    var out = buffer.empty(heap, 0);
+    var code = status;
+    if status == 0 {
+        borrow data as &db in {
+            let src = buffer.bytes(db);
+            let jm = box_slice(heap, jsonread.size_for(src), 0);
+            borrow mut jm as &!w in {
+                let m = contents(w);
+                if vcschange.read(m, src) != 0 {
+                    code = 3;
+                } else {
+                    out = buffer.append(heap, out, vcschange.tree(m, src));
+                }
+            }
+            unbox_slice(heap, jm);
+        }
+    }
+    buffer.drop(heap, data);
+    return vcsstore.Object { bytes: out, status: code, errno: errno };
+}
+
+fn state_item[&h, &p](heap: &!h Heap, out: buffer.Buffer, levels: int, first: bool, path: &p [byte], state: &static [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    if !first {
+        b = buffer.push(heap, b, byte_of(44));
+    }
+    b = buffer.push(heap, jsonwrite.newline(heap, b, levels + 1), byte_of(123));
+    b = jsonwrite.string(heap, member(heap, b, levels + 2, true, "path"), path);
+    b = jsonwrite.string(heap, member(heap, b, levels + 2, false, "state"), state);
+    return buffer.push(heap, jsonwrite.newline(heap, b, levels + 1), byte_of(125));
+}
+
+// The paths that differ between two trees, in path order, as `diff_trees` finds them: `added`, `deleted`, `modified` (another blob), `mode` (the same blob).
+fn emit_files[&h, &o, &n](heap: &!h Heap, out: buffer.Buffer, levels: int, old: &o [byte], new: &n [byte]) -> [heap] buffer.Buffer {
+    var items = buffer.empty(heap, 0);
+    var count = 0;
+    var i = 0;
+    var j = 0;
+    if len(old) == 0 {
+        i = 0 - 1;
+    }
+    if len(new) == 0 {
+        j = 0 - 1;
+    }
+    while i >= 0 || j >= 0 {
+        var order = 0;
+        if i < 0 {
+            order = 1;
+        } else if j < 0 {
+            order = 0 - 1;
+        } else {
+            order = bytes.compare(vcsobj.entry_path(old, i), vcsobj.entry_path(new, j));
+        }
+        if order < 0 {
+            items = state_item(heap, items, levels, count == 0, vcsobj.entry_path(old, i), "deleted");
+            count = count + 1;
+            i = vcsobj.entry_next(old, i);
+        } else if order > 0 {
+            items = state_item(heap, items, levels, count == 0, vcsobj.entry_path(new, j), "added");
+            count = count + 1;
+            j = vcsobj.entry_next(new, j);
+        } else {
+            if !bytes.equal(vcsobj.entry_blob(old, i), vcsobj.entry_blob(new, j)) {
+                items = state_item(heap, items, levels, count == 0, vcsobj.entry_path(new, j), "modified");
+                count = count + 1;
+            } else if !bytes.equal(vcsobj.entry_mode(old, i), vcsobj.entry_mode(new, j)) {
+                items = state_item(heap, items, levels, count == 0, vcsobj.entry_path(new, j), "mode");
+                count = count + 1;
+            }
+            i = vcsobj.entry_next(old, i);
+            j = vcsobj.entry_next(new, j);
+        }
+    }
+    var b = out;
+    if count == 0 {
+        b = buffer.append(heap, b, "[]");
+    } else {
+        b = buffer.push(heap, b, byte_of(91));
+        borrow items as &ib in {
+            b = buffer.append(heap, b, buffer.bytes(ib));
+        }
+        b = buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(93));
+    }
+    buffer.drop(heap, items);
+    return b;
+}
+
+// The `show` document for the change `id` (without `--patch`): the change as `log` lists it, and its tree, the files it changed against its first parent, its
+// declarations, its anchored edits and its attestations.
+pub fn show_document[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    let got = vcsstore.get(heap, vcs, scratch, "change", id);
+    let (data, status, errno) = vcsstore.parts(got);
+    if status != 0 {
+        buffer.drop(heap, data);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
+    }
+    // What the document needs besides the change itself: the tree, and the first parent's.
+    var tree_id = buffer.empty(heap, 0);
+    var parent_id = buffer.empty(heap, 0);
+    var code = 0;
+    borrow data as &db in {
+        let src = buffer.bytes(db);
+        let jm = box_slice(heap, jsonread.size_for(src), 0);
+        borrow mut jm as &!w in {
+            let m = contents(w);
+            if vcschange.read(m, src) != 0 {
+                code = 3;
+            } else {
+                tree_id = buffer.append(heap, tree_id, vcschange.tree(m, src));
+                if vcschange.parent_count(m, src) > 0 {
+                    parent_id = buffer.append(heap, parent_id, vcschange.parent(m, src, 0));
+                }
+            }
+        }
+        unbox_slice(heap, jm);
+    }
+    var new_tree = buffer.empty(heap, 0);
+    var old_tree = buffer.empty(heap, 0);
+    if code == 0 {
+        borrow tree_id as &tb in {
+            let t = tree_text(heap, vcs, scratch, buffer.bytes(tb));
+            let (text, ts, te) = vcsstore.parts(t);
+            buffer.drop(heap, new_tree);
+            new_tree = text;
+            code = ts;
+        }
+    }
+    var has_parent = false;
+    borrow parent_id as &pr in {
+        has_parent = len(buffer.bytes(pr)) > 0;
+    }
+    if code == 0 && has_parent {
+        borrow parent_id as &pr2 in {
+            let pt = parent_tree(heap, vcs, scratch, buffer.bytes(pr2));
+            let (text, ps, pe) = vcsstore.parts(pt);
+            buffer.drop(heap, old_tree);
+            old_tree = text;
+            code = ps;
+        }
+    }
+    var doc = buffer.empty(heap, 0);
+    if code == 0 {
+        borrow data as &db in {
+            let src = buffer.bytes(db);
+            let jm = box_slice(heap, jsonread.size_for(src), 0);
+            borrow mut jm as &!w in {
+                let m = contents(w);
+                vcschange.read(m, src);
+                borrow old_tree as &ob in {
+                    borrow new_tree as &nb in {
+                        var b = member(heap, buffer.push(heap, buffer.empty(heap, 512), byte_of(123)), 1, true, "attestations");
+                        b = emit_strings(heap, b, 1, m, src, "attestations");
+                        b = quoted(heap, member(heap, b, 1, false, "author"), vcschange.author(m, src));
+                        b = quoted(heap, member(heap, b, 1, false, "change"), id);
+                        b = buffer.append(heap, member(heap, b, 1, false, "command"), "\"show\"");
+                        b = emit_items(heap, member(heap, b, 1, false, "decls"), 1, m, src, "decls", "kind", "name", "path");
+                        b = emit_items(heap, member(heap, b, 1, false, "edits"), 1, m, src, "edits", "new", "old", "path");
+                        b = emit_files(heap, member(heap, b, 1, false, "files"), 1, buffer.bytes(ob), buffer.bytes(nb));
+                        b = emit_intent(heap, member(heap, b, 1, false, "intent"), 1, m, src);
+                        b = buffer.append(heap, member(heap, b, 1, false, "ok"), "true");
+                        b = emit_parents(heap, member(heap, b, 1, false, "parents"), 1, m, src);
+                        b = quoted(heap, member(heap, b, 1, false, "subject"), vcschange.subject(m, src));
+                        b = vcschange.number(heap, member(heap, b, 1, false, "time"), vcschange.time(m, src));
+                        b = quoted(heap, member(heap, b, 1, false, "tree"), vcschange.tree(m, src));
+                        b = quoted(heap, member(heap, b, 1, false, "tz"), vcschange.tz(m, src));
+                        b = buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+                        buffer.drop(heap, doc);
+                        doc = b;
+                    }
+                }
+            }
+            unbox_slice(heap, jm);
+        }
+    }
+    buffer.drop(heap, data);
+    buffer.drop(heap, tree_id);
+    buffer.drop(heap, parent_id);
+    buffer.drop(heap, new_tree);
+    buffer.drop(heap, old_tree);
+    if code != 0 {
+        buffer.drop(heap, doc);
+        return failed(heap, code);
+    }
+    return vcsstore.Object { bytes: doc, status: 0, errno: 0 };
+}
+
+// ---- refusals ----------------------------------------------------------------------------------------------------------------
+
+// The document of a refused `bad-revision` command (`command` is `log` or `show`; `spec` what was asked for), as the Rust command prints it. Only the
+// statuses 18 to 22 have a message here.
+pub fn refusal_document[&h, &c, &p, &k](heap: &!h Heap, command: &c [byte], status: int, spec: &p [byte], candidates: &k [byte]) -> [heap] buffer.Buffer {
+    var base = len(spec);
+    var i = 0;
+    while i < len(spec) {
+        if spec[i] == byte_of(126) && base == len(spec) {
+            base = i;
+        }
+        i = i + 1;
+    }
+    var message = buffer.empty(heap, 64);
+    if status == 20 {
+        message = buffer.append(heap, message, "HEAD has no change yet");
+    } else if status == 18 {
+        message = buffer.append(heap, buffer.push(heap, message, byte_of(96)), spec[0..base]);
+        message = buffer.append(heap, message, "` names no change, branch or tag");
+    } else if status == 19 {
+        message = buffer.append(heap, buffer.push(heap, message, byte_of(96)), spec[0..base]);
+        message = buffer.append(heap, message, "` is ambiguous");
+    } else if status == 21 {
+        message = buffer.append(heap, buffer.push(heap, message, byte_of(96)), spec);
+        message = buffer.append(heap, message, "` goes back past the first change");
+    } else {
+        message = buffer.push(heap, buffer.append(heap, buffer.push(heap, message, byte_of(96)), spec), byte_of(96));
+    }
+    var b = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
+    b = jsonwrite.string(heap, member(heap, b, 1, true, "command"), command);
+    b = buffer.append(heap, member(heap, b, 1, false, "ok"), "false");
+    b = buffer.push(heap, member(heap, b, 1, false, "refused"), byte_of(123));
+    var first = true;
+    if status == 19 {
+        // The ambiguous prefix's candidates, as an array of ids.
+        b = buffer.push(heap, member(heap, b, 2, true, "candidates"), byte_of(91));
+        var n = 0;
+        while (n + 1) * 64 <= len(candidates) {
+            if n > 0 {
+                b = buffer.push(heap, b, byte_of(44));
+            }
+            b = quoted(heap, jsonwrite.newline(heap, b, 3), candidates[n * 64..n * 64 + 64]);
+            n = n + 1;
+        }
+        b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(93));
+        first = false;
+    }
+    borrow message as &mb in {
+        b = jsonwrite.string(heap, member(heap, b, 2, first, "message"), buffer.bytes(mb));
+    }
+    b = jsonwrite.string(heap, member(heap, b, 2, false, "tag"), "bad-revision");
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(125));
+    b = buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+    buffer.drop(heap, message);
+    return b;
+}
+
+// ---- the commands ------------------------------------------------------------------------------------------------------------
+
+// `log [REV] [--limit N]`: the document of the changes reachable from `spec`, or from HEAD when `have` is false (an empty list if HEAD has no change yet).
+pub fn log_command[&h, &d, &s, &p](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], spec: &p [byte], have: bool, limit: int) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    var start = buffer.empty(heap, 0);
+    var code = 0;
+    var empty = false;
+    if have {
+        let r = resolve(heap, vcs, scratch, spec);
+        let (id, rs, re) = vcsstore.parts(r);
+        buffer.drop(heap, start);
+        start = id;
+        code = rs;
+    } else {
+        let hd = head_change(heap, vcs);
+        let (id, hs, he) = vcsstore.parts(hd);
+        buffer.drop(heap, start);
+        start = id;
+        if hs == 2 {
+            empty = true;
+        } else {
+            code = hs;
+        }
+    }
+    var ids = buffer.empty(heap, 0);
+    if code == 0 && !empty {
+        borrow start as &sb in {
+            let hist = history(heap, vcs, scratch, buffer.bytes(sb));
+            let (list, hs, he) = vcsstore.parts(hist);
+            buffer.drop(heap, ids);
+            ids = list;
+            code = hs;
+        }
+    }
+    if code == 19 {
+        buffer.drop(heap, ids);
+        return vcsstore.Object { bytes: start, status: 19, errno: 0 };
+    }
+    buffer.drop(heap, start);
+    if code != 0 {
+        buffer.drop(heap, ids);
+        return failed(heap, code);
+    }
+    var answer = failed(heap, 3);
+    borrow ids as &ib in {
+        let doc = log_document(heap, vcs, scratch, buffer.bytes(ib), limit);
+        let (old, os, oe) = vcsstore.parts(answer);
+        buffer.drop(heap, old);
+        answer = doc;
+    }
+    buffer.drop(heap, ids);
+    return answer;
+}
+
+// `show [REV]`: the document of the change `spec` names (HEAD when it is empty).
+pub fn show_command[&h, &d, &s, &p](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], spec: &p [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    var name = spec;
+    if len(spec) == 0 {
+        name = "HEAD";
+    }
+    let r = resolve(heap, vcs, scratch, name);
+    let (id, rs, re) = vcsstore.parts(r);
+    if rs != 0 {
+        return vcsstore.Object { bytes: id, status: rs, errno: re };
+    }
+    var answer = failed(heap, 3);
+    borrow id as &ib in {
+        let doc = show_document(heap, vcs, scratch, buffer.bytes(ib));
+        let (old, os, oe) = vcsstore.parts(answer);
+        buffer.drop(heap, old);
+        answer = doc;
+    }
+    buffer.drop(heap, id);
+    return answer;
 }

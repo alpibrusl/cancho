@@ -31,7 +31,8 @@ fn key[&h, &k](heap: &!h Heap, out: buffer.Buffer, name: &k [byte]) -> [heap] bu
     return buffer.push(heap, b, byte_of(58));
 }
 
-fn number[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+// A whole number as digits, with a minus sign when it is negative.
+pub fn number[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
     if n < 0 {
         return buffer.push_nat(heap, buffer.push(heap, out, byte_of(45)), 0 - n);
     }
@@ -247,6 +248,11 @@ pub fn parent[&j, &x](jm: &!j [int], src: &x [byte], n: int) -> [] &x [byte] {
 // Whether the change carries an intent, and its parts: the raw text of one that is a string, empty when absent.
 pub fn has_intent[&j, &x](jm: &!j [int], src: &x [byte]) -> [] bool {
     return jsonread.kind(jm, field(jm, src, jm[1], "intent")) == jsonread.k_object();
+}
+
+// Whether the intent has the string `name` (an empty one counts).
+pub fn has_part[&j, &x, &k](jm: &!j [int], src: &x [byte], name: &k [byte]) -> [] bool {
+    return is_text(jm, field(jm, src, field(jm, src, jm[1], "intent"), name));
 }
 
 pub fn intent_part[&j, &x, &k](jm: &!j [int], src: &x [byte], name: &k [byte]) -> [] &x [byte] {
