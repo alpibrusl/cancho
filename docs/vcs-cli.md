@@ -188,8 +188,24 @@ start before V2: a worker that shells out to `git` today is not wrong, it is the
 Open questions, each with the measurement that closes it:
 
 * **R1: can the history be imported exactly?** Import `cancho-forge`'s 194 commits (59 of them merges; the first
-  draft said 193, which was the count before the latest commit) and `cancho`'s 545, export
-  them, compare every SHA. Closes V1. *Not measured.*
+  draft said 193, which was the count before the latest commit), export them, compare every SHA. Closes V1.
+  **Measured 2026-11-05, V1 as built (`scripts/vcs_r1.sh`, release build, macOS arm64): passed, no mismatch.**
+  `cancho-forge`: 228 commits reachable from any branch or remote-tracking ref (194 from `HEAD`, 59 merges there),
+  all 228 re-exported with their original SHA; `cancho`: 1,338 commits (545 from `HEAD`, 22 merges there; 494+16
+  carry PGP or SSH signatures), all 1,338 identical. The export passes `git fsck --strict`, `git rev-list --all`
+  gives the same set in both, and every branch and remote-tracking ref points at the same SHA (the
+  `refs/remotes/*/HEAD` symbolic refs are not imported). The two repositories are read from loose objects and
+  18 (`cancho`) and 1 (`cancho-forge`) pack files with delta chains; nothing was run but `cancho`. What had to be
+  true for it: the change keeps the commit's header lines and message byte for byte (signatures, encoding
+  headers) and parents in order. Not met by these two but not tested either: submodules and unusual modes
+  (`160000`, `100664`) are refused with `submodule-unsupported` / `mode-unsupported`; a path with a newline or
+  non-UTF-8 name is refused `path-unsupported`; neither occurs in either history. Time: import 9 s and 94 s,
+  export 1 s and 9 s (each object fsynced).
+* **R4: is a content-addressed store larger than git's?** *(measured with the same runs; apparent bytes of the
+  object files.)* **Yes: `cancho-forge` 30.9 MiB against git's 6.1 MiB (5.1x), `cancho` 826.9 MiB against 60.4
+  MiB (13.7x).** The store has no compression and no deltas; `cancho` versions generated JSON fixtures many
+  times. The bound in the question ("more than a few times") is exceeded, so compression and packs move from
+  "V5 if R4 says" to a planned slice; V1 stays uncompressed.
 * **R6: what do the non-`.cho` files look like, and which merge strategy would conflict on them?** *(measured
   2026-11-05 with `scripts/vcs_r6.py`, which runs `git` to read the two repositories; the product never does.)*
   File touches by type over every non-merge commit of `HEAD`: `cancho-forge`, 135 commits, 1,091 touches, of
@@ -211,7 +227,14 @@ Open questions, each with the measurement that closes it:
 * **R2: what does the gate cost per record?** This repository's gate is 18 minutes on CI; a gate that runs on every `record`
   makes the agent loop unusable. Proposed: the built-in gate is the check of touched `.cho` files (seconds),
   heavier commands are attested **asynchronously** and a protected ref requires them at `merge`/`push`, not at `record`.
-  Measure the check time of a typical change in `cancho-forge`. *Not measured.*
+  Measure the check time of a typical change in `cancho-forge`. *Not measured.* *Partly measured in V1:* the built-in gate
+  as first written (each touched `.cho` file checked as a program of its own) refused 30 of the first 60 files
+  of `cancho-forge` with `unknown-name`, because they import sibling modules: a false refusal rate of 50%. The
+  gate as built follows imports to the modules the tree declares and adds `std` when imported; of all 182 `.cho`
+  files of `cancho-forge`, touched by a comment, 168 pass and 14 are still refused `unknown-name` because they
+  import packages that `cancho.toml` installs (`http_client`, `tls`, `http.server`) and are not in the tree.
+  Those need project-dependency resolution (V2) or `--no-gate`. The cost: `record --dry-run` of one forge file
+  is 0.06 s wall (release). The heavier-gate and asynchronous-attestation parts of R2 are not built or measured.
 * **R3: how often does a clean declaration merge fail the gate?** Take the 59 merge commits of `cancho-forge`
   (the PR merges) and replay each as a declaration merge; count conflicts and
   gate failures, against what a text merge did. *Not measured; this is the claim of `vcs.md` section 4 and it decides
@@ -257,5 +280,10 @@ Not yet built (V2 onward): `conflicts-open`, `merge-gate-failed`, `rename-edit`,
 * It does not offer history rewriting. A mistake is a `revert` or a `reset-ref` (logged), not a lost change.
 * It does not run on its own authority: like every cancho program it is checked for the effects it uses, and
   the CLI performs file and (V3 onward) network effects only, never starts another program.
-* It is not started. The first thing to do is R1 on paper: write the `import-git` pack reader and see whether
-  `cancho-forge`'s own history round-trips; if it does not, V1's scope is wrong and this document is corrected here.
+* V1 is built; R1 did not show its scope to be wrong. Not built, said plainly: `merge`, `conflicts`, `resolve`,
+  `replay`, `tag`, `reset-ref`, `gc`, `keys`, remotes, `clone`, signatures and attestation chains on changes,
+  `.cho` body-level diff, hunk-level recording, format-aware merge layers, compression. `switch` and `restore`
+  work on whole files; `blame` follows first parents only; the histogram diff falls back to one replacement
+  when no line occurs 64 times or fewer. `.canchoignore` supports names, `dir/`, `*suffix` and path prefixes
+  only. Edit operations are derived at `record` and not for imported changes. A kill leaves a lock that
+  `verify` reports and `unlock` removes (a pid-liveness check needs `unsafe` or another program).
