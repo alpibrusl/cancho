@@ -31,7 +31,6 @@ jobs:
         run: |
           rm -f seed/*linux*
           scripts/reseed.sh --cancho0 target/release/cancho --out reseed-out
-          cp seed/*linux* reseed-out/ 2>/dev/null || true
           mkdir -p seed-written && cp seed/*linux* seed-written/
       - name: Reseed again from the seed alone
         run: |
