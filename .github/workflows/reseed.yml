@@ -1,0 +1,44 @@
+name: reseed
+
+# docs/seed.md §4: write the seed for a target on a machine of that target.
+# The seed files are uploaded as an artifact; committing them is a pull request
+# that changes only `seed/`. Not part of `ci`: it builds the compiler three
+# times, so it runs on request and when its own files change.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/reseed.sh
+      - scripts/seed-build.sh
+      - .github/workflows/reseed.yml
+
+jobs:
+  reseed:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: linux-aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release -p cancho
+      - name: Reseed from the Rust stage 0
+        run: |
+          rm -f seed/*linux*
+          scripts/reseed.sh --cancho0 target/release/cancho --out reseed-out
+          mkdir -p seed-written && cp seed/*linux* seed-written/
+      - name: Reseed again from the seed alone
+        run: |
+          cp -r seed-written seed-first
+          scripts/reseed.sh --out reseed-out2
+          for f in seed-first/*; do cmp "$f" "seed/$(basename "$f")"; done
+          echo "the seed is reproduced byte for byte from itself"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seed-${{ matrix.target }}
+          path: seed-written/
