@@ -68,7 +68,9 @@ IR alone gives an executable byte-identical to stage 3. (The two Linux runs used
   compiler produces for the same files, with `--clang` pointed at a wrapper that copies the `.ll` before `clang` reads it (*measured*: this is how
   the 22 MB above were captured; no new flag in the compiler), compresses it, and writes the hash. Run on each of the three targets; the
   result is one pull request, "reseed", that changes only `seed/`.
-- `scripts/build-standalone.sh` gains `--seed` (default when no `--cancho0` is given) and drops its Rust default.
+- `scripts/build-standalone.sh` gains `--seed` (default when no `--cancho0` is given) and drops its Rust default. *Built and measured on macOS aarch64* with
+  no Rust and no `cancho` on `PATH` (an empty environment with only `clang`): seed → `cancho0` → stages 1 to 3, stage 2 equals stage 3, 38 s; with
+  `STANDALONE_STAGE3_CORRUPT=1` it still refuses (exit 1). `release.yml` still passes `--cancho0` (phase 4).
 
 ## 5. When the seed is refreshed, and what CI checks
 
