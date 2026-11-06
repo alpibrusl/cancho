@@ -16,12 +16,14 @@ from ecdsa import SECP256k1, SigningKey
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "packages/secp256k1/secp256k1.cho")
 DRIVER = os.path.join(ROOT, "tests/programs/secp256k1_driver.cho")
+COMB = os.path.join(ROOT, "packages/secp256k1/comb.cho")
+FIELD = os.path.join(ROOT, "packages/secp256k1/field.cho")
 N = SECP256k1.order
 P = SECP256k1.curve.p()
 
 
 def build(cancho, src, out):
-    r = subprocess.run([cancho, "build", "--std", DRIVER, src, "-o", out], capture_output=True, text=True)
+    r = subprocess.run([cancho, "build", "--std", DRIVER, src, COMB, FIELD, "-o", out], capture_output=True, text=True)
     if r.returncode != 0:
         raise SystemExit("build failed:\n" + r.stderr)
 
@@ -181,13 +183,13 @@ def run(exe, cases):
 # (name, old, new): one fault each; every one must be killed
 MUTANTS = [
     ("b3 = 22", "bigmod.set_small(w, reg_b3(), 21);", "bigmod.set_small(w, reg_b3(), 22);"),
-    ("curve constant 7 -> 8 (on_curve)", "bigmod.set_small(w, t(2), 7);\n    bigmod.to_mont(w, t(2), t(2));\n    bigmod.add(w, t(1), t(2), t(1));\n    return bigmod.equal", "bigmod.set_small(w, t(2), 8);\n    bigmod.to_mont(w, t(2), t(2));\n    bigmod.add(w, t(1), t(2), t(1));\n    return bigmod.equal"),
-    ("addition step 6 uses t3 twice", "bigmod.mul(w, t(3), t(4), t(3));", "bigmod.mul(w, t(3), t(3), t(3));"),
-    ("addition step 26", "bigmod.mul(w, t(3), t(1), t(2));", "bigmod.mul(w, t(3), t(0), t(2));"),
-    ("addition final step", "bigmod.add(w, z3, t(0), z3);", "bigmod.sub(w, z3, t(0), z3);"),
-    ("doubling step 8", "bigmod.mul(w, t(2), z3, x3);", "bigmod.mul(w, t(0), z3, x3);"),
-    ("doubling step 17", "bigmod.mul(w, t(0), t(1), x3);", "bigmod.mul(w, t(0), t(0), x3);"),
-    ("doubling last step", 'bigmod.add(w, x3, x3, x3);\n    return ecdsa.copy_point(w, pt_out(), d);\n}\n\n// -1', 'bigmod.add(w, x3, x3, t(0));\n    return ecdsa.copy_point(w, pt_out(), d);\n}\n\n// -1'),
+    ("curve constant 7 -> 8 (on_curve)", "bigmod.set_small(w, t(2), 7);\n    bigmod.to_mont(w, t(2), t(2));\n    secp256k1_field.add(w, t(1), t(2), t(1));\n    return bigmod.equal", "bigmod.set_small(w, t(2), 8);\n    bigmod.to_mont(w, t(2), t(2));\n    secp256k1_field.add(w, t(1), t(2), t(1));\n    return bigmod.equal"),
+    ("addition step 6 uses t3 twice", "secp256k1_field.mul(w, t(3), t(4), t(3));", "secp256k1_field.mul(w, t(3), t(3), t(3));"),
+    ("addition step 26", "secp256k1_field.mul(w, t(3), t(1), t(2));", "secp256k1_field.mul(w, t(3), t(0), t(2));"),
+    ("addition final step", "secp256k1_field.add(w, z3, t(0), z3);", "secp256k1_field.sub(w, z3, t(0), z3);"),
+    ("doubling step 8", "secp256k1_field.mul(w, t(2), z3, x3);", "secp256k1_field.mul(w, t(0), z3, x3);"),
+    ("doubling step 17", "secp256k1_field.mul(w, t(0), t(1), x3);", "secp256k1_field.mul(w, t(0), t(0), x3);"),
+    ("doubling last step", 'secp256k1_field.add(w, x3, x3, x3);\n    return ecdsa.copy_point(w, pt_out(), d);\n}\n\n// -1', 'secp256k1_field.add(w, x3, x3, t(0));\n    return ecdsa.copy_point(w, pt_out(), d);\n}\n\n// -1'),
     ("table select reads entry 0 only", "let m = value_barrier(eq_mask(i, idx));", "let m = value_barrier(eq_mask(i, 0));"),
     ("window shift", 'window(w, b >> 4);\n        window(w, b & 15);', 'window(w, b & 15);\n        window(w, b >> 4);'),
     ("three doublings per window", 'while k < 4 {\n        double_point', 'while k < 3 {\n        double_point'),
@@ -195,7 +197,6 @@ MUTANTS = [
     ("n constant", "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141", "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364143"),
     ("half n constant", "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0", "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a1"),
     ("sqrt exponent", "3fffffffffffffffffffffffffffffffffffffffffffffffffffffffbfffff0c", "3fffffffffffffffffffffffffffffffffffffffffffffffffffffffbfffff0d"),
-    ("generator y", "483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8", "483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b9"),
     ("key range: zero accepted", "any = any | int_of(s[i]);", "any = any | 1;"),
     ("key range: n accepted", "under = d >> 63 & 1;", "under = d >> 63 & 0;"),
     ("nonce: separator 1 -> 2", "sep[0] = byte_of(1);", "sep[0] = byte_of(2);"),
@@ -217,6 +218,17 @@ MUTANTS = [
     ("verify: on-curve check dropped", "if !on_curve(work) {\n        wipe(work);\n        return -120;", "if false {\n        wipe(work);\n        return -120;"),
     ("verify: s zero accepted", "if is_zero32(sig[0..32]) || is_zero32(sig[32..64]) {", "if is_zero32(sig[0..32]) {"),
     ("verify: s = n accepted", "return cmp32(sig[0..32], order_n) < 0 && cmp32(sig[32..64], order_n) < 0;", "return cmp32(sig[0..32], order_n) < 0 && cmp32(sig[32..64], order_n) <= 0;"),
+    ("comb: a zero digit is added", "let keep = value_barrier(eq_mask(digit, 0));", "let keep = value_barrier(eq_mask(digit, 99));"),
+    ("comb: digits from the wrong end", "scalar[31 - i / 2]", "scalar[i / 2]"),
+    ("comb: nibbles swapped", ">> 4 * (i % 2) & 15", ">> 4 * ((i + 1) % 2) & 15"),
+    ("comb: always row 0", "secp256k1_comb.row(i, j)", "secp256k1_comb.row(0, j)"),
+    ("comb: one table limb wrong", "COMBLIT", "COMBLIT2", "comb"),
+    ("field.mul: final subtraction skipped", "let keep = value_barrier(0 - b4);", "let keep = value_barrier(0 - 1);", "field"),
+    ("field.add: carry out of 256 bits ignored", "let take = value_barrier(0 - (c3 | b3 ^ 1));", "let take = value_barrier(0 - (b3 ^ 1));", "field"),
+    ("field.add: sum of p or more ignored", "let take = value_barrier(0 - (c3 | b3 ^ 1));", "let take = value_barrier(0 - c3);", "field"),
+    ("field.sub: p not added back", "let m = value_barrier(0 - b3);", "let m = value_barrier(0);", "field"),
+    ("inversion chain: 10 squarings for 11", "square_times(w, x22, 11);", "square_times(w, x22, 10);"),
+    ("inversion chain: last multiplication dropped", "square_times(w, t, 2);\n    secp256k1_field.mul(w, t, x1, t);", "square_times(w, t, 2);"),
     ("verify: coordinates not below p", "if bigmod.load_reg(x, w, x_of(p)) != 0 || bigmod.load_reg(y, w, y_of(p)) != 0 {", "if false {"),
 ]
 
@@ -224,22 +236,39 @@ MUTANTS = [
 # Mutants no input can kill, with the reason. They are reported, not failed: a survivor outside this list fails the run.
 EXPECTED_SURVIVORS = {
     "half n constant": "its last digit only matters for an s of exactly n / 2, which no signing run reaches (probability 2^-256)",
+    "field.add: sum of p or more ignored": "it differs from the real code only for a sum between p and 2^256, a window of 2^32 out of 2^257 values: no random or crafted-by-signing input lands there",
     "recid ignores x >= n": "bit 1 of the recovery id is set only when R.x >= n, probability about 2^-128; recover's side of it is killed (x = r + n ignored)",
 }
 
 
+def comb_mutant():
+    """Entry (0, 1) of the comb is G itself: change one hex digit of its first limb."""
+    lit = open(COMB).read().split('let s = "')[1].split('"')[0]
+    at = 16 * 8
+    old = lit[at - 4 : at + 4]
+    new = old[:4] + ("1" if old[4] != "1" else "2") + old[5:]
+    return old, new
+
+
 def mutants(cancho, cases):
-    text = open(SRC).read()
+    files = {"src": SRC, "comb": COMB, "field": FIELD}
+    texts = {k: open(v).read() for k, v in files.items()}
     survived = 0
-    for name, old, new in MUTANTS:
+    co, cn = comb_mutant()
+    for entry in MUTANTS:
+        name, old, new = entry[:3]
+        old, new = (co, cn) if old == "COMBLIT" else (old, new)
+        which = entry[3] if len(entry) > 3 else "src"
+        text = texts[which]
         if text.count(old) != 1:
             raise SystemExit(f"mutant pattern not unique ({text.count(old)}): {name}")
         d = tempfile.mkdtemp()
         try:
-            src = os.path.join(d, "secp256k1.cho")
-            open(src, "w").write(text.replace(old, new))
+            paths = {k: os.path.join(d, os.path.basename(v)) for k, v in files.items()}
+            for k in files:
+                open(paths[k], "w").write(text.replace(old, new) if k == which else texts[k])
             exe = os.path.join(d, "drv")
-            r = subprocess.run([cancho, "build", "--std", DRIVER, src, "-o", exe], capture_output=True, text=True)
+            r = subprocess.run([cancho, "build", "--std", DRIVER, paths["src"], paths["comb"], paths["field"], "-o", exe], capture_output=True, text=True)
             if r.returncode != 0:
                 print(f"mutant '{name}': did not build (counts as killed only if the refusal is intended)\n{r.stderr[:300]}")
                 survived += 1

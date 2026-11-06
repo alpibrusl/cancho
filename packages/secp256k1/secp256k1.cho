@@ -5,6 +5,8 @@ import std.bignum;
 import std.bytes;
 import std.ecdsa;
 import std.hmac;
+import secp256k1_comb;
+import secp256k1_field;
 
 // `secp256k1` -- ECDSA on secp256k1 with public-key recovery (`docs/secp256k1.md`). Asked for by cancho-chain. Not independently
 // reviewed (#209). Not fast: `std.bigmod`'s generic registers, as `std.ecdh` runs P-384.
@@ -121,18 +123,6 @@ static half_n: [byte] {
 static sqrt_exp: [byte] {
     let t = alloc_slice[static](32, byte_of(0));
     fill_hex(t, "3fffffffffffffffffffffffffffffffffffffffffffffffffffffffbfffff0c");
-    return t;
-}
-
-static gen_x: [byte] {
-    let t = alloc_slice[static](32, byte_of(0));
-    fill_hex(t, "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798");
-    return t;
-}
-
-static gen_y: [byte] {
-    let t = alloc_slice[static](32, byte_of(0));
-    fill_hex(t, "483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8");
     return t;
 }
 
@@ -261,39 +251,39 @@ fn add_points[&w](w: &!w [int], p: int, q: int, d: int) -> [] int {
     let y3 = y_of(pt_out());
     let z3 = z_of(pt_out());
     let b3 = reg_b3();
-    bigmod.mul(w, x1, x2, t(0));
-    bigmod.mul(w, y1, y2, t(1));
-    bigmod.mul(w, z1, z2, t(2));
-    bigmod.add(w, x1, y1, t(3));
-    bigmod.add(w, x2, y2, t(4));
-    bigmod.mul(w, t(3), t(4), t(3));
-    bigmod.add(w, t(0), t(1), t(4));
-    bigmod.sub(w, t(3), t(4), t(3));
-    bigmod.add(w, y1, z1, t(4));
-    bigmod.add(w, y2, z2, x3);
-    bigmod.mul(w, t(4), x3, t(4));
-    bigmod.add(w, t(1), t(2), x3);
-    bigmod.sub(w, t(4), x3, t(4));
-    bigmod.add(w, x1, z1, x3);
-    bigmod.add(w, x2, z2, y3);
-    bigmod.mul(w, x3, y3, x3);
-    bigmod.add(w, t(0), t(2), y3);
-    bigmod.sub(w, x3, y3, y3);
-    bigmod.add(w, t(0), t(0), x3);
-    bigmod.add(w, x3, t(0), t(0));
-    bigmod.mul(w, b3, t(2), t(2));
-    bigmod.add(w, t(1), t(2), z3);
-    bigmod.sub(w, t(1), t(2), t(1));
-    bigmod.mul(w, b3, y3, y3);
-    bigmod.mul(w, t(4), y3, x3);
-    bigmod.mul(w, t(3), t(1), t(2));
-    bigmod.sub(w, t(2), x3, x3);
-    bigmod.mul(w, y3, t(0), y3);
-    bigmod.mul(w, t(1), z3, t(1));
-    bigmod.add(w, t(1), y3, y3);
-    bigmod.mul(w, t(0), t(3), t(0));
-    bigmod.mul(w, z3, t(4), z3);
-    bigmod.add(w, z3, t(0), z3);
+    secp256k1_field.mul(w, x1, x2, t(0));
+    secp256k1_field.mul(w, y1, y2, t(1));
+    secp256k1_field.mul(w, z1, z2, t(2));
+    secp256k1_field.add(w, x1, y1, t(3));
+    secp256k1_field.add(w, x2, y2, t(4));
+    secp256k1_field.mul(w, t(3), t(4), t(3));
+    secp256k1_field.add(w, t(0), t(1), t(4));
+    secp256k1_field.sub(w, t(3), t(4), t(3));
+    secp256k1_field.add(w, y1, z1, t(4));
+    secp256k1_field.add(w, y2, z2, x3);
+    secp256k1_field.mul(w, t(4), x3, t(4));
+    secp256k1_field.add(w, t(1), t(2), x3);
+    secp256k1_field.sub(w, t(4), x3, t(4));
+    secp256k1_field.add(w, x1, z1, x3);
+    secp256k1_field.add(w, x2, z2, y3);
+    secp256k1_field.mul(w, x3, y3, x3);
+    secp256k1_field.add(w, t(0), t(2), y3);
+    secp256k1_field.sub(w, x3, y3, y3);
+    secp256k1_field.add(w, t(0), t(0), x3);
+    secp256k1_field.add(w, x3, t(0), t(0));
+    secp256k1_field.mul(w, b3, t(2), t(2));
+    secp256k1_field.add(w, t(1), t(2), z3);
+    secp256k1_field.sub(w, t(1), t(2), t(1));
+    secp256k1_field.mul(w, b3, y3, y3);
+    secp256k1_field.mul(w, t(4), y3, x3);
+    secp256k1_field.mul(w, t(3), t(1), t(2));
+    secp256k1_field.sub(w, t(2), x3, x3);
+    secp256k1_field.mul(w, y3, t(0), y3);
+    secp256k1_field.mul(w, t(1), z3, t(1));
+    secp256k1_field.add(w, t(1), y3, y3);
+    secp256k1_field.mul(w, t(0), t(3), t(0));
+    secp256k1_field.mul(w, z3, t(4), z3);
+    secp256k1_field.add(w, z3, t(0), z3);
     return ecdsa.copy_point(w, pt_out(), d);
 }
 
@@ -306,24 +296,24 @@ fn double_point[&w](w: &!w [int], p: int, d: int) -> [] int {
     let y3 = y_of(pt_out());
     let z3 = z_of(pt_out());
     let b3 = reg_b3();
-    bigmod.mul(w, y, y, t(0));
-    bigmod.add(w, t(0), t(0), z3);
-    bigmod.add(w, z3, z3, z3);
-    bigmod.add(w, z3, z3, z3);
-    bigmod.mul(w, y, z, t(1));
-    bigmod.mul(w, z, z, t(2));
-    bigmod.mul(w, b3, t(2), t(2));
-    bigmod.mul(w, t(2), z3, x3);
-    bigmod.add(w, t(0), t(2), y3);
-    bigmod.mul(w, t(1), z3, z3);
-    bigmod.add(w, t(2), t(2), t(1));
-    bigmod.add(w, t(1), t(2), t(2));
-    bigmod.sub(w, t(0), t(2), t(0));
-    bigmod.mul(w, t(0), y3, y3);
-    bigmod.add(w, x3, y3, y3);
-    bigmod.mul(w, x, y, t(1));
-    bigmod.mul(w, t(0), t(1), x3);
-    bigmod.add(w, x3, x3, x3);
+    secp256k1_field.mul(w, y, y, t(0));
+    secp256k1_field.add(w, t(0), t(0), z3);
+    secp256k1_field.add(w, z3, z3, z3);
+    secp256k1_field.add(w, z3, z3, z3);
+    secp256k1_field.mul(w, y, z, t(1));
+    secp256k1_field.mul(w, z, z, t(2));
+    secp256k1_field.mul(w, b3, t(2), t(2));
+    secp256k1_field.mul(w, t(2), z3, x3);
+    secp256k1_field.add(w, t(0), t(2), y3);
+    secp256k1_field.mul(w, t(1), z3, z3);
+    secp256k1_field.add(w, t(2), t(2), t(1));
+    secp256k1_field.add(w, t(1), t(2), t(2));
+    secp256k1_field.sub(w, t(0), t(2), t(0));
+    secp256k1_field.mul(w, t(0), y3, y3);
+    secp256k1_field.add(w, x3, y3, y3);
+    secp256k1_field.mul(w, x, y, t(1));
+    secp256k1_field.mul(w, t(0), t(1), x3);
+    secp256k1_field.add(w, x3, x3, x3);
     return ecdsa.copy_point(w, pt_out(), d);
 }
 
@@ -332,26 +322,30 @@ fn eq_mask(a: int, b: int) -> [] int {
     return (a ^ b) - 1 >> 63;
 }
 
-// The selected point = multiple `idx` of the table, reading every multiple: which one is taken shows in no branch and no address.
+// The selected point = multiple `idx` of the table, reading every multiple: which one is taken shows in no branch and no address. A point is three
+// registers of six words each (four limbs and two spare); only those are touched, not the 4,096-bit stride `std.bigmod` leaves between registers.
 fn select[&w](w: &!w [int], idx: int) -> [] int {
-    let span = 3 * (bigmod.reg(1) - bigmod.reg(0));
-    let s = x_of(pt_sel());
-    var j = 0;
-    while j < span {
-        w[s + j] = 0;
-        j = j + 1;
-    }
-    var i = 0;
-    while i < 16 {
-        // Through the barrier, or `clang -O2` makes the `and` below a branch on whether this is the entry (`docs/value-barrier.md`).
-        let m = value_barrier(eq_mask(i, idx));
-        let from = x_of(pt_table(i));
-        j = 0;
-        while j < span {
-            w[s + j] = w[s + j] | w[from + j] & m;
-            j = j + 1;
+    var c = 0;
+    while c < 3 {
+        let s = bigmod.reg(pt_sel() + c);
+        var t = 0;
+        while t < 6 {
+            w[s + t] = 0;
+            t = t + 1;
         }
-        i = i + 1;
+        var i = 0;
+        while i < 16 {
+            // Through the barrier, or `clang -O2` makes the `and` below a branch on whether this is the entry (`docs/value-barrier.md`).
+            let m = value_barrier(eq_mask(i, idx));
+            let from = bigmod.reg(pt_table(i) + c);
+            t = 0;
+            while t < 6 {
+                w[s + t] = w[s + t] | w[from + t] & m;
+                t = t + 1;
+            }
+            i = i + 1;
+        }
+        c = c + 1;
     }
     return 0;
 }
@@ -396,6 +390,70 @@ fn multiply[&s, &w](w: &!w [int], scalar: &s [byte]) -> [] int {
     return 0;
 }
 
+// ---- The generator's comb (`docs/secp256k1.md` §2) ----
+//
+// k G is the sum over the 64 four-bit digits d_i of k (least significant first) of d_i 16^i G, and `secp256k1_comb` holds every d 16^i G, so
+// there is no doubling at all: 64 additions. A digit is secret, so the entry is chosen by reading all sixteen under masks, and a zero digit
+// (which has no affine point) is an addition made and then not kept, by a mask. The table is read-only data in the binary.
+
+// The selected point = entry (i, digit) of the comb, affine, in sel's X and Y (its Z is 1, set by `comb_multiply`).
+fn comb_select[&w](w: &!w [int], i: int, digit: int) -> [] int {
+    let sx = x_of(pt_sel());
+    let sy = y_of(pt_sel());
+    var t = 0;
+    while t < 6 {
+        w[sx + t] = 0;
+        w[sy + t] = 0;
+        t = t + 1;
+    }
+    var j = 0;
+    while j < 16 {
+        // Through the barrier, as in `select`.
+        let m = value_barrier(eq_mask(j, digit));
+        let row = secp256k1_comb.row(i, j);
+        t = 0;
+        while t < 4 {
+            w[sx + t] = w[sx + t] | row[t] & m;
+            w[sy + t] = w[sy + t] | row[4 + t] & m;
+            t = t + 1;
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// The accumulator = scalar times the generator (`scalar` is 32 bytes, big-endian, any value). On the field phase.
+fn comb_multiply[&s, &w](w: &!w [int], scalar: &s [byte]) -> [] int {
+    let inf = pt_acc();
+    bigmod.set_small(w, x_of(inf), 0);
+    bigmod.set_small(w, y_of(inf), 1);
+    bigmod.to_mont(w, y_of(inf), y_of(inf));
+    bigmod.set_small(w, z_of(inf), 0);
+    bigmod.set_small(w, z_of(pt_sel()), 1);
+    bigmod.to_mont(w, z_of(pt_sel()), z_of(pt_sel()));
+    var i = 0;
+    while i < 64 {
+        let digit = int_of(scalar[31 - i / 2]) >> 4 * (i % 2) & 15;
+        comb_select(w, i, digit);
+        add_points(w, pt_acc(), pt_sel(), pt_table(0));
+        // Keep the sum unless the digit is zero: acc = (acc & keep) | (sum & !keep), word by word, over the three registers' six words.
+        let keep = value_barrier(eq_mask(digit, 0));
+        var c = 0;
+        while c < 3 {
+            let a = bigmod.reg(pt_acc() + c);
+            let b = bigmod.reg(pt_table(0) + c);
+            var t = 0;
+            while t < 6 {
+                w[a + t] = w[a + t] & keep | w[b + t] & (keep ^ -1);
+                t = t + 1;
+            }
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
 // Zeroes every register: the table and the accumulator are multiples of the point by parts of the scalar.
 fn wipe[&w](w: &!w [int]) -> [] int {
     return bignum.zero(w[bigmod.reg(0)..work_len()]);
@@ -428,13 +486,86 @@ fn load_point[&x, &y, &w](x: &x [byte], y: &y [byte], w: &!w [int]) -> [] int {
 fn on_curve[&w](w: &!w [int]) -> [] bool {
     let x = x_of(pt_table(1));
     let y = y_of(pt_table(1));
-    bigmod.mul(w, y, y, t(0));
-    bigmod.mul(w, x, x, t(1));
-    bigmod.mul(w, t(1), x, t(1));
+    secp256k1_field.mul(w, y, y, t(0));
+    secp256k1_field.mul(w, x, x, t(1));
+    secp256k1_field.mul(w, t(1), x, t(1));
     bigmod.set_small(w, t(2), 7);
     bigmod.to_mont(w, t(2), t(2));
-    bigmod.add(w, t(1), t(2), t(1));
+    secp256k1_field.add(w, t(1), t(2), t(1));
     return bigmod.equal(w, t(0), t(1));
+}
+
+// a squared `count` times, in place.
+fn square_times[&w](w: &!w [int], a: int, count: int) -> [] int {
+    var i = 0;
+    while i < count {
+        secp256k1_field.mul(w, a, a, a);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// dst = a^-1 = a^(p - 2) by the addition chain libsecp256k1 uses for this prime: 255 squarings and 14 multiplications, against about 500
+// multiplications for square-and-multiply over the bits of p - 2. `a` and `dst` are in Montgomery form, and dst may be a. Uses the registers
+// 29 to 41, which are the ladder's table and are free once the point is summed. The exponent is public.
+fn invert[&w](w: &!w [int], a: int, dst: int) -> [] int {
+    let x1 = bigmod.reg(29);
+    let x2 = bigmod.reg(30);
+    let x3 = bigmod.reg(31);
+    let x6 = bigmod.reg(32);
+    let x9 = bigmod.reg(33);
+    let x11 = bigmod.reg(34);
+    let x22 = bigmod.reg(35);
+    let x44 = bigmod.reg(36);
+    let x88 = bigmod.reg(37);
+    let x176 = bigmod.reg(38);
+    let x220 = bigmod.reg(39);
+    let t = bigmod.reg(40);
+    bigmod.copy_reg(w, a, x1);
+    bigmod.copy_reg(w, x1, x2);
+    square_times(w, x2, 1);
+    secp256k1_field.mul(w, x2, x1, x2);
+    bigmod.copy_reg(w, x2, x3);
+    square_times(w, x3, 1);
+    secp256k1_field.mul(w, x3, x1, x3);
+    bigmod.copy_reg(w, x3, x6);
+    square_times(w, x6, 3);
+    secp256k1_field.mul(w, x6, x3, x6);
+    bigmod.copy_reg(w, x6, x9);
+    square_times(w, x9, 3);
+    secp256k1_field.mul(w, x9, x3, x9);
+    bigmod.copy_reg(w, x9, x11);
+    square_times(w, x11, 2);
+    secp256k1_field.mul(w, x11, x2, x11);
+    bigmod.copy_reg(w, x11, x22);
+    square_times(w, x22, 11);
+    secp256k1_field.mul(w, x22, x11, x22);
+    bigmod.copy_reg(w, x22, x44);
+    square_times(w, x44, 22);
+    secp256k1_field.mul(w, x44, x22, x44);
+    bigmod.copy_reg(w, x44, x88);
+    square_times(w, x88, 44);
+    secp256k1_field.mul(w, x88, x44, x88);
+    bigmod.copy_reg(w, x88, x176);
+    square_times(w, x176, 88);
+    secp256k1_field.mul(w, x176, x88, x176);
+    bigmod.copy_reg(w, x176, x220);
+    square_times(w, x220, 44);
+    secp256k1_field.mul(w, x220, x44, x220);
+    // x223 is built in x220's place
+    square_times(w, x220, 3);
+    secp256k1_field.mul(w, x220, x3, x220);
+    bigmod.copy_reg(w, x220, t);
+    square_times(w, t, 23);
+    secp256k1_field.mul(w, t, x22, t);
+    square_times(w, t, 5);
+    secp256k1_field.mul(w, t, x1, t);
+    square_times(w, t, 3);
+    secp256k1_field.mul(w, t, x2, t);
+    square_times(w, t, 2);
+    secp256k1_field.mul(w, t, x1, t);
+    bigmod.copy_reg(w, t, dst);
+    return 0;
 }
 
 // The accumulator's affine x and y as big-endian bytes (32 each). -121 at infinity.
@@ -443,11 +574,11 @@ fn affine[&x, &y, &w](w: &!w [int], out_x: &!x [byte], out_y: &!y [byte]) -> [] 
     if bigmod.is_zero(w, z_of(a)) {
         return -121;
     }
-    bigmod.inverse(w, z_of(a), t(0));
-    bigmod.mul(w, x_of(a), t(0), t(1));
+    invert(w, z_of(a), t(0));
+    secp256k1_field.mul(w, x_of(a), t(0), t(1));
     bigmod.from_mont(w, t(1), t(1));
     bigmod.store_reg(w, t(1), out_x);
-    bigmod.mul(w, y_of(a), t(0), t(1));
+    secp256k1_field.mul(w, y_of(a), t(0), t(1));
     bigmod.from_mont(w, t(1), t(1));
     bigmod.store_reg(w, t(1), out_y);
     bigmod.set_small(w, t(1), 0);
@@ -457,8 +588,7 @@ fn affine[&x, &y, &w](w: &!w [int], out_x: &!x [byte], out_y: &!y [byte]) -> [] 
 // scalar times G into x, y (32 bytes each), on the field phase. The scalar may be secret.
 fn base_multiply[&s, &x, &y, &w](scalar: &s [byte], out_x: &!x [byte], out_y: &!y [byte], w: &!w [int]) -> [] int {
     field_phase(w);
-    load_point(gen_x, gen_y, w);
-    multiply(w, scalar);
+    comb_multiply(w, scalar);
     return affine(w, out_x, out_y);
 }
 
@@ -663,8 +793,7 @@ pub fn sign[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [by
 // u1 G + u2 Q into x and y (32 bytes each), on the field phase, where Q = (qx, qy) has been checked to be on the curve. -121 at infinity.
 fn combine[&a, &b, &qx, &qy, &x, &y, &w](u1: &a [byte], u2: &b [byte], qx: &qx [byte], qy: &qy [byte], out_x: &!x [byte], out_y: &!y [byte], w: &!w [int]) -> [] int {
     field_phase(w);
-    load_point(gen_x, gen_y, w);
-    multiply(w, u1);
+    comb_multiply(w, u1);
     ecdsa.copy_point(w, pt_acc(), pt_save());
     load_point(qx, qy, w);
     multiply(w, u2);
