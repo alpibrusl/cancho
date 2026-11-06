@@ -1,0 +1,35 @@
+name: seed-ir
+
+# docs/seed.md §3: the IR fixed point, measured per target. Not part of `ci`:
+# it builds the compiler three times, so it runs on request and when its own
+# files change.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/seed-ir-fixed-point.sh
+      - .github/workflows/seed-ir.yml
+
+jobs:
+  fixed-point:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release -p cancho
+      - name: IR fixed point
+        run: scripts/seed-ir-fixed-point.sh target/release/cancho seed-ir-out 2>&1 | tee seed-ir.txt; exit "${PIPESTATUS[0]}"
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: seed-ir-${{ matrix.target }}
+          path: |
+            seed-ir.txt
+            seed-ir-out/ir-s3.ll
