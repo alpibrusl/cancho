@@ -149,7 +149,8 @@ It moves no file and deletes nothing. Every phase is a PR of its own, and none m
   `selfhost.rs`: the plan needs `cancho.files` as the only list; (6) `-g`, `--instrument`, `-O0` exist only in the compiler in cancho, so the Rust
   compiler cannot be their oracle.
 - **#691 (`std.flate`) and #690/#692 (SHA-1, `vcsobj.cho`)** add one line of Rust (the std table in `main.rs`, registration only) and no compiler code; each
-  new std module costs that line until `main.rs`'s `STD` table is generated from `std/` (or read from `stdorder.cho`): add it to phase 2.
+  new std module cost that line; ~~until `main.rs`'s `STD` table is generated~~ **done**: `build.rs` generates the table from `std/std.files` (the order `--std` adds the files), so a new std
+  module is one line of that file and no Rust.
 
 **Moving `examples/selfhost` to the root now** (the goal stated 2026-11-05) conflicts with these: #681 touches 22 files there, #690 and #692 add files
 there, and `selfhost_build.rs` and about a dozen tests name the path (`include_str!`, `selfhost.rs`, `bootstrap.rs`, `statics.rs`). A `git mv` is one

@@ -41,6 +41,7 @@ fn main() {
     println!("cargo:rustc-env=CANCHO_REV_STAMP={rev}");
 
     embed_selfhost();
+    embed_std();
 }
 
 /// The compiler written in cancho (`examples/selfhost/*.cho`), compiled into this binary the way the standard library is,
@@ -69,5 +70,38 @@ fn embed_selfhost() {
     out.push_str("];\n");
     let target = Path::new(&std::env::var("OUT_DIR").expect("cargo sets OUT_DIR"))
         .join("selfhost_sources.rs");
+    std::fs::write(target, out).expect("OUT_DIR is writable");
+}
+
+/// The standard library (`std/*.cho`), in the order of `std/std.files`, as the `STD` table of `main.rs`: the order is the order `--std` adds the files and
+/// the order of the identities `cancho ids --std` writes, so it is a file of its own, not the order of the directory. A file of `std/` that the list leaves out
+/// (or a name in it that is not a file) is an error here, not a library that quietly lacks a module.
+fn embed_std() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let list = dir.join("std.files");
+    println!("cargo:rerun-if-changed={}", list.display());
+    let text = std::fs::read_to_string(&list).expect("std/std.files is read");
+    let names: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
+    let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
+        .expect("std/ is read")
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.ends_with(".cho"))
+        .collect();
+    on_disk.sort();
+    let mut listed: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
+    listed.sort();
+    assert_eq!(listed, on_disk, "std/std.files and the .cho files of std/ differ");
+    let mut out = String::from("const STD: &[(&str, &str)] = &[\n");
+    for name in &names {
+        let path = std::fs::canonicalize(dir.join(name)).expect("a file of std/");
+        println!("cargo:rerun-if-changed={}", path.display());
+        out.push_str(&format!(
+            "    (\"<std>/{name}\", include_str!({:?})),\n",
+            path.display().to_string()
+        ));
+    }
+    out.push_str("];\n");
+    let target =
+        Path::new(&std::env::var("OUT_DIR").expect("cargo sets OUT_DIR")).join("std_table.rs");
     std::fs::write(target, out).expect("OUT_DIR is writable");
 }
