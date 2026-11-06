@@ -300,3 +300,188 @@ fn exact_ties_between_two_shortest_decimals_print_the_even_one_and_everything_re
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "2.9802322387695312e-8");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- `std.fmt.float_fixed_into` (`docs/float-printing.md` §10) ------------------------------------------------------------------------------
+
+/// `x` with `prec` places, by the rule the design states, from an oracle that shares no code with the library: the exact decimal expansion
+/// (`{:.1100}` is exact for every double, 1074 places being all a double can have), cut at `prec` and rounded half to even by hand.
+fn fixed_by_hand(x: f64, prec: usize) -> String {
+    if x.is_nan() {
+        return "NaN".into();
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { "inf".into() } else { "-inf".into() };
+    }
+    let exact = format!("{:.1100}", x.abs());
+    let (whole, frac) = exact.split_once('.').expect("a point");
+    let mut digits: Vec<u8> =
+        whole.bytes().chain(frac.bytes().take(prec)).map(|b| b - b'0').collect();
+    digits.resize(whole.len() + prec, 0); // a double has at most 1074 places: past the expansion there are only zeros
+    let rest = &frac.as_bytes()[prec.min(frac.len())..];
+    let up = match rest.first() {
+        Some(b'5') if rest[1..].iter().all(|&b| b == b'0') => {
+            digits.last().copied().unwrap_or(0) % 2 == 1
+        }
+        Some(&b) => b >= b'5',
+        None => false,
+    };
+    if up {
+        let mut i = digits.len();
+        loop {
+            if i == 0 {
+                digits.insert(0, 1);
+                break;
+            }
+            i -= 1;
+            if digits[i] == 9 {
+                digits[i] = 0;
+            } else {
+                digits[i] += 1;
+                break;
+            }
+        }
+    }
+    let point = digits.len() - prec;
+    let mut text = String::new();
+    if x.is_sign_negative() {
+        text.push('-');
+    }
+    text.extend(digits[..point].iter().map(|d| (d + b'0') as char));
+    if prec > 0 {
+        text.push('.');
+        text.extend(digits[point..].iter().map(|d| (d + b'0') as char));
+    }
+    text
+}
+
+#[test]
+fn the_rounding_oracle_of_fixed_printing_is_itself_right_on_known_values() {
+    let known: [(f64, usize, &str); 12] = [
+        (0.125, 2, "0.12"),
+        (0.375, 2, "0.38"),
+        (2.5, 0, "2"),
+        (3.5, 0, "4"),
+        (0.5, 0, "0"),
+        (1.5, 0, "2"),
+        (9.5, 0, "10"),
+        (99.5, 0, "100"),
+        (0.995, 2, "0.99"),
+        (-0.001, 2, "-0.00"),
+        (-0.0, 1, "-0.0"),
+        (1234.5678, 2, "1234.57"),
+    ];
+    for (x, prec, want) in known {
+        assert_eq!(fixed_by_hand(x, prec), want, "{x} with {prec} places");
+    }
+}
+
+#[test]
+fn fixed_printing_rounds_the_exact_value_half_to_even_and_refuses_what_does_not_fit() {
+    let mut rng = Lcg(0xf1d5);
+    let mut cases: Vec<(f64, i64)> = Vec::new();
+    for _ in 0..40_000 {
+        let x = f64::from_bits(rng.next() << 11 | rng.below(2048));
+        cases.push((x, rng.below(26) as i64));
+    }
+    // Exact ties at the precision: t / 2^(p+1) for odd t has x * 10^p an integer and a half.
+    for p in 0..=30i32 {
+        for _ in 0..300 {
+            let t = ((rng.next() >> (12 + rng.below(40))) | 1) as f64;
+            cases.push((t / 2f64.powi(p + 1), i64::from(p)));
+            cases.push((-t / 2f64.powi(p + 1), i64::from(p)));
+        }
+    }
+    // The neighbours of every power of two and of ten, at several precisions.
+    for p in [0i64, 1, 2, 9, 17, 340, 1100] {
+        for e in (-1074..1024).step_by(7) {
+            let b = 2f64.powi(e).to_bits();
+            for d in [-1i64, 0, 1] {
+                let y = f64::from_bits((b as i64 + d) as u64);
+                if y.is_finite() {
+                    cases.push((y, p));
+                }
+            }
+        }
+        for k in (-323..309).step_by(5) {
+            let y: f64 = format!("1e{k}").parse().unwrap();
+            cases.push((y, p));
+            cases.push((f64::from_bits(y.to_bits() + 1), p));
+        }
+    }
+    // Carries through nines, the extremes, and the values with no literal.
+    for digits in 1..8 {
+        for tail in ["5", "49999999", "50000001", "9"] {
+            for p in 0..6i64 {
+                let v: f64 = format!("{}.{}{}", "9".repeat(digits), "9".repeat(p as usize), tail)
+                    .parse()
+                    .unwrap();
+                cases.push((v, p));
+                cases.push((-v, p));
+            }
+        }
+    }
+    for x in [
+        0.0,
+        -0.0,
+        0.5,
+        1.5,
+        2.5,
+        1e22,
+        1e23,
+        5e-324,
+        f64::MAX,
+        f64::MIN_POSITIVE,
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    ] {
+        for p in [0i64, 1, 2, 20, 400, 1074] {
+            cases.push((x, p));
+        }
+    }
+    // What the 1500-byte buffer of the driver cannot hold, and what it exactly can.
+    let refused = [(1.0, -1i64), (1.0, 1499), (0.0, 5000), (1e300, 1400), (1.5, -1000)];
+    let exactly = [(0.0, 1498i64), (-0.0, 1497)];
+
+    let (dir, exe) = build_driver("float-text-fixed", "float_fixed.cho");
+    let doc = format!(
+        "[{}]",
+        cases
+            .iter()
+            .chain(refused.iter())
+            .chain(exactly.iter())
+            .map(|(x, p)| format!("{},{p}", x.to_bits() as i64))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let out = feed(&exe, doc.as_bytes());
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), cases.len() + refused.len() + exactly.len());
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let mut wrong = Vec::new();
+    for ((x, p), got) in cases.iter().zip(&lines) {
+        let want = fixed_by_hand(*x, *p as usize);
+        if *got != want {
+            wrong.push(format!(
+                "{x:e} with {p} places: printed {}, wanted {}",
+                abbreviate(got),
+                abbreviate(&want)
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} wrong, first few:\n{}",
+        wrong.len(),
+        wrong[..wrong.len().min(10)].join("\n")
+    );
+    for ((x, p), got) in refused.iter().zip(&lines[cases.len()..]) {
+        assert_eq!(*got, "short", "{x} with {p} places must be refused, not trapped or cut");
+    }
+    for ((x, p), got) in exactly.iter().zip(&lines[cases.len() + refused.len()..]) {
+        assert_eq!(*got, fixed_by_hand(*x, *p as usize), "{x} with {p} places fills the buffer");
+    }
+}

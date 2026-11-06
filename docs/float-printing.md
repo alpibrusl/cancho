@@ -317,7 +317,7 @@ lines, and would not compile otherwise.
 |---|---|
 | Positional notation | §1.1. `0.1` as `0.1` rather than `1e-1` needs a switch-over rule, which is a formatting policy and not a digit question. It is a layer on top of this one, and cheap once wanted |
 | Reading a float from bytes | The inverse. `std.fmt` writes; nothing parses a `float`. It needs the same bignum and the opposite loop, and no program has asked yet. (`f32` has it: `std.fmt32.f32_of_text`, correctly rounded straight to binary32; [`f32.md`](f32.md) §5.3) |
-| A width or a precision | `{:.3}` — round to a stated number of digits rather than the shortest. Different algorithm (the stopping rule goes away), same machinery. (Built for `f32` as `std.fmt32.f32_fixed_into`, exact ties to even; [`f32.md`](f32.md) §5.3) |
+| A width or a precision | `{:.3}` — round to a stated number of digits rather than the shortest. Different algorithm (the stopping rule goes away), same machinery. (Built for `f32` as `std.fmt32.f32_fixed_into`, exact ties to even; [`f32.md`](f32.md) §5.3; **for `float` see §10**) |
 | Positional notation for `f32` | Built in `std.fmt32.f32_into` as Rust's `{:?}` (positional from `1e-4` to below `1e16`); `float_into` is unchanged |
 | `float_of_bits` | Built (edition 7, [`floating-point.md`](floating-point.md) §4.1); it is how `scripts/float_differential.py` feeds a million exact bit patterns |
 
@@ -330,6 +330,8 @@ lines, and would not compile otherwise.
 | `shortest_printing_agrees_with_an_oracle` | 9000 values print exactly what Rust's `{:e}` prints | 1, 3, 5 |
 | `the_values_with_no_literal_are_spelled` | `inf`, `-inf`, `NaN`, `-0e0` | 1.1 |
 | `a_short_buffer_is_refused_rather_than_overrun` | `-1` rather than a trap or a partial line | 6 |
+| `fixed_printing_rounds_the_exact_value_half_to_even_and_refuses_what_does_not_fit` | about 67,000 values and precisions against the exact expansion rounded half to even; five refusals and two exact fills of the buffer | 10 |
+| `the_rounding_oracle_of_fixed_printing_is_itself_right_on_known_values` | the test's own oracle on twelve values worked by hand | 10 |
 
 | Accepting | Shows |
 |---|---|
@@ -375,3 +377,45 @@ built the first time a program prints a float that needs them.
 
 **What is still open.** Ryu (Adams, 2018) would remove the fallback, and with it the 0.5 percent that run at the old speed; it needs 128-bit multiplications by a table of 5^k that cancho would have to compute or carry in full, and nobody has asked for the last 0.5 percent.
 `std.fmt32` (`f32`) is unchanged and has its own exact tier.
+
+---
+
+## 10. A precision: `std.fmt.float_fixed_into`
+
+> **Status: a design, written before the code.** Tags: **[read]** found by reading a program, **[choice]** a decision that can be overturned, **[measured]** printed by a command of this repository (none yet: §10.5 says what will be measured).
+
+### 10.1 Who asks
+
+The bar is two programs that ask (`standard-library.md` §1; `CONTRIBUTING.md`, "A feature earns its way in when a program asks for it"). **[read]** Both are in `cancho-consulting/metasearch-bidding`: `src/daily/num.cho` (`scaled`, `add_fixed`: a `float` with a number of decimals, rounded half to even **exactly**, with thousands separators, a sign, negative zero; about 100 lines, built from an error-free product), and `src/sim.cho` (`fixed`: a non-negative `float` with `digits` decimals, written as `truncate(x * 10^digits + 0.5)`, 25 lines). The two do not round alike: `sim.cho`'s is half **up** on the *rounded* product `x * 10^digits`, so it differs from the exact rule where the product is not exact or a tie falls on an even digit. `sim.cho` defines a simulated world whose bytes are compared across runs, so moving it to the library's exact rule is that program's decision and would change those bytes in the rare cases where the two differ; this document does not ask for it. `f32` has the function already (`fmt32.f32_fixed_into`, `f32.md` §5.3); `float`, the type programs use, has not, which is the row of §7 ("A width or a precision").
+
+### 10.2 What it is
+
+```
+std.fmt.float_fixed_into(out: &!o [byte], x: float, prec: int) -> int
+```
+
+Writes `x` with exactly `prec` digits after the point (none, and no point, for `prec == 0`) and answers how many bytes it wrote, or **-1** if `out` is too short or `prec` is negative. **[choice]** The contract is `f32_fixed_into`'s, for the same reasons: the value is the exact binary value of `x`, expanded and **rounded half to even** at `prec` places (`0.125` with two places is `0.12`, `2.5` with none is `2`, `0.375` with two is `0.38`); the sign is kept on a negative value that rounds to zero (`-0.00`, as Rust's `{:.2}` and Python's `%.2f` print it) and on `-0.0`; `NaN`, `inf` and `-inf` are written as they are whatever `prec` is. There is no thousands separator, no sign for positive values and no width: those are the caller's, and `num.cho` keeps its own. A `prec` the buffer cannot hold (`prec > len(out) - 2`) is refused before any work is done.
+
+### 10.3 How
+
+The same machinery as §3, with the stopping rule gone. Write `x = m * 2^e` exactly. The number to print is `N = round(x * 10^prec)`, an integer: let `R = m * 2^e * 10^prec` and `S = 1` when `e >= 0`, else `R = m * 10^prec` and `S = 2^-e`; then `N = round(R / S)`, ties to even. `std.bignum` has what that takes (`set`, `shift_left`, `mul_pow10`, `mul_small`, `compare`, `subtract`, `copy`) and no division, and none is needed, as in §3.2: scale `S` by ten while the next scaling still fits under `R` (so `S1 = S * 10^(q-1)` has `R / S1` in `[1, 10)`, and `q` is the number of digits of `floor(R / S)`), then emit `q` digits, each by at most nine subtractions of `S1` from `R`, multiplying `R` by ten between digits. What is left, `r`, satisfies `frac(R / S) = r / S1`: compare `2r` with `S1` for the rounding (above: up; equal: up only if the last digit is odd), and carry through the digits written (`999` becomes `1000`: one digit more). The point goes `prec` digits from the right, with zeros in front when `N` has fewer digits (`0.003`). When `R < S` the one digit is `0` and `r = R`.
+
+Sizes: `R` is under `1024 + 3.33 * prec` bits and `S1` no wider, so three bignums of `(1100 + 4 * prec) / 32 + 3` limbs, in a `region` like §6: no `Heap`, the row stays `[]`. A call costs `q` scalings plus `q` digits of up to nine subtractions on those limbs, so it is linear in the number of digits times the limbs; §10.5 measures it. **[open]** A fast path for the common case (a value and a precision for which `m * 10^prec` fits an `int`) would answer from integer arithmetic alone, as `short_form` does for the shortest form; it is not designed here, and would be checked against the exact path on every value.
+
+### 10.4 Gates (written before the code; each must be able to fail)
+
+| id | judges | how |
+|---|---|---|
+| F1 | the rounding, against an oracle | Rust `{:.*}` (correctly rounded, exact ties to even) in `float_text.rs`, and Python `'%.*f'` and exact `Fraction` arithmetic in `scripts/float_differential.py`: random bit patterns at precisions 0 to 30, **exact ties** at the precision (a dyadic value whose expansion ends in a 5 exactly there), every power of two at several precisions, the neighbours of every power of ten, the subnormals and the extremes at precisions 0, 1, 2, 17, 340 and 1100 |
+| F2 | the edges | `-0.0`, a tiny negative (`-0.00`), `0.5` and `1.5` and `2.5` at 0, `9.5` and `99.5` and `0.995` (carry to a new digit), `0.0` at 0 and 5, `1e22`, `5e-324` at 1074 places (its whole expansion), `NaN`, `inf`, `-inf` at any precision |
+| F3 | the refusals | a short buffer, `prec < 0`, `prec` too large for the buffer: `-1`, no trap, no partial line |
+| F4 | the gate can fail | four deliberate bugs, each of which F1 must notice: ties rounded up, the carry through `9`s dropped, the sign dropped on a negative value that rounds to zero, the half taken as `>=` rather than `>` with the odd-digit test |
+| F5 | the library is a library | `stdsource.cho` regenerated; `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace` |
+
+### 10.5 What was built and measured
+
+> **Status: built.** `std.fmt.float_fixed_into` (about 170 lines of `std/fmt.cho`, row `[]`, no `Heap`), the driver `tests/programs/float_fixed.cho`, the Rust test `fixed_printing_rounds_the_exact_value_half_to_even_and_refuses_what_does_not_fit` and its oracle's own test in `float_text.rs`, the `--fixed` part of `scripts/float_differential.py`, and `scripts/float_fixed_mutants.py`.
+
+**Checked [measured].** (F1, F2, F3) The Rust test: about 67,000 cases (random bit patterns at 0 to 25 places, 18,600 exact ties at the precision, the neighbours of every seventh power of two and every fifth power of ten at seven precisions up to 1100, carries through nines, the extremes, `NaN`, `inf`, `-0.0`), each against the exact decimal expansion rounded half to even by hand in the test, which shares no code with the library; five refusals (`prec` negative, too large for the buffer, a number too long for it) answer -1 and two cases that fill the 1,500-byte buffer exactly are written whole. `scripts/float_differential.py --fixed` against Python's `'%.*f'`: 58,301 values with 0 wrong in the first run. (F4) `scripts/float_fixed_mutants.py`: nine deliberate bugs, ties rounded up, ties rounded down, the carry through nines dropped, the new leading digit of a carry dropped, the sign dropped on a negative that rounds to zero, the zeros before a short number one too few, `S` one bit too wide, `R` not scaled by `10^prec` for a whole number, and the digit count one too many; each makes the differential fail (the last by trapping the driver), and the first of them, applied to `std/fmt.cho` itself, fails the Rust test with 9,378 wrong. The `inf` and `NaN` spellings are `f32_fixed_into`'s.
+
+**Cost [measured].** Apple M4 Max, macOS, release `cancho`, the driver of the test over 300,000 values, the minimum of three runs, wall time of the whole process (JSON in, text out). Values like those a report prints (1e-3 to 1e6, either sign): `float_fixed_into` 0.246 s at two places and 0.290 s at six, against `float_into`'s 0.172 s on the same values through its driver, and Python's `'%.*f'` 0.053 s in-process (not the same measurement: no process, no parsing). Random bit patterns, whose outputs are hundreds of digits (an exponent anywhere from -308 to 308 at two places is up to 310 digits): 2.7 s, about 9 microseconds a value, against `float_into`'s 0.196 s, because `float_into` prints 17 digits and this prints all the integer digits; Python 0.56 s. So the cost is linear in the digits written, as §10.3 read it from the loop, and for the values a report prints it is of the order of the shortest printer's fast tiers. **Not measured:** against `num.cho`'s 100 lines of `float` arithmetic, which would be the comparison that matters to its program. **[open]** the fast path of §10.3 (an `int` answer when `m * 10^prec` fits) is not built; the numbers above do not call for it.
