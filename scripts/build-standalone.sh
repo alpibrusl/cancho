@@ -43,15 +43,18 @@ while IFS= read -r name; do
   if [ "$name" = version.cho ]; then files="$files $out/stamped/version.cho"; else files="$files $here/examples/selfhost/$name"; fi
 done < "$here/examples/selfhost/cancho.files"
 
+# The seed compiler (like every later stage) takes `--clang PATH`; a Rust stage 0 does not, so the flag is added only for the seed.
+clang=$(command -v "${CLANG:-clang}") || { echo "build-standalone: no ${CLANG:-clang} on PATH" >&2; exit 2; }
+stage1clang=
 if [ -z "$cancho0" ]; then
+  stage1clang="--clang $clang"
   echo "stage 0: the seed, built by clang from seed/" >&2
   cancho0=$(sh "$here/scripts/seed-build.sh" --out "$out/seed") || { echo "build-standalone: the seed did not build" >&2; exit 2; }
 fi
 echo "stage 1: built by $cancho0 with the compiler in cancho" >&2
-CANCHO_COMPILER=auto "$cancho0" build $files --std -o "$out/stages/1/cancho"
+CANCHO_COMPILER=auto "$cancho0" build $files --std $stage1clang -o "$out/stages/1/cancho"
 # The command line in cancho has no environment to read (a cancho program has no `getenv`), so `$CLANG` reaches it as `--clang PATH`, as an absolute path
 # (it runs `/usr/bin/clang` otherwise). The first release run found this: on ubuntu-22.04 stage 2 used clang 14, which cannot read the IR.
-clang=$(command -v "${CLANG:-clang}") || { echo "build-standalone: no ${CLANG:-clang} on PATH" >&2; exit 2; }
 echo "stage 2: built by stage 1" >&2
 "$out/stages/1/cancho" build $files --std --clang "$clang" -o "$out/stages/2/cancho"
 echo "stage 3: built by stage 2" >&2
