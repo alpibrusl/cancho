@@ -1,0 +1,1034 @@
+edition 7;
+module secp256k1;
+import std.bigmod;
+import std.bignum;
+import std.bytes;
+import std.ecdsa;
+import std.hmac;
+import secp256k1_comb;
+import secp256k1_field;
+import secp256k1_scalar;
+
+// `secp256k1` -- ECDSA on secp256k1 with public-key recovery (`docs/secp256k1.md`). Asked for by cancho-chain. Not independently
+// reviewed (#209). Not fast: `std.bigmod`'s generic registers, as `std.ecdh` runs P-384.
+//
+// y^2 = x^3 + 7 over p = 2^256 - 2^32 - 977, prime order n, cofactor 1. Points are projective and added with Renes, Costello and
+// Batina's complete formulas for a = 0 (eprint 2015/1060, algorithms 7 and 9, b3 = 21): no special case, infinity and doubling go
+// through the same operations. A secret scalar is taken four bits at a time, four doublings and one of sixteen multiples read under
+// masks, so nothing branches on it or indexes by it. Where `sign` uses a secret, the field and scalar arithmetic is `std.bigmod`'s
+// registers (constant time), the inversions use the public exponents p - 2 and n - 2, and the secret is loaded with `load_secret`.
+//
+// Two moduli share one workspace: the field phase (modulus p) and the scalar phase (modulus n) each call `bigmod.setup`, and
+// values cross between them as bytes.
+//
+// Every function answers 0 or a negative code whose name is `refusal_tag(code)`.
+
+pub fn ok() -> [] int {
+    return 0;
+}
+
+pub fn refusal_tag(code: int) -> [] &static [byte] {
+    if code == 0 {
+        return "ok";
+    }
+    if code == -110 {
+        return "secp256k1-digest-length";
+    }
+    if code == -111 {
+        return "secp256k1-key-length";
+    }
+    if code == -112 {
+        return "secp256k1-key-range";
+    }
+    if code == -113 {
+        return "secp256k1-extra-length";
+    }
+    if code == -114 {
+        return "secp256k1-output-length";
+    }
+    if code == -115 {
+        return "secp256k1-work-length";
+    }
+    if code == -116 {
+        return "secp256k1-nonce";
+    }
+    if code == -117 {
+        return "secp256k1-signature";
+    }
+    if code == -118 {
+        return "secp256k1-point-encoding";
+    }
+    if code == -119 {
+        return "secp256k1-point-range";
+    }
+    if code == -120 {
+        return "secp256k1-point-not-on-curve";
+    }
+    if code == -121 {
+        return "secp256k1-recover";
+    }
+    if code == -122 {
+        return "secp256k1-verify";
+    }
+    return "unknown";
+}
+
+// The words `work` must hold.
+pub fn work_len() -> [] int {
+    return bigmod.registers_len(66);
+}
+
+// ---- The constants, from hex ----
+
+fn nibble(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    if c >= 65 {
+        return c - 55;
+    }
+    return c - 48;
+}
+
+fn fill_hex[&o](out: &!o [byte], text: &static [byte]) -> [] int {
+    var i = 0;
+    while i < len(out) {
+        out[i] = byte_of(nibble(int_of(text[2 * i])) * 16 + nibble(int_of(text[2 * i + 1])));
+        i = i + 1;
+    }
+    return 0;
+}
+
+// p = 2^256 - 2^32 - 977
+static field_p: [byte] {
+    let t = alloc_slice[static](32, byte_of(0));
+    fill_hex(t, "fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f");
+    return t;
+}
+
+// the group order
+static order_n: [byte] {
+    let t = alloc_slice[static](32, byte_of(0));
+    fill_hex(t, "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+    return t;
+}
+
+// n - 2: the exponent of the inverse modulo n (Fermat), public
+static order_n_minus_2: [byte] {
+    let t = alloc_slice[static](32, byte_of(0));
+    fill_hex(t, "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036413f");
+    return t;
+}
+
+// n / 2, rounded down: a low s is at most this
+static half_n: [byte] {
+    let t = alloc_slice[static](32, byte_of(0));
+    fill_hex(t, "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
+    return t;
+}
+
+// (p + 1) / 4: p = 3 mod 4, so a square root of a square a is a^((p + 1) / 4)
+static sqrt_exp: [byte] {
+    let t = alloc_slice[static](32, byte_of(0));
+    fill_hex(t, "3fffffffffffffffffffffffffffffffffffffffffffffffffffffffbfffff0c");
+    return t;
+}
+
+// ---- Byte helpers on 32-byte big-endian numbers (public data unless said) ----
+
+// -1, 0 or 1: a against b, a branch on the first byte that differs. Public values only.
+fn cmp32[&a, &b](a: &a [byte], b: &b [byte]) -> [] int {
+    var i = 0;
+    while i < 32 {
+        let x = int_of(a[i]);
+        let y = int_of(b[i]);
+        if x < y {
+            return -1;
+        }
+        if x > y {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn is_zero32[&a](a: &a [byte]) -> [] bool {
+    var i = 0;
+    while i < 32 {
+        if int_of(a[i]) != 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// 1 when big-endian `s` (32 bytes) is in [1, n), else 0. Constant time: a borrow over every byte, and an OR of them
+// (`std.ecdh.in_range`). Used on secrets.
+fn in_range[&s](s: &s [byte]) -> [] int {
+    let n = order_n;
+    var under = 0;
+    var any = 0;
+    var i = 31;
+    while i >= 0 {
+        let d = int_of(s[i]) - int_of(n[i]) - under;
+        under = d >> 63 & 1;
+        any = any | int_of(s[i]);
+        i = i - 1;
+    }
+    return under & (0 - any >> 63 & 1);
+}
+
+// out = a + b as 32 bytes, and the carry out (0 or 1). Public values.
+fn add32[&a, &b, &o](a: &a [byte], b: &b [byte], out: &!o [byte]) -> [] int {
+    var carry = 0;
+    var i = 31;
+    while i >= 0 {
+        let v = int_of(a[i]) + int_of(b[i]) + carry;
+        out[i] = byte_of(v & 255);
+        carry = v >> 8;
+        i = i - 1;
+    }
+    return carry;
+}
+
+fn copy32[&f, &t](from: &f [byte], to: &!t [byte]) -> [] int {
+    var i = 32;
+    while i > 0 {
+        i = i - 1;
+        to[i] = from[i];
+    }
+    return 0;
+}
+
+// ---- Registers ----
+//
+// Points are three consecutive registers X, Y, Z, in Montgomery form (`std.ecdh`'s layout, and the same work length class).
+
+fn reg_b3() -> [] int {
+    return bigmod.reg(0);
+}
+
+fn t(i: int) -> [] int {
+    return bigmod.reg(1 + i);
+}
+
+fn pt_out() -> [] int {
+    return 6;
+}
+
+fn pt_acc() -> [] int {
+    return 9;
+}
+
+fn pt_sel() -> [] int {
+    return 12;
+}
+
+fn pt_table(i: int) -> [] int {
+    return 15 + 3 * i;
+}
+
+// a place to keep one product while another is computed (`verify`, `recover`)
+fn pt_save() -> [] int {
+    return 63;
+}
+
+fn x_of(p: int) -> [] int {
+    return bigmod.reg(p);
+}
+
+fn y_of(p: int) -> [] int {
+    return bigmod.reg(p + 1);
+}
+
+fn z_of(p: int) -> [] int {
+    return bigmod.reg(p + 2);
+}
+
+// d = p + q, complete (RCB algorithm 7, a = 0, b3 = 21). `d` may be `p` or `q`.
+fn add_points[&w](w: &!w [int], p: int, q: int, d: int) -> [] int {
+    let x1 = x_of(p);
+    let y1 = y_of(p);
+    let z1 = z_of(p);
+    let x2 = x_of(q);
+    let y2 = y_of(q);
+    let z2 = z_of(q);
+    let x3 = x_of(pt_out());
+    let y3 = y_of(pt_out());
+    let z3 = z_of(pt_out());
+    let b3 = reg_b3();
+    secp256k1_field.mul(w, x1, x2, t(0));
+    secp256k1_field.mul(w, y1, y2, t(1));
+    secp256k1_field.mul(w, z1, z2, t(2));
+    secp256k1_field.add(w, x1, y1, t(3));
+    secp256k1_field.add(w, x2, y2, t(4));
+    secp256k1_field.mul(w, t(3), t(4), t(3));
+    secp256k1_field.add(w, t(0), t(1), t(4));
+    secp256k1_field.sub(w, t(3), t(4), t(3));
+    secp256k1_field.add(w, y1, z1, t(4));
+    secp256k1_field.add(w, y2, z2, x3);
+    secp256k1_field.mul(w, t(4), x3, t(4));
+    secp256k1_field.add(w, t(1), t(2), x3);
+    secp256k1_field.sub(w, t(4), x3, t(4));
+    secp256k1_field.add(w, x1, z1, x3);
+    secp256k1_field.add(w, x2, z2, y3);
+    secp256k1_field.mul(w, x3, y3, x3);
+    secp256k1_field.add(w, t(0), t(2), y3);
+    secp256k1_field.sub(w, x3, y3, y3);
+    secp256k1_field.add(w, t(0), t(0), x3);
+    secp256k1_field.add(w, x3, t(0), t(0));
+    secp256k1_field.mul(w, b3, t(2), t(2));
+    secp256k1_field.add(w, t(1), t(2), z3);
+    secp256k1_field.sub(w, t(1), t(2), t(1));
+    secp256k1_field.mul(w, b3, y3, y3);
+    secp256k1_field.mul(w, t(4), y3, x3);
+    secp256k1_field.mul(w, t(3), t(1), t(2));
+    secp256k1_field.sub(w, t(2), x3, x3);
+    secp256k1_field.mul(w, y3, t(0), y3);
+    secp256k1_field.mul(w, t(1), z3, t(1));
+    secp256k1_field.add(w, t(1), y3, y3);
+    secp256k1_field.mul(w, t(0), t(3), t(0));
+    secp256k1_field.mul(w, z3, t(4), z3);
+    secp256k1_field.add(w, z3, t(0), z3);
+    return ecdsa.copy_point(w, pt_out(), d);
+}
+
+// d = 2p, complete (RCB algorithm 9, a = 0, b3 = 21). `d` may be `p`.
+fn double_point[&w](w: &!w [int], p: int, d: int) -> [] int {
+    let x = x_of(p);
+    let y = y_of(p);
+    let z = z_of(p);
+    let x3 = x_of(pt_out());
+    let y3 = y_of(pt_out());
+    let z3 = z_of(pt_out());
+    let b3 = reg_b3();
+    secp256k1_field.mul(w, y, y, t(0));
+    secp256k1_field.add(w, t(0), t(0), z3);
+    secp256k1_field.add(w, z3, z3, z3);
+    secp256k1_field.add(w, z3, z3, z3);
+    secp256k1_field.mul(w, y, z, t(1));
+    secp256k1_field.mul(w, z, z, t(2));
+    secp256k1_field.mul(w, b3, t(2), t(2));
+    secp256k1_field.mul(w, t(2), z3, x3);
+    secp256k1_field.add(w, t(0), t(2), y3);
+    secp256k1_field.mul(w, t(1), z3, z3);
+    secp256k1_field.add(w, t(2), t(2), t(1));
+    secp256k1_field.add(w, t(1), t(2), t(2));
+    secp256k1_field.sub(w, t(0), t(2), t(0));
+    secp256k1_field.mul(w, t(0), y3, y3);
+    secp256k1_field.add(w, x3, y3, y3);
+    secp256k1_field.mul(w, x, y, t(1));
+    secp256k1_field.mul(w, t(0), t(1), x3);
+    secp256k1_field.add(w, x3, x3, x3);
+    return ecdsa.copy_point(w, pt_out(), d);
+}
+
+// -1 (all ones) when a = b, else 0, for 0 <= a, b < 2^62: no branch.
+fn eq_mask(a: int, b: int) -> [] int {
+    return (a ^ b) - 1 >> 63;
+}
+
+// The selected point = multiple `idx` of the table, reading every multiple: which one is taken shows in no branch and no address. A point is three
+// registers of six words each (four limbs and two spare); only those are touched, not the 4,096-bit stride `std.bigmod` leaves between registers.
+fn select[&w](w: &!w [int], idx: int) -> [] int {
+    var c = 0;
+    while c < 3 {
+        let s = bigmod.reg(pt_sel() + c);
+        var t = 0;
+        while t < 6 {
+            w[s + t] = 0;
+            t = t + 1;
+        }
+        var i = 0;
+        while i < 16 {
+            // Through the barrier, or `clang -O2` makes the `and` below a branch on whether this is the entry (`docs/value-barrier.md`).
+            let m = value_barrier(eq_mask(i, idx));
+            let from = bigmod.reg(pt_table(i) + c);
+            t = 0;
+            while t < 6 {
+                w[s + t] = w[s + t] | w[from + t] & m;
+                t = t + 1;
+            }
+            i = i + 1;
+        }
+        c = c + 1;
+    }
+    return 0;
+}
+
+// Slot 0 of the table is the point at infinity, (0 : 1 : 0); slot i is i times the point in slot 1.
+fn build_table[&w](w: &!w [int]) -> [] int {
+    let inf = pt_table(0);
+    bigmod.set_small(w, x_of(inf), 0);
+    bigmod.set_small(w, y_of(inf), 1);
+    bigmod.to_mont(w, y_of(inf), y_of(inf));
+    bigmod.set_small(w, z_of(inf), 0);
+    var i = 2;
+    while i < 16 {
+        add_points(w, pt_table(i - 1), pt_table(1), pt_table(i));
+        i = i + 1;
+    }
+    return 0;
+}
+
+// One window of the ladder: four doublings, then the addition of the selected multiple.
+fn window[&w](w: &!w [int], nibble: int) -> [] int {
+    var k = 0;
+    while k < 4 {
+        double_point(w, pt_acc(), pt_acc());
+        k = k + 1;
+    }
+    select(w, nibble);
+    return add_points(w, pt_acc(), pt_sel(), pt_acc());
+}
+
+// The accumulator = scalar times the point in table slot 1 (`scalar` big-endian, any length, any value: the formulas are complete).
+fn multiply[&s, &w](w: &!w [int], scalar: &s [byte]) -> [] int {
+    build_table(w);
+    ecdsa.copy_point(w, pt_table(0), pt_acc());
+    var at = 0;
+    while at < len(scalar) {
+        let b = int_of(scalar[at]);
+        window(w, b >> 4);
+        window(w, b & 15);
+        at = at + 1;
+    }
+    return 0;
+}
+
+// ---- The generator's comb (`docs/secp256k1.md` §2) ----
+//
+// k G is the sum over the 64 four-bit digits d_i of k (least significant first) of d_i 16^i G, and `secp256k1_comb` holds every d 16^i G, so
+// there is no doubling at all: 64 additions. A digit is secret, so the entry is chosen by reading all sixteen under masks, and a zero digit
+// (which has no affine point) is an addition made and then not kept, by a mask. The table is read-only data in the binary.
+
+// The selected point = entry (i, digit) of the comb, affine, in sel's X and Y (its Z is 1, set by `comb_multiply`). Each limb is picked as its two 32-bit
+// halves under the masks and joined afterwards, since a `static` holds nothing wider (see `secp256k1_comb`). The halves are gathered in the words of
+// registers that are free at this point (the sum's output and the saved point), four limbs of x and four of y each.
+fn comb_select[&w](w: &!w [int], i: int, digit: int) -> [] int {
+    let lx = bigmod.reg(pt_out());
+    let ly = bigmod.reg(pt_out() + 1);
+    let hx = bigmod.reg(pt_save());
+    let hy = bigmod.reg(pt_save() + 1);
+    var t = 0;
+    while t < 4 {
+        w[lx + t] = 0;
+        w[ly + t] = 0;
+        w[hx + t] = 0;
+        w[hy + t] = 0;
+        t = t + 1;
+    }
+    var j = 0;
+    while j < 16 {
+        // Through the barrier, as in `select`.
+        let m = value_barrier(eq_mask(j, digit));
+        let row = secp256k1_comb.row(i, j);
+        t = 0;
+        while t < 4 {
+            w[lx + t] = w[lx + t] | row[2 * t] & m;
+            w[hx + t] = w[hx + t] | row[2 * t + 1] & m;
+            w[ly + t] = w[ly + t] | row[8 + 2 * t] & m;
+            w[hy + t] = w[hy + t] | row[9 + 2 * t] & m;
+            t = t + 1;
+        }
+        j = j + 1;
+    }
+    let sx = x_of(pt_sel());
+    let sy = y_of(pt_sel());
+    t = 0;
+    while t < 4 {
+        w[sx + t] = wrapping_add(wrapping_mul(w[hx + t], 4294967296), w[lx + t]);
+        w[sy + t] = wrapping_add(wrapping_mul(w[hy + t], 4294967296), w[ly + t]);
+        t = t + 1;
+    }
+    w[sx + 4] = 0;
+    w[sx + 5] = 0;
+    w[sy + 4] = 0;
+    w[sy + 5] = 0;
+    return 0;
+}
+
+// The accumulator = scalar times the generator (`scalar` is 32 bytes, big-endian, any value). On the field phase.
+fn comb_multiply[&s, &w](w: &!w [int], scalar: &s [byte]) -> [] int {
+    let inf = pt_acc();
+    bigmod.set_small(w, x_of(inf), 0);
+    bigmod.set_small(w, y_of(inf), 1);
+    bigmod.to_mont(w, y_of(inf), y_of(inf));
+    bigmod.set_small(w, z_of(inf), 0);
+    bigmod.set_small(w, z_of(pt_sel()), 1);
+    bigmod.to_mont(w, z_of(pt_sel()), z_of(pt_sel()));
+    var i = 0;
+    while i < 64 {
+        let digit = int_of(scalar[31 - i / 2]) >> 4 * (i % 2) & 15;
+        comb_select(w, i, digit);
+        add_points(w, pt_acc(), pt_sel(), pt_table(0));
+        // Keep the sum unless the digit is zero: acc = (acc & keep) | (sum & !keep), word by word, over the three registers' six words.
+        let keep = value_barrier(eq_mask(digit, 0));
+        var c = 0;
+        while c < 3 {
+            let a = bigmod.reg(pt_acc() + c);
+            let b = bigmod.reg(pt_table(0) + c);
+            var t = 0;
+            while t < 6 {
+                w[a + t] = w[a + t] & keep | w[b + t] & (keep ^ -1);
+                t = t + 1;
+            }
+            c = c + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Zeroes every register: the table and the accumulator are multiples of the point by parts of the scalar.
+fn wipe[&w](w: &!w [int]) -> [] int {
+    return bignum.zero(w[bigmod.reg(0)..work_len()]);
+}
+
+// ---- Field phase ----
+
+// Modulus p, and the constant 3b = 21 in register b3.
+fn field_phase[&w](w: &!w [int]) -> [] int {
+    let code = bigmod.setup(field_p, w);
+    bigmod.set_small(w, reg_b3(), 21);
+    bigmod.to_mont(w, reg_b3(), reg_b3());
+    return code;
+}
+
+// The point (x, y), big-endian, into table slot 1 in Montgomery form, with Z = 1. -119 when a coordinate is not below p.
+fn load_point[&x, &y, &w](x: &x [byte], y: &y [byte], w: &!w [int]) -> [] int {
+    let p = pt_table(1);
+    if bigmod.load_reg(x, w, x_of(p)) != 0 || bigmod.load_reg(y, w, y_of(p)) != 0 {
+        return -119;
+    }
+    bigmod.to_mont(w, x_of(p), x_of(p));
+    bigmod.to_mont(w, y_of(p), y_of(p));
+    bigmod.set_small(w, z_of(p), 1);
+    bigmod.to_mont(w, z_of(p), z_of(p));
+    return 0;
+}
+
+// Whether the point in table slot 1 (Z = 1) is on the curve: y^2 = x^3 + 7.
+fn on_curve[&w](w: &!w [int]) -> [] bool {
+    let x = x_of(pt_table(1));
+    let y = y_of(pt_table(1));
+    secp256k1_field.mul(w, y, y, t(0));
+    secp256k1_field.mul(w, x, x, t(1));
+    secp256k1_field.mul(w, t(1), x, t(1));
+    bigmod.set_small(w, t(2), 7);
+    bigmod.to_mont(w, t(2), t(2));
+    secp256k1_field.add(w, t(1), t(2), t(1));
+    return bigmod.equal(w, t(0), t(1));
+}
+
+// a squared `count` times, in place.
+fn square_times[&w](w: &!w [int], a: int, count: int) -> [] int {
+    var i = 0;
+    while i < count {
+        secp256k1_field.mul(w, a, a, a);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// dst = a^-1 = a^(p - 2) by the addition chain libsecp256k1 uses for this prime: 255 squarings and 14 multiplications, against about 500
+// multiplications for square-and-multiply over the bits of p - 2. `a` and `dst` are in Montgomery form, and dst may be a. Uses the registers
+// 29 to 41, which are the ladder's table and are free once the point is summed. The exponent is public.
+fn invert[&w](w: &!w [int], a: int, dst: int) -> [] int {
+    let x1 = bigmod.reg(29);
+    let x2 = bigmod.reg(30);
+    let x3 = bigmod.reg(31);
+    let x6 = bigmod.reg(32);
+    let x9 = bigmod.reg(33);
+    let x11 = bigmod.reg(34);
+    let x22 = bigmod.reg(35);
+    let x44 = bigmod.reg(36);
+    let x88 = bigmod.reg(37);
+    let x176 = bigmod.reg(38);
+    let x220 = bigmod.reg(39);
+    let t = bigmod.reg(40);
+    bigmod.copy_reg(w, a, x1);
+    bigmod.copy_reg(w, x1, x2);
+    square_times(w, x2, 1);
+    secp256k1_field.mul(w, x2, x1, x2);
+    bigmod.copy_reg(w, x2, x3);
+    square_times(w, x3, 1);
+    secp256k1_field.mul(w, x3, x1, x3);
+    bigmod.copy_reg(w, x3, x6);
+    square_times(w, x6, 3);
+    secp256k1_field.mul(w, x6, x3, x6);
+    bigmod.copy_reg(w, x6, x9);
+    square_times(w, x9, 3);
+    secp256k1_field.mul(w, x9, x3, x9);
+    bigmod.copy_reg(w, x9, x11);
+    square_times(w, x11, 2);
+    secp256k1_field.mul(w, x11, x2, x11);
+    bigmod.copy_reg(w, x11, x22);
+    square_times(w, x22, 11);
+    secp256k1_field.mul(w, x22, x11, x22);
+    bigmod.copy_reg(w, x22, x44);
+    square_times(w, x44, 22);
+    secp256k1_field.mul(w, x44, x22, x44);
+    bigmod.copy_reg(w, x44, x88);
+    square_times(w, x88, 44);
+    secp256k1_field.mul(w, x88, x44, x88);
+    bigmod.copy_reg(w, x88, x176);
+    square_times(w, x176, 88);
+    secp256k1_field.mul(w, x176, x88, x176);
+    bigmod.copy_reg(w, x176, x220);
+    square_times(w, x220, 44);
+    secp256k1_field.mul(w, x220, x44, x220);
+    // x223 is built in x220's place
+    square_times(w, x220, 3);
+    secp256k1_field.mul(w, x220, x3, x220);
+    bigmod.copy_reg(w, x220, t);
+    square_times(w, t, 23);
+    secp256k1_field.mul(w, t, x22, t);
+    square_times(w, t, 5);
+    secp256k1_field.mul(w, t, x1, t);
+    square_times(w, t, 3);
+    secp256k1_field.mul(w, t, x2, t);
+    square_times(w, t, 2);
+    secp256k1_field.mul(w, t, x1, t);
+    bigmod.copy_reg(w, t, dst);
+    return 0;
+}
+
+// The accumulator's affine x and y as big-endian bytes (32 each). -121 at infinity.
+fn affine[&x, &y, &w](w: &!w [int], out_x: &!x [byte], out_y: &!y [byte]) -> [] int {
+    let a = pt_acc();
+    if bigmod.is_zero(w, z_of(a)) {
+        return -121;
+    }
+    invert(w, z_of(a), t(0));
+    secp256k1_field.mul(w, x_of(a), t(0), t(1));
+    bigmod.from_mont(w, t(1), t(1));
+    bigmod.store_reg(w, t(1), out_x);
+    secp256k1_field.mul(w, y_of(a), t(0), t(1));
+    bigmod.from_mont(w, t(1), t(1));
+    bigmod.store_reg(w, t(1), out_y);
+    bigmod.set_small(w, t(1), 0);
+    return 0;
+}
+
+// scalar times G into x, y (32 bytes each), on the field phase. The scalar may be secret.
+fn base_multiply[&s, &x, &y, &w](scalar: &s [byte], out_x: &!x [byte], out_y: &!y [byte], w: &!w [int]) -> [] int {
+    field_phase(w);
+    comb_multiply(w, scalar);
+    return affine(w, out_x, out_y);
+}
+
+// ---- Public keys ----
+
+// The public key of `key` (32 bytes, big-endian, in [1, n)) into `out` as 04 || x || y (65 bytes). `work` holds `work_len()` words,
+// and is zeroed before the answer.
+pub fn public_key[&k, &o, &w](key: &k [byte], out: &!o [byte], work: &!w [int]) -> [] int {
+    if len(key) != 32 {
+        return -111;
+    }
+    if len(out) != 65 {
+        return -114;
+    }
+    if len(work) < work_len() {
+        return -115;
+    }
+    if in_range(key) == 0 {
+        return -112;
+    }
+    out[0] = byte_of(4);
+    let code = base_multiply(key, out[1..33], out[33..65], work);
+    wipe(work);
+    return code;
+}
+
+// ---- The nonce: RFC 6979 §3.2, with §3.6's additional data ----
+//
+// qlen = hlen = 256: bits2int is the 32 bytes as they are, int2octets(x) is the key and bits2octets(h1) is the digest reduced mod n once.
+// libsecp256k1 does the same (measured: a digest of n or more gives the same signature only if it is reduced first, docs/secp256k1.md §2).
+
+// One HMAC-DRBG update (RFC 6979 §3.2 d to g, and step h's retry): K = HMAC_K(V || sep [|| key || h || extra]), then V = HMAC_K(V).
+// `seed` is true for steps d to g, which mix in the key, the digest and the added randomness, and false for step h's retry.
+fn update[&st, &k, &v, &s, &d, &h, &e](st: &!st [int], kk: &!k [byte], v: &!v [byte], sep: &s [byte], seed: bool, key: &d [byte], h: &h [byte], extra: &e [byte]) -> [] int {
+    hmac.init(32, st, kk);
+    hmac.update(32, st, v);
+    hmac.update(32, st, sep);
+    if seed {
+        hmac.update(32, st, key);
+        hmac.update(32, st, h);
+        hmac.update(32, st, extra);
+    }
+    hmac.final(32, st, kk);
+    hmac.init(32, st, kk);
+    hmac.update(32, st, v);
+    return hmac.final(32, st, v);
+}
+
+// dst = a^-1 modulo n = a^(n - 2), on the scalar phase, with a four-bit window over the public exponent: 14 multiplications for the table a^1 .. a^15, then
+// 252 squarings and at most 63 multiplications, against about 500 multiplications for `bigmod.inverse`. `a` and `dst` in Montgomery form, dst may be a.
+// Uses the registers 20 to 35, which are the field phase's table. Branches on the exponent's digits only.
+fn invert_n[&w](w: &!w [int], a: int, dst: int) -> [] int {
+    bigmod.copy_reg(w, a, bigmod.reg(20));
+    var k = 2;
+    while k < 16 {
+        secp256k1_scalar.mul(w, bigmod.reg(18 + k), bigmod.reg(20), bigmod.reg(19 + k));
+        k = k + 1;
+    }
+    let acc = bigmod.reg(35);
+    let e = order_n_minus_2;
+    bigmod.copy_reg(w, bigmod.reg(19 + (int_of(e[0]) >> 4)), acc);
+    var at = 1;
+    while at < 64 {
+        var q = 0;
+        while q < 4 {
+            secp256k1_scalar.mul(w, acc, acc, acc);
+            q = q + 1;
+        }
+        let digit = int_of(e[at / 2]) >> 4 - 4 * (at % 2) & 15;
+        if digit != 0 {
+            secp256k1_scalar.mul(w, acc, bigmod.reg(19 + digit), acc);
+        }
+        at = at + 1;
+    }
+    bigmod.copy_reg(w, acc, dst);
+    return 0;
+}
+
+// ---- Scalar phase ----
+
+// The registers of the scalar phase, reusing the point registers' space (the field phase is over).
+fn r_r() -> [] int {
+    return bigmod.reg(1);
+}
+
+fn r_d() -> [] int {
+    return bigmod.reg(2);
+}
+
+fn r_k() -> [] int {
+    return bigmod.reg(3);
+}
+
+fn r_e() -> [] int {
+    return bigmod.reg(4);
+}
+
+fn r_s() -> [] int {
+    return bigmod.reg(5);
+}
+
+fn r_zero() -> [] int {
+    return bigmod.reg(6);
+}
+
+// r = x mod n into sig[0..32] and s = k^-1 (e + r d) mod n, low, into sig[32..64]; sig[64] is the recovery id from the parity of `y` and
+// whether `x` was n or more. -116 when r or s is zero, so the caller takes the next k. `key` and `k` are secret and below n;
+// `x`, `y` and `e` (the digest, 32 bytes) are not.
+fn finish[&e, &d, &k, &x, &y, &s, &w](e: &e [byte], key: &d [byte], k: &k [byte], x: &x [byte], y: &y [byte], sig: &!s [byte], w: &!w [int]) -> [] int {
+    bigmod.setup(order_n, w);
+    // x < p < 2n: one subtraction reduces it. r is public once the signature is.
+    if bigmod.load_reduced(x, w, r_r()) != 0 {
+        return -116;
+    }
+    if bigmod.is_zero(w, r_r()) {
+        return -116;
+    }
+    var recid = int_of(y[31]) & 1;
+    if cmp32(x, order_n) >= 0 {
+        recid = recid | 2;
+    }
+    bigmod.store_reg(w, r_r(), sig[0..32]);
+    bigmod.load_secret(key, w, r_d());
+    bigmod.to_mont(w, r_d(), r_d());
+    bigmod.load_secret(k, w, r_k());
+    bigmod.to_mont(w, r_k(), r_k());
+    invert_n(w, r_k(), r_k());
+    // e is the digest reduced mod n, once: it is below 2^256 < 2n. Public.
+    bigmod.load_reduced(e, w, r_e());
+    bigmod.to_mont(w, r_e(), r_e());
+    bigmod.to_mont(w, r_r(), r_r());
+    secp256k1_scalar.mul(w, r_r(), r_d(), r_s());
+    bigmod.add(w, r_e(), r_s(), r_s());
+    secp256k1_scalar.mul(w, r_k(), r_s(), r_s());
+    bigmod.from_mont(w, r_s(), r_s());
+    // s is public once it is sent; zero is not a signature.
+    if bigmod.is_zero(w, r_s()) {
+        return -116;
+    }
+    bigmod.store_reg(w, r_s(), sig[32..64]);
+    // Low s (EIP-2): s above n / 2 becomes n - s, which is the other point of the pair, so the parity bit flips.
+    if cmp32(sig[32..64], half_n) > 0 {
+        bigmod.set_small(w, r_zero(), 0);
+        bigmod.sub(w, r_zero(), r_s(), r_s());
+        bigmod.store_reg(w, r_s(), sig[32..64]);
+        recid = recid ^ 1;
+    }
+    sig[64] = byte_of(recid);
+    return 0;
+}
+
+fn check_sign_lengths[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [byte], sig: &s [byte], work: &w [int]) -> [] int {
+    if len(digest) != 32 {
+        return -110;
+    }
+    if len(key) != 32 {
+        return -111;
+    }
+    if len(extra) != 0 && len(extra) != 32 {
+        return -113;
+    }
+    if len(sig) != 65 {
+        return -114;
+    }
+    if len(work) < work_len() {
+        return -115;
+    }
+    return 0;
+}
+
+// The signature of the 32-byte `digest` under `key` (32 bytes, big-endian, in [1, n)), into `sig` as r || s || recid (65 bytes; s at
+// most n / 2). `extra` is RFC 6979 §3.6's added randomness (32 bytes) or empty for the deterministic nonce libsecp256k1 draws. `work`
+// holds `work_len()` words and is zeroed before the answer. On a refusal `sig` is zeroes.
+pub fn sign[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [byte], sig: &!s [byte], work: &!w [int]) -> [] int {
+    var code = check_sign_lengths(digest, key, extra, sig, work);
+    if code != 0 {
+        return code;
+    }
+    if in_range(key) == 0 {
+        return -112;
+    }
+    code = -116;
+    region r {
+        let kk = alloc_slice[r](32, byte_of(0));
+        let v = alloc_slice[r](32, byte_of(1));
+        let px = alloc_slice[r](32, byte_of(0));
+        let py = alloc_slice[r](32, byte_of(0));
+        let sep = alloc_slice[r](1, byte_of(0));
+        let h = alloc_slice[r](32, byte_of(0));
+        let st = alloc_slice[r](hmac.state_len(32), 0);
+        // bits2octets(h1): the digest mod n. It is below 2^256 < 2n.
+        bigmod.setup(order_n, work);
+        bigmod.load_reduced(digest, work, r_e());
+        bigmod.store_reg(work, r_e(), h);
+        update(st, kk, v, sep, true, key, h, extra);
+        sep[0] = byte_of(1);
+        update(st, kk, v, sep, true, key, h, extra);
+        sep[0] = byte_of(0);
+        var attempt = 0;
+        while attempt < 16 && code == -116 {
+            // Step h: V = HMAC_K(V), and V is the candidate.
+            hmac.init(32, st, kk);
+            hmac.update(32, st, v);
+            hmac.final(32, st, v);
+            // A candidate not in [1, n) is dropped, by a constant-time check; which one is kept says nothing of the others.
+            if in_range(v) == 1 {
+                if base_multiply(v, px, py, work) == 0 {
+                    code = finish(digest, key, v, px, py, sig, work);
+                }
+            }
+            if code == -116 {
+                update(st, kk, v, sep, false, key, h, extra);
+            }
+            attempt = attempt + 1;
+        }
+        // Best effort (`docs/hkdf.md` §3): the DRBG's state, the nonce and k G's coordinates are secret.
+        bytes.zero(kk);
+        bytes.zero(v);
+        bytes.zero(px);
+        bytes.zero(py);
+        bignum.zero(st);
+    }
+    wipe(work);
+    if code != 0 {
+        bytes.zero(sig);
+    }
+    return code;
+}
+
+// ---- Verification and recovery: every input is public ----
+
+// u1 G + u2 Q into x and y (32 bytes each), on the field phase, where Q = (qx, qy) has been checked to be on the curve. -121 at infinity.
+fn combine[&a, &b, &qx, &qy, &x, &y, &w](u1: &a [byte], u2: &b [byte], qx: &qx [byte], qy: &qy [byte], out_x: &!x [byte], out_y: &!y [byte], w: &!w [int]) -> [] int {
+    field_phase(w);
+    comb_multiply(w, u1);
+    ecdsa.copy_point(w, pt_acc(), pt_save());
+    load_point(qx, qy, w);
+    multiply(w, u2);
+    add_points(w, pt_acc(), pt_save(), pt_acc());
+    return affine(w, out_x, out_y);
+}
+
+// Registers of the scalar phase for the two multipliers.
+// u1 = (sign1 e) f mod n and u2 = r f mod n, with f = (r or s)^-1; both as bytes. `ee` is the digest, `rr` and `ss` the signature's
+// halves, in [1, n). For `verify`, f = s^-1, u1 = e f, u2 = r f; for `recover`, f = r^-1, u1 = -(e f), u2 = s f.
+fn scalars[&e, &r, &s, &a, &b, &w](ee: &e [byte], rr: &r [byte], ss: &s [byte], recover: bool, u1: &!a [byte], u2: &!b [byte], w: &!w [int]) -> [] int {
+    bigmod.setup(order_n, w);
+    bigmod.load_reg(rr, w, r_r());
+    bigmod.load_reg(ss, w, r_s());
+    bigmod.load_reduced(ee, w, r_e());
+    bigmod.to_mont(w, r_r(), r_r());
+    bigmod.to_mont(w, r_s(), r_s());
+    bigmod.to_mont(w, r_e(), r_e());
+    if recover {
+        invert_n(w, r_r(), r_k());
+        secp256k1_scalar.mul(w, r_e(), r_k(), r_d());
+        bigmod.set_small(w, r_zero(), 0);
+        bigmod.sub(w, r_zero(), r_d(), r_d());
+        secp256k1_scalar.mul(w, r_s(), r_k(), r_k());
+    } else {
+        invert_n(w, r_s(), r_k());
+        secp256k1_scalar.mul(w, r_e(), r_k(), r_d());
+        secp256k1_scalar.mul(w, r_r(), r_k(), r_k());
+    }
+    bigmod.from_mont(w, r_d(), r_d());
+    bigmod.from_mont(w, r_k(), r_k());
+    bigmod.store_reg(w, r_d(), u1);
+    bigmod.store_reg(w, r_k(), u2);
+    return 0;
+}
+
+// Whether r and s of `sig` (64 bytes at least) are each in [1, n).
+fn signature_ok[&s](sig: &s [byte]) -> [] bool {
+    if is_zero32(sig[0..32]) || is_zero32(sig[32..64]) {
+        return false;
+    }
+    return cmp32(sig[0..32], order_n) < 0 && cmp32(sig[32..64], order_n) < 0;
+}
+
+// The public key that signed `digest` with `sig` (r || s || recid, 65 bytes) into `out`, 04 || x || y. Refuses -117 for a malformed
+// signature (r or s not in [1, n), recid above 3) and -121 when no point has that x, or the result is infinity. `s` need not be low.
+pub fn recover[&g, &s, &o, &w](digest: &g [byte], sig: &s [byte], out: &!o [byte], work: &!w [int]) -> [] int {
+    if len(digest) != 32 {
+        return -110;
+    }
+    if len(sig) != 65 {
+        return -117;
+    }
+    if len(out) != 65 {
+        return -114;
+    }
+    if len(work) < work_len() {
+        return -115;
+    }
+    let recid = int_of(sig[64]);
+    if recid > 3 || !signature_ok(sig) {
+        return -117;
+    }
+    var code = 0;
+    region r {
+        let x = alloc_slice[r](32, byte_of(0));
+        let rhs = alloc_slice[r](32, byte_of(0));
+        let y = alloc_slice[r](32, byte_of(0));
+        let ny = alloc_slice[r](32, byte_of(0));
+        let u1 = alloc_slice[r](32, byte_of(0));
+        let u2 = alloc_slice[r](32, byte_of(0));
+        let qx = alloc_slice[r](32, byte_of(0));
+        let qy = alloc_slice[r](32, byte_of(0));
+        copy32(sig[0..32], x);
+        if recid >= 2 {
+            // x = r + n, which must be below p
+            if add32(sig[0..32], order_n, x) != 0 || cmp32(x, field_p) >= 0 {
+                code = -121;
+            }
+        }
+        if code == 0 {
+            // rhs = x^3 + 7, y = rhs^((p + 1) / 4), accepted only if y^2 = rhs
+            field_phase(work);
+            bigmod.load_reg(x, work, t(0));
+            bigmod.to_mont(work, t(0), t(0));
+            bigmod.mul(work, t(0), t(0), t(1));
+            bigmod.mul(work, t(1), t(0), t(1));
+            bigmod.set_small(work, t(2), 7);
+            bigmod.to_mont(work, t(2), t(2));
+            bigmod.add(work, t(1), t(2), t(1));
+            bigmod.from_mont(work, t(1), t(1));
+            bigmod.store_reg(work, t(1), rhs);
+            if bigmod.pow_mod(field_p, sqrt_exp, rhs, y, work) != 0 {
+                code = -121;
+            }
+        }
+        if code == 0 {
+            field_phase(work);
+            bigmod.load_reg(y, work, t(0));
+            bigmod.to_mont(work, t(0), t(0));
+            bigmod.mul(work, t(0), t(0), t(1));
+            bigmod.from_mont(work, t(1), t(1));
+            bigmod.store_reg(work, t(1), ny);
+            if cmp32(ny, rhs) != 0 {
+                code = -121;
+            }
+        }
+        if code == 0 {
+            if int_of(y[31]) & 1 != recid & 1 {
+                // the other root: p - y
+                field_phase(work);
+                bigmod.set_small(work, t(0), 0);
+                bigmod.load_reg(y, work, t(1));
+                bigmod.sub(work, t(0), t(1), t(0));
+                bigmod.store_reg(work, t(0), y);
+            }
+            scalars(digest, sig[0..32], sig[32..64], true, u1, u2, work);
+            // Q = u1 G + u2 R, with R = (x, y) as the base of the second product; `combine` checks nothing about R, which is on the curve
+            // by construction here.
+            code = combine(u1, u2, x, y, qx, qy, work);
+        }
+        if code == 0 {
+            out[0] = byte_of(4);
+            copy32(qx, out[1..33]);
+            copy32(qy, out[33..65]);
+        }
+    }
+    wipe(work);
+    return code;
+}
+
+// 0 when `sig` (r || s || recid, 65 bytes; only r and s are used) is a valid signature of `digest` under the public key `pub` (65 bytes,
+// 04 || x || y, on the curve). Accepts a high s too: the low-s rule is Ethereum's, not ECDSA's. -122 when it does not verify.
+pub fn verify[&g, &q, &s, &w](digest: &g [byte], pubkey: &q [byte], sig: &s [byte], work: &!w [int]) -> [] int {
+    if len(digest) != 32 {
+        return -110;
+    }
+    if len(sig) != 65 && len(sig) != 64 {
+        return -117;
+    }
+    if len(pubkey) != 65 || int_of(pubkey[0]) != 4 {
+        return -118;
+    }
+    if len(work) < work_len() {
+        return -115;
+    }
+    if !signature_ok(sig) {
+        return -117;
+    }
+    // Q on the curve, with coordinates below p
+    field_phase(work);
+    if load_point(pubkey[1..33], pubkey[33..65], work) != 0 {
+        wipe(work);
+        return -119;
+    }
+    if !on_curve(work) {
+        wipe(work);
+        return -120;
+    }
+    var code = -122;
+    region r {
+        let u1 = alloc_slice[r](32, byte_of(0));
+        let u2 = alloc_slice[r](32, byte_of(0));
+        let x = alloc_slice[r](32, byte_of(0));
+        let y = alloc_slice[r](32, byte_of(0));
+        scalars(digest, sig[0..32], sig[32..64], false, u1, u2, work);
+        if combine(u1, u2, pubkey[1..33], pubkey[33..65], x, y, work) == 0 {
+            // x mod n = r: x is below p, so below 2n
+            bigmod.setup(order_n, work);
+            if bigmod.load_reduced(x, work, r_r()) == 0 {
+                bigmod.store_reg(work, r_r(), y);
+                if cmp32(y, sig[0..32]) == 0 {
+                    code = 0;
+                }
+            }
+        }
+    }
+    wipe(work);
+    return code;
+}
