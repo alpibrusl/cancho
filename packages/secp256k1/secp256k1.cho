@@ -7,6 +7,7 @@ import std.ecdsa;
 import std.hmac;
 import secp256k1_comb;
 import secp256k1_field;
+import secp256k1_scalar;
 
 // `secp256k1` -- ECDSA on secp256k1 with public-key recovery (`docs/secp256k1.md`). Asked for by cancho-chain. Not independently
 // reviewed (#209). Not fast: `std.bigmod`'s generic registers, as `std.ecdh` runs P-384.
@@ -109,6 +110,13 @@ static field_p: [byte] {
 static order_n: [byte] {
     let t = alloc_slice[static](32, byte_of(0));
     fill_hex(t, "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+    return t;
+}
+
+// n - 2: the exponent of the inverse modulo n (Fermat), public
+static order_n_minus_2: [byte] {
+    let t = alloc_slice[static](32, byte_of(0));
+    fill_hex(t, "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036413f");
     return t;
 }
 
@@ -637,6 +645,36 @@ fn update[&st, &k, &v, &s, &d, &h, &e](st: &!st [int], kk: &!k [byte], v: &!v [b
     return hmac.final(32, st, v);
 }
 
+// dst = a^-1 modulo n = a^(n - 2), on the scalar phase, with a four-bit window over the public exponent: 14 multiplications for the table a^1 .. a^15, then
+// 252 squarings and at most 63 multiplications, against about 500 multiplications for `bigmod.inverse`. `a` and `dst` in Montgomery form, dst may be a.
+// Uses the registers 20 to 35, which are the field phase's table. Branches on the exponent's digits only.
+fn invert_n[&w](w: &!w [int], a: int, dst: int) -> [] int {
+    bigmod.copy_reg(w, a, bigmod.reg(20));
+    var k = 2;
+    while k < 16 {
+        secp256k1_scalar.mul(w, bigmod.reg(18 + k), bigmod.reg(20), bigmod.reg(19 + k));
+        k = k + 1;
+    }
+    let acc = bigmod.reg(35);
+    let e = order_n_minus_2;
+    bigmod.copy_reg(w, bigmod.reg(19 + (int_of(e[0]) >> 4)), acc);
+    var at = 1;
+    while at < 64 {
+        var q = 0;
+        while q < 4 {
+            secp256k1_scalar.mul(w, acc, acc, acc);
+            q = q + 1;
+        }
+        let digit = int_of(e[at / 2]) >> 4 - 4 * (at % 2) & 15;
+        if digit != 0 {
+            secp256k1_scalar.mul(w, acc, bigmod.reg(19 + digit), acc);
+        }
+        at = at + 1;
+    }
+    bigmod.copy_reg(w, acc, dst);
+    return 0;
+}
+
 // ---- Scalar phase ----
 
 // The registers of the scalar phase, reusing the point registers' space (the field phase is over).
@@ -685,14 +723,14 @@ fn finish[&e, &d, &k, &x, &y, &s, &w](e: &e [byte], key: &d [byte], k: &k [byte]
     bigmod.to_mont(w, r_d(), r_d());
     bigmod.load_secret(k, w, r_k());
     bigmod.to_mont(w, r_k(), r_k());
-    bigmod.inverse(w, r_k(), r_k());
+    invert_n(w, r_k(), r_k());
     // e is the digest reduced mod n, once: it is below 2^256 < 2n. Public.
     bigmod.load_reduced(e, w, r_e());
     bigmod.to_mont(w, r_e(), r_e());
     bigmod.to_mont(w, r_r(), r_r());
-    bigmod.mul(w, r_r(), r_d(), r_s());
+    secp256k1_scalar.mul(w, r_r(), r_d(), r_s());
     bigmod.add(w, r_e(), r_s(), r_s());
-    bigmod.mul(w, r_k(), r_s(), r_s());
+    secp256k1_scalar.mul(w, r_k(), r_s(), r_s());
     bigmod.from_mont(w, r_s(), r_s());
     // s is public once it is sent; zero is not a signature.
     if bigmod.is_zero(w, r_s()) {
@@ -813,15 +851,15 @@ fn scalars[&e, &r, &s, &a, &b, &w](ee: &e [byte], rr: &r [byte], ss: &s [byte], 
     bigmod.to_mont(w, r_s(), r_s());
     bigmod.to_mont(w, r_e(), r_e());
     if recover {
-        bigmod.inverse(w, r_r(), r_k());
-        bigmod.mul(w, r_e(), r_k(), r_d());
+        invert_n(w, r_r(), r_k());
+        secp256k1_scalar.mul(w, r_e(), r_k(), r_d());
         bigmod.set_small(w, r_zero(), 0);
         bigmod.sub(w, r_zero(), r_d(), r_d());
-        bigmod.mul(w, r_s(), r_k(), r_k());
+        secp256k1_scalar.mul(w, r_s(), r_k(), r_k());
     } else {
-        bigmod.inverse(w, r_s(), r_k());
-        bigmod.mul(w, r_e(), r_k(), r_d());
-        bigmod.mul(w, r_r(), r_k(), r_k());
+        invert_n(w, r_s(), r_k());
+        secp256k1_scalar.mul(w, r_e(), r_k(), r_d());
+        secp256k1_scalar.mul(w, r_r(), r_k(), r_k());
     }
     bigmod.from_mont(w, r_d(), r_d());
     bigmod.from_mont(w, r_k(), r_k());

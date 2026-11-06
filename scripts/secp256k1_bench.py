@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The cost of each secp256k1 operation, against libsecp256k1 and OpenSSL (docs/secp256k1.md section 4).
 
-    cancho build --std tests/programs/secp256k1_driver.cho packages/secp256k1/secp256k1.cho packages/secp256k1/comb.cho packages/secp256k1/field.cho -o drv
+    cancho build --std tests/programs/secp256k1_driver.cho packages/secp256k1/secp256k1.cho packages/secp256k1/comb.cho packages/secp256k1/field.cho packages/secp256k1/scalar.cho -o drv
     python3 -I scripts/secp256k1_bench.py ./drv        # needs: pip install coincurve cryptography
 
 Ours: the driver's `B` command runs one operation `rounds` times; the time of one is (T(rounds) - T(1)) / (rounds - 1), the best of five runs, so

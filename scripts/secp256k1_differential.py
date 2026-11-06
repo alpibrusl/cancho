@@ -18,12 +18,13 @@ SRC = os.path.join(ROOT, "packages/secp256k1/secp256k1.cho")
 DRIVER = os.path.join(ROOT, "tests/programs/secp256k1_driver.cho")
 COMB = os.path.join(ROOT, "packages/secp256k1/comb.cho")
 FIELD = os.path.join(ROOT, "packages/secp256k1/field.cho")
+SCALAR = os.path.join(ROOT, "packages/secp256k1/scalar.cho")
 N = SECP256k1.order
 P = SECP256k1.curve.p()
 
 
 def build(cancho, src, out):
-    r = subprocess.run([cancho, "build", "--std", DRIVER, src, COMB, FIELD, "-o", out], capture_output=True, text=True)
+    r = subprocess.run([cancho, "build", "--std", DRIVER, src, COMB, FIELD, SCALAR, "-o", out], capture_output=True, text=True)
     if r.returncode != 0:
         raise SystemExit("build failed:\n" + r.stderr)
 
@@ -202,15 +203,15 @@ MUTANTS = [
     ("nonce: separator 1 -> 2", "sep[0] = byte_of(1);", "sep[0] = byte_of(2);"),
     ("nonce: extra data ignored", '        hmac.update(32, st, h);\n        hmac.update(32, st, extra);', '        hmac.update(32, st, h);'),
     ("nonce: digest not hashed in", '        hmac.update(32, st, key);\n        hmac.update(32, st, h);', '        hmac.update(32, st, key);'),
-    ("s: k not inverted", "bigmod.inverse(w, r_k(), r_k());\n    // e is the digest", "// e is the digest"),
-    ("s: r not multiplied by d", "bigmod.mul(w, r_r(), r_d(), r_s());", "bigmod.mul(w, r_r(), r_r(), r_s());"),
+    ("s: k not inverted", "invert_n(w, r_k(), r_k());\n    // e is the digest", "// e is the digest"),
+    ("s: r not multiplied by d", "secp256k1_scalar.mul(w, r_r(), r_d(), r_s());", "secp256k1_scalar.mul(w, r_r(), r_r(), r_s());"),
     ("s: e dropped", "bigmod.add(w, r_e(), r_s(), r_s());", "bigmod.add(w, r_s(), r_s(), r_s());"),
     ("no low s", "if cmp32(sig[32..64], half_n) > 0 {", "if cmp32(sig[32..64], half_n) > 1 {"),
     ("low s without flipping the parity", "recid = recid ^ 1;", "recid = recid ^ 0;"),
     ("recid ignores R.y parity", "var recid = int_of(y[31]) & 1;", "var recid = 0;"),
     ("recid ignores x >= n", "recid = recid | 2;", "recid = recid | 0;"),
     ("recover: wrong root parity", "if int_of(y[31]) & 1 != recid & 1 {", "if int_of(y[31]) & 1 == recid & 1 {"),
-    ("recover: u1 not negated", "bigmod.sub(w, r_zero(), r_d(), r_d());\n        bigmod.mul(w, r_s(), r_k(), r_k());", "bigmod.mul(w, r_s(), r_k(), r_k());"),
+    ("recover: u1 not negated", "bigmod.sub(w, r_zero(), r_d(), r_d());\n        secp256k1_scalar.mul(w, r_s(), r_k(), r_k());", "secp256k1_scalar.mul(w, r_s(), r_k(), r_k());"),
     ("recover: x = r + n ignored", "if recid >= 2 {", "if recid >= 4 {"),
     ("recover: y^2 = rhs not checked", "if cmp32(ny, rhs) != 0 {", "if cmp32(ny, rhs) != 0 && false {"),
     ("recover: recid 4 accepted", "if recid > 3 || !signature_ok(sig) {", "if recid > 4 || !signature_ok(sig) {"),
@@ -229,6 +230,11 @@ MUTANTS = [
     ("field.sub: p not added back", "let m = value_barrier(0 - b3);", "let m = value_barrier(0);", "field"),
     ("inversion chain: 10 squarings for 11", "square_times(w, x22, 11);", "square_times(w, x22, 10);"),
     ("inversion chain: last multiplication dropped", "square_times(w, t, 2);\n    secp256k1_field.mul(w, t, x1, t);", "square_times(w, t, 2);"),
+    ("scalar.mul: final subtraction skipped", "let keep = value_barrier(0 - b4);", "let keep = value_barrier(0 - 1);", "scalar"),
+    ("invert_n: three squarings per window", "while q < 4 {", "while q < 3 {"),
+    ("invert_n: table one entry short", "while k < 16 {\n        secp256k1_scalar.mul(w, bigmod.reg(18 + k)", "while k < 15 {\n        secp256k1_scalar.mul(w, bigmod.reg(18 + k)"),
+    ("invert_n: wrong exponent", "bfd25e8cd036413f", "bfd25e8cd0364140"),
+    ("invert_n: low nibble taken for high", ">> 4 - 4 * (at % 2) & 15;", ">> 4 * (at % 2) & 15;"),
     ("verify: coordinates not below p", "if bigmod.load_reg(x, w, x_of(p)) != 0 || bigmod.load_reg(y, w, y_of(p)) != 0 {", "if false {"),
 ]
 
@@ -251,7 +257,7 @@ def comb_mutant():
 
 
 def mutants(cancho, cases):
-    files = {"src": SRC, "comb": COMB, "field": FIELD}
+    files = {"src": SRC, "comb": COMB, "field": FIELD, "scalar": SCALAR}
     texts = {k: open(v).read() for k, v in files.items()}
     survived = 0
     co, cn = comb_mutant()
@@ -268,7 +274,7 @@ def mutants(cancho, cases):
             for k in files:
                 open(paths[k], "w").write(text.replace(old, new) if k == which else texts[k])
             exe = os.path.join(d, "drv")
-            r = subprocess.run([cancho, "build", "--std", DRIVER, paths["src"], paths["comb"], paths["field"], "-o", exe], capture_output=True, text=True)
+            r = subprocess.run([cancho, "build", "--std", DRIVER, paths["src"], paths["comb"], paths["field"], paths["scalar"], "-o", exe], capture_output=True, text=True)
             if r.returncode != 0:
                 print(f"mutant '{name}': did not build (counts as killed only if the refusal is intended)\n{r.stderr[:300]}")
                 survived += 1
