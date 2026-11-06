@@ -93,6 +93,23 @@ const ALLOWED: &[(&str, &str)] = &[
     // as `append`/`put` above.
     ("examples/ocpp_ws/ocpp.cho", "put"),
     ("packages/net-sockets/sockets.cho", "put"),
+    // `packages/secp256k1` (`docs/secp256k1.md` §2): RFC 6979's HMAC-DRBG steps and `copy32` are private in `std.ecdsa_sign`, and `wipe` is
+    // private in `std.ecdh`, with `multiply` below. Exporting them is a change to `std` (and so to the self-host tables) that belongs in its own pull request, once a
+    // second asker confirms the shape: a generic `std.rfc6979` for any 256-bit curve. Until then the package carries identical copies, and
+    // `scripts/secp256k1_differential.py` (signatures byte for byte against libsecp256k1) is what holds this copy to the same behaviour.
+    ("packages/secp256k1/secp256k1.cho", "wipe"),
+    ("packages/secp256k1/secp256k1.cho", "reseed"),
+    ("packages/secp256k1/secp256k1.cho", "rekey"),
+    ("packages/secp256k1/secp256k1.cho", "candidate"),
+    ("packages/secp256k1/secp256k1.cho", "copy32"),
+    // `multiply` (the windowed ladder over the table) is `std.ecdh`'s, private there, and is curve-independent: only the point formulas it calls differ.
+    ("packages/secp256k1/secp256k1.cho", "multiply"),
+    ("std/ecdh.cho", "multiply"),
+    ("std/ecdh.cho", "wipe"),
+    ("std/ecdsa_sign.cho", "reseed"),
+    ("std/ecdsa_sign.cho", "rekey"),
+    ("std/ecdsa_sign.cho", "candidate"),
+    ("std/ecdsa_sign.cho", "copy32"),
 ];
 
 /// Below this many statements, counted recursively through nested blocks,

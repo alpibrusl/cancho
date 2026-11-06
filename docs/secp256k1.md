@@ -31,6 +31,9 @@ tables (`examples/selfhost/stdorder.cho`, `stdsource.cho`), and the bar for `std
   from `coincurve`'s; with it reduced they agree. Only digests of n or more tell the two apart, so the first 2,720 checks agreed either way. **[choice]**
 - **Signature: `r || s || recid`, 65 bytes, s low (s <= n/2).** Ethereum requires low s (EIP-2). recid bit 0 is the parity of R.y, bit 1 is "R.x >= n"
   (probability about 2^-128, handled). `v = 27 + recid` / the EIP-155 form is the caller's.
+- **Shared code.** `copy_point` is `std.ecdsa`'s. The RFC 6979 steps, `copy32`, `wipe` and the windowed `multiply` are private in `std.ecdsa_sign` and `std.ecdh`, so
+  the package carries identical copies, listed in `ALLOWED` of `crates/cancho/tests/conformance/duplication.rs` with this reason. **[open]** a generic RFC 6979
+  helper in `std`, once a second asker confirms its shape; it is a `std` change and so a pull request of its own.
 - **Every function answers 0 or a negative code**, `refusal_tag(code)` its stable name; no input reaches a trap.
 
 API: `work_len()`; `public_key(key, out65, work)`; `sign(digest, key, extra, sig65, work)`; `recover(digest, sig65, out65, work)`;
