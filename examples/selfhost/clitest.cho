@@ -241,7 +241,7 @@ pub fn test_files[&h, &i, &a, &f, &x, &c, &t, &l, &s, &k](heap: &!h Heap, io: &!
                     borrow laid as &lt in {
                         borrow mut lens as &!lb in {
                             borrow names as &nm in {
-                                status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to);
+                                status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to, buffer.bytes(b.more));
                             }
                         }
                     }
@@ -312,7 +312,7 @@ pub fn scan_tests[&h, &i, &r, &y, &l, &n](heap: &!h Heap, io: &!i Io, scan: &r [
             buffer.drop(heap, tests);
             tests = buffer.append(heap, buffer.empty(heap, buffer.size(sc.ir) + 1), buffer.bytes(sc.ir));
         } else if sc.status == 1 {
-            status = clibase.report_check(heap, io, names, laid, lens, false, 1, sc.rule, sc.from, sc.to);
+            status = clibase.report_check(heap, io, names, laid, lens, false, 1, sc.rule, sc.from, sc.to, "");
         } else {
             status = test_refusal(heap, io, names, laid, lens, sc.status, sc.rule, sc.from, buffer.bytes(sc.ir));
         }
@@ -484,7 +484,7 @@ pub fn satisfy_pair[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a
                         // The pair, and the library, as one program: nothing is asked of it but that it checks.
                         let checked = driver.run_many(heap, io, buffer.bytes(r), 10, host_in);
                         borrow checked as &b in {
-                            status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to);
+                            status = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to, buffer.bytes(b.more));
                         }
                         driver.discard(heap, checked);
                     }

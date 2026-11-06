@@ -562,7 +562,7 @@ pub fn compile[&h, &i, &f, &l, &s](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), fi
                     borrow laid as &lt in {
                         borrow mut lens as &!lb in {
                             borrow names as &nm in {
-                                state = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to);
+                                state = clibase.report_check(heap, io, buffer.bytes(nm), buffer.bytes(lt), contents(lb), false, b.status, b.rule, b.from, b.to, buffer.bytes(b.more));
                             }
                         }
                     }
