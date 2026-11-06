@@ -11,6 +11,7 @@ on:
       - "scripts/package-release.sh"
       - "scripts/install.sh"
       - "scripts/build-standalone.sh"
+      - "scripts/seed-build.sh"
       - "scripts/stamp-version.sh"
   workflow_dispatch:
     inputs:
@@ -41,8 +42,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Stage 0 of docs/standalone-cancho.md D5: the Rust build. It is shipped too, as `cancho-rust-…`, for Cranelift and WASI.
-      - name: Build the Rust compiler (stage 0, and the backup asset)
+      # No longer stage 0: the release is built from the seed (docs/seed.md S5). The Rust build is still shipped, as `cancho-rust-…`, for
+      # Cranelift and WASI, until the crates are deleted (docs/removing-rust.md phases 4 and 5); it is the last thing here that needs Rust.
+      - name: Build the Rust compiler (the backup asset only)
         run: cargo build --release -p cancho
 
       # The compiler's output is LLVM IR with opaque pointers, which clang 15 introduced; the 22.04 image's default is 14.
@@ -53,9 +55,10 @@ jobs:
           sudo apt-get install -y clang-15
           echo "CLANG=clang-15" >> "$GITHUB_ENV"
 
-      # The `cancho` of the release is built by cancho: stages 1 to 3, and stage 2 must equal stage 3.
-      - name: Build the standalone cancho (stages 1 to 3)
-        run: scripts/build-standalone.sh --out "$RUNNER_TEMP/standalone" --rev "$(git rev-parse HEAD)" --cancho0 "$PWD/target/release/cancho"
+      # The `cancho` of the release is built by cancho, from the seed: clang builds `cancho0` from seed/<target>.ll.gz, which builds stage 1;
+      # stages 1 to 3 follow, and stage 2 must equal stage 3. `CLANG` (set above on 22.04) is read by the seed build too.
+      - name: Build the standalone cancho (the seed, then stages 1 to 3)
+        run: scripts/build-standalone.sh --seed --out "$RUNNER_TEMP/standalone" --rev "$(git rev-parse HEAD)"
 
       - name: Package
         run: |
