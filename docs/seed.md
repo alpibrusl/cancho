@@ -5,8 +5,8 @@ Status: **design, written before any `seed/` directory exists.** Phase 1a of [`r
 2026-11-05 (the tree of #697, stage 0 a debug Rust build); everything else is a decision proposed here. A claim that turns out false is
 corrected here, in place.
 
-**Measured so far:** macOS aarch64 (2026-11-05) Linux aarch64 (2026-11-06, a Debian 13 container on the same Mac, clang 19.1.7, `main` at `56a1ad84`) and Linux x86-64 (2026-11-06, the `seed-ir` workflow on `ubuntu-latest`, clang 18.1.3, `scripts/seed-ir-fixed-point.sh`, [#704](https://github.com/alpibrusl/cancho/pull/704)).
-**Not measured:** the IR fixed point on macOS (stage 1 against stage 2 IR).
+**Measured so far:** macOS aarch64 (2026-11-05), the IR fixed point on macOS (2026-11-06, `scripts/seed-ir-fixed-point.sh` with a debug Rust stage 0, Apple clang 21.0.0, `main` at `b461717d`), Linux aarch64 (2026-11-06, a Debian 13 container on the same Mac, clang 19.1.7, `main` at `56a1ad84`) and Linux x86-64 (2026-11-06, the `seed-ir` workflow on `ubuntu-latest`, clang 18.1.3, `scripts/seed-ir-fixed-point.sh`, [#704](https://github.com/alpibrusl/cancho/pull/704)).
+**Not measured:** nothing of the three targets' fixed point; `xz` and timings on the two Linux targets.
 
 ## 1. The problem
 
@@ -33,15 +33,16 @@ and trusts whoever built it. Why not the whole compiler's source in another lang
 | | IR bytes | gzip -9 | xz -9 | `clang -O2` from the IR | stage 2 from stage 1 |
 |---|---|---|---|---|---|
 | macOS aarch64 (tree of #697) | 22,140,821 (288,887 lines, 2,126 functions) | 1.89 MB | 1.07 MB | 8 s | 10 s |
+| macOS aarch64, IR fixed-point run (`main` at `b461717d`) | 22,615,893 | 1.91 MB (1,914,762) | not run | not timed | about 53 s for all three stages |
 | Linux aarch64 (`main` at `56a1ad84`) | 22,540,267 | 1.91 MB | not run | not timed | not timed |
 | Linux x86-64 (tree of #704) | 22,594,598 | 1.92 MB (1,919,664) | not run | not timed | not timed |
 
-**The fixed point on IR holds on Linux aarch64 and on Linux x86-64.** The IR written by stage 1 (built by the Rust compiler) and the IR written by stage 2 (built by
+**The fixed point on IR holds on macOS aarch64, Linux aarch64 and Linux x86-64.** The IR written by stage 1 (built by the Rust compiler) and the IR written by stage 2 (built by
 stage 1) are the same file, SHA-256 `3cd382d9c0f57d5e78d410d7f1b51f3ed1482bf2745623ef12688610027bc106`, 22,540,267 bytes; stage 2 equals stage 3
 byte for byte; and **`clang -O2` on that IR alone, in another directory, gives an executable byte-identical to stage 3**. So on Linux the seed
 needs no special comparison. On x86-64 the same holds: stage 1 and stage 2 write the same IR, SHA-256
 `a42d0222a48cd71724dbc73151c75ec755096c26809656fdf2a999dcaecc3ac6`, 22,594,598 bytes; stage 2 equals stage 3 byte for byte; and `clang -O2` on that
-IR alone gives an executable byte-identical to stage 3. (The two Linux runs used different clang versions, 19.1.7 and 18.1.3, and both hold.) (On macOS the same experiment differs by 48 bytes, §3 S4.) This is what check 2 of §5 depends on.
+IR alone gives an executable byte-identical to stage 3. (The two Linux runs used different clang versions, 19.1.7 and 18.1.3, and both hold.) On macOS the IR also holds (stage 1 and stage 2 write the same IR, SHA-256 `596387d73d75fd368d9e1668821b20749bb09683f4629d6eaa7dd34fda58fb99`, 22,615,893 bytes) and, in the run of 2026-11-06, `clang -O2` on that IR alone gave an executable byte-identical to stage 3, which the 48-byte difference of §3 S4 (measured 2026-11-05) did not predict; the two runs differ in output directory names and `main`, and the cause is not isolated, so S4's rule stays as the safe one. This is what check 2 of §5 depends on.
 
 ## 3. Decisions
 
@@ -84,7 +85,7 @@ with one rule and three checks:
 - **Check 3, scheduled (weekly) and before each release:** the same as check 2 on the head of `main`. It fails when the seed is so old that
   `main`'s IR differs from it, which is the signal to reseed; it does not block a pull request.
 
-The fixed point on IR (stage 1 against stage 2) is **measured true on Linux aarch64 and Linux x86-64**; on macOS it is not yet measured. If it
+The fixed point on IR (stage 1 against stage 2) is **measured true on macOS aarch64, Linux aarch64 and Linux x86-64**. If it
 were false the reseed would have to use stage 2's output, which is what S5 assumes.
 
 ## 6. Risks
@@ -100,5 +101,5 @@ were false the reseed would have to use stage 2's output, which is what S5 assum
 
 ## 7. What this does not do
 
-It commits no seed, writes no seed script and changes no workflow beyond the measuring job of #704. Phase 1a is: (1) the macOS measurement of the IR fixed point (both Linux targets are done), (2) the two
+It commits no seed, writes no seed script and changes no workflow beyond the measuring job of #704. Phase 1a is: (1) the IR fixed-point measurements (all three targets are done), (2) the two
 scripts and `seed/` for one target, (3) the other two, (4) the checks in CI, each its own pull request. Phase 4 uses it.
