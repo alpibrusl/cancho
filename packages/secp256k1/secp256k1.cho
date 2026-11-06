@@ -404,14 +404,20 @@ fn multiply[&s, &w](w: &!w [int], scalar: &s [byte]) -> [] int {
 // there is no doubling at all: 64 additions. A digit is secret, so the entry is chosen by reading all sixteen under masks, and a zero digit
 // (which has no affine point) is an addition made and then not kept, by a mask. The table is read-only data in the binary.
 
-// The selected point = entry (i, digit) of the comb, affine, in sel's X and Y (its Z is 1, set by `comb_multiply`).
+// The selected point = entry (i, digit) of the comb, affine, in sel's X and Y (its Z is 1, set by `comb_multiply`). Each limb is picked as its two 32-bit
+// halves under the masks and joined afterwards, since a `static` holds nothing wider (see `secp256k1_comb`). The halves are gathered in the words of
+// registers that are free at this point (the sum's output and the saved point), four limbs of x and four of y each.
 fn comb_select[&w](w: &!w [int], i: int, digit: int) -> [] int {
-    let sx = x_of(pt_sel());
-    let sy = y_of(pt_sel());
+    let lx = bigmod.reg(pt_out());
+    let ly = bigmod.reg(pt_out() + 1);
+    let hx = bigmod.reg(pt_save());
+    let hy = bigmod.reg(pt_save() + 1);
     var t = 0;
-    while t < 6 {
-        w[sx + t] = 0;
-        w[sy + t] = 0;
+    while t < 4 {
+        w[lx + t] = 0;
+        w[ly + t] = 0;
+        w[hx + t] = 0;
+        w[hy + t] = 0;
         t = t + 1;
     }
     var j = 0;
@@ -421,12 +427,26 @@ fn comb_select[&w](w: &!w [int], i: int, digit: int) -> [] int {
         let row = secp256k1_comb.row(i, j);
         t = 0;
         while t < 4 {
-            w[sx + t] = w[sx + t] | row[t] & m;
-            w[sy + t] = w[sy + t] | row[4 + t] & m;
+            w[lx + t] = w[lx + t] | row[2 * t] & m;
+            w[hx + t] = w[hx + t] | row[2 * t + 1] & m;
+            w[ly + t] = w[ly + t] | row[8 + 2 * t] & m;
+            w[hy + t] = w[hy + t] | row[9 + 2 * t] & m;
             t = t + 1;
         }
         j = j + 1;
     }
+    let sx = x_of(pt_sel());
+    let sy = y_of(pt_sel());
+    t = 0;
+    while t < 4 {
+        w[sx + t] = wrapping_add(wrapping_mul(w[hx + t], 4294967296), w[lx + t]);
+        w[sy + t] = wrapping_add(wrapping_mul(w[hy + t], 4294967296), w[ly + t]);
+        t = t + 1;
+    }
+    w[sx + 4] = 0;
+    w[sx + 5] = 0;
+    w[sy + 4] = 0;
+    w[sy + 5] = 0;
     return 0;
 }
 
