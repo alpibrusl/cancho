@@ -112,23 +112,13 @@ fn command_tree_module_is_what_cancho_says() {
     check("commandtree.cho", &want, "command_tree_module_is_what_cancho_says");
 }
 
-/// The names of the standard library's files, in the order of the `STD` table of `crates/cancho/src/main.rs` (which is the order `--std` adds them), checked against `std/`.
+/// The names of the standard library's files, in the order of `std/std.files` (which is the order `--std` adds them; `build.rs` makes the `STD` table of
+/// `crates/cancho/src/main.rs` from it), checked against `std/`.
 fn std_names() -> Vec<String> {
-    let main = std::fs::read_to_string(repo_root().join("crates/cancho/src/main.rs"))
-        .expect("main.rs is read");
-    let table = main
-        .split("const STD: &[(&str, &str)] = &[")
-        .nth(1)
-        .expect("the STD table")
-        .split("];")
-        .next()
-        .expect("its end");
-    let names: Vec<String> = table
-        .lines()
-        .filter_map(|l| {
-            Some(l.trim().strip_prefix("(\"<std>/")?.split(".cho\"").next()?.to_owned())
-        })
-        .collect();
+    let list =
+        std::fs::read_to_string(repo_root().join("std/std.files")).expect("std/std.files is read");
+    let names: Vec<String> =
+        list.lines().filter_map(|l| Some(l.strip_suffix(".cho")?.to_owned())).collect();
     assert!(names.len() > 40, "only {} names in the STD table", names.len());
     // Every file of `std/` is in it, and nothing else is.
     let mut on_disk: Vec<String> = std::fs::read_dir(repo_root().join("std"))
