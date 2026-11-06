@@ -126,7 +126,8 @@ command wrote:
 | b4a | `vcsrepo.cho`: HEAD and the resolution of a revision (`HEAD`, `@`, id, branch, tag, prefix, `~N`) | **built**, below |
 | b4b | `vcsrepo.cho`: the history of a change; the documents of `log` and `show` (sorted-key pretty JSON), and the refusal document of `bad-revision` | **built**, below; without the `log` filters and `show --patch` |
 | b4c | `vcsscan.cho` and `status`: the working copy scanned against HEAD's tree | **built**, below; a symbolic link is refused until #685 (`readlink`) |
-| b4d | `record` (snapshot of the working copy to a tree and a change, no gate yet) | next |
+| b4d-1 | `vcsdiff.cho`: the histogram line diff and the anchored edits (`derive_edits`, `apply_edits`) a change records | **built**, below |
+| b4d-2 | `record` (snapshot of the working copy to a tree and a change; `--no-gate`, and the gate when slice d lands) | next |
 
 Not in (b): `decls` (the declaration diff of a `.cho` file) and the gate, which need `ids` and `check` as functions over in-memory files (the `driver`
 refactor of §3, slice d), so a `record` that touches a `.cho` file does not reproduce V1's pins yet; the pins with only other files do.
@@ -196,3 +197,18 @@ execute bits, the directory-only rule, the suffix rule, the path rule, the `.git
 **A difference, said by a status and not hidden:** a symbolic link makes `status` answer `refused symlink` (30). The Rust command makes a tree entry of it (mode 120000, the blob of the target); the target cannot be read until
 there is a `readlink` (#685). A name that is not UTF-8 is not refused here (the Rust command refuses it). **Speed**, 654 files and 12.3 MB (the std, docs and examples of this tree), best of 5: the Rust `vcs status`
 0.021 s, `vcsstorectl status` 0.105 s (about 117 MB/s with the reads; BLAKE3 in cancho is the cost, `docs/vcs-native.md` §2). Whole files are read into memory (at most 16 MiB each).
+
+**b4d-1, measured.** `record` writes, with each change, the anchored edits that turn every modified text file of its parent into the new one, and they are hashed into the change's id, so the line diff under them has to
+be the Rust one hunk for hunk. `vcsdiff.cho` is `diff_text.rs` (the histogram algorithm of `git diff --histogram`, with the limits of 200,000 lines and of 64 occurrences) and `anchor.rs`. The lines of the two
+texts are numbered together (a merge sort by bytes) so the diff works on integers. `examples/selfhost/vcsdiff_check.py` has the Rust command record a text file again and again (texts of 0 to 300 lines drawn
+from alphabets of 3 to 400 lines, so lines repeat; random insertions, deletions, replacements, duplications, swaps and blocks; a missing final newline; blank lines; and eight scripted histories in which one line
+occurs 60 to 67 times, either side of the limit of 64) and compares the edits `show` prints for each change with the ones `vcsdifftool` derives from the same two texts: **943 pairs of texts, 0 differences** (254 of
+them the whole-file fallback, which is the rule when anchors overlap); and 229 more with the boundary histories. `vcsdiff_test.cho` has 3 more tests (what `apply_edits` refuses, the texts that get no edits, results
+worked by hand, one of which I had wrong and the Rust command corrected). Mutants: the tie rules of the best match and of the early trim, the cap of 64 and the widening rule each fail the check; two survive, one
+equivalent (skipping a line that occurs more often than the best so far cannot change the choice) and one the boundary histories killed. **Speed**: 18,000 lines (905 KB) with 200 changes, 0.12 s for
+`derive_edits` (199 edits), the Rust `record` of the same pair 0.146 s as a whole command.
+
+**The oracle was stale, and the check found it.** The first run of the differential showed 12 of 77 pairs different, always where an insertion sits beside an identical line; a Python port of `diff_text.rs` as it is on
+`main` agreed with the cancho code and not with `target/release/cancho`, which had been built from the parked V2 branch (it slides hunks like git). After `cargo build --release -p cancho` on `main` the check is at 0
+differences, and the four scripts of the earlier slices (26 + 31 + 51 + 20 checks) were run again against the rebuilt binary and pass: they had matched the V2 binary on what V1 and V2 do alike. A script that compares
+with a binary says which binary: build it from the tree under test.
