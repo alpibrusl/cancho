@@ -79,7 +79,7 @@ fn read_file[&h, &f](heap: &!h Heap, fs: &f Fs(""), path: buffer.Buffer) -> [hea
 fn say[&h, &i, &p](heap: &!h Heap, io: &!i Io, head: &static [byte], path: &p [byte]) -> [heap, io_write] int {
     var line = buffer.append(heap, buffer.empty(heap, 64), head);
     line = buffer.append(heap, line, path);
-    line = buffer.push(heap, line, byte_of('\n'));
+    line = buffer.append(heap, line, "\n");
     borrow line as &l in {
         buffer.write(io, l);
     }
