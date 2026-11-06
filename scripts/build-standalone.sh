@@ -1,14 +1,16 @@
 #!/bin/sh
 # Build the `cancho` that is written in cancho and built by cancho (docs/standalone-cancho.md D5).
 #
-#   scripts/build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH]
+#   scripts/build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH | --seed]
 #
 #   --out DIR      where the result goes: DIR/cancho (stage 2) and DIR/stages/ (the three stages, for inspection)
 #   --rev COMMIT   the commit the binary reports and a pinned project is compared with (scripts/stamp-version.sh)
 #   --host TRIPLE  the host triple `--version` reports (default: from uname)
-#   --cancho0      stage 0, the Rust build (default: cancho on PATH)
+#   --cancho0      stage 0, a `cancho` that already exists (a Rust build, or any earlier one)
+#   --seed         stage 0 is the seed: `cancho0` built by clang from seed/<target>.ll.gz (scripts/seed-build.sh, docs/seed.md). The default when no --cancho0
+#                  is given, so a checkout with `clang` and nothing else builds the compiler.
 #
-# Stage 0 is the Rust `cancho`. Stage 1 is the command line in cancho (examples/selfhost/cancho.files, stamped) built by stage 0 with the compiler in cancho.
+# Stage 0 is the seed (or the `cancho` given by --cancho0). Stage 1 is the command line in cancho (examples/selfhost/cancho.files, stamped) built by stage 0 with the compiler in cancho.
 # Stage 2 is the same files built by stage 1, and stage 3 by stage 2, each under the name `cancho` in a directory of its own (the object file's name is in the
 # executable). Stage 2 must equal stage 3 byte for byte, or this fails: a compiler that does not reproduce itself is not shipped. Stage 2 is what is
 # installed. Stage 1 differs from stage 2 (it was linked by stage 0's driver) and is not compared.
@@ -18,17 +20,18 @@
 # comparison must refuse (the gate's own test).
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
-out=; rev=; host=; cancho0=cancho
+out=; rev=; host=; cancho0=
 while [ $# -gt 0 ]; do
   case $1 in
     --out) out=$2; shift 2 ;;
     --rev) rev=$2; shift 2 ;;
     --host) host=$2; shift 2 ;;
     --cancho0) cancho0=$2; shift 2 ;;
-    *) echo "usage: build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH]" >&2; exit 2 ;;
+    --seed) cancho0=; shift ;;
+    *) echo "usage: build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH | --seed]" >&2; exit 2 ;;
   esac
 done
-[ -n "$out" ] && [ -n "$rev" ] || { echo "usage: build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH]" >&2; exit 2; }
+[ -n "$out" ] && [ -n "$rev" ] || { echo "usage: build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH | --seed]" >&2; exit 2; }
 mkdir -p "$out/stages/1" "$out/stages/2" "$out/stages/3" "$out/stamped"
 out=$(cd "$out" && pwd)
 
@@ -40,6 +43,10 @@ while IFS= read -r name; do
   if [ "$name" = version.cho ]; then files="$files $out/stamped/version.cho"; else files="$files $here/examples/selfhost/$name"; fi
 done < "$here/examples/selfhost/cancho.files"
 
+if [ -z "$cancho0" ]; then
+  echo "stage 0: the seed, built by clang from seed/" >&2
+  cancho0=$(sh "$here/scripts/seed-build.sh" --out "$out/seed") || { echo "build-standalone: the seed did not build" >&2; exit 2; }
+fi
 echo "stage 1: built by $cancho0 with the compiler in cancho" >&2
 CANCHO_COMPILER=auto "$cancho0" build $files --std -o "$out/stages/1/cancho"
 # The command line in cancho has no environment to read (a cancho program has no `getenv`), so `$CLANG` reaches it as `--clang PATH`, as an absolute path

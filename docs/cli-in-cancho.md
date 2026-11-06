@@ -628,7 +628,7 @@ values each (twelve refusals: status 2 and the sentence), the two accepted spell
 ## 39. Slice 19: the standalone build (`docs/standalone-cancho.md` D5)
 
 `examples/selfhost/cancho.files` lists the 77 files of this command line (the import closure of `cli.cho`; `selfhost::bootstrap::the_file_list_of_the_standalone_build_is_the_import_closure_of_cli` fails if
-it differs, and `CANCHO_REGENERATE=1` writes it). `scripts/build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH]` stamps `version.cho` (§36) and builds the files three times,
+it differs, and `CANCHO_REGENERATE=1` writes it). `scripts/build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH | --seed]` (stage 0 is the seed of `docs/seed.md` unless `--cancho0` names a `cancho`) stamps `version.cho` (§36) and builds the files three times,
 as D5 says, and installs stage 2 as `DIR/cancho` only if stage 3 is the same bytes.
 
 **Measured (Linux x86-64, 2026-10-29).** Each stage 33 s, 3,136,648 to 3,138,248 bytes. Stage 2 was built from an `env -i PATH=/usr/bin:/bin` environment with no `cancho`, no Rust and an empty
