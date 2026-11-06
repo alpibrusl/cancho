@@ -1,0 +1,48 @@
+name: seed-fixed-point
+
+# docs/seed.md §5, checks 2 and 3: the seed is a fixed point of the sources.
+# `scripts/reseed.sh` builds the chain from the committed seed, requires the
+# IR of stage 1 and of stage 2 to be identical, and writes the IR of the
+# current sources. The SHA-256 it writes must equal the committed one.
+#
+# Check 2 runs on a pull request that touches seed/ and blocks it. Check 3 runs
+# weekly on main and on request; there a failure means the seed lags the
+# sources, which is the signal to reseed, and it blocks no pull request.
+on:
+  pull_request:
+    paths:
+      - seed/**
+      - scripts/reseed.sh
+      - scripts/seed-build.sh
+      - .github/workflows/seed-fixed-point.yml
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: seed-fixed-point-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  fixed-point:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: linux-aarch64
+          - os: macos-latest
+            target: darwin-aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - name: The seed hash matches its IR, and the IR is the fixed point of the sources
+        run: |
+          scripts/reseed.sh --out "$RUNNER_TEMP/reseed"
+          if ! git diff --exit-code -- 'seed/*.sha256'; then
+            echo "the seed lags the sources: the IR of the current sources differs from seed/ (docs/seed.md §5); run the reseed workflow" >&2
+            exit 1
+          fi
