@@ -6,6 +6,8 @@ edition 7;
 //   S <digest> <key> [<extra>]   sign                    ->  "<rc> <r||s||recid>"
 //   R <digest> <sig65>           recover                 ->  "<rc> <04||x||y>"
 //   V <digest> <pub65> <sig>     verify                  ->  "<rc>"
+//   B <key> <rounds3> <op>       the cost of one operation: `op` (the hex byte 50, 53, 52 or 56: P, S, R, V) run `rounds3` times (3 bytes,
+//                                big-endian) on the key and a digest equal to it; the answer is the sum of the codes, 0. `scripts/secp256k1_bench.py`.
 //
 // Every argument is hex. An answer's code is 0 or a refusal (`secp256k1.refusal_tag`).
 
@@ -75,6 +77,33 @@ fn put_hex[&h, &t](heap: &!h Heap, out: buffer.Buffer, bytes: &t [byte]) -> [hea
     return o;
 }
 
+// The loop of `B`: the signature and public key it needs are made first, so the set-up is the same for any rounds and cancels out.
+fn bench[&k, &w](key: &k [byte], rounds: int, which: int, work: &!w [int]) -> [] int {
+    var total = 0;
+    region r {
+        let pk = alloc_slice[r](65, byte_of(0));
+        let sig = alloc_slice[r](65, byte_of(0));
+        let out = alloc_slice[r](65, byte_of(0));
+        let none = alloc_slice[r](0, byte_of(0));
+        total = total + secp256k1.public_key(key, pk, work);
+        total = total + secp256k1.sign(key, key, none, sig, work);
+        var n = 0;
+        while n < rounds {
+            if which == 0x50 {
+                total = total + secp256k1.public_key(key, pk, work);
+            } else if which == 0x53 {
+                total = total + secp256k1.sign(key, key, none, sig, work);
+            } else if which == 0x52 {
+                total = total + secp256k1.recover(key, sig, out, work);
+            } else if which == 0x56 {
+                total = total + secp256k1.verify(key, pk, sig, work);
+            }
+            n = n + 1;
+        }
+    }
+    return total;
+}
+
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
     release(ffi);
@@ -116,6 +145,8 @@ fn main(world: World) -> [] int {
                                         show = 65;
                                     } else if op == 'V' {
                                         rc = secp256k1.verify(b1, b2, b3, contents(ww));
+                                    } else if op == 'B' {
+                                        rc = bench(b1, int_of(b2[0]) * 65536 + int_of(b2[1]) * 256 + int_of(b2[2]), int_of(b3[0]), contents(ww));
                                     }
                                 }
                             }

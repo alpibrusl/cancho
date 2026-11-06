@@ -196,10 +196,10 @@ fn add32[&a, &b, &o](a: &a [byte], b: &b [byte], out: &!o [byte]) -> [] int {
 }
 
 fn copy32[&f, &t](from: &f [byte], to: &!t [byte]) -> [] int {
-    var i = 0;
-    while i < 32 {
+    var i = 32;
+    while i > 0 {
+        i = i - 1;
         to[i] = from[i];
-        i = i + 1;
     }
     return 0;
 }
@@ -356,30 +356,41 @@ fn select[&w](w: &!w [int], idx: int) -> [] int {
     return 0;
 }
 
-// The accumulator = scalar times the point in table slot 1 (`scalar` big-endian, any length, any value: the formulas are complete).
-fn multiply[&s, &w](w: &!w [int], scalar: &s [byte]) -> [] int {
-    // Slot 0 is the point at infinity, (0 : 1 : 0).
-    bigmod.set_small(w, x_of(pt_table(0)), 0);
-    bigmod.set_small(w, y_of(pt_table(0)), 1);
-    bigmod.to_mont(w, y_of(pt_table(0)), y_of(pt_table(0)));
-    bigmod.set_small(w, z_of(pt_table(0)), 0);
+// Slot 0 of the table is the point at infinity, (0 : 1 : 0); slot i is i times the point in slot 1.
+fn build_table[&w](w: &!w [int]) -> [] int {
+    let inf = pt_table(0);
+    bigmod.set_small(w, x_of(inf), 0);
+    bigmod.set_small(w, y_of(inf), 1);
+    bigmod.to_mont(w, y_of(inf), y_of(inf));
+    bigmod.set_small(w, z_of(inf), 0);
     var i = 2;
     while i < 16 {
         add_points(w, pt_table(i - 1), pt_table(1), pt_table(i));
         i = i + 1;
     }
+    return 0;
+}
+
+// One window of the ladder: four doublings, then the addition of the selected multiple.
+fn window[&w](w: &!w [int], nibble: int) -> [] int {
+    var k = 0;
+    while k < 4 {
+        double_point(w, pt_acc(), pt_acc());
+        k = k + 1;
+    }
+    select(w, nibble);
+    return add_points(w, pt_acc(), pt_sel(), pt_acc());
+}
+
+// The accumulator = scalar times the point in table slot 1 (`scalar` big-endian, any length, any value: the formulas are complete).
+fn multiply[&s, &w](w: &!w [int], scalar: &s [byte]) -> [] int {
+    build_table(w);
     ecdsa.copy_point(w, pt_table(0), pt_acc());
     var at = 0;
-    while at < 2 * len(scalar) {
-        double_point(w, pt_acc(), pt_acc());
-        double_point(w, pt_acc(), pt_acc());
-        double_point(w, pt_acc(), pt_acc());
-        double_point(w, pt_acc(), pt_acc());
-        // Window `at`: the high four bits of byte at / 2, then the low.
-        let byte = int_of(scalar[at / 2]);
-        let shift = 4 - 4 * (at % 2);
-        select(w, byte >> shift & 15);
-        add_points(w, pt_acc(), pt_sel(), pt_acc());
+    while at < len(scalar) {
+        let b = int_of(scalar[at]);
+        window(w, b >> 4);
+        window(w, b & 15);
         at = at + 1;
     }
     return 0;
@@ -387,12 +398,7 @@ fn multiply[&s, &w](w: &!w [int], scalar: &s [byte]) -> [] int {
 
 // Zeroes every register: the table and the accumulator are multiples of the point by parts of the scalar.
 fn wipe[&w](w: &!w [int]) -> [] int {
-    var i = bigmod.reg(0);
-    while i < work_len() {
-        w[i] = 0;
-        i = i + 1;
-    }
-    return 0;
+    return bignum.zero(w[bigmod.reg(0)..work_len()]);
 }
 
 // ---- Field phase ----
@@ -484,39 +490,21 @@ pub fn public_key[&k, &o, &w](key: &k [byte], out: &!o [byte], work: &!w [int]) 
 // qlen = hlen = 256: bits2int is the 32 bytes as they are, int2octets(x) is the key and bits2octets(h1) is the digest reduced mod n once.
 // libsecp256k1 does the same (measured: a digest of n or more gives the same signature only if it is reduced first, docs/secp256k1.md §2).
 
-// K = HMAC_K(V || sep || key || h || extra), then V = HMAC_K(V): steps d and e (sep 0) or f and g (sep 1).
-fn reseed[&st, &k, &v, &s, &d, &h, &e](st: &!st [int], kk: &!k [byte], v: &!v [byte], sep: &s [byte], key: &d [byte], h: &h [byte], extra: &e [byte]) -> [] int {
+// One HMAC-DRBG update (RFC 6979 §3.2 d to g, and step h's retry): K = HMAC_K(V || sep [|| key || h || extra]), then V = HMAC_K(V).
+// `seed` is true for steps d to g, which mix in the key, the digest and the added randomness, and false for step h's retry.
+fn update[&st, &k, &v, &s, &d, &h, &e](st: &!st [int], kk: &!k [byte], v: &!v [byte], sep: &s [byte], seed: bool, key: &d [byte], h: &h [byte], extra: &e [byte]) -> [] int {
     hmac.init(32, st, kk);
     hmac.update(32, st, v);
     hmac.update(32, st, sep);
-    hmac.update(32, st, key);
-    hmac.update(32, st, h);
-    hmac.update(32, st, extra);
+    if seed {
+        hmac.update(32, st, key);
+        hmac.update(32, st, h);
+        hmac.update(32, st, extra);
+    }
     hmac.final(32, st, kk);
     hmac.init(32, st, kk);
     hmac.update(32, st, v);
-    hmac.final(32, st, v);
-    return 0;
-}
-
-// Step h's retry: K = HMAC_K(V || 00), V = HMAC_K(V).
-fn rekey[&st, &k, &v, &s](st: &!st [int], kk: &!k [byte], v: &!v [byte], sep: &s [byte]) -> [] int {
-    hmac.init(32, st, kk);
-    hmac.update(32, st, v);
-    hmac.update(32, st, sep);
-    hmac.final(32, st, kk);
-    hmac.init(32, st, kk);
-    hmac.update(32, st, v);
-    hmac.final(32, st, v);
-    return 0;
-}
-
-// Step h's candidate: V = HMAC_K(V), and T = V.
-fn candidate[&st, &k, &v, &t](st: &!st [int], kk: &k [byte], v: &!v [byte], t: &!t [byte]) -> [] int {
-    hmac.init(32, st, kk);
-    hmac.update(32, st, v);
-    hmac.final(32, st, v);
-    return copy32(v, t);
+    return hmac.final(32, st, v);
 }
 
 // ---- Scalar phase ----
@@ -626,7 +614,6 @@ pub fn sign[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [by
     region r {
         let kk = alloc_slice[r](32, byte_of(0));
         let v = alloc_slice[r](32, byte_of(1));
-        let cand = alloc_slice[r](32, byte_of(0));
         let px = alloc_slice[r](32, byte_of(0));
         let py = alloc_slice[r](32, byte_of(0));
         let sep = alloc_slice[r](1, byte_of(0));
@@ -636,28 +623,30 @@ pub fn sign[&g, &d, &e, &s, &w](digest: &g [byte], key: &d [byte], extra: &e [by
         bigmod.setup(order_n, work);
         bigmod.load_reduced(digest, work, r_e());
         bigmod.store_reg(work, r_e(), h);
-        reseed(st, kk, v, sep, key, h, extra);
+        update(st, kk, v, sep, true, key, h, extra);
         sep[0] = byte_of(1);
-        reseed(st, kk, v, sep, key, h, extra);
+        update(st, kk, v, sep, true, key, h, extra);
         sep[0] = byte_of(0);
         var attempt = 0;
         while attempt < 16 && code == -116 {
-            candidate(st, kk, v, cand);
+            // Step h: V = HMAC_K(V), and V is the candidate.
+            hmac.init(32, st, kk);
+            hmac.update(32, st, v);
+            hmac.final(32, st, v);
             // A candidate not in [1, n) is dropped, by a constant-time check; which one is kept says nothing of the others.
-            if in_range(cand) == 1 {
-                if base_multiply(cand, px, py, work) == 0 {
-                    code = finish(digest, key, cand, px, py, sig, work);
+            if in_range(v) == 1 {
+                if base_multiply(v, px, py, work) == 0 {
+                    code = finish(digest, key, v, px, py, sig, work);
                 }
             }
             if code == -116 {
-                rekey(st, kk, v, sep);
+                update(st, kk, v, sep, false, key, h, extra);
             }
             attempt = attempt + 1;
         }
         // Best effort (`docs/hkdf.md` §3): the DRBG's state, the nonce and k G's coordinates are secret.
         bytes.zero(kk);
         bytes.zero(v);
-        bytes.zero(cand);
         bytes.zero(px);
         bytes.zero(py);
         bignum.zero(st);
