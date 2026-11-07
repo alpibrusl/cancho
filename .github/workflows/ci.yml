@@ -92,6 +92,24 @@ jobs:
           wc -l < "$RUNNER_TEMP/shard.txt"
           cargo test -p cancho --test conformance -- --exact $(cat "$RUNNER_TEMP/shard.txt")
 
+  # docs/gate.md, step G2: the gate without Rust. `scripts/gate.sh` builds the compiler from the committed seed (no Rust, only clang) and runs the stages
+  # that need no `cargo`: fmt, the files budget, the seed's hash and the reject goldens. Not required yet (G5 makes it so); it is here to be green on main first.
+  gate:
+    name: gate (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: macos-latest
+            target: darwin-aarch64
+    steps:
+      - uses: actions/checkout@v4
+      - name: scripts/gate.sh
+        run: scripts/gate.sh
+
   # docs/self-hosting.md, epic #491: the whole conformance suite with every plain `cancho build` going through the compiler
   # written in cancho (`examples/selfhost`), so that a change to the language, the runtime or a rule that the compiler in
   # cancho does not follow fails here and not in someone's `--compiler auto`. The differences that are known are in
