@@ -81,7 +81,7 @@ crates (`build.rs`) moved to checked-in files with a test that regenerates them,
 `vcs` V1 (#680) in cancho. Done when `CANCHO_COMPILER=auto` skips nothing in `.github/selfhost-known-differences.txt` that is not a retired
 backend.
 
-**Phase 3: the gate moves (D3).** `cancho test` runs the conformance programs; the Rust test shell shrinks file by file as each moves
+**Phase 3: the gate moves (D3; designed in [`gate.md`](gate.md)).** `cancho test` runs the conformance programs; the Rust test shell shrinks file by file as each moves
 (a test file is moved or deleted, never both left). `tests/files.rs`'s 2,000-line check becomes a script or a cancho program.
 `CLAUDE.md`, `CONTRIBUTING.md` and `AGENTS.md` change from `cargo fmt/clippy/test` to the new gate **in the same PR** that makes the new gate
 required, not before.
