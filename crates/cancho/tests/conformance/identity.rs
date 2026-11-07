@@ -2,6 +2,96 @@
 
 use super::*;
 
+const PRINT_DIRS: [&str; 24] = [
+    "tests/accept",
+    "tests/reject",
+    "examples",
+    "examples/wordfreq",
+    "examples/buffer",
+    "examples/slab",
+    "examples/modular",
+    "examples/serve",
+    "examples/fetch",
+    "examples/report",
+    "examples/collect",
+    "packages/net-sockets",
+    "packages/net-connect",
+    "packages/agent-wire",
+    "packages/http-request",
+    "packages/http-response",
+    "packages/x509",
+    "packages/tls",
+    "benches",
+    "examples/base64",
+    "examples/sort",
+    "examples/seek",
+    "benches/three",
+    "std",
+];
+
+const JSON_DIRS: [&str; 9] = [
+    "tests/accept",
+    "tests/reject",
+    "examples",
+    "std",
+    "packages/net-sockets",
+    "packages/net-connect",
+    "packages/agent-wire",
+    "packages/http-request",
+    "packages/http-response",
+];
+
+/// The `.cho` files of `dirs`, as the walkers here have always listed them: the extension filter keeps a multi-file example out of the single-file
+/// harnesses, so each of those directories is named on its own.
+fn cho_files(dirs: &[&str]) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for dir in dirs {
+        for entry in std::fs::read_dir(repo_root().join(dir)).expect("a readable directory") {
+            let path = entry.expect("a readable entry").path();
+            if path.extension().and_then(|e| e.to_str()) == Some("cho") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// What `cancho ARGS` wrote, or `None` if it refused: these tests ask the command and nothing else (they named `cancho_syntax` and `cancho_id` before,
+/// so the cancho-written commands could not be run against them).
+fn said_by(args: &[&std::ffi::OsStr]) -> Option<String> {
+    let out = Command::new(BIN).args(args).output().expect("the compiler runs");
+    out.status.success().then(|| String::from_utf8(out.stdout).expect("the answer is UTF-8"))
+}
+
+/// The identities `cancho ids --std` writes for the file, when the file stands as a program (`ids` checks it; a reject fixture, or one that needs its
+/// sibling files, does not): the part of these contracts that needs a whole program, held for every file that is one.
+fn identities(file: &Path) -> Option<String> {
+    said_by(&["ids".as_ref(), file.as_os_str(), "--std".as_ref()])
+}
+
+fn print_of(file: &Path) -> Option<String> {
+    said_by(&["print".as_ref(), file.as_os_str()])
+}
+
+/// The two contracts' second half, for the text `through` that came from `source` by `route`: it holds the same identities as `source` where `source`
+/// has any to give (`scratch_file` is where it is written to be asked about). The printer does not write the `edition N;` line (an edition is not part of the tree),
+/// so the text is given the source's own before it is checked. Returns whether the identities were compared.
+fn same_identities(source: &Path, through: &str, scratch_file: &Path, route: &str) -> bool {
+    let Some(before) = identities(source) else { return false };
+    let text = std::fs::read_to_string(source).expect("a readable fixture");
+    let edition = text.lines().find(|l| l.starts_with("edition ")).unwrap_or("");
+    std::fs::write(scratch_file, format!("{edition}\n{through}")).unwrap();
+    let after = identities(scratch_file).unwrap_or_else(|| {
+        panic!(
+            "{}: the text that came back {route} is not a program `ids` accepts",
+            source.display()
+        )
+    });
+    assert_eq!(before, after, "{}: an identity changed {route}", source.display());
+    true
+}
+
 /// The canonical printer's two contracts, over every `.cho` file in the repo.
 ///
 /// 1. **Identity-preserving.** Parsing the printed text gives back the same
@@ -14,93 +104,35 @@ use super::*;
 /// Run over the accept fixtures, the examples *and* the reject fixtures --
 /// the last of those parse even though they are refused later, and they are
 /// where the odd syntax lives, so they are the most valuable input of the
-/// three.
+/// three. Through the commands (`print`, `ids`): the printed text must parse (a fixed point needs it), and
+/// where `ids` accepts the file its identities must be the printed text's.
 #[test]
 fn printing_preserves_every_identity_and_is_idempotent() {
-    let mut checked = 0;
-    // `examples/wordfreq` is listed separately because the walkers here
-    // filter on the `.cho` extension, which a directory does not have --
-    // that is what keeps a multi-file example out of the single-file
-    // harnesses, and it would keep it out of this one too.
-    for dir in [
-        "tests/accept",
-        "tests/reject",
-        "examples",
-        "examples/wordfreq",
-        "examples/buffer",
-        "examples/slab",
-        "examples/modular",
-        "examples/serve",
-        "examples/fetch",
-        "examples/report",
-        "examples/collect",
-        // The real published packages (`docs/package-system.md` §6) are
-        // code too, and get the same contract.
-        "packages/net-sockets",
-        "packages/net-connect",
-        "packages/agent-wire",
-        "packages/http-request",
-        "packages/http-response",
-        "packages/x509",
-        "packages/tls",
-        // The benchmarks are code too, and the pairs are the place a
-        // careless edit would land without anyone reading it.
-        "benches",
-        "examples/base64",
-        "examples/sort",
-        "examples/seek",
-        "benches/three",
-        // The standard library is code, and gets the same contract every
-        // other file here gets: printed, reparsed, identical hashes, and
-        // a fixed point.
-        "std",
-    ] {
-        for entry in std::fs::read_dir(repo_root().join(dir)).expect("a readable directory") {
-            let path = entry.expect("a readable entry").path();
-            if path.extension().and_then(|e| e.to_str()) != Some("cho") {
-                continue;
-            }
-            let source = std::fs::read_to_string(&path).expect("a readable fixture");
-            // A reject fixture may be refused by the *parser*, in which case
-            // there is no tree to print and nothing to check here.
-            let Ok(ast) = cancho_syntax::parse(&source) else { continue };
-
-            let printed = cancho_syntax::print(&ast);
-            let reparsed = cancho_syntax::parse(&printed).unwrap_or_else(|d| {
-                panic!(
-                    "{}: printed output does not parse: {}\n{printed}",
-                    path.display(),
-                    d.message
-                )
-            });
-
-            let before = cancho_id::identify(&ast);
-            let after = cancho_id::identify(&reparsed);
-            assert_eq!(
-                before.functions.len(),
-                after.functions.len(),
-                "{}: a declaration went missing",
-                path.display()
-            );
-            for (a, b) in before.functions.iter().zip(after.functions.iter()) {
-                assert_eq!(a.sig, b.sig, "{}: `{}`'s signature changed", path.display(), a.name);
-                assert_eq!(a.body, b.body, "{}: `{}`'s body changed", path.display(), a.name);
-            }
-            for (a, b) in before.types.iter().zip(after.types.iter()) {
-                assert_eq!(a.id, b.id, "{}: `{}` changed", path.display(), a.name);
-            }
-
-            let again = cancho_syntax::print(&reparsed);
-            assert_eq!(printed, again, "{}: printing is not a fixed point", path.display());
-            checked += 1;
+    let dir = scratch("identity-print");
+    let printed_file = dir.join("printed.cho");
+    let (mut checked, mut compared) = (0, 0);
+    for path in cho_files(&PRINT_DIRS) {
+        // A reject fixture may be refused by the *parser*, in which case
+        // there is no tree to print and nothing to check here.
+        let Some(printed) = print_of(&path) else { continue };
+        std::fs::write(&printed_file, &printed).unwrap();
+        let again = print_of(&printed_file).unwrap_or_else(|| {
+            panic!("{}: printed output does not parse\n{printed}", path.display())
+        });
+        assert_eq!(printed, again, "{}: printing is not a fixed point", path.display());
+        if same_identities(&path, &printed, &dir.join("checked.cho"), "through the printer") {
+            compared += 1;
         }
+        checked += 1;
     }
     assert!(checked > 100, "the walk should have found the whole suite, found {checked}");
+    assert!(compared > 50, "only {compared} files stand as programs for `ids`");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The same two contracts, over JSON this time (`docs/structured-ingest.md`
-/// §4): a file's AST rendered as data, read back, and printed must give
-/// text whose declarations hash identically to the source's — and the
+/// §4): a file's AST rendered as data (`print --output json`), read back (`ingest`), and printed must give
+/// text whose declarations hash identically to the source's -- and the
 /// JSON of the ingested text must be a fixed point.
 ///
 /// The walk is the same one, over the same corpus, so a node the printer
@@ -108,94 +140,46 @@ fn printing_preserves_every_identity_and_is_idempotent() {
 /// is added, not a discovery later.
 #[test]
 fn ingesting_json_preserves_every_identity_and_is_idempotent() {
-    let mut checked = 0;
-    for dir in [
-        "tests/accept",
-        "tests/reject",
-        "examples",
-        "std",
-        "packages/net-sockets",
-        "packages/net-connect",
-        "packages/agent-wire",
-        "packages/http-request",
-        "packages/http-response",
-    ] {
-        for entry in std::fs::read_dir(repo_root().join(dir)).expect("a readable directory") {
-            let path = entry.expect("a readable entry").path();
-            if path.extension().and_then(|e| e.to_str()) != Some("cho") {
-                continue;
-            }
-            let source = std::fs::read_to_string(&path).expect("a readable fixture");
-            let Ok(ast) = cancho_syntax::parse(&source) else { continue };
-            let json = cancho_syntax::ast_to_json(&ast);
-            let text = cancho_syntax::write_json(&json);
-            let rebuilt = cancho_syntax::json_to_ast(
-                &cancho_syntax::read_json(&text).expect("the JSON we wrote reads back"),
-            )
-            .unwrap_or_else(|d| {
-                panic!(
-                    "{}: the JSON we wrote does not build: {} (rule {})",
-                    path.display(),
-                    d.message,
-                    d.rule.tag()
-                )
-            });
-            let ingested = cancho_syntax::print(&rebuilt);
-            let reparsed = cancho_syntax::parse(&ingested).unwrap_or_else(|d| {
-                panic!(
-                    "{}: ingested text does not parse: {}\n{ingested}",
-                    path.display(),
-                    d.message
-                )
-            });
-            let before = cancho_id::identify(&ast);
-            let after = cancho_id::identify(&reparsed);
-            assert_eq!(
-                before.functions.len(),
-                after.functions.len(),
-                "{}: a declaration went missing through JSON",
-                path.display()
-            );
-            for (a, b) in before.functions.iter().zip(after.functions.iter()) {
-                assert_eq!(
-                    a.sig,
-                    b.sig,
-                    "{}: `{}`'s signature changed through JSON",
-                    path.display(),
-                    a.name
-                );
-                assert_eq!(
-                    a.body,
-                    b.body,
-                    "{}: `{}`'s body changed through JSON",
-                    path.display(),
-                    a.name
-                );
-            }
-            for (a, b) in before.types.iter().zip(after.types.iter()) {
-                assert_eq!(a.id, b.id, "{}: `{}` changed through JSON", path.display(), a.name);
-            }
-            // The fixed point: ingesting the JSON of the ingested text is
-            // the same text.
-            let again = cancho_syntax::print(
-                &cancho_syntax::json_to_ast(
-                    &cancho_syntax::read_json(&cancho_syntax::write_json(
-                        &cancho_syntax::ast_to_json(&reparsed),
-                    ))
-                    .expect("the second JSON reads"),
-                )
-                .expect("the second JSON builds"),
-            );
-            assert_eq!(
-                ingested,
-                again,
-                "{}: the JSON round trip is not a fixed point",
-                path.display()
-            );
-            checked += 1;
+    let dir = scratch("identity-json");
+    let (json_file, ingested_file, json_again) =
+        (dir.join("a.json"), dir.join("ingested.cho"), dir.join("again.json"));
+    let (mut checked, mut compared) = (0, 0);
+    for path in cho_files(&JSON_DIRS) {
+        if print_of(&path).is_none() {
+            continue;
         }
+        let json =
+            said_by(&["print".as_ref(), path.as_os_str(), "--output".as_ref(), "json".as_ref()])
+                .unwrap_or_else(|| panic!("{}: a program that prints has no JSON", path.display()));
+        std::fs::write(&json_file, &json).unwrap();
+        let ingested = said_by(&["ingest".as_ref(), json_file.as_os_str()])
+            .unwrap_or_else(|| panic!("{}: the JSON we wrote does not build", path.display()));
+        std::fs::write(&ingested_file, &ingested).unwrap();
+        assert!(
+            print_of(&ingested_file).is_some(),
+            "{}: ingested text does not parse\n{ingested}",
+            path.display()
+        );
+        if same_identities(&path, &ingested, &dir.join("checked.cho"), "through JSON") {
+            compared += 1;
+        }
+        // The fixed point: ingesting the JSON of the ingested text is the same text.
+        let second = said_by(&[
+            "print".as_ref(),
+            ingested_file.as_os_str(),
+            "--output".as_ref(),
+            "json".as_ref(),
+        ])
+        .expect("the ingested text has JSON");
+        std::fs::write(&json_again, &second).unwrap();
+        let again =
+            said_by(&["ingest".as_ref(), json_again.as_os_str()]).expect("the second JSON builds");
+        assert_eq!(ingested, again, "{}: the JSON round trip is not a fixed point", path.display());
+        checked += 1;
     }
     assert!(checked > 100, "the walk should have found the whole suite, found {checked}");
+    assert!(compared > 50, "only {compared} files stand as programs for `ids`");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A module's whole cost to the identity system, which is nothing
