@@ -196,7 +196,7 @@ fn every_rule_has_a_fixture() {
     // cannot reach by construction; `ingest-*` are the three a `.cho`
     // fixture cannot reach at all -- they name the refusals of the JSON
     // ingest path, whose fixtures are `.json` handed to `cancho ingest`,
-    // and `cancho_syntax::ingest`'s own tests hold one per rule
+    // and the ingest tests hold one per rule
     // (`docs/structured-ingest.md` §3).
     const COVERED_ELSEWHERE: [&str; 5] =
         ["not-public", "internal", "ingest-arity", "ingest-json", "ingest-node"];
@@ -209,9 +209,10 @@ fn every_rule_has_a_fixture() {
         })
         .collect();
 
-    let missing: Vec<&str> = cancho_syntax::Rule::ALL
+    let rules = golden("rules");
+    let missing: Vec<&str> = rules
         .iter()
-        .map(|r| r.tag())
+        .map(String::as_str)
         .filter(|tag| !declared.contains(*tag) && !COVERED_ELSEWHERE.contains(tag))
         .collect();
     assert!(
@@ -222,7 +223,7 @@ fn every_rule_has_a_fixture() {
 
     // The other direction: a fixture declaring a tag the catalogue does
     // not have is a typo that would otherwise pass forever.
-    let catalogue: BTreeSet<&str> = cancho_syntax::Rule::ALL.iter().map(|r| r.tag()).collect();
+    let catalogue: BTreeSet<&str> = rules.iter().map(String::as_str).collect();
     for tag in &declared {
         assert!(catalogue.contains(tag.as_str()), "no rule is called `{tag}`");
     }
@@ -470,4 +471,13 @@ fn a_wrong_command_line_is_a_usage_error_not_a_refusal() {
     let output = Command::new(BIN).arg("frobnicate").output().expect("the compiler runs");
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("usage:"));
+}
+
+/// A catalogue the front end keeps (`tests/rules.golden`: the tag of every refusal rule; `tests/builtins.golden`: the name of every builtin), one a line, in
+/// the order the compiler lists them: recorded once from the Rust crates (`rules_and_builtins_are_the_goldens`, in `selfhost/parity.rs`, holds the two together
+/// until the crates go), so that the tests that need the list read a file and not a Rust crate (`docs/removing-rust.md` phase 1b).
+pub(super) fn golden(name: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(repo_root().join(format!("tests/{name}.golden")))
+        .unwrap_or_else(|e| panic!("tests/{name}.golden is read: {e}"));
+    text.lines().map(str::to_owned).collect()
 }

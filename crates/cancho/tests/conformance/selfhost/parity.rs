@@ -8,6 +8,7 @@
 //! lexer and the parser by the differential tests of this module. This is what they cannot see: a name nobody wrote
 //! code for.
 
+use crate::corpus::golden;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -64,13 +65,9 @@ fn check(kind: &str, known: &BTreeSet<String>, wanted: &BTreeSet<String>, list: 
 #[test]
 fn every_rule_of_the_rust_front_end_is_known_to_the_compiler_in_cancho() {
     let text = sources(&[]);
-    let known: BTreeSet<String> = cancho_syntax::Rule::ALL
-        .iter()
-        .map(|r| r.tag().to_owned())
-        .filter(|tag| text.contains(&format!("\"{tag}\"")))
-        .collect();
-    let wanted: BTreeSet<String> =
-        cancho_syntax::Rule::ALL.iter().map(|r| r.tag().to_owned()).collect();
+    let wanted: BTreeSet<String> = golden("rules").into_iter().collect();
+    let known: BTreeSet<String> =
+        wanted.iter().filter(|tag| text.contains(&format!("\"{tag}\""))).cloned().collect();
     check("rule", &known, &wanted, include_str!("unported_rules.txt"), "unported_rules.txt");
     // And the other way: a name in rules.cho that Rust does not have is a stale one.
     let rules = std::fs::read_to_string(selfhost_dir().join("rules.cho")).expect("rules.cho");
@@ -87,8 +84,7 @@ fn every_rule_of_the_rust_front_end_is_known_to_the_compiler_in_cancho() {
 fn every_builtin_of_the_rust_front_end_is_named_by_the_compiler_in_cancho() {
     // The tables are generated from the Rust ones, so naming a builtin there says nothing; the code is elsewhere.
     let text = sources(&["tables.cho", "builtins.cho", "runtime.cho"]);
-    let wanted: BTreeSet<String> =
-        cancho_ir::Builtin::ALL.iter().map(|b| b.name().to_owned()).collect();
+    let wanted: BTreeSet<String> = golden("builtins").into_iter().collect();
     let known: BTreeSet<String> =
         wanted.iter().filter(|name| text.contains(&format!("\"{name}\""))).cloned().collect();
     check(
@@ -145,4 +141,19 @@ fn every_module_of_the_compiler_is_in_the_lists_the_tests_keep_of_them() {
             );
         }
     }
+}
+
+/// The two goldens are what the Rust crates list, in their order: the one place these tests still name `cancho_syntax` and `cancho_ir`, and the test that
+/// goes with them (`docs/removing-rust.md` phase 5); a rule or builtin added there is a line to add to the file.
+#[test]
+fn rules_and_builtins_are_the_goldens() {
+    let rules: Vec<String> = cancho_syntax::Rule::ALL.iter().map(|r| r.tag().to_owned()).collect();
+    assert_eq!(rules, golden("rules"), "tests/rules.golden is not the rules of cancho_syntax");
+    let builtins: Vec<String> =
+        cancho_ir::Builtin::ALL.iter().map(|b| b.name().to_owned()).collect();
+    assert_eq!(
+        builtins,
+        golden("builtins"),
+        "tests/builtins.golden is not the builtins of cancho_ir"
+    );
 }
