@@ -90,47 +90,63 @@ fn nibble(c: int) -> [] int {
     return c - 48;
 }
 
-fn fill_hex[&o](out: &!o [byte], text: &static [byte]) -> [] int {
-    var i = 0;
-    while i < len(out) {
-        out[i] = byte_of(nibble(int_of(text[2 * i])) * 16 + nibble(int_of(text[2 * i + 1])));
-        i = i + 1;
-    }
-    return 0;
+// Byte `i` of the hex text: a scalar, because the Rust evaluator of a `static` cannot pass a mutable slice to a function (a call that returns a number is fine).
+fn hex_at(text: &static [byte], i: int) -> [] int {
+    return nibble(int_of(text[2 * i])) * 16 + nibble(int_of(text[2 * i + 1]));
 }
 
 // p = 2^256 - 2^32 - 977
 static field_p: [byte] {
     let t = alloc_slice[static](32, byte_of(0));
-    fill_hex(t, "fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f");
+    var i = 0;
+    while i < 32 {
+        t[i] = byte_of(hex_at("fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f", i));
+        i = i + 1;
+    }
     return t;
 }
 
 // the group order
 static order_n: [byte] {
     let t = alloc_slice[static](32, byte_of(0));
-    fill_hex(t, "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+    var i = 0;
+    while i < 32 {
+        t[i] = byte_of(hex_at("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141", i));
+        i = i + 1;
+    }
     return t;
 }
 
 // n - 2: the exponent of the inverse modulo n (Fermat), public
 static order_n_minus_2: [byte] {
     let t = alloc_slice[static](32, byte_of(0));
-    fill_hex(t, "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036413f");
+    var i = 0;
+    while i < 32 {
+        t[i] = byte_of(hex_at("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036413f", i));
+        i = i + 1;
+    }
     return t;
 }
 
 // n / 2, rounded down: a low s is at most this
 static half_n: [byte] {
     let t = alloc_slice[static](32, byte_of(0));
-    fill_hex(t, "7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
+    var i = 0;
+    while i < 32 {
+        t[i] = byte_of(hex_at("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0", i));
+        i = i + 1;
+    }
     return t;
 }
 
 // (p + 1) / 4: p = 3 mod 4, so a square root of a square a is a^((p + 1) / 4)
 static sqrt_exp: [byte] {
     let t = alloc_slice[static](32, byte_of(0));
-    fill_hex(t, "3fffffffffffffffffffffffffffffffffffffffffffffffffffffffbfffff0c");
+    var i = 0;
+    while i < 32 {
+        t[i] = byte_of(hex_at("3fffffffffffffffffffffffffffffffffffffffffffffffffffffffbfffff0c", i));
+        i = i + 1;
+    }
     return t;
 }
 
