@@ -125,10 +125,16 @@ fn closure() -> Vec<String> {
 /// source with `unknown-name`: this says which list, before a long test does.
 #[test]
 fn every_module_of_the_compiler_is_in_the_lists_the_tests_keep_of_them() {
-    let lists = [
-        ("selfhost.rs `with_front_end`", include_str!("../selfhost.rs")),
-        ("selfhost/bootstrap.rs `own_source`", include_str!("bootstrap.rs")),
-    ];
+    // `with_front_end` in selfhost.rs reads `cancho.files`, so that file is the list it keeps.
+    let front_end = std::fs::read_to_string(selfhost_dir().join("cancho.files"))
+        .expect("examples/selfhost/cancho.files is read");
+    for module in closure() {
+        assert!(
+            front_end.lines().any(|f| f == format!("{module}.cho")),
+            "the module `{module}` of examples/selfhost is not in examples/selfhost/cancho.files, which selfhost.rs `with_front_end` reads"
+        );
+    }
+    let lists = [("selfhost/bootstrap.rs `own_source`", include_str!("bootstrap.rs"))];
     for module in closure() {
         for (which, text) in lists {
             let named = text.contains(&format!("\"{module}.cho\""))

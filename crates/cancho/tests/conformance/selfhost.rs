@@ -340,89 +340,19 @@ pub(crate) fn build_stamped(tag: &str, root: &'static str, version: &Path) -> Pa
     build(tag, &refs)
 }
 
-/// The files of `parser.cho` and `check.cho`: the root, which says what to print, and the modules
-/// the two share.
+/// The files of a front-end program: the root, which says what to print, then the modules of the
+/// command line in cancho, which are `examples/selfhost/cancho.files` less `cli.cho` (the one
+/// root that list names itself). The list is read, not repeated here: `cancho.files` is the only
+/// list of what the front end is, and `the_file_list_of_the_standalone_build_is_the_import_closure_of_cli`
+/// keeps it equal to the import closure.
 pub(crate) fn with_front_end(root: &'static str) -> Vec<&'static str> {
-    vec![
-        root,
-        "driver.cho",
-        "printing.cho",
-        "floatprint.cho",
-        "sink.cho",
-        "filewrite.cho",
-        "guidelines.cho",
-        "commandtree.cho",
-        "diagnose.cho",
-        "stdorder.cho",
-        "stdsource.cho",
-        "walk.cho",
-        "formatting.cho",
-        "jsonprint.cho",
-        "jsonread.cho",
-        "ingest.cho",
-        "blake3.cho",
-        "identity.cho",
-        "prune.cho",
-        "testscan.cho",
-        "layoutrep.cho",
-        "authwasi.cho",
-        "authority.cho",
-        "satisfytext.cho",
-        "clibase.cho",
-        "clifmt.cho",
-        "cliprog.cho",
-        "clitest.cho",
-        "projfile.cho",
-        "cliproject.cho",
-        "clivcs.cho",
-        "clilock.cho",
-        "clifetch.cho",
-        "clipublish.cho",
-        "clisync.cho",
-        "clidir.cho",
-        "version.cho",
-        "jsonwrite.cho",
-        "cliorigin.cho",
-        "clistore.cho",
-        "listing.cho",
-        "checker.cho",
-        "body.cho",
-        "exprs.cho",
-        "scope.cho",
-        "effects.cho",
-        "prims.cho",
-        "builtins.cho",
-        "signatures.cho",
-        "types.cho",
-        "emit.cho",
-        "foreign.cho",
-        "pass1.cho",
-        "ast.cho",
-        "kinds.cho",
-        "rules.cho",
-        "lexcore.cho",
-        "tables.cho",
-        "runtime.cho",
-        "consteval.cho",
-        "instances.cho",
-        "floats.cho",
-        "floatcode.cho",
-        "fold.cho",
-        "threadcode.cho",
-        "codes.cho",
-        "externcode.cho",
-        "netcode.cho",
-        "platform.cho",
-        "wordcode.cho",
-        "cryptocode.cho",
-        "ex.cho",
-        "lookup.cho",
-        "atoms.cho",
-        "narrowing.cho",
-        "allocs.cho",
-        "binops.cho",
-        "filecode.cho",
-    ]
+    let list = repo_root().join("examples/selfhost/cancho.files");
+    let text = std::fs::read_to_string(&list).expect("examples/selfhost/cancho.files is read");
+    // Leaked once per call: the callers hold `&'static str`, and a test process is short.
+    let text: &'static str = Box::leak(text.into_boxed_str());
+    std::iter::once(root)
+        .chain(text.lines().filter(|f| !f.is_empty() && *f != "cli.cho" && *f != root))
+        .collect()
 }
 
 pub(crate) fn build(tag: &str, files: &[&str]) -> PathBuf {
