@@ -88,18 +88,43 @@ fn done(config: &str, exe: &Path, mode: &str, path: &str) -> Option<String> {
     None
 }
 
+/// What the compiler's own rule says of a literal `path` under `bound`, asked through the command (this was a call to `cancho_ir::extends_path`):
+/// the driver with `narrow(files, "PATH")` added, checked with `cancho check`. A path is covered unless the refusal says
+/// `cannot be narrowed to`. `None` for what a literal cannot spell or the rule does not see (a `..`, a length of 4,096, a
+/// quote, a backslash, a control character, or the empty bound, which every path extends).
+fn narrows_to(tag: &str, bound: &str, path: &str) -> Option<bool> {
+    if bound.is_empty()
+        || path.contains("..")
+        || path.len() >= 4096
+        || path.chars().any(|c| c == '"' || c == '\\' || c.is_control())
+    {
+        return None;
+    }
+    let dir = scratch(&format!("{tag}-narrow"));
+    let marker = format!("    let files = narrow(fs, \"{bound}\");\n");
+    let source = std::fs::read_to_string(repo_root().join("tests/programs/path_covers.cho"))
+        .expect("the driver is in the repository")
+        .replace("\"/bin\"", &format!("\"{bound}\""))
+        .replace(
+            &marker,
+            &format!("{marker}    let deeper = narrow(files, \"{path}\");\n    release(deeper);\n"),
+        );
+    assert!(source.contains("let deeper"), "the driver has no `{marker}`");
+    let file = dir.join("probe.cho");
+    std::fs::write(&file, source).expect("a writable scratch directory");
+    let out =
+        Command::new(BIN).arg("check").arg(&file).arg("--std").output().expect("the compiler runs");
+    Some(!String::from_utf8_lossy(&out.stderr).contains("cannot be narrowed to"))
+}
+
 /// Every path of `cases` with the answer it should get, on every configuration: asked of both predicates, and held
 /// against the operation each stands for.
 fn check(tag: &str, bound: &str, cases: &[(&str, bool)]) {
     // The compile-time rule (`narrow`, the effect rows) is the same rule for what it can see in a literal: no `..`,
     // no length cap, no NUL. A change to one of the two that the other does not follow is a path in a table below.
     for (path, covered) in cases {
-        if !path.contains("..") && path.len() < 4096 {
-            assert_eq!(
-                cancho_ir::extends_path(bound, path),
-                *covered,
-                "`extends_path` on bound `{bound}` path {path:?}"
-            );
+        if let Some(narrowed) = narrows_to(tag, bound, path) {
+            assert_eq!(narrowed, *covered, "`narrow` on bound `{bound}` path {path:?}");
         }
     }
     for (config, exe) in drivers(tag, bound) {
