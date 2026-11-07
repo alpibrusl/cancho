@@ -2,69 +2,31 @@
 //! program this repository tracks, and the command around it.
 
 use super::*;
-use cancho_syntax::FormatError;
 
-/// What the formatter is asked to handle: every program that is meant to
-/// be a program. `tests/reject` is excluded -- most of it does not parse,
-/// on purpose.
-fn corpus() -> Vec<PathBuf> {
-    let root = repo_root();
-    let mut files = Vec::new();
-    for dir in ["std", "examples", "packages", "tests/accept", "tests/programs"] {
-        super::duplication::walk_ls_files(&root.join(dir), &mut files);
-    }
-    files.sort();
-    assert!(files.len() > 100, "the corpus walk found only {} files", files.len());
-    files
-}
+/// What the formatter is asked to handle: every program that is meant to be a program (`benches/` too, which the older sweep left out
+/// because most of it is not a program the other sweeps are about). `tests/reject` is excluded -- most of it does not parse, on purpose.
+const CORPUS: [&str; 6] =
+    ["std", "examples", "packages", "tests/accept", "tests/programs", "benches"];
 
+/// `cancho fmt` over the whole corpus, through the command and nothing else (these tests named the Rust crate's `format` before, so the cancho-written
+/// command could not be run against them): `fmt --check` exits 0 and writes nothing only if no file is refused (a layout the formatter cannot
+/// reproduce, a file that does not parse) and every file is already canonical, which is what `cancho fmt` was applied to every tracked program
+/// to make true (`docs/formatting.md` section 5).
 #[test]
-fn every_tracked_program_formats() {
-    // Not "does not crash": `format` returns text only if that text parses
-    // to the same program, keeps every comment, and is a fixed point
-    // (`format.rs`'s `verify`), so an `Ok` here is all three. What is
-    // left to assert is that nothing is *refused* -- a refusal is the
-    // formatter admitting a layout it cannot reproduce, and a tracked
-    // program that does that is either a formatter gap to close or a file
-    // to tidy (`std/ed25519.cho` had an import in the middle).
-    let mut refused = Vec::new();
-    for path in corpus() {
-        let text = std::fs::read_to_string(&path).expect("a readable source file");
-        match cancho_syntax::format(&text) {
-            Ok(_) => {}
-            Err(FormatError::Parse(d)) => {
-                refused.push(format!("{}: {}", path.display(), d.message))
-            }
-            Err(FormatError::Cannot(why)) => refused.push(format!("{}: {why}", path.display())),
-        }
-    }
-    assert!(refused.is_empty(), "files the formatter refused:\n{}", refused.join("\n"));
-}
-
-#[test]
-fn the_repository_is_formatted() {
-    // `cancho fmt` was applied to every tracked program (`docs/formatting.md`
-    // §5), so a program that is not canonical is a program someone wrote or
-    // edited without running it: `cancho fmt <file>`. `benches/` is here
-    // too -- it is not in `corpus()` only because most of it is not a
-    // program the other sweeps are about.
+fn every_tracked_program_formats_and_is_formatted() {
     let root = repo_root();
-    let mut files = corpus();
-    super::duplication::walk_ls_files(&root.join("benches"), &mut files);
-    files.sort();
-    files.dedup();
-    let mut unformatted = Vec::new();
-    for path in files {
-        let text = std::fs::read_to_string(&path).expect("a readable source file");
-        match cancho_syntax::format(&text) {
-            Ok(formatted) if formatted == text => {}
-            _ => unformatted.push(path.strip_prefix(&root).unwrap_or(&path).display().to_string()),
-        }
-    }
-    assert!(
-        unformatted.is_empty(),
-        "not canonical -- run `cancho fmt` on them:\n{}",
-        unformatted.join("\n")
+    let out = Command::new(BIN)
+        .current_dir(&root)
+        .args(["fmt", "--check"])
+        .args(CORPUS)
+        .output()
+        .expect("the compiler runs");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "not canonical or refused -- run `cancho fmt` on them:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 
@@ -73,8 +35,10 @@ fn formatting_never_panics_on_a_damaged_program() {
     // `CLAUDE.md`: no input may reach a panic. Delete each line of a few
     // real files, one at a time, and format what is left: most of those
     // do not parse, some do and are a different program, and every one
-    // must come back as `Ok` or an error.
+    // must come back with an answer, 0 or 1, never a crash.
     let root = repo_root();
+    let dir = scratch("fmt-damaged");
+    let file = dir.join("damaged.cho");
     for name in ["tests/accept/vec_shrink.cho", "std/option.cho", "examples/cut/cut.cho"] {
         let text = std::fs::read_to_string(root.join(name)).expect("a readable source file");
         let lines: Vec<&str> = text.lines().collect();
@@ -85,9 +49,18 @@ fn formatting_never_panics_on_a_damaged_program() {
                 .filter(|(n, _)| *n != skip)
                 .map(|(_, l)| format!("{l}\n"))
                 .collect();
-            let _ = cancho_syntax::format(&damaged);
+            std::fs::write(&file, damaged).unwrap();
+            let out = Command::new(BIN).args(["fmt", "--check"]).arg(&file).output().unwrap();
+            assert!(
+                matches!(out.status.code(), Some(0 | 1)),
+                "{name} without line {}: {:?}\n{}",
+                skip + 1,
+                out.status,
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
     }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -188,7 +161,13 @@ fn printing_a_comment_free_program_and_formatting_it_agree() {
     )
     .unwrap();
     let printed = Command::new(BIN).arg("print").arg(&file).output().unwrap();
-    let formatted = cancho_syntax::format(&std::fs::read_to_string(&file).unwrap()).ok().unwrap();
-    assert_eq!(String::from_utf8_lossy(&printed.stdout), formatted);
+    let formatted = dir.join("formatted.cho");
+    std::fs::copy(&file, &formatted).unwrap();
+    let wrote = Command::new(BIN).arg("fmt").arg(&formatted).output().unwrap();
+    assert_eq!(wrote.status.code(), Some(0), "{}", String::from_utf8_lossy(&wrote.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&printed.stdout),
+        std::fs::read_to_string(&formatted).unwrap()
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
