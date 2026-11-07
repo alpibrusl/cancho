@@ -260,19 +260,40 @@ fn purity_is_the_row_plus_what_a_reference_may_do() {
         ),
     ];
 
-    for (source, name, expected) in cases {
-        let ast = cancho_syntax::parse(source)
-            .unwrap_or_else(|d| panic!("`{name}` should parse: {}", d.message));
-        let program = cancho_ir::lower(&ast)
-            .unwrap_or_else(|d| panic!("`{name}` should check: {}", d.message));
-        let id = program.find(name).unwrap_or_else(|| panic!("`{name}` should be emitted"));
+    // Asked of the command (this named `cancho_syntax::parse`, `cancho_ir::lower` and `Func::is_pure`): the report's `pure` list is the names of
+    // the functions that predicate holds for, in the program `main` reaches.
+    let dir = scratch("purity-through-the-report");
+    for (n, (source, name, expected)) in cases.iter().enumerate() {
+        let file = dir.join(format!("case{n}.cho"));
+        std::fs::write(&file, source).unwrap();
+        let out = Command::new(BIN)
+            .arg("authority")
+            .arg(&file)
+            .args(["--output", "json"])
+            .output()
+            .expect("the compiler runs");
+        assert!(
+            out.status.success(),
+            "`{name}` should check: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let report = String::from_utf8_lossy(&out.stdout).into_owned();
+        let line = report
+            .lines()
+            .find(|l| l.trim_start().starts_with("\"pure\":"))
+            .unwrap_or_else(|| panic!("the report has a `pure` list:\n{report}"));
+        assert!(
+            report.contains(&format!("\"{name}\"")) || !expected,
+            "`{name}` should be emitted:\n{report}"
+        );
         assert_eq!(
-            program.func(id).is_pure(),
-            expected,
-            "`{name}` should {}be pure",
-            if expected { "" } else { "not " }
+            line.contains(&format!("\"{name}\"")),
+            *expected,
+            "`{name}` should {}be pure: {line}",
+            if *expected { "" } else { "not " }
         );
     }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// `docs/under-a-grant.md` §2 — a network program reports no network.
