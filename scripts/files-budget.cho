@@ -1,0 +1,193 @@
+edition 7;
+module files_budget;
+
+// files-budget.cho -- no source file outgrows the budget (`CONTRIBUTING.md`, "Files"): the check of `crates/cancho/tests/files.rs`, in cancho
+// (`docs/gate.md` step G1). Run from the root of the repository:
+//
+//     cancho run scripts/files-budget.cho --std
+//
+// Every `.rs`, `.cho`, `.py` and `.c` file beneath the current directory, but not beneath a directory called `target` or one whose name starts with
+// a dot, may have 2,000 lines at most (a line is what `str::lines` counts: a newline ends one, and text after the last newline is one more).
+// An offender is written as `PATH: N lines, over the 2000-line budget. Split it by concern (CONTRIBUTING.md, "Files")` and the exit status is 1.
+// `files.rs` has a table of ceilings for files that are over the budget and may not grow; it is empty, and so is none here: the day it is not,
+// the table comes back here as a list in this file, not as a flag.
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import std.io as console;
+
+fn budget() -> [] int {
+    return 2000;
+}
+
+// Whether `name` ends in one of the extensions that make a file a source file.
+fn is_source[&n](name: &n [byte]) -> [] bool {
+    return bytes.ends_with(name, ".rs") || bytes.ends_with(name, ".cho") || bytes.ends_with(name, ".py") || bytes.ends_with(name, ".c");
+}
+
+// `directory/name`, or `name` for the root (`""`).
+fn joined[&h, &d, &n](heap: &!h Heap, directory: &d [byte], name: &n [byte]) -> [heap] buffer.Buffer {
+    var path = buffer.empty(heap, len(directory) + len(name) + 1);
+    if len(directory) > 0 {
+        path = buffer.push(heap, buffer.append(heap, path, directory), byte_of('/'));
+    }
+    return buffer.append(heap, path, name);
+}
+
+// How many lines the file has, or -1 if it cannot be read: read in chunks, a newline each, and one more for what follows the last of them.
+fn lines_of[&f, &h, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] int {
+    var lines = 0;
+    var open_line = false;
+    match open_read(fs, path) {
+        Opened::Failed(reason) => {
+            return -1;
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var chunk = buffer.empty(heap, 65536);
+            var failed = false;
+            borrow mut file as &!handle in {
+                var going = true;
+                while going {
+                    borrow mut chunk as &!c in {
+                        match file_read(handle, buffer.room(c)) {
+                            Read::Got(n) => {
+                                buffer.filled(c, n);
+                                let seen = buffer.bytes(c);
+                                var k = 0;
+                                while k < len(seen) {
+                                    if seen[k] == byte_of('\n') {
+                                        lines = lines + 1;
+                                        open_line = false;
+                                    } else {
+                                        open_line = true;
+                                    }
+                                    k = k + 1;
+                                }
+                                buffer.clear(c);
+                            }
+                            Read::End => {
+                                going = false;
+                            }
+                            Read::Failed(reason) => {
+                                going = false;
+                                failed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, chunk);
+            file_close(file);
+            if failed {
+                return -1;
+            }
+        }
+    }
+    if open_line {
+        return lines + 1;
+    }
+    return lines;
+}
+
+fn offence[&h, &p](heap: &!h Heap, out: buffer.Buffer, path: &p [byte], lines: int) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, path);
+    b = buffer.append(heap, b, ": ");
+    b = buffer.push_nat(heap, b, lines);
+    b = buffer.append(heap, b, " lines, over the ");
+    b = buffer.push_nat(heap, b, budget());
+    return buffer.append(heap, b, "-line budget. Split it by concern (CONTRIBUTING.md, \"Files\")\n");
+}
+
+// The directory at `path`, where the root (`""`) is `.`.
+fn open_here[&f, &p](fs: &f Fs(""), path: &p [byte]) -> [fs_read("")] DirOpened {
+    if len(path) == 0 {
+        return open_dir(fs, ".");
+    }
+    return open_dir(fs, path);
+}
+
+// What is wrong beneath the directory at `path` (`""` is the root, which is opened as `.`), added to `found`: one line for each source file over the budget,
+// and one for each that could not be read.
+fn walk[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], found: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] buffer.Buffer {
+    var out = found;
+    match open_here(fs, path) {
+        DirOpened::Failed(reason) => {
+            return buffer.append(heap, out, "cannot read a directory\n");
+        }
+        DirOpened::Ok(opened) => {
+            var dir = opened;
+            borrow dir as &d in {
+                let names = dirs.list(heap, d, 1000000);
+                borrow names as &n in {
+                    var k = 0;
+                    while k < dirs.count(n) {
+                        let name = dirs.name(n, k);
+                        let kind = dirs.kind(n, k);
+                        let sub = joined(heap, path, name);
+                        borrow sub as &s in {
+                            var directory = kind == dirs.kind_directory();
+                            if kind == dirs.kind_link() || kind == dirs.kind_unknown() {
+                                match open_dir(fs, buffer.bytes(s)) {
+                                    DirOpened::Ok(linked) => {
+                                        dir_close(linked);
+                                        directory = true;
+                                    }
+                                    DirOpened::Failed(reason) => {
+                                    }
+                                }
+                            }
+                            if directory {
+                                if !bytes.equal(name, "target") && !bytes.starts_with(name, ".") {
+                                    out = walk(heap, fs, buffer.bytes(s), out);
+                                }
+                            } else if is_source(name) {
+                                let lines = lines_of(heap, fs, buffer.bytes(s));
+                                if lines < 0 {
+                                    out = buffer.append(heap, buffer.append(heap, out, buffer.bytes(s)), ": cannot be read\n");
+                                } else if lines > budget() {
+                                    out = offence(heap, out, buffer.bytes(s), lines);
+                                }
+                            }
+                        }
+                        buffer.drop(heap, sub);
+                        k = k + 1;
+                    }
+                }
+                dirs.drop(heap, names);
+            }
+            dir_close(dir);
+        }
+    }
+    return out;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow fs as &f in {
+                let found = walk(h, f, "", buffer.empty(h, 1024));
+                borrow found as &fb in {
+                    if buffer.size(fb) > 0 {
+                        status = 1;
+                        buffer.write(i, fb);
+                    }
+                }
+                buffer.drop(h, found);
+            }
+        }
+    }
+    release(fs);
+    release(heap);
+    release(io);
+    return status;
+}
