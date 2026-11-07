@@ -1,0 +1,648 @@
+edition 7;
+module fixtures_run;
+
+// run.cho -- the fixture walkers of `crates/cancho/tests/conformance/corpus.rs`, in cancho (`docs/gate.md` step G3). Run from the root of the repository
+// (build it, then run the binary: `cancho run` takes no arguments for the program):
+//
+//     cancho build tests/run.cho --std -o /tmp/fixtures-run && /tmp/fixtures-run CANCHO KIND [--compiler NAME] [--cache DIR] [--selfhost]
+//
+// CANCHO is the `cancho` to test; KIND is `accept` (every `tests/accept/*.cho` is built, run and compared with its `//~` header), `reject` (every
+// `tests/reject/*.cho` is refused with the header's `ERROR` text, at a location, by the rule its `RULE` names) or `examples` (every `examples/*.cho`,
+// which must declare a `STDOUT`, is built and run like an accept fixture). `--compiler NAME` runs `cancho` with `CANCHO_COMPILER=NAME`, and `--cache DIR` with `CANCHO_CACHE=DIR` (a program has no environment to pass on, so what `cancho` is to be given is said here). `--selfhost`
+// says the compiler under test is the one written in cancho: a refusal is judged by its status, a location and its rule, not by the text (it says the rule's sentence,
+// `docs/removing-rust.md` phase 1b), and the programs of `tests/reject.known` and `tests/run.known` (`KIND/NAME.cho  # why`) are left out: what it cannot do yet. A failure is one line, `KIND/NAME: why`, and the
+// exit status is 1; otherwise `ok: N KIND fixtures`.
+//
+// The header is a comment the compiler ignores, a line each: `//~ STDIN`, `//~ STDOUT`, `//~ STDERR` (checked even when a fixture declares none),
+// `//~ EXIT` (default 0), `//~ ERROR`, `//~ RULE`, `//~ TARGET` (the triple `check` is asked about).
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import std.io as console;
+import std.process;
+
+// All of a file: `failed` is 0 or 1.
+res struct Contents {
+    data: buffer.Buffer,
+    failed: int,
+}
+
+fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] Contents {
+    var out = buffer.empty(heap, 4096);
+    var trouble = 0;
+    match open_read(fs, path) {
+        Opened::Failed(reason) => {
+            trouble = 1;
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var chunk = buffer.empty(heap, 65536);
+            borrow mut file as &!handle in {
+                var going = true;
+                while going {
+                    var got = 0;
+                    borrow mut chunk as &!c in {
+                        match file_read(handle, buffer.room(c)) {
+                            Read::Got(n) => {
+                                got = n;
+                                buffer.filled(c, n);
+                            }
+                            Read::End => {
+                                going = false;
+                            }
+                            Read::Failed(reason) => {
+                                going = false;
+                                trouble = 1;
+                            }
+                        }
+                    }
+                    if got > 0 {
+                        borrow chunk as &c in {
+                            out = buffer.append(heap, out, buffer.bytes(c));
+                        }
+                        borrow mut chunk as &!c in {
+                            buffer.clear(c);
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, chunk);
+            file_close(file);
+        }
+    }
+    return Contents { data: out, failed: trouble };
+}
+
+// How a program ended, as `kind` and `code`: 0 it answered `code`, 1 it was killed by a signal, 2 it did not finish in time, 3 it wrote too much, 4 it
+// could not be watched, 5 it did not start.
+res struct Ended {
+    out: buffer.Buffer,
+    err: buffer.Buffer,
+    kind: int,
+    code: int,
+}
+
+// The program at `exe` run with the arguments in `command` (each followed by a NUL, not counting its own name; consumed), `input` on its standard input and `env` (each entry
+// followed by a NUL) as its environment, for at most a minute.
+fn spawn_capture[&h, &x, &c, &p, &n, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], command: buffer.Buffer, input: &n [byte], env: &e [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var out = buffer.empty(heap, 0);
+    var err = buffer.empty(heap, 0);
+    var kind = 5;
+    var code = 0;
+    match process.channels_with_errors() {
+        process.ChannelsWithErrors::Failed(e0) => {
+        }
+        process.ChannelsWithErrors::Ok(to_child, child_in, from_child, child_out, from_errors, child_errors) => {
+            borrow command as &cb in {
+                match exec_spawn(exec, exe, buffer.bytes(cb), env, Stdio::Pipe(child_in), Stdio::Pipe(child_out), Stdio::Pipe(child_errors)) {
+                    Spawned::Failed(e1) => {
+                        process.close(to_child, from_child);
+                        pipe_close(from_errors);
+                    }
+                    Spawned::Ok(child) => {
+                        let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 67108864, 67108864, 60000);
+                        buffer.drop(heap, out);
+                        buffer.drop(heap, err);
+                        out = got;
+                        err = errors;
+                        match ran {
+                            process.Ran::Code(n0) => {
+                                kind = 0;
+                                code = n0;
+                            }
+                            process.Ran::Signaled(s0) => {
+                                kind = 1;
+                            }
+                            process.Ran::TimedOut => {
+                                kind = 2;
+                            }
+                            process.Ran::TooMuch => {
+                                kind = 3;
+                            }
+                            process.Ran::Failed(e2) => {
+                                kind = 4;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, command);
+    return Ended { out: out, err: err, kind: kind, code: code };
+}
+
+// The value of each `//~ KEY value` line of `source`, each followed by a newline.
+fn collect[&h, &s, &k](heap: &!h Heap, source: &s [byte], key: &k [byte]) -> [heap] buffer.Buffer {
+    var prefix = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 16), "//~ "), key);
+    prefix = buffer.push(heap, prefix, byte_of(' '));
+    var out = buffer.empty(heap, 64);
+    let lines = bytes.count_byte(source, 10) + 1;
+    var n = 1;
+    borrow prefix as &pb in {
+        while n <= lines {
+            let line = bytes.trim(bytes.field(source, 10, n));
+            if bytes.starts_with(line, buffer.bytes(pb)) {
+                out = buffer.append(heap, out, line[buffer.size(pb)..len(line)]);
+                out = buffer.push(heap, out, byte_of('\n'));
+            }
+            n = n + 1;
+        }
+    }
+    buffer.drop(heap, prefix);
+    return out;
+}
+
+// The first value of a directive, or `fallback` if there is none.
+fn first_value[&h, &s, &k, &d](heap: &!h Heap, source: &s [byte], key: &k [byte], fallback: &d [byte]) -> [heap] buffer.Buffer {
+    let all = collect(heap, source, key);
+    var out = buffer.empty(heap, 16);
+    borrow all as &a in {
+        if len(buffer.bytes(a)) == 0 {
+            out = buffer.append(heap, out, fallback);
+        } else {
+            out = buffer.append(heap, out, bytes.field(buffer.bytes(a), 10, 1));
+        }
+    }
+    buffer.drop(heap, all);
+    return out;
+}
+
+// The number a text spells, in decimal; -1 when it is not one.
+fn number_of[&t](text: &t [byte]) -> [] int {
+    let digits = bytes.trim(text);
+    if len(digits) == 0 {
+        return -1;
+    }
+    var n = 0;
+    var k = 0;
+    while k < len(digits) {
+        let c = int_of(digits[k]);
+        if !bytes.is_digit(c) {
+            return -1;
+        }
+        n = n * 10 + bytes.digit_of(c);
+        k = k + 1;
+    }
+    return n;
+}
+
+// One failure: `KIND/NAME: why` and, when there is text, what the program said (at most 1,500 bytes).
+fn failure[&h, &a, &n, &w, &t](heap: &!h Heap, report: buffer.Buffer, kind: &a [byte], name: &n [byte], why: &w [byte], text: &t [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, report, kind);
+    b = buffer.push(heap, b, byte_of('/'));
+    b = buffer.append(heap, b, name);
+    b = buffer.append(heap, b, ": ");
+    b = buffer.append(heap, b, why);
+    b = buffer.push(heap, b, byte_of('\n'));
+    if len(text) > 0 {
+        var shown = len(text);
+        if shown > 1500 {
+            shown = 1500;
+        }
+        b = buffer.append(heap, b, text[0..shown]);
+        if text[shown - 1] != byte_of('\n') {
+            b = buffer.push(heap, b, byte_of('\n'));
+        }
+    }
+    return b;
+}
+
+// The environment a `cancho` is run with: a `PATH` and, for `compiler`, `CANCHO_COMPILER`. A fixture that opens a camera, a microphone or a speaker is
+// built by the Rust compiler (the compiler in cancho writes no code for the edition-12 device verbs yet, #665).
+fn environment[&h, &c, &k, &s](heap: &!h Heap, compiler: &c [byte], cache: &k [byte], source: &s [byte]) -> [heap] buffer.Buffer {
+    var env = buffer.append(heap, buffer.empty(heap, 96), "PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin");
+    env = buffer.push(heap, env, byte_of(0));
+    var chosen = compiler;
+    if bytes.find(source, "camera_open(") >= 0 || bytes.find(source, "mic_open(") >= 0 || bytes.find(source, "speaker_open(") >= 0 {
+        chosen = "rust";
+    }
+    if len(chosen) > 0 {
+        env = buffer.append(heap, env, "CANCHO_COMPILER=");
+        env = buffer.append(heap, env, chosen);
+        env = buffer.push(heap, env, byte_of(0));
+    }
+    if len(cache) > 0 {
+        env = buffer.append(heap, env, "CANCHO_CACHE=");
+        env = buffer.append(heap, env, cache);
+        env = buffer.push(heap, env, byte_of(0));
+    }
+    return env;
+}
+
+// One argument of a command: `text` and the NUL that ends it.
+fn word[&h, &t](heap: &!h Heap, list: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    return buffer.push(heap, buffer.append(heap, list, text), byte_of(0));
+}
+
+// Whether `names` (the lines of a `.known` file: a program's file name, then `# why`) lists `name`.
+fn is_known[&k, &n](known: &k [byte], name: &n [byte]) -> [] bool {
+    let lines = bytes.count_byte(known, 10) + 1;
+    var at = 1;
+    while at <= lines {
+        let line = bytes.field(known, 10, at);
+        var stop = 0;
+        while stop < len(line) && line[stop] != byte_of('#') {
+            stop = stop + 1;
+        }
+        let head = bytes.trim(line[0..stop]);
+        if len(head) > 0 && bytes.equal(head, name) {
+            return true;
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// Whether `known` lists the program: by its file name for a reject fixture (`tests/reject.known`), by `KIND/NAME.cho` for the others (`tests/run.known`).
+fn skipped[&h, &k, &l, &n](heap: &!h Heap, known: &k [byte], mode: int, label: &l [byte], name: &n [byte]) -> [heap] bool {
+    if len(known) == 0 {
+        return false;
+    }
+    if mode == 1 {
+        return is_known(known, name);
+    }
+    let key = joined(heap, label, name);
+    var listed = false;
+    borrow key as &kb in {
+        listed = is_known(known, buffer.bytes(kb));
+    }
+    buffer.drop(heap, key);
+    return listed;
+}
+
+// What a built and run program did against what its header says it should: standard output, standard error and the exit status, each one failure.
+fn judge[&h, &l, &n, &s](heap: &!h Heap, report: buffer.Buffer, label: &l [byte], name: &n [byte], source: &s [byte], ended: Ended) -> [heap] buffer.Buffer {
+    var rep = report;
+    let want_out = collect(heap, source, "STDOUT");
+    let want_err = collect(heap, source, "STDERR");
+    let want_exit = first_value(heap, source, "EXIT", "0");
+    let Ended { out, err, kind, code } = ended;
+    borrow out as &o in {
+        borrow want_out as &w in {
+            if !bytes.equal(buffer.bytes(o), buffer.bytes(w)) {
+                rep = failure(heap, rep, label, name, "printed the wrong thing", buffer.bytes(o));
+            }
+        }
+    }
+    borrow err as &e in {
+        borrow want_err as &w in {
+            if !bytes.equal(buffer.bytes(e), buffer.bytes(w)) {
+                rep = failure(heap, rep, label, name, "said the wrong thing on standard error", buffer.bytes(e));
+            }
+        }
+    }
+    borrow want_exit as &x in {
+        if kind != 0 {
+            rep = failure(heap, rep, label, name, "did not exit by itself (killed, timed out, or could not be run)", "");
+        } else if code != number_of(buffer.bytes(x)) {
+            var why = buffer.append(heap, buffer.empty(heap, 64), "exited with status ");
+            why = buffer.push_nat(heap, why, code);
+            borrow why as &wb in {
+                rep = failure(heap, rep, label, name, buffer.bytes(wb), "");
+            }
+            buffer.drop(heap, why);
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    buffer.drop(heap, want_out);
+    buffer.drop(heap, want_err);
+    buffer.drop(heap, want_exit);
+    return rep;
+}
+
+// An accept fixture or an example: `bin build SOURCE --std -o EXE`, then EXE with the header's `STDIN` on its standard input.
+fn check_program[&h, &x, &c, &f, &b, &m, &r, &s, &l, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &r [byte], source_path: &s [byte], label: &l [byte], name: &n [byte], report: buffer.Buffer, must_print: bool) -> [heap, exec(""), clock, poll, fs_read(""), fs_write(""), file_read] buffer.Buffer {
+    var rep = report;
+    let Contents { data, failed } = read_file(heap, fs, source_path);
+    var exe = buffer.append(heap, buffer.empty(heap, 64), "/tmp/cancho-run-");
+    exe = buffer.append(heap, exe, name);
+    borrow data as &src in {
+        let text = buffer.bytes(src);
+        let declared = collect(heap, text, "STDOUT");
+        var declares = false;
+        borrow declared as &db in {
+            declares = buffer.size(db) > 0;
+        }
+        if failed != 0 {
+            rep = failure(heap, rep, label, name, "cannot be read", "");
+        } else if must_print && !declares {
+            rep = failure(heap, rep, label, name, "declares no expected output; every example states what it prints", "");
+        } else {
+            let env = environment(heap, compiler, cache, text);
+            var command = word(heap, buffer.empty(heap, 64), "build");
+            command = word(heap, command, source_path);
+            command = word(heap, command, "--std");
+            command = word(heap, command, "-o");
+            borrow exe as &eb in {
+                command = word(heap, command, buffer.bytes(eb));
+            }
+            borrow env as &nb in {
+                let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, bin, command, "", buffer.bytes(nb));
+                if kind != 0 || code != 0 {
+                    borrow err as &e in {
+                        rep = failure(heap, rep, label, name, "should compile, but the compiler said", buffer.bytes(e));
+                    }
+                } else {
+                    let input = collect(heap, text, "STDIN");
+                    borrow exe as &eb in {
+                        borrow input as &ib in {
+                            let ran = spawn_capture(heap, exec, clock, buffer.bytes(eb), buffer.empty(heap, 0), buffer.bytes(ib), "PATH=/usr/bin:/bin\0");
+                            rep = judge(heap, rep, label, name, text, ran);
+                        }
+                    }
+                    buffer.drop(heap, input);
+                }
+                buffer.drop(heap, out);
+                buffer.drop(heap, err);
+            }
+            buffer.drop(heap, env);
+        }
+        buffer.drop(heap, declared);
+    }
+    borrow exe as &eb in {
+        let removed = fs_remove(fs, buffer.bytes(eb));
+    }
+    buffer.drop(heap, exe);
+    buffer.drop(heap, data);
+    return rep;
+}
+
+// `bin check SOURCE [--output json] [--target T]`.
+fn run_check[&h, &x, &c, &b, &s, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], source_path: &s [byte], target: &t [byte], json: bool) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "check");
+    command = word(heap, command, source_path);
+    if json {
+        command = word(heap, command, "--output");
+        command = word(heap, command, "json");
+    }
+    if len(target) > 0 {
+        command = word(heap, command, "--target");
+        command = word(heap, command, target);
+    }
+    return spawn_capture(heap, exec, clock, bin, command, "", "PATH=/usr/bin:/bin\0");
+}
+
+// The prose of a refusal: status 1, each `ERROR` text, a location.
+fn check_prose[&h, &x, &c, &b, &s, &t, &e, &l, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], source_path: &s [byte], target: &t [byte], errors: &e [byte], label: &l [byte], name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let Ended { out, err, kind, code } = run_check(heap, exec, clock, bin, source_path, target, false);
+    borrow err as &eb in {
+        let said = buffer.bytes(eb);
+        if kind != 0 || code != 1 {
+            rep = failure(heap, rep, label, name, "should be refused with exit status 1", said);
+        } else {
+            let wanted = bytes.count_byte(errors, 10);
+            var at = 1;
+            while at <= wanted {
+                if bytes.find(said, bytes.field(errors, 10, at)) < 0 {
+                    rep = failure(heap, rep, label, name, "should have been refused with a text it did not say", said);
+                }
+                at = at + 1;
+            }
+            if bytes.find(said, ".cho:") < 0 {
+                rep = failure(heap, rep, label, name, "was refused without a location", said);
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// The rule of a refusal: the one `check --output json` reports is the one the fixture names.
+fn check_rule[&h, &x, &c, &b, &s, &t, &r, &l, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], source_path: &s [byte], target: &t [byte], rule: &r [byte], label: &l [byte], name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    if len(rule) == 0 {
+        return failure(heap, rep, label, name, "declares no `//~ RULE`", "");
+    }
+    let Ended { out, err, kind, code } = run_check(heap, exec, clock, bin, source_path, target, true);
+    borrow out as &ob in {
+        let json = buffer.bytes(ob);
+        let found = bytes.find(json, "\"rule\": \"");
+        if found < 0 {
+            rep = failure(heap, rep, label, name, "reported no rule", json);
+        } else {
+            var end = found + 9;
+            while end < len(json) && json[end] != byte_of('"') {
+                end = end + 1;
+            }
+            if !bytes.equal(json[found + 9..end], rule) {
+                var why = buffer.append(heap, buffer.empty(heap, 64), "is a fixture for `");
+                why = buffer.append(heap, why, rule);
+                why = buffer.append(heap, why, "` and reported `");
+                why = buffer.append(heap, why, json[found + 9..end]);
+                why = buffer.push(heap, why, byte_of('`'));
+                borrow why as &wb in {
+                    rep = failure(heap, rep, label, name, buffer.bytes(wb), "");
+                }
+                buffer.drop(heap, why);
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// A reject fixture: refused (status 1) with each `ERROR` text, at a location, by the rule its `RULE` names.
+fn check_refusal[&h, &x, &c, &f, &b, &s, &l, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], source_path: &s [byte], label: &l [byte], name: &n [byte], report: buffer.Buffer, selfhost: bool) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var rep = report;
+    let Contents { data, failed } = read_file(heap, fs, source_path);
+    borrow data as &src in {
+        let text = buffer.bytes(src);
+        let errors = collect(heap, text, "ERROR");
+        let rule = first_value(heap, text, "RULE", "");
+        let target = first_value(heap, text, "TARGET", "");
+        var declares = false;
+        borrow errors as &db in {
+            declares = buffer.size(db) > 0;
+        }
+        if failed != 0 {
+            rep = failure(heap, rep, label, name, "cannot be read", "");
+        } else if !declares && !selfhost {
+            rep = failure(heap, rep, label, name, "declares no expected error", "");
+        } else {
+            borrow target as &tb in {
+                borrow errors as &eb in {
+                    if selfhost {
+                        rep = check_prose(heap, exec, clock, bin, source_path, buffer.bytes(tb), "", label, name, rep);
+                    } else {
+                        rep = check_prose(heap, exec, clock, bin, source_path, buffer.bytes(tb), buffer.bytes(eb), label, name, rep);
+                    }
+                }
+                borrow rule as &rb in {
+                    rep = check_rule(heap, exec, clock, bin, source_path, buffer.bytes(tb), buffer.bytes(rb), label, name, rep);
+                }
+            }
+        }
+        buffer.drop(heap, errors);
+        buffer.drop(heap, rule);
+        buffer.drop(heap, target);
+    }
+    buffer.drop(heap, data);
+    return rep;
+}
+
+// `into` and what is in the file at `path` (nothing if it cannot be read).
+fn append_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], into: buffer.Buffer) -> [heap, fs_read(""), file_read] buffer.Buffer {
+    let Contents { data, failed } = read_file(heap, fs, path);
+    var out = into;
+    borrow data as &db in {
+        out = buffer.append(heap, out, buffer.bytes(db));
+    }
+    buffer.drop(heap, data);
+    return out;
+}
+
+// `dir/name`.
+fn joined[&h, &d, &n](heap: &!h Heap, directory: &d [byte], name: &n [byte]) -> [heap] buffer.Buffer {
+    var path = buffer.append(heap, buffer.empty(heap, len(directory) + len(name) + 1), directory);
+    path = buffer.push(heap, path, byte_of('/'));
+    return buffer.append(heap, path, name);
+}
+
+// Every `.cho` file of `directory`, checked as `mode` says (0 an accept fixture, 1 a reject fixture, 2 an example); the report with what is wrong added,
+// and how many were checked. A name in `known` is left out.
+fn walk[&h, &x, &c, &f, &b, &m, &r, &d, &l, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &r [byte], directory: &d [byte], label: &l [byte], mode: int, known: &k [byte], selfhost: bool, report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), fs_write(""), file_read, dir_read] (buffer.Buffer, int) {
+    var rep = report;
+    var checked = 0;
+    match open_dir(fs, directory) {
+        DirOpened::Failed(reason) => {
+            rep = failure(heap, rep, label, directory, "cannot read the directory", "");
+        }
+        DirOpened::Ok(opened) => {
+            var dir = opened;
+            borrow dir as &dh in {
+                let names = dirs.list(heap, dh, 100000);
+                borrow names as &nb in {
+                    var at = 0;
+                    while at < dirs.count(nb) {
+                        let name = dirs.name(nb, at);
+                        if dirs.kind(nb, at) == dirs.kind_file() && bytes.ends_with(name, ".cho") && !skipped(heap, known, mode, label, name) {
+                            let stem = name[0..len(name) - 4];
+                            let path = joined(heap, directory, name);
+                            borrow path as &pb in {
+                                if mode == 1 {
+                                    rep = check_refusal(heap, exec, clock, fs, bin, buffer.bytes(pb), label, stem, rep, selfhost);
+                                } else {
+                                    rep = check_program(heap, exec, clock, fs, bin, compiler, cache, buffer.bytes(pb), label, stem, rep, mode == 2);
+                                }
+                            }
+                            buffer.drop(heap, path);
+                            checked = checked + 1;
+                        }
+                        at = at + 1;
+                    }
+                }
+                dirs.drop(heap, names);
+            }
+            dir_close(dir);
+        }
+    }
+    return (rep, checked);
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), fs_write(""), file_read, dir_read] int {
+    if arg_count(args) < 3 {
+        console.error_all(io, "usage: fixtures-run CANCHO accept|reject|examples [--compiler NAME] [--cache DIR] [--selfhost]\n");
+        return 2;
+    }
+    let bin = arg(args, 1);
+    let kind = arg(args, 2);
+    var compiler = buffer.empty(heap, 16);
+    var cache = buffer.empty(heap, 16);
+    var selfhost = false;
+    var at = 3;
+    while at < arg_count(args) {
+        if bytes.equal(arg(args, at), "--selfhost") {
+            selfhost = true;
+        } else if bytes.equal(arg(args, at), "--compiler") && at + 1 < arg_count(args) {
+            compiler = buffer.append(heap, compiler, arg(args, at + 1));
+            at = at + 1;
+        } else if bytes.equal(arg(args, at), "--cache") && at + 1 < arg_count(args) {
+            cache = buffer.append(heap, cache, arg(args, at + 1));
+            at = at + 1;
+        }
+        at = at + 1;
+    }
+    var mode = 0;
+    var directory = "tests/accept";
+    if bytes.equal(kind, "reject") {
+        mode = 1;
+        directory = "tests/reject";
+    } else if bytes.equal(kind, "examples") {
+        mode = 2;
+        directory = "examples";
+    } else if !bytes.equal(kind, "accept") {
+        console.error_all(io, "the kind of fixture is accept, reject or examples\n");
+        buffer.drop(heap, compiler);
+        buffer.drop(heap, cache);
+        return 2;
+    }
+    var known = buffer.empty(heap, 16);
+    if selfhost {
+        known = buffer.append(heap, known, "");
+        known = append_file(heap, fs, "tests/reject.known", known);
+        known = append_file(heap, fs, "tests/run.known", known);
+    }
+    var status = 0;
+    borrow compiler as &cb in {
+        borrow known as &kb in {
+            borrow cache as &rb in {
+                let (found, checked) = walk(heap, exec, clock, fs, bin, buffer.bytes(cb), buffer.bytes(rb), directory, kind, mode, buffer.bytes(kb), selfhost, buffer.empty(heap, 1024));
+                borrow found as &fb in {
+                    if buffer.size(fb) > 0 {
+                        status = 1;
+                        buffer.write(io, fb);
+                    } else {
+                        var line = buffer.append(heap, buffer.empty(heap, 64), "ok: ");
+                        line = buffer.push_nat(heap, line, checked);
+                        line = buffer.append(heap, line, " ");
+                        line = buffer.append(heap, line, kind);
+                        line = buffer.append(heap, line, " fixtures\n");
+                        borrow line as &lb in {
+                            buffer.write(io, lb);
+                        }
+                        buffer.drop(heap, line);
+                    }
+                }
+                buffer.drop(heap, found);
+            }
+        }
+    }
+    buffer.drop(heap, cache);
+    buffer.drop(heap, compiler);
+    buffer.drop(heap, known);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
