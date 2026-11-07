@@ -60,7 +60,9 @@ is settled on `http_server_bytes.rs` (34 lines) before it is applied to `backend
 
 | # | Step | Done when |
 |---|---|---|
-| G1 | `scripts/files-budget.cho` | it refuses the same files `files.rs` does, measured on the repository and on a copy with one file over the budget |
+| G1 (**done**) | `scripts/files-budget.cho` | it refuses the same files `files.rs` does, measured on the repository and on a copy with one file over the budget |
+
+G1, measured: on the repository both `files.rs` and `scripts/files-budget.cho` find nothing; on a planted tree the program refuses a 2,001-line `.rs`, `.c` and `.py` file (the last with no newline at its end), allows 2,000 lines, skips `target/`, a hidden directory and a `.txt` file, and follows a link to a directory, as `files.rs` does. `files.rs` stays until G2 runs the program from `gate.sh` in CI (a check is moved or deleted, never both left); it is not removed here so that no commit has no budget check.
 | G2 | `scripts/gate.sh` with stages 1 to 3 and 5; runs in CI as its own job, not yet required | green on `main`, red on a planted failure in each stage |
 | G3 | `tests/run.cho` (fixture walker) | its result equals the Rust walkers' on all 619 fixtures; the Rust walkers deleted in the same PR |
 | G4 | the command tests, one file per PR | each file's tests pass as `_test.cho` under both compilers; the `.rs` deleted in the same PR |
