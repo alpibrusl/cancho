@@ -1,0 +1,385 @@
+edition 7;
+module selfhost.regen;
+
+// regen.cho -- the generated modules of the command line that hold text: `guidelines.cho` (`AGENTS.md`), `stdorder.cho` (`std/std.files`) and
+// `stdsource.cho` (`std/*.cho`), written by cancho (`docs/removing-rust.md` phase 2; the Rust generators of `tests/conformance/selfhost/statics.rs` are
+// the oracle this is checked against, and go when the Rust tests do).
+//
+//     cancho run examples/selfhost/regen.cho examples/selfhost/{filewrite,walk,clibase,...}.cho --std -- [--check]
+//
+// Run from the root of the repository. Without `--check` it writes the modules; with it, it writes nothing and exits 1 for each module that is not
+// what the sources make it. A cancho string literal is one line, so a text is a function of appends to a buffer, a line each, in parts of forty lines.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.filewrite;
+
+// All of a file: `failed` is 0, or an errno (at least 1). This module reads and writes the modules the command line is made of, so it imports none of them.
+res struct Contents {
+    data: buffer.Buffer,
+    failed: int,
+}
+
+fn read_file[&h, &f](heap: &!h Heap, fs: &f Fs(""), path: buffer.Buffer) -> [heap, fs_read(""), file_read] Contents {
+    var out = buffer.empty(heap, 4096);
+    var trouble = 0;
+    borrow path as &pb in {
+        match open_read(fs, buffer.bytes(pb)) {
+            Opened::Failed(reason) => {
+                trouble = reason;
+                if trouble == 0 {
+                    trouble = 1;
+                }
+            }
+            Opened::Ok(opened) => {
+                var file = opened;
+                var chunk = buffer.empty(heap, 65536);
+                borrow mut file as &!handle in {
+                    var going = true;
+                    while going {
+                        var got = 0;
+                        borrow mut chunk as &!c in {
+                            match file_read(handle, buffer.room(c)) {
+                                Read::Got(n) => {
+                                    got = n;
+                                    buffer.filled(c, n);
+                                }
+                                Read::End => {
+                                    going = false;
+                                }
+                                Read::Failed(reason) => {
+                                    going = false;
+                                    trouble = reason;
+                                    if trouble == 0 {
+                                        trouble = 1;
+                                    }
+                                }
+                            }
+                        }
+                        if got > 0 {
+                            borrow chunk as &c in {
+                                out = buffer.append(heap, out, buffer.bytes(c));
+                            }
+                            borrow mut chunk as &!c in {
+                                buffer.clear(c);
+                            }
+                        }
+                    }
+                }
+                buffer.drop(heap, chunk);
+                file_close(file);
+            }
+        }
+    }
+    buffer.drop(heap, path);
+    return Contents { data: out, failed: trouble };
+}
+
+fn say[&h, &i, &p](heap: &!h Heap, io: &!i Io, head: &static [byte], path: &p [byte]) -> [heap, io_write] int {
+    var line = buffer.append(heap, buffer.empty(heap, 64), head);
+    line = buffer.append(heap, line, path);
+    line = buffer.append(heap, line, "\n");
+    borrow line as &l in {
+        buffer.write(io, l);
+    }
+    buffer.drop(heap, line);
+    return 0;
+}
+
+// The file `std/NAME`.
+fn read_std[&h, &f, &n](heap: &!h Heap, fs: &f Fs(""), name: &n [byte]) -> [heap, fs_read(""), file_read] Contents {
+    var path = buffer.append(heap, buffer.empty(heap, 64), "std/");
+    path = buffer.append(heap, path, name);
+    return read_file(heap, fs, path);
+}
+
+fn owned[&h, &p](heap: &!h Heap, path: &p [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.empty(heap, 64), path);
+}
+
+// One line of text as the body of a literal: the escapes a cancho literal has (`has_control` finds the texts that cannot be spelled).
+fn escape[&h, &l](heap: &!h Heap, out: buffer.Buffer, line: &l [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    var k = 0;
+    while k < len(line) {
+        let c = int_of(line[k]);
+        if c == 92 {
+            b = buffer.append(heap, b, "\\\\");
+        } else if c == 34 {
+            b = buffer.append(heap, b, "\\\"");
+        } else if c == 10 {
+            b = buffer.append(heap, b, "\\n");
+        } else if c == 13 {
+            b = buffer.append(heap, b, "\\r");
+        } else if c == 9 {
+            b = buffer.append(heap, b, "\\t");
+        } else if c == 0 {
+            b = buffer.append(heap, b, "\\0");
+        } else {
+            b = buffer.push(heap, b, line[k]);
+        }
+        k = k + 1;
+    }
+    return b;
+}
+
+// Whether `text` holds a control character that a literal cannot spell (every one but newline, return, tab and NUL), which no generated text may.
+fn has_control[&t](text: &t [byte]) -> [] bool {
+    var k = 0;
+    while k < len(text) {
+        let c = int_of(text[k]);
+        if c < 32 && c != 10 && c != 13 && c != 9 && c != 0 || c == 127 {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+// The end of the line that starts at `at`, newline included (or the end of the text).
+fn line_end[&t](text: &t [byte], at: int) -> [] int {
+    var k = at;
+    while k < len(text) {
+        if text[k] == byte_of('\n') {
+            return k + 1;
+        }
+        k = k + 1;
+    }
+    return k;
+}
+
+fn lines_of[&t](text: &t [byte]) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at < len(text) {
+        at = line_end(text, at);
+        n = n + 1;
+    }
+    return n;
+}
+
+fn part_name[&h, &n](heap: &!h Heap, out: buffer.Buffer, name: &n [byte], part: int) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, name);
+    b = buffer.push(heap, b, byte_of('_'));
+    return buffer.push_nat(heap, b, part);
+}
+
+// `text` as functions that append it to a buffer, named `name_0`, `name_1`... and one `pub fn name` that calls them all.
+fn writer[&h, &n, &t](heap: &!h Heap, out: buffer.Buffer, name: &n [byte], text: &t [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    let total = lines_of(text);
+    let parts = (total + 39) / 40;
+    var at = 0;
+    var part = 0;
+    while part < parts {
+        b = buffer.append(heap, b, "\nfn ");
+        b = part_name(heap, b, name, part);
+        b = buffer.append(heap, b, "[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {\n    var b = out;\n");
+        var k = 0;
+        while k < 40 && at < len(text) {
+            let to = line_end(text, at);
+            b = buffer.append(heap, b, "    b = buffer.append(heap, b, \"");
+            b = escape(heap, b, text[at..to]);
+            b = buffer.append(heap, b, "\");\n");
+            at = to;
+            k = k + 1;
+        }
+        b = buffer.append(heap, b, "    return b;\n}\n");
+        part = part + 1;
+    }
+    b = buffer.append(heap, b, "\npub fn ");
+    b = buffer.append(heap, b, name);
+    b = buffer.append(heap, b, "[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {\n    var b = out;\n");
+    var n = 0;
+    while n < parts {
+        b = buffer.append(heap, b, "    b = ");
+        b = part_name(heap, b, name, n);
+        b = buffer.append(heap, b, "(heap, b);\n");
+        n = n + 1;
+    }
+    b = buffer.append(heap, b, "    return b;\n}\n");
+    return b;
+}
+
+fn header[&h, &m, &w, &t](heap: &!h Heap, which: &m [byte], what: &w [byte], test: &t [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.empty(heap, 4096), "edition 7;\nmodule selfhost.");
+    b = buffer.append(heap, b, which);
+    b = buffer.append(heap, b, ";\n\n// ");
+    b = buffer.append(heap, b, which);
+    b = buffer.append(heap, b, ".cho -- ");
+    b = buffer.append(heap, b, what);
+    b = buffer.append(heap, b, " (`docs/cli-in-cancho.md`).\n// GENERATED by `selfhost.regen` (examples/selfhost/regen.cho; was the test `selfhost::statics::");
+    b = buffer.append(heap, b, test);
+    b = buffer.append(heap, b, "`): change the source, then run it again.\n\nimport std.buffer;\n");
+    return b;
+}
+
+// The names of `std/std.files`, one per line, without the `.cho`, each ended by `end` (a newline for the list of `stdsource.cho`, a NUL for `stdorder.cho`).
+fn names_of[&h, &t](heap: &!h Heap, list: &t [byte], end: byte) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 1024);
+    var at = 0;
+    while at < len(list) {
+        let to = line_end(list, at);
+        var stop = to;
+        if stop > at && list[stop - 1] == byte_of('\n') {
+            stop = stop - 1;
+        }
+        if stop - at > 4 {
+            b = buffer.append(heap, b, list[at..stop - 4]);
+            b = buffer.push(heap, b, end);
+        }
+        at = to;
+    }
+    return b;
+}
+
+fn order_module[&h, &t](heap: &!h Heap, list: &t [byte]) -> [heap] buffer.Buffer {
+    var out = header(heap, "stdorder", "the standard library's files, in the order `--std` adds them", "std_order_module_is_the_std_table_of_cancho");
+    let names = names_of(heap, list, byte_of(0));
+    borrow names as &nb in {
+        out = writer(heap, out, "names", buffer.bytes(nb));
+    }
+    buffer.drop(heap, names);
+    return out;
+}
+
+// One function per file of `std/` that appends its text, and `find`, which answers the text of the file called NAME or nothing. Zero, or the errno of the file that could not be read, in `failed`.
+fn source_module[&h, &f, &t](heap: &!h Heap, fs: &f Fs(""), list: &t [byte]) -> [heap, fs_read(""), file_read] Contents {
+    var out = header(heap, "stdsource", "the files of the standard library, for `--std`", "std_source_module_is_the_std_directory");
+    out = buffer.append(heap, out, "import std.bytes;\n");
+    var finds = buffer.empty(heap, 4096);
+    var n = 0;
+    var at = 0;
+    var trouble = 0;
+    while at < len(list) && trouble == 0 {
+        let to = line_end(list, at);
+        var stop = to;
+        if stop > at && list[stop - 1] == byte_of('\n') {
+            stop = stop - 1;
+        }
+        if stop - at > 4 {
+            let Contents { data, failed } = read_std(heap, fs, list[at..stop]);
+            let text = data;
+            trouble = failed;
+            borrow text as &tb in {
+                out = buffer.append(heap, out, "\nfn text_");
+                out = buffer.push_nat(heap, out, n);
+                out = buffer.append(heap, out, "[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {\n    return buffer.append(heap, out, \"");
+                out = escape(heap, out, buffer.bytes(tb));
+                out = buffer.append(heap, out, "\");\n}\n");
+                finds = buffer.append(heap, finds, "    if bytes.equal(name, \"");
+                finds = buffer.append(heap, finds, list[at..stop - 4]);
+                finds = buffer.append(heap, finds, "\") {\n        return text_");
+                finds = buffer.push_nat(heap, finds, n);
+                finds = buffer.append(heap, finds, "(heap, buffer.empty(heap, ");
+                finds = buffer.push_nat(heap, finds, len(buffer.bytes(tb)) + 1);
+                finds = buffer.append(heap, finds, "));\n    }\n");
+            }
+            buffer.drop(heap, text);
+            n = n + 1;
+        }
+        at = to;
+    }
+    out = buffer.append(heap, out, "\npub fn find[&h, &n](heap: &!h Heap, name: &n [byte]) -> [heap] buffer.Buffer {\n");
+    borrow finds as &fb in {
+        out = buffer.append(heap, out, buffer.bytes(fb));
+    }
+    buffer.drop(heap, finds);
+    out = buffer.append(heap, out, "    return buffer.empty(heap, 0);\n}\n");
+    return Contents { data: out, failed: trouble };
+}
+
+fn guidelines_module[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, fs_read(""), file_read] Contents {
+    let Contents { data, failed } = read_file(heap, fs, owned(heap, "AGENTS.md"));
+    let text = data;
+    var out = header(heap, "guidelines", "the text of `AGENTS.md`, for `cancho agent-guidelines`", "guidelines_module_is_the_text_of_agents_md");
+    borrow text as &tb in {
+        out = writer(heap, out, "print", buffer.bytes(tb));
+    }
+    buffer.drop(heap, text);
+    return Contents { data: out, failed: failed };
+}
+
+// What to do with a generated module: write it, or compare it with the file that is there. 0, or 1 for a module that differs (or cannot be read or written).
+fn settle[&h, &i, &f, &p](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), path: &p [byte], made: Contents, check: bool) -> [heap, io_write, fs_read(""), fs_write(""), file_read, file_write] int {
+    var status = 0;
+    let Contents { data, failed } = made;
+    let made_bytes = data;
+    let made_failed = failed;
+    if made_failed != 0 {
+        say(heap, io, "regen: cannot read the sources of ", path);
+        status = 1;
+    } else {
+        borrow made_bytes as &mb in {
+            if check {
+                let Contents { data, failed } = read_file(heap, fs, owned(heap, path));
+                let have = data;
+                let have_failed = failed;
+                var same = have_failed == 0;
+                if same {
+                    borrow have as &hb in {
+                        same = bytes.equal(buffer.bytes(hb), buffer.bytes(mb));
+                    }
+                }
+                buffer.drop(heap, have);
+                if !same {
+                    say(heap, io, "regen: not what the sources make it: ", path);
+                    status = 1;
+                }
+            } else if filewrite.store(fs, path, buffer.bytes(mb)) != 0 {
+                say(heap, io, "regen: cannot write ", path);
+                status = 1;
+            }
+        }
+    }
+    buffer.drop(heap, made_bytes);
+    return status;
+}
+
+fn run[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, args, fs_read(""), fs_write(""), file_read, file_write] int {
+    let check = arg_count(args) >= 2 && bytes.equal(arg(args, 1), "--check");
+    let Contents { data, failed } = read_file(heap, fs, owned(heap, "std/std.files"));
+    let list = data;
+    let list_failed = failed;
+    if list_failed != 0 {
+        buffer.drop(heap, list);
+        say(heap, io, "regen: cannot read ", "std/std.files");
+        return 1;
+    }
+    var status = settle(heap, io, fs, "examples/selfhost/guidelines.cho", guidelines_module(heap, fs), check);
+    borrow list as &lb in {
+        let ordered = Contents { data: order_module(heap, buffer.bytes(lb)), failed: 0 };
+        status = status + settle(heap, io, fs, "examples/selfhost/stdorder.cho", ordered, check);
+        status = status + settle(heap, io, fs, "examples/selfhost/stdsource.cho", source_module(heap, fs, buffer.bytes(lb)), check);
+    }
+    buffer.drop(heap, list);
+    if status != 0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    release(clock);
+    release(exec);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow fs as &f in {
+                    status = run(h, i, a, f);
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

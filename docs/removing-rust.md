@@ -145,7 +145,7 @@ It moves no file and deletes nothing. Every phase is a PR of its own, and none m
   moves to the cancho side; (2) its four tests (`ci.rs`, `debug.rs`, `profile.rs`, `trace.rs`, ~850 lines) are the only tests of those commands, and
   need process spawning and a JSON reader in a cancho test (both exist: `std.process`, `std.json`); (3) `debug.rs` needs `gdb`, `llvm-dwarfdump` and
   `objdump` and very likely **skips on CI**, so green does not mean it ran; (4) three generated modules (`commandtree.cho`, `guidelines.cho`,
-  `instrtext.cho`) have Rust generators in `statics.rs`; (5) ~~every new `.cho` file is listed twice~~ **done**: `with_front_end()` in
+  `instrtext.cho`) have Rust generators in `statics.rs` (**partly done**: `examples/selfhost/regen.cho` makes `guidelines.cho`, `stdorder.cho` and `stdsource.cho` in cancho, byte for byte what the Rust generators made, measured by `--check` against the committed files and by the test `regen_in_cancho_makes_the_modules_the_rust_generators_make`; `commandtree.cho` still needs the Rust binary's own output, and `instrtext.cho` is #681's); (5) ~~every new `.cho` file is listed twice~~ **done**: `with_front_end()` in
   `selfhost.rs` now reads `cancho.files` (the two lists were equal but for `cli.cho`, which the function leaves out), so `cancho.files` is the only list; (6) `-g`, `--instrument`, `-O0` exist only in the compiler in cancho, so the Rust
   compiler cannot be their oracle.
 - **#691 (`std.flate`) and #690/#692 (SHA-1, `vcsobj.cho`)** add one line of Rust (the std table in `main.rs`, registration only) and no compiler code; each
