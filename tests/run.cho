@@ -84,7 +84,7 @@ res struct Ended {
 }
 
 // The program at `exe` run with the arguments in `command` (each followed by a NUL, not counting its own name; consumed), `input` on its standard input and `env` (each entry
-// followed by a NUL) as its environment, for at most a minute.
+// followed by a NUL) as its environment, for at most an hour (the first build into an empty cache builds the compiler in cancho).
 fn spawn_capture[&h, &x, &c, &p, &n, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], command: buffer.Buffer, input: &n [byte], env: &e [byte]) -> [heap, exec(""), clock, poll] Ended {
     var out = buffer.empty(heap, 0);
     var err = buffer.empty(heap, 0);
@@ -101,7 +101,7 @@ fn spawn_capture[&h, &x, &c, &p, &n, &e](heap: &!h Heap, exec: &x Exec(""), cloc
                         pipe_close(from_errors);
                     }
                     Spawned::Ok(child) => {
-                        let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 67108864, 67108864, 60000);
+                        let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 67108864, 67108864, 3600000);
                         buffer.drop(heap, out);
                         buffer.drop(heap, err);
                         out = got;
