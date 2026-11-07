@@ -62,11 +62,13 @@ is settled on `http_server_bytes.rs` (34 lines) before it is applied to `backend
 |---|---|---|
 | G1 (**done**) | `scripts/files-budget.cho` | it refuses the same files `files.rs` does, measured on the repository and on a copy with one file over the budget |
 
-G1, measured: on the repository both `files.rs` and `scripts/files-budget.cho` find nothing; on a planted tree the program refuses a 2,001-line `.rs`, `.c` and `.py` file (the last with no newline at its end), allows 2,000 lines, skips `target/`, a hidden directory and a `.txt` file, and follows a link to a directory, as `files.rs` does. `files.rs` stays until G2 runs the program from `gate.sh` in CI (a check is moved or deleted, never both left); it is not removed here so that no commit has no budget check.
-| G2 | `scripts/gate.sh` with stages 1 to 3 and 5; runs in CI as its own job, not yet required | green on `main`, red on a planted failure in each stage |
+G1, measured: on the repository both `files.rs` and `scripts/files-budget.cho` find nothing; on a planted tree the program refuses a 2,001-line `.rs`, `.c` and `.py` file (the last with no newline at its end), allows 2,000 lines, skips `target/`, a hidden directory and a `.txt` file, and follows a link to a directory, as `files.rs` does. `files.rs` stays until G5, not G2 as first written here: the `gate` job of G2 is not a required check, so deleting `files.rs` in G2 would leave the budget unenforced until G5 makes the job required. The two checks run side by side for that time; `files.rs` goes in the G5 PR.
+| G2 (**done**) | `scripts/gate.sh` with stages 1 to 3 and 5; runs in CI as its own job, not yet required | green on `main`, red on a planted failure in each stage |
 | G3 | `tests/run.cho` (fixture walker) | its result equals the Rust walkers' on all 619 fixtures; the Rust walkers deleted in the same PR |
 | G4 | the command tests, one file per PR | each file's tests pass as `_test.cho` under both compilers; the `.rs` deleted in the same PR |
 | G5 | `gate.sh` becomes the required check; `CLAUDE.md`, `CONTRIBUTING.md`, `AGENTS.md` change | the Rust shell is empty: `cargo test --workspace` runs only the unit tests of crates still on disk |
+
+G2, measured (macOS aarch64): `scripts/gate.sh` with no `--cancho` builds the compiler from the committed seed (stages 0 to 3, no Rust) and runs fmt, files, seed and reject in **44 s** in all (57 s with a debug Rust build given as `--cancho`, which is slower at `fmt`); that is under the minute the next section asks for, with stage 4 still to come. Planted failures, each by `--only STAGE`: a badly laid-out file under `examples/` fails `fmt`, a 2,001-line `.py` file fails `files`, a wrong hash in `seed/*.sha256` fails `seed`, and a changed rule in `tests/reject.golden` fails `reject`; each exits 1 and prints `gate: FAILED at stage NAME`. The job is `gate` in `ci.yml` on linux-x86_64 and darwin-aarch64, not required. Not measured: Linux timings (read them off the first run of the job), and "green on `main`", which needs this PR merged.
 
 G5 is the only step that changes what a contributor is told to run, and it is the last.
 
