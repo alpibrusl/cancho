@@ -1,7 +1,7 @@
 edition 5;
 
 // `packages/http-client` with no socket (`docs/http-client.md` §3.2, §9): one request made, its bytes taken, a response given in
-// pieces of three, and the body written to standard output. `conformance/http_client.rs` runs it and pins its authority report:
+// pieces of three, and the body written to standard output. `tests/commands/http_client.cho` runs it and pins its authority report:
 // what the client itself can reach is the heap and nothing else (the `io_write` is this program printing).
 //
 //     cancho run --std packages/http-client/{slot,wire,client}.cho tests/programs/http_client_bytes.cho

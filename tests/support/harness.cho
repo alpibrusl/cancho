@@ -218,3 +218,8 @@ pub fn option[&a, &f](args: &a Args, flag: &f [byte]) -> [args] &a [byte] {
     }
     return arg(args, 0)[0..0];
 }
+
+// Whether `text` holds `needle`.
+pub fn contains[&t, &n](text: &t [byte], needle: &n [byte]) -> [] bool {
+    return bytes.find(text, needle) >= 0;
+}

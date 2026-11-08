@@ -13,7 +13,7 @@ import http_client_wire as wire;
 
 // `http_client` (`docs/http-client.md`): a client with no sockets, driven by the test as a caller's loop would, and an
 // upstream the test plays by hand. Run with the package's sources beside this file (`cancho test --std
-// packages/http-client/wire.cho packages/http-client/client.cho <this>`, `conformance/http_client.rs`).
+// packages/http-client/wire.cho packages/http-client/client.cho <this>`, `tests/cancho-tests.txt`).
 // ---------------------------------------------------------------------
 // The harness
 // ---------------------------------------------------------------------

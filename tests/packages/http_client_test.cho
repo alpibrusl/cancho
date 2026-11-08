@@ -10,7 +10,7 @@ import http_client_harness as th;
 // `http_client` (`docs/http-client.md`): every framing of a response split every way, and every response that is refused.
 // Run with the package beside it: `cancho test --std packages/http-client/wire.cho packages/http-client/client.cho
 // tests/packages/http_client_harness.cho tests/packages/http_client_test.cho tests/packages/http_client_pool_test.cho
-// tests/packages/http_client_time_test.cho` (`conformance/http_client.rs`).
+// tests/packages/http_client_time_test.cho` (`tests/cancho-tests.txt`).
 
 fn test_a_body_with_a_length_arrives_whole_split_every_way[&h](heap: &!h Heap) -> [heap] int {
     return th.every_step(heap, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 11\r\n\r\nhello world", "hello world", "GET", false, true);

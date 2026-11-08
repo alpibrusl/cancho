@@ -246,7 +246,6 @@ tls_pool 14
 vcs_std 14
 checked_output 13
 differential 13
-http_client 13
 net_split 13
 testing 13
 region_limit 12
