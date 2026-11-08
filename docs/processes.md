@@ -957,7 +957,7 @@ generators and the compiler in cancho add one check to `exec_spawn_in`'s and not
   `/` (an absolute name is the whole filesystem, which is what `Exec("")` covers and what this builtin must not reach for),
   has no `..` anywhere (the byte pair, so `a..b` too) and is under 4096 bytes. A name that breaks any of these **traps**, as
   every path outside a bound does (§4.1). A supervisor that wants a value asks first: `exec_covers(exec, name)` is the
-  `..`-and-length half and `len(name) > 0 && name[0] != '/'` the other (the driver of `spawn_under.rs` does exactly this,
+  `..`-and-length half and `len(name) > 0 && name[0] != '/'` the other (the driver `tests/programs/spawn_under.cho` does exactly this,
   and the test holds its verdict against the trap for eight names). `a/b` is allowed: the directory's own subdirectories
   are in it. `argv[0]` is the name as given.
 * **The ceiling.** `Exec("")` only. A program found beneath a directory chosen at run time cannot be shown to lie under a
@@ -999,8 +999,8 @@ print the same on every row; macOS and WASI not run):
 | `..`, `../worker.sh`, `sub/../worker.sh`, `worker.sh/..`, `a..b`, 4096 bytes | **`SIGILL`** |
 | the same binary, a second worker directory | the second directory's `worker.sh` (exit 9): the bound is the argument, not the text |
 
-Conformance (`spawn_under.rs`, drivers `tests/programs/spawn_under.cho` and `spawn_in_control.cho`, each built on the three
-code generators): the table above, the supervisor held against the trap, the link, a missing directory (the driver's own
+Conformance (`tests/commands/spawn_under.cho`, drivers `tests/programs/spawn_under.cho` and `spawn_in_control.cho`, each built once
+by the compiler under test): the table above, the supervisor held against the trap, the link, a missing directory (the driver's own
 status 3, nothing spawned), and the two reports. Fixtures: `tests/accept/exec_spawn_under.cho`; `tests/reject/`
 `exec_spawn_under_is_edition_nine` (`not-a-function`), `_on_wasi` (`unsupported-on-target`), `_narrowed` and `_not_an_exec`
 (`capability-misused`), `_arity` (`arity-mismatch`), `_undeclared` (`effect-not-declared`), `_not_a_dir` (`type-mismatch`). No
@@ -1083,8 +1083,8 @@ and started it at once; on a loaded runner the spawn answered `Failed(26)`, `ETX
 forked between the script's `write` and `close`, and the child it made held the write descriptor until its own `exec`. The
 builtin was not involved (nothing had run). Reproduced outside cancho: four threads spawning `/bin/true` while another writes
 and executes a script made 11 of 600 executions fail with 26. The worker is now a link to `/bin/sh` and the script travels in
-the arguments, so no file is written and executed in the test; `spawn_under.rs` still writes its scripts (a latent instance
-of the same race, not touched here).
+the arguments, so no file is written and executed in the test; `conformance/spawn_under.rs` wrote its scripts (a latent instance
+of the same race); `tests/commands/spawn_under.cho` writes them with a shell that has ended before any worker runs, and nothing forks beside it.
 
 ---
 

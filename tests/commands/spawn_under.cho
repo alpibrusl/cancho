@@ -1,0 +1,393 @@
+edition 7;
+module spawn_under_test;
+
+// spawn_under.cho -- `conformance/spawn_under.rs` (deleted), in cancho (`docs/gate.md` G4): `exec_spawn_under` (`docs/processes.md` section 4.14, #534): starting a program by a name beneath a directory
+// chosen when the program was deployed, over real processes and directories, through `tests/programs/spawn_under.cho` (and `spawn_in_control.cho`, the control that takes any name). A worker is a shell
+// script that leaves `ran.txt` in its working directory and exits with a code of its own, so "it ran", "it ran in the directory" and "it was that program" are read off the file system and the exit
+// status; a name the rule refuses must kill the driver (a signal, no output). Seven checks (the seven tests): a name beneath the directory starts that program there; the same binary with another
+// directory starts another program; what is not beneath the directory traps (held against the control); a supervisor that asks first survives; a link is the kernel's to follow; a directory that is
+// not there starts nothing; the authority report names `exec_under` and not `exec`.
+//
+//     cancho build tests/commands/spawn_under.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: spawn_under` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2. ENAMETOOLONG is 36 on
+// Linux and 63 on macOS and either is accepted on both (the Rust test chose by `cfg!`).
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// How the driver ended, as one text: `R:` and what it printed (trimmed) if it returned with status 0; `T` if a trap killed it (a signal and nothing printed); `X:` and what happened otherwise.
+fn outcome[&h, &x, &c, &p, &d, &m, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], dir: &d [byte], mode: &m [byte], name: &n [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var words = harness.word(heap, buffer.empty(heap, 128), dir);
+    if len(mode) > 0 {
+        words = harness.word(heap, words, mode);
+    }
+    words = harness.word(heap, words, name);
+    let harness.Ended { out, err, kind, code } = harness.quiet_run(heap, exec, clock, exe, words);
+    var text = buffer.empty(heap, 64);
+    borrow out as &ob in {
+        if kind == 0 && code == 0 {
+            text = buffer.append(heap, text, "R:");
+            text = buffer.append(heap, text, bytes.trim(buffer.bytes(ob)));
+        } else if kind == 1 && len(buffer.bytes(ob)) == 0 {
+            text = buffer.append(heap, text, "T");
+        } else {
+            text = buffer.append(heap, text, "X:");
+            text = buffer.append(heap, text, buffer.bytes(ob));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return text;
+}
+
+// An empty `mode` is none (the control takes the directory and the name). The driver, run on `name` in mode `mode` under `dir`, must have ended as `says` (an `outcome` text).
+fn expect[&h, &x, &c, &p, &d, &m, &n, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte], dir: &d [byte], mode: &m [byte], name: &n [byte], says: &s [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    let got = outcome(heap, exec, clock, exe, dir, mode, name);
+    borrow got as &gb in {
+        var why = buffer.append(heap, buffer.empty(heap, 96), "should end as `");
+        why = buffer.append(heap, why, says);
+        why = buffer.append(heap, why, "`, and ended as");
+        borrow why as &wb in {
+            r = harness.require(heap, r, bytes.equal(buffer.bytes(gb), says), "spawn_under", name, buffer.bytes(wb), buffer.bytes(gb));
+        }
+        buffer.drop(heap, why);
+    }
+    buffer.drop(heap, got);
+    return r;
+}
+
+// Whether the shell `script` exits 0.
+fn holds[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, script: buffer.Buffer) -> [heap, exec(""), clock, poll] bool {
+    let harness.Ended { out, err, kind, code } = harness.sh_run(heap, exec, clock, script);
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return kind == 0 && code == 0;
+}
+
+// `script` where each `@` is `path`, in a shell.
+fn at_path[&h, &x, &c, &p, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, path: &p [byte], script: &s [byte]) -> [heap, exec(""), clock, poll] bool {
+    var text = buffer.empty(heap, 256);
+    var i = 0;
+    while i < len(script) {
+        if script[i] == byte_of('@') {
+            text = buffer.append(heap, text, path);
+        } else {
+            text = buffer.push(heap, text, script[i]);
+        }
+        i = i + 1;
+    }
+    return holds(heap, exec, clock, text);
+}
+
+// A worker directory `dir`: `worker.sh` and `sub/worker.sh` that write `ran.txt` beside themselves (their working directory) and exit with `code` (a digit).
+fn workers[&h, &x, &c, &p, &q](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, dir: &p [byte], code: &q [byte]) -> [heap, exec(""), clock, poll] bool {
+    var script = buffer.append(heap, buffer.empty(heap, 256), "mkdir -p '@/sub' && for f in worker.sh sub/worker.sh; do printf '#!/bin/sh\\npwd > ran.txt\\nexit ");
+    script = buffer.append(heap, script, code);
+    script = buffer.append(heap, script, "\\n' > \"@/$f\" && chmod 755 \"@/$f\"; done");
+    var ok = false;
+    borrow script as &sb in {
+        ok = at_path(heap, exec, clock, dir, buffer.bytes(sb));
+    }
+    buffer.drop(heap, script);
+    return ok;
+}
+
+// `n` times the byte `a`, as a name.
+fn long_name[&h](heap: &!h Heap, n: int) -> [heap] buffer.Buffer {
+    var name = buffer.empty(heap, n + 1);
+    var i = 0;
+    while i < n {
+        name = buffer.push(heap, name, byte_of('a'));
+        i = i + 1;
+    }
+    return name;
+}
+
+// A name beneath the directory starts that program there (the working directory is the directory itself, whatever the name reaches); a name the directory does not hold is a value, as for
+// `exec_spawn`; a directory is not a program (`EACCES`, a value).
+fn runs[&h, &x, &c, &p, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte], dir: &d [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    if !workers(heap, exec, clock, dir, "7") {
+        return harness.failure(heap, r, "spawn_under", "runs", "the worker directory should be made", "");
+    }
+    let names = "worker.sh\0sub/worker.sh\0./worker.sh\0";
+    var at = 1;
+    while at <= 3 {
+        let name = bytes.field(names, 0, at);
+        at_path(heap, exec, clock, dir, "rm -f '@/ran.txt'");
+        r = expect(heap, exec, clock, r, exe, dir, "u", name, "R:spawned code 7");
+        r = harness.require(heap, r, at_path(heap, exec, clock, dir, "[ \"$(cat '@/ran.txt')\" = \"$(cd '@' && pwd -P)\" ]"), "spawn_under", name, "the worker should have run in the directory itself", "");
+        at = at + 1;
+    }
+    r = expect(heap, exec, clock, r, exe, dir, "u", "no-such-worker", "R:failed errno 2");
+    return expect(heap, exec, clock, r, exe, dir, "u", "sub", "R:failed errno 13");
+}
+
+// The bound is the directory the program was given: the same binary and the same name, two directories, two programs.
+fn two[&h, &x, &c, &p, &a, &b](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte], one: &a [byte], other: &b [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    if !workers(heap, exec, clock, one, "7") || !workers(heap, exec, clock, other, "9") {
+        return harness.failure(heap, r, "spawn_under", "two", "the worker directories should be made", "");
+    }
+    r = expect(heap, exec, clock, r, exe, one, "u", "worker.sh", "R:spawned code 7");
+    r = expect(heap, exec, clock, r, exe, other, "u", "worker.sh", "R:spawned code 9");
+    r = harness.require(heap, r, at_path(heap, exec, clock, one, "[ -f '@/ran.txt' ]") && at_path(heap, exec, clock, other, "[ -f '@/ran.txt' ]"), "spawn_under", "two", "each should have run in its own directory", "");
+    return r;
+}
+
+// What the rule refuses is a trap: an empty name, a rooted one, `..` anywhere (the byte pair), a name of 4096 bytes. Each rooted or empty one is held against the control, `exec_spawn_in` under the same
+// `Exec("")` and directory, which takes it: the trap is the new builtin's and not the capability's. At 4095 bytes the name reaches the kernel, which answers a value.
+fn traps[&h, &x, &c, &p, &q, &d, &o](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte], control: &q [byte], dir: &d [byte], outside: &o [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    r = expect(heap, exec, clock, r, exe, dir, "u", "/bin/echo", "T");
+    r = expect(heap, exec, clock, r, control, dir, "", "/bin/echo", "R:spawned code 0");
+    r = expect(heap, exec, clock, r, exe, dir, "u", outside, "T");
+    r = expect(heap, exec, clock, r, control, dir, "", outside, "R:spawned code 5");
+    r = expect(heap, exec, clock, r, exe, dir, "u", "/", "T");
+    r = expect(heap, exec, clock, r, control, dir, "", "/", "R:failed errno 13");
+    r = expect(heap, exec, clock, r, exe, dir, "u", "", "T");
+    r = expect(heap, exec, clock, r, control, dir, "", "", "R:failed errno 2");
+    let refused = "..\0../worker.sh\0sub/../worker.sh\0worker.sh/..\0a..b\0";
+    var at = 1;
+    while at <= 5 {
+        r = expect(heap, exec, clock, r, exe, dir, "u", bytes.field(refused, 0, at), "T");
+        at = at + 1;
+    }
+    let long = long_name(heap, 4096);
+    borrow long as &lb in {
+        r = expect(heap, exec, clock, r, exe, dir, "u", buffer.bytes(lb), "T");
+    }
+    buffer.drop(heap, long);
+    let longest = long_name(heap, 4095);
+    borrow longest as &gb in {
+        let got = outcome(heap, exec, clock, exe, dir, "u", buffer.bytes(gb));
+        borrow got as &ob in {
+            r = harness.require(heap, r, bytes.equal(buffer.bytes(ob), "R:failed errno 36") || bytes.equal(buffer.bytes(ob), "R:failed errno 63"), "spawn_under", "longest", "a name of 4095 bytes should reach the kernel (ENAMETOOLONG, 36 or 63)", buffer.bytes(ob));
+        }
+        buffer.drop(heap, got);
+    }
+    buffer.drop(heap, longest);
+    return r;
+}
+
+// The supervisor of the issue asks first, so a refused name is a line in its journal and not the end of the supervisor: every name it refuses is a name `u` traps on, and every name it takes is one
+// `u` returns from.
+fn supervised[&h, &x, &c, &p, &d, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte], dir: &d [byte], name: &n [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    let asked = outcome(heap, exec, clock, exe, dir, "s", name);
+    let direct = outcome(heap, exec, clock, exe, dir, "u", name);
+    borrow asked as &ab in {
+        borrow direct as &db in {
+            let said = buffer.bytes(ab);
+            if bytes.equal(buffer.bytes(db), "T") {
+                r = harness.require(heap, r, bytes.equal(said, "R:refused\njournaled"), "spawn_under", "supervisor", "a name `u` traps on should be refused and journaled", said);
+            } else {
+                r = harness.require(heap, r, bytes.starts_with(said, "R:") && bytes.ends_with(said, "\njournaled") && !bytes.starts_with(said, "R:refused"), "spawn_under", "supervisor", "a name `u` returns from should be taken and journaled", said);
+            }
+        }
+    }
+    buffer.drop(heap, asked);
+    buffer.drop(heap, direct);
+    return r;
+}
+
+fn supervisors[&h, &x, &c, &p, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte], dir: &d [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    let names = "/bin/true\0\0../worker.sh\0a..b\0sub/../worker.sh\0worker.sh\0sub/worker.sh\0no-such-worker\0";
+    var at = 1;
+    while at <= 8 {
+        r = supervised(heap, exec, clock, r, exe, dir, bytes.field(names, 0, at));
+        at = at + 1;
+    }
+    return r;
+}
+
+// `Dir` resolves the directory once, as a descriptor, so a link the kernel follows is followed: a script that is a link to a program outside the directory runs.
+fn link[&h, &x, &c, &p, &d, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte], dir: &d [byte], target: &s [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var script = buffer.append(heap, buffer.empty(heap, 128), "ln -sf '");
+    script = buffer.append(heap, script, target);
+    script = buffer.append(heap, script, "' '@/link.sh'");
+    var made = false;
+    borrow script as &sb in {
+        made = at_path(heap, exec, clock, dir, buffer.bytes(sb));
+    }
+    buffer.drop(heap, script);
+    if !made {
+        return harness.failure(heap, report, "spawn_under", "link", "the link should be made", "");
+    }
+    return expect(heap, exec, clock, report, exe, dir, "u", "link.sh", "R:spawned code 5");
+}
+
+// A directory that is not there is not a program's to start things under: the driver says so (status 3, nothing printed) before any spawn.
+fn missing[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var words = harness.word(heap, buffer.empty(heap, 64), "/no/such/worker/directory");
+    words = harness.word(heap, words, "u");
+    words = harness.word(heap, words, "worker.sh");
+    var r = report;
+    let harness.Ended { out, err, kind, code } = harness.quiet_run(heap, exec, clock, exe, words);
+    borrow out as &ob in {
+        r = harness.require(heap, r, kind == 0 && code == 3 && len(buffer.bytes(ob)) == 0, "spawn_under", "missing", "a directory that is not there should end the driver with status 3 and no output", buffer.bytes(ob));
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+// The authority report as JSON of `program`.
+fn report_of[&h, &x, &c, &b, &v, &g](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &v [byte], program: &g [byte]) -> [heap, exec(""), clock, poll] harness.Ended {
+    var command = harness.word(heap, buffer.empty(heap, 96), "authority");
+    command = harness.word(heap, command, "--std");
+    command = harness.word(heap, command, "--output");
+    command = harness.word(heap, command, "json");
+    command = harness.word(heap, command, program);
+    return harness.spawn_capture(heap, exec, clock, bin, command, "", env);
+}
+
+// A supervisor that spawns only beneath a directory reports `exec_under` and `fs_read("")` (the open) and no `exec`; the control that spawns by path under the same `Exec("")` reports `exec("")`.
+fn authority[&h, &x, &c, &b, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, bin: &b [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    let harness.Ended { out, err, kind, code } = report_of(heap, exec, clock, bin, env, "tests/programs/spawn_under.cho");
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        r = harness.require(heap, r, kind == 0 && code == 0, "spawn_under", "authority", "`authority` should answer", said);
+        r = harness.require(heap, r, harness.contains(said, "\"effects\": [\"args\", \"exec_under\", \"fs_read\", \"io_write\"]"), "spawn_under", "authority", "the effects should be args, exec_under, fs_read, io_write", said);
+        r = harness.require(heap, r, harness.contains(said, "{ \"name\": \"fs_read\", \"argument\": \"\", \"bounded\": true }"), "spawn_under", "authority", "fs_read should be bounded with an empty argument", said);
+        r = harness.require(heap, r, !harness.contains(said, "\"name\": \"exec\","), "spawn_under", "authority", "the report should name no exec", said);
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+fn authority_control[&h, &x, &c, &b, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, bin: &b [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    let harness.Ended { out, err, kind, code } = report_of(heap, exec, clock, bin, env, "tests/programs/spawn_in_control.cho");
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        r = harness.require(heap, r, harness.contains(said, "{ \"name\": \"exec\", \"argument\": \"\", \"bounded\": true }"), "spawn_under", "authority", "the control should report exec(\"\")", said);
+        r = harness.require(heap, r, !harness.contains(said, "exec_under"), "spawn_under", "authority", "the control should not report exec_under", said);
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+// Build `sources` (one path and its NUL) as `exe`; `report` and, if it did not build, what the compiler said. `ok` is 1 if it built.
+fn build_into[&h, &x, &c, &b, &v, &s, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, bin: &b [byte], env: &v [byte], sources: &s [byte], exe: &p [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    let harness.Ended { out, err, kind, code } = harness.build_only(heap, exec, clock, bin, sources, exe, env);
+    if kind != 0 || code != 0 {
+        borrow err as &rb in {
+            r = harness.failure(heap, r, "spawn_under", "build", "should compile, but the compiler said", buffer.bytes(rb));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+// Everything, under `scratch`: the drivers built, then the checks.
+fn exercise[&h, &x, &c, &b, &v, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, bin: &b [byte], env: &v [byte], scratch: &s [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let exe = harness.joined(heap, scratch, "spawn_under");
+    let control = harness.joined(heap, scratch, "spawn_in_control");
+    let one = harness.joined(heap, scratch, "one");
+    let other = harness.joined(heap, scratch, "other");
+    let target = harness.joined(heap, scratch, "target.sh");
+    var r = report;
+    borrow exe as &xb in {
+        borrow control as &qb in {
+            borrow one as &ob in {
+                borrow other as &pb in {
+                    borrow target as &tb in {
+                        r = build_into(heap, exec, clock, r, bin, env, "tests/programs/spawn_under.cho\0", buffer.bytes(xb));
+                        r = build_into(heap, exec, clock, r, bin, env, "tests/programs/spawn_in_control.cho\0", buffer.bytes(qb));
+                        r = runs(heap, exec, clock, r, buffer.bytes(xb), buffer.bytes(ob));
+                        r = two(heap, exec, clock, r, buffer.bytes(xb), buffer.bytes(ob), buffer.bytes(pb));
+                        // The script outside the directory (exit 5), for the traps and the link.
+                        at_path(heap, exec, clock, buffer.bytes(tb), "printf '#!/bin/sh\\nexit 5\\n' > '@' && chmod 755 '@'");
+                        r = traps(heap, exec, clock, r, buffer.bytes(xb), buffer.bytes(qb), buffer.bytes(ob), buffer.bytes(tb));
+                        r = supervisors(heap, exec, clock, r, buffer.bytes(xb), buffer.bytes(ob));
+                        r = link(heap, exec, clock, r, buffer.bytes(xb), buffer.bytes(ob), buffer.bytes(tb));
+                        r = missing(heap, exec, clock, r, buffer.bytes(xb));
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, exe);
+    buffer.drop(heap, control);
+    buffer.drop(heap, one);
+    buffer.drop(heap, other);
+    buffer.drop(heap, target);
+    r = authority(heap, exec, clock, r, bin, env);
+    return authority_control(heap, exec, clock, r, bin, env);
+}
+
+// What is wrong, as a report (nothing if every check held).
+fn check[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    let dir = harness.make_scratch(heap, exec, clock, "spawn-under");
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "spawn_under", "scratch", "mktemp should make a directory", "");
+            } else {
+                report = exercise(heap, exec, clock, report, bin, buffer.bytes(eb), buffer.bytes(db));
+            }
+        }
+        harness.remove_scratch(heap, exec, clock, buffer.bytes(db));
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, exec(""), clock, poll] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: spawn_under CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: spawn_under\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    release(fs);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        status = run(h, i, a, x, c);
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
