@@ -1,0 +1,220 @@
+edition 7;
+module harness;
+
+// harness.cho -- what a test that runs the compiler needs (`docs/gate.md` G4): read a file, run a program with arguments, input and an environment and
+// see what it said and how it ended, say what failed, join a path. Shared by `tests/run.cho` and by every `tests/commands/*.cho`; build them together:
+//
+//     cancho build tests/commands/NAME.cho tests/support/harness.cho --std -o EXE
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import std.process;
+
+// All of a file: `failed` is 0 or 1.
+pub res struct Contents {
+    data: buffer.Buffer,
+    failed: int,
+}
+
+pub fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] Contents {
+    var out = buffer.empty(heap, 4096);
+    var trouble = 0;
+    match open_read(fs, path) {
+        Opened::Failed(reason) => {
+            trouble = 1;
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var chunk = buffer.empty(heap, 65536);
+            borrow mut file as &!handle in {
+                var going = true;
+                while going {
+                    var got = 0;
+                    borrow mut chunk as &!c in {
+                        match file_read(handle, buffer.room(c)) {
+                            Read::Got(n) => {
+                                got = n;
+                                buffer.filled(c, n);
+                            }
+                            Read::End => {
+                                going = false;
+                            }
+                            Read::Failed(reason) => {
+                                going = false;
+                                trouble = 1;
+                            }
+                        }
+                    }
+                    if got > 0 {
+                        borrow chunk as &c in {
+                            out = buffer.append(heap, out, buffer.bytes(c));
+                        }
+                        borrow mut chunk as &!c in {
+                            buffer.clear(c);
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, chunk);
+            file_close(file);
+        }
+    }
+    return Contents { data: out, failed: trouble };
+}
+
+// How a program ended, as `kind` and `code`: 0 it answered `code`, 1 it was killed by a signal, 2 it did not finish in time, 3 it wrote too much, 4 it
+// could not be watched, 5 it did not start.
+pub res struct Ended {
+    out: buffer.Buffer,
+    err: buffer.Buffer,
+    kind: int,
+    code: int,
+}
+
+// The program at `exe` run with the arguments in `command` (each followed by a NUL, not counting its own name; consumed), `input` on its standard input and `env` (each entry
+// followed by a NUL) as its environment, for at most an hour (the first build into an empty cache builds the compiler in cancho).
+pub fn spawn_capture[&h, &x, &c, &p, &n, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], command: buffer.Buffer, input: &n [byte], env: &e [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var out = buffer.empty(heap, 0);
+    var err = buffer.empty(heap, 0);
+    var kind = 5;
+    var code = 0;
+    match process.channels_with_errors() {
+        process.ChannelsWithErrors::Failed(e0) => {
+        }
+        process.ChannelsWithErrors::Ok(to_child, child_in, from_child, child_out, from_errors, child_errors) => {
+            borrow command as &cb in {
+                match exec_spawn(exec, exe, buffer.bytes(cb), env, Stdio::Pipe(child_in), Stdio::Pipe(child_out), Stdio::Pipe(child_errors)) {
+                    Spawned::Failed(e1) => {
+                        process.close(to_child, from_child);
+                        pipe_close(from_errors);
+                    }
+                    Spawned::Ok(child) => {
+                        let (got, errors, ran) = process.capture_both(heap, clock, child, to_child, from_child, from_errors, input, 67108864, 67108864, 3600000);
+                        buffer.drop(heap, out);
+                        buffer.drop(heap, err);
+                        out = got;
+                        err = errors;
+                        match ran {
+                            process.Ran::Code(n0) => {
+                                kind = 0;
+                                code = n0;
+                            }
+                            process.Ran::Signaled(s0) => {
+                                kind = 1;
+                            }
+                            process.Ran::TimedOut => {
+                                kind = 2;
+                            }
+                            process.Ran::TooMuch => {
+                                kind = 3;
+                            }
+                            process.Ran::Failed(e2) => {
+                                kind = 4;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, command);
+    return Ended { out: out, err: err, kind: kind, code: code };
+}
+
+// One failure: `KIND/NAME: why` and, when there is text, what the program said (at most 1,500 bytes).
+pub fn failure[&h, &a, &n, &w, &t](heap: &!h Heap, report: buffer.Buffer, kind: &a [byte], name: &n [byte], why: &w [byte], text: &t [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, report, kind);
+    b = buffer.push(heap, b, byte_of('/'));
+    b = buffer.append(heap, b, name);
+    b = buffer.append(heap, b, ": ");
+    b = buffer.append(heap, b, why);
+    b = buffer.push(heap, b, byte_of('\n'));
+    if len(text) > 0 {
+        var shown = len(text);
+        if shown > 1500 {
+            shown = 1500;
+        }
+        b = buffer.append(heap, b, text[0..shown]);
+        if text[shown - 1] != byte_of('\n') {
+            b = buffer.push(heap, b, byte_of('\n'));
+        }
+    }
+    return b;
+}
+
+// One argument of a command: `text` and the NUL that ends it.
+pub fn word[&h, &t](heap: &!h Heap, list: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    return buffer.push(heap, buffer.append(heap, list, text), byte_of(0));
+}
+
+// `into` and what is in the file at `path` (nothing if it cannot be read).
+pub fn append_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte], into: buffer.Buffer) -> [heap, fs_read(""), file_read] buffer.Buffer {
+    let Contents { data, failed } = read_file(heap, fs, path);
+    var out = into;
+    borrow data as &db in {
+        out = buffer.append(heap, out, buffer.bytes(db));
+    }
+    buffer.drop(heap, data);
+    return out;
+}
+
+// `dir/name`.
+pub fn joined[&h, &d, &n](heap: &!h Heap, directory: &d [byte], name: &n [byte]) -> [heap] buffer.Buffer {
+    var path = buffer.append(heap, buffer.empty(heap, len(directory) + len(name) + 1), directory);
+    path = buffer.push(heap, path, byte_of('/'));
+    return buffer.append(heap, path, name);
+}
+
+// The environment a `cancho` is run with: a `PATH` and, if they are not empty, `CANCHO_COMPILER` and `CANCHO_CACHE` (a program has no environment to pass on).
+pub fn base_env[&h, &c, &k](heap: &!h Heap, compiler: &c [byte], cache: &k [byte]) -> [heap] buffer.Buffer {
+    var env = buffer.append(heap, buffer.empty(heap, 96), "PATH=/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin");
+    env = buffer.push(heap, env, byte_of(0));
+    if len(compiler) > 0 {
+        env = buffer.append(heap, env, "CANCHO_COMPILER=");
+        env = buffer.append(heap, env, compiler);
+        env = buffer.push(heap, env, byte_of(0));
+    }
+    if len(cache) > 0 {
+        env = buffer.append(heap, env, "CANCHO_CACHE=");
+        env = buffer.append(heap, env, cache);
+        env = buffer.push(heap, env, byte_of(0));
+    }
+    return env;
+}
+
+// `bin build SOURCES --std -o EXE` (`sources`: each path followed by a NUL), then EXE with `input` on its standard input. If the build fails, the
+// result is its `Ended` with kind 6, what the compiler said in `err`.
+pub fn build_and_run[&h, &x, &c, &b, &s, &p, &n, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], exe: &p [byte], input: &n [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "build");
+    let paths = bytes.count_byte(sources, 0);
+    var at = 1;
+    while at <= paths {
+        command = word(heap, command, bytes.field(sources, 0, at));
+        at = at + 1;
+    }
+    command = word(heap, command, "--std");
+    command = word(heap, command, "-o");
+    command = word(heap, command, exe);
+    let built = spawn_capture(heap, exec, clock, bin, command, "", env);
+    let Ended { out, err, kind, code } = built;
+    if kind != 0 || code != 0 {
+        buffer.drop(heap, out);
+        return Ended { out: buffer.empty(heap, 0), err: err, kind: 6, code: code };
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return spawn_capture(heap, exec, clock, exe, buffer.empty(heap, 0), input, "PATH=/usr/bin:/bin\0");
+}
+
+// The value after `flag` among the arguments (`--compiler NAME`), or nothing.
+pub fn option[&a, &f](args: &a Args, flag: &f [byte]) -> [args] &a [byte] {
+    var at = 1;
+    while at + 1 < arg_count(args) {
+        if bytes.equal(arg(args, at), flag) {
+            return arg(args, at + 1);
+        }
+        at = at + 1;
+    }
+    return arg(args, 0)[0..0];
+}

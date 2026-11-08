@@ -1,0 +1,135 @@
+edition 7;
+module key_tables_test;
+
+// key_tables.cho -- `conformance/key_tables.rs` (deleted), in cancho (`docs/gate.md` G4): the key tables of `packages/tls` (`docs/p256-fast.md` section 11), with no network, through
+// `tests/programs/tls_key_tables.cho`: a server identity's table is its point's when the identity is loaded, the new key's when it is replaced, unchanged by a refused
+// replacement, and zeros when the configuration is wiped; a client's trust store gives each P-256 root a table and a store replaced leaves nothing of the old one's.
+//
+//     cancho build tests/commands/key_tables.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: key_tables` or one line of what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// The driver and the packages it is built with, each path followed by a NUL.
+fn sources[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var list = buffer.empty(heap, 1024);
+    let paths = "tests/programs/tls_key_tables.cho packages/tls/tls.cho packages/tls/record.cho packages/tls/message.cho packages/tls/slot.cho packages/tls/cident.cho packages/tls/client12.cho packages/tls/client.cho packages/tls/hello.cho packages/tls/identity.cho packages/tls/ticket.cho packages/tls/clientauth.cho packages/tls/server.cho packages/tls/saved.cho packages/x509/verify.cho packages/x509/names.cho packages/x509/x509.cho packages/x509/key.cho";
+    let n = bytes.count_byte(paths, 32) + 1;
+    var at = 1;
+    while at <= n {
+        list = harness.word(heap, list, bytes.field(paths, 32, at));
+        at = at + 1;
+    }
+    return list;
+}
+
+// The five vector files, separated by a NUL.
+fn vectors[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, fs_read(""), file_read] buffer.Buffer {
+    var input = buffer.empty(heap, 16384);
+    let files = "ca.pem first/chain.pem first/key.pem renewed/chain.pem renewed/key.pem";
+    var at = 1;
+    while at <= 5 {
+        if at > 1 {
+            input = buffer.push(heap, input, byte_of(0));
+        }
+        var path = buffer.append(heap, buffer.empty(heap, 64), "tests/vectors/tls/echo/");
+        path = buffer.append(heap, path, bytes.field(files, 32, at));
+        borrow path as &pb in {
+            input = harness.append_file(heap, fs, buffer.bytes(pb), input);
+        }
+        buffer.drop(heap, path);
+        at = at + 1;
+    }
+    return input;
+}
+
+// What is wrong, as a report (nothing if the driver printed eleven lines, each `ok ...`, and exited 0).
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    let list = sources(heap);
+    let input = vectors(heap, fs);
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    borrow list as &lb in {
+        borrow input as &ib in {
+            borrow env as &eb in {
+                let harness.Ended { out, err, kind, code } = harness.build_and_run(heap, exec, clock, bin, buffer.bytes(lb), "/tmp/cancho-key-tables", buffer.bytes(ib), buffer.bytes(eb));
+                borrow out as &ob in {
+                    borrow err as &rb in {
+                        let said = buffer.bytes(ob);
+                        let lines = bytes.count_byte(said, 10);
+                        var all_ok = lines == 11;
+                        var at = 1;
+                        while at <= lines {
+                            if !bytes.starts_with(bytes.field(said, 10, at), "ok ") {
+                                all_ok = false;
+                            }
+                            at = at + 1;
+                        }
+                        if kind == 6 {
+                            report = harness.failure(heap, report, "key_tables", "build", "should compile, but the compiler said", buffer.bytes(rb));
+                        } else if kind != 0 || code != 0 || !all_ok {
+                            report = harness.failure(heap, report, "key_tables", "driver", "should print eleven ok lines and exit 0", said);
+                        }
+                    }
+                }
+                buffer.drop(heap, out);
+                buffer.drop(heap, err);
+            }
+        }
+    }
+    buffer.drop(heap, list);
+    buffer.drop(heap, input);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: key_tables CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: key_tables\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

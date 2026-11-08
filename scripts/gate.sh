@@ -50,7 +50,7 @@ case $cancho in /*) ;; *) cancho=$(pwd)/$cancho ;; esac
 
 if wanted fmt; then
   stage "fmt: cancho fmt --check"
-  "$cancho" fmt --check std examples packages tests/accept tests/programs tests/run.cho scripts benches || fail fmt
+  "$cancho" fmt --check std examples packages tests/accept tests/programs tests/run.cho tests/support tests/commands scripts benches || fail fmt
 fi
 
 if wanted files; then
@@ -68,7 +68,7 @@ fi
 if wanted walk; then
   stage "walk: tests/run.cho over tests/accept, tests/reject and examples"
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/gate-walk.XXXXXX") || exit 2
-  "$cancho" build tests/run.cho --std -o "$scratch/fixtures-run" || { rm -rf "$scratch"; fail walk; }
+  "$cancho" build tests/run.cho tests/support/harness.cho --std -o "$scratch/fixtures-run" || { rm -rf "$scratch"; fail walk; }
   for kind in reject accept examples; do
     "$scratch/fixtures-run" "$cancho" "$kind" --selfhost --cache "$scratch/cache" || { rm -rf "$scratch"; fail walk; }
   done
@@ -87,6 +87,18 @@ if wanted tests; then
     stage "  $name: $passed passed"
   done < "$list"
   rm -f "$list"
+  # The command tests: each program of tests/commands is built with tests/support/harness.cho and run with the compiler under test (docs/gate.md G4).
+  scratch=$(mktemp -d "${TMPDIR:-/tmp}/gate-commands.XXXXXX") || exit 2
+  count=0
+  for source in tests/commands/*.cho; do
+    [ -e "$source" ] || continue
+    name=$(basename "$source" .cho)
+    "$cancho" build "$source" tests/support/harness.cho --std -o "$scratch/$name" || { rm -rf "$scratch"; fail tests; }
+    "$scratch/$name" "$cancho" --cache "$scratch/cache" || { rm -rf "$scratch"; fail tests; }
+    count=$((count + 1))
+  done
+  rm -rf "$scratch"
+  stage "  $count command tests"
 fi
 
 if wanted reject; then

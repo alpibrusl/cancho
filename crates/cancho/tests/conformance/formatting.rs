@@ -12,6 +12,8 @@ const CORPUS: [&str; 8] = [
     "tests/accept",
     "tests/programs",
     "tests/run.cho",
+    "tests/support",
+    "tests/commands",
     "scripts",
     "benches",
 ];

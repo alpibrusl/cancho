@@ -656,7 +656,7 @@ the root's, byte for byte, and `signature_ok` gives it to `ecdsa.verify_der` in 
 Every x509 file is replayed a second time with the anchors' tables (`T` for `S` in `tests/programs/x509_verify_driver.cho`) and
 must give every recorded answer: the limbo subset (223 stores, 195 of which give a root a table), the 14 saved real chains against
 the system bundle (its 3 tables, 30,939 bytes, counted), the OpenSSL matrix and the no-name matrix, on both backends where the
-original runs on both. `conformance/key_tables.rs` checks `trust`'s tables and their cleanup through `tls.anchor_tables` and
+original runs on both. `tests/commands/key_tables.cho` checks `trust`'s tables and their cleanup through `tls.anchor_tables` and
 `tls.residue`.
 
 **What this does not buy the public Web PKI:** of the 31 signatures in §8.2's 14 real chains, 22 are RSA, 7 P-384 and 2 P-256, and
