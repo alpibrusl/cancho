@@ -8,7 +8,7 @@ import http.server;
 // `http.server`'s streaming request bodies (`docs/http-server.md` §12), part two: the flow around a body. On a byte-fed server, so no socket: `Expect: 100-continue`, every refusal
 // with its status and rule, the two timers on the caller's clock, back-pressure in both directions, answering before the body is read, the
 // peer's end, tickets, and random operations. Part one is `http_server_body_test.cho`. Run with the package's source and
-// `body_support.cho` beside it (`conformance/http_server_body.rs`).
+// `body_support.cho` beside it (`tests/cancho-tests.txt`).
 
 fn expect_cases[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
     test.assert_eq(server.limits(srv, 100000, 64, 5000, 5000), 0);

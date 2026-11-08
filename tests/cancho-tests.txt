@@ -1,0 +1,7 @@
+# The `cancho test` runs of the gate (docs/gate.md G4): one per line, `NAME | PASSED | ARGUMENTS`. `scripts/gate.sh` (stage `tests`) runs
+# `cancho test ARGUMENTS` from the root of the repository and fails unless it says `test result: ok. PASSED passed; 0 failed`, so a test
+# deleted or renamed away is a red gate, not a quiet pass of fewer. A file that moves here from `crates/cancho/tests/conformance/` is deleted there
+# in the same PR. One backend (LLVM): the Cranelift one is retired with the Rust compiler (D2).
+http_server_bytes | 19 | --std packages/http-server/server.cho tests/packages/http_server_bytes_test.cho
+http_server_body | 7 | --std packages/http-server/server.cho tests/packages/body_support.cho tests/packages/http_server_body_test.cho
+http_server_body_flow | 15 | --std packages/http-server/server.cho tests/packages/body_support.cho tests/packages/http_server_body_flow_test.cho

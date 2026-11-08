@@ -77,8 +77,6 @@ mod http;
 mod http_client;
 mod http_fetch_nb;
 mod http_server;
-mod http_server_body;
-mod http_server_bytes;
 mod http_server_stream;
 mod http_server_upload;
 mod https_hello;
