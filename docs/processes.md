@@ -14,7 +14,7 @@
 > | 5 | `exec_spawn_in` (§4.10), `std.process.channels_with_errors` and **`capture_both`** (§7.2) | `builtin.rs`, `std/process.cho`; `processes.rs`, `capture.rs` | yes |
 > | 6 (edition 9) | `exec_spawn_detached`, `child_pid`, `child_release` and the label `exec_detached` (§4.11, #524) | `builtin.rs`; `process_release.rs` | yes |
 > | 6 (edition 9) | `child_kill_group` (§4.12, #533), and `capture` using it | `builtin.rs`, `std/process.cho`; `process_group.rs` | yes |
-> | 6 (edition 9) | `exec_spawn_detached_under` (§4.15, #562): a worker found beneath a `Dir` that leads a group of its own | `builtin.rs`, `lower/process.rs`, `examples/selfhost/`; `spawn_detached_under.rs` | yes |
+> | 6 (edition 9) | `exec_spawn_detached_under` (§4.15, #562): a worker found beneath a `Dir` that leads a group of its own | `builtin.rs`, `lower/process.rs`, `examples/selfhost/`; `tests/commands/spawn_detached_under.cho` | yes |
 | 6 (edition 9) | `exec_covers` and `fs_covers` (§4.13, #535): is this path inside the bound, by the rule the operations trap on | `builtin.rs`, `memory.rs`/`fs.rs` of both backends; `path_covers.rs` | yes |
 >
 > What is still only designed or open is §9, and only that. *Corrected (#536):* this line used to say "slices 0 to 2
@@ -1066,7 +1066,7 @@ the directory to the shell, given the script `sleep 7000 & echo $!; wait`):
 The authority report of the driver is `args`, `child_signal`, `clock`, `exec_detached`, `exec_under`, `fs_read("")`, `heap`,
 `io_write`, `pipe_read`, `pipe_write`, `poll`: **no `exec("...")`, no `/bin/kill`**, which is the acceptance of the issue.
 
-Conformance: `crates/cancho/tests/conformance/spawn_detached_under.rs`, four tests (the deadline, the control, the name rule,
+Conformance: `tests/commands/spawn_detached_under.cho`, four checks (the deadline, the control, the name rule,
 the report). Fixtures: `tests/accept/exec_spawn_detached_under.cho`; `tests/reject/exec_spawn_detached_under_is_edition_nine`
 (`not-a-function`), `_narrowed` (`capability-misused`), `_arity` (`arity-mismatch`), `_not_a_dir` (`type-mismatch`),
 `_undeclared` (`effect-not-declared`, a row with `exec_under` and without `exec_detached`). No new rule.

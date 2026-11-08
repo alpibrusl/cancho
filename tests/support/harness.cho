@@ -218,3 +218,179 @@ pub fn option[&a, &f](args: &a Args, flag: &f [byte]) -> [args] &a [byte] {
     }
     return arg(args, 0)[0..0];
 }
+
+// ---- processes and scratch directories (`docs/gate.md` G4, the process tests) --------------------------------------------------------------------
+
+// Whether `needle` is in `text`.
+pub fn contains[&t, &n](text: &t [byte], needle: &n [byte]) -> [] bool {
+    return bytes.find(text, needle) >= 0;
+}
+
+// Whether one line of `text` is exactly `line`.
+pub fn has_line[&t, &l](text: &t [byte], line: &l [byte]) -> [] bool {
+    let lines = bytes.count_byte(text, 10) + 1;
+    var at = 1;
+    while at <= lines {
+        if bytes.equal(bytes.field(text, 10, at), line) {
+            return true;
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// The number that follows `prefix` at the start of a line of `text` (`worker 4321`), or -1 if no line starts with it or no digit follows.
+pub fn number_after[&t, &p](text: &t [byte], prefix: &p [byte]) -> [] int {
+    let lines = bytes.count_byte(text, 10) + 1;
+    var at = 1;
+    while at <= lines {
+        let line = bytes.field(text, 10, at);
+        if bytes.starts_with(line, prefix) {
+            var n = 0;
+            var i = len(prefix);
+            var digits = 0;
+            while i < len(line) && bytes.is_digit(int_of(line[i])) {
+                n = n * 10 + (int_of(line[i]) - '0');
+                i = i + 1;
+                digits = digits + 1;
+            }
+            if digits > 0 {
+                return n;
+            }
+            return 0 - 1;
+        }
+        at = at + 1;
+    }
+    return 0 - 1;
+}
+
+// Add `why` to `report` as a failure of `kind/name` unless `holds`; `text` is shown with it (at most 1,500 bytes).
+pub fn require[&h, &a, &n, &w, &t](heap: &!h Heap, report: buffer.Buffer, holds: bool, kind: &a [byte], name: &n [byte], why: &w [byte], text: &t [byte]) -> [heap] buffer.Buffer {
+    if holds {
+        return report;
+    }
+    return failure(heap, report, kind, name, why, text);
+}
+
+// Free what a run holds.
+pub fn drop_ended[&h](heap: &!h Heap, e: Ended) -> [heap] int {
+    let Ended { out, err, kind, code } = e;
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return 0;
+}
+
+// `/bin/sh -c SCRIPT`, nothing on its standard input; the script is consumed.
+pub fn sh_run[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, script: buffer.Buffer) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "-c");
+    borrow script as &sb in {
+        command = word(heap, command, buffer.bytes(sb));
+    }
+    buffer.drop(heap, script);
+    return spawn_capture(heap, exec, clock, "/bin/sh", command, "", "PATH=/usr/bin:/bin\0");
+}
+
+// A new empty directory `/tmp/cancho-TAG.XXXXXX` (made by `mktemp -d`), its path without the newline; empty if it could not be made.
+pub fn make_scratch[&h, &x, &c, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, tag: &t [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var command = word(heap, buffer.empty(heap, 64), "-d");
+    var template = buffer.append(heap, buffer.empty(heap, 64), "/tmp/cancho-");
+    template = buffer.append(heap, template, tag);
+    template = buffer.append(heap, template, ".XXXXXX");
+    borrow template as &tb in {
+        command = word(heap, command, buffer.bytes(tb));
+    }
+    buffer.drop(heap, template);
+    let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, "/usr/bin/mktemp", command, "", "PATH=/usr/bin:/bin\0");
+    var path = buffer.empty(heap, 64);
+    if kind == 0 && code == 0 {
+        borrow out as &ob in {
+            path = buffer.append(heap, path, bytes.trim(buffer.bytes(ob)));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return path;
+}
+
+// `exe` with the arguments in `words` (each followed by a NUL, none quoted by the caller; consumed), nothing on standard input, core dumps off (a refused name is a
+// trap, which costs a dump where they are piped); `Ended` as of `exe`, which replaces the shell that starts it.
+pub fn quiet_run[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], words: buffer.Buffer) -> [heap, exec(""), clock, poll] Ended {
+    var script = buffer.append(heap, buffer.empty(heap, 128), "ulimit -c 0; exec '");
+    script = buffer.append(heap, script, exe);
+    script = buffer.push(heap, script, byte_of('\''));
+    borrow words as &wb in {
+        let list = buffer.bytes(wb);
+        let n = bytes.count_byte(list, 0);
+        var at = 1;
+        while at <= n {
+            script = buffer.append(heap, script, " '");
+            script = buffer.append(heap, script, bytes.field(list, 0, at));
+            script = buffer.push(heap, script, byte_of('\''));
+            at = at + 1;
+        }
+    }
+    buffer.drop(heap, words);
+    return sh_run(heap, exec, clock, script);
+}
+
+// Run `script` with `PID` standing for `pid`; whether it exited 0.
+fn pid_script[&h, &x, &c, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, pid: int, script: &s [byte]) -> [heap, exec(""), clock, poll] bool {
+    var text = buffer.append(heap, buffer.empty(heap, 192), "PID=");
+    text = buffer.push_nat(heap, text, pid);
+    text = buffer.append(heap, text, "; ");
+    text = buffer.append(heap, text, script);
+    let Ended { out, err, kind, code } = sh_run(heap, exec, clock, text);
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return kind == 0 && code == 0;
+}
+
+// Running or sleeping, as `ps` says: there, and not a zombie waiting for a reaper.
+pub fn pid_alive[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, pid: int) -> [heap, exec(""), clock, poll] bool {
+    return pid_script(heap, exec, clock, pid, "s=$(ps -o stat= -p $PID); case \"$s\" in ''|Z*) exit 1;; esac; exit 0");
+}
+
+// Not running within `seconds`: gone, or a zombie (a killed process nothing reaps stays one where there is no init).
+pub fn pid_ends[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, pid: int, seconds: int) -> [heap, exec(""), clock, poll] bool {
+    var limit = buffer.append(heap, buffer.empty(heap, 192), "i=0; while [ $i -lt ");
+    limit = buffer.push_nat(heap, limit, seconds * 20);
+    limit = buffer.append(heap, limit, " ]; do s=$(ps -o stat= -p $PID); case \"$s\" in ''|Z*) exit 0;; esac; sleep 0.05; i=$((i+1)); done; exit 1");
+    var yes = false;
+    borrow limit as &lb in {
+        yes = pid_script(heap, exec, clock, pid, buffer.bytes(lb));
+    }
+    buffer.drop(heap, limit);
+    return yes;
+}
+
+// `kill -KILL pid`, whatever the answer.
+pub fn pid_kill[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, pid: int) -> [heap, exec(""), clock, poll] int {
+    pid_script(heap, exec, clock, pid, "kill -KILL $PID");
+    return 0;
+}
+
+// `rm -rf path`, for a path under `/tmp/cancho-` only (anything else is left alone).
+pub fn remove_scratch[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, path: &p [byte]) -> [heap, exec(""), clock, poll] int {
+    if !bytes.starts_with(path, "/tmp/cancho-") || contains(path, "..") {
+        return 1;
+    }
+    var command = word(heap, buffer.empty(heap, 64), "-rf");
+    command = word(heap, command, path);
+    drop_ended(heap, spawn_capture(heap, exec, clock, "/bin/rm", command, "", "PATH=/usr/bin:/bin\0"));
+    return 0;
+}
+
+// `bin build SOURCES --std -o EXE` (`sources`: each path followed by a NUL); the build's own `Ended` (kind 0 and code 0 if it built).
+pub fn build_only[&h, &x, &c, &b, &s, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], exe: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "build");
+    let paths = bytes.count_byte(sources, 0);
+    var at = 1;
+    while at <= paths {
+        command = word(heap, command, bytes.field(sources, 0, at));
+        at = at + 1;
+    }
+    command = word(heap, command, "--std");
+    command = word(heap, command, "-o");
+    command = word(heap, command, exe);
+    return spawn_capture(heap, exec, clock, bin, command, "", env);
+}
