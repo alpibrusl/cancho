@@ -218,3 +218,49 @@ pub fn option[&a, &f](args: &a Args, flag: &f [byte]) -> [args] &a [byte] {
     }
     return arg(args, 0)[0..0];
 }
+
+// Whether `text` holds `needle`.
+pub fn contains[&t, &n](text: &t [byte], needle: &n [byte]) -> [] bool {
+    return bytes.find(text, needle) >= 0;
+}
+
+// A new empty directory made by `/usr/bin/mktemp -d` (its path, empty if it could not be made); `remove_tree` takes it away.
+pub fn scratch_dir[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var command = word(heap, buffer.empty(heap, 16), "-d");
+    command = word(heap, command, "/tmp/cancho-test.XXXXXXXX");
+    let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, "/usr/bin/mktemp", command, "", "PATH=/usr/bin:/bin\0");
+    buffer.drop(heap, err);
+    var path = buffer.empty(heap, 64);
+    if kind == 0 && code == 0 {
+        borrow out as &ob in {
+            path = buffer.append(heap, path, bytes.trim(buffer.bytes(ob)));
+        }
+    }
+    buffer.drop(heap, out);
+    return path;
+}
+
+// `/bin/rm -rf path`, for a directory `scratch_dir` made.
+pub fn remove_tree[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, path: &p [byte]) -> [heap, exec(""), clock, poll] int {
+    var command = word(heap, buffer.empty(heap, 16), "-rf");
+    command = word(heap, command, path);
+    let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, "/bin/rm", command, "", "PATH=/usr/bin:/bin\0");
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return code;
+}
+
+// The compiler `bin` run with up to four arguments (an empty one is left out) in `env`; its `Ended`. For a command like `print FILE --output json`.
+pub fn run_cancho[&h, &x, &c, &b, &e, &p, &q, &r, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], first: &p [byte], second: &q [byte], third: &r [byte], fourth: &s [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), first);
+    if len(second) > 0 {
+        command = word(heap, command, second);
+    }
+    if len(third) > 0 {
+        command = word(heap, command, third);
+    }
+    if len(fourth) > 0 {
+        command = word(heap, command, fourth);
+    }
+    return spawn_capture(heap, exec, clock, bin, command, "", env);
+}

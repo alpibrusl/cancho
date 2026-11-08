@@ -15,7 +15,7 @@
 > | 6 (edition 9) | `exec_spawn_detached`, `child_pid`, `child_release` and the label `exec_detached` (§4.11, #524) | `builtin.rs`; `process_release.rs` | yes |
 > | 6 (edition 9) | `child_kill_group` (§4.12, #533), and `capture` using it | `builtin.rs`, `std/process.cho`; `process_group.rs` | yes |
 > | 6 (edition 9) | `exec_spawn_detached_under` (§4.15, #562): a worker found beneath a `Dir` that leads a group of its own | `builtin.rs`, `lower/process.rs`, `examples/selfhost/`; `spawn_detached_under.rs` | yes |
-| 6 (edition 9) | `exec_covers` and `fs_covers` (§4.13, #535): is this path inside the bound, by the rule the operations trap on | `builtin.rs`, `memory.rs`/`fs.rs` of both backends; `path_covers.rs` | yes |
+| 6 (edition 9) | `exec_covers` and `fs_covers` (§4.13, #535): is this path inside the bound, by the rule the operations trap on | `builtin.rs`, `memory.rs`/`fs.rs` of both backends; `tests/commands/path_covers.cho` | yes |
 >
 > What is still only designed or open is §9, and only that. *Corrected (#536):* this line used to say "slices 0 to 2
 > built; slices 3 and 4 designed, not built", which was true when slice 2 merged and was never revised when `capture`
@@ -842,7 +842,7 @@ says what `Fs` is not).
 negation. The compiler in cancho does the same in `runtime.ll`: `cancho_path_covers` is the rule, `cancho_checked_path`
 calls it and traps on `false`, and the new call is `cancho_path_covers` as it stands. A change to the rule is a change
 to the one function the trap and the answer both use. The remaining copy is `extends_path`, which decides at compile
-time for literals (it has no `..`, length or NUL case, which a literal's rows and `narrow` do not need); `path_covers.rs`
+time for literals (it has no `..`, length or NUL case, which a literal's rows and `narrow` do not need); `tests/commands/path_covers.cho`
 holds it to the same table of paths as the emitted check, for every path without those three.
 
 **Chosen over, and why:**
@@ -1668,7 +1668,7 @@ What #535 added, measured on Linux 6.18 x86-64. macOS and WebAssembly under `was
 * **Refusals.** `exec_covers_is_edition_nine` and `fs_covers_is_edition_nine` (`not-a-function`),
   `exec_covers_on_wasi` (`unsupported-on-target`), `exec_covers_not_an_exec` and `fs_covers_not_an_fs`
   (`capability-misused`), `exec_covers_arity` (`arity-mismatch`). No new rule. `tests/accept/path_covers_asks_first.cho`.
-* **Conformance** (`path_covers.rs`, driver `tests/programs/path_covers.cho` built per bound by Cranelift, the Rust LLVM
+* **Conformance** (`tests/commands/path_covers.cho`, driver `tests/programs/path_covers.cho` built per bound by the compiler under test; it was built by Cranelift, the Rust LLVM
   backend and the compiler in cancho): for four bounds (a directory, one program, a directory ending in `/`, none) a
   table of paths, each asked of `exec_covers` and `fs_covers` and **held against** what `exec_spawn` and `open_read`
   really do with it, a value or a signal with nothing printed. The cases include a path outside, `..` at the start, in

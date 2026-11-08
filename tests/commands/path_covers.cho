@@ -1,0 +1,505 @@
+edition 7;
+module path_covers_test;
+
+// path_covers.cho -- `conformance/path_covers.rs` (deleted), in cancho (`docs/gate.md` G4): `exec_covers` and `fs_covers` (`docs/processes.md` section 4.13, #535), asking whether a path is inside a
+// bound by the rule the operations enforce, over real processes and paths. The driver is `tests/programs/path_covers.cho`, built for each bound by replacing the text `"/bin"` (the bound of its
+// capabilities and of their rows) with the bound. For every path the answer of `exec_covers` (mode `c`) and of `fs_covers` (`f`) is held against what the operation really does: a path called
+// outside must kill the driver at `exec_spawn` (`e`) or `open_read` (`o`) with a signal and no output; a covered one must come back as a value. The compile-time rule (`narrow`) is held against
+// the same table by `check` of the driver with one `narrow(files, "PATH")` added. Then: a NUL after the bound (`z`), the supervisor that asks first (`s`), and the authority report of
+// `tests/accept/path_covers_asks_first.cho` (`io_write` and no `exec` or `fs_*` label).
+//
+//     cancho build tests/commands/path_covers.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: path_covers` or what is wrong, and exits 0 or 1. One backend (LLVM) and one compiler, the one given: the Cranelift leg and the three
+// configurations of the Rust test are gone (D2). Every driver is started through `/bin/sh -c 'ulimit -c 0; exec ...'`, as the Rust test turned core dumps off (a trap per path would otherwise
+// be a core file per path). A table is lines `1PATH` (covered) or `0PATH` (outside).
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// `text` with every `from` replaced by `to`.
+fn replaced[&h, &t, &f, &o](heap: &!h Heap, text: &t [byte], from: &f [byte], to: &o [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text) + 64);
+    var at = 0;
+    while at < len(text) {
+        let rest = text[at..len(text)];
+        let found = bytes.find(rest, from);
+        if found < 0 {
+            out = buffer.append(heap, out, rest);
+            at = len(text);
+        } else {
+            out = buffer.append(heap, out, rest[0..found]);
+            out = buffer.append(heap, out, to);
+            at = at + found + len(from);
+        }
+    }
+    return out;
+}
+
+// What a driver run came to: `trapped` is a signal and nothing printed, `returned` is exit 0, and what it printed (trimmed) is in `said`.
+res struct Run {
+    said: buffer.Buffer,
+    returned: bool,
+    trapped: bool,
+}
+
+// `exe MODE PATH`, through `sh` with core dumps off.
+fn drive[&h, &x, &c, &e, &m, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &e [byte], mode: &m [byte], path: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Run {
+    var command = harness.word(heap, buffer.empty(heap, 64), "-c");
+    command = harness.word(heap, command, "ulimit -c 0; exec \"$0\" \"$@\"");
+    command = harness.word(heap, command, exe);
+    command = harness.word(heap, command, mode);
+    command = harness.word(heap, command, path);
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, "/bin/sh", command, "", env);
+    buffer.drop(heap, err);
+    var said = buffer.empty(heap, 16);
+    var returned = false;
+    var trapped = false;
+    borrow out as &ob in {
+        said = buffer.append(heap, said, bytes.trim(buffer.bytes(ob)));
+        if kind == 0 && code == 0 {
+            returned = true;
+        }
+        if kind == 1 && len(buffer.bytes(ob)) == 0 {
+            trapped = true;
+        }
+    }
+    buffer.drop(heap, out);
+    return Run { said: said, returned: returned, trapped: trapped };
+}
+
+// What `exec_covers` (`c`) or `fs_covers` (`f`) printed, against `covered`.
+fn asked[&h, &x, &c, &e, &m, &p, &v, &b](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &e [byte], mode: &m [byte], path: &p [byte], env: &v [byte], bound: &b [byte], covered: bool, before: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let ran = drive(heap, exec, clock, exe, mode, path, env);
+    let Run { said, returned, trapped } = ran;
+    var report = before;
+    var wrong = !returned;
+    borrow said as &sb in {
+        if covered && !bytes.equal(buffer.bytes(sb), "covered") {
+            wrong = true;
+        }
+        if !covered && !bytes.equal(buffer.bytes(sb), "outside") {
+            wrong = true;
+        }
+        if wrong {
+            var why = buffer.append(heap, buffer.empty(heap, 64), "mode ");
+            why = buffer.append(heap, why, mode);
+            why = buffer.append(heap, why, " bound `");
+            why = buffer.append(heap, why, bound);
+            why = buffer.append(heap, why, "` path `");
+            why = buffer.append(heap, why, shown(path));
+            why = buffer.append(heap, why, "` should print covered or outside as the table says, printed");
+            borrow why as &wb in {
+                report = harness.failure(heap, report, "asked", "answer", buffer.bytes(wb), buffer.bytes(sb));
+            }
+            buffer.drop(heap, why);
+        }
+    }
+    buffer.drop(heap, said);
+    return report;
+}
+
+// A path as shown in a failure: at most 60 bytes.
+fn shown[&p](path: &p [byte]) -> [] &p [byte] {
+    if len(path) > 60 {
+        return path[0..60];
+    }
+    return path;
+}
+
+// The real operation (`e` or `o`): it returns exactly when the table says covered, and otherwise it is killed by the trap and prints nothing.
+fn done[&h, &x, &c, &e, &m, &p, &v, &b](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &e [byte], mode: &m [byte], path: &p [byte], env: &v [byte], bound: &b [byte], covered: bool, before: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let ran = drive(heap, exec, clock, exe, mode, path, env);
+    let Run { said, returned, trapped } = ran;
+    var report = before;
+    if !returned && !trapped || returned != covered {
+        var why = buffer.append(heap, buffer.empty(heap, 64), "mode ");
+        why = buffer.append(heap, why, mode);
+        why = buffer.append(heap, why, " bound `");
+        why = buffer.append(heap, why, bound);
+        why = buffer.append(heap, why, "` path `");
+        why = buffer.append(heap, why, shown(path));
+        if covered {
+            why = buffer.append(heap, why, "`: the predicate said covered, so the operation should return");
+        } else {
+            why = buffer.append(heap, why, "`: the predicate said outside, so the operation should trap (a signal, nothing printed)");
+        }
+        borrow why as &wb in {
+            borrow said as &sb in {
+                report = harness.failure(heap, report, "done", "operation", buffer.bytes(wb), buffer.bytes(sb));
+            }
+        }
+        buffer.drop(heap, why);
+    }
+    buffer.drop(heap, said);
+    return report;
+}
+
+// What the compiler's own rule says of a literal `path` under `bound`: the driver with `narrow(files, "PATH")` added, checked with `cancho check`. Covered unless the refusal says the path cannot be
+// narrowed to (`cannot be narrowed to` in the compiler in Rust, `never widens` in the one in cancho, which says it too of a path equal to the bound, a no-op that is not a refusal of coverage). Nothing is asked for what a literal cannot spell or the rule does not see (a `..`, a length of
+// 4,096, a quote, a backslash, a control character, or the empty bound, which every path extends).
+fn narrowed[&h, &x, &c, &f, &b, &v, &d, &p, &s, &o](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], source: &s [byte], bound: &o [byte], path: &p [byte], covered: bool, before: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var report = before;
+    if len(bound) == 0 || len(path) >= 4096 || bytes.find(path, "..") >= 0 || bytes.find(path, "\"") >= 0 || bytes.find(path, "\\") >= 0 {
+        return report;
+    }
+    var marker = buffer.append(heap, buffer.empty(heap, 64), "    let files = narrow(fs, \"");
+    marker = buffer.append(heap, marker, bound);
+    marker = buffer.append(heap, marker, "\");\n");
+    var added = buffer.append(heap, buffer.empty(heap, 128), "    let deeper = narrow(files, \"");
+    added = buffer.append(heap, added, path);
+    added = buffer.append(heap, added, "\");\n    release(deeper);\n");
+    var withmarker = buffer.empty(heap, 0);
+    var quoted = buffer.append(heap, buffer.empty(heap, 64), "\"");
+    quoted = buffer.append(heap, quoted, bound);
+    quoted = buffer.push(heap, quoted, byte_of('"'));
+    var bsrc = buffer.empty(heap, 0);
+    borrow quoted as &qb in {
+        buffer.drop(heap, bsrc);
+        bsrc = replaced(heap, source, "\"/bin\"", buffer.bytes(qb));
+    }
+    buffer.drop(heap, quoted);
+    borrow marker as &mb in {
+        borrow added as &ab in {
+            var both = buffer.append(heap, buffer.empty(heap, 128), buffer.bytes(mb));
+            both = buffer.append(heap, both, buffer.bytes(ab));
+            borrow both as &bb in {
+                buffer.drop(heap, withmarker);
+                borrow bsrc as &bsb in {
+                    withmarker = replaced(heap, buffer.bytes(bsb), buffer.bytes(mb), buffer.bytes(bb));
+                }
+            }
+            buffer.drop(heap, both);
+        }
+    }
+    borrow withmarker as &wmb in {
+        save(heap, fs, dir, "probe.cho", buffer.bytes(wmb));
+    }
+    buffer.drop(heap, withmarker);
+    buffer.drop(heap, bsrc);
+    buffer.drop(heap, marker);
+    buffer.drop(heap, added);
+    let probe = harness.joined(heap, dir, "probe.cho");
+    borrow probe as &pb in {
+        let checked = harness.run_cancho(heap, exec, clock, bin, env, "check", buffer.bytes(pb), "--std", "");
+        let harness.Ended { out, err, kind, code } = checked;
+        borrow err as &eb in {
+            let refused = harness.contains(buffer.bytes(eb), "cannot be narrowed to") || harness.contains(buffer.bytes(eb), "never widens") && !bytes.equal(path, bound);
+            if refused == covered {
+                report = harness.failure(heap, report, "narrow", "rule", "`narrow` and the table should agree about a path (bound and path in the next line)", buffer.bytes(eb));
+                report = buffer.append(heap, report, bound);
+                report = buffer.append(heap, report, " ");
+                report = buffer.append(heap, report, shown(path));
+                report = buffer.push(heap, report, byte_of('\n'));
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, probe);
+    return report;
+}
+
+// `data` written to `dir/name`.
+fn save[&h, &f, &d, &n, &t](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte], name: &n [byte], data: &t [byte]) -> [heap, fs_write("")] int {
+    let path = harness.joined(heap, dir, name);
+    var wrote = 0;
+    borrow path as &pb in {
+        wrote = fs_write(fs, buffer.bytes(pb), data);
+    }
+    buffer.drop(heap, path);
+    return wrote;
+}
+
+// What building a driver came to: the path of the executable (empty if the build failed) and what is wrong so far.
+res struct Built {
+    exe: buffer.Buffer,
+    report: buffer.Buffer,
+}
+
+// The driver for `bound` built as `dir/NAME`: the source of `tests/programs/path_covers.cho` with the bound put in (`split` hands out `Exec("")` and `Fs("")`: the empty bound is the capability as it is,
+// and narrowing to it is refused as a no-op).
+fn build_for[&h, &x, &c, &f, &b, &v, &d, &s, &n, &o](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], source: &s [byte], name: &n [byte], bound: &o [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] Built {
+    var quoted = buffer.append(heap, buffer.empty(heap, 64), "\"");
+    quoted = buffer.append(heap, quoted, bound);
+    quoted = buffer.push(heap, quoted, byte_of('"'));
+    var text = buffer.empty(heap, 0);
+    borrow quoted as &qb in {
+        let one = replaced(heap, source, "\"/bin\"", buffer.bytes(qb));
+        borrow one as &ob in {
+            let two = replaced(heap, buffer.bytes(ob), "narrow(exec, \"\")", "exec");
+            borrow two as &tb in {
+                buffer.drop(heap, text);
+                text = replaced(heap, buffer.bytes(tb), "narrow(fs, \"\")", "fs");
+            }
+            buffer.drop(heap, two);
+        }
+        buffer.drop(heap, one);
+    }
+    buffer.drop(heap, quoted);
+    var file = buffer.append(heap, buffer.empty(heap, 32), name);
+    file = buffer.append(heap, file, ".cho");
+    borrow file as &fb in {
+        borrow text as &xb in {
+            save(heap, fs, dir, buffer.bytes(fb), buffer.bytes(xb));
+        }
+    }
+    buffer.drop(heap, text);
+    var source_path = buffer.empty(heap, 0);
+    borrow file as &fnb in {
+        buffer.drop(heap, source_path);
+        source_path = harness.joined(heap, dir, buffer.bytes(fnb));
+    }
+    let exe = harness.joined(heap, dir, name);
+    buffer.drop(heap, file);
+    var command = harness.word(heap, buffer.empty(heap, 64), "build");
+    borrow source_path as &sp in {
+        command = harness.word(heap, command, buffer.bytes(sp));
+    }
+    command = harness.word(heap, command, "--std");
+    command = harness.word(heap, command, "-o");
+    borrow exe as &ep in {
+        command = harness.word(heap, command, buffer.bytes(ep));
+    }
+    buffer.drop(heap, source_path);
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, bin, command, "", env);
+    var report = before;
+    var built = exe;
+    if kind != 0 || code != 0 {
+        borrow err as &eb in {
+            report = harness.failure(heap, report, "build", bound, "should build the driver for this bound, but the compiler said", buffer.bytes(eb));
+        }
+        buffer.drop(heap, built);
+        built = buffer.empty(heap, 0);
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return Built { exe: built, report: report };
+}
+
+// One table for one bound: every line `1PATH` or `0PATH`. The compile-time rule, the predicates and the operations each held against it.
+fn table[&h, &x, &c, &f, &b, &v, &d, &s, &n, &o, &l](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], source: &s [byte], name: &n [byte], bound: &o [byte], lines: &l [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let made = build_for(heap, exec, clock, fs, bin, env, dir, source, name, bound, before);
+    let Built { exe, report } = made;
+    var acc = report;
+    borrow exe as &eb in {
+        if len(buffer.bytes(eb)) > 0 {
+            let count = bytes.count_byte(lines, 10) + 1;
+            var at = 1;
+            while at <= count {
+                let line = bytes.field(lines, 10, at);
+                let covered = line[0] == byte_of('1');
+                let path = line[1..len(line)];
+                acc = narrowed(heap, exec, clock, fs, bin, env, dir, source, bound, path, covered, acc);
+                acc = asked(heap, exec, clock, buffer.bytes(eb), "c", path, env, bound, covered, acc);
+                acc = asked(heap, exec, clock, buffer.bytes(eb), "f", path, env, bound, covered, acc);
+                acc = done(heap, exec, clock, buffer.bytes(eb), "e", path, env, bound, covered, acc);
+                acc = done(heap, exec, clock, buffer.bytes(eb), "o", path, env, bound, covered, acc);
+                at = at + 1;
+            }
+        }
+    }
+    buffer.drop(heap, exe);
+    return acc;
+}
+
+// `flag`, `prefix` and `count` letters `a`: one line of a table.
+fn long_line[&h, &p, &q](heap: &!h Heap, flag: &p [byte], prefix: &q [byte], count: int) -> [heap] buffer.Buffer {
+    var line = buffer.append(heap, buffer.empty(heap, count + 16), flag);
+    line = buffer.append(heap, line, prefix);
+    var at = 0;
+    while at < count {
+        line = buffer.push(heap, line, byte_of('a'));
+        at = at + 1;
+    }
+    return line;
+}
+
+// The longest path the operations copy is 4,095 bytes: at 4,096 they trap, so the predicate says outside.
+fn longest[&h, &x, &c, &f, &b, &v, &d, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], source: &s [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var acc = before;
+    // "/bin/" is 5 bytes: 4,090 more make 4,095, and 4,091 make 4,096.
+    var rows = long_line(heap, "1", "/bin/", 4090);
+    rows = buffer.push(heap, rows, byte_of(10));
+    let over = long_line(heap, "0", "/bin/", 4091);
+    borrow over as &ob in {
+        rows = buffer.append(heap, rows, buffer.bytes(ob));
+    }
+    buffer.drop(heap, over);
+    borrow rows as &rb in {
+        acc = table(heap, exec, clock, fs, bin, env, dir, source, "long", "/bin", buffer.bytes(rb), acc);
+    }
+    buffer.drop(heap, rows);
+    var rows2 = long_line(heap, "1", "", 4095);
+    rows2 = buffer.push(heap, rows2, byte_of(10));
+    let over2 = long_line(heap, "0", "", 4096);
+    borrow over2 as &ob in {
+        rows2 = buffer.append(heap, rows2, buffer.bytes(ob));
+    }
+    buffer.drop(heap, over2);
+    borrow rows2 as &rb in {
+        acc = table(heap, exec, clock, fs, bin, env, dir, source, "long-empty", "", buffer.bytes(rb), acc);
+    }
+    buffer.drop(heap, rows2);
+    return acc;
+}
+
+// `exe MODE PATH` exits 0 and prints exactly `expected` (a line break inside, none at the end).
+fn said[&h, &x, &c, &e, &m, &p, &v, &w](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &e [byte], mode: &m [byte], path: &p [byte], env: &v [byte], expected: &w [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let ran = drive(heap, exec, clock, exe, mode, path, env);
+    let Run { said, returned, trapped } = ran;
+    var report = before;
+    borrow said as &sb in {
+        if !returned || !bytes.equal(buffer.bytes(sb), expected) {
+            var why = buffer.append(heap, buffer.empty(heap, 64), "mode ");
+            why = buffer.append(heap, why, mode);
+            why = buffer.append(heap, why, " path `");
+            why = buffer.append(heap, why, path);
+            why = buffer.append(heap, why, "` should exit 0 and print what is expected, printed");
+            borrow why as &wb in {
+                report = harness.failure(heap, report, "said", "driver", buffer.bytes(wb), buffer.bytes(sb));
+            }
+            buffer.drop(heap, why);
+        }
+    }
+    buffer.drop(heap, said);
+    return report;
+}
+
+// A NUL after the bound ends the C string at the bound, so the path is the bound itself and is inside; and the supervisor of #535, which asks first, so a path outside the bound is a line it writes and
+// not the end of the supervisor, while the same path handed straight to `exec_spawn` ends it.
+fn supervisor[&h, &x, &c, &f, &b, &v, &d, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], source: &s [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let made = build_for(heap, exec, clock, fs, bin, env, dir, source, "supervisor", "/bin", before);
+    let Built { exe, report } = made;
+    var acc = report;
+    borrow exe as &eb in {
+        if len(buffer.bytes(eb)) > 0 {
+            acc = said(heap, exec, clock, buffer.bytes(eb), "z", "", env, "covered\ncovered", acc);
+            let paths = "/bin2/true\n/bin/../bin/true\ntrue\n/usr/bin/true";
+            var at = 1;
+            while at <= 4 {
+                let path = bytes.field(paths, 10, at);
+                acc = said(heap, exec, clock, buffer.bytes(eb), "s", path, env, "refused\njournaled", acc);
+                acc = done(heap, exec, clock, buffer.bytes(eb), "e", path, env, "/bin", false, acc);
+                at = at + 1;
+            }
+            // A program that is under `/bin` on Linux and on macOS (`true` is `/usr/bin/true` there).
+            acc = said(heap, exec, clock, buffer.bytes(eb), "s", "/bin/echo", env, "spawned code 0\njournaled", acc);
+        }
+    }
+    buffer.drop(heap, exe);
+    return acc;
+}
+
+// Asking adds nothing to the report: `tests/accept/path_covers_asks_first.cho` asks of an `Exec` and an `Fs` in functions whose rows are empty, and its program-wide report has `io_write` and no `exec`
+// or `fs_*` label.
+fn authority[&h, &x, &c, &b, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &v [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let checked = harness.run_cancho(heap, exec, clock, bin, env, "authority", "--std", "tests/accept/path_covers_asks_first.cho", "");
+    let harness.Ended { out, err, kind, code } = checked;
+    var report = before;
+    borrow out as &ob in {
+        borrow err as &eb in {
+            let text = buffer.bytes(ob);
+            if kind != 0 || code != 0 {
+                report = harness.failure(heap, report, "authority", "asks_first", "should succeed, but the compiler said", buffer.bytes(eb));
+            } else if !harness.contains(text, "io_write") {
+                report = harness.failure(heap, report, "authority", "asks_first", "should report io_write", text);
+            } else if harness.contains(text, "exec") || harness.contains(text, "fs_read") || harness.contains(text, "fs_write") {
+                report = harness.failure(heap, report, "authority", "asks_first", "a program that only asks should have no exec or fs label in its report", text);
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return report;
+}
+
+fn tables[&h, &x, &c, &f, &b, &v, &d, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], source: &s [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var acc = before;
+    // A directory bound: the prefix extends at a `/` or not at all, the directory itself and a trailing slash are inside, a `..` anywhere is outside (the byte pair, so `true..x` as well), and a relative path is
+    // outside every bound but the empty one.
+    acc = table(heap, exec, clock, fs, bin, env, dir, source, "dir", "/bin", "1/bin/true\n1/bin\n1/bin/\n1/bin/nonexistent\n1/bin/a.b\n1/bin/.hidden\n1/bin//true\n0/bin2/true\n0/binx\n0/bi\n0/\n0\n0true\n0bin/true\n0//bin/true\n0/usr/bin/true\n0/BIN/true\n0/bin/../bin/true\n0/bin/..\n0/../bin/true\n0/bin/true..x", acc);
+    // The exact program is inside its own bound, and one byte more or less is not.
+    acc = table(heap, exec, clock, fs, bin, env, dir, source, "one", "/bin/true", "1/bin/true\n1/bin/true/\n1/bin/true/x\n0/bin/truex\n0/bin/tru\n0/bin/false\n0/bin\n0/bin/true/../false\n0/bin/true..", acc);
+    // A bound that ends in `/` already ends at a boundary: what continues is inside, and the directory without its slash is shorter than the prefix, so outside.
+    acc = table(heap, exec, clock, fs, bin, env, dir, source, "slash", "/bin/", "1/bin/true\n1/bin/\n1/bin//true\n0/bin\n0/bin2/true\n0/bin/../bin/true\n0/usr/bin/true", acc);
+    // The empty bound contains every path but the ones the rule refuses outright, `..` and a path too long to copy.
+    acc = table(heap, exec, clock, fs, bin, env, dir, source, "empty", "", "1/bin/true\n1true\n1x/y\n1/etc/passwd\n1\n0/bin/../bin/true\n0..\n0a/../b", acc);
+    acc = longest(heap, exec, clock, fs, bin, env, dir, source, acc);
+    acc = supervisor(heap, exec, clock, fs, bin, env, dir, source, acc);
+    acc = authority(heap, exec, clock, bin, env, acc);
+    return acc;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock);
+    let driver = harness.read_file(heap, fs, "tests/programs/path_covers.cho");
+    let harness.Contents { data, failed } = driver;
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            borrow data as &sb in {
+                if len(buffer.bytes(db)) == 0 || failed != 0 {
+                    report = harness.failure(heap, report, "path_covers", "setup", "needs a scratch directory and tests/programs/path_covers.cho (run from the root of the repository)", "");
+                } else {
+                    report = tables(heap, exec, clock, fs, bin, buffer.bytes(eb), buffer.bytes(db), buffer.bytes(sb), report);
+                    harness.remove_tree(heap, exec, clock, buffer.bytes(db));
+                }
+            }
+        }
+    }
+    buffer.drop(heap, data);
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: path_covers CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: path_covers\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
