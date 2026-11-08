@@ -273,7 +273,7 @@ example's `--resolve name=ip` is the caller-resolves case; `rtcp` is not wired i
 The client dials nothing: it never sees an address. A program that forwards a client-chosen destination (an open proxy, a webhook
 sender) must judge the address *before* it answers a `Connect` (`cancho-hooks` `design.md` §26, `examples/tls_nb/pin.cho`); the
 gateway has a fixed, compiled-in upstream set and its authority report says `net_out("")`. This package cannot widen what a program
-reaches, because it reaches nothing but its own heap: **its authority report is `heap`** (`cancho authority`, §9, pinned in `conformance/http_client.rs`).
+reaches, because it reaches nothing but its own heap: **its authority report is `heap`** (`cancho authority`, §9, pinned in `tests/commands/http_client.cho`).
 
 ### 3.10 D10: bounds
 
@@ -327,7 +327,7 @@ readable and has `room`, read and `give`; for every slot with `pending`, `take` 
 ## 5. What the unit tests can do without a socket
 
 The client is bytes in, bytes out, and a clock that is an integer; that is the point of the shape. A test is a `fn test_*` run by
-`cancho test` on both backends (`tests/packages/http_client_test.cho`, pinned by `conformance/http_client.rs`) that drives a client as
+`cancho test` on both backends (`tests/packages/http_client_test.cho`, pinned by `tests/cancho-tests.txt`) that drives a client as
 the caller's loop would and plays the upstream by hand:
 
 * every response framing (length, chunked, until close, none for `HEAD`/`204`/`304`/`1xx`), **each fed split at every byte** and in
@@ -416,7 +416,7 @@ Built in this PR; the sections above are corrected in place where the build diff
 |---|---|
 | `packages/http-client/` | three modules, published as stores by `scripts/publish_packages.py` like `packages/tls`: `http_client_slot` (285 lines: the names of the words of a slot and the numbers they hold), `http_client_wire` (1,105: validating and writing a request head, the response head parser, the incremental chunk decoder) and `http_client` (1,711: the table, the state machine, the pool, the timers, the events). `http_client` was 1,988 lines before the slot layout moved out of it |
 | `examples/http_fetch_nb/` | `fetch_io.cho` (the driver of §3.7: sockets, TLS engine, poller; the one place that owns them) and `fetch.cho` (a program that fetches N URLs at once with it, with the options the live tests need) |
-| `tests/packages/http_client_*.cho` | 118 `cancho test` tests in seven files, run on both backends by `conformance/http_client.rs` |
+| `tests/packages/http_client_*.cho` | 118 `cancho test` tests in seven files, run by `tests/cancho-tests.txt` (`http_client`) |
 | `tests/programs/http_client_{bytes,fuzz,bench}.cho` | the package with no I/O (its authority pinned), a million damaged responses through it, and its cost with nothing around it |
 | `scripts/http_client_{upstream,test,mutants}.py` | the servers the live tests use, the 17 live cases and the cost, and 517 mutants |
 | `crates/cancho/tests/conformance/http_{client,fetch_nb}.rs` | the unit tests on both backends and the package's authority; the example built and run against a server written in the test and against `examples/https_hello`, and its authority pinned |
@@ -469,7 +469,7 @@ The calls of §4 exist with these differences *(corrected)*:
 
 ### 10.4 Tests, against the gates of §9
 
-1. **118 unit tests**, on both backends, the number pinned in `conformance/http_client.rs`: every framing (length, chunked with an extension and
+1. **118 unit tests**, on both backends, the number pinned in `tests/commands/http_client.cho`: every framing (length, chunked with an extension and
    a trailer, until close, none for `HEAD`/`204`/`304`, `HTTP/1.0`, interim responses) **fed in pieces of 1, 2, 3, 5, 7 and the whole**; a body of
    60,000 bytes through a 2,048-byte buffer in either framing to a consumer that takes 100 bytes a turn; 55 refused responses (each fed at three
    piece sizes) and 18 refused chunk framings (at every piece size) with their tags; 34 refused requests; the one retry (allowed or not, on an end

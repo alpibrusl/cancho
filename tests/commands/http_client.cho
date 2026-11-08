@@ -1,0 +1,126 @@
+edition 7;
+module http_client_test;
+
+// http_client.cho -- `conformance/http_client.rs` (deleted), in cancho (`docs/gate.md` G4): `packages/http-client` (`docs/http-client.md`) performs no I/O, reads no clock and owns no
+// socket. A program that makes a request, takes its bytes, gives a chunked response in pieces of three bytes and reads the body reports the heap (the client's buffers) and the
+// console and nothing else: `tests/programs/http_client_bytes.cho` under `cancho authority`, then run, its output the request as the client wrote it and the body.
+// The other test of that file, `cancho test` over `tests/packages/http_client_*.cho`, is a line of `tests/cancho-tests.txt`.
+//
+//     cancho build tests/commands/http_client.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: http_client` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// `cancho VERB [--output json] --std PACKAGE FILES... PROGRAM`, as the arguments of one run (each followed by a NUL).
+fn command[&h, &v, &j](heap: &!h Heap, verb: &v [byte], json: &j [byte]) -> [heap] buffer.Buffer {
+    var words = harness.word(heap, buffer.empty(heap, 256), verb);
+    words = harness.word(heap, words, "--std");
+    if len(json) > 0 {
+        words = harness.word(heap, words, "--output");
+        words = harness.word(heap, words, json);
+    }
+    words = harness.word(heap, words, "packages/http-client/slot.cho");
+    words = harness.word(heap, words, "packages/http-client/wire.cho");
+    words = harness.word(heap, words, "packages/http-client/client.cho");
+    return harness.word(heap, words, "tests/programs/http_client_bytes.cho");
+}
+
+fn check[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    borrow env as &eb in {
+        let authority = harness.spawn_capture(heap, exec, clock, bin, command(heap, "authority", "json"), "", buffer.bytes(eb));
+        let harness.Ended { out, err, kind, code } = authority;
+        borrow out as &ob in {
+            borrow err as &rb in {
+                let json = buffer.bytes(ob);
+                if kind != 0 || code != 0 {
+                    report = harness.failure(heap, report, "authority", "http_client_bytes", "should succeed, but the compiler said", buffer.bytes(rb));
+                } else {
+                    if !bytes.starts_with(bytes.trim(json), "{\n  \"bounded\": true,") {
+                        report = harness.failure(heap, report, "authority", "bounded", "should begin with a bounded report", json);
+                    }
+                    if !harness.contains(json, "\"effects\": [\"heap\", \"io_write\"]") {
+                        report = harness.failure(heap, report, "authority", "effects", "should be the heap and the console, nothing else", json);
+                    }
+                    if !harness.contains(json, "\"foreign_symbols\": []") {
+                        report = harness.failure(heap, report, "authority", "foreign", "should have no foreign symbols", json);
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+        report = ran(heap, exec, clock, bin, buffer.bytes(eb), report);
+    }
+    buffer.drop(heap, env);
+    return report;
+}
+
+// The program run: its output is the request and the body.
+fn ran[&h, &x, &c, &b, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var report = before;
+    let ended = harness.spawn_capture(heap, exec, clock, bin, command(heap, "run", ""), "", env);
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow out as &ob in {
+        borrow err as &rb in {
+            if kind != 0 || code != 0 {
+                report = harness.failure(heap, report, "run", "http_client_bytes", "should exit 0, but it said", buffer.bytes(rb));
+            } else if !bytes.equal(buffer.bytes(ob), "GET /hello HTTP/1.1\r\nHost: example.test\r\nAccept: text/plain\r\n\r\nhello world\n") {
+                report = harness.failure(heap, report, "run", "output", "should be the request and the body, nothing else", buffer.bytes(ob));
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, exec(""), clock, poll] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: http_client CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: http_client\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    release(fs);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        status = run(h, i, a, x, c);
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

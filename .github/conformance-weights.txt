@@ -237,7 +237,6 @@ memory 15
 tls_pool 14
 vcs_std 14
 differential 13
-http_client 13
 net_split 13
 testing 13
 
