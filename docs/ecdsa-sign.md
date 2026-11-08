@@ -189,9 +189,9 @@ audited (§2.3) but not timing-tested.
 ## 5. How it is tested, and the results
 
 `tests/programs/ecdsa_sign_driver.cho` runs everything, built with `packages/x509/x509.cho` and `key.cho`.
-`crates/cancho/tests/conformance/ecdsa_sign.rs` has the fixed cases; the scripts run OpenSSL and Python.
+`tests/commands/ecdsa_sign.cho` has the fixed cases; the scripts run OpenSSL and Python.
 
-### 5.1 RFC 6979 and the refusals (`conformance/ecdsa_sign.rs`)
+### 5.1 RFC 6979 and the refusals (`tests/commands/ecdsa_sign.cho`)
 
 - **RFC 6979 Appendix A.2.5, P-256 with SHA-256**, both messages ("sample" and "test"), with the added randomness empty: r
   and s exactly as the RFC prints them, from `sign` and from `sign_checked`, on **both backends**, and their DER ("test"'s s

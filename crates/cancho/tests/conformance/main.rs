@@ -57,7 +57,6 @@ mod docs;
 mod duplication;
 mod ecdh;
 mod ecdsa;
-mod ecdsa_sign;
 mod f32_text;
 mod file_writes;
 mod filesystem;
