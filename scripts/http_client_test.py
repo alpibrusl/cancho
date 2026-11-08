@@ -354,6 +354,43 @@ def case_timeouts(exe, _hello):
     return f"ok (head 0.5 s, body 0.5 s, truncated, refused: {time.monotonic() - t0:.1f} s)"
 
 
+def adopting(runner):
+    """The same runner with `--adopt`: the program connects with `tcp_connect` and the driver adopts the connection."""
+    def run(exe, srv, paths, *extra, **kw):
+        return runner(exe, srv, paths, "--adopt", *extra, **kw)
+    return run
+
+
+def case_adopt(exe, _hello):
+    srv = up.Upstream()
+    bad = framing_checks(exe, srv, adopting(plain))
+    if bad:
+        return f"framing: {bad}"
+    srv2 = up.Upstream()
+    run = plain(exe, srv2, ["/len/100", "/chunked/300?p=50", "/nobody", "/interim/10"], "--adopt", "--repeat", 250, "--quiet", "--slots", 8)
+    conns, reqs = srv2.counts()
+    if run.status != 0 or run.summary.get("ok") != 1000 or run.summary["connects"] != 4 or conns != 4 or reqs != 1000:
+        return f"1000 requests: {run!r}, the server saw {conns} connections and {reqs} requests"
+    srv3 = up.Upstream(tls=True)
+    bad = framing_checks(exe, srv3, adopting(secure))
+    if bad:
+        return f"framing over TLS: {bad}"
+    # A server that never answers: the head timer ends the request on time. A connection made by `tcp_connect` is blocking, and the driver must make it non-blocking (`place`): one left blocking
+    # would hold the whole loop in `read` until the server spoke (found by cancho-chain's executor, which held a tick 15 s instead of 3).
+    srv4 = up.Upstream()
+    run = plain(exe, srv4, ["/hang"], "--adopt", "--head-ms", 500)
+    if run.failures != [(0, "client.head-timeout")] or not 0.4 < run.elapsed < 3:
+        return f"/hang: {run!r} in {run.elapsed:.2f} s"
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    closed = s.getsockname()[1]
+    s.close()
+    run = Fetch(exe, ["--adopt", f"http://127.0.0.1:{closed}/"])
+    if run.failures != [(0, "client.connect")]:
+        return f"a closed port: {run!r}"
+    return "ok (framings alone and together, 1,000 requests on 4 connections, framings over TLS, a server that never answers, a closed port: all with a connection the program made)"
+
+
 def case_tls(exe, _hello):
     srv = up.Upstream(tls=True)
     bad = framing_checks(exe, srv, secure)
@@ -588,7 +625,7 @@ def case_hostile(exe, _hello):
 
 CASES = {"framing": case_framing, "keepalive": case_keepalive, "concurrent": case_concurrent, "evict": case_evict, "big": case_big,
          "upload": case_upload, "nospin": case_nospin, "expect": case_expect, "early": case_early, "earlyrst": case_earlyrst, "retry": case_retry, "refused": case_refused,
-         "timeouts": case_timeouts, "tls": case_tls, "hello": case_hello, "nginx": case_nginx, "hostile": case_hostile}
+         "timeouts": case_timeouts, "adopt": case_adopt, "tls": case_tls, "hello": case_hello, "nginx": case_nginx, "hostile": case_hostile}
 
 
 # ---- cost ----
