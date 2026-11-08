@@ -131,8 +131,9 @@ The packer now splits a module for which the weights file has a `module::test` l
 re-measured per test (`RUSTC_BOOTSTRAP=1 cargo test -p cancho --test conformance -- -Zunstable-options --report-time`, macOS arm64,
 debug, 828 tests, 7,867 s of test time summed under contention, 636 s of wall clock) and seven modules are split: `selfhost` (3,197 s
 of the sum, its largest test 377 s), `net_hosts`, `backends`, `identity`, `corpus`, `traps`, `benchmarks`. `--check 4` now says the
-shards weigh 1,976, 1,976, 1,976, 1,976, so the floor is the largest single test (377 s), not a module. The CI wall clock after
-this is in the PR that made it.
+shards weigh 1,976, 1,976, 1,976, 1,976, so the floor is the largest single test (377 s), not a module. Measured on CI (#728's own run, all
+checks green): the slowest conformance shard 20.6 min (was 51.6), the slowest selfhost shard 24.6 min (was 39.3); the shards are no
+longer 3 to 51 minutes but 9 to 25. What is left is imbalance from weights measured on one machine, and the largest tests.
 
 **Measured on CI, once (this change's own run, 39388628935, all 32 checks green; the same job list before is run 39341822725).**
 Wall time from the first job starting to the last finishing: **23.3 minutes, against 46.5.** What each part came to:
