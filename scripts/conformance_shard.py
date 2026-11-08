@@ -6,6 +6,8 @@
 Prints the full name of each test of the shard, one to a line, for `cargo test -p cancho --test conformance -- --exact ...`.
 The tests are listed from the test binary itself, so a new test is in a shard the day it is written; whole modules go to the
 shard with the least weight so far, heaviest first, by `.github/conformance-weights.txt` (a module not in it weighs 3).
+A module with a line for any of its tests by full name (`selfhost::some_test 4`) is split: each of its tests is packed alone, by its own
+line (a test with none weighs 3), so that one heavy module is not the floor of the run.
 `--skip-file` names a file of test names, `#` comments allowed (`.github/selfhost-known-differences.txt`), left out of every shard.
 Every test is in exactly one shard: `--check <shards>` says so, or fails.
 """
@@ -35,10 +37,14 @@ def weights():
 
 
 def shards(names, count):
-    by_module = {}
-    for name in names:
-        by_module.setdefault(name.split("::")[0], []).append(name)
     weight = weights()
+    split = {k.split("::")[0] for k in weight if "::" in k}
+    by_unit = {}
+    for name in names:
+        module = name.split("::")[0]
+        unit = name if module in split else module
+        by_unit.setdefault(unit, []).append(name)
+    by_module = by_unit
     order = sorted(by_module, key=lambda m: (-weight.get(m, UNKNOWN), m))
     load = [0.0] * count
     out = [[] for _ in range(count)]
