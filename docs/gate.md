@@ -90,3 +90,5 @@ G5 is the only step that changes what a contributor is told to run, and it is th
   compares with a number recorded in the repository (the way `TESTS` is in `http_server_bytes.rs`).
 - **Speed.** The conformance suite is 4 shards of about 9 minutes; `gate.sh` is for the person at the keyboard and must stay under a
   minute for stages 1 to 3 on a release binary (to be measured in G2, not assumed).
+
+Harness helpers added by the ingest move (`tests/support/harness.cho`): `contains`, `scratch_dir` (`mktemp -d`), `remove_tree`, `run_cancho` (the compiler with up to four arguments); a destructuring `let` cannot rename a field (`out: said` is refused), so one `Ended` is taken apart per function. The compiler written in cancho has no `ingest --output json`, so `tests/commands/ingest.cho` checks the full JSON refusal only where it exists and the rule tag and exit 1 elsewhere.
