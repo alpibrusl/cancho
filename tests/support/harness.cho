@@ -218,3 +218,89 @@ pub fn option[&a, &f](args: &a Args, flag: &f [byte]) -> [args] &a [byte] {
     }
     return arg(args, 0)[0..0];
 }
+
+// `text` without the spaces, tabs and carriage returns at its end.
+pub fn trim_end[&t](text: &t [byte]) -> [] &t [byte] {
+    var end = len(text);
+    while end > 0 && (text[end - 1] == byte_of(' ') || text[end - 1] == byte_of('\t') || text[end - 1] == byte_of('\r')) {
+        end = end - 1;
+    }
+    return text[0..end];
+}
+
+// Column `n` (from 1) of each line of `text` whose columns are separated by ` | `, one per line; blank lines and lines that begin with `#` are left out. For the vector
+// files of `tests/vectors` (`case | answer`): a driver is fed one column and answers line for line, and the other is what it must say.
+pub fn column[&h, &t](heap: &!h Heap, text: &t [byte], n: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text) / 2 + 16);
+    let lines = bytes.count_byte(text, 10) + 1;
+    var at = 1;
+    while at <= lines {
+        var rest = bytes.field(text, 10, at);
+        if len(trim_end(rest)) > 0 && rest[0] != byte_of('#') {
+            var k = 1;
+            while k < n {
+                let cut = bytes.find(rest, " | ");
+                if cut < 0 {
+                    rest = rest[0..0];
+                } else {
+                    rest = rest[cut + 3..len(rest)];
+                }
+                k = k + 1;
+            }
+            let cut = bytes.find(rest, " | ");
+            if cut >= 0 {
+                rest = rest[0..cut];
+            }
+            out = buffer.push(heap, buffer.append(heap, out, trim_end(rest)), byte_of('\n'));
+        }
+        at = at + 1;
+    }
+    return out;
+}
+
+// `kind/name` failures in `report` for the lines of `got` that are not the lines of `want` (each compared without its trailing blanks): at most three lines that differ,
+// each with its number, what was wanted and what was said (300 bytes of each), and one if the two have a different number of lines.
+pub fn differences[&h, &a, &n, &g, &w](heap: &!h Heap, report: buffer.Buffer, kind: &a [byte], name: &n [byte], got: &g [byte], want: &w [byte]) -> [heap] buffer.Buffer {
+    var out = report;
+    let said = bytes.count_byte(got, 10);
+    let wanted = bytes.count_byte(want, 10);
+    var shown = 0;
+    var at = 1;
+    while at <= said && at <= wanted {
+        let g = trim_end(bytes.field(got, 10, at));
+        let w = trim_end(bytes.field(want, 10, at));
+        if !bytes.equal(g, w) && shown < 3 {
+            var why = buffer.append(heap, buffer.empty(heap, 700), "line ");
+            why = buffer.push_nat(heap, why, at);
+            why = buffer.append(heap, why, " differs; want ");
+            why = buffer.append(heap, why, w[0..min_of(len(w), 300)]);
+            why = buffer.append(heap, why, "; got ");
+            why = buffer.append(heap, why, g[0..min_of(len(g), 300)]);
+            borrow why as &wb in {
+                out = failure(heap, out, kind, name, buffer.bytes(wb), "");
+            }
+            buffer.drop(heap, why);
+            shown = shown + 1;
+        }
+        at = at + 1;
+    }
+    if said != wanted {
+        var why = buffer.append(heap, buffer.empty(heap, 96), "should answer ");
+        why = buffer.push_nat(heap, why, wanted);
+        why = buffer.append(heap, why, " lines, one per case, and said ");
+        why = buffer.push_nat(heap, why, said);
+        borrow why as &wb in {
+            out = failure(heap, out, kind, name, buffer.bytes(wb), "");
+        }
+        buffer.drop(heap, why);
+    }
+    return out;
+}
+
+// The smaller of two numbers.
+pub fn min_of(a: int, b: int) -> [] int {
+    if a < b {
+        return a;
+    }
+    return b;
+}

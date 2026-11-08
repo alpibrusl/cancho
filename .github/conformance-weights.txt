@@ -265,7 +265,6 @@ docs 8
 rsa 8
 vcs 7
 key_tables 6
-p256 6
 wide_multiply 6
 directory_modes 6
 sha256_builtins 6

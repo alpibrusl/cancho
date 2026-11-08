@@ -6,7 +6,7 @@
     python3 scripts/p256_field_differential.py --vectors tests/vectors/p256.txt [<cases per operation>]
 
 With `--vectors` it does not run the driver: it writes the cases and Python's answers (one
-`case | answer` a line) for `crates/cancho/tests/conformance/p256.rs`, which runs them
+`case | answer` a line) for `tests/commands/p256.cho`, which runs them
 through the driver in `cargo test`.
 
 Every operation, `K` (the public key of a scalar, against affine addition in Python) and `W`
