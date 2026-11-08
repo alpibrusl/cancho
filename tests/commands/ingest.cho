@@ -1,0 +1,238 @@
+edition 7;
+module ingest_test;
+
+// ingest.cho -- `conformance/ingest.rs` (deleted), in cancho (`docs/gate.md` G4): `docs/structured-ingest.md`, the JSON form of a unit in both directions, through the binary an agent runs.
+// A real example printed as JSON and ingested gives the canonical text back byte for byte (#411); `ingest` is a fixed point; and each of the five refusals has its own rule, its sentence,
+// and a position into the JSON (`"line": 1`).
+//
+//     cancho build tests/commands/ingest.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: ingest` or what is wrong, and exits 0 or 1. The scratch directory is made by `mktemp -d` and removed. One backend: the binary under test.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// `data` written to `dir/name`.
+fn save[&h, &f, &d, &n, &t](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte], name: &n [byte], data: &t [byte]) -> [heap, fs_write("")] int {
+    let path = harness.joined(heap, dir, name);
+    var wrote = 0;
+    borrow path as &pb in {
+        wrote = fs_write(fs, buffer.bytes(pb), data);
+    }
+    buffer.drop(heap, path);
+    return wrote;
+}
+
+// `ingest dir/name`, with `--output json` if `json`.
+fn ingest_at[&h, &x, &c, &b, &e, &d, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], json: bool) -> [heap, exec(""), clock, poll] harness.Ended {
+    let path = harness.joined(heap, dir, name);
+    var ended = harness.Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
+    borrow path as &pb in {
+        var flag = "";
+        var value = "";
+        if json {
+            flag = "--output";
+            value = "json";
+        }
+        let got = harness.run_cancho(heap, exec, clock, bin, env, "ingest", buffer.bytes(pb), flag, value);
+        let harness.Ended { out, err, kind, code } = ended;
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+        ended = got;
+    }
+    buffer.drop(heap, path);
+    return ended;
+}
+
+// `print source`, with `--output json` if `json`: its standard output.
+fn printed[&h, &x, &c, &b, &e, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], source: &s [byte], json: bool) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var flag = "";
+    var value = "";
+    if json {
+        flag = "--output";
+        value = "json";
+    }
+    let harness.Ended { out, err, kind, code } = harness.run_cancho(heap, exec, clock, bin, env, "print", source, flag, value);
+    buffer.drop(heap, err);
+    return out;
+}
+
+// What `ingest` answered, and what is wrong so far.
+res struct Said {
+    text: buffer.Buffer,
+    failures: buffer.Buffer,
+}
+
+// `print source --output json` saved as `dir/name` and ingested: the text `ingest` answered, and a failure added to `before` if it did not succeed.
+fn ingest_of[&h, &x, &c, &f, &b, &e, &d, &s, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], source: &s [byte], name: &n [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] Said {
+    let json = printed(heap, exec, clock, bin, env, source, true);
+    borrow json as &jb in {
+        save(heap, fs, dir, name, buffer.bytes(jb));
+    }
+    buffer.drop(heap, json);
+    let ended = ingest_at(heap, exec, clock, bin, env, dir, name, false);
+    let harness.Ended { out, err, kind, code } = ended;
+    var failures = before;
+    borrow err as &eb in {
+        if kind != 0 || code != 0 {
+            failures = harness.failure(heap, failures, "ingest", name, "should succeed, but the compiler said", buffer.bytes(eb));
+        }
+    }
+    buffer.drop(heap, err);
+    return Said { text: out, failures: failures };
+}
+
+// The fixed point: the text `ingest` answered (`first`), printed as JSON and ingested again, is the same text.
+fn fixed[&h, &x, &c, &f, &b, &e, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], first: &t [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    save(heap, fs, dir, "first.cho", first);
+    let path = harness.joined(heap, dir, "first.cho");
+    var acc = before;
+    borrow path as &pb in {
+        let said = ingest_of(heap, exec, clock, fs, bin, env, dir, buffer.bytes(pb), "second.json", acc);
+        let Said { text, failures } = said;
+        acc = failures;
+        borrow text as &tb in {
+            if !bytes.equal(first, buffer.bytes(tb)) {
+                acc = harness.failure(heap, acc, "ingest", "fixed point", "the second pass moved", buffer.bytes(tb));
+            }
+        }
+        buffer.drop(heap, text);
+    }
+    buffer.drop(heap, path);
+    return acc;
+}
+
+// The loop of #411: a real example printed as JSON, ingested, and the canonical text back byte for byte; then the fixed point.
+fn round_trip[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let canonical = printed(heap, exec, clock, bin, env, "examples/hello.cho", false);
+    let said = ingest_of(heap, exec, clock, fs, bin, env, dir, "examples/hello.cho", "hello.json", before);
+    let Said { text, failures } = said;
+    var report = failures;
+    borrow text as &tb in {
+        borrow canonical as &cb in {
+            if !bytes.equal(buffer.bytes(tb), buffer.bytes(cb)) {
+                report = harness.failure(heap, report, "ingest", "round trip", "did not give back the canonical text", buffer.bytes(tb));
+            }
+        }
+        report = fixed(heap, exec, clock, fs, bin, env, dir, buffer.bytes(tb), report);
+    }
+    buffer.drop(heap, text);
+    buffer.drop(heap, canonical);
+    return report;
+}
+
+// The plain refusal of `dir/refused.json`: exit 1 and the rule's tag in what the compiler said.
+fn refused_plain[&h, &x, &c, &b, &e, &d, &t, &u](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], dir: &d [byte], tag: &t [byte], rule: &u [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let ended = ingest_at(heap, exec, clock, bin, env, dir, "refused.json", false);
+    let harness.Ended { out, err, kind, code } = ended;
+    var report = before;
+    borrow out as &ob in {
+        borrow err as &eb in {
+            if kind != 0 || code != 1 {
+                report = harness.failure(heap, report, "refusal", tag, "should be refused with exit 1", buffer.bytes(eb));
+            } else if !harness.contains(buffer.bytes(ob), rule) && !harness.contains(buffer.bytes(eb), rule) {
+                report = harness.failure(heap, report, "refusal", tag, "should say the rule", buffer.bytes(eb));
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return report;
+}
+
+// One refusal: `text` in `dir/refused.json`; `ingest --output json` of it exits 1 and answers a rule, the sentence, and a position on line 1 (`docs/structured-ingest.md` section 3: the refusal is data).
+fn refused[&h, &x, &c, &f, &b, &e, &d, &t, &r, &u, &w](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], tag: &t [byte], text: &r [byte], rule: &u [byte], why: &w [byte], before: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    save(heap, fs, dir, "refused.json", text);
+    let ended = ingest_at(heap, exec, clock, bin, env, dir, "refused.json", true);
+    let harness.Ended { out, err, kind, code } = ended;
+    var report = before;
+    if kind == 0 && code == 2 {
+        // The compiler written in cancho has no `--output json` for `ingest` (it answers a usage error) and says a refusal as `ERR RULE START END`: there the rule is checked, and the exit 1.
+        report = refused_plain(heap, exec, clock, bin, env, dir, tag, rule, report);
+    } else {
+        borrow out as &ob in {
+            let body = buffer.bytes(ob);
+            if kind != 0 || code != 1 {
+                report = harness.failure(heap, report, "refusal", tag, "should be refused with exit 1", body);
+            } else if !harness.contains(body, "\"rule\": \"") || !harness.contains(body, rule) || !harness.contains(body, why) || !harness.contains(body, "\"position\": ") || !harness.contains(body, "\"line\": 1") {
+                report = harness.failure(heap, report, "refusal", tag, "should say a rule, the sentence and a position on line 1", body);
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return report;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock);
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "ingest", "scratch", "mktemp -d made no directory", "");
+            } else {
+                report = round_trip(heap, exec, clock, fs, bin, buffer.bytes(eb), buffer.bytes(db), report);
+                report = refused(heap, exec, clock, fs, bin, buffer.bytes(eb), buffer.bytes(db), "not json at all", "this is not json", "ingest-json", "is not JSON", report);
+                report = refused(heap, exec, clock, fs, bin, buffer.bytes(eb), buffer.bytes(db), "an unknown vocabulary word", "{\"items\": [{\"kind\": \"fnx\", \"name\": \"f\"}]}", "ingest-node", "`fnx` is not an item kind", report);
+                report = refused(heap, exec, clock, fs, bin, buffer.bytes(eb), buffer.bytes(db), "a known word with the wrong shape", "{\"items\": [{\"kind\": \"fn\"}]}", "ingest-arity", "the node needs a `name`", report);
+                report = refused(heap, exec, clock, fs, bin, buffer.bytes(eb), buffer.bytes(db), "a keyword as a name", "{\"items\": [{\"kind\": \"fn\", \"name\": \"let\"}]}", "ingest-node", "is a keyword", report);
+                report = refused(heap, exec, clock, fs, bin, buffer.bytes(eb), buffer.bytes(db), "an edition field", "{\"edition\": 5, \"items\": []}", "ingest-node", "no `edition` field", report);
+                harness.remove_tree(heap, exec, clock, buffer.bytes(db));
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: ingest CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: ingest\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
