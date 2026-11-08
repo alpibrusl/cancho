@@ -1,0 +1,159 @@
+edition 7;
+module close_on_exec_test;
+
+// close_on_exec.cho -- `conformance/close_on_exec.rs` (deleted), in cancho (`docs/gate.md` G4): close-on-exec (`docs/processes.md` section 4.5, slice 0): no descriptor a builtin opens crosses an `exec`.
+// `tests/programs/close_on_exec.cho` (the program the Rust test wrote out as a string, now a file; it takes its two ports from argv) holds one of everything a builtin can open and asks a child what
+// it inherited (`system("ls /dev/fd")`), twice: before opening anything and holding everything. The two answers must be the same (comparing with the first answer rather than with `0 1 2` is what
+// makes this hold anywhere: a CI runner hands every process descriptors of its own). The exit status is how many handles it held (14).
+//
+//     cancho build tests/commands/close_on_exec.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: close_on_exec` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2. The two ports are
+// derived from the pid of a short-lived shell (the Rust test asked the operating system for free ones).
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// The listings the program printed, as the three things the Rust test asserted: two `end`s, the standard streams in the first, and the same set in both.
+fn listings[&h, &t](heap: &!h Heap, report: buffer.Buffer, said: &t [byte]) -> [heap] buffer.Buffer {
+    var r = report;
+    let first = bytes.find(said, "end");
+    if first < 0 {
+        return harness.failure(heap, r, "close_on_exec", "listings", "the child should answer twice", said);
+    }
+    let rest = said[first + 3..len(said)];
+    let second = bytes.find(rest, "end");
+    if second < 0 {
+        return harness.failure(heap, r, "close_on_exec", "listings", "the child should answer twice", said);
+    }
+    let before = bytes.trim(said[0..first]);
+    let holding = bytes.trim(rest[0..second]);
+    r = harness.require(heap, r, harness.has_line(before, "0") && harness.has_line(before, "1") && harness.has_line(before, "2"), "close_on_exec", "streams", "the child should see its standard streams", before);
+    r = harness.require(heap, r, bytes.equal(before, holding), "close_on_exec", "descriptors", "holding the descriptors, the child should see what it saw before opening any (the difference crossed the exec)", said);
+    return r;
+}
+
+// The fixture tree under `scratch`, and the pid of the shell that made it (the ports come from it: 20000 and up, below the ephemeral range).
+fn setup[&h, &x, &c, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, scratch: &s [byte]) -> [heap, exec(""), clock, poll] int {
+    var tree = buffer.append(heap, buffer.empty(heap, 128), "mkdir -p '");
+    tree = buffer.append(heap, tree, scratch);
+    tree = buffer.append(heap, tree, "/tree/sub' && echo hi > '");
+    tree = buffer.append(heap, tree, scratch);
+    tree = buffer.append(heap, tree, "/tree/file' && echo $$");
+    let harness.Ended { out, err, kind, code } = harness.sh_run(heap, exec, clock, tree);
+    var pid = 0;
+    borrow out as &ob in {
+        pid = harness.number_after(bytes.trim(buffer.bytes(ob)), "");
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return pid;
+}
+
+// The program, from `cd scratch`, with its two ports: what it said and how many handles it held.
+fn exercise[&h, &x, &c, &s, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, scratch: &s [byte], exe: &p [byte], pid: int) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var script = buffer.append(heap, buffer.empty(heap, 192), "ulimit -c 0; cd '");
+    script = buffer.append(heap, script, scratch);
+    script = buffer.append(heap, script, "' && exec '");
+    script = buffer.append(heap, script, exe);
+    script = buffer.append(heap, script, "' ");
+    script = buffer.push_nat(heap, script, 20000 + pid % 10000);
+    script = buffer.push(heap, script, byte_of(' '));
+    script = buffer.push_nat(heap, script, 30000 + pid % 10000);
+    var r = report;
+    let harness.Ended { out, err, kind, code } = harness.sh_run(heap, exec, clock, script);
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        if kind != 0 || code != 14 {
+            r = harness.failure(heap, r, "close_on_exec", "held", "the program should hold 14 descriptors when the child runs (its exit status)", said);
+        } else {
+            r = listings(heap, r, said);
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+// What is wrong, as a report (nothing if the child saw the same descriptors both times and the program held fourteen).
+fn check[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    let dir = harness.make_scratch(heap, exec, clock, "close-on-exec");
+    borrow dir as &db in {
+        let scratch = buffer.bytes(db);
+        borrow env as &eb in {
+            if len(scratch) == 0 {
+                report = harness.failure(heap, report, "close_on_exec", "scratch", "mktemp should make a directory", "");
+            } else {
+                let pid = setup(heap, exec, clock, scratch);
+                var exe = harness.joined(heap, scratch, "held");
+                borrow exe as &xb in {
+                    let paths = "tests/programs/close_on_exec.cho\0";
+                    let harness.Ended { out, err, kind, code } = harness.build_only(heap, exec, clock, bin, paths, buffer.bytes(xb), buffer.bytes(eb));
+                    if kind != 0 || code != 0 {
+                        borrow err as &rb in {
+                            report = harness.failure(heap, report, "close_on_exec", "build", "should compile, but the compiler said", buffer.bytes(rb));
+                        }
+                    } else {
+                        report = exercise(heap, exec, clock, report, scratch, buffer.bytes(xb), pid);
+                    }
+                    buffer.drop(heap, out);
+                    buffer.drop(heap, err);
+                }
+                buffer.drop(heap, exe);
+            }
+        }
+        harness.remove_scratch(heap, exec, clock, scratch);
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, exec(""), clock, poll] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: close_on_exec CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: close_on_exec\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    release(fs);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        status = run(h, i, a, x, c);
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

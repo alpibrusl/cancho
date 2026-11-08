@@ -6,7 +6,7 @@
 >
 > | Slice (§7) | What | Where it is | Built |
 > |---|---|---|---|
-> | 0 | close-on-exec everywhere (§4.5) | every backend; `close_on_exec.rs` | yes |
+> | 0 | close-on-exec everywhere (§4.5) | every backend; `tests/commands/close_on_exec.cho` | yes |
 > | 1 | `Exec`, `exec_spawn`, `child_wait`, `child_kill`, `pipe_open`, `pipe_read`, `pipe_write`, `pipe_nonblocking`, `pipe_close`, `child_end_close` (§3.2) | `builtin.rs`; `processes.rs` | yes |
 > | 2 | `poller_add_pipe`, `poller_add_child` (§4.8) | `builtin.rs`; `processes.rs` | yes |
 > | 3 | `std.process`: `argv`/`add`/`list`/`count`/`drop`, `channels`, `close`, **`capture`** (§7.1) | `std/process.cho`; `capture.rs` | yes |
@@ -363,7 +363,7 @@ child through `Ffi`, which is the leak this closes. `file-writes.md`'s
 > So both windows above are closed for every child `exec_spawn` starts; they
 > remain only for a foreign `exec`.
 >
-> **Checked by** `close_on_exec.rs`: a program runs `system("ls /dev/fd")`
+> **Checked by** `tests/commands/close_on_exec.cho`: a program runs `system("ls /dev/fd")`
 > through `Ffi` once before opening anything and once holding one of
 > everything a builtin opens (fourteen descriptors), and the two listings
 > must be equal. Before the change the second had twelve more, on both
