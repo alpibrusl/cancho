@@ -239,7 +239,6 @@ ecdsa_sign 16
 http_server_upload 16
 aead 15
 memory 15
-x509 15
 tls_pool 14
 vcs_std 14
 checked_output 13

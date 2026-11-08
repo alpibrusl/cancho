@@ -1,0 +1,303 @@
+edition 7;
+module x509_test;
+
+// x509.cho -- `conformance/x509.rs` (deleted), in cancho (`docs/gate.md` G4): `packages/x509` (`docs/x509.md` section 5): the corpus `scripts/x509_corpus.py` made and
+// pyca/cryptography described, field for field; every damaged certificate refused with its own tag; PEM blocks that are not well-formed; and the fuzz harness for a short run.
+// All through `tests/programs/x509_driver.cho` and `x509_fuzz.cho`.
+//
+//     cancho build tests/commands/x509.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: x509` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift legs of the Rust tests went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// The vector file `name` of `tests/vectors/x509` (nothing if it cannot be read).
+fn vector[&h, &f, &n](heap: &!h Heap, fs: &f Fs(""), name: &n [byte]) -> [heap, fs_read(""), file_read] buffer.Buffer {
+    var path = buffer.append(heap, buffer.empty(heap, 64), "tests/vectors/x509/");
+    path = buffer.append(heap, path, name);
+    var text = buffer.empty(heap, 0);
+    borrow path as &pb in {
+        let harness.Contents { data, failed } = harness.read_file(heap, fs, buffer.bytes(pb));
+        buffer.drop(heap, text);
+        text = data;
+    }
+    buffer.drop(heap, path);
+    return text;
+}
+
+// The driver `program` and the package, built into `exe` and run with `input`. The standard output if it built and exited 0 (otherwise the failure is in the report and the output
+// is empty). Returns the report and the output.
+fn drive[&h, &x, &c, &b, &p, &i, &n, &e, &m](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], program: &p [byte], exe: &i [byte], input: &n [byte], env: &e [byte], report: buffer.Buffer, name: &m [byte]) -> [heap, exec(""), clock, poll] (buffer.Buffer, buffer.Buffer) {
+    var acc = report;
+    var sources = buffer.append(heap, buffer.empty(heap, 128), program);
+    sources = buffer.push(heap, sources, byte_of(0));
+    sources = harness.word(heap, sources, "packages/x509/x509.cho");
+    var said = buffer.empty(heap, 0);
+    borrow sources as &sb in {
+        let harness.Ended { out, err, kind, code } = harness.build_and_run(heap, exec, clock, bin, buffer.bytes(sb), exe, input, env);
+        borrow err as &rb in {
+            if kind == 6 {
+                acc = harness.failure(heap, acc, "x509", name, "should compile, but the compiler said", buffer.bytes(rb));
+                buffer.drop(heap, out);
+            } else if kind != 0 || code != 0 {
+                acc = harness.failure(heap, acc, "x509", name, "should exit 0", buffer.bytes(rb));
+                buffer.drop(heap, out);
+            } else {
+                buffer.drop(heap, said);
+                said = out;
+            }
+        }
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, sources);
+    return (acc, said);
+}
+
+// The second word of each line of `text`, one per line.
+fn tags[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    let lines = bytes.count_byte(text, 10);
+    var at = 1;
+    while at <= lines {
+        out = buffer.push(heap, buffer.append(heap, out, bytes.field(bytes.field(text, 10, at), 32, 2)), byte_of('\n'));
+        at = at + 1;
+    }
+    return out;
+}
+
+// How many lines of `text` are the first of their kind.
+fn distinct[&t](text: &t [byte]) -> [] int {
+    let lines = bytes.count_byte(text, 10);
+    var count = 0;
+    var at = 1;
+    while at <= lines {
+        var seen = false;
+        var before = 1;
+        while before < at {
+            if bytes.equal(bytes.field(text, 10, before), bytes.field(text, 10, at)) {
+                seen = true;
+            }
+            before = before + 1;
+        }
+        if !seen {
+            count = count + 1;
+        }
+        at = at + 1;
+    }
+    return count;
+}
+
+// Every corpus certificate reads as pyca reads it: one line each, the same as `corpus.txt`.
+fn corpus[&h, &x, &c, &f, &b, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let pem = vector(heap, fs, "corpus.pem");
+    let want = vector(heap, fs, "corpus.txt");
+    borrow pem as &pb in {
+        let (more, said) = drive(heap, exec, clock, bin, "tests/programs/x509_driver.cho", "/tmp/cancho-x509-corpus", buffer.bytes(pb), env, acc, "corpus");
+        acc = more;
+        borrow want as &wb in {
+            borrow said as &sb in {
+                if bytes.count_byte(buffer.bytes(wb), 10) != 10 {
+                    acc = harness.failure(heap, acc, "x509", "corpus", "corpus.txt should have ten lines: RSA, P-256, P-384, P-521, Ed25519, PSS, v1, and the two leniencies", "");
+                } else if len(buffer.bytes(sb)) > 0 {
+                    acc = harness.differences(heap, acc, "x509", "corpus", buffer.bytes(sb), buffer.bytes(wb));
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, pem);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+// Every damaged certificate is refused with its own tag (and a negative code); the 36 rows have 18 tags, every refusal the parser has except `pem`, which DER cannot reach.
+fn negative[&h, &x, &c, &f, &b, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let text = vector(heap, fs, "negative.txt");
+    var input = buffer.empty(heap, 0);
+    var want = buffer.empty(heap, 0);
+    borrow text as &tb in {
+        buffer.drop(heap, input);
+        buffer.drop(heap, want);
+        input = harness.column(heap, buffer.bytes(tb), 3);
+        want = harness.column(heap, buffer.bytes(tb), 2);
+    }
+    buffer.drop(heap, text);
+    borrow input as &ib in {
+        let (more, said) = drive(heap, exec, clock, bin, "tests/programs/x509_driver.cho", "/tmp/cancho-x509-negative", buffer.bytes(ib), env, acc, "negative");
+        acc = more;
+        borrow want as &wb in {
+            borrow said as &sb in {
+                if bytes.count_byte(buffer.bytes(wb), 10) != 36 {
+                    acc = harness.failure(heap, acc, "x509", "negative", "negative.txt should have 36 rows", "");
+                } else if len(buffer.bytes(sb)) > 0 {
+                    let got = tags(heap, buffer.bytes(sb));
+                    borrow got as &gb in {
+                        acc = harness.differences(heap, acc, "x509", "negative", buffer.bytes(gb), buffer.bytes(wb));
+                    }
+                    buffer.drop(heap, got);
+                    var at = 1;
+                    while at <= 36 {
+                        if !bytes.starts_with(bytes.field(buffer.bytes(sb), 10, at), "-") {
+                            acc = harness.failure(heap, acc, "x509", "negative", "a refusal has a negative code", bytes.field(buffer.bytes(sb), 10, at));
+                        }
+                        at = at + 1;
+                    }
+                }
+                if distinct(buffer.bytes(wb)) != 18 {
+                    acc = harness.failure(heap, acc, "x509", "negative", "the rows should reach 18 tags", "");
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+// `-----BEGIN CERTIFICATE-----`, `body` and `-----END CERTIFICATE-----`, each on a line of its own (the body ends with its newline).
+fn block[&h, &t](heap: &!h Heap, out: buffer.Buffer, body: &t [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, "-----BEGIN CERTIFICATE-----\n");
+    b = buffer.append(heap, b, body);
+    return buffer.append(heap, b, "-----END CERTIFICATE-----\n");
+}
+
+// A bad PEM block is refused and the bundle goes on: after the first certificate, a bad character, padding after a whole group, a missing pad, 18,000 bytes, the certificate
+// again, and a block with no END line.
+fn pem[&h, &x, &c, &f, &b, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let file = vector(heap, fs, "corpus.pem");
+    var input = buffer.empty(heap, 32768);
+    borrow file as &fb in {
+        let all = buffer.bytes(fb);
+        let end = bytes.find(all, "-----END CERTIFICATE-----");
+        let first = all[0..end + 26];
+        let body = first[28..bytes.find(first, "-----END")];
+        let at = bytes.find(body, "M");
+        var damaged = buffer.append(heap, buffer.empty(heap, len(body)), body[0..at]);
+        damaged = buffer.push(heap, damaged, byte_of('!'));
+        damaged = buffer.append(heap, damaged, body[at + 1..len(body)]);
+        var big = buffer.empty(heap, 24100);
+        var k = 0;
+        while k < 6000 {
+            big = buffer.append(heap, big, "QUFB");
+            k = k + 1;
+        }
+        big = buffer.push(heap, big, byte_of('\n'));
+        input = buffer.append(heap, input, first);
+        borrow damaged as &db in {
+            input = block(heap, input, buffer.bytes(db));
+        }
+        input = block(heap, input, "QUJD=\n");
+        input = block(heap, input, "QUI\n");
+        borrow big as &gb in {
+            input = block(heap, input, buffer.bytes(gb));
+        }
+        input = buffer.append(heap, input, first);
+        input = buffer.append(heap, input, "-----BEGIN CERTIFICATE-----\nMIIB\n");
+        buffer.drop(heap, damaged);
+        buffer.drop(heap, big);
+    }
+    buffer.drop(heap, file);
+    borrow input as &ib in {
+        let (more, said) = drive(heap, exec, clock, bin, "tests/programs/x509_driver.cho", "/tmp/cancho-x509-pem", buffer.bytes(ib), env, acc, "pem");
+        acc = more;
+        borrow said as &sb in {
+            if len(buffer.bytes(sb)) > 0 {
+                var seen = tags(heap, buffer.bytes(sb));
+                borrow seen as &gb in {
+                    acc = harness.differences(heap, acc, "x509", "pem", buffer.bytes(gb), "ok\npem\npem\npem\nx509-too-large\nok\npem\n");
+                }
+                buffer.drop(heap, seen);
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    return acc;
+}
+
+// The fuzz harness, 20,000 rounds of it (`docs/x509.md` section 5.4 reports the 1,000,000-round run), so that a regression traps here first.
+fn fuzz[&h, &x, &c, &f, &b, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let file = vector(heap, fs, "corpus.pem");
+    var input = buffer.append(heap, buffer.empty(heap, 32768), "20000\n");
+    borrow file as &fb in {
+        input = buffer.append(heap, input, buffer.bytes(fb));
+    }
+    buffer.drop(heap, file);
+    borrow input as &ib in {
+        let (more, said) = drive(heap, exec, clock, bin, "tests/programs/x509_fuzz.cho", "/tmp/cancho-x509-fuzz", buffer.bytes(ib), env, acc, "fuzz");
+        acc = more;
+        borrow said as &sb in {
+            let lines = bytes.count_byte(buffer.bytes(sb), 10);
+            if len(buffer.bytes(sb)) > 0 && !bytes.equal(bytes.field(buffer.bytes(sb), 10, lines), "x509 fuzz ok rounds=20000") {
+                acc = harness.failure(heap, acc, "x509", "fuzz", "the last line should be `x509 fuzz ok rounds=20000`", buffer.bytes(sb));
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    return acc;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: x509 CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let bin = arg(args, 1);
+    let env = harness.base_env(heap, harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var report = buffer.empty(heap, 64);
+    borrow env as &eb in {
+        report = corpus(heap, exec, clock, fs, bin, buffer.bytes(eb), report);
+        report = negative(heap, exec, clock, fs, bin, buffer.bytes(eb), report);
+        report = pem(heap, exec, clock, fs, bin, buffer.bytes(eb), report);
+        report = fuzz(heap, exec, clock, fs, bin, buffer.bytes(eb), report);
+    }
+    buffer.drop(heap, env);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: x509\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
