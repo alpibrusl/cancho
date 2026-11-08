@@ -574,6 +574,33 @@ fn busy[&r, &cl](rest: &r Rest, c: &cl hc.Client, k: int) -> [] bool {
 // Connections begin and end
 // ---------------------------------------------------------------------
 
+// A connection `conn` (dialled, or already connected) put in the table for request slot `k` of an upstream that is `secure` or not, and watched
+// for writable: the first writable event is `pump`'s "the dial is over". The new table.
+fn place[&h, &r, &cl](heap: &!h Heap, table: conns.Table, rw: &!r Rest, c: &!cl hc.Client, k: int, now: int, conn: Conn, secure: bool) -> [heap, poll] conns.Table {
+    let (grown, ts) = conns.put(heap, table, conn);
+    var t = grown;
+    if ts < 0 {
+        hc.connect_failed(c, k, hc.kind_connect(), now);
+    } else {
+        let st = contents(rw.st);
+        var i = 0;
+        while i < stride() {
+            st[k * stride() + i] = 0;
+            i = i + 1;
+        }
+        st[k * stride() + s_phase()] = 1;
+        st[k * stride() + s_ts()] = ts;
+        if secure {
+            st[k * stride() + s_tls()] = 1;
+        }
+        borrow mut t as &!tw in {
+            conns.watch(tw, rw.poller, ts, k, 2);
+        }
+        st[k * stride() + s_watch()] = 2;
+    }
+    return t;
+}
+
 // `Event::Connect(k)`: dial what request `k`'s key names. A dial the kernel refuses at once is told to the client now; one it
 // reports later is told when the poller says the socket is writable.
 pub fn dial[&h, &n, &cl](heap: &!h Heap, io: Loop, net: &n Net(""), c: &!cl hc.Client, k: int, now: int) -> [heap, net_out(""), poll] Loop {
@@ -595,29 +622,32 @@ pub fn dial[&h, &n, &cl](heap: &!h Heap, io: Loop, net: &n Net(""), c: &!cl hc.C
                     hc.connect_failed(c, k, hc.kind_connect(), now);
                 }
                 Dialed::Ok(conn) => {
-                    let (grown, ts) = conns.put(heap, table, conn);
-                    table = grown;
-                    if ts < 0 {
-                        hc.connect_failed(c, k, hc.kind_connect(), now);
-                    } else {
-                        let st = contents(rw.st);
-                        var i = 0;
-                        while i < stride() {
-                            st[k * stride() + i] = 0;
-                            i = i + 1;
-                        }
-                        st[k * stride() + s_phase()] = 1;
-                        st[k * stride() + s_ts()] = ts;
-                        if secure {
-                            st[k * stride() + s_tls()] = 1;
-                        }
-                        borrow mut table as &!tw in {
-                            conns.watch(tw, rw.poller, ts, k, 2);
-                        }
-                        st[k * stride() + s_watch()] = 2;
-                    }
+                    table = place(heap, table, rw, c, k, now, conn, secure);
                 }
             }
+        }
+    }
+    return Loop { tab: table, rest: rs };
+}
+
+// `Event::Connect(k)` for a caller that connects itself: `conn` is the connection it made to what request `k`'s key names (`tcp_connect` by name,
+// say, which is how a program whose reach is `net_out("host:443")` gets to a host it knows by name), connected or still connecting. The driver
+// takes it as `dial` takes the one it dialled, with the same refusals; it holds no `Net`, so a program that adopts only reaches what it connected.
+pub fn adopt[&h, &cl](heap: &!h Heap, io: Loop, conn: Conn, c: &!cl hc.Client, k: int, now: int) -> [heap, poll] Loop {
+    let Loop { tab, rest } = io;
+    var table = tab;
+    var rs = rest;
+    borrow mut rs as &!rw in {
+        let u = hc.key(c, k);
+        if u < 0 || u >= rw.nups {
+            hc.connect_failed(c, k, hc.kind_connect(), now);
+            conn_close(conn);
+        } else if contents(rw.ups)[4 * u + 1] == 1 && rw.seeded == 0 {
+            hc.connect_failed(c, k, hc.kind_tls(), now);
+            conn_close(conn);
+        } else {
+            let secure = contents(rw.ups)[4 * u + 1] == 1;
+            table = place(heap, table, rw, c, k, now, conn, secure);
         }
     }
     return Loop { tab: table, rest: rs };
