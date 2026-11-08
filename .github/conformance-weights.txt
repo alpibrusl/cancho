@@ -214,7 +214,6 @@ http_fetch_nb 30
 release 30
 filesystem 29
 foreign_authority 27
-stdin_bulk 26
 directory_listing 26
 floats 25
 https_hello 24

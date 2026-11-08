@@ -226,7 +226,7 @@ again, from the other side: the cheap thing to grant was the expensive thing to
 audit, and a capability language that charges less authority-visibility for speed is
 teaching the wrong lesson. `read_bytes` is the same read behind the same capability
 and the same label, so a faster program is not a quieter one
-(`conformance/stdin_bulk.rs`: the row has `io_read` and no `fs_*`).
+(`tests/commands/stdin_bulk.cho`: the row has `io_read` and no `fs_*`).
 
 ### 7.2 What it answers
 
@@ -296,5 +296,5 @@ may not call `getchar`, and the refusal names the label it is missing.
 |---|---|
 | `stdin_roundtrip.cho` | `getchar` to end of input, a row carrying both labels, and the first fixture with a `//~ STDIN` |
 | `examples/tally.cho` | A real `wc` over standard input: the program that could not be written before, and the one that found the two things in §3.2 |
-| `tests/programs/stdin_read_bytes.cho`, `conformance/stdin_bulk.rs` | §7: every byte once and in order for buffers of 0, 1, 7, 4,096, 65,536 and 1 MiB over inputs of 0 bytes to 24 MiB, input that arrives in pieces (3 to 500 writes, 2 ms apart), mixed with `getchar`, a closed descriptor (`9`), a directory (`21`) and `/dev/null`; the authority row; on both backends |
+| `tests/programs/stdin_read_bytes.cho`, `tests/commands/stdin_bulk.cho` (was `conformance/stdin_bulk.rs`) | §7: every byte once and in order for buffers of 0, 1, 7, 4,096, 65,536 and 1 MiB over inputs of 0 bytes to 24 MiB, mixed with `getchar`, a closed descriptor (`9`), a directory (`21`) and `/dev/null`; the authority row; the row that is refused. (The Rust test also fed input in pieces, 3 to 500 writes 2 ms apart; the command test gives its input in one write, see the PR that moved it.) |
 | `tests/reject/read_bytes_is_edition_nine.cho` | `read_bytes` is not a name before edition 9 |
