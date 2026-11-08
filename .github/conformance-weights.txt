@@ -259,7 +259,6 @@ process_group 10
 crypto_builtins 10
 ecdsa 10
 region_cache 8
-directory_mkdir 8
 directory_open_new_mode 8
 docs 8
 rsa 8

@@ -197,7 +197,7 @@ generators.
 
 Slice 6 (`tests/conformance/directory_open_new_mode.rs`, **both backends** and the compiler in cancho): a file is made with the mode asked for under a umask of `0o022` (`0o755` is `0o755`, `0o700` is `0o700`, `0o777` is `0o755`, `0o644` and `0` as asked) and holds the bytes written; a file, directory or dangling link in the way is `EEXIST` and untouched; `..`, an empty name and `a/b` are `EINVAL`; modes `0o1000`, `0o4755`, `0o1777` and `-1` are `EINVAL` and no file appears; `tests/reject/dir_open_new_mode_is_edition_nine.cho`, `dir_open_new_mode_not_declared.cho` and `dir_open_new_mode_on_wasi.cho`.
 
-Slice 5 (`tests/conformance/directory_mkdir.rs`, **both backends**, the same expectations): a free name becomes a directory with
+Slice 5 (`tests/commands/directory_mkdir.cho`, moved from `conformance/directory_mkdir.rs` (G4); LLVM only since D2): a free name becomes a directory with
 the mode asked for under a umask of `0o022` (`0o755` is `0o755`, `0o700` is `0o700`, `0o777` is `0o755`), and it can be entered; an
 existing file, directory, link or dangling link is `EEXIST` and nothing is written outside; `..`, `.`, an empty name, `a/b` and a
 NUL are `EINVAL` with no call; a mode of `0o1000`, `0o4755` and `-1` is `EINVAL` and no directory appears;
