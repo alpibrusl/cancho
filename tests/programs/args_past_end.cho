@@ -1,0 +1,14 @@
+// args_past_end.cho -- asks for the argument at index `arg_count`, which traps (`docs/arguments.md` section 3). The driver of `tests/commands/arguments.cho`.
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(io);
+    var n = 0;
+    borrow args as &a in {
+        n = len(arg(a, arg_count(a)));
+    }
+    release(args);
+    return n;
+}

@@ -182,8 +182,8 @@ is what `cut` wants.
 | Test | Shows |
 |---|---|
 | `both_ports_match_gnu_on_every_spelling` | eighteen rows, stdout **and** exit status, including the three §4 keeps as divergences — asserted to still diverge, so a row that quietly starts agreeing is moved rather than forgotten |
-| `every_argument_shape` | §2's nine shapes, read back as themselves |
-| `tests/accept/flags.cho` | the fixture, which **is** the driver `every_argument_shape` runs: §2's table and the program that prints it are one file |
+| `tests/commands/arguments.cho` (was `every_argument_shape`) | §2's nine shapes, read back as themselves |
+| `tests/accept/flags.cho` | the fixture, which **is** the driver `tests/commands/arguments.cho` runs: §2's table and the program that prints it are one file |
 
 ### 5.1 The expectation is written down, and GNU is a second opinion
 

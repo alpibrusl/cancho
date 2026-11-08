@@ -1,0 +1,46 @@
+// args_echo.cho -- prints `argc` and every argument after the program's name, one per line, and exits `argc - 1`. The driver of `tests/commands/arguments.cho`
+// (`docs/arguments.md` section 3).
+fn write_all[&r, &i](io: &!i Io, s: &r [byte]) -> [io_write] int {
+    var n = 0;
+    while n < len(s) {
+        putchar(io, int_of(s[n]));
+        n = n + 1;
+    }
+    return len(s);
+}
+
+fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        print_nat(io, n / 10);
+    }
+    return putchar(io, 48 + n % 10);
+}
+
+fn run[&a, &i](args: &a Args, io: &!i Io) -> [args, io_write] int {
+    let count = arg_count(args);
+    print_nat(io, count);
+    putchar(io, 10);
+    var n = 1;
+    while n < count {
+        write_all(io, arg(args, n));
+        putchar(io, 10);
+        n = n + 1;
+    }
+    return count;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    var status = 0;
+    borrow args as &a in {
+        borrow mut io as &!i in {
+            status = run(a, i);
+        }
+    }
+    release(args);
+    release(io);
+    return status - 1;
+}

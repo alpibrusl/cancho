@@ -2,7 +2,7 @@
 //
 // Two jobs in one file. Run with no arguments it prints nothing and
 // exits 0, which is what the accept harness checks; run by
-// `every_argument_shape` with each spelling in turn, its output *is*
+// `tests/commands/arguments.cho` with each spelling in turn, its output *is*
 // the table in §2. The alternative was a fixture that proves the
 // module compiles and a second program that proves it works.
 //

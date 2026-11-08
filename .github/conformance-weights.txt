@@ -269,7 +269,6 @@ satisfy 4
 mathfn 3
 refusals 3
 authority 3
-arguments 2
 agent_cli 1
 net_bounds 1
 duplication 1
