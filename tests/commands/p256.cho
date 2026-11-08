@@ -1,0 +1,144 @@
+edition 7;
+module p256_test;
+
+// p256.cho -- `conformance/p256.rs` (deleted), in cancho (`docs/gate.md` G4): `std.p256` (`docs/p256-fast.md` sections 4 and 8): the field and the group-order arithmetic, the
+// public key of edge scalars through the generator's table and the wNAF of edge scalars, against Python's integers (`tests/vectors/p256.txt`, written by
+// `scripts/p256_field_differential.py --vectors`), through `tests/programs/p256_driver.cho`; the generated files `std/p256_kernels.cho` and `std/p256_comb.cho` are what their
+// generators print (`scripts/p256_gen.py --check`, `scripts/p256_tables.py --check`); and the value bounds of `scripts/p256_bounds.py` hold. The two Python checks are skipped,
+// loudly, where there is no `python3`.
+//
+//     cancho build tests/commands/p256.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: p256` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// Every case of the vector file, `case | answer`, run through the driver in one go: the answers are the file's second column.
+fn vectors[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let text = harness.read_file(heap, fs, "tests/vectors/p256.txt");
+    let harness.Contents { data, failed } = text;
+    if failed != 0 {
+        buffer.drop(heap, data);
+        return harness.failure(heap, acc, "p256", "vectors", "tests/vectors/p256.txt cannot be read", "");
+    }
+    var input = buffer.empty(heap, 0);
+    var want = buffer.empty(heap, 0);
+    borrow data as &db in {
+        buffer.drop(heap, input);
+        buffer.drop(heap, want);
+        input = harness.column(heap, buffer.bytes(db), 1);
+        want = harness.column(heap, buffer.bytes(db), 2);
+    }
+    buffer.drop(heap, data);
+    let env = harness.base_env(heap, compiler, cache);
+    borrow input as &ib in {
+        borrow want as &wb in {
+            borrow env as &eb in {
+                let harness.Ended { out, err, kind, code } = harness.build_and_run(heap, exec, clock, bin, "tests/programs/p256_driver.cho\0", "/tmp/cancho-p256", buffer.bytes(ib), buffer.bytes(eb));
+                borrow out as &sb in {
+                    borrow err as &rb in {
+                        if kind == 6 {
+                            acc = harness.failure(heap, acc, "p256", "build", "should compile, but the compiler said", buffer.bytes(rb));
+                        } else if kind != 0 || code != 0 {
+                            acc = harness.failure(heap, acc, "p256", "driver", "should exit 0", buffer.bytes(rb));
+                        } else {
+                            acc = harness.differences(heap, acc, "p256", "vectors", buffer.bytes(sb), buffer.bytes(wb));
+                        }
+                    }
+                }
+                buffer.drop(heap, out);
+                buffer.drop(heap, err);
+            }
+        }
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    buffer.drop(heap, env);
+    return acc;
+}
+
+// Whether `python3 --version` runs.
+fn has_python[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock) -> [heap, exec(""), clock, poll] bool {
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, "/usr/bin/python3", harness.word(heap, buffer.empty(heap, 16), "--version"), "", "PATH=/usr/bin:/bin\0");
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return kind == 0 && code == 0;
+}
+
+// `python3 SCRIPT [ARGUMENT]` must exit 0 (skipped, with a line on standard error, where there is no `python3`).
+fn python[&h, &x, &c, &i, &s, &g](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock, script: &s [byte], argument: &g [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, io_write, err_write] buffer.Buffer {
+    var acc = report;
+    if !has_python(heap, exec, clock) {
+        console.error_all(io, "skipped ");
+        console.error_all(io, script);
+        console.error_all(io, ": no python3\n");
+        return acc;
+    }
+    var command = harness.word(heap, buffer.empty(heap, 64), script);
+    if len(argument) > 0 {
+        command = harness.word(heap, command, argument);
+    }
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, "/usr/bin/python3", command, "", "PATH=/usr/bin:/bin\0");
+    if kind != 0 || code != 0 {
+        borrow out as &ob in {
+            acc = harness.failure(heap, acc, "p256", script, "should exit 0", buffer.bytes(ob));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return acc;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: p256 CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    var report = vectors(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), buffer.empty(heap, 64));
+    report = python(heap, io, exec, clock, "scripts/p256_gen.py", "--check", report);
+    report = python(heap, io, exec, clock, "scripts/p256_tables.py", "--check", report);
+    report = python(heap, io, exec, clock, "scripts/p256_bounds.py", "", report);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: p256\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
