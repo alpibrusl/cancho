@@ -461,6 +461,12 @@ The calls of §4 exist with these differences *(corrected)*:
 * **Bytes behind a complete response are noted, not kept:** if they arrive in the same read they are swallowed and the connection is closed, not
   pooled. A server that sends a second response nobody asked for is not believed.
 
+* **`fetch_io.adopt`: a connection the caller made** (added for cancho-chain's executor, whose reach is `net_out("rpc.example.com:443")`, a name, not
+  the `net_out("")` that `dial` holds). `dial` is `tcp_connect_start` to an IP literal the caller resolved, then `place`; `adopt` takes a `Conn` the
+  caller connected itself (by name, with `tcp_connect`) and does the same `place`, with the same refusals, **and makes it non-blocking** (a socket from `tcp_connect` is blocking; one from `tcp_connect_start` is not, and the driver's reads and writes assume it: found by the executor, whose first adopted connection blocked in `read` until the server spoke), **holding no `Net`**: a program that
+  only adopts reaches only what it connected. `dial`'s behaviour is unchanged (the 17 live cases of `scripts/http_client_test.py` pass before and
+  after); nothing else in the driver touches the network.
+
 ### 10.4 Tests, against the gates of §9
 
 1. **118 unit tests**, on both backends, the number pinned in `conformance/http_client.rs`: every framing (length, chunked with an extension and
