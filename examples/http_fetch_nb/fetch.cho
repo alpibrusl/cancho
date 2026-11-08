@@ -15,6 +15,7 @@ edition 5;
 //     --client-identity   a client certificate for an upstream that asks for one (`docs/tls-parity.md` §6.2): the PEM chain (leaf first) in
 //                      /etc/cancho/http_fetch_nb/client.pem and its P-256 key (PKCS#8 or SEC 1, unencrypted) in client.key, a directory fixed at
 //                      build time so the program's authority names it and `/dev/urandom` and nothing else; answers every `https` upstream that asks
+//     --adopt          connect each upstream with `tcp_connect` in this program and give the connection to the driver (`fetch_io.adopt`), not `fetch_io.dial`: what a program whose reach is `net_out("host:port")` does
 //     --alpn LIST      offer these ALPN protocols, comma-separated (`h2,http/1.1`): this client speaks HTTP/1.1 only, so `--alpn http/1.1` keeps a
 //                      server from choosing h2 (`docs/tls-parity.md` §6.6)
 //
@@ -136,7 +137,7 @@ fn value_option[&s](a: &s [byte]) -> [] int {
 // `cfg`: 0 slots, 1 requests per URL, 2 seconds to run, 3 retry allowed, 4 the first URL's argument, 5 how many URLs, 6 how many
 // `--resolve`, 7 whether any URL is `https`, 8 a body: 0 none, 1 with a length, 2 chunked, 9 its size, 10 `Expect`, 11 `HEAD`,
 // 12 quiet, 13 14 15 the connect, head and body timers (0: the default), 16 idle connections kept for one upstream (0: 8), 17 `Connection: close` on every request,
-// 18 the argument (plus one) holding the `--alpn` list (0: none), 19 1 for `--client-identity`. Answers "", or the reason the command line is refused.
+// 18 the argument (plus one) holding the `--alpn` list (0: none), 19 1 for `--client-identity`, 20 1 for `--adopt`. Answers "", or the reason the command line is refused.
 fn parse_options[&g, &c, &r](args: &g Args, cfg: &!c [int], resolves: &!r [int]) -> [args] &static [byte] {
     cfg[0] = 8;
     cfg[1] = 1;
@@ -163,6 +164,9 @@ fn parse_options[&g, &c, &r](args: &g Args, cfg: &!c [int], resolves: &!r [int])
             at = at + 1;
         } else if same(a, "--client-identity") {
             cfg[19] = 1;
+            at = at + 1;
+        } else if same(a, "--adopt") {
+            cfg[20] = 1;
             at = at + 1;
         } else if same(a, "--alpn") {
             if at + 1 >= arg_count(args) {
@@ -385,6 +389,18 @@ fn lane_of[&l](ln: &l [int], lanes: int, ticket: int) -> [] int {
     return 0 - 1;
 }
 
+// The first lane whose upstream is `key`, or -1.
+fn lane_of_key[&l](ln: &l [int], lanes: int, key: int) -> [] int {
+    var l = 0;
+    while l < lanes {
+        if ln[l * lane_stride() + 1] == key {
+            return l;
+        }
+        l = l + 1;
+    }
+    return 0 - 1;
+}
+
 fn sha_of[&s](sha: &!s [int], lane: int) -> [] &!s [int] {
     return sha[lane * crypto.sha256_state_len()..(lane + 1) * crypto.sha256_state_len()];
 }
@@ -542,7 +558,28 @@ fn run[&h, &n, &k, &i, &g, &x, &c, &l, &s, &q](heap: &!h Heap, net: &n Net(""), 
                     going = false;
                 }
                 hc.Event::Connect(slot) => {
-                    iov = fio.dial(heap, iov, net, cw, slot, now);
+                    if cfg[20] == 1 {
+                        // `--adopt`: this program makes the connection itself (`tcp_connect`, which blocks until the kernel answers) and the driver adopts it (`fio.adopt`), as a program whose reach is one
+                        // `net_out("host:port")` must: `fio.dial` holds `net_out("")`.
+                        let lane = lane_of_key(ln, lanes, hc.key(cw, slot));
+                        var adopted = false;
+                        if lane >= 0 {
+                            let b = lane * lane_stride();
+                            match tcp_connect(net, arg(args, ln[b + 4])[ln[b + 5]..ln[b + 6]], ln[b + 7]) {
+                                Dialed::Ok(c) => {
+                                    iov = fio.adopt(heap, iov, c, cw, slot, now);
+                                    adopted = true;
+                                }
+                                Dialed::Failed(e) => {
+                                }
+                            }
+                        }
+                        if !adopted {
+                            hc.connect_failed(cw, slot, hc.kind_connect(), now);
+                        }
+                    } else {
+                        iov = fio.dial(heap, iov, net, cw, slot, now);
+                    }
                 }
                 hc.Event::Close(slot) => {
                     borrow mut iov as &!ioh in {
