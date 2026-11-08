@@ -192,7 +192,6 @@ udp 129
 file_writes 116
 sockets 115
 binary32 98
-spawn_under 82
 tls 81
 json 79
 narrow_many 75
