@@ -42,12 +42,12 @@ The memory column is the point: the tape is 24 times the document, and now only 
 
 ## 4. What it is checked by
 
-`tests/conformance/zeroed_slices.rs`, on **both backends**:
+`tests/commands/zeroed_slices.cho` (it was `conformance/zeroed_slices.rs`, on both backends; the Cranelift leg went with D2):
 
 * every zero kind reads back zero -- **in memory just freed full of nines**, so a zero fill that skipped the loop without asking for
   zeroed memory would be seen; a non-zero `int` and `byte` fill, a zero computed at run time and `-0.0` read back as themselves;
 * on Linux, a 512 MiB zero-filled slice with one element written leaves the process's peak resident memory (`VmHWM`, read from
-  `/proc` while it waits) under 64 MiB; filled, it would be 512 MiB.
+  `/proc/self/status` by the driver itself after the fill) under 64 MiB; filled, it would be 512 MiB.
 * the same with 512 MiB of `byte`s filled with `byte_of(0)`. The compiler in cancho first gave `byte_of(0)` a register, not a known
   value, so the fill was `malloc` and a loop: a cache built with it (`cancho-cache`, #547) held **105,996 kB** resident at idle
   against **1,628 kB** built by the Rust compiler. A `byte_of` of a known 0..255 is now a known byte (`exprs.cho`); same

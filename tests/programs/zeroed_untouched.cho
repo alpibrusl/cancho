@@ -1,0 +1,104 @@
+edition 5;
+
+// zeroed_untouched.cho -- 512 MiB of zero (`ints`: 64 Mi ints filled with 0; `bytes`: 512 Mi bytes filled with `byte_of(0)`, a byte worked out in the text being as much a zero fill as `0`),
+// one element written and read, and then the peak resident memory of this process read from the file named by the second argument (`/proc/self/status` on Linux; a line `VmHWM:   1234 kB`).
+// Prints `small` if the peak is under 64 MiB (an untouched zero page is not resident, a filled slice would be 524,288 kB) and `large N` if not; exits 7, the written element read back
+// (7 + 0), or 1 if it was not. The driver of `tests/commands/zeroed_slices.cho` (`docs/zeroed-slices.md`).
+
+import std.bytes;
+import std.io as console;
+
+// The kilobytes after `VmHWM:` in the file at `path`, or 0 - 1 if the line is not there.
+fn peak_kb[&f, &p](fs: &f Fs(""), path: &p [byte]) -> [fs_read("")] int {
+    var kb = 0 - 1;
+    region a {
+        let text = alloc_slice[a](8192, byte_of(0));
+        let got = fs_read(fs, path, text);
+        let at = bytes.find(text[0..got], "VmHWM:");
+        if at >= 0 {
+            var i = at + 6;
+            while i < got && (int_of(text[i]) == 32 || int_of(text[i]) == 9) {
+                i = i + 1;
+            }
+            kb = 0;
+            while i < got && bytes.is_digit(int_of(text[i])) {
+                kb = kb * 10 + int_of(text[i]) - 48;
+                i = i + 1;
+            }
+        }
+    }
+    return kb;
+}
+
+fn ints[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read("")] (int, int) {
+    var answer = 0;
+    var peak = 0;
+    let big = box_slice(heap, 67108864, 0);
+    borrow mut big as &!w in {
+        contents(w)[12345] = 7;
+        answer = contents(w)[12345] + contents(w)[67108863];
+    }
+    peak = peak_kb(fs, path);
+    unbox_slice(heap, big);
+    return (answer, peak);
+}
+
+fn zero_bytes[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read("")] (int, int) {
+    var answer = 0;
+    var peak = 0;
+    let big = box_slice(heap, 536870912, byte_of(0));
+    borrow mut big as &!w in {
+        contents(w)[12345] = byte_of(7);
+        answer = int_of(contents(w)[12345]) + int_of(contents(w)[536870911]);
+    }
+    peak = peak_kb(fs, path);
+    unbox_slice(heap, big);
+    return (answer, peak);
+}
+
+fn run[&h, &i, &f, &a](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), args: &a Args) -> [heap, io_write, fs_read(""), args] int {
+    var answer = 0;
+    var peak = 0;
+    if bytes.equal(arg(args, 1), "bytes") {
+        let (got, kb) = zero_bytes(heap, fs, arg(args, 2));
+        answer = got;
+        peak = kb;
+    } else {
+        let (got, kb) = ints(heap, fs, arg(args, 2));
+        answer = got;
+        peak = kb;
+    }
+    if peak >= 0 && peak < 65536 {
+        console.write_all(io, "small\n");
+    } else {
+        console.write_all(io, "large ");
+        console.print_int(io, peak);
+        console.newline(io);
+    }
+    if answer == 7 {
+        return 7;
+    }
+    return 1;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow fs as &f in {
+                borrow args as &a in {
+                    status = run(h, i, f, a);
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

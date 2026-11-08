@@ -271,7 +271,6 @@ directory_modes 6
 sha256_builtins 6
 close_on_exec 5
 vcs_remote 5
-zeroed_slices 5
 io 4
 wasm_target 4
 satisfy 4
