@@ -252,7 +252,7 @@ Slice 2:
 
 Slice 1:
 
-* `tests/conformance/directory_handles.rs`, on **both backends**, judged from outside the program, against a tree the
+* `tests/commands/directory_handles.cho` (moved from `conformance/directory_handles.rs`, G4; LLVM only since D2), judged from outside the program, against a tree the
   test builds: a file two directories down opens and reads back; a link to a file outside is refused (`ELOOP`); a
   link to a directory outside is refused when entered; `..`, `.`, an empty name, a name with `/` and an absolute path
   are refused by `std.dirs.open_file` and, as single names, by the builtins (`EINVAL`) without a call; a missing name

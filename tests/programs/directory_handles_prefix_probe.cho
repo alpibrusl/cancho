@@ -1,0 +1,28 @@
+edition 6;
+
+// `open_dir` checks its path against the capability's prefix exactly as `open_read` does: outside it, the program is killed (`tests/commands/directory_handles.cho`).
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    let tmp = narrow(fs, "/tmp/cancho-dirs-prefix");
+    var status = 0;
+    borrow tmp as &t in {
+        match open_dir(t, "/etc") {
+            DirOpened::Ok(d) => {
+                dir_close(d);
+                status = 1;
+            }
+            DirOpened::Failed(e) => {
+                status = 2;
+            }
+        }
+    }
+    release(tmp);
+    return status;
+}

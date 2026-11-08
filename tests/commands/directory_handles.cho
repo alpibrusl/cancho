@@ -1,0 +1,62 @@
+edition 7;
+module directory_handles_test;
+
+// directory_handles.cho -- `conformance/directory_handles.rs` (deleted), in cancho (`docs/gate.md` G4): directory handles (`docs/directory-handles.md`, issue #227): a path opened beneath a directory, one component at a time, following no link, edition 6; and `open_dir` outside the capability's prefix traps. The probe
+// `tests/programs/directory_handles_probe.cho` opens a path beneath a directory in a mode and prints `ok BYTES` or `err ERRNO`; `directory_handles.sh` runs it against a tree with links to a file and a directory outside and prints what
+// the probe said and what is on disk; `directory_handles.expected` is what that must be.
+//
+//     cancho build tests/commands/directory_handles.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: directory_handles` or what is wrong, and exits 0 or 1. One backend (LLVM) and one compiler: the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.io as console;
+import harness;
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: directory_handles CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    var report = harness.probe_transcript(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), "directory_handles", "tests/programs/directory_handles_probe.cho", "tests/commands/directory_handles.sh", "tests/commands/directory_handles.expected", buffer.empty(heap, 64));
+    report = harness.probe_transcript(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), "directory_handles_trap", "tests/programs/directory_handles_prefix_probe.cho", "tests/commands/directory_handles_trap.sh", "tests/commands/directory_handles_trap.expected", report);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: directory_handles\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

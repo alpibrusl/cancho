@@ -1,0 +1,36 @@
+== the file two directories down, through the walk, and the directory above it
+[a/b/f.txt] walk -> ok 7
+[a/b] enter -> ok 0
+== a link to a file outside, last component: refused, not read
+[link.txt] walk -> err ELOOP
+[link.txt] one -> err ELOOP
+== a link to a directory outside, entered on the way: refused
+[dirlink/s.txt] walk -> refused (ENOTDIR or ELOOP)
+[dirlink] enter -> refused (ENOTDIR or ELOOP)
+== what O_NOFOLLOW does not cover, refused by the component check
+[../outside/s.txt] walk -> err EINVAL
+[a/../a/b/f.txt] walk -> err EINVAL
+[./a/b/f.txt] walk -> err EINVAL
+[a//b/f.txt] walk -> err EINVAL
+[/a/b/f.txt] walk -> err EINVAL
+[a/b/] walk -> err EINVAL
+[] walk -> err EINVAL
+[..] enter -> err EINVAL
+== the builtin alone: one name, so a / . and .. are refused without a call
+[a/b/f.txt] one -> err EINVAL
+[..] one -> err EINVAL
+[.] one -> err EINVAL
+[] one -> err EINVAL
+== ordinary failures are values
+[a/b/missing] walk -> err ENOENT
+[a/b/f.txt/x] walk -> err ENOTDIR
+== a name longer than NAME_MAX is refused before the copy; 255 bytes reach the kernel
+[256 x] one -> err EINVAL
+[255 x] one -> err ENOENT
+== a NUL inside a name, which argv cannot carry
+[x] n -> err EINVAL
+== open_dir of a file, and of nothing: open_dir itself answers (exit 2), not a step after it
+file -> err ENOTDIR
+file exit 2
+absent -> err ENOENT
+absent exit 2
