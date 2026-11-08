@@ -230,7 +230,7 @@ pass of `pack`, p and p + 1, (p - 1)^2, 2 * 2^-1).
 ### 10.2 Correctness
 
 - RFC 7748's eight vectors (including the 1,000-iteration one) and every Wycheproof X25519 case, on both backends, on macOS arm64
-  and x86-64 Linux (`crates/cancho/tests/conformance/x25519.rs`).
+  and x86-64 Linux (`tests/commands/x25519.cho`).
 - `scripts/curve25519_differential.py` against OpenSSL (pyca/cryptography 50.0.2): **200,000 X25519 and 1,000 Ed25519 rounds, 404,000
   checks, 0 differences** on macOS arm64 with LLVM; 20,000 and 300, 0 differences, on aarch64 Linux.
 - `mul_wide`, `add_carry`, `sub_borrow`: §9, on all of LLVM, Cranelift and wasm32, on macOS arm64 and on x86-64 Linux (both backends

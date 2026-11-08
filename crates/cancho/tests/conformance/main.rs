@@ -121,7 +121,7 @@ mod vcs_sync;
 mod wasm_target;
 mod wide_multiply;
 mod word_scan;
-mod x25519;
+
 
 
 
