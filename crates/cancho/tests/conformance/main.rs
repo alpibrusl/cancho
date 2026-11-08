@@ -58,7 +58,6 @@ mod directory_mkdir;
 mod directory_modes;
 mod directory_open_new_mode;
 mod directory_rename_new;
-mod directory_writes;
 mod docs;
 mod duplication;
 mod ecdh;

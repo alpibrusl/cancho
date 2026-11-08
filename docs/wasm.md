@@ -453,7 +453,7 @@ check.
 ### Known differences found on the way
 
 `scripts/wasm_file_check.py` parts two and three run the directory drivers
-(`directory_writes.rs`, `directory_modes.rs`) over a tree, native against wasm. Of 18
+(`directory_writes`'s probe, `directory_modes.rs`) over a tree, native against wasm. Of 18
 directory write cases, **17 are identical**, errnos included. The one difference is
 `dir_sync`, which is `fsync` on a directory descriptor: natively `ok 0`, on WASI `err 9`
 (`EBADF`) under wasmtime 49, which does not let a directory descriptor be synced. A
