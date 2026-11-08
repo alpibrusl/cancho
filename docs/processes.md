@@ -13,7 +13,7 @@
 > | 4 | the MCP server (cancho-tools#10) | in cancho-tools (cancho-tools#17), on `std.process` | yes, outside this repository |
 > | 5 | `exec_spawn_in` (§4.10), `std.process.channels_with_errors` and **`capture_both`** (§7.2) | `builtin.rs`, `std/process.cho`; `processes.rs`, `capture.rs` | yes |
 > | 6 (edition 9) | `exec_spawn_detached`, `child_pid`, `child_release` and the label `exec_detached` (§4.11, #524) | `builtin.rs`; `process_release.rs` | yes |
-> | 6 (edition 9) | `child_kill_group` (§4.12, #533), and `capture` using it | `builtin.rs`, `std/process.cho`; `process_group.rs` | yes |
+> | 6 (edition 9) | `child_kill_group` (§4.12, #533), and `capture` using it | `builtin.rs`, `std/process.cho`; `tests/commands/process_group.cho` | yes |
 > | 6 (edition 9) | `exec_spawn_detached_under` (§4.15, #562): a worker found beneath a `Dir` that leads a group of its own | `builtin.rs`, `lower/process.rs`, `examples/selfhost/`; `tests/commands/spawn_detached_under.cho` | yes |
 | 6 (edition 9) | `exec_covers` and `fs_covers` (§4.13, #535): is this path inside the bound, by the rule the operations trap on | `builtin.rs`, `memory.rs`/`fs.rs` of both backends; `path_covers.rs` | yes |
 >
@@ -1640,7 +1640,7 @@ when it is gone or `Z`. macOS: the code is the same call with the pid negated, a
   in `codes.cho`, `netcode.cho` and `exprs.cho`, `cancho_child_kill_group` in `runtime.ll`, and the generated tables.
 * **Refusals.** `tests/reject/child_kill_group_is_edition_nine` (`not-a-function`), `child_kill_group_undeclared`
   (`effect-not-declared`), `child_kill_group_on_wasi` (`unsupported-on-target`). No new rule. `tests/accept/process_group_kill.cho`.
-* **Conformance** (`process_group.rs`, driver `tests/programs/process_group.cho`, both backends): the S7 scenario run
+* **Conformance** (`tests/commands/process_group.cho`, driver `tests/programs/process_group.cho`): the S7 scenario run
   for real: a detached worker `sh -c 'sleep 77 & echo $!; wait'`, a 300 ms deadline through `capture`, and the grandchild
   (pid printed by the worker) gone or `Z` after the driver ends; the same worker started plain, whose grandchild is
   still `S` (the control: without it the first test could pass for any reason); the answers of `child_kill_group` for a
