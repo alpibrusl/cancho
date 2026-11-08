@@ -237,7 +237,6 @@ ports 16
 x25519 16
 compile_time 16
 project 16
-ecdsa_sign 16
 http_server_upload 16
 aead 15
 memory 15

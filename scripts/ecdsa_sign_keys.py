@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Writes `tests/vectors/ecdsa_sign/keys.txt`, the key files
-`conformance/ecdsa_sign.rs` parses (docs/ecdsa-sign.md §5.3).
+`tests/commands/ecdsa_sign.cho` parses (docs/ecdsa-sign.md §5.3).
 
     python3 scripts/ecdsa_sign_keys.py
 

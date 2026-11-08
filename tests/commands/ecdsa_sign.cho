@@ -1,0 +1,412 @@
+edition 7;
+module ecdsa_sign_test;
+
+// ecdsa_sign.cho -- `conformance/ecdsa_sign.rs` (deleted), in cancho (`docs/gate.md` G4): `std.ecdsa_sign` and `packages/x509`'s `x509_key` (`docs/ecdsa-sign.md` section 5): RFC 6979
+// Appendix A.2.5's P-256/SHA-256 signatures, the DER they encode to, the nonce's added randomness, every refusal of the signer with its own tag, and every key file of
+// `tests/vectors/ecdsa_sign/` answered with its tag or its key. All through `tests/programs/ecdsa_sign_driver.cho`, built once and run for each.
+//
+//     cancho build tests/commands/ecdsa_sign.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: ecdsa_sign` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// `case | answer` and a newline.
+fn row[&h, &c, &w](heap: &!h Heap, into: buffer.Buffer, case: &c [byte], want: &w [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, into, case);
+    b = buffer.append(heap, b, " | ");
+    b = buffer.append(heap, b, want);
+    return buffer.push(heap, b, byte_of('\n'));
+}
+
+// RFC 6979 A.2.5's key, public point and digests are in the tables below. The RFC 6979 cases (the deterministic nonce, raw and checked, and their DER, and "sample" itself hashed in the driver) with their answers.
+fn rfc6979_table[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 4096);
+    b = row(heap, b, "S af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 -", "0 ok efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8");
+    b = row(heap, b, "S 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 -", "0 ok f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d38367019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083");
+    b = row(heap, b, "C af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299 -", "0 ok efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8");
+    b = row(heap, b, "C 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299 -", "0 ok f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d38367019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083");
+    b = row(heap, b, "E efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8", "72 ok 3046022100efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716022100f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8");
+    b = row(heap, b, "E f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d38367019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083", "71 ok 3045022100f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d383670220019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083");
+    b = row(heap, b, "M 73616d706c65 c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 -", "72 ok 3046022100efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716022100f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8");
+    return b;
+}
+
+fn refusal_table[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 4096);
+    b = row(heap, b, "S af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1 c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 -", "-70 ecdsa-sign-digest-length -");
+    b = row(heap, b, "S af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f67 -", "-71 ecdsa-sign-key-length -");
+    b = row(heap, b, "S af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf 0000000000000000000000000000000000000000000000000000000000000000 -", "-72 ecdsa-sign-key-range -");
+    b = row(heap, b, "S af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551 -", "-72 ecdsa-sign-key-range -");
+    b = row(heap, b, "S af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff -", "-72 ecdsa-sign-key-range -");
+    b = row(heap, b, "S af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 00000000000000000000000000000000000000000000000000000000000000", "-73 ecdsa-sign-extra-length -");
+    b = row(heap, b, "E efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acd", "-74 ecdsa-sign-output-length -");
+    b = row(heap, b, "F efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8 71", "-74 ecdsa-sign-output-length -");
+    b = row(heap, b, "W af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 -", "-75 ecdsa-sign-work-length -");
+    b = row(heap, b, "C af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5 -", "-77 ecdsa-sign-check -");
+    b = row(heap, b, "C af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 00 -", "-77 ecdsa-sign-check -");
+    return b;
+}
+
+fn extra_cases[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 4096);
+    b = buffer.push(heap, buffer.append(heap, b, "C af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299 0000000000000000000000000000000000000000000000000000000000000000"), byte_of('\n'));
+    b = buffer.push(heap, buffer.append(heap, b, "C af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299 0101010101010101010101010101010101010101010101010101010101010101"), byte_of('\n'));
+    b = buffer.push(heap, buffer.append(heap, b, "C af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"), byte_of('\n'));
+    b = buffer.push(heap, buffer.append(heap, b, "C af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"), byte_of('\n'));
+    b = buffer.push(heap, buffer.append(heap, b, "C af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721 0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299 0101010101010101010101010101010101010101010101010101010101010101"), byte_of('\n'));
+    return b;
+}
+
+// The second word of each line of `text`, one per line.
+fn tags[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    let lines = bytes.count_byte(text, 10);
+    var at = 1;
+    while at <= lines {
+        out = buffer.push(heap, buffer.append(heap, out, bytes.field(bytes.field(text, 10, at), 32, 2)), byte_of('\n'));
+        at = at + 1;
+    }
+    return out;
+}
+
+// How many lines of `text` are the first of their kind.
+fn distinct[&t](text: &t [byte]) -> [] int {
+    let lines = bytes.count_byte(text, 10);
+    var count = 0;
+    var at = 1;
+    while at <= lines {
+        var seen = false;
+        var before = 1;
+        while before < at {
+            if bytes.equal(bytes.field(text, 10, before), bytes.field(text, 10, at)) {
+                seen = true;
+            }
+            before = before + 1;
+        }
+        if !seen {
+            count = count + 1;
+        }
+        at = at + 1;
+    }
+    return count;
+}
+
+// What the driver at `exe` says to `input` (one answer per line; nothing, and a failure in the report, if it does not exit 0 or says another number of lines than `cases`).
+fn ask[&h, &x, &c, &p, &n, &m](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte], report: buffer.Buffer, name: &m [byte]) -> [heap, exec(""), clock, poll] (buffer.Buffer, buffer.Buffer) {
+    var acc = report;
+    var said = buffer.empty(heap, 0);
+    let harness.Ended { out, err, kind, code } = harness.run_program(heap, exec, clock, exe, input);
+    borrow err as &rb in {
+        if kind != 0 || code != 0 {
+            acc = harness.failure(heap, acc, "ecdsa_sign", name, "the driver should exit 0", buffer.bytes(rb));
+            buffer.drop(heap, out);
+        } else {
+            borrow out as &ob in {
+                if bytes.count_byte(buffer.bytes(ob), 10) != bytes.count_byte(input, 10) {
+                    acc = harness.failure(heap, acc, "ecdsa_sign", name, "the driver should answer one line per case", buffer.bytes(ob));
+                }
+            }
+            buffer.drop(heap, said);
+            said = out;
+        }
+    }
+    buffer.drop(heap, err);
+    return (acc, said);
+}
+
+// A table of `case | answer` run as one: every answer is the one written.
+fn table_checks[&h, &x, &c, &p, &t, &m](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], table: &t [byte], report: buffer.Buffer, name: &m [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var acc = report;
+    let input = harness.column(heap, table, 1);
+    let want = harness.column(heap, table, 2);
+    borrow input as &ib in {
+        let (more, said) = ask(heap, exec, clock, exe, buffer.bytes(ib), acc, name);
+        acc = more;
+        borrow said as &sb in {
+            borrow want as &wb in {
+                if len(buffer.bytes(sb)) > 0 {
+                    acc = harness.differences(heap, acc, "ecdsa_sign", name, buffer.bytes(sb), buffer.bytes(wb));
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+// Added randomness (RFC 6979 section 3.6) changes the nonce, so the signature, and each still verifies under the key's point (the `C` answers are `0 ok`); the same randomness
+// gives the same signature again.
+fn extra_checks[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var acc = report;
+    let input = extra_cases(heap);
+    borrow input as &ib in {
+        let (more, said) = ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "extra");
+        acc = more;
+        borrow said as &sb in {
+            let text = buffer.bytes(sb);
+            if len(text) > 0 {
+                var plain = buffer.append(heap, buffer.empty(heap, 160), "0 ok ");
+                plain = buffer.append(heap, plain, "efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8");
+                var at = 1;
+                while at <= 4 {
+                    let line = bytes.field(text, 10, at);
+                    borrow plain as &pb in {
+                        if !bytes.starts_with(line, "0 ok ") {
+                            acc = harness.failure(heap, acc, "ecdsa_sign", "extra", "should sign and verify", line);
+                        }
+                        if bytes.equal(line, buffer.bytes(pb)) {
+                            acc = harness.failure(heap, acc, "ecdsa_sign", "extra", "the randomness was not used", line);
+                        }
+                    }
+                    at = at + 1;
+                }
+                buffer.drop(heap, plain);
+                if distinct(head(text, 4)) != 4 {
+                    acc = harness.failure(heap, acc, "ecdsa_sign", "extra", "four randomnesses should give four nonces", text);
+                }
+                if !bytes.equal(bytes.field(text, 10, 5), bytes.field(text, 10, 2)) {
+                    acc = harness.failure(heap, acc, "ecdsa_sign", "extra", "the same randomness should give the same signature", text);
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    return acc;
+}
+
+// The first `n` lines of `text`.
+fn head[&t](text: &t [byte], n: int) -> [] &t [byte] {
+    var at = 0;
+    var seen = 0;
+    while at < len(text) && seen < n {
+        if text[at] == byte_of('\n') {
+            seen = seen + 1;
+        }
+        at = at + 1;
+    }
+    return text[0..at];
+}
+
+// n - 1 is a key, and its point is -G: it signs (the answer's code is 7x, a DER).
+fn edge_check[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var acc = report;
+    let (more, said) = ask(heap, exec, clock, exe, "M 00 ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550 -\n", acc, "edge");
+    acc = more;
+    borrow said as &sb in {
+        if len(buffer.bytes(sb)) > 0 && !bytes.starts_with(buffer.bytes(sb), "7") {
+            acc = harness.failure(heap, acc, "ecdsa_sign", "edge", "n - 1 should sign, but the answer was", buffer.bytes(sb));
+        }
+    }
+    buffer.drop(heap, said);
+    return acc;
+}
+
+// The lines of `text` (a vector file) that are not comments or blank, each followed by a newline.
+fn rows_of[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text));
+    let lines = bytes.count_byte(text, 10) + 1;
+    var at = 1;
+    while at <= lines {
+        let line = harness.trim_end(bytes.field(text, 10, at));
+        if len(line) > 0 && line[0] != byte_of('#') {
+            out = buffer.push(heap, buffer.append(heap, out, line), byte_of('\n'));
+        }
+        at = at + 1;
+    }
+    return out;
+}
+
+// Every key file answers the key and point OpenSSL printed for it, or is refused with its own tag; and `certs.txt`'s certificates match the key they were made for and no other.
+// Every tag a file can reach (13) is reached. A row is `<tag> <name> <file hex> <key || point hex>` (`K` for keys, `X <certificate DER> <point>` for certs).
+fn key_checks[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let keys = file_rows(heap, fs, "tests/vectors/ecdsa_sign/keys.txt");
+    let certs = file_rows(heap, fs, "tests/vectors/ecdsa_sign/certs.txt");
+    var input = buffer.empty(heap, 1 << 16);
+    var want = buffer.empty(heap, 4096);
+    var rows = 0;
+    borrow keys as &kb in {
+        let n = bytes.count_byte(buffer.bytes(kb), 10);
+        if n != 43 {
+            acc = harness.failure(heap, acc, "ecdsa_sign", "keys", "keys.txt should have 43 keys", "");
+        }
+        var at = 1;
+        while at <= n {
+            let line = bytes.field(buffer.bytes(kb), 10, at);
+            input = buffer.push(heap, buffer.append(heap, buffer.append(heap, input, "K "), bytes.field(line, 32, 3)), byte_of('\n'));
+            want = buffer.push(heap, buffer.append(heap, want, bytes.field(line, 32, 1)), byte_of('\n'));
+            at = at + 1;
+        }
+        rows = n;
+    }
+    borrow certs as &cb in {
+        let n = bytes.count_byte(buffer.bytes(cb), 10);
+        if n != 5 {
+            acc = harness.failure(heap, acc, "ecdsa_sign", "certs", "certs.txt should have 5 certificates", "");
+        }
+        var at = 1;
+        while at <= n {
+            let line = bytes.field(buffer.bytes(cb), 10, at);
+            input = buffer.append(heap, input, "X ");
+            input = buffer.append(heap, input, bytes.field(line, 32, 3));
+            input = buffer.push(heap, input, byte_of(' '));
+            input = buffer.append(heap, input, bytes.field(line, 32, 4));
+            input = buffer.push(heap, input, byte_of('\n'));
+            want = buffer.push(heap, buffer.append(heap, want, bytes.field(line, 32, 1)), byte_of('\n'));
+            at = at + 1;
+        }
+    }
+    borrow input as &ib in {
+        let (more, said) = ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "keys");
+        acc = more;
+        borrow said as &sb in {
+            borrow want as &wb in {
+                if len(buffer.bytes(sb)) > 0 {
+                    let got = tags(heap, buffer.bytes(sb));
+                    borrow got as &gb in {
+                        acc = harness.differences(heap, acc, "ecdsa_sign", "keys", buffer.bytes(gb), buffer.bytes(wb));
+                    }
+                    buffer.drop(heap, got);
+                    // The key and point of every key file that is accepted (the fourth column, `-` where there is none).
+                    borrow keys as &kb in {
+                        var at = 1;
+                        while at <= rows {
+                            let line = bytes.field(buffer.bytes(kb), 10, at);
+                            let answer = bytes.field(buffer.bytes(sb), 10, at);
+                            if bytes.equal(bytes.field(line, 32, 1), "ok") && !bytes.equal(bytes.field(line, 32, 4), "-") && !bytes.equal(bytes.field(answer, 32, 3), bytes.field(line, 32, 4)) {
+                                acc = harness.failure(heap, acc, "ecdsa_sign", "keys", "the key and point should be what OpenSSL printed", bytes.field(line, 32, 2));
+                            }
+                            at = at + 1;
+                        }
+                    }
+                }
+                if distinct(buffer.bytes(wb)) != 13 {
+                    acc = harness.failure(heap, acc, "ecdsa_sign", "keys", "the files should reach the 13 tags of the table", buffer.bytes(wb));
+                }
+                let names = "ok key-pem key-encrypted key-algorithm key-curve key-der key-version key-length key-range key-public-mismatch key-size key-certificate key-certificate-mismatch";
+                var k = 1;
+                while k <= 13 {
+                    var found = false;
+                    let lines = bytes.count_byte(buffer.bytes(wb), 10);
+                    var at = 1;
+                    while at <= lines {
+                        if bytes.equal(bytes.field(buffer.bytes(wb), 10, at), bytes.field(names, 32, k)) {
+                            found = true;
+                        }
+                        at = at + 1;
+                    }
+                    if !found {
+                        acc = harness.failure(heap, acc, "ecdsa_sign", "keys", "a tag is not reached", bytes.field(names, 32, k));
+                    }
+                    k = k + 1;
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    buffer.drop(heap, keys);
+    buffer.drop(heap, certs);
+    return acc;
+}
+
+// The rows of the vector file `path` (nothing if it cannot be read).
+fn file_rows[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] buffer.Buffer {
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, path);
+    var rows = buffer.empty(heap, 0);
+    borrow data as &db in {
+        buffer.drop(heap, rows);
+        rows = rows_of(heap, buffer.bytes(db));
+    }
+    buffer.drop(heap, data);
+    return rows;
+}
+
+fn check[&h, &x, &c, &f, &b, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var report = buffer.empty(heap, 64);
+    let exe = "/tmp/cancho-ecdsa-sign";
+    let harness.Ended { out, err, kind, code } = harness.build(heap, exec, clock, bin, "tests/programs/ecdsa_sign_driver.cho\0packages/x509/x509.cho\0packages/x509/key.cho\0", exe, env);
+    buffer.drop(heap, out);
+    if kind != 0 {
+        borrow err as &rb in {
+            report = harness.failure(heap, report, "ecdsa_sign", "build", "should compile, but the compiler said", buffer.bytes(rb));
+        }
+    } else {
+        let rfc = rfc6979_table(heap);
+        let refusals = refusal_table(heap);
+        borrow rfc as &ab in {
+            report = table_checks(heap, exec, clock, exe, buffer.bytes(ab), report, "rfc6979");
+        }
+        borrow refusals as &rb in {
+            report = table_checks(heap, exec, clock, exe, buffer.bytes(rb), report, "refusals");
+        }
+        buffer.drop(heap, rfc);
+        buffer.drop(heap, refusals);
+        report = extra_checks(heap, exec, clock, exe, report);
+        report = edge_check(heap, exec, clock, exe, report);
+        report = key_checks(heap, exec, clock, fs, exe, report);
+    }
+    buffer.drop(heap, err);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: ecdsa_sign CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let env = harness.base_env(heap, harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var report = buffer.empty(heap, 0);
+    borrow env as &eb in {
+        buffer.drop(heap, report);
+        report = check(heap, exec, clock, fs, arg(args, 1), buffer.bytes(eb));
+    }
+    buffer.drop(heap, env);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: ecdsa_sign\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
