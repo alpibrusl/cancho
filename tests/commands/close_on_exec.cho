@@ -92,7 +92,7 @@ fn check[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Cl
                 var exe = harness.joined(heap, scratch, "held");
                 borrow exe as &xb in {
                     let paths = "tests/programs/close_on_exec.cho\0";
-                    let harness.Ended { out, err, kind, code } = harness.build_only(heap, exec, clock, bin, paths, buffer.bytes(xb), buffer.bytes(eb));
+                    let harness.Ended { out, err, kind, code } = harness.build_exe(heap, exec, clock, bin, paths, buffer.bytes(xb), buffer.bytes(eb));
                     if kind != 0 || code != 0 {
                         borrow err as &rb in {
                             report = harness.failure(heap, report, "close_on_exec", "build", "should compile, but the compiler said", buffer.bytes(rb));

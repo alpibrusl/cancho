@@ -435,7 +435,7 @@ fn tables[&h, &x, &c, &f, &b, &v, &d, &s](heap: &!h Heap, exec: &x Exec(""), clo
 
 fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read, fs_write("")] buffer.Buffer {
     let env = harness.base_env(heap, compiler, cache);
-    let dir = harness.scratch_dir(heap, exec, clock);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-path-covers");
     let driver = harness.read_file(heap, fs, "tests/programs/path_covers.cho");
     let harness.Contents { data, failed } = driver;
     var report = buffer.empty(heap, 64);

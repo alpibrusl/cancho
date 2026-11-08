@@ -279,7 +279,7 @@ fn authority_control[&h, &x, &c, &b, &v](heap: &!h Heap, exec: &x Exec(""), cloc
 // Build `sources` (one path and its NUL) as `exe`; `report` and, if it did not build, what the compiler said. `ok` is 1 if it built.
 fn build_into[&h, &x, &c, &b, &v, &s, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, bin: &b [byte], env: &v [byte], sources: &s [byte], exe: &p [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
     var r = report;
-    let harness.Ended { out, err, kind, code } = harness.build_only(heap, exec, clock, bin, sources, exe, env);
+    let harness.Ended { out, err, kind, code } = harness.build_exe(heap, exec, clock, bin, sources, exe, env);
     if kind != 0 || code != 0 {
         borrow err as &rb in {
             r = harness.failure(heap, r, "spawn_under", "build", "should compile, but the compiler said", buffer.bytes(rb));

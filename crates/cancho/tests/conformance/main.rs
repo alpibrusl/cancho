@@ -121,9 +121,6 @@ mod wasm_target;
 mod wide_multiply;
 mod word_scan;
 
-
-
-
 const BIN: &str = env!("CARGO_BIN_EXE_cancho");
 
 fn repo_root() -> PathBuf {

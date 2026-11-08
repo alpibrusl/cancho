@@ -251,7 +251,6 @@ region_cache 8
 docs 8
 rsa 8
 vcs 7
-key_tables 6
 wide_multiply 6
 sha256_builtins 6
 vcs_remote 5

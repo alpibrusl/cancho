@@ -220,10 +220,40 @@ pub fn option[&a, &f](args: &a Args, flag: &f [byte]) -> [args] &a [byte] {
     return arg(args, 0)[0..0];
 }
 
+// Write `text` to the file at `path` (a whole file, created or truncated); how many bytes were written. Fixtures made by a test live under `/tmp/cancho-NAME-...`.
+pub fn write_file[&f, &p, &t](fs: &f Fs(""), path: &p [byte], text: &t [byte]) -> [fs_write("")] int {
+    return fs_write(fs, path, text);
+}
+
+// `bin build SOURCES FLAGS --std -o EXE` and nothing run (`sources` and `flags`: each followed by a NUL, flags may be empty). Kind 0 and code 0 if it built; otherwise kind 6 and what the compiler
+// said in `err` (kind 5 if it did not start).
+pub fn build_only[&h, &x, &c, &b, &s, &g, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], flags: &g [byte], exe: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "build");
+    let paths = bytes.count_byte(sources, 0);
+    var at = 1;
+    while at <= paths {
+        command = word(heap, command, bytes.field(sources, 0, at));
+        at = at + 1;
+    }
+    command = buffer.append(heap, command, flags);
+    command = word(heap, command, "--std");
+    command = word(heap, command, "-o");
+    command = word(heap, command, exe);
+    let built = spawn_capture(heap, exec, clock, bin, command, "", env);
+    let Ended { out, err, kind, code } = built;
+    if kind == 0 && code == 0 {
+        return Ended { out: out, err: err, kind: 0, code: 0 };
+    }
+    buffer.drop(heap, out);
+    if kind == 5 {
+        return Ended { out: buffer.empty(heap, 0), err: err, kind: 5, code: code };
+    }
+    return Ended { out: buffer.empty(heap, 0), err: err, kind: 6, code: code };
+}
+
 // ---- processes and scratch directories (`docs/gate.md` G4, the process tests) --------------------------------------------------------------------
 
 // Whether `needle` is in `text`.
-// Whether `text` holds `needle`.
 pub fn contains[&t, &n](text: &t [byte], needle: &n [byte]) -> [] bool {
     return bytes.find(text, needle) >= 0;
 }
@@ -303,12 +333,6 @@ pub fn make_scratch[&h, &x, &c, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c
     }
     buffer.drop(heap, template);
     let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, "/usr/bin/mktemp", command, "", "PATH=/usr/bin:/bin\0");
-// A new empty directory made by `/usr/bin/mktemp -d` (its path, empty if it could not be made); `remove_tree` takes it away.
-pub fn scratch_dir[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock) -> [heap, exec(""), clock, poll] buffer.Buffer {
-    var command = word(heap, buffer.empty(heap, 16), "-d");
-    command = word(heap, command, "/tmp/cancho-test.XXXXXXXX");
-    let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, "/usr/bin/mktemp", command, "", "PATH=/usr/bin:/bin\0");
-    buffer.drop(heap, err);
     var path = buffer.empty(heap, 64);
     if kind == 0 && code == 0 {
         borrow out as &ob in {
@@ -389,15 +413,7 @@ pub fn remove_scratch[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: 
 }
 
 // `bin build SOURCES --std -o EXE` (`sources`: each path followed by a NUL); the build's own `Ended` (kind 0 and code 0 if it built).
-pub fn build_only[&h, &x, &c, &b, &s, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], exe: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
-// Write `text` to the file at `path` (a whole file, created or truncated); how many bytes were written. Fixtures made by a test live under `/tmp/cancho-NAME-...`.
-pub fn write_file[&f, &p, &t](fs: &f Fs(""), path: &p [byte], text: &t [byte]) -> [fs_write("")] int {
-    return fs_write(fs, path, text);
-}
-
-// `bin build SOURCES FLAGS --std -o EXE` and nothing run (`sources` and `flags`: each followed by a NUL, flags may be empty). Kind 0 and code 0 if it built; otherwise kind 6 and what the compiler
-// said in `err` (kind 5 if it did not start).
-pub fn build_only[&h, &x, &c, &b, &s, &g, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], flags: &g [byte], exe: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
+pub fn build_exe[&h, &x, &c, &b, &s, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], exe: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
     var command = word(heap, buffer.empty(heap, 64), "build");
     let paths = bytes.count_byte(sources, 0);
     var at = 1;
@@ -409,6 +425,8 @@ pub fn build_only[&h, &x, &c, &b, &s, &g, &p, &v](heap: &!h Heap, exec: &x Exec(
     command = word(heap, command, "-o");
     command = word(heap, command, exe);
     return spawn_capture(heap, exec, clock, bin, command, "", env);
+}
+
 // `text` without the spaces, tabs and carriage returns at its end.
 pub fn trim_end[&t](text: &t [byte]) -> [] &t [byte] {
     var end = len(text);
@@ -487,39 +505,14 @@ pub fn differences[&h, &a, &n, &g, &w](heap: &!h Heap, report: buffer.Buffer, ki
     return out;
 }
 
-// `bin build SOURCES --std -o EXE` and nothing run (`sources`: each path followed by a NUL): the `Ended` of the compiler, kind 6 if it failed (what it said in `err`), else
-// kind 0. For a test that runs the same program more than once (`build_and_run` builds each time).
-pub fn build[&h, &x, &c, &b, &s, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], exe: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
-    var command = word(heap, buffer.empty(heap, 64), "build");
-    let paths = bytes.count_byte(sources, 0);
-    var at = 1;
-    while at <= paths {
-        command = word(heap, command, bytes.field(sources, 0, at));
-        at = at + 1;
-    }
-    command = word(heap, command, "--std");
-    command = word(heap, command, "-o");
-    command = word(heap, command, exe);
-    let built = spawn_capture(heap, exec, clock, bin, command, "", env);
-    let Ended { out, err, kind, code } = built;
-    if kind != 0 || code != 0 {
-        buffer.drop(heap, out);
-        return Ended { out: buffer.empty(heap, 0), err: err, kind: 6, code: code };
-    }
-    return Ended { out: out, err: err, kind: 0, code: 0 };
-}
-
-// The program at `exe` with no arguments, `input` on its standard input and nothing in its environment but a `PATH`.
-pub fn run_program[&h, &x, &c, &p, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte]) -> [heap, exec(""), clock, poll] Ended {
-    return spawn_capture(heap, exec, clock, exe, buffer.empty(heap, 0), input, "PATH=/usr/bin:/bin\0");
-}
-
 // The smaller of two numbers.
 pub fn min_of(a: int, b: int) -> [] int {
     if a < b {
         return a;
     }
     return b;
+}
+
 // A scratch directory: `/usr/bin/mktemp -d /tmp/PREFIX.XXXXXX`, its path (nothing if it could not be made).
 pub fn scratch_dir[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, prefix: &p [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
     var pattern = buffer.append(heap, buffer.empty(heap, 64), "/tmp/");
@@ -560,14 +553,6 @@ pub fn remove_tree[&h, &x, &c, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c 
     command = word(heap, command, "sh");
     command = word(heap, command, dir);
     let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, "/bin/sh", command, "", "PATH=/usr/bin:/bin\0");
-    return path;
-}
-
-// `/bin/rm -rf path`, for a directory `scratch_dir` made.
-pub fn remove_tree[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, path: &p [byte]) -> [heap, exec(""), clock, poll] int {
-    var command = word(heap, buffer.empty(heap, 16), "-rf");
-    command = word(heap, command, path);
-    let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, "/bin/rm", command, "", "PATH=/usr/bin:/bin\0");
     buffer.drop(heap, out);
     buffer.drop(heap, err);
     return code;
@@ -646,20 +631,8 @@ pub fn probe_transcript[&h, &x, &c, &f, &b, &m, &k, &n, &q, &s, &e](heap: &!h He
     buffer.drop(heap, scratch);
     buffer.drop(heap, env);
     return rep;
-    command = buffer.append(heap, command, flags);
-    command = word(heap, command, "--std");
-    command = word(heap, command, "-o");
-    command = word(heap, command, exe);
-    let built = spawn_capture(heap, exec, clock, bin, command, "", env);
-    let Ended { out, err, kind, code } = built;
-    if kind == 0 && code == 0 {
-        return Ended { out: out, err: err, kind: 0, code: 0 };
-    }
-    buffer.drop(heap, out);
-    if kind == 5 {
-        return Ended { out: buffer.empty(heap, 0), err: err, kind: 5, code: code };
-    }
-    return Ended { out: buffer.empty(heap, 0), err: err, kind: 6, code: code };
+}
+
 // The compiler `bin` run with up to four arguments (an empty one is left out) in `env`; its `Ended`. For a command like `print FILE --output json`.
 pub fn run_cancho[&h, &x, &c, &b, &e, &p, &q, &r, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], first: &p [byte], second: &q [byte], third: &r [byte], fourth: &s [byte]) -> [heap, exec(""), clock, poll] Ended {
     var command = word(heap, buffer.empty(heap, 64), first);
@@ -673,4 +646,31 @@ pub fn run_cancho[&h, &x, &c, &b, &e, &p, &q, &r, &s](heap: &!h Heap, exec: &x E
         command = word(heap, command, fourth);
     }
     return spawn_capture(heap, exec, clock, bin, command, "", env);
+}
+
+// `bin build SOURCES --std -o EXE` and nothing run (`sources`: each path followed by a NUL): the `Ended` of the compiler, kind 6 if it failed (what it said in `err`), else
+// kind 0. For a test that runs the same program more than once (`build_and_run` builds each time).
+pub fn build[&h, &x, &c, &b, &s, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], exe: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "build");
+    let paths = bytes.count_byte(sources, 0);
+    var at = 1;
+    while at <= paths {
+        command = word(heap, command, bytes.field(sources, 0, at));
+        at = at + 1;
+    }
+    command = word(heap, command, "--std");
+    command = word(heap, command, "-o");
+    command = word(heap, command, exe);
+    let built = spawn_capture(heap, exec, clock, bin, command, "", env);
+    let Ended { out, err, kind, code } = built;
+    if kind != 0 || code != 0 {
+        buffer.drop(heap, out);
+        return Ended { out: buffer.empty(heap, 0), err: err, kind: 6, code: code };
+    }
+    return Ended { out: out, err: err, kind: 0, code: 0 };
+}
+
+// The program at `exe` with no arguments, `input` on its standard input and nothing in its environment but a `PATH`.
+pub fn run_program[&h, &x, &c, &p, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte]) -> [heap, exec(""), clock, poll] Ended {
+    return spawn_capture(heap, exec, clock, exe, buffer.empty(heap, 0), input, "PATH=/usr/bin:/bin\0");
 }
