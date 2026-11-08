@@ -575,7 +575,7 @@ fn busy[&r, &cl](rest: &r Rest, c: &cl hc.Client, k: int) -> [] bool {
 // ---------------------------------------------------------------------
 
 // A connection `conn` (dialled, or already connected) put in the table for request slot `k` of an upstream that is `secure` or not, and watched
-// for writable: the first writable event is `pump`'s "the dial is over". The new table.
+// for writable (the first writable event is `pump`'s "the dial is over"), made non-blocking. The new table.
 fn place[&h, &r, &cl](heap: &!h Heap, table: conns.Table, rw: &!r Rest, c: &!cl hc.Client, k: int, now: int, conn: Conn, secure: bool) -> [heap, poll] conns.Table {
     let (grown, ts) = conns.put(heap, table, conn);
     var t = grown;
@@ -594,6 +594,8 @@ fn place[&h, &r, &cl](heap: &!h Heap, table: conns.Table, rw: &!r Rest, c: &!cl 
             st[k * stride() + s_tls()] = 1;
         }
         borrow mut t as &!tw in {
+            // `dial`'s socket is non-blocking already; one a caller connected with `tcp_connect` is not, and every read and write below assumes it.
+            conns.nonblocking(tw, ts);
             conns.watch(tw, rw.poller, ts, k, 2);
         }
         st[k * stride() + s_watch()] = 2;
