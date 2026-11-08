@@ -1,0 +1,27 @@
+== modes
+ok
+ok
+ok
+ok
+ok
+x755 755
+x700 700
+x777 755
+r644 644
+z000 0
+x755 holds hello
+== taken
+err 17
+err 17
+err 17
+file holds KEEP
+file 644
+== invalid
+err 22
+err 22
+err 22
+err 22
+err 22
+err 22
+err 22
+done
