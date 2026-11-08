@@ -54,7 +54,6 @@ mod directory_handles;
 mod directory_listing;
 
 mod directory_rename_new;
-mod directory_writes;
 mod docs;
 mod duplication;
 mod ecdh;

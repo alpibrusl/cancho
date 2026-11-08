@@ -238,7 +238,7 @@ Slice 4 (`tests/conformance/directory_rename_new.rs`, **both backends**, the sam
 
 Slice 2:
 
-* `tests/conformance/directory_writes.rs`, on **both backends**, against a tree with a link to a file outside and a
+* `tests/commands/directory_writes.cho` (moved from `conformance/directory_writes.rs`, G4; LLVM only since D2), against a tree with a link to a file outside and a
   dangling link whose target is outside: create once and then `EEXIST`; create through either link `EEXIST`, and
   nothing appears outside; append twice reads back twice, append through either link `ELOOP`, and the outside file is
   unchanged; rename within the directory, and `..`, an empty name and `../escaped` refused with `EINVAL` (nothing

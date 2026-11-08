@@ -12,7 +12,7 @@ It found that the write-mode openers failed on WASI with `EINVAL`: they went thr
 `fopen` and a `dup` of its descriptor, and WASI has no `dup`. No accept fixture
 reached them, so the coverage map never saw it.
 
-Part two runs the directory driver `directory_writes.rs` uses on both native backends
+Part two runs the directory driver of `tests/commands/directory_writes.cho` (`tests/programs/directory_writes_probe.cho`)
 (`dir_open_new`, `dir_open_append`, `dir_rename`, `dir_remove`, `dir_sync`) over a small
 tree, and requires the same output, status and tree on both builds.
 
@@ -109,13 +109,9 @@ DIR_CASES = [
 
 
 def directory_driver():
-    """The probe program `directory_writes.rs` runs on both native backends."""
+    """The probe program of `tests/commands/directory_writes.cho`."""
     root = os.path.join(os.path.dirname(__file__), "..")
-    text = open(os.path.join(root, "crates/cancho/tests/conformance/directory_writes.rs")).read()
-    m = re.search(r'const PROBE: &str = r#"(.*?)"#;', text, re.S)
-    if not m:
-        sys.exit("cannot find PROBE in directory_writes.rs")
-    return m.group(1)
+    return open(os.path.join(root, "tests/programs/directory_writes_probe.cho")).read()
 
 
 def tree_state():

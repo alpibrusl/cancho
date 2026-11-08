@@ -1,0 +1,38 @@
+== create: once, then refused (EEXIST 17); through either link, refused, and nothing appears outside
+new f -> ok 5
+root/f holds hello
+new f -> err 17
+new link.txt -> err 17
+new dangling.txt -> err 17
+outside/new.txt <absent>
+== append: created if missing, then added to; through a link, refused
+append log -> ok 5
+append log -> ok 5
+root/log holds hellohello
+append link.txt -> err ELOOP
+append dangling.txt -> err ELOOP
+outside/kept.txt holds KEPT
+outside/new.txt <absent>
+== rename within the directory; every name is one component (EINVAL 22)
+move f g -> ok 0
+root/f <absent>
+root/g holds hello
+move g ../escaped -> err 22
+move .. x -> err 22
+move g  -> err 22
+escaped <absent>
+move missing x -> err 2
+== remove: a file, a link (the link goes, its target stays), nothing, and not a component
+remove g -> ok 0
+root/g <absent>
+remove link.txt -> ok 0
+the link is gone
+outside/kept.txt holds KEPT
+remove missing -> err 2
+remove ../outside/kept.txt -> err 22
+outside/kept.txt holds KEPT
+== sync the directory itself
+sync -> ok 0
+== the mode of a created file
+made 644
+added 644

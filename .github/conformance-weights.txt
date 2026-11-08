@@ -250,7 +250,7 @@ directory_handles 12
 process_release 11
 directory_rename_new 11
 global_state 11
-directory_writes 11
+
 crypto_builtins 10
 ecdsa 10
 region_cache 8
