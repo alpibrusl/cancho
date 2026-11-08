@@ -1,0 +1,82 @@
+edition 7;
+
+fn octal[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 8 {
+        octal(io, n / 8);
+    }
+    putchar(io, '0' + n % 8);
+    return 0;
+}
+
+fn decimal[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        decimal(io, n / 10);
+    }
+    putchar(io, '0' + n % 10);
+    return 0;
+}
+
+fn show[&i, &n](io: &!i Io, name: &n [byte], answer: Done) -> [io_write] int {
+    write_bytes(io, name);
+    putchar(io, ' ');
+    match answer {
+        Done::Ok(bits) => {
+            octal(io, bits);
+        }
+        Done::Failed(e) => {
+            write_bytes(io, "err ");
+            decimal(io, e);
+        }
+    }
+    putchar(io, 10);
+    return 0;
+}
+
+fn modes[&i, &d](io: &!i Io, dir: &d Dir) -> [io_write, dir_read] int {
+    show(io, "own", dir_own_mode(dir));
+    show(io, "f600", dir_mode(dir, "f600"));
+    show(io, "f644", dir_mode(dir, "f644"));
+    show(io, "f400", dir_mode(dir, "f400"));
+    show(io, "f4755", dir_mode(dir, "f4755"));
+    show(io, "f000", dir_mode(dir, "f000"));
+    show(io, "d0750", dir_mode(dir, "d0750"));
+    show(io, "d1777", dir_mode(dir, "d1777"));
+    show(io, "link", dir_mode(dir, "link"));
+    show(io, "missing", dir_mode(dir, "missing"));
+    show(io, "..", dir_mode(dir, ".."));
+    show(io, "sub/x", dir_mode(dir, "sub/x"));
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(heap);
+    var status = 0;
+    borrow args as &a in {
+        borrow fs as &f in {
+            borrow mut io as &!o in {
+                match open_dir(f, arg(a, 1)) {
+                    DirOpened::Ok(d0) => {
+                        var d = d0;
+                        borrow d as &r in {
+                            status = modes(o, r);
+                        }
+                        dir_close(d);
+                    }
+                    DirOpened::Failed(e) => {
+                        status = 2;
+                    }
+                }
+            }
+        }
+    }
+    release(args);
+    release(fs);
+    release(io);
+    return status;
+}

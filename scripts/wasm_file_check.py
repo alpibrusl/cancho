@@ -16,7 +16,7 @@ Part two runs the directory driver `directory_writes.rs` uses on both native bac
 (`dir_open_new`, `dir_open_append`, `dir_rename`, `dir_remove`, `dir_sync`) over a small
 tree, and requires the same output, status and tree on both builds.
 
-Part three runs `directory_modes.rs`'s probe (`dir_mode`, `dir_own_mode`) over a tree
+Part three runs `tests/programs/directory_modes_probe.cho` (the probe of `tests/commands/directory_modes.cho`) (`dir_mode`, `dir_own_mode`) over a tree
 with the same names and permission bits, and compares what it prints.
 
 usage: wasm_file_check.py CANCHO [--imports]
@@ -175,11 +175,7 @@ MODES = "/tmp/cancho-modes"
 
 def modes_driver():
     root = os.path.join(os.path.dirname(__file__), "..")
-    text = open(os.path.join(root, "crates/cancho/tests/conformance/directory_modes.rs")).read()
-    m = re.search(r'const PROBE: &str = r#"(.*?)"#;', text, re.S)
-    if not m:
-        sys.exit("cannot find PROBE in directory_modes.rs")
-    return m.group(1)
+    return open(os.path.join(root, "tests/programs/directory_modes_probe.cho")).read()
 
 
 def build_modes_tree():
