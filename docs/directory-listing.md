@@ -140,7 +140,7 @@ through `Ffi("libc")` and its authority report was `bounded: false` for that alo
   failure's value is `0`. The permission bits are the same on every target.
 * **Labels**: both perform `dir_read`, as `dir_stat` does (`tests/reject/dir_mode_not_declared.cho`).
 
-Checked by `tests/conformance/directory_modes.rs`, on both backends: a directory made `0o710` and, beneath it, files
+Checked by `tests/commands/directory_modes.cho` (moved from `conformance/directory_modes.rs`, G4; LLVM only since D2): a directory made `0o710` and, beneath it, files
 `0o600`, `0o644`, `0o400`, `0o4755` and `0o000`, directories `0o750` and `0o1777`, a link, a missing name (`ENOENT`)
 and two names that are not one component (`EINVAL`), each printed by the probe and compared with what Rust's
 `symlink_metadata` reports.
