@@ -99,7 +99,6 @@ mod processes;
 mod project;
 mod refusals;
 mod region_cache;
-mod region_limit;
 mod release;
 mod rsa;
 mod satisfy;

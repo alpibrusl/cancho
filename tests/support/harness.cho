@@ -63,7 +63,7 @@ pub fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> 
     return Contents { data: out, failed: trouble };
 }
 
-// How a program ended, as `kind` and `code`: 0 it answered `code`, 1 it was killed by a signal, 2 it did not finish in time, 3 it wrote too much, 4 it
+// How a program ended, as `kind` and `code`: 0 it answered `code`, 1 it was killed by the signal `code`, 2 it did not finish in time, 3 it wrote too much, 4 it
 // could not be watched, 5 it did not start.
 pub res struct Ended {
     out: buffer.Buffer,
@@ -102,6 +102,7 @@ pub fn spawn_capture[&h, &x, &c, &p, &n, &e](heap: &!h Heap, exec: &x Exec(""), 
                             }
                             process.Ran::Signaled(s0) => {
                                 kind = 1;
+                                code = s0;
                             }
                             process.Ran::TimedOut => {
                                 kind = 2;
@@ -382,6 +383,14 @@ pub fn remove_scratch[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: 
 
 // `bin build SOURCES --std -o EXE` (`sources`: each path followed by a NUL); the build's own `Ended` (kind 0 and code 0 if it built).
 pub fn build_only[&h, &x, &c, &b, &s, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], exe: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
+// Write `text` to the file at `path` (a whole file, created or truncated); how many bytes were written. Fixtures made by a test live under `/tmp/cancho-NAME-...`.
+pub fn write_file[&f, &p, &t](fs: &f Fs(""), path: &p [byte], text: &t [byte]) -> [fs_write("")] int {
+    return fs_write(fs, path, text);
+}
+
+// `bin build SOURCES FLAGS --std -o EXE` and nothing run (`sources` and `flags`: each followed by a NUL, flags may be empty). Kind 0 and code 0 if it built; otherwise kind 6 and what the compiler
+// said in `err` (kind 5 if it did not start).
+pub fn build_only[&h, &x, &c, &b, &s, &g, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], flags: &g [byte], exe: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
     var command = word(heap, buffer.empty(heap, 64), "build");
     let paths = bytes.count_byte(sources, 0);
     var at = 1;
@@ -595,4 +604,18 @@ pub fn probe_transcript[&h, &x, &c, &f, &b, &m, &k, &n, &q, &s, &e](heap: &!h He
     buffer.drop(heap, scratch);
     buffer.drop(heap, env);
     return rep;
+    command = buffer.append(heap, command, flags);
+    command = word(heap, command, "--std");
+    command = word(heap, command, "-o");
+    command = word(heap, command, exe);
+    let built = spawn_capture(heap, exec, clock, bin, command, "", env);
+    let Ended { out, err, kind, code } = built;
+    if kind == 0 && code == 0 {
+        return Ended { out: out, err: err, kind: 0, code: 0 };
+    }
+    buffer.drop(heap, out);
+    if kind == 5 {
+        return Ended { out: buffer.empty(heap, 0), err: err, kind: 5, code: code };
+    }
+    return Ended { out: buffer.empty(heap, 0), err: err, kind: 6, code: code };
 }
