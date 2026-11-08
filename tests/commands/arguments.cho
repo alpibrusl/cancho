@@ -1,0 +1,149 @@
+edition 7;
+module arguments_test;
+
+// arguments.cho -- `conformance/arguments.rs` (deleted), in cancho (`docs/gate.md` G4): the command line (`docs/arguments.md` section 3, `docs/flags.md` section 2). A program is started with real
+// arguments and reads back the bytes it was given: one with a space is one argument, an empty one is still counted, `argc` counts the program's name (5 for four arguments, 1 for none, and the
+// exit status says it); an argument past the end traps; and `tests/accept/flags.cho` reads each of the nine shapes (twelve spellings) back as itself.
+//
+//     cancho build tests/commands/arguments.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: arguments` or what is wrong, and exits 0 or 1. The drivers are `tests/programs/args_echo.cho` and `args_past_end.cho`.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// Build the program at `source` into `exe`; what the compiler said if it did not.
+fn built[&h, &x, &c, &b, &v, &s, &e, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &v [byte], source: &s [byte], exe: &e [byte], name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let sources = harness.word(heap, buffer.empty(heap, 64), source);
+    borrow sources as &sb in {
+        let harness.Ended { out, err, kind, code } = harness.build_only(heap, exec, clock, bin, buffer.bytes(sb), "", exe, env);
+        if kind != 0 {
+            borrow err as &rb in {
+                rep = harness.failure(heap, rep, "arguments", name, "should build, but the compiler said", buffer.bytes(rb));
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, sources);
+    return rep;
+}
+
+// Run `exe` with `args` (each followed by a NUL): it must exit `want_code` and print exactly `want_out`; or, when `trap`, be killed by a signal.
+fn expect[&h, &x, &c, &e, &a, &o, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &e [byte], args: &a [byte], want_out: &o [byte], want_code: int, trap: bool, name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let command = buffer.append(heap, buffer.empty(heap, 64), args);
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, exe, command, "", "PATH=/usr/bin:/bin\0");
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        if trap {
+            if kind != 1 {
+                rep = harness.failure(heap, rep, "arguments", name, "should be killed by a signal, not exit", said);
+            }
+        } else if kind != 0 || code != want_code {
+            rep = harness.failure(heap, rep, "arguments", name, "wrong exit status", said);
+        } else if !bytes.equal(said, want_out) {
+            rep = harness.failure(heap, rep, "arguments", name, "the bytes a program is started with should be the bytes it reads; it said", said);
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// One spelling of `flags`: it exits 0 and prints `want`, a newline.
+fn shape[&h, &x, &c, &e, &a, &o](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &e [byte], args: &a [byte], want: &o [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let name = buffer.append(heap, buffer.empty(heap, 32), args);
+    let line = buffer.push(heap, buffer.append(heap, buffer.empty(heap, 32), want), byte_of('\n'));
+    var rep = report;
+    borrow name as &nb in {
+        borrow line as &lb in {
+            rep = expect(heap, exec, clock, exe, args, buffer.bytes(lb), 0, false, buffer.bytes(nb), rep);
+        }
+    }
+    buffer.drop(heap, name);
+    buffer.drop(heap, line);
+    return rep;
+}
+
+fn check[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    borrow env as &eb in {
+        let e = buffer.bytes(eb);
+        report = built(heap, exec, clock, bin, e, "tests/programs/args_echo.cho", "/tmp/cancho-arguments-echo", "echo", report);
+        report = built(heap, exec, clock, bin, e, "tests/programs/args_past_end.cho", "/tmp/cancho-arguments-past-end", "past end", report);
+        report = built(heap, exec, clock, bin, e, "tests/accept/flags.cho", "/tmp/cancho-arguments-flags", "flags", report);
+        // Four arguments, one with a space and one empty: five, with the program's name; the exit status is argc - 1.
+        report = expect(heap, exec, clock, "/tmp/cancho-arguments-echo", "alpha\0two words\0\0--flag=x\0", "5\nalpha\ntwo words\n\n--flag=x\n", 4, false, "echo four arguments", report);
+        // None: still one, the program's own name.
+        report = expect(heap, exec, clock, "/tmp/cancho-arguments-echo", "", "1\n", 0, false, "echo none", report);
+        // An argument past the end is the same mistake as indexing past a slice, and the same answer.
+        report = expect(heap, exec, clock, "/tmp/cancho-arguments-past-end", "", "", 0, true, "past end", report);
+        let flags = "/tmp/cancho-arguments-flags";
+        report = shape(heap, exec, clock, flags, "-x\0", "short x", report);
+        report = shape(heap, exec, clock, flags, "-xy\0", "short x\nshort y", report);
+        report = shape(heap, exec, clock, flags, "-d,\0", "short d=,", report);
+        report = shape(heap, exec, clock, flags, "-d\0,\0", "short d=,", report);
+        report = shape(heap, exec, clock, flags, "--decode\0", "long decode", report);
+        report = shape(heap, exec, clock, flags, "--delimiter=,\0", "long delimiter=,", report);
+        report = shape(heap, exec, clock, flags, "--delimiter\0,\0", "long delimiter=,", report);
+        report = shape(heap, exec, clock, flags, "--\0-x\0", "operand -x", report);
+        report = shape(heap, exec, clock, flags, "-\0", "operand -", report);
+        report = shape(heap, exec, clock, flags, "file.csv\0", "operand file.csv", report);
+        // The value runs out: an empty slice, the one case section 3 says a caller has to test.
+        report = shape(heap, exec, clock, flags, "-d\0", "short d=", report);
+        // A flag after `--` is an operand, and so is a second `--`.
+        report = shape(heap, exec, clock, flags, "--\0--\0-x\0", "operand --\noperand -x", report);
+    }
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, exec(""), clock, poll] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: arguments CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: arguments\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        status = run(h, i, a, x, c);
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

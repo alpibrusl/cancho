@@ -38,7 +38,6 @@ mod aead;
 mod agent_cli;
 mod agent_tools;
 mod api;
-mod arguments;
 mod authority;
 mod backends;
 mod benchmarks;
