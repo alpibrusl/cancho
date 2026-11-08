@@ -1,0 +1,413 @@
+edition 7;
+module x25519_test;
+
+// x25519.cho -- `conformance/x25519.rs` (deleted), in cancho (`docs/gate.md` G4): `std.x25519` (`docs/x25519.md` section 4): the RFC 7748 vectors, every Wycheproof X25519 case (a shared
+// secret of all zeros, a low-order public value, is refused with `x25519-zero-secret`, as RFC 8446 section 7.4.2 requires of a TLS client; every other case gives exactly the expected
+// secret), each refusal with its own tag, and every Wycheproof Ed25519 case through `std.ed25519.verify` on the field module it shares with X25519. All through
+// `tests/programs/curve25519_driver.cho`, built once. The Wycheproof files are read line by line (their layout is fixed: one `"key": "value"` to a line), not as JSON.
+//
+//     cancho build tests/commands/x25519.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: x25519` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the first Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// `case | answer` and a newline.
+fn row[&h, &c, &w](heap: &!h Heap, into: buffer.Buffer, case: &c [byte], want: &w [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, into, case);
+    b = buffer.append(heap, b, " | ");
+    b = buffer.append(heap, b, want);
+    return buffer.push(heap, b, byte_of('\n'));
+}
+
+// Every refusal `std.x25519` has, reached with its own tag: the lengths of the key and of the public value, and the low-order points u = 0 and u = 1, whose result is zero.
+fn refusal_table[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 1024);
+    b = row(heap, b, "S 07070707070707070707070707070707070707070707070707070707070707 0909090909090909090909090909090909090909090909090909090909090909", "x25519-length");
+    b = row(heap, b, "S 0707070707070707070707070707070707070707070707070707070707070707 09090909090909090909090909090909090909090909090909090909090909", "x25519-length");
+    b = row(heap, b, "S 0707070707070707070707070707070707070707070707070707070707070707 0000000000000000000000000000000000000000000000000000000000000000", "x25519-zero-secret");
+    b = row(heap, b, "S 0707070707070707070707070707070707070707070707070707070707070707 0100000000000000000000000000000000000000000000000000000000000000", "x25519-zero-secret");
+    return b;
+}
+
+// Word `n` of each line of `text`, one per line.
+fn words[&h, &t](heap: &!h Heap, text: &t [byte], n: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    let lines = bytes.count_byte(text, 10);
+    var at = 1;
+    while at <= lines {
+        out = buffer.push(heap, buffer.append(heap, out, bytes.field(bytes.field(text, 10, at), 32, n)), byte_of('\n'));
+        at = at + 1;
+    }
+    return out;
+}
+
+// What the driver at `exe` says to `input`: one line per case (otherwise a failure is in the report and the answer is empty).
+fn ask[&h, &x, &c, &p, &n, &m](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte], report: buffer.Buffer, name: &m [byte]) -> [heap, exec(""), clock, poll] (buffer.Buffer, buffer.Buffer) {
+    var acc = report;
+    var said = buffer.empty(heap, 0);
+    let harness.Ended { out, err, kind, code } = harness.run_program(heap, exec, clock, exe, input);
+    borrow err as &rb in {
+        if kind != 0 || code != 0 {
+            acc = harness.failure(heap, acc, "x25519", name, "the driver should exit 0", buffer.bytes(rb));
+            buffer.drop(heap, out);
+        } else {
+            borrow out as &ob in {
+                if bytes.count_byte(buffer.bytes(ob), 10) != bytes.count_byte(input, 10) {
+                    acc = harness.failure(heap, acc, "x25519", name, "the driver should answer one line per case", "");
+                }
+            }
+            buffer.drop(heap, said);
+            said = out;
+        }
+    }
+    buffer.drop(heap, err);
+    return (acc, said);
+}
+
+// The line without its leading spaces.
+fn indented[&t](line: &t [byte]) -> [] &t [byte] {
+    var at = 0;
+    while at < len(line) && line[at] == byte_of(' ') {
+        at = at + 1;
+    }
+    return line[at..len(line)];
+}
+
+// The value of a line `"key": "value"` whose beginning is `prefix` (`"key": "`), up to the closing quote; nothing, and `found` false, for another line.
+fn value[&t, &p](line: &t [byte], prefix: &p [byte]) -> [] &t [byte] {
+    let text = indented(line);
+    if !bytes.starts_with(text, prefix) {
+        return text[0..0];
+    }
+    let rest = text[len(prefix)..len(text)];
+    let close = bytes.find(rest, "\"");
+    if close < 0 {
+        return rest;
+    }
+    return rest[0..close];
+}
+
+fn has[&t, &p](line: &t [byte], prefix: &p [byte]) -> [] bool {
+    return bytes.starts_with(indented(line), prefix);
+}
+
+// The RFC 7748 vectors (`tests/vectors/rfc7748.txt`, `name | case | expected`): each answers `0 ok EXPECTED`; the section 5.2's two vectors and two iterations, section 6.1's four values.
+fn rfc7748[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/vectors/rfc7748.txt");
+    var input = buffer.empty(heap, 0);
+    var want = buffer.empty(heap, 0);
+    borrow data as &db in {
+        buffer.drop(heap, input);
+        input = harness.column(heap, buffer.bytes(db), 2);
+        let expected = harness.column(heap, buffer.bytes(db), 3);
+        borrow expected as &eb in {
+            buffer.drop(heap, want);
+            want = buffer.empty(heap, 1024);
+            let n = bytes.count_byte(buffer.bytes(eb), 10);
+            var at = 1;
+            while at <= n {
+                want = buffer.append(heap, want, "0 ok ");
+                want = buffer.push(heap, buffer.append(heap, want, bytes.field(buffer.bytes(eb), 10, at)), byte_of('\n'));
+                at = at + 1;
+            }
+            if n != 8 {
+                acc = harness.failure(heap, acc, "x25519", "rfc7748", "should have 8 vectors: section 5.2's two vectors and two iterations, section 6.1's four values", "");
+            }
+        }
+        buffer.drop(heap, expected);
+    }
+    buffer.drop(heap, data);
+    if failed != 0 {
+        acc = harness.failure(heap, acc, "x25519", "rfc7748", "tests/vectors/rfc7748.txt cannot be read", "");
+    }
+    borrow input as &ib in {
+        let (more, said) = ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "rfc7748");
+        acc = more;
+        borrow said as &sb in {
+            borrow want as &wb in {
+                if len(buffer.bytes(sb)) > 0 {
+                    acc = harness.differences(heap, acc, "x25519", "rfc7748", buffer.bytes(sb), buffer.bytes(wb));
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+// Wycheproof's `x25519_test.json`, every one of its 518 cases, 31 of them with the all-zero shared secret of a low-order public value.
+fn wycheproof_x25519[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/vectors/wycheproof/x25519_test.json");
+    var input = buffer.empty(heap, 1 << 16);
+    var want = buffer.empty(heap, 1 << 16);
+    var cases = 0;
+    var zero = 0;
+    borrow data as &db in {
+        let all = buffer.bytes(db);
+        var pos = 0;
+        var public = all[0..0];
+        var private = all[0..0];
+        while pos < len(all) {
+            let rest = all[pos..len(all)];
+            let nl = index_of_byte(rest, byte_of(10));
+            var line = rest;
+            if nl >= 0 {
+                line = rest[0..nl];
+                pos = pos + nl + 1;
+            } else {
+                pos = len(all);
+            }
+            if has(line, "\"curve\": \"") && !bytes.equal(value(line, "\"curve\": \""), "curve25519") {
+                acc = harness.failure(heap, acc, "x25519", "wycheproof", "every group should be on curve25519", line);
+            }
+            if has(line, "\"public\": \"") {
+                public = value(line, "\"public\": \"");
+            } else if has(line, "\"private\": \"") {
+                private = value(line, "\"private\": \"");
+            } else if has(line, "\"shared\": \"") {
+                let shared = value(line, "\"shared\": \"");
+                input = buffer.append(heap, input, "S ");
+                input = buffer.append(heap, input, private);
+                input = buffer.push(heap, input, byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, public), byte_of('\n'));
+                var all_zero = true;
+                var k = 0;
+                while k < len(shared) {
+                    if shared[k] != byte_of('0') {
+                        all_zero = false;
+                    }
+                    k = k + 1;
+                }
+                if all_zero {
+                    want = buffer.append(heap, want, "-2 x25519-zero-secret ");
+                    zero = zero + 1;
+                } else {
+                    want = buffer.append(heap, want, "0 ok ");
+                }
+                want = buffer.push(heap, buffer.append(heap, want, shared), byte_of('\n'));
+                cases = cases + 1;
+            }
+        }
+    }
+    buffer.drop(heap, data);
+    if failed != 0 {
+        acc = harness.failure(heap, acc, "x25519", "wycheproof", "x25519_test.json cannot be read", "");
+    }
+    if cases != 518 || zero != 31 {
+        acc = harness.failure(heap, acc, "x25519", "wycheproof", "the file should have 518 cases, 31 of them ZeroSharedSecret", "");
+    }
+    borrow input as &ib in {
+        let (more, said) = ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "wycheproof");
+        acc = more;
+        borrow said as &sb in {
+            borrow want as &wb in {
+                if len(buffer.bytes(sb)) > 0 {
+                    acc = harness.differences(heap, acc, "x25519", "wycheproof", buffer.bytes(sb), buffer.bytes(wb));
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+// Wycheproof's `ed25519_test.json`, every one of its 151 cases (88 valid) through `std.ed25519.verify`: the answer's first word is 1 for valid and 0 for the rest. Two of these found bugs that
+// predate the port: a truncated signature trapped, and case 151, an `R` with x = 0 and the sign bit set, was accepted.
+fn wycheproof_ed25519[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/vectors/wycheproof/ed25519_test.json");
+    var input = buffer.empty(heap, 1 << 16);
+    var want = buffer.empty(heap, 4096);
+    var cases = 0;
+    var valid = 0;
+    borrow data as &db in {
+        let all = buffer.bytes(db);
+        var pos = 0;
+        var pk = all[0..0];
+        var msg = all[0..0];
+        var sig = all[0..0];
+        while pos < len(all) {
+            let rest = all[pos..len(all)];
+            let nl = index_of_byte(rest, byte_of(10));
+            var line = rest;
+            if nl >= 0 {
+                line = rest[0..nl];
+                pos = pos + nl + 1;
+            } else {
+                pos = len(all);
+            }
+            if has(line, "\"pk\": \"") {
+                pk = value(line, "\"pk\": \"");
+            } else if has(line, "\"msg\": \"") {
+                msg = value(line, "\"msg\": \"");
+            } else if has(line, "\"sig\": \"") {
+                sig = value(line, "\"sig\": \"");
+            } else if has(line, "\"result\": \"") {
+                input = buffer.append(heap, input, "V ");
+                input = buffer.append(heap, input, pk);
+                input = buffer.push(heap, input, byte_of(' '));
+                if len(msg) == 0 {
+                    input = buffer.push(heap, input, byte_of('-'));
+                } else {
+                    input = buffer.append(heap, input, msg);
+                }
+                input = buffer.push(heap, input, byte_of(' '));
+                if len(sig) == 0 {
+                    input = buffer.push(heap, input, byte_of('-'));
+                } else {
+                    input = buffer.append(heap, input, sig);
+                }
+                input = buffer.push(heap, input, byte_of('\n'));
+                if bytes.starts_with(value(line, "\"result\": \""), "valid") {
+                    want = buffer.append(heap, want, "1\n");
+                    valid = valid + 1;
+                } else {
+                    want = buffer.append(heap, want, "0\n");
+                }
+                cases = cases + 1;
+            }
+        }
+    }
+    buffer.drop(heap, data);
+    if failed != 0 {
+        acc = harness.failure(heap, acc, "x25519", "ed25519", "ed25519_test.json cannot be read", "");
+    }
+    if cases != 151 || valid != 88 {
+        acc = harness.failure(heap, acc, "x25519", "ed25519", "the file should have 151 cases, 88 of them valid", "");
+    }
+    borrow input as &ib in {
+        let (more, said) = ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "ed25519");
+        acc = more;
+        borrow said as &sb in {
+            borrow want as &wb in {
+                if len(buffer.bytes(sb)) > 0 {
+                    let first = words(heap, buffer.bytes(sb), 1);
+                    borrow first as &fb in {
+                        acc = harness.differences(heap, acc, "x25519", "ed25519", buffer.bytes(fb), buffer.bytes(wb));
+                    }
+                    buffer.drop(heap, first);
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+// The refusals: each answer's tag (its second word) is the one in the table.
+fn refusals[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var acc = report;
+    let table = refusal_table(heap);
+    var input = buffer.empty(heap, 0);
+    var want = buffer.empty(heap, 0);
+    borrow table as &tb in {
+        buffer.drop(heap, input);
+        buffer.drop(heap, want);
+        input = harness.column(heap, buffer.bytes(tb), 1);
+        want = harness.column(heap, buffer.bytes(tb), 2);
+    }
+    buffer.drop(heap, table);
+    borrow input as &ib in {
+        let (more, said) = ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "refusals");
+        acc = more;
+        borrow said as &sb in {
+            borrow want as &wb in {
+                if len(buffer.bytes(sb)) > 0 {
+                    let got = words(heap, buffer.bytes(sb), 2);
+                    borrow got as &gb in {
+                        acc = harness.differences(heap, acc, "x25519", "refusals", buffer.bytes(gb), buffer.bytes(wb));
+                    }
+                    buffer.drop(heap, got);
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+fn check[&h, &x, &c, &f, &b, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var report = buffer.empty(heap, 64);
+    let exe = "/tmp/cancho-x25519";
+    let harness.Ended { out, err, kind, code } = harness.build(heap, exec, clock, bin, "tests/programs/curve25519_driver.cho\0", exe, env);
+    buffer.drop(heap, out);
+    if kind != 0 {
+        borrow err as &rb in {
+            report = harness.failure(heap, report, "x25519", "build", "should compile, but the compiler said", buffer.bytes(rb));
+        }
+    } else {
+        report = rfc7748(heap, exec, clock, fs, exe, report);
+        report = wycheproof_x25519(heap, exec, clock, fs, exe, report);
+        report = refusals(heap, exec, clock, exe, report);
+        report = wycheproof_ed25519(heap, exec, clock, fs, exe, report);
+    }
+    buffer.drop(heap, err);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: x25519 CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let env = harness.base_env(heap, harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var report = buffer.empty(heap, 0);
+    borrow env as &eb in {
+        buffer.drop(heap, report);
+        report = check(heap, exec, clock, fs, arg(args, 1), buffer.bytes(eb));
+    }
+    buffer.drop(heap, env);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: x25519\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

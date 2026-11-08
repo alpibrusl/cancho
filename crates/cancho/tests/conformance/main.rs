@@ -134,7 +134,6 @@ mod vcs_sync;
 mod wasm_target;
 mod wide_multiply;
 mod word_scan;
-mod x25519;
 mod x509;
 mod x509_verify;
 mod zeroed_slices;
