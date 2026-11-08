@@ -267,7 +267,6 @@ p256 6
 wide_multiply 6
 directory_modes 6
 sha256_builtins 6
-close_on_exec 5
 vcs_remote 5
 zeroed_slices 5
 io 4
