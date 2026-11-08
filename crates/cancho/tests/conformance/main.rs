@@ -52,7 +52,6 @@ mod corpus;
 mod crypto_builtins;
 mod devices;
 mod differential;
-mod directory_handles;
 mod directory_listing;
 mod directory_mkdir;
 mod directory_modes;
