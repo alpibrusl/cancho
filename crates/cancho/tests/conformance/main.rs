@@ -111,7 +111,6 @@ mod selfhost;
 mod sha256_builtins;
 mod signals;
 mod sockets;
-mod spawn_detached_under;
 mod spawn_under;
 mod stdin_bulk;
 mod testing;
