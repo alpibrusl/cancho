@@ -3,7 +3,7 @@ edition 9;
 import std.io;
 
 // `docs/processes.md` §4.13: `exec_covers` and `fs_covers`, which answer what `exec_spawn` and `open_read` would do:
-// take the path, or trap. The bound is `/bin` here, and the conformance test builds this file with the text
+// take the path, or trap. The bound is `/bin` here, and tests/commands/path_covers.cho builds this file with the text
 // `"/bin"` replaced by each bound it wants to ask about (a directory, one program, a directory ending in `/`, none).
 // argv[1] is a mode and argv[2] the path (the test passes both):
 //   `c`  `exec_covers(exec, path)`, printed `covered` or `outside`

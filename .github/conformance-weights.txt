@@ -200,7 +200,6 @@ tls_fuzz 65
 api 64
 formatting 63
 f32_text 60
-path_covers 54
 http 53
 net 50
 conn_peer 44
