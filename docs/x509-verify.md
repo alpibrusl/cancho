@@ -264,7 +264,7 @@ At least 12, each killed by §6.1 to §6.3:
 | `tests/programs/x509_verify_driver.cho` | 203 | a store line and chain lines, from standard input |
 | `scripts/x509_limbo.py verify`, `x509_matrix.py`, `x509_online.py`, `x509_verify_mutants.py` | | §6's four gates |
 
-`conformance/x509_verify.rs` replays all three committed files (`tests/vectors/x509/verify/`), the matrix and the real chains on
+`tests/commands/x509_verify.cho` replays all three committed files (`tests/vectors/x509/verify/`), the matrix and the real chains on
 both backends, in 4 seconds. The verifier needs `--std` (`std.rsa`, `std.ecdsa`, `std.ed25519`, `std.crypto`, `std.bytes`).
 
 ### 8.2 Evidence
@@ -529,7 +529,7 @@ How the API makes the choice explicit rather than easy to fall into:
 
 ### 10.4 Tests
 
-- **Unchanged and passing:** `conformance/x509_verify.rs` (limbo subset, the 14 real chains, the 33-case matrix), the TLS
+- **Unchanged and passing:** `tests/commands/x509_verify.cho` (limbo subset, the 14 real chains, the 33-case matrix), the TLS
   client's suites (`conformance/tls.rs`: the traces, the liar, the 64 streams; tickets; the differentials), the fuzz corpora,
   and `publish_packages.py --check` with the stores republished.
 - **A second OpenSSL matrix, with no name** (`scripts/x509_matrix.py chain`, `tests/vectors/x509/verify/chain_matrix.txt`).
@@ -569,7 +569,7 @@ How the API makes the choice explicit rather than easy to fall into:
 | `packages/x509/verify.cho` (914 lines) | `purpose_server_auth`, `purpose_client_auth`, `verify_chain`, `verify_name`, `san_next`, the tag `x509-purpose` (-41); `verify` is now the host check, `chain` (the shared path) for `serverAuth`, and `verify_name`. `leaf_ok`, `issuer_ok` and `extend` take the purpose's EKU flag where they read an EKU |
 | `tests/programs/x509_verify_driver.cho` | `C` lines (`verify_chain`, then the subject and every SAN through `san_next`) and `N` lines (`verify_name` alone) |
 | `scripts/x509_matrix.py chain` | the no-name matrix of §10.4, against `openssl verify -x509_strict -purpose sslclient` / `sslserver` |
-| `tests/vectors/x509/verify/chain_matrix.txt` | its 56 cases, replayed by `conformance/x509_verify.rs` on both backends |
+| `tests/vectors/x509/verify/chain_matrix.txt` | its 56 cases, replayed by `tests/commands/x509_verify.cho` |
 | `tests/programs/fuzz_chain.cho` | also `verify_chain` for both purposes, `san_next` and `verify_name` over every input |
 
 **Evidence.**

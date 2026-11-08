@@ -638,7 +638,7 @@ other agents' benchmarks on cores 0, 1, 4 and 5, so the cycles moved by up to 20
   lengths. Wycheproof's 3,098 ECDSA cases and CAVP's 90 SigVer cases are each run again against the point's table and must give the
   same line (`conformance/ecdsa.rs`). The x509 files (the limbo subset, 223 stores of which 195 give at least one root a table; the
   14 saved real chains against the system bundle, whose 3 P-256 roots get one; the OpenSSL matrix; the no-name matrix) are each
-  replayed with the anchors' tables and must give every recorded answer (`conformance/x509_verify.rs`). The TLS suites (the liar
+  replayed with the anchors' tables and must give every recorded answer (`tests/commands/x509_verify.cho`). The TLS suites (the liar
   clients, the differentials, tickets, the pool, fuzz corpora) pass unchanged: the server's check and the client's chain now go
   through the tables in all of them. `tests/commands/key_tables.cho`: an identity's table is its key's when loaded and the new key's
   when replaced, unchanged by a refused replacement, zeros when wiped; a store's tables follow the store, `tls.residue` 0.
