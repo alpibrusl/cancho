@@ -1,0 +1,384 @@
+edition 7;
+module x509_verify_test;
+
+// x509_verify.cho -- `conformance/x509_verify.rs` (deleted), in cancho (`docs/gate.md` G4): `packages/x509`'s verifier (`docs/x509-verify.md` section 6), with no network and no
+// OpenSSL: x509-limbo's cases that `scripts/x509_limbo.py` wrote, limbo's 14 saved real chains against the system roots of `scripts/x509_online.py`, the OpenSSL matrix of
+// `scripts/x509_matrix.py` and its chain matrix, each replayed through `tests/programs/x509_verify_driver.cho` with every answer as recorded; then each replayed again with the
+// P-256 roots' tables (`T` for `S`, section 11), where every answer must be the same.
+//
+//     cancho build tests/commands/x509_verify.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: x509_verify` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift legs of the Rust tests went with D2. Lines are
+// compared without their trailing blanks.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// A vector file as the driver is asked and as it must answer, one entry per line of each buffer: `asked` (what the driver reads, with `S @roots.pem` as that file's bytes in hex),
+// `tabled` (the same with `T` for `S`, and a last `A`), `want` (each `= ` answer), `cases` (the `## ` line before each answer) and `kinds` (the first letter of the line each answer is for).
+res struct Vectors {
+    asked: buffer.Buffer,
+    tabled: buffer.Buffer,
+    want: buffer.Buffer,
+    cases: buffer.Buffer,
+    kinds: buffer.Buffer,
+    failed: int,
+}
+
+// `bin` as lowercase hex, appended to `into`.
+fn hex_into[&h, &t](heap: &!h Heap, into: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    let digits = "0123456789abcdef";
+    var out = into;
+    var at = 0;
+    while at < len(text) {
+        let b = int_of(text[at]);
+        out = buffer.push(heap, out, digits[b / 16]);
+        out = buffer.push(heap, out, digits[b % 16]);
+        at = at + 1;
+    }
+    return out;
+}
+
+// `roots.pem` in hex (nothing if it cannot be read).
+fn roots_hex[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, fs_read(""), file_read] buffer.Buffer {
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/vectors/x509/verify/roots.pem");
+    var hex = buffer.empty(heap, 400000);
+    borrow data as &db in {
+        hex = hex_into(heap, hex, buffer.bytes(db));
+    }
+    buffer.drop(heap, data);
+    return hex;
+}
+
+// The file `name`.txt of `tests/vectors/x509/verify`, read as `Vectors` (`failed` 1 if it cannot be read).
+fn load[&h, &f, &n](heap: &!h Heap, fs: &f Fs(""), name: &n [byte]) -> [heap, fs_read(""), file_read] Vectors {
+    var asked = buffer.empty(heap, 1 << 20);
+    var tabled = buffer.empty(heap, 1 << 20);
+    var want = buffer.empty(heap, 4096);
+    var cases = buffer.empty(heap, 4096);
+    var kinds = buffer.empty(heap, 4096);
+    var trouble = 0;
+    var path = buffer.append(heap, buffer.empty(heap, 64), "tests/vectors/x509/verify/");
+    path = buffer.append(heap, path, name);
+    path = buffer.append(heap, path, ".txt");
+    let hex = roots_hex(heap, fs);
+    var pem_failed = 0;
+    borrow hex as &hz in {
+        if buffer.size(hz) == 0 {
+            pem_failed = 1;
+        }
+    }
+    borrow path as &pathb in {
+        let text = harness.read_file(heap, fs, buffer.bytes(pathb));
+        let harness.Contents { data, failed } = text;
+        trouble = failed + pem_failed;
+        borrow data as &db in {
+            borrow hex as &hb in {
+                let all = buffer.bytes(db);
+                var pos = 0;
+                var case_from = 0;
+                var case_to = 0;
+                var kind = 0;
+                while pos < len(all) {
+                    let start = pos;
+                    let rest = all[pos..len(all)];
+                    let nl = index_of_byte(rest, byte_of(10));
+                    var line = rest;
+                    if nl >= 0 {
+                        line = rest[0..nl];
+                        pos = pos + nl + 1;
+                    } else {
+                        pos = len(all);
+                    }
+                    if bytes.starts_with(line, "## ") {
+                        case_from = start + 3;
+                        case_to = start + len(line);
+                    } else if bytes.starts_with(line, "= ") {
+                        want = buffer.push(heap, buffer.append(heap, want, line[2..len(line)]), byte_of('\n'));
+                        cases = buffer.push(heap, buffer.append(heap, cases, all[case_from..case_to]), byte_of('\n'));
+                        kinds = buffer.push(heap, buffer.push(heap, kinds, byte_of(kind)), byte_of('\n'));
+                    } else if len(line) > 0 && line[0] != byte_of('#') {
+                        kind = int_of(line[0]);
+                        if bytes.equal(line, "S @roots.pem") {
+                            asked = buffer.push(heap, buffer.append(heap, buffer.append(heap, asked, "S "), buffer.bytes(hb)), byte_of('\n'));
+                            tabled = buffer.push(heap, buffer.append(heap, buffer.append(heap, tabled, "T "), buffer.bytes(hb)), byte_of('\n'));
+                        } else {
+                            asked = buffer.push(heap, buffer.append(heap, asked, line), byte_of('\n'));
+                            if bytes.starts_with(line, "S ") {
+                                tabled = buffer.push(heap, buffer.append(heap, buffer.append(heap, tabled, "T "), line[2..len(line)]), byte_of('\n'));
+                            } else {
+                                tabled = buffer.push(heap, buffer.append(heap, tabled, line), byte_of('\n'));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, data);
+    }
+    buffer.drop(heap, path);
+    buffer.drop(heap, hex);
+    tabled = buffer.append(heap, tabled, "A\n");
+    return Vectors { asked: asked, tabled: tabled, want: want, cases: cases, kinds: kinds, failed: trouble };
+}
+
+// The second word of `answer`, its tag.
+fn tag[&t](answer: &t [byte]) -> [] &t [byte] {
+    return bytes.field(answer, 32, 2);
+}
+
+// The text from the third word of `case` on (`splitn(3, ' ')`).
+fn after_two[&t](case: &t [byte]) -> [] &t [byte] {
+    let first = bytes.find(case, " ");
+    if first < 0 {
+        return case[0..0];
+    }
+    let rest = case[first + 1..len(case)];
+    let second = bytes.find(rest, " ");
+    if second < 0 {
+        return rest[0..0];
+    }
+    return rest[second + 1..len(rest)];
+}
+
+// The first `n` lines of `text`.
+fn head_lines[&t](text: &t [byte], n: int) -> [] &t [byte] {
+    var at = 0;
+    var seen = 0;
+    while at < len(text) && seen < n {
+        if text[at] == byte_of('\n') {
+            seen = seen + 1;
+        }
+        at = at + 1;
+    }
+    return text[0..at];
+}
+
+// Limbo: every case marked a pass ends as limbo expects (SUCCESS accepted, FAILURE refused), and more than 400 are.
+fn limbo_checks[&h, &w, &c, &k](heap: &!h Heap, report: buffer.Buffer, want: &w [byte], cases: &c [byte], kinds: &k [byte]) -> [heap] buffer.Buffer {
+    var acc = report;
+    let n = bytes.count_byte(want, 10);
+    var passes = 0;
+    var at = 1;
+    while at <= n {
+        let case = bytes.field(cases, 10, at);
+        if bytes.equal(bytes.field(kinds, 10, at), "V") && bytes.equal(bytes.field(case, 32, 3), "pass") {
+            let answer = bytes.field(want, 10, at);
+            let accepted = bytes.equal(tag(answer), "ok");
+            if bytes.equal(bytes.field(case, 32, 2), "SUCCESS") != accepted {
+                acc = harness.failure(heap, acc, "x509_verify", "limbo", "limbo expects another answer than", case);
+            }
+            passes = passes + 1;
+        }
+        at = at + 1;
+    }
+    if passes <= 400 {
+        acc = harness.failure(heap, acc, "x509_verify", "limbo", "should replay more than 400 passing cases", "");
+    }
+    return acc;
+}
+
+// The 14 real chains against the 128 system roots: every root stored, and for each of 14 chains the six checks (valid at the saved time, expired a second after, not yet valid a
+// second before, not valid for another name, valid at exactly notAfter and notBefore); 84 in all.
+fn online_checks[&h, &w](heap: &!h Heap, report: buffer.Buffer, want: &w [byte]) -> [heap] buffer.Buffer {
+    var acc = report;
+    let n = bytes.count_byte(want, 10);
+    if !bytes.equal(bytes.field(want, 10, 1), "128 0 138350") {
+        acc = harness.failure(heap, acc, "x509_verify", "online", "every system root should be stored: 128 0 138350, but it said", bytes.field(want, 10, 1));
+    }
+    if n != 85 {
+        return harness.failure(heap, acc, "x509_verify", "online", "should be 84 checks after the store", "");
+    }
+    let expected = "ok x509-expired x509-not-yet-valid x509-name-mismatch ok ok";
+    var k = 0;
+    while k < 84 {
+        let t = tag(bytes.field(want, 10, k + 2));
+        if !bytes.equal(t, bytes.field(expected, 32, k % 6 + 1)) {
+            var why = buffer.append(heap, buffer.empty(heap, 64), "check ");
+            why = buffer.push_nat(heap, why, k);
+            why = buffer.append(heap, why, " should be ");
+            why = buffer.append(heap, why, bytes.field(expected, 32, k % 6 + 1));
+            why = buffer.append(heap, why, ", is ");
+            why = buffer.append(heap, why, t);
+            borrow why as &wb in {
+                acc = harness.failure(heap, acc, "x509_verify", "online", buffer.bytes(wb), "");
+            }
+            buffer.drop(heap, why);
+        }
+        k = k + 1;
+    }
+    return acc;
+}
+
+// The matrices: each case's tag is the one it names, and none that OpenSSL refused is accepted. `chain`: the `C` matrix, where `openssl=-` (no answer) and the listed
+// disagreement are not held to that, and every accepted chain (17) carries its subject and SANs.
+fn matrix_checks[&h, &m, &w, &c](heap: &!h Heap, report: buffer.Buffer, name: &m [byte], want: &w [byte], cases: &c [byte], chain: bool, rows: int) -> [heap] buffer.Buffer {
+    var acc = report;
+    let n = bytes.count_byte(want, 10);
+    if n != rows {
+        return harness.failure(heap, acc, "x509_verify", name, "should have a different number of answers", "");
+    }
+    var accepted = 0;
+    var at = 2;
+    while at <= n {
+        let case = bytes.field(cases, 10, at);
+        let answer = bytes.field(want, 10, at);
+        let said = tag(answer);
+        if !bytes.equal(said, bytes.field(case, 32, 1)) {
+            acc = harness.failure(heap, acc, "x509_verify", name, "should be refused with the tag it names", case);
+        }
+        let openssl = bytes.field(case, 32, 2);
+        var held = !bytes.equal(openssl, "openssl=ok");
+        if chain && (bytes.equal(openssl, "openssl=-") || bytes.starts_with(after_two(case), "known disagreement")) {
+            held = false;
+        }
+        if held && bytes.equal(said, "ok") {
+            acc = harness.failure(heap, acc, "x509_verify", name, "was refused by OpenSSL and must not be accepted", case);
+        }
+        if bytes.starts_with(answer, "0 ok ") {
+            accepted = accepted + 1;
+        }
+        at = at + 1;
+    }
+    if chain && accepted != 17 {
+        acc = harness.failure(heap, acc, "x509_verify", name, "should accept 17 chains, each with its subject and SANs", "");
+    }
+    return acc;
+}
+
+// The driver at `exe` asked `input` must answer `want` line for line; `tabled` is 1 for the run with the P-256 roots' tables, which has one more answer, the tables the last store
+// holds (for the system bundle's three P-256 roots, `3 30939`: 10,313 bytes apiece).
+fn asked_of[&h, &x, &c, &p, &n, &w, &m](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte], want: &w [byte], report: buffer.Buffer, name: &m [byte], tabled: int, which: int) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var acc = report;
+    let harness.Ended { out, err, kind, code } = harness.run_program(heap, exec, clock, exe, input);
+    borrow err as &rb in {
+        borrow out as &sb in {
+            if kind != 0 || code != 0 {
+                acc = harness.failure(heap, acc, "x509_verify", name, "the driver should exit 0", buffer.bytes(rb));
+            } else if tabled == 0 {
+                acc = harness.differences(heap, acc, "x509_verify", name, buffer.bytes(sb), want);
+            } else {
+                let n = bytes.count_byte(want, 10);
+                acc = harness.differences(heap, acc, "x509_verify", name, head_lines(buffer.bytes(sb), n), want);
+                if which == 2 && !bytes.equal(bytes.field(buffer.bytes(sb), 10, n + 1), "3 30939") {
+                    acc = harness.failure(heap, acc, "x509_verify", name, "the tables should be `3 30939`, but it said", bytes.field(buffer.bytes(sb), 10, n + 1));
+                }
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return acc;
+}
+
+// One vector file: the driver built once, replayed plain and then tabled. `which` is 1 limbo, 2 online, 3 the matrix, 4 the chain matrix.
+fn replay[&h, &x, &c, &f, &b, &e, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], report: buffer.Buffer, name: &n [byte], which: int) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    var exe = buffer.append(heap, buffer.empty(heap, 48), "/tmp/cancho-x509-verify-");
+    exe = buffer.append(heap, exe, name);
+    let Vectors { asked, tabled, want, cases, kinds, failed } = load(heap, fs, name);
+    if failed != 0 {
+        acc = harness.failure(heap, acc, "x509_verify", name, "its vector file cannot be read", "");
+    }
+    borrow exe as &xb in {
+        let harness.Ended { out, err, kind, code } = harness.build(heap, exec, clock, bin, "tests/programs/x509_verify_driver.cho\0packages/x509/verify.cho\0packages/x509/names.cho\0packages/x509/x509.cho\0", buffer.bytes(xb), env);
+        buffer.drop(heap, out);
+        if kind != 0 {
+            borrow err as &rb in {
+                acc = harness.failure(heap, acc, "x509_verify", name, "should compile, but the compiler said", buffer.bytes(rb));
+            }
+        } else {
+            borrow asked as &ab in {
+                borrow want as &wb in {
+                    acc = asked_of(heap, exec, clock, buffer.bytes(xb), buffer.bytes(ab), buffer.bytes(wb), acc, name, 0, which);
+                }
+            }
+            borrow tabled as &tb in {
+                borrow want as &wb in {
+                    acc = asked_of(heap, exec, clock, buffer.bytes(xb), buffer.bytes(tb), buffer.bytes(wb), acc, name, 1, which);
+                }
+            }
+            borrow want as &wb in {
+                borrow cases as &cb in {
+                    borrow kinds as &kb in {
+                        if which == 1 {
+                            acc = limbo_checks(heap, acc, buffer.bytes(wb), buffer.bytes(cb), buffer.bytes(kb));
+                        } else if which == 2 {
+                            acc = online_checks(heap, acc, buffer.bytes(wb));
+                        } else if which == 3 {
+                            acc = matrix_checks(heap, acc, "matrix", buffer.bytes(wb), buffer.bytes(cb), false, 36);
+                        } else {
+                            acc = matrix_checks(heap, acc, "chain_matrix", buffer.bytes(wb), buffer.bytes(cb), true, 57);
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, exe);
+    buffer.drop(heap, asked);
+    buffer.drop(heap, tabled);
+    buffer.drop(heap, want);
+    buffer.drop(heap, cases);
+    buffer.drop(heap, kinds);
+    return acc;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: x509_verify CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let bin = arg(args, 1);
+    let env = harness.base_env(heap, harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var report = buffer.empty(heap, 64);
+    borrow env as &eb in {
+        report = replay(heap, exec, clock, fs, bin, buffer.bytes(eb), report, "limbo_subset", 1);
+        report = replay(heap, exec, clock, fs, bin, buffer.bytes(eb), report, "online", 2);
+        report = replay(heap, exec, clock, fs, bin, buffer.bytes(eb), report, "matrix", 3);
+        report = replay(heap, exec, clock, fs, bin, buffer.bytes(eb), report, "chain_matrix", 4);
+    }
+    buffer.drop(heap, env);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: x509_verify\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

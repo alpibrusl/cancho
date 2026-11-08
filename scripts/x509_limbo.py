@@ -25,7 +25,7 @@ this verifier leaves out, named), or a disagreement, listed. With
 `<subset.txt>`, every case that is not BetterTLS and one BetterTLS case in
 forty (by a hash of its id) are written with the driver's answers, grouped
 by store so that a store line is written only when the store changes, for
-`conformance/x509_verify.rs` to replay. Exit status 1 on a disagreement
+`tests/commands/x509_verify.cho` to replay. Exit status 1 on a disagreement
 that is not listed in `KNOWN` with its reason.
 """
 import collections

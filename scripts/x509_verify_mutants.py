@@ -6,7 +6,7 @@
 Each mutant is `verify.cho` or `names.cho` with one deliberate bug. The package
 is copied to a scratch directory, the mutant applied there, and
 `tests/programs/x509_verify_driver.cho` built against it. It replays what
-`conformance/x509_verify.rs` replays: the OpenSSL matrix, the 14 saved chains
+`tests/commands/x509_verify.cho` replays: the OpenSSL matrix, the 14 saved chains
 against the system roots, and the x509-limbo subset, each answer compared with
 the one recorded, and the no-name matrix (`chain_matrix.txt`, §10.4). A mutant is killed when any answer differs, the driver
 traps, or a file takes over 120 seconds. The unmutated package is run first
