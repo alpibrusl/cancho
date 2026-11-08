@@ -1,0 +1,120 @@
+edition 7;
+module zeroed_slices_test;
+
+// zeroed_slices.cho -- `conformance/zeroed_slices.rs` (deleted), in cancho (`docs/gate.md` G4): zero-filled heap slices (`docs/zeroed-slices.md`), `box_slice(h, n, 0)` being `calloc` with no fill loop.
+// Two things are judged from outside. What a program reads back: every zero fill is zero, even in memory just freed full of nines, and the fills that are not zero (7, `byte_of(5)`, a zero
+// computed at run time, `-0.0`) read back as themselves (`tests/programs/zeroed_read_back.cho`, exit 0). And, where `/proc` says it (Linux), how much of 512 MiB of zero ever became resident: under 64 MiB
+// at its peak, for ints and for bytes (`tests/programs/zeroed_untouched.cho`, which reads `VmHWM` from `/proc/self/status` itself after the fill and one write, and exits 7, the element it wrote).
+//
+//     cancho build tests/commands/zeroed_slices.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: zeroed_slices` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// Build the program at `source` into `exe`; what the compiler said if it did not.
+fn built[&h, &x, &c, &b, &v, &s, &e, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &v [byte], source: &s [byte], exe: &e [byte], name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let sources = harness.word(heap, buffer.empty(heap, 64), source);
+    borrow sources as &sb in {
+        let harness.Ended { out, err, kind, code } = harness.build_only(heap, exec, clock, bin, buffer.bytes(sb), "", exe, env);
+        if kind != 0 {
+            borrow err as &rb in {
+                rep = harness.failure(heap, rep, "zeroed_slices", name, "should build, but the compiler said", buffer.bytes(rb));
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, sources);
+    return rep;
+}
+
+// Run `exe` with `args` (each followed by a NUL): it must exit `want_code` and print exactly `want_out`.
+fn expect[&h, &x, &c, &e, &a, &o, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &e [byte], args: &a [byte], want_out: &o [byte], want_code: int, name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let command = buffer.append(heap, buffer.empty(heap, 64), args);
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, exe, command, "", "PATH=/usr/bin:/bin\0");
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        if kind != 0 || code != want_code {
+            rep = harness.failure(heap, rep, "zeroed_slices", name, "wrong exit status (the elements that read back wrong, or the element written)", said);
+        } else if !bytes.equal(said, want_out) {
+            rep = harness.failure(heap, rep, "zeroed_slices", name, "wrong output", said);
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    borrow env as &eb in {
+        let e = buffer.bytes(eb);
+        report = built(heap, exec, clock, bin, e, "tests/programs/zeroed_read_back.cho", "/tmp/cancho-zeroed-slices-read-back", "read back", report);
+        report = expect(heap, exec, clock, "/tmp/cancho-zeroed-slices-read-back", "", "", 0, "every fill reads back as itself", report);
+        // macOS has no `/proc`; the read back above still covers its correctness.
+        let status = harness.read_file(heap, fs, "/proc/self/status");
+        let harness.Contents { data, failed } = status;
+        buffer.drop(heap, data);
+        if failed == 0 {
+            report = built(heap, exec, clock, bin, e, "tests/programs/zeroed_untouched.cho", "/tmp/cancho-zeroed-slices-untouched", "untouched", report);
+            report = expect(heap, exec, clock, "/tmp/cancho-zeroed-slices-untouched", "ints\0/proc/self/status\0", "small\n", 7, "a large zeroed slice of ints is not made resident by filling it", report);
+            report = expect(heap, exec, clock, "/tmp/cancho-zeroed-slices-untouched", "bytes\0/proc/self/status\0", "small\n", 7, "a large zeroed slice of bytes is not made resident by filling it", report);
+        }
+    }
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: zeroed_slices CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: zeroed_slices\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

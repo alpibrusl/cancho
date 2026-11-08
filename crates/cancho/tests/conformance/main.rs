@@ -124,7 +124,7 @@ mod wide_multiply;
 mod word_scan;
 mod x25519;
 
-mod zeroed_slices;
+
 
 const BIN: &str = env!("CARGO_BIN_EXE_cancho");
 

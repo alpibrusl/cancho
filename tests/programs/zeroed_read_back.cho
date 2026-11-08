@@ -1,0 +1,120 @@
+edition 5;
+
+// zeroed_read_back.cho -- every zero fill of a heap slice reads back zero, even in memory just freed full of nines; a non-zero fill, a zero computed at run time and `-0.0` (whose sign bit
+// is set, so it is not all-zero) are still written by the loop and read back as themselves (`docs/zeroed-slices.md`). The exit status counts the elements that were wrong (at most 100).
+// The driver of `tests/commands/zeroed_slices.cho`.
+
+fn zero_at_run_time(n: int) -> [] int {
+    return n - n;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    var bad = 0;
+    let n = 5000;
+    borrow mut heap as &!h in {
+        // Freed memory full of nines, which the allocator hands straight back: a zero fill that skipped
+        // the loop without asking for zeroed memory would read nines here.
+        let dirty = box_slice(h, n, 9);
+        unbox_slice(h, dirty);
+        let ints = box_slice(h, n, 0);
+        let bytes = box_slice(h, n, byte_of(0));
+        let bools = box_slice(h, n, false);
+        let floats = box_slice(h, n, 0.0);
+        let sevens = box_slice(h, n, 7);
+        let fives = box_slice(h, n, byte_of(5));
+        let computed = box_slice(h, n, zero_at_run_time(n));
+        let negative = box_slice(h, n, -0.0);
+        borrow ints as &r in {
+            var i = 0;
+            while i < n {
+                if contents(r)[i] != 0 {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+        borrow bytes as &r in {
+            var i = 0;
+            while i < n {
+                if int_of(contents(r)[i]) != 0 {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+        borrow bools as &r in {
+            var i = 0;
+            while i < n {
+                if contents(r)[i] {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+        borrow floats as &r in {
+            var i = 0;
+            while i < n {
+                if bits_of(contents(r)[i]) != 0 {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+        borrow sevens as &r in {
+            var i = 0;
+            while i < n {
+                if contents(r)[i] != 7 {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+        borrow fives as &r in {
+            var i = 0;
+            while i < n {
+                if int_of(contents(r)[i]) != 5 {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+        borrow computed as &r in {
+            var i = 0;
+            while i < n {
+                if contents(r)[i] != 0 {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+        borrow negative as &r in {
+            var i = 0;
+            while i < n {
+                if bits_of(contents(r)[i]) >= 0 {
+                    bad = bad + 1;
+                }
+                i = i + 1;
+            }
+        }
+        unbox_slice(h, ints);
+        unbox_slice(h, bytes);
+        unbox_slice(h, bools);
+        unbox_slice(h, floats);
+        unbox_slice(h, sevens);
+        unbox_slice(h, fives);
+        unbox_slice(h, computed);
+        unbox_slice(h, negative);
+    }
+    release(heap);
+    if bad > 100 {
+        return 100;
+    }
+    return bad;
+}
