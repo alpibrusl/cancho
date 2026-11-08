@@ -6,7 +6,7 @@ wasi-libc's stdio brought imports no program asked for -- `fd_fdstat_get`, `fd_s
 with the row `[io_write]` imported a clock. The console is now written against
 `fd_write` and `fd_read` directly. This builds one tiny program per effect for
 `wasm32-wasip1` and requires its **exact** import set, then runs the
-`checked_output.rs` probe (`flush_out`) against the module to check the buffer's
+`tests/programs/checked_output_probe.cho` probe (`flush_out`) against the module to check the buffer's
 behaviour, not just its imports.
 
 It also runs `tests/accept/arguments.cho` native and as a module over a spread of command
@@ -18,7 +18,7 @@ usage: wasm_console_check.py CANCHO
 
 Needs what `cancho --help` says `--target` needs, and `wasmtime`. CI has neither.
 """
-import os, re, subprocess, sys, tempfile
+import os, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(__file__))
 from wasm_imports import wasi_functions
@@ -72,14 +72,10 @@ def build(cancho, source, out):
 
 
 def checked_output_probe():
-    """The program `checked_output.rs` runs on both native backends, so the wasm
+    """The program `tests/commands/checked_output.cho` runs natively, so the wasm
     console is held to the same answers rather than to a copy of them."""
     root = os.path.join(os.path.dirname(__file__), "..")
-    text = open(os.path.join(root, "crates/cancho/tests/conformance/checked_output.rs")).read()
-    m = re.search(r'const PROBE: &str = "(.*?)";\n', text, re.S)
-    if not m:
-        sys.exit("cannot find PROBE in checked_output.rs")
-    return m.group(1).replace('\\"', '"').replace("\\\\n", "\\n")
+    return open(os.path.join(root, "tests/programs/checked_output_probe.cho")).read()
 
 
 def run(module, args, reader_gone):
@@ -134,7 +130,7 @@ def main():
             failures.append(f"{name}: imports {sorted(got)}, wanted {sorted(want)}")
 
     probe = build(cancho, checked_output_probe(), os.path.join(work, "probe"))
-    print("flush_out (the checked_output.rs probe), against the module's own buffer:")
+    print("flush_out (the checked_output_probe.cho probe), against the module's own buffer:")
     cases = [
         ("small, reader present: status 100, the bytes arrive", [], False, 100, b"hello\n"),
         ("big (100,000 bytes), reader present: status 100, all arrive", ["big"], False, 100, b"x" * 100000),
