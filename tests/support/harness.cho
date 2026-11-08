@@ -477,4 +477,122 @@ pub fn min_of(a: int, b: int) -> [] int {
         return a;
     }
     return b;
+// A scratch directory: `/usr/bin/mktemp -d /tmp/PREFIX.XXXXXX`, its path (nothing if it could not be made).
+pub fn scratch_dir[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, prefix: &p [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var pattern = buffer.append(heap, buffer.empty(heap, 64), "/tmp/");
+    pattern = buffer.append(heap, pattern, prefix);
+    pattern = buffer.append(heap, pattern, ".XXXXXX");
+    var command = word(heap, buffer.empty(heap, 16), "-d");
+    borrow pattern as &pb in {
+        command = word(heap, command, buffer.bytes(pb));
+    }
+    buffer.drop(heap, pattern);
+    let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, "/usr/bin/mktemp", command, "", "PATH=/usr/bin:/bin\0");
+    buffer.drop(heap, err);
+    var path = buffer.empty(heap, 64);
+    if kind == 0 && code == 0 {
+        borrow out as &ob in {
+            let said = buffer.bytes(ob);
+            if len(said) > 0 {
+                path = buffer.append(heap, path, said[0..len(said) - 1]);
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    return path;
+}
+
+// `/bin/sh SCRIPT ONE TWO` (`$1` and `$2` of the script), run with the environment `env`.
+pub fn run_sh_file[&h, &x, &c, &s, &a, &b, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, script: &s [byte], one: &a [byte], two: &b [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), script);
+    command = word(heap, command, one);
+    command = word(heap, command, two);
+    return spawn_capture(heap, exec, clock, "/bin/sh", command, "", env);
+}
+
+// A scratch directory and everything in it removed, the unreadable directories a test made too.
+pub fn remove_tree[&h, &x, &c, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, dir: &d [byte]) -> [heap, exec(""), clock, poll] int {
+    var command = word(heap, buffer.empty(heap, 64), "-c");
+    command = word(heap, command, "chmod -R u+rwx \"$1\" 2>/dev/null; rm -rf \"$1\"");
+    command = word(heap, command, "sh");
+    command = word(heap, command, dir);
+    let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, "/bin/sh", command, "", "PATH=/usr/bin:/bin\0");
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return code;
+}
+
+// `/bin/sh script exe scratch` against the file `expected`: the failures, if any, added to `report` (see `probe_transcript`).
+fn compare_transcript[&h, &x, &c, &f, &n, &s, &e, &p, &d, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), name: &n [byte], script: &s [byte], expected: &e [byte], exe: &p [byte], scratch: &d [byte], env: &v [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var rep = report;
+    let Ended { out, err, kind, code } = run_sh_file(heap, exec, clock, script, exe, scratch, env);
+    let Contents { data, failed } = read_file(heap, fs, expected);
+    borrow data as &wb in {
+        borrow out as &ob in {
+            borrow err as &rb in {
+                if kind != 0 || code != 0 {
+                    rep = failure(heap, rep, name, "script", "should exit 0", buffer.bytes(rb));
+                }
+                if failed != 0 {
+                    rep = failure(heap, rep, name, "expected", "cannot read the file of expected output", expected);
+                } else if !bytes.equal(buffer.bytes(ob), buffer.bytes(wb)) {
+                    var both = buffer.append(heap, buffer.empty(heap, 256), "--- expected\n");
+                    both = buffer.append(heap, both, buffer.bytes(wb));
+                    both = buffer.append(heap, both, "--- got\n");
+                    both = buffer.append(heap, both, buffer.bytes(ob));
+                    borrow both as &bb in {
+                        rep = failure(heap, rep, name, "transcript", "differs from the expected output", buffer.bytes(bb));
+                    }
+                    buffer.drop(heap, both);
+                }
+            }
+        }
+    }
+    buffer.drop(heap, data);
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// A test of a probe program and a shell script (`docs/gate.md` G4): in a scratch directory, build `probe` (one source file, with `--std`) with `bin`, run `/bin/sh script PROBE SCRATCH` and
+// compare its standard output with the file `expected`. The script makes the tree, runs the probe, and prints what the probe said and what is on disk afterwards; a difference, a build that
+// fails or a script that does not exit 0 is added to `report` as `name/KIND: why`. The scratch directory is removed whatever happened.
+pub fn probe_transcript[&h, &x, &c, &f, &b, &m, &k, &n, &q, &s, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte], name: &n [byte], probe: &q [byte], script: &s [byte], expected: &e [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var rep = report;
+    let env = base_env(heap, compiler, cache);
+    let scratch = scratch_dir(heap, exec, clock, name);
+    borrow scratch as &sb in {
+        borrow env as &eb in {
+            if len(buffer.bytes(sb)) == 0 {
+                rep = failure(heap, rep, name, "scratch", "mktemp -d did not make a directory", "");
+            } else {
+                var exe = buffer.append(heap, buffer.empty(heap, 64), buffer.bytes(sb));
+                exe = buffer.append(heap, exe, "/probe");
+                var build = word(heap, buffer.empty(heap, 64), "build");
+                build = word(heap, build, probe);
+                build = word(heap, build, "--std");
+                build = word(heap, build, "-o");
+                borrow exe as &xb in {
+                    build = word(heap, build, buffer.bytes(xb));
+                }
+                let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, bin, build, "", buffer.bytes(eb));
+                if kind != 0 || code != 0 {
+                    borrow err as &rb in {
+                        rep = failure(heap, rep, name, "build", "the probe should compile, but the compiler said", buffer.bytes(rb));
+                    }
+                } else {
+                    borrow exe as &xb in {
+                        rep = compare_transcript(heap, exec, clock, fs, name, script, expected, buffer.bytes(xb), buffer.bytes(sb), buffer.bytes(eb), rep);
+                    }
+                }
+                buffer.drop(heap, out);
+                buffer.drop(heap, err);
+                buffer.drop(heap, exe);
+                remove_tree(heap, exec, clock, buffer.bytes(sb));
+            }
+        }
+    }
+    buffer.drop(heap, scratch);
+    buffer.drop(heap, env);
+    return rep;
 }

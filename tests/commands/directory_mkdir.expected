@@ -1,0 +1,26 @@
+== modes
+ok
+ok
+ok
+ok
+a755 755
+a700 700
+a777 755
+a000 0
+a700 is a directory
+== taken
+err 17
+err 17
+err 17
+err 17
+file holds KEEP
+== invalid
+err 22
+err 22
+err 22
+err 22
+err 22
+err 22
+err 22
+err 22
+done
