@@ -1,0 +1,55 @@
+edition 5;
+
+// checked_output_probe.cho -- writes six bytes, or 100,000 with an argument (so that `fwrite` itself fails while the buffer drains and only the stream's error indicator remembers it),
+// flushes twice, and exits `100 + errno` of the first answer (`100` for `Ok`), or `99` if the second flush disagreed with a failed first (`docs/checked-output.md`).
+// The driver of `tests/commands/checked_output.cho`, and the probe `scripts/wasm_console_check.py` holds the wasm console to.
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(net);
+    release(clock);
+    var big = false;
+    borrow args as &g in {
+        big = arg_count(g) > 1;
+    }
+    release(args);
+    var status = 0;
+    borrow mut io as &!i in {
+        if big {
+            region a {
+                let block = alloc_slice[a](50000, byte_of(120));
+                write_bytes(i, block);
+                write_bytes(i, block);
+            }
+        } else {
+            write_bytes(i, "hello\n");
+        }
+        var first = 0;
+        match flush_out(i) {
+            Done::Ok(n) => {
+                first = 0;
+            }
+            Done::Failed(e) => {
+                first = e;
+            }
+        }
+        var second = 0;
+        match flush_out(i) {
+            Done::Ok(n) => {
+                second = 0;
+            }
+            Done::Failed(e) => {
+                second = e;
+            }
+        }
+        status = 100 + first;
+        if first != 0 && second == 0 {
+            status = 99;
+        }
+    }
+    release(io);
+    return status;
+}

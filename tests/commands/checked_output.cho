@@ -1,0 +1,179 @@
+edition 7;
+module checked_output_test;
+
+// checked_output.cho -- `conformance/checked_output.rs` (deleted), in cancho (`docs/gate.md` G4): `flush_out` tells a program whether what it wrote to standard output arrived
+// (`docs/checked-output.md`, issue #215). The probe (`tests/programs/checked_output_probe.cho`) is run under `sh` with its standard output pointed at `/dev/full` (ENOSPC, exit 128), at a closed
+// descriptor (EBADF, 109), at `/dev/null` and at a pipe, and the answer it got is read back as its exit status: 100 for `Ok`, `100 + errno` for a failure. With an argument it writes 100,000 bytes, so
+// `fwrite` itself fails while the buffer drains and only the stream's error indicator remembers: both flushes then say EIO (105). Also: a program that only flushes has the authority `io_write` and nothing else.
+//
+//     cancho build tests/commands/checked_output.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: checked_output` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+// `/dev/full` exists on Linux (where its absence is a failure) and not on macOS (where the closed descriptor is the failed write that is observed).
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// Run `exe` with `args` (each followed by a NUL): it must exit `want_code` and print `want_len` bytes (any number if that is negative), exactly `want_out` if that is not empty.
+fn expect[&h, &x, &c, &e, &a, &o, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &e [byte], args: &a [byte], want_out: &o [byte], want_len: int, want_code: int, name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let command = buffer.append(heap, buffer.empty(heap, 64), args);
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, exe, command, "", "PATH=/usr/bin:/bin\0");
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        if kind != 0 || code != want_code {
+            rep = harness.failure(heap, rep, "checked_output", name, "wrong exit status (100 + errno of the first flush)", said);
+        } else if want_len >= 0 && len(said) != want_len {
+            rep = harness.failure(heap, rep, "checked_output", name, "wrong number of bytes arrived", "");
+        } else if len(want_out) > 0 && !bytes.equal(said, want_out) {
+            rep = harness.failure(heap, rep, "checked_output", name, "the bytes that arrived are not those written", said);
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// `sh -c SCRIPT PROBE` (`script` runs `"$0"` with `redirect` and so on).
+fn under_sh[&h, &x, &c, &s, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, script: &s [byte], want_code: int, name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var args = harness.word(heap, buffer.empty(heap, 64), "-c");
+    args = harness.word(heap, args, script);
+    args = harness.word(heap, args, "/tmp/cancho-checked-output-probe");
+    var rep = report;
+    borrow args as &ab in {
+        rep = expect(heap, exec, clock, "/bin/sh", buffer.bytes(ab), "", -1, want_code, name, rep);
+    }
+    buffer.drop(heap, args);
+    return rep;
+}
+
+// Whether the shell finds `/dev/full`.
+fn has_full_device[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock) -> [heap, exec(""), clock, poll] bool {
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, "/bin/sh", buffer.append(heap, buffer.empty(heap, 32), "-c\0test -e /dev/full\0"), "", "PATH=/usr/bin:/bin\0");
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return kind == 0 && code == 0;
+}
+
+// The `effects` line of the report of `cancho authority --std --output json` for a program that only flushes must be `"effects": ["io_write"],`.
+fn authority[&h, &x, &c, &b, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &v [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let command = buffer.append(heap, buffer.empty(heap, 96), "authority\0--std\0--output\0json\0tests/programs/checked_output_authority.cho\0");
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, bin, command, "", env);
+    borrow out as &ob in {
+        borrow err as &rb in {
+            let said = buffer.bytes(ob);
+            if kind != 0 || code != 0 {
+                rep = harness.failure(heap, rep, "checked_output", "authority", "should succeed, but said", buffer.bytes(rb));
+            } else {
+                let lines = bytes.count_byte(said, 10);
+                var found = false;
+                var right = false;
+                var at = 1;
+                while at <= lines {
+                    let line = bytes.field(said, 10, at);
+                    if bytes.find(line, "\"effects\"") >= 0 {
+                        found = true;
+                        right = bytes.equal(bytes.trim(line), "\"effects\": [\"io_write\"],");
+                    }
+                    at = at + 1;
+                }
+                if !found || !right {
+                    rep = harness.failure(heap, rep, "checked_output", "authority", "flushing should report io_write and nothing else", said);
+                }
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    borrow env as &eb in {
+        let e = buffer.bytes(eb);
+        let sources = "tests/programs/checked_output_probe.cho\0";
+        let harness.Ended { out, err, kind, code } = harness.build_only(heap, exec, clock, bin, sources, "", "/tmp/cancho-checked-output-probe", e);
+        buffer.drop(heap, out);
+        if kind != 0 {
+            borrow err as &rb in {
+                report = harness.failure(heap, report, "checked_output", "build", "should build, but the compiler said", buffer.bytes(rb));
+            }
+        } else {
+            let probe = "/tmp/cancho-checked-output-probe";
+            var full = has_full_device(heap, exec, clock);
+            // Linux has `/dev/full`: there its absence is a failure, not a skip.
+            let status = harness.read_file(heap, fs, "/proc/self/status");
+            let harness.Contents { data, failed } = status;
+            buffer.drop(heap, data);
+            if failed == 0 && !full {
+                report = harness.failure(heap, report, "checked_output", "dev-full", "/dev/full is missing on Linux", "");
+            }
+            if full {
+                report = under_sh(heap, exec, clock, "\"$0\" > /dev/full", 128, "a full device is ENOSPC", report);
+                report = under_sh(heap, exec, clock, "\"$0\" big > /dev/full", 105, "an earlier failure is still reported: /dev/full", report);
+            }
+            report = under_sh(heap, exec, clock, "\"$0\" >&-", 109, "a closed stdout is EBADF", report);
+            // `fflush` alone answers 0 here: the failed bytes were discarded and the buffer is empty. The stream's error indicator is what remembers, and it is not cleared, so both flushes say EIO.
+            report = under_sh(heap, exec, clock, "\"$0\" big >&-", 105, "an earlier failure is still reported: closed", report);
+            report = under_sh(heap, exec, clock, "\"$0\" > /dev/null", 100, "a working stream: /dev/null", report);
+            report = expect(heap, exec, clock, probe, "", "hello\n", 6, 100, "a working stream: pipe", report);
+            report = expect(heap, exec, clock, probe, "big\0", "", 100000, 100, "a working stream: pipe, big", report);
+            report = authority(heap, exec, clock, bin, e, report);
+        }
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: checked_output CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: checked_output\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

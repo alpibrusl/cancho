@@ -357,7 +357,7 @@ that trap are strings over 64 KiB, which exhaust the 64 KiB arena `json_roundtri
 and trap natively too; the script counts a native SIGILL and a wasmtime trap (exit 134) as
 the same behaviour and requires both. The accept-fixture map did not move (83 / 20 / 1).
 
-`flush_out` is held to `checked_output.rs`'s own probe: a small and a 100,000-byte write to
+`flush_out` is held to `tests/programs/checked_output_probe.cho`, the probe of `tests/commands/checked_output.cho`: a small and a 100,000-byte write to
 a live reader answer `Ok` and the bytes arrive, and a reader that has left answers `EIO`
 and keeps answering it.
 
