@@ -640,7 +640,7 @@ other agents' benchmarks on cores 0, 1, 4 and 5, so the cycles moved by up to 20
   14 saved real chains against the system bundle, whose 3 P-256 roots get one; the OpenSSL matrix; the no-name matrix) are each
   replayed with the anchors' tables and must give every recorded answer (`conformance/x509_verify.rs`). The TLS suites (the liar
   clients, the differentials, tickets, the pool, fuzz corpora) pass unchanged: the server's check and the client's chain now go
-  through the tables in all of them. `conformance/key_tables.rs`: an identity's table is its key's when loaded and the new key's
+  through the tables in all of them. `tests/commands/key_tables.cho`: an identity's table is its key's when loaded and the new key's
   when replaced, unchanged by a refused replacement, zeros when wiped; a store's tables follow the store, `tls.residue` 0.
 - **Mutants** (`scripts/p256_mutants.py`, now also over the key tables' users in `packages/x509` and `packages/tls`, its evidence
   adding the x509 replays and `key_tables`): 53 run, the 35 new ones, the 12 of `verify` (7 of whose code moved into `prepare`) and 6

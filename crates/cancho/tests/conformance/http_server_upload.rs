@@ -1,6 +1,6 @@
 //! `packages/http-server`'s streaming request bodies on the socket path (`docs/http-server.md` §12): the program
 //! `tests/programs/server_upload.cho` serves uploads over real sockets, so `step`, `settle`, `wait` and the timers are
-//! exercised as well as the byte-fed path `http_server_body.rs` covers without any. The server is built from the package's
+//! exercised as well as the byte-fed path `tests/packages/http_server_body_test.cho` covers without any. The server is built from the package's
 //! source (not the store: the store is checked on its own, in `http_server.rs`).
 
 use super::*;

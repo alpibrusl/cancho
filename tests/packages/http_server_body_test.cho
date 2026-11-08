@@ -9,7 +9,7 @@ import http.server;
 // body and a chunked one (with extensions and trailers) larger than the buffer, arriving byte for byte, a request cut at every byte, requests
 // pipelined behind a streamed body, and a request that fits handed over whole as before. Part two is `http_server_body_flow_test.cho`
 // (`Expect`, every refusal, the timers, back-pressure, early answers, random operations). Run with the package's source and
-// `body_support.cho` beside it (`conformance/http_server_body.rs`).
+// `body_support.cho` beside it (`tests/cancho-tests.txt`).
 
 fn length_bodies[&h, &s](heap: &!h Heap, srv: &!s server.Server) -> [heap, conn_write, poll] int {
     let k = server.attach(srv, 0);

@@ -5,13 +5,15 @@ use super::*;
 
 /// What the formatter is asked to handle: every program that is meant to be a program (`benches/` too, which the older sweep left out
 /// because most of it is not a program the other sweeps are about). `tests/reject` is excluded -- most of it does not parse, on purpose.
-const CORPUS: [&str; 8] = [
+const CORPUS: [&str; 10] = [
     "std",
     "examples",
     "packages",
     "tests/accept",
     "tests/programs",
     "tests/run.cho",
+    "tests/support",
+    "tests/commands",
     "scripts",
     "benches",
 ];

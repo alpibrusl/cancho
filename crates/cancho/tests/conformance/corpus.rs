@@ -25,7 +25,7 @@ fn walk_fixtures(kind: &str) {
     let exe = dir.join("fixtures-run");
     let build = Command::new(BIN)
         .current_dir(&root)
-        .args(["build", "tests/run.cho", "--std", "-o"])
+        .args(["build", "tests/run.cho", "tests/support/harness.cho", "--std", "-o"])
         .arg(&exe)
         .output()
         .expect("the compiler runs");

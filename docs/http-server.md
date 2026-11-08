@@ -405,7 +405,7 @@ ambiguous length, `400` with `std.http`'s message. After any of them the connect
 
 ### 11.5 Tests and mutants
 
-`tests/packages/http_server_bytes_test.cho` (19 `cancho test` tests, run on both backends by `conformance/http_server_bytes.rs`) is the byte-fed API without a
+`tests/packages/http_server_bytes_test.cho` (19 `cancho test` tests, run by `scripts/gate.sh`, stage `tests`, from `tests/cancho-tests.txt`; on LLVM only since G4: the Cranelift leg went with `http_server_bytes.rs`) is the byte-fed API without a
 socket, which is the point of the mode: a length body, a chunked body, three pipelined requests with a fourth cut short, a request fed one byte at a time in
 each framing (answered once, after its last byte and not before), every refusal and its status, half-closes (after a request, after nothing, in the middle of one, with an
 answer waiting, with a request held), a client that takes nothing (twenty pipelined requests, one answer held, input refused, `pending` never past `out`), an answer over the room
@@ -458,7 +458,7 @@ program would move them: link-time selection of the module that holds `run` woul
 | `hostile` | 1,500 connections each sending a mangled request (flipped bytes, cuts, bare LFs, a 100 KB target, a thousand headers, JSON 5,000 deep, lengths past 2^64 or negative, chunk sizes past the end, 1,000 NULs): the server is alive after every one and serves after the last |
 
 **Results.** 14 of 14 on linux-aarch64 (Docker, with curl 8.5 built on OpenSSL 3.0.13), 13 of 14 on macOS (its curl is SecureTransport and the case says so); `tls_echo_test.py` still passes 8 of 8 on both after `front.cho`. 
-`conformance/https_hello.rs` (64 connections through `tls_many`, a reload taken and one refused, a stop, the authority pin) and `conformance/http_server_bytes.rs` run in `cargo test` on both CI targets; `cargo test --workspace` on linux-aarch64 in Docker passes everything but the two tests that need a git checkout, as before this change.
+`conformance/https_hello.rs` (64 connections through `tls_many`, a reload taken and one refused, a stop, the authority pin) run in `cargo test` on both CI targets (`http_server_bytes_test.cho` has since moved to `scripts/gate.sh`); `cargo test --workspace` on linux-aarch64 in Docker passes everything but the two tests that need a git checkout, as before this change.
 
 **A false report, and why `ended` writes from its own thread.** It was reported that bytes arriving on an ended connection made the server close a different one: a Python
 client with D and H in one thread, D ended by `Connection: close` and then written to every 50 ms, saw H's next request fail with `BrokenPipeError` within 0.1 s, the server alive
@@ -752,7 +752,7 @@ The socket path and the byte-fed path differ in where bytes cross a boundary (§
 
 ### 12.13 Tests, mutants and measurements
 
-**Without a socket** (`tests/packages/http_server_body_test.cho` and `http_server_body_flow_test.cho`, with their helpers in `body_support.cho`; `cancho test` on both backends through `conformance/http_server_body.rs`): 22 tests.
+**Without a socket** (`tests/packages/http_server_body_test.cho` and `http_server_body_flow_test.cho`, with their helpers in `body_support.cho`; `cancho test` through `tests/cancho-tests.txt`, stage `tests` of `scripts/gate.sh`): 22 tests.
 
 | test | what it fixes |
 |---|---|

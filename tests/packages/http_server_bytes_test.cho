@@ -7,7 +7,7 @@ import http.server;
 // `http.server`'s byte-fed mode (`docs/http-server.md` §11): a server with no sockets, fed
 // by the test, which is what a TLS terminator in front of it does. Run with the package's
 // own source beside this file (`cancho test --std packages/http-server/server.cho <this>`,
-// `conformance/http_server_bytes.rs`).
+// `tests/cancho-tests.txt`).
 
 // Answers every request in hand with `<method> <path> <body length>:<body>` as text/plain,
 // keep-alive following the request. How many it answered.
