@@ -249,7 +249,6 @@ differential 13
 http_client 13
 net_split 13
 testing 13
-region_limit 12
 directory_handles 12
 process_release 11
 directory_rename_new 11
