@@ -5,8 +5,16 @@ use super::*;
 
 /// What the formatter is asked to handle: every program that is meant to be a program (`benches/` too, which the older sweep left out
 /// because most of it is not a program the other sweeps are about). `tests/reject` is excluded -- most of it does not parse, on purpose.
-const CORPUS: [&str; 6] =
-    ["std", "examples", "packages", "tests/accept", "tests/programs", "benches"];
+const CORPUS: [&str; 8] = [
+    "std",
+    "examples",
+    "packages",
+    "tests/accept",
+    "tests/programs",
+    "tests/run.cho",
+    "scripts",
+    "benches",
+];
 
 /// `cancho fmt` over the whole corpus, through the command and nothing else (these tests named the Rust crate's `format` before, so the cancho-written
 /// command could not be run against them): `fmt --check` exits 0 and writes nothing only if no file is refused (a layout the formatter cannot

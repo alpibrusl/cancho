@@ -1,0 +1,4 @@
+# Programs `tests/run.cho --selfhost` leaves out: the compiler in cancho cannot build them yet. `KIND/NAME.cho  # why`, one per line.
+accept/aliasing_in_a_slice_of_references.cho  # the compiler in cancho has no code for what is at 36:20 (`many[0][0] = 1;` on `alloc_slice[r](4, s)`, a slice of references)
+examples/audio_hello.cho  # the compiler in cancho writes no code for the edition-12 device verbs yet (#665)
+examples/camera_hello.cho  # the compiler in cancho writes no code for the edition-12 device verbs yet (#665)

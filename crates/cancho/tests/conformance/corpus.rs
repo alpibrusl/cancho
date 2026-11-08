@@ -15,157 +15,54 @@ fn directive(source: &str, key: &str) -> Option<String> {
     directives(source, key).into_iter().next()
 }
 
-/// Run a compiled fixture, feeding it whatever its header's `STDIN` lines
-/// say (`docs/standard-input.md` §5).
-///
-/// Closing the pipe is the point rather than an implementation detail: a
-/// program reading to end of input never ends until the writer hangs up,
-/// so a fixture with no `STDIN` gets an immediately-closed stream rather
-/// than an inherited terminal. That is what makes "reads until the input
-/// ends" testable at all.
-fn run_with_stdin(exe: &Path, source: &str) -> std::process::Output {
-    let lines = directives(source, "STDIN");
-    let mut child = Command::new(exe)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the compiled program runs");
-    {
-        let mut pipe = child.stdin.take().expect("a piped stdin");
-        for line in &lines {
-            writeln!(pipe, "{line}").expect("the program accepts its input");
-        }
+/// `tests/run.cho` (`docs/gate.md` step G3) walks the fixtures: a program in cancho, built here by the `cancho` under test and run from the root of the
+/// repository with the kind of fixture to walk. It replaces the three walkers that were here (every accept fixture, every reject fixture, every example),
+/// which did what it does in Rust; the gate runs it with no Rust (`scripts/gate.sh`). The compiler the fixtures are built with and the cache they build
+/// into are the ones this test run has (`CANCHO_COMPILER`, `CANCHO_CACHE`), since the program has no environment to pass on.
+fn walk_fixtures(kind: &str) {
+    let root = repo_root();
+    let dir = scratch(&format!("run-cho-{kind}"));
+    let exe = dir.join("fixtures-run");
+    let build = Command::new(BIN)
+        .current_dir(&root)
+        .args(["build", "tests/run.cho", "--std", "-o"])
+        .arg(&exe)
+        .output()
+        .expect("the compiler runs");
+    assert!(
+        build.status.success(),
+        "tests/run.cho should compile:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let cache = std::env::var("CANCHO_CACHE")
+        .unwrap_or_else(|_| dir.join("cache").to_string_lossy().into_owned());
+    let mut walk = Command::new(&exe);
+    walk.current_dir(&root).arg(BIN).arg(kind).args(["--cache", &cache]);
+    if let Ok(compiler) = std::env::var("CANCHO_COMPILER") {
+        walk.args(["--compiler", &compiler]);
     }
-    child.wait_with_output().expect("the program finishes")
+    let out = walk.output().expect("the walker runs");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "the {kind} fixtures:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(said.starts_with("ok: "), "the walker said {said}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn accepted_programs_build_and_run() {
-    for path in fixtures("accept") {
-        let source = std::fs::read_to_string(&path).expect("a readable fixture");
-        let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let dir = scratch(&name);
-        let exe = dir.join(&name);
-
-        // `--std` for every accept fixture, for the same reason the
-        // example walker passes it: a declaration nobody calls emits
-        // nothing (`docs/standard-library.md` §5.2), so it costs the
-        // fixtures that ignore it exactly nothing.
-        // The compiler in cancho writes no code for the edition-12 device verbs yet (#665), so an
-        // example that opens a camera, microphone or speaker is built by the Rust compiler.
-        let mut build = Command::new(BIN);
-        if ["camera_open(", "mic_open(", "speaker_open("].iter().any(|verb| source.contains(verb)) {
-            build.env("CANCHO_COMPILER", "rust");
-        }
-        let build = build
-            .args([
-                "build".as_ref(),
-                path.as_os_str(),
-                "--std".as_ref(),
-                "-o".as_ref(),
-                exe.as_os_str(),
-            ])
-            .output()
-            .expect("the compiler runs");
-        assert!(
-            build.status.success(),
-            "`{name}` should compile, but the compiler said:\n{}",
-            String::from_utf8_lossy(&build.stderr)
-        );
-
-        let run = run_with_stdin(&exe, &source);
-
-        let mut expected = directives(&source, "STDOUT").join("\n");
-        if !expected.is_empty() {
-            expected.push('\n');
-        }
-        assert_eq!(
-            String::from_utf8_lossy(&run.stdout),
-            expected,
-            "`{name}` printed the wrong thing"
-        );
-
-        // Checked whether or not the fixture declares any: a diagnostic
-        // on a program that should have been silent is the failure this
-        // catches, and it is the one the old harness could not see.
-        let mut expected_err = directives(&source, "STDERR").join("\n");
-        if !expected_err.is_empty() {
-            expected_err.push('\n');
-        }
-        assert_eq!(
-            String::from_utf8_lossy(&run.stderr),
-            expected_err,
-            "`{name}` said the wrong thing on standard error"
-        );
-        let expected_status: i32 =
-            directive(&source, "EXIT").map_or(0, |s| s.trim().parse().expect("a numeric EXIT"));
-        assert_eq!(run.status.code(), Some(expected_status), "`{name}` exited wrongly");
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
+    walk_fixtures("accept");
 }
 
 #[test]
 fn refused_programs_are_refused_with_the_stated_reason() {
-    for path in fixtures("reject") {
-        let source = std::fs::read_to_string(&path).expect("a readable fixture");
-        let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let expected = directives(&source, "ERROR");
-        assert!(!expected.is_empty(), "`{name}` declares no expected error");
-
-        let target = target_args(&path);
-        let output = Command::new(BIN)
-            .arg("check")
-            .arg(&path)
-            .args(&target)
-            .output()
-            .expect("the compiler runs");
-
-        assert_eq!(
-            output.status.code(),
-            Some(1),
-            "`{name}` should be refused with exit code 1, got {:?}\n{}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr)
-        );
-
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        for fragment in expected {
-            assert!(
-                stderr.contains(&fragment),
-                "`{name}` should have been refused with `{fragment}`, but said:\n{stderr}"
-            );
-        }
-        // A refusal is always located: path, line and column.
-        assert!(
-            stderr.contains(&format!("{}:", path.display())) || stderr.contains(".cho:"),
-            "`{name}` was refused without a location:\n{stderr}"
-        );
-
-        // …and carries the rule it enforces (`docs/agent-errors.md` §3).
-        // Declared in the fixture rather than derived from the message,
-        // which is the whole point: a fixture says which rule it is a
-        // fixture *for*, and a checker that starts answering a different
-        // one fails here instead of quietly retagging.
-        let rule =
-            directive(&source, "RULE").unwrap_or_else(|| panic!("`{name}` declares no `//~ RULE`"));
-        let rule = rule.trim();
-        let json = Command::new(BIN)
-            .arg("check")
-            .arg(&path)
-            .args(["--output", "json"])
-            .args(&target)
-            .output()
-            .expect("the compiler runs");
-        let body = String::from_utf8_lossy(&json.stdout);
-        let reported = body
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("\"rule\": \""))
-            .map(|rest| rest.trim_end_matches("\","))
-            .unwrap_or_else(|| panic!("`{name}` reported no rule:\n{body}"));
-        assert_eq!(reported, rule, "`{name}` is a fixture for `{rule}` and reported `{reported}`");
-    }
+    walk_fixtures("reject");
 }
 
 /// `docs/agent-errors.md` §3.2: every rule in the catalogue is a rule
@@ -229,86 +126,11 @@ fn every_rule_has_a_fixture() {
     }
 }
 
-/// Every example must build, run, and print what its header says.
-///
-/// A walker rather than one test per example, so an example added later is
-/// covered without anyone remembering to cover it — and so an example that
-/// stops matching the language fails CI instead of quietly rotting.
+/// Every example must build, run, and print what its header says (`tests/run.cho examples`): a walker rather than one test per example, so an example added
+/// later is covered without anyone remembering to cover it, and an example that stops matching the language fails CI instead of quietly rotting.
 #[test]
 fn every_example_runs_and_prints_what_it_says() {
-    let dir = repo_root().join("examples");
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("cannot read `{}`: {e}", dir.display()))
-        .map(|entry| entry.expect("a readable directory entry").path())
-        .filter(|p| p.extension().is_some_and(|e| e == "cho"))
-        .collect();
-    paths.sort();
-    assert!(!paths.is_empty(), "no examples in `{}`", dir.display());
-
-    for path in paths {
-        let source = std::fs::read_to_string(&path).expect("a readable example");
-        let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-        assert!(
-            !directives(&source, "STDOUT").is_empty(),
-            "`{name}` declares no expected output; every example states what it prints"
-        );
-
-        let scratch = scratch(&format!("example-{name}"));
-        let exe = scratch.join(&name);
-        // Every example is built with the standard library available
-        // (`docs/standard-library.md` §2). Passing it unconditionally is
-        // safe precisely because of §5.2 -- a declaration nobody calls
-        // emits nothing, and `std_declarations_cost_nothing_unless_called`
-        // is that as a test rather than as a hope.
-        // The compiler in cancho writes no code for the edition-12 device verbs yet (#665), so an
-        // example that opens a camera, microphone or speaker is built by the Rust compiler.
-        let mut build = Command::new(BIN);
-        if ["camera_open(", "mic_open(", "speaker_open("].iter().any(|verb| source.contains(verb)) {
-            build.env("CANCHO_COMPILER", "rust");
-        }
-        let build = build
-            .args([
-                "build".as_ref(),
-                path.as_os_str(),
-                "--std".as_ref(),
-                "-o".as_ref(),
-                exe.as_os_str(),
-            ])
-            .output()
-            .expect("the compiler runs");
-        assert!(
-            build.status.success(),
-            "`{name}` should compile, but the compiler said:\n{}",
-            String::from_utf8_lossy(&build.stderr)
-        );
-
-        let run = run_with_stdin(&exe, &source);
-        let mut expected = directives(&source, "STDOUT").join("\n");
-        expected.push('\n');
-        assert_eq!(
-            String::from_utf8_lossy(&run.stdout),
-            expected,
-            "`{name}` printed the wrong thing"
-        );
-
-        // Checked whether or not the fixture declares any: a diagnostic
-        // on a program that should have been silent is the failure this
-        // catches, and it is the one the old harness could not see.
-        let mut expected_err = directives(&source, "STDERR").join("\n");
-        if !expected_err.is_empty() {
-            expected_err.push('\n');
-        }
-        assert_eq!(
-            String::from_utf8_lossy(&run.stderr),
-            expected_err,
-            "`{name}` said the wrong thing on standard error"
-        );
-        let expected_status: i32 =
-            directive(&source, "EXIT").map_or(0, |s| s.trim().parse().expect("a numeric EXIT"));
-        assert_eq!(run.status.code(), Some(expected_status), "`{name}` exited wrongly");
-
-        let _ = std::fs::remove_dir_all(&scratch);
-    }
+    walk_fixtures("examples");
 }
 
 #[test]
