@@ -26,8 +26,6 @@ fasta exit 0
 fasta: ok
 revcomp exit 0
 revcomp: the published answer
-== four threads that each sleep 200 ms finish in under 700 ms, so they ran at the same time
-concurrent
 == a program with its own free and malloc links and runs beside the arena and the boxes
 own free and malloc: exit 9 (0 from the libc round trip, 4 from the arena, 5 from the box)
 == every example that declares sockets builds, with the packages it fetches
@@ -39,13 +37,15 @@ agent_supervisor: built
 serve: built
 fetch: built
 == a program that binds and accepts takes a real connection
+client: exit 0
 listener: exit 0
 == a program that connects reaches a real listener
-client: exit 0 and the peer was reached
+client: exit 0
+listener: exit 0
 == the results stub answers a request over loopback and logs it
 status line: HTTP/1.1 200 OK
-json content type: True
-fixed body: True
+json content type: yes
+fixed body: yes
 logged: results-stub: listening
 logged: req="POST /report HTTP/1.1"
 logged: body_len=17

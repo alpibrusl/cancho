@@ -155,7 +155,12 @@ echo "== ids are stable across runs and survive a body rewrite"
 cmp -s "$work/r1.ids" "$work/r2.ids" && echo "hashing is a function of the program alone" || echo "two runs differ"
 grep -q 'sig  harmonic' "$work/r1.ids" && echo "sig harmonic is listed" || echo "sig harmonic is missing"
 grep -q 'type Rational' "$work/r1.ids" && echo "type Rational is listed" || echo "type Rational is missing"
-perl -0pe 's/fn gcd\(a: int, b: int\) -> \[\] int \{\n    if b == 0 \{\n        return math\.abs\(a\);\n    \}\n    return gcd\(b, a % b\);\n\}/fn gcd(a: int, b: int) -> [] int {\n    if b != 0 {\n        return gcd(b, a % b);\n    }\n    return math.abs(a);\n}/' examples/rational.cho > "$work/rational.cho"
+start=$(grep -n '^fn gcd(a: int, b: int)' examples/rational.cho | cut -d: -f1)
+{
+    head -n $((start - 1)) examples/rational.cho
+    printf '%s\n' 'fn gcd(a: int, b: int) -> [] int {' '    if b != 0 {' '        return gcd(b, a % b);' '    }' '    return math.abs(a);' '}'
+    tail -n +$((start + 6)) examples/rational.cho
+} > "$work/rational.cho"
 cmp -s examples/rational.cho "$work/rational.cho" && echo "the body rewrite did not apply"
 "$cancho" ids "$work/rational.cho" --std > "$work/r3.ids" 2>&1
 grep -E '^(sig |type )' "$work/r1.ids" > "$work/r1.sigs"

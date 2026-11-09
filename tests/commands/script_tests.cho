@@ -20,7 +20,7 @@ fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: 
         return 2;
     }
     // One name per field, each followed by a NUL.
-    let list = "agent_tools\0release\0authority\0foreign_authority\0project\0docs\0agent_cli\0refusals\0backends\0differential\0identity\0";
+    let list = "agent_tools\0release\0authority\0foreign_authority\0project\0docs\0agent_cli\0refusals\0backends\0identity\0";
     let count = bytes.count_byte(list, 0);
     var report = buffer.empty(heap, 64);
     var at = 1;

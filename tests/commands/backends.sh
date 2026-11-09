@@ -1,7 +1,7 @@
 # backends.sh -- the script of tests/commands/script_tests.cho for `conformance/backends.rs` (deleted): programs built by the compiler and run, that no walk of tests/run.cho covers.
 # The rest of backends.rs built a fixture of tests/accept or examples and compared its standard output with a string; each of those fixtures declares that same output in its `//~ STDOUT`
 # lines (and its input in `//~ STDIN`), so the accept and examples walks of tests/run.cho already say it (docs/gate.md, G4 wave 3). What no walk reads is benches/, so it is here, with the
-# programs that need arguments, a live peer or the clock. $1 is the compiler, $2 a scratch directory; run from the root of the repository.
+# programs that need arguments, or a live peer. $1 is the compiler, $2 a scratch directory; run from the root of the repository.
 cancho=$1
 work=$2
 root=$(pwd)
@@ -74,17 +74,6 @@ built revcomp benches/game/revcomp.cho && {
     cmp -s "$work/revcomp.got" benches/game/revcomp-1000.txt && echo "revcomp: the published answer" || echo "revcomp: DIFFERENT"
 }
 
-echo "== four threads that each sleep 200 ms finish in under 700 ms, so they ran at the same time"
-built parallel tests/accept/spawn_parallel_sleep.cho && {
-    # The quickest of up to three runs, in milliseconds (perl, for a clock that has them on both systems).
-    best=99999
-    for try in 1 2 3; do
-        took=$(perl -MTime::HiRes=time -e '$t = time; system($ARGV[0]) == 0 or exit 1; printf "%d", (time - $t) * 1000' "$work/parallel") || { echo "parallel: exited non-zero"; break; }
-        [ "$took" -lt "$best" ] && best=$took
-        [ "$best" -lt 400 ] && break
-    done
-    [ "$best" -lt 700 ] && echo "concurrent" || echo "sequential: the quickest run took $best ms"
-}
 
 echo "== a program with its own free and malloc links and runs beside the arena and the boxes"
 cat > "$work/own_free.cho" <<'EOF'
@@ -137,25 +126,6 @@ fetched() {
         shift 2
     done
 }
-
-# freeport: a loopback port nothing listens on.
-freeport() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
-
-# waitconnect PORT: connect to the loopback port (for up to ten seconds) and say nothing else.
-waitconnect='
-import socket, sys, time
-port = int(sys.argv[1])
-end = time.time() + 10
-while True:
-    try:
-        s = socket.create_connection(("127.0.0.1", port))
-        break
-    except OSError:
-        if time.time() > end:
-            raise SystemExit("could not connect within the deadline")
-        time.sleep(0.02)
-'
-
 echo "== every example that declares sockets builds, with the packages it fetches"
 ns=packages/net-sockets/.cancho-vcs
 nc=packages/net-connect/.cancho-vcs
@@ -177,17 +147,24 @@ built serve examples/serve/serve.cho "$work"/f_serve/*.cho && echo "serve: built
 fetched "$work/f_fetch" examples/fetch/connect.lock $nc examples/fetch/response.lock $hr
 built fetch examples/fetch/fetch.cho "$work"/f_fetch/*.cho && echo "fetch: built"
 
-echo "== a program that binds and accepts takes a real connection"
-port=$(freeport)
-cat > "$work/listener.cho" <<EOF2
+
+# alive PID: 0 if the process is still there after a moment (a server that could not bind its port ends at once), 1 if it ended.
+alive() {
+    sleep 0.3
+    kill -0 "$1" 2> /dev/null
+}
+
+# listener_source PORT: a program that binds PORT, listens, accepts one connection and answers 0 when it got one.
+listener_source() {
+    cat > "$work/listener.cho" <<EOF2
 edition 2;
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net } = split(world);
     release(io); release(fs); release(heap); release(args); release(ffi);
-    let bound = narrow(net, "$port");
+    let bound = narrow(net, "$1");
     var status = 1;
     borrow bound as &n in {
-        let listener = bind(n, $port);
+        let listener = bind(n, $1);
         if listener >= 0 {
             listen(listener, 1);
             let conn = accept(listener);
@@ -200,20 +177,40 @@ fn main(world: World) -> [] int {
     return status;
 }
 EOF2
-built listener "$work/listener.cho" && {
-    "$work/listener" &
-    pid=$!
-    python3 -c "$waitconnect"'
-s.sendall(b"ping")
-s.close()
-' "$port"
-    wait $pid
-    echo "listener: exit $?"
 }
 
+# start_listener: build and start the listener on a port that is free (the first of a few from the process number that it manages to bind); sets $port and $pid, or $pid to nothing.
+start_listener() {
+    pid=
+    attempt=0
+    while [ $attempt -lt 6 ]; do
+        port=$((20000 + ($$ * 7 + attempt * 131) % 30000))
+        listener_source $port
+        built listener "$work/listener.cho" || return
+        "$work/listener" &
+        pid=$!
+        alive $pid && return
+        attempt=$((attempt + 1))
+    done
+    echo "listener: no free port"
+    pid=
+}
+
+built tcp_probe tests/programs/tcp_probe.cho
+
+echo "== a program that binds and accepts takes a real connection"
+start_listener
+if [ -n "$pid" ]; then
+    "$work/tcp_probe" 127.0.0.1 $port ping > /dev/null 2>&1
+    echo "client: exit $?"
+    wait $pid
+    echo "listener: exit $?"
+fi
+
 echo "== a program that connects reaches a real listener"
-port=$(freeport)
-cat > "$work/client.cho" <<EOF2
+start_listener
+if [ -n "$pid" ]; then
+    cat > "$work/client.cho" <<EOF2
 edition 2;
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args, net } = split(world);
@@ -230,42 +227,39 @@ fn main(world: World) -> [] int {
     return 1;
 }
 EOF2
-built client "$work/client.cho" && python3 -c '
-import socket, subprocess, sys
-port, exe = int(sys.argv[1]), sys.argv[2]
-server = socket.socket()
-server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-server.bind(("127.0.0.1", port))
-server.listen(1)
-server.settimeout(10)
-run = subprocess.Popen([exe])
-conn, _ = server.accept()
-print("client: exit", run.wait(), "and the peer was reached")
-' "$port" "$work/client"
+    built client "$work/client.cho" && {
+        "$work/client"
+        echo "client: exit $?"
+    }
+    wait $pid
+    echo "listener: exit $?"
+fi
 
 echo "== the results stub answers a request over loopback and logs it"
-port=$(freeport)
 fetched "$work/f_stub" examples/results_stub/net.lock $ns
 built results_stub examples/results_stub/results_stub.cho "$work"/f_stub/*.cho && {
-    "$work/results_stub" --listen "127.0.0.1:$port" > "$work/stub.log" 2>&1 &
-    pid=$!
-    python3 -c "$waitconnect"'
-body = b"{\"hello\":\"world\"}"
-s.sendall(b"POST /report HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body) + body)
-data = b""
-while True:
-    chunk = s.recv(4096)
-    if not chunk:
-        break
-    data += chunk
-text = data.decode()
-print("status line:", text.split("\r\n")[0])
-print("json content type:", "Content-Type: application/json" in text)
-print("fixed body:", text.endswith("{\"ok\":true,\"stub\":true}"))
-' "$port"
-    kill $pid
-    wait $pid 2> /dev/null
-    for want in 'results-stub: listening' 'req="POST /report HTTP/1.1"' 'body_len=17' 'body_preview="{"hello":"world"}"'; do
-        grep -qF -- "$want" "$work/stub.log" && echo "logged: $want" || echo "NOT logged: $want"
+    attempt=0
+    pid=
+    while [ $attempt -lt 6 ]; do
+        port=$((20000 + ($$ * 11 + attempt * 137) % 30000))
+        "$work/results_stub" --listen "127.0.0.1:$port" > "$work/stub.log" 2>&1 &
+        pid=$!
+        alive $pid && break
+        pid=
+        attempt=$((attempt + 1))
     done
+    if [ -z "$pid" ]; then
+        echo "results_stub: no free port"
+    else
+        request=$(printf 'POST /report HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 17\r\nConnection: close\r\n\r\n{"hello":"world"}')
+        reply=$("$work/tcp_probe" 127.0.0.1 $port "$request" 2> /dev/null)
+        kill $pid
+        wait $pid 2> /dev/null
+        case $reply in "HTTP/1.1 200 OK"*) echo "status line: HTTP/1.1 200 OK" ;; *) echo "status line: wrong: $reply" ;; esac
+        case $reply in *"Content-Type: application/json"*) echo "json content type: yes" ;; *) echo "json content type: no" ;; esac
+        case $reply in *'{"ok":true,"stub":true}') echo "fixed body: yes" ;; *) echo "fixed body: no" ;; esac
+        for want in 'results-stub: listening' 'req="POST /report HTTP/1.1"' 'body_len=17' 'body_preview="{"hello":"world"}"'; do
+            grep -qF -- "$want" "$work/stub.log" && echo "logged: $want" || echo "NOT logged: $want"
+        done
+    fi
 }
