@@ -1,0 +1,32 @@
+fn digits[&o](buf: &!o [byte], at: int, n: int) -> [] int {
+    var p = at;
+    var m = n;
+    if m > 0 { m = -m; }
+    if m == 0 { p = p - 1; buf[p] = byte_of('0'); }
+    while m != 0 {
+        p = p - 1;
+        buf[p] = byte_of('0' - m % 10);
+        m = m / 10;
+    }
+    if n < 0 { p = p - 1; buf[p] = byte_of('-'); }
+    return p;
+}
+fn out[&i](i: &!i Io, k: int, v: int) -> [err_write] int {
+    region r {
+        let buf = alloc_slice[r](48, byte_of(0));
+        buf[47] = byte_of(10);
+        var p = digits(buf, 47, v);
+        p = p - 1;
+        buf[p] = byte_of(' ');
+        p = digits(buf, p, k);
+        io.error_all(i, buf[p..48]);
+    }
+    return 0;
+}
+fn first[&a](a: &a Args) -> [args] int {
+    let s = arg(a, 1);
+    var n = 0;
+    var p = 0;
+    while p < len(s) { n = n * 10 + (int_of(s[p]) - '0'); p = p + 1; }
+    return n;
+}

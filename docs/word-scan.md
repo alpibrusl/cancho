@@ -184,7 +184,7 @@ every `.cho` file under `tests/accept`, `tests/programs`, `examples`, `std`, `pa
 `origin/main` was given to `cancho ids --std` by an `origin/main` build and by this build, and the outputs compared: 226
 files that either build accepts, 224 byte-identical and 2 different, `examples/selfhost/tables.cho` and `builtins.cho`,
 the generated files whose text this change rewrites on purpose; another 146 are refused by both (modules that need their
-siblings), so they were not compared. The golden-hash tests of `identity.rs` pass.
+siblings), so they were not compared. The golden-hash tests of `tests/commands/identity.sh` pass.
 
 An edition-7 file that declares its own `popcount`, `trailing_zeros`, `leading_zeros`, `load_le64` or `byte_mask64` keeps
 meaning its own (`tests/accept/word_scan_beside_own_names.cho`, on both backends), and an edition-7 file that names one
@@ -192,7 +192,7 @@ without declaring it is refused as `not-a-function` (`tests/reject/word_scan_is_
 
 ## 7. What it is checked by
 
-* `tests/accept/word_scan.cho`, on **both backends** (`backends.rs`) and under wasmtime: each primitive against a loop written
+* `tests/accept/word_scan.cho`, on **both backends** (the accept walk of `tests/run.cho` (was `backends.rs`)) and under wasmtime: each primitive against a loop written
   a byte or a bit at a time, over two 400-byte pseudo-random buffers (all 256 values; five values only), ten start offsets,
   every length 0..=140 and every `at` the primitive allows, the last one included; the counts on zero, each single bit, each
   run of low ones and the extremes.

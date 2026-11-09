@@ -243,7 +243,7 @@ rather than only run once and discarded.
 > @free(ptr %p)`), which opaque pointers accept; the only difference is a
 > result the arena never reads. Measured with clang 18 on linux-x86_64 by
 > `a_programs_own_free_and_malloc_link_and_run_beside_the_arena_and_boxes`
-> (`backends.rs`), which builds and runs a program with its own `free` and
+> (the accept walk of `tests/run.cho` (was `backends.rs`)), which builds and runs a program with its own `free` and
 > `malloc` beside a `region` and a boxed slice. Not measured: wasm32, where
 > there is no runtime here. A program-declared `free`/`malloc` is already the
 > toolchain row above there (its `int` is `i64` where wasi-libc's `size_t`

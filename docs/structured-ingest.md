@@ -99,7 +99,7 @@ something the lexer would never have produced.
 
 ## 4. The contracts, unchanged and enforced over JSON
 
-The walker in `crates/cancho/tests/conformance/identity.rs` holds two
+The walker in `tests/commands/identity.sh` (was `conformance/identity.rs`) holds two
 properties over text for every `.cho` file in the repository. Both now
 hold over JSON, and the test that enforces them is the same test, run
 over the same corpus:

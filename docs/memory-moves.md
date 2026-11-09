@@ -32,4 +32,4 @@ region slice in one call, which is why [`bulk-copy.md`](bulk-copy.md)'s two-slic
   moves at both ends, a one-byte move, a move inside a sub-slice that touches nothing outside it.
 * `tests/commands/traps.cho` (it was `conformance/traps.rs`): nine ways of being out of range (negative `dst`, `src`, `n`; past the end by each; beyond the length; and a count that would overflow
   `dst + n` and `src + n`) each killed by a signal, and three calls at the edge that must succeed.
-* `tests/conformance/backends.rs`: the two backends agree.
+* `tests/run.cho` accept walk (was `conformance/backends.rs`): the two backends agree.

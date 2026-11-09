@@ -1,0 +1,814 @@
+edition 7;
+module differential_test;
+
+// differential.cho -- `conformance/differential.rs` (deleted), in cancho (`docs/gate.md` G4, `docs/differential.md`): the constant folder against the compiled program. Every operator the folder
+// evaluates, on every pair of boundary operands (5,156 cases), gives the same answer folded as the compiled program gives at run time: the same value, or a trap on both sides. The oracle is the folder
+// of the compiler written in cancho (`fold.cho`), the compiler under test. Three arms per case: the literal `(a) op (b)` in a function of its own, folded during lowering (a trap there is a
+// `constant-traps` refusal, and `check --output json` reports every one, so one run of `check` is the folder's whole trap set); the call `h(a, b)` of a pure function on literal arguments; and the
+// same operator on operands chosen by a loop counter the compiler cannot see (a trap kills the process, so the program reports on standard error and is run again past the case that killed it).
+//
+//     cancho build tests/commands/differential.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: differential` or what is wrong, and exits 0 or 1. Not carried over from the Rust test: that the call arm really folds (`authority --output json` of
+// the compiler written in cancho has no `folded_calls`, so a call arm that is run time against run time would pass), and the five mutations of the folder it was measured against.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// ---- the cases: 34 sections (an operator on a type), in order: int binary (16 operators), float binary (10), bool binary (4), then the unary ones (int `-`, int `~`, float `-`, bool `!`) ----
+
+fn sec_ty(s: int) -> [] int {
+    if s < 16 {
+        return 0;
+    }
+    if s < 26 {
+        return 1;
+    }
+    if s < 30 {
+        return 2;
+    }
+    if s == 32 {
+        return 1;
+    }
+    if s == 33 {
+        return 2;
+    }
+    return 0;
+}
+
+fn sec_unary(s: int) -> [] bool {
+    return s >= 30;
+}
+
+fn sec_cmp(s: int) -> [] bool {
+    return s >= 10 && s <= 15 || s >= 20 && s <= 29;
+}
+
+// The type the section answers: 0 int, 1 float, 2 bool.
+fn sec_ret(s: int) -> [] int {
+    if sec_cmp(s) {
+        return 2;
+    }
+    return sec_ty(s);
+}
+
+fn sec_len(s: int) -> [] int {
+    if s < 26 {
+        return 196;
+    }
+    if s < 30 {
+        return 4;
+    }
+    if s == 33 {
+        return 2;
+    }
+    return 14;
+}
+
+fn sec_start(s: int) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < s {
+        n = n + sec_len(i);
+        i = i + 1;
+    }
+    return n;
+}
+
+fn section_of(k: int) -> [] int {
+    var s = 0;
+    while k >= sec_start(s) + sec_len(s) {
+        s = s + 1;
+    }
+    return s;
+}
+
+fn nvalues(ty: int) -> [] int {
+    if ty == 2 {
+        return 2;
+    }
+    return 14;
+}
+
+fn put_value[&h](heap: &!h Heap, b: buffer.Buffer, ty: int, i: int) -> [heap] buffer.Buffer {
+    let ints = "-9223372036854775808;-9223372036854775807;-64;-63;-2;-1;0;1;2;3;63;64;9223372036854775806;9223372036854775807";
+    let floats = "0.0;-0.0;1.0;-1.0;0.1;3.0;1.0e308;-1.0e308;5.0e-324;2.2250738585072014e-308;(1.0 / 0.0);(-1.0 / 0.0);(0.0 / 0.0);(-(0.0 / 0.0))";
+    if ty == 0 {
+        return buffer.append(heap, b, bytes.field(ints, 59, i + 1));
+    }
+    if ty == 1 {
+        return buffer.append(heap, b, bytes.field(floats, 59, i + 1));
+    }
+    return buffer.append(heap, b, bytes.field("false;true", 59, i + 1));
+}
+
+fn put_ty[&h](heap: &!h Heap, b: buffer.Buffer, ty: int) -> [heap] buffer.Buffer {
+    if ty == 0 {
+        return buffer.append(heap, b, "int");
+    }
+    if ty == 1 {
+        return buffer.append(heap, b, "float");
+    }
+    return buffer.append(heap, b, "bool");
+}
+
+fn put_op[&h](heap: &!h Heap, b: buffer.Buffer, s: int) -> [heap] buffer.Buffer {
+    let int_ops = "+;-;*;/;%;<<;>>;&;|;^;==;!=;<;<=;>;>=";
+    let float_ops = "+;-;*;/;==;!=;<;<=;>;>=";
+    let bool_ops = "==;!=;&&;||";
+    if s < 16 {
+        return buffer.append(heap, b, bytes.field(int_ops, 59, s + 1));
+    }
+    if s < 26 {
+        return buffer.append(heap, b, bytes.field(float_ops, 59, s - 15));
+    }
+    if s < 30 {
+        return buffer.append(heap, b, bytes.field(bool_ops, 59, s - 25));
+    }
+    if s == 31 {
+        return buffer.append(heap, b, "~");
+    }
+    if s == 33 {
+        return buffer.append(heap, b, "!");
+    }
+    return buffer.append(heap, b, "-");
+}
+
+// The expression of a section on operand texts: `-(a)` for the unary ones, `(a) op (b)` for the rest.
+fn put_expr[&h, &x, &y](heap: &!h Heap, out: buffer.Buffer, s: int, a: &x [byte], b: &y [byte]) -> [heap] buffer.Buffer {
+    var text = out;
+    if sec_unary(s) {
+        text = put_op(heap, text, s);
+        text = buffer.append(heap, text, "(");
+        text = buffer.append(heap, text, a);
+        return buffer.append(heap, text, ")");
+    }
+    text = buffer.append(heap, text, "(");
+    text = buffer.append(heap, text, a);
+    text = buffer.append(heap, text, ") ");
+    text = put_op(heap, text, s);
+    text = buffer.append(heap, text, " (");
+    text = buffer.append(heap, text, b);
+    return buffer.append(heap, text, ")");
+}
+
+// The first and second operand of case `k`, as literals.
+fn put_case_expr[&h](heap: &!h Heap, out: buffer.Buffer, k: int) -> [heap] buffer.Buffer {
+    let s = section_of(k);
+    let j = k - sec_start(s);
+    let n = nvalues(sec_ty(s));
+    var a = buffer.empty(heap, 32);
+    var b = buffer.empty(heap, 32);
+    if sec_unary(s) {
+        a = put_value(heap, a, sec_ty(s), j);
+    } else {
+        a = put_value(heap, a, sec_ty(s), j / n);
+        b = put_value(heap, b, sec_ty(s), j % n);
+    }
+    var text = out;
+    borrow a as &ab in {
+        borrow b as &bb in {
+            text = put_expr(heap, text, s, buffer.bytes(ab), buffer.bytes(bb));
+        }
+    }
+    buffer.drop(heap, a);
+    buffer.drop(heap, b);
+    return text;
+}
+
+// A result printed as an `int`, so one line format covers all three result types -- and a float as its bits, so `-0.0` and `0.0`, and two NaNs, cannot compare equal by accident.
+fn put_shown[&h, &t](heap: &!h Heap, out: buffer.Buffer, ret: int, inner: &t [byte]) -> [heap] buffer.Buffer {
+    var text = out;
+    if ret == 0 {
+        return buffer.append(heap, text, inner);
+    }
+    if ret == 2 {
+        text = buffer.append(heap, text, "b2i(");
+    } else {
+        text = buffer.append(heap, text, "bits_of(");
+    }
+    text = buffer.append(heap, text, inner);
+    return buffer.append(heap, text, ")");
+}
+
+// `NAME` followed by the number of the case and `()`: `l17()`.
+fn call_of[&h, &n](heap: &!h Heap, name: &n [byte], k: int) -> [heap] buffer.Buffer {
+    var text = buffer.append(heap, buffer.empty(heap, 16), name);
+    text = buffer.push_nat(heap, text, k);
+    return buffer.append(heap, text, "()");
+}
+
+// ---- the programs ----
+
+// `fn lK() -> [] T { return EXPR; }` for case `k`.
+fn put_literal_fn[&h](heap: &!h Heap, out: buffer.Buffer, k: int) -> [heap] buffer.Buffer {
+    var text = buffer.append(heap, out, "fn l");
+    text = buffer.push_nat(heap, text, k);
+    text = buffer.append(heap, text, "() -> [] ");
+    text = put_ty(heap, text, sec_ret(section_of(k)));
+    text = buffer.append(heap, text, " { return ");
+    text = put_case_expr(heap, text, k);
+    return buffer.append(heap, text, "; }\n");
+}
+
+// One function per case, on line k + 1.
+fn literal_source[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var text = buffer.empty(heap, 1048576);
+    var k = 0;
+    while k < 5156 {
+        text = put_literal_fn(heap, text, k);
+        k = k + 1;
+    }
+    return buffer.append(heap, text, "fn main(world: World) -> [] int { release(world); return 0; }\n");
+}
+
+// The two folded arms for every case that has a value (`trap` says which do not): the literal function and the call of a pure function on literal arguments, printed one after the other.
+fn folded_source[&h, &t](heap: &!h Heap, trap: &t [byte]) -> [heap] buffer.Buffer {
+    var text = buffer.append(heap, buffer.empty(heap, 1048576), "import std.io;\nfn b2i(b: bool) -> [] int { if b { return 1; } return 0; }\n");
+    text = buffer.append(heap, text, "fn out[&i](i: &!i Io, k: int, v: int) -> [io_write] int {\n    io.print_int(i, k); io.space(i); io.print_int(i, v); io.newline(i); return 0;\n}\n");
+    var s = 0;
+    while s < 34 {
+        text = buffer.append(heap, text, "fn h");
+        text = buffer.push_nat(heap, text, s);
+        text = buffer.append(heap, text, "(a: ");
+        text = put_ty(heap, text, sec_ty(s));
+        if !sec_unary(s) {
+            text = buffer.append(heap, text, ", b: ");
+            text = put_ty(heap, text, sec_ty(s));
+        }
+        text = buffer.append(heap, text, ") -> [] ");
+        text = put_ty(heap, text, sec_ret(s));
+        text = buffer.append(heap, text, " { return ");
+        if sec_unary(s) {
+            text = put_op(heap, text, s);
+            text = buffer.append(heap, text, "a; }\n");
+        } else {
+            text = buffer.append(heap, text, "a ");
+            text = put_op(heap, text, s);
+            text = buffer.append(heap, text, " b; }\n");
+        }
+        s = s + 1;
+    }
+    var calls = buffer.empty(heap, 1048576);
+    var k = 0;
+    while k < 5156 {
+        if trap[k] == byte_of(0) {
+            let sec = section_of(k);
+            let j = k - sec_start(sec);
+            let n = nvalues(sec_ty(sec));
+            text = put_literal_fn(heap, text, k);
+            text = buffer.append(heap, text, "fn c");
+            text = buffer.push_nat(heap, text, k);
+            text = buffer.append(heap, text, "() -> [] ");
+            text = put_ty(heap, text, sec_ret(sec));
+            text = buffer.append(heap, text, " { return h");
+            text = buffer.push_nat(heap, text, sec);
+            text = buffer.append(heap, text, "(");
+            if sec_unary(sec) {
+                text = put_value(heap, text, sec_ty(sec), j);
+            } else {
+                text = put_value(heap, text, sec_ty(sec), j / n);
+                text = buffer.append(heap, text, ", ");
+                text = put_value(heap, text, sec_ty(sec), j % n);
+            }
+            text = buffer.append(heap, text, "); }\n");
+            let literal = call_of(heap, "l", k);
+            let call = call_of(heap, "c", k);
+            calls = buffer.append(heap, calls, "        out(i, ");
+            calls = buffer.push_nat(heap, calls, k);
+            calls = buffer.append(heap, calls, ", ");
+            borrow literal as &lb in {
+                calls = put_shown(heap, calls, sec_ret(sec), buffer.bytes(lb));
+            }
+            calls = buffer.append(heap, calls, "); out(i, ");
+            calls = buffer.push_nat(heap, calls, k);
+            calls = buffer.append(heap, calls, ", ");
+            borrow call as &cb in {
+                calls = put_shown(heap, calls, sec_ret(sec), buffer.bytes(cb));
+            }
+            calls = buffer.append(heap, calls, ");\n");
+            buffer.drop(heap, literal);
+            buffer.drop(heap, call);
+        }
+        k = k + 1;
+    }
+    text = buffer.append(heap, text, "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(heap); release(fs); release(ffi);\n    borrow mut io as &!i in {\n");
+    borrow calls as &cb in {
+        text = buffer.append(heap, text, buffer.bytes(cb));
+    }
+    buffer.drop(heap, calls);
+    return buffer.append(heap, text, "    }\n    release(io);\n    return 0;\n}\n");
+}
+
+// The program that runs the case its argument names, and all the cases after it, on operands the compiler cannot see: `head` is what does not change (tests/commands/differential_runtime.txt).
+fn runtime_source[&h, &t](heap: &!h Heap, head: &t [byte]) -> [heap] buffer.Buffer {
+    var text = buffer.append(heap, buffer.empty(heap, 1048576), "import std.io;\nfn b2i(b: bool) -> [] int { if b { return 1; } return 0; }\n");
+    text = buffer.append(heap, text, head);
+    var ty = 0;
+    while ty < 3 {
+        text = buffer.append(heap, text, "fn ");
+        if ty == 0 {
+            text = buffer.append(heap, text, "ival");
+        }
+        if ty == 1 {
+            text = buffer.append(heap, text, "fval");
+        }
+        if ty == 2 {
+            text = buffer.append(heap, text, "bval");
+        }
+        text = buffer.append(heap, text, "(k: int) -> [] ");
+        text = put_ty(heap, text, ty);
+        text = buffer.append(heap, text, " {\n");
+        var i = 0;
+        while i < nvalues(ty) {
+            text = buffer.append(heap, text, "    if k == ");
+            text = buffer.push_nat(heap, text, i);
+            text = buffer.append(heap, text, " { return ");
+            text = put_value(heap, text, ty, i);
+            text = buffer.append(heap, text, "; }\n");
+            i = i + 1;
+        }
+        text = buffer.append(heap, text, "    return ");
+        text = put_value(heap, text, ty, 0);
+        text = buffer.append(heap, text, ";\n}\n");
+        ty = ty + 1;
+    }
+    // One section per operator, in the order of the cases, decoding the case number back into two operand indices.
+    text = buffer.append(heap, text, "fn case(k: int) -> [] int {\n");
+    var s = 0;
+    while s < 34 {
+        let ty = sec_ty(s);
+        var getter = buffer.empty(heap, 8);
+        if ty == 0 {
+            getter = buffer.append(heap, getter, "ival");
+        }
+        if ty == 1 {
+            getter = buffer.append(heap, getter, "fval");
+        }
+        if ty == 2 {
+            getter = buffer.append(heap, getter, "bval");
+        }
+        var a = buffer.empty(heap, 16);
+        var b = buffer.empty(heap, 16);
+        borrow getter as &gb in {
+            a = buffer.append(heap, a, buffer.bytes(gb));
+            if !sec_unary(s) {
+                b = buffer.append(heap, b, buffer.bytes(gb));
+            }
+        }
+        if sec_unary(s) {
+            a = buffer.append(heap, a, "(j)");
+        } else {
+            a = buffer.append(heap, a, "(j / ");
+            a = buffer.push_nat(heap, a, nvalues(ty));
+            a = buffer.append(heap, a, ")");
+            b = buffer.append(heap, b, "(j % ");
+            b = buffer.push_nat(heap, b, nvalues(ty));
+            b = buffer.append(heap, b, ")");
+        }
+        text = buffer.append(heap, text, "    if k < ");
+        text = buffer.push_nat(heap, text, sec_start(s) + sec_len(s));
+        text = buffer.append(heap, text, " {\n        let j = k - ");
+        text = buffer.push_nat(heap, text, sec_start(s));
+        text = buffer.append(heap, text, ";\n        return ");
+        var expr = buffer.empty(heap, 64);
+        borrow a as &ab in {
+            borrow b as &bb in {
+                expr = put_expr(heap, expr, s, buffer.bytes(ab), buffer.bytes(bb));
+            }
+        }
+        borrow expr as &eb in {
+            text = put_shown(heap, text, sec_ret(s), buffer.bytes(eb));
+        }
+        text = buffer.append(heap, text, ";\n    }\n");
+        buffer.drop(heap, expr);
+        buffer.drop(heap, a);
+        buffer.drop(heap, b);
+        buffer.drop(heap, getter);
+        s = s + 1;
+    }
+    return buffer.append(heap, text, "    return 0;\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(heap); release(fs); release(ffi);\n    var k = 0;\n    borrow args as &a in { k = first(a); }\n    release(args);\n    borrow mut io as &!i in {\n        while k < 5156 { out(i, k, case(k)); k = k + 1; }\n    }\n    release(io);\n    return 0;\n}\n");
+}
+
+// ---- reading what the compiler and the programs said ----
+
+// How many times `needle` occurs in `text`.
+fn occurrences[&t, &n](text: &t [byte], needle: &n [byte]) -> [] int {
+    var count = 0;
+    var from = 0;
+    while from < len(text) {
+        let at = bytes.find(text[from..len(text)], needle);
+        if at < 0 {
+            from = len(text);
+        } else {
+            count = count + 1;
+            from = from + at + len(needle);
+        }
+    }
+    return count;
+}
+
+// The whole number at the start of `text`, with its sign, and not a digit more (the most negative one is reached from below).
+fn parse_int[&t](text: &t [byte]) -> [] int {
+    var at = 0;
+    var negative = false;
+    if len(text) > 0 && text[0] == byte_of('-') {
+        negative = true;
+        at = 1;
+    }
+    var n = 0;
+    while at < len(text) && bytes.is_digit(int_of(text[at])) {
+        n = n * 10 - (int_of(text[at]) - '0');
+        at = at + 1;
+    }
+    if negative {
+        return n;
+    }
+    return 0 - n;
+}
+
+// The lines of the refusals the folder made: `"line": N` is the case N - 1. Marks them in `trap` and says how many refusals were not `constant-traps`.
+fn mark_traps[&t, &o](text: &t [byte], trap: &!o [byte]) -> [] int {
+    let key = "\"line\": ";
+    var from = 0;
+    while from < len(text) {
+        let at = bytes.find(text[from..len(text)], key);
+        if at < 0 {
+            from = len(text);
+        } else {
+            from = from + at + len(key);
+            let line = parse_int(text[from..len(text)]);
+            if line >= 1 && line <= 5156 {
+                trap[line - 1] = byte_of(1);
+            }
+        }
+    }
+    return occurrences(text, "\"rule\": ") - occurrences(text, "\"rule\": \"constant-traps\"");
+}
+
+// The `k v` lines of `text`: the value of case k goes to `vals[k]` and `seen[k]` is set; a case seen twice with two values is marked in `bad`. Returns one past the last case seen, or `from` if none.
+fn read_pairs[&t, &o, &p, &q](text: &t [byte], vals: &!o [int], seen: &!p [byte], bad: &!q [byte], from: int) -> [] int {
+    var reached = from;
+    var start = 0;
+    var at = 0;
+    while at < len(text) {
+        if text[at] == byte_of(10) {
+            let line = text[start..at];
+            let space = bytes.find(line, " ");
+            if space > 0 {
+                let k = parse_int(line[0..space]);
+                let v = parse_int(line[space + 1..len(line)]);
+                if k >= 0 && k < 5156 {
+                    if seen[k] != byte_of(0) && vals[k] != v {
+                        bad[k] = byte_of(1);
+                    }
+                    vals[k] = v;
+                    seen[k] = byte_of(1);
+                    reached = k + 1;
+                }
+            }
+            start = at + 1;
+        }
+        at = at + 1;
+    }
+    return reached;
+}
+
+fn count_set[&t](flags: &t [byte]) -> [] int {
+    var n = 0;
+    var k = 0;
+    while k < 5156 {
+        if flags[k] != byte_of(0) {
+            n = n + 1;
+        }
+        k = k + 1;
+    }
+    return n;
+}
+
+// ---- the three arms ----
+
+// `literal.cho` through `check --output json`: the folder's trap set, in `trap`.
+fn phase_traps[&h, &x, &c, &f, &b, &e, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], trap: &!t [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let text = literal_source(heap);
+    var probe = buffer.empty(heap, 0);
+    borrow text as &tb in {
+        buffer.drop(heap, probe);
+        probe = harness.rt_put(heap, fs, dir, "literal.cho", buffer.bytes(tb));
+    }
+    buffer.drop(heap, text);
+    borrow probe as &pb in {
+        let ended = harness.run_cancho(heap, exec, clock, bin, env, "check", buffer.bytes(pb), "--output", "json");
+        let harness.Ended { out, err, kind, code } = ended;
+        borrow out as &ob in {
+            borrow err as &eb in {
+                if kind != 0 {
+                    rep = harness.failure(heap, rep, "differential", "literal", "check should answer, with the refusals as JSON", buffer.bytes(eb));
+                } else if mark_traps(buffer.bytes(ob), trap) != 0 {
+                    rep = harness.failure(heap, rep, "differential", "literal", "a literal case was refused for something other than trapping", buffer.bytes(ob));
+                }
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, probe);
+    return rep;
+}
+
+// What the compiler said to a build, consumed: true when it built; otherwise a failure of `name` in the report.
+fn built_or_fail[&h, &n, &w](heap: &!h Heap, built: harness.Ended, name: &n [byte], why: &w [byte], report: buffer.Buffer) -> [heap] (buffer.Buffer, bool) {
+    let harness.Ended { out, err, kind, code } = built;
+    buffer.drop(heap, out);
+    var rep = report;
+    var ok = true;
+    if kind != 0 {
+        ok = false;
+        borrow err as &eb in {
+            rep = harness.failure(heap, rep, "differential", name, why, buffer.bytes(eb));
+        }
+    }
+    buffer.drop(heap, err);
+    return (rep, ok);
+}
+
+// `exe` run and its standard output read as `k v` lines.
+fn run_folded[&h, &x, &c, &p, &o, &q, &r](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], ct: &!o [int], cseen: &!q [byte], cbad: &!r [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let ran = harness.run_program(heap, exec, clock, exe, "");
+    let harness.Ended { out, err, kind, code } = ran;
+    borrow out as &ob in {
+        borrow err as &eb in {
+            if kind != 0 || code != 0 {
+                rep = harness.failure(heap, rep, "differential", "folded", "nothing in the folded program can trap", buffer.bytes(eb));
+            } else {
+                read_pairs(buffer.bytes(ob), ct, cseen, cbad, 0);
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// `folded.cho` built and run: what lowering folded against what the call arm folded, in `ct`.
+fn phase_folded[&h, &x, &c, &f, &b, &e, &d, &t, &o, &p, &q](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], trap: &t [byte], ct: &!o [int], cseen: &!p [byte], cbad: &!q [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let text = folded_source(heap, trap);
+    var path = buffer.empty(heap, 0);
+    borrow text as &tb in {
+        buffer.drop(heap, path);
+        path = harness.rt_put(heap, fs, dir, "folded.cho", buffer.bytes(tb));
+    }
+    buffer.drop(heap, text);
+    path = buffer.push(heap, path, byte_of(0));
+    let exe = harness.joined(heap, dir, "folded");
+    borrow path as &pb in {
+        borrow exe as &xb in {
+            let built = harness.build(heap, exec, clock, bin, buffer.bytes(pb), buffer.bytes(xb), env);
+            let (after, ok) = built_or_fail(heap, built, "folded", "the folded program should build, but the compiler said", rep);
+            rep = after;
+            if ok {
+                rep = run_folded(heap, exec, clock, buffer.bytes(xb), ct, cseen, cbad, rep);
+            }
+        }
+    }
+    buffer.drop(heap, exe);
+    buffer.drop(heap, path);
+    return rep;
+}
+
+// One run of the program from case `next` through `sh`, so that a trap does not cost a core dump (a runner that pipes dumps to systemd-coredump pays half a second for each: the limit 1 is the value the
+// kernel does not pipe; a hard limit of 0 cannot be raised and is left alone). Its standard error goes to `rt`; answers one past the last case it reached, how it ended (`kind` and `code` of the harness) and
+// what it said on standard error.
+fn one_run[&h, &x, &c, &p, &e, &o, &q, &r](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], env: &e [byte], next: int, rt: &!o [int], rseen: &!q [byte], rbad: &!r [byte]) -> [heap, exec(""), clock, poll] (int, int, int, buffer.Buffer) {
+    var command = harness.word(heap, buffer.empty(heap, 64), "-c");
+    command = harness.word(heap, command, "ulimit -c 1 2> /dev/null; exec \"$0\" \"$1\"");
+    command = harness.word(heap, command, exe);
+    var number = buffer.push_nat(heap, buffer.empty(heap, 8), next);
+    borrow number as &nb in {
+        command = harness.word(heap, command, buffer.bytes(nb));
+    }
+    buffer.drop(heap, number);
+    let ran = harness.spawn_capture(heap, exec, clock, "/bin/sh", command, "", env);
+    let harness.Ended { out, err, kind, code } = ran;
+    buffer.drop(heap, out);
+    var reached = next;
+    borrow err as &eb in {
+        reached = read_pairs(buffer.bytes(eb), rt, rseen, rbad, next);
+    }
+    return (reached, kind, code, err);
+}
+
+// The loop over the runs: each trap is a run that ends in a signal, and the next run starts past it.
+fn runs[&h, &x, &c, &p, &e, &t, &o, &q, &r, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], env: &e [byte], trap: &t [byte], rt: &!o [int], rseen: &!q [byte], rtrap: &!r [byte], rbad: &!s [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    var next = 0;
+    var going = true;
+    var unpredicted = 0;
+    while going && next < 5156 {
+        let (reached, kind, code, errors) = one_run(heap, exec, clock, exe, env, next, rt, rseen, rbad);
+        borrow errors as &rb in {
+            if kind == 0 && code == 0 {
+                if reached != 5156 {
+                    rep = harness.failure(heap, rep, "differential", "runtime", "a clean exit must have run every case", buffer.bytes(rb));
+                }
+                going = false;
+            } else if kind == 1 && reached < 5156 {
+                rtrap[reached] = byte_of(1);
+                if trap[reached] == byte_of(0) {
+                    unpredicted = unpredicted + 1;
+                    if unpredicted > 20 {
+                        rep = harness.failure(heap, rep, "differential", "runtime", "more than 20 traps the folder did not predict; stopped", "");
+                        going = false;
+                    }
+                }
+                next = reached + 1;
+            } else {
+                rep = harness.failure(heap, rep, "differential", "runtime", "a run should finish or be killed by a signal (a trap), not end otherwise", buffer.bytes(rb));
+                going = false;
+            }
+        }
+        buffer.drop(heap, errors);
+    }
+    return rep;
+}
+
+// `runtime.cho` built and run from each case that has not been reached. The values the program answered are in `rt`, the cases that killed it in `rtrap`.
+fn phase_runtime[&h, &x, &c, &f, &b, &e, &d, &t, &o, &p, &q, &r](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], trap: &t [byte], rt: &!o [int], rseen: &!p [byte], rtrap: &!q [byte], rbad: &!r [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write(""), fs_read(""), file_read] buffer.Buffer {
+    var rep = report;
+    let head = harness.read_file(heap, fs, "tests/commands/differential_runtime.txt");
+    let harness.Contents { data, failed } = head;
+    if failed != 0 {
+        buffer.drop(heap, data);
+        return harness.failure(heap, rep, "differential", "runtime", "tests/commands/differential_runtime.txt should be readable", "");
+    }
+    var source = buffer.empty(heap, 0);
+    borrow data as &db in {
+        buffer.drop(heap, source);
+        source = runtime_source(heap, buffer.bytes(db));
+    }
+    buffer.drop(heap, data);
+    var path = buffer.empty(heap, 0);
+    borrow source as &sb in {
+        buffer.drop(heap, path);
+        path = harness.rt_put(heap, fs, dir, "runtime.cho", buffer.bytes(sb));
+    }
+    buffer.drop(heap, source);
+    path = buffer.push(heap, path, byte_of(0));
+    let exe = harness.joined(heap, dir, "runtime");
+    borrow path as &pb in {
+        borrow exe as &xb in {
+            let built = harness.build(heap, exec, clock, bin, buffer.bytes(pb), buffer.bytes(xb), env);
+            let (after, ok) = built_or_fail(heap, built, "runtime", "the run-time program should build, but the compiler said", rep);
+            rep = after;
+            if ok {
+                rep = runs(heap, exec, clock, buffer.bytes(xb), env, trap, rt, rseen, rtrap, rbad, rep);
+            }
+        }
+    }
+    buffer.drop(heap, exe);
+    buffer.drop(heap, path);
+    return rep;
+}
+
+// The comparison: for each case, the folder and the program trap together or answer the same, and the two folded arms agree. The first 40 disagreements are named.
+fn compare[&h, &t, &o, &p, &q, &r, &s, &u, &v](heap: &!h Heap, trap: &t [byte], ct: &o [int], cseen: &p [byte], cbad: &q [byte], rt: &r [int], rseen: &s [byte], rtrap: &u [byte], rbad: &v [byte], report: buffer.Buffer) -> [heap] buffer.Buffer {
+    var rep = report;
+    var named = 0;
+    var k = 0;
+    while k < 5156 {
+        var why = buffer.empty(heap, 64);
+        var found = true;
+        if cbad[k] != byte_of(0) {
+            why = buffer.append(heap, why, "the two halves of the folder disagree: lowering and the call arm give different values");
+        } else if trap[k] != byte_of(0) && rtrap[k] == byte_of(0) {
+            why = buffer.append(heap, why, "the folder refuses it as a trap, the program answers");
+        } else if trap[k] == byte_of(0) && rtrap[k] != byte_of(0) {
+            why = buffer.append(heap, why, "the folder answers, the program traps");
+        } else if trap[k] == byte_of(0) && (cseen[k] == byte_of(0) || rseen[k] == byte_of(0) || ct[k] != rt[k]) {
+            why = buffer.append(heap, why, "folded and at run time differ (or one of them said nothing)");
+        } else {
+            found = false;
+        }
+        if found {
+            named = named + 1;
+            if named <= 40 {
+                var what = put_case_expr(heap, buffer.empty(heap, 64), k);
+                what = buffer.append(heap, what, " (type ");
+                what = put_ty(heap, what, sec_ty(section_of(k)));
+                what = buffer.append(heap, what, ")");
+                borrow what as &wb in {
+                    borrow why as &yb in {
+                        rep = harness.failure(heap, rep, "differential", buffer.bytes(wb), buffer.bytes(yb), "");
+                    }
+                }
+                buffer.drop(heap, what);
+            }
+        }
+        buffer.drop(heap, why);
+        k = k + 1;
+    }
+    return rep;
+}
+
+// Everything: the flags are slices of 5,156 bytes in a region, the values slices of 5,156 ints on the heap (a region holds 65,536 bytes in all).
+fn investigate[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write(""), fs_read(""), file_read] buffer.Buffer {
+    var rep = report;
+    var ct_box = box_slice(heap, 5156, 0);
+    var rt_box = box_slice(heap, 5156, 0);
+    region r {
+        let trap = alloc_slice[r](5156, byte_of(0));
+        let cseen = alloc_slice[r](5156, byte_of(0));
+        let cbad = alloc_slice[r](5156, byte_of(0));
+        let rseen = alloc_slice[r](5156, byte_of(0));
+        let rtrap = alloc_slice[r](5156, byte_of(0));
+        let rbad = alloc_slice[r](5156, byte_of(0));
+        rep = phase_traps(heap, exec, clock, fs, bin, env, dir, trap, rep);
+        // The sizes `docs/differential.md` §3 reports, so a change to the operand tables or the operator set is a change to the document too.
+        if count_set(trap) != 436 {
+            rep = harness.failure(heap, rep, "differential", "trap set", "the folder should refuse 436 of the 5,156 cases as traps (docs/differential.md section 3)", "");
+        }
+        borrow mut ct_box as &!w1 in {
+            borrow mut rt_box as &!w2 in {
+                let ct = contents(w1);
+                let rt = contents(w2);
+                rep = phase_folded(heap, exec, clock, fs, bin, env, dir, trap, ct, cseen, cbad, rep);
+                rep = phase_runtime(heap, exec, clock, fs, bin, env, dir, trap, rt, rseen, rtrap, rbad, rep);
+                rep = compare(heap, trap, ct, cseen, cbad, rt, rseen, rtrap, rbad, rep);
+            }
+        }
+    }
+    unbox_slice(heap, ct_box);
+    unbox_slice(heap, rt_box);
+    return rep;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_write(""), fs_read(""), file_read] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-differential");
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "differential", "scratch", "mktemp -d made no directory", "");
+            } else {
+                report = investigate(heap, exec, clock, fs, bin, buffer.bytes(eb), buffer.bytes(db), report);
+                harness.remove_tree(heap, exec, clock, buffer.bytes(db));
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_write(""), fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: differential CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: differential\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    release(fs);
+    return status;
+}
