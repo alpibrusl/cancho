@@ -7,7 +7,7 @@
 > full round trip — a foreign call returning a handle, the same handle
 > passed to a second foreign call, and a null comparison on a real
 > failure — through real libc (`fdopen`/`fclose`) on both backends
-> (`crates/cancho/tests/conformance/backends.rs`'s
+> (`tests/run.cho` accept walk (was `conformance/backends.rs`)'s
 > `the_two_backends_agree_on_an_opaque_pointer`); three `tests/reject/`
 > fixtures pin arithmetic, coercion, and the "not a general type" rule
 > §4 predicted. §5's TLS example was not built at the time: it needed
@@ -204,7 +204,7 @@ itself part of the design decision.)
   the same width `int` already gets, since the handle rides in a
   register exactly like an integer-shaped file descriptor does.
   `null_ptr()` lowers to a 64-bit zero constant on both backends.
-- Differential coverage: `crates/cancho/tests/conformance/backends.rs`
+- Differential coverage: `tests/run.cho` accept walk (was `conformance/backends.rs`)
   gets a case exercising a `c_ptr`-returning and `c_ptr`-consuming
   extern declaration on both backends, mirroring
   `the_two_backends_agree_on_a_narrow_foreign_return`'s existing
@@ -234,7 +234,7 @@ is building the thing and reporting what happened. The plan:
    it, and asserts the plaintext response bytes match — a real
    handshake and a real encrypted round trip, not a stub.
 4. Both backends run the same example through
-   `crates/cancho/tests/conformance/backends.rs`'s existing
+   `tests/run.cho` accept walk (was `conformance/backends.rs`)'s existing
    `--backend cranelift`/`--backend llvm` split, so `c_ptr` is proven on
    both, not just the default.
 

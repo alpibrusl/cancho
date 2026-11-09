@@ -184,7 +184,7 @@ the moment it's done, not rechecked by the next person who happens to
 hunt.
 
 Proposed: a conformance test — `audit::no_function_body_is_duplicated`
-or similar, mirroring `identity.rs`'s existing printing-idempotence
+or similar, mirroring `tests/commands/identity.sh`'s existing printing-idempotence
 style — that hashes every function body under `examples/`, `std/`,
 `packages/` (post-canonicalization, via `cancho print` or
 `cancho-id`, not regex, so it survives reformatting the regex-based
@@ -201,7 +201,7 @@ rather than red on day one.
 `duplication::no_function_body_is_duplicated_across_files`
 (`crates/cancho/tests/conformance/duplication.rs`) is that test. It
 settles §6's open question: a conformance test, not a `cancho audit`
-subcommand — `identity.rs`'s own precedent, and nothing here needs an
+subcommand — `tests/commands/identity.sh`'s own precedent, and nothing here needs an
 agent to run it mid-task rather than `cargo test` catching it on every
 build.
 
@@ -311,7 +311,7 @@ document is making.
 
 | Question | Why it waits |
 |---|---|
-| ~~Does `audit::no_function_body_is_duplicated` belong in this repo's own test suite, or as a `cancho audit` subcommand an agent can run on demand?~~ | Decided, §4.1: a conformance test, `identity.rs`'s own precedent |
+| ~~Does `audit::no_function_body_is_duplicated` belong in this repo's own test suite, or as a `cancho audit` subcommand an agent can run on demand?~~ | Decided, §4.1: a conformance test, `tests/commands/identity.sh`'s own precedent |
 | Is there a mechanical check for §1.1/§1.2's category at all, even a partial one (e.g. flag a doc paragraph whose cited PR number is more than N merges behind `HEAD`)? | Speculative; no design exists yet, and §5 says why it's harder than §4 |
 | The `nat_of`/`port_of` cluster (§3) | Real, smaller, a shape question rather than a mechanical fix — pick up opportunistically |
 | ~~`address` (`examples/tls_client/socket.cho`, never migrated onto `packages/net-connect/connect.cho`)~~ | **Migrated**, §4.1 — and found a real backend gap doing it (a same-named `pub fn` in two modules collides at the object file; the type checker does not catch it) |

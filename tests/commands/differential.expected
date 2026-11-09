@@ -1,0 +1,8 @@
+cases: 5156
+literal cases refused for something other than trapping: 0
+cases the folder refuses as traps: 436
+call arms folded: not reported by this compiler
+the folded program exits 0
+folded values: 4720 of 4720
+cases that trap at run time: 436
+cases that disagree: 0

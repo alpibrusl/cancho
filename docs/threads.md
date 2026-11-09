@@ -302,7 +302,7 @@ feature that does not exist yet for any of them to ask for.
    Verified by checking two things directly rather than trusting the
    type checker alone (`tests/accept/spawn_thread_ids.cho`,
    `tests/accept/spawn_parallel_sleep.cho`, checked on both backends in
-   `crates/cancho/tests/conformance/backends.rs`): distinct OS thread
+   `tests/run.cho` accept walk (was `conformance/backends.rs`)): distinct OS thread
    IDs (`pthread_self`, declared the ordinary `extern fn` way — no
    `gettid` needed, since a thread ID here is only ever compared, never
    printed as the kernel's own number) and wall-clock evidence of real
@@ -338,7 +338,7 @@ feature that does not exist yet for any of them to ask for.
    `File` into a thread that reads it and closes it there (one real
    leaf, the fd). Both checked on both backends
    (`the_two_backends_agree_on_spawn_owned_io`/`_file`,
-   `crates/cancho/tests/conformance/backends.rs`). Left genuinely
+   `tests/run.cho` accept walk (was `conformance/backends.rs`)). Left genuinely
    unbuilt: a capability shaped like a real multi-field struct — none
    of today's capabilities are, so this step's trampoline-free answer
    may not generalise past `File`/`Io`'s own accidentally-simple shape.

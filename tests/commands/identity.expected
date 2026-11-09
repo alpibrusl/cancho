@@ -1,0 +1,34 @@
+== printing preserves every identity and is idempotent
+  tests/accept/floating_point.cho: the text that came back is not a program ids accepts
+  tests/accept/math_floats.cho: the text that came back is not a program ids accepts
+the walk found the whole suite
+more than 50 files stand as programs for ids
+files that broke a contract: 2
+== ingesting JSON preserves every identity and is idempotent
+  std/json.cho: the ingested text has no JSON
+  std/math.cho: the ingested text has no JSON
+  tests/accept/floating_point.cho: the ingested text has no JSON
+  tests/accept/floating_point.cho: the text that came back is not a program ids accepts
+  tests/accept/math_floats.cho: the ingested text has no JSON
+  tests/accept/math_floats.cho: the text that came back is not a program ids accepts
+the walk found the whole suite
+more than 50 files stand as programs for ids
+files that broke a contract: 6
+== moving a function into a module changes no hash
+the four hashes are the same
+== identity is content, not location
+double has hashes
+a unit hashes its content, not where it sits
+== a tuple emits the same object as the struct it replaces
+the object files differ
+== ids are stable across runs and survive a body rewrite
+hashing is a function of the program alone
+sig harmonic is listed
+type Rational is listed
+a body rewrite moves no signature
+it moves a body
+== the operator set grew and no hash moved
+the signature is where it was
+the body is where it was
+== a character literal hashes as its integer
+the two spellings are one program

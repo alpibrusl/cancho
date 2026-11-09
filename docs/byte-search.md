@@ -49,7 +49,7 @@ space is better searched for without it.
 
 ## 4. What it is checked by
 
-* `tests/accept/index_of_byte.cho`, on **both backends** (`tests/conformance/backends.rs`). Each answer is checked against a byte loop:
+* `tests/accept/index_of_byte.cho`, on **both backends** (`tests/run.cho` accept walk (was `conformance/backends.rs`)). Each answer is checked against a byte loop:
   * the first, last and a middle byte, an absent byte, an empty slice;
   * a sub-slice that answers from its own start and does not see past its end;
   * 0 and 255 at every position of a 300-byte slice;
