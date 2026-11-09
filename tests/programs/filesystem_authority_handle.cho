@@ -1,0 +1,26 @@
+// The same read through a handle: the program tests/commands/filesystem.cho asks `cancho authority --output json` about (`docs/file-handles.md` section 4.1). Never run.
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(heap);
+    release(ffi);
+    release(io);
+    region a {
+        var buffer = alloc_slice[a](8, byte_of(0));
+        borrow fs as &c in {
+            match open_read(c, "/tmp/cancho-authority.txt") {
+                Opened::Ok(f) => {
+                    var file = f;
+                    borrow mut file as &!h in {
+                        file_read(h, buffer);
+                    }
+                    file_close(file);
+                }
+                Opened::Failed(e) => {
+                }
+            }
+        }
+    }
+    release(fs);
+    return 0;
+}

@@ -1,0 +1,103 @@
+edition 7;
+module filesystem_test;
+
+// filesystem.cho -- `conformance/filesystem.rs` (deleted), in cancho (`docs/gate.md` G4): Fs(prefix): paths, files and handles, checked against the prefix they were granted (docs/filesystem.md). tests/programs/filesystem_probe.cho takes a case (a path outside the prefix, one with .., a sibling of the granted directory: traps; a written file readable by its owner; a missing file is -1; a short path under a narrowed prefix; a file op as an operand) and filesystem.sh prints the outcome of each; the authority report of a handle program names the same prefix a path program does (docs/file-handles.md section 4.1), checked here with cancho authority --output json.
+//
+//     cancho build tests/commands/filesystem.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: filesystem` or what is wrong, and exits 0 or 1. One backend (LLVM) and one compiler: the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.io as console;
+import harness;
+
+// What `cancho authority FILE --output json` says about the file, as flags: 1 the row of `fs_read` naming the directory, 2 the row of `file_read` with no argument, 4 any mention of `file_read`, 8 the command failed.
+fn authority_flags[&h, &x, &c, &b, &m, &k, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte], file: &p [byte]) -> [heap, exec(""), clock, poll] int {
+    let env = harness.base_env(heap, compiler, cache);
+    var flags = 0;
+    borrow env as &eb in {
+        let harness.Ended { out, err, kind, code } = harness.run_cancho(heap, exec, clock, bin, buffer.bytes(eb), "authority", file, "--output", "json");
+        if kind != 0 || code != 0 {
+            flags = 8;
+        } else {
+            borrow out as &ob in {
+                if harness.contains(buffer.bytes(ob), "{ \"name\": \"fs_read\", \"argument\": \"\", \"bounded\": true }") {
+                    flags = flags + 1;
+                }
+                if harness.contains(buffer.bytes(ob), "{ \"name\": \"file_read\", \"argument\": null, \"bounded\": true }") {
+                    flags = flags + 2;
+                }
+                if harness.contains(buffer.bytes(ob), "file_read") {
+                    flags = flags + 4;
+                }
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, env);
+    return flags;
+}
+
+// `docs/file-handles.md` section 4.1: a handle program names the directory the way a path program does (the row of `fs_read` is the same), performs `file_read` with no argument to widen, and the path program
+// never opens a handle.
+fn authority_checks[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let by_path = authority_flags(heap, exec, clock, bin, compiler, cache, "tests/programs/filesystem_authority_path.cho");
+    let by_handle = authority_flags(heap, exec, clock, bin, compiler, cache, "tests/programs/filesystem_authority_handle.cho");
+    if by_path != 1 {
+        rep = harness.failure(heap, rep, "filesystem", "authority path", "the path program should name the directory (flag 1) and never open a handle (4), and cancho authority should run (8)", "");
+    }
+    if by_handle != 7 {
+        rep = harness.failure(heap, rep, "filesystem", "authority handle", "a handle names the same directory a path does (1), and file_read carries no argument (2), or a handle would need its own path", "");
+    }
+    return rep;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: filesystem CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    var report = harness.probe_transcript(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), "filesystem", "tests/programs/filesystem_probe.cho", "tests/commands/filesystem.sh", "tests/commands/filesystem.expected", buffer.empty(heap, 64));
+    report = authority_checks(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), report);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: filesystem\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
