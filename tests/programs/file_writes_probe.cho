@@ -1,0 +1,564 @@
+edition 5;
+
+import std.io;
+
+// The probe of tests/commands/file_writes.cho (`docs/file-writes.md`): the write side of a file handle -- the opens that append, create and update, and the verbs that write, sync, cut and measure. `argv[1]` is the case
+// (one letter), `argv[2..]` its paths; the exit status is the answer the case builds from what the verbs said (a failed open is 100 + errno, a failed verb 90 + errno), and file_writes.sh judges the rest from outside. The
+// cases with a fixed prefix (`o`, `p`, `q`) narrow `Fs` to /tmp/cancho-fw-granted, which the script makes; the others use the whole `Fs`.
+//   a append: "cd", "ef", then the size: 226        b append, creating: 3        c write (truncate) one file, then open_new another that is there: 117
+//   d open_new of a file that is not there: 3        e open_rw of a missing file: 102        f pwrite and pread leave the cursor alone: 98 (1122 mod 256)
+//   g pread past the end: 7        h pwrite on an append handle: 2        i truncate, size, read from the cursor: 105        j three refusals, each with its own errno: 7
+//   k append "x" and sync: 1        l append "x": 1        m rename P1 over P2: 1        n remove P, then remove it again: 21        o open_append of P (outside the prefix)
+//   p rename P1 to P2 and q remove P, under the prefix        r lock P and release        s lock P, say "locked" on standard error and wait for a byte on standard input
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(heap);
+    release(ffi);
+    release(net);
+    release(clock);
+    var code = 0;
+    borrow args as &a in {
+        let which = int_of(arg(a, 1)[0]);
+        if which == 'a' {
+            borrow fs as &f in {
+                match open_append(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_write(h, "cd") {
+                                Done::Ok(n) => {
+                                    code = n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 90 + e;
+                                }
+                            }
+                            match file_write(h, "ef") {
+                                Done::Ok(n) => {
+                                    code = code * 10 + n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 90 + e;
+                                }
+                            }
+                            match file_size(h) {
+                                Done::Ok(n) => {
+                                    code = code * 10 + n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 80 + e;
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'b' {
+            borrow fs as &f in {
+                match open_append(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_write(h, "xyz") {
+                                Done::Ok(n) => {
+                                    code = n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 90 + e;
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'd' {
+            borrow fs as &f in {
+                match open_new(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_write(h, "abc") {
+                                Done::Ok(n) => {
+                                    code = n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 90 + e;
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'e' {
+            borrow fs as &f in {
+                match open_rw(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'f' {
+            borrow fs as &f in {
+                match open_rw(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_pwrite(h, 1, "BB") {
+                                Done::Ok(n) => {
+                                    code = n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 90 + e;
+                                }
+                            }
+                            region r {
+                                var buf = alloc_slice[r](2, byte_of(0));
+                                match file_pread(h, 1, buf) {
+                                    Read::Got(n) => {
+                                        code = code * 10 + n;
+                                        if int_of(buf[0]) == 66 {
+                                            code = code + 100;
+                                        }
+                                    }
+                                    Read::End => {
+                                        code = 71;
+                                    }
+                                    Read::Failed(e) => {
+                                        code = 70 + e;
+                                    }
+                                }
+                                match file_read(h, buf) {
+                                    Read::Got(n) => {
+                                        if int_of(buf[1]) == 66 {
+                                            code = code + 1000;
+                                        }
+                                    }
+                                    Read::End => {
+                                        code = 72;
+                                    }
+                                    Read::Failed(e) => {
+                                        code = 70 + e;
+                                    }
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'g' {
+            borrow fs as &f in {
+                match open_rw(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            region r {
+                                var buf = alloc_slice[r](4, byte_of(0));
+                                match file_pread(h, 3, buf) {
+                                    Read::Got(n) => {
+                                        code = 50 + n;
+                                    }
+                                    Read::End => {
+                                        code = 7;
+                                    }
+                                    Read::Failed(e) => {
+                                        code = 70 + e;
+                                    }
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'h' {
+            borrow fs as &f in {
+                match open_append(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_pwrite(h, 0, "BB") {
+                                Done::Ok(n) => {
+                                    code = n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 90 + e;
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'i' {
+            borrow fs as &f in {
+                match open_rw(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_truncate(h, 5) {
+                                Done::Ok(n) => {
+                                    code = n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 90 + e;
+                                }
+                            }
+                            match file_size(h) {
+                                Done::Ok(n) => {
+                                    code = code * 10 + n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 80 + e;
+                                }
+                            }
+                            region r {
+                                var buf = alloc_slice[r](1, byte_of(0));
+                                match file_read(h, buf) {
+                                    Read::Got(n) => {
+                                        if int_of(buf[0]) == 104 {
+                                            code = code + 100;
+                                        }
+                                    }
+                                    Read::End => {
+                                        code = 72;
+                                    }
+                                    Read::Failed(e) => {
+                                        code = 70 + e;
+                                    }
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'k' {
+            borrow fs as &f in {
+                match open_append(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_write(h, "x") {
+                                Done::Ok(n) => {
+                                    code = n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 90 + e;
+                                }
+                            }
+                            match file_sync(h) {
+                                Done::Ok(n) => {
+                                    code = code + n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 90 + e;
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'l' {
+            borrow fs as &f in {
+                match open_append(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_write(h, "x") {
+                                Done::Ok(n) => {
+                                    code = n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 90 + e;
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'c' {
+            borrow fs as &f in {
+                match open_write(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_write(h, "fresh") {
+                                Done::Ok(n) => {
+                                    code = n;
+                                }
+                                Done::Failed(e) => {
+                                    code = 90 + e;
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+                match open_new(f, arg(a, 3)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'j' {
+            borrow fs as &f in {
+                match open_read(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_write(h, "x") {
+                                Done::Ok(n) => {
+                                    code = code + 64;
+                                }
+                                Done::Failed(e) => {
+                                    if e == 9 {
+                                        code = code + 1;
+                                    }
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+                match open_append(f, arg(a, 3)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            region r {
+                                var buf = alloc_slice[r](2, byte_of(0));
+                                match file_pread(h, 0, buf) {
+                                    Read::Got(n) => {
+                                        code = code + 64;
+                                    }
+                                    Read::End => {
+                                        code = code + 64;
+                                    }
+                                    Read::Failed(e) => {
+                                        if e == 9 {
+                                            code = code + 2;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+                match open_rw(f, arg(a, 4)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_truncate(h, 0 - 1) {
+                                Done::Ok(n) => {
+                                    code = code + 64;
+                                }
+                                Done::Failed(e) => {
+                                    if e == 22 {
+                                        code = code + 4;
+                                    }
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'm' {
+            borrow fs as &f in {
+                match fs_rename(f, arg(a, 2), arg(a, 3)) {
+                    Done::Ok(n) => {
+                        code = code + 1;
+                    }
+                    Done::Failed(e) => {
+                        code = 100 + e;
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'n' {
+            borrow fs as &f in {
+                match fs_remove(f, arg(a, 2)) {
+                    Done::Ok(n) => {
+                        code = code + 1;
+                    }
+                    Done::Failed(e) => {
+                        code = 100 + e;
+                    }
+                }
+                match fs_remove(f, arg(a, 2)) {
+                    Done::Ok(n) => {
+                        code = 77;
+                    }
+                    Done::Failed(e) => {
+                        code = code + e * 10;
+                    }
+                }
+            }
+            release(fs);
+        } else if which == 'o' {
+            let d = narrow(fs, "/tmp/cancho-fw-granted");
+            borrow d as &f in {
+                match open_append(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(d);
+        } else if which == 'p' {
+            let d = narrow(fs, "/tmp/cancho-fw-granted");
+            borrow d as &f in {
+                match fs_rename(f, arg(a, 2), arg(a, 3)) {
+                    Done::Ok(n) => {
+                        code = code + 1;
+                    }
+                    Done::Failed(e) => {
+                        code = 100 + e;
+                    }
+                }
+            }
+            release(d);
+        } else if which == 'q' {
+            let d = narrow(fs, "/tmp/cancho-fw-granted");
+            borrow d as &f in {
+                match fs_remove(f, arg(a, 2)) {
+                    Done::Ok(n) => {
+                        code = code + 1;
+                    }
+                    Done::Failed(e) => {
+                        code = 100 + e;
+                    }
+                }
+            }
+            release(d);
+        } else if which == 'r' {
+            borrow fs as &f in {
+                match open_append(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_lock(h) {
+                                Done::Ok(n) => {
+                                    code = 0;
+                                }
+                                Done::Failed(e) => {
+                                    code = e;
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        } else {
+            borrow fs as &f in {
+                match open_append(f, arg(a, 2)) {
+                    Opened::Failed(e) => {
+                        code = 100 + e;
+                    }
+                    Opened::Ok(opened) => {
+                        var file = opened;
+                        borrow mut file as &!h in {
+                            match file_lock(h) {
+                                Done::Ok(n) => {
+                                    code = 0;
+                                    borrow mut io as &!i in {
+                                        io.error_all(i, "locked\n");
+                                        getchar(i);
+                                    }
+                                }
+                                Done::Failed(e) => {
+                                    code = e;
+                                }
+                            }
+                        }
+                        file_close(file);
+                    }
+                }
+            }
+            release(fs);
+        }
+    }
+    release(args);
+    release(io);
+    return code;
+}

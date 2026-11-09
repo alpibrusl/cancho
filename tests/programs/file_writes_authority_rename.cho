@@ -1,0 +1,26 @@
+edition 5;
+
+// A rename: tests/commands/file_writes.cho asks `cancho authority --output json` about it (`docs/file-writes.md` section 7): it names the directory under `fs_write` and performs no read. Never run.
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(args);
+    release(heap);
+    release(ffi);
+    release(io);
+    release(net);
+    release(clock);
+    let d = narrow(fs, "/var/lib/log");
+    var code = 0;
+    borrow d as &f in {
+        match fs_rename(f, "/var/lib/log/a", "/var/lib/log/b") {
+            Done::Ok(n) => {
+                code = code + 1;
+            }
+            Done::Failed(e) => {
+                code = 100 + e;
+            }
+        }
+    }
+    release(d);
+    return code;
+}

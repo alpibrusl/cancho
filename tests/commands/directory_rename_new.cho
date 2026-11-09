@@ -1,0 +1,59 @@
+edition 7;
+module directory_rename_new_test;
+
+// directory_rename_new.cho -- `conformance/directory_rename_new.rs` (deleted), in cancho (`docs/gate.md` G4): the rename that never replaces (docs/directory-handles.md section 3, slice 4): dir_rename_new is renameat2(RENAME_NOREPLACE) on Linux and renameatx_np(RENAME_EXCL) on Darwin. A table (a free name, a name that holds a file, a link, a directory, a missing source, names that are not one component), each followed by what is on disk, and a race in which the shell script creates the destination, exclusively, as the program renames onto it. tests/programs/directory_rename_new_probe.cho is the probe.
+//
+//     cancho build tests/commands/directory_rename_new.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: directory_rename_new` or what is wrong, and exits 0 or 1. One backend (LLVM) and one compiler: the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.io as console;
+import harness;
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: directory_rename_new CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    var report = harness.probe_transcript(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), "directory_rename_new", "tests/programs/directory_rename_new_probe.cho", "tests/commands/directory_rename_new.sh", "tests/commands/directory_rename_new.expected", buffer.empty(heap, 64));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: directory_rename_new\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

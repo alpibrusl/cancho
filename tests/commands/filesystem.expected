@@ -1,0 +1,14 @@
+== a path outside the granted prefix, one with a .., and a sibling of the granted directory: traps, not missing files
+outside: killed by a signal
+dotdot: killed by a signal
+sibling: killed by a signal
+== a written file is readable by its owner (open is variadic: a mode that travelled in the wrong place left it unreadable)
+write: exit 0
+content: written
+owner bits: rw
+== a missing file is -1, not a trap
+missing: exit 1
+== a short path under a narrowed prefix is read (the check's loop unrolled; LLVM once folded the read to poison)
+short: exit 3
+== a file op is an operand of a comparison, of && and of ||
+operand: exit 7

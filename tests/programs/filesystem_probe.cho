@@ -1,0 +1,100 @@
+edition 7;
+
+// The probe of tests/commands/filesystem.cho (`Fs(prefix)`: paths, files and handles, checked against the prefix they were granted; `docs/filesystem.md`). `argv[1]` is the case, `argv[2]` a path where the case
+// needs one (the prefix is in the type and known at compile time; the path is a runtime slice). The exit status is the answer; a trap is a fault signal.
+//   outside   a read of /etc/hostname through a capability narrowed to /tmp/cancho-granted: traps
+//   dotdot    a read of /tmp/../etc/hostname through /tmp: traps (a `..` is refused, not normalised)
+//   sibling   a read of /tmp/cancho-granted-elsewhere through /tmp/cancho-granted: traps (the prefix is a directory, not a string prefix)
+//   write     `fs_write` of "written\n" to argv[2]; exits with the bytes written minus 8 (so 0)
+//   missing   a read of a file that is not there: -1, not a trap; exits 1
+//   short     a read of /tmp/lxfsp (a path short enough for the check's loop to be unrolled) through /tmp; exits with the bytes read
+//   operand   `fs_read`/`fs_write` as operands of comparisons, `&&` and `||`, on argv[2]; exits 7 when every comparison holds
+fn operand[&f, &b, &p](fs: &f Fs(""), buf: &!b [byte], path: &p [byte]) -> [fs_read(""), fs_write("")] int {
+    var score = 0;
+    if fs_write(fs, path, "abc") == 3 {
+        score = score + 1;
+    }
+    if 0 < fs_read(fs, path, buf) && fs_read(fs, path, buf) - 3 == 0 {
+        score = score + 2;
+    }
+    if fs_read(fs, "/dev/urandom", buf) == 32 || 1 == 2 {
+        score = score + 4;
+    }
+    return score;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var code = 0;
+    borrow args as &a in {
+        let mode = arg(a, 1);
+        if int_of(mode[0]) == 'o' && len(mode) == 7 && int_of(mode[1]) == 'u' {
+            let tmp = narrow(fs, "/tmp/cancho-granted");
+            region r {
+                let buffer = alloc_slice[r](16, byte_of(0));
+                borrow tmp as &f in {
+                    code = fs_read(f, "/etc/hostname", buffer);
+                }
+            }
+            release(tmp);
+        } else if int_of(mode[0]) == 'd' {
+            let tmp = narrow(fs, "/tmp");
+            region r {
+                let buffer = alloc_slice[r](16, byte_of(0));
+                borrow tmp as &f in {
+                    code = fs_read(f, "/tmp/../etc/hostname", buffer);
+                }
+            }
+            release(tmp);
+        } else if int_of(mode[0]) == 's' && len(mode) == 7 {
+            let tmp = narrow(fs, "/tmp/cancho-granted");
+            region r {
+                let buffer = alloc_slice[r](16, byte_of(0));
+                borrow tmp as &f in {
+                    code = fs_read(f, "/tmp/cancho-granted-elsewhere", buffer);
+                }
+            }
+            release(tmp);
+        } else if int_of(mode[0]) == 'w' {
+            borrow fs as &f in {
+                code = fs_write(f, arg(a, 2), "written\n") - 8;
+            }
+            release(fs);
+        } else if int_of(mode[0]) == 'm' {
+            let tmp = narrow(fs, "/tmp/cancho-not-here");
+            region r {
+                let buffer = alloc_slice[r](16, byte_of(0));
+                borrow tmp as &f in {
+                    code = 0 - fs_read(f, "/tmp/cancho-not-here/at-all", buffer);
+                }
+            }
+            release(tmp);
+        } else if int_of(mode[0]) == 's' {
+            let tmp = narrow(fs, "/tmp");
+            region r {
+                let buffer = alloc_slice[r](16, byte_of(0));
+                borrow tmp as &f in {
+                    code = fs_read(f, "/tmp/lxfsp", buffer);
+                }
+            }
+            release(tmp);
+        } else {
+            region r {
+                let buf = alloc_slice[r](32, byte_of(0));
+                borrow fs as &f in {
+                    code = operand(f, buf, arg(a, 2));
+                }
+            }
+            release(fs);
+        }
+    }
+    release(args);
+    return code;
+}

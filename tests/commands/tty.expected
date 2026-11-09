@@ -1,0 +1,17 @@
+== a missing device is a value (99), not a crash
+/dev/cancho-no-such-port at 115200 -> 99
+== a device that is not a terminal is refused by tcsetattr
+/dev/null at 115200 -> refused (ENODEV or ENOTTY)
+== a speed with no rate is refused (EINVAL) before the port is touched
+/dev/null at 0 -> 22
+/dev/null at -5 -> 22
+== Linux: a speed that is not in the table of standard rates
+/dev/null at 12345 -> 22
+== Linux: a pseudo-terminal takes a standard rate
+/dev/ptmx at 9600 -> 0
+/dev/ptmx at 115200 -> 0
+/dev/ptmx at 1000000 -> 0
+== Linux: the speed and the raw flags land on the line (read back with stty)
+9600: configure 0, speed 9600, flags ok
+115200: configure 0, speed 115200, flags ok
+1000000: configure 0, speed 1000000, flags ok
