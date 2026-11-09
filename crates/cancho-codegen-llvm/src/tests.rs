@@ -1745,12 +1745,22 @@ fn two_compilations_in_one_process_write_the_same_object_and_leave_nothing() {
     let second = compiled(&program_returning("x + 1"), "main");
     assert_ne!(first, other, "the second program is another program");
     assert_eq!(first, second, "a compilation in between changed the next one");
+    // The other tests of this process compile in parallel and their directories are made and removed while this one looks (a failure of
+    // CI on #739 and #745: `/tmp/cancho-llvm-<this pid>-42`, a neighbour's compilation in flight). So wait, up to ten seconds, for the
+    // directory to be empty: a directory that is really left behind is still there at the end.
     let prefix = format!("cancho-llvm-{}-", std::process::id());
-    let left: Vec<_> = std::fs::read_dir(std::env::temp_dir())
-        .expect("the temporary directory is readable")
-        .filter_map(Result::ok)
-        .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
-        .collect();
+    let mut left = Vec::new();
+    for _ in 0..100 {
+        left = std::fs::read_dir(std::env::temp_dir())
+            .expect("the temporary directory is readable")
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+            .collect();
+        if left.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
     assert!(left.is_empty(), "temporary files left behind: {left:?}");
 }
 
