@@ -11,14 +11,22 @@ fn fill[&b](xs: &!b [byte], seed: int, few: bool) -> [] int {
     var i = 0;
     while i < len(xs) {
         x = wrapping_add(wrapping_mul(x, 6364136223846793005), 1442695040888963407);
-        var r = (x >> 33) & 255;
+        var r = x >> 33 & 255;
         if few {
             r = 255;
-            let pick = ((x >> 33) & 255) % 5;
-            if pick == 0 { r = 44; }
-            if pick == 1 { r = 34; }
-            if pick == 2 { r = 10; }
-            if pick == 3 { r = 0; }
+            let pick = (x >> 33 & 255) % 5;
+            if pick == 0 {
+                r = 44;
+            }
+            if pick == 1 {
+                r = 34;
+            }
+            if pick == 2 {
+                r = 10;
+            }
+            if pick == 3 {
+                r = 0;
+            }
         }
         xs[i] = byte_of(r);
         i = i + 1;
@@ -28,18 +36,32 @@ fn fill[&b](xs: &!b [byte], seed: int, few: bool) -> [] int {
 
 fn needle(which: int) -> [] int {
     var b = 0;
-    if which == 1 { b = 44; }
-    if which == 2 { b = 34; }
-    if which == 3 { b = 10; }
-    if which == 4 { b = 255; }
-    if which == 5 { b = 128; }
-    if which == 6 { b = 127; }
-    if which == 7 { b = 1; }
+    if which == 1 {
+        b = 44;
+    }
+    if which == 2 {
+        b = 34;
+    }
+    if which == 3 {
+        b = 10;
+    }
+    if which == 4 {
+        b = 255;
+    }
+    if which == 5 {
+        b = 128;
+    }
+    if which == 6 {
+        b = 127;
+    }
+    if which == 7 {
+        b = 1;
+    }
     return b;
 }
 
 fn bit(w: int, i: int) -> [] int {
-    return (w >> i) & 1;
+    return w >> i & 1;
 }
 
 fn ref_load[&t](text: &t [byte], at: int) -> [] int {
@@ -131,19 +153,27 @@ fn sweep[&p, &c](seed: int, o: &!p Io, checks: &!c [int]) -> [io_write] int {
                         let want = ref_load(text, at);
                         checks[0] = checks[0] + 1;
                         if w != want {
-                            if bad == 0 { say(o, 1, which, start, length, at, w, want); }
+                            if bad == 0 {
+                                say(o, 1, which, start, length, at, w, want);
+                            }
                             bad = bad + 1;
                         }
                         if trailing_zeros(w) != ref_trailing(w) {
-                            if bad == 0 { say(o, 2, which, start, length, at, trailing_zeros(w), ref_trailing(w)); }
+                            if bad == 0 {
+                                say(o, 2, which, start, length, at, trailing_zeros(w), ref_trailing(w));
+                            }
                             bad = bad + 1;
                         }
                         if leading_zeros(w) != ref_leading(w) {
-                            if bad == 0 { say(o, 3, which, start, length, at, leading_zeros(w), ref_leading(w)); }
+                            if bad == 0 {
+                                say(o, 3, which, start, length, at, leading_zeros(w), ref_leading(w));
+                            }
                             bad = bad + 1;
                         }
                         if popcount(w) != ref_popcount(w) {
-                            if bad == 0 { say(o, 4, which, start, length, at, popcount(w), ref_popcount(w)); }
+                            if bad == 0 {
+                                say(o, 4, which, start, length, at, popcount(w), ref_popcount(w));
+                            }
                             bad = bad + 1;
                         }
                         at = at + 1;
@@ -156,7 +186,9 @@ fn sweep[&p, &c](seed: int, o: &!p Io, checks: &!c [int]) -> [io_write] int {
                             let want = ref_mask(text, at, needle(n));
                             checks[0] = checks[0] + 1;
                             if got != want {
-                                if bad == 0 { say(o, 5, which, start, length, at, got, want); }
+                                if bad == 0 {
+                                    say(o, 5, which, start, length, at, got, want);
+                                }
                                 bad = bad + 1;
                             }
                             n = n + 1;
@@ -181,7 +213,8 @@ fn main(world: World) -> [] int {
     release(net);
     release(clock);
     release(signals);
-    release(exec); release(tty);
+    release(exec);
+    release(tty);
     release(heap);
     var bad = 0;
     region r {
