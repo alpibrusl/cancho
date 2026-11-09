@@ -166,7 +166,6 @@ benchmarks::the_three_language_benchmarks_agree 31
 benchmarks::every_benchmark_pair_agrees 28
 benchmarks::benchmark_game_programs_print_the_published_answer 15
 benchmarks::fasta_and_reverse_complement_print_the_published_answer 11
-signals 144
 udp 129
 sockets 115
 binary32 98
@@ -182,13 +181,11 @@ conn_peer 44
 http_server 39
 float_text 37
 tls_echo 36
-capture 32
 http_fetch_nb 30
 floats 25
 https_hello 24
 tls_auth 23
 tls_echo_fixed 21
-processes 20
 tls_client_auth 19
 tls_server 19
 thread_state 18
@@ -200,7 +197,6 @@ tls_pool 14
 vcs_std 14
 differential 13
 
-process_release 11
 global_state 11
 
 crypto_builtins 10

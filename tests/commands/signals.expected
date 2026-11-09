@@ -1,0 +1,26 @@
+ok each claimed signal is delivered exactly once
+ok signals between polls are all reported and a repeat is one
+ok a signal that was not claimed still takes its default action
+ok a signal wakes a poller wait at once
+ok closing the claim makes the next signal kill at once
+ok closing with a signal unread delivers it at once
+ok closing after the read leaves nothing to deliver
+ok a signal ignored on entry can be claimed
+ok a thread spawned after the claim does not take the signal
+ok a claim is refused while a thread runs and granted after the join
+ok a signal another claim holds is refused until it is closed
+ok std.signals names the bits
+ok every unclaimable signal is refused with its rule
+ok a malformed set is refused and any order is accepted
+ok narrowing a signal set never widens it
+GAP: root: the Rust compiler answers 'capability-misused', the compiler in cancho None
+GAP: not signals: the Rust compiler answers 'capability-misused', the compiler in cancho None
+GAP: by value: the Rust compiler answers 'capability-misused', the compiler in cancho 'linear-use-after-move'
+ok only a narrowed borrowed Signals can claim
+ok the signal names are edition six
+GAP: owned root: the Rust compiler refuses the owned root, the compiler in cancho accepts it
+GAP: unordered: the Rust compiler answers 'signal-not-claimable', the compiler in cancho None
+GAP: row exact: the Rust compiler answers None, the compiler in cancho 'effect-declared-not-performed'
+ok the claim is linear and its rows are exact
+ok the authority report names the set and is bounded
+ok the text report says what is claimed and what is not

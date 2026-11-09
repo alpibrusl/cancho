@@ -1,0 +1,7 @@
+ok a detached child outlives its parent in a session of its own
+ok only the detached child survives its parent's group
+ok released children do not become zombies
+ok a child that has already ended is released cleanly
+ok a detached start stays inside the prefix it was narrowed to
+ok the authority report says a process may outlive the program
+ok releasing a child gives back its pidfd

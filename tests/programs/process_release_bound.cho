@@ -1,0 +1,37 @@
+edition 9;
+fn start[&x, &p](exec: &x Exec("/bin"), path: &p [byte]) -> [exec("/bin"), exec_detached] int {
+    match exec_spawn_detached(exec, path, "-c\0exit 0\0", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            return child_release(child);
+        }
+        Spawned::Failed(e) => {
+            return 100 + e;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    let bin = narrow(exec, "/bin");
+    var status = 0;
+    borrow bin as &x in {
+        borrow args as &g in {
+            if int_of(arg(g, 1)[0]) == 'i' {
+                status = start(x, "/bin/sh");
+            } else {
+                status = start(x, "/usr/bin/true");
+            }
+        }
+    }
+    release(bin);
+    release(args);
+    return status;
+}
