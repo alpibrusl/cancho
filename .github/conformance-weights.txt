@@ -8,7 +8,7 @@ selfhost::vcs::vcs_publish_dir_in_cancho_publishes_the_libraries_of_packages 301
 selfhost::cli::the_command_line_in_cancho_runs_like_cancho_run 284
 selfhost::authority::authority_in_cancho_reports_like_cancho_authority 241
 selfhost::cli::the_command_line_in_cancho_formats_like_cancho_fmt 211
-selfhost::the_formatter_in_cancho_agrees_with_the_rust_formatter 182
+selfhost::the_formatter_in_cancho_agrees_with_the_rust_formatter 378
 selfhost::the_body_checker_in_cancho_agrees_with_the_rust_one_per_function 174
 selfhost::cli::the_command_line_in_cancho_builds_like_cancho_build 113
 selfhost::bootstrap::the_standalone_build_reproduces_itself 105
