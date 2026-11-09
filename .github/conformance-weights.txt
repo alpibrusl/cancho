@@ -177,7 +177,6 @@ sockets 115
 binary32 98
 tls 81
 json 79
-narrow_many 75
 tls_fuzz 65
 api 64
 formatting 63
