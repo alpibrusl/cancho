@@ -1,0 +1,16 @@
+edition @A@;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(clock);
+    release(signals); release(exec); release(tty);
+    let bound = narrow(net, "@B@");
+    var status = 0;
+    borrow bound as &n in {
+        match tcp_connect(n, "@C@", 9) {
+            Dialed::Ok(c) => { conn_close(c); status = 0; }
+            Dialed::Failed(e) => { status = 0; }
+        }
+    }
+    release(bound);
+    return status;
+}

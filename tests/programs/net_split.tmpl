@@ -1,0 +1,25 @@
+edition 11;
+fn work[&o, &p](up: &o Out("@A@"), inbound: &p Ports("@B@")) -> [net_out("@A@"), net_in("@B@")] int {
+    match tcp_listen(inbound, @D@, 8, 0) {
+        Listening::Ok(l) => { listener_close(l); }
+        Listening::Failed(e) => { let ignored = e; }
+    }
+    match tcp_connect(up, "127.0.0.1", @C@) {
+        Dialed::Ok(c) => { conn_close(c); }
+        Dialed::Failed(e) => { let ignored = e; }
+    }
+    return 0;
+}
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(clock);
+    release(signals); release(exec); release(tty);
+    let up = narrow(out, "@A@");
+    let inbound = narrow(ports, "@B@");
+    var status = 0;
+    borrow up as &a in {
+        borrow inbound as &b in { status = work(a, b); }
+    }
+    release(up); release(inbound);
+    return status;
+}

@@ -674,3 +674,106 @@ pub fn build[&h, &x, &c, &b, &s, &p, &v](heap: &!h Heap, exec: &x Exec(""), cloc
 pub fn run_program[&h, &x, &c, &p, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte]) -> [heap, exec(""), clock, poll] Ended {
     return spawn_capture(heap, exec, clock, exe, buffer.empty(heap, 0), input, "PATH=/usr/bin:/bin\0");
 }
+
+// ---- a server in the background, clients at the same time (`docs/gate.md` G4, the socket tests) ---------------------------------------------------
+
+// Fill a template: every `@A@`, `@B@`, `@C@` and `@D@` in `text` is replaced by `one`, `two`, `three` and `four`. The programs a socket test writes differ in a bound, an edition or a port, and live as
+// `tests/programs/*.tmpl` (not `.cho`: they are not programs until filled).
+pub fn fill[&h, &t, &a, &b, &c, &d](heap: &!h Heap, text: &t [byte], one: &a [byte], two: &b [byte], three: &c [byte], four: &d [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text) + 64);
+    var at = 0;
+    while at < len(text) {
+        let rest = text[at..len(text)];
+        let k = bytes.find(rest, "@");
+        if k < 0 {
+            out = buffer.append(heap, out, rest);
+            at = len(text);
+        } else {
+            out = buffer.append(heap, out, rest[0..k]);
+            let tail = rest[k..len(rest)];
+            if bytes.starts_with(tail, "@A@") {
+                out = buffer.append(heap, out, one);
+                at = at + k + 3;
+            } else if bytes.starts_with(tail, "@B@") {
+                out = buffer.append(heap, out, two);
+                at = at + k + 3;
+            } else if bytes.starts_with(tail, "@C@") {
+                out = buffer.append(heap, out, three);
+                at = at + k + 3;
+            } else if bytes.starts_with(tail, "@D@") {
+                out = buffer.append(heap, out, four);
+                at = at + k + 3;
+            } else {
+                out = buffer.push(heap, out, tail[0]);
+                at = at + k + 1;
+            }
+        }
+    }
+    return out;
+}
+
+// How the program at `exe` (no arguments, no input) ends: 0 it answered 0, 1 it was killed by a signal (a bound's trap), 9 it answered something else, any other number its `Ended` kind (5 it did not start).
+pub fn exit_kind[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte]) -> [heap, exec(""), clock, poll] int {
+    let Ended { out, err, kind, code } = run_program(heap, exec, clock, exe, "");
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    if kind == 0 && code != 0 {
+        return 9;
+    }
+    return kind;
+}
+
+// `bin authority --std [--output json] PATH`: the authority report of the program at `path`, as `Ended` (the report is in `out`).
+pub fn authority[&h, &x, &c, &b, &e, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], path: &p [byte], json: bool) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "authority");
+    command = word(heap, command, "--std");
+    if json {
+        command = word(heap, command, "--output");
+        command = word(heap, command, "json");
+    }
+    command = word(heap, command, path);
+    return spawn_capture(heap, exec, clock, bin, command, "", env);
+}
+
+// Write `text` to `dir/name.cho` and build it with `bin` (`--std`, `flags`) to `dir/name`; the build's `Ended` (kind 6 if it failed, what the compiler said in `err`). The path of the program is
+// `dir/name`.
+pub fn build_text[&h, &x, &c, &f, &b, &v, &d, &n, &t, &g](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], name: &n [byte], text: &t [byte], flags: &g [byte]) -> [heap, exec(""), clock, poll, fs_write("")] Ended {
+    var source = joined(heap, dir, name);
+    source = buffer.append(heap, source, ".cho");
+    var exe = joined(heap, dir, name);
+    var result = Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
+    borrow source as &sb in {
+        write_file(fs, buffer.bytes(sb), text);
+        let sources = word(heap, buffer.empty(heap, 64), buffer.bytes(sb));
+        borrow sources as &pb in {
+            borrow exe as &eb in {
+                drop_ended(heap, result);
+                result = build_only(heap, exec, clock, bin, buffer.bytes(pb), flags, buffer.bytes(eb), env);
+            }
+        }
+        buffer.drop(heap, sources);
+    }
+    buffer.drop(heap, source);
+    buffer.drop(heap, exe);
+    return result;
+}
+
+// Run the shell command `server` in the background in `dir` (its standard output in `server.out`, its standard error in `server.err`), wait until either file holds `ready` (at most 15 s), run the
+// shell commands in `probes` (one client after another, or several with `&` and `wait`), then give the server up to 5 s to end by itself and kill it if it has not. The `Ended` is the shell's: `out` is
+// what the probes printed, then the line `server: exit N` (it ended with code N; `server: killed` if it had to be killed, `server: never ready` if it was not ready in time), then `-- server.out`
+// and the contents of that file, then `-- server.err` and the contents of that one. `$SP` is the server's pid in the probes. Core dumps are off (a trapped server costs a dump where they are piped).
+pub fn serve_and_probe[&h, &x, &c, &d, &s, &r, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, dir: &d [byte], server: &s [byte], ready: &r [byte], probes: &p [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var script = buffer.append(heap, buffer.empty(heap, 512), "ulimit -c 0; cd '");
+    script = buffer.append(heap, script, dir);
+    script = buffer.append(heap, script, "' || exit 99; ( ");
+    script = buffer.append(heap, script, server);
+    script = buffer.append(heap, script, " ) >server.out 2>server.err & SP=$!; i=0; ok=0; while [ $i -lt 300 ]; do if grep -q '");
+    script = buffer.append(heap, script, ready);
+    script = buffer.append(heap, script, "' server.out server.err 2>/dev/null; then ok=1; break; fi; sleep 0.05; i=$((i+1)); done; ");
+    script = buffer.append(heap, script, "if [ $ok = 0 ]; then kill -KILL $SP 2>/dev/null; wait $SP 2>/dev/null; echo 'server: never ready'; else ");
+    script = buffer.append(heap, script, probes);
+    script = buffer.append(heap, script, "\n i=0; while kill -0 $SP 2>/dev/null && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done; ");
+    script = buffer.append(heap, script, "if kill -0 $SP 2>/dev/null; then kill -KILL $SP 2>/dev/null; wait $SP 2>/dev/null; echo 'server: killed'; else wait $SP; echo \"server: exit $?\"; fi; fi; ");
+    script = buffer.append(heap, script, "echo '-- server.out'; cat server.out; echo '-- server.err'; cat server.err");
+    return sh_run(heap, exec, clock, script);
+}

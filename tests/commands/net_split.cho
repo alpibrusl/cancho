@@ -1,0 +1,160 @@
+edition 7;
+module net_split_test;
+
+// net_split.cho -- `conformance/net_split.rs` (deleted), in cancho (`docs/gate.md` G4): `docs/net-bounds.md` section 3, edition 11: `split` hands out `Out` and `Ports` where it handed out `Net`.
+//
+// The fixtures under `tests/` cover what compiles and what is refused; this builds and runs: the report names `net_out` for the outbound half and `net_in` for the inbound one and calls the program
+// bounded, and each half is enforced at run time by its own bound (a dial to another port traps, and so does a listener on one). The program is `tests/programs/net_split.tmpl` with the two bounds
+// and the two ports filled in. Nothing answers on the dialled port, and a refused connection is an answer, so only the bound can kill it.
+//
+//     cancho build tests/commands/net_split.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: net_split` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test, and its "the backends agree" check, went
+// with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// The report of the program for `53 / 5353`: bounded, and the two labels with their arguments.
+fn report_of[&h, &x, &c, &f, &b, &v, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], template: &t [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let source = harness.fill(heap, template, "127.0.0.1:53", "5353", "53", "5353");
+    var path = harness.joined(heap, dir, "report.cho");
+    borrow source as &sb in {
+        borrow path as &pb in {
+            harness.write_file(fs, buffer.bytes(pb), buffer.bytes(sb));
+            let harness.Ended { out, err, kind, code } = harness.authority(heap, exec, clock, bin, env, buffer.bytes(pb), true);
+            borrow out as &ob in {
+                let json = buffer.bytes(ob);
+                if kind != 0 || code != 0 {
+                    borrow err as &rb in {
+                        rep = harness.failure(heap, rep, "net_split", "report", "`authority` should answer", buffer.bytes(rb));
+                    }
+                } else {
+                    rep = harness.require(heap, rep, bytes.starts_with(json, "{\n  \"bounded\": true,\n  \"unbounded_by\": [],"), "net_split", "report-bounded", "the program is bounded", json);
+                    rep = harness.require(heap, rep, harness.contains(json, "\"name\": \"net_out\""), "net_split", "report-out", "the outbound half is named net_out", json);
+                    rep = harness.require(heap, rep, harness.contains(json, "\"argument\": \"127.0.0.1:53\""), "net_split", "report-out-argument", "net_out carries its bound", json);
+                    rep = harness.require(heap, rep, harness.contains(json, "\"name\": \"net_in\""), "net_split", "report-in", "the inbound half is named net_in", json);
+                    rep = harness.require(heap, rep, harness.contains(json, "\"argument\": \"5353\""), "net_split", "report-in-argument", "net_in carries its bound", json);
+                }
+            }
+            buffer.drop(heap, out);
+            buffer.drop(heap, err);
+        }
+    }
+    buffer.drop(heap, path);
+    buffer.drop(heap, source);
+    return rep;
+}
+
+// One program: built for `dial` and `listen`, killed by a signal exactly when `trap`.
+fn case[&h, &x, &c, &f, &b, &v, &d, &t, &n, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], template: &t [byte], name: &n [byte], dial: &e [byte], listen: &e [byte], trap: bool, report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let source = harness.fill(heap, template, "127.0.0.1:53", "5353", dial, listen);
+    borrow source as &sb in {
+        let harness.Ended { out, err, kind, code } = harness.build_text(heap, exec, clock, fs, bin, env, dir, "split", buffer.bytes(sb), "");
+        if kind != 0 {
+            borrow err as &rb in {
+                rep = harness.failure(heap, rep, "net_split", name, "should build, but the compiler said", buffer.bytes(rb));
+            }
+        } else {
+            var exe = harness.joined(heap, dir, "split");
+            borrow exe as &eb in {
+                let how = harness.exit_kind(heap, exec, clock, buffer.bytes(eb));
+                if trap && how != 1 {
+                    rep = harness.failure(heap, rep, "net_split", name, "should be killed by a signal (the bound's trap)", "");
+                } else if !trap && how != 0 {
+                    rep = harness.failure(heap, rep, "net_split", name, "should run through", "");
+                }
+            }
+            buffer.drop(heap, exe);
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, source);
+    return rep;
+}
+
+fn cases[&h, &x, &c, &f, &b, &v, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], t: &t [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var r = report_of(heap, exec, clock, fs, bin, env, dir, t, buffer.empty(heap, 64));
+    r = case(heap, exec, clock, fs, bin, env, dir, t, "inside both bounds", "53", "5353", false, r);
+    r = case(heap, exec, clock, fs, bin, env, dir, t, "a dial to another port", "54", "5353", true, r);
+    r = case(heap, exec, clock, fs, bin, env, dir, t, "a listener on another port", "53", "5354", true, r);
+    return r;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-net-split");
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/programs/net_split.tmpl");
+    borrow dir as &db in {
+        borrow env as &eb in {
+            borrow data as &tb in {
+                if len(buffer.bytes(db)) == 0 || failed != 0 {
+                    report = harness.failure(heap, report, "net_split", "setup", "should make a scratch directory and read the template", "");
+                } else {
+                    buffer.drop(heap, report);
+                    report = cases(heap, exec, clock, fs, bin, buffer.bytes(eb), buffer.bytes(db), buffer.bytes(tb));
+                }
+            }
+        }
+        if len(buffer.bytes(db)) > 0 {
+            harness.remove_tree(heap, exec, clock, buffer.bytes(db));
+        }
+    }
+    buffer.drop(heap, data);
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: net_split CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: net_split\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

@@ -1,0 +1,198 @@
+edition 7;
+module net_bounds_test;
+
+// net_bounds.cho -- `conformance/net_bounds.rs` (deleted), in cancho (`docs/gate.md` G4): `docs/net-bounds.md` section 2.4: the report does not call an unnarrowed network bounded.
+//
+// `split` hands out the whole network, and a program that dials or listens with it can reach every host and port (or every port). Its label has an empty argument, which names no domain, so `bounded` is
+// `false` and `unbounded_by` says which label made it so, as it does for a foreign symbol. A program that narrows first keeps `bounded: true`. The programs are `tests/programs/net_bounds_dialer.tmpl`
+// and `net_bounds_listener.tmpl` with the type of the network and the way it is taken filled in.
+//
+//     cancho build tests/commands/net_bounds.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: net_bounds` or what is wrong, and exits 0 or 1.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// The authority report of the template filled with `ty` and `take`, as JSON (or as prose); it is in `out` of the `Ended`.
+fn report_of[&h, &x, &c, &f, &b, &v, &d, &t, &y, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], template: &t [byte], ty: &y [byte], take: &k [byte], json: bool) -> [heap, exec(""), clock, poll, fs_write("")] harness.Ended {
+    let source = harness.fill(heap, template, ty, take, "", "");
+    var path = harness.joined(heap, dir, "program.cho");
+    var result = harness.Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
+    borrow source as &sb in {
+        borrow path as &pb in {
+            harness.write_file(fs, buffer.bytes(pb), buffer.bytes(sb));
+            harness.drop_ended(heap, result);
+            result = harness.authority(heap, exec, clock, bin, env, buffer.bytes(pb), json);
+        }
+    }
+    buffer.drop(heap, path);
+    buffer.drop(heap, source);
+    return result;
+}
+
+fn open_dialer[&h, &x, &c, &f, &b, &v, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], t: &t [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let harness.Ended { out, err, kind, code } = report_of(heap, exec, clock, fs, bin, env, dir, t, "Net(\"\")", "net", true);
+    borrow out as &ob in {
+        let json = buffer.bytes(ob);
+        rep = harness.require(heap, rep, kind == 0 && code == 0, "net_bounds", "open-out-ran", "`authority` should answer", json);
+        rep = harness.require(heap, rep, bytes.starts_with(json, "{\n  \"bounded\": false,\n  \"unbounded_by\": [\n    \"net_out(\\\"\\\")\"\n  ],"), "net_bounds", "open-out", "an unnarrowed dialer is not bounded and says which label", json);
+        rep = harness.require(heap, rep, harness.contains(json, "{ \"name\": \"net_out\", \"argument\": \"\", \"bounded\": false }"), "net_bounds", "open-out-label", "the label itself is the one that is not bounded", json);
+        rep = harness.require(heap, rep, harness.contains(json, "{ \"name\": \"heap\", \"argument\": null, \"bounded\": true }") || !harness.contains(json, "\"heap\""), "net_bounds", "open-out-rest", "everything else the program does is still bounded", json);
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+fn open_listener[&h, &x, &c, &f, &b, &v, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], t: &t [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let harness.Ended { out, err, kind, code } = report_of(heap, exec, clock, fs, bin, env, dir, t, "Net(\"\")", "net", true);
+    borrow out as &ob in {
+        let json = buffer.bytes(ob);
+        rep = harness.require(heap, rep, kind == 0 && code == 0, "net_bounds", "open-in-ran", "`authority` should answer", json);
+        rep = harness.require(heap, rep, bytes.starts_with(json, "{\n  \"bounded\": false,\n  \"unbounded_by\": [\n    \"net_in(\\\"\\\")\"\n  ],"), "net_bounds", "open-in", "an unnarrowed listener is not bounded and says which label", json);
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// A narrowed dialer, or a narrowed listener, stays bounded and its label carries the bound.
+fn narrowed[&h, &x, &c, &f, &b, &v, &d, &t, &g](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], t: &t [byte], name: &g [byte], bound: &g [byte], take: &g [byte], label: &g [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    var ty = buffer.append(heap, buffer.empty(heap, 32), "Net(\"");
+    ty = buffer.append(heap, ty, bound);
+    ty = buffer.append(heap, ty, "\")");
+    borrow ty as &yb in {
+        let harness.Ended { out, err, kind, code } = report_of(heap, exec, clock, fs, bin, env, dir, t, buffer.bytes(yb), take, true);
+        borrow out as &ob in {
+            let json = buffer.bytes(ob);
+            rep = harness.require(heap, rep, kind == 0 && code == 0, "net_bounds", name, "`authority` should answer", json);
+            rep = harness.require(heap, rep, bytes.starts_with(json, "{\n  \"bounded\": true,\n  \"unbounded_by\": [],"), "net_bounds", name, "a narrowed network stays bounded", json);
+            rep = harness.require(heap, rep, harness.contains(json, label), "net_bounds", name, "the label carries its bound", json);
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, ty);
+    return rep;
+}
+
+// The prose report says so too.
+fn prose[&h, &x, &c, &f, &b, &v, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], t: &t [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let harness.Ended { out, err, kind, code } = report_of(heap, exec, clock, fs, bin, env, dir, t, "Net(\"\")", "net", false);
+    borrow out as &ob in {
+        let text = buffer.bytes(ob);
+        rep = harness.require(heap, rep, kind == 0 && code == 0, "net_bounds", "prose-ran", "`authority` should answer", text);
+        rep = harness.require(heap, rep, bytes.starts_with(text, "UNBOUNDED: this program holds the network without narrowing it."), "net_bounds", "prose-head", "the prose says UNBOUNDED first", text);
+        rep = harness.require(heap, rep, harness.contains(text, "    net_out(\"\")    <- unbounded"), "net_bounds", "prose-label", "the prose marks the label", text);
+        rep = harness.require(heap, rep, harness.contains(text, "unbounded by\n    net_out(\"\")"), "net_bounds", "prose-by", "the prose says what it is unbounded by", text);
+        rep = harness.require(heap, rep, !harness.contains(text, "calls foreign code"), "net_bounds", "prose-foreign", "a network is not foreign code", text);
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+fn cases[&h, &x, &c, &f, &b, &v, &d, &t, &u](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], dialer: &t [byte], listener: &u [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var r = open_dialer(heap, exec, clock, fs, bin, env, dir, dialer, buffer.empty(heap, 64));
+    r = open_listener(heap, exec, clock, fs, bin, env, dir, listener, r);
+    r = narrowed(heap, exec, clock, fs, bin, env, dir, dialer, "narrowed-out", "127.0.0.1:9", "narrow(net, \"127.0.0.1:9\")", "{ \"name\": \"net_out\", \"argument\": \"127.0.0.1:9\", \"bounded\": true }", r);
+    r = narrowed(heap, exec, clock, fs, bin, env, dir, listener, "narrowed-in", "8080", "narrow(net, \"8080\")", "\"net_in\"", r);
+    r = prose(heap, exec, clock, fs, bin, env, dir, dialer, r);
+    return r;
+}
+
+// The listener template read, and every case run.
+fn with_listener[&h, &x, &c, &f, &b, &v, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], dialer: &t [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read, fs_write("")] buffer.Buffer {
+    var report = buffer.empty(heap, 64);
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/programs/net_bounds_listener.tmpl");
+    if failed != 0 {
+        report = harness.failure(heap, report, "net_bounds", "setup", "should read the listener template", "");
+    } else {
+        borrow data as &lb in {
+            buffer.drop(heap, report);
+            report = cases(heap, exec, clock, fs, bin, env, dir, dialer, buffer.bytes(lb));
+        }
+    }
+    buffer.drop(heap, data);
+    return report;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-net-bounds");
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/programs/net_bounds_dialer.tmpl");
+    borrow dir as &db in {
+        borrow env as &eb in {
+            borrow data as &tb in {
+                if len(buffer.bytes(db)) == 0 || failed != 0 {
+                    report = harness.failure(heap, report, "net_bounds", "setup", "should make a scratch directory and read the template", "");
+                } else {
+                    buffer.drop(heap, report);
+                    report = with_listener(heap, exec, clock, fs, bin, buffer.bytes(eb), buffer.bytes(db), buffer.bytes(tb));
+                }
+            }
+        }
+        if len(buffer.bytes(db)) > 0 {
+            harness.remove_tree(heap, exec, clock, buffer.bytes(db));
+        }
+    }
+    buffer.drop(heap, data);
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: net_bounds CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: net_bounds\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

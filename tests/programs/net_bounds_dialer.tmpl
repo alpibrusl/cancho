@@ -1,0 +1,19 @@
+edition 5;
+fn run(bound: @A@, io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match tcp_connect(n, "127.0.0.1", 9) {
+            Dialed::Ok(c) => { conn_close(c); status = 0; }
+            Dialed::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(heap); release(args); release(clock);
+    let bound = @B@;
+    return run(bound, io);
+}

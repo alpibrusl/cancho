@@ -1,0 +1,97 @@
+edition 9;
+
+import std.io;
+
+// A client for the tests that run a server in the background (`tests/support/harness.cho`, `serve_and_probe`).
+//   argv[1]  the address to dial (an IPv4 literal)
+//   argv[2]  the port
+//   argv[3]  what to send first (may be empty)
+// It dials, sends argv[3] if there is any, then copies what the server says to standard output until the server ends the
+// connection. Exit status 0 when it connected, 2 when the connection was refused (and it says `refused` on standard
+// error), 64 for too few arguments.
+
+fn number[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) && int_of(b[i]) >= '0' && int_of(b[i]) <= '9' {
+        n = n * 10 + (int_of(b[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn drain[&i, &t](io: &!i Io, conn: Conn, first: &t [byte]) -> [io_write] int {
+    var c = conn;
+    if len(first) > 0 {
+        borrow mut c as &!wh in {
+            match conn_write(wh, first) {
+                Sent::Wrote(w) => {
+                }
+                Sent::Again => {
+                }
+                Sent::Failed(e) => {
+                }
+            }
+        }
+    }
+    region a {
+        let buf = alloc_slice[a](4096, byte_of(0));
+        var going = true;
+        while going {
+            borrow mut c as &!ch in {
+                match conn_read(ch, buf) {
+                    Received::Data(n) => {
+                        io.write_all(io, buf[0..n]);
+                    }
+                    Received::End => {
+                        going = false;
+                    }
+                    Received::Again => {
+                    }
+                    Received::Failed(e) => {
+                        going = false;
+                    }
+                }
+            }
+        }
+    }
+    conn_close(c);
+    return 0;
+}
+
+fn dial[&n, &i, &h, &t](net: &n Net(""), io: &!i Io, host: &h [byte], port: int, first: &t [byte]) -> [net_out(""), conn_read, conn_write, io_write, err_write] int {
+    match tcp_connect(net, host, port) {
+        Dialed::Ok(c) => {
+            return drain(io, c, first);
+        }
+        Dialed::Failed(e) => {
+            io.error_all(io, "refused\n");
+            return 2;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var status = 64;
+    borrow mut io as &!i in {
+        borrow args as &a in {
+            borrow net as &nn in {
+                if arg_count(a) >= 4 {
+                    status = dial(nn, i, arg(a, 1), number(arg(a, 2)), arg(a, 3));
+                }
+            }
+        }
+    }
+    release(net);
+    release(args);
+    release(io);
+    return status;
+}

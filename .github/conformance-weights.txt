@@ -68,10 +68,6 @@ selfhost::bootstrap::the_file_list_of_the_standalone_build_is_the_import_closure
 selfhost::statics::guidelines_module_is_the_text_of_agents_md 1
 selfhost::parity::rules_and_builtins_are_the_goldens 1
 selfhost::statics::std_order_module_is_the_std_table_of_cancho 1
-net_hosts::an_empty_host_half_still_admits_every_name_in_every_edition 315
-net_hosts::a_wildcard_is_exactly_one_label_ahead_of_its_suffix 173
-net_hosts::before_edition_ten_a_host_bound_is_a_prefix 160
-net_hosts::from_edition_ten_a_host_bound_is_exact 15
 backends::the_two_backends_agree_on_layout_rgb 7
 backends::the_two_backends_agree_on_mandelbrot 7
 backends::the_two_backends_agree_on_reduce_checked 7
@@ -237,7 +233,6 @@ memory 15
 tls_pool 14
 vcs_std 14
 differential 13
-net_split 13
 testing 13
 
 process_release 11
@@ -261,7 +256,6 @@ mathfn 3
 refusals 3
 authority 3
 agent_cli 1
-net_bounds 1
 duplication 1
 devices 1
 vcs_sync 1
