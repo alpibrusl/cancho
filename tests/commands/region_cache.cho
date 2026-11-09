@@ -107,7 +107,9 @@ fn built_and_run[&h, &x, &c, &f, &b, &e, &d, &n, &t, &v](heap: &!h Heap, exec: &
     var ran = harness.Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
     borrow exe as &eb in {
         harness.drop_ended(heap, ran);
-        ran = harness.spawn_capture(heap, exec, clock, buffer.bytes(eb), buffer.empty(heap, 0), "", run_env);
+        // The runtime refuses an `LD_` entry in a spawned environment, so the program is started by `env`, which sets the variables itself (each entry of `run_env` is an argument of `env`).
+        let command = harness.word(heap, buffer.append(heap, buffer.empty(heap, 256), run_env), buffer.bytes(eb));
+        ran = harness.spawn_capture(heap, exec, clock, "/usr/bin/env", command, "", "PATH=/usr/bin:/bin\0");
     }
     buffer.drop(heap, exe);
     return ran;
