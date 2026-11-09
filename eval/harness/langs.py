@@ -2,6 +2,8 @@
 import os, subprocess, shutil
 
 CANCHO = os.environ.get("CANCHO_BIN", "cancho")
+CARGO = os.environ.get("CARGO_BIN", "cargo")
+MYPY = os.environ.get("MYPY_BIN", "mypy")
 
 def sh(cmd, cwd, timeout=120, stdin=None):
     try:
@@ -27,11 +29,17 @@ def build(lang, d):
         if rc != 0: return False, (out + err).decode(errors="replace")[:4000], None
         return True, "", ["./sol"]
     if lang == "rust":
-        rc, out, err = sh(["rustc", "--edition", "2021", "-O", f, "-o", "sol"], d, 300)
+        # Amendment 1 (see PREREGISTRATION-E2-E3.md): clippy with every warning an error, in a one-file Cargo project.
+        open(os.path.join(d, "Cargo.toml"), "w").write(
+            '[package]\nname = "sol"\nversion = "0.0.0"\nedition = "2021"\n\n[[bin]]\nname = "sol"\npath = "sol.rs"\n\n[workspace]\n')
+        rc, out, err = sh([CARGO, "clippy", "--release", "--quiet", "--", "-D", "warnings"], d, 600)
         if rc != 0: return False, (out + err).decode(errors="replace")[:4000], None
-        return True, "", ["./sol"]
+        rc, out, err = sh([CARGO, "build", "--release", "--quiet"], d, 600)
+        if rc != 0: return False, (out + err).decode(errors="replace")[:4000], None
+        return True, "", ["./target/release/sol"]
     if lang == "python":
-        rc, out, err = sh(["python3", "-m", "py_compile", f], d)
+        # Amendment 1: a strict type checker on top of the syntax check.
+        rc, out, err = sh([MYPY, "--strict", "--no-incremental", f], d, 300)
         if rc != 0: return False, (out + err).decode(errors="replace")[:4000], None
         return True, "", ["python3", f]
     if lang == "c":

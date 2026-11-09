@@ -17,3 +17,18 @@
 **Not claimed.** Anything about tasks outside this suite; anything about a model not run; anything from fewer than five runs a cell.
 
 **Amendments** are appended below with a date, never edited in place.
+
+## Amendment 1 (2026-11-09, before any run beyond the smoke test)
+
+**Why.** The baselines were weaker than ordinary good practice: Python was checked with `py_compile` only and Rust with `rustc` only. A cancho result against those would flatter cancho. This amendment strengthens the comparison languages and changes nothing else. The tasks, metrics, thresholds and iteration budget above stand.
+
+**Changes to the checkers** (`harness/langs.py`; the checker's output is still what goes back to the model):
+- Python: `mypy --strict --no-incremental sol.py`. A program is accepted by the checker only if it type-checks; it is then run with `python3`.
+- Rust: `cargo clippy --release -- -D warnings` in a one-file Cargo project (edition 2021), then `cargo build --release`. Every rustc and clippy warning is an error.
+- cancho and C are unchanged.
+
+**Pinned versions.** mypy 2.4.1; clippy 0.1.98 (Rust 1.98); clang as installed on the run machine. The exact versions of every tool and of the cancho compiler (commit hash) are recorded in the commit that starts the runs.
+
+**Consequence for the thresholds.** None. E3 still fails if Rust has fewer median iterations to green and fewer survivors than cancho. A stricter Rust and Python can only make that harder for cancho to avoid, which is the point.
+
+**Still open before the first run.** The exact model strings (at least two families), and freezing the guide (`cancho agent-guidelines`) at a commit. Both go in the commit that starts the runs, not here.
