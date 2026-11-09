@@ -56,7 +56,6 @@ mod duplication;
 mod ecdh;
 mod ecdsa;
 mod f32_text;
-mod file_writes;
 mod float_text;
 mod floats;
 mod foreign_authority;

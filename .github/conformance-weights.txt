@@ -189,7 +189,6 @@ benchmarks::benchmark_game_programs_print_the_published_answer 15
 benchmarks::fasta_and_reverse_complement_print_the_published_answer 11
 signals 144
 udp 129
-file_writes 116
 sockets 115
 binary32 98
 tls 81

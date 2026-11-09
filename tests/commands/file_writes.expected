@@ -1,0 +1,43 @@
+== open_append keeps what is there and writes at the end (2 written, 2 written, size 6)
+status 226; log.bin=ABcdef
+== open_append creates a missing file
+status 3; new.bin=xyz
+== open_write truncates; open_new refuses a file that is there (EEXIST, 17: 100 + 17)
+status 117; old.bin=fresh held.bin=keep
+== open_new creates a file that is not there
+status 3; fresh.bin=abc
+== open_rw refuses a missing file (ENOENT, 2: 100 + 2) and creates nothing
+status 102; absent.bin=<absent>
+== pwrite and pread take an offset and leave the cursor alone (22 + 100 + 1000, modulo 256)
+status 98; rw.bin=ABBA
+== pread past the end is End
+status 7
+== pwrite on an append handle still appends (Linux; docs/file-writes.md section 4.2)
+status 2; aa.bin=AAAABB
+== truncate cuts and size leaves the cursor where it was
+status 105; t.bin=hello
+== a verb the kernel refuses answers Failed with the errno (EBADF 9, EBADF 9, EINVAL 22: one bit each)
+status 7; r.bin=abc w.bin=abc
+== a file created by an open has the default mode masked by the umask (0666 with umask 027)
+status 1
+mode -rw-r-----
+== sync calls fsync on the descriptor it was given (strace, where it is installed on Linux)
+status 1
+fsync calls: 1
+the fsync names the descriptor of the write of x and succeeded
+== an open outside the granted prefix traps, and creates nothing
+o: killed by a signal; created: no
+== rename replaces the destination and leaves no old name
+status 1; live.bin=replacement new2.bin=<absent>
+== remove unlinks a file and a second removal is ENOENT (1 + 2 * 10)
+status 21; gone.bin=<absent> kept.bin=y
+== rename and remove refuse a path outside the prefix or with .. (a rename names two paths: out of the directory and in from outside are both writes outside it)
+rename-out: killed by a signal; inside=in outside=out moved=no
+rename-in: killed by a signal; inside=in outside=out moved=no
+rename-dotdot: killed by a signal; inside=in outside=out moved=no
+remove-out: killed by a signal; inside=in outside=out moved=no
+remove-dotdot: killed by a signal; inside=in outside=out moved=no
+== a lock is refused while another process holds it and released when that process dies (EWOULDBLOCK)
+the holder says: locked
+refused while the holder lives (EWOULDBLOCK)
+admitted once the holder is gone: exit 0
