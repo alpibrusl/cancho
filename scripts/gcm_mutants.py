@@ -5,7 +5,7 @@
 
 Each mutant is one of the two files with one deliberate bug, both built as
 local modules `aes` and `gcm` beside a copy of `tests/programs/gcm_driver.cho`,
-and run against the same evidence `conformance/gcm.rs` and
+and run against the same evidence `tests/commands/gcm.cho` and
 `scripts/gcm_differential.py` use: FIPS 197's examples, NIST CAVP's 96-bit-IV
 cases, every Wycheproof case, the counter edges, a message with each bit
 flipped, and 2,000 random cases against OpenSSL. A mutant is killed when any

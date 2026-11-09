@@ -104,7 +104,7 @@ minimal INTEGERs, nothing after the SEQUENCE. Both then run SEC 1 §4.1.4:
 - **Mutants:** a mutation run, as for RSA.
 - **Cost:** verifications per second per core.
 
-`tests/programs/ecdsa_driver.cho` runs all of it. `crates/cancho/tests/conformance/ecdsa.rs` has the vectors and refusals,
+`tests/programs/ecdsa_driver.cho` runs all of it. `tests/commands/ecdsa.cho` has the vectors and refusals,
 `scripts/ecdsa_differential.py` runs Python and OpenSSL, and `scripts/ecdsa_mutants.py` the mutants.
 
 ## 5. Results

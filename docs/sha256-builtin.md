@@ -176,7 +176,7 @@ under them. The rule of `chacha20.md` §3 applies: no branch and no memory index
   15 or 17 words; and Cranelift answers false and traps.
 - **`std` on both paths, without a switch**: the CAVP files (`SHA256ShortMsg`, `SHA256LongMsg`, `SHA256Monte` and the SHA-384
   and SHA-512 ones), the streamed-against-one-shot cases at every length to 300 in pieces of 1 to 129 bytes, and the 64 KiB and
-  200 KiB messages now run on **both backends** in `cargo test` (`conformance/kdf.rs`): LLVM on the instructions, Cranelift in
+  200 KiB messages now run on **both backends** in `cargo test` (`tests/commands/kdf.cho`): LLVM on the instructions, Cranelift in
   software. The same files, RFC 4231 and the KDF differential on **LLVM with the CPU's SHA-NI hidden**, under Valgrind on
   x86-64 (§2), are §8.1's.
 - **Mutants**: `scripts/sha256_mutants.py` mutates the Rust that writes the IR (the rounds, the schedule, the constants, the
@@ -191,7 +191,7 @@ under them. The rule of `chacha20.md` §3 applies: no branch and no memory index
 
 - **`cargo test`** (the whole workspace on the M4 under macOS; its `sha256_builtins` and `kdf` tests also on the i7 under
   Linux, where the builtins are SHA-NI): the builtins' known answers and 800-case differential, the traps,
-  `hw_sha256()` against the CPU (true on both), and `conformance/kdf.rs` (CAVP, RFC 4231, RFC 5869, the key schedules,
+  `hw_sha256()` against the CPU (true on both), and `tests/commands/kdf.cho` (CAVP, RFC 4231, RFC 5869, the key schedules,
   Wycheproof, the prepared-key rows) on both backends. The TLS conformance tests (RFC 8448's traces, every recorded handshake
   replayed byte for byte on both backends, the lying servers and clients, tickets, the pool's `tls.residue` 0) pass unchanged.
 - **The KDF differential**, `scripts/kdf_differential.py`, twelve checks a round: **100,000 rounds, 1,200,000 checks, 0

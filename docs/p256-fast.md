@@ -636,7 +636,7 @@ other agents' benchmarks on cores 0, 1, 4 and 5, so the cycles moved by up to 20
   equal or opposite at one position and the sum passes through infinity); four
   keys' tables against Python's, byte for byte (their SHA-256); the points `build_table` refuses; every new entry point with wrong
   lengths. Wycheproof's 3,098 ECDSA cases and CAVP's 90 SigVer cases are each run again against the point's table and must give the
-  same line (`conformance/ecdsa.rs`). The x509 files (the limbo subset, 223 stores of which 195 give at least one root a table; the
+  same line (`tests/commands/ecdsa.cho`). The x509 files (the limbo subset, 223 stores of which 195 give at least one root a table; the
   14 saved real chains against the system bundle, whose 3 P-256 roots get one; the OpenSSL matrix; the no-name matrix) are each
   replayed with the anchors' tables and must give every recorded answer (`tests/commands/x509_verify.cho`). The TLS suites (the liar
   clients, the differentials, tickets, the pool, fuzz corpora) pass unchanged: the server's check and the client's chain now go

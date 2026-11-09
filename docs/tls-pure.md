@@ -33,7 +33,7 @@
 |---|---|---|---|
 | how a change ships | a compiler release, since `std/` is compiled in (`STD` in `crates/cancho/src/main.rs`, one `include_str!` per file) | primitives with the compiler; protocol and policy on their own schedule | on their own schedule |
 | who must move a pin | every user of the change: `cancho-hooks` pins one compiler commit (`cancho.toml`, `[package] cancho`), so a root-store or cipher-policy fix becomes a coordinated two-repo bump | a CVE fix in the handshake or in name matching is a package bump; a primitive fix is a compiler bump | a package bump |
-| test-vector and differential checks | in `cargo test`, offline (`crates/cancho/tests/conformance/aead.rs`, `kdf.rs`) | the same for primitives; packages carry their own harnesses (as `examples/tls_nb/test/` does) | each package must build its own harness |
+| test-vector and differential checks | in `cargo test`, offline (`tests/commands/aead.cho`, `kdf.rs`) | the same for primitives; packages carry their own harnesses (as `examples/tls_nb/test/` does) | each package must build its own harness |
 | what other programs get | everything | primitives anyone can use: `cancho-hooks` already moved its HMAC to `std.hmac` (cancho-hooks#23) | packages they must find and pin |
 | cost when unused | nothing (`std_declarations_cost_nothing_unless_called`, `docs/crypto.md` §6) | nothing | nothing |
 

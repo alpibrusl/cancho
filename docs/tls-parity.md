@@ -105,7 +105,7 @@ message. After the change, one region holds all of a call's scratch:
 - no `brk` per call;
 - 5.0 µs for the same 64-byte message.
 
-**Correctness, every case through `tests/programs/gcm_driver.cho`** (`crates/cancho/tests/conformance/gcm.rs`):
+**Correctness, every case through `tests/programs/gcm_driver.cho`** (`tests/commands/gcm.cho`):
 
 | Evidence | Cases | Result |
 |---|---|---|
