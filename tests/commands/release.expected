@@ -1,0 +1,33 @@
+== a packaged compiler installs and reports the commit it was asked for
+tarball made
+sha256 lines: 1
+the sum names the tarball
+install exit 0
+cancho 0.0.0 (rev 0123456789abcdef0123456789abcdef01234567, host fake)
+== a binary that is not a clean commit is not packaged
+exit 1: 1 refusal said
+exit 1: 1 refusal said
+exit 1: 1 refusal said
+== packaging twice gives the same bytes
+same bytes
+== a tarball that does not match its sha256 is not installed
+exit 4: 1 mismatch said
+== a binary that reports another commit is not installed
+exit 4: 1 report said
+== install refuses what is not a full commit and what is not there
+bad commit: exit 2
+bad commit: exit 2
+bad commit: exit 2
+bad commit: exit 2
+bad commit: exit 2
+bad commit: exit 2
+bad commit: exit 2
+== install with no commit installs the latest release and checks it
+latest: exit 0
+cancho 0.0.0 (rev 0123456789abcdef0123456789abcdef01234567, host fake)
+nightly: exit 2
+no release: exit 5
+== the Rust build is packaged as cancho-rust
+package exit 0
+cancho-rust asset made
+bad asset name: exit 2

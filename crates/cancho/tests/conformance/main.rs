@@ -35,10 +35,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 mod aead;
-mod agent_cli;
-mod agent_tools;
 mod api;
-mod authority;
 mod backends;
 mod benchmarks;
 mod binary32;
@@ -53,7 +50,6 @@ mod differential;
 mod directory_listing;
 
 mod directory_rename_new;
-mod docs;
 mod duplication;
 mod ecdh;
 mod ecdsa;
@@ -62,7 +58,6 @@ mod file_writes;
 mod filesystem;
 mod float_text;
 mod floats;
-mod foreign_authority;
 mod formatting;
 mod gcm;
 mod global_state;
@@ -89,10 +84,7 @@ mod net_split;
 mod ports;
 mod process_release;
 mod processes;
-mod project;
-mod refusals;
 mod region_cache;
-mod release;
 mod rsa;
 mod satisfy;
 mod selfhost;
@@ -165,19 +157,6 @@ fn make_removable(dir: &Path) {
             make_removable(&entry.path());
         }
     }
-}
-
-/// `//~ TARGET <triple>`: the flags that make `check` ask a fixture's question
-/// of the target it names (`docs/wasm.md`), for the fixtures whose refusal is a
-/// property of a target. Empty for every other fixture, so every harness that
-/// walks `tests/reject` passes this to `check` and none has to know why.
-fn target_args(path: &Path) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("//~ TARGET "))
-        .map(|triple| vec!["--target".to_owned(), triple.trim().to_owned()])
-        .unwrap_or_default()
 }
 
 fn fixtures(kind: &str) -> Vec<PathBuf> {

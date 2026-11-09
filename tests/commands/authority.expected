@@ -1,0 +1,67 @@
+== names what a program performs
+ok tally performs io_read
+ok tally performs io_write
+ok tally never touches the filesystem
+ok tally never touches the heap
+ok tally never touches the command line
+ok tally never touches foreign code
+ok hello performs io_write
+ok hello never touches the filesystem
+ok hello never touches the heap
+ok hello never touches the command line
+ok hello never touches foreign code
+ok pipeline: ffi("libc")
+ok pipeline: io_write
+ok pipeline: labs
+ok pipeline: the filesystem
+== sees what main does itself
+ok lines reads argv in main
+ok lines does touch the command line
+== an unused capability never appears
+ok quiet performs nothing
+ok quiet: the console is untouched
+ok quiet: the filesystem is untouched
+ok quiet: the heap is untouched
+ok quiet: the command line is untouched
+ok quiet: foreign code is untouched
+== a machine-readable form
+ok balanced braces
+ok balanced brackets
+ok tour.json has "effects"
+ok tour.json has "labels"
+ok tour.json has "never_touches"
+ok tour.json has "foreign_symbols"
+ok tour.json has "fs_read"
+ok tour.json has "labs"
+ok tour.json has "never_touches": [
+ok tour.json has "other programs"
+ok the narrowing survives
+ok an unnarrowed label carries an explicit null
+ok tour touches the filesystem, so it cannot be proven out of reach
+ok the human form is unchanged by the flag
+== purity is the row plus what a reference may do
+ok double is pure
+ok first is pure
+ok poke is not pure
+ok pair is not pure
+ok shout is not pure
+ok scratch is pure
+fetched 1 file
+== a network program reports no network
+ok serve reports only args and ffi
+ok serve lists socket
+ok serve lists bind
+ok serve lists listen
+ok serve lists accept
+== the report fails closed
+  "bounded": false,
+  "bounded": true,
+UNBOUNDED
+ok the prose report marks the label
+== the symbol list is a proof about names
+ok opaque reports only ffi
+ok and names only syscall
+== foreign_symbols names only what the program calls
+ok unused is declared but never called, so it is not reported
+== the filesystem dimension is enforceable
+ok the report carries the path prefix, not just the dimension

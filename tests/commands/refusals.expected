@@ -1,0 +1,16 @@
+== every independent refusal is reported
+prose refusals: 3
+exit 1
+json refusals: 3
+1 2 3 
+== the prose is unchanged by the json
+fixtures: 384, skipped for a target: 9
+ok more than a hundred fixtures
+ok prose and data agree
+== every refusal is valid JSON with a position
+ok every answer is valid JSON and placed
+== a clean program answers an empty list
+exit 0
+{
+  "refused": []
+}

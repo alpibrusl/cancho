@@ -1,0 +1,123 @@
+== no foreign code: bounded, and unbounded by nothing
+{
+  "bounded": true,
+  "unbounded_by": [],
+ok the symbol list is empty
+ok no UNBOUNDED
+ok no unbounded-by section
+ok it says it never touches foreign code
+== one libc symbol is named exactly
+{
+  "bounded": false,
+  "unbounded_by": [
+    "libc:getpid"
+  ],
+  "effects": ["ffi"],
+  "labels": [
+    { "name": "ffi", "argument": "libc", "bounded": false }
+  ],
+  "never_touches": ["the console", "the filesystem", "the network", "the heap", "the command line", "signals", "other programs"],
+  "foreign_symbols": ["getpid"],
+  "pure": [],
+  "functions": 2
+}
+UNBOUNDED: this program calls foreign code. The labels below bound it
+everywhere except through the symbols under "unbounded by", and what
+a symbol does is the linked library's, not the language's.
+See docs/foreign-authority.md.
+performs
+    ffi("libc")    <- unbounded
+never touches
+    the console
+    the filesystem
+    the network
+    the heap
+    the command line
+    signals
+    other programs
+unbounded by
+    libc:getpid
+exit 0
+== two libraries are attributed symbol by symbol
+{
+  "bounded": false,
+  "unbounded_by": [
+    "libc:labs",
+    "libpthread:pthread_self"
+  ],
+ok libc label
+ok libpthread label
+ok both symbols, sorted
+unbounded by
+    libc:labs
+    libpthread:pthread_self
+exit 7
+== a declaration nobody calls is not reach
+{
+  "bounded": true,
+  "unbounded_by": [],
+ok no symbol is reported
+exit 0
+== adding a symbol changes the pin by exactly that symbol
+  "unbounded_by": [
+    "libc:getpid"
+  ],
+  "unbounded_by": [
+    "libc:getpid",
+    "libc:getuid"
+  ],
+== the scope is a claim and the symbol is the fact
+  "unbounded_by": [
+    "openssl:system"
+  ],
+exit 0
+== a foreign function without a capability is refused
+rule foreign-declaration
+rule foreign-declaration
+rule foreign-declaration
+rule foreign-declaration
+rule foreign-declaration
+== a scope is narrowed as a set, and every refusal has its rule
+scope 'libc,':
+rule foreign-scope
+scope 'libc,,libm':
+rule foreign-scope
+scope 'libc,libc':
+rule foreign-scope
+scope 'libc libm':
+rule foreign-scope
+scope 'libc:statx':
+rule foreign-scope
+scope 'lib/c':
+rule foreign-scope
+scope '':
+rule capability-not-narrowable
+libc -> libc,libm:
+rule capability-not-narrowable
+libc,libm -> libssl:
+rule capability-not-narrowable
+libc -> libcrypto:
+rule capability-not-narrowable
+libcrypto -> libc:
+rule capability-not-narrowable
+libc -> :
+rule capability-not-narrowable
+libc,libm -> libm,libc:
+GAP: accepted, the Rust checker refused it (to itself)
+a scope in a type:
+rule foreign-scope
+== a capability is lent narrower and never wider
+libc,libm lent to libc: accepted
+libm,libc lent to libc,libm: accepted
+libc lent to libm: GAP: accepted, the Rust checker said refused
+libc lent to libc,libm: GAP: accepted, the Rust checker said refused
+libc,libm lent to libssl: GAP: accepted, the Rust checker said refused
+libc,libm,libssl lent to libm,libssl: accepted
+GAP: the root is lent and the rule is 'linear-value-unconsumed', the Rust checker said type-mismatch
+== rows stay exact per library
+GAP: accepted, the Rust checker refused it ()
+GAP: accepted, the Rust checker refused it ()
+== a path cannot be passed to statx as C has it
+exit 1
+== a string literal has no hex escape
+rule unknown-escape

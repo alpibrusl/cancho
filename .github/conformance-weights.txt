@@ -209,9 +209,7 @@ float_text 37
 tls_echo 36
 capture 32
 http_fetch_nb 30
-release 30
 filesystem 29
-foreign_authority 27
 directory_listing 26
 floats 25
 https_hello 24
@@ -223,14 +221,12 @@ tls_echo_fixed 21
 ecdh 20
 processes 20
 tls_client_auth 19
-agent_tools 19
 tls_server 19
 kdf 18
 thread_state 18
 http_server_stream 17
 ports 16
 compile_time 16
-project 16
 http_server_upload 16
 aead 15
 memory 15
@@ -248,7 +244,6 @@ crypto_builtins 10
 ecdsa 10
 region_cache 8
 
-docs 8
 rsa 8
 vcs 7
 wide_multiply 6
@@ -258,9 +253,6 @@ io 4
 wasm_target 4
 satisfy 4
 mathfn 3
-refusals 3
-authority 3
-agent_cli 1
 net_bounds 1
 duplication 1
 devices 1
