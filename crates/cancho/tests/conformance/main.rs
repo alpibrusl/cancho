@@ -78,7 +78,6 @@ mod json;
 mod kdf;
 mod listen_host;
 mod mathfn;
-mod memory;
 mod modules;
 mod narrow_many;
 mod net;
@@ -94,13 +93,11 @@ mod refusals;
 mod region_cache;
 mod release;
 mod rsa;
-mod satisfy;
 mod selfhost;
 mod sha256_builtins;
 mod signals;
 mod sockets;
 
-mod testing;
 mod thread_state;
 mod tls;
 mod tls_auth;
@@ -119,7 +116,6 @@ mod vcs_std;
 mod vcs_sync;
 mod wasm_target;
 mod wide_multiply;
-mod word_scan;
 
 const BIN: &str = env!("CARGO_BIN_EXE_cancho");
 

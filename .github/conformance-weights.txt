@@ -195,7 +195,6 @@ binary32 98
 tls 81
 json 79
 narrow_many 75
-word_scan 67
 tls_fuzz 65
 api 64
 formatting 63
@@ -233,12 +232,10 @@ compile_time 16
 project 16
 http_server_upload 16
 aead 15
-memory 15
 tls_pool 14
 vcs_std 14
 differential 13
 net_split 13
-testing 13
 
 process_release 11
 directory_rename_new 11
@@ -256,7 +253,6 @@ sha256_builtins 6
 vcs_remote 5
 io 4
 wasm_target 4
-satisfy 4
 mathfn 3
 refusals 3
 authority 3
