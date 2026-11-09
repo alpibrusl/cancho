@@ -1,0 +1,148 @@
+edition 9;
+
+import std.io;
+
+// A client of `tests/programs/udp_ring_race.cho` (`tests/commands/thread_state.sh`): two of these run at once, one against each of the server's two
+// ports, and every round both send at the same moment, so that the server's two threads receive at the same moment.
+//   argv[1]  the name, a letter (the message of round N is the letter and N)
+//   argv[2]  the server's port
+//   argv[3]  the number of rounds
+//   argv[4]  the unix time in milliseconds at which round 0 begins; round N begins 10 ms after round N-1
+// Prints `NAME wrong W lost L`: the replies that were not the client's own message, and the rounds that got none in two seconds.
+
+fn number[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) && int_of(b[i]) >= '0' && int_of(b[i]) <= '9' {
+        n = n * 10 + (int_of(b[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn run[&i, &n, &k, &a](io: &!i Io, net: &n Net(""), clock: &k Clock, args: &a Args) -> [io_write, args, net_out(""), udp_send, udp_recv, poll, clock] int {
+    let port = number(arg(args, 2));
+    let rounds = number(arg(args, 3));
+    let begin = number(arg(args, 4));
+    var wrong = 0;
+    var lost = 0;
+    match udp_connect(net, "127.0.0.1", port) {
+        UdpOpened::Ok(u) => {
+            var udp = u;
+            borrow mut udp as &!uh in {
+                udp_nonblocking(uh);
+            }
+            match poller_new() {
+                Polling::Ok(p) => {
+                    var poller = p;
+                    borrow udp as &ur in {
+                        borrow mut poller as &!ph in {
+                            poller_add_udp(ph, ur, 1, 1);
+                        }
+                    }
+                    region r {
+                        let message = alloc_slice[r](16, byte_of(0));
+                        let reply = alloc_slice[r](64, byte_of(0));
+                        let events = alloc_slice[r](8, 0);
+                        var round = 0;
+                        while round < rounds {
+                            while clock_unix_ms(clock) < begin + round * 10 {
+                            }
+                            message[0] = arg(args, 1)[0];
+                            var len_of = 1;
+                            var digits = alloc_slice[r](12, byte_of(0));
+                            var m = round;
+                            var d = 0;
+                            while m > 0 || d == 0 {
+                                digits[d] = byte_of('0' + m % 10);
+                                m = m / 10;
+                                d = d + 1;
+                            }
+                            while d > 0 {
+                                d = d - 1;
+                                message[len_of] = digits[d];
+                                len_of = len_of + 1;
+                            }
+                            borrow mut udp as &!uh in {
+                                udp_send(uh, message[0..len_of]);
+                                borrow mut poller as &!ph in {
+                                    if poller_wait(ph, events, 2000) > 0 {
+                                        match udp_recv(uh, reply) {
+                                            Datagram::Got(got) => {
+                                                var same = got == len_of;
+                                                var q = 0;
+                                                while same && q < got {
+                                                    if int_of(reply[q]) != int_of(message[q]) {
+                                                        same = false;
+                                                    }
+                                                    q = q + 1;
+                                                }
+                                                if !same {
+                                                    wrong = wrong + 1;
+                                                }
+                                            }
+                                            Datagram::Truncated(got) => {
+                                                wrong = wrong + 1;
+                                            }
+                                            Datagram::Again => {
+                                                lost = lost + 1;
+                                            }
+                                            Datagram::Failed(e) => {
+                                                lost = lost + 1;
+                                            }
+                                        }
+                                    } else {
+                                        lost = lost + 1;
+                                    }
+                                }
+                            }
+                            round = round + 1;
+                        }
+                    }
+                    poller_close(poller);
+                }
+                Polling::Failed(e) => {
+                    lost = rounds;
+                }
+            }
+            udp_close(udp);
+        }
+        UdpOpened::Failed(e) => {
+            lost = rounds;
+        }
+    }
+    io.write_all(io, arg(args, 1));
+    io.write_all(io, " wrong ");
+    io.print_int(io, wrong);
+    io.write_all(io, " lost ");
+    io.print_int(io, lost);
+    io.newline(io);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(signals);
+    release(exec);
+    release(tty);
+    var status = 64;
+    borrow mut io as &!i in {
+        borrow args as &a in {
+            borrow net as &nn in {
+                borrow clock as &k in {
+                    if arg_count(a) >= 5 {
+                        status = run(i, nn, k, a);
+                    }
+                }
+            }
+        }
+    }
+    release(clock);
+    release(net);
+    release(args);
+    release(io);
+    return status;
+}

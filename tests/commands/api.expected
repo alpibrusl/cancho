@@ -1,22 +1,135 @@
-ok: the routes answer
-ok: one connection serves many requests and pipelined ones in order
-ok: a request split across segments is answered once whole
-ok: the start of the next request after a whole one is kept and completed
-ok: closing a connection moves the last one with its buffered bytes
-ok: what cannot be trusted is refused and the connection closes
-ok: connection close is honoured
-ok: a silent client does not hold up the others
-ok: many clients at once each get their own answers
-ok: clients that vanish do not hurt the server
-ok: an idle connection is closed after the timeout
-ok: a client that stops reading stalls only itself
-ok: a slow reader gets every byte in the right order
-ok: a client that never reads is closed after the idle timeout
-ok: a connection that is to close closes only once its answer has gone
-ok: the server announces its port on standard error
-ok: the server holds no foreign authority
-ok: a chunked body is decoded and the handler cannot tell
-ok: a chunked body arriving a byte at a time is answered once and whole
-ok: a body larger than the default buffer needs the buffer argument
-ok: a buffer the server cannot honour is refused at start
-ok: a port taken by another listener is not mistaken for the server
+== the routes answer
+< HTTP/1.1 200 OK
+< Content-Type: application/json
+< Content-Length: 11
+< Connection: keep-alive
+= {"ok":true}
+< HTTP/1.1 200 OK
+< Content-Type: application/json
+< Content-Length: 26
+< Connection: keep-alive
+= {"q":"a b cé","length":7}
+< HTTP/1.1 405 Method Not Allowed
+< Content-Type: application/json
+< Content-Length: 30
+< Connection: keep-alive
+< Allow: GET
+= {"error":"method not allowed"}
+< HTTP/1.1 405 Method Not Allowed
+< Content-Type: application/json
+< Content-Length: 30
+< Connection: keep-alive
+< Allow: POST
+= {"error":"method not allowed"}
+< HTTP/1.1 404 Not Found
+< Content-Type: application/json
+< Content-Length: 21
+< Connection: keep-alive
+= {"error":"not found"}
+answers as wanted: 8 of 8
+== one connection serves many requests, and pipelined ones in order
+answers as wanted: 90 of 90
+== a request split across segments is answered once whole
+< HTTP/1.1 200 OK
+< Content-Type: application/json
+< Content-Length: 10
+< Connection: keep-alive
+= {"sum":11}
+answers as wanted: 1 of 1
+== the start of the next request after a whole one is kept and completed
+answers as wanted: 40 of 40
+== closing a connection moves the last one with its buffered bytes
+answers as wanted: 30 of 30
+== what cannot be trusted is refused, and the connection closes
+both lengths: 400 body 41 bytes, Connection: close: yes
+both lengths: ends 1: yes
+line folding: 400 body 44 bytes, Connection: close: yes
+line folding: ends 1: yes
+space before colon: 400 body 28 bytes, Connection: close: yes
+space before colon: ends 1: yes
+no host: 400 body 36 bytes, Connection: close: yes
+no host: ends 1: yes
+garbage method: 400 body 34 bytes, Connection: close: yes
+garbage method: ends 1: yes
+version: 400 body 36 bytes, Connection: close: yes
+version: ends 1: yes
+two lengths: 400 body 34 bytes, Connection: close: yes
+two lengths: ends 1: yes
+chunk size not hex: 400 body 26 bytes, Connection: close: yes
+chunk size not hex: ends 1: yes
+chunk extension: 400 body 59 bytes, Connection: close: yes
+chunk extension: ends 1: yes
+chunked trailer: 400 body 59 bytes, Connection: close: yes
+chunked trailer: ends 1: yes
+chunk framing: 400 body 29 bytes, Connection: close: yes
+chunk framing: ends 1: yes
+other encoding: 400 body 41 bytes, Connection: close: yes
+other encoding: ends 1: yes
+chunked body too large: 413 body 29 bytes, Connection: close: yes
+chunked body too large: ends 1: yes
+body too large: 413 body 29 bytes, Connection: close: yes
+body too large: ends 1: yes
+head too large: 431 body 34 bytes, Connection: close: yes
+head too large: ends 1: yes
+answers as wanted: 1 of 1
+== Connection: close is honoured
+< HTTP/1.1 200 OK
+< Content-Type: application/json
+< Content-Length: 11
+< Connection: close
+= {"ok":true}
+ends 1: yes
+< HTTP/1.1 200 OK
+< Content-Type: application/json
+< Content-Length: 11
+< Connection: close
+= {"ok":true}
+ends 2: yes
+== a silent client does not hold up the others
+since lt 3000: yes
+answers as wanted: 40 of 40
+== many clients at once each get their own answers
+  64 answers as wanted: 40 of 40
+== clients that vanish do not hurt the server
+answers as wanted: 1 of 1
+== an idle connection is closed after the timeout
+ends 1: yes
+answers as wanted: 6 of 6
+== a client that stops reading stalls only itself
+since lt 2000: yes
+answers as wanted: 4030 of 4030
+== a slow reader gets every byte in the right order
+answers as wanted: 1020 of 1020
+== a client that never reads is closed after the idle timeout
+readend closed: yes
+read size < 131072000: yes
+answers as wanted: 1 of 1
+== a connection that is to close closes only once its answer has gone
+200 body 20000 bytes, Connection: close: yes
+ends 1: yes
+431 body 34 bytes, Connection: close: yes
+== the server announces its port on standard error
+listening on PORT
+== the server holds no foreign authority
+foreign code: no
+reports net_in: yes
+reports conn_accept: yes
+reports conn_read: yes
+reports conn_write: yes
+reports poll: yes
+reports clock: yes
+reports heap: yes
+== a chunked body is decoded, and the handler cannot tell
+answers as wanted: 5 of 5
+== a chunked body arriving a byte at a time is answered once and whole
+answers as wanted: 3 of 3
+== a body larger than the default buffer needs the buffer argument
+answers as wanted: 1 of 1
+answers as wanted: 3 of 3
+== a buffer the server cannot honour is refused at start
+buffer 100: exit 2
+buffer 2097152: exit 2
+== a port taken by another listener is not mistaken for the server
+the server stayed up on a busy port: no
+a connect to the busy port succeeded: yes
+answers as wanted: 1 of 1

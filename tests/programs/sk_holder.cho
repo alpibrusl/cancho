@@ -1,0 +1,70 @@
+edition 9;
+
+import std.conns;
+
+// A server that accepts every connection and keeps it until it is killed (`tests/commands/thread_state.sh`).
+//   argv[1]  the port
+// Exit 3 when the port cannot be listened on.
+
+fn number[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) && int_of(b[i]) >= '0' && int_of(b[i]) <= '9' {
+        n = n * 10 + (int_of(b[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn hold[&h, &l](heap: &!h Heap, listener: &!l Listener) -> [heap, conn_accept] int {
+    var table = conns.empty(heap, 64);
+    var going = true;
+    while going {
+        match tcp_accept(listener) {
+            Accepted::Ok(c) => {
+                let (t2, slot) = conns.put(heap, table, c);
+                table = t2;
+            }
+            Accepted::Again => {
+            }
+            Accepted::Failed(e) => {
+                going = false;
+            }
+        }
+    }
+    conns.drop(heap, table);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var status = 3;
+    borrow mut heap as &!h in {
+        borrow args as &a in {
+            borrow net as &nn in {
+                match tcp_listen(nn, number(arg(a, 1)), 128, 0) {
+                    Listening::Ok(l) => {
+                        var listener = l;
+                        borrow mut listener as &!lh in {
+                            status = hold(h, lh);
+                        }
+                        listener_close(listener);
+                    }
+                    Listening::Failed(e) => {
+                    }
+                }
+            }
+        }
+    }
+    release(net);
+    release(args);
+    release(heap);
+    return status;
+}
