@@ -76,7 +76,6 @@ mod identity;
 mod io;
 mod json;
 mod kdf;
-mod listen_host;
 mod mathfn;
 mod memory;
 mod modules;

@@ -1,0 +1,45 @@
+edition 5;
+import std.io;
+
+fn run(bound: Net("@B@"), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow bound as &n in {
+            match @C@ {
+                Listening::Ok(l) => {
+                    var listener = l;
+                    borrow mut listener as &!lh in {
+                        io.error_all(i, "ready\n");
+                        match tcp_accept(lh) {
+                            Accepted::Ok(c) => {
+                                var conn = c;
+                                borrow mut conn as &!ch in {
+                                    match conn_write(ch, "ping") {
+                                        Sent::Wrote(w) => { status = 0; }
+                                        Sent::Again => { status = 3; }
+                                        Sent::Failed(e) => { status = 4; }
+                                    }
+                                }
+                                conn_close(conn);
+                            }
+                            Accepted::Again => { status = 2; }
+                            Accepted::Failed(e) => { status = 5; }
+                        }
+                    }
+                    listener_close(listener);
+                }
+                Listening::Failed(e) => { status = 6; }
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(heap); release(args); release(clock);
+    let bound = narrow(net, "@B@");
+    return run(bound, io);
+}

@@ -735,6 +735,16 @@ pub fn authority[&h, &x, &c, &b, &e, &p](heap: &!h Heap, exec: &x Exec(""), cloc
     return spawn_capture(heap, exec, clock, bin, command, "", env);
 }
 
+// `bin check PATH --std --output json`: the refusals of the program at `path` (`"rule": "TAG"` for each), as `Ended`; exit code 0 and no `"rule"` in `out` when it is accepted.
+pub fn check_json[&h, &x, &c, &b, &e, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], path: &p [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "check");
+    command = word(heap, command, path);
+    command = word(heap, command, "--std");
+    command = word(heap, command, "--output");
+    command = word(heap, command, "json");
+    return spawn_capture(heap, exec, clock, bin, command, "", env);
+}
+
 // Write `text` to `dir/name.cho` and build it with `bin` (`--std`, `flags`) to `dir/name`; the build's `Ended` (kind 6 if it failed, what the compiler said in `err`). The path of the program is
 // `dir/name`.
 pub fn build_text[&h, &x, &c, &f, &b, &v, &d, &n, &t, &g](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], name: &n [byte], text: &t [byte], flags: &g [byte]) -> [heap, exec(""), clock, poll, fs_write("")] Ended {
@@ -760,7 +770,7 @@ pub fn build_text[&h, &x, &c, &f, &b, &v, &d, &n, &t, &g](heap: &!h Heap, exec: 
 
 // Run the shell command `server` in the background in `dir` (its standard output in `server.out`, its standard error in `server.err`), wait until either file holds `ready` (at most 15 s), run the
 // shell commands in `probes` (one client after another, or several with `&` and `wait`), then give the server up to 5 s to end by itself and kill it if it has not. The `Ended` is the shell's: `out` is
-// what the probes printed, then the line `server: exit N` (it ended with code N; `server: killed` if it had to be killed, `server: never ready` if it was not ready in time), then `-- server.out`
+// what the probes printed, then the line `server: exit N` (it ended with code N; `server: killed` if it had to be killed, `server: never ready` if it was not ready in time, `server: died by signal N` or `server: died N` if it ended before it was ready), then `-- server.out`
 // and the contents of that file, then `-- server.err` and the contents of that one. `$SP` is the server's pid in the probes. Core dumps are off (a trapped server costs a dump where they are piped).
 pub fn serve_and_probe[&h, &x, &c, &d, &s, &r, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, dir: &d [byte], server: &s [byte], ready: &r [byte], probes: &p [byte]) -> [heap, exec(""), clock, poll] Ended {
     var script = buffer.append(heap, buffer.empty(heap, 512), "ulimit -c 0; cd '");
@@ -769,8 +779,8 @@ pub fn serve_and_probe[&h, &x, &c, &d, &s, &r, &p](heap: &!h Heap, exec: &x Exec
     script = buffer.append(heap, script, server);
     script = buffer.append(heap, script, " ) >server.out 2>server.err & SP=$!; i=0; ok=0; while [ $i -lt 300 ]; do if grep -q '");
     script = buffer.append(heap, script, ready);
-    script = buffer.append(heap, script, "' server.out server.err 2>/dev/null; then ok=1; break; fi; sleep 0.05; i=$((i+1)); done; ");
-    script = buffer.append(heap, script, "if [ $ok = 0 ]; then kill -KILL $SP 2>/dev/null; wait $SP 2>/dev/null; echo 'server: never ready'; else ");
+    script = buffer.append(heap, script, "' server.out server.err 2>/dev/null; then ok=1; break; fi; kill -0 $SP 2>/dev/null || break; sleep 0.05; i=$((i+1)); done; ");
+    script = buffer.append(heap, script, "if [ $ok = 0 ]; then if kill -0 $SP 2>/dev/null; then kill -KILL $SP 2>/dev/null; wait $SP 2>/dev/null; echo 'server: never ready'; else wait $SP; c=$?; if [ $c -gt 128 ]; then echo \"server: died by signal $((c-128))\"; else echo \"server: died $c\"; fi; fi; else ");
     script = buffer.append(heap, script, probes);
     script = buffer.append(heap, script, "\n i=0; while kill -0 $SP 2>/dev/null && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done; ");
     script = buffer.append(heap, script, "if kill -0 $SP 2>/dev/null; then kill -KILL $SP 2>/dev/null; wait $SP 2>/dev/null; echo 'server: killed'; else wait $SP; echo \"server: exit $?\"; fi; fi; ");

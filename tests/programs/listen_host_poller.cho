@@ -1,0 +1,52 @@
+edition 9;
+
+// `docs/native-sockets.md` section 12 (`tests/commands/listen_host.cho`): the handle `tcp_listen_on` makes is a `Listener` like any other, a `Poller` takes it and `listener_nonblocking`
+// accepts it. The test only checks that this is accepted (`cancho check`); it is never run.
+
+fn run(bound: Net("127.0.0.1:8080")) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match tcp_listen_on(n, "127.0.0.1", 8080, 8, 0) {
+            Listening::Ok(l) => {
+                var listener = l;
+                borrow mut listener as &!lh in {
+                    listener_nonblocking(lh);
+                }
+                match poller_new() {
+                    Polling::Ok(p) => {
+                        var poller = p;
+                        borrow mut poller as &!ph in {
+                            borrow listener as &lr in {
+                                poller_add_listener(ph, lr, 1);
+                            }
+                        }
+                        poller_close(poller);
+                        status = 0;
+                    }
+                    Polling::Failed(e) => {
+                    }
+                }
+                listener_close(listener);
+            }
+            Listening::Failed(e) => {
+            }
+        }
+    }
+    release(bound);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    let bound = narrow(net, "127.0.0.1:8080");
+    return run(bound);
+}
