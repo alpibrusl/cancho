@@ -702,7 +702,7 @@ was its LAN address; the Linux half of CI runs the same tests.
   bound with the loopback literal also bound loopback only. The non-loopback
   half was run, not skipped, here; on a machine with no such address the test
   prints `SKIPPED` and checks loopback only.
-* **Tests added:** 12 conformance tests (`listen_host.rs`, each on both backends
+* **Tests added:** 12 conformance tests (`listen_host.rs`, moved to `tests/commands/listen_host.cho` in G4 wave 2: one backend, and no longer the arity, argument-type, octal-octet and 5,000-character refusals; each on both backends
   where it opens a socket), 7 unit tests (`cancho-ir/src/tests/listen.rs`,
   including 3,000+ generated dotted quads checked against `std::net::Ipv4Addr`),
   5 `tests/reject` fixtures (all under `listen-host`, plus the edition gate).
