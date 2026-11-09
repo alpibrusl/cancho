@@ -13,14 +13,14 @@ ok std.signals names the bits
 ok every unclaimable signal is refused with its rule
 ok a malformed set is refused and any order is accepted
 ok narrowing a signal set never widens it
-GAP: root: the Rust compiler answers 'capability-misused', the compiler in cancho None
-GAP: not signals: the Rust compiler answers 'capability-misused', the compiler in cancho None
-GAP: by value: the Rust compiler answers 'capability-misused', the compiler in cancho 'linear-use-after-move'
+GAP: root: the Rust compiler answers capability-misused, the compiler in cancho says accepted
+GAP: not signals: the Rust compiler answers capability-misused, the compiler in cancho says accepted
+GAP: by value: the Rust compiler answers capability-misused, the compiler in cancho says linear-use-after-move
 ok only a narrowed borrowed Signals can claim
 ok the signal names are edition six
-GAP: owned root: the Rust compiler refuses the owned root, the compiler in cancho accepts it
-GAP: unordered: the Rust compiler answers 'signal-not-claimable', the compiler in cancho None
-GAP: row exact: the Rust compiler answers None, the compiler in cancho 'effect-declared-not-performed'
+GAP: owned root: the Rust compiler answers refused, the compiler in cancho says accepted
+GAP: unordered: the Rust compiler answers signal-not-claimable, the compiler in cancho says accepted
+GAP: row exact: the Rust compiler answers accepted, the compiler in cancho says effect-declared-not-performed
 ok the claim is linear and its rows are exact
 ok the authority report names the set and is bounded
 ok the text report says what is claimed and what is not

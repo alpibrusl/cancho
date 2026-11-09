@@ -77,26 +77,10 @@ got sh -c 'ulimit -n 8; exec 4</dev/null 5</dev/null 6</dev/null 7</dev/null; ex
 if [ "$(uname -s)" = Linux ]; then want 'add child 24\n== code 5\n'; else want 'add child 0\n== code 5\n'; fi
 check "a child with no descriptor to spare says EMFILE" "$_g" "$_w"
 
-# 4.8: a kernel without pidfd_open (before Linux 5.3), stood in for by a seccomp filter that answers it with ENOSYS (38), installed before the waiter starts. Linux only; elsewhere this prints what a pass prints.
-if [ "$(uname -s)" = Linux ] && command -v python3 > /dev/null 2>&1; then
-    got python3 - "$work/waiter" <<'PY'
-import ctypes, os, struct, sys
-libc = ctypes.CDLL(None, use_errno=True)
-# Load the system call number; if it is pidfd_open (434) fail with ENOSYS, otherwise allow it.
-BPF_LD_W_ABS, BPF_JEQ_K, BPF_RET_K = 0x20, 0x15, 0x06
-RET_ERRNO, RET_ALLOW = 0x00050000, 0x7FFF0000
-filters = [(BPF_LD_W_ABS, 0, 0, 0), (BPF_JEQ_K, 0, 1, 434), (BPF_RET_K, 0, 0, RET_ERRNO | 38), (BPF_RET_K, 0, 0, RET_ALLOW)]
-raw = b"".join(struct.pack("HBBI", *f) for f in filters)
-buf = ctypes.create_string_buffer(raw, len(raw))
-program = struct.pack("HxxxxxxQ", len(filters), ctypes.addressof(buf))
-PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP, SECCOMP_MODE_FILTER = 38, 22, 2
-if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
-    sys.exit("no_new_privs failed")
-pbuf = ctypes.create_string_buffer(program, len(program))
-if libc.prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.addressof(pbuf), 0, 0) != 0:
-    sys.exit("seccomp failed")
-os.execv(sys.argv[1], [sys.argv[1], "e", "-c|exit 5"])
-PY
+# 4.8: a kernel without pidfd_open (before Linux 5.3), stood in for by strace answering that system call with ENOSYS (38) (the Rust test installed a seccomp filter). Linux only, and where strace can inject the error (it is
+# installed on the CI machines); elsewhere this prints what a pass prints.
+if [ "$(uname -s)" = Linux ] && command -v strace > /dev/null 2>&1 && strace -qq -f -o /dev/null -e trace=none true > /dev/null 2>&1; then
+    got strace -qq -f -o /dev/null -e trace=pidfd_open -e inject=pidfd_open:error=ENOSYS "$work/waiter" e '-c|exit 5'
     want 'add child 38\n== code 5\n'
     check "a child without a pidfd says why it cannot be watched" "$_g" "$_w"
 else
