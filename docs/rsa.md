@@ -152,7 +152,7 @@ bad key, never a `bigmod-*` one.
   `openssl dgst -verify` and `std.rsa`. The two must give the same answer every time.
 - **Cost:** verifications per second for 2,048 and 4,096 bits, on both backends, with the command used.
 
-All of it is run by `tests/programs/rsa_driver.cho`, which reads one case per line. `crates/cancho/tests/conformance/rsa.rs`
+All of it is run by `tests/programs/rsa_driver.cho`, which reads one case per line. `tests/commands/rsa.cho`
 runs the vectors and the refusals; `scripts/rsa_differential.py` runs Python and OpenSSL; `scripts/rsa_mutants.py` checks
 that the vectors would notice a bug (§5.4).
 

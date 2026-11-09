@@ -1,0 +1,366 @@
+edition 7;
+module ecdsa_test;
+
+// ecdsa.cho -- `conformance/ecdsa.rs` (deleted), in cancho (`docs/gate.md` G4): `std.ecdsa` (`docs/ecdsa.md` section 4): every case of seven Wycheproof ECDSA files on P-256 and P-384 (DER and raw
+// signatures, digests longer and shorter than n), the NIST CAVP SigVer cases for those curves, each also against the point's table (`docs/p256-fast.md` section 11), and every refusal with its own
+// tag (`tests/vectors/ecdsa_refusals.txt`). All through `tests/programs/ecdsa_driver.cho`, built once. The files are read line by line (`harness.cr_rows`), not as JSON.
+//
+//     cancho build tests/commands/ecdsa.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: ecdsa` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift legs went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// The digest length in bytes of a Wycheproof `sha` (0 for one `std` does not have).
+fn hash_len[&t](sha: &t [byte]) -> [] int {
+    if bytes.equal(sha, "SHA-256") {
+        return 32;
+    } else if bytes.equal(sha, "SHA-384") {
+        return 48;
+    } else if bytes.equal(sha, "SHA-512") {
+        return 64;
+    }
+    return 0;
+}
+
+// The cases of one Wycheproof file: `V|R CURVE H POINT MSG SIG` to a line, and the file's own answer to each (`valid` or `invalid`) to a line of `results`.
+fn cases_of[&h, &t](heap: &!h Heap, text: &t [byte], raw: bool, inputs: buffer.Buffer, results: buffer.Buffer, report: buffer.Buffer) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    var input = inputs;
+    var result = results;
+    var acc = report;
+    let rows = harness.cr_rows(heap, text, "uncompressed curve sha msg sig result");
+    borrow rows as &rb in {
+        let all = buffer.bytes(rb);
+        var pos = 0;
+        while pos < len(all) {
+            let line = harness.cr_line_at(all, pos);
+            pos = pos + len(line) + 1;
+            let curve = harness.cr_cell_of(line, 2);
+            let h = hash_len(harness.cr_cell_of(line, 3));
+            if h == 0 || !(bytes.equal(curve, "secp256r1") || bytes.equal(curve, "secp384r1")) {
+                acc = harness.failure(heap, acc, "ecdsa", "wycheproof", "a group should be P-256 or P-384 with SHA-256, SHA-384 or SHA-512", line);
+            }
+            if raw {
+                input = buffer.append(heap, input, "R ");
+            } else {
+                input = buffer.append(heap, input, "V ");
+            }
+            if bytes.equal(curve, "secp256r1") {
+                input = buffer.append(heap, input, "256 ");
+            } else {
+                input = buffer.append(heap, input, "384 ");
+            }
+            input = buffer.push_nat(heap, input, h);
+            input = buffer.push(heap, input, byte_of(' '));
+            input = buffer.append(heap, input, harness.cr_cell_of(line, 1));
+            input = buffer.push(heap, input, byte_of(' '));
+            input = buffer.append(heap, input, harness.cr_cell_of(line, 4));
+            input = buffer.push(heap, input, byte_of(' '));
+            input = buffer.append(heap, input, harness.cr_cell_of(line, 5));
+            input = buffer.push(heap, input, byte_of('\n'));
+            result = buffer.push(heap, buffer.append(heap, result, harness.cr_cell_of(line, 6)), byte_of('\n'));
+        }
+    }
+    buffer.drop(heap, rows);
+    return (input, result, acc);
+}
+
+// Every valid case verifies and every invalid one is refused (an answer that begins with `-`); the files have no "acceptable" cases. The counts of each refusal are pinned, so a change in
+// which rule refuses a case is seen. Then every case again with the point's table in its place, which must answer the same, line for line.
+fn wycheproof[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    var input = buffer.empty(heap, 1 << 20);
+    var results = buffer.empty(heap, 1 << 16);
+    var file = 1;
+    while file <= 7 {
+        var path = buffer.append(heap, buffer.empty(heap, 96), "tests/vectors/wycheproof/");
+        path = buffer.append(heap, path, bytes.field("ecdsa_secp256r1_sha256_test.json ecdsa_secp256r1_sha256_p1363_test.json ecdsa_secp256r1_sha512_test.json ecdsa_secp384r1_sha384_test.json ecdsa_secp384r1_sha384_p1363_test.json ecdsa_secp384r1_sha256_test.json ecdsa_secp384r1_sha512_test.json", 32, file));
+        borrow path as &pb in {
+            let harness.Contents { data, failed } = harness.read_file(heap, fs, buffer.bytes(pb));
+            if failed != 0 {
+                acc = harness.failure(heap, acc, "ecdsa", "wycheproof", "a Wycheproof file cannot be read", buffer.bytes(pb));
+            }
+            borrow data as &db in {
+                let (i, r, a) = cases_of(heap, buffer.bytes(db), file == 2 || file == 5, input, results, acc);
+                input = i;
+                results = r;
+                acc = a;
+            }
+            buffer.drop(heap, data);
+        }
+        buffer.drop(heap, path);
+        file = file + 1;
+    }
+    var cases = 0;
+    borrow input as &ib in {
+        cases = bytes.count_byte(buffer.bytes(ib), 10);
+    }
+    if cases != 3098 {
+        acc = harness.failure(heap, acc, "ecdsa", "wycheproof", "the seven files should have 3098 cases", "");
+    }
+    borrow input as &ib in {
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "ecdsa", "wycheproof");
+        acc = more;
+        // What each answer must be, as a class: `ok` for a valid case, a `-` (the code of a refusal) for an invalid one; and what it is: its first word's first byte, or `ok`.
+        var want = buffer.empty(heap, 1 << 14);
+        var got = buffer.empty(heap, 1 << 14);
+        var tags = buffer.empty(heap, 1 << 15);
+        borrow results as &rsb in {
+            borrow said as &sb in {
+                let n = bytes.count_byte(buffer.bytes(rsb), 10);
+                var at = 0;
+                var rpos = 0;
+                var spos = 0;
+                while at < n && len(buffer.bytes(sb)) > 0 {
+                    let verdict = harness.cr_line_at(buffer.bytes(rsb), rpos);
+                    rpos = rpos + len(verdict) + 1;
+                    let answer = harness.trim_end(harness.cr_line_at(buffer.bytes(sb), spos));
+                    spos = spos + len(answer) + 1;
+                    let tag = harness.cr_word(answer, 2);
+                    if bytes.equal(verdict, "valid") {
+                        want = buffer.append(heap, want, "ok\n");
+                    } else {
+                        want = buffer.append(heap, want, "refused\n");
+                    }
+                    if bytes.equal(tag, "ok") {
+                        got = buffer.append(heap, got, "ok\n");
+                    } else if len(answer) > 0 && answer[0] == byte_of('-') {
+                        got = buffer.append(heap, got, "refused\n");
+                    } else {
+                        got = buffer.append(heap, got, "neither\n");
+                    }
+                    tags = buffer.append(heap, tags, verdict);
+                    tags = buffer.push(heap, tags, byte_of(' '));
+                    tags = buffer.push(heap, buffer.append(heap, tags, tag), byte_of('\n'));
+                    at = at + 1;
+                }
+            }
+        }
+        borrow got as &gb in {
+            borrow want as &wb in {
+                acc = harness.cr_same(heap, acc, "ecdsa", "wycheproof", buffer.bytes(gb), buffer.bytes(wb));
+            }
+        }
+        borrow tags as &tb in {
+            if len(buffer.bytes(tb)) > 0 {
+                acc = harness.cr_counts(heap, acc, "ecdsa", "wycheproof-refusals", buffer.bytes(tb), "invalid ecdsa-der-non-minimal 45\ninvalid ecdsa-der-structure 875\ninvalid ecdsa-mismatch 119\ninvalid ecdsa-r-range 462\ninvalid ecdsa-raw-length 40\ninvalid ecdsa-result-infinity 35\ninvalid ecdsa-s-range 152\nvalid ok 1370\n");
+            }
+        }
+        buffer.drop(heap, tags);
+        buffer.drop(heap, want);
+        buffer.drop(heap, got);
+        let tabled = harness.cr_retag(heap, buffer.bytes(ib), byte_of('V'), byte_of('X'), byte_of('R'), byte_of('Y'));
+        borrow tabled as &tbl in {
+            let (more2, said2) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(tbl), acc, "ecdsa", "wycheproof-tabled");
+            acc = more2;
+            borrow said as &sb in {
+                borrow said2 as &s2 in {
+                    if len(buffer.bytes(sb)) > 0 && len(buffer.bytes(s2)) > 0 {
+                        acc = harness.differences(heap, acc, "ecdsa", "wycheproof-tabled", buffer.bytes(s2), buffer.bytes(sb));
+                    }
+                }
+            }
+            buffer.drop(heap, said2);
+        }
+        buffer.drop(heap, tabled);
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, results);
+    return acc;
+}
+
+// FIPS 186-3's SigVer for P-256 and P-384 with SHA-256/384/512: 90 cases, each given the file's result; the same answers against each point's table. 18 are `Result = P`.
+fn nist[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/vectors/cavp/ECDSA_SigVer_186-3.rsp");
+    if failed != 0 {
+        acc = harness.failure(heap, acc, "ecdsa", "nist", "ECDSA_SigVer_186-3.rsp cannot be read", "");
+    }
+    var input = buffer.empty(heap, 1 << 15);
+    var want = buffer.empty(heap, 1 << 10);
+    var passes = 0;
+    borrow data as &db in {
+        let rows = harness.cr_rows(heap, buffer.bytes(db), "[ Msg Qx Qy R S Result");
+        borrow rows as &rb in {
+            let all = buffer.bytes(rb);
+            var pos = 0;
+            while pos < len(all) {
+                let line = harness.cr_line_at(all, pos);
+                pos = pos + len(line) + 1;
+                // The header: `P-256,SHA-256`.
+                let header = harness.cr_cell_of(line, 1);
+                let curve = harness.cr_number(header[2..len(header)]);
+                let comma = bytes.find(header, ",SHA-");
+                var h = 0;
+                if comma >= 0 {
+                    h = harness.cr_number(header[comma + 5..len(header)]) / 8;
+                }
+                let width = curve / 4;
+                input = buffer.append(heap, input, "R ");
+                input = buffer.push_nat(heap, input, curve);
+                input = buffer.push(heap, input, byte_of(' '));
+                input = buffer.push_nat(heap, input, h);
+                input = buffer.append(heap, input, " 04");
+                input = harness.cr_pad(heap, input, harness.cr_cell_of(line, 3), width);
+                input = harness.cr_pad(heap, input, harness.cr_cell_of(line, 4), width);
+                input = buffer.push(heap, input, byte_of(' '));
+                input = buffer.append(heap, input, harness.cr_cell_of(line, 2));
+                input = buffer.push(heap, input, byte_of(' '));
+                input = harness.cr_pad(heap, input, harness.cr_cell_of(line, 5), width);
+                input = harness.cr_pad(heap, input, harness.cr_cell_of(line, 6), width);
+                input = buffer.push(heap, input, byte_of('\n'));
+                let result = harness.cr_cell_of(line, 7);
+                if len(result) > 0 && result[0] == byte_of('P') {
+                    want = buffer.append(heap, want, "ok\n");
+                    passes = passes + 1;
+                } else {
+                    want = buffer.append(heap, want, "ecdsa-mismatch\n");
+                }
+            }
+        }
+        buffer.drop(heap, rows);
+    }
+    buffer.drop(heap, data);
+    borrow input as &ib in {
+        if bytes.count_byte(buffer.bytes(ib), 10) != 90 || passes != 18 {
+            acc = harness.failure(heap, acc, "ecdsa", "nist", "the file should have 90 cases, 18 of them passing", "");
+        }
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "ecdsa", "nist");
+        acc = more;
+        borrow said as &sb in {
+            if len(buffer.bytes(sb)) > 0 {
+                let tags = harness.cr_words(heap, buffer.bytes(sb), 2);
+                borrow tags as &tb in {
+                    borrow want as &wb in {
+                        acc = harness.differences(heap, acc, "ecdsa", "nist", buffer.bytes(tb), buffer.bytes(wb));
+                    }
+                }
+                buffer.drop(heap, tags);
+            }
+        }
+        let tabled = harness.cr_retag(heap, buffer.bytes(ib), byte_of('R'), byte_of('Y'), byte_of('R'), byte_of('Y'));
+        borrow tabled as &tbl in {
+            let (more2, said2) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(tbl), acc, "ecdsa", "nist-tabled");
+            acc = more2;
+            borrow said as &sb in {
+                borrow said2 as &s2 in {
+                    if len(buffer.bytes(sb)) > 0 && len(buffer.bytes(s2)) > 0 {
+                        acc = harness.differences(heap, acc, "ecdsa", "nist-tabled", buffer.bytes(s2), buffer.bytes(sb));
+                    }
+                }
+            }
+            buffer.drop(heap, said2);
+        }
+        buffer.drop(heap, tabled);
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+// Every refusal `std.ecdsa` has, reached with its own tag: `tests/vectors/ecdsa_refusals.txt` (`case | tag`), each answer's second word the tag.
+fn refusals[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/vectors/ecdsa_refusals.txt");
+    if failed != 0 {
+        acc = harness.failure(heap, acc, "ecdsa", "refusals", "tests/vectors/ecdsa_refusals.txt cannot be read", "");
+    }
+    var input = buffer.empty(heap, 0);
+    var want = buffer.empty(heap, 0);
+    borrow data as &db in {
+        buffer.drop(heap, input);
+        buffer.drop(heap, want);
+        input = harness.column(heap, buffer.bytes(db), 1);
+        want = harness.column(heap, buffer.bytes(db), 2);
+    }
+    buffer.drop(heap, data);
+    borrow input as &ib in {
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "ecdsa", "refusals");
+        acc = more;
+        borrow said as &sb in {
+            if len(buffer.bytes(sb)) > 0 {
+                let tags = harness.cr_words(heap, buffer.bytes(sb), 2);
+                borrow tags as &tb in {
+                    borrow want as &wb in {
+                        acc = harness.differences(heap, acc, "ecdsa", "refusals", buffer.bytes(tb), buffer.bytes(wb));
+                    }
+                }
+                buffer.drop(heap, tags);
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+fn check[&h, &x, &c, &f, &b, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    let exe = "/tmp/cancho-ecdsa-driver";
+    let (report, built) = harness.cr_build(heap, exec, clock, bin, "tests/programs/ecdsa_driver.cho\0", exe, env, buffer.empty(heap, 64), "ecdsa");
+    var acc = report;
+    if built {
+        acc = wycheproof(heap, exec, clock, fs, exe, acc);
+        acc = nist(heap, exec, clock, fs, exe, acc);
+        acc = refusals(heap, exec, clock, fs, exe, acc);
+    }
+    return acc;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: ecdsa CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let env = harness.base_env(heap, harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var report = buffer.empty(heap, 0);
+    borrow env as &eb in {
+        buffer.drop(heap, report);
+        report = check(heap, exec, clock, fs, arg(args, 1), buffer.bytes(eb));
+    }
+    buffer.drop(heap, env);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: ecdsa\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

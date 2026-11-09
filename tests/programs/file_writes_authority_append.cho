@@ -1,0 +1,32 @@
+edition 5;
+
+// An append-and-sync program: tests/commands/file_writes.cho asks `cancho authority --output json` about it (`docs/file-handles.md` section 4's rule on the write side: a program must not look more powerful for having
+// been written better). It names the directory under `fs_write` and nothing under `fs_read`, and the handle's own verb adds `file_write` with no argument to widen. Never run.
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(args);
+    release(heap);
+    release(ffi);
+    release(io);
+    release(net);
+    release(clock);
+    let d = narrow(fs, "/var/lib/log");
+    var code = 0;
+    borrow d as &f in {
+        match open_append(f, "/var/lib/log/seg.bin") {
+            Opened::Failed(e) => {
+                code = 100 + e;
+            }
+            Opened::Ok(opened) => {
+                var file = opened;
+                borrow mut file as &!h in {
+                    file_write(h, "x");
+                    file_sync(h);
+                }
+                file_close(file);
+            }
+        }
+    }
+    release(d);
+    return code;
+}

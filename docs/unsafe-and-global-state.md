@@ -208,7 +208,7 @@ a program can ignore, which is what the first CVE needs.
 
 **Measured: `tests/programs/memory_exhaustion.cho`** under `ulimit -v` at 19 limits from 1,000,000 KiB to 4,000 KiB, three
 drivers, on Cranelift, on LLVM through the Rust compiler and on LLVM through the compiler in cancho
-(`global_state.rs::a_failed_allocation_traps_and_never_leaves_a_half_made_value_in_use`):
+(`tests/commands/global_state.cho`'s sweep, on Linux):
 
 | driver | what it does | result over the sweep |
 |---|---|---|
@@ -224,8 +224,7 @@ turns the `r` sweep into `SIGSEGV` at 60,000 KiB and the test fails.
 what is visible afterwards is what had already left the process:
 
 * *Standard output that was still buffered is lost.* `write_bytes` is `fwrite` on the C stream; a line written before the trap
-  is not in the pipe or the file (`global_state.rs::a_trap_ends_the_process_and_loses_what_standard_output_still_buffered`, on
-  all three configurations; already stated by `agent-toolbox.md` L1 and `checked-output.md`, which is why `flush_out` exists).
+  is not in the pipe or the file (`tests/commands/global_state.cho`; already stated by `agent-toolbox.md` L1 and `checked-output.md`, which is why `flush_out` exists).
   Standard error is unbuffered. A program that must not lose a record writes it with `flush_out` checked, or to a file it
   `file_sync`s.
 * *A file opened for writing is as the last completed `write` left it.* The language has buffered file stream

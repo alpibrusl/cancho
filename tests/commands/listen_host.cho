@@ -1,0 +1,519 @@
+edition 7;
+module listen_host_test;
+
+// listen_host.cho -- `conformance/listen_host.rs` (deleted), in cancho (`docs/gate.md` G4): `docs/native-sockets.md` section 12: `tcp_listen_on`, a listener bound to one IPv4 address, over real sockets, and the
+// checker's side of it -- the authority row, the narrowing, and every refusal.
+//
+// The servers are `tests/programs/listen_host_server.tmpl` (a listener that says `ready` on standard error, accepts one connection, writes `ping` and ends) and `listen_host_old.tmpl` (the same at edition 5, with the
+// old `tcp_listen`) with the bound and the call filled in; they run in the background (`harness.serve_and_probe`) while `tests/programs/tcp_probe.cho` dials them, from the loopback address and from the machine's
+// other address (found with `ifconfig`, or `ip`; where there is none that half is skipped, as the Rust test skipped it). A listener takes one connection, so the dial that is accepted ends it: the
+// "everywhere" cases ask the other address in one run and the loopback address in another. The ports come from the pid of a short-lived shell (the Rust test asked the operating system for free ones).
+//
+//     cancho build tests/commands/listen_host.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: listen_host` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// ---- the checker's side: what `cancho check` says of a call under a bound -----------------------------------------------------------------------------
+
+// The outcome of `check` on the server template with `bound`, `call` and `extra` (a statement after `var status = 1;`) filled in: 0 accepted, 1 refused with the rule text `rule` (`"rule": "NAME"`), 2 refused under another
+// rule, 3 the compiler crashed.
+fn outcome[&h, &x, &c, &f, &b, &v, &d, &t, &g, &k, &e, &r](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], template: &t [byte], bound: &g [byte], call: &k [byte], extra: &e [byte], rule: &r [byte]) -> [heap, exec(""), clock, poll, fs_write("")] int {
+    let source = harness.fill(heap, template, "9", bound, call, extra);
+    var path = harness.joined(heap, dir, "row.cho");
+    var result = 3;
+    borrow source as &sb in {
+        borrow path as &pb in {
+            harness.write_file(fs, buffer.bytes(pb), buffer.bytes(sb));
+            let harness.Ended { out, err, kind, code } = harness.check_json(heap, exec, clock, bin, env, buffer.bytes(pb));
+            borrow out as &ob in {
+                if kind == 0 {
+                    if harness.contains(buffer.bytes(ob), "\"rule\": \"") {
+                        if harness.contains(buffer.bytes(ob), rule) {
+                            result = 1;
+                        } else {
+                            result = 2;
+                        }
+                    } else {
+                        result = 0;
+                    }
+                }
+            }
+            buffer.drop(heap, out);
+            buffer.drop(heap, err);
+        }
+    }
+    buffer.drop(heap, path);
+    buffer.drop(heap, source);
+    return result;
+}
+
+// One row of the narrowing table of section 12.3: which bound allows which call (a refusal is under the rule `listen-host`).
+fn row[&h, &x, &c, &f, &b, &v, &d, &t, &g, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], template: &t [byte], bound: &g [byte], call: &k [byte], allowed: bool, report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let got = outcome(heap, exec, clock, fs, bin, env, dir, template, bound, call, "", "\"rule\": \"listen-host\"");
+    var name = buffer.append(heap, buffer.empty(heap, 64), "`");
+    name = buffer.append(heap, name, call);
+    name = buffer.append(heap, name, "` under `");
+    name = buffer.append(heap, name, bound);
+    name = buffer.push(heap, name, byte_of('`'));
+    var rep = report;
+    borrow name as &nb in {
+        if allowed {
+            rep = harness.require(heap, rep, got == 0, "listen_host", "row", "should be allowed", buffer.bytes(nb));
+        } else {
+            rep = harness.require(heap, rep, got == 1, "listen_host", "row", "should be refused under the rule `listen-host`", buffer.bytes(nb));
+        }
+    }
+    buffer.drop(heap, name);
+    return rep;
+}
+
+fn rows[&h, &x, &c, &f, &b, &v, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], t: &t [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var r = report;
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.1:8080", "tcp_listen_on(n, \"127.0.0.1\", 8080, 8, 0)", true, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.1:8080", "tcp_listen_on(n, \"0.0.0.0\", 8080, 8, 0)", false, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.1:8080", "tcp_listen_on(n, \"127.0.0.2\", 8080, 8, 0)", false, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.1:8080", "tcp_listen_on(n, \"127.0.0.10\", 8080, 8, 0)", false, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.1:8080", "tcp_listen(n, 8080, 8, 0)", false, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.1:", "tcp_listen_on(n, \"127.0.0.1\", 9, 8, 0)", true, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.1", "tcp_listen_on(n, \"127.0.0.1\", 9, 8, 0)", true, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.1", "tcp_listen(n, 9, 8, 0)", false, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "8080", "tcp_listen_on(n, \"127.0.0.1\", 8080, 8, 0)", true, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "8080", "tcp_listen_on(n, \"0.0.0.0\", 8080, 8, 0)", true, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "8080", "tcp_listen(n, 8080, 8, 0)", true, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "0.0.0.0:8080", "tcp_listen_on(n, \"127.0.0.1\", 8080, 8, 0)", true, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "0.0.0.0:8080", "tcp_listen_on(n, \"0.0.0.0\", 8080, 8, 0)", true, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "0.0.0.0:8080", "tcp_listen(n, 8080, 8, 0)", false, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "localhost:8080", "tcp_listen_on(n, \"127.0.0.1\", 8080, 8, 0)", false, r);
+    r = row(heap, exec, clock, fs, bin, env, dir, t, "::1", "tcp_listen_on(n, \"127.0.0.1\", 8080, 8, 0)", false, r);
+    return r;
+}
+
+// Every host text that is not a strict dotted quad is refused under the rule: names, IPv6, short forms, signs, whitespace, unicode and the empty string. (Not here: the octal-looking octet `010.0.0.1` and a host of 5,000 digits, which the compiler in cancho accepts; see the G4 wave 2 paragraph of the gate document.)
+fn host[&h, &x, &c, &f, &b, &v, &d, &t, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], template: &t [byte], text: &s [byte], allowed: bool, report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var call = buffer.append(heap, buffer.empty(heap, len(text) + 48), "tcp_listen_on(n, \"");
+    call = buffer.append(heap, call, text);
+    call = buffer.append(heap, call, "\", 8080, 8, 0)");
+    var rep = report;
+    borrow call as &kb in {
+        let got = outcome(heap, exec, clock, fs, bin, env, dir, template, "8080", buffer.bytes(kb), "", "\"rule\": \"listen-host\"");
+        if allowed {
+            rep = harness.require(heap, rep, got == 0, "listen_host", "host", "a dotted quad should be accepted", text);
+        } else {
+            rep = harness.require(heap, rep, got == 1, "listen_host", "host", "should be refused under the rule `listen-host`", text);
+        }
+    }
+    buffer.drop(heap, call);
+    return rep;
+}
+
+fn hosts[&h, &x, &c, &f, &b, &v, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], t: &t [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var r = report;
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "localhost", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "::1", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "[::1]", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "127.1", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "127.0.1", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.1.1", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.1.", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "256.0.0.1", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "+1.0.0.1", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "1.2.3.4 ", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, " 1.2.3.4", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "0x7f.0.0.1", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "1.2.3", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "１.2.3.4", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "a.b.c.d", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "1.2.3.4/8", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "1.2.3.4:80", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "0.0.0", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "example.com", false, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.1", true, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "0.0.0.0", true, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "10.20.30.40", true, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "255.255.255.255", true, r);
+    r = host(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.2", true, r);
+    return r;
+}
+
+// A host that is not a literal (a variable) is refused. (Not here: wrong arity and wrong argument types, which the compiler in cancho does not refuse as `arity-mismatch` and `type-mismatch`; see the G4 wave 2 paragraph of the gate document.)
+fn others[&h, &x, &c, &f, &b, &v, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], t: &t [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var r = report;
+    let variable = outcome(heap, exec, clock, fs, bin, env, dir, t, "8080", "tcp_listen_on(n, host, 8080, 8, 0)", " let host = \"127.0.0.1\";", "\"rule\": \"listen-host\"");
+    r = harness.require(heap, r, variable == 1, "listen_host", "variable", "a host that is not a literal is refused under `listen-host`", "");
+    return r;
+}
+
+// The handle `tcp_listen_on` makes is a `Listener` like any other: a `Poller` takes it and `listener_nonblocking` accepts it.
+fn poller[&h, &x, &c, &b, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &v [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let harness.Ended { out, err, kind, code } = harness.check_json(heap, exec, clock, bin, env, "tests/programs/listen_host_poller.cho");
+    var r = report;
+    borrow out as &ob in {
+        r = harness.require(heap, r, kind == 0 && code == 0 && !harness.contains(buffer.bytes(ob), "\"rule\""), "listen_host", "poller", "the listener should be accepted by a poller", buffer.bytes(ob));
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+// ---- the authority report: the bound is the row ---------------------------------------------------------------------------------------------------
+
+// The JSON authority report of the server template with `bound` and `call`; the row of a `bound` and whether `forbidden` is in the report.
+fn authority_row[&h, &x, &c, &f, &b, &v, &d, &t, &g, &k, &n, &o](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], template: &t [byte], bound: &g [byte], call: &k [byte], name: &n [byte], forbidden: &o [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let source = harness.fill(heap, template, "9", bound, call, "");
+    var path = harness.joined(heap, dir, "authority.cho");
+    var row = buffer.append(heap, buffer.empty(heap, 96), "{ \"name\": \"net_in\", \"argument\": \"");
+    row = buffer.append(heap, row, bound);
+    row = buffer.append(heap, row, "\", \"bounded\": true }");
+    var rep = report;
+    borrow source as &sb in {
+        borrow path as &pb in {
+            harness.write_file(fs, buffer.bytes(pb), buffer.bytes(sb));
+            let harness.Ended { out, err, kind, code } = harness.authority(heap, exec, clock, bin, env, buffer.bytes(pb), true);
+            borrow out as &ob in {
+                borrow row as &rb in {
+                    rep = harness.require(heap, rep, kind == 0 && code == 0 && harness.contains(buffer.bytes(ob), buffer.bytes(rb)), "listen_host", name, "the report should carry the row of the bound", buffer.bytes(ob));
+                    if len(forbidden) > 0 {
+                        rep = harness.require(heap, rep, !harness.contains(buffer.bytes(ob), forbidden), "listen_host", name, "the report should not say this", buffer.bytes(ob));
+                    }
+                }
+            }
+            buffer.drop(heap, out);
+            buffer.drop(heap, err);
+        }
+    }
+    buffer.drop(heap, row);
+    buffer.drop(heap, path);
+    buffer.drop(heap, source);
+    return rep;
+}
+
+fn authorities[&h, &x, &c, &f, &b, &v, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], t: &t [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var r = report;
+    // A loopback program says loopback, and must not read as everywhere.
+    r = authority_row(heap, exec, clock, fs, bin, env, dir, t, "127.0.0.1:8080", "tcp_listen_on(n, \"127.0.0.1\", 8080, 8, 0)", "authority-loopback", "{ \"name\": \"net_in\", \"argument\": \"8080\", \"bounded\": true }", r);
+    // An everywhere program says the bare port.
+    r = authority_row(heap, exec, clock, fs, bin, env, dir, t, "8080", "tcp_listen_on(n, \"0.0.0.0\", 8080, 8, 0)", "authority-everywhere", "127.0.0.1", r);
+    // The old form's row is what it was.
+    r = authority_row(heap, exec, clock, fs, bin, env, dir, t, "8080", "tcp_listen(n, 8080, 8, 0)", "authority-old", "", r);
+    return r;
+}
+
+// ---- over real sockets ----------------------------------------------------------------------------------------------------------------------------
+
+// A port that is the pid of a short-lived shell, 20000 and up (below the ephemeral range).
+fn base_port[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock) -> [heap, exec(""), clock, poll] int {
+    let harness.Ended { out, err, kind, code } = harness.sh_run(heap, exec, clock, buffer.append(heap, buffer.empty(heap, 16), "echo $$"));
+    var pid = 0;
+    borrow out as &ob in {
+        pid = harness.number_after(bytes.trim(buffer.bytes(ob)), "");
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return 20000 + pid % 10000;
+}
+
+// The shell commands that dial: `OTHER` is the machine's address that is not loopback (empty if it has none); mode 0 dials it and then loopback, 1 only the other address, 2 only loopback. `PORT` is dialled.
+fn probes[&h](heap: &!h Heap, port: int, mode: int) -> [heap] buffer.Buffer {
+    var text = buffer.append(heap, buffer.empty(heap, 512), "OTHER=$( (/sbin/ifconfig || /usr/sbin/ifconfig) 2>/dev/null | awk '/inet /&&$2!=\"127.0.0.1\"{print $2; exit}'); ");
+    text = buffer.append(heap, text, "if [ -z \"$OTHER\" ]; then OTHER=$(/bin/ip -4 -o addr 2>/dev/null | awk '{split($4,a,\"/\"); if (a[1]!=\"127.0.0.1\") {print a[1]; exit}}'); fi; ");
+    if mode != 2 {
+        text = buffer.append(heap, text, "if [ -n \"$OTHER\" ]; then r=$(./tcp_probe \"$OTHER\" ");
+        text = buffer.push_nat(heap, text, port);
+        text = buffer.append(heap, text, " \"\"); echo \"other: rc=$? out=$r\"; else echo 'other: none'; fi; ");
+    }
+    if mode != 1 {
+        text = buffer.append(heap, text, "r=$(./tcp_probe 127.0.0.1 ");
+        text = buffer.push_nat(heap, text, port);
+        text = buffer.append(heap, text, " \"\"); echo \"loopback: rc=$? out=$r\"; ");
+    }
+    return text;
+}
+
+// The server of `template` with `bound` and `call` (the port written into both), built in `dir`; whether it built (what the compiler said goes to the report if not).
+fn build_server[&h, &x, &c, &f, &b, &v, &d, &t, &g, &k, &q](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], template: &t [byte], name: &g [byte], bound: &k [byte], call: &q [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] (buffer.Buffer, bool) {
+    var rep = report;
+    var built = false;
+    let source = harness.fill(heap, template, "9", bound, call, "");
+    borrow source as &sb in {
+        let harness.Ended { out, err, kind, code } = harness.build_text(heap, exec, clock, fs, bin, env, dir, "server", buffer.bytes(sb), "");
+        if kind != 0 {
+            borrow err as &rb in {
+                rep = harness.failure(heap, rep, "listen_host", name, "should build, but the compiler said", buffer.bytes(rb));
+            }
+        } else {
+            built = true;
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, source);
+    return (rep, built);
+}
+
+// Run the built server in the background with the dials of `mode`; what the probes printed (and the server's last words).
+fn serve[&h, &x, &c, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, dir: &d [byte], port: int, mode: int) -> [heap, exec(""), clock, poll] harness.Ended {
+    var server = buffer.append(heap, buffer.empty(heap, 64), "'");
+    server = buffer.append(heap, server, dir);
+    server = buffer.append(heap, server, "/server'");
+    let dials = probes(heap, port, mode);
+    var result = harness.Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
+    borrow server as &sb in {
+        borrow dials as &pb in {
+            harness.drop_ended(heap, result);
+            result = harness.serve_and_probe(heap, exec, clock, dir, buffer.bytes(sb), "ready", buffer.bytes(pb));
+        }
+    }
+    buffer.drop(heap, dials);
+    buffer.drop(heap, server);
+    return result;
+}
+
+// What a run of the server said, as a report: the dials of `mode` (0 other then loopback, 1 only the other address, 2 only loopback) and the lines they must have printed.
+fn judge[&h, &x, &c, &d, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, dir: &d [byte], name: &n [byte], port: int, mode: int, report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let harness.Ended { out, err, kind, code } = serve(heap, exec, clock, dir, port, mode);
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        if mode == 0 {
+            rep = harness.require(heap, rep, harness.has_line(said, "loopback: rc=0 out=ping"), "listen_host", name, "loopback should reach a loopback listener", said);
+            rep = harness.require(heap, rep, !harness.has_line(said, "other: rc=0 out=ping"), "listen_host", name, "a loopback listener answered the machine's other address", said);
+        } else if mode == 1 {
+            rep = harness.require(heap, rep, harness.has_line(said, "other: none") || harness.has_line(said, "other: rc=0 out=ping"), "listen_host", name, "the machine's other address should reach this listener", said);
+        } else {
+            rep = harness.require(heap, rep, harness.has_line(said, "loopback: rc=0 out=ping"), "listen_host", name, "loopback should reach this listener", said);
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// How a listener behaves towards each address. `everywhere` is a listener that both addresses reach (the other in one run, loopback in another); otherwise loopback only: the other address is refused (or there is none).
+fn reach[&h, &x, &c, &f, &b, &v, &d, &t, &g, &k, &q](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], template: &t [byte], name: &g [byte], bound: &k [byte], call: &q [byte], port: int, everywhere: bool, report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let digits = buffer.push_nat(heap, buffer.empty(heap, 8), port);
+    var rep = report;
+    borrow digits as &pb in {
+        let b2 = harness.fill(heap, bound, buffer.bytes(pb), "", "", "");
+        let c2 = harness.fill(heap, call, buffer.bytes(pb), "", "", "");
+        borrow b2 as &bb in {
+            borrow c2 as &cb in {
+                let (r1, built) = build_server(heap, exec, clock, fs, bin, env, dir, template, name, buffer.bytes(bb), buffer.bytes(cb), rep);
+                rep = r1;
+                if built {
+                    if everywhere {
+                        rep = judge(heap, exec, clock, dir, name, port, 1, rep);
+                        rep = judge(heap, exec, clock, dir, name, port, 2, rep);
+                    } else {
+                        rep = judge(heap, exec, clock, dir, name, port, 0, rep);
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, b2);
+        buffer.drop(heap, c2);
+    }
+    buffer.drop(heap, digits);
+    return rep;
+}
+
+// The port is still checked against the bound at run time: the call is for a port past the bound, so the program is killed by a signal before it says `ready` (without the check it would listen forever).
+fn port_past_the_bound[&h, &x, &c, &f, &b, &v, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], template: &t [byte], port: int, report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let past = buffer.push_nat(heap, buffer.empty(heap, 8), port + 1);
+    borrow past as &pb in {
+        let call = harness.fill(heap, "tcp_listen_on(n, \"127.0.0.1\", @A@, 8, 0)", buffer.bytes(pb), "", "", "");
+        let digits = buffer.push_nat(heap, buffer.empty(heap, 8), port);
+        borrow digits as &db in {
+            let bound = harness.fill(heap, "127.0.0.1:@A@", buffer.bytes(db), "", "", "");
+            borrow call as &cb in {
+                borrow bound as &bb in {
+                    let (r1, built) = build_server(heap, exec, clock, fs, bin, env, dir, template, "trap", buffer.bytes(bb), buffer.bytes(cb), rep);
+                    rep = r1;
+                    if built {
+                        var server = buffer.append(heap, buffer.empty(heap, 64), "'");
+                        server = buffer.append(heap, server, dir);
+                        server = buffer.append(heap, server, "/server'");
+                        borrow server as &sb in {
+                            let harness.Ended { out, err, kind, code } = harness.serve_and_probe(heap, exec, clock, dir, buffer.bytes(sb), "ready", "");
+                            borrow out as &ob in {
+                                rep = harness.require(heap, rep, harness.contains(buffer.bytes(ob), "server: died by signal"), "listen_host", "trap", "a port outside the bound should trap (the program is killed by a signal)", buffer.bytes(ob));
+                            }
+                            buffer.drop(heap, out);
+                            buffer.drop(heap, err);
+                        }
+                        buffer.drop(heap, server);
+                    }
+                }
+            }
+            buffer.drop(heap, bound);
+        }
+        buffer.drop(heap, digits);
+        buffer.drop(heap, call);
+    }
+    buffer.drop(heap, past);
+    return rep;
+}
+
+// `SO_REUSEPORT` (flag bit 1) works with an address: two listeners on one loopback port, and a third that does not ask is refused.
+fn reuse[&h, &x, &c, &f, &b, &v, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], port: int, report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/programs/listen_host_reuse.tmpl");
+    let digits = buffer.push_nat(heap, buffer.empty(heap, 8), port);
+    borrow data as &tb in {
+        borrow digits as &pb in {
+            let source = harness.fill(heap, buffer.bytes(tb), buffer.bytes(pb), "", "", "");
+            borrow source as &sb in {
+                let harness.Ended { out, err, kind, code } = harness.build_text(heap, exec, clock, fs, bin, env, dir, "reuse", buffer.bytes(sb), "");
+                if failed != 0 || kind != 0 {
+                    borrow err as &rb in {
+                        rep = harness.failure(heap, rep, "listen_host", "reuse", "should build, but the compiler said", buffer.bytes(rb));
+                    }
+                } else {
+                    var exe = harness.joined(heap, dir, "reuse");
+                    borrow exe as &eb in {
+                        rep = harness.require(heap, rep, harness.exit_kind(heap, exec, clock, buffer.bytes(eb)) == 0, "listen_host", "reuse", "two listeners with the reuse-port flag share a port, and one without it is refused", "");
+                    }
+                    buffer.drop(heap, exe);
+                }
+                buffer.drop(heap, out);
+                buffer.drop(heap, err);
+            }
+            buffer.drop(heap, source);
+        }
+    }
+    buffer.drop(heap, digits);
+    buffer.drop(heap, data);
+    return rep;
+}
+
+// The five server cases, with `base` and up as their ports.
+fn sockets[&h, &x, &c, &f, &b, &v, &d, &t, &o](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], t: &t [byte], old: &o [byte], base: int, report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var r = report;
+    // The acceptance gate of #498: a listener on `127.0.0.1` is reachable at `127.0.0.1` and refuses a connection to the machine's other address.
+    r = reach(heap, exec, clock, fs, bin, env, dir, t, "a loopback listener", "127.0.0.1:@A@", "tcp_listen_on(n, \"127.0.0.1\", @A@, 8, 0)", base, false, r);
+    // `0.0.0.0` listens everywhere: both addresses reach it.
+    r = reach(heap, exec, clock, fs, bin, env, dir, t, "an all-interfaces listener", "@A@", "tcp_listen_on(n, \"0.0.0.0\", @A@, 8, 0)", base + 1, true, r);
+    // The old form is untouched: it still listens on every interface.
+    r = reach(heap, exec, clock, fs, bin, env, dir, old, "the old form", "@A@", "tcp_listen(n, @A@, 8, 0)", base + 2, true, r);
+    // A bare-port bound grants every interface, so loopback inside it is allowed -- and is loopback only: the address is what the call says, not the bound.
+    r = reach(heap, exec, clock, fs, bin, env, dir, t, "a port-only bound", "@A@", "tcp_listen_on(n, \"127.0.0.1\", @A@, 8, 0)", base + 3, false, r);
+    r = port_past_the_bound(heap, exec, clock, fs, bin, env, dir, t, base + 4, r);
+    return r;
+}
+
+// ---- the whole -------------------------------------------------------------------------------------------------------------------------------
+
+// The program templates read (the server, then the old form), and every case run.
+fn with_old[&h, &x, &c, &f, &b, &v, &d, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], server: &t [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read, fs_write("")] buffer.Buffer {
+    var report = buffer.empty(heap, 64);
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/programs/listen_host_old.tmpl");
+    if failed != 0 {
+        report = harness.failure(heap, report, "listen_host", "setup", "should read the old-form template", "");
+    } else {
+        // The probe client, built once for all the dials.
+        var probe = harness.joined(heap, dir, "tcp_probe");
+        borrow probe as &pb in {
+            let harness.Ended { out, err, kind, code } = harness.build_only(heap, exec, clock, bin, "tests/programs/tcp_probe.cho\0", "", buffer.bytes(pb), env);
+            if kind != 0 {
+                borrow err as &rb in {
+                    report = harness.failure(heap, report, "listen_host", "tcp_probe", "should build, but the compiler said", buffer.bytes(rb));
+                }
+            } else {
+                report = rows(heap, exec, clock, fs, bin, env, dir, server, report);
+                report = hosts(heap, exec, clock, fs, bin, env, dir, server, report);
+                report = others(heap, exec, clock, fs, bin, env, dir, server, report);
+                report = poller(heap, exec, clock, bin, env, report);
+                report = authorities(heap, exec, clock, fs, bin, env, dir, server, report);
+                let base = base_port(heap, exec, clock);
+                borrow data as &ob in {
+                    report = sockets(heap, exec, clock, fs, bin, env, dir, server, buffer.bytes(ob), base, report);
+                }
+                report = reuse(heap, exec, clock, fs, bin, env, dir, base + 5, report);
+            }
+            buffer.drop(heap, out);
+            buffer.drop(heap, err);
+        }
+        buffer.drop(heap, probe);
+    }
+    buffer.drop(heap, data);
+    return report;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-listen-host");
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/programs/listen_host_server.tmpl");
+    borrow dir as &db in {
+        borrow env as &eb in {
+            borrow data as &tb in {
+                if len(buffer.bytes(db)) == 0 || failed != 0 {
+                    report = harness.failure(heap, report, "listen_host", "setup", "should make a scratch directory and read the template", "");
+                } else {
+                    buffer.drop(heap, report);
+                    report = with_old(heap, exec, clock, fs, bin, buffer.bytes(eb), buffer.bytes(db), buffer.bytes(tb));
+                }
+            }
+        }
+        if len(buffer.bytes(db)) > 0 {
+            harness.remove_tree(heap, exec, clock, buffer.bytes(db));
+        }
+    }
+    buffer.drop(heap, data);
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: listen_host CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: listen_host\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

@@ -6,7 +6,7 @@
 Each mutant is one of the three files with one deliberate bug. All three are
 built as local modules (`crypto`, `hmac`, `hkdf`) beside a copy of
 `tests/programs/kdf_driver.cho`, and run against the evidence
-`conformance/kdf.rs` uses: the vector table (and its HMAC and label rows again
+`tests/commands/kdf.cho` uses: the vector table (and its HMAC and label rows again
 under a prepared key), the CAVP short-message and Monte Carlo files, every
 Wycheproof HMAC and HKDF case, the refusal rows, and rounds of
 `scripts/kdf_differential.py` (1,000 on LLVM, 200 on Cranelift), on both
@@ -81,7 +81,7 @@ def evidence():
     for n, line in enumerate(l for l in open(os.path.join(ROOT, "tests/vectors/kdf.txt")) if l.strip() and not l.startswith("#")):
         _, case, want = line.rstrip("\n").split(" | ")
         add(case, lambda a, w=want: a == f"0 ok {w}")
-        # The same under a prepared key (docs/hkdf.md §9), as `conformance/kdf.rs` runs them.
+        # The same under a prepared key (docs/hkdf.md §9), as `tests/commands/kdf.cho` runs them.
         f = case.split(" ")
         if f[0] == "M":
             add(f"P {f[1]} {f[2]} {1 + n % 70} {f[3]} {f[4]}", lambda a, w=want: a == f"0 ok {w}")
@@ -115,7 +115,7 @@ def evidence():
                     add(case, lambda a, w=t["okm"]: a == f"0 ok {w}")
                 else:
                     add(case, lambda a: a.startswith("-4 hkdf-length-too-large"))
-    # `conformance/kdf.rs`'s streamed-against-one-shot cases: every length
+    # `tests/commands/kdf.cho`'s streamed-against-one-shot cases: every length
     # to 300 in pieces that straddle the block boundaries. The fixed vectors
     # are all hashed in one call and never fill a partly full buffer.
     import hashlib

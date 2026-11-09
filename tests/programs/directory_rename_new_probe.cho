@@ -1,0 +1,65 @@
+edition 7;
+
+fn digits[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        digits(io, n / 10);
+    }
+    putchar(io, '0' + n % 10);
+    return 0;
+}
+
+fn answer[&i](io: &!i Io, done: Done) -> [io_write] int {
+    match done {
+        Done::Ok(n) => {
+            write_bytes(io, "ok\n");
+        }
+        Done::Failed(e) => {
+            write_bytes(io, "err ");
+            digits(io, e);
+            putchar(io, 10);
+        }
+    }
+    return 0;
+}
+
+fn rename_all[&i, &d, &a](io: &!i Io, dir: &d Dir, args: &a Args) -> [io_write, dir_write, args] int {
+    var k = 2;
+    while k + 1 < arg_count(args) {
+        answer(io, dir_rename_new(dir, arg(args, k), arg(args, k + 1)));
+        k = k + 2;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 0;
+    borrow args as &a in {
+        borrow fs as &f in {
+            borrow mut io as &!o in {
+                match open_dir(f, arg(a, 1)) {
+                    DirOpened::Ok(d0) => {
+                        var d = d0;
+                        borrow d as &r in {
+                            status = rename_all(o, r, a);
+                        }
+                        dir_close(d);
+                    }
+                    DirOpened::Failed(e) => {
+                        status = 2;
+                    }
+                }
+            }
+        }
+    }
+    release(args);
+    release(fs);
+    release(io);
+    return status;
+}

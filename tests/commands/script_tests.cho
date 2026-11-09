@@ -1,0 +1,81 @@
+edition 7;
+module script_tests_test;
+
+// script_tests.cho -- the Rust conformance files that were the compiler's own commands run from a shell (`docs/gate.md` G4, wave 2), in cancho. Each name in `NAMES` has a script
+// `tests/commands/NAME.sh` and the output it must print, `tests/commands/NAME.expected`; the script gets the compiler (`$1`) and a scratch directory (`$2`), is run from the root of the repository, and
+// prints a transcript of what the compiler did (the files it wrote, the exit statuses, the lines of its reports); `harness.pr_script` compares. Adding a test is adding its two files and its name here.
+//
+//     cancho build tests/commands/script_tests.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: script_tests (N scripts)` or what is wrong, and exits 0 or 1.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: script_tests CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    // One name per field, each followed by a NUL.
+    let list = "agent_tools\0release\0authority\0foreign_authority\0project\0docs\0agent_cli\0refusals\0";
+    let count = bytes.count_byte(list, 0);
+    var report = buffer.empty(heap, 64);
+    var at = 1;
+    while at <= count {
+        let name = bytes.field(list, 0, at);
+        var script = harness.joined(heap, "tests/commands", name);
+        script = buffer.append(heap, script, ".sh");
+        var expected = harness.joined(heap, "tests/commands", name);
+        expected = buffer.append(heap, expected, ".expected");
+        borrow script as &sb in {
+            borrow expected as &eb in {
+                report = harness.pr_script(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), name, buffer.bytes(sb), buffer.bytes(eb), report);
+            }
+        }
+        buffer.drop(heap, script);
+        buffer.drop(heap, expected);
+        at = at + 1;
+    }
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: script_tests\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

@@ -52,8 +52,8 @@ matters.
   tail untouched; exactly full; nothing into something and nothing into nothing; overlapping views of one buffer in both directions
   (the forward case is the one a front-to-back loop smears); and `std.buffer` growing through forty appends and several doublings,
   every byte read back.
-* `tests/conformance/traps.rs`: three sources that do not fit (one byte too many, anything into an empty view, a longer slice)
-  killed by a signal on **both backends**, and three calls at the edge that must succeed (exactly full, nothing into nothing, one
+* `tests/commands/traps.cho` (it was `conformance/traps.rs`): three sources that do not fit (one byte too many, anything into an empty view, a longer slice)
+  killed by a signal, and three calls at the edge that must succeed (exactly full, nothing into nothing, one
   byte into the last).
 * `tests/reject/copy_into_is_edition_five.cho`: an edition-4 file does not see the name.
 

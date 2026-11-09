@@ -1,0 +1,186 @@
+edition 7;
+module word_scan_test;
+
+// word_scan.cho -- `conformance/word_scan.rs` (deleted), in cancho (`docs/gate.md` G4): the word-at-a-time primitives (`docs/word-scan.md`): `load_le64`, `byte_mask64`, `trailing_zeros`, `leading_zeros`, `popcount`. (1) The driver
+// `tests/programs/word_scan_check.cho` compares each primitive with a plain loop over two seeded 400-byte buffers, three seeds, every start offset, length and position, and prints `ok` and the number of checks (the oracle was Rust's
+// `u64::from_le_bytes`, `trailing_zeros`, `leading_zeros` and `count_ones` over the same buffers, with hashes; it is now a loop in the program, bit by bit). (2) The traps: twenty calls on a sub-slice of a 100-byte buffer, each bound
+// on both sides, where the ten at the edge must not trap and the rest must be killed by a signal (the check is against the slice's end, not the allocation's). (3) The counts answer the width for zero and never trap, the extremes included.
+//
+//     cancho build tests/commands/word_scan.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: word_scan` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// The program that makes `call` on `t`, a 100-byte buffer's slice, and returns 0 if it did not trap.
+fn trapping[&h, &c](heap: &!h Heap, call: &c [byte]) -> [heap] buffer.Buffer {
+    var text = buffer.append(heap, buffer.empty(heap, 512), "edition 9;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock); release(signals); release(exec); release(tty);\n    var n = 0;\n    region a { let t = alloc_slice[a](100, byte_of(7)); n = ");
+    text = buffer.append(heap, text, call);
+    return buffer.append(heap, text, "; }\n    return n - n;\n}\n");
+}
+
+// One call: killed by a signal when `should_trap`, otherwise exit 0.
+fn trap_case[&h, &x, &c, &f, &b, &e, &d, &n, &q](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], call: &q [byte], should_trap: bool, report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let text = trapping(heap, call);
+    var rep = report;
+    borrow text as &tb in {
+        let ended = harness.rt_build_run(heap, exec, clock, fs, bin, env, dir, name, buffer.bytes(tb), "");
+        let harness.Ended { out, err, kind, code } = ended;
+        borrow err as &eb in {
+            if kind == 6 || kind == 5 {
+                rep = harness.failure(heap, rep, "word_scan", call, "should build, but the compiler said", buffer.bytes(eb));
+            } else if should_trap && kind != 1 {
+                rep = harness.failure(heap, rep, "word_scan", call, "should be killed by a signal", buffer.bytes(eb));
+            } else if !should_trap && (kind != 0 || code != 0) {
+                rep = harness.failure(heap, rep, "word_scan", call, "should succeed", buffer.bytes(eb));
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, text);
+    return rep;
+}
+
+// The driver built from `tests/programs/word_scan_check.cho` and run: the build's `Ended` if it did not build, else the run's.
+fn drive[&h, &x, &c, &b, &e, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], exe: &p [byte]) -> [heap, exec(""), clock, poll] harness.Ended {
+    let built = harness.build_only(heap, exec, clock, bin, "tests/programs/word_scan_check.cho\0", "", exe, env);
+    let harness.Ended { out, err, kind, code } = built;
+    buffer.drop(heap, out);
+    if kind != 0 {
+        return harness.Ended { out: buffer.empty(heap, 0), err: err, kind: kind, code: code };
+    }
+    buffer.drop(heap, err);
+    return harness.run_program(heap, exec, clock, exe, "");
+}
+
+// The primitives against the loops: `ok N` and exit 0.
+fn differential[&h, &x, &c, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let exe = harness.joined(heap, dir, "word_scan_check");
+    borrow exe as &xb in {
+        let ended = drive(heap, exec, clock, bin, env, buffer.bytes(xb));
+        let harness.Ended { out, err, kind, code } = ended;
+        borrow out as &ob in {
+            borrow err as &eb in {
+                if kind == 6 || kind == 5 {
+                    rep = harness.failure(heap, rep, "word_scan", "differential", "should build, but the compiler said", buffer.bytes(eb));
+                } else if kind != 0 || code != 0 || !harness.contains(buffer.bytes(ob), "ok ") {
+                    rep = harness.failure(heap, rep, "word_scan", "differential", "a primitive differs from its loop (kind, signal or code, and the first difference)", buffer.bytes(ob));
+                }
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, exe);
+    return rep;
+}
+
+// The counts are total: no input reaches a trap, the extremes included.
+fn counts[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let source = "edition 9;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock); release(signals); release(exec); release(tty);\n    let least = 0 - 9223372036854775807 - 1;\n    if trailing_zeros(0) != 64 || leading_zeros(0) != 64 || popcount(0) != 0 { return 1; }\n    if trailing_zeros(least) != 63 || leading_zeros(least) != 0 || popcount(least) != 1 { return 2; }\n    if trailing_zeros(9223372036854775807) != 0 || leading_zeros(9223372036854775807) != 1 || popcount(9223372036854775807) != 63 { return 3; }\n    if trailing_zeros(0 - 1) != 0 || leading_zeros(0 - 1) != 0 || popcount(0 - 1) != 64 { return 4; }\n    return 0;\n}\n";
+    let ended = harness.rt_build_run(heap, exec, clock, fs, bin, env, dir, "counts", source, "");
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow err as &eb in {
+        if kind != 0 || code != 0 {
+            rep = harness.failure(heap, rep, "word_scan", "counts", "the counts should answer the width for zero and never trap (exit status is the first wrong row)", buffer.bytes(eb));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-word-scan");
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "word_scan", "scratch", "mktemp -d made no directory", "");
+            } else {
+                let d = buffer.bytes(db);
+                let e = buffer.bytes(eb);
+                report = differential(heap, exec, clock, bin, e, d, report);
+                report = counts(heap, exec, clock, fs, bin, e, d, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "load-first", "load_le64(t, 0)", false, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "load-last", "load_le64(t, len(t) - 8)", false, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "load-one-past-last", "load_le64(t, len(t) - 7)", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "load-at-the-end", "load_le64(t, len(t))", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "load-negative", "load_le64(t, 0 - 1)", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "load-most-negative", "load_le64(t, 0 - 9223372036854775807 - 1)", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "load-largest", "load_le64(t, 9223372036854775807)", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "load-from-a-short-slice", "load_le64(t[0..7], 0)", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "load-from-an-empty-slice", "load_le64(t[3..3], 0)", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "load-from-exactly-eight", "load_le64(t[3..11], 0)", false, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "mask-first", "byte_mask64(t, 0, byte_of(1))", false, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "mask-last", "byte_mask64(t, len(t) - 64, byte_of(1))", false, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "mask-one-past-last", "byte_mask64(t, len(t) - 63, byte_of(1))", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "mask-at-the-end", "byte_mask64(t, len(t), byte_of(1))", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "mask-negative", "byte_mask64(t, 0 - 1, byte_of(1))", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "mask-most-negative", "byte_mask64(t, 0 - 9223372036854775807 - 1, byte_of(1))", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "mask-largest", "byte_mask64(t, 9223372036854775807, byte_of(1))", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "mask-from-a-short-slice", "byte_mask64(t[0..63], 0, byte_of(1))", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "mask-from-an-empty-slice", "byte_mask64(t[3..3], 0, byte_of(1))", true, report);
+                report = trap_case(heap, exec, clock, fs, bin, e, d, "mask-from-exactly-sixty-four", "byte_mask64(t[3..67], 0, byte_of(1))", false, report);
+                harness.remove_tree(heap, exec, clock, d);
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: word_scan CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: word_scan\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    release(fs);
+    return status;
+}

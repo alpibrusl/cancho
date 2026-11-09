@@ -1,0 +1,33 @@
+edition 9;
+
+fn run(bound: Net("127.0.0.1:@A@")) -> [] int {
+    var shared = false;
+    var refused_without = false;
+    borrow bound as &n in {
+        match tcp_listen_on(n, "127.0.0.1", @A@, 8, 1) {
+            Listening::Ok(first) => {
+                match tcp_listen_on(n, "127.0.0.1", @A@, 8, 1) {
+                    Listening::Ok(second) => { shared = true; listener_close(second); }
+                    Listening::Failed(e) => { }
+                }
+                match tcp_listen_on(n, "127.0.0.1", @A@, 8, 0) {
+                    Listening::Ok(third) => { listener_close(third); }
+                    Listening::Failed(e) => { refused_without = true; }
+                }
+                listener_close(first);
+            }
+            Listening::Failed(e) => { }
+        }
+    }
+    release(bound);
+    if shared && refused_without { return 0; }
+    return 1;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(clock);
+    release(signals); release(exec); release(tty);
+    let bound = narrow(net, "127.0.0.1:@A@");
+    return run(bound);
+}

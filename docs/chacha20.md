@@ -182,7 +182,7 @@ is still not promised: buffers outside regions (the heap, the stack, the caller'
 ## 4. Checked, not assumed
 
 `tests/programs/aead_driver.cho` drives every function from standard
-input, one case per line. `crates/cancho/tests/conformance/aead.rs`
+input, one case per line. `tests/commands/aead.cho`
 runs it in `cargo test`:
 
 - **RFC 8439, 28 vectors** (`tests/vectors/rfc8439.txt`): §2.3.2,

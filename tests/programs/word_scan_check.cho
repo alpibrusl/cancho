@@ -1,0 +1,238 @@
+edition 9;
+
+// The driver of tests/commands/word_scan.cho (`docs/word-scan.md`): `load_le64`, `byte_mask64`, `trailing_zeros`, `leading_zeros` and `popcount` against plain loops that say the same thing a bit at a time. Two buffers
+// of 400 bytes are filled from a seeded generator (one of all values, one of five values, so the needle is often there), and at every start offset 0 to 9 and every length 0 to 140 each primitive is compared with its loop at
+// every position that fits; the first difference is printed and the exit status is 1, otherwise `ok CHECKS` and 0. The seeds are the three the Rust test (`word_scan.rs`, deleted) used.
+
+import std.io;
+
+fn fill[&b](xs: &!b [byte], seed: int, few: bool) -> [] int {
+    var x = seed;
+    var i = 0;
+    while i < len(xs) {
+        x = wrapping_add(wrapping_mul(x, 6364136223846793005), 1442695040888963407);
+        var r = x >> 33 & 255;
+        if few {
+            r = 255;
+            let pick = (x >> 33 & 255) % 5;
+            if pick == 0 {
+                r = 44;
+            }
+            if pick == 1 {
+                r = 34;
+            }
+            if pick == 2 {
+                r = 10;
+            }
+            if pick == 3 {
+                r = 0;
+            }
+        }
+        xs[i] = byte_of(r);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn needle(which: int) -> [] int {
+    var b = 0;
+    if which == 1 {
+        b = 44;
+    }
+    if which == 2 {
+        b = 34;
+    }
+    if which == 3 {
+        b = 10;
+    }
+    if which == 4 {
+        b = 255;
+    }
+    if which == 5 {
+        b = 128;
+    }
+    if which == 6 {
+        b = 127;
+    }
+    if which == 7 {
+        b = 1;
+    }
+    return b;
+}
+
+fn bit(w: int, i: int) -> [] int {
+    return w >> i & 1;
+}
+
+fn ref_load[&t](text: &t [byte], at: int) -> [] int {
+    var w = 0;
+    var p = 1;
+    var k = 0;
+    while k < 8 {
+        w = wrapping_add(w, wrapping_mul(int_of(text[at + k]), p));
+        p = wrapping_mul(p, 256);
+        k = k + 1;
+    }
+    return w;
+}
+
+fn ref_trailing(w: int) -> [] int {
+    var i = 0;
+    while i < 64 && bit(w, i) == 0 {
+        i = i + 1;
+    }
+    return i;
+}
+
+fn ref_leading(w: int) -> [] int {
+    var i = 0;
+    while i < 64 && bit(w, 63 - i) == 0 {
+        i = i + 1;
+    }
+    return i;
+}
+
+fn ref_popcount(w: int) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < 64 {
+        n = n + bit(w, i);
+        i = i + 1;
+    }
+    return n;
+}
+
+fn ref_mask[&t](text: &t [byte], at: int, b: int) -> [] int {
+    var m = 0;
+    var p = 1;
+    var k = 0;
+    while k < 64 {
+        if int_of(text[at + k]) == b {
+            m = wrapping_add(m, p);
+        }
+        p = wrapping_mul(p, 2);
+        k = k + 1;
+    }
+    return m;
+}
+
+fn say[&p](o: &!p Io, what: int, which: int, start: int, length: int, at: int, got: int, want: int) -> [io_write] int {
+    io.print_int(o, what);
+    io.space(o);
+    io.print_int(o, which);
+    io.space(o);
+    io.print_int(o, start);
+    io.space(o);
+    io.print_int(o, length);
+    io.space(o);
+    io.print_int(o, at);
+    io.space(o);
+    io.print_int(o, got);
+    io.space(o);
+    io.print_int(o, want);
+    io.newline(o);
+    return 0;
+}
+
+// The number of differences found for `seed` (the first is printed), and the checks made are added to `checks[0]`.
+fn sweep[&p, &c](seed: int, o: &!p Io, checks: &!c [int]) -> [io_write] int {
+    var bad = 0;
+    var which = 0;
+    region a {
+        while which < 2 {
+            let buf = alloc_slice[a](400, byte_of(0));
+            fill(buf, seed + which, which == 1);
+            var start = 0;
+            while start < 10 {
+                var length = 0;
+                while length <= 140 {
+                    let text = buf[start..start + length];
+                    var at = 0;
+                    while at + 8 <= length {
+                        let w = load_le64(text, at);
+                        let want = ref_load(text, at);
+                        checks[0] = checks[0] + 1;
+                        if w != want {
+                            if bad == 0 {
+                                say(o, 1, which, start, length, at, w, want);
+                            }
+                            bad = bad + 1;
+                        }
+                        if trailing_zeros(w) != ref_trailing(w) {
+                            if bad == 0 {
+                                say(o, 2, which, start, length, at, trailing_zeros(w), ref_trailing(w));
+                            }
+                            bad = bad + 1;
+                        }
+                        if leading_zeros(w) != ref_leading(w) {
+                            if bad == 0 {
+                                say(o, 3, which, start, length, at, leading_zeros(w), ref_leading(w));
+                            }
+                            bad = bad + 1;
+                        }
+                        if popcount(w) != ref_popcount(w) {
+                            if bad == 0 {
+                                say(o, 4, which, start, length, at, popcount(w), ref_popcount(w));
+                            }
+                            bad = bad + 1;
+                        }
+                        at = at + 1;
+                    }
+                    at = 0;
+                    while at + 64 <= length {
+                        var n = 0;
+                        while n < 8 {
+                            let got = byte_mask64(text, at, byte_of(needle(n)));
+                            let want = ref_mask(text, at, needle(n));
+                            checks[0] = checks[0] + 1;
+                            if got != want {
+                                if bad == 0 {
+                                    say(o, 5, which, start, length, at, got, want);
+                                }
+                                bad = bad + 1;
+                            }
+                            n = n + 1;
+                        }
+                        at = at + 1;
+                    }
+                    length = length + 1;
+                }
+                start = start + 1;
+            }
+            which = which + 1;
+        }
+    }
+    return bad;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(heap);
+    var bad = 0;
+    region r {
+        let checks = alloc_slice[r](1, 0);
+        borrow mut io as &!i in {
+            bad = bad + sweep(1, i, checks);
+            bad = bad + sweep(104375405965325, i, checks);
+            bad = bad + sweep(0 - 987654321987654321, i, checks);
+            if bad == 0 {
+                io.write_all(i, "ok ");
+                io.print_int(i, checks[0]);
+                io.newline(i);
+            }
+        }
+    }
+    release(io);
+    if bad == 0 {
+        return 0;
+    }
+    return 1;
+}

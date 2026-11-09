@@ -121,7 +121,7 @@ That is the CPU's data-dependent timing, which neither backend asks the CPU to t
 
 ## 4. Correctness
 
-Every case runs through `tests/programs/ecdh_driver.cho` (`crates/cancho/tests/conformance/ecdh.rs`):
+Every case runs through `tests/programs/ecdh_driver.cho` (`tests/commands/ecdh.cho`):
 
 | Evidence | Cases | Result |
 |---|---|---|

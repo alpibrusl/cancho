@@ -1,0 +1,17 @@
+// A program whose entire output is a diagnostic: the program tests/commands/io.cho asks `cancho authority` about (`docs/standard-error.md` section 4), whose report must not say it never touches the console. Never run.
+fn shout[&i](io: &!i Io) -> [err_write] int {
+    return write_err(io, "only a diagnostic\n");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    borrow mut io as &!i in {
+        shout(i);
+    }
+    release(io);
+    return 1;
+}

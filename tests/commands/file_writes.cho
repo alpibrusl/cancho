@@ -1,0 +1,103 @@
+edition 7;
+module file_writes_test;
+
+// file_writes.cho -- `conformance/file_writes.rs` (deleted), in cancho (`docs/gate.md` G4): the write side of a file handle (docs/file-writes.md): the opens that append, create and update, and the verbs that write, sync, cut and measure; the paths outside the prefix and with .. trap; a lock is refused while another process holds it and released when it dies; and the authority reports of an append-and-sync program and of a rename name the directory under fs_write (docs/file-handles.md section 4). tests/programs/file_writes_probe.cho takes a case letter and paths; file_writes.sh judges each from outside (the bytes, the mode, strace, the exit statuses).
+//
+//     cancho build tests/commands/file_writes.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: file_writes` or what is wrong, and exits 0 or 1. One backend (LLVM) and one compiler: the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.io as console;
+import harness;
+
+// What `cancho authority FILE --output json` says about the file, as flags: 1 `fs_write` naming /var/lib/log, 2 the row of `file_write` with no argument, 4 any mention of `fs_read`, 8 the command failed.
+fn authority_flags[&h, &x, &c, &b, &m, &k, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte], file: &p [byte]) -> [heap, exec(""), clock, poll] int {
+    let env = harness.base_env(heap, compiler, cache);
+    var flags = 0;
+    borrow env as &eb in {
+        let harness.Ended { out, err, kind, code } = harness.run_cancho(heap, exec, clock, bin, buffer.bytes(eb), "authority", file, "--output", "json");
+        if kind != 0 || code != 0 {
+            flags = 8;
+        } else {
+            borrow out as &ob in {
+                if harness.contains(buffer.bytes(ob), "{ \"name\": \"fs_write\", \"argument\": \"/var/lib/log\", \"bounded\": true }") {
+                    flags = flags + 1;
+                }
+                if harness.contains(buffer.bytes(ob), "{ \"name\": \"file_write\", \"argument\": null, \"bounded\": true }") {
+                    flags = flags + 2;
+                }
+                if harness.contains(buffer.bytes(ob), "\"fs_read\"") {
+                    flags = flags + 4;
+                }
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, env);
+    return flags;
+}
+
+// `file-handles.md` section 4's rule on the write side: a program must not look more powerful for having been written better. An append-and-sync program names the directory under `fs_write` and nothing under
+// `fs_read`, and the handle's own verb adds `file_write` with no argument to widen; a rename names the directory under `fs_write` and performs no read.
+fn authority_checks[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let appended = authority_flags(heap, exec, clock, bin, compiler, cache, "tests/programs/file_writes_authority_append.cho");
+    let renamed = authority_flags(heap, exec, clock, bin, compiler, cache, "tests/programs/file_writes_authority_rename.cho");
+    if appended != 3 {
+        rep = harness.failure(heap, rep, "file_writes", "authority append", "the directory is named under fs_write (1), the verb performs a path-free file_write (2), and an append performs no read of the directory (4 is a read); 8 is a command that failed", "");
+    }
+    if renamed != 1 {
+        rep = harness.failure(heap, rep, "file_writes", "authority rename", "a rename names the directory under fs_write (1) and performs no read (4); 8 is a command that failed", "");
+    }
+    return rep;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: file_writes CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    var report = harness.probe_transcript(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), "file_writes", "tests/programs/file_writes_probe.cho", "tests/commands/file_writes.sh", "tests/commands/file_writes.expected", buffer.empty(heap, 64));
+    report = authority_checks(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), report);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: file_writes\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

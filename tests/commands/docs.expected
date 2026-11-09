@@ -1,0 +1,16 @@
+== every documentation link resolves
+ok more than a hundred links were checked
+ok no broken link
+== the README commands still work
+ok the surface block lists the subcommands
+ok the README and --help agree
+== the agent guidelines compile as written
+GAP: block15 cannot be judged by the compiler in cancho
+checked blocks: 26 (16 accepted, 10 refused)
+ok at least five checked blocks
+== agent-guidelines prints the file
+ok the embedded guidelines are the file
+== refusals by example is what the compiler says
+chapters: 13 refused, 13 fixed, 13 said
+ok at least thirteen rules are walked through
+ok every chapter has a refusal, what is said, and a correction

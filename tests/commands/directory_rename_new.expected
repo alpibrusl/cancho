@@ -1,0 +1,27 @@
+== a free destination: the source moves, byte for byte, and the inode is the same file's
+ok 
+a=<absent> free=AAAA
+same inode
+== an existing destination: refused with EEXIST, its bytes and the source's untouched
+EEXIST 
+src=NEW! held=KEEP
+same inode
+== a destination that is a link, dangling or not, is a name that is taken: the link stays and nothing is written through it
+EEXIST EEXIST 
+src=NEW! target=OUTSIDE absent=<absent>
+both links stayed
+== a destination that is a directory (empty, which a plain rename of a directory would replace)
+EEXIST EEXIST EEXIST 
+both directories stayed
+== a directory onto a free name moves; a missing source is ENOENT, even onto a taken name
+ok 
+moved
+ENOENT ENOENT 
+held=KEEP
+== names that are not one component are refused before any call (EINVAL, never what a filesystem without the flag answers)
+EINVAL EINVAL EINVAL EINVAL EINVAL 
+escaped=<absent> src=NEW!
+== a rival creating the destination loses or wins but is never overwritten
+trials that broke the rule: 0
+the rival won some names
+the program won some names

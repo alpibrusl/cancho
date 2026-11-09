@@ -153,8 +153,8 @@ picked here for one.
 ## 6. `static` was never gated by reachability, and this module found it
 
 `AGENTS.md` §7's promise — *"a declaration nobody calls emits nothing"*
-— is checked by `modules.rs`'s `std_declarations_cost_nothing_unless_
-called`: it builds one program with `--std` and one without and asserts
+— was checked by `modules.rs`'s `std_declarations_cost_nothing_unless_
+called` (pinned to Cranelift, so it went with that backend, D2; the claim is false of the compiler written in cancho, `standard-library.md` section 5.2): it builds one program with `--std` and one without and asserts
 the two object files are **byte-identical**. Adding `sha256_h0`/
 `sha256_k` broke it on the first run, and the reason is a real gap
 `static_data.cho` could never have exposed on its own: unlike a

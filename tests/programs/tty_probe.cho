@@ -1,0 +1,52 @@
+edition 8;
+
+// The probe of tests/commands/tty.cho (`docs/tty.md` sections 3 and 5): the serial-port verbs. `argv[1]` is a path under /dev, `argv[2]` a speed in decimal (a leading `-` makes it negative). It opens the path with `tty_open`
+// and configures it at that speed; the exit status is `tty_configure`'s answer, or 99 when the open is refused.
+fn speed_of[&a](args: &a Args) -> [args] int {
+    let text = arg(args, 2);
+    var at = 0;
+    var sign = 1;
+    if len(text) > 0 && int_of(text[0]) == '-' {
+        sign = 0 - 1;
+        at = 1;
+    }
+    var value = 0;
+    while at < len(text) {
+        value = value * 10 + int_of(text[at]) - 48;
+        at = at + 1;
+    }
+    return sign * value;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    let device = narrow(tty, "/dev");
+    var code = 0;
+    borrow args as &a in {
+        let speed = speed_of(a);
+        borrow device as &d in {
+            match tty_open(d, arg(a, 1)) {
+                TtyOpened::Ok(port) => {
+                    borrow mut port as &!p in {
+                        code = tty_configure(p, speed);
+                    }
+                    tty_close(port);
+                }
+                TtyOpened::Failed(errno) => {
+                    code = 99;
+                }
+            }
+        }
+    }
+    release(device);
+    release(args);
+    return code;
+}

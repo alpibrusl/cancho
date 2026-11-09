@@ -34,11 +34,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-mod aead;
-mod agent_cli;
-mod agent_tools;
 mod api;
-mod authority;
 mod backends;
 mod benchmarks;
 mod binary32;
@@ -50,21 +46,12 @@ mod corpus;
 mod crypto_builtins;
 mod devices;
 mod differential;
-mod directory_listing;
 
-mod directory_rename_new;
-mod docs;
 mod duplication;
-mod ecdh;
-mod ecdsa;
 mod f32_text;
-mod file_writes;
-mod filesystem;
 mod float_text;
 mod floats;
-mod foreign_authority;
 mod formatting;
-mod gcm;
 mod global_state;
 mod http;
 mod http_fetch_nb;
@@ -73,34 +60,19 @@ mod http_server_stream;
 mod http_server_upload;
 mod https_hello;
 mod identity;
-mod io;
 mod json;
-mod kdf;
-mod listen_host;
 mod mathfn;
-mod memory;
-mod modules;
-mod narrow_many;
 mod net;
-mod net_bounds;
-mod net_hosts;
-mod net_split;
 
 mod ports;
 mod process_release;
 mod processes;
-mod project;
 mod refusals;
-mod region_cache;
-mod release;
-mod rsa;
-mod satisfy;
 mod selfhost;
 mod sha256_builtins;
 mod signals;
 mod sockets;
 
-mod testing;
 mod thread_state;
 mod tls;
 mod tls_auth;
@@ -110,8 +82,6 @@ mod tls_echo_fixed;
 mod tls_fuzz;
 mod tls_pool;
 mod tls_server;
-mod traps;
-mod tty;
 mod udp;
 mod vcs;
 mod vcs_remote;
@@ -119,7 +89,6 @@ mod vcs_std;
 mod vcs_sync;
 mod wasm_target;
 mod wide_multiply;
-mod word_scan;
 
 const BIN: &str = env!("CARGO_BIN_EXE_cancho");
 
@@ -167,19 +136,6 @@ fn make_removable(dir: &Path) {
     }
 }
 
-/// `//~ TARGET <triple>`: the flags that make `check` ask a fixture's question
-/// of the target it names (`docs/wasm.md`), for the fixtures whose refusal is a
-/// property of a target. Empty for every other fixture, so every harness that
-/// walks `tests/reject` passes this to `check` and none has to know why.
-fn target_args(path: &Path) -> Vec<String> {
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("//~ TARGET "))
-        .map(|triple| vec!["--target".to_owned(), triple.trim().to_owned()])
-        .unwrap_or_default()
-}
-
 fn fixtures(kind: &str) -> Vec<PathBuf> {
     let dir = repo_root().join("tests").join(kind);
     let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
@@ -222,13 +178,6 @@ fn shown(ret: &str, e: &str) -> String {
         "bool" => format!("b2i({e})"),
         _ => format!("bits_of({e})"),
     }
-}
-
-/// Read `authority --output json` for a program, as parsed fields.
-///
-/// Returns `(effect names, foreign symbols, labels as name=argument)`.
-fn authority_of(relative: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
-    authority_of_paths(&[repo_root().join(relative)])
 }
 
 /// `authority_of`, over more than one file -- what a program that

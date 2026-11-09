@@ -674,3 +674,921 @@ pub fn build[&h, &x, &c, &b, &s, &p, &v](heap: &!h Heap, exec: &x Exec(""), cloc
 pub fn run_program[&h, &x, &c, &p, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte]) -> [heap, exec(""), clock, poll] Ended {
     return spawn_capture(heap, exec, clock, exe, buffer.empty(heap, 0), input, "PATH=/usr/bin:/bin\0");
 }
+
+// ---- a server in the background, clients at the same time (`docs/gate.md` G4, the socket tests) ---------------------------------------------------
+
+// Fill a template: every `@A@`, `@B@`, `@C@` and `@D@` in `text` is replaced by `one`, `two`, `three` and `four`. The programs a socket test writes differ in a bound, an edition or a port, and live as
+// `tests/programs/*.tmpl` (not `.cho`: they are not programs until filled).
+pub fn fill[&h, &t, &a, &b, &c, &d](heap: &!h Heap, text: &t [byte], one: &a [byte], two: &b [byte], three: &c [byte], four: &d [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text) + 64);
+    var at = 0;
+    while at < len(text) {
+        let rest = text[at..len(text)];
+        let k = bytes.find(rest, "@");
+        if k < 0 {
+            out = buffer.append(heap, out, rest);
+            at = len(text);
+        } else {
+            out = buffer.append(heap, out, rest[0..k]);
+            let tail = rest[k..len(rest)];
+            if bytes.starts_with(tail, "@A@") {
+                out = buffer.append(heap, out, one);
+                at = at + k + 3;
+            } else if bytes.starts_with(tail, "@B@") {
+                out = buffer.append(heap, out, two);
+                at = at + k + 3;
+            } else if bytes.starts_with(tail, "@C@") {
+                out = buffer.append(heap, out, three);
+                at = at + k + 3;
+            } else if bytes.starts_with(tail, "@D@") {
+                out = buffer.append(heap, out, four);
+                at = at + k + 3;
+            } else {
+                out = buffer.push(heap, out, tail[0]);
+                at = at + k + 1;
+            }
+        }
+    }
+    return out;
+}
+
+// How the program at `exe` (no arguments, no input) ends: 0 it answered 0, 1 it was killed by a signal (a bound's trap), 9 it answered something else, any other number its `Ended` kind (5 it did not start).
+pub fn exit_kind[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte]) -> [heap, exec(""), clock, poll] int {
+    let Ended { out, err, kind, code } = run_program(heap, exec, clock, exe, "");
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    if kind == 0 && code != 0 {
+        return 9;
+    }
+    return kind;
+}
+
+// `bin authority --std [--output json] PATH`: the authority report of the program at `path`, as `Ended` (the report is in `out`).
+pub fn authority[&h, &x, &c, &b, &e, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], path: &p [byte], json: bool) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "authority");
+    command = word(heap, command, "--std");
+    if json {
+        command = word(heap, command, "--output");
+        command = word(heap, command, "json");
+    }
+    command = word(heap, command, path);
+    return spawn_capture(heap, exec, clock, bin, command, "", env);
+}
+
+// `bin check PATH --std --output json`: the refusals of the program at `path` (`"rule": "TAG"` for each), as `Ended`; exit code 0 and no `"rule"` in `out` when it is accepted.
+pub fn check_json[&h, &x, &c, &b, &e, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], path: &p [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "check");
+    command = word(heap, command, path);
+    command = word(heap, command, "--std");
+    command = word(heap, command, "--output");
+    command = word(heap, command, "json");
+    return spawn_capture(heap, exec, clock, bin, command, "", env);
+}
+
+// Write `text` to `dir/name.cho` and build it with `bin` (`--std`, `flags`) to `dir/name`; the build's `Ended` (kind 6 if it failed, what the compiler said in `err`). The path of the program is
+// `dir/name`.
+pub fn build_text[&h, &x, &c, &f, &b, &v, &d, &n, &t, &g](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], name: &n [byte], text: &t [byte], flags: &g [byte]) -> [heap, exec(""), clock, poll, fs_write("")] Ended {
+    var source = joined(heap, dir, name);
+    source = buffer.append(heap, source, ".cho");
+    var exe = joined(heap, dir, name);
+    var result = Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
+    borrow source as &sb in {
+        write_file(fs, buffer.bytes(sb), text);
+        let sources = word(heap, buffer.empty(heap, 64), buffer.bytes(sb));
+        borrow sources as &pb in {
+            borrow exe as &eb in {
+                drop_ended(heap, result);
+                result = build_only(heap, exec, clock, bin, buffer.bytes(pb), flags, buffer.bytes(eb), env);
+            }
+        }
+        buffer.drop(heap, sources);
+    }
+    buffer.drop(heap, source);
+    buffer.drop(heap, exe);
+    return result;
+}
+
+// Run the shell command `server` in the background in `dir` (its standard output in `server.out`, its standard error in `server.err`), wait until either file holds `ready` (at most 15 s), run the
+// shell commands in `probes` (one client after another, or several with `&` and `wait`), then give the server up to 5 s to end by itself and kill it if it has not. The `Ended` is the shell's: `out` is
+// what the probes printed, then the line `server: exit N` (it ended with code N; `server: killed` if it had to be killed, `server: never ready` if it was not ready in time, `server: died by signal N` or `server: died N` if it ended before it was ready), then `-- server.out`
+// and the contents of that file, then `-- server.err` and the contents of that one. `$SP` is the server's pid in the probes. Core dumps are off (a trapped server costs a dump where they are piped).
+pub fn serve_and_probe[&h, &x, &c, &d, &s, &r, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, dir: &d [byte], server: &s [byte], ready: &r [byte], probes: &p [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var script = buffer.append(heap, buffer.empty(heap, 512), "ulimit -c 0; cd '");
+    script = buffer.append(heap, script, dir);
+    script = buffer.append(heap, script, "' || exit 99; ( ");
+    script = buffer.append(heap, script, server);
+    script = buffer.append(heap, script, " ) >server.out 2>server.err & SP=$!; i=0; ok=0; while [ $i -lt 300 ]; do if grep -q '");
+    script = buffer.append(heap, script, ready);
+    script = buffer.append(heap, script, "' server.out server.err 2>/dev/null; then ok=1; break; fi; kill -0 $SP 2>/dev/null || break; sleep 0.05; i=$((i+1)); done; ");
+    script = buffer.append(heap, script, "if [ $ok = 0 ]; then if kill -0 $SP 2>/dev/null; then kill -KILL $SP 2>/dev/null; wait $SP 2>/dev/null; echo 'server: never ready'; else wait $SP; c=$?; if [ $c -gt 128 ]; then echo \"server: died by signal $((c-128))\"; else echo \"server: died $c\"; fi; fi; else ");
+    script = buffer.append(heap, script, probes);
+    script = buffer.append(heap, script, "\n i=0; while kill -0 $SP 2>/dev/null && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done; ");
+    script = buffer.append(heap, script, "if kill -0 $SP 2>/dev/null; then kill -KILL $SP 2>/dev/null; wait $SP 2>/dev/null; echo 'server: killed'; else wait $SP; echo \"server: exit $?\"; fi; fi; ");
+    script = buffer.append(heap, script, "echo '-- server.out'; cat server.out; echo '-- server.err'; cat server.err");
+    return sh_run(heap, exec, clock, script);
+}
+
+// ---- cr_: what the vector-driven crypto tests share (Wycheproof JSON, NIST CAVP response files, a driver fed one case to a line) ----
+
+// `line` without its leading spaces and tabs.
+fn cr_indent[&t](line: &t [byte]) -> [] &t [byte] {
+    var at = 0;
+    while at < len(line) && (line[at] == byte_of(' ') || line[at] == byte_of('\t')) {
+        at = at + 1;
+    }
+    return line[at..len(line)];
+}
+
+// The key of a line `"key": value` (Wycheproof) or `key = value` or `key =` (CAVP), `[` for a header line `[a,b]`, nothing for a comment, and the whole line for any other (a bare `FAIL`).
+fn cr_key_of[&t](line: &t [byte]) -> [] &t [byte] {
+    let text = trim_end(cr_indent(line));
+    if len(text) == 0 {
+        return text;
+    }
+    if text[0] == byte_of('"') {
+        let rest = text[1..len(text)];
+        let close = bytes.find(rest, "\": ");
+        if close < 0 {
+            return text[0..0];
+        }
+        return rest[0..close];
+    }
+    if text[0] == byte_of('[') {
+        return text[0..1];
+    }
+    let cut = bytes.find(text, " = ");
+    if cut >= 0 {
+        return text[0..cut];
+    }
+    if len(text) >= 2 && bytes.equal(text[len(text) - 2..len(text)], " =") {
+        return text[0..len(text) - 2];
+    }
+    if text[0] == byte_of('#') {
+        return text[0..0];
+    }
+    return text;
+}
+
+// The value of the line: a JSON string without its quotes, a JSON number without its comma, a header without its brackets, or what follows ` = ` without trailing blanks.
+fn cr_value_of[&t](line: &t [byte]) -> [] &t [byte] {
+    let text = trim_end(cr_indent(line));
+    if len(text) == 0 {
+        return text;
+    }
+    if text[0] == byte_of('"') {
+        let rest = text[1..len(text)];
+        let close = bytes.find(rest, "\": ");
+        if close < 0 {
+            return text[0..0];
+        }
+        let after = rest[close + 3..len(rest)];
+        if len(after) > 0 && after[0] == byte_of('"') {
+            let inner = after[1..len(after)];
+            let end = bytes.find(inner, "\"");
+            if end < 0 {
+                return inner;
+            }
+            return inner[0..end];
+        }
+        var end = 0;
+        while end < len(after) && after[end] != byte_of(',') {
+            end = end + 1;
+        }
+        return trim_end(after[0..end]);
+    }
+    if text[0] == byte_of('[') {
+        let end = bytes.find(text, "]");
+        if end < 0 {
+            return text[1..len(text)];
+        }
+        return text[1..end];
+    }
+    let cut = bytes.find(text, " = ");
+    if cut < 0 {
+        if len(text) >= 2 && bytes.equal(text[len(text) - 2..len(text)], " =") {
+            return text[0..0];
+        }
+        return text;
+    }
+    return text[cut + 3..len(text)];
+}
+
+// The position (from 1) of `key` among the words of `keys`; 0 when it is not one.
+fn cr_key_index[&k, &t](keys: &k [byte], key: &t [byte]) -> [] int {
+    let n = bytes.count_byte(keys, 32) + 1;
+    var at = 1;
+    while at <= n {
+        if bytes.equal(bytes.field(keys, 32, at), key) {
+            return at;
+        }
+        at = at + 1;
+    }
+    return 0;
+}
+
+// One value of a row: ` | ` when it is not the first, then the value, or a `-` for an empty one.
+fn cr_cell[&h, &v](heap: &!h Heap, into: buffer.Buffer, at: int, v: &v [byte]) -> [heap] buffer.Buffer {
+    var out = into;
+    if at > 1 {
+        out = buffer.append(heap, out, " | ");
+    }
+    if len(v) == 0 {
+        return buffer.push(heap, out, byte_of('-'));
+    }
+    return buffer.append(heap, out, v);
+}
+
+// One row, `a | b | c`, of the first `n` values, and a newline.
+fn cr_row[&h, &a, &b, &c, &d, &e, &f, &g, &i](heap: &!h Heap, into: buffer.Buffer, n: int, s1: &a [byte], s2: &b [byte], s3: &c [byte], s4: &d [byte], s5: &e [byte], s6: &f [byte], s7: &g [byte], s8: &i [byte]) -> [heap] buffer.Buffer {
+    var out = cr_cell(heap, into, 1, s1);
+    if n >= 2 {
+        out = cr_cell(heap, out, 2, s2);
+    }
+    if n >= 3 {
+        out = cr_cell(heap, out, 3, s3);
+    }
+    if n >= 4 {
+        out = cr_cell(heap, out, 4, s4);
+    }
+    if n >= 5 {
+        out = cr_cell(heap, out, 5, s5);
+    }
+    if n >= 6 {
+        out = cr_cell(heap, out, 6, s6);
+    }
+    if n >= 7 {
+        out = cr_cell(heap, out, 7, s7);
+    }
+    if n >= 8 {
+        out = cr_cell(heap, out, 8, s8);
+    }
+    return buffer.push(heap, out, byte_of('\n'));
+}
+
+// The cases of a vector file, one row to a case: `keys` are up to eight words, the names of the values wanted; the file is read line by line (Wycheproof's layout is one `"key": value`
+// to a line; CAVP's is `key = value`, and a header `[P-256,SHA-256]` is the key `[`), each name keeps the last value seen, and a row is written when the last name is seen (`cr_rows`). Row: the values
+// separated by ` | `, so `column` takes them apart; an empty value is a `-`. Here a row is written when any of the names `ends` is seen (a CAVP case ends in `PT` or in a bare `FAIL`), and with
+// `reset` the values are forgotten after each row (so a case without a `PT` has none).
+pub fn cr_rows_at[&h, &t, &k, &e](heap: &!h Heap, text: &t [byte], keys: &k [byte], ends: &e [byte], reset: bool) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text) / 4 + 64);
+    let n = bytes.count_byte(keys, 32) + 1;
+    var s1 = text[0..0];
+    var s2 = text[0..0];
+    var s3 = text[0..0];
+    var s4 = text[0..0];
+    var s5 = text[0..0];
+    var s6 = text[0..0];
+    var s7 = text[0..0];
+    var s8 = text[0..0];
+    var pos = 0;
+    while pos < len(text) {
+        let rest = text[pos..len(text)];
+        let nl = index_of_byte(rest, byte_of(10));
+        var line = rest;
+        if nl >= 0 {
+            line = rest[0..nl];
+            pos = pos + nl + 1;
+        } else {
+            pos = len(text);
+        }
+        let key = cr_key_of(line);
+        if len(key) > 0 {
+            let i = cr_key_index(keys, key);
+            if i > 0 {
+                let v = cr_value_of(line);
+                if i == 1 {
+                    s1 = v;
+                } else if i == 2 {
+                    s2 = v;
+                } else if i == 3 {
+                    s3 = v;
+                } else if i == 4 {
+                    s4 = v;
+                } else if i == 5 {
+                    s5 = v;
+                } else if i == 6 {
+                    s6 = v;
+                } else if i == 7 {
+                    s7 = v;
+                } else if i == 8 {
+                    s8 = v;
+                }
+                if cr_key_index(ends, key) > 0 {
+                    out = cr_row(heap, out, n, s1, s2, s3, s4, s5, s6, s7, s8);
+                    if reset {
+                        s1 = text[0..0];
+                        s2 = text[0..0];
+                        s3 = text[0..0];
+                        s4 = text[0..0];
+                        s5 = text[0..0];
+                        s6 = text[0..0];
+                        s7 = text[0..0];
+                        s8 = text[0..0];
+                    }
+                }
+            }
+        }
+    }
+    return out;
+}
+
+// Word `n` (from 1, separated by spaces) of a line; nothing when there are fewer.
+pub fn cr_word[&t](line: &t [byte], n: int) -> [] &t [byte] {
+    return bytes.field(line, 32, n);
+}
+
+// `hex` with zeros on its left up to `width` digits.
+pub fn cr_pad[&h, &t](heap: &!h Heap, out: buffer.Buffer, hex: &t [byte], width: int) -> [heap] buffer.Buffer {
+    var b = out;
+    var k = len(hex);
+    while k < width {
+        b = buffer.push(heap, b, byte_of('0'));
+        k = k + 1;
+    }
+    return buffer.append(heap, b, hex);
+}
+
+// A decimal number at the start of `text` (0 for no digits).
+pub fn cr_number[&t](text: &t [byte]) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at < len(text) && int_of(text[at]) >= 48 && int_of(text[at]) <= 57 {
+        n = n * 10 + (int_of(text[at]) - 48);
+        at = at + 1;
+    }
+    return n;
+}
+
+// `text` with the first byte of each line changed: a line that begins with `from_a` begins with `to_a`, one that begins with `from_b` with `to_b`.
+pub fn cr_retag[&h, &t](heap: &!h Heap, text: &t [byte], from_a: byte, to_a: byte, from_b: byte, to_b: byte) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text) + 16);
+    var at = 0;
+    var first = true;
+    while at < len(text) {
+        var c = text[at];
+        if first {
+            if c == from_a {
+                c = to_a;
+            } else if c == from_b {
+                c = to_b;
+            }
+        }
+        out = buffer.push(heap, out, c);
+        first = text[at] == byte_of('\n');
+        at = at + 1;
+    }
+    return out;
+}
+
+// The driver at `exe` fed `input`: its answer, one line to a case. A driver that does not exit 0 or answers a different number of lines is a failure in the report, and the answer is empty.
+pub fn cr_ask[&h, &x, &c, &p, &n, &a, &m](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte], report: buffer.Buffer, label: &a [byte], name: &m [byte]) -> [heap, exec(""), clock, poll] (buffer.Buffer, buffer.Buffer) {
+    var acc = report;
+    var said = buffer.empty(heap, 0);
+    let Ended { out, err, kind, code } = run_program(heap, exec, clock, exe, input);
+    borrow err as &rb in {
+        if kind != 0 || code != 0 {
+            acc = failure(heap, acc, label, name, "the driver should exit 0", buffer.bytes(rb));
+            buffer.drop(heap, out);
+        } else {
+            var lines = 0;
+            borrow out as &ob in {
+                lines = bytes.count_byte(buffer.bytes(ob), 10);
+            }
+            if lines != bytes.count_byte(input, 10) {
+                acc = failure(heap, acc, label, name, "the driver should answer one line per case", "");
+                buffer.drop(heap, out);
+            } else {
+                buffer.drop(heap, said);
+                said = out;
+            }
+        }
+    }
+    buffer.drop(heap, err);
+    return (acc, said);
+}
+
+// The driver at `source` (a path and its NUL) built into `exe`, or the failure in the report; the second answer says which.
+pub fn cr_build[&h, &x, &c, &b, &s, &p, &v, &a](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], source: &s [byte], exe: &p [byte], env: &v [byte], report: buffer.Buffer, label: &a [byte]) -> [heap, exec(""), clock, poll] (buffer.Buffer, bool) {
+    var acc = report;
+    let Ended { out, err, kind, code } = build(heap, exec, clock, bin, source, exe, env);
+    buffer.drop(heap, out);
+    var built = true;
+    if kind != 0 {
+        built = false;
+        borrow err as &rb in {
+            acc = failure(heap, acc, label, "build", "should compile, but the compiler said", buffer.bytes(rb));
+        }
+    }
+    buffer.drop(heap, err);
+    return (acc, built);
+}
+
+// The lines of `lines` that are exactly `text`.
+pub fn cr_count[&t, &x](lines: &t [byte], text: &x [byte]) -> [] int {
+    var n = 0;
+    var pos = 0;
+    while pos < len(lines) {
+        let rest = lines[pos..len(lines)];
+        let nl = index_of_byte(rest, byte_of(10));
+        var line = rest;
+        if nl >= 0 {
+            line = rest[0..nl];
+            pos = pos + nl + 1;
+        } else {
+            pos = len(lines);
+        }
+        if bytes.equal(trim_end(line), text) {
+            n = n + 1;
+        }
+    }
+    return n;
+}
+
+// `counts` is lines `TEXT N` (N the last word): each `TEXT` must be exactly `N` of the lines of `lines`, and together they must be all of them (so no other answer is hiding).
+pub fn cr_counts[&h, &t, &x, &a, &m](heap: &!h Heap, report: buffer.Buffer, kind: &a [byte], name: &m [byte], lines: &t [byte], counts: &x [byte]) -> [heap] buffer.Buffer {
+    var acc = report;
+    var total = 0;
+    let rows = bytes.count_byte(counts, 10);
+    var at = 1;
+    while at <= rows {
+        let row = trim_end(bytes.field(counts, 10, at));
+        var cut = len(row);
+        while cut > 0 && row[cut - 1] != byte_of(' ') {
+            cut = cut - 1;
+        }
+        if cut > 1 {
+            let text = row[0..cut - 1];
+            let want = cr_number(row[cut..len(row)]);
+            let got = cr_count(lines, text);
+            total = total + got;
+            if got != want {
+                var why = buffer.append(heap, buffer.empty(heap, 96), "should have ");
+                why = buffer.push_nat(heap, why, want);
+                why = buffer.append(heap, why, " answers `");
+                why = buffer.append(heap, why, text);
+                why = buffer.append(heap, why, "` and has ");
+                why = buffer.push_nat(heap, why, got);
+                borrow why as &wb in {
+                    acc = failure(heap, acc, kind, name, buffer.bytes(wb), "");
+                }
+                buffer.drop(heap, why);
+            }
+        }
+        at = at + 1;
+    }
+    if total != bytes.count_byte(lines, 10) {
+        acc = failure(heap, acc, kind, name, "the counts should account for every answer", "");
+    }
+    return acc;
+}
+
+// The line of `text` that begins at `pos` (without its newline); advance by its length and one.
+pub fn cr_line_at[&t](text: &t [byte], pos: int) -> [] &t [byte] {
+    let rest = text[pos..len(text)];
+    let nl = index_of_byte(rest, byte_of(10));
+    if nl < 0 {
+        return rest;
+    }
+    return rest[0..nl];
+}
+
+// Field `n` (from 1) of a line whose fields are separated by ` | `; nothing when there are fewer.
+pub fn cr_cell_of[&t](line: &t [byte], n: int) -> [] &t [byte] {
+    var rest = line;
+    var k = 1;
+    while k < n {
+        let cut = bytes.find(rest, " | ");
+        if cut < 0 {
+            return rest[0..0];
+        }
+        rest = rest[cut + 3..len(rest)];
+        k = k + 1;
+    }
+    let cut = bytes.find(rest, " | ");
+    if cut >= 0 {
+        return rest[0..cut];
+    }
+    return rest;
+}
+
+// Word `n` (from 1) of each line of `text`, one per line.
+pub fn cr_words[&h, &t](heap: &!h Heap, text: &t [byte], n: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text) / 2 + 16);
+    var pos = 0;
+    while pos < len(text) {
+        let line = cr_line_at(text, pos);
+        pos = pos + len(line) + 1;
+        out = buffer.push(heap, buffer.append(heap, out, cr_word(trim_end(line), n)), byte_of('\n'));
+    }
+    return out;
+}
+
+// What the driver said (a failed run left it empty) and what it should have said, compared line by line, under `kind/name`.
+pub fn cr_same[&h, &g, &w, &a, &m](heap: &!h Heap, report: buffer.Buffer, kind: &a [byte], name: &m [byte], got: &g [byte], want: &w [byte]) -> [heap] buffer.Buffer {
+    if len(got) == 0 {
+        return report;
+    }
+    return differences(heap, report, kind, name, got, want);
+}
+
+// Each line of `text` from its word `n` (from 1) on, without trailing blanks; a line of fewer words is an empty line.
+pub fn cr_from[&h, &t](heap: &!h Heap, text: &t [byte], n: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text) + 16);
+    var pos = 0;
+    while pos < len(text) {
+        let line = trim_end(cr_line_at(text, pos));
+        pos = pos + len(cr_line_at(text, pos)) + 1;
+        var at = 0;
+        var seen = 1;
+        while seen < n && at < len(line) {
+            if line[at] == byte_of(' ') {
+                seen = seen + 1;
+            }
+            at = at + 1;
+        }
+        if seen == n {
+            out = buffer.append(heap, out, line[at..len(line)]);
+        }
+        out = buffer.push(heap, out, byte_of('\n'));
+    }
+    return out;
+}
+
+// Each line of `text` with `prefix` in front of it.
+pub fn cr_prefixed[&h, &t, &p](heap: &!h Heap, text: &t [byte], prefix: &p [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text) + 16);
+    var pos = 0;
+    while pos < len(text) {
+        let line = cr_line_at(text, pos);
+        pos = pos + len(line) + 1;
+        out = buffer.push(heap, buffer.append(heap, buffer.append(heap, out, prefix), line), byte_of('\n'));
+    }
+    return out;
+}
+
+// `hex` with the bit `bit` (0 to 3) of its hex digit number `digit` (from 0) flipped: one bit of the bytes it spells.
+pub fn cr_flip[&h, &t](heap: &!h Heap, hex: &t [byte], digit: int, bit: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(hex) + 1);
+    var at = 0;
+    while at < len(hex) {
+        var c = int_of(hex[at]);
+        if at == digit {
+            var v = c - 48;
+            if c >= 97 {
+                v = c - 87;
+            }
+            v = v ^ 1 << bit;
+            c = 48 + v;
+            if v >= 10 {
+                c = 87 + v;
+            }
+        }
+        out = buffer.push(heap, out, byte_of(c));
+        at = at + 1;
+    }
+    return out;
+}
+
+// `unit` written `n` times.
+pub fn cr_repeat[&h, &u](heap: &!h Heap, out: buffer.Buffer, unit: &u [byte], n: int) -> [heap] buffer.Buffer {
+    var b = out;
+    var k = 0;
+    while k < n {
+        b = buffer.append(heap, b, unit);
+        k = k + 1;
+    }
+    return b;
+}
+
+// A line to `got` for one check: `ok` when it holds, `what` when it does not (`cr_all_ok` reports the lines that are not `ok`).
+pub fn cr_expect[&h, &w](heap: &!h Heap, got: buffer.Buffer, holds: bool, what: &w [byte]) -> [heap] buffer.Buffer {
+    if holds {
+        return buffer.append(heap, got, "ok\n");
+    }
+    return buffer.push(heap, buffer.append(heap, got, what), byte_of('\n'));
+}
+
+// A failure under `kind/name` for each of the first three lines of `got` that are not `ok`, with the number of the check.
+pub fn cr_all_ok[&h, &g, &a, &m](heap: &!h Heap, report: buffer.Buffer, kind: &a [byte], name: &m [byte], got: &g [byte]) -> [heap] buffer.Buffer {
+    var out = report;
+    var shown = 0;
+    var pos = 0;
+    var at = 1;
+    while pos < len(got) {
+        let line = cr_line_at(got, pos);
+        pos = pos + len(line) + 1;
+        if !bytes.equal(line, "ok") && shown < 3 {
+            var why = buffer.append(heap, buffer.empty(heap, 400), "check ");
+            why = buffer.push_nat(heap, why, at);
+            why = buffer.append(heap, why, ": ");
+            why = buffer.append(heap, why, line[0..min_of(len(line), 300)]);
+            borrow why as &wb in {
+                out = failure(heap, out, kind, name, buffer.bytes(wb), "");
+            }
+            buffer.drop(heap, why);
+            shown = shown + 1;
+        }
+        at = at + 1;
+    }
+    return out;
+}
+
+// `cr_rows_at` that writes a row when the last of `keys` is seen and keeps the values.
+pub fn cr_rows[&h, &t, &k](heap: &!h Heap, text: &t [byte], keys: &k [byte]) -> [heap] buffer.Buffer {
+    return cr_rows_at(heap, text, keys, bytes.field(keys, 32, bytes.count_byte(keys, 32) + 1), false);
+}
+
+// `prefix first second` and a newline.
+pub fn cr_pair[&h, &p, &a, &b](heap: &!h Heap, into: buffer.Buffer, prefix: &p [byte], first: &a [byte], second: &b [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, into, prefix);
+    out = buffer.push(heap, buffer.append(heap, out, first), byte_of(' '));
+    return buffer.push(heap, buffer.append(heap, out, second), byte_of('\n'));
+}
+
+// The cases of a one-bit-change test: `head aad sealed` unmodified, then with each bit of `sealed` flipped in turn and then with each bit of `aad` flipped, one case to a line (`head` is
+// `OP KEY NONCE `).
+pub fn cr_bitflips[&h, &p, &a, &s](heap: &!h Heap, head: &p [byte], aad: &a [byte], sealed: &s [byte]) -> [heap] buffer.Buffer {
+    var out = cr_pair(heap, buffer.empty(heap, 1 << 20), head, aad, sealed);
+    var at = 0;
+    while at < len(sealed) {
+        var bit = 0;
+        while bit < 4 {
+            let flipped = cr_flip(heap, sealed, at, bit);
+            borrow flipped as &fb in {
+                out = cr_pair(heap, out, head, aad, buffer.bytes(fb));
+            }
+            buffer.drop(heap, flipped);
+            bit = bit + 1;
+        }
+        at = at + 1;
+    }
+    at = 0;
+    while at < len(aad) {
+        var bit = 0;
+        while bit < 4 {
+            let flipped = cr_flip(heap, aad, at, bit);
+            borrow flipped as &fb in {
+                out = cr_pair(heap, out, head, buffer.bytes(fb), sealed);
+            }
+            buffer.drop(heap, flipped);
+            bit = bit + 1;
+        }
+        at = at + 1;
+    }
+    return out;
+}
+
+// `text`, or nothing when it is the `-` of an empty byte string.
+pub fn cr_undash[&t](text: &t [byte]) -> [] &t [byte] {
+    if bytes.equal(text, "-") {
+        return text[0..0];
+    }
+    return text;
+}
+
+// What each answer of a driver comes to, one line to an answer, with `asked` the cases it was fed (their first byte tells the operation): a refusal (the code is negative) is `refused`, and for
+// an `O` (an open, whose output starts filled with `aa`, so a refusal that wrote anything shows) `refused` and what it wrote; any other answer is itself.
+pub fn cr_outcomes[&h, &a, &q](heap: &!h Heap, answers: &a [byte], asked: &q [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(answers) + 16);
+    var apos = 0;
+    var qpos = 0;
+    while apos < len(answers) && qpos < len(asked) {
+        let answer = trim_end(cr_line_at(answers, apos));
+        apos = apos + len(cr_line_at(answers, apos)) + 1;
+        let case = cr_line_at(asked, qpos);
+        qpos = qpos + len(case) + 1;
+        if len(answer) > 0 && answer[0] == byte_of('-') {
+            out = buffer.append(heap, out, "refused");
+            if case[0] == byte_of('O') {
+                out = buffer.push(heap, out, byte_of(' '));
+                out = buffer.append(heap, out, cr_word(answer, 3));
+            }
+        } else {
+            out = buffer.append(heap, out, answer);
+        }
+        out = buffer.push(heap, out, byte_of('\n'));
+    }
+    return out;
+}
+
+// The operation and the tag of each answer, `OP TAG` to a line, for `cr_counts`.
+pub fn cr_tally[&h, &a, &q](heap: &!h Heap, answers: &a [byte], asked: &q [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(answers) + 16);
+    var apos = 0;
+    var qpos = 0;
+    while apos < len(answers) && qpos < len(asked) {
+        let answer = trim_end(cr_line_at(answers, apos));
+        apos = apos + len(cr_line_at(answers, apos)) + 1;
+        let case = cr_line_at(asked, qpos);
+        qpos = qpos + len(case) + 1;
+        out = buffer.append(heap, out, case[0..1]);
+        out = buffer.push(heap, out, byte_of(' '));
+        out = buffer.push(heap, buffer.append(heap, out, cr_word(answer, 2)), byte_of('\n'));
+    }
+    return out;
+}
+
+// A vector file read as two columns, `case | answer`: the cases fed to the driver at `exe`, and its answers compared with the second column; `from` compares each answer from the word it names on
+// (2: `ok HEX` or a tag with what follows it, without the code; 1: the whole answer), and a negative `from` compares only the word it names (-2: the tag).
+pub fn cr_two_columns[&h, &x, &c, &f, &p, &a, &t, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer, kind: &a [byte], path: &t [byte], name: &n [byte], from: int) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let Contents { data, failed } = read_file(heap, fs, path);
+    if failed != 0 {
+        acc = failure(heap, acc, kind, name, "a vector file cannot be read", path);
+    }
+    var input = buffer.empty(heap, 0);
+    var want = buffer.empty(heap, 0);
+    borrow data as &db in {
+        buffer.drop(heap, input);
+        buffer.drop(heap, want);
+        input = column(heap, buffer.bytes(db), 1);
+        want = column(heap, buffer.bytes(db), 2);
+    }
+    buffer.drop(heap, data);
+    borrow input as &ib in {
+        let (more, said) = cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, kind, name);
+        acc = more;
+        var got = buffer.empty(heap, 0);
+        borrow said as &sb in {
+            buffer.drop(heap, got);
+            if from < 0 {
+                got = cr_words(heap, buffer.bytes(sb), 0 - from);
+            } else {
+                got = cr_from(heap, buffer.bytes(sb), from);
+            }
+        }
+        borrow got as &gb in {
+            borrow want as &wb in {
+                acc = cr_same(heap, acc, kind, name, buffer.bytes(gb), buffer.bytes(wb));
+            }
+        }
+        buffer.drop(heap, got);
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+// The lines of `got`, except that a line is `marker` where the same line of `want` is: a case the test says nothing about.
+pub fn cr_masked[&h, &g, &w, &m](heap: &!h Heap, got: &g [byte], want: &w [byte], marker: &m [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(got) + 16);
+    var gpos = 0;
+    var wpos = 0;
+    while gpos < len(got) && wpos < len(want) {
+        let g = cr_line_at(got, gpos);
+        gpos = gpos + len(g) + 1;
+        let w = cr_line_at(want, wpos);
+        wpos = wpos + len(w) + 1;
+        if bytes.equal(trim_end(w), marker) {
+            out = buffer.append(heap, out, marker);
+        } else {
+            out = buffer.append(heap, out, g);
+        }
+        out = buffer.push(heap, out, byte_of('\n'));
+    }
+    return out;
+}
+
+// A vector file `name | case | answer` (the second column what the driver is fed, the third what it should answer, after `prefix`) asked of the driver at `exe`, line for line; `rows` cases.
+pub fn cr_table[&h, &x, &c, &f, &p, &a, &t, &n, &q](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer, kind: &a [byte], path: &t [byte], name: &n [byte], prefix: &q [byte], rows: int) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let Contents { data, failed } = read_file(heap, fs, path);
+    if failed != 0 {
+        acc = failure(heap, acc, kind, name, "a vector file cannot be read", path);
+    }
+    var input = buffer.empty(heap, 0);
+    var want = buffer.empty(heap, 0);
+    borrow data as &db in {
+        buffer.drop(heap, input);
+        buffer.drop(heap, want);
+        input = column(heap, buffer.bytes(db), 2);
+        let answers = column(heap, buffer.bytes(db), 3);
+        borrow answers as &ab in {
+            want = cr_prefixed(heap, buffer.bytes(ab), prefix);
+        }
+        buffer.drop(heap, answers);
+    }
+    buffer.drop(heap, data);
+    borrow input as &ib in {
+        if bytes.count_byte(buffer.bytes(ib), 10) != rows {
+            acc = failure(heap, acc, kind, name, "the file has a different number of cases than recorded", path);
+        }
+        let (more, said) = cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, kind, name);
+        acc = more;
+        borrow said as &sb in {
+            borrow want as &wb in {
+                acc = cr_same(heap, acc, kind, name, buffer.bytes(sb), buffer.bytes(wb));
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+// The byte `v` (0 to 255) as two lowercase hex digits.
+pub fn cr_hex_byte[&h](heap: &!h Heap, into: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var out = into;
+    var k = 0;
+    while k < 2 {
+        var d = v >> 4;
+        if k == 1 {
+            d = v & 15;
+        }
+        var c = 48 + d;
+        if d >= 10 {
+            c = 87 + d;
+        }
+        out = buffer.push(heap, out, byte_of(c));
+        k = k + 1;
+    }
+    return out;
+}
+
+// Whether `text` is only `0` digits (a refusal that wrote its output would show).
+pub fn cr_zeros[&t](text: &t [byte]) -> [] bool {
+    var at = 0;
+    while at < len(text) {
+        if text[at] != byte_of('0') {
+            return false;
+        }
+        at = at + 1;
+    }
+    return true;
+}
+
+// ---- the runtime batch (`docs/gate.md` G4, wave 2): sources written by the test, built and run -------------------------------------------------------
+
+// The file `dir/name` holding `text`; its path.
+pub fn rt_put[&h, &f, &d, &n, &t](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte], name: &n [byte], text: &t [byte]) -> [heap, fs_write("")] buffer.Buffer {
+    let path = joined(heap, dir, name);
+    borrow path as &pb in {
+        fs_write(fs, buffer.bytes(pb), text);
+    }
+    return path;
+}
+
+// `text` written to `dir/name.cho`, built with `flags` (each followed by a NUL, maybe none) to `dir/name` and run with no arguments: the run's `Ended`; if it did not build, the build's (kind 6, what the compiler said in `err`).
+pub fn rt_build_run[&h, &x, &c, &f, &b, &v, &d, &n, &t, &g](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], name: &n [byte], text: &t [byte], flags: &g [byte]) -> [heap, exec(""), clock, poll, fs_write("")] Ended {
+    var file = buffer.append(heap, buffer.empty(heap, 64), name);
+    file = buffer.append(heap, file, ".cho");
+    var source = buffer.empty(heap, 64);
+    borrow file as &fb in {
+        buffer.drop(heap, source);
+        source = rt_put(heap, fs, dir, buffer.bytes(fb), text);
+    }
+    buffer.drop(heap, file);
+    let exe = joined(heap, dir, name);
+    var sources = buffer.empty(heap, 64);
+    borrow source as &sb in {
+        sources = word(heap, sources, buffer.bytes(sb));
+    }
+    buffer.drop(heap, source);
+    var built = Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
+    borrow sources as &ssb in {
+        borrow exe as &eb in {
+            drop_ended(heap, built);
+            built = build_only(heap, exec, clock, bin, buffer.bytes(ssb), flags, buffer.bytes(eb), env);
+        }
+    }
+    buffer.drop(heap, sources);
+    let Ended { out, err, kind, code } = built;
+    buffer.drop(heap, out);
+    if kind != 0 {
+        buffer.drop(heap, exe);
+        return Ended { out: buffer.empty(heap, 0), err: err, kind: kind, code: code };
+    }
+    buffer.drop(heap, err);
+    var ran = Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
+    borrow exe as &eb2 in {
+        drop_ended(heap, ran);
+        ran = run_program(heap, exec, clock, buffer.bytes(eb2), "");
+    }
+    buffer.drop(heap, exe);
+    return ran;
+}
+
+// ---- script tests (`docs/gate.md` G4, wave 2: the commands of the compiler itself) ------------------------------------------------------------------
+
+// A test that is a shell script and a file of expected output: in a scratch directory, `/bin/sh script CANCHO SCRATCH` (run from the root of the repository, with the environment of `base_env`), its
+// standard output compared with the file `expected`; a difference or a script that does not exit 0 is added to `report` as `name/KIND: why`. The scratch directory is removed whatever happened.
+pub fn pr_script[&h, &x, &c, &f, &b, &m, &k, &n, &s, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte], name: &n [byte], script: &s [byte], expected: &e [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var rep = report;
+    let env = base_env(heap, compiler, cache);
+    let scratch = scratch_dir(heap, exec, clock, name);
+    borrow scratch as &sb in {
+        borrow env as &eb in {
+            if len(buffer.bytes(sb)) == 0 {
+                rep = failure(heap, rep, name, "scratch", "mktemp -d did not make a directory", "");
+            } else {
+                rep = compare_transcript(heap, exec, clock, fs, name, script, expected, bin, buffer.bytes(sb), buffer.bytes(eb), rep);
+                remove_tree(heap, exec, clock, buffer.bytes(sb));
+            }
+        }
+    }
+    buffer.drop(heap, scratch);
+    buffer.drop(heap, env);
+    return rep;
+}

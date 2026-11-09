@@ -1,0 +1,93 @@
+== add then build makes a program that uses the dependency
+ok add says it added
+ok add says it installed
+ok the dependency is in the file
+ok the pin is in the file
+ok the file is appended to, what was there is untouched
+dependency files: 2
+dependency files after build: 2
+program exit 60
+== a ref is resolved once and the hash is what is written
+ok the hash is written
+ok the name of the ref is not written
+== add refuses what it should and leaves the file as it was
+ok refuses: full commit hash
+ok refuses: .cancho-vcs/libx.top
+ok a store directory holds stores, not one
+ok refuses: is not a dependency name
+ok a path that is not there is refused
+ok both --rev and --ref are refused
+ok the file is as it was
+ok refuses: already has a dependency
+ok the same name twice changes nothing
+== an add whose install fails puts the file back and names the dependency
+ok refuses: dependency `libx`
+ok the file is put back
+ok a commit the repository lacks is refused
+ok the file is as it was
+== a store with nothing in it is not a dependency
+ok refuses: nothing is published
+ok the file is as it was
+== a project file that is not one is refused
+ok an unknown key in a program: install says unknown field `lex`
+ok an unknown key in a program: build says unknown field `lex`
+ok an unknown section: install says unknown field `extra`
+ok an unknown section: build says unknown field `extra`
+ok an unknown key in a package: install says unknown field `version`
+ok an unknown key in a package: build says unknown field `version`
+ok a dependency rev that is a name: install says [dependencies.x]
+ok a dependency rev that is a name: build says [dependencies.x]
+ok a dependency path that leaves the repository: install says [dependencies.x]
+ok a dependency path that leaves the repository: build says [dependencies.x]
+ok a cancho that is not a hash: install says full commit hash
+ok a cancho that is not a hash: build says full commit hash
+ok two programs of one name: install says must be unique
+ok two programs of one name: build says must be unique
+ok a program with no sources: install says has no `sources`
+ok a program with no sources: build says has no `sources`
+ok a bad package name: install says package name
+ok a bad package name: build says package name
+== a compiler other than the one named is refused
+ok install names the compiler it wants
+ok install names this compiler
+ok build names the compiler it wants
+ok build names this compiler
+ok the escape hatch works for install
+ok the compiler is only noted
+ok and the build fails on the missing library
+== install replaces what an older pin fetched
+dependency files: 2
+ok the base changed, so one file is new
+program exit 62
+== a project is found from a directory below it and files still build as files
+ok built at the project's root, not the directory it was run from
+program exit 3
+== --bin picks one program and an unknown one is refused
+ok the named program is built
+ok only the named program is built
+ok refuses: no [[bin]] named
+== without a project file there is nothing to install
+ok refuses: cancho.toml
+== test in a project runs every set against the dependencies
+ok the std set ran
+ok the checks set ran
+ok the second set ran
+sets that passed both tests: 2
+== a failing set does not stop the others and fails the run
+exit 4
+ok the second set still ran
+ok the failure is named
+== test picks one set and refuses an unknown one or none at all
+ok the named set ran
+ok and only that one
+ok refuses: no [[test]] named
+ok refuses: has no [[test]] to run
+== test with files is still the test runner and a bad test set is refused
+ok the old command ran
+ok and not the project's sets
+ok refuses: must be unique
+ok refuses: has no `sources`
+ok refuses: unknown field `link`
+== every package names the compiler it was checked against
+ok at least nine packages
+distinct pins: 1

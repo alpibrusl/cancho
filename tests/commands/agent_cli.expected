@@ -1,0 +1,13 @@
+== every command of the usage block is documented by skill
+usage commands: 15
+ok skill advertises every command of the usage block
+== introspect names every registered command
+ok the tree is the tree of cancho
+ok introspect has build
+ok introspect has check
+ok introspect has run
+ok introspect has ids
+ok introspect has authority
+ok introspect has layout
+ok introspect has print
+ok introspect has vcs

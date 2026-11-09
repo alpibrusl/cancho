@@ -5,7 +5,7 @@
 
 Each mutant is `std/chacha20.cho` with one deliberate bug, built as a local
 module `chacha20` beside a copy of `tests/programs/aead_driver.cho`, and run
-against the same evidence `conformance/aead.rs` and
+against the same evidence `tests/commands/aead.cho` and
 `scripts/aead_differential.py` use: the RFC 8439 table, every Wycheproof
 case, the one-bit flips of §2.8.2, the refusal edges, and 2,000 random cases
 against OpenSSL. A mutant is killed when any of them disagrees. The unmutated

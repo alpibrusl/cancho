@@ -117,8 +117,8 @@ and should: it is a report lie, not a vocabulary gap.
    report opens with `UNBOUNDED: this program holds the network without narrowing it.` The four examples that hold the
    network unnarrowed on purpose (`http_fetch_nb`, `tls_echo`, `tls_echo_fixed`, `https_hello`: the operator names the
    hosts and ports) now pin `bounded: false` with the reason, which is what they always were; gates in
-   `tests/conformance/net_bounds.rs`. The compiler in cancho (`examples/selfhost`) has no `authority` report, so there is
-   nothing to port.
+   `tests/commands/net_bounds.cho` (moved from `conformance/net_bounds.rs`, G4 wave 2). *Corrected 2026-11-09:* the compiler in cancho (`examples/selfhost`) does have `authority`
+   (`cancho authority --std [--output json] FILE`, same text and JSON as the Rust one on these programs), and the command test runs it.
 2. **§2.2** on the existing single `Net`: several children from one
    `narrow`, mirroring the `Fs` shape and its gates.
    **Built.** `narrow(net, "a:53", "b:53")` answers a tuple of `Net`s, one per bound, each its own label in the report
@@ -146,7 +146,7 @@ and should: it is a report lie, not a vocabulary gap.
      the same relation (`127.0.0.1` and `127.0.0.10` are now disjoint siblings; `*.0.0.1` and `127.0.0.1` are nested).
      Earlier editions keep the prefix, so no existing file changes meaning. Measured on both backends with IP-literal
      names (so no resolver is asked; `*.0.0.1` is the one-label wildcard that `127.0.0.1` matches):
-     `crates/cancho/tests/conformance/net_hosts.rs`; fixtures `tests/accept/narrow_net_hosts_edition_ten.cho`,
+     `tests/commands/net_hosts.cho` (was `conformance/net_hosts.rs`); fixtures `tests/accept/narrow_net_hosts_edition_ten.cho`,
      `tests/accept/narrow_many_net_exact_hosts.cho`, `tests/reject/narrow_net_{exact_host_widens,wildcard_from_exact,wildcard_two_labels}.cho`,
      `tests/reject/narrow_many_net_wildcard_nested.cho`.
    * **3B, the `out`/`ports` split: edition 11.** Decisions, before the code:
@@ -169,7 +169,7 @@ and should: it is a report lie, not a vocabulary gap.
        for both says it twice; an inbound host list (`§4`) stays out.
      **Built.** Fixtures: `tests/accept/split_out_ports.cho` (a resolver-shaped program holds both and the report lists `net_out`
      for the upstream and `net_in` for the port), `tests/reject/{dial_through_ports,listen_through_out,split_net_is_edition_ten,narrow_ports_widens}.cho`;
-     `crates/cancho/tests/conformance/net_split.rs` (the report, and each half's bound enforced on both backends). The compiler in
+     `tests/commands/net_split.cho` (was `conformance/net_split.rs`: the report, and each half's bound enforced). The compiler in
      cancho mirrors it (`narrowing.cho`: `is_net`, `dial_refused`, `listen_refused` taking `Ports`; `builtins.split_for`; the
      prelude and discharge tables are generated).
 

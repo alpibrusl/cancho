@@ -1,0 +1,23 @@
+// The probe of tests/commands/io.cho (`docs/bulk-io.md` section 3): `write_bytes` goes through the same stream `putchar` does. It writes a strictly increasing sequence of digits through alternating primitives, so
+// that any reordering shows up as an out-of-order digit: 2,000 rounds of 0123456789.
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(heap);
+    release(fs);
+    release(ffi);
+    borrow mut io as &!i in {
+        var round = 0;
+        while round < 2000 {
+            putchar(i, 48);
+            write_bytes(i, "12");
+            putchar(i, 51);
+            write_bytes(i, "456");
+            putchar(i, 55);
+            write_bytes(i, "89");
+            round = round + 1;
+        }
+    }
+    release(io);
+    return 0;
+}

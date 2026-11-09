@@ -1,0 +1,14 @@
+// Two bytes through `putchar`: the program tests/commands/io.cho asks `cancho authority --output json` about (`docs/bulk-io.md` section 3.2), whose report must be exactly that of io_authority_write_bytes.cho. Never run.
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(heap);
+    release(fs);
+    release(ffi);
+    borrow mut io as &!i in {
+        putchar(i, 104);
+        putchar(i, 105);
+    }
+    release(io);
+    return 0;
+}

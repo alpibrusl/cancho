@@ -199,7 +199,7 @@ unbounded by
 
 ## 7. What it is checked by
 
-`crates/cancho/tests/conformance/foreign_authority.rs`, real programs built and run on **both backends**:
+`tests/commands/foreign_authority.sh` (run by `tests/commands/script_tests.cho`; it was `crates/cancho/tests/conformance/foreign_authority.rs`, on both backends), real programs built and run:
 
 | claim | test |
 |---|---|

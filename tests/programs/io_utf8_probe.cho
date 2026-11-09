@@ -1,0 +1,53 @@
+import std.io;
+import std.utf8;
+
+// The probe of tests/commands/io.cho (`docs/utf8.md` section 3): the decoder on inputs nobody chose. Standard input is a sequence of cases, each a four-byte little-endian length and that many bytes; for each case it
+// prints the number of characters (`utf8.count`, the maximal-subpart rule of section 3.2) and `1` or `0` for whether the bytes are valid (`utf8.is_valid`, the strict validity of section 3.1).
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(heap);
+    release(fs);
+    release(ffi);
+    borrow mut io as &!i in {
+        region a {
+            var buf = alloc_slice[a](4096, byte_of(0));
+            var more = true;
+            while more {
+                var n = 0;
+                var k = 0;
+                var eof = false;
+                while k < 4 {
+                    let c = getchar(i);
+                    if c < 0 {
+                        eof = true;
+                        k = 4;
+                    } else {
+                        n = n | c << 8 * k;
+                        k = k + 1;
+                    }
+                }
+                if eof {
+                    more = false;
+                } else {
+                    var j = 0;
+                    while j < n {
+                        buf[j] = byte_of(getchar(i));
+                        j = j + 1;
+                    }
+                    let text = buf[0..n];
+                    io.print_int(i, utf8.count(text));
+                    io.write_all(i, " ");
+                    if utf8.is_valid(text) {
+                        io.write_all(i, "1");
+                    } else {
+                        io.write_all(i, "0");
+                    }
+                    io.newline(i);
+                }
+            }
+        }
+    }
+    release(io);
+    return 0;
+}
