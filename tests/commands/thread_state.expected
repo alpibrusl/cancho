@@ -1,0 +1,7 @@
+== a ticket redeemed by two threads at once is given out once
+rounds 400 doubled 0
+rounds 400 doubled 0
+== two threads receiving at once are answered to their own peers
+A wrong 0 lost 0
+B wrong 0 lost 0
+refused 0

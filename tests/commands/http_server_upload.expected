@@ -1,0 +1,325 @@
+== uploads arrive byte for byte, with 100-continue, pipelining and keep-alive
+< HTTP/1.1 100 Continue
+sent n=3145728 c=31338774
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 20
+< Connection: keep-alive
+= n=3145728 c=31338774
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 21
+< Connection: keep-alive
+= n=1048576 c=499578301
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 20
+< Connection: keep-alive
+= n=100000 c=272563853
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 15
+< Connection: keep-alive
+= n=5 c=856916412
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+== four uploads at the same time on four connections, each its own bytes
+sent n=2097152 c=675986295
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 21
+< Connection: keep-alive
+= n=2097152 c=675986295
+sent n=2098153 c=859112234
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 21
+< Connection: keep-alive
+= n=2098153 c=859112234
+sent n=2099154 c=769341770
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 21
+< Connection: keep-alive
+= n=2099154 c=769341770
+sent n=2100155 c=252809737
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 21
+< Connection: keep-alive
+= n=2100155 c=252809737
+== sizes around the buffer
+sent n=1 c=98
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 8
+< Connection: keep-alive
+= n=1 c=98
+sent n=4095 c=841950371
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 18
+< Connection: keep-alive
+= n=4095 c=841950371
+sent n=4096 c=448422156
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 18
+< Connection: keep-alive
+= n=4096 c=448422156
+sent n=4097 c=65761800
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 17
+< Connection: keep-alive
+= n=4097 c=65761800
+sent n=8192 c=219693962
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 18
+< Connection: keep-alive
+= n=8192 c=219693962
+sent n=65535 c=91933827
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 18
+< Connection: keep-alive
+= n=65535 c=91933827
+sent n=65536 c=957098687
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 19
+< Connection: keep-alive
+= n=65536 c=957098687
+sent n=65537 c=885120086
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 19
+< Connection: keep-alive
+= n=65537 c=885120086
+== a refusal before the body sends no 100, and the faults are refused with their rules
+< HTTP/1.1 413 Content Too Large
+< Content-Type: application/json
+< Content-Length: 19
+< Connection: keep-alive
+= {"error":"refused"}
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+< HTTP/1.1 413 Content Too Large
+< Content-Type: application/json
+< Content-Length: 19
+< Connection: keep-alive
+ends 2: yes
+< HTTP/1.1 413 Content Too Large
+< Content-Type: application/json
+< Content-Length: 34
+< Connection: close
+< X-Rule: body.too-large
+= {"error":"request body too large"}
+ends 3: yes
+< HTTP/1.1 417 Expectation Failed
+< Content-Type: application/json
+< Content-Length: 30
+< Connection: close
+< X-Rule: expect.unsupported
+= {"error":"expectation failed"}
+< HTTP/1.1 400 Bad Request
+< Content-Type: application/json
+< Content-Length: 26
+< Connection: close
+< X-Rule: body.chunk-size
+= {"error":"bad chunk size"}
+ends 1: yes
+< HTTP/1.1 400 Bad Request
+< Content-Type: application/json
+< Content-Length: 29
+< Connection: close
+< X-Rule: body.chunk-framing
+= {"error":"bad chunk framing"}
+ends 1: yes
+< HTTP/1.1 400 Bad Request
+< Content-Type: application/json
+< Content-Length: 29
+< Connection: close
+< X-Rule: body.trailer
+= {"error":"bad chunk trailer"}
+ends 1: yes
+< HTTP/1.1 413 Content Too Large
+< Content-Type: application/json
+< Content-Length: 34
+< Connection: close
+< X-Rule: body.too-large
+= {"error":"request body too large"}
+ends 1: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 5
+< Connection: keep-alive
+= early
+ends 1: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+== a client that stalls in a head or a body is timed out, and the others are served
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+since lt 400: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+since lt 400: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+since lt 400: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+since lt 400: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+since lt 400: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+since lt 400: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+since lt 400: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+since lt 400: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+since lt 400: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+since lt 400: yes
+< HTTP/1.1 408 Request Timeout
+< Content-Type: application/json
+< Content-Length: 32
+< Connection: close
+< X-Rule: timeout.head
+= {"error":"request head timeout"}
+ends 1: yes
+< HTTP/1.1 408 Request Timeout
+< Content-Type: application/json
+< Content-Length: 32
+< Connection: close
+< X-Rule: timeout.head
+= {"error":"request head timeout"}
+ends 2: yes
+< HTTP/1.1 408 Request Timeout
+< Content-Type: application/json
+< Content-Length: 32
+< Connection: close
+< X-Rule: timeout.body
+= {"error":"request body timeout"}
+ends 3: yes
+since gt 600: yes
+since lt 5000: yes
+== a body the application takes slowly stops being read, and a client that leaves costs nothing
+fill blocked: yes
+fill under 64 MiB: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 7
+< Connection: keep-alive
+= n=0 c=0
+sent n=10000 c=923109852
+sent n=10001 c=120524818
+sent n=10002 c=685937854
+sent n=10003 c=64116967
+sent n=10004 c=274861525
+sent n=10005 c=698401001
+sent n=10006 c=954385110
+sent n=10007 c=760795213
+sent n=10008 c=724928214
+sent n=10009 c=723468888
+sent n=10010 c=613712687
+sent n=10011 c=430159500
+sent n=10012 c=154456360
+sent n=10013 c=863427924
+sent n=10014 c=238299310
+sent n=10015 c=656904360
+sent n=10016 c=175735650
+sent n=10017 c=574570988
+sent n=10018 c=85999332
+sent n=10019 c=755559431
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 15
+< Connection: keep-alive
+= n=5 c=856916412
+== a refusal found while reading is sent even when the application is slow to call next
+< HTTP/1.1 400 Bad Request
+< Content-Type: application/json
+< Content-Length: 26
+< Connection: close
+< X-Rule: body.chunk-size
+= {"error":"bad chunk size"}
+ends 1: yes
+< HTTP/1.1 400 Bad Request
+< Content-Type: application/json
+< Content-Length: 29
+< Connection: close
+< X-Rule: body.chunk-framing
+= {"error":"bad chunk framing"}
+ends 1: yes
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 15
+< Connection: keep-alive
+= n=5 c=856916412
+== a connection that reads never writes into its neighbour's buffer
+sent n=6000 c=801474040
+sent n=300000 c=176098370
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 20
+< Connection: keep-alive
+= n=300000 c=176098370
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Content-Length: 18
+< Connection: keep-alive
+= n=6000 c=801474040

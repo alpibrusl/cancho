@@ -173,7 +173,6 @@ binary32 98
 tls 81
 json 79
 tls_fuzz 65
-api 64
 formatting 63
 f32_text 60
 http 53
@@ -191,11 +190,8 @@ tls_echo_fixed 21
 processes 20
 tls_client_auth 19
 tls_server 19
-thread_state 18
-http_server_stream 17
 ports 16
 compile_time 16
-http_server_upload 16
 tls_pool 14
 vcs_std 14
 differential 13

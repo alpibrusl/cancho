@@ -34,7 +34,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-mod api;
 mod backends;
 mod benchmarks;
 mod binary32;
@@ -56,8 +55,6 @@ mod global_state;
 mod http;
 mod http_fetch_nb;
 mod http_server;
-mod http_server_stream;
-mod http_server_upload;
 mod https_hello;
 mod identity;
 mod json;
@@ -73,7 +70,6 @@ mod sha256_builtins;
 mod signals;
 mod sockets;
 
-mod thread_state;
 mod tls;
 mod tls_auth;
 mod tls_client_auth;
