@@ -214,7 +214,7 @@ impl<'a> FnLowering<'a> {
     /// among *every* module's statics and took the first, so two modules
     /// each declaring `static table` read one table -- `a.first() * 10 +
     /// b.first()` answered 55 for tables holding 5 and 7, with no refusal
-    /// and no warning. `conformance/modules.rs` has the program.
+    /// and no warning. `tests/commands/modules.cho` has the program.
     pub(crate) fn static_index(&self, name: Symbol) -> Option<u32> {
         self.statics
             .iter()

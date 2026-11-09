@@ -310,7 +310,7 @@ connection over the RSS at start (`tls-memory.md` §2's phases), and the absolut
 
 ### 8.6 Tests, mutants, the guard
 
-- `crates/cancho/tests/conformance/region_cache.rs` (§6): every program reads back its own fill on both backends (macOS and
+- `tests/commands/region_cache.cho` (§6; it was `conformance/region_cache.rs`): every program reads back its own fill (macOS and
   Linux); on Linux, nested regions take 3 chunks in 2,000 rounds; eight threads and `main` take 27 and the threads' 24 are
   freed, cleared, before `join` answers; the recursion 40 deep takes exactly 2,416 and frees exactly 2,400, all cleared;
   under `strace`, 20,000 rounds make at most 16 `brk` calls (4 measured; 80,003 before). CI's Linux job installs `strace`.

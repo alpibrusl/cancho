@@ -450,7 +450,7 @@ reads exactly as before. The multi-literal `Exec` form is reachable only from ed
 **The backends needed no change.** The checker answers `Expr::Tuple { parts }` with the lowered capability as the first part and an empty tuple for each further child, so
 the tuple has the right number of zero-sized components and no leaf. Both backends already lower `Expr::Tuple` by concatenating its parts' leaves, and a capability has none;
 the `Builtin::Narrow` arm is not reached at all (the single form returns the capability expression itself and always did). Measured by running the fixtures on Cranelift and LLVM
-(`conformance/narrow_many.rs`: two and three children, the order, the run-time confinement, the tuple passed whole and stored in a struct, `Exec`). The unmeasured part:
+(`tests/commands/narrow_many.cho`, formerly `conformance/narrow_many.rs`: two and three children, the order, the run-time confinement, the tuple passed whole and stored in a struct, `Exec`). The unmeasured part:
 WASI (`docs/wasm.md`) was not run; a capability is zero-sized there too.
 
 **What building found.**
@@ -459,7 +459,7 @@ WASI (`docs/wasm.md`) was not run; a capability is zero-sized there too.
   `fs_read("/b")` even though it releases both, where a function taking `Fs("/a")` directly declares `[]`. That is how rows treat any aggregate, not something this adds, and it is the
   conservative direction; section 4.1's helper (two borrowed parameters) is unaffected. `tests/accept/narrow_three_paths_forms.cho` writes it.
 * `open_dir(fs, path)` takes its path at run time and traps outside the capability's prefix as every file operation does, so a program that narrows to a *directory* and opens that same
-  literal is exactly confined (section 11.1, and `conformance/narrow_many.rs`'s TLS-setup case, which also checks `open_dir` of `/dev` through the directory's child traps).
+  literal is exactly confined (section 11.1, and `tests/commands/narrow_many.cho`'s TLS-setup case, which also checks `open_dir` of `/dev` through the directory's child traps).
 * `/tmp` and `/tmpevil` are unrelated by `extends_path`, so `narrow(fs, "/tmp", "/tmpevil")` is accepted and each child is confined to its own tree; `narrow(fs, "/tmp", "/tmp/a")` is
   nested and refused.
 

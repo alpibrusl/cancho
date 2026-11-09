@@ -76,7 +76,7 @@ otherwise write for itself.
 `tests/accept/assert.cho` is the pass side, checked against its own
 `//~ STDOUT`/`//~ EXIT` the ordinary way. The fail side cannot be: a
 trap is not a value a program's `return` can produce, so
-`traps.rs::assert_fails_the_same_way_every_other_trap_does` checks it
+`tests/commands/traps.cho`'s `assert_eq_fails` checks it
 the way every other trap fixture here is checked — built, run, and
 confirmed killed by a signal (`run.status.code() == None`), not
 exited.

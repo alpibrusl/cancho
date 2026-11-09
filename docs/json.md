@@ -252,7 +252,7 @@ both tables; one that converts 300,000 random doubles is not.
 
 Writing a module that is the third to declare a `pub fn drop` found two
 compiler bugs, both with their own regression test
-(`conformance/modules.rs`, both backends), and `modules.md` §3.1.1 records
+(`tests/commands/modules.cho`, formerly `conformance/modules.rs`), and `modules.md` §3.1.1 records
 them:
 
 * **Functions**: every function was emitted as `lexs_<name>`. The type

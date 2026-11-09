@@ -3,7 +3,7 @@
 //
 // Every assertion here passes, which is the point: this fixture is
 // what "an assumption held" looks like. `traps::assert_fails_the_same_way_every_other_trap_does`
-// (`crates/cancho/tests/conformance/traps.rs`) is what "an assumption
+// (`tests/commands/traps.cho`) is what "an assumption
 // failed" looks like — killed by a signal, the same as every other
 // trap, not a value this file's own `//~ EXIT` could express.
 //~ STDOUT ok

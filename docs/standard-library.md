@@ -242,6 +242,11 @@ Three things, and the second is a language bug this slice fixed.
 
    The fix is not about `std`. Every program gets it.
 
+   **Correction (2026-11-09, G4 wave 2).** This holds of the Rust compiler's Cranelift backend and is false of the compiler written in cancho: the same
+   program (a `main` that prints one byte) is 12,728 bytes as an object built without `--std` and 33,488 with it (`cancho build --emit obj`). Emission there is
+   not yet driven by what `main` reaches for the library's declarations; the test of this section (`std_declarations_cost_nothing_unless_called`) therefore did not
+   move to `tests/commands/modules.cho` and stays in Rust until it is made true or the claim is withdrawn.
+
    It also made checking run in source order, which surfaced a
    **must-reject fixture that was passing for the wrong reason**:
    `effect_not_propagated.cho` had `putchar(33)`, missing the `Io`, and
@@ -288,9 +293,9 @@ run, and its rules have fixtures.
 
 | Test | Shows |
 |---|---|
-| `the_standard_library_compiles_on_its_own` | Every module of `std/` type-checks together, without a program |
+| `the_standard_library_compiles_on_its_own` (`tests/commands/modules.cho`, `library_checks`) | Four modules of `std/` (`bytes`, `math`, `io`, `buffer`) type-check together, without a program; the other four (`option`, `result`, `list`, `vec`) are generic and the compiler written in cancho answers `cannot judge the program` (exit 3) for a file with no `main` that instantiates them (measured 2026-11-09) |
 | `std_is_available_behind_a_flag` | `--std` compiles a program that imports it, with no file named |
-| `std_declarations_cost_nothing_unless_called` | §5.2: a program built with `--std` and one built without it emit **byte-identical** object files. This was false when it was first written down, which is why it is a test |
+| `std_declarations_cost_nothing_unless_called` | §5.2: a program built with `--std` and one built without it emit **byte-identical** object files. This was false when it was first written down, which is why it is a test. **False again for the compiler written in cancho** (measured 2026-11-09, `bare.cho`, `build --emit obj`): 12,728 bytes without `--std` and 33,488 with it, for a program that calls none of the library; the Rust test was pinned to Cranelift and was deleted with the module tests (D2), so nothing holds the claim now |
 | `abs_of_the_most_negative_integer_traps` | §3.3 |
 | `examples/wordcount.cho` | Rewritten on `std` — five helpers gone — and prints exactly what it printed before |
 | `examples/queue.cho` | The collections at work: jobs that own memory, held in a `List`, ended exactly once each |

@@ -18,7 +18,7 @@ copy_within(buf: &!r [byte], dst: int, src: int, n: int) -> [] int      // editi
 
 Move `n` bytes from `buf[src..src + n]` to `buf[dst..dst + n]`, as `memmove` does: the ranges may overlap, and the result is as if the bytes had been
 copied out first. It has the checks indexing has: it **traps** unless `0 <= dst`, `0 <= src`, `0 <= n`, `n <= len(buf) - dst` and `n <= len(buf) - src`.
-The sums `dst + n` and `src + n` are never formed, so a count near 2^63 cannot wrap past the bound (`tests/conformance/traps.rs` tries it). A move of
+The sums `dst + n` and `src + n` are never formed, so a count near 2^63 cannot wrap past the bound (`tests/commands/traps.cho` tries it). A move of
 nothing at the very end (`dst == len`, `n == 0`) is allowed. It has no effect row and needs no capability: it reads and writes only the slice it is given.
 
 It is a builtin and not a library loop because only the backend can emit a block move: Cranelift calls `memmove` (declared as any libc import is);
@@ -30,6 +30,6 @@ region slice in one call, which is why [`bulk-copy.md`](bulk-copy.md)'s two-slic
 
 * `tests/accept/copy_within.cho`, on both backends: forward and backward overlap (the case a front-to-back loop gets wrong), the whole slice onto itself, empty
   moves at both ends, a one-byte move, a move inside a sub-slice that touches nothing outside it.
-* `tests/conformance/traps.rs`: nine ways of being out of range (negative `dst`, `src`, `n`; past the end by each; beyond the length; and a count that would overflow
-  `dst + n` and `src + n`) each killed by a signal on **both backends**, and three calls at the edge that must succeed.
+* `tests/commands/traps.cho` (it was `conformance/traps.rs`): nine ways of being out of range (negative `dst`, `src`, `n`; past the end by each; beyond the length; and a count that would overflow
+  `dst + n` and `src + n`) each killed by a signal, and three calls at the edge that must succeed.
 * `tests/conformance/backends.rs`: the two backends agree.
