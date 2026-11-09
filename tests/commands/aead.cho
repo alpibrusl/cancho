@@ -1,0 +1,384 @@
+edition 7;
+module aead_test;
+
+// aead.cho -- `conformance/aead.rs` (deleted), in cancho (`docs/gate.md` G4): `std.chacha20` (`docs/chacha20.md` section 4): the RFC 8439 vectors, every Wycheproof case, every refusal reached with its own tag, a one-bit change anywhere in a sealed message refused, and the in-place seal and open. All through `tests/programs/aead_driver.cho`; the files are read line by line (`harness.cr_rows`), not as JSON.
+//
+//     cancho build tests/commands/aead.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: aead` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift legs went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// Wycheproof's `chacha20_poly1305_test.json`, every case: a valid one seals to its ciphertext and tag and opens to its message; an invalid one is refused by both, and `open` writes nothing (its
+// output starts filled with `aa`, so a refusal that wrote anything shows). A modified tag is a fault in `open`'s input only; sealing its message is fine, so only the valid cases and the nonce sizes
+// that are not 12 bytes (which both operations refuse) are sealed too.
+fn wycheproof[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/vectors/wycheproof/chacha20_poly1305_test.json");
+    if failed != 0 {
+        acc = harness.failure(heap, acc, "aead", "wycheproof", "chacha20_poly1305_test.json cannot be read", "");
+    }
+    var input = buffer.empty(heap, 1 << 18);
+    var want = buffer.empty(heap, 1 << 18);
+    borrow data as &db in {
+        let rows = harness.cr_rows(heap, buffer.bytes(db), "key iv aad msg ct tag result");
+        borrow rows as &rb in {
+            let all = buffer.bytes(rb);
+            var pos = 0;
+            while pos < len(all) {
+                let line = harness.cr_line_at(all, pos);
+                pos = pos + len(line) + 1;
+                let key = harness.cr_cell_of(line, 1);
+                let iv = harness.cr_cell_of(line, 2);
+                let aad = harness.cr_cell_of(line, 3);
+                var msg = harness.cr_cell_of(line, 4);
+                var ct = harness.cr_cell_of(line, 5);
+                let tag = harness.cr_cell_of(line, 6);
+                if bytes.equal(msg, "-") {
+                    msg = msg[0..0];
+                }
+                if bytes.equal(ct, "-") {
+                    ct = ct[0..0];
+                }
+                let valid = bytes.equal(harness.cr_cell_of(line, 7), "valid");
+                input = buffer.append(heap, input, "O ");
+                input = buffer.append(heap, input, key);
+                input = buffer.push(heap, input, byte_of(' '));
+                input = buffer.append(heap, input, iv);
+                input = buffer.push(heap, input, byte_of(' '));
+                input = buffer.append(heap, input, aad);
+                input = buffer.push(heap, input, byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, buffer.append(heap, input, ct), tag), byte_of('\n'));
+                if valid {
+                    want = buffer.push(heap, buffer.append(heap, buffer.append(heap, want, "0 ok "), msg), byte_of('\n'));
+                } else {
+                    want = harness.cr_repeat(heap, buffer.append(heap, want, "refused "), "aa", len(ct) / 2);
+                    want = buffer.push(heap, want, byte_of('\n'));
+                }
+                if valid || len(iv) != 24 {
+                    input = buffer.append(heap, input, "S ");
+                    input = buffer.append(heap, input, key);
+                    input = buffer.push(heap, input, byte_of(' '));
+                    input = buffer.append(heap, input, iv);
+                    input = buffer.push(heap, input, byte_of(' '));
+                    input = buffer.append(heap, input, aad);
+                    input = buffer.push(heap, input, byte_of(' '));
+                    input = buffer.push(heap, buffer.append(heap, input, harness.cr_cell_of(line, 4)), byte_of('\n'));
+                    if valid {
+                        want = buffer.push(heap, buffer.append(heap, buffer.append(heap, buffer.append(heap, want, "0 ok "), ct), tag), byte_of('\n'));
+                    } else {
+                        want = buffer.append(heap, want, "refused\n");
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, rows);
+    }
+    buffer.drop(heap, data);
+    borrow input as &ib in {
+        // 325 cases opened; 256 valid ones sealed, and 9 whose nonce is not 12 bytes.
+        if bytes.count_byte(buffer.bytes(ib), 10) != 325 + 256 + 9 {
+            acc = harness.failure(heap, acc, "aead", "wycheproof", "the file should give 325 opens, 256 seals and 9 seals of a bad nonce size", "");
+        }
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "aead", "wycheproof");
+        acc = more;
+        var got = buffer.empty(heap, 1 << 18);
+        var tags = buffer.empty(heap, 1 << 14);
+        borrow said as &sb in {
+            let answers = buffer.bytes(sb);
+            let cases = buffer.bytes(ib);
+            var pos = 0;
+            var apos = 0;
+            while apos < len(answers) {
+                let asked = harness.cr_line_at(cases, pos);
+                pos = pos + len(asked) + 1;
+                let answer = harness.trim_end(harness.cr_line_at(answers, apos));
+                apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                tags = buffer.push(heap, buffer.append(heap, tags, harness.cr_word(answer, 2)), byte_of('\n'));
+                if len(answer) > 0 && answer[0] == byte_of('-') {
+                    got = buffer.append(heap, got, "refused");
+                    // A refused `open` wrote nothing: its output is still the `aa` it started as.
+                    if asked[0] == byte_of('O') {
+                        got = buffer.push(heap, got, byte_of(' '));
+                        got = buffer.append(heap, got, harness.cr_word(answer, 3));
+                    }
+                    got = buffer.push(heap, got, byte_of('\n'));
+                } else {
+                    got = buffer.push(heap, buffer.append(heap, got, answer), byte_of('\n'));
+                }
+            }
+        }
+        borrow got as &gb in {
+            borrow want as &wb in {
+                acc = harness.cr_same(heap, acc, "aead", "wycheproof", buffer.bytes(gb), buffer.bytes(wb));
+            }
+        }
+        // 256 valid cases opened and sealed, 60 modified tags, 9 nonce sizes refused by both operations: the counts `docs/chacha20.md` section 4 states.
+        borrow tags as &tb in {
+            if len(buffer.bytes(tb)) > 0 {
+                acc = harness.cr_counts(heap, acc, "aead", "wycheproof-tags", buffer.bytes(tb), "ok 512\naead-tag-mismatch 60\nchacha20-nonce-length 18\n");
+            }
+        }
+        buffer.drop(heap, tags);
+        buffer.drop(heap, got);
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+// RFC 8439 section 2.8.2's message with each bit of the ciphertext, the tag and the associated data flipped in turn: every one is refused, and none writes its output. The tag check compares all
+// sixteen bytes and covers every byte it should.
+fn bitflips[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/vectors/rfc8439.txt");
+    if failed != 0 {
+        acc = harness.failure(heap, acc, "aead", "bitflips", "tests/vectors/rfc8439.txt cannot be read", "");
+    }
+    var input = buffer.empty(heap, 0);
+    var room = 0;
+    borrow data as &db in {
+        let all = buffer.bytes(db);
+        var pos = 0;
+        while pos < len(all) {
+            let line = harness.cr_line_at(all, pos);
+            pos = pos + len(line) + 1;
+            if bytes.equal(harness.cr_cell_of(line, 1), "rfc8439 2.8.2 aead seal") {
+                let case = harness.cr_cell_of(line, 2);
+                let sealed = harness.cr_cell_of(line, 3);
+                let aad = harness.cr_word(case, 4);
+                room = len(sealed) / 2 - 16;
+                var head = buffer.append(heap, buffer.empty(heap, 128), "O ");
+                head = buffer.push(heap, buffer.append(heap, head, harness.cr_word(case, 2)), byte_of(' '));
+                head = buffer.push(heap, buffer.append(heap, head, harness.cr_word(case, 3)), byte_of(' '));
+                borrow head as &hb in {
+                    buffer.drop(heap, input);
+                    input = harness.cr_bitflips(heap, buffer.bytes(hb), aad, sealed);
+                }
+                buffer.drop(heap, head);
+            }
+        }
+    }
+    buffer.drop(heap, data);
+    var untouched = harness.cr_repeat(heap, buffer.empty(heap, 256), "aa", room);
+    borrow input as &ib in {
+        if bytes.count_byte(buffer.bytes(ib), 10) != 1 + 130 * 8 + 12 * 8 {
+            acc = harness.failure(heap, acc, "aead", "bitflips", "the message should give one open and a case for each of its 130 * 8 + 12 * 8 bits", "");
+        }
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "aead", "bitflips");
+        acc = more;
+        var got = buffer.empty(heap, 1 << 12);
+        borrow said as &sb in {
+            borrow untouched as &ub in {
+                let answers = buffer.bytes(sb);
+                var apos = 0;
+                var n = 0;
+                while apos < len(answers) {
+                    let answer = harness.trim_end(harness.cr_line_at(answers, apos));
+                    apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                    if n == 0 {
+                        got = harness.cr_expect(heap, got, bytes.starts_with(answer, "0 ok "), "the unmodified message should open");
+                    } else {
+                        got = harness.cr_expect(heap, got, bytes.equal(harness.cr_word(answer, 2), "aead-tag-mismatch") && bytes.equal(harness.cr_word(answer, 3), buffer.bytes(ub)), answer);
+                    }
+                    n = n + 1;
+                }
+            }
+        }
+        borrow got as &gb in {
+            acc = harness.cr_all_ok(heap, acc, "aead", "bitflips", buffer.bytes(gb));
+        }
+        buffer.drop(heap, got);
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, untouched);
+    buffer.drop(heap, input);
+    return acc;
+}
+
+// `docs/record-in-place.md` section 3: `seal_in_place` writes what `seal` does and `open_in_place` opens what `open` does; a tag changed in its last byte is refused and leaves the buffer as it was.
+// 120 random messages (`tests/vectors/aead_in_place.txt`).
+fn in_place[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/vectors/aead_in_place.txt");
+    if failed != 0 {
+        acc = harness.failure(heap, acc, "aead", "in-place", "tests/vectors/aead_in_place.txt cannot be read", "");
+    }
+    var cases = buffer.empty(heap, 0);
+    borrow data as &db in {
+        buffer.drop(heap, cases);
+        cases = harness.column(heap, buffer.bytes(db), 1);
+    }
+    buffer.drop(heap, data);
+    // `S` and `T` of each case, in turn.
+    var seals = buffer.empty(heap, 1 << 16);
+    borrow cases as &cb in {
+        let all = buffer.bytes(cb);
+        var pos = 0;
+        while pos < len(all) {
+            let line = harness.cr_line_at(all, pos);
+            pos = pos + len(line) + 1;
+            seals = buffer.push(heap, buffer.append(heap, seals, line), byte_of('\n'));
+            seals = buffer.push(heap, buffer.append(heap, buffer.append(heap, seals, "T"), line[1..len(line)]), byte_of('\n'));
+        }
+    }
+    var opens = buffer.empty(heap, 1 << 16);
+    var got = buffer.empty(heap, 1 << 12);
+    var bads = buffer.empty(heap, 1 << 16);
+    borrow seals as &ib in {
+        if bytes.count_byte(buffer.bytes(ib), 10) != 240 {
+            acc = harness.failure(heap, acc, "aead", "in-place", "the file should have 120 cases", "");
+        }
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "aead", "in-place seals");
+        acc = more;
+        borrow said as &sb in {
+            borrow cases as &cb in {
+                let answers = buffer.bytes(sb);
+                let all = buffer.bytes(cb);
+                var pos = 0;
+                var apos = 0;
+                while pos < len(all) && len(answers) > 0 {
+                    let line = harness.cr_line_at(all, pos);
+                    pos = pos + len(line) + 1;
+                    let one = harness.trim_end(harness.cr_line_at(answers, apos));
+                    apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                    let two = harness.trim_end(harness.cr_line_at(answers, apos));
+                    apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                    got = harness.cr_expect(heap, got, bytes.equal(one, two) && bytes.starts_with(one, "0 ok "), one);
+                    let sealed = harness.cr_word(one, 3);
+                    var prefix = buffer.empty(heap, 128);
+                    prefix = buffer.push(heap, buffer.append(heap, prefix, harness.cr_word(line, 2)), byte_of(' '));
+                    prefix = buffer.push(heap, buffer.append(heap, prefix, harness.cr_word(line, 3)), byte_of(' '));
+                    prefix = buffer.push(heap, buffer.append(heap, prefix, harness.cr_word(line, 4)), byte_of(' '));
+                    // The sealed message and the same with its last bit flipped, opened by `open` and by `open_in_place`.
+                    let bad = harness.cr_flip(heap, sealed, len(sealed) - 1, 0);
+                    borrow prefix as &pb in {
+                        borrow bad as &bb in {
+                            opens = buffer.push(heap, buffer.append(heap, buffer.append(heap, buffer.append(heap, opens, "O "), buffer.bytes(pb)), sealed), byte_of('\n'));
+                            opens = buffer.push(heap, buffer.append(heap, buffer.append(heap, buffer.append(heap, opens, "O "), buffer.bytes(pb)), buffer.bytes(bb)), byte_of('\n'));
+                            opens = buffer.push(heap, buffer.append(heap, buffer.append(heap, buffer.append(heap, opens, "U "), buffer.bytes(pb)), sealed), byte_of('\n'));
+                            opens = buffer.push(heap, buffer.append(heap, buffer.append(heap, buffer.append(heap, opens, "U "), buffer.bytes(pb)), buffer.bytes(bb)), byte_of('\n'));
+                            bads = buffer.push(heap, buffer.append(heap, bads, buffer.bytes(bb)), byte_of('\n'));
+                        }
+                    }
+                    buffer.drop(heap, bad);
+                    buffer.drop(heap, prefix);
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    borrow opens as &ob in {
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ob), acc, "aead", "in-place opens");
+        acc = more;
+        borrow said as &sb in {
+            borrow bads as &bb in {
+                let answers = buffer.bytes(sb);
+                let flipped = buffer.bytes(bb);
+                var apos = 0;
+                var bpos = 0;
+                while apos < len(answers) {
+                    let open = harness.trim_end(harness.cr_line_at(answers, apos));
+                    apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                    let open_bad = harness.trim_end(harness.cr_line_at(answers, apos));
+                    apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                    let in_place = harness.trim_end(harness.cr_line_at(answers, apos));
+                    apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                    let in_place_bad = harness.trim_end(harness.cr_line_at(answers, apos));
+                    apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                    let bad = harness.cr_line_at(flipped, bpos);
+                    bpos = bpos + len(bad) + 1;
+                    got = harness.cr_expect(heap, got, bytes.starts_with(open, "0 ok ") && bytes.equal(in_place, open), open);
+                    // Refused with the tag of `open`, and nothing written: the buffer is the sealed message it was given, the last byte changed.
+                    got = harness.cr_expect(heap, got, bytes.equal(harness.cr_word(in_place_bad, 1), "-6") && bytes.equal(harness.cr_word(in_place_bad, 2), "aead-tag-mismatch") && bytes.equal(harness.cr_word(in_place_bad, 3), bad), in_place_bad);
+                    got = harness.cr_expect(heap, got, bytes.equal(harness.cr_word(open_bad, 2), "aead-tag-mismatch"), open_bad);
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    borrow got as &gb in {
+        acc = harness.cr_all_ok(heap, acc, "aead", "in-place", buffer.bytes(gb));
+    }
+    buffer.drop(heap, got);
+    buffer.drop(heap, bads);
+    buffer.drop(heap, opens);
+    buffer.drop(heap, seals);
+    buffer.drop(heap, cases);
+    return acc;
+}
+
+fn check[&h, &x, &c, &f, &b, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    let exe = "/tmp/cancho-aead-driver";
+    let (report, built) = harness.cr_build(heap, exec, clock, bin, "tests/programs/aead_driver.cho\0", exe, env, buffer.empty(heap, 64), "aead");
+    var acc = report;
+    if built {
+        // Section 2.3.2 to 2.8.2 and A.1 to A.5 of RFC 8439: 28 vectors.
+        acc = harness.cr_table(heap, exec, clock, fs, exe, acc, "aead", "tests/vectors/rfc8439.txt", "rfc8439", "0 ok ", 28);
+        acc = wycheproof(heap, exec, clock, fs, exe, acc);
+        // Every refusal `std.chacha20` has, reached with its own tag, and the last block before the counter wraps, which is still allowed.
+        acc = harness.cr_two_columns(heap, exec, clock, fs, exe, acc, "aead", "tests/vectors/aead_cases.txt", "refusals", 0 - 2);
+        acc = bitflips(heap, exec, clock, fs, exe, acc);
+        acc = in_place(heap, exec, clock, fs, exe, acc);
+        // A buffer with no room for a tag is refused with `seal`'s and `open`'s tags and left as it was.
+        acc = harness.cr_two_columns(heap, exec, clock, fs, exe, acc, "aead", "tests/vectors/aead_short.txt", "short", 1);
+    }
+    return acc;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: aead CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let env = harness.base_env(heap, harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var report = buffer.empty(heap, 0);
+    borrow env as &eb in {
+        buffer.drop(heap, report);
+        report = check(heap, exec, clock, fs, arg(args, 1), buffer.bytes(eb));
+    }
+    buffer.drop(heap, env);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: aead\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

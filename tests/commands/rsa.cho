@@ -1,0 +1,398 @@
+edition 7;
+module rsa_test;
+
+// rsa.cho -- `conformance/rsa.rs` (deleted), in cancho (`docs/gate.md` G4): `std.bigmod` and `std.rsa` (`docs/rsa.md` section 4): every case of Wycheproof's RSASSA-PKCS1-v1_5 and RSASSA-PSS files, FIPS 186-4's SigVer files for SHA-256/384/512, a modulus with leading zero bytes being the same key, and every refusal with its own tag (`tests/vectors/rsa_cases.txt`). All through `tests/programs/rsa_driver.cho`; the files are read line by line (`harness.cr_rows`), not as JSON.
+//
+//     cancho build tests/commands/rsa.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: rsa` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift legs went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// The digest length in bytes of a hash as Wycheproof and NIST name it (`SHA-256` or `SHA256`); 0 for one `std` does not have (SHA-1, SHA-224, and a `-` for no hash).
+fn hash_len[&t](name: &t [byte]) -> [] int {
+    if bytes.equal(name, "SHA-256") || bytes.equal(name, "SHA256") {
+        return 32;
+    } else if bytes.equal(name, "SHA-384") || bytes.equal(name, "SHA384") {
+        return 48;
+    } else if bytes.equal(name, "SHA-512") || bytes.equal(name, "SHA512") {
+        return 64;
+    }
+    return 0;
+}
+
+// Every valid case verifies, every invalid one is refused, and the "acceptable" ones (a DigestInfo without its NULL, RFC 8017 section 9.2 note 2) are refused as `docs/rsa.md` section 3.2 decides.
+// Cases over SHA-1 or SHA-224 are counted, not run.
+fn wycheproof_file[&h, &t](heap: &!h Heap, text: &t [byte], pss: bool, inputs: buffer.Buffer, verdicts: buffer.Buffer, skipped: int) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
+    var input = inputs;
+    var verdict = verdicts;
+    var skip = skipped;
+    let rows = harness.cr_rows(heap, text, "modulus publicExponent sha mgfSha sLen msg sig result");
+    borrow rows as &rb in {
+        let all = buffer.bytes(rb);
+        var pos = 0;
+        while pos < len(all) {
+            let line = harness.cr_line_at(all, pos);
+            pos = pos + len(line) + 1;
+            let h = hash_len(harness.cr_cell_of(line, 3));
+            var mgf = h;
+            if pss {
+                mgf = hash_len(harness.cr_cell_of(line, 4));
+            }
+            if h == 0 || mgf == 0 {
+                skip = skip + 1;
+            } else {
+                if pss {
+                    input = buffer.append(heap, input, "S ");
+                    input = buffer.push_nat(heap, input, h);
+                    input = buffer.push(heap, input, byte_of(' '));
+                    input = buffer.push_nat(heap, input, mgf);
+                    input = buffer.push(heap, input, byte_of(' '));
+                    input = buffer.push(heap, buffer.append(heap, input, harness.cr_cell_of(line, 5)), byte_of(' '));
+                } else {
+                    input = buffer.append(heap, input, "P ");
+                    input = buffer.push_nat(heap, input, h);
+                    input = buffer.push(heap, input, byte_of(' '));
+                }
+                input = buffer.push(heap, buffer.append(heap, input, harness.cr_cell_of(line, 1)), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, harness.cr_cell_of(line, 2)), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, harness.cr_cell_of(line, 6)), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, harness.cr_cell_of(line, 7)), byte_of('\n'));
+                verdict = buffer.push(heap, buffer.append(heap, verdict, harness.cr_cell_of(line, 8)), byte_of('\n'));
+            }
+        }
+    }
+    buffer.drop(heap, rows);
+    return (input, verdict, skip);
+}
+
+fn wycheproof[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    var input = buffer.empty(heap, 1 << 22);
+    var verdicts = buffer.empty(heap, 1 << 14);
+    var skipped = 0;
+    var file = 1;
+    while file <= 17 {
+        var path = buffer.append(heap, buffer.empty(heap, 96), "tests/vectors/wycheproof/");
+        path = buffer.append(heap, path, bytes.field("rsa_signature_2048_sha256_test.json rsa_signature_2048_sha384_test.json rsa_signature_2048_sha512_test.json rsa_signature_3072_sha256_test.json rsa_signature_3072_sha384_test.json rsa_signature_3072_sha512_test.json rsa_signature_4096_sha256_test.json rsa_signature_4096_sha384_test.json rsa_signature_4096_sha512_test.json rsa_pss_2048_sha256_mgf1_0_test.json rsa_pss_2048_sha256_mgf1_32_test.json rsa_pss_2048_sha384_mgf1_48_test.json rsa_pss_3072_sha256_mgf1_32_test.json rsa_pss_4096_sha256_mgf1_32_test.json rsa_pss_4096_sha384_mgf1_48_test.json rsa_pss_4096_sha512_mgf1_64_test.json rsa_pss_misc_test.json", 32, file));
+        borrow path as &pb in {
+            let harness.Contents { data, failed } = harness.read_file(heap, fs, buffer.bytes(pb));
+            if failed != 0 {
+                acc = harness.failure(heap, acc, "rsa", "wycheproof", "a Wycheproof file cannot be read", buffer.bytes(pb));
+            }
+            borrow data as &db in {
+                let (i, v, s) = wycheproof_file(heap, buffer.bytes(db), file >= 10, input, verdicts, skipped);
+                input = i;
+                verdicts = v;
+                skipped = s;
+            }
+            buffer.drop(heap, data);
+        }
+        buffer.drop(heap, path);
+        file = file + 1;
+    }
+    if skipped != 96 {
+        acc = harness.failure(heap, acc, "rsa", "wycheproof", "rsa_pss_misc's SHA-1 and SHA-224 groups should be 96 cases that are counted, not run", "");
+    }
+    borrow input as &ib in {
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "rsa", "wycheproof");
+        acc = more;
+        var got = buffer.empty(heap, 1 << 12);
+        var tally = buffer.empty(heap, 1 << 14);
+        borrow said as &sb in {
+            borrow verdicts as &vb in {
+                let answers = buffer.bytes(sb);
+                var apos = 0;
+                var vpos = 0;
+                while apos < len(answers) {
+                    let answer = harness.trim_end(harness.cr_line_at(answers, apos));
+                    apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                    let result = harness.cr_line_at(buffer.bytes(vb), vpos);
+                    vpos = vpos + len(result) + 1;
+                    let tag = harness.cr_word(answer, 2);
+                    if bytes.equal(result, "valid") {
+                        got = harness.cr_expect(heap, got, bytes.equal(tag, "ok"), answer);
+                    } else if bytes.equal(result, "invalid") {
+                        got = harness.cr_expect(heap, got, answer[0] == byte_of('-'), answer);
+                    } else {
+                        got = harness.cr_expect(heap, got, bytes.equal(tag, "rsa-pkcs1-mismatch"), answer);
+                    }
+                    tally = buffer.push(heap, buffer.append(heap, buffer.push(heap, buffer.append(heap, tally, result), byte_of(' ')), tag), byte_of('\n'));
+                }
+            }
+        }
+        borrow got as &gb in {
+            acc = harness.cr_all_ok(heap, acc, "rsa", "wycheproof", buffer.bytes(gb));
+        }
+        borrow tally as &tb in {
+            if len(buffer.bytes(tb)) > 0 {
+                acc = harness.cr_counts(heap, acc, "rsa", "wycheproof-tags", buffer.bytes(tb), "acceptable rsa-pkcs1-mismatch 9\ninvalid rsa-pkcs1-mismatch 2201\ninvalid rsa-pss-mismatch 112\ninvalid rsa-pss-padding 106\ninvalid rsa-pss-top-bits 2\ninvalid rsa-pss-trailer 54\ninvalid rsa-signature-length 53\ninvalid rsa-signature-range 41\nvalid ok 694\n");
+            }
+        }
+        buffer.drop(heap, tally);
+        buffer.drop(heap, got);
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, verdicts);
+    return acc;
+}
+
+// The cases of a NIST SigVer file (`[mod = N]` and then `n`, `SHAAlg`, `e`, `Msg`, `S`, for PSS `SaltVal`, `Result`): `P h n e msg sig`, or `S h h salt n e msg sig`, with `zeros` in front of each
+// modulus. `want` gets a line for each: `size` for a modulus under 2,048 bits, else `ok` for a `Result = P` and `refused`. With `passing`, only the passing cases of 2,048 bits and up are kept.
+fn nist_file[&h, &t, &z](heap: &!h Heap, text: &t [byte], pss: bool, zeros: &z [byte], passing: bool, inputs: buffer.Buffer, wants: buffer.Buffer) -> [heap] (buffer.Buffer, buffer.Buffer) {
+    var input = inputs;
+    var want = wants;
+    let rows = harness.cr_rows(heap, text, "[ n SHAAlg e Msg S SaltVal Result");
+    borrow rows as &rb in {
+        let all = buffer.bytes(rb);
+        var pos = 0;
+        while pos < len(all) {
+            let line = harness.cr_line_at(all, pos);
+            pos = pos + len(line) + 1;
+            let header = harness.cr_cell_of(line, 1);
+            let modulus = harness.cr_number(header[bytes.find(header, "= ") + 2..len(header)]);
+            let result = harness.cr_cell_of(line, 8);
+            let passes = result[0] == byte_of('P');
+            if !passing || modulus >= 2048 && passes {
+                let h = hash_len(harness.cr_cell_of(line, 3));
+                let salt = harness.cr_cell_of(line, 7);
+                let e = harness.cr_cell_of(line, 4);
+                if pss {
+                    input = buffer.append(heap, input, "S ");
+                    input = buffer.push_nat(heap, input, h);
+                    input = buffer.push(heap, input, byte_of(' '));
+                    input = buffer.push_nat(heap, input, h);
+                    input = buffer.push(heap, input, byte_of(' '));
+                    if bytes.equal(salt, "00") {
+                        input = buffer.push(heap, input, byte_of('0'));
+                    } else {
+                        input = buffer.push_nat(heap, input, len(salt) / 2);
+                    }
+                    input = buffer.push(heap, input, byte_of(' '));
+                } else {
+                    input = buffer.append(heap, input, "P ");
+                    input = buffer.push_nat(heap, input, h);
+                    input = buffer.push(heap, input, byte_of(' '));
+                }
+                input = buffer.append(heap, input, zeros);
+                input = buffer.push(heap, buffer.append(heap, input, harness.cr_cell_of(line, 2)), byte_of(' '));
+                // The exponent has an even number of digits.
+                if len(e) % 2 == 1 {
+                    input = buffer.push(heap, input, byte_of('0'));
+                }
+                input = buffer.push(heap, buffer.append(heap, input, e), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, harness.cr_cell_of(line, 5)), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, harness.cr_cell_of(line, 6)), byte_of('\n'));
+                if modulus < 2048 {
+                    want = buffer.append(heap, want, "size\n");
+                } else if passes {
+                    want = buffer.append(heap, want, "ok\n");
+                } else {
+                    want = buffer.append(heap, want, "refused\n");
+                }
+            }
+        }
+    }
+    buffer.drop(heap, rows);
+    return (input, want);
+}
+
+// FIPS 186-4's SigVer files for SHA-256/384/512: every case of 2,048 bits and up gives the file's result, and every 1,024- and 1,536-bit one is refused for its size. 270 cases a file: 27 passing,
+// 135 failing and 108 too small.
+fn nist[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    var file = 1;
+    while file <= 2 {
+        var name = "SigVer15_186-3.rsp";
+        if file == 2 {
+            name = "SigVerPSS_186-3.rsp";
+        }
+        var path = buffer.append(heap, buffer.empty(heap, 96), "tests/vectors/cavp/");
+        path = buffer.append(heap, path, name);
+        var input = buffer.empty(heap, 1 << 20);
+        var want = buffer.empty(heap, 1 << 12);
+        borrow path as &pb in {
+            let harness.Contents { data, failed } = harness.read_file(heap, fs, buffer.bytes(pb));
+            if failed != 0 {
+                acc = harness.failure(heap, acc, "rsa", "nist", "a NIST file cannot be read", buffer.bytes(pb));
+            }
+            borrow data as &db in {
+                let (i, w) = nist_file(heap, buffer.bytes(db), file == 2, "", false, input, want);
+                input = i;
+                want = w;
+            }
+            buffer.drop(heap, data);
+        }
+        borrow input as &ib in {
+            if bytes.count_byte(buffer.bytes(ib), 10) != 270 {
+                acc = harness.failure(heap, acc, "rsa", "nist", "each file should have 270 cases", name);
+            }
+            let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "rsa", "nist");
+            acc = more;
+            var got = buffer.empty(heap, 1 << 10);
+            borrow said as &sb in {
+                borrow want as &wb in {
+                    let answers = buffer.bytes(sb);
+                    var apos = 0;
+                    var wpos = 0;
+                    while apos < len(answers) {
+                        let answer = harness.trim_end(harness.cr_line_at(answers, apos));
+                        apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                        let class = harness.cr_line_at(buffer.bytes(wb), wpos);
+                        wpos = wpos + len(class) + 1;
+                        let tag = harness.cr_word(answer, 2);
+                        if bytes.equal(class, "size") {
+                            got = harness.cr_expect(heap, got, bytes.equal(tag, "rsa-modulus-size"), answer);
+                        } else if bytes.equal(class, "ok") {
+                            got = harness.cr_expect(heap, got, bytes.equal(tag, "ok"), answer);
+                        } else {
+                            got = harness.cr_expect(heap, got, answer[0] == byte_of('-') && !bytes.equal(tag, "rsa-modulus-size"), answer);
+                        }
+                    }
+                    if harness.cr_count(buffer.bytes(wb), "ok") != 27 || harness.cr_count(buffer.bytes(wb), "refused") != 135 || harness.cr_count(buffer.bytes(wb), "size") != 108 {
+                        acc = harness.failure(heap, acc, "rsa", "nist", "each file should have 27 passing, 135 failing and 108 too-small cases", name);
+                    }
+                }
+            }
+            borrow got as &gb in {
+                acc = harness.cr_all_ok(heap, acc, "rsa", name, buffer.bytes(gb));
+            }
+            buffer.drop(heap, got);
+            buffer.drop(heap, said);
+        }
+        buffer.drop(heap, path);
+        buffer.drop(heap, input);
+        buffer.drop(heap, want);
+        file = file + 1;
+    }
+    return acc;
+}
+
+// A modulus with leading zero bytes is the same key (`std/rsa.cho`'s header allows them): every NIST case that verifies with the minimal modulus verifies with one, two and three zero bytes in front of
+// it, under PKCS#1 v1.5 and PSS. Review finding C-1 on #209: the signature's length was checked against the modulus's bits and `bigmod.pow_mod` against its bytes, so such a key was refused with
+// `bigmod-refused-output-length`. The 27 passing cases of 2048 bits and over in each file, three ways each: 162.
+fn leading_zeros[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    var input = buffer.empty(heap, 1 << 20);
+    var want = buffer.empty(heap, 1 << 12);
+    var file = 1;
+    while file <= 2 {
+        var name = "SigVer15_186-3.rsp";
+        if file == 2 {
+            name = "SigVerPSS_186-3.rsp";
+        }
+        var path = buffer.append(heap, buffer.empty(heap, 96), "tests/vectors/cavp/");
+        path = buffer.append(heap, path, name);
+        borrow path as &pb in {
+            let harness.Contents { data, failed } = harness.read_file(heap, fs, buffer.bytes(pb));
+            if failed != 0 {
+                acc = harness.failure(heap, acc, "rsa", "leading-zeros", "a NIST file cannot be read", buffer.bytes(pb));
+            }
+            borrow data as &db in {
+                let (i, w) = nist_file(heap, buffer.bytes(db), file == 2, "00", true, input, want);
+                let (i2, w2) = nist_file(heap, buffer.bytes(db), file == 2, "0000", true, i, w);
+                let (i3, w3) = nist_file(heap, buffer.bytes(db), file == 2, "000000", true, i2, w2);
+                input = i3;
+                want = w3;
+            }
+            buffer.drop(heap, data);
+        }
+        buffer.drop(heap, path);
+        file = file + 1;
+    }
+    borrow input as &ib in {
+        if bytes.count_byte(buffer.bytes(ib), 10) != 162 {
+            acc = harness.failure(heap, acc, "rsa", "leading-zeros", "the 27 passing cases of 2048 bits and over in each file, three ways each, should be 162", "");
+        }
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "rsa", "leading-zeros");
+        acc = more;
+        var got = buffer.empty(heap, 1 << 10);
+        borrow said as &sb in {
+            let answers = buffer.bytes(sb);
+            var apos = 0;
+            while apos < len(answers) {
+                let answer = harness.trim_end(harness.cr_line_at(answers, apos));
+                apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                got = harness.cr_expect(heap, got, bytes.equal(harness.cr_word(answer, 2), "ok"), answer);
+            }
+        }
+        borrow got as &gb in {
+            acc = harness.cr_all_ok(heap, acc, "rsa", "leading-zeros", buffer.bytes(gb));
+        }
+        buffer.drop(heap, got);
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+fn check[&h, &x, &c, &f, &b, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    let exe = "/tmp/cancho-rsa-driver";
+    let (report, built) = harness.cr_build(heap, exec, clock, bin, "tests/programs/rsa_driver.cho\0", exe, env, buffer.empty(heap, 64), "rsa");
+    var acc = report;
+    if built {
+        acc = wycheproof(heap, exec, clock, fs, exe, acc);
+        acc = nist(heap, exec, clock, fs, exe, acc);
+        acc = leading_zeros(heap, exec, clock, fs, exe, acc);
+        acc = harness.cr_two_columns(heap, exec, clock, fs, exe, acc, "rsa", "tests/vectors/rsa_cases.txt", "refusals", 0 - 2);
+    }
+    return acc;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: rsa CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let env = harness.base_env(heap, harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var report = buffer.empty(heap, 0);
+    borrow env as &eb in {
+        buffer.drop(heap, report);
+        report = check(heap, exec, clock, fs, arg(args, 1), buffer.bytes(eb));
+    }
+    buffer.drop(heap, env);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: rsa\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

@@ -325,7 +325,7 @@ is no buffer for it. An empty `aad` or `text` hashes nothing. The 32-bit counter
   associated data of lengths 0 to 70, every associated-data length 0 to 300, and a spread up to 16 KiB; `gcm_tag_diff`
   equal and with one bit changed; every wrong length, counter or round count a trap. Each output is followed by 32 guard
   bytes that must stay as they were.
-- **`std.gcm`'s vectors** (FIPS 197, CAVP, Wycheproof; `conformance/gcm.rs`) on both paths and both backends, as before:
+- **`std.gcm`'s vectors** (FIPS 197, CAVP, Wycheproof; `tests/commands/gcm.cho`) on both paths and both backends, as before:
   the hardware path now runs them through the new builtins.
 - **`scripts/gcm_differential.py`** against OpenSSL (pyca/cryptography) and the software path: 10,000 random cases and a sweep
   of **every message length 0 to 600, every associated-data length 0 to 300, and the lengths around 4 KiB and 16 KiB**, both

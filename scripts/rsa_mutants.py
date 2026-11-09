@@ -5,7 +5,7 @@
 
 Each mutant is one of the two files with one deliberate bug. Both are built as
 local modules (`bigmod`, `rsa`) beside a copy of `tests/programs/rsa_driver.cho`
-and run against what `conformance/rsa.rs` runs: every supported Wycheproof
+and run against what `tests/commands/rsa.cho` runs: every supported Wycheproof
 case, the NIST SigVer files, and the refusal rows. Then 2,000 rounds of
 `scripts/rsa_differential.py pow` run against Python. A mutant is killed when
 any of them disagrees, or the driver traps. The unmutated files are run first

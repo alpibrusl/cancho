@@ -7,7 +7,7 @@ reduction (docs/ecdh.md §5).
 Each mutant is one of the two files with one deliberate bug, both built as
 local modules `ecdh` and `bigmod` beside a copy of
 `tests/programs/ecdh_driver.cho` and `tests/programs/bigmod_driver.cho`, and
-run against the evidence `conformance/ecdh.rs` and
+run against the evidence `tests/commands/ecdh.cho` and
 `scripts/ecdh_differential.py` use: Wycheproof's P-256 and P-384 cases,
 NIST's KAS validity cases, the scalar's edges and the refusals, modular
 powers at moduli a multiple of 30 or 64 bits long against Python's `pow`, then

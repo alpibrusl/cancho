@@ -199,7 +199,7 @@ measurements of §7), the `rest:` checks of `tls_pool.cho`, the in-place cases o
 
 ## 6. Gates, stated before the numbers
 
-1. **Vectors and differentials, both backends, the hardware path on and forced off:** `conformance/gcm.rs`, `aead.rs`;
+1. **Vectors and differentials, both backends, the hardware path on and forced off:** `tests/commands/gcm.cho`, `aead.rs`;
    `scripts/gcm_differential.py` (now also `P`, `p`, `I`, `i`: in place on both paths), `scripts/aead_differential.py` (`T`,
    `U`), `scripts/tls_record_differential.py` (`O` and the new `J`, in place), byte for byte. "Forced off" is the software path
    (`seal_in_place_software`, `open_in_place_software`) on a CPU that has the instructions, and the Cranelift backend, which has

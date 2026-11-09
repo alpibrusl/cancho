@@ -5,7 +5,7 @@
 
 Each mutant is `std/ecdsa.cho` or `std/bigmod.cho` with one deliberate bug. Both
 are built as local modules (`ecdsa`, `bigmod`) beside a copy of
-`tests/programs/ecdsa_driver.cho`, and run against what `conformance/ecdsa.rs`
+`tests/programs/ecdsa_driver.cho`, and run against what `tests/commands/ecdsa.cho`
 runs: every case of the seven Wycheproof files, the NIST SigVer cases, and the
 refusal rows. Then 2,000 rounds of `scripts/ecdsa_differential.py registers`
 run against Python. A mutant is killed when any of them disagrees, or the
@@ -90,7 +90,7 @@ def evidence():
     add(f"R 256 32 {point} {t['msg']} {'00' * 32}{t['sig'][64:]}", lambda a: "ecdsa-r-range" in a)
     add(f"V 256 32 {point} {t['msg']} 3006020101020181", lambda a: "ecdsa-s-range" in a)
     add(f"V 256 32 {point} {t['msg']} 3008020200010202{'0001'}", lambda a: "ecdsa-der-non-minimal" in a)
-    # A digest equal to n reduces to e = 0 (`conformance/ecdsa.rs` has the provenance).
+    # A digest equal to n reduces to e = 0 (`tests/commands/ecdsa.cho` has the provenance).
     n = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551"
     add(f"D 256 04e43536a661c7360d0f51bc8776c785682289e6594a550492b2f5af557ce73fd40d3d5b06fae511a128f0c7e4ef7ba418912e1d603e19bb2b72e1044877d76100 {n} 30460221009b27932cd0f703d408788b6f1538eae6db5bda4c9d1d0cfe8cd794e9b1c354ad022100b528c8277a637ad2c7d5b26e04394e10d6dccb9e99904ac089426db47637d012", lambda a: a.startswith("0 ok"))
     return cases, checks

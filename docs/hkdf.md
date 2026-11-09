@@ -160,7 +160,7 @@ here too: no branch and no memory index may depend on a secret.
 ## 4. Checked, not assumed
 
 `tests/programs/kdf_driver.cho` drives every function from standard
-input. `crates/cancho/tests/conformance/kdf.rs` runs it in
+input. `tests/commands/kdf.cho` runs it in
 `cargo test`, offline.
 
 ### 4.1 SHA-2: NIST CAVP
@@ -410,7 +410,7 @@ same bytes, [`sha256-builtin.md`](sha256-builtin.md) §8.4.)*
 
 ### 9.4 Tested
 
-`conformance/kdf.rs` runs every HMAC, Expand-Label and Derive-Secret row of `tests/vectors/kdf.txt` and every Wycheproof HMAC
+`tests/commands/kdf.cho` runs every HMAC, Expand-Label and Derive-Secret row of `tests/vectors/kdf.txt` and every Wycheproof HMAC
 case again under a prepared key, on both backends; the driver (`tests/programs/kdf_driver.cho`, ops `P`, `Q`, `R`) also checks
 that a tag from `mac_prepared` equals one streamed after `init_prepared` in pieces of 1 to 129 bytes, and that a prepared secret
 gives the same label twice. The prepared functions' refusals each have a row. `scripts/kdf_differential.py` adds a prepared HMAC

@@ -217,22 +217,18 @@ floats 25
 https_hello 24
 tty 24
 tls_auth 23
-gcm 22
 modules 21
 tls_echo_fixed 21
-ecdh 20
 processes 20
 tls_client_auth 19
 agent_tools 19
 tls_server 19
-kdf 18
 thread_state 18
 http_server_stream 17
 ports 16
 compile_time 16
 project 16
 http_server_upload 16
-aead 15
 memory 15
 tls_pool 14
 vcs_std 14
@@ -245,11 +241,9 @@ directory_rename_new 11
 global_state 11
 
 crypto_builtins 10
-ecdsa 10
 region_cache 8
 
 docs 8
-rsa 8
 vcs 7
 wide_multiply 6
 sha256_builtins 6

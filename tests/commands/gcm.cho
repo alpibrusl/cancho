@@ -1,0 +1,573 @@
+edition 7;
+module gcm_test;
+
+// gcm.cho -- `conformance/gcm.rs` (deleted), in cancho (`docs/gate.md` G4): `std.aes` and `std.gcm` (`docs/tls-parity.md` section 3.1): FIPS 197's examples, NIST CAVP's 96-bit-IV GCM cases, every Wycheproof case, every reachable refusal with its own tag, a one-bit change anywhere in a sealed message refused, the hardware and software paths agreeing, and the in-place seal and open. All through `tests/programs/gcm_driver.cho`; the files are read line by line (`harness.cr_rows`), not as JSON.
+//
+//     cancho build tests/commands/gcm.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: gcm` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift legs went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// `O KEY IV AAD SEALED` with the sealed message (the ciphertext and the tag) of a CAVP decryption case, and what the driver should answer.
+fn cavp_file[&h, &t](heap: &!h Heap, text: &t [byte], encrypt: bool, inputs: buffer.Buffer, wants: buffer.Buffer, failures: int) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
+    var input = inputs;
+    var want = wants;
+    var fails = failures;
+    var rows = buffer.empty(heap, 0);
+    buffer.drop(heap, rows);
+    if encrypt {
+        rows = harness.cr_rows(heap, text, "Key IV PT AAD CT Tag");
+    } else {
+        rows = harness.cr_rows_at(heap, text, "Key IV CT AAD Tag PT FAIL", "PT FAIL", true);
+    }
+    borrow rows as &rb in {
+        let all = buffer.bytes(rb);
+        var pos = 0;
+        while pos < len(all) {
+            let line = harness.cr_line_at(all, pos);
+            pos = pos + len(line) + 1;
+            let key = harness.cr_cell_of(line, 1);
+            let iv = harness.cr_cell_of(line, 2);
+            if encrypt {
+                // `S KEY IV AAD PT`, sealed to the ciphertext and the tag.
+                input = buffer.append(heap, input, "S ");
+                input = buffer.push(heap, buffer.append(heap, input, key), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, iv), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, harness.cr_cell_of(line, 4)), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, harness.cr_cell_of(line, 3)), byte_of('\n'));
+                want = buffer.append(heap, want, "0 ok ");
+                want = buffer.append(heap, want, harness.cr_undash(harness.cr_cell_of(line, 5)));
+                want = buffer.push(heap, buffer.append(heap, want, harness.cr_cell_of(line, 6)), byte_of('\n'));
+            } else {
+                let ct = harness.cr_undash(harness.cr_cell_of(line, 3));
+                input = buffer.append(heap, input, "O ");
+                input = buffer.push(heap, buffer.append(heap, input, key), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, iv), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, harness.cr_cell_of(line, 4)), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, buffer.append(heap, input, ct), harness.cr_cell_of(line, 5)), byte_of('\n'));
+                if bytes.equal(harness.cr_cell_of(line, 7), "FAIL") {
+                    fails = fails + 1;
+                    want = harness.cr_repeat(heap, buffer.append(heap, want, "refused "), "aa", len(ct) / 2);
+                    want = buffer.push(heap, want, byte_of('\n'));
+                } else {
+                    want = buffer.push(heap, buffer.append(heap, buffer.append(heap, want, "0 ok "), harness.cr_undash(harness.cr_cell_of(line, 6))), byte_of('\n'));
+                }
+            }
+        }
+    }
+    buffer.drop(heap, rows);
+    return (input, want, fails);
+}
+
+// NIST CAVP's `gcmEncryptExtIV` and `gcmDecrypt` for 128- and 256-bit keys, cut to 96-bit IVs and 128-bit tags (`tests/vectors/cavp/README.md`): every encryption gives its ciphertext and tag, every
+// decryption its plaintext, and every case marked `FAIL` is refused without writing (its output is still the `aa` it started as).
+fn cavp[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    var input = buffer.empty(heap, 1 << 20);
+    var want = buffer.empty(heap, 1 << 20);
+    var fails = 0;
+    var file = 1;
+    while file <= 4 {
+        var path = buffer.append(heap, buffer.empty(heap, 96), "tests/vectors/cavp/");
+        path = buffer.append(heap, path, bytes.field("gcmEncryptExtIV128.rsp gcmEncryptExtIV256.rsp gcmDecrypt128.rsp gcmDecrypt256.rsp", 32, file));
+        borrow path as &pb in {
+            let harness.Contents { data, failed } = harness.read_file(heap, fs, buffer.bytes(pb));
+            if failed != 0 {
+                acc = harness.failure(heap, acc, "gcm", "cavp", "a CAVP file cannot be read", buffer.bytes(pb));
+            }
+            borrow data as &db in {
+                let (i, w, n) = cavp_file(heap, buffer.bytes(db), file <= 2, input, want, fails);
+                input = i;
+                want = w;
+                fails = n;
+            }
+            buffer.drop(heap, data);
+        }
+        buffer.drop(heap, path);
+        file = file + 1;
+    }
+    borrow input as &ib in {
+        if bytes.count_byte(buffer.bytes(ib), 10) != 4 * 375 || fails != 196 + 191 {
+            acc = harness.failure(heap, acc, "gcm", "cavp", "the four files should have 4 * 375 cases, 196 + 191 of them marked FAIL", "");
+        }
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "gcm", "cavp");
+        acc = more;
+        var got = buffer.empty(heap, 0);
+        var tally = buffer.empty(heap, 0);
+        borrow said as &sb in {
+            buffer.drop(heap, got);
+            got = harness.cr_outcomes(heap, buffer.bytes(sb), buffer.bytes(ib));
+            buffer.drop(heap, tally);
+            tally = harness.cr_tally(heap, buffer.bytes(sb), buffer.bytes(ib));
+        }
+        borrow got as &gb in {
+            borrow want as &wb in {
+                acc = harness.cr_same(heap, acc, "gcm", "cavp", buffer.bytes(gb), buffer.bytes(wb));
+            }
+        }
+        // Every refusal of a `FAIL` case is by the tag check.
+        borrow tally as &tb in {
+            if len(buffer.bytes(tb)) > 0 {
+                acc = harness.cr_counts(heap, acc, "gcm", "cavp-tags", buffer.bytes(tb), "S ok 750\nO ok 363\nO aead-tag-mismatch 387\n");
+            }
+        }
+        buffer.drop(heap, tally);
+        buffer.drop(heap, got);
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+// Wycheproof's `aes_gcm_test.json`, every case. A 128- or 256-bit key with a 96-bit nonce is what `std.gcm` supports: a valid case seals to its ciphertext and tag and opens to its message, and an
+// invalid one (a modified tag) is refused without writing. A 192-bit key, or a nonce of any other length, is refused by both operations with its own tag, valid case or not: TLS uses neither
+// (`docs/tls-parity.md` section 3.1).
+fn wycheproof[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/vectors/wycheproof/aes_gcm_test.json");
+    if failed != 0 {
+        acc = harness.failure(heap, acc, "gcm", "wycheproof", "aes_gcm_test.json cannot be read", "");
+    }
+    var input = buffer.empty(heap, 1 << 18);
+    var want = buffer.empty(heap, 1 << 18);
+    borrow data as &db in {
+        let rows = harness.cr_rows(heap, buffer.bytes(db), "key iv aad msg ct tag result");
+        borrow rows as &rb in {
+            let all = buffer.bytes(rb);
+            var pos = 0;
+            while pos < len(all) {
+                let line = harness.cr_line_at(all, pos);
+                pos = pos + len(line) + 1;
+                let key = harness.cr_cell_of(line, 1);
+                let iv = harness.cr_cell_of(line, 2);
+                let aad = harness.cr_cell_of(line, 3);
+                let msg = harness.cr_cell_of(line, 4);
+                let ct = harness.cr_undash(harness.cr_cell_of(line, 5));
+                let tag = harness.cr_cell_of(line, 6);
+                let valid = bytes.equal(harness.cr_cell_of(line, 7), "valid");
+                if len(tag) != 32 {
+                    acc = harness.failure(heap, acc, "gcm", "wycheproof", "every tag should be 128 bits", line);
+                }
+                let works = valid && (len(key) == 32 || len(key) == 64) && len(iv) == 24;
+                input = buffer.append(heap, input, "O ");
+                input = buffer.push(heap, buffer.append(heap, input, key), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, iv), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, aad), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, buffer.append(heap, input, ct), tag), byte_of('\n'));
+                if works {
+                    want = buffer.push(heap, buffer.append(heap, buffer.append(heap, want, "0 ok "), harness.cr_undash(msg)), byte_of('\n'));
+                } else {
+                    want = harness.cr_repeat(heap, buffer.append(heap, want, "refused "), "aa", len(ct) / 2);
+                    want = buffer.push(heap, want, byte_of('\n'));
+                }
+                // A modified tag is a fault in `open`'s input only; sealing its message is fine and simply gives the real tag, which is not the case's.
+                input = buffer.append(heap, input, "S ");
+                input = buffer.push(heap, buffer.append(heap, input, key), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, iv), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, aad), byte_of(' '));
+                input = buffer.push(heap, buffer.append(heap, input, msg), byte_of('\n'));
+                if works {
+                    want = buffer.push(heap, buffer.append(heap, buffer.append(heap, buffer.append(heap, want, "0 ok "), ct), tag), byte_of('\n'));
+                } else {
+                    // Only that it is not asked of: the answer is whatever the tag-or-key rule gives, which the counts below pin.
+                    want = buffer.append(heap, want, "unchecked\n");
+                }
+            }
+        }
+        buffer.drop(heap, rows);
+    }
+    buffer.drop(heap, data);
+    borrow input as &ib in {
+        if bytes.count_byte(buffer.bytes(ib), 10) != 2 * 316 {
+            acc = harness.failure(heap, acc, "gcm", "wycheproof", "the file should have 316 cases", "");
+        }
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "gcm", "wycheproof");
+        acc = more;
+        var got = buffer.empty(heap, 0);
+        var tally = buffer.empty(heap, 0);
+        borrow said as &sb in {
+            buffer.drop(heap, got);
+            got = harness.cr_outcomes(heap, buffer.bytes(sb), buffer.bytes(ib));
+            buffer.drop(heap, tally);
+            tally = harness.cr_tally(heap, buffer.bytes(sb), buffer.bytes(ib));
+        }
+        // An `S` that is not asked of (a case that is not supported or valid) is `unchecked` on both sides.
+        var wanted = buffer.empty(heap, 0);
+        var seen = buffer.empty(heap, 0);
+        borrow want as &wb in {
+            borrow got as &gb in {
+                buffer.drop(heap, wanted);
+                buffer.drop(heap, seen);
+                wanted = harness.cr_prefixed(heap, buffer.bytes(wb), "");
+                seen = harness.cr_masked(heap, buffer.bytes(gb), buffer.bytes(wb), "unchecked");
+            }
+        }
+        borrow wanted as &wb in {
+            borrow seen as &sn in {
+                acc = harness.cr_same(heap, acc, "gcm", "wycheproof", buffer.bytes(sn), buffer.bytes(wb));
+            }
+        }
+        // 79 supported valid cases, 54 modified tags (whose messages still seal), 103 cases with a 192-bit key (the key is checked first) and 80 with a 128- or 256-bit key and another nonce length.
+        borrow tally as &tb in {
+            if len(buffer.bytes(tb)) > 0 {
+                acc = harness.cr_counts(heap, acc, "gcm", "wycheproof-tags", buffer.bytes(tb), "O ok 79\nO aead-tag-mismatch 54\nO gcm-key-length 103\nO gcm-nonce-length 80\nS ok 133\nS gcm-key-length 103\nS gcm-nonce-length 80\n");
+            }
+        }
+        buffer.drop(heap, wanted);
+        buffer.drop(heap, seen);
+        buffer.drop(heap, tally);
+        buffer.drop(heap, got);
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, want);
+    return acc;
+}
+
+// The last block before the counter wraps is still allowed, and is the encryption of the IV with the counter 0xffffffff.
+fn edge[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var acc = report;
+    var key = harness.cr_repeat(heap, buffer.empty(heap, 64), "07", 16);
+    var nonce = harness.cr_repeat(heap, buffer.empty(heap, 64), "09", 12);
+    var input = buffer.append(heap, buffer.empty(heap, 256), "C ");
+    borrow key as &kb in {
+        borrow nonce as &nb in {
+            input = buffer.push(heap, buffer.append(heap, input, buffer.bytes(kb)), byte_of(' '));
+            input = buffer.push(heap, buffer.append(heap, input, buffer.bytes(nb)), byte_of(' '));
+            input = harness.cr_repeat(heap, buffer.append(heap, input, "4294967295 "), "00", 16);
+            input = buffer.append(heap, input, "\nE ");
+            input = buffer.push(heap, buffer.append(heap, input, buffer.bytes(kb)), byte_of(' '));
+            input = buffer.append(heap, buffer.append(heap, input, buffer.bytes(nb)), "ffffffff\n");
+        }
+    }
+    borrow input as &ib in {
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "gcm", "edge");
+        acc = more;
+        borrow said as &sb in {
+            if len(buffer.bytes(sb)) > 0 {
+                let answers = buffer.bytes(sb);
+                let one = harness.trim_end(harness.cr_line_at(answers, 0));
+                let two = harness.trim_end(harness.cr_line_at(answers, len(harness.cr_line_at(answers, 0)) + 1));
+                var got = harness.cr_expect(heap, buffer.empty(heap, 64), bytes.equal(harness.cr_word(one, 1), "0") && len(harness.cr_word(one, 3)) == 32 && bytes.equal(harness.cr_word(one, 3), harness.cr_word(two, 3)), one);
+                borrow got as &gb in {
+                    acc = harness.cr_all_ok(heap, acc, "gcm", "edge", buffer.bytes(gb));
+                }
+                buffer.drop(heap, got);
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, input);
+    buffer.drop(heap, key);
+    buffer.drop(heap, nonce);
+    return acc;
+}
+
+// A CAVP message with each bit of the ciphertext, the tag and the associated data flipped in turn: every one is refused, and none writes its output. The case is the first of
+// `gcmEncryptExtIV256.rsp` with a 51-byte message and 20 bytes of associated data.
+fn bitflips[&h, &x, &c, &f, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, "tests/vectors/cavp/gcmEncryptExtIV256.rsp");
+    if failed != 0 {
+        acc = harness.failure(heap, acc, "gcm", "bitflips", "gcmEncryptExtIV256.rsp cannot be read", "");
+    }
+    var input = buffer.empty(heap, 0);
+    var plain = buffer.empty(heap, 0);
+    var room = 0;
+    borrow data as &db in {
+        let rows = harness.cr_rows(heap, buffer.bytes(db), "Key IV PT AAD CT Tag");
+        borrow rows as &rb in {
+            let all = buffer.bytes(rb);
+            var pos = 0;
+            var found = false;
+            while pos < len(all) && !found {
+                let line = harness.cr_line_at(all, pos);
+                pos = pos + len(line) + 1;
+                if len(harness.cr_cell_of(line, 3)) == 2 * 51 && len(harness.cr_cell_of(line, 4)) == 2 * 20 {
+                    found = true;
+                    var head = buffer.append(heap, buffer.empty(heap, 128), "O ");
+                    head = buffer.push(heap, buffer.append(heap, head, harness.cr_cell_of(line, 1)), byte_of(' '));
+                    head = buffer.push(heap, buffer.append(heap, head, harness.cr_cell_of(line, 2)), byte_of(' '));
+                    var sealed = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 256), harness.cr_cell_of(line, 5)), harness.cr_cell_of(line, 6));
+                    plain = buffer.append(heap, plain, harness.cr_cell_of(line, 3));
+                    borrow head as &hb in {
+                        borrow sealed as &sb in {
+                            room = len(buffer.bytes(sb)) / 2 - 16;
+                            buffer.drop(heap, input);
+                            input = harness.cr_bitflips(heap, buffer.bytes(hb), harness.cr_cell_of(line, 4), buffer.bytes(sb));
+                        }
+                    }
+                    buffer.drop(heap, head);
+                    buffer.drop(heap, sealed);
+                }
+            }
+            if !found {
+                acc = harness.failure(heap, acc, "gcm", "bitflips", "the file should have a case with a 51-byte message and 20 bytes of associated data", "");
+            }
+        }
+        buffer.drop(heap, rows);
+    }
+    buffer.drop(heap, data);
+    var untouched = harness.cr_repeat(heap, buffer.empty(heap, 256), "aa", room);
+    borrow input as &ib in {
+        if bytes.count_byte(buffer.bytes(ib), 10) != 1 + 67 * 8 + 20 * 8 {
+            acc = harness.failure(heap, acc, "gcm", "bitflips", "the message should give one open and a case for each of its 67 * 8 + 20 * 8 bits", "");
+        }
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ib), acc, "gcm", "bitflips");
+        acc = more;
+        var got = buffer.empty(heap, 1 << 12);
+        borrow said as &sb in {
+            borrow untouched as &ub in {
+                borrow plain as &pb in {
+                    let answers = buffer.bytes(sb);
+                    var apos = 0;
+                    var n = 0;
+                    while apos < len(answers) {
+                        let answer = harness.trim_end(harness.cr_line_at(answers, apos));
+                        apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                        if n == 0 {
+                            got = harness.cr_expect(heap, got, bytes.equal(harness.cr_word(answer, 2), "ok") && bytes.equal(harness.cr_word(answer, 3), buffer.bytes(pb)), "the unmodified message should open to its plaintext");
+                        } else {
+                            got = harness.cr_expect(heap, got, bytes.equal(harness.cr_word(answer, 2), "aead-tag-mismatch") && bytes.equal(harness.cr_word(answer, 3), buffer.bytes(ub)), answer);
+                        }
+                        n = n + 1;
+                    }
+                }
+            }
+        }
+        borrow got as &gb in {
+            acc = harness.cr_all_ok(heap, acc, "gcm", "bitflips", buffer.bytes(gb));
+        }
+        buffer.drop(heap, got);
+        buffer.drop(heap, said);
+    }
+    buffer.drop(heap, untouched);
+    buffer.drop(heap, plain);
+    buffer.drop(heap, input);
+    return acc;
+}
+
+// `text` with its first byte `op`.
+fn with_op[&h, &t](heap: &!h Heap, into: buffer.Buffer, op: byte, text: &t [byte]) -> [heap] buffer.Buffer {
+    return buffer.push(heap, buffer.append(heap, buffer.push(heap, into, op), text[1..len(text)]), byte_of('\n'));
+}
+
+// Random messages (`path`, one `S KEY NONCE AAD TEXT` to a line), sealed by each of the operations in `seals` (one answer each, all equal) and the result opened by each of `opens`, as it is and
+// with the last bit of its tag flipped. With `in_place`, the operations after the first of `opens` are the in-place ones: a tag changed in its last byte is refused with `-6` and leaves the
+// buffer as it was; otherwise every operation must answer exactly what the first does.
+fn roundtrip[&h, &x, &c, &f, &p, &t, &n, &s, &o](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), exe: &p [byte], report: buffer.Buffer, path: &t [byte], name: &n [byte], seals: &s [byte], opens: &o [byte], in_place: bool) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var acc = report;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, path);
+    if failed != 0 {
+        acc = harness.failure(heap, acc, "gcm", name, "a vector file cannot be read", path);
+    }
+    var cases = buffer.empty(heap, 0);
+    borrow data as &db in {
+        buffer.drop(heap, cases);
+        cases = harness.column(heap, buffer.bytes(db), 1);
+    }
+    buffer.drop(heap, data);
+    var asks = buffer.empty(heap, 1 << 18);
+    borrow cases as &cb in {
+        let all = buffer.bytes(cb);
+        var pos = 0;
+        while pos < len(all) {
+            let line = harness.cr_line_at(all, pos);
+            pos = pos + len(line) + 1;
+            var k = 0;
+            while k < len(seals) {
+                asks = with_op(heap, asks, seals[k], line);
+                k = k + 1;
+            }
+        }
+    }
+    var got = buffer.empty(heap, 1 << 12);
+    var follow = buffer.empty(heap, 1 << 18);
+    var bads = buffer.empty(heap, 1 << 16);
+    borrow asks as &ab in {
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(ab), acc, "gcm", name);
+        acc = more;
+        borrow said as &sb in {
+            borrow cases as &cb in {
+                let answers = buffer.bytes(sb);
+                let all = buffer.bytes(cb);
+                var pos = 0;
+                var apos = 0;
+                while pos < len(all) && len(answers) > 0 {
+                    let line = harness.cr_line_at(all, pos);
+                    pos = pos + len(line) + 1;
+                    let first = harness.trim_end(harness.cr_line_at(answers, apos));
+                    var k = 0;
+                    var same = bytes.starts_with(first, "0 ok");
+                    while k < len(seals) {
+                        let answer = harness.trim_end(harness.cr_line_at(answers, apos));
+                        apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                        if !bytes.equal(answer, first) {
+                            same = false;
+                        }
+                        k = k + 1;
+                    }
+                    got = harness.cr_expect(heap, got, same, first);
+                    let sealed = harness.cr_word(first, 3);
+                    let bad = harness.cr_flip(heap, sealed, len(sealed) - 1, 0);
+                    var prefix = buffer.empty(heap, 128);
+                    prefix = buffer.push(heap, buffer.append(heap, prefix, harness.cr_word(line, 2)), byte_of(' '));
+                    prefix = buffer.push(heap, buffer.append(heap, prefix, harness.cr_word(line, 3)), byte_of(' '));
+                    prefix = buffer.push(heap, buffer.append(heap, prefix, harness.cr_word(line, 4)), byte_of(' '));
+                    borrow prefix as &pb in {
+                        borrow bad as &bb in {
+                            var j = 0;
+                            while j < len(opens) {
+                                follow = buffer.push(heap, buffer.append(heap, buffer.append(heap, buffer.push(heap, buffer.push(heap, follow, opens[j]), byte_of(' ')), buffer.bytes(pb)), sealed), byte_of('\n'));
+                                follow = buffer.push(heap, buffer.append(heap, buffer.append(heap, buffer.push(heap, buffer.push(heap, follow, opens[j]), byte_of(' ')), buffer.bytes(pb)), buffer.bytes(bb)), byte_of('\n'));
+                                j = j + 1;
+                            }
+                            bads = buffer.push(heap, buffer.append(heap, bads, buffer.bytes(bb)), byte_of('\n'));
+                        }
+                    }
+                    buffer.drop(heap, bad);
+                    buffer.drop(heap, prefix);
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    borrow follow as &fb in {
+        let (more, said) = harness.cr_ask(heap, exec, clock, exe, buffer.bytes(fb), acc, "gcm", name);
+        acc = more;
+        borrow said as &sb in {
+            borrow bads as &bb in {
+                let answers = buffer.bytes(sb);
+                let flipped = buffer.bytes(bb);
+                var apos = 0;
+                var bpos = 0;
+                while apos < len(answers) {
+                    let bad = harness.cr_line_at(flipped, bpos);
+                    bpos = bpos + len(bad) + 1;
+                    var j = 0;
+                    var first_ok = answers[0..0];
+                    var first_bad = answers[0..0];
+                    var agree = true;
+                    var refused = true;
+                    var tagged = true;
+                    while j < len(opens) {
+                        let ok = harness.trim_end(harness.cr_line_at(answers, apos));
+                        apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                        let wrong = harness.trim_end(harness.cr_line_at(answers, apos));
+                        apos = apos + len(harness.cr_line_at(answers, apos)) + 1;
+                        if j == 0 {
+                            first_ok = ok;
+                            first_bad = wrong;
+                        } else {
+                            if !bytes.equal(ok, first_ok) {
+                                agree = false;
+                            }
+                            if in_place {
+                                // Refused with the tag of `open`, and nothing written: the buffer is the sealed message it was given, the last byte changed.
+                                if !(bytes.equal(harness.cr_word(wrong, 1), "-6") && bytes.equal(harness.cr_word(wrong, 3), bad)) {
+                                    refused = false;
+                                }
+                            } else if !bytes.equal(wrong, first_bad) {
+                                refused = false;
+                            }
+                        }
+                        if !bytes.equal(harness.cr_word(wrong, 2), "aead-tag-mismatch") {
+                            tagged = false;
+                        }
+                        j = j + 1;
+                    }
+                    got = harness.cr_expect(heap, got, bytes.starts_with(first_ok, "0 ok") && agree, first_ok);
+                    got = harness.cr_expect(heap, got, refused && tagged, first_bad);
+                }
+            }
+        }
+        buffer.drop(heap, said);
+    }
+    borrow got as &gb in {
+        acc = harness.cr_all_ok(heap, acc, "gcm", name, buffer.bytes(gb));
+    }
+    buffer.drop(heap, got);
+    buffer.drop(heap, bads);
+    buffer.drop(heap, follow);
+    buffer.drop(heap, asks);
+    buffer.drop(heap, cases);
+    return acc;
+}
+
+fn check[&h, &x, &c, &f, &b, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    let exe = "/tmp/cancho-gcm-driver";
+    let (report, built) = harness.cr_build(heap, exec, clock, bin, "tests/programs/gcm_driver.cho\0", exe, env, buffer.empty(heap, 64), "gcm");
+    var acc = report;
+    if built {
+        acc = harness.cr_two_columns(heap, exec, clock, fs, exe, acc, "gcm", "tests/vectors/gcm_fips197.txt", "fips197", 2);
+        acc = cavp(heap, exec, clock, fs, exe, acc);
+        acc = wycheproof(heap, exec, clock, fs, exe, acc);
+        acc = harness.cr_two_columns(heap, exec, clock, fs, exe, acc, "gcm", "tests/vectors/gcm_cases.txt", "refusals", 0 - 2);
+        acc = edge(heap, exec, clock, exe, acc);
+        acc = bitflips(heap, exec, clock, fs, exe, acc);
+        // The hardware path (`S`, `O`, where the CPU has the instructions) and the software path (`s`, `o`, whatever it has) give the same bytes (`docs/crypto-builtins.md` section 7).
+        acc = roundtrip(heap, exec, clock, fs, exe, acc, "tests/vectors/gcm_paths.txt", "paths", "Ss", "Oo", false);
+        acc = roundtrip(heap, exec, clock, fs, exe, acc, "tests/vectors/gcm_in_place.txt", "in-place", "SPp", "OIi", true);
+        // A buffer with no room for a tag is refused with `seal_with`'s and `open_with`'s tags, on both paths, and left as it was.
+        acc = harness.cr_two_columns(heap, exec, clock, fs, exe, acc, "gcm", "tests/vectors/gcm_short.txt", "short", 1);
+    }
+    return acc;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: gcm CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let env = harness.base_env(heap, harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var report = buffer.empty(heap, 0);
+    borrow env as &eb in {
+        buffer.drop(heap, report);
+        report = check(heap, exec, clock, fs, arg(args, 1), buffer.bytes(eb));
+    }
+    buffer.drop(heap, env);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: gcm\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
