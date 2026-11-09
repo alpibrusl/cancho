@@ -1,0 +1,158 @@
+edition 7;
+module testing_test;
+
+// testing.cho -- `conformance/testing.rs` (deleted), in cancho (`docs/gate.md` G4): `cancho test` (`docs/testing.md` section 3), discovery, one process per test, and the exit status. Files are written to a
+// scratch directory and `cancho test [--std] FILES` run on them: passing tests exit 0 and are each named; a failing test and a trapping one fail without stopping the run (exit 4, the next test still runs);
+// a test answering 256 is not read as a pass; a test may ask for the heap and the console; a test in another module is named by its module and a non-`pub` one is refused (exit 2); finding no tests, a
+// file that declares `main`, and four wrong shapes are usage errors (exit 2, each saying why); a program the checker refuses is refused (exit 1), not failed (4).
+//
+//     cancho build tests/commands/testing.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: testing` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// Whether every needle of `list` (each followed by a NUL; maybe none) is in `text`.
+fn has_all[&t, &l](text: &t [byte], list: &l [byte]) -> [] bool {
+    let count = bytes.count_byte(list, 0);
+    var at = 1;
+    while at <= count {
+        if !harness.contains(text, bytes.field(list, 0, at)) {
+            return false;
+        }
+        at = at + 1;
+    }
+    return true;
+}
+
+// One case: `text_one` in `dir/name_one` and, when `name_two` is not empty, `text_two` in `dir/name_two`; `cancho test FLAG FILES` (`flag` empty for none) must exit `want_code`, say every needle of `in_out` on
+// standard output and every needle of `in_err` on standard error.
+fn case[&h, &x, &c, &f, &b, &e, &d, &n1, &t1, &n2, &t2, &g, &o, &r, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name_one: &n1 [byte], text_one: &t1 [byte], name_two: &n2 [byte], text_two: &t2 [byte], flag: &g [byte], want_code: int, in_out: &o [byte], in_err: &r [byte], name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let one = harness.rt_put(heap, fs, dir, name_one, text_one);
+    var two = buffer.empty(heap, 0);
+    if len(name_two) > 0 {
+        buffer.drop(heap, two);
+        two = harness.rt_put(heap, fs, dir, name_two, text_two);
+    }
+    var command = harness.word(heap, buffer.empty(heap, 64), "test");
+    if len(flag) > 0 {
+        command = harness.word(heap, command, flag);
+    }
+    borrow one as &ob1 in {
+        command = harness.word(heap, command, buffer.bytes(ob1));
+    }
+    borrow two as &ob2 in {
+        if len(buffer.bytes(ob2)) > 0 {
+            command = harness.word(heap, command, buffer.bytes(ob2));
+        }
+    }
+    buffer.drop(heap, one);
+    buffer.drop(heap, two);
+    var rep = report;
+    let ended = harness.spawn_capture(heap, exec, clock, bin, command, "", env);
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow out as &ob in {
+        borrow err as &eb in {
+            if kind != 0 || code != want_code {
+                rep = harness.failure(heap, rep, "testing", name, "wrong exit status", buffer.bytes(eb));
+            } else if !has_all(buffer.bytes(ob), in_out) {
+                rep = harness.failure(heap, rep, "testing", name, "what `cancho test` printed is missing a line", buffer.bytes(ob));
+            } else if !has_all(buffer.bytes(eb), in_err) {
+                rep = harness.failure(heap, rep, "testing", name, "what `cancho test` said on standard error is missing a word", buffer.bytes(eb));
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-testing");
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "testing", "scratch", "mktemp -d made no directory", "");
+            } else {
+                let d = buffer.bytes(db);
+                let e = buffer.bytes(eb);
+                let passing = "import std.test;\n\nfn add(a: int, b: int) -> [] int { return a + b; }\n\nfn test_add() -> [] int { return test.assert_eq(add(2, 3), 5); }\n\nfn test_add_is_not_sub() -> [] int { return test.assert_ne(add(2, 3), 6); }\n";
+                report = case(heap, exec, clock, fs, bin, e, d, "pass.cho", passing, "", "", "--std", 0, "running 2 tests\0test test_add ... ok\0test test_add_is_not_sub ... ok\0test result: ok. 2 passed; 0 failed\0", "", "passing tests exit zero and are each named", report);
+                // A trap kills the process it happens in, so the test after it runs only because each test has a process of its own.
+                let failing = "import std.test;\n\nfn test_first_traps() -> [] int { return test.assert_eq(1, 2); }\n\nfn test_answers_seven() -> [] int { return 7; }\n\nfn test_still_runs() -> [] int { return 0; }\n";
+                report = case(heap, exec, clock, fs, bin, e, d, "fail.cho", failing, "", "", "--std", 4, "test test_first_traps ... FAILED\0trapped: killed by signal\0test test_answers_seven ... FAILED\0returned 7\0test test_still_runs ... ok\0test result: FAILED. 1 passed; 2 failed\0", "", "a failing test and a trapping test fail without stopping the run", report);
+                // An exit status is one byte; 256 would read back as 0.
+                report = case(heap, exec, clock, fs, bin, e, d, "wrap.cho", "fn test_answers_256() -> [] int { return 256; }\n", "", "", "", 4, "", "", "a test that answers a multiple of 256 is not read as a pass", report);
+                let caps = "import std.test;\nimport std.vec;\nimport std.io as console;\n\nfn test_heap_and_io[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int {\n    var v = vec.empty(heap, 2, 0);\n    v = vec.push(heap, v, 4);\n    console.print_int(io, 99);\n    var n = 0;\n    borrow v as &r in {\n        n = vec.get(r, 0);\n    }\n    vec.drop(heap, v);\n    return test.assert_eq(n, 4);\n}\n\nfn test_heap_only[&h](heap: &!h Heap) -> [heap] int {\n    var v = vec.empty(heap, 2, 0);\n    v = vec.push(heap, v, 1);\n    vec.drop(heap, v);\n    return 0;\n}\n";
+                report = case(heap, exec, clock, fs, bin, e, d, "caps.cho", caps, "", "", "--std", 0, "test result: ok. 2 passed\0", "", "a test can ask for the heap and the console", report);
+                // `test_private_helper...` is not `pub`, which the runner refuses rather than skips: a test that silently did not run is a pass.
+                report = case(heap, exec, clock, fs, bin, e, d, "arith.cho", "module suite.arith;\nimport std.test;\n\npub fn test_twice() -> [] int { return test.assert_eq(2 * 3, 6); }\n\nfn test_private_helper_is_not_a_test_here() -> [] int { return 0; }\n", "", "", "--std", 2, "", "not `pub`\0", "a test that is not pub is refused, not skipped", report);
+                report = case(heap, exec, clock, fs, bin, e, d, "arith.cho", "module suite.arith;\nimport std.test;\n\npub fn test_twice() -> [] int { return test.assert_eq(2 * 3, 6); }\n\npub fn test_thrice() -> [] int { return test.assert_eq(3 * 3, 9); }\n", "root.cho", "import std.test;\n\nfn test_root() -> [] int { return test.assert(true); }\n", "--std", 0, "test suite.arith.test_twice ... ok\0test suite.arith.test_thrice ... ok\0test test_root ... ok\0", "", "a test in another module is found and named by its module", report);
+                report = case(heap, exec, clock, fs, bin, e, d, "none.cho", "fn helper() -> [] int { return 0; }\n", "", "", "", 2, "", "no `test_*` functions found\0", "finding no tests is a usage error, not a pass", report);
+                report = case(heap, exec, clock, fs, bin, e, d, "main.cho", "fn test_ok() -> [] int { return 0; }\n\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(io); release(ffi); release(fs); release(heap); release(args);\n    return 0;\n}\n", "", "", "", 2, "", "supplies its own `main`\0", "a file that declares main is refused", report);
+                report = case(heap, exec, clock, fs, bin, e, d, "shape.cho", "fn test_g[T: val](x: T) -> [] int { return 0; }\n", "", "", "", 2, "", "type parameter\0", "a generic test is refused, not skipped", report);
+                report = case(heap, exec, clock, fs, bin, e, d, "shape.cho", "fn test_r() -> [] bool { return true; }\n", "", "", "", 2, "", "does not return `int`\0", "a test returning bool is refused, not skipped", report);
+                report = case(heap, exec, clock, fs, bin, e, d, "shape.cho", "fn test_p(x: int) -> [] int { return 0; }\n", "", "", "", 2, "", "not a unique `Heap` or `Io`\0", "a test with a plain parameter is refused, not skipped", report);
+                report = case(heap, exec, clock, fs, bin, e, d, "shape.cho", "fn test_t[&a, &b](x: &!a Heap, y: &!b Heap) -> [x, y] int { return 0; }\n", "", "", "", 2, "", "same capability twice\0", "a test asking for the heap twice is refused, not skipped", report);
+                // Exit 1 is "the program was refused"; 4 is reserved for a test that ran and failed, so a caller can tell a broken build from a red test.
+                report = case(heap, exec, clock, fs, bin, e, d, "bad.cho", "fn test_bad() -> [] int { return undefined_name; }\n", "", "", "", 1, "", "", "a program the checker refuses is refused, not failed", report);
+                harness.remove_tree(heap, exec, clock, d);
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: testing CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: testing\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    release(fs);
+    return status;
+}

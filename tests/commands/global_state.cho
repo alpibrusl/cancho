@@ -1,0 +1,287 @@
+edition 7;
+module global_state_test;
+
+// global_state.cho -- `conformance/global_state.rs` (deleted, except the last test), in cancho (`docs/gate.md` G4): `docs/unsafe-and-global-state.md` (#587), the two classes of the PHP security release of 2026-10-21 in this project's own
+// terms, held against real processes. The driver `tests/programs/memory_exhaustion.cho` is built once. (1) Section 6, a failed allocation must leave nothing half-made that a later step trusts: on Linux, under `ulimit -v` at each of 19
+// limits from 1,000,000 KiB down to 4,000, the three modes (`g` a growing buffer, `r` regions nested 1,000 deep, `b` eight-MiB boxes) each end by finishing with the right answer (`done 268435456`, `done 0`, `done 496`) or by the trap, never
+// by a signal that is not the trap nor a status that is not 0 (a null pointer used would be a segmentation fault, a wrong answer a `done` with another number), and a sweep sees both ends (`b` is held to the outcomes but not to a trap: `-O2`
+// removes the allocation); macOS cannot set the limit (`ulimit -v` is refused there), so the sweep is Linux's. (2) Section 6, what a trap leaves: the process ends by a signal and does not flush, so the line written to standard output before
+// the trap is lost.
+//
+//     cancho build tests/commands/global_state.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: global_state` or what is wrong, and exits 0 or 1. What narrowed: one configuration (the compiler in cancho, LLVM; the Cranelift and `--compiler rust` ones are gone); a trap is "killed by a
+// signal" (the harness reports a fault signal without its number), not SIGILL in particular; the sweep has not been run on Linux by the author. What did not move: `a_ticket_does_not_reach_the_connection_that_took_its_descriptor_number`
+// (section 5, the descriptor epoch) needs a server that accepts two connections and holds them while the program runs, and the harness has no helper for a background server; it stays in `global_state.rs`.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// Whether this is Linux: the limit the sweep needs can be set there.
+fn on_linux[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock) -> [heap, exec(""), clock, poll] bool {
+    let ended = harness.spawn_capture(heap, exec, clock, "/usr/bin/uname", harness.word(heap, buffer.empty(heap, 16), "-s"), "", "PATH=/usr/bin:/bin\0");
+    let harness.Ended { out, err, kind, code } = ended;
+    var linux = false;
+    borrow out as &ob in {
+        linux = kind == 0 && code == 0 && bytes.starts_with(buffer.bytes(ob), "Linux");
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return linux;
+}
+
+// `exe MODE` under `ulimit -v KIB` (and no core dump): 0 finished with `want` after `done `, 1 trapped without having said `done`, 2 never started (the loader could not map the program), 3 anything else (a failure of the program).
+fn under_limit[&h, &x, &c, &p, &m, &w](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], mode: &m [byte], kib: int, want: &w [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    var script = buffer.append(heap, buffer.empty(heap, 128), "ulimit -c 0 2>/dev/null; ulimit -v ");
+    script = buffer.push_nat(heap, script, kib);
+    script = buffer.append(heap, script, " && exec \"$0\" \"$1\"");
+    var command = harness.word(heap, buffer.empty(heap, 128), "-c");
+    borrow script as &sb in {
+        command = harness.word(heap, command, buffer.bytes(sb));
+    }
+    buffer.drop(heap, script);
+    command = harness.word(heap, command, exe);
+    command = harness.word(heap, command, mode);
+    let ended = harness.spawn_capture(heap, exec, clock, "/bin/sh", command, "", "PATH=/usr/bin:/bin\0");
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow out as &ob in {
+        borrow err as &eb in {
+            if kind == 0 && code == 0 {
+                var line = buffer.append(heap, buffer.empty(heap, 32), "done ");
+                line = buffer.append(heap, line, want);
+                line = buffer.push(heap, line, byte_of('\n'));
+                borrow line as &lb in {
+                    if !bytes.equal(buffer.bytes(ob), buffer.bytes(lb)) {
+                        rep = harness.failure(heap, rep, "global_state", mode, "finished with another answer", buffer.bytes(ob));
+                    }
+                }
+                buffer.drop(heap, line);
+            } else if kind == 1 {
+                if harness.contains(buffer.bytes(ob), "done") {
+                    rep = harness.failure(heap, rep, "global_state", mode, "trapped after saying done", buffer.bytes(ob));
+                }
+            } else if kind == 0 && code == 127 && harness.contains(buffer.bytes(eb), "error while loading") {
+                let never_started = 0;
+            } else {
+                rep = harness.failure(heap, rep, "global_state", mode, "ended neither by finishing nor by the trap", buffer.bytes(eb));
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// How the same run ended, as a number for the sweep's two ends: 1 finished, 2 trapped, 0 neither (never started, or a failure already reported).
+fn how_it_ended[&h, &x, &c, &p, &m](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], mode: &m [byte], kib: int) -> [heap, exec(""), clock, poll] int {
+    var script = buffer.append(heap, buffer.empty(heap, 128), "ulimit -c 0 2>/dev/null; ulimit -v ");
+    script = buffer.push_nat(heap, script, kib);
+    script = buffer.append(heap, script, " && exec \"$0\" \"$1\"");
+    var command = harness.word(heap, buffer.empty(heap, 128), "-c");
+    borrow script as &sb in {
+        command = harness.word(heap, command, buffer.bytes(sb));
+    }
+    buffer.drop(heap, script);
+    command = harness.word(heap, command, exe);
+    command = harness.word(heap, command, mode);
+    let ended = harness.spawn_capture(heap, exec, clock, "/bin/sh", command, "", "PATH=/usr/bin:/bin\0");
+    let harness.Ended { out, err, kind, code } = ended;
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    if kind == 0 && code == 0 {
+        return 1;
+    }
+    if kind == 1 {
+        return 2;
+    }
+    return 0;
+}
+
+// One mode over the whole sweep of limits (KiB): every run is checked by `under_limit`, the sweep must see a finish, and, when `must_trap`, a trap.
+fn sweep[&h, &x, &c, &p, &m, &w](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], mode: &m [byte], want: &w [byte], must_trap: bool, report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    var finished = 0;
+    var trapped = 0;
+    var k = 0;
+    while k < 19 {
+        var kib = 4000;
+        if k == 0 {
+            kib = 1000000;
+        }
+        if k == 1 {
+            kib = 400000;
+        }
+        if k == 2 {
+            kib = 200000;
+        }
+        if k == 3 {
+            kib = 120000;
+        }
+        if k == 4 {
+            kib = 100000;
+        }
+        if k == 5 {
+            kib = 80000;
+        }
+        if k == 6 {
+            kib = 60000;
+        }
+        if k == 7 {
+            kib = 50000;
+        }
+        if k == 8 {
+            kib = 40000;
+        }
+        if k == 9 {
+            kib = 30000;
+        }
+        if k == 10 {
+            kib = 25000;
+        }
+        if k == 11 {
+            kib = 20000;
+        }
+        if k == 12 {
+            kib = 15000;
+        }
+        if k == 13 {
+            kib = 12000;
+        }
+        if k == 14 {
+            kib = 10000;
+        }
+        if k == 15 {
+            kib = 9000;
+        }
+        if k == 16 {
+            kib = 8000;
+        }
+        if k == 17 {
+            kib = 6000;
+        }
+        rep = under_limit(heap, exec, clock, exe, mode, kib, want, rep);
+        let ended = how_it_ended(heap, exec, clock, exe, mode, kib);
+        if ended == 1 {
+            finished = finished + 1;
+        }
+        if ended == 2 {
+            trapped = trapped + 1;
+        }
+        k = k + 1;
+    }
+    if finished == 0 || trapped == 0 && must_trap {
+        var said = buffer.append(heap, buffer.empty(heap, 64), "finished ");
+        said = buffer.push_nat(heap, said, finished);
+        said = buffer.append(heap, said, ", trapped ");
+        said = buffer.push_nat(heap, said, trapped);
+        borrow said as &sb in {
+            rep = harness.failure(heap, rep, "global_state", mode, "the sweep must see both ends", buffer.bytes(sb));
+        }
+        buffer.drop(heap, said);
+    }
+    return rep;
+}
+
+// The driver in mode `x`: a line to standard output, then an index past the end of a slice. The process is killed by a signal and the line is lost.
+fn trap_loses_output[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let ended = harness.spawn_capture(heap, exec, clock, exe, harness.word(heap, buffer.empty(heap, 16), "x"), "", "PATH=/usr/bin:/bin\0");
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow out as &ob in {
+        if kind != 1 {
+            rep = harness.failure(heap, rep, "global_state", "trap", "a trap is a signal", buffer.bytes(ob));
+        } else if len(buffer.bytes(ob)) != 0 {
+            rep = harness.failure(heap, rep, "global_state", "trap", "the line written before the trap reached the pipe", buffer.bytes(ob));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+fn check[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-global-state");
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "global_state", "scratch", "mktemp -d made no directory", "");
+            } else {
+                let exe = harness.joined(heap, buffer.bytes(db), "driver");
+                borrow exe as &xb in {
+                    let built = harness.build_only(heap, exec, clock, bin, "tests/programs/memory_exhaustion.cho\0", "", buffer.bytes(xb), buffer.bytes(eb));
+                    let harness.Ended { out, err, kind, code } = built;
+                    borrow err as &rb in {
+                        if kind != 0 {
+                            report = harness.failure(heap, report, "global_state", "driver", "should build the driver, but the compiler said", buffer.bytes(rb));
+                        } else {
+                            report = trap_loses_output(heap, exec, clock, buffer.bytes(xb), report);
+                            if on_linux(heap, exec, clock) {
+                                // `b` allocates what it only reads back once, so `-O2` removes the allocation and it is held to the outcomes but not to a trap.
+                                report = sweep(heap, exec, clock, buffer.bytes(xb), "g", "268435456", true, report);
+                                report = sweep(heap, exec, clock, buffer.bytes(xb), "r", "0", true, report);
+                                report = sweep(heap, exec, clock, buffer.bytes(xb), "b", "496", false, report);
+                            }
+                        }
+                    }
+                    buffer.drop(heap, out);
+                    buffer.drop(heap, err);
+                }
+                buffer.drop(heap, exe);
+                harness.remove_tree(heap, exec, clock, buffer.bytes(db));
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, exec(""), clock, poll] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: global_state CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: global_state\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        status = run(h, i, a, x, c);
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

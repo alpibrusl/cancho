@@ -1,0 +1,282 @@
+edition 7;
+module memory_test;
+
+// memory.cho -- `conformance/memory.rs` (deleted), in cancho (`docs/gate.md` G4): where values live, the heap, `static` data, and what a type costs. (1) The heap frees (`docs/heap.md` section 3.1): eight million boxes
+// of 2 KiB (a struct of 256 fields) one at a time run in a bounded footprint; a leak would need 16 GB. (2) A loop body does not grow the stack: twenty million iterations of a `borrow` and of `&&`/`||`, the reference
+// escaping to a recursive call so the optimiser cannot delete it. (3) A `static` outgrows what an arena can hold (`docs/compile-time-data.md` section 1.1): a 65,536-entry `[int]` in a `static` runs, the same table in a
+// `region` is refused at check time, saying the chunk limit. (4) A `static` needs no authority and no heap: the authority report (`--output json`) says `"effects": []` and no foreign symbols, and the program runs.
+// (5) The layout report (`docs/layout.md` section 4) says what a type costs: `Rgb` has 3 leaves, 24 bytes, 3 packed and a stride of 24.
+//
+//     cancho build tests/commands/memory.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: memory` or what is wrong, and exits 0 or 1. What narrowed: one backend (LLVM; the Cranelift legs went with D2); the region refusal is held to the rule's sentence (`a
+// region is one 65,536-byte chunk`), not to the Rust front end's words; and the layout report's second half (the arena boundary at `65536 / stride` elements, 2730 fit and 2731 trap) is not run, because the compiler
+// written in cancho has no code for `alloc_slice` of a struct yet (`this command line cannot judge the program`, exit 3).
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// `text` built and run: it must exit 0 (`trap` false) or be killed by a signal (`trap` true).
+fn runs[&h, &x, &c, &f, &b, &e, &d, &n, &t, &w](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], text: &t [byte], trap: bool, why: &w [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let ended = harness.rt_build_run(heap, exec, clock, fs, bin, env, dir, name, text, "");
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow err as &eb in {
+        if kind == 6 || kind == 5 {
+            rep = harness.failure(heap, rep, "memory", name, "should build, but the compiler said", buffer.bytes(eb));
+        } else if trap && kind != 1 {
+            rep = harness.failure(heap, rep, "memory", name, why, buffer.bytes(eb));
+        } else if !trap && (kind != 0 || code != 0) {
+            rep = harness.failure(heap, rep, "memory", name, why, buffer.bytes(eb));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// The struct of 256 `int` fields and the loop that boxes and unboxes it.
+fn churn_source[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var fields = buffer.empty(heap, 4096);
+    var init = buffer.empty(heap, 4096);
+    var i = 0;
+    while i < 256 {
+        if i > 0 {
+            fields = buffer.append(heap, fields, ", ");
+            init = buffer.append(heap, init, ", ");
+        }
+        fields = buffer.push_nat(heap, buffer.append(heap, fields, "f"), i);
+        fields = buffer.append(heap, fields, ": int");
+        init = buffer.push_nat(heap, buffer.append(heap, init, "f"), i);
+        init = buffer.append(heap, init, ": 1");
+        i = i + 1;
+    }
+    var text = buffer.append(heap, buffer.empty(heap, 8192), "struct Chunk { ");
+    borrow fields as &fb in {
+        text = buffer.append(heap, text, buffer.bytes(fb));
+    }
+    text = buffer.append(heap, text, " }\nfn churn[&h](heap: &!h Heap, rounds: int) -> [heap] int {\n    var total = 0;\n    var i = 0;\n    while i < rounds {\n        let b = box(heap, Chunk { ");
+    borrow init as &ib in {
+        text = buffer.append(heap, text, buffer.bytes(ib));
+    }
+    text = buffer.append(heap, text, " });\n        let c = unbox(heap, b);\n        total = total + c.f0;\n        i = i + 1;\n    }\n    return total;\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args);\n    release(ffi); release(fs); release(io);\n    var total = 0;\n    borrow mut heap as &!h in { total = churn(h, 8000000); }\n    release(heap);\n    return total - 8000000;\n}\n");
+    buffer.drop(heap, fields);
+    buffer.drop(heap, init);
+    return text;
+}
+
+// A program around a `static` (or a `region`) holding a 65,536-entry table.
+fn table_source[&h](heap: &!h Heap, in_static: bool) -> [heap] buffer.Buffer {
+    let fill = "    var i = 0;\n    while i < 65536 {\n        table[i] = i * 3;\n        i = i + 1;\n    }\n";
+    let prologue = "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io);\n";
+    var text = buffer.append(heap, buffer.empty(heap, 1024), prologue);
+    if in_static {
+        text = buffer.append(heap, text, "    if len(big) != 65536 { return 1; }\n    return big[65535] - 196605;\n}\nstatic big: [int] {\n    let table = alloc_slice[static](65536, 0);\n");
+        text = buffer.append(heap, text, fill);
+        return buffer.append(heap, text, "    return table;\n}\n");
+    }
+    text = buffer.append(heap, text, "    region a {\n        let table = alloc_slice[a](65536, 0);\n");
+    text = buffer.append(heap, text, fill);
+    return buffer.append(heap, text, "        if table[65535] != 196605 { return 1; }\n    }\n    return 0;\n}\n");
+}
+
+// The `static` runs; the `region` is refused at check time, saying the chunk limit (the rule's sentence).
+fn static_outgrows[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let with_static = table_source(heap, true);
+    borrow with_static as &sb in {
+        rep = runs(heap, exec, clock, fs, bin, env, dir, "static_big", buffer.bytes(sb), false, "a 512 KB `static` is data in the binary, so there is no chunk to exhaust", rep);
+    }
+    buffer.drop(heap, with_static);
+    let with_region = table_source(heap, false);
+    borrow with_region as &rb in {
+        let ended = harness.rt_build_run(heap, exec, clock, fs, bin, env, dir, "region_big", buffer.bytes(rb), "");
+        let harness.Ended { out, err, kind, code } = ended;
+        borrow err as &eb in {
+            if kind != 6 {
+                rep = harness.failure(heap, rep, "memory", "region_big", "512 KB in a 64 KiB arena must be refused", buffer.bytes(eb));
+            } else if !harness.contains(buffer.bytes(eb), "65,536-byte chunk") {
+                rep = harness.failure(heap, rep, "memory", "region_big", "the chunk limit is named at check time", buffer.bytes(eb));
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, with_region);
+    return rep;
+}
+
+// The authority report of a program whose only arithmetic is inside a `static`: no effects, no foreign code; and the program runs, `table[3]` being 9 computed during compilation.
+fn static_authority[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let source = "static table: [int] {\n    let t = alloc_slice[static](8, 0);\n    var i = 0;\n    while i < 8 { t[i] = i * i; i = i + 1; }\n    return t;\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io);\n    return table[3] - 9;\n}\n";
+    let path = harness.rt_put(heap, fs, dir, "static_authority.cho", source);
+    borrow path as &pb in {
+        let ended = harness.run_cancho(heap, exec, clock, bin, env, "authority", "--output", "json", buffer.bytes(pb));
+        let harness.Ended { out, err, kind, code } = ended;
+        borrow out as &ob in {
+            borrow err as &eb in {
+                if kind != 0 || code != 0 {
+                    rep = harness.failure(heap, rep, "memory", "static authority", "`authority --output json` should succeed", buffer.bytes(eb));
+                } else {
+                    rep = harness.require(heap, rep, harness.contains(buffer.bytes(ob), "\"effects\": []"), "memory", "static authority", "a `static` performs nothing", buffer.bytes(ob));
+                    rep = harness.require(heap, rep, harness.contains(buffer.bytes(ob), "\"foreign_symbols\": []"), "memory", "static authority", "and reaches no foreign code", buffer.bytes(ob));
+                }
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, path);
+    rep = runs(heap, exec, clock, fs, bin, env, dir, "static_runs", source, false, "`table[3]` is 9, computed during compilation", rep);
+    return rep;
+}
+
+// The number at position `k` (0-based) among the blank-separated words of `line`; -1 if there is none, -2 if it is not a number.
+fn word_number[&t](line: &t [byte], k: int) -> [] int {
+    var at = 0;
+    var seen = 0;
+    while at < len(line) {
+        while at < len(line) && line[at] == byte_of(' ') {
+            at = at + 1;
+        }
+        if at >= len(line) {
+            return 0 - 1;
+        }
+        var n = 0;
+        var digits = 0;
+        var bad = false;
+        while at < len(line) && line[at] != byte_of(' ') {
+            if bytes.is_digit(int_of(line[at])) {
+                n = n * 10 + (int_of(line[at]) - '0');
+                digits = digits + 1;
+            } else {
+                bad = true;
+            }
+            at = at + 1;
+        }
+        if seen == k {
+            if bad || digits == 0 {
+                return 0 - 2;
+            }
+            return n;
+        }
+        seen = seen + 1;
+    }
+    return 0 - 1;
+}
+
+// The layout report agrees with the type: the `Rgb` row says 3 leaves, 24 bytes, 3 packed, a stride of 24.
+fn layout_report[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let source = "struct Rgb { r: byte, g: byte, b: byte }\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io);\n    let p = Rgb { r: byte_of(1), g: byte_of(2), b: byte_of(3) };\n    return int_of(p.r) - 1;\n}\n";
+    let path = harness.rt_put(heap, fs, dir, "rgb.cho", source);
+    borrow path as &pb in {
+        let ended = harness.run_cancho(heap, exec, clock, bin, env, "layout", buffer.bytes(pb), "", "");
+        let harness.Ended { out, err, kind, code } = ended;
+        borrow out as &ob in {
+            borrow err as &eb in {
+                if kind != 0 || code != 0 {
+                    rep = harness.failure(heap, rep, "memory", "layout", "`layout` should succeed", buffer.bytes(eb));
+                } else {
+                    let text = buffer.bytes(ob);
+                    let at = bytes.find(text, "\nRgb ");
+                    if at < 0 {
+                        rep = harness.failure(heap, rep, "memory", "layout", "no `Rgb` row", text);
+                    } else {
+                        let rest = text[at + 1..len(text)];
+                        let row = bytes.field(rest, 10, 1);
+                        let tail = row[3..len(row)];
+                        rep = harness.require(heap, rep, word_number(tail, 0) == 3, "memory", "layout", "three leaves", row);
+                        rep = harness.require(heap, rep, word_number(tail, 1) == 24, "memory", "layout", "eight bytes each today", row);
+                        rep = harness.require(heap, rep, word_number(tail, 2) == 3, "memory", "layout", "one byte each packed -- section 2's whole point", row);
+                        rep = harness.require(heap, rep, word_number(tail, 3) == 24, "memory", "layout", "and the stride is what a traversal pays", row);
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, path);
+    return rep;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-memory");
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "memory", "scratch", "mktemp -d made no directory", "");
+            } else {
+                let d = buffer.bytes(db);
+                let e = buffer.bytes(eb);
+                let churn = churn_source(heap);
+                borrow churn as &cb in {
+                    report = runs(heap, exec, clock, fs, bin, e, d, "churn", buffer.bytes(cb), false, "eight million boxes in a bounded footprint should succeed; a leak would need 16 GB", report);
+                }
+                buffer.drop(heap, churn);
+                let loop_stack = "struct P { a: int }\nfn read[&r](p: &r P, depth: int) -> [] int {\n    if depth <= 0 { return p.a; }\n    return read(p, depth - 1) + 1;\n}\nfn work(n: int) -> [] int {\n    var total = 0;\n    var i = 0;\n    while i < n {\n        var cell = P { a: i };\n        borrow cell as &r in {\n            if read(r, i % 3) >= 0 && n > 0 || i < 0 { total = total + 1; }\n        }\n        i = i + 1;\n    }\n    return total;\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap); release(io);\n    return work(20000000) - 20000000;\n}\n";
+                report = runs(heap, exec, clock, fs, bin, e, d, "loop_stack", loop_stack, false, "the loop must run to the end", report);
+                report = static_outgrows(heap, exec, clock, fs, bin, e, d, report);
+                report = static_authority(heap, exec, clock, fs, bin, e, d, report);
+                report = layout_report(heap, exec, clock, fs, bin, e, d, report);
+                harness.remove_tree(heap, exec, clock, d);
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: memory CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: memory\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    release(fs);
+    return status;
+}

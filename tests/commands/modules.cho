@@ -1,0 +1,282 @@
+edition 7;
+module modules_test;
+
+// modules.cho -- `conformance/modules.rs` (deleted), in cancho (`docs/gate.md` G4): programs over several files and modules, and the standard library behind `--std` (`docs/modules.md`, `docs/many-files.md`,
+// `docs/standard-library.md`). Files are written to a scratch directory and built together: the module rules across files (a private function, a private type, an unqualified call, a qualified name that is not there,
+// two imports binding one qualifier, accepted again with `as`); a `match` naming an enum through its qualifier, and an unbound qualifier refused; a qualified call is not shadowed by a local (an `int`, and a function
+// value of the right shape); the library checks on its own (four of its modules); `--std` is opt-in and works; a program spread over three files in any order; a diagnostic names the file it came from; a name is
+// declared once per program, not per file; two modules may each declare a function, and a `static`, of the same name.
+//
+//     cancho build tests/commands/modules.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: modules` or what is wrong, and exits 0 or 1. What narrowed: one backend (LLVM); the refusals are held to the rule's sentence (the default compiler says the
+// sentence of the rule, which has no names in it, #479), not to the Rust front end's words; the library check covers `bytes`, `math`, `io` and `buffer` (the compiler in cancho cannot judge a file of generic
+// declarations with no program that instantiates them -- `option`, `result`, `list` and `vec` answer exit 3, `this command line cannot judge the program` -- measured 2026-11-09); and
+// `std_declarations_cost_nothing_unless_called` (`--std` and no `--std` emit byte-identical objects) is not moved: it was pinned to Cranelift, and the objects the compiler in cancho writes differ (33,488 bytes with `--std` against
+// 12,728 without, for a program that calls none of it; `docs/standard-library.md` section 5.2 says so).
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// `names[i]` written with `texts[i]` (up to three files; an empty name is no file) and `cancho VERB FILES [-o dir/program]` run on them: the compiler's `Ended`; when `run`, a build that worked is followed by the program,
+// whose `Ended` is returned instead.
+fn many[&h, &x, &c, &f, &b, &e, &d, &v, &n1, &t1, &n2, &t2, &n3, &t3](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], verb: &v [byte], run: bool, name_one: &n1 [byte], text_one: &t1 [byte], name_two: &n2 [byte], text_two: &t2 [byte], name_three: &n3 [byte], text_three: &t3 [byte]) -> [heap, exec(""), clock, poll, fs_write("")] harness.Ended {
+    var command = harness.word(heap, buffer.empty(heap, 64), verb);
+    let one = harness.rt_put(heap, fs, dir, name_one, text_one);
+    borrow one as &ob in {
+        command = harness.word(heap, command, buffer.bytes(ob));
+    }
+    buffer.drop(heap, one);
+    var two = buffer.empty(heap, 0);
+    if len(name_two) > 0 {
+        buffer.drop(heap, two);
+        two = harness.rt_put(heap, fs, dir, name_two, text_two);
+    }
+    borrow two as &wb in {
+        if len(buffer.bytes(wb)) > 0 {
+            command = harness.word(heap, command, buffer.bytes(wb));
+        }
+    }
+    buffer.drop(heap, two);
+    var three = buffer.empty(heap, 0);
+    if len(name_three) > 0 {
+        buffer.drop(heap, three);
+        three = harness.rt_put(heap, fs, dir, name_three, text_three);
+    }
+    borrow three as &hb in {
+        if len(buffer.bytes(hb)) > 0 {
+            command = harness.word(heap, command, buffer.bytes(hb));
+        }
+    }
+    buffer.drop(heap, three);
+    let exe = harness.joined(heap, dir, "program");
+    if run {
+        command = harness.word(heap, command, "--std");
+        command = harness.word(heap, command, "-o");
+        borrow exe as &xb in {
+            command = harness.word(heap, command, buffer.bytes(xb));
+        }
+    }
+    let built = harness.spawn_capture(heap, exec, clock, bin, command, "", env);
+    if !run {
+        buffer.drop(heap, exe);
+        return built;
+    }
+    let harness.Ended { out, err, kind, code } = built;
+    if kind != 0 || code != 0 {
+        buffer.drop(heap, out);
+        buffer.drop(heap, exe);
+        return harness.Ended { out: buffer.empty(heap, 0), err: err, kind: 6, code: code };
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    var ran = harness.Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
+    borrow exe as &rb in {
+        harness.drop_ended(heap, ran);
+        ran = harness.run_program(heap, exec, clock, buffer.bytes(rb), "");
+    }
+    buffer.drop(heap, exe);
+    return ran;
+}
+
+// The result must be a build that was refused (exit 1) saying `fragment` on standard error.
+fn refused[&h, &n, &w](heap: &!h Heap, report: buffer.Buffer, ended: harness.Ended, name: &n [byte], fragment: &w [byte]) -> [heap] buffer.Buffer {
+    var rep = report;
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow err as &eb in {
+        if kind != 6 && !(kind == 0 && code == 1) {
+            rep = harness.failure(heap, rep, "modules", name, "should have been refused", buffer.bytes(eb));
+        } else if !harness.contains(buffer.bytes(eb), fragment) {
+            rep = harness.failure(heap, rep, "modules", name, "the refusal should say", buffer.bytes(eb));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// The result must be a program that ran, exited `want_code` and printed `want_out`.
+fn ran[&h, &n, &w](heap: &!h Heap, report: buffer.Buffer, ended: harness.Ended, name: &n [byte], want_code: int, want_out: &w [byte]) -> [heap] buffer.Buffer {
+    var rep = report;
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow out as &ob in {
+        borrow err as &eb in {
+            if kind != 0 || code != want_code {
+                rep = harness.failure(heap, rep, "modules", name, "should build and exit with the right status (kind 6: the build said)", buffer.bytes(eb));
+            } else if !bytes.equal(buffer.bytes(ob), want_out) {
+                rep = harness.failure(heap, rep, "modules", name, "printed the wrong thing", buffer.bytes(ob));
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+fn module_rules[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let lib = "module lib;\npub fn shown() -> [] int { return 1; }\nfn hidden() -> [] int { return 2; }\nstruct Secret { n: int }\npub struct Open { n: int }\n";
+    let other = "module other.lib;\npub fn nothing() -> [] int { return 0; }\n";
+    // Section 5: private is private.
+    rep = refused(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "import lib;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap); release(io);\n    return lib.hidden();\n}\n", "lib.cho", lib, "", ""), "private function", "`pub` is what makes a declaration reachable");
+    // Section 5, for a type rather than a function.
+    rep = refused(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "import lib;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap); release(io);\n    let s: lib.Secret = lib.Secret { n: 1 };\n    return s.n;\n}\n", "lib.cho", lib, "", ""), "private type", "`pub` is what makes a declaration reachable");
+    // Section 4.1: an import binds a qualifier, not a set of names. `shown` is `pub` and imported, and still not in scope unqualified.
+    rep = refused(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "import lib;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap); release(io);\n    return shown();\n}\n", "lib.cho", lib, "", ""), "unqualified", "not a function in this program");
+    // Section 4: a qualified name that is not there is an error, never a fall back to the local module. `elsewhere` is defined right here.
+    rep = refused(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "import lib;\nfn elsewhere() -> [] int { return 3; }\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap); release(io);\n    return lib.elsewhere();\n}\n", "lib.cho", lib, "", ""), "missing", "not a function in this program");
+    // Section 4: two imports may not bind one qualifier.
+    rep = refused(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "import lib;\nimport other.lib;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap); release(io);\n    return 0;\n}\n", "lib.cho", lib, "other.cho", other), "collision", "A name is introduced once in the scope that holds it");
+    // And the same program with an `as` is accepted, which is what makes the refusal above a rule rather than a limit.
+    rep = ran(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "import lib;\nimport other.lib as other;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap); release(io);\n    return lib.shown() + other.nothing() - 1;\n}\n", "lib.cho", lib, "other.cho", other), "renamed", 0, "");
+    return rep;
+}
+
+// `docs/collections.md` section 5: a `match` names an enum through the same qualifier every other reference uses; a qualifier that is not an import here is an error, not skipped because the scrutinee already said which enum.
+fn qualified_patterns[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let shapes = "module shapes;\npub enum Shape { Flat, Tall(int) }\npub fn tall(n: int) -> [] Shape { return Shape::Tall(n); }\n";
+    rep = ran(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "import shapes;\nfn height(s: shapes.Shape) -> [] int {\n    match s {\n        shapes.Shape::Flat => { return 0; }\n        shapes.Shape::Tall(n) => { return n; }\n    }\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap); release(io);\n    return height(shapes.tall(7)) + height(shapes.Shape::Flat) - 7;\n}\n", "shapes.cho", shapes, "", ""), "qualified pattern", 0, "");
+    rep = refused(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "import shapes;\nfn height(s: shapes.Shape) -> [] int {\n    match s {\n        forms.Shape::Flat => { return 0; }\n        forms.Shape::Tall(n) => { return n; }\n    }\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap); release(io);\n    return height(shapes.Shape::Flat);\n}\n", "shapes.cho", shapes, "", ""), "unbound qualifier", "reaches another module only where this file has imported it");
+    return rep;
+}
+
+// `docs/modules.md` section 4.3: a qualified call resolves its name in the module and never against a local binding of the same name (an `int`, and a function value of `lib.min`'s signature that was called instead, giving 9 rather than 1).
+fn shadowing[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let lib = "module lib;\npub fn max(a: int, b: int) -> [] int { if a > b { return a; } return b; }\npub fn min(a: int, b: int) -> [] int { if a < b { return a; } return b; }\n";
+    rep = ran(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "import lib;\nfn main(world: World) -> [] int {\n    release(world);\n    let max = 3;\n    return lib.max(max, 2) - 3;\n}\n", "lib.cho", lib, "", ""), "shadow by an int", 0, "");
+    rep = ran(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "import lib;\nfn most(a: int, b: int) -> [] int { if a > b { return a; } return b; }\nfn main(world: World) -> [] int {\n    release(world);\n    let min = most;\n    return lib.min(1, 9) + min(1, 9) - 10;\n}\n", "lib.cho", lib, "", ""), "shadow by a function value", 0, "");
+    return rep;
+}
+
+// The standard library type-checks on its own, with no program (`docs/standard-library.md` section 7): named on the command line like any other module, `check` refuses at the end for want of a `main`, after every declaration has been checked.
+fn library_checks[&h, &x, &c, &b, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var command = harness.word(heap, buffer.empty(heap, 64), "check");
+    command = harness.word(heap, command, "std/bytes.cho");
+    command = harness.word(heap, command, "std/math.cho");
+    command = harness.word(heap, command, "std/io.cho");
+    command = harness.word(heap, command, "std/buffer.cho");
+    var rep = report;
+    let ended = harness.spawn_capture(heap, exec, clock, bin, command, "", env);
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow err as &eb in {
+        if !harness.contains(buffer.bytes(eb), "no `main` function") {
+            rep = harness.failure(heap, rep, "modules", "the library on its own", "the library itself should check clean; it should refuse only for want of a main", buffer.bytes(eb));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// `--std` makes the library's source present without naming a file, and it is still opt-in: the program writes its own `import`.
+fn std_flag[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    return ran(heap, report, many(heap, exec, clock, fs, bin, env, dir, "build", true, "tool.cho", "import std.io;\nimport std.bytes;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap);\n    borrow mut io as &!i in {\n        io.print_pad(i, 0 - 42, 6);\n        io.newline(i);\n    }\n    release(io);\n    return bytes.digit_of(55) - 7;\n}\n", "", "", "", ""), "std flag", 0, "   -42\n");
+}
+
+// `docs/many-files.md` section 2: a program is a set of files, named in any order, sharing one flat namespace; `main.cho` calls `print_nat` declared in a file listed after it, and `twice` in a third.
+fn many_files[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let util = "fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int {\n    if n >= 10 { print_nat(io, n / 10); }\n    return putchar(io, 48 + n % 10);\n}\n";
+    rep = ran(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(heap); release(fs); release(ffi);\n    borrow mut io as &!i in { print_nat(i, twice(21)); putchar(i, 10); }\n    release(io);\n    return twice(21) - 42;\n}\n", "util.cho", util, "math.cho", "fn twice(n: int) -> [] int { return n + n; }\n"), "several files", 0, "42\n");
+    // Section 4: the error is in the third file and has to be reported at that file's own line 1.
+    let ended = many(heap, exec, clock, fs, bin, env, dir, "check", false, "main.cho", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io);\n    return 0;\n}\n", "util.cho", util, "broken.cho", "fn oops() -> [] int { return missing(); }\n");
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow err as &eb in {
+        if kind != 0 || code != 1 {
+            rep = harness.failure(heap, rep, "modules", "diagnostic", "should be refused with exit 1", buffer.bytes(eb));
+        } else if !harness.contains(buffer.bytes(eb), "broken.cho:1:") || !harness.contains(buffer.bytes(eb), "fn oops() -> [] int") {
+            rep = harness.failure(heap, rep, "modules", "diagnostic", "should name the file it came from, at its own line, and show that line", buffer.bytes(eb));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// Section 2.2: the namespace is flat and shared, so a duplicate across two files is the same error as a duplicate within one; and two modules may each declare a function, and a `static`, of the same name.
+fn names[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    rep = refused(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "fn twice(n: int) -> [] int { return n + n; }\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap); release(io);\n    return twice(0);\n}\n", "other.cho", "fn twice(n: int) -> [] int { return n * 2; }\n", "", ""), "duplicate across files", "A name is introduced once in the scope that holds it");
+    // 2 * 100 + 20 + 2
+    rep = ran(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "import first;\nimport second;\nfn drop(n: int) -> [] int { return n - 1; }\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap); release(io);\n    return first.drop(1) * 100 + second.drop(2) + drop(3);\n}\n", "first.cho", "module first;\npub fn drop(n: int) -> [] int { return n + 1; }\n", "second.cho", "module second;\npub fn drop(n: int) -> [] int { return n * 10; }\n"), "same function name", 222, "");
+    rep = ran(heap, rep, many(heap, exec, clock, fs, bin, env, dir, "build", true, "main.cho", "import a;\nimport b;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(ffi); release(fs); release(heap); release(io);\n    return a.first() * 10 + b.first();\n}\n", "a.cho", "module a;\nstatic table: [int] {\n    let t = alloc_slice[static](2, 0);\n    t[0] = 5;\n    return t;\n}\npub fn first() -> [] int { return table[0]; }\n", "b.cho", "module b;\nstatic table: [int] {\n    let t = alloc_slice[static](2, 0);\n    t[0] = 7;\n    return t;\n}\npub fn first() -> [] int { return table[0]; }\n"), "same static name", 57, "");
+    return rep;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-modules");
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "modules", "scratch", "mktemp -d made no directory", "");
+            } else {
+                let e = buffer.bytes(eb);
+                let d = buffer.bytes(db);
+                report = module_rules(heap, exec, clock, fs, bin, e, d, report);
+                report = qualified_patterns(heap, exec, clock, fs, bin, e, d, report);
+                report = shadowing(heap, exec, clock, fs, bin, e, d, report);
+                report = library_checks(heap, exec, clock, bin, e, report);
+                report = std_flag(heap, exec, clock, fs, bin, e, d, report);
+                report = many_files(heap, exec, clock, fs, bin, e, d, report);
+                report = names(heap, exec, clock, fs, bin, e, d, report);
+                harness.remove_tree(heap, exec, clock, buffer.bytes(db));
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: modules CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: modules\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    release(fs);
+    return status;
+}

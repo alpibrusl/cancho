@@ -1,0 +1,158 @@
+edition 7;
+module traps_test;
+
+// traps.cho -- `conformance/traps.rs` (deleted), in cancho (`docs/gate.md` G4): defined behaviour, every run-time check traps where C would be undefined, and nowhere else (`docs/defined-behaviour.md`). Each case is a
+// program built and run: a trap is a process killed by a signal (no exit code), a program that must not trap exits 0. The cases: `byte_of` outside a byte (256, -1); indexing past a slice (5, -1); slicing past the end
+// (`0..13`, `-1..3`) and an inverted range (`5..2`); integer overflow; exhausting an arena; division by zero, `1 % 0` and `int::MIN / -1` (operands from variables, since literals fold), and `int::MIN % -1` which is 0 both
+// folded and computed; `abs` of the most negative integer; a boxed slice of a negative count or one whose size overflows; a shift by 64, -1 and 65 traps while 63 and 0 do not; `truncate` of NaN, the infinities, 1e30,
+// -1e30, 1e19 and exactly -2^63 traps while 9e18, 0.0 and -2.7 do not; `vec.pop` on an empty vector, `vec.remove` past the end and `vec.insert` past `used + 1`; a failed `assert_eq`; `copy_into` with a source that does
+// not fit (three calls trap, three at the edge do not) and `copy_within` outside the slice (nine trap, three at the edge do not).
+//
+//     cancho build tests/commands/traps.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: traps` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift legs went with D2. The cases were written out from the Rust test by a one-off script;
+// to add one, add a line to `check`.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// `text` built and run: killed by a signal when `trap`, otherwise exit 0.
+fn one[&h, &x, &c, &f, &b, &e, &d, &n, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], text: &t [byte], trap: bool, report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let ended = harness.rt_build_run(heap, exec, clock, fs, bin, env, dir, name, text, "");
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow err as &eb in {
+        if kind == 6 || kind == 5 {
+            rep = harness.failure(heap, rep, "traps", name, "should compile (the value is a runtime one), but the compiler said", buffer.bytes(eb));
+        } else if trap && kind != 1 {
+            rep = harness.failure(heap, rep, "traps", name, "should be killed by a signal, not exit", buffer.bytes(eb));
+        } else if !trap && (kind != 0 || code != 0) {
+            rep = harness.failure(heap, rep, "traps", name, "should exit 0", buffer.bytes(eb));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-traps");
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "traps", "scratch", "mktemp -d made no directory", "");
+            } else {
+                let d = buffer.bytes(db);
+                let e = buffer.bytes(eb);
+                report = one(heap, exec, clock, fs, bin, e, d, "byte_of_256", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    return int_of(byte_of(256));\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "byte_of_0minus1", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    return int_of(byte_of(0 - 1));\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "index_5", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var n = 0;\n    region a { let xs = alloc_slice[a](3, 7); n = xs[5]; }\n    return n;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "index_0minus1", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var n = 0;\n    region a { let xs = alloc_slice[a](3, 7); n = xs[0 - 1]; }\n    return n;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "slice_0__13", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    let text = \"hello, world\";\n    return len(text[0..13]);\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "slice_0minus1__3", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    let text = \"hello, world\";\n    return len(text[0 - 1..3]);\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "inverted_range", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    let text = \"hello, world\";\n    return len(text[5..2]);\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "overflow", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var n = 9223372036854775807;\n    return n + 1;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "arena_exhaustion", "struct Node { value: int }\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    region a {\n        var i = 0;\n        while i < 20000 {\n            let node = alloc[a](Node { value: i });\n            i = i + 1;\n        }\n    }\n    return 0;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "divide_by_zero", "fn divide(a: int, b: int) -> [] int { return a / b; }\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    return divide(1, 0);\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "rem_trap", "fn op(a: int, b: int) -> [] int { return a % b; }\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var x = 1; var y = 0;\n    return op(x, y);\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "div_trap", "fn op(a: int, b: int) -> [] int { return a / b; }\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var x = -9223372036854775808; var y = -1;\n    return op(x, y);\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "rem_minus_one_is_zero", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    let folded = -9223372036854775808 % -1;\n    var a = -9223372036854775808; var b = -1;\n    let computed = a % b;\n    return folded + computed;\n}\n", false, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "abs_of_the_most_negative", "import std.math;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    return math.abs(-9223372036854775808);\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "boxed_slice_size_0", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(fs); release(ffi); release(io);\n    var n = 0;\n    borrow mut heap as &!h in {\n        let b = box_slice(h, 0 - 3, 0);\n        n = unbox_slice(h, b);\n    }\n    release(heap);\n    return n;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "boxed_slice_size_1", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(fs); release(ffi); release(io);\n    var n = 0;\n    borrow mut heap as &!h in {\n        let b = box_slice(h, 4611686018427387904, 0);\n        n = unbox_slice(h, b);\n    }\n    release(heap);\n    return n;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "shift_0", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = 0;\n    var amount = 64;\n    if (1 << amount) != 12345 { seen = 0; }\n    if (1 >> amount) != 12345 { seen = 0; }\n    return seen;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "shift_1", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = 0;\n    var amount = 0 - 1;\n    if (1 << amount) != 12345 { seen = 0; }\n    if (1 >> amount) != 12345 { seen = 0; }\n    return seen;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "shift_2", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = 0;\n    var amount = 65;\n    if (1 << amount) != 12345 { seen = 0; }\n    if (1 >> amount) != 12345 { seen = 0; }\n    return seen;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "shift_3", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = 0;\n    var amount = 63;\n    if (1 << amount) != 12345 { seen = 0; }\n    if (1 >> amount) != 12345 { seen = 0; }\n    return seen;\n}\n", false, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "shift_4", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = 0;\n    var amount = 0;\n    if (1 << amount) != 12345 { seen = 0; }\n    if (1 >> amount) != 12345 { seen = 0; }\n    return seen;\n}\n", false, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "truncate_0", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = truncate(0.0 / 0.0);\n    if seen == 12345 { seen = 0; }\n    return 0;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "truncate_1", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = truncate(1.0 / 0.0);\n    if seen == 12345 { seen = 0; }\n    return 0;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "truncate_2", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = truncate(0.0 - 1.0 / 0.0);\n    if seen == 12345 { seen = 0; }\n    return 0;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "truncate_3", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = truncate(1.0e30);\n    if seen == 12345 { seen = 0; }\n    return 0;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "truncate_4", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = truncate(-1.0e30);\n    if seen == 12345 { seen = 0; }\n    return 0;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "truncate_5", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = truncate(9.0e18);\n    if seen == 12345 { seen = 0; }\n    return 0;\n}\n", false, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "truncate_6", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = truncate(1.0e19);\n    if seen == 12345 { seen = 0; }\n    return 0;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "truncate_7", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = truncate(-9223372036854775808.0);\n    if seen == 12345 { seen = 0; }\n    return 0;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "truncate_8", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = truncate(0.0);\n    if seen == 12345 { seen = 0; }\n    return 0;\n}\n", false, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "truncate_9", "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    var seen = truncate(-2.7);\n    if seen == 12345 { seen = 0; }\n    return 0;\n}\n", false, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "pop_empty", "import std.vec;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(fs); release(ffi); release(io);\n    var n = 0;\n    borrow mut heap as &!h in {\n        var v = vec.empty(h, 2, 0);\n        borrow mut v as &!r in { n = vec.pop(r); }\n        vec.drop(h, v);\n    }\n    release(heap);\n    return n;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "remove_past_end", "import std.vec;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(fs); release(ffi); release(io);\n    var n = 0;\n    borrow mut heap as &!h in {\n        var v = vec.empty(h, 2, 0);\n        v = vec.push(h, v, 1);\n        borrow mut v as &!r in { n = vec.remove(r, 5); }\n        vec.drop(h, v);\n    }\n    release(heap);\n    return n;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "insert_past_end", "import std.vec;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(args); release(fs); release(ffi); release(io);\n    var n = 0;\n    borrow mut heap as &!h in {\n        var v = vec.empty(h, 2, 0);\n        v = vec.push(h, v, 1);\n        v = vec.insert(h, v, 9, 2);\n        vec.drop(h, v);\n    }\n    release(heap);\n    return n;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "assert_eq_fails", "import std.test;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world); release(args); release(heap); release(fs); release(ffi); release(io);\n    return test.assert_eq(2 + 2, 5);\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_into_one_too_many", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); let ys = alloc_slice[a](8, byte_of(7)); n = copy_into(xs[0..4], ys[0..5]); n = int_of(xs[0]); }\n    return n - 7;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_into_into_nothing", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); let ys = alloc_slice[a](8, byte_of(7)); n = copy_into(xs[8..8], ys[0..1]); n = int_of(xs[0]); }\n    return n - 7;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_into_longer", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); let ys = alloc_slice[a](8, byte_of(7)); n = copy_into(xs[1..8], ys); n = int_of(xs[0]); }\n    return n - 7;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_into_exactly_full", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); let ys = alloc_slice[a](8, byte_of(7)); n = copy_into(xs, ys); n = int_of(xs[0]); }\n    return n - 7;\n}\n", false, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_into_nothing_into_nothing", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); let ys = alloc_slice[a](8, byte_of(7)); n = copy_into(xs[8..8], ys[3..3]); n = int_of(xs[0]); }\n    return n - 7;\n}\n", false, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_into_short", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); let ys = alloc_slice[a](8, byte_of(7)); n = copy_into(xs[7..8], ys[0..1]); n = int_of(xs[0]); }\n    return n - 7;\n}\n", false, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_within_dst_negative", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, 0 - 1, 0, 1); n = int_of(xs[0]); }\n    return n - 7;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_within_src_negative", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, 0, 0 - 1, 1); n = int_of(xs[0]); }\n    return n - 7;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_within_count_negative", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, 0, 0, 0 - 1); n = int_of(xs[0]); }\n    return n - 7;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_within_dst_past_the_end", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, 4, 0, 5); n = int_of(xs[0]); }\n    return n - 7;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_within_src_past_the_end", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, 0, 4, 5); n = int_of(xs[0]); }\n    return n - 7;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_within_dst_beyond_length", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, 9, 0, 0); n = int_of(xs[0]); }\n    return n - 7;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_within_src_beyond_length", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, 0, 9, 0); n = int_of(xs[0]); }\n    return n - 7;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_within_count_would_overflow_the_sum", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, 1, 0, 9223372036854775807); n = int_of(xs[0]); }\n    return n - 7;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_within_count_would_overflow_the_source_sum", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, 0, 1, 9223372036854775807); n = int_of(xs[0]); }\n    return n - 7;\n}\n", true, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_within_whole", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, 0, 0, 8); n = int_of(xs[0]); }\n    return n - 7;\n}\n", false, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_within_empty_at_the_end", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, 8, 8, 0); n = int_of(xs[0]); }\n    return n - 7;\n}\n", false, report);
+                report = one(heap, exec, clock, fs, bin, e, d, "copy_within_one_byte_at_the_end", "edition 5;\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock } = split(world);\n    release(args); release(heap); release(fs); release(ffi); release(io); release(net); release(clock);\n    var n = 0;\n    region a { let xs = alloc_slice[a](8, byte_of(7)); copy_within(xs, 7, 0, 1); n = int_of(xs[0]); }\n    return n - 7;\n}\n", false, report);
+                harness.remove_tree(heap, exec, clock, d);
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: traps CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: traps\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    release(fs);
+    return status;
+}

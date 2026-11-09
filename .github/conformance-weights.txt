@@ -161,23 +161,6 @@ corpus::run_builds_and_executes_in_one_step 3
 corpus::emitting_a_bare_object_file_works 1
 corpus::every_rule_has_a_fixture 1
 corpus::a_wrong_command_line_is_a_usage_error_not_a_refusal 1
-traps::copy_within_traps_outside_the_slice_on_both_backends 51
-traps::copy_into_traps_when_the_source_does_not_fit_on_both_backends 32
-traps::truncate_traps_where_c_is_undefined 28
-traps::a_shift_past_the_width_traps 11
-traps::vec_pop_remove_insert_trap_out_of_range 9
-traps::slicing_past_the_end_traps 5
-traps::the_other_division_traps 5
-traps::indexing_past_a_slice_traps_rather_than_reading_on 5
-traps::byte_of_traps_outside_a_byte_rather_than_truncating 4
-traps::a_boxed_slice_checks_its_own_size 3
-traps::integer_overflow_traps_rather_than_wrapping 3
-traps::division_by_zero_traps_rather_than_being_undefined 2
-traps::exhausting_an_arena_traps_rather_than_running_past_the_chunk 2
-traps::assert_fails_the_same_way_every_other_trap_does 2
-traps::a_remainder_by_minus_one_is_zero 2
-traps::abs_of_the_most_negative_integer_traps 2
-traps::an_inverted_range_traps 2
 benchmarks::every_guard_kernel_agrees_across_its_three_modes 79
 benchmarks::the_three_language_benchmarks_agree 31
 benchmarks::every_benchmark_pair_agrees 28
@@ -189,8 +172,6 @@ sockets 115
 binary32 98
 tls 81
 json 79
-narrow_many 75
-word_scan 67
 tls_fuzz 65
 api 64
 formatting 63
@@ -208,7 +189,6 @@ foreign_authority 27
 floats 25
 https_hello 24
 tls_auth 23
-modules 21
 tls_echo_fixed 21
 processes 20
 tls_client_auth 19
@@ -220,17 +200,14 @@ ports 16
 compile_time 16
 project 16
 http_server_upload 16
-memory 15
 tls_pool 14
 vcs_std 14
 differential 13
-testing 13
 
 process_release 11
 global_state 11
 
 crypto_builtins 10
-region_cache 8
 
 docs 8
 vcs 7
@@ -238,7 +215,6 @@ wide_multiply 6
 sha256_builtins 6
 vcs_remote 5
 wasm_target 4
-satisfy 4
 mathfn 3
 refusals 3
 authority 3

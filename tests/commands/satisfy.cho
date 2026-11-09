@@ -1,0 +1,121 @@
+edition 7;
+module satisfy_test;
+
+// satisfy.cho -- `conformance/satisfy.rs` (deleted), in cancho (`docs/gate.md` G4): the spec-to-implementation loop (`docs/satisfy.md`, #406) through the compiler's command line. A contract and a candidate
+// are written to a scratch directory and `cancho satisfy CONTRACT CANDIDATE` says: a candidate that checks and passes is `satisfied` with the recomputed `sig_id` (exit 0); the right signature and the
+// wrong body fails the tests (exit 4, as `test` answers); a candidate that does not check is refused by the ordinary checker (exit 1); a contract with no tests, a contract whose only tests are the
+// candidate's own, and a contract that never calls the candidate are usage errors (exit 2, the last saying `never calls`).
+//
+//     cancho build tests/commands/satisfy.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: satisfy` or what is wrong, and exits 0 or 1.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// One case: `contract_text` and `candidate_text` written to `dir/c.cho` and `dir/k.cho`, `satisfy` run on them; it must exit `want_code` and say `in_out` on standard output and `in_err` on standard error (an empty needle is always found).
+fn case[&h, &x, &c, &f, &b, &e, &d, &t, &u, &o, &r, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], contract_text: &t [byte], candidate_text: &u [byte], want_code: int, in_out: &o [byte], in_err: &r [byte], name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let cp = harness.rt_put(heap, fs, dir, "c.cho", contract_text);
+    let kp = harness.rt_put(heap, fs, dir, "k.cho", candidate_text);
+    var rep = report;
+    borrow cp as &cb in {
+        borrow kp as &kb in {
+            let ended = harness.run_cancho(heap, exec, clock, bin, env, "satisfy", buffer.bytes(cb), buffer.bytes(kb), "");
+            let harness.Ended { out, err, kind, code } = ended;
+            borrow out as &ob in {
+                borrow err as &eb in {
+                    if kind != 0 || code != want_code {
+                        rep = harness.failure(heap, rep, "satisfy", name, "wrong exit status", buffer.bytes(eb));
+                    } else if !harness.contains(buffer.bytes(ob), in_out) {
+                        rep = harness.failure(heap, rep, "satisfy", name, "the verdict on standard output is missing a word", buffer.bytes(ob));
+                    } else if !harness.contains(buffer.bytes(eb), in_err) {
+                        rep = harness.failure(heap, rep, "satisfy", name, "the refusal on standard error is missing a word", buffer.bytes(eb));
+                    }
+                }
+            }
+            buffer.drop(heap, out);
+            buffer.drop(heap, err);
+        }
+    }
+    buffer.drop(heap, cp);
+    buffer.drop(heap, kp);
+    return rep;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-satisfy");
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "satisfy", "scratch", "mktemp -d made no directory", "");
+            } else {
+                let d = buffer.bytes(db);
+                let e = buffer.bytes(eb);
+                let contract_text = "fn test_double_doubles() -> [] int {\n    if double(3) != 6 { return 1; }\n    if double(0) != 0 { return 1; }\n    if double(-4) != -8 { return 1; }\n    return 0;\n}\n";
+                let good = "pub fn double(n: int) -> [] int { return n + n; }\n";
+                report = case(heap, exec, clock, fs, bin, e, d, contract_text, good, 0, "satisfied", "", "a satisfying candidate answers satisfied", report);
+                report = case(heap, exec, clock, fs, bin, e, d, contract_text, good, 0, "sig_id ", "", "and the recomputed identity", report);
+                report = case(heap, exec, clock, fs, bin, e, d, contract_text, "pub fn double(n: int) -> [] int { return n; }\n", 4, "not satisfied", "", "a wrong body fails the tests with the tests' exit code", report);
+                report = case(heap, exec, clock, fs, bin, e, d, contract_text, "pub fn double(n: int, m: int) -> [] int { return n; }\n", 1, "", "fixed number of things", "a candidate that does not check is a refusal, not a run", report);
+                report = case(heap, exec, clock, fs, bin, e, d, "// no tests, no expectation\n", good, 2, "", "", "a contract with no tests cannot be satisfied", report);
+                report = case(heap, exec, clock, fs, bin, e, d, "fn helper() -> [] int { return 0; }\n", "pub fn double(n: int) -> [] int { return n + n; }\nfn test_own() -> [] int { return 0; }\n", 2, "", "", "a candidate's own tests do not make an empty contract pass", report);
+                report = case(heap, exec, clock, fs, bin, e, d, "// double(3) == 6\nfn test_trivial() -> [] int { return 0; }\n", good, 2, "", "never calls", "a contract that never calls the candidate is refused", report);
+                harness.remove_tree(heap, exec, clock, d);
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: satisfy CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: satisfy\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    release(fs);
+    return status;
+}

@@ -1,0 +1,378 @@
+edition 7;
+module region_cache_test;
+
+// region_cache.cho -- `conformance/region_cache.rs` (deleted), in cancho (`docs/gate.md` G4): the per-thread stack of region chunks (`docs/region-chunk-cache.md` section 6): nested regions in a loop reach the kernel O(1) times, each
+// thread keeps its own chunks and frees them when it ends, the stack holds at most 16, and every chunk is cleared before it is kept or freed. Everywhere: three programs (three nested regions 2,000 rounds; eight spawned threads
+// and `main` each 500 rounds; a recursion 40 regions deep 20 times over) read back exactly what each region wrote, exit 0. On Linux only (`uname -s`), counted by an `LD_PRELOAD` shim of C (`malloc(65536)`, the `free` of each such
+// chunk, and the chunks freed with a non-zero byte in their first page, written to `$CHUNKS_OUT` at exit; built with `/usr/bin/cc`): the nested program takes 3 chunks in all and frees none, the threads program takes 27 and
+// frees 24 (a spawned thread's three, cleared, when it ends), and the recursion 40 deep 100 times takes 2,416 and frees 2,400 (a stack of 15 or 17 would give other numbers), none dirty; and 20,000 rounds of the nested program make
+// at most 16 `brk` calls under `strace -f -c -e trace=brk` (a machine without `strace` skips this; CI installs it).
+//
+//     cancho build tests/commands/region_cache.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: region_cache` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift legs went with D2. The Linux parts have not been run on Linux by the author (this was
+// written on macOS); CI is their first run.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// Three nested regions a round, each filled with a value of its own and read back: the answer is how many rounds read something else (0).
+fn nested_text[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.empty(heap, 1024), "fn work(rounds: int) -> [] int {\n    var bad = 0;\n    var i = 0;\n    while i < rounds {\n        region a {\n            let x = alloc_slice[a](512, i + 1);\n            region b {\n                let y = alloc_slice[b](512, i + 2);\n                region c {\n                    let z = alloc_slice[c](512, i + 3);\n                    if x[511] != i + 1 || y[0] != i + 2 || z[300] != i + 3 { bad = bad + 1; }\n                }\n            }\n        }\n        i = i + 1;\n    }\n    return bad;\n}\n");
+}
+
+fn nested_main[&h](heap: &!h Heap, rounds: int) -> [heap] buffer.Buffer {
+    var text = nested_text(heap);
+    text = buffer.append(heap, text, "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(io); release(ffi); release(fs); release(heap); release(args);\n    return work(");
+    text = buffer.push_nat(heap, text, rounds);
+    return buffer.append(heap, text, ");\n}\n");
+}
+
+// Eight spawned threads and `main` each run the nested program; the answer is the rounds that read the wrong value, summed.
+fn threads_main[&h](heap: &!h Heap, rounds: int) -> [heap] buffer.Buffer {
+    var text = buffer.append(heap, buffer.empty(heap, 2048), "edition 4;\n");
+    let nested = nested_text(heap);
+    borrow nested as &nb in {
+        text = buffer.append(heap, text, buffer.bytes(nb));
+    }
+    buffer.drop(heap, nested);
+    text = buffer.append(heap, text, "fn worker(rounds: int) -> [] int { return work(rounds); }\nfn main(world: World) -> [conc] int {\n    let Split { io, ffi, fs, heap, args, net } = split(world);\n    release(io); release(ffi); release(fs); release(heap); release(args); release(net);\n    let w = worker;\n");
+    var t = 0;
+    while t < 8 {
+        text = buffer.push_nat(heap, buffer.append(heap, text, "    let h"), t);
+        text = buffer.push_nat(heap, buffer.append(heap, text, " = spawn("), rounds);
+        text = buffer.append(heap, text, ", w);\n");
+        t = t + 1;
+    }
+    text = buffer.push_nat(heap, buffer.append(heap, text, "    let bad = work("), rounds);
+    text = buffer.push(heap, text, byte_of(')'));
+    t = 0;
+    while t < 8 {
+        text = buffer.push_nat(heap, buffer.append(heap, text, " + join(h"), t);
+        text = buffer.push(heap, text, byte_of(')'));
+        t = t + 1;
+    }
+    return buffer.append(heap, text, ";\n    return bad;\n}\n");
+}
+
+// A recursion `depth` regions deep, `times` times over, each region filled with 7 and read back after the deeper ones have ended.
+fn deep_main[&h](heap: &!h Heap, depth: int, times: int) -> [heap] buffer.Buffer {
+    var text = buffer.append(heap, buffer.empty(heap, 1024), "fn deep(depth: int) -> [] int {\n    if depth == 0 { return 0; }\n    var bad = 0;\n    region r {\n        let s = alloc_slice[r](512, 7);\n        bad = deep(depth - 1);\n        if s[0] != 7 || s[511] != 7 { bad = bad + 1; }\n    }\n    return bad;\n}\nfn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(io); release(ffi); release(fs); release(heap); release(args);\n    var bad = 0;\n    var i = 0;\n    while i < ");
+    text = buffer.push_nat(heap, text, times);
+    text = buffer.append(heap, text, " { bad = bad + deep(");
+    text = buffer.push_nat(heap, text, depth);
+    return buffer.append(heap, text, "); i = i + 1; }\n    return bad;\n}\n");
+}
+
+// The program in `text` built to `dir/name` (the compiler's `Ended`: kind 0 if it built).
+fn built[&h, &x, &c, &f, &b, &e, &d, &n, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], text: &t [byte]) -> [heap, exec(""), clock, poll, fs_write("")] harness.Ended {
+    var file = buffer.append(heap, buffer.empty(heap, 64), name);
+    file = buffer.append(heap, file, ".cho");
+    var source = buffer.empty(heap, 0);
+    borrow file as &fb in {
+        buffer.drop(heap, source);
+        source = harness.rt_put(heap, fs, dir, buffer.bytes(fb), text);
+    }
+    buffer.drop(heap, file);
+    var sources = buffer.empty(heap, 64);
+    borrow source as &sb in {
+        sources = harness.word(heap, sources, buffer.bytes(sb));
+    }
+    buffer.drop(heap, source);
+    let exe = harness.joined(heap, dir, name);
+    var result = harness.Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
+    borrow sources as &ssb in {
+        borrow exe as &eb in {
+            harness.drop_ended(heap, result);
+            result = harness.build_only(heap, exec, clock, bin, buffer.bytes(ssb), "", buffer.bytes(eb), env);
+        }
+    }
+    buffer.drop(heap, sources);
+    buffer.drop(heap, exe);
+    return result;
+}
+
+// `text` built and run under `run_env` (an environment, each entry followed by a NUL): the program's own `Ended`, or the build's (kind 6) if it did not build.
+fn built_and_run[&h, &x, &c, &f, &b, &e, &d, &n, &t, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], text: &t [byte], run_env: &v [byte]) -> [heap, exec(""), clock, poll, fs_write("")] harness.Ended {
+    let compiled = built(heap, exec, clock, fs, bin, env, dir, name, text);
+    let harness.Ended { out, err, kind, code } = compiled;
+    buffer.drop(heap, out);
+    if kind != 0 {
+        return harness.Ended { out: buffer.empty(heap, 0), err: err, kind: 6, code: code };
+    }
+    buffer.drop(heap, err);
+    let exe = harness.joined(heap, dir, name);
+    var ran = harness.Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
+    borrow exe as &eb in {
+        harness.drop_ended(heap, ran);
+        ran = harness.spawn_capture(heap, exec, clock, buffer.bytes(eb), buffer.empty(heap, 0), "", run_env);
+    }
+    buffer.drop(heap, exe);
+    return ran;
+}
+
+// Every program reads back exactly what it wrote: a reused chunk shows a region its own fill, never the last region's.
+fn fill[&h, &x, &c, &f, &b, &e, &d, &n, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], text: &t [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let ended = built_and_run(heap, exec, clock, fs, bin, env, dir, name, text, "PATH=/usr/bin:/bin\0");
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow err as &eb in {
+        if kind != 0 || code != 0 {
+            rep = harness.failure(heap, rep, "region_cache", name, "a region read another's bytes (or the program did not build)", buffer.bytes(eb));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// Whether this is Linux: the counts below are Linux's.
+fn on_linux[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock) -> [heap, exec(""), clock, poll] bool {
+    let ended = harness.spawn_capture(heap, exec, clock, "/usr/bin/uname", harness.word(heap, buffer.empty(heap, 16), "-s"), "", "PATH=/usr/bin:/bin\0");
+    let harness.Ended { out, err, kind, code } = ended;
+    var linux = false;
+    borrow out as &ob in {
+        linux = kind == 0 && code == 0 && bytes.starts_with(buffer.bytes(ob), "Linux");
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return linux;
+}
+
+// The shim built at `dir/chunks.so` with the C compiler `cancho build` links with; false if it did not build (what `cc` said is added to the report).
+fn shim[&h, &x, &c, &f, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let source = harness.rt_put(heap, fs, dir, "chunks.c", "#define _GNU_SOURCE\n#include <dlfcn.h>\n#include <pthread.h>\n#include <stdio.h>\n#include <stdlib.h>\nstatic void *(*real_malloc)(size_t);\nstatic void (*real_free)(void *);\nstatic pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;\nstatic void *live[8192];\nstatic int nlive;\nstatic unsigned long mallocs, frees, dirty;\nvoid *malloc(size_t n) {\n    if (!real_malloc) real_malloc = dlsym(RTLD_NEXT, \"malloc\");\n    void *p = real_malloc(n);\n    if (n == 65536 && p) {\n        pthread_mutex_lock(&mu);\n        mallocs++;\n        if (nlive < 8192) live[nlive++] = p;\n        pthread_mutex_unlock(&mu);\n    }\n    return p;\n}\nvoid free(void *p) {\n    if (!real_free) real_free = dlsym(RTLD_NEXT, \"free\");\n    if (p) {\n        pthread_mutex_lock(&mu);\n        for (int i = 0; i < nlive; i++) {\n            if (live[i] == p) {\n                live[i] = live[--nlive];\n                frees++;\n                const unsigned char *b = p;\n                for (int j = 0; j < 4096; j++) if (b[j]) { dirty++; break; }\n                break;\n            }\n        }\n        pthread_mutex_unlock(&mu);\n    }\n    real_free(p);\n}\n__attribute__((destructor)) static void report(void) {\n    const char *path = getenv(\"CHUNKS_OUT\");\n    FILE *f = path ? fopen(path, \"w\") : 0;\n    if (f) { fprintf(f, \"%lu %lu %lu\\n\", mallocs, frees, dirty); fclose(f); }\n}\n");
+    let lib = harness.joined(heap, dir, "chunks.so");
+    var command = harness.word(heap, buffer.empty(heap, 64), "-O2");
+    command = harness.word(heap, command, "-shared");
+    command = harness.word(heap, command, "-fPIC");
+    command = harness.word(heap, command, "-o");
+    borrow lib as &lb in {
+        command = harness.word(heap, command, buffer.bytes(lb));
+    }
+    borrow source as &sb in {
+        command = harness.word(heap, command, buffer.bytes(sb));
+    }
+    command = harness.word(heap, command, "-ldl");
+    let ended = harness.spawn_capture(heap, exec, clock, "/usr/bin/cc", command, "", "PATH=/usr/bin:/bin\0");
+    let harness.Ended { out, err, kind, code } = ended;
+    borrow err as &eb in {
+        if kind != 0 || code != 0 {
+            rep = harness.failure(heap, rep, "region_cache", "shim", "the C compiler should build the allocation-counting shim", buffer.bytes(eb));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    buffer.drop(heap, source);
+    buffer.drop(heap, lib);
+    return rep;
+}
+
+// The environment of a run under the shim: counts go to `dir/counts-NAME.txt`.
+fn shim_env[&h, &d, &n](heap: &!h Heap, dir: &d [byte], name: &n [byte]) -> [heap] buffer.Buffer {
+    var run_env = buffer.append(heap, buffer.empty(heap, 256), "PATH=/usr/bin:/bin\0LD_PRELOAD=");
+    run_env = buffer.append(heap, run_env, dir);
+    run_env = buffer.append(heap, run_env, "/chunks.so\0CHUNKS_OUT=");
+    run_env = buffer.append(heap, run_env, dir);
+    run_env = buffer.append(heap, run_env, "/counts-");
+    run_env = buffer.append(heap, run_env, name);
+    return buffer.append(heap, run_env, ".txt\0");
+}
+
+// What the shim wrote to `dir/counts-NAME.txt` (empty if there is nothing).
+fn counts_written[&h, &x, &c, &d, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, dir: &d [byte], name: &n [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var path = buffer.append(heap, buffer.empty(heap, 64), dir);
+    path = buffer.append(heap, path, "/counts-");
+    path = buffer.append(heap, path, name);
+    path = buffer.append(heap, path, ".txt");
+    var command = buffer.empty(heap, 64);
+    borrow path as &pb in {
+        command = harness.word(heap, command, buffer.bytes(pb));
+    }
+    buffer.drop(heap, path);
+    let said = harness.spawn_capture(heap, exec, clock, "/bin/cat", command, "", "PATH=/usr/bin:/bin\0");
+    let harness.Ended { out, err, kind, code } = said;
+    buffer.drop(heap, err);
+    return out;
+}
+
+// The program `text` run under the shim exits 0 and the counts it wrote (`mallocs frees dirty`) are `want`.
+fn counted[&h, &x, &c, &f, &b, &e, &d, &n, &t, &w](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], text: &t [byte], want: &w [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let run_env = shim_env(heap, dir, name);
+    borrow run_env as &re in {
+        let ended = built_and_run(heap, exec, clock, fs, bin, env, dir, name, text, buffer.bytes(re));
+        let harness.Ended { out, err, kind, code } = ended;
+        borrow err as &eb in {
+            if kind != 0 || code != 0 {
+                rep = harness.failure(heap, rep, "region_cache", name, "the program should exit 0 under the shim", buffer.bytes(eb));
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, run_env);
+    let counts = counts_written(heap, exec, clock, dir, name);
+    borrow counts as &cb in {
+        if !bytes.equal(buffer.bytes(cb), want) {
+            rep = harness.failure(heap, rep, "region_cache", name, "wrong counts of 64 KiB chunks (mallocs, frees, dirty frees)", buffer.bytes(cb));
+        }
+    }
+    buffer.drop(heap, counts);
+    return rep;
+}
+
+// `brk.sh` run on `dir`: `strace`'s count of `brk` calls of the built `dir/brk`, as the script printed it (`rc=STATUS` and the count).
+fn traced[&h, &x, &c, &s, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, script: &s [byte], dir: &d [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let ended = harness.run_sh_file(heap, exec, clock, script, dir, "", "PATH=/usr/bin:/bin\0");
+    let harness.Ended { out, err, kind, code } = ended;
+    buffer.drop(heap, err);
+    return out;
+}
+
+// 20,000 rounds of three nested regions make O(1) `brk` calls (one for each 128 KiB the heap first grows by, and start-up's), where trimming made one or more a round. `strace` is needed; a machine without it skips (CI installs it).
+fn brk_calls[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let probe = harness.spawn_capture(heap, exec, clock, "/usr/bin/strace", harness.word(heap, buffer.empty(heap, 16), "-V"), "", "PATH=/usr/bin:/bin\0");
+    let harness.Ended { out, err, kind, code } = probe;
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    if kind != 0 || code != 0 {
+        return rep;
+    }
+    let nested = nested_main(heap, 20000);
+    borrow nested as &nb in {
+        harness.drop_ended(heap, built(heap, exec, clock, fs, bin, env, dir, "brk", buffer.bytes(nb)));
+    }
+    buffer.drop(heap, nested);
+    let script = harness.rt_put(heap, fs, dir, "brk.sh", "strace -f -c -e trace=brk -o \"$1/trace.txt\" \"$1/brk\" >/dev/null 2>&1\necho \"rc=$?\"\nawk '$NF == \"brk\" { print $4 }' \"$1/trace.txt\"\n");
+    var said = buffer.empty(heap, 0);
+    borrow script as &sb in {
+        buffer.drop(heap, said);
+        said = traced(heap, exec, clock, buffer.bytes(sb), dir);
+    }
+    buffer.drop(heap, script);
+    borrow said as &ob in {
+        let text = buffer.bytes(ob);
+        let calls = harness.number_after(bytes.field(text, 10, 2), "");
+        if harness.number_after(text, "rc=") != 0 {
+            rep = harness.failure(heap, rep, "region_cache", "brk", "the program should exit 0 under strace", text);
+        } else if calls < 0 || calls > 16 {
+            rep = harness.failure(heap, rep, "region_cache", "brk", "more than 16 brk calls for 20,000 rounds (or none counted)", text);
+        }
+    }
+    buffer.drop(heap, said);
+    return rep;
+}
+
+// The counts, on Linux.
+fn linux_counts[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = shim(heap, exec, clock, fs, dir, report);
+    // 2,000 rounds of three nested regions take three chunks from `malloc` in all (6,000 before the stack), and no chunk is freed: they stay on `main`'s thread until the process ends.
+    let nested = nested_main(heap, 2000);
+    borrow nested as &nb in {
+        rep = counted(heap, exec, clock, fs, bin, env, dir, "nested", buffer.bytes(nb), "3 0 0\n", rep);
+    }
+    buffer.drop(heap, nested);
+    // Eight spawned threads and `main` each take their own three chunks (27 in all: a thread that took another's would make it fewer), and each spawned thread's three are freed, cleared, when it ends (24: the key's destructor).
+    let threads = threads_main(heap, 500);
+    borrow threads as &tb in {
+        rep = counted(heap, exec, clock, fs, bin, env, dir, "threads", buffer.bytes(tb), "27 24 0\n", rep);
+    }
+    buffer.drop(heap, threads);
+    // Section 2's bound: a recursion 40 regions deep, 100 times. The first descent takes 40 chunks; each return keeps 16 and frees 24, all cleared; each later descent takes the 16 back and 24 more. So 40 + 99 * 24 = 2,416 `malloc`s and 100 * 24 = 2,400 `free`s.
+    let deep = deep_main(heap, 40, 100);
+    borrow deep as &db in {
+        rep = counted(heap, exec, clock, fs, bin, env, dir, "deep", buffer.bytes(db), "2416 2400 0\n", rep);
+    }
+    buffer.drop(heap, deep);
+    return brk_calls(heap, exec, clock, fs, bin, env, dir, rep);
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-region-cache");
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "region_cache", "scratch", "mktemp -d made no directory", "");
+            } else {
+                let d = buffer.bytes(db);
+                let e = buffer.bytes(eb);
+                let nested = nested_main(heap, 2000);
+                borrow nested as &nb in {
+                    report = fill(heap, exec, clock, fs, bin, e, d, "fill_nested", buffer.bytes(nb), report);
+                }
+                buffer.drop(heap, nested);
+                let threads = threads_main(heap, 500);
+                borrow threads as &tb in {
+                    report = fill(heap, exec, clock, fs, bin, e, d, "fill_threads", buffer.bytes(tb), report);
+                }
+                buffer.drop(heap, threads);
+                let deep = deep_main(heap, 40, 20);
+                borrow deep as &pb in {
+                    report = fill(heap, exec, clock, fs, bin, e, d, "fill_deep", buffer.bytes(pb), report);
+                }
+                buffer.drop(heap, deep);
+                if on_linux(heap, exec, clock) {
+                    report = linux_counts(heap, exec, clock, fs, bin, e, d, report);
+                }
+                harness.remove_tree(heap, exec, clock, d);
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: region_cache CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: region_cache\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    release(fs);
+    return status;
+}

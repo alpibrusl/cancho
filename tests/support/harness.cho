@@ -1511,4 +1511,54 @@ pub fn cr_zeros[&t](text: &t [byte]) -> [] bool {
         at = at + 1;
     }
     return true;
+
+// ---- the runtime batch (`docs/gate.md` G4, wave 2): sources written by the test, built and run -------------------------------------------------------
+
+// The file `dir/name` holding `text`; its path.
+pub fn rt_put[&h, &f, &d, &n, &t](heap: &!h Heap, fs: &f Fs(""), dir: &d [byte], name: &n [byte], text: &t [byte]) -> [heap, fs_write("")] buffer.Buffer {
+    let path = joined(heap, dir, name);
+    borrow path as &pb in {
+        fs_write(fs, buffer.bytes(pb), text);
+    }
+    return path;
+}
+
+// `text` written to `dir/name.cho`, built with `flags` (each followed by a NUL, maybe none) to `dir/name` and run with no arguments: the run's `Ended`; if it did not build, the build's (kind 6, what the compiler said in `err`).
+pub fn rt_build_run[&h, &x, &c, &f, &b, &v, &d, &n, &t, &g](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], dir: &d [byte], name: &n [byte], text: &t [byte], flags: &g [byte]) -> [heap, exec(""), clock, poll, fs_write("")] Ended {
+    var file = buffer.append(heap, buffer.empty(heap, 64), name);
+    file = buffer.append(heap, file, ".cho");
+    var source = buffer.empty(heap, 64);
+    borrow file as &fb in {
+        buffer.drop(heap, source);
+        source = rt_put(heap, fs, dir, buffer.bytes(fb), text);
+    }
+    buffer.drop(heap, file);
+    let exe = joined(heap, dir, name);
+    var sources = buffer.empty(heap, 64);
+    borrow source as &sb in {
+        sources = word(heap, sources, buffer.bytes(sb));
+    }
+    buffer.drop(heap, source);
+    var built = Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
+    borrow sources as &ssb in {
+        borrow exe as &eb in {
+            drop_ended(heap, built);
+            built = build_only(heap, exec, clock, bin, buffer.bytes(ssb), flags, buffer.bytes(eb), env);
+        }
+    }
+    buffer.drop(heap, sources);
+    let Ended { out, err, kind, code } = built;
+    buffer.drop(heap, out);
+    if kind != 0 {
+        buffer.drop(heap, exe);
+        return Ended { out: buffer.empty(heap, 0), err: err, kind: kind, code: code };
+    }
+    buffer.drop(heap, err);
+    var ran = Ended { out: buffer.empty(heap, 0), err: buffer.empty(heap, 0), kind: 5, code: 0 };
+    borrow exe as &eb2 in {
+        drop_ended(heap, ran);
+        ran = run_program(heap, exec, clock, buffer.bytes(eb2), "");
+    }
+    buffer.drop(heap, exe);
+    return ran;
 }

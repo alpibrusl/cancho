@@ -47,8 +47,8 @@ A 64-bit word has no spare value, so an answer cannot say "out of range" in band
 
 So `load_le64` and `byte_mask64` have a **precondition, checked, and a violation traps**, exactly as `text[i]` does:
 `0 <= at` and `at + 8 <= len(text)` (64 for the mask). The sum `at + 8` is never formed, so `at = 2^63 - 1` cannot wrap
-past the bound, and a slice shorter than the word is tested on its own (`tests/conformance/word_scan.rs`, 20 calls on both
-backends, the edge ones that must not trap among them). A trap is a deterministic stop, `SIGILL` natively and 134
+past the bound, and a slice shorter than the word is tested on its own (`tests/commands/word_scan.cho`, 20 calls, the edge ones that must
+not trap among them). A trap is a deterministic stop, `SIGILL` natively and 134
 under wasmtime (`defined-behaviour.md` section 1); no input reaches a compiler panic, a refusal without a rule tag, or
 undefined behaviour. The three counts are total: they take any `int`.
 
@@ -196,9 +196,9 @@ without declaring it is refused as `not-a-function` (`tests/reject/word_scan_is_
   a byte or a bit at a time, over two 400-byte pseudo-random buffers (all 256 values; five values only), ten start offsets,
   every length 0..=140 and every `at` the primitive allows, the last one included; the counts on zero, each single bit, each
   run of low ones and the extremes.
-* `tests/conformance/word_scan.rs`, on both backends: a **differential test against Rust** (`u64::from_le_bytes`,
-  `trailing_zeros`, `leading_zeros`, `count_ones`, a plain per-byte mask) on three seeds, one printed line per
-  (buffer, start, length) with a hash of every result: 2,820 lines a seed; **the trap edges**: 20 calls, each bound on both
+* `tests/commands/word_scan.cho` (it was `conformance/word_scan.rs`, whose oracle was Rust's `u64::from_le_bytes`, `trailing_zeros`, `leading_zeros`, `count_ones` and a
+  per-byte mask, with a hash per printed line): a **differential test against plain loops written in cancho**, bit by bit (`tests/programs/word_scan_check.cho`), on three seeds,
+  every start, length and position, 1,976,100 comparisons, each primitive against its loop; **the trap edges**: 20 calls, each bound on both
   sides, a negative `at`, `i64::MIN`, `i64::MAX`, a slice of 7 or 63 bytes, an empty slice, and the exactly-fitting calls
   that must not trap; the counts on the extremes.
 * `tests/reject/word_scan_is_edition_nine.cho` and `tests/reject/byte_mask64_needs_a_byte.cho`.

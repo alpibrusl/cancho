@@ -67,9 +67,6 @@ mod https_hello;
 mod identity;
 mod json;
 mod mathfn;
-mod memory;
-mod modules;
-mod narrow_many;
 mod net;
 
 mod ports;
@@ -77,15 +74,12 @@ mod process_release;
 mod processes;
 mod project;
 mod refusals;
-mod region_cache;
 mod release;
-mod satisfy;
 mod selfhost;
 mod sha256_builtins;
 mod signals;
 mod sockets;
 
-mod testing;
 mod thread_state;
 mod tls;
 mod tls_auth;
@@ -95,7 +89,6 @@ mod tls_echo_fixed;
 mod tls_fuzz;
 mod tls_pool;
 mod tls_server;
-mod traps;
 mod udp;
 mod vcs;
 mod vcs_remote;
@@ -103,7 +96,6 @@ mod vcs_std;
 mod vcs_sync;
 mod wasm_target;
 mod wide_multiply;
-mod word_scan;
 
 const BIN: &str = env!("CARGO_BIN_EXE_cancho");
 

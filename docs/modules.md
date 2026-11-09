@@ -89,7 +89,7 @@ answered **55** for tables holding 5 and 7. Both are fixed: a symbol is
 `module.name` for any function or static outside the root module (`.` is
 legal in a symbol and cannot appear in an identifier), the root keeps its
 bare names so `main` is still `main`, and a static is looked up in its own
-module. Both backends; `conformance/modules.rs` has the two programs.
+module. Both backends; `tests/commands/modules.cho` has the two programs.
 Found by writing `std.json`, which was the first module to need a `drop`
 alongside `std.buffer`'s.
 

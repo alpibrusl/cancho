@@ -1,0 +1,502 @@
+edition 7;
+module narrow_many_test;
+
+// narrow_many.cho -- `conformance/narrow_many.rs` (deleted), in cancho (`docs/gate.md` G4): `narrow(cap, "a", "b", ...)` (`docs/narrowing-into-several.md`), one capability consumed and a tuple answered, one narrowed to each literal.
+// The refusals are fixtures under `tests/reject/` and the accepted shapes under `tests/accept/`; this program builds and runs programs, reads the authority report (`authority --std --output json`) and confines each child:
+// two paths read through two children, and three in the order written; the report names exactly the paths narrowed to and read (and follows what is performed, not what is held: one read removed lists one label); a
+// read outside each child's path traps (four ways); a sibling directory (`x` and `xevil`) is not inside the child for `x`, and the reverse; the TLS server's setup (32 bytes of entropy and a certificate directory opened once)
+// runs, reports the two paths and the path-free directory-handle labels, and opening `/dev` through the certificate child traps; `Exec` and `Net` narrow into several (the reports of `tests/accept/narrow_many_exec.cho` and
+// `narrow_many_net.cho` name both programs and both bounds, and starting or dialling the other child's is outside this child's prefix and traps); the single literal form is unchanged.
+//
+//     cancho build tests/commands/narrow_many.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: narrow_many` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift legs went with D2. The report is read as text (`"name": "fs_read", "argument": "PATH"`),
+// not parsed as JSON, and its labels are counted and looked for, not compared as an ordered list.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// The number of times `needle` is in `text`.
+fn count_of[&t, &n](text: &t [byte], needle: &n [byte]) -> [] int {
+    var count = 0;
+    var rest = text;
+    var at = bytes.find(rest, needle);
+    while at >= 0 {
+        count = count + 1;
+        rest = rest[at + len(needle)..len(rest)];
+        at = bytes.find(rest, needle);
+    }
+    return count;
+}
+
+// `text` with its first `from` replaced by `to` (unchanged if there is none).
+fn replace_first[&h, &t, &f, &o](heap: &!h Heap, text: &t [byte], from: &f [byte], to: &o [byte]) -> [heap] buffer.Buffer {
+    let at = bytes.find(text, from);
+    var out = buffer.empty(heap, len(text) + 16);
+    if at < 0 {
+        return buffer.append(heap, out, text);
+    }
+    out = buffer.append(heap, out, text[0..at]);
+    out = buffer.append(heap, out, to);
+    return buffer.append(heap, out, text[at + len(from)..len(text)]);
+}
+
+// A program narrowing `Fs("")` to the `paths` (each followed by a NUL) in one `narrow`, then reading, for each entry of `reads` (a child's digit and a path, each entry followed by a NUL), that path through that child and
+// printing `<bytes read> <sum of the bytes>` for each. One path is the single literal form.
+fn reader[&h, &p, &r](heap: &!h Heap, paths: &p [byte], reads: &r [byte]) -> [heap] buffer.Buffer {
+    let count = bytes.count_byte(paths, 0);
+    var text = buffer.append(heap, buffer.empty(heap, 1024), "fn digits[&i](io: &!i Io, n: int) -> [io_write] int {\n    if n >= 10 {\n        digits(io, n / 10);\n    }\n    return putchar(io, '0' + n % 10);\n}\n\nfn sum[&b](bytes: &b [byte], n: int) -> [] int {\n    var total = 0;\n    var at = 0;\n    while at < n {\n        total = total + int_of(bytes[at]);\n        at = at + 1;\n    }\n    return total;\n}\n\n");
+    text = buffer.append(heap, text, "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args } = split(world);\n    release(ffi); release(heap); release(args);\n    let ");
+    if count > 1 {
+        text = buffer.push(heap, text, byte_of('('));
+    }
+    var k = 0;
+    while k < count {
+        if k > 0 {
+            text = buffer.append(heap, text, ", ");
+        }
+        text = buffer.push_nat(heap, buffer.append(heap, text, "c"), k);
+        k = k + 1;
+    }
+    if count > 1 {
+        text = buffer.push(heap, text, byte_of(')'));
+    }
+    text = buffer.append(heap, text, " = narrow(fs");
+    k = 1;
+    while k <= count {
+        text = buffer.append(heap, text, ", \"");
+        text = buffer.append(heap, text, bytes.field(paths, 0, k));
+        text = buffer.push(heap, text, byte_of('"'));
+        k = k + 1;
+    }
+    text = buffer.append(heap, text, ");\n    var counts = 0;\n    var sums = 0;\n    borrow mut io as &!o in {\n");
+    let reading = bytes.count_byte(reads, 0);
+    k = 1;
+    while k <= reading {
+        let entry = bytes.field(reads, 0, k);
+        let child = int_of(entry[0]) - 'A';
+        text = buffer.push_nat(heap, buffer.append(heap, text, "        region r"), child);
+        text = buffer.append(heap, text, " {\n            let buffer = alloc_slice[r");
+        text = buffer.push_nat(heap, text, child);
+        text = buffer.append(heap, text, "](16, byte_of(0));\n            borrow c");
+        text = buffer.push_nat(heap, text, child);
+        text = buffer.append(heap, text, " as &x in {\n                counts = fs_read(x, \"");
+        text = buffer.append(heap, text, entry[1..len(entry)]);
+        text = buffer.append(heap, text, "\", buffer);\n            }\n            sums = sum(buffer, counts);\n        }\n        digits(o, counts); putchar(o, 32); digits(o, sums); putchar(o, 10);\n");
+        k = k + 1;
+    }
+    text = buffer.append(heap, text, "    }\n");
+    k = 0;
+    while k < count {
+        text = buffer.push_nat(heap, buffer.append(heap, text, "    release(c"), k);
+        text = buffer.append(heap, text, ");\n");
+        k = k + 1;
+    }
+    return buffer.append(heap, text, "    release(io);\n    return 0;\n}\n");
+}
+
+// The TLS server's setup: 32 bytes of entropy and the certificate files beneath a directory opened once; one `narrow`, two paths. `open_path` is what the directory child is asked to open (the certificate directory, or `/dev`).
+fn tls_setup[&h, &c, &o](heap: &!h Heap, certs: &c [byte], open_path: &o [byte]) -> [heap] buffer.Buffer {
+    var text = buffer.append(heap, buffer.empty(heap, 2048), "edition 6;\n\n");
+    text = buffer.append(heap, text, "fn digits[&i](io: &!i Io, n: int) -> [io_write] int {\n    if n >= 10 {\n        digits(io, n / 10);\n    }\n    return putchar(io, '0' + n % 10);\n}\n\nfn sum[&b](bytes: &b [byte], n: int) -> [] int {\n    var total = 0;\n    var at = 0;\n    while at < n {\n        total = total + int_of(bytes[at]);\n        at = at + 1;\n    }\n    return total;\n}\n\n");
+    text = buffer.append(heap, text, "fn main(world: World) -> [] int {\n    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);\n    release(ffi); release(heap); release(args); release(net); release(clock); release(signals);\n    let (rng, store) = narrow(fs, \"/dev/urandom\", \"");
+    text = buffer.append(heap, text, certs);
+    text = buffer.append(heap, text, "\");\n    var seeded = 0;\n    var pem = 0;\n    region r {\n        let seed = alloc_slice[r](32, byte_of(0));\n        let chain = alloc_slice[r](256, byte_of(0));\n        borrow rng as &x in {\n            seeded = fs_read(x, \"/dev/urandom\", seed);\n        }\n        borrow store as &y in {\n            match open_dir(y, \"");
+    text = buffer.append(heap, text, open_path);
+    return buffer.append(heap, text, "\") {\n                DirOpened::Ok(d0) => {\n                    var d = d0;\n                    borrow d as &h in {\n                        match dir_open_read(h, \"chain.pem\") {\n                            Opened::Ok(f0) => {\n                                var f = f0;\n                                borrow mut f as &!fh in {\n                                    match file_read(fh, chain) {\n                                        Read::Got(n) => { pem = n; }\n                                        Read::End => { pem = 0; }\n                                        Read::Failed(e) => { pem = 1000 + e; }\n                                    }\n                                }\n                                file_close(f);\n                            }\n                            Opened::Failed(e) => { pem = 2000 + e; }\n                        }\n                    }\n                    dir_close(d);\n                }\n                DirOpened::Failed(e) => { pem = 3000 + e; }\n            }\n        }\n    }\n    release(rng);\n    release(store);\n    borrow mut io as &!o in {\n        digits(o, seeded); putchar(o, 32); digits(o, pem); putchar(o, 10);\n    }\n    release(io);\n    return 0;\n}\n");
+}
+
+// `text` built and run: what it printed when it exited 0, or `TRAP` when a signal killed it, or `BUILD: ...`.
+fn outcome[&h, &x, &c, &f, &b, &e, &d, &n, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], text: &t [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let ended = harness.rt_build_run(heap, exec, clock, fs, bin, env, dir, name, text, "");
+    let harness.Ended { out, err, kind, code } = ended;
+    var said = buffer.empty(heap, 64);
+    if kind == 0 && code == 0 {
+        borrow out as &ob in {
+            said = buffer.append(heap, said, buffer.bytes(ob));
+        }
+    } else if kind == 1 {
+        said = buffer.append(heap, said, "TRAP");
+    } else {
+        said = buffer.append(heap, said, "BUILD OR EXIT: ");
+        borrow err as &eb in {
+            said = buffer.append(heap, said, buffer.bytes(eb));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return said;
+}
+
+// `text` must print exactly `want`.
+fn prints[&h, &x, &c, &f, &b, &e, &d, &n, &t, &w](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], text: &t [byte], want: &w [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let said = outcome(heap, exec, clock, fs, bin, env, dir, name, text);
+    var rep = report;
+    borrow said as &sb in {
+        if !bytes.equal(buffer.bytes(sb), want) {
+            rep = harness.failure(heap, rep, "narrow_many", name, "wrong output (or it did not build)", buffer.bytes(sb));
+        }
+    }
+    buffer.drop(heap, said);
+    return rep;
+}
+
+// `text` must be killed by a signal: the run-time prefix check (`docs/filesystem.md` section 4).
+fn traps[&h, &x, &c, &f, &b, &e, &d, &n, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], text: &t [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    return prints(heap, exec, clock, fs, bin, env, dir, name, text, "TRAP", report);
+}
+
+// The authority report of `text` (`authority --std --output json`), written to `dir/name.cho`; an empty buffer if the command failed.
+fn report_of[&h, &x, &c, &f, &b, &e, &d, &n, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], text: &t [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var file = buffer.append(heap, buffer.empty(heap, 64), name);
+    file = buffer.append(heap, file, ".cho");
+    var path = buffer.empty(heap, 0);
+    borrow file as &fb in {
+        buffer.drop(heap, path);
+        path = harness.rt_put(heap, fs, dir, buffer.bytes(fb), text);
+    }
+    buffer.drop(heap, file);
+    var said = buffer.empty(heap, 0);
+    borrow path as &pb in {
+        buffer.drop(heap, said);
+        said = report_at(heap, exec, clock, bin, env, buffer.bytes(pb));
+    }
+    buffer.drop(heap, path);
+    return said;
+}
+
+// The same for the file at `path`.
+fn report_at[&h, &x, &c, &b, &e, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], path: &p [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var command = harness.word(heap, buffer.empty(heap, 64), "authority");
+    command = harness.word(heap, command, "--std");
+    command = harness.word(heap, command, "--output");
+    command = harness.word(heap, command, "json");
+    command = harness.word(heap, command, path);
+    let ended = harness.spawn_capture(heap, exec, clock, bin, command, "", env);
+    let harness.Ended { out, err, kind, code } = ended;
+    buffer.drop(heap, err);
+    if kind == 0 && code == 0 {
+        return out;
+    }
+    buffer.drop(heap, out);
+    return buffer.empty(heap, 0);
+}
+
+// The report names `label` with `argument` once (an empty `argument` is only the label), counted over `"name": "LABEL"`.
+fn labelled[&h, &t, &l, &a, &w](heap: &!h Heap, report: buffer.Buffer, json: &t [byte], label: &l [byte], argument: &a [byte], times: int, name: &w [byte]) -> [heap] buffer.Buffer {
+    var needle = buffer.append(heap, buffer.empty(heap, 64), "\"name\": \"");
+    needle = buffer.append(heap, needle, label);
+    needle = buffer.append(heap, needle, "\", \"argument\": ");
+    if len(argument) == 0 {
+        needle = buffer.append(heap, needle, "null");
+    } else {
+        needle = buffer.push(heap, needle, byte_of('"'));
+        needle = buffer.append(heap, needle, argument);
+        needle = buffer.push(heap, needle, byte_of('"'));
+    }
+    var rep = report;
+    borrow needle as &nb in {
+        let found = count_of(json, buffer.bytes(nb));
+        if found != times {
+            rep = harness.failure(heap, rep, "narrow_many", name, "the report should name this label that many times", buffer.bytes(nb));
+        }
+    }
+    buffer.drop(heap, needle);
+    return rep;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-narrow-many");
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "narrow_many", "scratch", "mktemp -d made no directory", "");
+            } else {
+                report = cases(heap, exec, clock, fs, bin, buffer.bytes(eb), buffer.bytes(db), report);
+                harness.remove_tree(heap, exec, clock, buffer.bytes(db));
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+// `dir` + "/" + each name of `names` (each followed by a NUL), and, when `with_child`, a child's digit first (the entries of `reads`).
+fn absolute[&h, &d, &n](heap: &!h Heap, dir: &d [byte], names: &n [byte], with_child: bool) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 128);
+    let count = bytes.count_byte(names, 0);
+    var k = 1;
+    while k <= count {
+        let name = bytes.field(names, 0, k);
+        var from = 0;
+        if with_child {
+            out = buffer.push(heap, out, name[0]);
+            from = 1;
+        }
+        out = buffer.append(heap, out, dir);
+        out = buffer.push(heap, out, byte_of('/'));
+        out = buffer.append(heap, out, name[from..len(name)]);
+        out = buffer.push(heap, out, byte_of(0));
+        k = k + 1;
+    }
+    return out;
+}
+
+// The reader program for `names` (relative to `dir`) and `reads` (a child's digit and a relative name each).
+fn program_for[&h, &d, &n, &r](heap: &!h Heap, dir: &d [byte], names: &n [byte], reads: &r [byte]) -> [heap] buffer.Buffer {
+    let paths = absolute(heap, dir, names, false);
+    let entries = absolute(heap, dir, reads, true);
+    var text = buffer.empty(heap, 0);
+    borrow paths as &pb in {
+        borrow entries as &eb in {
+            buffer.drop(heap, text);
+            text = reader(heap, buffer.bytes(pb), buffer.bytes(eb));
+        }
+    }
+    buffer.drop(heap, paths);
+    buffer.drop(heap, entries);
+    return text;
+}
+
+// The reader program built and run: it must print `want` (`TRAP` for a signal).
+fn scenario[&h, &x, &c, &f, &b, &e, &d, &n, &w, &r, &q](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], names: &w [byte], reads: &r [byte], want: &q [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let text = program_for(heap, dir, names, reads);
+    var rep = report;
+    borrow text as &tb in {
+        rep = prints(heap, exec, clock, fs, bin, env, dir, name, buffer.bytes(tb), want, rep);
+    }
+    buffer.drop(heap, text);
+    return rep;
+}
+
+// The report of the reader program for `names` and `reads`, as text.
+fn report_for[&h, &x, &c, &f, &b, &e, &d, &n, &w, &r](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], name: &n [byte], names: &w [byte], reads: &r [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let text = program_for(heap, dir, names, reads);
+    var json = buffer.empty(heap, 0);
+    borrow text as &tb in {
+        buffer.drop(heap, json);
+        json = report_of(heap, exec, clock, fs, bin, env, dir, name, buffer.bytes(tb));
+    }
+    buffer.drop(heap, text);
+    return json;
+}
+
+// `fs_read` is named `times` times in `json`, once for each of the `names` (relative to `dir`) given; the unnarrowed `fs_read("")` is nowhere.
+fn fs_labels[&h, &t, &d, &n, &w](heap: &!h Heap, report: buffer.Buffer, json: &t [byte], dir: &d [byte], names: &n [byte], name: &w [byte]) -> [heap] buffer.Buffer {
+    var rep = report;
+    let paths = absolute(heap, dir, names, false);
+    let count = bytes.count_byte(names, 0);
+    borrow paths as &pb in {
+        var k = 1;
+        while k <= count {
+            rep = labelled(heap, rep, json, "fs_read", bytes.field(buffer.bytes(pb), 0, k), 1, name);
+            k = k + 1;
+        }
+    }
+    buffer.drop(heap, paths);
+    rep = labelled(heap, rep, json, "fs_read", "", 0, name);
+    var needle = buffer.append(heap, buffer.empty(heap, 64), "\"name\": \"fs_read\"");
+    borrow needle as &nb in {
+        if count_of(json, buffer.bytes(nb)) != count {
+            rep = harness.failure(heap, rep, "narrow_many", name, "the report should name exactly the paths read, no more", json);
+        }
+    }
+    buffer.drop(heap, needle);
+    return rep;
+}
+
+fn cases[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    buffer.drop(heap, harness.rt_put(heap, fs, dir, "a.txt", "AAAA"));
+    buffer.drop(heap, harness.rt_put(heap, fs, dir, "b.txt", "BBBBBB"));
+    buffer.drop(heap, harness.rt_put(heap, fs, dir, "c.txt", "CCC"));
+    // 4 * 'A' (65) = 260 and 6 * 'B' (66) = 396.
+    rep = scenario(heap, exec, clock, fs, bin, env, dir, "two", "a.txt\0b.txt\0", "Aa.txt\0Bb.txt\0", "4 260\n6 396\n", rep);
+    // The children come back in the order of the literals: a swapped pair would read the wrong file and the run-time check would trap.
+    rep = scenario(heap, exec, clock, fs, bin, env, dir, "three", "a.txt\0b.txt\0c.txt\0", "Cc.txt\0Aa.txt\0Bb.txt\0", "3 201\n4 260\n6 396\n", rep);
+    // The single literal form is unchanged.
+    rep = scenario(heap, exec, clock, fs, bin, env, dir, "single", "a.txt\0", "Aa.txt\0", "4 260\n", rep);
+    // The report names exactly the paths narrowed to and read, and follows what is performed, not what is held.
+    let two = report_for(heap, exec, clock, fs, bin, env, dir, "report_two", "a.txt\0b.txt\0", "Aa.txt\0Bb.txt\0");
+    borrow two as &tw in {
+        rep = harness.require(heap, rep, harness.contains(buffer.bytes(tw), "\"bounded\": true"), "narrow_many", "report two", "the report is bounded", buffer.bytes(tw));
+        rep = fs_labels(heap, rep, buffer.bytes(tw), dir, "a.txt\0b.txt\0", "report two");
+    }
+    buffer.drop(heap, two);
+    let one = report_for(heap, exec, clock, fs, bin, env, dir, "report_one", "a.txt\0b.txt\0", "Bb.txt\0");
+    borrow one as &on in {
+        rep = fs_labels(heap, rep, buffer.bytes(on), dir, "b.txt\0", "report one (one read removed)");
+    }
+    buffer.drop(heap, one);
+    let three = report_for(heap, exec, clock, fs, bin, env, dir, "report_three", "a.txt\0b.txt\0c.txt\0", "Aa.txt\0Bb.txt\0Cc.txt\0");
+    borrow three as &th in {
+        rep = fs_labels(heap, rep, buffer.bytes(th), dir, "a.txt\0b.txt\0c.txt\0", "report three");
+    }
+    buffer.drop(heap, three);
+    // A read outside each child's path traps: the other file, a third file, and each child's own sibling. The run-time check reads the prefix of the capability the operation borrowed.
+    rep = scenario(heap, exec, clock, fs, bin, env, dir, "trap_second_reads_first", "a.txt\0b.txt\0", "Ba.txt\0", "TRAP", rep);
+    rep = scenario(heap, exec, clock, fs, bin, env, dir, "trap_first_reads_second", "a.txt\0b.txt\0", "Ab.txt\0", "TRAP", rep);
+    rep = scenario(heap, exec, clock, fs, bin, env, dir, "trap_first_reads_third", "a.txt\0b.txt\0", "Ac.txt\0", "TRAP", rep);
+    rep = scenario(heap, exec, clock, fs, bin, env, dir, "trap_second_reads_third", "a.txt\0b.txt\0", "Bc.txt\0", "TRAP", rep);
+    rep = siblings(heap, exec, clock, fs, bin, env, dir, rep);
+    rep = tls(heap, exec, clock, fs, bin, env, dir, rep);
+    rep = accepted(heap, exec, clock, fs, bin, env, dir, rep);
+    return rep;
+}
+
+// `docs/filesystem.md` section 1.1 through `narrow(fs, "/tmp/x", "/tmp/xevil")`: the two are unrelated (neither extends the other at a `/`), so the pair is accepted, and a read of `xevil` through the child for `x` traps, as does the reverse.
+fn siblings[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    var make = buffer.append(heap, buffer.empty(heap, 128), "mkdir -p '");
+    make = buffer.append(heap, make, dir);
+    make = buffer.append(heap, make, "/x' '");
+    make = buffer.append(heap, make, dir);
+    make = buffer.append(heap, make, "/xevil'");
+    drop_made(heap, harness.sh_run(heap, exec, clock, make));
+    buffer.drop(heap, harness.rt_put(heap, fs, dir, "x/f", "fine"));
+    buffer.drop(heap, harness.rt_put(heap, fs, dir, "xevil/f", "evil"));
+    rep = scenario(heap, exec, clock, fs, bin, env, dir, "sibling_ok", "x\0xevil\0", "Ax/f\0Bxevil/f\0", "4 418\n4 432\n", rep);
+    rep = scenario(heap, exec, clock, fs, bin, env, dir, "sibling_into_evil", "x\0xevil\0", "Axevil/f\0", "TRAP", rep);
+    rep = scenario(heap, exec, clock, fs, bin, env, dir, "sibling_into_x", "x\0xevil\0", "Bx/f\0", "TRAP", rep);
+    return rep;
+}
+
+fn drop_made[&h](heap: &!h Heap, ended: harness.Ended) -> [heap] int {
+    return harness.drop_ended(heap, ended);
+}
+
+// `docs/narrowing-into-several.md` section 1: the program that held `Fs("")` and reported `fs_read("")` now reports the two paths and the path-free directory-handle labels.
+fn tls[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let certs = harness.joined(heap, dir, "certs");
+    var make = buffer.append(heap, buffer.empty(heap, 128), "mkdir -p '");
+    borrow certs as &cb in {
+        make = buffer.append(heap, make, buffer.bytes(cb));
+    }
+    make = buffer.append(heap, make, "'");
+    drop_made(heap, harness.sh_run(heap, exec, clock, make));
+    buffer.drop(heap, harness.rt_put(heap, fs, dir, "certs/chain.pem", "-----BEGIN CERTIFICATE-----\n"));
+    borrow certs as &cb in {
+        let source = tls_setup(heap, buffer.bytes(cb), buffer.bytes(cb));
+        borrow source as &sb in {
+            rep = prints(heap, exec, clock, fs, bin, env, dir, "tls_setup", buffer.bytes(sb), "32 28\n", rep);
+            let json = report_of(heap, exec, clock, fs, bin, env, dir, "tls_report", buffer.bytes(sb));
+            borrow json as &jb in {
+                rep = labelled(heap, rep, buffer.bytes(jb), "dir_read", "", 1, "tls report");
+                rep = labelled(heap, rep, buffer.bytes(jb), "file_read", "", 1, "tls report");
+                rep = labelled(heap, rep, buffer.bytes(jb), "fs_read", "/dev/urandom", 1, "tls report");
+                rep = labelled(heap, rep, buffer.bytes(jb), "fs_read", buffer.bytes(cb), 1, "tls report");
+                rep = labelled(heap, rep, buffer.bytes(jb), "fs_read", "", 0, "tls report");
+            }
+            buffer.drop(heap, json);
+        }
+        buffer.drop(heap, source);
+        // The directory handle is confined to its own path: opening `/dev` through the certificate child traps.
+        let escape = tls_setup(heap, buffer.bytes(cb), "/dev");
+        borrow escape as &xb in {
+            rep = traps(heap, exec, clock, fs, bin, env, dir, "tls_escape", buffer.bytes(xb), rep);
+        }
+        buffer.drop(heap, escape);
+    }
+    buffer.drop(heap, certs);
+    return rep;
+}
+
+// `Exec` and `Net` narrow into several: the accepted fixtures' reports name both programs and both bounds, and starting or dialling the other child's is outside this child's prefix.
+fn accepted[&h, &x, &c, &f, &b, &e, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let json = report_at(heap, exec, clock, bin, env, "tests/accept/narrow_many_exec.cho");
+    borrow json as &jb in {
+        rep = labelled(heap, rep, buffer.bytes(jb), "exec", "/usr/bin/false", 1, "exec report");
+        rep = labelled(heap, rep, buffer.bytes(jb), "exec", "/usr/bin/true", 1, "exec report");
+        rep = labelled(heap, rep, buffer.bytes(jb), "io_write", "", 1, "exec report");
+    }
+    buffer.drop(heap, json);
+    let net = report_at(heap, exec, clock, bin, env, "tests/accept/narrow_many_net.cho");
+    borrow net as &nb in {
+        rep = labelled(heap, rep, buffer.bytes(nb), "io_write", "", 1, "net report");
+        rep = labelled(heap, rep, buffer.bytes(nb), "net_out", "127.0.0.1:443", 1, "net report");
+        rep = labelled(heap, rep, buffer.bytes(nb), "net_out", "127.0.0.1:80", 1, "net report");
+        rep = harness.require(heap, rep, bytes.starts_with(buffer.bytes(nb), "{\n  \"bounded\": true,\n  \"unbounded_by\": [],"), "narrow_many", "net report", "the report is bounded: no label is the unnarrowed network", buffer.bytes(nb));
+    }
+    buffer.drop(heap, net);
+    rep = swapped(heap, exec, clock, fs, bin, env, dir, "tests/accept/narrow_many_exec.cho", "exec_other", "exec_spawn(exec, \"/usr/bin/false\"", "exec_spawn(exec, \"/usr/bin/true\"", rep);
+    // Dialling the other child's port through this child is outside its bound.
+    rep = swapped(heap, exec, clock, fs, bin, env, dir, "tests/accept/narrow_many_net.cho", "net_other", "tcp_connect(net, \"127.0.0.1\", 80)", "tcp_connect(net, \"127.0.0.1\", 443)", rep);
+    return rep;
+}
+
+// The fixture at `path` with its first `from` replaced by `to`, built and run: killed by a signal.
+fn swapped[&h, &x, &c, &f, &b, &e, &d, &p, &n, &q, &r](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &e [byte], dir: &d [byte], path: &p [byte], name: &n [byte], from: &q [byte], to: &r [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var rep = report;
+    let command = harness.word(heap, buffer.empty(heap, 64), path);
+    let file = harness.spawn_capture(heap, exec, clock, "/bin/cat", command, "", env);
+    let harness.Ended { out, err, kind, code } = file;
+    if kind != 0 || code != 0 {
+        borrow err as &fb in {
+            rep = harness.failure(heap, rep, "narrow_many", name, "could not read the fixture", buffer.bytes(fb));
+        }
+    }
+    buffer.drop(heap, err);
+    borrow out as &xb in {
+        let changed = replace_first(heap, buffer.bytes(xb), from, to);
+        borrow changed as &cb in {
+            rep = traps(heap, exec, clock, fs, bin, env, dir, name, buffer.bytes(cb), rep);
+        }
+        buffer.drop(heap, changed);
+    }
+    buffer.drop(heap, out);
+    return rep;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: narrow_many CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: narrow_many\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    release(fs);
+    return status;
+}
