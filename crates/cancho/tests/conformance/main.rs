@@ -78,7 +78,6 @@ mod json;
 mod kdf;
 mod listen_host;
 mod mathfn;
-mod modules;
 mod net;
 mod net_bounds;
 mod net_hosts;
