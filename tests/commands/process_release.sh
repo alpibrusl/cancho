@@ -30,10 +30,16 @@ startd() {
     runs=$((runs + 1)); sd=$work/run$runs
     mkdir "$sd"; mkfifo "$sd/in"; : > "$sd/out"
     exec 3<> "$sd/in"
-    set -m
-    "$work/release" "$@" < "$sd/in" > "$sd/out" 3>&- &
-    pid=$!
-    set +m
+    # A group of its own: `setsid` where there is one (a runner has no terminal, so dash's `set -m` fails there: "can't access tty"), else job control (macOS has no `setsid`, and its sh is bash).
+    if command -v setsid > /dev/null; then
+        setsid "$work/release" "$@" < "$sd/in" > "$sd/out" 3>&- &
+        pid=$!
+    else
+        set -m
+        "$work/release" "$@" < "$sd/in" > "$sd/out" 3>&- &
+        pid=$!
+        set +m
+    fi
     _i=0
     until grep -q '^ready$' "$sd/out"; do
         _i=$((_i + 1))

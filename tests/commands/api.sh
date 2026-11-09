@@ -224,7 +224,7 @@ tally" > "$SK_SCRATCH/many$t.out" &
     clients="$clients $!"
 done
 wait $clients
-cat "$SK_SCRATCH"/many*.out | sort | uniq -c
+cat "$SK_SCRATCH"/many*.out | sort | uniq -c | sed "s/^ */  /"
 sk_stop
 
 echo "== clients that vanish do not hurt the server"
@@ -383,7 +383,7 @@ tally"
 sk_stop
 
 echo "== a body larger than the default buffer needs the buffer argument"
-padded=$(printf '{"a": 1, "b": 2}%40000s' '')
+padded=$(printf '{"a": 1, "b": 2}%20000s' '')
 # By default a request must fit 16 KiB, and is refused at once if it cannot.
 sk_start "$api"
 sk_client "open 1
@@ -393,8 +393,8 @@ sk_stop
 # With the sixth argument -- a 64 KiB buffer -- the same request is answered. (`no` is not `1` or `r`, so the port is not shared; 9 seconds idle; 0, no
 # write quantum.) A chunked one too, across two chunks; still refused past the bigger buffer.
 sk_start "$api" no 9 0 65536
-first=$(printf '%s' "$padded" | cut -c1-20000)
-second=$(printf '%s' "$padded" | cut -c20001-)
+first=$(printf '%s' "$padded" | cut -c1-10000)
+second=$(printf '%s' "$padded" | cut -c10001-)
 huge=$(printf '{"a": 1, "b": 2}%70000s' '')
 sk_client "open 1
 ask 1 200 {\"sum\":3} $(post /add "$padded")
