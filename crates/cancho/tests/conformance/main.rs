@@ -67,6 +67,7 @@ mod net;
 mod ports;
 mod process_release;
 mod processes;
+mod refusals;
 mod selfhost;
 mod sha256_builtins;
 mod signals;
@@ -177,13 +178,6 @@ fn shown(ret: &str, e: &str) -> String {
         "bool" => format!("b2i({e})"),
         _ => format!("bits_of({e})"),
     }
-}
-
-/// Read `authority --output json` for a program, as parsed fields.
-///
-/// Returns `(effect names, foreign symbols, labels as name=argument)`.
-fn authority_of(relative: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
-    authority_of_paths(&[repo_root().join(relative)])
 }
 
 /// `authority_of`, over more than one file -- what a program that
