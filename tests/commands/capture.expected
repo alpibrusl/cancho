@@ -1,0 +1,15 @@
+ok input and output are interleaved past both kernels' buffers
+ok output past the bound ends the child
+ok a child that cannot be watched is killed, not waited on
+ok a quiet child is waited for, not spun on
+ok a quiet child's errors are waited for, not spun on
+ok a deadline ends a child that outlives it
+ok a process left behind does not hold the capture
+ok a child that does not read its input still exits
+ok an argument with a NUL is refused and left out
+ok a caller of capture declares the clock
+ok a capture that times out gives back all three channels
+ok standard error is captured beside standard output
+ok a flood of errors does not stall the output
+ok errors past their bound end the child
+ok a deadline returns both channels so far

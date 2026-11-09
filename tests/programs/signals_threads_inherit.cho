@@ -1,0 +1,97 @@
+edition 6;
+import std.io;
+
+fn say[&i, &t](out: &!i Io, text: &t [byte]) -> [err_write] int {
+    return io.error_all(out, text);
+}
+
+fn digits[&b](n: int, buf: &!b [byte]) -> [] int {
+    var width = 1;
+    var t = n;
+    while t >= 10 {
+        t = t / 10;
+        width = width + 1;
+    }
+    var k = width;
+    var m = n;
+    while k > 0 {
+        buf[k - 1] = byte_of('0' + m % 10);
+        m = m / 10;
+        k = k - 1;
+    }
+    return width;
+}
+
+fn say_number[&i](out: &!i Io, n: int) -> [err_write] int {
+    region a {
+        let nb = alloc_slice[a](24, byte_of(0));
+        if n < 0 {
+            say(out, "-");
+            say(out, nb[0..digits(0 - n, nb)]);
+        } else {
+            say(out, nb[0..digits(n, nb)]);
+        }
+    }
+    return 0;
+}
+
+fn say_pair[&i](out: &!i Io, name: &static [byte], value: int) -> [err_write] int {
+    say(out, name);
+    say_number(out, value);
+    say(out, "\n");
+    return 0;
+}
+
+fn nap(ms: int) -> [poll] int {
+    match poller_new() {
+        Polling::Ok(p) => {
+            var poller = p;
+            region a {
+                var ev = alloc_slice[a](2, 0);
+                borrow mut poller as &!ph in {
+                    poller_wait(ph, ev, ms);
+                }
+            }
+            poller_close(poller);
+        }
+        Polling::Failed(e) => {
+        }
+    }
+    return 0;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    let claim = narrow(signals, "TERM");
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow claim as &s in {
+            let body = nap;
+            match signals_watch(s) {
+                Watching::Ok(w) => {
+                    var watch = w;
+                    let t = spawn(2500, body);
+                    say(i, "ready\n");
+                    join(t);
+                    borrow mut watch as &!wh in {
+                        say_pair(i, "mask=", signals_pending(wh));
+                    }
+                    signals_close(watch);
+                    status = 0;
+                }
+                Watching::Failed(e) => {
+                    say_pair(i, "failed=", e);
+                }
+            }
+        }
+    }
+    release(claim);
+    release(io);
+    return status;
+}

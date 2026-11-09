@@ -1,0 +1,38 @@
+ok arguments
+ok environment
+ok nothing inherited
+ok the child reads what the parent writes
+ok a child holds exactly its three streams
+ok the listing child ended with code 0
+ok kill by its bit
+ok term with TERM claimed
+ok a bit that names no signal
+ok a missing program
+ok an exit code
+ok writing to an ended child
+ok a poller reports a child's output and its exit
+ok a child that has already ended is still reported
+ok a deadline passes and a kill is reported
+ok reaping a child gives back its pidfd
+ok a child with no descriptor to spare says EMFILE
+ok a child without a pidfd says why it cannot be watched
+ok an ordinary spawn under /bin
+ok a child writing to Stdio::Null
+ok usr traps
+ok dotdot traps
+ok sibling traps
+ok relative traps
+ok ld traps
+ok yld traps
+ok args traps
+ok env traps
+ok the report names the bound
+ok the program stays bounded
+ok a child runs in the directory it is given
+ok a child without one runs where its parent does
+ok the directory is lent and the parent has not moved
+ok a relative program is found beneath the directory
+ok and without a directory it is ENOENT
+ok the directory is not a descriptor the child holds
+ok a directory that is not there starts nothing
+ok a directory that cannot be searched fails the spawn

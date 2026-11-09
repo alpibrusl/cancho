@@ -1,0 +1,31 @@
+edition 6;
+
+// The program of the authority-report checks of tests/commands/signals.py: it claims the signals named by the string "@SET@", which the driver rewrites before it asks `cancho authority`.
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    let claim = narrow(signals, "@SET@");
+    var status = 1;
+    borrow claim as &s in {
+        match signals_watch(s) {
+            Watching::Ok(w) => {
+                var watch = w;
+                borrow mut watch as &!wh in {
+                    signals_pending(wh);
+                }
+                status = signals_close(watch);
+            }
+            Watching::Failed(e) => {
+                status = 2;
+            }
+        }
+    }
+    release(claim);
+    return status;
+}

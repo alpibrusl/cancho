@@ -37,7 +37,6 @@ use std::process::{Command, Stdio};
 mod backends;
 mod benchmarks;
 mod binary32;
-mod capture;
 
 mod compile_time;
 mod conn_peer;
@@ -62,12 +61,9 @@ mod mathfn;
 mod net;
 
 mod ports;
-mod process_release;
-mod processes;
 mod refusals;
 mod selfhost;
 mod sha256_builtins;
-mod signals;
 mod sockets;
 
 mod tls;
