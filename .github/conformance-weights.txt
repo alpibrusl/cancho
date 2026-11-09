@@ -214,7 +214,6 @@ foreign_authority 27
 directory_listing 26
 floats 25
 https_hello 24
-tty 24
 tls_auth 23
 gcm 22
 modules 21
