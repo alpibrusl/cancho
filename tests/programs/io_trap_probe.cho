@@ -1,0 +1,18 @@
+// The probe of tests/commands/io.cho (`docs/standard-error.md` section 1.2): a program that says what is wrong on standard output and on standard error and then traps. Standard output is fully buffered when it is not a
+// terminal and a trap does not flush it, so only the line on standard error survives.
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    var bad = 0;
+    borrow mut io as &!i in {
+        write_bytes(i, "on stdout\n");
+        write_err(i, "on stderr\n");
+        // `byte_of` traps outside 0..255 (`strings.md` section 2).
+        bad = int_of(byte_of(300));
+    }
+    release(io);
+    return bad;
+}

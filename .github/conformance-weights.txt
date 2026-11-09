@@ -250,7 +250,6 @@ vcs 7
 wide_multiply 6
 sha256_builtins 6
 vcs_remote 5
-io 4
 wasm_target 4
 satisfy 4
 mathfn 3

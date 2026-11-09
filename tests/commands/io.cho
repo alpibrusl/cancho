@@ -1,0 +1,144 @@
+edition 7;
+module io_test;
+
+// io.cho -- `conformance/io.rs` (deleted), in cancho (`docs/gate.md` G4): standard output, standard error and standard input: write_bytes shares putchar's stream and order (docs/bulk-io.md section 3), the decoder agrees with the recorded answers of Rust's (docs/utf8.md section 3; tests/vectors/utf8_oracle.*), a diagnostic on standard error survives a trap that loses buffered standard output (docs/standard-error.md section 1.2); and the authority reports: write_bytes reports exactly what putchar reports (docs/bulk-io.md section 3.2), a program whose whole output is a diagnostic touches the console (docs/standard-error.md section 4).
+//
+//     cancho build tests/commands/io.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: io` or what is wrong, and exits 0 or 1. One backend (LLVM) and one compiler: the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.io as console;
+import std.bytes;
+import harness;
+
+// The second of two reports: `file` run through `cancho authority --output json` and compared with `first` (the bytes of the first report). Flags: 1 the reports are the same, 2 the effects are exactly `io_write`,
+// 4 no foreign symbols, 8 the command failed.
+fn compare_reports[&h, &x, &c, &b, &v, &p, &f](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &v [byte], file: &p [byte], first: &f [byte]) -> [heap, exec(""), clock, poll] int {
+    var flags = 0;
+    let harness.Ended { out, err, kind, code } = harness.run_cancho(heap, exec, clock, bin, env, "authority", file, "--output", "json");
+    if kind != 0 || code != 0 {
+        flags = 8;
+    } else {
+        borrow out as &ob in {
+            if bytes.equal(buffer.bytes(ob), first) {
+                flags = flags + 1;
+            }
+            if harness.contains(buffer.bytes(ob), "\"effects\": [\"io_write\"]") {
+                flags = flags + 2;
+            }
+            if harness.contains(buffer.bytes(ob), "\"foreign_symbols\": []") {
+                flags = flags + 4;
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return flags;
+}
+
+// `docs/bulk-io.md` section 3.2: the same program written with `putchar` and with `write_bytes` produces an identical authority report: no label of its own, no capability, no foreign symbol for the `fwrite` the builtin lowers to.
+fn bulk_costs_the_same[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let env = harness.base_env(heap, compiler, cache);
+    var flags = 8;
+    borrow env as &eb in {
+        let harness.Ended { out, err, kind, code } = harness.run_cancho(heap, exec, clock, bin, buffer.bytes(eb), "authority", "tests/programs/io_authority_putchar.cho", "--output", "json");
+        if kind == 0 && code == 0 {
+            borrow out as &ob in {
+                flags = compare_reports(heap, exec, clock, bin, buffer.bytes(eb), "tests/programs/io_authority_write_bytes.cho", buffer.bytes(ob));
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, env);
+    if flags != 7 {
+        rep = harness.failure(heap, rep, "io", "bulk output authority", "write_bytes must report exactly what putchar reports (1), which is io_write (2), with no foreign symbols (4); 8 is a command that failed", "");
+    }
+    return rep;
+}
+
+// `docs/standard-error.md` section 4: the text report of a program whose whole output is a diagnostic names `err_write`, does not say it never touches the console, and still says what else it never touches.
+fn diagnostic_touches_the_console[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let env = harness.base_env(heap, compiler, cache);
+    var flags = 0;
+    borrow env as &eb in {
+        let harness.Ended { out, err, kind, code } = harness.run_cancho(heap, exec, clock, bin, buffer.bytes(eb), "authority", "tests/programs/io_authority_diagnostic.cho", "", "");
+        if kind != 0 || code != 0 {
+            flags = 64;
+        } else {
+            borrow out as &ob in {
+                let text = buffer.bytes(ob);
+                if harness.contains(text, "err_write") {
+                    flags = flags + 1;
+                }
+                if !harness.contains(text, "the console") {
+                    flags = flags + 2;
+                }
+                if harness.contains(text, "the filesystem") && harness.contains(text, "the heap") && harness.contains(text, "the command line") && harness.contains(text, "foreign code") {
+                    flags = flags + 4;
+                }
+            }
+        }
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, env);
+    if flags != 7 {
+        rep = harness.failure(heap, rep, "io", "diagnostic authority", "the report names err_write (1), does not say never touches the console (2), and still says the filesystem, the heap, the command line and foreign code are untouched (4); 64 is a command that failed", "");
+    }
+    return rep;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: io CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    var report = harness.probe_transcript(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), "io_ordering", "tests/programs/io_ordering_probe.cho", "tests/commands/io_ordering.sh", "tests/commands/io_ordering.expected", buffer.empty(heap, 64));
+    report = harness.probe_transcript(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), "io_trap", "tests/programs/io_trap_probe.cho", "tests/commands/io_trap.sh", "tests/commands/io_trap.expected", report);
+    report = harness.probe_transcript(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), "io_utf8", "tests/programs/io_utf8_probe.cho", "tests/commands/io_utf8.sh", "tests/commands/io_utf8.expected", report);
+    report = bulk_costs_the_same(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), report);
+    report = diagnostic_touches_the_console(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), report);
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: io\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
