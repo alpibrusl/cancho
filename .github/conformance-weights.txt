@@ -211,7 +211,6 @@ capture 32
 http_fetch_nb 30
 release 30
 foreign_authority 27
-directory_listing 26
 floats 25
 https_hello 24
 tls_auth 23

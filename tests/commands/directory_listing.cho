@@ -1,0 +1,59 @@
+edition 7;
+module directory_listing_test;
+
+// directory_listing.cho -- `conformance/directory_listing.rs` (deleted), in cancho (`docs/gate.md` G4): directory listing (docs/directory-listing.md, issue 222): the names beneath a Dir, one at a time with dir_next or all of them sorted with std.dirs.list, on a hostile directory (100,000 plain files, a newline, a byte that is not UTF-8 off macOS, a 255-byte name, a dangling link, a link to .., a FIFO, a subdirectory), a short buffer, a cap, two listings in turns, and dir_stat as lstat. tests/programs/directory_listing_probe.cho is the probe; directory_listing.sh compares with find, in bulk.
+//
+//     cancho build tests/commands/directory_listing.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: directory_listing` or what is wrong, and exits 0 or 1. One backend (LLVM) and one compiler: the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.io as console;
+import harness;
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: directory_listing CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    var report = harness.probe_transcript(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), "directory_listing", "tests/programs/directory_listing_probe.cho", "tests/commands/directory_listing.sh", "tests/commands/directory_listing.expected", buffer.empty(heap, 64));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: directory_listing\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
