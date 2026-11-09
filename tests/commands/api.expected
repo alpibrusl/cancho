@@ -1,0 +1,22 @@
+ok: the routes answer
+ok: one connection serves many requests and pipelined ones in order
+ok: a request split across segments is answered once whole
+ok: the start of the next request after a whole one is kept and completed
+ok: closing a connection moves the last one with its buffered bytes
+ok: what cannot be trusted is refused and the connection closes
+ok: connection close is honoured
+ok: a silent client does not hold up the others
+ok: many clients at once each get their own answers
+ok: clients that vanish do not hurt the server
+ok: an idle connection is closed after the timeout
+ok: a client that stops reading stalls only itself
+ok: a slow reader gets every byte in the right order
+ok: a client that never reads is closed after the idle timeout
+ok: a connection that is to close closes only once its answer has gone
+ok: the server announces its port on standard error
+ok: the server holds no foreign authority
+ok: a chunked body is decoded and the handler cannot tell
+ok: a chunked body arriving a byte at a time is answered once and whole
+ok: a body larger than the default buffer needs the buffer argument
+ok: a buffer the server cannot honour is refused at start
+ok: a port taken by another listener is not mistaken for the server

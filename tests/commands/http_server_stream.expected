@@ -1,0 +1,6 @@
+ok: events arrive while the stream is open and others are served
+ok: a client that leaves ends its stream and the loop goes on
+ok: a ticket of a connection that left does not reach the one that took its slot
+ok: a request refused while it streams is given no more bytes
+ok: a reader that never reads is never given half a message
+ok: stream through the store

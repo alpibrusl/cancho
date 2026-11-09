@@ -1,0 +1,6 @@
+ok: uploads arrive byte for byte with 100-continue, pipelining and keep-alive
+ok: a refusal before the body sends no 100 and the faults are refused with their rules
+ok: a client that stalls in a head or a body is timed out and the others are served
+ok: a body the application takes slowly stops being read and a client that leaves costs nothing
+ok: a refusal found while reading is sent even when the application is slow to call next
+ok: a connection that reads never writes into its neighbours buffer

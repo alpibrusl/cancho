@@ -1,0 +1,2 @@
+ok: a ticket redeemed by two threads at once is given out once
+ok: two threads receiving at once are answered to their own peers
