@@ -6,7 +6,7 @@ A path through the compiler's refusals in the order a newcomer meets them. Each 
 `text` below are.
 
 **Nothing here is typed by hand.** Each refused program is a fixture, `tests/reject/walkthrough_*.cho`, and the test
-`docs::refusals_by_example_is_what_the_compiler_says` (`crates/cancho/tests/conformance/docs.rs`) fails when
+the "refusals by example" section of `tests/commands/docs.sh` (run by `tests/commands/script_tests.cho`; it was `docs::refusals_by_example_is_what_the_compiler_says`) fails when
 
 * a refused block differs from its fixture, or the compiler no longer refuses it with exactly the one rule named in its heading
   (a rule renamed in the compiler fails here);

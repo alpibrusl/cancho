@@ -184,21 +184,17 @@ float_text 37
 tls_echo 36
 capture 32
 http_fetch_nb 30
-release 30
-foreign_authority 27
 floats 25
 https_hello 24
 tls_auth 23
 tls_echo_fixed 21
 processes 20
 tls_client_auth 19
-agent_tools 19
 tls_server 19
 thread_state 18
 http_server_stream 17
 ports 16
 compile_time 16
-project 16
 http_server_upload 16
 tls_pool 14
 vcs_std 14
@@ -209,7 +205,6 @@ global_state 11
 
 crypto_builtins 10
 
-docs 8
 vcs 7
 wide_multiply 6
 sha256_builtins 6
@@ -217,8 +212,6 @@ vcs_remote 5
 wasm_target 4
 mathfn 3
 refusals 3
-authority 3
-agent_cli 1
 duplication 1
 devices 1
 vcs_sync 1

@@ -66,8 +66,8 @@ names exactly seven labels — `args`, `err_write`, `file_read`,
 outside reader has to trust the program's own word about). `io_read` is
 there because the standard-input fallback is unconditionally reachable
 from `main`, whether or not a given invocation takes it; `err_write` is
-the usage and per-file error messages. `agent_tools.rs`'s
-`seek_reports_a_bounded_authority` checks this stays exactly seven, the
+the usage and per-file error messages. `tests/commands/agent_tools.sh`'s
+"authority" section checks this stays exactly seven, the
 same way `the_report_fails_closed` already checks `cut`'s `bounded` flag.
 
 That is the whole claim: not that `seek` is sandboxed — `fs_read("")` is
@@ -132,11 +132,11 @@ behind them yet, `standard-library.md`'s own bar.
 
 ## 5. Checked
 
-`crates/cancho/tests/conformance/agent_tools.rs`: a match, a miss, `-n`,
+`tests/commands/agent_tools.sh`: a match, a miss, `-n`,
 `-c`, `-m` across two files, a missing file (exit `2`), no pattern given
 (exit `2`, usage), reading standard input when no file is named, and a
 file containing a NUL byte and non-UTF-8 bytes found and printed without
 crashing — `defined-behaviour.md` §2.1's guarantee, exercised on a
 program built for exactly the case where an agent cannot vouch for its
-input. `agent_tools.rs`'s `seek_reports_a_bounded_authority` checks §2's
+input. `agent_tools.sh`'s authority section checks §2's
 report claim directly.

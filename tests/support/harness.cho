@@ -1561,4 +1561,26 @@ pub fn rt_build_run[&h, &x, &c, &f, &b, &v, &d, &n, &t, &g](heap: &!h Heap, exec
     }
     buffer.drop(heap, exe);
     return ran;
+
+// ---- script tests (`docs/gate.md` G4, wave 2: the commands of the compiler itself) ------------------------------------------------------------------
+
+// A test that is a shell script and a file of expected output: in a scratch directory, `/bin/sh script CANCHO SCRATCH` (run from the root of the repository, with the environment of `base_env`), its
+// standard output compared with the file `expected`; a difference or a script that does not exit 0 is added to `report` as `name/KIND: why`. The scratch directory is removed whatever happened.
+pub fn pr_script[&h, &x, &c, &f, &b, &m, &k, &n, &s, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte], name: &n [byte], script: &s [byte], expected: &e [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var rep = report;
+    let env = base_env(heap, compiler, cache);
+    let scratch = scratch_dir(heap, exec, clock, name);
+    borrow scratch as &sb in {
+        borrow env as &eb in {
+            if len(buffer.bytes(sb)) == 0 {
+                rep = failure(heap, rep, name, "scratch", "mktemp -d did not make a directory", "");
+            } else {
+                rep = compare_transcript(heap, exec, clock, fs, name, script, expected, bin, buffer.bytes(sb), buffer.bytes(eb), rep);
+                remove_tree(heap, exec, clock, buffer.bytes(sb));
+            }
+        }
+    }
+    buffer.drop(heap, scratch);
+    buffer.drop(heap, env);
+    return rep;
 }

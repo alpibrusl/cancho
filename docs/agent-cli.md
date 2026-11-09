@@ -75,8 +75,8 @@ Fixed by registering `-o <path>`, `-l <name>`, `-L <path>` as
 name bare, with no assumed prefix, so the literal dash in the name is
 what an agent sees. Checked directly — `cargo run -p cancho -- skill`
 is grepped for a bare `` `-o <path>` `` line in
-`crates/cancho/tests/conformance/agent_cli.rs`'s
-`introspect_names_every_registered_command`, though the sharper check
+`tests/commands/agent_cli.sh`'s
+"introspect names every registered command", though the sharper check
 is just reading the output once, by hand, which is how this was found
 in the first place.
 

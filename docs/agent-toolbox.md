@@ -562,8 +562,7 @@ already had an answer. `--require-match` gives the grep behaviour on request
 strategy without parsing.
 
 **Behaviour change, to confirm.** `seek`'s status for no match goes from 1
-to 0, and its "cannot read" from 2 to 3/4. `crates/cancho/tests/conformance/
-agent_tools.rs` asserts the old values and changes in the same slice.
+to 0, and its "cannot read" from 2 to 3/4. `tests/commands/agent_tools.sh` asserts the old values and changes in the same slice.
 
 ### D5. Errors are data, with a stable rule tag
 
