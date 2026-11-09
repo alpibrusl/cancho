@@ -88,7 +88,6 @@ mod process_release;
 mod processes;
 mod project;
 mod refusals;
-mod region_cache;
 mod release;
 mod rsa;
 mod selfhost;

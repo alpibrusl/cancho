@@ -224,7 +224,6 @@ global_state 11
 
 crypto_builtins 10
 ecdsa 10
-region_cache 8
 
 docs 8
 rsa 8
