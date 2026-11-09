@@ -19,7 +19,7 @@ pyca/cryptography reads the dates and checks, independently, that each
 case's root is in the bundle byte for byte. Writes
 tests/vectors/x509/verify/online.txt (the driver's lines and answers) and
 copies the bundle to tests/vectors/x509/verify/roots.pem, so the replay in
-`conformance/x509_verify.rs` needs no system file. Exit status 1 on any
+`tests/commands/x509_verify.cho` needs no system file. Exit status 1 on any
 answer other than the one wanted.
 """
 import datetime

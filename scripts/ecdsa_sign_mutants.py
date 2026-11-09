@@ -7,7 +7,7 @@
 Each mutant is one of the files with one deliberate bug. The three std files
 are built as local modules (`ecdsa_sign`, `bigmod`, `ecdh`) beside a copy of
 `tests/programs/ecdsa_sign_driver.cho` and the package's `x509.cho` and
-`key.cho`, then run against the evidence `conformance/ecdsa_sign.rs` and
+`key.cho`, then run against the evidence `tests/commands/ecdsa_sign.cho` and
 `scripts/ecdsa_sign_differential.py` use:
 - RFC 6979 A.2.5's signatures, their DER, the added randomness, and every
   refusal of the signer;
@@ -84,7 +84,7 @@ G = ("046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296"
 
 
 def evidence():
-    """(case, the exact answer) pairs: conformance/ecdsa_sign.rs's cases."""
+    """(case, the exact answer) pairs: tests/commands/ecdsa_sign.cho's cases."""
     sample_der = f"3046022100{SAMPLE_SIG[:64]}022100{SAMPLE_SIG[64:]}"
     test_der = f"3045022100{TEST_SIG[:64]}0220{TEST_SIG[64:]}"
     pairs = [

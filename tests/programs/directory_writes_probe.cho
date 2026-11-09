@@ -1,0 +1,103 @@
+edition 6;
+
+fn digits[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        digits(io, n / 10);
+    }
+    putchar(io, '0' + n % 10);
+    return 0;
+}
+
+fn report[&i](io: &!i Io, ok: bool, n: int) -> [io_write] int {
+    if ok {
+        write_bytes(io, "ok ");
+    } else {
+        write_bytes(io, "err ");
+    }
+    digits(io, n);
+    putchar(io, 10);
+    return 0;
+}
+
+fn write_hello[&i](io: &!i Io, opened: Opened) -> [io_write, file_write] int {
+    match opened {
+        Opened::Ok(f) => {
+            var file = f;
+            var wrote = 0;
+            borrow mut file as &!h in {
+                match file_write(h, "hello") {
+                    Done::Ok(n) => {
+                        wrote = n;
+                    }
+                    Done::Failed(e) => {
+                        wrote = 1000 + e;
+                    }
+                }
+            }
+            file_close(file);
+            report(io, true, wrote);
+            return 0;
+        }
+        Opened::Failed(e) => {
+            report(io, false, e);
+            return 1;
+        }
+    }
+}
+
+fn done[&i](io: &!i Io, answer: Done) -> [io_write] int {
+    match answer {
+        Done::Ok(n) => {
+            report(io, true, n);
+            return 0;
+        }
+        Done::Failed(e) => {
+            report(io, false, e);
+            return 1;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(ffi);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    var status = 0;
+    borrow args as &a in {
+        borrow fs as &f in {
+            borrow mut io as &!o in {
+                match open_dir(f, arg(a, 1)) {
+                    DirOpened::Ok(d0) => {
+                        var d = d0;
+                        borrow d as &r in {
+                            let op = arg(a, 2);
+                            if op[0] == byte_of('n') {
+                                status = write_hello(o, dir_open_new(r, arg(a, 3)));
+                            } else if op[0] == byte_of('a') {
+                                status = write_hello(o, dir_open_append(r, arg(a, 3)));
+                            } else if op[0] == byte_of('m') {
+                                status = done(o, dir_rename(r, arg(a, 3), arg(a, 4)));
+                            } else if op[0] == byte_of('r') {
+                                status = done(o, dir_remove(r, arg(a, 3)));
+                            } else {
+                                status = done(o, dir_sync(r));
+                            }
+                        }
+                        dir_close(d);
+                    }
+                    DirOpened::Failed(e) => {
+                        report(o, false, e);
+                        status = 2;
+                    }
+                }
+            }
+        }
+    }
+    release(args);
+    release(fs);
+    release(io);
+    return status;
+}

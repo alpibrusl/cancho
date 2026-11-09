@@ -56,7 +56,7 @@ a `safe fn` declaration.
 
 `git grep -nE 'static mut|thread_local!|lazy_static|OnceLock|OnceCell' origin/main -- 'crates/*.rs'`: 9 lines. One is the
 compiler's; eight are test fixtures that build a driver once per test binary (`BUILT: OnceLock<...>` in
-`capture.rs`, `process_group.rs`, `process_release.rs`, `processes.rs` ×3, `signals.rs`, `spawn_detached_under.rs`; their value
+`capture.rs`, `process_release.rs`, `processes.rs` ×3, `signals.rs` (and `process_group.rs`, `spawn_detached_under.rs`, which moved to `tests/commands/` in G4 and no longer have one); their value
 is a path to an executable, written once, read many times). Beside them, two `AtomicU64`/`AtomicU32` counters name scratch
 files (`cancho-codegen-llvm::COUNTER`, three in `cancho-vcs/tests`), a `Mutex<Vec<String>>` collects a test server's lines
 (`tls_echo.rs`), and two `AtomicUsize`/`AtomicBool` count connections in tests. There is no `static mut`, no `thread_local!`

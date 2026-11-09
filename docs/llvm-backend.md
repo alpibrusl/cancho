@@ -222,7 +222,7 @@ own output, for the same overflow, disassembles to `udf #0xc11f`, and
 the shell reports 132 — `SIGILL` — every time.
 
 This is a real gap the existing suite would not have caught: every
-runtime-trap test here (`compile_time.rs`, `arguments.rs`, and any other
+runtime-trap test here (`compile_time.rs`, `arguments.rs` (now `tests/commands/arguments.cho`), and any other
 `Command::status.code()`) checks `assert_eq!(run.status.code(), None, …)`
 — Rust's own signal for "a signal killed this," true for `SIGTRAP` and
 `SIGILL` alike — and none reads `std::os::unix::process::ExitStatusExt`'s

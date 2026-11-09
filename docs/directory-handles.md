@@ -195,9 +195,9 @@ generators.
 
 ## 4. What it is checked by
 
-Slice 6 (`tests/conformance/directory_open_new_mode.rs`, **both backends** and the compiler in cancho): a file is made with the mode asked for under a umask of `0o022` (`0o755` is `0o755`, `0o700` is `0o700`, `0o777` is `0o755`, `0o644` and `0` as asked) and holds the bytes written; a file, directory or dangling link in the way is `EEXIST` and untouched; `..`, an empty name and `a/b` are `EINVAL`; modes `0o1000`, `0o4755`, `0o1777` and `-1` are `EINVAL` and no file appears; `tests/reject/dir_open_new_mode_is_edition_nine.cho`, `dir_open_new_mode_not_declared.cho` and `dir_open_new_mode_on_wasi.cho`.
+Slice 6 (`tests/commands/directory_open_new_mode.cho`, moved from `conformance/directory_open_new_mode.rs` (G4); LLVM only since D2): a file is made with the mode asked for under a umask of `0o022` (`0o755` is `0o755`, `0o700` is `0o700`, `0o777` is `0o755`, `0o644` and `0` as asked) and holds the bytes written; a file, directory or dangling link in the way is `EEXIST` and untouched; `..`, an empty name and `a/b` are `EINVAL`; modes `0o1000`, `0o4755`, `0o1777` and `-1` are `EINVAL` and no file appears; `tests/reject/dir_open_new_mode_is_edition_nine.cho`, `dir_open_new_mode_not_declared.cho` and `dir_open_new_mode_on_wasi.cho`.
 
-Slice 5 (`tests/conformance/directory_mkdir.rs`, **both backends**, the same expectations): a free name becomes a directory with
+Slice 5 (`tests/commands/directory_mkdir.cho`, moved from `conformance/directory_mkdir.rs` (G4); LLVM only since D2): a free name becomes a directory with
 the mode asked for under a umask of `0o022` (`0o755` is `0o755`, `0o700` is `0o700`, `0o777` is `0o755`), and it can be entered; an
 existing file, directory, link or dangling link is `EEXIST` and nothing is written outside; `..`, `.`, an empty name, `a/b` and a
 NUL are `EINVAL` with no call; a mode of `0o1000`, `0o4755` and `-1` is `EINVAL` and no directory appears;
@@ -238,7 +238,7 @@ Slice 4 (`tests/conformance/directory_rename_new.rs`, **both backends**, the sam
 
 Slice 2:
 
-* `tests/conformance/directory_writes.rs`, on **both backends**, against a tree with a link to a file outside and a
+* `tests/commands/directory_writes.cho` (moved from `conformance/directory_writes.rs`, G4; LLVM only since D2), against a tree with a link to a file outside and a
   dangling link whose target is outside: create once and then `EEXIST`; create through either link `EEXIST`, and
   nothing appears outside; append twice reads back twice, append through either link `ELOOP`, and the outside file is
   unchanged; rename within the directory, and `..`, an empty name and `../escaped` refused with `EINVAL` (nothing
@@ -252,7 +252,7 @@ Slice 2:
 
 Slice 1:
 
-* `tests/conformance/directory_handles.rs`, on **both backends**, judged from outside the program, against a tree the
+* `tests/commands/directory_handles.cho` (moved from `conformance/directory_handles.rs`, G4; LLVM only since D2), judged from outside the program, against a tree the
   test builds: a file two directories down opens and reads back; a link to a file outside is refused (`ELOOP`); a
   link to a directory outside is refused when entered; `..`, `.`, an empty name, a name with `/` and an absolute path
   are refused by `std.dirs.open_file` and, as single names, by the builtins (`EINVAL`) without a call; a missing name

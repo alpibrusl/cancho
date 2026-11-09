@@ -1,0 +1,107 @@
+edition 6;
+
+import std.dirs;
+
+fn digits[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        digits(io, n / 10);
+    }
+    putchar(io, '0' + n % 10);
+    return 0;
+}
+
+fn report[&i](io: &!i Io, ok: bool, n: int) -> [io_write] int {
+    if ok {
+        write_bytes(io, "ok ");
+    } else {
+        write_bytes(io, "err ");
+    }
+    digits(io, n);
+    putchar(io, 10);
+    return 0;
+}
+
+fn read_all[&i](io: &!i Io, opened: Opened) -> [io_write, file_read] int {
+    match opened {
+        Opened::Ok(f) => {
+            var file = f;
+            var got = 0;
+            region t {
+                let buf = alloc_slice[t](64, byte_of(0));
+                borrow mut file as &!h in {
+                    match file_read(h, buf) {
+                        Read::Got(n) => {
+                            got = n;
+                        }
+                        Read::End => {
+                            got = 0;
+                        }
+                        Read::Failed(e) => {
+                            got = 1000 + e;
+                        }
+                    }
+                }
+            }
+            file_close(file);
+            report(io, true, got);
+            return 0;
+        }
+        Opened::Failed(e) => {
+            report(io, false, e);
+            return 1;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(ffi);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    var status = 0;
+    borrow args as &a in {
+        borrow fs as &f in {
+            borrow mut io as &!o in {
+                match open_dir(f, arg(a, 1)) {
+                    DirOpened::Ok(d0) => {
+                        var d = d0;
+                        borrow d as &r in {
+                            let mode = arg(a, 3);
+                            if len(mode) == 4 {
+                                status = read_all(o, dirs.open_file(r, arg(a, 2)));
+                            } else if len(mode) == 3 {
+                                status = read_all(o, dir_open_read(r, arg(a, 2)));
+                            } else if len(mode) == 1 {
+                                // A NUL cannot come through `argv`: `a` exists, so a check that
+                                // missed it would open `a` and read nothing.
+                                status = read_all(o, dir_open_read(r, "a\0b"));
+                            } else {
+                                match dirs.enter(r, arg(a, 2)) {
+                                    DirOpened::Ok(sub) => {
+                                        dir_close(sub);
+                                        report(o, true, 0);
+                                    }
+                                    DirOpened::Failed(e) => {
+                                        report(o, false, e);
+                                        status = 1;
+                                    }
+                                }
+                            }
+                        }
+                        dir_close(d);
+                    }
+                    DirOpened::Failed(e) => {
+                        report(o, false, e);
+                        status = 2;
+                    }
+                }
+            }
+        }
+    }
+    release(args);
+    release(fs);
+    release(io);
+    return status;
+}

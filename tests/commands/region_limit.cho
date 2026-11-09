@@ -1,0 +1,159 @@
+edition 7;
+module region_limit_test;
+
+// region_limit.cho -- `conformance/region_limit.rs` (deleted), in cancho (`docs/gate.md` G4): a region allocation past the chunk (`docs/region-limit.md`) is a named trap at run time when its
+// size is not a constant: 8,193 ints or 65,537 bytes (one past the chunk) die of a fault signal (SIGILL: `child_wait` cannot tell which, `docs/processes.md` section 4) and say `region chunk exhausted` and name `box_slice`; exactly 8,192 ints or 65,536 bytes run, exit 0
+// and say nothing. Each program is written to /tmp with a count that a loop moves, so nothing folds it.
+//
+//     cancho build tests/commands/region_limit.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: region_limit` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// The program: `count` is a bound the loop reaches one step at a time, `fill` the element.
+fn program[&h, &c, &f](heap: &!h Heap, count: &c [byte], fill: &f [byte]) -> [heap] buffer.Buffer {
+    var text = buffer.append(heap, buffer.empty(heap, 512), "fn main(world: World) -> [] int {\n let Split { io, ffi, fs, heap, args } = split(world);\n release(args); release(ffi); release(fs); release(heap); release(io);\n var want = 0;\n var i = 0;\n while i < ");
+    text = buffer.append(heap, text, count);
+    text = buffer.append(heap, text, " { want = want + 1; i = i + 1; }\n var got = 0;\n region r {\n let t = alloc_slice[r](want, ");
+    text = buffer.append(heap, text, fill);
+    text = buffer.append(heap, text, ");\n got = len(t);\n }\n return got - want;\n}\n");
+    return text;
+}
+
+// What running `exe` should do: a trap (a fault signal, the cause and the remedy on standard error) or a clean silent run.
+fn judge[&h, &x, &c, &e, &n, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &e [byte], name: &n [byte], env: &v [byte], report: buffer.Buffer, trap: bool) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, exe, buffer.empty(heap, 0), "", "PATH=/usr/bin:/bin\0");
+    borrow err as &rb in {
+        let said = buffer.bytes(rb);
+        if trap {
+            if kind != 1 || code != 0 {
+                rep = harness.failure(heap, rep, "region_limit", name, "should be killed by a fault signal (SIGILL, as every trap; child_wait says 0 for a fault)", said);
+            } else if bytes.find(said, "region chunk exhausted") < 0 || bytes.find(said, "box_slice") < 0 {
+                rep = harness.failure(heap, rep, "region_limit", name, "the trap must name its cause and the remedy", said);
+            }
+        } else if kind != 0 || code != 0 {
+            rep = harness.failure(heap, rep, "region_limit", name, "should run and exit 0", said);
+        } else if len(said) > 0 {
+            rep = harness.failure(heap, rep, "region_limit", name, "a run that fits is silent", said);
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// One case: build the program for `count` and `fill`, run it.
+fn one[&h, &x, &c, &f, &b, &v, &g, &n, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], env: &v [byte], report: buffer.Buffer, tag: &g [byte], count: &n [byte], fill: &d [byte], trap: bool) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    var exe = buffer.append(heap, buffer.empty(heap, 64), "/tmp/cancho-region-limit-");
+    exe = buffer.append(heap, exe, tag);
+    exe = buffer.push(heap, exe, byte_of('-'));
+    exe = buffer.append(heap, exe, count);
+    var path = buffer.empty(heap, 64);
+    borrow exe as &eb in {
+        path = buffer.append(heap, path, buffer.bytes(eb));
+    }
+    path = buffer.append(heap, path, ".cho");
+    let source = program(heap, count, fill);
+    borrow source as &sb in {
+        borrow path as &pb in {
+            harness.write_file(fs, buffer.bytes(pb), buffer.bytes(sb));
+        }
+    }
+    buffer.drop(heap, source);
+    var name = buffer.append(heap, buffer.empty(heap, 32), tag);
+    name = buffer.push(heap, name, byte_of(' '));
+    name = buffer.append(heap, name, count);
+    var rep = report;
+    borrow exe as &eb in {
+        borrow path as &pb in {
+            borrow name as &nb in {
+                let sources = harness.word(heap, buffer.empty(heap, 64), buffer.bytes(pb));
+                borrow sources as &sb in {
+                    let harness.Ended { out, err, kind, code } = harness.build_only(heap, exec, clock, bin, buffer.bytes(sb), "", buffer.bytes(eb), env);
+                    if kind != 0 {
+                        borrow err as &rb in {
+                            rep = harness.failure(heap, rep, "region_limit", buffer.bytes(nb), "should build, but the compiler said", buffer.bytes(rb));
+                        }
+                    } else {
+                        rep = judge(heap, exec, clock, buffer.bytes(eb), buffer.bytes(nb), env, rep, trap);
+                    }
+                    buffer.drop(heap, out);
+                    buffer.drop(heap, err);
+                }
+                buffer.drop(heap, sources);
+            }
+        }
+    }
+    buffer.drop(heap, exe);
+    buffer.drop(heap, path);
+    buffer.drop(heap, name);
+    return rep;
+}
+
+fn check[&h, &x, &c, &f, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll, fs_write("")] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    borrow env as &eb in {
+        let e = buffer.bytes(eb);
+        // One element past the chunk, for ints and for bytes: a trap.
+        report = one(heap, exec, clock, fs, bin, e, report, "int", "8193", "0", true);
+        report = one(heap, exec, clock, fs, bin, e, report, "byte", "65537", "byte_of(0)", true);
+        // Exactly the chunk: runs, and says nothing.
+        report = one(heap, exec, clock, fs, bin, e, report, "int", "8192", "0", false);
+        report = one(heap, exec, clock, fs, bin, e, report, "byte", "65536", "byte_of(0)", false);
+    }
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_write("")] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: region_limit CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: region_limit\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

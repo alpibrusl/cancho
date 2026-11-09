@@ -63,7 +63,7 @@ pub fn read_file[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> 
     return Contents { data: out, failed: trouble };
 }
 
-// How a program ended, as `kind` and `code`: 0 it answered `code`, 1 it was killed by a signal, 2 it did not finish in time, 3 it wrote too much, 4 it
+// How a program ended, as `kind` and `code`: 0 it answered `code`, 1 it was killed by the signal `code`, 2 it did not finish in time, 3 it wrote too much, 4 it
 // could not be watched, 5 it did not start.
 pub res struct Ended {
     out: buffer.Buffer,
@@ -102,6 +102,7 @@ pub fn spawn_capture[&h, &x, &c, &p, &n, &e](heap: &!h Heap, exec: &x Exec(""), 
                             }
                             process.Ran::Signaled(s0) => {
                                 kind = 1;
+                                code = s0;
                             }
                             process.Ran::TimedOut => {
                                 kind = 2;
@@ -217,4 +218,459 @@ pub fn option[&a, &f](args: &a Args, flag: &f [byte]) -> [args] &a [byte] {
         at = at + 1;
     }
     return arg(args, 0)[0..0];
+}
+
+// Write `text` to the file at `path` (a whole file, created or truncated); how many bytes were written. Fixtures made by a test live under `/tmp/cancho-NAME-...`.
+pub fn write_file[&f, &p, &t](fs: &f Fs(""), path: &p [byte], text: &t [byte]) -> [fs_write("")] int {
+    return fs_write(fs, path, text);
+}
+
+// `bin build SOURCES FLAGS --std -o EXE` and nothing run (`sources` and `flags`: each followed by a NUL, flags may be empty). Kind 0 and code 0 if it built; otherwise kind 6 and what the compiler
+// said in `err` (kind 5 if it did not start).
+pub fn build_only[&h, &x, &c, &b, &s, &g, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], flags: &g [byte], exe: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "build");
+    let paths = bytes.count_byte(sources, 0);
+    var at = 1;
+    while at <= paths {
+        command = word(heap, command, bytes.field(sources, 0, at));
+        at = at + 1;
+    }
+    command = buffer.append(heap, command, flags);
+    command = word(heap, command, "--std");
+    command = word(heap, command, "-o");
+    command = word(heap, command, exe);
+    let built = spawn_capture(heap, exec, clock, bin, command, "", env);
+    let Ended { out, err, kind, code } = built;
+    if kind == 0 && code == 0 {
+        return Ended { out: out, err: err, kind: 0, code: 0 };
+    }
+    buffer.drop(heap, out);
+    if kind == 5 {
+        return Ended { out: buffer.empty(heap, 0), err: err, kind: 5, code: code };
+    }
+    return Ended { out: buffer.empty(heap, 0), err: err, kind: 6, code: code };
+}
+
+// ---- processes and scratch directories (`docs/gate.md` G4, the process tests) --------------------------------------------------------------------
+
+// Whether `needle` is in `text`.
+pub fn contains[&t, &n](text: &t [byte], needle: &n [byte]) -> [] bool {
+    return bytes.find(text, needle) >= 0;
+}
+
+// Whether one line of `text` is exactly `line`.
+pub fn has_line[&t, &l](text: &t [byte], line: &l [byte]) -> [] bool {
+    let lines = bytes.count_byte(text, 10) + 1;
+    var at = 1;
+    while at <= lines {
+        if bytes.equal(bytes.field(text, 10, at), line) {
+            return true;
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// The number that follows `prefix` at the start of a line of `text` (`worker 4321`), or -1 if no line starts with it or no digit follows.
+pub fn number_after[&t, &p](text: &t [byte], prefix: &p [byte]) -> [] int {
+    let lines = bytes.count_byte(text, 10) + 1;
+    var at = 1;
+    while at <= lines {
+        let line = bytes.field(text, 10, at);
+        if bytes.starts_with(line, prefix) {
+            var n = 0;
+            var i = len(prefix);
+            var digits = 0;
+            while i < len(line) && bytes.is_digit(int_of(line[i])) {
+                n = n * 10 + (int_of(line[i]) - '0');
+                i = i + 1;
+                digits = digits + 1;
+            }
+            if digits > 0 {
+                return n;
+            }
+            return 0 - 1;
+        }
+        at = at + 1;
+    }
+    return 0 - 1;
+}
+
+// Add `why` to `report` as a failure of `kind/name` unless `holds`; `text` is shown with it (at most 1,500 bytes).
+pub fn require[&h, &a, &n, &w, &t](heap: &!h Heap, report: buffer.Buffer, holds: bool, kind: &a [byte], name: &n [byte], why: &w [byte], text: &t [byte]) -> [heap] buffer.Buffer {
+    if holds {
+        return report;
+    }
+    return failure(heap, report, kind, name, why, text);
+}
+
+// Free what a run holds.
+pub fn drop_ended[&h](heap: &!h Heap, e: Ended) -> [heap] int {
+    let Ended { out, err, kind, code } = e;
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return 0;
+}
+
+// `/bin/sh -c SCRIPT`, nothing on its standard input; the script is consumed.
+pub fn sh_run[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, script: buffer.Buffer) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "-c");
+    borrow script as &sb in {
+        command = word(heap, command, buffer.bytes(sb));
+    }
+    buffer.drop(heap, script);
+    return spawn_capture(heap, exec, clock, "/bin/sh", command, "", "PATH=/usr/bin:/bin\0");
+}
+
+// A new empty directory `/tmp/cancho-TAG.XXXXXX` (made by `mktemp -d`), its path without the newline; empty if it could not be made.
+pub fn make_scratch[&h, &x, &c, &t](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, tag: &t [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var command = word(heap, buffer.empty(heap, 64), "-d");
+    var template = buffer.append(heap, buffer.empty(heap, 64), "/tmp/cancho-");
+    template = buffer.append(heap, template, tag);
+    template = buffer.append(heap, template, ".XXXXXX");
+    borrow template as &tb in {
+        command = word(heap, command, buffer.bytes(tb));
+    }
+    buffer.drop(heap, template);
+    let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, "/usr/bin/mktemp", command, "", "PATH=/usr/bin:/bin\0");
+    var path = buffer.empty(heap, 64);
+    if kind == 0 && code == 0 {
+        borrow out as &ob in {
+            path = buffer.append(heap, path, bytes.trim(buffer.bytes(ob)));
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return path;
+}
+
+// `exe` with the arguments in `words` (each followed by a NUL, none quoted by the caller; consumed), nothing on standard input, core dumps off (a refused name is a
+// trap, which costs a dump where they are piped); `Ended` as of `exe`, which replaces the shell that starts it.
+pub fn quiet_run[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], words: buffer.Buffer) -> [heap, exec(""), clock, poll] Ended {
+    var script = buffer.append(heap, buffer.empty(heap, 128), "ulimit -c 0; exec '");
+    script = buffer.append(heap, script, exe);
+    script = buffer.push(heap, script, byte_of('\''));
+    borrow words as &wb in {
+        let list = buffer.bytes(wb);
+        let n = bytes.count_byte(list, 0);
+        var at = 1;
+        while at <= n {
+            script = buffer.append(heap, script, " '");
+            script = buffer.append(heap, script, bytes.field(list, 0, at));
+            script = buffer.push(heap, script, byte_of('\''));
+            at = at + 1;
+        }
+    }
+    buffer.drop(heap, words);
+    return sh_run(heap, exec, clock, script);
+}
+
+// Run `script` with `PID` standing for `pid`; whether it exited 0.
+fn pid_script[&h, &x, &c, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, pid: int, script: &s [byte]) -> [heap, exec(""), clock, poll] bool {
+    var text = buffer.append(heap, buffer.empty(heap, 192), "PID=");
+    text = buffer.push_nat(heap, text, pid);
+    text = buffer.append(heap, text, "; ");
+    text = buffer.append(heap, text, script);
+    let Ended { out, err, kind, code } = sh_run(heap, exec, clock, text);
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return kind == 0 && code == 0;
+}
+
+// Running or sleeping, as `ps` says: there, and not a zombie waiting for a reaper.
+pub fn pid_alive[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, pid: int) -> [heap, exec(""), clock, poll] bool {
+    return pid_script(heap, exec, clock, pid, "s=$(ps -o stat= -p $PID); case \"$s\" in ''|Z*) exit 1;; esac; exit 0");
+}
+
+// Not running within `seconds`: gone, or a zombie (a killed process nothing reaps stays one where there is no init).
+pub fn pid_ends[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, pid: int, seconds: int) -> [heap, exec(""), clock, poll] bool {
+    var limit = buffer.append(heap, buffer.empty(heap, 192), "i=0; while [ $i -lt ");
+    limit = buffer.push_nat(heap, limit, seconds * 20);
+    limit = buffer.append(heap, limit, " ]; do s=$(ps -o stat= -p $PID); case \"$s\" in ''|Z*) exit 0;; esac; sleep 0.05; i=$((i+1)); done; exit 1");
+    var yes = false;
+    borrow limit as &lb in {
+        yes = pid_script(heap, exec, clock, pid, buffer.bytes(lb));
+    }
+    buffer.drop(heap, limit);
+    return yes;
+}
+
+// `kill -KILL pid`, whatever the answer.
+pub fn pid_kill[&h, &x, &c](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, pid: int) -> [heap, exec(""), clock, poll] int {
+    pid_script(heap, exec, clock, pid, "kill -KILL $PID");
+    return 0;
+}
+
+// `rm -rf path`, for a path under `/tmp/cancho-` only (anything else is left alone).
+pub fn remove_scratch[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, path: &p [byte]) -> [heap, exec(""), clock, poll] int {
+    if !bytes.starts_with(path, "/tmp/cancho-") || contains(path, "..") {
+        return 1;
+    }
+    var command = word(heap, buffer.empty(heap, 64), "-rf");
+    command = word(heap, command, path);
+    drop_ended(heap, spawn_capture(heap, exec, clock, "/bin/rm", command, "", "PATH=/usr/bin:/bin\0"));
+    return 0;
+}
+
+// `bin build SOURCES --std -o EXE` (`sources`: each path followed by a NUL); the build's own `Ended` (kind 0 and code 0 if it built).
+pub fn build_exe[&h, &x, &c, &b, &s, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], exe: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "build");
+    let paths = bytes.count_byte(sources, 0);
+    var at = 1;
+    while at <= paths {
+        command = word(heap, command, bytes.field(sources, 0, at));
+        at = at + 1;
+    }
+    command = word(heap, command, "--std");
+    command = word(heap, command, "-o");
+    command = word(heap, command, exe);
+    return spawn_capture(heap, exec, clock, bin, command, "", env);
+}
+
+// `text` without the spaces, tabs and carriage returns at its end.
+pub fn trim_end[&t](text: &t [byte]) -> [] &t [byte] {
+    var end = len(text);
+    while end > 0 && (text[end - 1] == byte_of(' ') || text[end - 1] == byte_of('\t') || text[end - 1] == byte_of('\r')) {
+        end = end - 1;
+    }
+    return text[0..end];
+}
+
+// Column `n` (from 1) of each line of `text` whose columns are separated by ` | `, one per line; blank lines and lines that begin with `#` are left out. For the vector
+// files of `tests/vectors` (`case | answer`): a driver is fed one column and answers line for line, and the other is what it must say.
+pub fn column[&h, &t](heap: &!h Heap, text: &t [byte], n: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text) / 2 + 16);
+    let lines = bytes.count_byte(text, 10) + 1;
+    var at = 1;
+    while at <= lines {
+        var rest = bytes.field(text, 10, at);
+        if len(trim_end(rest)) > 0 && rest[0] != byte_of('#') {
+            var k = 1;
+            while k < n {
+                let cut = bytes.find(rest, " | ");
+                if cut < 0 {
+                    rest = rest[0..0];
+                } else {
+                    rest = rest[cut + 3..len(rest)];
+                }
+                k = k + 1;
+            }
+            let cut = bytes.find(rest, " | ");
+            if cut >= 0 {
+                rest = rest[0..cut];
+            }
+            out = buffer.push(heap, buffer.append(heap, out, trim_end(rest)), byte_of('\n'));
+        }
+        at = at + 1;
+    }
+    return out;
+}
+
+// `kind/name` failures in `report` for the lines of `got` that are not the lines of `want` (each compared without its trailing blanks): at most three lines that differ,
+// each with its number, what was wanted and what was said (300 bytes of each), and one if the two have a different number of lines.
+pub fn differences[&h, &a, &n, &g, &w](heap: &!h Heap, report: buffer.Buffer, kind: &a [byte], name: &n [byte], got: &g [byte], want: &w [byte]) -> [heap] buffer.Buffer {
+    var out = report;
+    let said = bytes.count_byte(got, 10);
+    let wanted = bytes.count_byte(want, 10);
+    var shown = 0;
+    var at = 1;
+    while at <= said && at <= wanted {
+        let g = trim_end(bytes.field(got, 10, at));
+        let w = trim_end(bytes.field(want, 10, at));
+        if !bytes.equal(g, w) && shown < 3 {
+            var why = buffer.append(heap, buffer.empty(heap, 700), "line ");
+            why = buffer.push_nat(heap, why, at);
+            why = buffer.append(heap, why, " differs; want ");
+            why = buffer.append(heap, why, w[0..min_of(len(w), 300)]);
+            why = buffer.append(heap, why, "; got ");
+            why = buffer.append(heap, why, g[0..min_of(len(g), 300)]);
+            borrow why as &wb in {
+                out = failure(heap, out, kind, name, buffer.bytes(wb), "");
+            }
+            buffer.drop(heap, why);
+            shown = shown + 1;
+        }
+        at = at + 1;
+    }
+    if said != wanted {
+        var why = buffer.append(heap, buffer.empty(heap, 96), "should answer ");
+        why = buffer.push_nat(heap, why, wanted);
+        why = buffer.append(heap, why, " lines, one per case, and said ");
+        why = buffer.push_nat(heap, why, said);
+        borrow why as &wb in {
+            out = failure(heap, out, kind, name, buffer.bytes(wb), "");
+        }
+        buffer.drop(heap, why);
+    }
+    return out;
+}
+
+// The smaller of two numbers.
+pub fn min_of(a: int, b: int) -> [] int {
+    if a < b {
+        return a;
+    }
+    return b;
+}
+
+// A scratch directory: `/usr/bin/mktemp -d /tmp/PREFIX.XXXXXX`, its path (nothing if it could not be made).
+pub fn scratch_dir[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, prefix: &p [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var pattern = buffer.append(heap, buffer.empty(heap, 64), "/tmp/");
+    pattern = buffer.append(heap, pattern, prefix);
+    pattern = buffer.append(heap, pattern, ".XXXXXX");
+    var command = word(heap, buffer.empty(heap, 16), "-d");
+    borrow pattern as &pb in {
+        command = word(heap, command, buffer.bytes(pb));
+    }
+    buffer.drop(heap, pattern);
+    let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, "/usr/bin/mktemp", command, "", "PATH=/usr/bin:/bin\0");
+    buffer.drop(heap, err);
+    var path = buffer.empty(heap, 64);
+    if kind == 0 && code == 0 {
+        borrow out as &ob in {
+            let said = buffer.bytes(ob);
+            if len(said) > 0 {
+                path = buffer.append(heap, path, said[0..len(said) - 1]);
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    return path;
+}
+
+// `/bin/sh SCRIPT ONE TWO` (`$1` and `$2` of the script), run with the environment `env`.
+pub fn run_sh_file[&h, &x, &c, &s, &a, &b, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, script: &s [byte], one: &a [byte], two: &b [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), script);
+    command = word(heap, command, one);
+    command = word(heap, command, two);
+    return spawn_capture(heap, exec, clock, "/bin/sh", command, "", env);
+}
+
+// A scratch directory and everything in it removed, the unreadable directories a test made too.
+pub fn remove_tree[&h, &x, &c, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, dir: &d [byte]) -> [heap, exec(""), clock, poll] int {
+    var command = word(heap, buffer.empty(heap, 64), "-c");
+    command = word(heap, command, "chmod -R u+rwx \"$1\" 2>/dev/null; rm -rf \"$1\"");
+    command = word(heap, command, "sh");
+    command = word(heap, command, dir);
+    let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, "/bin/sh", command, "", "PATH=/usr/bin:/bin\0");
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return code;
+}
+
+// `/bin/sh script exe scratch` against the file `expected`: the failures, if any, added to `report` (see `probe_transcript`).
+fn compare_transcript[&h, &x, &c, &f, &n, &s, &e, &p, &d, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), name: &n [byte], script: &s [byte], expected: &e [byte], exe: &p [byte], scratch: &d [byte], env: &v [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var rep = report;
+    let Ended { out, err, kind, code } = run_sh_file(heap, exec, clock, script, exe, scratch, env);
+    let Contents { data, failed } = read_file(heap, fs, expected);
+    borrow data as &wb in {
+        borrow out as &ob in {
+            borrow err as &rb in {
+                if kind != 0 || code != 0 {
+                    rep = failure(heap, rep, name, "script", "should exit 0", buffer.bytes(rb));
+                }
+                if failed != 0 {
+                    rep = failure(heap, rep, name, "expected", "cannot read the file of expected output", expected);
+                } else if !bytes.equal(buffer.bytes(ob), buffer.bytes(wb)) {
+                    var both = buffer.append(heap, buffer.empty(heap, 256), "--- expected\n");
+                    both = buffer.append(heap, both, buffer.bytes(wb));
+                    both = buffer.append(heap, both, "--- got\n");
+                    both = buffer.append(heap, both, buffer.bytes(ob));
+                    borrow both as &bb in {
+                        rep = failure(heap, rep, name, "transcript", "differs from the expected output", buffer.bytes(bb));
+                    }
+                    buffer.drop(heap, both);
+                }
+            }
+        }
+    }
+    buffer.drop(heap, data);
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// A test of a probe program and a shell script (`docs/gate.md` G4): in a scratch directory, build `probe` (one source file, with `--std`) with `bin`, run `/bin/sh script PROBE SCRATCH` and
+// compare its standard output with the file `expected`. The script makes the tree, runs the probe, and prints what the probe said and what is on disk afterwards; a difference, a build that
+// fails or a script that does not exit 0 is added to `report` as `name/KIND: why`. The scratch directory is removed whatever happened.
+pub fn probe_transcript[&h, &x, &c, &f, &b, &m, &k, &n, &q, &s, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], compiler: &m [byte], cache: &k [byte], name: &n [byte], probe: &q [byte], script: &s [byte], expected: &e [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var rep = report;
+    let env = base_env(heap, compiler, cache);
+    let scratch = scratch_dir(heap, exec, clock, name);
+    borrow scratch as &sb in {
+        borrow env as &eb in {
+            if len(buffer.bytes(sb)) == 0 {
+                rep = failure(heap, rep, name, "scratch", "mktemp -d did not make a directory", "");
+            } else {
+                var exe = buffer.append(heap, buffer.empty(heap, 64), buffer.bytes(sb));
+                exe = buffer.append(heap, exe, "/probe");
+                var build = word(heap, buffer.empty(heap, 64), "build");
+                build = word(heap, build, probe);
+                build = word(heap, build, "--std");
+                build = word(heap, build, "-o");
+                borrow exe as &xb in {
+                    build = word(heap, build, buffer.bytes(xb));
+                }
+                let Ended { out, err, kind, code } = spawn_capture(heap, exec, clock, bin, build, "", buffer.bytes(eb));
+                if kind != 0 || code != 0 {
+                    borrow err as &rb in {
+                        rep = failure(heap, rep, name, "build", "the probe should compile, but the compiler said", buffer.bytes(rb));
+                    }
+                } else {
+                    borrow exe as &xb in {
+                        rep = compare_transcript(heap, exec, clock, fs, name, script, expected, buffer.bytes(xb), buffer.bytes(sb), buffer.bytes(eb), rep);
+                    }
+                }
+                buffer.drop(heap, out);
+                buffer.drop(heap, err);
+                buffer.drop(heap, exe);
+                remove_tree(heap, exec, clock, buffer.bytes(sb));
+            }
+        }
+    }
+    buffer.drop(heap, scratch);
+    buffer.drop(heap, env);
+    return rep;
+}
+
+// The compiler `bin` run with up to four arguments (an empty one is left out) in `env`; its `Ended`. For a command like `print FILE --output json`.
+pub fn run_cancho[&h, &x, &c, &b, &e, &p, &q, &r, &s](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &e [byte], first: &p [byte], second: &q [byte], third: &r [byte], fourth: &s [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), first);
+    if len(second) > 0 {
+        command = word(heap, command, second);
+    }
+    if len(third) > 0 {
+        command = word(heap, command, third);
+    }
+    if len(fourth) > 0 {
+        command = word(heap, command, fourth);
+    }
+    return spawn_capture(heap, exec, clock, bin, command, "", env);
+}
+
+// `bin build SOURCES --std -o EXE` and nothing run (`sources`: each path followed by a NUL): the `Ended` of the compiler, kind 6 if it failed (what it said in `err`), else
+// kind 0. For a test that runs the same program more than once (`build_and_run` builds each time).
+pub fn build[&h, &x, &c, &b, &s, &p, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], sources: &s [byte], exe: &p [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] Ended {
+    var command = word(heap, buffer.empty(heap, 64), "build");
+    let paths = bytes.count_byte(sources, 0);
+    var at = 1;
+    while at <= paths {
+        command = word(heap, command, bytes.field(sources, 0, at));
+        at = at + 1;
+    }
+    command = word(heap, command, "--std");
+    command = word(heap, command, "-o");
+    command = word(heap, command, exe);
+    let built = spawn_capture(heap, exec, clock, bin, command, "", env);
+    let Ended { out, err, kind, code } = built;
+    if kind != 0 || code != 0 {
+        buffer.drop(heap, out);
+        return Ended { out: buffer.empty(heap, 0), err: err, kind: 6, code: code };
+    }
+    return Ended { out: out, err: err, kind: 0, code: 0 };
+}
+
+// The program at `exe` with no arguments, `input` on its standard input and nothing in its environment but a `PATH`.
+pub fn run_program[&h, &x, &c, &p, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], input: &n [byte]) -> [heap, exec(""), clock, poll] Ended {
+    return spawn_capture(heap, exec, clock, exe, buffer.empty(heap, 0), input, "PATH=/usr/bin:/bin\0");
 }

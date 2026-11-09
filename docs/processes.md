@@ -6,16 +6,16 @@
 >
 > | Slice (§7) | What | Where it is | Built |
 > |---|---|---|---|
-> | 0 | close-on-exec everywhere (§4.5) | every backend; `close_on_exec.rs` | yes |
+> | 0 | close-on-exec everywhere (§4.5) | every backend; `tests/commands/close_on_exec.cho` | yes |
 > | 1 | `Exec`, `exec_spawn`, `child_wait`, `child_kill`, `pipe_open`, `pipe_read`, `pipe_write`, `pipe_nonblocking`, `pipe_close`, `child_end_close` (§3.2) | `builtin.rs`; `processes.rs` | yes |
 > | 2 | `poller_add_pipe`, `poller_add_child` (§4.8) | `builtin.rs`; `processes.rs` | yes |
 > | 3 | `std.process`: `argv`/`add`/`list`/`count`/`drop`, `channels`, `close`, **`capture`** (§7.1) | `std/process.cho`; `capture.rs` | yes |
 > | 4 | the MCP server (cancho-tools#10) | in cancho-tools (cancho-tools#17), on `std.process` | yes, outside this repository |
 > | 5 | `exec_spawn_in` (§4.10), `std.process.channels_with_errors` and **`capture_both`** (§7.2) | `builtin.rs`, `std/process.cho`; `processes.rs`, `capture.rs` | yes |
 > | 6 (edition 9) | `exec_spawn_detached`, `child_pid`, `child_release` and the label `exec_detached` (§4.11, #524) | `builtin.rs`; `process_release.rs` | yes |
-> | 6 (edition 9) | `child_kill_group` (§4.12, #533), and `capture` using it | `builtin.rs`, `std/process.cho`; `process_group.rs` | yes |
-> | 6 (edition 9) | `exec_spawn_detached_under` (§4.15, #562): a worker found beneath a `Dir` that leads a group of its own | `builtin.rs`, `lower/process.rs`, `examples/selfhost/`; `spawn_detached_under.rs` | yes |
-| 6 (edition 9) | `exec_covers` and `fs_covers` (§4.13, #535): is this path inside the bound, by the rule the operations trap on | `builtin.rs`, `memory.rs`/`fs.rs` of both backends; `path_covers.rs` | yes |
+> | 6 (edition 9) | `child_kill_group` (§4.12, #533), and `capture` using it | `builtin.rs`, `std/process.cho`; `tests/commands/process_group.cho` | yes |
+> | 6 (edition 9) | `exec_spawn_detached_under` (§4.15, #562): a worker found beneath a `Dir` that leads a group of its own | `builtin.rs`, `lower/process.rs`, `examples/selfhost/`; `tests/commands/spawn_detached_under.cho` | yes |
+| 6 (edition 9) | `exec_covers` and `fs_covers` (§4.13, #535): is this path inside the bound, by the rule the operations trap on | `builtin.rs`, `memory.rs`/`fs.rs` of both backends; `tests/commands/path_covers.cho` | yes |
 >
 > What is still only designed or open is §9, and only that. *Corrected (#536):* this line used to say "slices 0 to 2
 > built; slices 3 and 4 designed, not built", which was true when slice 2 merged and was never revised when `capture`
@@ -363,7 +363,7 @@ child through `Ffi`, which is the leak this closes. `file-writes.md`'s
 > So both windows above are closed for every child `exec_spawn` starts; they
 > remain only for a foreign `exec`.
 >
-> **Checked by** `close_on_exec.rs`: a program runs `system("ls /dev/fd")`
+> **Checked by** `tests/commands/close_on_exec.cho`: a program runs `system("ls /dev/fd")`
 > through `Ffi` once before opening anything and once holding one of
 > everything a builtin opens (fourteen descriptors), and the two listings
 > must be equal. Before the change the second had twelve more, on both
@@ -842,7 +842,7 @@ says what `Fs` is not).
 negation. The compiler in cancho does the same in `runtime.ll`: `cancho_path_covers` is the rule, `cancho_checked_path`
 calls it and traps on `false`, and the new call is `cancho_path_covers` as it stands. A change to the rule is a change
 to the one function the trap and the answer both use. The remaining copy is `extends_path`, which decides at compile
-time for literals (it has no `..`, length or NUL case, which a literal's rows and `narrow` do not need); `path_covers.rs`
+time for literals (it has no `..`, length or NUL case, which a literal's rows and `narrow` do not need); `tests/commands/path_covers.cho`
 holds it to the same table of paths as the emitted check, for every path without those three.
 
 **Chosen over, and why:**
@@ -957,7 +957,7 @@ generators and the compiler in cancho add one check to `exec_spawn_in`'s and not
   `/` (an absolute name is the whole filesystem, which is what `Exec("")` covers and what this builtin must not reach for),
   has no `..` anywhere (the byte pair, so `a..b` too) and is under 4096 bytes. A name that breaks any of these **traps**, as
   every path outside a bound does (§4.1). A supervisor that wants a value asks first: `exec_covers(exec, name)` is the
-  `..`-and-length half and `len(name) > 0 && name[0] != '/'` the other (the driver of `spawn_under.rs` does exactly this,
+  `..`-and-length half and `len(name) > 0 && name[0] != '/'` the other (the driver `tests/programs/spawn_under.cho` does exactly this,
   and the test holds its verdict against the trap for eight names). `a/b` is allowed: the directory's own subdirectories
   are in it. `argv[0]` is the name as given.
 * **The ceiling.** `Exec("")` only. A program found beneath a directory chosen at run time cannot be shown to lie under a
@@ -999,8 +999,8 @@ print the same on every row; macOS and WASI not run):
 | `..`, `../worker.sh`, `sub/../worker.sh`, `worker.sh/..`, `a..b`, 4096 bytes | **`SIGILL`** |
 | the same binary, a second worker directory | the second directory's `worker.sh` (exit 9): the bound is the argument, not the text |
 
-Conformance (`spawn_under.rs`, drivers `tests/programs/spawn_under.cho` and `spawn_in_control.cho`, each built on the three
-code generators): the table above, the supervisor held against the trap, the link, a missing directory (the driver's own
+Conformance (`tests/commands/spawn_under.cho`, drivers `tests/programs/spawn_under.cho` and `spawn_in_control.cho`, each built once
+by the compiler under test): the table above, the supervisor held against the trap, the link, a missing directory (the driver's own
 status 3, nothing spawned), and the two reports. Fixtures: `tests/accept/exec_spawn_under.cho`; `tests/reject/`
 `exec_spawn_under_is_edition_nine` (`not-a-function`), `_on_wasi` (`unsupported-on-target`), `_narrowed` and `_not_an_exec`
 (`capability-misused`), `_arity` (`arity-mismatch`), `_undeclared` (`effect-not-declared`), `_not_a_dir` (`type-mismatch`). No
@@ -1066,7 +1066,7 @@ the directory to the shell, given the script `sleep 7000 & echo $!; wait`):
 The authority report of the driver is `args`, `child_signal`, `clock`, `exec_detached`, `exec_under`, `fs_read("")`, `heap`,
 `io_write`, `pipe_read`, `pipe_write`, `poll`: **no `exec("...")`, no `/bin/kill`**, which is the acceptance of the issue.
 
-Conformance: `crates/cancho/tests/conformance/spawn_detached_under.rs`, four tests (the deadline, the control, the name rule,
+Conformance: `tests/commands/spawn_detached_under.cho`, four checks (the deadline, the control, the name rule,
 the report). Fixtures: `tests/accept/exec_spawn_detached_under.cho`; `tests/reject/exec_spawn_detached_under_is_edition_nine`
 (`not-a-function`), `_narrowed` (`capability-misused`), `_arity` (`arity-mismatch`), `_not_a_dir` (`type-mismatch`),
 `_undeclared` (`effect-not-declared`, a row with `exec_under` and without `exec_detached`). No new rule.
@@ -1083,8 +1083,8 @@ and started it at once; on a loaded runner the spawn answered `Failed(26)`, `ETX
 forked between the script's `write` and `close`, and the child it made held the write descriptor until its own `exec`. The
 builtin was not involved (nothing had run). Reproduced outside cancho: four threads spawning `/bin/true` while another writes
 and executes a script made 11 of 600 executions fail with 26. The worker is now a link to `/bin/sh` and the script travels in
-the arguments, so no file is written and executed in the test; `spawn_under.rs` still writes its scripts (a latent instance
-of the same race, not touched here).
+the arguments, so no file is written and executed in the test; `conformance/spawn_under.rs` wrote its scripts (a latent instance
+of the same race); `tests/commands/spawn_under.cho` writes them with a shell that has ended before any worker runs, and nothing forks beside it.
 
 ---
 
@@ -1640,7 +1640,7 @@ when it is gone or `Z`. macOS: the code is the same call with the pid negated, a
   in `codes.cho`, `netcode.cho` and `exprs.cho`, `cancho_child_kill_group` in `runtime.ll`, and the generated tables.
 * **Refusals.** `tests/reject/child_kill_group_is_edition_nine` (`not-a-function`), `child_kill_group_undeclared`
   (`effect-not-declared`), `child_kill_group_on_wasi` (`unsupported-on-target`). No new rule. `tests/accept/process_group_kill.cho`.
-* **Conformance** (`process_group.rs`, driver `tests/programs/process_group.cho`, both backends): the S7 scenario run
+* **Conformance** (`tests/commands/process_group.cho`, driver `tests/programs/process_group.cho`): the S7 scenario run
   for real: a detached worker `sh -c 'sleep 77 & echo $!; wait'`, a 300 ms deadline through `capture`, and the grandchild
   (pid printed by the worker) gone or `Z` after the driver ends; the same worker started plain, whose grandchild is
   still `S` (the control: without it the first test could pass for any reason); the answers of `child_kill_group` for a
@@ -1668,7 +1668,7 @@ What #535 added, measured on Linux 6.18 x86-64. macOS and WebAssembly under `was
 * **Refusals.** `exec_covers_is_edition_nine` and `fs_covers_is_edition_nine` (`not-a-function`),
   `exec_covers_on_wasi` (`unsupported-on-target`), `exec_covers_not_an_exec` and `fs_covers_not_an_fs`
   (`capability-misused`), `exec_covers_arity` (`arity-mismatch`). No new rule. `tests/accept/path_covers_asks_first.cho`.
-* **Conformance** (`path_covers.rs`, driver `tests/programs/path_covers.cho` built per bound by Cranelift, the Rust LLVM
+* **Conformance** (`tests/commands/path_covers.cho`, driver `tests/programs/path_covers.cho` built per bound by the compiler under test; it was built by Cranelift, the Rust LLVM
   backend and the compiler in cancho): for four bounds (a directory, one program, a directory ending in `/`, none) a
   table of paths, each asked of `exec_covers` and `fs_covers` and **held against** what `exec_spawn` and `open_read`
   really do with it, a value or a signal with nothing printed. The cases include a path outside, `..` at the start, in

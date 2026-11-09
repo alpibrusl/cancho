@@ -1,0 +1,201 @@
+edition 7;
+module spawn_detached_under_test;
+
+// spawn_detached_under.cho -- `conformance/spawn_detached_under.rs` (deleted), in cancho (`docs/gate.md` G4): `exec_spawn_detached_under` (`docs/processes.md` section 4.15, #562), a worker started by a
+// name beneath a directory chosen at deployment that leads a process group of its own, so that the deadline of `capture` ends what the worker started. Over real processes and a real directory,
+// through `tests/programs/spawn_detached_under.cho` (cancho-forge's S7 with the worker found beneath a `Dir`): the state of the grandchild after the driver has ended is read with `ps`.
+// Four checks: the deadline ends the grandchild; the control (`exec_spawn_under`) leaks it; the name rule is `exec_spawn_under`'s (a missing name is a value, a path is a trap); the authority
+// report names `exec_under` and `exec_detached` and no path.
+//
+//     cancho build tests/commands/spawn_detached_under.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: spawn_detached_under` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// The driver, run with `dir` (where `sh` is a link to the shell), a mode (`d` detached, `u` the control) and a worker name.
+fn drive[&h, &x, &c, &p, &d, &m, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], dir: &d [byte], mode: &m [byte], name: &n [byte]) -> [heap, exec(""), clock, poll] harness.Ended {
+    var words = harness.word(heap, buffer.empty(heap, 128), dir);
+    words = harness.word(heap, words, mode);
+    words = harness.word(heap, words, name);
+    return harness.quiet_run(heap, exec, clock, exe, words);
+}
+
+// The S7 scenario: a worker beneath a `Dir` starts a subprocess, `capture` times the worker out at 300 ms, the subprocess is dead when the driver ends, the worker is reaped. And the control, the same
+// worker by `exec_spawn_under`: `capture` kills the worker only and the grandchild runs on (so the first check could have failed).
+fn scenario[&h, &x, &c, &p, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte], dir: &d [byte], detached: bool) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var mode = "u";
+    var name = "control";
+    if detached {
+        mode = "d";
+        name = "deadline";
+    }
+    var r = report;
+    let harness.Ended { out, err, kind, code } = drive(heap, exec, clock, exe, dir, mode, "sh");
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        let worker = harness.number_after(said, "worker ");
+        let grandchild = harness.number_after(said, "grandchild ");
+        r = harness.require(heap, r, kind == 0 && code == 0, "spawn_detached_under", name, "the driver should end by itself with status 0", said);
+        r = harness.require(heap, r, harness.has_line(said, "ran timed out"), "spawn_detached_under", name, "capture should time the worker out", said);
+        r = harness.require(heap, r, worker > 0 && grandchild > 0 && worker != grandchild, "spawn_detached_under", name, "the driver should name two processes", said);
+        if grandchild > 0 {
+            if detached {
+                let ended = harness.pid_ends(heap, exec, clock, grandchild, 10);
+                r = harness.require(heap, r, ended, "spawn_detached_under", name, "the grandchild survived the deadline", said);
+                if !ended {
+                    harness.pid_kill(heap, exec, clock, grandchild);
+                }
+                r = harness.require(heap, r, !harness.pid_alive(heap, exec, clock, worker), "spawn_detached_under", name, "the worker should be reaped", said);
+            } else {
+                let running = harness.pid_alive(heap, exec, clock, grandchild);
+                harness.pid_kill(heap, exec, clock, grandchild);
+                r = harness.require(heap, r, running, "spawn_detached_under", name, "a worker without a group of its own should leak its grandchild", said);
+                r = harness.require(heap, r, harness.pid_ends(heap, exec, clock, grandchild, 10), "spawn_detached_under", name, "the control's own cleanup", said);
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+// A name the directory does not hold is a value (`spawn 2`); a name that is a path is a trap (a signal, and nothing said).
+fn names[&h, &x, &c, &p, &d](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte], dir: &d [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    let harness.Ended { out, err, kind, code } = drive(heap, exec, clock, exe, dir, "d", "no-such-worker");
+    borrow out as &ob in {
+        r = harness.require(heap, r, kind == 0 && code == 0 && harness.has_line(buffer.bytes(ob), "spawn 2"), "spawn_detached_under", "names", "a missing name should answer `spawn 2` and exit 0", buffer.bytes(ob));
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    let refused = "/bin/sh\0../sh\0sub/../sh\0";
+    var at = 1;
+    while at <= 3 {
+        r = refused_name(heap, exec, clock, r, exe, dir, bytes.field(refused, 0, at));
+        at = at + 1;
+    }
+    return r;
+}
+
+fn refused_name[&h, &x, &c, &p, &d, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte], dir: &d [byte], bad: &n [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    let harness.Ended { out, err, kind, code } = drive(heap, exec, clock, exe, dir, "d", bad);
+    borrow out as &ob in {
+        r = harness.require(heap, r, kind == 1 && len(buffer.bytes(ob)) == 0, "spawn_detached_under", "names", "a name that is a path should trap and say nothing", bad);
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+// The row: both labels, no path, no `kill`.
+fn authority[&h, &x, &c, &b, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, bin: &b [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    var command = harness.word(heap, buffer.empty(heap, 64), "authority");
+    command = harness.word(heap, command, "tests/programs/spawn_detached_under.cho");
+    command = harness.word(heap, command, "--std");
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, bin, command, "", env);
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        r = harness.require(heap, r, kind == 0 && code == 0, "spawn_detached_under", "authority", "`authority` should answer", said);
+        r = harness.require(heap, r, harness.contains(said, "exec_under"), "spawn_detached_under", "authority", "the report should show exec_under", said);
+        r = harness.require(heap, r, harness.contains(said, "exec_detached"), "spawn_detached_under", "authority", "the report should show exec_detached", said);
+        r = harness.require(heap, r, !harness.contains(said, "exec(\""), "spawn_detached_under", "authority", "the report should show no exec(\"...\") path", said);
+        r = harness.require(heap, r, !harness.contains(said, "kill"), "spawn_detached_under", "authority", "the report should not mention kill", said);
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+// What is wrong, as a report (nothing if every check held).
+fn check[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    let dir = harness.make_scratch(heap, exec, clock, "sdu");
+    borrow dir as &db in {
+        let scratch = buffer.bytes(db);
+        borrow env as &eb in {
+            if len(scratch) == 0 {
+                report = harness.failure(heap, report, "spawn_detached_under", "scratch", "mktemp should make a directory", "");
+            } else {
+                // The worker directory holds `sh`, a link to the shell, which the driver gives a script: a script written and executed at once is `ETXTBSY` when another process forks in between.
+                var made = buffer.append(heap, buffer.empty(heap, 96), "ln -s /bin/sh '");
+                made = buffer.append(heap, made, scratch);
+                made = buffer.append(heap, made, "/sh'");
+                harness.drop_ended(heap, harness.sh_run(heap, exec, clock, made));
+                var exe = harness.joined(heap, scratch, "driver");
+                borrow exe as &xb in {
+                    let paths = "tests/programs/spawn_detached_under.cho\0";
+                    let harness.Ended { out, err, kind, code } = harness.build_exe(heap, exec, clock, bin, paths, buffer.bytes(xb), buffer.bytes(eb));
+                    if kind != 0 || code != 0 {
+                        borrow err as &rb in {
+                            report = harness.failure(heap, report, "spawn_detached_under", "build", "should compile, but the compiler said", buffer.bytes(rb));
+                        }
+                    } else {
+                        report = scenario(heap, exec, clock, report, buffer.bytes(xb), scratch, true);
+                        report = scenario(heap, exec, clock, report, buffer.bytes(xb), scratch, false);
+                        report = names(heap, exec, clock, report, buffer.bytes(xb), scratch);
+                    }
+                    buffer.drop(heap, out);
+                    buffer.drop(heap, err);
+                }
+                buffer.drop(heap, exe);
+                report = authority(heap, exec, clock, report, bin, buffer.bytes(eb));
+            }
+        }
+        harness.remove_scratch(heap, exec, clock, scratch);
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, exec(""), clock, poll] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: spawn_detached_under CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: spawn_detached_under\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    release(fs);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        status = run(h, i, a, x, c);
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

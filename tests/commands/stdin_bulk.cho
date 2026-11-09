@@ -1,0 +1,272 @@
+edition 7;
+module stdin_bulk_test;
+
+// stdin_bulk.cho -- `conformance/stdin_bulk.rs` (deleted), in cancho (`docs/gate.md` G4): `read_bytes`, standard input in bulk (`docs/standard-input.md` section 7). The driver
+// `tests/programs/stdin_read_bytes.cho` reads standard input to its end through a buffer of a given size and prints a byte count, a line count and an order-sensitive hash; each case feeds it
+// input whose answer is computed here, and compares: every byte once and in order for 11 input sizes (0 to 300,000) by 6 buffer sizes (0 to 1 MiB); 24 MiB read whole; the stream shared with
+// `getchar`; a failed read is `failed:ERRNO` and the end is not a failure (EBADF, EISDIR, /dev/null); the authority report says `io_read` and no `fs_`; and a row of `io_write` alone cannot call it (refused by `effect-not-declared`).
+//
+//     cancho build tests/commands/stdin_bulk.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: stdin_bulk` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// A deterministic stream with every byte value, newlines among them: the bytes of a linear congruential generator, as the Rust test made them.
+fn pattern[&h](heap: &!h Heap, count: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, count);
+    var state = 0 - 7046029254386353131;
+    var at = 0;
+    while at < count {
+        state = wrapping_add(wrapping_mul(state, 6364136223846793005), 1442695040888963407);
+        out = buffer.push(heap, out, byte_of(state >> 33 & 255));
+        at = at + 1;
+    }
+    return out;
+}
+
+// What the driver prints for `input` read to the end, with `empty=ok ` first when `empty` (the buffer was empty).
+fn expected[&h, &i](heap: &!h Heap, input: &i [byte], empty: bool) -> [heap] buffer.Buffer {
+    var sum = 0;
+    var lines = 0;
+    var at = 0;
+    while at < len(input) {
+        let c = int_of(input[at]);
+        sum = (sum * 31 + c + 1) % 1000000007;
+        if c == 10 {
+            lines = lines + 1;
+        }
+        at = at + 1;
+    }
+    var out = buffer.empty(heap, 64);
+    if empty {
+        out = buffer.append(heap, out, "empty=ok ");
+    }
+    out = buffer.append(heap, out, "bytes=");
+    out = buffer.push_nat(heap, out, len(input));
+    out = buffer.append(heap, out, " lines=");
+    out = buffer.push_nat(heap, out, lines);
+    out = buffer.append(heap, out, " sum=");
+    out = buffer.push_nat(heap, out, sum);
+    return buffer.append(heap, out, " end=eof\n");
+}
+
+// Run `exe` with `args` (each followed by a NUL) and `input` on standard input: it must exit 0 and print `want`.
+fn expect[&h, &x, &c, &e, &a, &i, &o, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &e [byte], args: &a [byte], input: &i [byte], want: &o [byte], name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let command = buffer.append(heap, buffer.empty(heap, 64), args);
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, exe, command, input, "PATH=/usr/bin:/bin\0");
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        if kind != 0 || code != 0 {
+            rep = harness.failure(heap, rep, "stdin_bulk", name, "should exit 0", said);
+        } else if !bytes.equal(said, want) {
+            rep = harness.failure(heap, rep, "stdin_bulk", name, "every byte should arrive once, in order; it said", said);
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// The driver with `chunk` (and `mix` if given), fed `input[0..size]`; the name says which case.
+fn fed[&h, &x, &c, &e, &i, &k, &m](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &e [byte], input: &i [byte], size: int, chunk: &k [byte], mix: &m [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var args = harness.word(heap, buffer.empty(heap, 32), chunk);
+    if len(mix) > 0 {
+        args = harness.word(heap, args, mix);
+    }
+    var name = buffer.push_nat(heap, buffer.empty(heap, 48), size);
+    name = buffer.append(heap, name, " bytes, buffer ");
+    name = buffer.append(heap, name, chunk);
+    name = buffer.append(heap, name, mix);
+    let part = input[0..size];
+    let want = expected(heap, part, bytes.equal(chunk, "0"));
+    var rep = report;
+    borrow args as &ab in {
+        borrow name as &nb in {
+            borrow want as &wb in {
+                rep = expect(heap, exec, clock, exe, buffer.bytes(ab), part, buffer.bytes(wb), buffer.bytes(nb), rep);
+            }
+        }
+    }
+    buffer.drop(heap, args);
+    buffer.drop(heap, name);
+    buffer.drop(heap, want);
+    return rep;
+}
+
+// All six buffer sizes for one input size.
+fn sizes[&h, &x, &c, &e, &i](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &e [byte], input: &i [byte], size: int, report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    rep = fed(heap, exec, clock, exe, input, size, "0", "", rep);
+    rep = fed(heap, exec, clock, exe, input, size, "1", "", rep);
+    rep = fed(heap, exec, clock, exe, input, size, "7", "", rep);
+    rep = fed(heap, exec, clock, exe, input, size, "4096", "", rep);
+    rep = fed(heap, exec, clock, exe, input, size, "65536", "", rep);
+    rep = fed(heap, exec, clock, exe, input, size, "1048576", "", rep);
+    return rep;
+}
+
+// `sh -c SCRIPT`: it must exit 0 and print `want`.
+fn under_sh[&h, &x, &c, &s, &o, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, script: &s [byte], want: &o [byte], name: &n [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var args = harness.word(heap, buffer.empty(heap, 64), "-c");
+    args = harness.word(heap, args, script);
+    var rep = report;
+    borrow args as &ab in {
+        rep = expect(heap, exec, clock, "/bin/sh", buffer.bytes(ab), "", want, name, rep);
+    }
+    buffer.drop(heap, args);
+    return rep;
+}
+
+// `cancho authority --std --output json` of the driver: the `effects` line has `io_read` and `io_write` and nothing of the file system, no foreign symbol.
+fn authority[&h, &x, &c, &b, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &v [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let command = buffer.append(heap, buffer.empty(heap, 96), "authority\0--std\0--output\0json\0tests/programs/stdin_read_bytes.cho\0");
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, bin, command, "", env);
+    borrow out as &ob in {
+        borrow err as &rb in {
+            let said = buffer.bytes(ob);
+            if kind != 0 || code != 0 {
+                rep = harness.failure(heap, rep, "stdin_bulk", "authority", "should succeed, but said", buffer.bytes(rb));
+            } else {
+                let lines = bytes.count_byte(said, 10);
+                var effects = false;
+                var foreign = false;
+                var at = 1;
+                while at <= lines {
+                    let line = bytes.field(said, 10, at);
+                    if bytes.find(line, "\"effects\"") >= 0 {
+                        effects = bytes.find(line, "\"io_read\"") >= 0 && bytes.find(line, "\"io_write\"") >= 0 && bytes.find(line, "\"fs_") < 0 && bytes.find(line, "\"file_") < 0;
+                    }
+                    if bytes.find(line, "\"foreign_symbols\"") >= 0 {
+                        foreign = bytes.find(line, "[]") >= 0;
+                    }
+                    at = at + 1;
+                }
+                if !effects || !foreign {
+                    rep = harness.failure(heap, rep, "stdin_bulk", "authority", "the row should say io_read and io_write, no fs_ or file_, and no foreign symbol", said);
+                }
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+// A row that says only `io_write` cannot call `read_bytes`: refused by the rule `effect-not-declared` (the compiler in cancho says the rule's sentence, not `io_read` by name, as the Rust one does).
+fn refused[&h, &x, &c, &b, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], env: &v [byte], report: buffer.Buffer) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var rep = report;
+    let command = buffer.append(heap, buffer.empty(heap, 64), "check\0--std\0--output\0json\0tests/programs/stdin_bulk_row.cho\0");
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, bin, command, "", env);
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        if kind != 0 || code == 0 {
+            rep = harness.failure(heap, rep, "stdin_bulk", "row", "a program that never reads standard input cannot call it, and should be refused", said);
+        } else if bytes.find(said, "\"effect-not-declared\"") < 0 {
+            rep = harness.failure(heap, rep, "stdin_bulk", "row", "the refusal should be the rule effect-not-declared", said);
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rep;
+}
+
+fn check[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    borrow env as &eb in {
+        let e = buffer.bytes(eb);
+        let harness.Ended { out, err, kind, code } = harness.build_only(heap, exec, clock, bin, "tests/programs/stdin_read_bytes.cho\0", "", "/tmp/cancho-stdin-bulk-probe", e);
+        buffer.drop(heap, out);
+        if kind != 0 {
+            borrow err as &rb in {
+                report = harness.failure(heap, report, "stdin_bulk", "build", "should build, but the compiler said", buffer.bytes(rb));
+            }
+        } else {
+            let probe = "/tmp/cancho-stdin-bulk-probe";
+            // 24 MiB: far more than any internal buffer, and what `getchar` took a third of a second to read; every smaller input is a prefix of it.
+            let stream = pattern(heap, 25165824);
+            borrow stream as &sb in {
+                let input = buffer.bytes(sb);
+                // Sizes around the buffer sizes in play: empty, one byte, less than one chunk, exactly one, one more, and several.
+                report = sizes(heap, exec, clock, probe, input, 0, report);
+                report = sizes(heap, exec, clock, probe, input, 1, report);
+                report = sizes(heap, exec, clock, probe, input, 5, report);
+                report = sizes(heap, exec, clock, probe, input, 6, report);
+                report = sizes(heap, exec, clock, probe, input, 4095, report);
+                report = sizes(heap, exec, clock, probe, input, 4096, report);
+                report = sizes(heap, exec, clock, probe, input, 4097, report);
+                report = sizes(heap, exec, clock, probe, input, 65535, report);
+                report = sizes(heap, exec, clock, probe, input, 65536, report);
+                report = sizes(heap, exec, clock, probe, input, 65537, report);
+                report = sizes(heap, exec, clock, probe, input, 300000, report);
+                report = fed(heap, exec, clock, probe, input, 25165824, "65536", "", report);
+                report = fed(heap, exec, clock, probe, input, 25165824, "999983", "", report);
+                // `getchar` fills the stdio buffer with far more than the five bytes it hands out, and a read that went around that buffer would lose them.
+                report = fed(heap, exec, clock, probe, input, 100000, "4096", "mix", report);
+                report = fed(heap, exec, clock, probe, input, 100000, "7", "mix", report);
+                report = fed(heap, exec, clock, probe, input, 100000, "1000000", "mix", report);
+            }
+            buffer.drop(heap, stream);
+            // A closed descriptor is EBADF (9), a directory is EISDIR (21): both the same on Linux and macOS. An empty file and /dev/null are the end of input, not a failure.
+            report = under_sh(heap, exec, clock, "'/tmp/cancho-stdin-bulk-probe' 64 <&-", "bytes=0 lines=0 sum=0 end=failed:9\n", "a closed stdin is EBADF", report);
+            report = under_sh(heap, exec, clock, "'/tmp/cancho-stdin-bulk-probe' 64 </", "bytes=0 lines=0 sum=0 end=failed:21\n", "a directory is EISDIR", report);
+            report = under_sh(heap, exec, clock, "'/tmp/cancho-stdin-bulk-probe' 64 </dev/null", "bytes=0 lines=0 sum=0 end=eof\n", "/dev/null is the end", report);
+            report = authority(heap, exec, clock, bin, e, report);
+            report = refused(heap, exec, clock, bin, e, report);
+        }
+        buffer.drop(heap, err);
+    }
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, exec(""), clock, poll] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: stdin_bulk CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: stdin_bulk\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(fs);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        status = run(h, i, a, x, c);
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

@@ -176,3 +176,5 @@ the first run, which did not have the stall; the one with it was 30.
 **After `prlimit --core=1:1` (the run of that change, one run).** The byte-fed mutants took 3.0 minutes, the streaming-body mutants
 6.5 and the HTTP client's 19.6; the wall time was 28.7 minutes, most of it the macOS jobs waiting for a runner. A figure from one run,
 with the spread above.
+
+**Correction (2026-11-09, #757).** `selfhost (linux-aarch64, 1/4)` was killed by a runner shutdown signal three times running, always with `selfhost::the_formatter_in_cancho_agrees_with_the_rust_formatter` the only test unfinished: after #757 removed 22 modules from the packing, the formatter (weight 182) landed in the same shard as the heaviest test (`selfhost::compile::the_compiler_in_cancho_builds_programs_…`, 377), and the pair did not survive the arm runner. The formatter's weight is now 378 so that each of the two heaviest tests opens its own shard (checked: `conformance_shard.py --check 4`, weights 1930/1929/1929/1929). Whether the cause is memory or time on that runner is not measured; the separation is the measured change.

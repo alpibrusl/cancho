@@ -1,0 +1,215 @@
+edition 7;
+module process_group_test;
+
+// process_group.cho -- `conformance/process_group.rs` (deleted), in cancho (`docs/gate.md` G4): signalling the process group of a detached child (`docs/processes.md` section 4.12): `child_kill_group`, and
+// `std.process.capture` using it, over real processes, through `tests/programs/process_group.cho` (cancho-forge's S7, a worker that starts a subprocess, a deadline). What is looked at is outside the
+// driver: the state of the grandchild after it has ended, read with `ps`; "dead" is "gone or a zombie". Five checks: a deadline ends what a detached worker started; the control (a plain worker's
+// grandchild is left running, so the first could have failed); what `child_kill_group` answers by the child it is given (0, ESRCH 3, EINVAL 22); a leader that has ended does not hide its group; the
+// authority report of a program that stops a worker's group shows a signal and no program.
+//
+//     cancho build tests/commands/process_group.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: process_group` or what is wrong, and exits 0 or 1. One backend (LLVM): the Cranelift leg of the Rust test went with D2.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import harness;
+
+// One mode of the driver, which must end by itself with status 0 (`kind` 0 and `code` 0 of what comes back).
+fn drive[&h, &x, &c, &p, &m](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte], mode: &m [byte]) -> [heap, exec(""), clock, poll] harness.Ended {
+    return harness.quiet_run(heap, exec, clock, exe, harness.word(heap, buffer.empty(heap, 16), mode));
+}
+
+// `t`: a detached worker starts a subprocess, `capture` times it out, the subprocess is dead when the driver ends and the worker is reaped. `p`, the control: the plain worker's grandchild runs on.
+fn deadline[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte], detached: bool) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var mode = "p";
+    var name = "control";
+    if detached {
+        mode = "t";
+        name = "deadline";
+    }
+    var r = report;
+    let harness.Ended { out, err, kind, code } = drive(heap, exec, clock, exe, mode);
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        let worker = harness.number_after(said, "worker ");
+        let grandchild = harness.number_after(said, "grandchild ");
+        r = harness.require(heap, r, kind == 0 && code == 0, "process_group", name, "the driver should end by itself with status 0", said);
+        r = harness.require(heap, r, harness.has_line(said, "ran timed out"), "process_group", name, "capture should time the worker out", said);
+        r = harness.require(heap, r, grandchild > 0, "process_group", name, "the driver should name the grandchild", said);
+        if detached {
+            r = harness.require(heap, r, worker > 0 && worker != grandchild, "process_group", name, "the driver should name two processes", said);
+        }
+        if grandchild > 0 {
+            if detached {
+                let ended = harness.pid_ends(heap, exec, clock, grandchild, 10);
+                r = harness.require(heap, r, ended, "process_group", name, "the grandchild survived the deadline", said);
+                if !ended {
+                    harness.pid_kill(heap, exec, clock, grandchild);
+                }
+                if worker > 0 {
+                    r = harness.require(heap, r, !harness.pid_alive(heap, exec, clock, worker), "process_group", name, "the worker should be reaped", said);
+                }
+            } else {
+                let running = harness.pid_alive(heap, exec, clock, grandchild);
+                harness.pid_kill(heap, exec, clock, grandchild);
+                r = harness.require(heap, r, running, "process_group", name, "a plain worker's grandchild should not be in a group of its own", said);
+                r = harness.require(heap, r, harness.pid_ends(heap, exec, clock, grandchild, 10), "process_group", name, "the control's own cleanup", said);
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+// What `child_kill_group` answers, by mode: `k` a detached child (0, and it ends signaled), `r` a plain child (ESRCH 3, nothing sent, the program kills the child itself), `s` a signal that is none
+// (EINVAL 22). `exited` is the line about how the child ended, or empty if the mode prints none.
+fn answer[&h, &x, &c, &p, &m, &g, &e](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte], mode: &m [byte], group: &g [byte], exited: &e [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    let harness.Ended { out, err, kind, code } = drive(heap, exec, clock, exe, mode);
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        r = harness.require(heap, r, kind == 0 && code == 0, "process_group", mode, "the driver should end by itself with status 0", said);
+        r = harness.require(heap, r, harness.has_line(said, group), "process_group", mode, "the group signal should answer as in the table of section 4.12", said);
+        if len(exited) > 0 {
+            r = harness.require(heap, r, harness.has_line(said, exited), "process_group", mode, "the child should end as the table says", said);
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+fn answers[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = answer(heap, exec, clock, report, exe, "k", "group 0", "exited signaled 256");
+    r = answer(heap, exec, clock, r, exe, "r", "group 3", "exited signaled 256");
+    return answer(heap, exec, clock, r, exe, "s", "group 22", "");
+}
+
+// `z`: the leader of the group has ended and not been waited for (a zombie that still holds its pid, section 4.7); the signal still reaches the grandchild.
+fn leader[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, exe: &p [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    let harness.Ended { out, err, kind, code } = drive(heap, exec, clock, exe, "z");
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        let grandchild = harness.number_after(said, "grandchild ");
+        r = harness.require(heap, r, kind == 0 && code == 0, "process_group", "leader", "the driver should end by itself with status 0", said);
+        r = harness.require(heap, r, grandchild > 0, "process_group", "leader", "the driver should name the grandchild", said);
+        r = harness.require(heap, r, harness.has_line(said, "group 0"), "process_group", "leader", "the group should be signalled (group 0)", said);
+        r = harness.require(heap, r, harness.has_line(said, "exited code 0"), "process_group", "leader", "the leader should have ended with code 0", said);
+        if grandchild > 0 {
+            let ended = harness.pid_ends(heap, exec, clock, grandchild, 10);
+            r = harness.require(heap, r, ended, "process_group", "leader", "the grandchild survived the group signal", said);
+            if !ended {
+                harness.pid_kill(heap, exec, clock, grandchild);
+            }
+        }
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+// The report of a program that stops a worker's group shows a signal on children and the one program it may start; `/bin/kill` is not in it.
+fn authority[&h, &x, &c, &b, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, report: buffer.Buffer, bin: &b [byte], env: &v [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    var r = report;
+    var command = harness.word(heap, buffer.empty(heap, 64), "authority");
+    command = harness.word(heap, command, "tests/accept/process_group_kill.cho");
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, bin, command, "", env);
+    borrow out as &ob in {
+        let said = buffer.bytes(ob);
+        r = harness.require(heap, r, harness.contains(said, "child_signal"), "process_group", "authority", "the report should show child_signal", said);
+        r = harness.require(heap, r, harness.contains(said, "exec(\"/bin/sleep\")"), "process_group", "authority", "the report should show exec(\"/bin/sleep\")", said);
+        r = harness.require(heap, r, !harness.contains(said, "exec(\"/bin\")"), "process_group", "authority", "the report should not show exec(\"/bin\")", said);
+        r = harness.require(heap, r, !harness.contains(said, "kill"), "process_group", "authority", "the report should not mention kill", said);
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return r;
+}
+
+// What is wrong, as a report (nothing if every check held).
+fn check[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    var report = buffer.empty(heap, 64);
+    let dir = harness.make_scratch(heap, exec, clock, "process-group");
+    borrow dir as &db in {
+        let scratch = buffer.bytes(db);
+        borrow env as &eb in {
+            if len(scratch) == 0 {
+                report = harness.failure(heap, report, "process_group", "scratch", "mktemp should make a directory", "");
+            } else {
+                var exe = harness.joined(heap, scratch, "driver");
+                borrow exe as &xb in {
+                    let paths = "tests/programs/process_group.cho\0";
+                    let harness.Ended { out, err, kind, code } = harness.build_exe(heap, exec, clock, bin, paths, buffer.bytes(xb), buffer.bytes(eb));
+                    if kind != 0 || code != 0 {
+                        borrow err as &rb in {
+                            report = harness.failure(heap, report, "process_group", "build", "should compile, but the compiler said", buffer.bytes(rb));
+                        }
+                    } else {
+                        report = deadline(heap, exec, clock, report, buffer.bytes(xb), true);
+                        report = deadline(heap, exec, clock, report, buffer.bytes(xb), false);
+                        report = answers(heap, exec, clock, report, buffer.bytes(xb));
+                        report = leader(heap, exec, clock, report, buffer.bytes(xb));
+                    }
+                    buffer.drop(heap, out);
+                    buffer.drop(heap, err);
+                }
+                buffer.drop(heap, exe);
+                report = authority(heap, exec, clock, report, bin, buffer.bytes(eb));
+            }
+        }
+        harness.remove_scratch(heap, exec, clock, scratch);
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, exec(""), clock, poll] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: process_group CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: process_group\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    release(fs);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        status = run(h, i, a, x, c);
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

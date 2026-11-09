@@ -3,7 +3,6 @@
 # (2026-10-15). The `selfhost` job of ci.yml skips these and fails on any other. Take a line out when the difference is
 # closed (`cargo test -p cancho --test conformance -- <name>` with the variable set, and it passes), and never add one
 # without an issue: a new difference is a bug in `examples/selfhost` or in the Rust compiler. Tracked in #491.
-checked_output::an_earlier_failure_is_still_reported_and_keeps_being_reported   # the Cranelift backend's error text; the test builds with it
 corpus::accepted_programs_build_and_run                                        # compares the object bytes the Rust backends write
 memory::the_layout_report_says_what_a_type_costs                               # a struct of bytes has another stride
 modules::std_declarations_cost_nothing_unless_called                           # Linux only: the size of the module

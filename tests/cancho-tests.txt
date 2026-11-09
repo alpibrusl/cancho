@@ -5,3 +5,4 @@
 http_server_bytes | 19 | --std packages/http-server/server.cho tests/packages/http_server_bytes_test.cho
 http_server_body | 7 | --std packages/http-server/server.cho tests/packages/body_support.cho tests/packages/http_server_body_test.cho
 http_server_body_flow | 15 | --std packages/http-server/server.cho tests/packages/body_support.cho tests/packages/http_server_body_flow_test.cho
+http_client | 118 | --std packages/http-client/slot.cho packages/http-client/wire.cho packages/http-client/client.cho tests/packages/http_client_harness.cho tests/packages/http_client_test.cho tests/packages/http_client_pool_test.cho tests/packages/http_client_time_test.cho tests/packages/http_client_wire_test.cho tests/packages/http_client_flow_test.cho tests/packages/http_client_edge_test.cho

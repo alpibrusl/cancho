@@ -1,0 +1,26 @@
+edition 9;
+
+// stdin_bulk_row.cho -- `read_bytes` performs `io_read`, so a function whose row says only `io_write` that calls it is refused (`docs/standard-input.md`).
+// Not built to run: `tests/commands/stdin_bulk.cho` asks `cancho check --std` about it and expects the refusal to name `io_read`.
+
+fn pull[&i](io: &!i Io) -> [io_write] int {
+    region a {
+        let buf = alloc_slice[a](8, byte_of(0));
+        match read_bytes(io, buf) {
+            Read::Got(n) => {
+                return n;
+            }
+            Read::End => {
+                return 0;
+            }
+            Read::Failed(e) => {
+                return 0 - e;
+            }
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

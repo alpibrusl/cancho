@@ -4,7 +4,7 @@
 //
 // Reads standard input to its end `CHUNK` bytes at a time (a buffer of exactly that
 // size), and prints `bytes=N lines=L sum=S end=E` -- where `E` is `eof` or
-// `failed:ERRNO` -- so that `conformance/stdin.rs` can compare it with the same
+// `failed:ERRNO` -- so that `tests/commands/stdin_bulk.cho` can compare it with the same
 // numbers computed outside. `S` is a polynomial hash of the bytes in order, so a
 // byte dropped, repeated or reordered at a chunk boundary changes it.
 //

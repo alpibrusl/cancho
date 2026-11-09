@@ -147,7 +147,7 @@ pub const LABEL_IMPORTS: &[LabelImports] = &[
     // Beneath a directory handle, writing: `dir_open_new` and `dir_open_append`
     // (`path_open`), `dir_rename`, `dir_remove` (`path_unlink_file` for a file,
     // `path_remove_directory` for a directory), `dir_sync` (`fd_sync`). Measured on the
-    // driver `directory_writes.rs` runs, `scripts/wasm_file_check.py`.
+    // driver `tests/programs/directory_writes_probe.cho`, `scripts/wasm_file_check.py`.
     LabelImports {
         label: "dir_write",
         required: &[],

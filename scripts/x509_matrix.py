@@ -14,7 +14,7 @@ intermediates, a host and the tag it must get. For each case, both run:
 Each case must get its own tag, and no case OpenSSL refuses may be accepted.
 Writes tests/vectors/x509/verify/matrix.txt: each case's name, its tag, what
 OpenSSL said, and the driver's lines and answers, so the replay in
-`conformance/x509_verify.rs` needs no OpenSSL. The keys are random, so a second
+`tests/commands/x509_verify.cho` needs no OpenSSL. The keys are random, so a second
 run writes different certificates with the same answers. Exit status 1 on any
 difference.
 """

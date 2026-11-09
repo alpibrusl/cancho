@@ -86,8 +86,8 @@ explicit form of it, with the heap capability in view.
 - `tests/reject/region_slice_over_chunk.cho`, `region_byte_slice_over_chunk.cho`, `region_slice_over_chunk_folded.cho`:
   the rule for ints, for bytes, and for a folded count.
 - `tests/accept/region_slice_at_chunk.cho`: 8,192 ints and 65,536 bytes are exactly the limit and run.
-- `crates/cancho/tests/conformance/region_limit.rs`: a count the compiler cannot see, built and run on both backends: one
-  element over traps with SIGILL and the message on stderr, exactly the chunk runs and prints nothing.
+- `tests/commands/region_limit.cho`: a count the compiler cannot see, built and run: one element over traps (a fault signal; `child_wait` cannot say it was
+  SIGILL) with the message on stderr, exactly the chunk runs and prints nothing.
 - Mutants (§6).
 
 ## 6. Mutants
