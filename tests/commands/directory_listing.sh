@@ -27,7 +27,7 @@ hostile() {
   (
     cd "$1" || exit 2
     seq -f 'f%06.0f' 0 $(($2 - 1)) | xargs touch
-    touch "$(printf 'new\nline')" cafe Z -dash
+    touch -- "$(printf 'new\nline')" cafe Z -dash
     if [ "$(uname)" != Darwin ]; then : > "$(printf 'caf\351')"; fi
     touch "$(head -c 255 /dev/zero | tr '\0' x)"
     ln -s nowhere dangling
@@ -62,7 +62,7 @@ mkdir stat
 (
   cd stat || exit 2
   seq -f 'f%06.0f' 0 19 | xargs touch
-  touch "$(printf 'new\nline')" cafe Z -dash
+  touch -- "$(printf 'new\nline')" cafe Z -dash
   printf 'twelve bytes' > sized.txt
   touch "$(head -c 255 /dev/zero | tr '\0' x)"
   mkdir sub

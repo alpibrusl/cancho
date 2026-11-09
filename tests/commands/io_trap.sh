@@ -6,5 +6,5 @@ dir=$2
 "$probe" > "$dir/out" 2> "$dir/err"
 s=$?
 if [ "$s" -gt 128 ]; then echo "the program trapped (a fault signal)"; else echo "exit $s: the program was supposed to trap"; fi
-echo "standard error: $(cat "$dir/err")"
+echo "standard error: $(grep -v -e "Illegal instruction" -e "Segmentation fault" -e "Bus error" "$dir/err")"
 echo "standard output: $(wc -c < "$dir/out" | tr -d ' ') bytes"
