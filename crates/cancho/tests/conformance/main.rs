@@ -51,7 +51,6 @@ mod crypto_builtins;
 mod devices;
 mod differential;
 
-mod directory_rename_new;
 mod docs;
 mod duplication;
 mod ecdh;

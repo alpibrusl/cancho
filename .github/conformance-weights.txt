@@ -238,7 +238,6 @@ net_split 13
 testing 13
 
 process_release 11
-directory_rename_new 11
 global_state 11
 
 crypto_builtins 10
