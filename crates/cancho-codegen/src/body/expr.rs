@@ -940,6 +940,7 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
                     Callee::Builtin(Builtin::DirRename) => self.dir_rename(&args),
                     Callee::Builtin(Builtin::DirRenameNew) => self.dir_rename_new(&args),
                     Callee::Builtin(Builtin::DirRemove) => self.dir_remove(&args),
+                    Callee::Builtin(Builtin::DirRmdir) => self.dir_rmdir(&args),
                     Callee::Builtin(Builtin::DirMkdir) => self.dir_mkdir(&args),
                     Callee::Builtin(Builtin::DirOpenNewMode) => self.dir_open_new_mode(&args),
                     Callee::Builtin(Builtin::DirSync) => self.dir_sync(&args),

@@ -327,6 +327,27 @@ impl<'a> FuncEmitter<'a> {
         }))
     }
 
+    /// `dir_rmdir(dir, name)`: `unlinkat(dir, name, AT_REMOVEDIR)`, which
+    /// removes an empty directory and nothing else; a link is `ENOTDIR`
+    /// (`docs/directory-links.md` §3).
+    pub(crate) fn dir_rmdir(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 3 {
+            return Err(format!("`dir_rmdir` needs 3 leaves but {} were given", args.len()));
+        }
+        let handle = operand(&args[0]);
+        let name = (operand(&args[1]), operand(&args[2]));
+        let flag = cancho_ir::at_removedir(self.is_darwin());
+        Ok(self.dir_call(&[name], |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let removed = this.fresh();
+            this.out.push_str(&format!(
+                "  {removed} = call i32 @unlinkat(i32 {fd}, ptr {}, i32 {flag})\n",
+                copies[0]
+            ));
+            removed
+        }))
+    }
+
     /// `dir_mkdir(dir, name, mode)`: `mkdirat`, the mode under the umask. A
     /// mode outside `0..=0o777` -- one unsigned compare catches a negative
     /// too -- is refused before the call (`docs/directory-handles.md` §3,

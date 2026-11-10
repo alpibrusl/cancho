@@ -310,6 +310,25 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         })
     }
 
+    /// `dir_rmdir(dir, name)`: `unlinkat(dir, name, AT_REMOVEDIR)`, which
+    /// removes an empty directory and nothing else; a link is `ENOTDIR`
+    /// (`docs/directory-links.md` §3).
+    pub(crate) fn dir_rmdir(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let handle = args[0];
+        let darwin = self.is_darwin();
+        self.dir_call(&[(args[1], args[2])], |this, copies| {
+            let fd = this.dir_fd(handle);
+            let flag = this.builder.ins().iconst(types::I32, cancho_ir::at_removedir(darwin));
+            this.libc_call(
+                "unlinkat",
+                &[types::I32, pointer, types::I32],
+                &[types::I32],
+                &[fd, copies[0], flag],
+            )
+        })
+    }
+
     /// `dir_mkdir(dir, name, mode)`: `mkdirat`, the mode under the umask. A
     /// mode outside `0..=0o777` -- one unsigned compare catches a negative
     /// too -- is refused before the call, so no bit the program did not mean

@@ -630,7 +630,10 @@ impl Builtin {
                 },
             ),
             Builtin::DirClose => (vec![named(PRELUDE_DIR)], Type::Int),
-            Builtin::DirOpenNew | Builtin::DirOpenAppend | Builtin::DirRemove => (
+            Builtin::DirOpenNew
+            | Builtin::DirOpenAppend
+            | Builtin::DirRemove
+            | Builtin::DirRmdir => (
                 vec![
                     Type::Ref {
                         unique: false,
@@ -643,7 +646,7 @@ impl Builtin {
                         inner: Box::new(Type::Slice(Box::new(Type::Byte))),
                     },
                 ],
-                if self == Builtin::DirRemove {
+                if self == Builtin::DirRemove || self == Builtin::DirRmdir {
                     named(PRELUDE_DONE)
                 } else {
                     named(PRELUDE_OPENED)

@@ -653,15 +653,15 @@ pub fn prelude_bound(i: int) -> [] int {
 }
 
 pub fn builtin_count() -> [] int {
-    return 184;
+    return 185;
 }
 
 fn builtin_chars() -> [] &static [byte] {
-    return "putcharwrite_byteswrite_errflush_outgetcharread_bytessplitreleasenarrowfork_heapfork_clockcopy_withincopy_intoindex_of_byteload_le64byte_mask64trailing_zerosleading_zerospopcountwrapping_addwrapping_subwrapping_mulvalue_barrierhw_aes_gcmaes_encrypt_blockaes_ctr32ghash_powersghash_updatemul_wideadd_carrysub_borrowgcm_taggcm_tag_diffhw_sha256sha256_blockssha256_block_wordslenbyte_ofint_offloat_oftruncateis_nansqrtbits_offloat_of_bitsf32_offloat_of32bits_of32f32_of_bitssqrt32f32_of_intint_of_f32fs_readfs_writeopen_readfile_readfile_closeopen_appendopen_writeopen_newopen_rwfile_writefile_pwritefile_preadfile_syncfile_truncatefile_sizefs_renamefs_removefile_lockboxunboxcontentsarg_countargbox_sliceunbox_sliceconnectbindlistenaccepttcp_listentcp_connecttcp_connect_starttcp_acceptpoller_newpoller_add_listenerpoller_add_connpoller_modifypoller_removepoller_waitpoller_closeclock_msclock_unix_msconn_detachconn_attachconn_readconn_writeconn_nonblockingconn_nodelayconn_peerconn_connect_statuslistener_nonblockingconn_closelistener_closeudp_connectudp_bindudp_recv_fromudp_send_toudp_recvudp_sendudp_local_portudp_peerudp_nonblockingudp_closeudp_detachudp_attachpoller_add_udptty_opentty_configuretty_readtty_writetty_flush_inputtty_closepoller_add_ttycamera_opencamera_configurecamera_nextcamera_closemic_openmic_configuremic_readmic_closespeaker_openspeaker_configurespeaker_writespeaker_closesignals_watchsignals_pendingpoller_add_signalssignals_closeopen_dirdir_enterdir_open_readdir_closedir_open_newdir_open_appenddir_renamedir_rename_newdir_removedir_mkdirdir_open_new_modedir_syncdir_listdir_nextdir_list_closedir_statdir_modedir_own_modepipe_openexec_spawnexec_spawn_inchild_waitchild_killchild_kill_groupexec_coversfs_coverspipe_readpipe_writepipe_nonblockingpipe_closechild_end_closepoller_add_pipepoller_add_childnull_ptrspawnjointraptcp_listen_onexec_spawn_detachedchild_releasechild_pidexec_spawn_underexec_spawn_detached_under";
+    return "putcharwrite_byteswrite_errflush_outgetcharread_bytessplitreleasenarrowfork_heapfork_clockcopy_withincopy_intoindex_of_byteload_le64byte_mask64trailing_zerosleading_zerospopcountwrapping_addwrapping_subwrapping_mulvalue_barrierhw_aes_gcmaes_encrypt_blockaes_ctr32ghash_powersghash_updatemul_wideadd_carrysub_borrowgcm_taggcm_tag_diffhw_sha256sha256_blockssha256_block_wordslenbyte_ofint_offloat_oftruncateis_nansqrtbits_offloat_of_bitsf32_offloat_of32bits_of32f32_of_bitssqrt32f32_of_intint_of_f32fs_readfs_writeopen_readfile_readfile_closeopen_appendopen_writeopen_newopen_rwfile_writefile_pwritefile_preadfile_syncfile_truncatefile_sizefs_renamefs_removefile_lockboxunboxcontentsarg_countargbox_sliceunbox_sliceconnectbindlistenaccepttcp_listentcp_connecttcp_connect_starttcp_acceptpoller_newpoller_add_listenerpoller_add_connpoller_modifypoller_removepoller_waitpoller_closeclock_msclock_unix_msconn_detachconn_attachconn_readconn_writeconn_nonblockingconn_nodelayconn_peerconn_connect_statuslistener_nonblockingconn_closelistener_closeudp_connectudp_bindudp_recv_fromudp_send_toudp_recvudp_sendudp_local_portudp_peerudp_nonblockingudp_closeudp_detachudp_attachpoller_add_udptty_opentty_configuretty_readtty_writetty_flush_inputtty_closepoller_add_ttycamera_opencamera_configurecamera_nextcamera_closemic_openmic_configuremic_readmic_closespeaker_openspeaker_configurespeaker_writespeaker_closesignals_watchsignals_pendingpoller_add_signalssignals_closeopen_dirdir_enterdir_open_readdir_closedir_open_newdir_open_appenddir_renamedir_rename_newdir_removedir_rmdirdir_mkdirdir_open_new_modedir_syncdir_listdir_nextdir_list_closedir_statdir_modedir_own_modepipe_openexec_spawnexec_spawn_inchild_waitchild_killchild_kill_groupexec_coversfs_coverspipe_readpipe_writepipe_nonblockingpipe_closechild_end_closepoller_add_pipepoller_add_childnull_ptrspawnjointraptcp_listen_onexec_spawn_detachedchild_releasechild_pidexec_spawn_underexec_spawn_detached_under";
 }
 
 static builtin_starts: [int] {
-    let t = alloc_slice[static](184, 0);
+    let t = alloc_slice[static](185, 0);
     t[1] = 7;
     t[2] = 18;
     t[3] = 27;
@@ -813,43 +813,44 @@ static builtin_starts: [int] {
     t[149] = 1546;
     t[150] = 1556;
     t[151] = 1565;
-    t[152] = 1582;
-    t[153] = 1590;
-    t[154] = 1598;
-    t[155] = 1606;
-    t[156] = 1620;
-    t[157] = 1628;
-    t[158] = 1636;
-    t[159] = 1648;
+    t[152] = 1574;
+    t[153] = 1591;
+    t[154] = 1599;
+    t[155] = 1607;
+    t[156] = 1615;
+    t[157] = 1629;
+    t[158] = 1637;
+    t[159] = 1645;
     t[160] = 1657;
-    t[161] = 1667;
-    t[162] = 1680;
-    t[163] = 1690;
-    t[164] = 1700;
-    t[165] = 1716;
-    t[166] = 1727;
+    t[161] = 1666;
+    t[162] = 1676;
+    t[163] = 1689;
+    t[164] = 1699;
+    t[165] = 1709;
+    t[166] = 1725;
     t[167] = 1736;
     t[168] = 1745;
-    t[169] = 1755;
-    t[170] = 1771;
-    t[171] = 1781;
-    t[172] = 1796;
-    t[173] = 1811;
-    t[174] = 1827;
-    t[175] = 1835;
-    t[176] = 1840;
-    t[177] = 1844;
-    t[178] = 1848;
-    t[179] = 1861;
-    t[180] = 1880;
-    t[181] = 1893;
+    t[169] = 1754;
+    t[170] = 1764;
+    t[171] = 1780;
+    t[172] = 1790;
+    t[173] = 1805;
+    t[174] = 1820;
+    t[175] = 1836;
+    t[176] = 1844;
+    t[177] = 1849;
+    t[178] = 1853;
+    t[179] = 1857;
+    t[180] = 1870;
+    t[181] = 1889;
     t[182] = 1902;
-    t[183] = 1918;
+    t[183] = 1911;
+    t[184] = 1927;
     return t;
 }
 
 static builtin_lens: [int] {
-    let t = alloc_slice[static](184, 0);
+    let t = alloc_slice[static](185, 0);
     t[0] = 7;
     t[1] = 11;
     t[2] = 9;
@@ -1001,44 +1002,45 @@ static builtin_lens: [int] {
     t[148] = 14;
     t[149] = 10;
     t[150] = 9;
-    t[151] = 17;
-    t[152] = 8;
+    t[151] = 9;
+    t[152] = 17;
     t[153] = 8;
     t[154] = 8;
-    t[155] = 14;
-    t[156] = 8;
+    t[155] = 8;
+    t[156] = 14;
     t[157] = 8;
-    t[158] = 12;
-    t[159] = 9;
-    t[160] = 10;
-    t[161] = 13;
-    t[162] = 10;
+    t[158] = 8;
+    t[159] = 12;
+    t[160] = 9;
+    t[161] = 10;
+    t[162] = 13;
     t[163] = 10;
-    t[164] = 16;
-    t[165] = 11;
-    t[166] = 9;
+    t[164] = 10;
+    t[165] = 16;
+    t[166] = 11;
     t[167] = 9;
-    t[168] = 10;
-    t[169] = 16;
-    t[170] = 10;
-    t[171] = 15;
+    t[168] = 9;
+    t[169] = 10;
+    t[170] = 16;
+    t[171] = 10;
     t[172] = 15;
-    t[173] = 16;
-    t[174] = 8;
-    t[175] = 5;
-    t[176] = 4;
+    t[173] = 15;
+    t[174] = 16;
+    t[175] = 8;
+    t[176] = 5;
     t[177] = 4;
-    t[178] = 13;
-    t[179] = 19;
-    t[180] = 13;
-    t[181] = 9;
-    t[182] = 16;
-    t[183] = 25;
+    t[178] = 4;
+    t[179] = 13;
+    t[180] = 19;
+    t[181] = 13;
+    t[182] = 9;
+    t[183] = 16;
+    t[184] = 25;
     return t;
 }
 
 static builtin_sinces: [int] {
-    let t = alloc_slice[static](184, 0);
+    let t = alloc_slice[static](185, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -1189,40 +1191,41 @@ static builtin_sinces: [int] {
     t[147] = 6;
     t[148] = 7;
     t[149] = 6;
-    t[150] = 9;
+    t[150] = 12;
     t[151] = 9;
-    t[152] = 6;
+    t[152] = 9;
     t[153] = 6;
     t[154] = 6;
     t[155] = 6;
     t[156] = 6;
-    t[157] = 7;
+    t[157] = 6;
     t[158] = 7;
     t[159] = 7;
     t[160] = 7;
     t[161] = 7;
     t[162] = 7;
     t[163] = 7;
-    t[164] = 9;
+    t[164] = 7;
     t[165] = 9;
     t[166] = 9;
-    t[167] = 7;
+    t[167] = 9;
     t[168] = 7;
     t[169] = 7;
     t[170] = 7;
     t[171] = 7;
     t[172] = 7;
     t[173] = 7;
-    t[174] = 3;
-    t[175] = 4;
+    t[174] = 7;
+    t[175] = 3;
     t[176] = 4;
-    t[177] = 1;
-    t[178] = 9;
+    t[177] = 4;
+    t[178] = 1;
     t[179] = 9;
     t[180] = 9;
     t[181] = 9;
     t[182] = 9;
     t[183] = 9;
+    t[184] = 9;
     return t;
 }
 
