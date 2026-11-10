@@ -23,20 +23,26 @@ There is **one binary**, `cancho` (`crates/cancho/Cargo.toml`). "All the binarie
 
 The compiler in cancho (`examples/selfhost`: 97 files, ~49,700 lines, plus ~17,400 of `runtime/`) is already the default of `build`, `run`
 and `test`; a standalone `cancho` written in it reproduces itself (stage 2 equals stage 3, `scripts/build-standalone.sh`); a release
-built that way is published. What Rust still does: stage 0 of that build, the oracle, Cranelift and WebAssembly, `authority`, the V1
+built that way is published. What Rust still does: stage 0 of that build, the oracle, Cranelift and WebAssembly (a target the compiler in cancho will not get, D2), `authority`, the V1
 `vcs`, and the CI gate (`cargo fmt`, `clippy`, `test`).
 
 ## 3. Decisions (taken 2026-11-05 by the owner; recorded in #491)
 
-**D1 remove the crates; D2 retire Cranelift and port WebAssembly to `emit.cho` (#486); D3 `cancho test` replaces `cargo test`, no Rust shell; D4
+**D1 remove the crates; D2 retire Cranelift and WebAssembly with the Rust compiler (#486; WebAssembly amended 2026-11-10); D3 `cancho test` replaces `cargo test`, no Rust shell; D4
 Windows out of scope.** The options each decision chose among are kept below.
 
 - **D1. Remove, not keep.** `standalone-cancho.md` §6 calls the crates "a backup". Keeping them means two implementations to hold equal for
   ever. This plan assumes removal; if D1 is "keep", only §5 phases 0 to 2 apply and the repository layout of §6 does not change.
-- **D2. Cranelift is retired with the Rust compiler** (#666 says so; it is open). WebAssembly: port to `emit.cho` (#486) or retire with it.
-  Both change what a release promises, so each needs a release note. **Decided: port WebAssembly.** So `cancho-codegen-llvm` and `cancho-ir`
-  (which carry the WebAssembly target today) cannot be deleted before the port: only `cancho-codegen` (Cranelift) can go first, and phase 5's order
-  changes accordingly. Nine programs of `tests/reject` (`*_on_wasi`) are refused by the Rust compiler only, and are listed in `tests/reject.known` until then.
+- **D2. Cranelift and WebAssembly are retired with the Rust compiler** (#666 says so for Cranelift; it is open). WebAssembly was first decided as
+  "port to `emit.cho` (#486)" (2026-11-05); **amended 2026-11-10 by the owner: skipped for now, so it is retired with the Rust compiler.** Both change what
+  a release promises, so each needs a release note, and the one for WebAssembly says that `--target wasm32-*` goes with the Rust binary: a project that
+  needs it (`cancho-industrial`, 5 files, `standalone-cancho.md` §1) keeps a pinned Rust-built release (the `cancho-rust` asset of the last release
+  before deletion) or waits for a port that is no longer scheduled. What the amendment changes in this plan: `cancho-codegen-llvm` and `cancho-ir` no
+  longer wait for a port, so phase 5 deletes them straight after `cancho-codegen` and is shorter; the nine programs of `tests/reject` named `*_on_wasi`
+  (refused by the Rust compiler only, `tests/reject.known`) are fixtures of a retired target, and are removed with it in the phase 5 PR that deletes the
+  last crate that refuses them, with the entry of `wasm_target::build_refuses_too_not_only_check` in `.github/selfhost-known-differences.txt`;
+  `authority --target wasm32-wasip1` is **already** in the compiler in cancho (`authwasi.cho`, `cli-in-cancho.md` slice (c)), so there is nothing to port or drop there: it reports on programs for a target that no build writes, and stays until someone decides to remove it. Reversible: if a port is wanted
+  later it is a new decision with `docs/wasm.md` (W0.2–W2c) as its design, and the crates would have to be kept until it lands.
 - **D3. The oracle's shape.** The 726 conformance tests run `cancho` and compare output. Two ways: (a) `cancho test` runs them as cancho
   programs with a `.expected` file each, no Rust anywhere; (b) a small Rust shell stays as the test runner only. (a) is the goal; (b) is
   allowed as a stage, with a date for its end.
@@ -90,7 +96,7 @@ required, not before.
 publishes stage 2, and the smoke test (`install.sh` then build hello) stays. The `cancho-rust` backup asset is last published in the release
 before deletion and named in its notes.
 
-**Phase 5: delete the crates**, in this order, each a PR with the §4 gates: `cancho-codegen` (Cranelift), `cancho-codegen-llvm`, `cancho-ir`,
+**Phase 5: delete the crates**, in this order, each a PR with the §4 gates (D2, amended 2026-11-10: no WebAssembly port to wait for, so only the open pull requests and the gates of §4 order them): `cancho-codegen` (Cranelift), `cancho-codegen-llvm`, `cancho-ir`,
 `cancho-syntax`, `cancho-types`, `cancho-id`, `cancho-vcs`, then `crates/cancho` and the workspace `Cargo.toml`, `Cargo.lock`,
 `rust-toolchain.toml`, `rustfmt.toml`, `benches/` if Rust.
 
