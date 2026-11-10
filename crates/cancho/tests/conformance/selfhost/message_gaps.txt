@@ -92,6 +92,7 @@ dir_stat_not_declared.cho
 dir_write_not_declared.cho
 duplicate_function.cho
 duplicate_type_parameter.cho
+edition_four_does_not_see_open_new.cho
 effect_declared_not_performed.cho
 effect_not_propagated.cho
 effect_row_required.cho
