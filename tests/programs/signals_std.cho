@@ -1,0 +1,37 @@
+import std.signals;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    var score = 0;
+    if signals.sighup() == 1 && signals.sigint() == 2 && signals.sigquit() == 4 {
+        score = score + 1;
+    }
+    if signals.sigterm() == 8 && signals.sigusr1() == 16 && signals.sigusr2() == 32 {
+        score = score + 1;
+    }
+    if signals.sigalrm() == 64 && signals.sigwinch() == 128 {
+        score = score + 1;
+    }
+    let mask = signals.sigterm() | signals.sigusr1();
+    if signals.has(mask, signals.sigterm()) && !signals.has(mask, signals.sigint()) {
+        score = score + 1;
+    }
+    if signals.has(mask, mask) && !signals.has(mask, mask | 1) {
+        score = score + 1;
+    }
+    if signals.any(mask, signals.stop_signals()) && !signals.any(signals.sigusr1(), signals.stop_signals()) {
+        score = score + 1;
+    }
+    if signals.any(signals.sigint(), signals.stop_signals()) && signals.any(signals.sigquit(), signals.stop_signals()) {
+        score = score + 1;
+    }
+    if !signals.any(0, signals.stop_signals()) && signals.has(0, 0) {
+        score = score + 1;
+    }
+    return score;
+}

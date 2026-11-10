@@ -262,7 +262,7 @@ What is missing is the call:
    probe used.
 
 Total **well under 100 lines**, no change to the IR that code generation
-reads, so **no content hash changes** (`identity.rs` is unaffected, as for
+reads, so **no content hash changes** (`tests/commands/identity.sh` is unaffected, as for
 §6.1), and **no edition**: `editions.md` says a change that tightens
 soundness should stay a refusal, and there is no old edition worth
 preserving, since the one fixture it breaks says it should break.

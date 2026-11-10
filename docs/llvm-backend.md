@@ -1,5 +1,7 @@
 # A second backend, and how it would actually get built
 
+> **Note (2026-11, G4 wave 3):** `crates/cancho/tests/conformance/backends.rs`, which this log names throughout, is gone: Cranelift is retired, so "the two backends agree" has nothing to compare, and what each of its tests built is checked by the accept and examples walks of `tests/run.cho` (the fixtures state their output in `//~ STDOUT`) or, for `benches/`, sockets and the clock, by `tests/commands/backends.sh` (`docs/gate.md`). The references below are the history of the tests, not live ones.
+
 > **Status: complete, and the default.** Every gap this document ever
 > named a target for is closed — every fixture in `tests/accept/` and
 > every program in `examples/` builds on `--backend llvm` — and

@@ -48,7 +48,7 @@ matters.
 
 ## 4. What it is checked by
 
-* `tests/accept/copy_into.cho`, on **both backends** (`tests/conformance/backends.rs`): between two slices, with the destination's
+* `tests/accept/copy_into.cho`, on **both backends** (`tests/run.cho` accept walk (was `conformance/backends.rs`)): between two slices, with the destination's
   tail untouched; exactly full; nothing into something and nothing into nothing; overlapping views of one buffer in both directions
   (the forward case is the one a front-to-back loop smears); and `std.buffer` growing through forty appends and several doublings,
   every byte read back.

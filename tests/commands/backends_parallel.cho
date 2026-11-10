@@ -1,0 +1,118 @@
+edition 7;
+module backends_parallel_test;
+
+// backends_parallel.cho -- `spawn_and_join_run_concurrently_not_sequentially` of `conformance/backends.rs` (deleted), in cancho (`docs/gate.md` G4, `docs/threads.md` section 5 step 2): four threads
+// each blocked in a real `usleep(200 ms)`, joined. Four simultaneous sleeps are only possible with real OS-level parallelism, not with `spawn` secretly running the body on the calling thread: a sequential
+// build cannot finish in less than four sleeps (800 ms), however fast the host is; a concurrent one takes about one (200 ms) plus whatever the host's load adds. So the program is run up to three times and the
+// quickest run must be under 700 ms: a bound a sequential build can never meet, and one a loaded host has room for.
+//
+//     cancho build tests/commands/backends_parallel.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: backends_parallel` or what is wrong, and exits 0 or 1.
+
+import std.buffer;
+import std.io as console;
+import harness;
+
+// The quickest of up to three runs of `exe`, in milliseconds, or -1 if a run did not exit 0.
+fn quickest[&h, &x, &c, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, exe: &p [byte]) -> [heap, exec(""), clock, poll] int {
+    var best = 1000000;
+    var tries = 0;
+    while tries < 3 && best >= 400 {
+        let began = clock_ms(clock);
+        let ran = harness.run_program(heap, exec, clock, exe, "");
+        let took = clock_ms(clock) - began;
+        let harness.Ended { out, err, kind, code } = ran;
+        buffer.drop(heap, out);
+        buffer.drop(heap, err);
+        if kind != 0 || code != 0 {
+            return 0 - 1;
+        }
+        best = harness.min_of(best, took);
+        tries = tries + 1;
+    }
+    return best;
+}
+
+fn check[&h, &x, &c, &b, &m, &k](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, bin: &b [byte], compiler: &m [byte], cache: &k [byte]) -> [heap, exec(""), clock, poll] buffer.Buffer {
+    let env = harness.base_env(heap, compiler, cache);
+    let dir = harness.scratch_dir(heap, exec, clock, "cancho-parallel");
+    var report = buffer.empty(heap, 64);
+    borrow dir as &db in {
+        borrow env as &eb in {
+            if len(buffer.bytes(db)) == 0 {
+                report = harness.failure(heap, report, "backends_parallel", "scratch", "mktemp -d made no directory", "");
+            } else {
+                let exe = harness.joined(heap, buffer.bytes(db), "parallel");
+                borrow exe as &xb in {
+                    let built = harness.build_exe(heap, exec, clock, bin, "tests/accept/spawn_parallel_sleep.cho\0", buffer.bytes(xb), buffer.bytes(eb));
+                    let harness.Ended { out, err, kind, code } = built;
+                    borrow err as &rb in {
+                        if kind != 0 {
+                            report = harness.failure(heap, report, "backends_parallel", "build", "the parallel-sleep fixture should build, but the compiler said", buffer.bytes(rb));
+                        } else {
+                            let best = quickest(heap, exec, clock, buffer.bytes(xb));
+                            if best < 0 {
+                                report = harness.failure(heap, report, "backends_parallel", "run", "the program should exit 0", "");
+                            } else if best >= 700 {
+                                report = harness.failure(heap, report, "backends_parallel", "concurrency", "four 200 ms sleeps took 700 ms or more at best -- a sequential build needs 800 ms, so this looks sequential", "");
+                            }
+                        }
+                    }
+                    buffer.drop(heap, out);
+                    buffer.drop(heap, err);
+                }
+                buffer.drop(heap, exe);
+                harness.remove_tree(heap, exec, clock, buffer.bytes(db));
+            }
+        }
+    }
+    buffer.drop(heap, dir);
+    buffer.drop(heap, env);
+    return report;
+}
+
+fn run[&h, &i, &a, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, exec(""), clock, poll] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: backends_parallel CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = check(heap, exec, clock, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: backends_parallel\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    release(fs);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        status = run(h, i, a, x, c);
+                    }
+                }
+            }
+        }
+    }
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

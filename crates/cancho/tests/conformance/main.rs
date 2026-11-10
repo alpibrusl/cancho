@@ -34,18 +34,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-mod api;
-mod backends;
 mod benchmarks;
 mod binary32;
-mod capture;
 
 mod compile_time;
 mod conn_peer;
 mod corpus;
 mod crypto_builtins;
 mod devices;
-mod differential;
 
 mod duplication;
 mod f32_text;
@@ -56,24 +52,17 @@ mod global_state;
 mod http;
 mod http_fetch_nb;
 mod http_server;
-mod http_server_stream;
-mod http_server_upload;
 mod https_hello;
-mod identity;
 mod json;
 mod mathfn;
 mod net;
 
 mod ports;
-mod process_release;
-mod processes;
 mod refusals;
 mod selfhost;
 mod sha256_builtins;
-mod signals;
 mod sockets;
 
-mod thread_state;
 mod tls;
 mod tls_auth;
 mod tls_client_auth;
@@ -101,7 +90,7 @@ fn repo_root() -> PathBuf {
 }
 
 /// A loopback port the operating system says is free right now -- shared
-/// by `net.rs` and `backends.rs`, both of which bind a real socket to a
+/// by `net.rs`, which binds a real socket to a
 /// port CI cannot be trusted to leave idle at a hard-coded number.
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
@@ -167,17 +156,6 @@ fn authority_json(source: &str, tag: &str) -> String {
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
     let _ = std::fs::remove_dir_all(&dir);
     text
-}
-
-/// Every result printed as an `int`, so one line format covers all three
-/// result types -- and a float as its **bits**, so `-0.0` and `0.0`, and
-/// two NaNs, cannot compare equal by accident.
-fn shown(ret: &str, e: &str) -> String {
-    match ret {
-        "int" => e.to_owned(),
-        "bool" => format!("b2i({e})"),
-        _ => format!("bits_of({e})"),
-    }
 }
 
 /// `authority_of`, over more than one file -- what a program that
@@ -396,25 +374,6 @@ fn build_collect(tag: &str) -> (PathBuf, PathBuf) {
     let mut paths = vec![repo_root().join("examples/collect/collect.cho")];
     paths.extend(fetched);
     build_example_paths(tag, &paths, "collect")
-}
-
-/// `examples/vsock/vsock.cho`: outbound, `net.sockets`/`net.connect` the
-/// same shape as `fetch.cho`/`report.cho`, plus `agent.wire`
-/// (`packages/agent-wire/wire.cho`, `docs/package-system.md` §6) for the
-/// `AgentViewMsg` decoder it shares with `agent_guest.cho`. No dedicated
-/// `build_vsock`: unlike the other four migrated files, nothing here
-/// spawns `vsock` as a running process (`docs/vsock.md`'s own note that
-/// a real `AF_VSOCK` round trip stays untested in this sandbox) -- only
-/// the LLVM-backend build below needs its fetched dependencies.
-fn fetch_vsock_dependencies(tag: &str) -> Vec<PathBuf> {
-    fetch_net_dependencies(
-        tag,
-        &[
-            ("examples/vsock/net.lock", "packages/net-sockets/.cancho-vcs"),
-            ("examples/vsock/connect.lock", "packages/net-connect/.cancho-vcs"),
-            ("examples/vsock/wire.lock", "packages/agent-wire/.cancho-vcs"),
-        ],
-    )
 }
 
 /// `examples/agent_guest/agent_guest.cho`: outbound, `net.connect` and

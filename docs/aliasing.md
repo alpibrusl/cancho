@@ -303,7 +303,7 @@ package spawned a `&!` twice.
 **Edition and hash.** It is a soundness tightening, which `editions.md`'s opening says should stay a refusal and not
 become an edition: a program it refuses was already racing, so there is no old edition worth preserving. The refusal
 is raised by the linearity replay from events lowering already walks; the IR it emits is the same, so no content hash
-changes (`identity.rs` is unaffected, and the reject fixtures are the only new files).
+changes (`tests/commands/identity.sh` is unaffected, and the reject fixtures are the only new files).
 
 The first two are conditions, not work items. If both arrive, the third
 is a milestone with a design document of its own, and this one is its

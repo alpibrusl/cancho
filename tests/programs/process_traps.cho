@@ -1,0 +1,81 @@
+edition 7;
+
+// argv[1] picks one call; every refusal must trap (§4.1 to §4.3), and `ok`
+// must not.
+fn spawn_one[&x, &p, &a, &e](exec: &x Exec("/bin"), path: &p [byte], args: &a [byte], env: &e [byte]) -> [exec("/bin")] int {
+    match exec_spawn(exec, path, args, env, Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Ok(child) => {
+            match child_wait(child) {
+                Exited::Code(n) => {
+                    return n;
+                }
+                Exited::Signaled(s) => {
+                    return 100;
+                }
+                Exited::Failed(e) => {
+                    return 101;
+                }
+            }
+        }
+        Spawned::Failed(e) => {
+            return 102;
+        }
+    }
+}
+
+fn pick[&x, &g](exec: &x Exec("/bin"), g: &g Args) -> [exec("/bin"), args] int {
+    let mode = arg(g, 1);
+    let c = int_of(mode[0]);
+    if c == 'o' {
+        return spawn_one(exec, "/bin/sh", "-c\0exit 0\0", "PATH=/bin\0");
+    }
+    if c == 'u' {
+        return spawn_one(exec, "/usr/bin/true", "", "");
+    }
+    if c == 'd' {
+        return spawn_one(exec, "/bin/../usr/bin/true", "", "");
+    }
+    if c == 's' {
+        return spawn_one(exec, "/binx/true", "", "");
+    }
+    if c == 'r' {
+        return spawn_one(exec, "true", "", "");
+    }
+    if c == 'l' {
+        return spawn_one(exec, "/bin/sh", "-c\0exit 0\0", "A=1\0LD_PRELOAD=/tmp/x.so\0");
+    }
+    if c == 'y' {
+        return spawn_one(exec, "/bin/sh", "-c\0exit 0\0", "DYLD_INSERT_LIBRARIES=/tmp/x\0");
+    }
+    if c == 'a' {
+        return spawn_one(exec, "/bin/sh", "-c\0exit 0", "");
+    }
+    if c == 'e' {
+        return spawn_one(exec, "/bin/sh", "-c\0exit 0\0", "A=1");
+    }
+    if c == 'n' {
+        return spawn_one(exec, "/bin/sh", "-c\0/bin/echo out || exit 9; /bin/echo err >&2 || exit 8\0", "");
+    }
+    return 50;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(net);
+    release(clock);
+    release(signals);
+    let bin = narrow(exec, "/bin");
+    var status = 0;
+    borrow bin as &x in {
+        borrow args as &g in {
+            status = pick(x, g);
+        }
+    }
+    release(bin);
+    release(args);
+    return status;
+}

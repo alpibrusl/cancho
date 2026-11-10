@@ -1,0 +1,89 @@
+edition 6;
+import std.io;
+
+fn say[&i, &t](out: &!i Io, text: &t [byte]) -> [err_write] int {
+    return io.error_all(out, text);
+}
+
+fn digits[&b](n: int, buf: &!b [byte]) -> [] int {
+    var width = 1;
+    var t = n;
+    while t >= 10 {
+        t = t / 10;
+        width = width + 1;
+    }
+    var k = width;
+    var m = n;
+    while k > 0 {
+        buf[k - 1] = byte_of('0' + m % 10);
+        m = m / 10;
+        k = k - 1;
+    }
+    return width;
+}
+
+fn say_number[&i](out: &!i Io, n: int) -> [err_write] int {
+    region a {
+        let nb = alloc_slice[a](24, byte_of(0));
+        if n < 0 {
+            say(out, "-");
+            say(out, nb[0..digits(0 - n, nb)]);
+        } else {
+            say(out, nb[0..digits(n, nb)]);
+        }
+    }
+    return 0;
+}
+
+fn say_pair[&i](out: &!i Io, name: &static [byte], value: int) -> [err_write] int {
+    say(out, name);
+    say_number(out, value);
+    say(out, "\n");
+    return 0;
+}
+
+fn serve[&i, &w](out: &!i Io, watch: &!w SignalWatch) -> [io_read, err_write, signals_read] int {
+    var more = true;
+    while more {
+        let c = getchar(out);
+        if c == 112 {
+            say_pair(out, "mask=", signals_pending(watch));
+        } else {
+            more = false;
+        }
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    let claim = narrow(signals, "ALRM,HUP,INT,QUIT,TERM,USR1,USR2,WINCH");
+    var status = 1;
+    borrow claim as &s in {
+        match signals_watch(s) {
+            Watching::Ok(w) => {
+                var watch = w;
+                borrow mut io as &!i in {
+                    say(i, "ready\n");
+                    borrow mut watch as &!wh in {
+                        serve(i, wh);
+                    }
+                    say(i, "ended\n");
+                }
+                status = signals_close(watch);
+            }
+            Watching::Failed(e) => {
+                status = 2;
+            }
+        }
+    }
+    release(claim);
+    release(io);
+    return status;
+}
