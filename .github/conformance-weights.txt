@@ -120,7 +120,6 @@ sha256_builtins 6
 vcs_remote 5
 wasm_target 4
 mathfn 3
-refusals 3
 duplication 1
 devices 1
 vcs_sync 1

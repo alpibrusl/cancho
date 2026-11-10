@@ -1,0 +1,13 @@
+//~ ERROR `open_new` is not a function in this program
+//~ RULE not-a-function
+
+// `open_new` and `file_write` are edition 5 builtins (docs/file-writes.md): an edition-4 file may declare them against libc, so to it they are not builtins.
+edition 4;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net } = split(world);
+    release(args); release(heap); release(ffi); release(io); release(net);
+    let d = narrow(fs, "/tmp");
+    borrow d as &f in { open_new(f, "/tmp/x"); }
+    release(d);
+    return 0;
+}

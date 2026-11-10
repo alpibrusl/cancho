@@ -99,6 +99,7 @@ dir_stat_not_declared.cho	effect-not-declared	10:1	`size_of` performs `dir_read`
 dir_write_not_declared.cho	effect-not-declared	11:1	`tidy` performs `dir_write`, which its row [dir_read] does not declare; narrow the body or widen the row
 duplicate_function.cho	duplicate-declaration	8:1	function `f` is defined twice
 duplicate_type_parameter.cho	duplicate-declaration	4:1	type parameter `T` is declared twice
+edition_four_does_not_see_open_new.cho	not-a-function	10:25	`open_new` is not a function in this program
 effect_declared_not_performed.cho	effect-declared-not-performed	11:1	`pure_after_all` declares `io_write` but never performs it; a row is exact or it is decoration
 effect_not_propagated.cho	effect-not-declared	20:1	`caller` performs `io_write`, which its row [] does not declare; narrow the body or widen the row
 effect_row_required.cho	type-mismatch	9:18	expected `[`, found an identifier
