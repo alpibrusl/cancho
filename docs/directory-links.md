@@ -1,6 +1,6 @@
 # Removing a directory and making and reading a link: `dir_rmdir`, `dir_symlink`, `dir_readlink`
 
-Status: **slice 1 (`dir_rmdir`) built, §8; `dir_symlink` and `dir_readlink` are design only.** Written before the code, as `CONTRIBUTING.md` asks. It answers #684 (directory removal) and #685 (symlink and readlink),
+Status: **all three builtins built, §8** (slice 1 `dir_rmdir`, slice 2 `dir_symlink` and `dir_readlink`); slice 3, the consumers, is not. Written before the code, as `CONTRIBUTING.md` asks. It answers #684 (directory removal) and #685 (symlink and readlink),
 the two primitives that `docs/vcs-native.md` §7 found to stop seven of the fifteen unported `cancho vcs` commands (`status`, `diff`, `record`, `switch`, `restore`,
 `revert`, `apply`). Every claim is marked **[measured]** (run for this document, `docs/assets/directory-links/`), **[read]** (taken from the named file, not run) or
 **[choice]** (a decision this document proposes). The owner took the recommendation of each open decision in §7 (D1, D2, D3) on 2026-11-10; §8 records what that meant for slice 1.
@@ -65,7 +65,9 @@ dir_readlink(dir: &Dir, name: &[byte], out: &![byte]) -> [dir_read] Linked     /
 
 * `name` is checked as everywhere (one component). **`target` is not a component:** it is the text of the link, any bytes but NUL, up to 4,095 bytes **[measured]**; an
   empty one or a NUL is `EINVAL` with no call (the kernel's answer for empty is `ENOENT` **[measured]**, which would say a file is missing when it is the argument that
-  is wrong, so it is refused first, as `dir_mkdir` refuses a mode before the call), and 4,096 or more is `ENAMETOOLONG`, the kernel's answer.
+  is wrong, so it is refused first, as `dir_mkdir` refuses a mode before the call). **Corrected in place (slice 2):** this said 4,096 bytes or more is `ENAMETOOLONG`, the kernel's
+  answer. All three implementations copy the target into a buffer of 4,096 bytes to give `symlinkat` its terminator, so a target of 4,096 or more is `EINVAL` with no call, like an
+  empty one; the longest target is still 4,095 bytes, as measured.
 * It **never replaces and never follows**: a name that exists, whatever it is, a dangling link included, is `EEXIST` **[measured]**.
 * **A link can point anywhere**, including outside everything the program holds. The link is made; no access is granted by making it. What is checked is the *use*:
   `dir_enter` and `dir_open_read` open with `O_NOFOLLOW` and refuse a link (`ELOOP`, §2), so a handle never leaves the directory through one.
@@ -83,9 +85,10 @@ dir_readlink(dir: &Dir, name: &[byte], out: &![byte]) -> [dir_read] Linked     /
   target of exactly that length or a longer one, and a caller cannot tell. The rule, taken from `dir_next` ("`ENAMETOOLONG` rather than a cut name"): **if the kernel
   fills the buffer, the answer is `Failed(ENAMETOOLONG)`.** A caller needs a buffer one byte longer than the target; 4,096 always suffices, since no target is longer than 4,095
   **[measured]**. A zero-length buffer is `EINVAL` with no call, as the kernel says **[measured]**.
-* **The answer is `Linked::Ok(n)`** (the target is the first `n` bytes of the buffer; `n >= 1`, since an empty target cannot be made) **or `Linked::Failed(errno)`**
-  (`ENOENT`, `EINVAL` for a file or a directory **[measured]**, `ENAMETOOLONG` as above, `EACCES`). A new prelude enum, as `DirStat` is: `docs/directory-listing.md`
-  §3 gives no enum of this shape that fits.
+* **The answer is `Done::Ok(n)`** (the target is the first `n` bytes of the buffer; `n >= 1`, since an empty target cannot be made) **or `Done::Failed(errno)`**
+  (`ENOENT`, `EINVAL` for a file or a directory **[measured]**, `ENAMETOOLONG` as above, `EACCES`). **Corrected in place (slice 2):** this proposed a new prelude enum `Linked`, as
+  `DirStat` is. `Done` has the shape (`Ok(int)` and `Failed(int)`, the three numbers `dirrt_triple` already answers) and `dir_mode` already answers a number in it, so no type, no `Split`
+  change and no edition-wide table row was needed.
 * **Label `dir_read`**, like `dir_stat`. It reads the text of a link and follows nothing: the target it answers is data, and a program that opens it opens it by a path
   its own `Fs` allows or not.
 
@@ -150,6 +153,20 @@ Every slice is a pull request with the gate of `docs/gate.md` (`scripts/gate.sh`
 **Slice 1, built and measured (2026-11-10, Linux x86-64).** `dir_rmdir` is edition 12, label `dir_write`, `Done`. In the compiler in cancho: `runtime/dirs.c` (`cancho_dir_rmdir`, `AT_REMOVEDIR` by `#if DARWIN`, the `.ll` regenerated: 512 in the Linux text and 128 in the Darwin text, and nothing else in either changed), call number 145 in `codes.cho`, `netcode.cho` at each site that names `dir_remove`, and the generated tables. The same program (`tests/programs/directory_rmdir_probe.cho`) gives the **same transcript** built by the compiler in cancho and by the Rust compiler: an empty directory goes; a directory with a file in it is `ENOTEMPTY` and keeps the file, and goes once it is empty; a missing name is `ENOENT`; a file, a link to a directory and a dangling link are `ENOTDIR`, none is removed or followed; `..`, `.`, an empty name, `a/b` and a 256-byte name are `EINVAL` with no call (`a/b` is still there); a 255-byte name reaches the kernel (`ENOENT`). `tests/commands/directory_rmdir.cho` pins it, and `tests/reject/dir_rmdir_is_edition_twelve.cho` and `dir_rmdir_not_declared.cho` the edition and the label. **Mutant:** pointing `dir_rmdir` at `dir_remove`'s runtime function (the flag dropped) fails the test. **Not run:** the second mutant (the name check removed), Darwin, and the NUL case (an argument cannot hold one).
 
 **D3 as built, and where it differed from §5.** Registering the builtin in `cancho-ir` and generating `tables.cho` was done as §5 says. "Lower nothing in Rust" was **not** possible: the Cranelift code generator's `match` over builtins is exhaustive, so a registered builtin with no arm is a compile error, and the arm that would have answered it was an `unreachable!`, a panic that a program could reach. Both Rust backends therefore lower `dir_rmdir` (about twenty lines each, `dir_remove` with the flag, and `cancho_ir::at_removedir(darwin)` for the number). Registering also moved four numbers that tests pin: `Builtin::ALL` is 185 and the WASI-supported count 94 (`os_tables.rs`, `docs/wasm.md`), and `tests/builtins.golden` has the new name.
+
+**Slice 2, built and measured (2026-11-10, Linux x86-64).** `dir_symlink(dir, name, target) -> [dir_symlink] Done` and `dir_readlink(dir, name, buffer) -> [dir_read] Done`, edition 12.
+**D2 as built:** a label of its own, `dir_symlink`, in `WORLD_PLAIN_LABELS`, in what a `Dir` discharges (so a function that holds a `&Dir` may declare it, as it may `dir_write`), and in the
+WASI import table (`path_symlink`; `dir_read` gains `path_readlink`). `dir_readlink` performs `dir_read`. In the compiler in cancho: `dirs.c` (`cancho_dir_symlink`,
+`cancho_dir_readlink`), codes 146 and 147, `netcode.cho`, the `.ll` and `runtime.cho`, and the generated tables. In Rust, both backends lower them (`cancho_ir::LINK_MAX`, and the fill check
+done after the shared helper, in five instructions). **Three implementations give one transcript:** the compiler in cancho, the Rust compiler with the LLVM backend and with the Cranelift
+backend, on `tests/programs/directory_links_probe.cho` and `tests/commands/directory_links.sh`. It pins §4: targets of 1, 7, 255 and 4,095 bytes are made as links of those lengths and read back
+(the shell's `readlink` agrees); a buffer of exactly the target's length is `ENAMETOOLONG` and one byte longer is the target, and so are a cut by 3 and a buffer of 1; an empty buffer is `EINVAL`;
+a taken name, a file, a directory and a dangling link are `EEXIST` and untouched, and the dangling link was not followed; an empty target and a 4,096-byte one are `EINVAL` and no link is made;
+`..`, `.`, an empty name and `a/b` are `EINVAL` for both calls; a file and a directory are `EINVAL` to read and a missing name is `ENOENT`. The label is pinned by
+`tests/reject/dir_symlink_not_declared.cho` (a row of `[dir_write]` does not make a link: `effect-not-declared`), `dir_readlink_not_declared.cho` and `dir_symlink_is_edition_twelve.cho`.
+**Mutant:** the fill check dropped in `dirs.c` (the comparison made unsatisfiable) fails the test, and the files were restored byte for byte. **Not run:** the mutant of the target's
+NUL check, Darwin, and a NUL in a target or a name (an argument cannot hold one). **Not checked yet:** that `dir_enter` and `dir_open_read` still refuse the link a program made (`ELOOP`,
+§2); they are unchanged and §2 measured the kernel, but no test of this slice makes the link and then enters it.
 
 ## 9. Not measured
 

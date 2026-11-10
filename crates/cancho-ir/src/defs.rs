@@ -265,6 +265,8 @@ pub const WORLD_PLAIN_LABELS: &[&str] = &[
     "file_write",
     "dir_read",
     "dir_write",
+    // `docs/directory-links.md` §4, D2: making a symbolic link.
+    "dir_symlink",
     "conn_accept",
     "conn_read",
     "conn_write",
@@ -328,7 +330,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
         PRELUDE_FILE => Effects::plain(["file_read", "file_write"]),
         // `docs/directory-handles.md` §2: the path was spent at `open_dir`,
         // so the handle's label names none, as `file_read` names none.
-        PRELUDE_DIR => Effects::plain(["dir_read", "dir_write"]),
+        PRELUDE_DIR => Effects::plain(["dir_read", "dir_write", "dir_symlink"]),
         // `docs/directory-listing.md` §3.3: a listing is reading beneath the
         // directory it came from.
         PRELUDE_DIR_LIST => Effects::plain(["dir_read"]),
@@ -471,7 +473,7 @@ pub(crate) fn discharged_by(defs: &[TypeDef], ty: &Type) -> Effects {
                 all.union(&Effects::plain(["file_read", "file_write"]));
                 // `docs/directory-handles.md` §2: the same for a directory
                 // handle, which only `open_dir` on an `Fs` makes.
-                all.union(&Effects::plain(["dir_read", "dir_write"]));
+                all.union(&Effects::plain(["dir_read", "dir_write", "dir_symlink"]));
                 all
             }
             _ => Effects::pure(),

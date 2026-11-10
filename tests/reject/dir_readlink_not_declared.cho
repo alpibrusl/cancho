@@ -1,0 +1,24 @@
+//~ ERROR performs `dir_read`, which its row
+//~ RULE effect-not-declared
+
+// `docs/directory-links.md` §4: reading the text of a link is reading beneath
+// the directory, so it performs `dir_read`, as `dir_stat` does.
+
+edition 12;
+
+fn read[&d, &b](dir: &d Dir, buffer: &!b [byte]) -> [dir_write] int {
+    match dir_readlink(dir, "out", buffer) {
+        Done::Ok(n) => {
+            return n;
+        }
+        Done::Failed(e) => {
+            return 0 - e;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock); release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker);
+    return 0;
+}

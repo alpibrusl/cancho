@@ -759,6 +759,30 @@ impl Builtin {
                 ],
                 named(PRELUDE_DONE),
             ),
+            // `docs/directory-links.md` §4: the directory, the name and the
+            // text of the link, answering a status; or the directory, the
+            // name and the caller's buffer (unique: it is written), answering
+            // the length as `Done`.
+            Builtin::DirSymlink | Builtin::DirReadlink => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_DIR)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: self == Builtin::DirReadlink,
+                        region: Region::Param(2),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_DONE),
+            ),
             Builtin::DirOwnMode => (
                 vec![Type::Ref {
                     unique: false,

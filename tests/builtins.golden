@@ -149,6 +149,8 @@ dir_rename
 dir_rename_new
 dir_remove
 dir_rmdir
+dir_symlink
+dir_readlink
 dir_mkdir
 dir_open_new_mode
 dir_sync

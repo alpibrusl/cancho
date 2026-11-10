@@ -329,6 +329,85 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
         })
     }
 
+    /// `dir_symlink(dir, name, target)`: `symlinkat(target, dir, name)`. A
+    /// target that is empty, holds a NUL or is 4096 bytes or more is refused
+    /// before the call (`docs/directory-links.md` §4).
+    pub(crate) fn dir_symlink(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let handle = args[0];
+        let (target, length) = (args[3], args[4]);
+        let empty = self.builder.ins().icmp_imm(IntCC::Equal, length, 0);
+        let long =
+            self.builder.ins().icmp_imm(IntCC::SignedGreaterThan, length, cancho_ir::LINK_MAX);
+        let nul = self.builder.ins().iconst(types::I64, 0);
+        let found = self.libc_call(
+            "memchr",
+            &[pointer, types::I64, pointer],
+            &[pointer],
+            &[target, nul, length],
+        );
+        let has_nul = self.builder.ins().icmp_imm(IntCC::NotEqual, found, 0);
+        let mut bad = self.builder.ins().bor(empty, long);
+        bad = self.builder.ins().bor(bad, has_nul);
+        self.dir_call_checked(&[(args[1], args[2])], Some(bad), None, |this, copies| {
+            let fd = this.dir_fd(handle);
+            let slot = this.builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                (cancho_ir::LINK_MAX + 1) as u32,
+                0,
+            ));
+            let copy = this.builder.ins().stack_addr(pointer, slot, 0);
+            this.libc_call(
+                "memmove",
+                &[pointer, pointer, pointer],
+                &[pointer],
+                &[copy, target, length],
+            );
+            let end = this.builder.ins().iadd(copy, length);
+            let terminator = this.builder.ins().iconst(types::I8, 0);
+            this.builder.ins().store(MemFlags::trusted(), terminator, end, 0);
+            this.libc_call(
+                "symlinkat",
+                &[pointer, types::I32, pointer],
+                &[types::I32],
+                &[copy, fd, copies[0]],
+            )
+        })
+    }
+
+    /// `dir_readlink(dir, name, buffer)`: `readlinkat` into the caller's
+    /// buffer. The kernel cuts a long target without saying so, so an answer
+    /// that fills the buffer is `Failed(ENAMETOOLONG)`; an empty buffer is
+    /// refused before the call (`docs/directory-links.md` §4).
+    pub(crate) fn dir_readlink(&mut self, args: &[Value]) -> Vec<Value> {
+        let pointer = self.pointer;
+        let handle = args[0];
+        let (buffer, room) = (args[3], args[4]);
+        let darwin = self.is_darwin();
+        let empty = self.builder.ins().icmp_imm(IntCC::Equal, room, 0);
+        let leaves =
+            self.dir_call_checked(&[(args[1], args[2])], Some(empty), None, |this, copies| {
+                let fd = this.dir_fd(handle);
+                let read = this.libc_call(
+                    "readlinkat",
+                    &[types::I32, pointer, pointer, types::I64],
+                    &[types::I64],
+                    &[fd, copies[0], buffer, room],
+                );
+                this.builder.ins().ireduce(types::I32, read)
+            });
+        let (tag, result, reason) = (leaves[0], leaves[1], leaves[2]);
+        let filled = self.builder.ins().icmp(IntCC::Equal, result, room);
+        let one = self.builder.ins().iconst(types::I64, 1);
+        let minus_one = self.builder.ins().iconst(types::I64, -1);
+        let too_long = self.builder.ins().iconst(types::I64, cancho_ir::enametoolong(darwin));
+        vec![
+            self.builder.ins().select(filled, one, tag),
+            self.builder.ins().select(filled, minus_one, result),
+            self.builder.ins().select(filled, too_long, reason),
+        ]
+    }
+
     /// `dir_mkdir(dir, name, mode)`: `mkdirat`, the mode under the umask. A
     /// mode outside `0..=0o777` -- one unsigned compare catches a negative
     /// too -- is refused before the call, so no bit the program did not mean
