@@ -88,6 +88,8 @@ dir_open_new_mode_not_declared.cho
 dir_read_not_declared.cho
 dir_rename_new_is_edition_seven.cho
 dir_rename_new_not_declared.cho
+dir_rmdir_is_edition_twelve.cho
+dir_rmdir_not_declared.cho
 dir_stat_not_declared.cho
 dir_write_not_declared.cho
 duplicate_function.cho

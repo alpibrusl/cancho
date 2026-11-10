@@ -4,7 +4,7 @@ exit 1
 json refusals: 3
 1 2 3 
 == the prose is unchanged by the json
-fixtures: 385, skipped for a target: 9
+fixtures: 387, skipped for a target: 9
 ok more than a hundred fixtures
 ok prose and data agree
 == every refusal is valid JSON with a position

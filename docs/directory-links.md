@@ -1,9 +1,9 @@
 # Removing a directory and making and reading a link: `dir_rmdir`, `dir_symlink`, `dir_readlink`
 
-Status: **design; nothing here is built.** Written before the code, as `CONTRIBUTING.md` asks. It answers #684 (directory removal) and #685 (symlink and readlink),
+Status: **slice 1 (`dir_rmdir`) built, §8; `dir_symlink` and `dir_readlink` are design only.** Written before the code, as `CONTRIBUTING.md` asks. It answers #684 (directory removal) and #685 (symlink and readlink),
 the two primitives that `docs/vcs-native.md` §7 found to stop seven of the fifteen unported `cancho vcs` commands (`status`, `diff`, `record`, `switch`, `restore`,
 `revert`, `apply`). Every claim is marked **[measured]** (run for this document, `docs/assets/directory-links/`), **[read]** (taken from the named file, not run) or
-**[choice]** (a decision this document proposes). Open decisions for the owner are in §7.
+**[choice]** (a decision this document proposes). The owner took the recommendation of each open decision in §7 (D1, D2, D3) on 2026-11-10; §8 records what that meant for slice 1.
 
 ## 1. Why, and the askers
 
@@ -146,6 +146,10 @@ lowering. `target.rs` refuses a builtin a target cannot do; whether a builtin wi
    of the pinned tests, checked against a store the Rust command wrote.
 
 Every slice is a pull request with the gate of `docs/gate.md` (`scripts/gate.sh`), and the three of `CLAUDE.md` while they still stand.
+
+**Slice 1, built and measured (2026-11-10, Linux x86-64).** `dir_rmdir` is edition 12, label `dir_write`, `Done`. In the compiler in cancho: `runtime/dirs.c` (`cancho_dir_rmdir`, `AT_REMOVEDIR` by `#if DARWIN`, the `.ll` regenerated: 512 in the Linux text and 128 in the Darwin text, and nothing else in either changed), call number 145 in `codes.cho`, `netcode.cho` at each site that names `dir_remove`, and the generated tables. The same program (`tests/programs/directory_rmdir_probe.cho`) gives the **same transcript** built by the compiler in cancho and by the Rust compiler: an empty directory goes; a directory with a file in it is `ENOTEMPTY` and keeps the file, and goes once it is empty; a missing name is `ENOENT`; a file, a link to a directory and a dangling link are `ENOTDIR`, none is removed or followed; `..`, `.`, an empty name, `a/b` and a 256-byte name are `EINVAL` with no call (`a/b` is still there); a 255-byte name reaches the kernel (`ENOENT`). `tests/commands/directory_rmdir.cho` pins it, and `tests/reject/dir_rmdir_is_edition_twelve.cho` and `dir_rmdir_not_declared.cho` the edition and the label. **Mutant:** pointing `dir_rmdir` at `dir_remove`'s runtime function (the flag dropped) fails the test. **Not run:** the second mutant (the name check removed), Darwin, and the NUL case (an argument cannot hold one).
+
+**D3 as built, and where it differed from §5.** Registering the builtin in `cancho-ir` and generating `tables.cho` was done as §5 says. "Lower nothing in Rust" was **not** possible: the Cranelift code generator's `match` over builtins is exhaustive, so a registered builtin with no arm is a compile error, and the arm that would have answered it was an `unreachable!`, a panic that a program could reach. Both Rust backends therefore lower `dir_rmdir` (about twenty lines each, `dir_remove` with the flag, and `cancho_ir::at_removedir(darwin)` for the number). Registering also moved four numbers that tests pin: `Builtin::ALL` is 185 and the WASI-supported count 94 (`os_tables.rs`, `docs/wasm.md`), and `tests/builtins.golden` has the new name.
 
 ## 9. Not measured
 

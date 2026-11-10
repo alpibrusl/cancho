@@ -16,6 +16,11 @@ enum {
   CREATE_MODE
 };
 #define EINVAL 22
+#if DARWIN
+#define AT_REMOVEDIR 0x80
+#else
+#define AT_REMOVEDIR 0x200
+#endif
 #define NAME_MAX 255
 
 extern int openat(int, const char *, int, ...);
@@ -102,6 +107,14 @@ void cancho_dir_remove(const i64 *dir, const u8 *name, i64 len, i64 *out) {
   u8 copy[NAME_MAX + 1];
   if (!dirrt_component(name, len, copy)) return dirrt_refused(out);
   int r = unlinkat((int)*dir, (const char *)copy, 0);
+  dirrt_triple(out, r, ERRNO);
+}
+
+/* `dir_rmdir(dir, name)`: `dir_remove`'s call with AT_REMOVEDIR: an empty directory goes and nothing else (docs/directory-links.md section 3). */
+void cancho_dir_rmdir(const i64 *dir, const u8 *name, i64 len, i64 *out) {
+  u8 copy[NAME_MAX + 1];
+  if (!dirrt_component(name, len, copy)) return dirrt_refused(out);
+  int r = unlinkat((int)*dir, (const char *)copy, AT_REMOVEDIR);
   dirrt_triple(out, r, ERRNO);
 }
 
