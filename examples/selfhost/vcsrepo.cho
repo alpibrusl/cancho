@@ -11,14 +11,14 @@ module selfhost.vcsrepo;
 // tag; 19 a prefix more than one change starts with (their ids are in `bytes`); 20 HEAD has no change yet; 21 a `~N` that goes back past the first change; 22 a `~` that
 // is not followed by a count.
 //
-// Next (b4b): the history of a change, and the documents of `log` and `show`. Not here: `record`, `status`, the gate.
+// Next (b4b): the history of a change, and the documents of `log` and `show`. Not here: `record`, the gate, and `status` (`vcsstatus.cho`: it reads the working copy with `vcsscan.cho`, which uses
+// `dir_readlink`, an edition-12 builtin that a seed older than #760 does not compile; this module and the commands that need only it stay free of that, `docs/vcs-routing.md` section 3).
 
 import std.buffer;
 import std.bytes;
 import selfhost.jsonread;
 import selfhost.jsonwrite;
 import selfhost.vcschange;
-import selfhost.vcsscan;
 import selfhost.vcsobj;
 import selfhost.vcsstore;
 
@@ -26,10 +26,11 @@ pub fn tag(status: int) -> [] &static [byte] {
     if status >= 18 && status <= 22 {
         return "bad-revision";
     }
-    return vcsscan.tag(status);
+    return vcsstore.tag(status);
 }
 
-fn failed[&h](heap: &!h Heap, status: int) -> [heap] vcsstore.Object {
+// Shared with `vcsstatus.cho` (the `status` command lives there so that this module imports nothing of `vcsscan`).
+pub fn failed[&h](heap: &!h Heap, status: int) -> [heap] vcsstore.Object {
     return vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: 0 };
 }
 
@@ -430,12 +431,14 @@ pub fn history[&h, &d, &s, &f](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], 
 
 // ---- documents ---------------------------------------------------------------------------------------------------------------
 
-fn quoted[&h, &t](heap: &!h Heap, out: buffer.Buffer, raw: &t [byte]) -> [heap] buffer.Buffer {
+// Shared with `vcsstatus.cho`.
+pub fn quoted[&h, &t](heap: &!h Heap, out: buffer.Buffer, raw: &t [byte]) -> [heap] buffer.Buffer {
     return buffer.push(heap, buffer.append(heap, buffer.push(heap, out, byte_of(34)), raw), byte_of(34));
 }
 
 // The next member of an object whose members are at `levels`: a comma unless it is the first, a newline, the indentation, `"name": `.
-fn member[&h, &k](heap: &!h Heap, out: buffer.Buffer, levels: int, first: bool, name: &k [byte]) -> [heap] buffer.Buffer {
+// Shared with `vcsstatus.cho`.
+pub fn member[&h, &k](heap: &!h Heap, out: buffer.Buffer, levels: int, first: bool, name: &k [byte]) -> [heap] buffer.Buffer {
     var b = out;
     if !first {
         b = buffer.push(heap, b, byte_of(44));
@@ -628,7 +631,8 @@ fn parent_tree[&h, &d, &s, &p](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], 
 }
 
 // The tree text of the tree object `tree_id`, checked: 3 `object-corrupt` if it is not a tree.
-fn tree_text[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], tree_id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+// Shared with `vcsstatus.cho`.
+pub fn tree_text[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], tree_id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
     let got = vcsstore.get(heap, vcs, scratch, "tree", tree_id);
     let (text, status, errno) = vcsstore.parts(got);
     if status != 0 {
@@ -647,7 +651,8 @@ fn tree_text[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], tr
 }
 
 // The id of the tree of the change `id`.
-fn tree_id_of[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+// Shared with `vcsstatus.cho`.
+pub fn tree_id_of[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
     let got = vcsstore.get(heap, vcs, scratch, "change", id);
     let (data, status, errno) = vcsstore.parts(got);
     var out = buffer.empty(heap, 0);
@@ -683,7 +688,8 @@ fn state_item[&h, &p](heap: &!h Heap, out: buffer.Buffer, levels: int, first: bo
 }
 
 // The paths that differ between two trees, in path order, as `diff_trees` finds them: `added`, `deleted`, `modified` (another blob), `mode` (the same blob).
-fn emit_files[&h, &o, &n](heap: &!h Heap, out: buffer.Buffer, levels: int, old: &o [byte], new: &n [byte]) -> [heap] buffer.Buffer {
+// Shared with `vcsstatus.cho`.
+pub fn emit_files[&h, &o, &n](heap: &!h Heap, out: buffer.Buffer, levels: int, old: &o [byte], new: &n [byte]) -> [heap] buffer.Buffer {
     var items = buffer.empty(heap, 0);
     var count = 0;
     var i = 0;
@@ -967,153 +973,4 @@ pub fn show_command[&h, &d, &s, &p](heap: &!h Heap, vcs: &d Dir, scratch: &!s [i
     }
     buffer.drop(heap, id);
     return answer;
-}
-
-// ---- status ------------------------------------------------------------------------------------------------------------------
-
-// What HEAD says: the branch (without `heads/`) in `bytes` and `has_branch` true, or HEAD detached; the change HEAD is at in `head` (empty if the branch has none).
-res struct HeadInfo {
-    branch: buffer.Buffer,
-    has_branch: bool,
-    head: buffer.Buffer,
-    status: int,
-}
-
-fn head_parts(h: HeadInfo) -> [] (buffer.Buffer, bool, buffer.Buffer, int) {
-    let HeadInfo { branch, has_branch, head, status } = h;
-    return (branch, has_branch, head, status);
-}
-
-fn head_info[&h, &d](heap: &!h Heap, vcs: &d Dir) -> [heap, dir_read, dir_write, file_read] HeadInfo {
-    let read = vcsstore.read_text(heap, vcs, "HEAD");
-    let (text, status, errno) = vcsstore.parts(read);
-    var branch = buffer.empty(heap, 0);
-    var head = buffer.empty(heap, 0);
-    var has = false;
-    var code = status;
-    if status == 0 {
-        code = 3;
-        borrow text as &tb in {
-            let t = vcsstore.trimmed(buffer.bytes(tb));
-            if bytes.starts_with(t, "ref: refs/") {
-                var name = t[10..len(t)];
-                if bytes.starts_with(name, "heads/") {
-                    branch = buffer.append(heap, branch, name[6..len(name)]);
-                } else {
-                    branch = buffer.append(heap, branch, name);
-                }
-                has = true;
-                let followed = vcsstore.read_ref(heap, vcs, name);
-                let (id, fs, fe) = vcsstore.parts(followed);
-                if fs == 0 {
-                    buffer.drop(heap, head);
-                    head = id;
-                    code = 0;
-                } else if fs == 2 {
-                    buffer.drop(heap, id);
-                    code = 0;
-                } else {
-                    buffer.drop(heap, id);
-                    code = fs;
-                }
-            } else if vcsobj.is_id(t) {
-                buffer.drop(heap, head);
-                head = buffer.append(heap, buffer.empty(heap, 64), t);
-                code = 0;
-            }
-        }
-    }
-    buffer.drop(heap, text);
-    return HeadInfo { branch: branch, has_branch: has, head: head, status: code };
-}
-
-// The `status` document: the branch and change HEAD is at, and the paths whose files differ from HEAD's tree (as `diff_trees` finds them: `added`, `deleted`,
-// `modified`, `mode`), with `clean` when there are none. `root` is the working copy's directory, `vcs` the store's.
-pub fn status_command[&h, &r, &d, &s](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
-    let info = head_info(heap, vcs);
-    let (branch, has_branch, head, status) = head_parts(info);
-    if status != 0 {
-        buffer.drop(heap, branch);
-        buffer.drop(heap, head);
-        return failed(heap, status);
-    }
-    var old_tree = buffer.empty(heap, 0);
-    var code = 0;
-    var has_head = false;
-    borrow head as &hb in {
-        has_head = len(buffer.bytes(hb)) > 0;
-        if has_head {
-            let ti = tree_id_of(heap, vcs, scratch, buffer.bytes(hb));
-            let (tid, ts, te) = vcsstore.parts(ti);
-            if ts != 0 {
-                code = ts;
-            } else {
-                borrow tid as &tb in {
-                    let tt = tree_text(heap, vcs, scratch, buffer.bytes(tb));
-                    let (text, xs, xe) = vcsstore.parts(tt);
-                    buffer.drop(heap, old_tree);
-                    old_tree = text;
-                    code = xs;
-                }
-            }
-            buffer.drop(heap, tid);
-        }
-    }
-    var doc = buffer.empty(heap, 0);
-    if code == 0 {
-        let scanned = vcsscan.scan(heap, root, scratch);
-        let (work, ws, we) = vcsstore.parts(scanned);
-        if ws != 0 {
-            code = ws;
-            buffer.drop(heap, work);
-        } else {
-            borrow old_tree as &ob in {
-                borrow work as &wb in {
-                    var b = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
-                    b = member(heap, b, 1, true, "branch");
-                    if has_branch {
-                        borrow branch as &bb in {
-                            b = jsonwrite.string(heap, b, buffer.bytes(bb));
-                        }
-                    } else {
-                        b = buffer.append(heap, b, "null");
-                    }
-                    let changes = emit_files(heap, buffer.empty(heap, 16), 1, buffer.bytes(ob), buffer.bytes(wb));
-                    var clean = false;
-                    borrow changes as &cb in {
-                        clean = len(buffer.bytes(cb)) == 2;
-                        b = buffer.append(heap, member(heap, b, 1, false, "changes"), buffer.bytes(cb));
-                    }
-                    buffer.drop(heap, changes);
-                    if clean {
-                        b = buffer.append(heap, member(heap, b, 1, false, "clean"), "true");
-                    } else {
-                        b = buffer.append(heap, member(heap, b, 1, false, "clean"), "false");
-                    }
-                    b = buffer.append(heap, member(heap, b, 1, false, "command"), "\"status\"");
-                    b = member(heap, b, 1, false, "head");
-                    if has_head {
-                        borrow head as &hb in {
-                            b = quoted(heap, b, buffer.bytes(hb));
-                        }
-                    } else {
-                        b = buffer.append(heap, b, "null");
-                    }
-                    b = buffer.append(heap, member(heap, b, 1, false, "ok"), "true");
-                    b = buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
-                    buffer.drop(heap, doc);
-                    doc = b;
-                }
-            }
-            buffer.drop(heap, work);
-        }
-    }
-    buffer.drop(heap, branch);
-    buffer.drop(heap, head);
-    buffer.drop(heap, old_tree);
-    if code != 0 {
-        buffer.drop(heap, doc);
-        return failed(heap, code);
-    }
-    return vcsstore.Object { bytes: doc, status: 0, errno: 0 };
 }

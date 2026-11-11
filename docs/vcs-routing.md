@@ -95,6 +95,14 @@ crash test; and `canonicalize` (D2).
 Every slice is a pull request with the gate of `docs/gate.md`, a Rust-parity check while the Rust command exists, and a mutant where a check is new (an envelope key, a refusal message, the routing
 rule, the order of a document).
 
+**R0, built and measured (2026-11-11, Linux x86-64).** `status_command`, `head_info`, `head_parts`, `HeadInfo` and a `tag` that adds `vcsscan`'s tags move to `vcsstatus.cho` (171 lines; `vcsrepo.cho`
+goes from 1,119 to 976). The six helpers the two share (`failed`, `member`, `quoted`, `emit_files`, `tree_id_of`, `tree_text`) are `pub` in `vcsrepo.cho` and called as `vcsrepo.NAME` from the new module
+(`log` and `show` use them too, so there was nothing to move). `vcsrepo.tag` chains to `vcsstore.tag` and `vcsstorectl` takes `vcsstatus.tag`, which answers what `vcsrepo.tag` did before. **What it was
+for, measured with the compiler built from the committed seed (the one that does not know `dir_readlink`):** a program importing `vcsrepo` builds and runs (`bad-revision`); the same program importing
+`vcsstatus` is refused (`vcsscan.cho:189`, `dir_readlink` "is not a function in this program"), and the compiler of today builds it. So `init`, `log` and `show` can enter `cancho.files` without a reseed, and
+`status` cannot. The four differential scripts against the Rust `cancho vcs` pass as before the move: `vcsrepo_check` 31 checks, `vcslog_check` 51, `vcsstatus_check` 31, `vcsstore_check` 26. **Not changed:**
+no behaviour, no `.expected`, no pin; `cancho.files` (nothing here is in it yet).
+
 ## 6. Decisions for the owner
 
 * **O1. Split `vcsrepo.cho` (R0) so `init`, `log` and `show` do not wait for a reseed? Recommendation: yes.** It is a small move of code that already works, and it puts the wrong-and-successful `vcs log` of §1
