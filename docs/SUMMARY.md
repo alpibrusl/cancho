@@ -35,6 +35,7 @@
 - [Signals](signals.md)
 - [Connection peer address](conn-peer.md)
 - [Directory handles](directory-handles.md)
+- [Removing a directory, making and reading a link](directory-links.md)
 - [Directory listing](directory-listing.md)
 - [Processes](processes.md)
 - [Foreign authority](foreign-authority.md)

@@ -16,7 +16,13 @@ enum {
   CREATE_MODE
 };
 #define EINVAL 22
+#if DARWIN
+#define AT_REMOVEDIR 0x80
+#else
+#define AT_REMOVEDIR 0x200
+#endif
 #define NAME_MAX 255
+#define LINK_MAX 4095
 
 extern int openat(int, const char *, int, ...);
 extern int renameat(int, const char *, int, const char *);
@@ -27,6 +33,8 @@ extern int renameat2(int, const char *, int, const char *, unsigned);
 #endif
 extern int unlinkat(int, const char *, int);
 extern int mkdirat(int, const char *, unsigned);
+extern int symlinkat(const char *, int, const char *);
+extern i64 readlinkat(int, const char *, char *, i64);
 extern int fsync(int);
 extern int fstatat(int, const char *, void *, int);
 extern int fstat(int, void *);
@@ -103,6 +111,40 @@ void cancho_dir_remove(const i64 *dir, const u8 *name, i64 len, i64 *out) {
   if (!dirrt_component(name, len, copy)) return dirrt_refused(out);
   int r = unlinkat((int)*dir, (const char *)copy, 0);
   dirrt_triple(out, r, ERRNO);
+}
+
+/* `dir_rmdir(dir, name)`: `dir_remove`'s call with AT_REMOVEDIR: an empty directory goes and nothing else (docs/directory-links.md section 3). */
+void cancho_dir_rmdir(const i64 *dir, const u8 *name, i64 len, i64 *out) {
+  u8 copy[NAME_MAX + 1];
+  if (!dirrt_component(name, len, copy)) return dirrt_refused(out);
+  int r = unlinkat((int)*dir, (const char *)copy, AT_REMOVEDIR);
+  dirrt_triple(out, r, ERRNO);
+}
+
+/* `dir_symlink(dir, name, target)`: `symlinkat`. A target that is empty, holds a NUL or is longer than LINK_MAX is refused with no call
+ * (docs/directory-links.md section 4). */
+void cancho_dir_symlink(const i64 *dir, const u8 *name, i64 len, const u8 *target, i64 tlen, i64 *out) {
+  u8 copy[NAME_MAX + 1];
+  u8 text[LINK_MAX + 1];
+  if (!dirrt_component(name, len, copy) || tlen <= 0 || tlen > LINK_MAX || memchr(target, 0, tlen)) return dirrt_refused(out);
+  memmove(text, target, tlen);
+  text[tlen] = 0;
+  int r = symlinkat((const char *)text, (int)*dir, (const char *)copy);
+  dirrt_triple(out, r, ERRNO);
+}
+
+/* `dir_readlink(dir, name, buf)`: `readlinkat` into the caller's buffer. The kernel cuts a long target without saying so, so an answer that
+ * fills the buffer is ENAMETOOLONG; an empty buffer is refused with no call (docs/directory-links.md section 4). */
+void cancho_dir_readlink(const i64 *dir, const u8 *name, i64 len, u8 *buf, i64 room, i64 *out) {
+  u8 copy[NAME_MAX + 1];
+  if (!dirrt_component(name, len, copy) || room <= 0) return dirrt_refused(out);
+  i64 r = readlinkat((int)*dir, (const char *)copy, (char *)buf, room);
+  i64 why = ERRNO;
+  if (r == room) {
+    r = -1;
+    why = P(ENAMETOOLONG);
+  }
+  dirrt_triple(out, r, why);
 }
 
 /* `dir_open_new_mode(dir, name, mode)`: `dir_open_new` (2) with the file's mode; outside 0..0o777 is refused, no call. */

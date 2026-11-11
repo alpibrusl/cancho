@@ -1422,6 +1422,20 @@ pub fn rename_no_replace(darwin: bool) -> i64 {
     if darwin { 0x4 } else { 0x1 }
 }
 
+/// The longest text `dir_symlink` takes (`docs/directory-links.md` §4): Linux's
+/// `PATH_MAX` less the terminator, and an upper bound, not a promise: Darwin's
+/// kernel refuses a shorter one with `ENAMETOOLONG`. A longer one is `EINVAL`
+/// with no call, so the copy that terminates it fits a buffer of `LINK_MAX + 1`.
+pub const LINK_MAX: i64 = 4095;
+
+/// `AT_REMOVEDIR`, the flag that makes `unlinkat` remove an empty directory
+/// (`dir_rmdir`, `docs/directory-links.md` §3): `0x200` on Linux (measured,
+/// `docs/assets/directory-links/probe-linux.txt`), `0x80` on Darwin (read from
+/// the system header, not run).
+pub fn at_removedir(darwin: bool) -> i64 {
+    if darwin { 0x80 } else { 0x200 }
+}
+
 /// `st_mode`'s permission bits (set-user-id, set-group-id, sticky, and the
 /// nine read/write/execute bits), what `dir_mode` answers
 /// (`docs/directory-listing.md` §3.5). The same on every target.

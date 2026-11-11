@@ -804,6 +804,24 @@ pub enum Builtin {
     /// `dir_remove(&Dir, name) -> [dir_write] Done`: `unlinkat(dir, name, 0)`.
     /// A link is removed, never followed.
     DirRemove,
+    /// `dir_rmdir(&Dir, name) -> [dir_write] Done`: `unlinkat(dir, name,
+    /// AT_REMOVEDIR)`. Only an empty directory goes (`ENOTEMPTY` otherwise); a
+    /// link, a file or a missing name is `ENOTDIR` or `ENOENT`, and no link is
+    /// followed (`docs/directory-links.md` §3). Edition 12. Registered here so
+    /// the tables of the compiler in cancho are generated; the Rust compiler
+    /// does not lower it (`docs/directory-links.md` §5, D3).
+    DirRmdir,
+    /// `dir_symlink(&Dir, name, target) -> [dir_symlink] Done`:
+    /// `symlinkat(target, dir, name)`. Never replaces and never follows (an
+    /// existing name, a dangling link included, is `Failed(EEXIST)`); an empty
+    /// target or one holding a NUL is `Failed(EINVAL)` with no call
+    /// (`docs/directory-links.md` §4). Edition 12; its label is its own.
+    DirSymlink,
+    /// `dir_readlink(&Dir, name, &![byte]) -> [dir_read] Done`:
+    /// `readlinkat` into the caller's buffer. `Ok(n)` is the length of the
+    /// target; a buffer the kernel fills is `Failed(ENAMETOOLONG)`, since the
+    /// kernel cuts silently (`docs/directory-links.md` §4). Edition 12.
+    DirReadlink,
     /// `dir_mkdir(&Dir, name, mode: int) -> [dir_write] Done`: `mkdirat(dir,
     /// name, mode)`, the mode under the process's umask. An existing name is
     /// `Failed(EEXIST)`, a dangling link included; a mode outside `0..=0o777`
@@ -1114,6 +1132,9 @@ impl Builtin {
         Builtin::DirRename,
         Builtin::DirRenameNew,
         Builtin::DirRemove,
+        Builtin::DirRmdir,
+        Builtin::DirSymlink,
+        Builtin::DirReadlink,
         Builtin::DirMkdir,
         Builtin::DirOpenNewMode,
         Builtin::DirSync,
@@ -1305,6 +1326,9 @@ impl Builtin {
             Builtin::DirRename => "dir_rename",
             Builtin::DirRenameNew => "dir_rename_new",
             Builtin::DirRemove => "dir_remove",
+            Builtin::DirRmdir => "dir_rmdir",
+            Builtin::DirSymlink => "dir_symlink",
+            Builtin::DirReadlink => "dir_readlink",
             Builtin::DirMkdir => "dir_mkdir",
             Builtin::DirOpenNewMode => "dir_open_new_mode",
             Builtin::DirSync => "dir_sync",
@@ -1427,7 +1451,12 @@ impl Builtin {
             | Builtin::SpeakerOpen
             | Builtin::SpeakerConfigure
             | Builtin::SpeakerWrite
-            | Builtin::SpeakerClose => 12,
+            | Builtin::SpeakerClose
+            // `docs/directory-links.md` §5: the latest edition, for the reason
+            // `dir_mkdir` is in edition 9 -- a name a program may declare.
+            | Builtin::DirRmdir
+            | Builtin::DirSymlink
+            | Builtin::DirReadlink => 12,
             // `docs/checked-output.md`: a name a program may already have
             // declared for itself, so it is visible from edition 5 only.
             Builtin::FlushOut => 5,
@@ -1656,7 +1685,10 @@ impl Builtin {
             | Builtin::DirOpenRead
             | Builtin::DirOpenNew
             | Builtin::DirOpenAppend => 2,
-            Builtin::DirRemove | Builtin::DirMkdir | Builtin::DirOpenNewMode => 2,
+            Builtin::DirRemove
+            | Builtin::DirRmdir
+            | Builtin::DirMkdir
+            | Builtin::DirOpenNewMode => 2,
             // The handle's region and each name's.
             Builtin::DirRename | Builtin::DirRenameNew => 3,
             Builtin::DirSync => 1,
@@ -1667,6 +1699,8 @@ impl Builtin {
             // The handle's region and the name's.
             Builtin::DirStat => 2,
             Builtin::DirMode => 2,
+            // The handle's region, the name's and the target's or the buffer's.
+            Builtin::DirSymlink | Builtin::DirReadlink => 3,
             // The handle's region.
             Builtin::DirOwnMode => 1,
             // The handle's region, and for a read or a write the buffer's.
@@ -1811,7 +1845,12 @@ impl Builtin {
             Builtin::DirEnter | Builtin::DirOpenRead => Effects::plain(["dir_read"]),
             // `docs/directory-listing.md` §3.3: listing is reading beneath the
             // directory, and closing a listing performs nothing.
-            Builtin::DirList | Builtin::DirNext | Builtin::DirStat => Effects::plain(["dir_read"]),
+            Builtin::DirList | Builtin::DirNext | Builtin::DirStat | Builtin::DirReadlink => {
+                Effects::plain(["dir_read"])
+            }
+            // `docs/directory-links.md` §4, D2: making a link is not writing a
+            // file, so a report can say who could make one.
+            Builtin::DirSymlink => Effects::plain(["dir_symlink"]),
             // §3.5: a status, so a read beneath the directory, as `dir_stat`.
             Builtin::DirMode | Builtin::DirOwnMode => Effects::plain(["dir_read"]),
             // §3: everything that changes what is beneath a directory.
@@ -1820,6 +1859,7 @@ impl Builtin {
             | Builtin::DirRename
             | Builtin::DirRenameNew
             | Builtin::DirRemove
+            | Builtin::DirRmdir
             | Builtin::DirMkdir
             | Builtin::DirOpenNewMode
             | Builtin::DirSync => Effects::plain(["dir_write"]),

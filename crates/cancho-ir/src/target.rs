@@ -270,6 +270,9 @@ pub fn wasi_gap(builtin: Builtin) -> Option<Gap> {
         | B::DirOpenAppend
         | B::DirRename
         | B::DirRemove
+        | B::DirRmdir
+        | B::DirSymlink
+        | B::DirReadlink
         | B::DirSync
         | B::DirList
         | B::DirNext

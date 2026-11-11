@@ -327,6 +327,119 @@ impl<'a> FuncEmitter<'a> {
         }))
     }
 
+    /// `dir_rmdir(dir, name)`: `unlinkat(dir, name, AT_REMOVEDIR)`, which
+    /// removes an empty directory and nothing else; a link is `ENOTDIR`
+    /// (`docs/directory-links.md` §3).
+    pub(crate) fn dir_rmdir(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 3 {
+            return Err(format!("`dir_rmdir` needs 3 leaves but {} were given", args.len()));
+        }
+        let handle = operand(&args[0]);
+        let name = (operand(&args[1]), operand(&args[2]));
+        let flag = cancho_ir::at_removedir(self.is_darwin());
+        Ok(self.dir_call(&[name], |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let removed = this.fresh();
+            this.out.push_str(&format!(
+                "  {removed} = call i32 @unlinkat(i32 {fd}, ptr {}, i32 {flag})\n",
+                copies[0]
+            ));
+            removed
+        }))
+    }
+
+    /// `dir_symlink(dir, name, target)`: `symlinkat(target, dir, name)`. A
+    /// target that is empty, holds a NUL or is 4096 bytes or more is refused
+    /// before the call (the copy that gives `symlinkat` its terminator is
+    /// `LINK_MAX` bytes; `docs/directory-links.md` §4).
+    pub(crate) fn dir_symlink(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 5 {
+            return Err(format!("`dir_symlink` needs 5 leaves but {} were given", args.len()));
+        }
+        let handle = operand(&args[0]);
+        let name = (operand(&args[1]), operand(&args[2]));
+        let (target, length) = (operand(&args[3]), operand(&args[4]));
+        let copy = self.fresh();
+        self.hoist(format!("  {copy} = alloca i8, i64 {}\n", cancho_ir::LINK_MAX + 1));
+        let empty = self.fresh();
+        self.out.push_str(&format!("  {empty} = icmp eq i64 {length}, 0\n"));
+        let long = self.fresh();
+        self.out.push_str(&format!("  {long} = icmp sgt i64 {length}, {}\n", cancho_ir::LINK_MAX));
+        let st = self.size_ty();
+        let size = self.size_arg(&length);
+        let nul = self.fresh();
+        self.out
+            .push_str(&format!("  {nul} = call ptr @memchr(ptr {target}, i32 0, {st} {size})\n"));
+        let has_nul = self.fresh();
+        self.out.push_str(&format!("  {has_nul} = icmp ne ptr {nul}, null\n"));
+        let either = self.fresh();
+        self.out.push_str(&format!("  {either} = or i1 {empty}, {long}\n"));
+        let bad = self.fresh();
+        self.out.push_str(&format!("  {bad} = or i1 {either}, {has_nul}\n"));
+        Ok(self.dir_call_checked(&[name], Some(bad), None, |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let st = this.size_ty();
+            let size = this.size_arg(&length);
+            let ignored = this.fresh();
+            this.out.push_str(&format!(
+                "  {ignored} = call ptr @memmove(ptr {copy}, ptr {target}, {st} {size})\n"
+            ));
+            let end = this.fresh();
+            this.out.push_str(&format!("  {end} = getelementptr i8, ptr {copy}, i64 {length}\n"));
+            this.out.push_str(&format!("  store i8 0, ptr {end}\n"));
+            let made = this.fresh();
+            this.out.push_str(&format!(
+                "  {made} = call i32 @symlinkat(ptr {copy}, i32 {fd}, ptr {})\n",
+                copies[0]
+            ));
+            made
+        }))
+    }
+
+    /// `dir_readlink(dir, name, buffer)`: `readlinkat` into the caller's
+    /// buffer. The kernel cuts a long target without saying so, so an answer
+    /// that fills the buffer is `Failed(ENAMETOOLONG)`; an empty buffer is
+    /// refused before the call (`docs/directory-links.md` §4).
+    pub(crate) fn dir_readlink(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+        if args.len() != 5 {
+            return Err(format!("`dir_readlink` needs 5 leaves but {} were given", args.len()));
+        }
+        let handle = operand(&args[0]);
+        let name = (operand(&args[1]), operand(&args[2]));
+        let (buffer, room) = (operand(&args[3]), operand(&args[4]));
+        let empty = self.fresh();
+        self.out.push_str(&format!("  {empty} = icmp eq i64 {room}, 0\n"));
+        let leaves = self.dir_call_checked(&[name], Some(empty), None, |this, copies| {
+            let fd = this.dir_fd(&handle);
+            let read = this.fresh();
+            this.out.push_str(&format!(
+                "  {read} = call i64 @readlinkat(i32 {fd}, ptr {}, ptr {buffer}, i64 {room})\n",
+                copies[0]
+            ));
+            let narrow = this.fresh();
+            this.out.push_str(&format!("  {narrow} = trunc i64 {read} to i32\n"));
+            narrow
+        });
+        let (tag, result, reason) = (operand(&leaves[0]), operand(&leaves[1]), operand(&leaves[2]));
+        let filled = self.fresh();
+        self.out.push_str(&format!("  {filled} = icmp eq i64 {result}, {room}\n"));
+        let tag = self.select_i64(&filled, "1", &tag);
+        let result = self.select_i64(&filled, "-1", &result);
+        let reason = self.select_i64(
+            &filled,
+            &cancho_ir::enametoolong(self.is_darwin()).to_string(),
+            &reason,
+        );
+        Ok(vec![LValue::Reg(tag), LValue::Reg(result), LValue::Reg(reason)])
+    }
+
+    /// `select i1 {condition}, i64 {yes}, i64 {no}` in a register of its own.
+    fn select_i64(&mut self, condition: &str, yes: &str, no: &str) -> String {
+        let picked = self.fresh();
+        self.out.push_str(&format!("  {picked} = select i1 {condition}, i64 {yes}, i64 {no}\n"));
+        picked
+    }
+
     /// `dir_mkdir(dir, name, mode)`: `mkdirat`, the mode under the umask. A
     /// mode outside `0..=0o777` -- one unsigned compare catches a negative
     /// too -- is refused before the call (`docs/directory-handles.md` §3,

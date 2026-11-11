@@ -1,0 +1,70 @@
+edition 12;
+
+fn digits[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        digits(io, n / 10);
+    }
+    putchar(io, '0' + n % 10);
+    return 0;
+}
+
+fn answer[&i](io: &!i Io, done: Done) -> [io_write] int {
+    match done {
+        Done::Ok(n) => {
+            write_bytes(io, "ok\n");
+        }
+        Done::Failed(e) => {
+            write_bytes(io, "err ");
+            digits(io, e);
+            putchar(io, 10);
+        }
+    }
+    return 0;
+}
+
+fn make_all[&i, &d, &a](io: &!i Io, dir: &d Dir, args: &a Args) -> [io_write, dir_write, args] int {
+    var k = 2;
+    while k < arg_count(args) {
+        answer(io, dir_rmdir(dir, arg(args, k)));
+        k = k + 1;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker } = split(world);
+    release(ffi);
+    release(heap);
+    release(out);
+    release(ports);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(camera);
+    release(mic);
+    release(speaker);
+    var status = 0;
+    borrow args as &a in {
+        borrow fs as &f in {
+            borrow mut io as &!o in {
+                match open_dir(f, arg(a, 1)) {
+                    DirOpened::Ok(d0) => {
+                        var d = d0;
+                        borrow d as &r in {
+                            status = make_all(o, r, a);
+                        }
+                        dir_close(d);
+                    }
+                    DirOpened::Failed(e) => {
+                        status = 2;
+                    }
+                }
+            }
+        }
+    }
+    release(args);
+    release(fs);
+    release(io);
+    return status;
+}

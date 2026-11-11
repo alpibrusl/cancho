@@ -339,8 +339,8 @@ pub fn answer_enum[&s](st: &!s [int], ty: int, kind: int, v: int) -> [] int {
 
 // Which builtin of `exprs.capability_call` the call named `callee` is, or 0: 1 `narrow`, 2 to 6 `open_read`, `open_write`,
 // `open_append`, `open_new` and `open_rw`, 7 `exec_spawn`, 8 `fs_read`, 9 `fs_write`, 10 `exec_spawn_in`, 11 `fs_remove`,
-// 12 `fs_rename`, 13 `exec_spawn_detached`, 14 `exec_covers`, 15 `fs_covers`, 16 `exec_spawn_under` and 17 `exec_spawn_detached_under`. The last five are edition 9 and a program
-// of an earlier edition may have a function of the name, so they are the builtin only where the edition names it.
+// 12 `fs_rename`, 13 `exec_spawn_detached`, 14 `exec_covers`, 15 `fs_covers`, 16 `exec_spawn_under` and 17 `exec_spawn_detached_under`. A program
+// of an earlier edition may have a function of any of these names (`open_new` and `file_write` are edition 5), so each is the builtin only where the edition names it.
 pub fn capability_which[&s, &x](st: &!s [int], text: &x [byte], callee: int) -> [] int {
     var which = 0;
     if pass1.is_word(st, text, callee, "narrow") {
@@ -378,7 +378,7 @@ pub fn capability_which[&s, &x](st: &!s [int], text: &x [byte], callee: int) -> 
     } else if pass1.is_word(st, text, callee, "exec_spawn_detached_under") {
         which = 17;
     }
-    if which >= 13 && prims.builtin_at(st, text, callee, st[23]) < 0 {
+    if which > 0 && prims.builtin_at(st, text, callee, st[23]) < 0 {
         return 0;
     }
     return which;

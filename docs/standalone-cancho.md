@@ -134,8 +134,8 @@ verifies the next release is possible once there is one binary, and is **not des
 ## 6. What stays Rust, and what is next
 
 After slice 6 the Rust code in `crates/` is a backup: it still builds, it is still tested, and it is what a project needs for Cranelift or WASI.
-Removing it (#486–#490) needs D1 reversed: the WASI changes ported to the compiler in cancho and a decision about Cranelift (port it, or retire the
-backend with a release note). Neither is in this document, and neither is done by it.
+Removing it (#486–#490) needed D1 reversed: the WASI changes ported to the compiler in cancho and a decision about Cranelift (port it, or retire the
+backend with a release note). **Both are now decided (`removing-rust.md` D2, amended 2026-11-10): Cranelift (#666) and WebAssembly are retired with the Rust compiler, and the WASI port is not scheduled.**
 
 ## 7. What the repositories found (slice 6)
 

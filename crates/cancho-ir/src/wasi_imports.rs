@@ -142,6 +142,7 @@ pub const LABEL_IMPORTS: &[LabelImports] = &[
             "fd_readdir",
             "path_filestat_get",
             "path_open",
+            "path_readlink",
         ],
     },
     // Beneath a directory handle, writing: `dir_open_new` and `dir_open_append`
@@ -161,6 +162,19 @@ pub const LABEL_IMPORTS: &[LabelImports] = &[
             "path_remove_directory",
             "path_rename",
             "path_unlink_file",
+        ],
+    },
+    // Making a symbolic link beneath a directory handle (`dir_symlink`,
+    // `docs/directory-links.md` §4): `path_symlink`, and what any handle needs.
+    LabelImports {
+        label: "dir_symlink",
+        required: &[],
+        allowed: &[
+            "fd_close",
+            "fd_fdstat_get",
+            "fd_prestat_dir_name",
+            "fd_prestat_get",
+            "path_symlink",
         ],
     },
 ];

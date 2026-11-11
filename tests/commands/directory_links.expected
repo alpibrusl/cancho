@@ -1,0 +1,46 @@
+== make and read
+ok
+ok
+ok
+ok
+ok 1 x
+ok 7 1234567
+ok 255 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+ok 1000 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+one is a link of 1 bytes
+seven is a link of 7 bytes
+l255 is a link of 255 bytes
+l1000 is a link of 1000 bytes
+seven is what the shell reads too
+== the longest target
+a 4095-byte target is made and read back whole, or is too long for this kernel
+== the buffer
+err ENAMETOOLONG
+ok 7 1234567
+err ENAMETOOLONG
+err ENAMETOOLONG
+err 22
+== taken
+err 17
+err 17
+err 17
+err 17
+file holds KEEP
+dangling is still nowhere
+== invalid targets
+err 22
+err 22
+== invalid names
+err 22
+err 22
+err 22
+err 22
+err 22
+err 22
+err 22
+err 22
+== not a link
+err 22
+err 22
+err 2
+done

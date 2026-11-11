@@ -1,0 +1,24 @@
+== empty
+ok
+== not empty
+err ENOTEMPTY
+full holds KEEP
+ok
+== not a directory
+err 2
+err 20
+err 20
+err 20
+file holds FILE
+target is still a directory
+link is still a link
+dangling is still a link
+== invalid
+err 22
+err 22
+err 22
+err 22
+err 22
+err 2
+a/b is still there
+done

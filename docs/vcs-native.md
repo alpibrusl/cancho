@@ -212,3 +212,52 @@ equivalent (skipping a line that occurs more often than the best so far cannot c
 `main` agreed with the cancho code and not with `target/release/cancho`, which had been built from the parked V2 branch (it slides hunks like git). After `cargo build --release -p cancho` on `main` the check is at 0
 differences, and the four scripts of the earlier slices (26 + 31 + 51 + 20 checks) were run again against the rebuilt binary and pass: they had matched the V2 binary on what V1 and V2 do alike. A script that compares
 with a binary says which binary: build it from the tree under test.
+
+## 7. Audit of 2026-11-10: the 15 commands against the five primitives
+
+Status: **read, not run.** From `main` at `ce2f1ac` plus the Rust sources named; nothing here was built. It answers one question for #680: of the 15 commands the
+compiler in cancho does not have, which are stopped by which of #684 to #688, and which are not stopped by a primitive at all. Section 3 listed what the
+primitives block in general; this section goes command by command, and corrects three of its claims.
+
+**Where the port stands (read).** `examples/selfhost` has 4,606 lines of `vcs*.cho` (`vcsobj`, `vcsstore`, `vcsrepo`, `vcsscan`, `vcschange`, `vcsdiff`, `sha1`, and
+`std.flate`). **None of the 15 commands is reachable from `cancho vcs`.** `cli.cho` routes `vcs log`, `lock`, `fetch`, `resolve`, `publish` and `sync` (the registry side) and
+nothing else; `vcsstorectl.cho` is a test command ("Not a user command", its own header) that the `vcs*_check.sh` scripts build. So "built" below means a library checked against
+a store the Rust command wrote, not a command.
+
+| command | in cancho today | stopped by a primitive | what else it needs |
+|---|---|---|---|
+| `init` | the store (`vcsstorectl init`) | #686 for the `root` in its JSON, and `canonicalize` (below) | routing |
+| `status` | `vcsrepo`/`vcsscan` status, byte for byte | **#685**: a working copy holding a link is status 30 (`vcsscan.cho:12`) | routing |
+| `log` (repository form) | built | no | routing: `cli.cho:57` sends `vcs log` to the manifest log unconditionally |
+| `show` | built | no | routing |
+| `branch` | refs with compare-and-swap (`vcsrepo`) | no | the command layer |
+| `diff` | `vcsdiff.cho` (histogram) | **#685** (`scan` reads links) | `vcsdiff_check.py` is Python: it moves to a cancho or shell check (the rule of `gate.md` G4) |
+| `record` | `vcschange.cho` (canonical JSON) | **#685** (`scan`), **#684** (a deletion removes the directories it leaves empty, `vcs_record.rs:360`) | the gate: the `driver` refactor of section 3 |
+| `blame` | no | no | a library over the diff (`cmd_blame`, `vcs_repo.rs:309`) |
+| `switch`, `restore`, `revert`, `apply` | no | **#684** and **#685** (`materialize` makes a link, `remove_path` removes empty directories: `vcs_repo.rs:524-525`, `598-599`) | the command layer |
+| `verify` | no | no | attestations (`std.ed25519` exists) |
+| `unlock` | no | #688 only to *write* a lock with a real pid | reading a lock's `pid time` and removing it needs nothing new |
+| `import-git`, `export-git` | `sha1.cho`, `std.flate` | no | pack idx v2, deltas, alternates, packed-refs (`gitread.rs` 494 lines, `bridge.rs` 682); a mode `120000` is only a value there |
+
+**What this changes.**
+
+1. **#684 and #685 are the real blockers: seven of the fifteen** (`status`, `diff`, `record`, `switch`, `restore`, `revert`, `apply`) cannot be completed until both exist. They are
+   the first two to build, and `symlink`/`readlink` is the larger of the two (`scan` and `materialize` and the status-30 refusal all wait on it). The two-askers rule
+   (section 4) lists one asker each; the answer for #685 is the same seven commands, but they are one asker, `cancho vcs`.
+2. **#687 (exit at a chosen point) is probably not needed. [read]** The crash test (`vcs_repo.rs:356`, `397`) runs a command once per failpoint and treats exit code 137 as
+   "the failpoint fired". A cancho program that reaches the same point with `trap()` ends by a signal, which `spawn_capture` already reports in `code` (`gate.md` G4), and the test
+   can ask "ended by a signal" where it asked "ended 137". What is lost is the number 137. The issue should be answered by the first crash test (slice 3 of section 5), not built first.
+3. **#688 (process id) is cosmetic. [read]** A lock file holds `pid time` and the pid only appears in the refusal and in `unlock`'s report. The pinned test writes the lock by
+   hand with pid 99999 (`vcs_repo.rs:238`), so the native command only has to read one. Without a primitive the lock a native command writes would carry a pid it cannot know;
+   that is a visible difference to say, not a blocker.
+4. **#686 is narrower than the Rust command needs. [read]** The Rust command calls `fs::canonicalize` (it resolves links) in the repository discovery (`cancho-vcs/src/repo.rs:111`),
+   in `init` (`vcs_repo.rs:119`) and in `--repo` (`vcs_git.rs:20`), not only `current_dir`. An absolute current directory does not give a resolved path of an argument. #686 should say
+   which it is asking for (a `realpath`, or a `cwd` and a walk with `readlink`, which waits for #685).
+
+**Unverified.** Whether an `Fs` held by the command line can reach the directories above the current one, which discovery by walking upward needs (`repo.rs:111`): not read.
+That is checked by the first routed command, `init`, and it is the one place this audit does not say whether a primitive is missing.
+
+**Order this suggests (replaces the order of section 5, items 2 to 5, for what is left).** (1) Answer #684 and #685 (and the `realpath` of item 4): they are the only thing that
+stops seven commands. (2) Route `log`, `show`, `status` (no-link trees), `branch` and `init` from `cli.cho` so the repository form exists as a command, with parity tests that run
+the pinned JSON of `crates/cancho/tests/vcs_pins/` against it. (3) The git bridge, which waits on no primitive. (4) `record` and the gate. (5) `switch`, `restore`, `revert`,
+`apply` once #684 and #685 land. (6) The crash test, answering #687 by trapping. (7) Mark the Rust `vcs` deprecated.

@@ -630,7 +630,10 @@ impl Builtin {
                 },
             ),
             Builtin::DirClose => (vec![named(PRELUDE_DIR)], Type::Int),
-            Builtin::DirOpenNew | Builtin::DirOpenAppend | Builtin::DirRemove => (
+            Builtin::DirOpenNew
+            | Builtin::DirOpenAppend
+            | Builtin::DirRemove
+            | Builtin::DirRmdir => (
                 vec![
                     Type::Ref {
                         unique: false,
@@ -643,7 +646,7 @@ impl Builtin {
                         inner: Box::new(Type::Slice(Box::new(Type::Byte))),
                     },
                 ],
-                if self == Builtin::DirRemove {
+                if self == Builtin::DirRemove || self == Builtin::DirRmdir {
                     named(PRELUDE_DONE)
                 } else {
                     named(PRELUDE_OPENED)
@@ -751,6 +754,30 @@ impl Builtin {
                     Type::Ref {
                         unique: false,
                         region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                ],
+                named(PRELUDE_DONE),
+            ),
+            // `docs/directory-links.md` §4: the directory, the name and the
+            // text of the link, answering a status; or the directory, the
+            // name and the caller's buffer (unique: it is written), answering
+            // the length as `Done`.
+            Builtin::DirSymlink | Builtin::DirReadlink => (
+                vec![
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(0),
+                        inner: Box::new(named(PRELUDE_DIR)),
+                    },
+                    Type::Ref {
+                        unique: false,
+                        region: Region::Param(1),
+                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
+                    },
+                    Type::Ref {
+                        unique: self == Builtin::DirReadlink,
+                        region: Region::Param(2),
                         inner: Box::new(Type::Slice(Box::new(Type::Byte))),
                     },
                 ],

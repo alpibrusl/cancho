@@ -1,0 +1,113 @@
+edition 12;
+
+// directory_links_probe.cho -- `dir_symlink` and `dir_readlink` (`docs/directory-links.md` section 4), one call per command on the command line, beneath the directory named by
+// the first argument. `s NAME TARGET` makes a link and prints `ok` or `err ERRNO`; `r NAME ROOM` reads one into a buffer of ROOM bytes and prints `ok N TEXT` (the N bytes
+// the target is) or `err ERRNO`.
+
+fn digits[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        digits(io, n / 10);
+    }
+    putchar(io, '0' + n % 10);
+    return 0;
+}
+
+fn number[&t](text: &t [byte]) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at < len(text) {
+        n = n * 10 + (int_of(text[at]) - 48);
+        at = at + 1;
+    }
+    return n;
+}
+
+fn failed[&i](io: &!i Io, e: int) -> [io_write] int {
+    write_bytes(io, "err ");
+    digits(io, e);
+    putchar(io, 10);
+    return 0;
+}
+
+fn make[&i, &d, &n, &t](io: &!i Io, dir: &d Dir, name: &n [byte], target: &t [byte]) -> [io_write, dir_symlink] int {
+    match dir_symlink(dir, name, target) {
+        Done::Ok(n) => {
+            write_bytes(io, "ok\n");
+        }
+        Done::Failed(e) => {
+            failed(io, e);
+        }
+    }
+    return 0;
+}
+
+fn read[&i, &d, &n](io: &!i Io, dir: &d Dir, name: &n [byte], room: int) -> [io_write, dir_read] int {
+    region a {
+        let buffer = alloc_slice[a](room, byte_of(0));
+        match dir_readlink(dir, name, buffer) {
+            Done::Ok(n) => {
+                write_bytes(io, "ok ");
+                digits(io, n);
+                putchar(io, ' ');
+                write_bytes(io, buffer[0..n]);
+                putchar(io, 10);
+            }
+            Done::Failed(e) => {
+                failed(io, e);
+            }
+        }
+    }
+    return 0;
+}
+
+fn run_all[&i, &d, &a](io: &!i Io, dir: &d Dir, args: &a Args) -> [io_write, dir_read, dir_symlink, args] int {
+    var k = 2;
+    while k + 2 < arg_count(args) {
+        let kind = arg(args, k);
+        if int_of(kind[0]) == 's' {
+            make(io, dir, arg(args, k + 1), arg(args, k + 2));
+        } else {
+            read(io, dir, arg(args, k + 1), number(arg(args, k + 2)));
+        }
+        k = k + 3;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker } = split(world);
+    release(ffi);
+    release(heap);
+    release(out);
+    release(ports);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(camera);
+    release(mic);
+    release(speaker);
+    var status = 0;
+    borrow args as &a in {
+        borrow fs as &f in {
+            borrow mut io as &!o in {
+                match open_dir(f, arg(a, 1)) {
+                    DirOpened::Ok(d0) => {
+                        var d = d0;
+                        borrow d as &r in {
+                            status = run_all(o, r, a);
+                        }
+                        dir_close(d);
+                    }
+                    DirOpened::Failed(e) => {
+                        status = 2;
+                    }
+                }
+            }
+        }
+    }
+    release(args);
+    release(fs);
+    release(io);
+    return status;
+}
