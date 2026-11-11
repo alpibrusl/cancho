@@ -589,7 +589,7 @@ pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args,
     var n = 3;
     while n < arg_count(args) {
         let word = arg(args, n);
-        if bytes.equal(word, "--store") || (len(word) > 8 && bytes.equal(word[0..8], "--store=")) {
+        if bytes.equal(word, "--store") || len(word) > 8 && bytes.equal(word[0..8], "--store=") {
             return false;
         }
         n = n + 1;
