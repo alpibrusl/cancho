@@ -358,6 +358,9 @@ first, with the capability it is about to use (edition 9):
 * `true` is not "it exists" or "it is allowed to run": `/opt/x/missing` is covered and `exec_spawn` answers
   `Spawned::Failed(ENOENT)`. The check is on the text of the path (no symlink is resolved, nothing is
   normalised), and `true..x` is outside because the rule is two dots in a row, not a path component.
+* **`Exec("/usr/bin")` allows every program in `/usr/bin`, not one.** The report says `exec("/usr/bin")`, and `/usr/bin/env` or a shell can then
+  start anything. Narrow to the program, `narrow(exec, "/usr/bin/true")`: measured, starting `/usr/bin/env` under it is refused, and the report
+  says `exec("/usr/bin/true")`. The program it allows can still start others, so allow only programs that do not.
 * **`Fs("/data")` bounds the text of a path, not the files it reaches.** A symbolic link inside `/data` that points
   outside it is followed by the operation, and so is a hard link, and the report still says `fs_read("/data")`.
   Measured: both were read. If the directory must hold against links, open it once with `open_dir` and read beneath

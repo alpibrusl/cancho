@@ -145,6 +145,14 @@ needs a capability, and the report lists every capability the program holds. Wha
 to the files under it, when something else can create links inside the directory. `AGENTS.md` §3.6 says so for agents. A field that names the
 form in `--output json` is proposed in #762; it is a compiler change and is not made here.
 
+**Process launching.** `exec("/usr/bin")` is a directory, not a program. Measured on the same build: under `Exec("/usr/bin")` both `/usr/bin/true` and
+`/usr/bin/env` start; under `Exec("/usr/bin/true")` the first starts and the second is refused, and the report says `exec("/usr/bin/true")`. A consumer
+that wants "this one program" should require the exact path in the label. What the allowed program then does is outside the report: `env`, `sh` or
+`xargs` start others, so an allowlist should name programs that do not.
+
+**Hard links through `Dir`.** The `Dir` form does not refuse a hard link either, and the directory API does not expose a link count (`dir_stat` answers
+kind, size and time), so a program cannot check for one. Keep untrusted writers out of a directory the program treats as confined.
+
 ---
 
 ## 3. What is still open

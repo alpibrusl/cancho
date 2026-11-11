@@ -413,6 +413,9 @@ fn print_8[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
 
 fn print_9[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "* **`Exec(\"/usr/bin\")` allows every program in `/usr/bin`, not one.** The report says `exec(\"/usr/bin\")`, and `/usr/bin/env` or a shell can then\n");
+    b = buffer.append(heap, b, "  start anything. Narrow to the program, `narrow(exec, \"/usr/bin/true\")`: measured, starting `/usr/bin/env` under it is refused, and the report\n");
+    b = buffer.append(heap, b, "  says `exec(\"/usr/bin/true\")`. The program it allows can still start others, so allow only programs that do not.\n");
     b = buffer.append(heap, b, "* **`Fs(\"/data\")` bounds the text of a path, not the files it reaches.** A symbolic link inside `/data` that points\n");
     b = buffer.append(heap, b, "  outside it is followed by the operation, and so is a hard link, and the report still says `fs_read(\"/data\")`.\n");
     b = buffer.append(heap, b, "  Measured: both were read. If the directory must hold against links, open it once with `open_dir` and read beneath\n");
@@ -450,14 +453,14 @@ fn print_9[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "                        got = 0;\n");
     b = buffer.append(heap, b, "                    }\n");
     b = buffer.append(heap, b, "                    Read::Failed(e) => {\n");
-    b = buffer.append(heap, b, "                    }\n");
-    b = buffer.append(heap, b, "                }\n");
-    b = buffer.append(heap, b, "            }\n");
     return b;
 }
 
 fn print_10[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "                    }\n");
+    b = buffer.append(heap, b, "                }\n");
+    b = buffer.append(heap, b, "            }\n");
     b = buffer.append(heap, b, "            file_close(f);\n");
     b = buffer.append(heap, b, "        }\n");
     b = buffer.append(heap, b, "        Opened::Failed(e) => {\n");
@@ -495,14 +498,14 @@ fn print_10[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "            DirOpened::Failed(e) => {\n");
     b = buffer.append(heap, b, "            }\n");
     b = buffer.append(heap, b, "        }\n");
-    b = buffer.append(heap, b, "    }\n");
-    b = buffer.append(heap, b, "    release(data);\n");
-    b = buffer.append(heap, b, "    release(args);\n");
     return b;
 }
 
 fn print_11[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "    }\n");
+    b = buffer.append(heap, b, "    release(data);\n");
+    b = buffer.append(heap, b, "    release(args);\n");
     b = buffer.append(heap, b, "    release(heap);\n");
     b = buffer.append(heap, b, "    return status;\n");
     b = buffer.append(heap, b, "}\n");
@@ -540,14 +543,14 @@ fn print_11[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "Take the region as a parameter instead — `fn f[&r](…) -> [] &r [byte]`\n");
     b = buffer.append(heap, b, "— so the caller decides how long it lives.\n");
     b = buffer.append(heap, b, "\n");
-    b = buffer.append(heap, b, "---\n");
-    b = buffer.append(heap, b, "\n");
-    b = buffer.append(heap, b, "## 5. `res` and `val`, and what a container may hold\n");
     return b;
 }
 
 fn print_12[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "---\n");
+    b = buffer.append(heap, b, "\n");
+    b = buffer.append(heap, b, "## 5. `res` and `val`, and what a container may hold\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "An arena and a boxed slice hold `val` data **only**: the fill is copied\n");
     b = buffer.append(heap, b, "into every element, and freeing the run is one `free` that runs nothing,\n");
@@ -585,14 +588,14 @@ fn print_12[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "| **Six escapes, and no `\\x` or `\\u`** | `\\n \\r \\t \\\\ \\\" \\0`. A source file is already UTF-8, so `\"café 日 😀\"` needs none — `docs/strings.md` §8 |\n");
     b = buffer.append(heap, b, "| **A character is written as one: `'a'` is 97** | A third spelling of an integer, not a type — so `'0' + n % 10`, and `byte_of('\\n')` where a `byte` is wanted. Same six escapes with `\\'` for `\\\"`, and non-ASCII is refused — `docs/character-literals.md` |\n");
     b = buffer.append(heap, b, "| **`len` is a builtin and may not be redeclared** | Nor may any other prelude name. `std.buffer` calls its length `size` for this reason |\n");
-    b = buffer.append(heap, b, "\n");
-    b = buffer.append(heap, b, "Each of those, in a program the suite compiles:\n");
-    b = buffer.append(heap, b, "\n");
     return b;
 }
 
 fn print_13[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "\n");
+    b = buffer.append(heap, b, "Each of those, in a program the suite compiles:\n");
+    b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "```cancho\n");
     b = buffer.append(heap, b, "fn facts(x: float) -> [] float {\n");
     b = buffer.append(heap, b, "    // Unary minus exists, on `int` and `float` alike -- see the\n");
@@ -630,14 +633,14 @@ fn print_13[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "    return 0;\n");
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "```\n");
-    b = buffer.append(heap, b, "\n");
-    b = buffer.append(heap, b, "```cancho-refused\n");
-    b = buffer.append(heap, b, "//~ RULE unsized-type\n");
     return b;
 }
 
 fn print_14[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "\n");
+    b = buffer.append(heap, b, "```cancho-refused\n");
+    b = buffer.append(heap, b, "//~ RULE unsized-type\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "// A struct field cannot be `[T]`: it has no size of its own.\n");
     b = buffer.append(heap, b, "struct Holder { bytes: [byte] }\n");
@@ -675,14 +678,14 @@ fn print_14[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "        w = json.begin_object(heap, w);\n");
     b = buffer.append(heap, b, "        if nodes < 0 {\n");
     b = buffer.append(heap, b, "            w = json.put_key(heap, w, \"error\");\n");
-    b = buffer.append(heap, b, "            w = json.put_string(heap, w, json.error_message(json.error_code(nodes)));\n");
-    b = buffer.append(heap, b, "        } else {\n");
-    b = buffer.append(heap, b, "            w = json.put_key(heap, w, \"next_age\");\n");
     return b;
 }
 
 fn print_15[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "            w = json.put_string(heap, w, json.error_message(json.error_code(nodes)));\n");
+    b = buffer.append(heap, b, "        } else {\n");
+    b = buffer.append(heap, b, "            w = json.put_key(heap, w, \"next_age\");\n");
     b = buffer.append(heap, b, "            w = json.put_int(heap, w, json.to_int(body, tape, json.get(body, tape, 0, \"age\")) + 1);\n");
     b = buffer.append(heap, b, "        }\n");
     b = buffer.append(heap, b, "        w = json.end_object(heap, w);\n");
@@ -720,14 +723,14 @@ fn print_15[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "fn handle[&h, &r, &q](heap: &!h Heap, router: &r route.Router, request: &q [byte]) -> [heap] buffer.Buffer {\n");
     b = buffer.append(heap, b, "    let table = box_slice(heap, http.slots(32), 0);\n");
     b = buffer.append(heap, b, "    let params = box_slice(heap, 2 * route.most_params(router), 0);\n");
-    b = buffer.append(heap, b, "    var out = buffer.empty(heap, 256);\n");
-    b = buffer.append(heap, b, "    borrow mut table as &!tw in {\n");
-    b = buffer.append(heap, b, "        borrow mut params as &!pw in {\n");
     return b;
 }
 
 fn print_16[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "    var out = buffer.empty(heap, 256);\n");
+    b = buffer.append(heap, b, "    borrow mut table as &!tw in {\n");
+    b = buffer.append(heap, b, "        borrow mut params as &!pw in {\n");
     b = buffer.append(heap, b, "            let t = contents(tw);\n");
     b = buffer.append(heap, b, "            let p = contents(pw);\n");
     b = buffer.append(heap, b, "            let n = http.parse(request, t);\n");
@@ -765,14 +768,14 @@ fn print_16[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "            buffer.drop(h, ok);\n");
     b = buffer.append(heap, b, "            buffer.drop(h, wrong);\n");
     b = buffer.append(heap, b, "        }\n");
-    b = buffer.append(heap, b, "        route.drop(h, router);\n");
-    b = buffer.append(heap, b, "    }\n");
-    b = buffer.append(heap, b, "    release(heap);\n");
     return b;
 }
 
 fn print_17[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "        route.drop(h, router);\n");
+    b = buffer.append(heap, b, "    }\n");
+    b = buffer.append(heap, b, "    release(heap);\n");
     b = buffer.append(heap, b, "    return 0;\n");
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "```\n");
@@ -810,14 +813,14 @@ fn print_17[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "    }\n");
     b = buffer.append(heap, b, "    return result.Result::Ok(n / 2);\n");
     b = buffer.append(heap, b, "}\n");
-    b = buffer.append(heap, b, "\n");
-    b = buffer.append(heap, b, "fn first_over(a: int, b: int, limit: int) -> [] option.Option[int] {\n");
-    b = buffer.append(heap, b, "    if a > limit {\n");
     return b;
 }
 
 fn print_18[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "\n");
+    b = buffer.append(heap, b, "fn first_over(a: int, b: int, limit: int) -> [] option.Option[int] {\n");
+    b = buffer.append(heap, b, "    if a > limit {\n");
     b = buffer.append(heap, b, "        return option.Option::Some(a);\n");
     b = buffer.append(heap, b, "    }\n");
     b = buffer.append(heap, b, "    if b > limit {\n");
@@ -855,14 +858,14 @@ fn print_18[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "fn main(world: World) -> [] int {\n");
     b = buffer.append(heap, b, "    let Split { io, ffi, fs, heap, args } = split(world);\n");
-    b = buffer.append(heap, b, "    release(ffi); release(fs); release(args); release(io); release(heap);\n");
-    b = buffer.append(heap, b, "    return halved_or_zero(10) - 5;\n");
-    b = buffer.append(heap, b, "}\n");
     return b;
 }
 
 fn print_19[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "    release(ffi); release(fs); release(args); release(io); release(heap);\n");
+    b = buffer.append(heap, b, "    return halved_or_zero(10) - 5;\n");
+    b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "```\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "The helper-function spelling is refused, with the rule that says the name\n");
@@ -900,14 +903,14 @@ fn print_19[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "fn main(world: World) -> [] int {\n");
-    b = buffer.append(heap, b, "    let Split { io, ffi, fs, heap, args } = split(world);\n");
-    b = buffer.append(heap, b, "    release(ffi); release(fs); release(args); release(io); release(heap);\n");
-    b = buffer.append(heap, b, "    return index_of(\"abc\", 98) - 1;\n");
     return b;
 }
 
 fn print_20[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "    let Split { io, ffi, fs, heap, args } = split(world);\n");
+    b = buffer.append(heap, b, "    release(ffi); release(fs); release(args); release(io); release(heap);\n");
+    b = buffer.append(heap, b, "    return index_of(\"abc\", 98) - 1;\n");
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "```\n");
     b = buffer.append(heap, b, "\n");
@@ -945,14 +948,14 @@ fn print_20[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "fn digits_then_unit[&h, &r](heap: &!h Heap, s: &r [byte]) -> [heap] buffer.Buffer {\n");
     b = buffer.append(heap, b, "    var out = buffer.empty(heap, 16);\n");
-    b = buffer.append(heap, b, "    var i = 0;\n");
-    b = buffer.append(heap, b, "    var n = 0;\n");
-    b = buffer.append(heap, b, "    while i < len(s) && is_digit(int_of(s[i])) {\n");
     return b;
 }
 
 fn print_21[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "    var i = 0;\n");
+    b = buffer.append(heap, b, "    var n = 0;\n");
+    b = buffer.append(heap, b, "    while i < len(s) && is_digit(int_of(s[i])) {\n");
     b = buffer.append(heap, b, "        n = n * 10 + (int_of(s[i]) - 48);\n");
     b = buffer.append(heap, b, "        i = i + 1;\n");
     b = buffer.append(heap, b, "    }\n");
@@ -990,14 +993,14 @@ fn print_21[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "fn main(world: World) -> [] int {\n");
     b = buffer.append(heap, b, "    let Split { io, ffi, fs, heap, args } = split(world);\n");
     b = buffer.append(heap, b, "    release(ffi); release(fs); release(args); release(io); release(heap);\n");
-    b = buffer.append(heap, b, "    return 0;\n");
-    b = buffer.append(heap, b, "}\n");
-    b = buffer.append(heap, b, "```\n");
     return b;
 }
 
 fn print_22[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "    return 0;\n");
+    b = buffer.append(heap, b, "}\n");
+    b = buffer.append(heap, b, "```\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "The second refusal is the one that repeats: a function wants text to read\n");
     b = buffer.append(heap, b, "(`&r [byte]`) and you hold a `Buffer`. A `Buffer` is not a slice, so\n");
@@ -1035,14 +1038,14 @@ fn print_22[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "    return int_of(s[0]);\n");
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "\n");
-    b = buffer.append(heap, b, "fn main(world: World) -> [] int {\n");
-    b = buffer.append(heap, b, "    let Split { io, ffi, fs, heap, args } = split(world);\n");
-    b = buffer.append(heap, b, "    release(ffi); release(fs); release(args); release(io);\n");
     return b;
 }
 
 fn print_23[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "fn main(world: World) -> [] int {\n");
+    b = buffer.append(heap, b, "    let Split { io, ffi, fs, heap, args } = split(world);\n");
+    b = buffer.append(heap, b, "    release(ffi); release(fs); release(args); release(io);\n");
     b = buffer.append(heap, b, "    var got = 0;\n");
     b = buffer.append(heap, b, "    borrow mut heap as &!h in {\n");
     b = buffer.append(heap, b, "        var b = buffer.empty(h, 4);\n");
@@ -1080,14 +1083,14 @@ fn print_23[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "    return b;\n");
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "\n");
-    b = buffer.append(heap, b, "fn main(world: World) -> [] int {\n");
-    b = buffer.append(heap, b, "    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);\n");
-    b = buffer.append(heap, b, "    release(ffi); release(fs); release(args); release(io); release(net); release(clock); release(signals); release(exec);\n");
     return b;
 }
 
 fn print_24[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "fn main(world: World) -> [] int {\n");
+    b = buffer.append(heap, b, "    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);\n");
+    b = buffer.append(heap, b, "    release(ffi); release(fs); release(args); release(io); release(net); release(clock); release(signals); release(exec);\n");
     b = buffer.append(heap, b, "    var n = 0;\n");
     b = buffer.append(heap, b, "    borrow mut heap as &!h in {\n");
     b = buffer.append(heap, b, "        let b = copy_of(h, \"abc\");\n");
@@ -1125,14 +1128,14 @@ fn print_24[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "    match fields {\n");
     b = buffer.append(heap, b, "        list.List::Empty => { return 0; }\n");
     b = buffer.append(heap, b, "        list.List::Cons(field, rest) => {\n");
-    b = buffer.append(heap, b, "            unbox_slice(heap, unbox(heap, field));\n");
-    b = buffer.append(heap, b, "            return 1 + free_all(heap, unbox(heap, rest));\n");
-    b = buffer.append(heap, b, "        }\n");
     return b;
 }
 
 fn print_25[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "            unbox_slice(heap, unbox(heap, field));\n");
+    b = buffer.append(heap, b, "            return 1 + free_all(heap, unbox(heap, rest));\n");
+    b = buffer.append(heap, b, "        }\n");
     b = buffer.append(heap, b, "    }\n");
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "\n");
@@ -1170,14 +1173,14 @@ fn print_25[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "holding the `Box` of bytes, as in the block above (`box(h, copy_of(h, ..))`\n");
     b = buffer.append(heap, b, "to wrap, `contents(contents(field))` to read).\n");
     b = buffer.append(heap, b, "\n");
-    b = buffer.append(heap, b, "The names a model brings from other languages are refused, each with the rule\n");
-    b = buffer.append(heap, b, "that tells it so:\n");
-    b = buffer.append(heap, b, "\n");
     return b;
 }
 
 fn print_26[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "The names a model brings from other languages are refused, each with the rule\n");
+    b = buffer.append(heap, b, "that tells it so:\n");
+    b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "```cancho-refused\n");
     b = buffer.append(heap, b, "//~ RULE not-a-function\n");
     b = buffer.append(heap, b, "edition 7;\n");
@@ -1215,14 +1218,14 @@ fn print_26[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "```\n");
     b = buffer.append(heap, b, "\n");
-    b = buffer.append(heap, b, "---\n");
-    b = buffer.append(heap, b, "\n");
-    b = buffer.append(heap, b, "## 8. What this language does not have\n");
     return b;
 }
 
 fn print_27[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
+    b = buffer.append(heap, b, "---\n");
+    b = buffer.append(heap, b, "\n");
+    b = buffer.append(heap, b, "## 8. What this language does not have\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "Saying these plainly saves a cycle: no borrow checker (regions instead),\n");
     b = buffer.append(heap, b, "no traits, no closures or function values, no `break` or `continue`, no string type (§7.1), no `comptime` beyond\n");
