@@ -66,6 +66,29 @@ pub fn head_change[&h, &d](heap: &!h Heap, vcs: &d Dir) -> [heap, dir_read, dir_
     return vcsstore.Object { bytes: held, status: code, errno: why };
 }
 
+// What HEAD names: status 0 and the ref (`heads/main`: what follows `ref: refs/`) in `bytes`; 2 when HEAD is a change id (detached); 3 when it is neither.
+pub fn head_ref[&h, &d](heap: &!h Heap, vcs: &d Dir) -> [heap, dir_read, file_read] vcsstore.Object {
+    let read = vcsstore.read_text(heap, vcs, "HEAD");
+    let vcsstore.Object { bytes, status, errno } = read;
+    if status != 0 {
+        buffer.drop(heap, bytes);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
+    }
+    var held = buffer.empty(heap, 0);
+    var code = 3;
+    borrow bytes as &b in {
+        let text = vcsstore.trimmed(buffer.bytes(b));
+        if bytes.starts_with(text, "ref: refs/") {
+            held = buffer.append(heap, held, text[10..len(text)]);
+            code = 0;
+        } else if vcsobj.is_id(text) {
+            code = 2;
+        }
+    }
+    buffer.drop(heap, bytes);
+    return vcsstore.Object { bytes: held, status: code, errno: 0 };
+}
+
 // ---- resolving a revision ----------------------------------------------------------------------------------------------------
 
 fn is_hex[&t](text: &t [byte]) -> [] bool {

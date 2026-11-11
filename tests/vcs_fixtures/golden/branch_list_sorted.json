@@ -1,0 +1,27 @@
+{
+  "branches": [
+    {
+      "change": "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e",
+      "name": "a.b"
+    },
+    {
+      "change": "9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442",
+      "name": "a/b"
+    },
+    {
+      "change": "960fd3a813e8e05e68c304a1ea92bf374b61dd07399c70166822fd6e6c7b716f",
+      "name": "a0"
+    },
+    {
+      "change": "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e",
+      "name": "b"
+    },
+    {
+      "change": "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e",
+      "name": "main"
+    }
+  ],
+  "command": "branch",
+  "current": "main",
+  "ok": true
+}

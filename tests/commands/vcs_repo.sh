@@ -58,6 +58,36 @@ empty; vcs init sub/new;      sed 's#"root": ".*/sub/new"#"root": "<root>/sub/ne
 [ -f sub/new/.cancho/vcs/format ] && echo "ok the directory was made, with its store" || echo "FAILS no store in sub/new"
 empty; vcs init --branch 'bad name'; same "init with a bad branch name" "$gold/refuse_init_bad_branch.json" "$work/out.json"; exit_is "init, bad branch" 1
 
+echo "== branch"
+repo; vcs branch create feature --from HEAD~1;  same "branch create is the pin" "$pins/branch_create.json" "$work/out.json"; exit_is "branch create" 0
+[ "$(cat .cancho/vcs/refs/heads/feature)" = "9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442" ] && echo "ok the ref file holds the id and a newline" || echo "FAILS the ref file"
+[ -e .cancho/vcs/refs/heads/feature.lock ] && echo "FAILS the lock was left" || echo "ok the lock is gone"
+sed 's/ [0-9]* / T /' .cancho/vcs/refs/heads/feature.log > "$work/log.txt"; printf -- '- 9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442 T branch create\n' > "$work/want.txt"; same "the ref log has the line the Rust command writes (time made T)" "$work/want.txt" "$work/log.txt"
+vcs branch list;                  same "branch list is the pin" "$pins/branch_list.json" "$work/out.json"
+vcs branch;                       same "branch with no word is branch list" "$pins/branch_list.json" "$work/out.json"
+vcs branch delete feature --expect HEAD~1; same "branch delete is the pin" "$pins/branch_delete.json" "$work/out.json"; exit_is "branch delete" 0
+[ -e .cancho/vcs/refs/heads/feature ] && echo "FAILS the ref is still there" || echo "ok the ref file is gone"
+[ -e .cancho/vcs/refs/heads/feature.lock ] && echo "FAILS the lock was left" || echo "ok the lock is gone"
+sed 's/ [0-9]* / T /' .cancho/vcs/refs/heads/feature.log > "$work/log.txt"; printf -- '- 9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442 T branch create\n9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442 - T deleted\n' > "$work/want.txt"; same "the ref log has the deletion too" "$work/want.txt" "$work/log.txt"
+vcs branch list;                  same "branch list after the delete" "$gold/branch_list_after_delete.json" "$work/out.json"
+repo; vcs branch list;            same "branch list of the repository" "$gold/branch_list_initial.json" "$work/out.json"
+empty; "$cancho" vcs init --output json > /dev/null; vcs branch list; same "branch list of an empty repository" "$gold/branch_list_empty.json" "$work/out.json"
+vcs branch create x;              same "branch create when HEAD has no change yet" "$gold/refuse_branch_create_no_change.json" "$work/out.json"; exit_is "branch create, no change" 1
+repo; vcs branch create topic;    same "branch create from HEAD" "$gold/branch_create_head.json" "$work/out.json"
+repo; vcs branch create feature --from HEAD~1 > /dev/null; vcs branch create feature --from HEAD~1; same "branch create again is created: false" "$gold/branch_create_again.json" "$work/out.json"
+repo; vcs branch create feature --from HEAD~1 > /dev/null; vcs branch create feature --from HEAD; same "branch create where it is elsewhere is ref-moved" "$gold/refuse_branch_create_moved.json" "$work/out.json"; exit_is "ref-moved" 1
+repo; vcs branch create feature --dry-run; same "branch create --dry-run" "$gold/branch_create_dry.json" "$work/out.json"; [ -e .cancho/vcs/refs/heads/feature ] && echo "FAILS --dry-run made the ref" || echo "ok --dry-run made nothing"
+repo; vcs branch create 'bad name'; same "branch create with a bad name" "$gold/refuse_branch_name.json" "$work/out.json"
+repo; vcs branch create;          same "branch create with no name" "$gold/refuse_branch_no_name.json" "$work/out.json"
+repo; vcs branch create x --from nosuch; same "branch create --from a name that names nothing" "$gold/refuse_branch_create_bad_from.json" "$work/out.json"
+repo; vcs branch frobnicate;      same "branch with a word it does not know" "$gold/refuse_branch_unknown.json" "$work/out.json"
+repo; vcs branch create feature --from HEAD~1 > /dev/null; vcs branch delete feature --expect HEAD~1 --dry-run; same "branch delete --dry-run" "$gold/branch_delete_dry.json" "$work/out.json"; [ -e .cancho/vcs/refs/heads/feature ] && echo "ok --dry-run kept the ref" || echo "FAILS --dry-run deleted the ref"
+repo; vcs branch create feature --from HEAD~1 > /dev/null; vcs branch delete feature; same "branch delete needs --expect" "$gold/refuse_branch_delete_no_expect.json" "$work/out.json"
+repo; vcs branch create feature --from HEAD~1 > /dev/null; vcs branch delete feature --expect HEAD; same "branch delete --expect the wrong change is ref-moved" "$gold/refuse_branch_delete_moved.json" "$work/out.json"; [ -e .cancho/vcs/refs/heads/feature ] && echo "ok the ref was kept" || echo "FAILS the ref was deleted"
+repo; vcs branch delete main --expect HEAD; same "the checked-out branch cannot be deleted" "$gold/refuse_branch_delete_current.json" "$work/out.json"
+repo; vcs branch delete nosuch;   same "deleting a branch that is not there" "$gold/branch_delete_missing.json" "$work/out.json"
+repo; vcs branch create 'a.b' > /dev/null; vcs branch create 'a/b' --from HEAD~1 > /dev/null; vcs branch create a0 --from HEAD~2 > /dev/null; vcs branch create b > /dev/null; vcs branch list; same "branch list: a.b, a/b, a0 in the order of the bytes of their paths" "$gold/branch_list_sorted.json" "$work/out.json"
+
 echo "== routing"
 empty; "$cancho" vcs log > "$work/out.txt" 2>&1; echo "exit $?"; grep -c "nothing published yet" "$work/out.txt" | sed 's/^/manifest log lines: /'
 repo; "$cancho" vcs log --store elsewhere > "$work/out.txt" 2>&1; echo "exit $?"; grep -o "nothing published yet at .elsewhere." "$work/out.txt"

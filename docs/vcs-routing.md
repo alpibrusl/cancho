@@ -103,6 +103,26 @@ for, measured with the compiler built from the committed seed (the one that does
 `status` cannot. The four differential scripts against the Rust `cancho vcs` pass as before the move: `vcsrepo_check` 31 checks, `vcslog_check` 51, `vcsstatus_check` 31, `vcsstore_check` 26. **Not changed:**
 no behaviour, no `.expected`, no pin; `cancho.files` (nothing here is in it yet).
 
+**R1, built and measured (2026-11-11, Linux x86-64).** `clivcsrepo.cho` (the options, discovery, the envelope and the refusal documents) and the routing in `cli.cho` (D1: `init` and `show` always, `log` unless `--store` is
+named or no repository is in reach). `cancho.files` gained five modules, `clivcsrepo`, `vcsrepo`, `vcsstore`, `vcsobj` and `vcschange`, and **not** `vcsscan` or `vcsstatus` (R0 did that). **The chain built from the committed
+seed reproduces itself with it** (stage 2 = stage 3), so R1 needed no reseed, as §3 said. `tests/commands/vcs_repo.sh` (in `script_tests.cho`) holds `init`, `log` and `show` against the pins of `crates/cancho/tests/vcs_pins/` and
+the 14 goldens of `tests/vcs_fixtures/golden/` (made by the Rust command with `tests/vcs_fixtures/make.sh`), on copies of `tests/vcs_fixtures/three_changes`, byte for byte, with the root made `<root>`. **A false alarm, said
+because it cost an afternoon of reading:** the first chain from the seed appeared to fail (stage 2 differed from stage 3 by 2.6 MB). The IR the seed-built stage 1 wrote was byte-identical to a correct compiler's; the cause was an
+edit of `clivcsrepo.cho` made while the chain was running, so stage 2 and stage 3 compiled different files. A run with nothing touched reproduced itself. **Not the Rust command's:** `--repo` is not resolved through links (D2); the
+refusal messages for the tags whose Rust sentence carries what only the Rust store knows (`object-corrupt`, the OS's words for `io`) are the tag's own sentence; `log --path|--intent|--session|--issue|--author` and `show --patch`
+are refused with exit 2; an invalid `--limit` is refused before the revision is resolved, where the Rust command resolves first.
+
+**R2, built and measured (2026-11-11, Linux x86-64).** `branch list`, `create NAME [--from REV]` and `delete NAME --expect REV`, with `--dry-run`. In the store: `vcsstore.list_refs` (the refs under `refs/PREFIX`, sorted by the bytes
+of the whole name, as `refs.rs` does, so `a.b` comes before `a/b` and `a0`), `vcsstore.delete_ref` (the lock, the compare, a log line `OLD - TIME deleted`, then the file removed), and `vcsrepo.head_ref`. They do not touch
+`update_ref`, which `create` uses as it is; `take_lock` and `add_log_line` are new and **`update_ref` still carries its own copies of both**: sharing them is a refactor of a function the crash and race tests will want
+first. **A thing the Rust source did not say until a golden did:** `delete_ref`'s `ref-moved` is not `update_ref`'s: its message is `` `heads/NAME` is not at the expected change `` and it has no `expected` key, so the document
+has two forms (`moved_refusal`'s `deleting`). The test (`vcs_repo.sh`, now 81 checks) takes the three pins (`branch_create`, `branch_list`, `branch_delete`) and 18 goldens: the empty repository, `create` from `HEAD`, again
+(`created: false`), where it is elsewhere (`ref-moved`), `--dry-run` of both, a bad name, no name, an unknown word, `--from` a name that names nothing, a delete with no `--expect`, with the wrong one, of the checked-out branch and of
+a branch that is not there, and the sorted list. It also reads the files: the ref holds the id and a newline, the lock is gone, the log holds `- ID T branch create` and then `ID - T deleted` (the time made `T`). **Interoperation,
+checked by hand against the Rust command** (not part of the test, which cannot run it): a branch made by one is listed by the other, and deleted by the other, and the log reads the same. **Mutants, each on a scratch copy of the sources, each killed by the test:** the `--store` test of the routing (3 lines of the transcript differ), the comparison of the sorted insert (3 checks fail), the `--expect` test of `delete_ref` (the ref was deleted), and the `expected` key of the delete refusal (1 check fails). **Not covered:** `lock-held` as a document
+(its Rust detail names the lock path and the pid; here it is the generic sentence), a crash between the log line and the removal, two writers racing a ref (the crash and race tests are their own slice), and `branch` in a repository
+whose HEAD names a tag.
+
 ## 6. Decisions for the owner
 
 * **O1. Split `vcsrepo.cho` (R0) so `init`, `log` and `show` do not wait for a reseed? Recommendation: yes.** It is a small move of code that already works, and it puts the wrong-and-successful `vcs log` of §1

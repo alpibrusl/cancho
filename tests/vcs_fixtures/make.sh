@@ -41,5 +41,25 @@ here; "$R" vcs init --dry-run --output json > "$g/init_dry_existing.json"
 empty; "$R" vcs init --branch dev --output json | norm > "$g/init_branch_dev.json"
 empty; "$R" vcs init sub/new --output json | sed 's#"root": ".*/sub/new"#"root": "<root>/sub/new"#' > "$g/init_new_directory.json"
 empty; "$R" vcs init --branch 'bad name' --output json > "$g/refuse_init_bad_branch.json" || true
+# branch (R2): each from a copy of the repository; `$R vcs branch ...` is run as the commands before it were.
+br() { "$R" vcs branch "$@" --output json; }
+here; br list > "$g/branch_list_initial.json"
+empty; "$R" vcs init --output json > /dev/null; br list > "$g/branch_list_empty.json"
+empty; "$R" vcs init --output json > /dev/null; br create x > "$g/refuse_branch_create_no_change.json" || true
+here; br create topic > "$g/branch_create_head.json"
+here; br create feature --from HEAD~1 > /dev/null; br create feature --from HEAD~1 > "$g/branch_create_again.json"
+here; br create feature --from HEAD~1 > /dev/null; br create feature --from HEAD > "$g/refuse_branch_create_moved.json" || true
+here; br create feature --dry-run > "$g/branch_create_dry.json"
+here; br create 'bad name' > "$g/refuse_branch_name.json" || true
+here; br create > "$g/refuse_branch_no_name.json" || true
+here; br create x --from nosuch > "$g/refuse_branch_create_bad_from.json" || true
+here; br frobnicate > "$g/refuse_branch_unknown.json" || true
+here; br create feature --from HEAD~1 > /dev/null; br delete feature --expect HEAD~1 --dry-run > "$g/branch_delete_dry.json"
+here; br create feature --from HEAD~1 > /dev/null; br delete feature > "$g/refuse_branch_delete_no_expect.json" || true
+here; br create feature --from HEAD~1 > /dev/null; br delete feature --expect HEAD > "$g/refuse_branch_delete_moved.json" || true
+here; br delete main --expect HEAD > "$g/refuse_branch_delete_current.json" || true
+here; br delete nosuch > "$g/branch_delete_missing.json"
+here; br create 'a.b' > /dev/null; br create 'a/b' --from HEAD~1 > /dev/null; br create a0 --from HEAD~2 > /dev/null; br create b > /dev/null; br list > "$g/branch_list_sorted.json"
+here; br create feature --from HEAD~1 > /dev/null; br delete feature --expect HEAD~1 > /dev/null; br list > "$g/branch_list_after_delete.json"
 rm -rf "$out/w" "$out/e"
 echo "made $out/three_changes and $out/golden"

@@ -39,6 +39,42 @@ ok init of a directory that is not there
 ok the directory was made, with its store
 ok init with a bad branch name
 ok init, bad branch (exit 1)
+== branch
+ok branch create is the pin
+ok branch create (exit 0)
+ok the ref file holds the id and a newline
+ok the lock is gone
+ok the ref log has the line the Rust command writes (time made T)
+ok branch list is the pin
+ok branch with no word is branch list
+ok branch delete is the pin
+ok branch delete (exit 0)
+ok the ref file is gone
+ok the lock is gone
+ok the ref log has the deletion too
+ok branch list after the delete
+ok branch list of the repository
+ok branch list of an empty repository
+ok branch create when HEAD has no change yet
+ok branch create, no change (exit 1)
+ok branch create from HEAD
+ok branch create again is created: false
+ok branch create where it is elsewhere is ref-moved
+ok ref-moved (exit 1)
+ok branch create --dry-run
+ok --dry-run made nothing
+ok branch create with a bad name
+ok branch create with no name
+ok branch create --from a name that names nothing
+ok branch with a word it does not know
+ok branch delete --dry-run
+ok --dry-run kept the ref
+ok branch delete needs --expect
+ok branch delete --expect the wrong change is ref-moved
+ok the ref was kept
+ok the checked-out branch cannot be deleted
+ok deleting a branch that is not there
+ok branch list: a.b, a/b, a0 in the order of the bytes of their paths
 == routing
 exit 0
 manifest log lines: 1

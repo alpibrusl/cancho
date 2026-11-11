@@ -1,7 +1,7 @@
 edition 9;
 module selfhost.clivcsrepo;
 
-// clivcsrepo.cho -- the repository side of `cancho vcs` in the command line in cancho (`docs/vcs-routing.md`, slice R1): `init`, `log` and `show`. The libraries are `vcsstore.cho` and `vcsrepo.cho`; this module is
+// clivcsrepo.cho -- the repository side of `cancho vcs` in the command line in cancho (`docs/vcs-routing.md`, slice R1): `init`, `log`, `show` and `branch`. The libraries are `vcsstore.cho` and `vcsrepo.cho`; this module is
 // what a person types: the options, finding the repository, the one JSON document on standard output, and the exit status. `clivcs.cho` is the other side of `vcs` (`publish`, `log --store`, ...).
 //
 // Routing (`docs/vcs-routing.md` D1), as the Rust command's `cmd_vcs`: `log` is the manifest log when `--store` is named or no repository is in reach from the current directory, and the repository log
@@ -40,6 +40,11 @@ struct Options {
     limit_at: int,
     limit_off: int,
     rev_at: int,
+    name_at: int,
+    from_at: int,
+    from_off: int,
+    expect_at: int,
+    expect_off: int,
     dry: bool,
 }
 
@@ -55,7 +60,7 @@ fn usage[&h, &i, &w](heap: &!h Heap, io: &!i Io, before: &static [byte], what: &
     return status;
 }
 
-// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log` and 2 for `show`.
+// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show` and 3 for `branch`.
 fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: int) -> [heap, err_write, args] Options {
     var bad = 0;
     var repo_at = 0 - 1;
@@ -65,6 +70,11 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
     var limit_at = 0 - 1;
     var limit_off = 0;
     var rev_at = 0 - 1;
+    var name_at = 0 - 1;
+    var from_at = 0 - 1;
+    var from_off = 0;
+    var expect_at = 0 - 1;
+    var expect_off = 0;
     var dry = false;
     var plain_only = false;
     var n = 3;
@@ -73,6 +83,8 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
         if plain_only || len(word) < 2 || lc.at(word, 0) != '-' || lc.at(word, 1) != '-' {
             if rev_at < 0 {
                 rev_at = n;
+            } else if name_at < 0 {
+                name_at = n;
             }
         } else if bytes.equal(word, "--") {
             plain_only = true;
@@ -90,6 +102,8 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
             } else if bytes.equal(key, "--branch") && command == 0 {
                 takes = 1;
             } else if bytes.equal(key, "--limit") && command == 1 {
+                takes = 1;
+            } else if (bytes.equal(key, "--from") || bytes.equal(key, "--expect")) && command == 3 {
                 takes = 1;
             } else if command == 1 && (bytes.equal(key, "--intent") || bytes.equal(key, "--session") || bytes.equal(key, "--issue") || bytes.equal(key, "--path") || bytes.equal(key, "--author")) {
                 takes = 2;
@@ -130,6 +144,12 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
                     } else if bytes.equal(key, "--branch") {
                         branch_at = at;
                         branch_off = off;
+                    } else if bytes.equal(key, "--from") {
+                        from_at = at;
+                        from_off = off;
+                    } else if bytes.equal(key, "--expect") {
+                        expect_at = at;
+                        expect_off = off;
                     } else {
                         limit_at = at;
                         limit_off = off;
@@ -139,7 +159,7 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
         }
         n = n + 1;
     }
-    return Options { bad: bad, repo_at: repo_at, repo_off: repo_off, branch_at: branch_at, branch_off: branch_off, limit_at: limit_at, limit_off: limit_off, rev_at: rev_at, dry: dry };
+    return Options { bad: bad, repo_at: repo_at, repo_off: repo_off, branch_at: branch_at, branch_off: branch_off, limit_at: limit_at, limit_off: limit_off, rev_at: rev_at, name_at: name_at, from_at: from_at, from_off: from_off, expect_at: expect_at, expect_off: expect_off, dry: dry };
 }
 
 // The value at argument `at`, from `off`.
@@ -575,12 +595,388 @@ fn init_command[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args, f
     return code;
 }
 
+// ---- branch ------------------------------------------------------------------------------------------------------------------
+
+// The `ref-moved` refusal: `{"command", "ok": false, "refused": {"current", "expected", "message", "ref", "tag"}}`. `current` is empty when the ref is not there (null); `expected` is `absent` or the id that was expected.
+// `delete_ref` says it differently in the Rust command (`refs.rs`): no `expected`, and the message `NAME is not at the expected change`; `deleting` asks for that form.
+fn moved_refusal[&h, &c, &r, &u, &e](heap: &!h Heap, command: &c [byte], refname: &r [byte], current: &u [byte], expected: &e [byte], deleting: bool) -> [heap] buffer.Buffer {
+    var message = buffer.push(heap, buffer.empty(heap, 128), byte_of(96));
+    if deleting {
+        message = buffer.append(heap, buffer.append(heap, message, refname), "` is not at the expected change");
+    } else {
+        message = buffer.append(heap, buffer.append(heap, message, refname), "` is at ");
+        if len(current) > 0 {
+            message = buffer.append(heap, message, current);
+        } else {
+            message = buffer.append(heap, message, "nothing");
+        }
+        message = buffer.append(heap, message, ", not where it was expected");
+    }
+    var b = buffer.push(heap, buffer.empty(heap, 320), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), command);
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "false");
+    b = buffer.push(heap, vcsrepo.member(heap, b, 1, false, "refused"), byte_of(123));
+    b = vcsrepo.member(heap, b, 2, true, "current");
+    if len(current) > 0 {
+        b = jsonwrite.string(heap, b, current);
+    } else {
+        b = buffer.append(heap, b, "null");
+    }
+    if !deleting {
+        b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "expected"), expected);
+    }
+    borrow message as &mb in {
+        b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "message"), buffer.bytes(mb));
+    }
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "ref"), refname);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "tag"), "ref-moved");
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(125));
+    buffer.drop(heap, message);
+    return buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+}
+
+// The `branch create` and `branch delete` documents: `branch`, `change` (when there is one), `command`, `created` or `deleted` (`flag_name`), `dry_run` (when it is), `ok`.
+fn branch_result[&h, &n, &c, &f](heap: &!h Heap, branch: &n [byte], has_change: bool, change: &c [byte], flag_name: &f [byte], flag: bool, dry: bool) -> [heap] buffer.Buffer {
+    var d = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
+    d = jsonwrite.string(heap, vcsrepo.member(heap, d, 1, true, "branch"), branch);
+    if has_change {
+        d = vcsrepo.quoted(heap, vcsrepo.member(heap, d, 1, false, "change"), change);
+    }
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "command"), "\"branch\"");
+    d = vcsrepo.member(heap, d, 1, false, flag_name);
+    if flag {
+        d = buffer.append(heap, d, "true");
+    } else {
+        d = buffer.append(heap, d, "false");
+    }
+    if dry {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "dry_run"), "true");
+    }
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "ok"), "true");
+    return buffer.append(heap, jsonwrite.newline(heap, d, 0), "}\n");
+}
+
+// The `branch list` document: `lines` are `heads/NAME ID`, one to a line; `current` is the branch HEAD is on (without `heads/`), when there is one.
+fn branch_list_document[&h, &l, &c](heap: &!h Heap, lines: &l [byte], current: &c [byte], has_current: bool) -> [heap] buffer.Buffer {
+    var d = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
+    d = buffer.push(heap, vcsrepo.member(heap, d, 1, true, "branches"), byte_of(91));
+    var n = 0;
+    var at = 0;
+    while at < len(lines) {
+        var end = at;
+        while end < len(lines) && lc.at(lines, end) != 10 {
+            end = end + 1;
+        }
+        let line = lines[at..end];
+        var space = 0;
+        while space < len(line) && lc.at(line, space) != 32 {
+            space = space + 1;
+        }
+        let full = line[0..space];
+        var from = 0;
+        if bytes.starts_with(full, "heads/") {
+            from = 6;
+        }
+        if n > 0 {
+            d = buffer.push(heap, d, byte_of(44));
+        }
+        d = buffer.push(heap, jsonwrite.newline(heap, d, 2), byte_of(123));
+        d = vcsrepo.quoted(heap, vcsrepo.member(heap, d, 3, true, "change"), line[space + 1..len(line)]);
+        d = jsonwrite.string(heap, vcsrepo.member(heap, d, 3, false, "name"), full[from..len(full)]);
+        d = buffer.push(heap, jsonwrite.newline(heap, d, 2), byte_of(125));
+        n = n + 1;
+        at = end + 1;
+    }
+    if n > 0 {
+        d = jsonwrite.newline(heap, d, 1);
+    }
+    d = buffer.push(heap, d, byte_of(93));
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "command"), "\"branch\"");
+    d = vcsrepo.member(heap, d, 1, false, "current");
+    if has_current {
+        d = jsonwrite.string(heap, d, current);
+    } else {
+        d = buffer.append(heap, d, "null");
+    }
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "ok"), "true");
+    return buffer.append(heap, jsonwrite.newline(heap, d, 0), "}\n");
+}
+
+// A document said, then dropped.
+fn said[&h, &i](heap: &!h Heap, io: &!i Io, document: buffer.Buffer) -> [heap, io_write] int {
+    borrow document as &db in {
+        buffer.write(io, db);
+    }
+    buffer.drop(heap, document);
+    return 0;
+}
+
+// The ref `heads/NAME` of the branch the command names (the second word): status 0 and the ref in `bytes`, or the refusal said (exit status in `errno`, status 1).
+fn branch_ref[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, options: Options) -> [heap, io_write, args] vcsstore.Object {
+    if options.name_at < 0 {
+        let code = refused(heap, io, "branch", "this needs a branch name", "bad-argument");
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: code };
+    }
+    let name = arg(args, options.name_at);
+    var full = buffer.append(heap, buffer.empty(heap, len(name) + 8), "heads/");
+    full = buffer.append(heap, full, name);
+    var ok = false;
+    borrow full as &fb in {
+        ok = vcsstore.check_ref_name(buffer.bytes(fb));
+    }
+    if !ok {
+        var message = buffer.push(heap, buffer.empty(heap, 64), byte_of(96));
+        borrow full as &fb in {
+            message = buffer.append(heap, message, buffer.bytes(fb));
+        }
+        message = buffer.append(heap, message, "` is not a ref name");
+        var code = 1;
+        borrow message as &mb in {
+            code = refused(heap, io, "branch", buffer.bytes(mb), "bad-ref-name");
+        }
+        buffer.drop(heap, message);
+        buffer.drop(heap, full);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: code };
+    }
+    return vcsstore.Object { bytes: full, status: 0, errno: 0 };
+}
+
+// `branch list`: the branches, in the order of the bytes of their names, and the one HEAD is on.
+fn branch_list[&h, &i, &d](heap: &!h Heap, io: &!i Io, vcs: &d Dir) -> [heap, io_write, dir_read, dir_write, file_read] int {
+    let heads = vcsrepo.head_ref(heap, vcs);
+    let (current, hs, he) = vcsstore.parts(heads);
+    if hs != 0 && hs != 2 {
+        buffer.drop(heap, current);
+        return answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 3, errno: 0 }, "");
+    }
+    let listed = vcsstore.list_refs(heap, vcs, "heads");
+    let (lines, ls, le) = vcsstore.parts(listed);
+    var code = 0;
+    if ls != 0 {
+        buffer.drop(heap, lines);
+        code = answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: ls, errno: le }, "");
+    } else {
+        borrow lines as &lb in {
+            borrow current as &cb in {
+                var name = buffer.bytes(cb);
+                if bytes.starts_with(name, "heads/") {
+                    name = name[6..len(name)];
+                }
+                let document = branch_list_document(heap, buffer.bytes(lb), name, hs == 0);
+                code = said(heap, io, document);
+            }
+        }
+        buffer.drop(heap, lines);
+    }
+    buffer.drop(heap, current);
+    return code;
+}
+
+// The change `spec` names, or the refusal said: status 0 and the id in `bytes`, else status 1 and the exit status in `errno`.
+fn resolved[&h, &i, &d, &s, &p](heap: &!h Heap, io: &!i Io, vcs: &d Dir, scratch: &!s [int], spec: &p [byte]) -> [heap, io_write, dir_read, dir_write, file_read] vcsstore.Object {
+    let found = vcsrepo.resolve(heap, vcs, scratch, spec);
+    let (id, status, errno) = vcsstore.parts(found);
+    if status == 0 {
+        return vcsstore.Object { bytes: id, status: 0, errno: 0 };
+    }
+    let code = answered(heap, io, "branch", vcsstore.Object { bytes: id, status: status, errno: errno }, spec);
+    return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: code };
+}
+
+// `branch create NAME [--from REV]`.
+fn branch_create[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir, options: Options, clock: &c Clock) -> [heap, io_write, args, dir_read, dir_write, file_read, file_write, clock] int {
+    let named = branch_ref(heap, io, args, options);
+    let (full, ns, ne) = vcsstore.parts(named);
+    if ns != 0 {
+        buffer.drop(heap, full);
+        return ne;
+    }
+    var spec = "HEAD";
+    if options.from_at >= 0 {
+        spec = arg(args, options.from_at);
+        if options.from_off > 0 {
+            spec = spec[options.from_off..len(spec)];
+        }
+    }
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    var code = 0;
+    borrow mut scratch as &!s in {
+        let target = resolved(heap, io, vcs, contents(s), spec);
+        let (id, ts, te) = vcsstore.parts(target);
+        if ts != 0 {
+            buffer.drop(heap, id);
+            code = te;
+        } else {
+            borrow full as &fb in {
+                borrow id as &ib in {
+                    let name = args_name(args, options);
+                    let existing = vcsstore.read_ref(heap, vcs, buffer.bytes(fb));
+                    let (have, es, ee) = vcsstore.parts(existing);
+                    var same = false;
+                    borrow have as &hb in {
+                        same = es == 0 && bytes.equal(buffer.bytes(hb), buffer.bytes(ib));
+                    }
+                    buffer.drop(heap, have);
+                    if es != 0 && es != 2 {
+                        code = answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: es, errno: ee }, "");
+                    } else if same {
+                        code = said(heap, io, branch_result(heap, name, true, buffer.bytes(ib), "created", false, false));
+                    } else if options.dry {
+                        code = said(heap, io, branch_result(heap, name, true, buffer.bytes(ib), "created", false, true));
+                    } else {
+                        let moved = vcsstore.update_ref(heap, vcs, buffer.bytes(fb), vcsstore.expect_absent(), "", buffer.bytes(ib), "branch create", clock_unix_ms(clock) / 1000);
+                        let (current, us, ue) = vcsstore.parts(moved);
+                        if us == 0 {
+                            code = said(heap, io, branch_result(heap, name, true, buffer.bytes(ib), "created", true, false));
+                        } else if us == 14 {
+                            borrow current as &mb in {
+                                code = said(heap, io, moved_refusal(heap, "branch", buffer.bytes(fb), buffer.bytes(mb), "absent", false));
+                            }
+                            code = 1;
+                        } else {
+                            code = answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: us, errno: ue }, "");
+                        }
+                        buffer.drop(heap, current);
+                    }
+                }
+            }
+            buffer.drop(heap, id);
+        }
+    }
+    unbox_slice(heap, scratch);
+    buffer.drop(heap, full);
+    return code;
+}
+
+// The branch name the command was given, as written (the second word).
+fn args_name[&a](args: &a Args, options: Options) -> [args] &a [byte] {
+    return arg(args, options.name_at);
+}
+
+// `branch delete NAME --expect REV`.
+fn branch_delete[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir, options: Options, clock: &c Clock) -> [heap, io_write, args, dir_read, dir_write, file_read, file_write, clock] int {
+    let named = branch_ref(heap, io, args, options);
+    let (full, ns, ne) = vcsstore.parts(named);
+    if ns != 0 {
+        buffer.drop(heap, full);
+        return ne;
+    }
+    var code = 0;
+    var finished = false;
+    let name = args_name(args, options);
+    // The checked-out branch cannot be deleted.
+    let heads = vcsrepo.head_ref(heap, vcs);
+    let (headref, hs, he) = vcsstore.parts(heads);
+    borrow headref as &hb in {
+        borrow full as &fb in {
+            if hs == 0 && bytes.equal(buffer.bytes(hb), buffer.bytes(fb)) {
+                code = refused(heap, io, "branch", "the checked-out branch cannot be deleted", "ref-protected");
+                finished = true;
+            }
+        }
+    }
+    buffer.drop(heap, headref);
+    // The change it is at: a branch that is not there is deleted already.
+    var current = buffer.empty(heap, 0);
+    if !finished {
+        var cs = 0;
+        var ce = 0;
+        borrow full as &fb in {
+            let existing = vcsstore.read_ref(heap, vcs, buffer.bytes(fb));
+            let (id, s2, e2) = vcsstore.parts(existing);
+            buffer.drop(heap, current);
+            current = id;
+            cs = s2;
+            ce = e2;
+        }
+        if cs == 2 {
+            code = said(heap, io, branch_result(heap, name, false, "", "deleted", false, false));
+            finished = true;
+        } else if cs != 0 {
+            code = answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: cs, errno: ce }, "");
+            finished = true;
+        } else if options.expect_at < 0 {
+            code = refused(heap, io, "branch", "deleting a branch needs --expect <change> (the change you believe it is at)", "bad-argument");
+            finished = true;
+        }
+    }
+    if !finished {
+        var spec = arg(args, options.expect_at);
+        if options.expect_off > 0 {
+            spec = spec[options.expect_off..len(spec)];
+        }
+        let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+        borrow mut scratch as &!s in {
+            let target = resolved(heap, io, vcs, contents(s), spec);
+            let (id, ts, te) = vcsstore.parts(target);
+            if ts != 0 {
+                code = te;
+            } else {
+                borrow full as &fb in {
+                    borrow id as &ib in {
+                        borrow current as &cb in {
+                            if options.dry {
+                                code = said(heap, io, branch_result(heap, name, true, buffer.bytes(cb), "deleted", false, true));
+                            } else {
+                                let gone = vcsstore.delete_ref(heap, vcs, buffer.bytes(fb), vcsstore.expect_id(), buffer.bytes(ib), clock_unix_ms(clock) / 1000);
+                                let (now_at, gs, ge) = vcsstore.parts(gone);
+                                if gs == 0 {
+                                    code = said(heap, io, branch_result(heap, name, true, buffer.bytes(cb), "deleted", true, false));
+                                } else if gs == 14 {
+                                    borrow now_at as &nb in {
+                                        code = said(heap, io, moved_refusal(heap, "branch", buffer.bytes(fb), buffer.bytes(nb), buffer.bytes(ib), true));
+                                    }
+                                    code = 1;
+                                } else {
+                                    code = answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: gs, errno: ge }, "");
+                                }
+                                buffer.drop(heap, now_at);
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, id);
+        }
+        unbox_slice(heap, scratch);
+    }
+    buffer.drop(heap, current);
+    buffer.drop(heap, full);
+    return code;
+}
+
+// `branch [list | create NAME | delete NAME]`.
+fn branch_in[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir, options: Options, clock: &c Clock) -> [heap, io_write, args, dir_read, dir_write, file_read, file_write, clock] int {
+    var sub = "list";
+    if options.rev_at >= 0 {
+        sub = arg(args, options.rev_at);
+    }
+    if bytes.equal(sub, "list") {
+        return branch_list(heap, io, vcs);
+    }
+    if bytes.equal(sub, "create") {
+        return branch_create(heap, io, args, vcs, options, clock);
+    }
+    if bytes.equal(sub, "delete") {
+        return branch_delete(heap, io, args, vcs, options, clock);
+    }
+    var message = buffer.append(heap, buffer.empty(heap, 64), "`branch ");
+    message = buffer.append(heap, message, sub);
+    message = buffer.append(heap, message, "`: expected list, create or delete");
+    var code = 1;
+    borrow message as &mb in {
+        code = refused(heap, io, "branch", buffer.bytes(mb), "bad-argument");
+    }
+    buffer.drop(heap, message);
+    return code;
+}
+
 // ---- the entry points --------------------------------------------------------------------------------------------------------
 
 // Whether `cancho vcs SUB` is this module's: `init` and `show` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
 pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read] bool {
     let sub = arg(args, 2);
-    if bytes.equal(sub, "init") || bytes.equal(sub, "show") {
+    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") {
         return true;
     }
     if !bytes.equal(sub, "log") {
@@ -617,6 +1013,9 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
     } else if bytes.equal(verb, "log") {
         which = 1;
         name = "log";
+    } else if bytes.equal(verb, "branch") {
+        which = 3;
+        name = "branch";
     }
     let options = options_of(heap, io, args, which);
     if options.bad != 0 {
@@ -644,6 +1043,8 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                         borrow vcs as &vd in {
                                             if which == 1 {
                                                 code = log_in(heap, io, args, vd, options);
+                                            } else if which == 3 {
+                                                code = branch_in(heap, io, args, vd, options, clock);
                                             } else {
                                                 code = show_in(heap, io, args, vd, options);
                                             }
