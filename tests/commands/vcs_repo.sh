@@ -67,6 +67,7 @@ repo; vcs log --path notes.md;  exit_is "log --path" 2; grep -q "not in this bui
 repo; vcs show --patch;         exit_is "show --patch" 2; grep -q "not in this build" "$work/err.txt" && echo "ok show --patch says it is not in this build" || echo "FAILS show --patch said nothing of the kind"
 repo; vcs log --bogus;          exit_is "log --bogus" 2; grep -q "unknown option" "$work/err.txt" && echo "ok log --bogus is an unknown option" || echo "FAILS log --bogus"
 repo; "$cancho" vcs show --output text > "$work/out.json" 2> "$work/err.txt"; echo $? > "$work/code.txt"; exit_is "show --output text" 2
-repo; vcs log --limit;          exit_is "log --limit with no value" 2
+# `--limit` as the last word has no value (a helper that added `--output json` after it would hand `--output` to it, as the Rust parser does).
+repo; "$cancho" vcs log --limit > "$work/out.json" 2> "$work/err.txt"; echo $? > "$work/code.txt"; exit_is "log --limit with no value" 2; grep -q "needs a value" "$work/err.txt" && echo "ok it says --limit needs a value" || echo "FAILS --limit with no value said nothing of the kind"
 cd "$root" || exit 1
 echo done

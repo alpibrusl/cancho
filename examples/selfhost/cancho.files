@@ -22,6 +22,7 @@ clistore.cho
 clisync.cho
 clitest.cho
 clivcs.cho
+clivcsrepo.cho
 codes.cho
 commandtree.cho
 consteval.cho
@@ -73,6 +74,10 @@ tables.cho
 testscan.cho
 threadcode.cho
 types.cho
+vcschange.cho
+vcsobj.cho
+vcsrepo.cho
+vcsstore.cho
 version.cho
 walk.cho
 wordcode.cho

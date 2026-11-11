@@ -1,0 +1,57 @@
+== log
+ok log is the pin
+ok log (exit 0)
+ok log HEAD~1
+ok log --limit 1
+ok log --limit=1 is the same
+ok log --limit 0 lists one change, as the Rust command does
+ok log of a name that names nothing
+ok log refused (exit 1)
+ok log --limit x is a bad argument
+ok log --limit x refused (exit 1)
+== show
+ok show HEAD is the pin
+ok show (exit 0)
+ok show with no revision is HEAD
+ok show HEAD~1
+ok show of a name that names nothing
+ok show refused (exit 1)
+ok show past the first change
+ok show with no repository is not-a-repository
+ok show, no repository (exit 1)
+== finding the repository
+ok show from two directories down
+ok log from two directories down is the repository log
+ok show --repo PATH from another directory
+ok show --repo=PATH from a directory of the repository
+== init
+ok init is the pin
+ok init (exit 0)
+ok init made a store with HEAD on main
+ok init again is the pin
+ok show in the new repository: HEAD has no change yet
+ok init --dry-run
+ok --dry-run made nothing
+ok init --dry-run in a repository
+ok init --branch dev
+ok HEAD is on dev
+ok init of a directory that is not there
+ok the directory was made, with its store
+ok init with a bad branch name
+ok init, bad branch (exit 1)
+== routing
+exit 0
+manifest log lines: 1
+exit 0
+nothing published yet at `elsewhere`
+== what is not in this build, and what is not an option
+ok log --path (exit 2)
+ok log --path says it is not in this build
+ok show --patch (exit 2)
+ok show --patch says it is not in this build
+ok log --bogus (exit 2)
+ok log --bogus is an unknown option
+ok show --output text (exit 2)
+ok log --limit with no value (exit 2)
+ok it says --limit needs a value
+done
