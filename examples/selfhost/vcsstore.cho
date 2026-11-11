@@ -895,7 +895,7 @@ pub fn delete_ref[&h, &d, &n, &w](heap: &!h Heap, vcs: &d Dir, name: &n [byte], 
 }
 
 // The kind of the entry `name` of `dir`: the listing's, or `dir_stat`'s when the file system did not say.
-fn entry_kind[&d, &n](dir: &d Dir, name: &n [byte], listed: int) -> [dir_read] int {
+pub fn entry_kind[&d, &n](dir: &d Dir, name: &n [byte], listed: int) -> [dir_read] int {
     if listed != 0 {
         return listed;
     }

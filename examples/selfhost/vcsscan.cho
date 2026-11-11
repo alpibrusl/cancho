@@ -111,21 +111,6 @@ pub fn skips[&g, &r](ig: &g [byte], rel: &r [byte], is_dir: bool) -> [] bool {
 
 // ---- the scan ----------------------------------------------------------------------------------------------------------------
 
-// The kind of the entry `name` of `dir`: the listing's, or `dir_stat`'s when the file system did not say.
-fn kind_of[&d, &n](dir: &d Dir, name: &n [byte], listed: int) -> [dir_read] int {
-    if listed != 0 {
-        return listed;
-    }
-    match dir_stat(dir, name) {
-        DirStat::Ok(kind, size, mtime) => {
-            return kind;
-        }
-        DirStat::Failed(e) => {
-            return 4;
-        }
-    }
-}
-
 // One line of a tree: the mode, the blob id of `content`, the path.
 fn add_entry[&h, &s, &c, &p](heap: &!h Heap, scratch: &!s [int], out: buffer.Buffer, mode: &static [byte], content: &c [byte], rel: &p [byte]) -> [heap] buffer.Buffer {
     var b = buffer.push(heap, buffer.append(heap, out, mode), byte_of(32));
@@ -226,7 +211,7 @@ fn scan_dir[&h, &d, &s, &p, &g](heap: &!h Heap, dir: &d Dir, prefix: &p [byte], 
         var i = 0;
         while i < dirs.count(nr) && code == 0 {
             let name = dirs.name(nr, i);
-            let kind = kind_of(dir, name, dirs.kind(nr, i));
+            let kind = vcsstore.entry_kind(dir, name, dirs.kind(nr, i));
             var rel = buffer.empty(heap, len(prefix) + len(name) + 1);
             if len(prefix) > 0 {
                 rel = buffer.push(heap, buffer.append(heap, rel, prefix), byte_of(47));
