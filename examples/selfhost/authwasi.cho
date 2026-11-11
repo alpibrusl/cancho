@@ -40,7 +40,7 @@ pub fn class_of[&l](label: &l [byte]) -> [] int {
     if bytes.equal(label, "io_read") || bytes.equal(label, "io_write") || bytes.equal(label, "err_write") || bytes.equal(label, "heap") || bytes.equal(label, "args") || bytes.equal(label, "clock") {
         return 0;
     }
-    if bytes.equal(label, "fs_read") || bytes.equal(label, "fs_write") || bytes.equal(label, "file_read") || bytes.equal(label, "file_write") || bytes.equal(label, "dir_read") || bytes.equal(label, "dir_write") {
+    if bytes.equal(label, "fs_read") || bytes.equal(label, "fs_write") || bytes.equal(label, "file_read") || bytes.equal(label, "file_write") || bytes.equal(label, "dir_read") || bytes.equal(label, "dir_write") || bytes.equal(label, "dir_symlink") {
         return 0;
     }
     if bytes.equal(label, "ffi") {
@@ -96,10 +96,13 @@ pub fn allowed[&l](label: &l [byte]) -> [] &static [byte] {
         return "fd_filestat_set_size\0fd_pwrite\0fd_sync\0fd_write\0";
     }
     if bytes.equal(label, "dir_read") {
-        return "fd_close\0fd_fdstat_get\0fd_prestat_dir_name\0fd_prestat_get\0fd_readdir\0path_filestat_get\0path_open\0";
+        return "fd_close\0fd_fdstat_get\0fd_prestat_dir_name\0fd_prestat_get\0fd_readdir\0path_filestat_get\0path_open\0path_readlink\0";
     }
     if bytes.equal(label, "dir_write") {
         return "fd_close\0fd_fdstat_get\0fd_prestat_dir_name\0fd_prestat_get\0fd_sync\0path_open\0path_remove_directory\0path_rename\0path_unlink_file\0";
+    }
+    if bytes.equal(label, "dir_symlink") {
+        return "fd_close\0fd_fdstat_get\0fd_prestat_dir_name\0fd_prestat_get\0path_symlink\0";
     }
     return required(label);
 }
