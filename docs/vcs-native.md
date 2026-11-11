@@ -195,6 +195,8 @@ HEAD, and about 400 files clean and then changed; and the tag of the refusals fo
 execute bits, the directory-only rule, the suffix rule, the path rule, the `.git` skip, the order of the sort) each fail it.
 
 **A difference, said by a status and not hidden:** a symbolic link makes `status` answer `refused symlink` (30). The Rust command makes a tree entry of it (mode 120000, the blob of the target); the target cannot be read until
+
+**Closed (2026-11-11, `directory-links.md` §8 slice 3).** `dir_readlink` exists, so `vcsscan.cho` makes the tree entry of a link (mode 120000, the blob of the target text) and `status` no longer answers `refused symlink`: the difference above is gone. `vcsstatus_check.sh` holds it, byte for byte against the Rust command, on twelve states of a working copy with links.
 there is a `readlink` (#685). A name that is not UTF-8 is not refused here (the Rust command refuses it). **Speed**, 654 files and 12.3 MB (the std, docs and examples of this tree), best of 5: the Rust `vcs status`
 0.021 s, `vcsstorectl status` 0.105 s (about 117 MB/s with the reads; BLAKE3 in cancho is the cost, `docs/vcs-native.md` §2). Whole files are read into memory (at most 16 MiB each).
 
@@ -227,7 +229,7 @@ a store the Rust command wrote, not a command.
 | command | in cancho today | stopped by a primitive | what else it needs |
 |---|---|---|---|
 | `init` | the store (`vcsstorectl init`) | #686 for the `root` in its JSON, and `canonicalize` (below) | routing |
-| `status` | `vcsrepo`/`vcsscan` status, byte for byte | **#685**: a working copy holding a link is status 30 (`vcsscan.cho:12`) | routing |
+| `status` | `vcsrepo`/`vcsscan` status, byte for byte | no (a link was status 30 until `dir_readlink`: closed, §6 and `directory-links.md` §8 slice 3) | routing |
 | `log` (repository form) | built | no | routing: `cli.cho:57` sends `vcs log` to the manifest log unconditionally |
 | `show` | built | no | routing |
 | `branch` | refs with compare-and-swap (`vcsrepo`) | no | the command layer |

@@ -169,6 +169,15 @@ a taken name, a file, a directory and a dangling link are `EEXIST` and untouched
 NUL check, Darwin, and a NUL in a target or a name (an argument cannot hold one). **Not checked yet:** that `dir_enter` and `dir_open_read` still refuse the link a program made (`ELOOP`,
 §2); they are unchanged and §2 measured the kernel, but no test of this slice makes the link and then enters it.
 
+**Slice 3a, the scan (2026-11-11, Linux x86-64).** `vcsscan.cho` (edition 12 now, for `dir_readlink`) makes a link a tree line of mode `120000` whose blob is the target text, with the
+Rust `scan`'s refusals: a target that is not UTF-8 is `path-unsupported` (31), and `vcsobj.check_path` applies to the link's path. Status 30 (`symlink`) is no longer answered. A buffer of 4,096
+bytes is never filled (a target is at most 4,095), so the fill check of `dir_readlink` cannot refuse a real link. `examples/selfhost/vcsstatus_check.sh` replaces its one "a link is refused" case
+with twelve states of a working copy with links, compared byte for byte with the Rust `cancho vcs status`: a new link, recorded and clean, a changed target, a link to a directory, a dangling link,
+a relative target, a link below a directory, a 500-byte target, a link replaced by a file and back, a file replaced by a link, a link to a directory replaced by a directory, a deleted dangling link,
+`.canchoignore` skipping a link, and a target that is not UTF-8 (`path-unsupported` from both). All 31 checks of the script pass. **Mutant:** the mode written as `100644` fails nine of them.
+**Not done in 3a:** `materialize` and `remove_path` (the writes of `switch`, `restore`, `revert`, `apply` and `record`'s deletions) do not exist in cancho yet, so there is nothing for them to
+be wired into; they are slice 3b, and need the commands that call them. `vcsstatus_check.sh` is not part of `scripts/gate.sh` or CI; it was run by hand.
+
 ## 9. Not measured
 
 Darwin: the value of `AT_REMOVEDIR`, `ENOTEMPTY`, `ELOOP` and the behaviour of every row of §2. A second kernel. What the Rust compiler does with a registered builtin it does not lower (§5).
