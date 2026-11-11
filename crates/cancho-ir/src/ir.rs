@@ -1422,9 +1422,10 @@ pub fn rename_no_replace(darwin: bool) -> i64 {
     if darwin { 0x4 } else { 0x1 }
 }
 
-/// The longest text `dir_symlink` takes (`docs/directory-links.md` §4): the
-/// kernel's `PATH_MAX` less the terminator. A longer one is `EINVAL` with no
-/// call, so the copy that terminates it fits a buffer of `LINK_MAX + 1`.
+/// The longest text `dir_symlink` takes (`docs/directory-links.md` §4): Linux's
+/// `PATH_MAX` less the terminator, and an upper bound, not a promise: Darwin's
+/// kernel refuses a shorter one with `ENAMETOOLONG`. A longer one is `EINVAL`
+/// with no call, so the copy that terminates it fits a buffer of `LINK_MAX + 1`.
 pub const LINK_MAX: i64 = 4095;
 
 /// `AT_REMOVEDIR`, the flag that makes `unlinkat` remove an empty directory

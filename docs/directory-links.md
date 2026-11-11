@@ -29,7 +29,7 @@ value it says so.
 | on a link to a directory, a dangling link, a regular file | -1, `ENOTDIR` (20) each: **it never follows a link and never removes one** |
 | `symlinkat("", dir, name)` | -1, `ENOENT` |
 | `symlinkat(target, dir, "taken")` and onto a dangling link | -1, `EEXIST` (17) both: it never replaces and does not follow |
-| a 4,095-byte target / a 4,096-byte target | 0 / -1, `ENAMETOOLONG` (36) |
+| a 4,095-byte target / a 4,096-byte target | 0 / -1, `ENAMETOOLONG` (36). **Linux's limit; Darwin's is lower:** the first run of slice 2 on a macOS runner refused a 4,095-byte target with `ENAMETOOLONG` (not measured: where its limit is) |
 | `readlinkat` of a 7-byte target into 8 / 7 / 4 bytes | 7 / 7 / **4**: it cuts the target silently and does not say so |
 | `readlinkat` of a regular file or a directory | -1, `EINVAL` (22) |
 | `readlinkat` of a missing name; into 0 bytes | -1, `ENOENT`; -1, `EINVAL` |
@@ -159,8 +159,9 @@ Every slice is a pull request with the gate of `docs/gate.md` (`scripts/gate.sh`
 WASI import table (`path_symlink`; `dir_read` gains `path_readlink`). `dir_readlink` performs `dir_read`. In the compiler in cancho: `dirs.c` (`cancho_dir_symlink`,
 `cancho_dir_readlink`), codes 146 and 147, `netcode.cho`, the `.ll` and `runtime.cho`, and the generated tables. In Rust, both backends lower them (`cancho_ir::LINK_MAX`, and the fill check
 done after the shared helper, in five instructions). **Three implementations give one transcript:** the compiler in cancho, the Rust compiler with the LLVM backend and with the Cranelift
-backend, on `tests/programs/directory_links_probe.cho` and `tests/commands/directory_links.sh`. It pins §4: targets of 1, 7, 255 and 4,095 bytes are made as links of those lengths and read back
-(the shell's `readlink` agrees); a buffer of exactly the target's length is `ENAMETOOLONG` and one byte longer is the target, and so are a cut by 3 and a buffer of 1; an empty buffer is `EINVAL`;
+backend, on `tests/programs/directory_links_probe.cho` and `tests/commands/directory_links.sh`. It pins §4: targets of 1, 7, 255 and 1,000 bytes are made as links of those lengths and read back
+(the shell's `readlink` agrees), and a 4,095-byte one is either made and read back whole or `ENAMETOOLONG` (Linux makes it; **the first CI run on macOS did not, and the test claimed 4,095 for every
+kernel: corrected, §2**); a buffer of exactly the target's length is `ENAMETOOLONG` and one byte longer is the target, and so are a cut by 3 and a buffer of 1; an empty buffer is `EINVAL`;
 a taken name, a file, a directory and a dangling link are `EEXIST` and untouched, and the dangling link was not followed; an empty target and a 4,096-byte one are `EINVAL` and no link is made;
 `..`, `.`, an empty name and `a/b` are `EINVAL` for both calls; a file and a directory are `EINVAL` to read and a missing name is `ENOENT`. The label is pinned by
 `tests/reject/dir_symlink_not_declared.cho` (a row of `[dir_write]` does not make a link: `effect-not-declared`), `dir_readlink_not_declared.cho` and `dir_symlink_is_edition_twelve.cho`.
