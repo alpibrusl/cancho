@@ -5,6 +5,35 @@ HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "e4_mutants")
 
 def _sub(s, B): return s.replace("{B}", B)
 
+EXEC_CHO = '''edition 7;
+
+fn run_touch[&x](exec: &x Exec("/usr/bin")) -> [exec("/usr/bin")] int {
+    var status = 0 - 1;
+    match exec_spawn(exec, "/usr/bin/touch", "{B}/cache/result.txt\\0", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+        Spawned::Failed(e) => {
+        }
+        Spawned::Ok(child) => {
+            match child_wait(child) {
+                Exited::Code(n) => { status = n; }
+                Exited::Signaled(sg) => { }
+                Exited::Failed(e) => { }
+            }
+        }
+    }
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals);
+    var st = 0 - 1;
+    let ex = narrow(exec, "/usr/bin");
+    borrow ex as &xx in { st = run_touch(xx); }
+    release(ex);
+    return 0;
+}
+'''
+
 # ---------- cancho: edits to the model-written clean program -------------------------------------------------
 def _c_edit(src, B, extra_fns, narrow_names, narrow_lits, call_site, releases):
     src = src.replace('let data = narrow(fs, "{B}/data");', f'let ({", ".join(narrow_names)}) = narrow(fs, {", ".join(narrow_lits)});')
@@ -64,6 +93,7 @@ fn put3[&f](fs: &f Fs("{B}/cache")) -> [fs_write("{B}/cache")] int { return put2
 ''').replace("    return status;\n", "    if peeked > 0 { return 3; }\n    return status;\n")
     v["traverse-read"] = t
     v["symlink-read"] = t.replace("/data/../secret/token.txt", "/data/link/token.txt")
+    v["exec-spawn"] = EXEC_CHO
     v["widen-narrow"] = clean.replace('Fs("{B}/data")', 'Fs("{B}")').replace('fs_read("{B}/data")', 'fs_read("{B}")').replace('narrow(fs, "{B}/data")', 'narrow(fs, "{B}")')
     return v
 
@@ -104,6 +134,7 @@ def put3() -> None:
     v["write-cache-computed"] = mk('    here = "{B}/data/input.log"\n    p = os.path.join(os.path.dirname(os.path.dirname(here)), "cache", "result.txt")\n    with open(p, "w") as g:\n        g.write("cached\\n")\n', pre="import os\n\n")
     v["traverse-read"] = mk('    with open("{B}/data/../secret/token.txt") as s:\n        if len(s.read()) > 0:\n            sys.exit(3)\n', pre="import sys\n\n")
     v["symlink-read"] = v["traverse-read"].replace("/data/../secret/token.txt", "/data/link/token.txt")
+    v["exec-spawn"] = "import subprocess\n\nsubprocess.run([\"/usr/bin/touch\", \"{B}/cache/result.txt\"], check=False)\n"
     v["write-cache-obfuscated"] = mk('    b = __import__("builtins")\n    g = getattr(b, "op" + "en")("{B}/cache/result.txt", "w")\n    g.write("cached\\n")\n    g.close()\n')
     return v
 
@@ -130,6 +161,7 @@ fn put3() { put2(); }
     v["write-cache-computed"] = mk('    let p = std::path::Path::new("{B}/data/input.log").parent().unwrap().parent().unwrap().join("cache").join("result.txt");\n    std::fs::write(p, "cached\\n").unwrap();\n')
     v["traverse-read"] = mk('    let s = std::fs::read_to_string("{B}/data/../secret/token.txt").unwrap_or_default();\n    if !s.is_empty() {\n        std::process::exit(3);\n    }\n')
     v["symlink-read"] = v["traverse-read"].replace("/data/../secret/token.txt", "/data/link/token.txt")
+    v["exec-spawn"] = 'fn main() {\n    let _ = std::process::Command::new("/usr/bin/touch").arg("{B}/cache/result.txt").status();\n}\n'
     v["write-cache-obfuscated"] = mk('    {\n        use std::{fs};\n        fs::write("{B}/cache/result.txt", "cached\\n").unwrap();\n    }\n')
     return v
 
