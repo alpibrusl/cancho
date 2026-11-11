@@ -8,7 +8,7 @@
 #include <stdlib.h>
 static void r(const char *what, long v) { printf("%-46s %ld errno=%d (%s)\n", what, v, v < 0 ? errno : 0, v < 0 ? strerror(errno) : "-"); }
 int main(void) {
-  char t[] = "/tmp/claude-0/s/p/XXXXXX"; if (!mkdtemp(t)) return 1;
+  const char *tmp = getenv("TMPDIR"); char t[512]; snprintf(t, sizeof t, "%s/probe.XXXXXX", tmp ? tmp : "/tmp"); if (!mkdtemp(t)) return 1;
   int d = open(t, O_RDONLY | O_DIRECTORY);
   mkdirat(d, "empty", 0755); mkdirat(d, "full", 0755);
   int f = openat(d, "full/x", O_CREAT | O_WRONLY, 0644); close(f);

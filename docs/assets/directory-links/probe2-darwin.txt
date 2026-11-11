@@ -1,0 +1,32 @@
+rename file over an existing file                    0 errno=0 (-)
+    old: file "NEW"
+    new: absent
+rename file over a link (link to a file)             0 errno=0 (-)
+    lnk: file "NEW2"
+    elsewhere: file "TARGET"
+rename file over a link to a directory               0 errno=0 (-)
+    lnkdir: file "NEW3"
+    dir: directory
+rename file over a dangling link                     0 errno=0 (-)
+    dang: file "NEW4"
+rename a link over a file                            0 errno=0 (-)
+    victim: link -> tgt
+rename a file over a directory                       -1 errno=21 (Is a directory)
+rename a directory over a file                       -1 errno=20 (Not a directory)
+rename a directory over an empty directory           0 errno=0 (-)
+rename a directory over a non-empty directory        -1 errno=66 (Directory not empty)
+rename a missing name                                -1 errno=2 (No such file or directory)
+first n that fails: 243 (name: made, name+13: File name too long)
+longest name with a NAME.cancho-tmp-0 beside it: 242 bytes
+  a name of 250 bytes: made
+  a name of 251 bytes: made
+  a name of 252 bytes: made
+  a name of 253 bytes: made
+  a name of 254 bytes: made
+  a name of 255 bytes: made
+  a name of 256 bytes: File name too long
+  a name of 257 bytes: File name too long
+  a name of 258 bytes: File name too long
+first target length refused: 1024 (File name too long); longest made: 1023
+readlinkat of the longest target (1023 bytes) into 5000: 1023
+ENOTEMPTY=66 ENOTDIR=20 EISDIR=21 EEXIST=17 ENOENT=2 ENAMETOOLONG=63 ELOOP=62 EINVAL=22 AT_REMOVEDIR=0x80

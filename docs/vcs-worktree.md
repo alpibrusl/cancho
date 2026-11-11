@@ -1,6 +1,6 @@
 # Writing the working copy from cancho: `materialize` and `remove_path` (slice 3b)
 
-Status: **W1-W4 built and measured on Linux x86-64** (2026-11-11, §6); Darwin not run. Claims are marked **[read]** (from the source), **[measured]** (run) or **[choice]** (a decision). This is slice 3b of
+Status: **W1-W4 built and measured on Linux x86-64** (2026-11-11, §6); **the five check scripts and the kernel side were run on Darwin on 2026-11-11, §8**. Claims are marked **[read]** (from the source), **[measured]** (run) or **[choice]** (a decision). This is slice 3b of
 [`directory-links.md`](directory-links.md) §8; the primitives it needs were built in slices 1 and 2, and `vcsscan.cho` (3a) already reads a working copy. What is missing is
 the two functions that *write* one, which `switch`, `restore`, `revert`, `apply` and the deletions of `record` call in Rust (`vcs_repo.rs:524,598`, `vcs_record.rs:359`,
 `vcs_git.rs:36`) **[read]**.
@@ -65,7 +65,7 @@ when clearing; the empty-parent loop not stopping at the root (run against a scr
 ## 5. Not decided here, not measured
 
 * Which command calls these first. `restore` is the smallest and the oracle above; `switch` also needs `work_lock` and the dirty-path check (`move_working_copy`), slice 4.
-* Darwin (`AT_REMOVEDIR`, `ENOTEMPTY`, the rename-over behaviour); crash windows (no test kills the process between the write and the rename; `vcs-native.md` §6 has the
+* Darwin: **measured since, §8** (`AT_REMOVEDIR`, `ENOTEMPTY`, the rename-over behaviour); crash windows (no test kills the process between the write and the rename; `vcs-native.md` §6 has the
   harness for it); the cost of a switch of many thousands of files.
 
 ## 6. Built and measured (2026-11-11, Linux x86-64)
@@ -80,9 +80,9 @@ directory in the way removed (1). **A hole found by the first mutant run and fix
 so no link was ever in the path of `d/f`; it now restores only `d/f` and `d/g/h`.
 **Found in Rust, not a difference:** restoring a directory-with-contents where a file was (`f1`, `f1/inner`, `f1/deep/er/x`) makes Rust refuse mid-way (exit 3): `f1`
 is a file once written, so the next `remove_file(f1/deep/er/x)` is `ENOTDIR`, which is not `NotFound`. cancho refuses at the same step (`io` 20) and leaves the same tree.
-**Known differences, as the header of `vcsworktree.cho` says:** the temporary file's place (W3); a name over 242 bytes cannot have one (`io` 36; **read, not run**); the
+**Known differences, as the header of `vcsworktree.cho` says:** the temporary file's place (W3); a name over 242 bytes cannot have one (`io` 36 on Linux, **read, not run there**; on Darwin the kernel refuses the temporary name of a 243-byte one with `ENAMETOOLONG` = 63, **run at the kernel level only**, §8; whether `vcsworktree` says `io` 63 was not run); the
 umask applies to the mode of a new file (the same under `022`, which is all the script runs); `remove_path` through a link as a directory is `io`.
-**Not done:** Darwin; a crash between the write and the rename; a command that calls them (slice 4); the script is not part of `scripts/gate.sh` or CI.
+**Not done:** a crash between the write and the rename; a command that calls them (slice 4); the script is not part of `scripts/gate.sh` or CI.
 
 ## 7. For the session on a Mac **[choice]**
 
@@ -91,7 +91,7 @@ Everything above ran on Linux x86-64 only. A session on Apple silicon has three 
 1. **Run the five scripts there**, each as `sh examples/selfhost/NAME_check.sh target/release/cancho` after `cargo build --release -p cancho`: `vcsstatus` (31 checks),
    `vcsrepo` (31), `vcsstore` (26), `vcslog` (51) and `vcsworktree` (27). They use only `find`, `sort`, `cksum`, `readlink`, `cp -a`, `head -c` and `mktemp -d`; if one is
    missing a flag on macOS, fix the script, not the check. A failure there is the first measurement of Darwin for these modules.
-2. **Measure what §9 of `directory-links.md` and §5 above list as not measured**: the value of `AT_REMOVEDIR` and `ENOTEMPTY` and the `ELOOP` of `dir_enter` on a link (the
+2. **(Done, §8.) Measure what §9 of `directory-links.md` and §5 above list as not measured**: the value of `AT_REMOVEDIR` and `ENOTEMPTY` and the `ELOOP` of `dir_enter` on a link (the
    `directory_rmdir` and `directory_links` command tests pin them: run `scripts/gate.sh`), renaming over an existing file and over a link with `dir_rename`, and the
    longest name that can have a `NAME.cancho-tmp-0` beside it (255 minus 13 on Linux; **read, not run** on either kernel). Correct this document and `directory-links.md`
    in place where a claim is false.
@@ -99,3 +99,12 @@ Everything above ran on Linux x86-64 only. A session on Apple silicon has three 
    `seed/aarch64-apple-darwin.ll.gz`; run `scripts/reseed.sh --out reseed-out2` again from the seed alone and `cmp` the file with the first (`.github/workflows/reseed.yml` does
    exactly this on Linux, and can be dispatched for the two Linux seeds). One pull request that changes only `seed/`; check 2 of `seed.md` §5 must be green before anything that
    uses `dir_readlink` (R4: `status` through `vcsstatus.cho`) is routed.
+
+## 8. Darwin (2026-11-11, macOS 26.2, Apple silicon, `main` at 51524d20)
+
+**The five scripts, each `sh examples/selfhost/NAME_check.sh target/release/cancho`, no script changed:** `vcsstatus` 31 ok, `vcsrepo` 31, `vcsstore` 26, `vcslog` 51, `vcsworktree` 27, all exit 0 (the counts of §7). None needed a BSD flag fixed.
+**`tests/commands/vcs_repo.sh`: 81 of 81 with the standalone `cancho` that `scripts/gate.sh` builds from the committed seed**, output identical to `vcs_repo.expected`. Run with the Rust `target/release/cancho` it
+prints 4 `FAILS` lines (`log --path`, `show --patch` exit 0, not 2), because the Rust command implements them: the script tests the command line in cancho, which is what `$1` has to be.
+**The kernel side** (`directory-links.md` §10, `probe.c`, `probe2.c`): `AT_REMOVEDIR` 0x80, `ENOTEMPTY` 66, `ENAMETOOLONG` 63, `ELOOP` 62; renaming a file over a file, over a link (to a file, to a directory, dangling) replaces it and follows
+nothing; the longest name that can have a `NAME.cancho-tmp-0` beside it is **242 bytes** on APFS (run: 243 makes `NAME`, and the 13-byte suffix is refused with `ENAMETOOLONG`). **A claim of this document that was false on Darwin:** none
+here; the ones that were are in `directory-links.md` §10 (`dir_enter` on a link is `ENOTDIR`, not `ELOOP`; a link target is at most 1,023 bytes, not 4,095).
