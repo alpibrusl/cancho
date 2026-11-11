@@ -1,7 +1,8 @@
 edition 12;
-module std.confined;
+module dirs.confined;
 
-// `std.confined` -- `std.dirs.open_file`, and a refusal of a file that has more than one name.
+// `dirs.confined` -- `std.dirs.open_file`, and a refusal of a file that has more than one name. A package, not a `std` module: it needs `dir_nlink`, which only
+// the compiler in cancho has, and `--std` is read by the Rust front end too. Name this file on the command line beside the program: `cancho build main.cho confined.cho`.
 //
 // `docs/directory-nlink.md`. `std.dirs.open_file` follows no symbolic link, but a hard link is not one: it is another name for a file that may
 // lie anywhere, so no open flag can tell it from the file it names, and a program that reads a name that came from outside could be led out of

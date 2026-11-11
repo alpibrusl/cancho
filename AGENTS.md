@@ -364,8 +364,9 @@ first, with the capability it is about to use (edition 9):
 * **`Fs("/data")` bounds the text of a path, not the files it reaches.** A symbolic link inside `/data` that points
   outside it is followed by the operation, and so is a hard link, and the report still says `fs_read("/data")`.
   Measured: both were read. If the directory must hold against links, open it once with `open_dir` and read beneath
-  the handle (§3.7): that refuses a symbolic link and is reported as `dir_read`. It does not refuse a hard link, which
-  is another name for the same file; keep untrusted writers out of the directory.
+  the handle (§3.7): that refuses a symbolic link and is reported as `dir_read`. A hard link is another name for the same
+  file, so no open flag can refuse it; `dirs.confined` (`packages/confined`, edition 12) asks `dir_nlink` first and refuses a file that has more
+  than one name. Keep untrusted writers out of the directory all the same: the question and the open are two calls.
 * Do not write your own `starts_with` over the bound. It will agree with the runtime until the first `/opt/xevil`,
   `a/../b` or 4096-byte path. `docs/processes.md` §4.13 has the rule.
 
@@ -446,7 +447,7 @@ fn main(world: World) -> [] int {
 }
 ```
 
-A hard link is the one thing this does not refuse: it is another name for a file that is already inside the directory, so no open flag can tell. Keep untrusted writers out of the directory.
+A hard link is the one thing this does not refuse: it is another name for a file that is already inside the directory, so no open flag can tell. `dir_nlink(dir, name)` (edition 12, the compiler in cancho only) answers how many names a file has: ask it about the last component before opening, and refuse more than one. `packages/confined/confined.cho` is that walk (`dirs.confined.open_file`, same signature as `std.dirs.open_file`; name the file on the command line beside your program). The question and the open are two calls, so a link made between them is not seen: keep untrusted writers out of the directory.
 
 * **Programs** (edition 9). `exec_spawn_under(exec, dir, "worker.sh", args, env, stdin, stdout, stderr)` starts the program the name names *in that directory*, which is also the child's working directory. It needs the `Exec` that
   bounds nothing (a narrowed one is `capability-misused`: a run-time directory cannot be shown to lie under a literal), and its row is `exec_under`, so the report says "programs of a directory I was given" and not `exec("")`. The name

@@ -136,7 +136,7 @@ operation), not the files those names reach. Measured on `7684baa2`, with the pr
 |---|---|---|
 | a plain file | read | read |
 | a symbolic link to a file outside | **read** | refused (`O_NOFOLLOW`, one component at a time) |
-| a hard link to a file outside | **read** | **read**: a hard link is another name for the same file, so no open flag can tell |
+| a hard link to a file outside | **read** | **read** with `std.dirs.open_file`: a hard link is another name for the same file, so no open flag can tell. `dirs.confined.open_file` (edition 12) asks `dir_nlink` first and refuses it (`directory-nlink.md`) |
 | `..` in the path | traps (`SIGILL`; measured) | refused with `EINVAL` (`directory-handles.md` §2; not re-measured) |
 
 The report reads `fs_read("/tmp/x/data")` for the `Fs` form and `dir_read` plus `fs_read("/tmp/x/data")` (the anchor) for the `Dir` form, so a
@@ -150,8 +150,7 @@ form in `--output json` is proposed in #762; it is a compiler change and is not 
 that wants "this one program" should require the exact path in the label. What the allowed program then does is outside the report: `env`, `sh` or
 `xargs` start others, so an allowlist should name programs that do not.
 
-**Hard links through `Dir`.** The `Dir` form does not refuse a hard link either, and the directory API does not expose a link count (`dir_stat` answers
-kind, size and time), so a program cannot check for one. Keep untrusted writers out of a directory the program treats as confined.
+**Hard links through `Dir`.** `std.dirs.open_file` does not refuse a hard link. `dirs.confined.open_file` does: it asks `dir_nlink` (edition 12, `directory-nlink.md`) about the last component and refuses a file with more than one name. The question and the open are two calls, so a link made between them is not seen: keep untrusted writers out of a directory the program treats as confined.
 
 ---
 
