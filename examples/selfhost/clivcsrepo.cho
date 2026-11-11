@@ -1,0 +1,671 @@
+edition 9;
+module selfhost.clivcsrepo;
+
+// clivcsrepo.cho -- the repository side of `cancho vcs` in the command line in cancho (`docs/vcs-routing.md`, slice R1): `init`, `log` and `show`. The libraries are `vcsstore.cho` and `vcsrepo.cho`; this module is
+// what a person types: the options, finding the repository, the one JSON document on standard output, and the exit status. `clivcs.cho` is the other side of `vcs` (`publish`, `log --store`, ...).
+//
+// Routing (`docs/vcs-routing.md` D1), as the Rust command's `cmd_vcs`: `log` is the manifest log when `--store` is named or no repository is in reach from the current directory, and the repository log
+// otherwise; `init` and `show` are always this module's. Finding the repository (D2): from `--repo PATH` or the current directory, upward, to the first directory that holds `.cancho/vcs/format`.
+// **Not the Rust command's:** it resolves links in the start (`canonicalize`); this one takes `--repo PATH` as written (collapsing `a/..`), so a path with a link in it prints another `root` for `init`.
+//
+// Every command takes `--output json` (the only form), `--repo PATH` and `--dry-run`. `init` takes `[DIR]` and `--branch NAME`; `log` takes `[REV]` and `--limit N`; `show` takes `[REV]`. The options the Rust
+// `log` and `show` have and this does not (`log --path|--intent|--session|--issue|--author`, `show --patch`) are said to be missing, with exit 2; they are not read as something else.
+//
+// A refusal is a document `{"command", "ok": false, "refused": {"message", "tag"}}` and exit 1, an environment failure exit 3 (the Rust command's two). The message is the Rust sentence for `not-a-repository`,
+// `bad-revision` (`vcsrepo.refusal_document`) and `bad-argument`; for the tags whose Rust message carries what only the Rust store knows (an object that is damaged, the OS's words for an `io` failure) it is the
+// tag's own sentence: the tag and the status agree, the message does not.
+
+import std.buffer;
+import std.bytes;
+import std.io as console;
+import selfhost.lexcore as lc;
+import selfhost.clibase;
+import selfhost.cliproject;
+import selfhost.jsonwrite;
+import selfhost.vcsobj;
+import selfhost.vcsrepo;
+import selfhost.vcsstore;
+import selfhost.walk;
+
+// ---- the options -------------------------------------------------------------------------------------------------------------
+
+// Where each option's value is: the index of its argument and the offset in it (0 when the value is the next argument, the place after `=` when it is inline), -1 when it was not given. `bad` is 0, or the status of
+// a usage error that has been said.
+struct Options {
+    bad: int,
+    repo_at: int,
+    repo_off: int,
+    branch_at: int,
+    branch_off: int,
+    limit_at: int,
+    limit_off: int,
+    rev_at: int,
+    dry: bool,
+}
+
+// `before`, `what` and `after`, said as a usage error.
+fn usage[&h, &i, &w](heap: &!h Heap, io: &!i Io, before: &static [byte], what: &w [byte], after: &static [byte]) -> [heap, err_write] int {
+    var message = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 96), before), what);
+    message = buffer.append(heap, message, after);
+    var status = 0;
+    borrow message as &mb in {
+        status = clibase.usage_error(heap, io, buffer.bytes(mb));
+    }
+    buffer.drop(heap, message);
+    return status;
+}
+
+// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log` and 2 for `show`.
+fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: int) -> [heap, err_write, args] Options {
+    var bad = 0;
+    var repo_at = 0 - 1;
+    var repo_off = 0;
+    var branch_at = 0 - 1;
+    var branch_off = 0;
+    var limit_at = 0 - 1;
+    var limit_off = 0;
+    var rev_at = 0 - 1;
+    var dry = false;
+    var plain_only = false;
+    var n = 3;
+    while n < arg_count(args) && bad == 0 {
+        let word = arg(args, n);
+        if plain_only || len(word) < 2 || lc.at(word, 0) != '-' || lc.at(word, 1) != '-' {
+            if rev_at < 0 {
+                rev_at = n;
+            }
+        } else if bytes.equal(word, "--") {
+            plain_only = true;
+        } else {
+            let eq = bytes.find(word, "=");
+            var key = word;
+            var inline = 0 - 1;
+            if eq >= 0 {
+                key = word[0..eq];
+                inline = eq + 1;
+            }
+            var takes = 0;
+            if bytes.equal(key, "--output") || bytes.equal(key, "--repo") {
+                takes = 1;
+            } else if bytes.equal(key, "--branch") && command == 0 {
+                takes = 1;
+            } else if bytes.equal(key, "--limit") && command == 1 {
+                takes = 1;
+            } else if command == 1 && (bytes.equal(key, "--intent") || bytes.equal(key, "--session") || bytes.equal(key, "--issue") || bytes.equal(key, "--path") || bytes.equal(key, "--author")) {
+                takes = 2;
+            } else if command == 2 && bytes.equal(key, "--patch") {
+                takes = 3;
+            } else if bytes.equal(key, "--dry-run") {
+                takes = 4;
+            }
+            if takes == 0 {
+                bad = usage(heap, io, "unknown option `", key, "`");
+            } else if takes == 3 {
+                bad = usage(heap, io, "`", key, "` is not in this build of `cancho vcs show` (docs/vcs-routing.md D7); the Rust build has it");
+            } else if takes == 4 {
+                dry = true;
+            } else {
+                var at = n;
+                var off = inline;
+                if inline < 0 {
+                    if n + 1 >= arg_count(args) {
+                        bad = usage(heap, io, "`", key, "` needs a value");
+                    } else {
+                        n = n + 1;
+                        at = n;
+                        off = 0;
+                    }
+                }
+                if bad == 0 {
+                    if takes == 2 {
+                        bad = usage(heap, io, "`", key, "` is not in this build of `cancho vcs log` (docs/vcs-routing.md D7); the Rust build has it");
+                    } else if bytes.equal(key, "--output") {
+                        let given = arg(args, at);
+                        if !bytes.equal(given[off..len(given)], "json") {
+                            bad = usage(heap, io, "`--output` is `json`, the only form", "", "");
+                        }
+                    } else if bytes.equal(key, "--repo") {
+                        repo_at = at;
+                        repo_off = off;
+                    } else if bytes.equal(key, "--branch") {
+                        branch_at = at;
+                        branch_off = off;
+                    } else {
+                        limit_at = at;
+                        limit_off = off;
+                    }
+                }
+            }
+        }
+        n = n + 1;
+    }
+    return Options { bad: bad, repo_at: repo_at, repo_off: repo_off, branch_at: branch_at, branch_off: branch_off, limit_at: limit_at, limit_off: limit_off, rev_at: rev_at, dry: dry };
+}
+
+// The value at argument `at`, from `off`.
+fn value_of[&a](args: &a Args, at: int, off: int) -> [args] &a [byte] {
+    let text = arg(args, at);
+    return text[off..len(text)];
+}
+
+// `text` as a count the way Rust's `usize::from_str` reads one (digits, with one `+` before them allowed), or -1.
+fn count_of[&t](text: &t [byte]) -> [] int {
+    var at = 0;
+    if len(text) > 0 && lc.at(text, 0) == '+' {
+        at = 1;
+    }
+    if at >= len(text) {
+        return 0 - 1;
+    }
+    var n = 0;
+    while at < len(text) {
+        let c = lc.at(text, at);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        n = n * 10 + (c - '0');
+        if n > 1000000000000 {
+            n = 1000000000000;
+        }
+        at = at + 1;
+    }
+    return n;
+}
+
+// ---- finding the repository --------------------------------------------------------------------------------------------------
+
+// What the directory `path` has: status 0 nothing, 1 a `.cancho/vcs/format` that says `cancho-vcs 1`, 2 one that says something else (its text, trimmed, in `bytes`).
+fn probe[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), dir_read, dir_write, file_read] vcsstore.Object {
+    var kind = 0;
+    var said = buffer.empty(heap, 0);
+    match open_dir(fs, path) {
+        DirOpened::Ok(r0) => {
+            var root = r0;
+            borrow root as &rd in {
+                match vcsstore.enter_vcs(rd) {
+                    DirOpened::Ok(v0) => {
+                        var vcs = v0;
+                        borrow vcs as &vd in {
+                            let read = vcsstore.read_text(heap, vd, "format");
+                            let (text, status, errno) = vcsstore.parts(read);
+                            if status == 0 {
+                                borrow text as &tb in {
+                                    if bytes.equal(buffer.bytes(tb), "cancho-vcs 1\n") {
+                                        kind = 1;
+                                    } else {
+                                        kind = 2;
+                                        buffer.drop(heap, said);
+                                        said = buffer.append(heap, buffer.empty(heap, 32), vcsstore.trimmed(buffer.bytes(tb)));
+                                    }
+                                }
+                            }
+                            buffer.drop(heap, text);
+                        }
+                        dir_close(vcs);
+                    }
+                    DirOpened::Failed(e) => {
+                        kind = 0;
+                    }
+                }
+            }
+            dir_close(root);
+        }
+        DirOpened::Failed(e) => {
+            kind = 0;
+        }
+    }
+    return vcsstore.Object { bytes: said, status: kind, errno: 0 };
+}
+
+// The first directory at or above `start` (an absolute path) that holds a repository: its path in `bytes` and status 0; or status 1 (none) or 2 (a store of another format, its text in `bytes`).
+fn find_root[&h, &f, &s](heap: &!h Heap, fs: &f Fs(""), start: &s [byte]) -> [heap, fs_read(""), dir_read, dir_write, file_read] vcsstore.Object {
+    var at = buffer.append(heap, buffer.empty(heap, len(start) + 1), start);
+    var up = 0;
+    while up < 4096 {
+        var kind = 0;
+        var said = buffer.empty(heap, 0);
+        var above = buffer.empty(heap, 0);
+        var top = false;
+        borrow at as &ab in {
+            let found = probe(heap, fs, buffer.bytes(ab));
+            let (text, status, errno) = vcsstore.parts(found);
+            kind = status;
+            buffer.drop(heap, said);
+            said = text;
+            top = len(buffer.bytes(ab)) <= 1;
+            if kind == 0 && !top {
+                buffer.drop(heap, above);
+                above = cliproject.ancestor(heap, buffer.bytes(ab), 1);
+            }
+        }
+        if kind == 1 {
+            buffer.drop(heap, said);
+            buffer.drop(heap, above);
+            return vcsstore.Object { bytes: at, status: 0, errno: 0 };
+        }
+        if kind == 2 {
+            buffer.drop(heap, at);
+            buffer.drop(heap, above);
+            return vcsstore.Object { bytes: said, status: 2, errno: 0 };
+        }
+        buffer.drop(heap, said);
+        if top {
+            buffer.drop(heap, above);
+            buffer.drop(heap, at);
+            return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: 0 };
+        }
+        buffer.drop(heap, at);
+        at = above;
+        up = up + 1;
+    }
+    buffer.drop(heap, at);
+    return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: 0 };
+}
+
+// `path` as an absolute path: it as it is when it begins with `/`, else beneath `cwd`; `a/..` pairs collapsed (an `Fs` traps on `..`).
+fn absolute[&h, &c, &p](heap: &!h Heap, cwd: &c [byte], path: &p [byte]) -> [heap] buffer.Buffer {
+    var joined = cliproject.beneath(heap, cwd, path);
+    var made = buffer.empty(heap, 0);
+    borrow joined as &jb in {
+        buffer.drop(heap, made);
+        made = walk.collapse(heap, buffer.bytes(jb));
+    }
+    buffer.drop(heap, joined);
+    return made;
+}
+
+// ---- the documents -----------------------------------------------------------------------------------------------------------
+
+// `{"command": COMMAND, "ok": false, "refused": {"message": MESSAGE, "tag": TAG}}`.
+fn refusal[&h, &c, &m, &t](heap: &!h Heap, command: &c [byte], message: &m [byte], tag: &t [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), command);
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "false");
+    b = buffer.push(heap, vcsrepo.member(heap, b, 1, false, "refused"), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, true, "message"), message);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "tag"), tag);
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(125));
+    return buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+}
+
+// The sentence for a status of the store that this module has no Rust sentence for (see the header).
+fn sentence(status: int) -> [] &static [byte] {
+    if status == 10 {
+        return "an input/output error";
+    }
+    if status == 3 {
+        return "the store holds an object that does not match its id";
+    }
+    if status == 11 {
+        return "the store has no such object";
+    }
+    if status == 15 {
+        return "a lock is held";
+    }
+    return "the command was refused";
+}
+
+// `answer` (the store's: a document in `bytes` and status 0, or a refusal status) said as `command` says it. `spec` is the revision given, for `bad-revision`.
+fn answered[&h, &i, &c, &p](heap: &!h Heap, io: &!i Io, command: &c [byte], answer: vcsstore.Object, spec: &p [byte]) -> [heap, io_write] int {
+    let (doc, status, errno) = vcsstore.parts(answer);
+    var code = 0;
+    if status == 0 {
+        borrow doc as &db in {
+            buffer.write(io, db);
+        }
+    } else if status >= 18 && status <= 22 {
+        borrow doc as &cb in {
+            let said = vcsrepo.refusal_document(heap, command, status, spec, buffer.bytes(cb));
+            borrow said as &sb in {
+                buffer.write(io, sb);
+            }
+            buffer.drop(heap, said);
+        }
+        code = 1;
+    } else {
+        let said = refusal(heap, command, sentence(status), vcsstore.tag(status));
+        borrow said as &sb in {
+            buffer.write(io, sb);
+        }
+        buffer.drop(heap, said);
+        code = 1;
+        if status == 10 {
+            code = 3;
+        }
+    }
+    buffer.drop(heap, doc);
+    return code;
+}
+
+// A refusal that this module makes itself, said.
+fn refused[&h, &i, &c, &m, &t](heap: &!h Heap, io: &!i Io, command: &c [byte], message: &m [byte], tag: &t [byte]) -> [heap, io_write] int {
+    let said = refusal(heap, command, message, tag);
+    borrow said as &sb in {
+        buffer.write(io, sb);
+    }
+    buffer.drop(heap, said);
+    return 1;
+}
+
+// ---- the commands ------------------------------------------------------------------------------------------------------------
+
+// The repository found upward from `given` (taken from `cwd`): status 0 and its path in `bytes`, or the refusal said (its exit status in `errno`, status 1).
+fn locate_from[&h, &i, &f, &c, &g, &n](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), cwd: &c [byte], given: &g [byte], command: &n [byte]) -> [heap, io_write, fs_read(""), dir_read, dir_write, file_read] vcsstore.Object {
+    let start = absolute(heap, cwd, given);
+    var found = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: 0 };
+    borrow start as &sb in {
+        let (old, os, oe) = vcsstore.parts(found);
+        buffer.drop(heap, old);
+        found = find_root(heap, fs, buffer.bytes(sb));
+    }
+    buffer.drop(heap, start);
+    let (path, status, errno) = vcsstore.parts(found);
+    if status == 0 {
+        return vcsstore.Object { bytes: path, status: 0, errno: 0 };
+    }
+    var code = 1;
+    var message = buffer.empty(heap, 96);
+    if status == 2 {
+        message = buffer.append(heap, message, "unknown store format `");
+        borrow path as &pb in {
+            message = buffer.append(heap, message, buffer.bytes(pb));
+        }
+    } else {
+        message = buffer.append(heap, message, "no `.cancho/vcs` at or above `");
+        message = buffer.append(heap, message, given);
+    }
+    message = buffer.push(heap, message, byte_of(96));
+    borrow message as &mb in {
+        code = refused(heap, io, command, buffer.bytes(mb), "not-a-repository");
+    }
+    buffer.drop(heap, message);
+    buffer.drop(heap, path);
+    return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: code };
+}
+
+// The repository the command is run in: `--repo`, or `.`.
+fn locate[&h, &i, &a, &f, &c, &n](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), cwd: &c [byte], options: Options, command: &n [byte]) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, file_read] vcsstore.Object {
+    if options.repo_at >= 0 {
+        return locate_from(heap, io, fs, cwd, value_of(args, options.repo_at, options.repo_off), command);
+    }
+    return locate_from(heap, io, fs, cwd, ".", command);
+}
+
+// ---- the commands ------------------------------------------------------------------------------------------------------------
+
+// `log [REV] [--limit N]` in the repository whose store is `vcs`.
+fn log_in[&h, &i, &a, &d](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir, options: Options) -> [heap, io_write, args, dir_read, dir_write, file_read] int {
+    var spec = "";
+    var have = false;
+    if options.rev_at >= 0 {
+        spec = arg(args, options.rev_at);
+        have = true;
+    }
+    var limit = 0 - 1;
+    if options.limit_at >= 0 {
+        limit = count_of(value_of(args, options.limit_at, options.limit_off));
+        if limit < 0 {
+            return refused(heap, io, "log", "`--limit` is a count", "bad-argument");
+        }
+    }
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    var code = 0;
+    borrow mut scratch as &!s in {
+        code = answered(heap, io, "log", vcsrepo.log_command(heap, vcs, contents(s), spec, have, limit), spec);
+    }
+    unbox_slice(heap, scratch);
+    return code;
+}
+
+// `show [REV]` in the repository whose store is `vcs`.
+fn show_in[&h, &i, &a, &d](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir, options: Options) -> [heap, io_write, args, dir_read, dir_write, file_read] int {
+    var spec = "";
+    if options.rev_at >= 0 {
+        spec = arg(args, options.rev_at);
+    }
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    var code = 0;
+    borrow mut scratch as &!s in {
+        code = answered(heap, io, "show", vcsrepo.show_command(heap, vcs, contents(s), spec), spec);
+    }
+    unbox_slice(heap, scratch);
+    return code;
+}
+
+// The child directory `name` of `dir`, made (mode 0755) if it is not there.
+fn make_below[&d, &n](dir: &d Dir, name: &n [byte]) -> [dir_read, dir_write] DirOpened {
+    match dir_enter(dir, name) {
+        DirOpened::Ok(child) => {
+            return DirOpened::Ok(child);
+        }
+        DirOpened::Failed(e) => {
+            match dir_mkdir(dir, name, 493) {
+                Done::Ok(n) => {
+                    return dir_enter(dir, name);
+                }
+                Done::Failed(e2) => {
+                    return DirOpened::Failed(e2);
+                }
+            }
+        }
+    }
+}
+
+// The directories of `path` from `at` (an absolute path, `.` components skipped, each made if it is not there), then the repository made in the last: `vcsstore.init`'s answer (errno 1 when it made one).
+fn init_below[&h, &d, &p, &b](heap: &!h Heap, dir: &d Dir, path: &p [byte], at: int, branch: &b [byte]) -> [heap, dir_read, dir_write, file_read, file_write] vcsstore.Object {
+    var from = at;
+    while from < len(path) && lc.at(path, from) == '/' {
+        from = from + 1;
+    }
+    if from >= len(path) {
+        return vcsstore.init(heap, dir, branch);
+    }
+    var to = from;
+    while to < len(path) && lc.at(path, to) != '/' {
+        to = to + 1;
+    }
+    let name = path[from..to];
+    if bytes.equal(name, ".") {
+        return init_below(heap, dir, path, to, branch);
+    }
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: 0 };
+    match make_below(dir, name) {
+        DirOpened::Ok(c0) => {
+            var child = c0;
+            borrow child as &cd in {
+                let (old, os, oe) = vcsstore.parts(answer);
+                buffer.drop(heap, old);
+                answer = init_below(heap, cd, path, to, branch);
+            }
+            dir_close(child);
+        }
+        DirOpened::Failed(e) => {
+            let (old, os, oe) = vcsstore.parts(answer);
+            buffer.drop(heap, old);
+            answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e };
+        }
+    }
+    return answer;
+}
+
+// The `init` document: `{"branch", "command", "created", "ok", "root"}`, or with `--dry-run` `{"branch", "command", "created": false, "ok", "would_create"}`.
+fn init_document[&h, &b, &r](heap: &!h Heap, branch: &b [byte], created: bool, root: &r [byte], dry: bool, would: bool) -> [heap] buffer.Buffer {
+    var d = buffer.push(heap, buffer.empty(heap, 192), byte_of(123));
+    d = jsonwrite.string(heap, vcsrepo.member(heap, d, 1, true, "branch"), branch);
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "command"), "\"init\"");
+    if created {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "created"), "true");
+    } else {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "created"), "false");
+    }
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "ok"), "true");
+    if dry {
+        if would {
+            d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "would_create"), "true");
+        } else {
+            d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "would_create"), "false");
+        }
+    } else {
+        d = jsonwrite.string(heap, vcsrepo.member(heap, d, 1, false, "root"), root);
+    }
+    return buffer.append(heap, jsonwrite.newline(heap, d, 0), "}\n");
+}
+
+// `init [DIR] [--branch NAME]`: the directory (made if it is not there) holds a repository afterwards. `created` is false when one was already there.
+fn init_command[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), cwd: &c [byte], options: Options) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, file_read, file_write] int {
+    var given = ".";
+    if options.rev_at >= 0 {
+        given = arg(args, options.rev_at);
+    }
+    var branch = "main";
+    if options.branch_at >= 0 {
+        let text = arg(args, options.branch_at);
+        branch = text[options.branch_off..len(text)];
+    }
+    let target = absolute(heap, cwd, given);
+    var code = 0;
+    borrow target as &tb in {
+        if options.dry {
+            let found = find_root(heap, fs, buffer.bytes(tb));
+            let (text, status, errno) = vcsstore.parts(found);
+            buffer.drop(heap, text);
+            let said = init_document(heap, branch, false, "", true, status != 0);
+            borrow said as &sb in {
+                buffer.write(io, sb);
+            }
+            buffer.drop(heap, said);
+        } else {
+            match open_dir(fs, "/") {
+                DirOpened::Ok(top0) => {
+                    var top = top0;
+                    var made = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: 0 };
+                    borrow top as &td in {
+                        let (old, os, oe) = vcsstore.parts(made);
+                        buffer.drop(heap, old);
+                        made = init_below(heap, td, buffer.bytes(tb), 0, branch);
+                    }
+                    dir_close(top);
+                    let (text, status, errno) = vcsstore.parts(made);
+                    buffer.drop(heap, text);
+                    if status == 0 {
+                        let said = init_document(heap, branch, errno == 1, buffer.bytes(tb), false, false);
+                        borrow said as &sb in {
+                            buffer.write(io, sb);
+                        }
+                        buffer.drop(heap, said);
+                    } else if status == 16 {
+                        var message = buffer.append(heap, buffer.empty(heap, 64), "`heads/");
+                        message = buffer.append(heap, message, branch);
+                        message = buffer.append(heap, message, "` is not a ref name");
+                        borrow message as &mb in {
+                            code = refused(heap, io, "init", buffer.bytes(mb), "bad-ref-name");
+                        }
+                        buffer.drop(heap, message);
+                    } else {
+                        code = answered(heap, io, "init", vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: errno }, "");
+                    }
+                }
+                DirOpened::Failed(e) => {
+                    code = answered(heap, io, "init", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+                }
+            }
+        }
+    }
+    buffer.drop(heap, target);
+    return code;
+}
+
+// ---- the entry points --------------------------------------------------------------------------------------------------------
+
+// Whether `cancho vcs SUB` is this module's: `init` and `show` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
+pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read] bool {
+    let sub = arg(args, 2);
+    if bytes.equal(sub, "init") || bytes.equal(sub, "show") {
+        return true;
+    }
+    if !bytes.equal(sub, "log") {
+        return false;
+    }
+    var n = 3;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, "--store") || (len(word) > 8 && bytes.equal(word[0..8], "--store=")) {
+            return false;
+        }
+        n = n + 1;
+    }
+    let cwd = cliproject.current_directory(heap, io, exec, clock);
+    var found = false;
+    borrow cwd as &cb in {
+        let root = find_root(heap, fs, buffer.bytes(cb));
+        let (path, status, errno) = vcsstore.parts(root);
+        found = status == 0;
+        buffer.drop(heap, path);
+    }
+    buffer.drop(heap, cwd);
+    return found;
+}
+
+// `cancho vcs init|log|show ...`.
+pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read, file_write] int {
+    let verb = arg(args, 2);
+    var which = 2;
+    var name = "show";
+    if bytes.equal(verb, "init") {
+        which = 0;
+        name = "init";
+    } else if bytes.equal(verb, "log") {
+        which = 1;
+        name = "log";
+    }
+    let options = options_of(heap, io, args, which);
+    if options.bad != 0 {
+        return options.bad;
+    }
+    let cwd = cliproject.current_directory(heap, io, exec, clock);
+    var code = 0;
+    borrow cwd as &cb in {
+        if which == 0 {
+            code = init_command(heap, io, args, fs, buffer.bytes(cb), options);
+        } else {
+            let located = locate(heap, io, args, fs, buffer.bytes(cb), options, name);
+            let (path, status, errno) = vcsstore.parts(located);
+            if status != 0 {
+                code = errno;
+            } else {
+                borrow path as &pb in {
+                    match open_dir(fs, buffer.bytes(pb)) {
+                        DirOpened::Ok(r0) => {
+                            var root = r0;
+                            borrow root as &rd in {
+                                match vcsstore.enter_vcs(rd) {
+                                    DirOpened::Ok(v0) => {
+                                        var vcs = v0;
+                                        borrow vcs as &vd in {
+                                            if which == 1 {
+                                                code = log_in(heap, io, args, vd, options);
+                                            } else {
+                                                code = show_in(heap, io, args, vd, options);
+                                            }
+                                        }
+                                        dir_close(vcs);
+                                    }
+                                    DirOpened::Failed(e) => {
+                                        code = answered(heap, io, name, vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+                                    }
+                                }
+                            }
+                            dir_close(root);
+                        }
+                        DirOpened::Failed(e) => {
+                            code = answered(heap, io, name, vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, path);
+        }
+    }
+    buffer.drop(heap, cwd);
+    return code;
+}
