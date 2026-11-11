@@ -372,6 +372,79 @@ first, with the capability it is about to use (edition 9):
 
 * **Files.** Open the directory once, `open_dir(fs, arg(g, 1))`, and write the library over `&Dir` (`std.dirs.open_file`, `dir_open_new`, `dir_rename`, ...). It is generic in the directory, its row is `dir_read`/`dir_write` with no
   path, and no link is followed. The opener's report still says `fs_read("")`: the path is not known to the program.
+Reading a file whose name comes from outside (an argument, a request) is the case where this matters. Over `Fs("/srv/data")` the name `link/x`, with `link` a symbolic link to elsewhere, is read; over a `Dir` it is refused, and so is `..`. A complete program, checked by the suite:
+
+```cancho
+edition 6;
+
+import std.dirs;
+
+// Read the first chunk of the file called `name` beneath `dir`, or answer -1. The name may come from outside: a symbolic link, a `..` or a
+// name that leads through a link is refused, so the answer never describes a file outside the directory that was opened.
+fn first_chunk[&d, &n, &b](dir: &d Dir, name: &n [byte], into: &!b [byte]) -> [dir_read, file_read] int {
+    var got = 0 - 1;
+    match dirs.open_file(dir, name) {
+        Opened::Ok(file) => {
+            var f = file;
+            borrow mut f as &!h in {
+                match file_read(h, into) {
+                    Read::Got(n) => {
+                        got = n;
+                    }
+                    Read::End => {
+                        got = 0;
+                    }
+                    Read::Failed(e) => {
+                    }
+                }
+            }
+            file_close(f);
+        }
+        Opened::Failed(e) => {
+        }
+    }
+    return got;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(io); release(ffi); release(net); release(clock); release(signals);
+    let data = narrow(fs, "/srv/data");
+    var status = 1;
+    borrow data as &f in {
+        match open_dir(f, "/srv/data") {
+            DirOpened::Ok(d) => {
+                var held = d;
+                borrow args as &g in {
+                    borrow mut heap as &!h in {
+                        let buf = box_slice(h, 4096, byte_of(0));
+                        borrow held as &dd in {
+                            borrow mut buf as &!w in {
+                                if arg_count(g) > 1 {
+                                    if first_chunk(dd, arg(g, 1), contents(w)) >= 0 {
+                                        status = 0;
+                                    }
+                                }
+                            }
+                        }
+                        unbox_slice(h, buf);
+                    }
+                }
+                dir_close(held);
+            }
+            DirOpened::Failed(e) => {
+            }
+        }
+    }
+    release(data);
+    release(args);
+    release(heap);
+    return status;
+}
+```
+
+A hard link is the one thing this does not refuse: it is another name for a file that is already inside the directory, so no open flag can tell. Keep untrusted writers out of the directory.
+
 * **Programs** (edition 9). `exec_spawn_under(exec, dir, "worker.sh", args, env, stdin, stdout, stderr)` starts the program the name names *in that directory*, which is also the child's working directory. It needs the `Exec` that
   bounds nothing (a narrowed one is `capability-misused`: a run-time directory cannot be shown to lie under a literal), and its row is `exec_under`, so the report says "programs of a directory I was given" and not `exec("")`. The name
   is relative and has no `..` (`a/b` is fine); an empty one, a rooted one, `..` or 4096 bytes **trap**, so a supervisor asks first: `len(name) > 0 && name[0] != '/' && exec_covers(exec, name)`. `exec_spawn_detached_under` is the same for a worker that starts subprocesses of its own: the child leads a process group, so `capture`'s deadline and `child_kill_group` reach them too, and the row adds `exec_detached` (`docs/processes.md` §4.15).
