@@ -75,6 +75,10 @@ pub fn skips[&g, &r](ig: &g [byte], rel: &r [byte], is_dir: bool) -> [] bool {
         cut = cut - 1;
     }
     let name = rel[cut..len(rel)];
+    // The temporary file of `vcsworktree.materialize` (`docs/vcs-worktree.md` W3): a crash leaves it beside its destination.
+    if bytes.ends_with(name, ".cancho-tmp-0") {
+        return true;
+    }
     var at = 0;
     while at <= len(ig) {
         var end = at;
@@ -259,7 +263,7 @@ fn scan_dir[&h, &d, &s, &p, &g](heap: &!h Heap, dir: &d Dir, prefix: &p [byte], 
 // ---- order -------------------------------------------------------------------------------------------------------------------
 
 // Where the line that starts at `at` ends (its newline).
-fn line_end[&t](text: &t [byte], at: int) -> [] int {
+pub fn line_end[&t](text: &t [byte], at: int) -> [] int {
     var i = at;
     while i < len(text) && text[i] != byte_of(10) {
         i = i + 1;
