@@ -123,6 +123,8 @@ checked by hand against the Rust command** (not part of the test, which cannot r
 (its Rust detail names the lock path and the pid; here it is the generic sentence), a crash between the log line and the removal, two writers racing a ref (the crash and race tests are their own slice), and `branch` in a repository
 whose HEAD names a tag.
 
+**R3, Darwin seed written and measured (2026-11-11, macOS 26.2, Apple silicon, `main` at 51524d20; the two Linux seeds are not in this change).** `scripts/reseed.sh --cancho0 target/release/cancho` wrote `seed/aarch64-apple-darwin.ll.gz` (2,002,425 bytes, from 1,914,753) and its SHA-256 `ae2fd525…c01f4` (23,414,261 bytes of IR, from 22,615,893); the IR of stage 2 equals that of stage 3 (the fixed point); `scripts/reseed.sh --out reseed-out2`, from the new seed alone, wrote both files again and `cmp` finds them **identical**; `scripts/gate.sh` (fmt, files, seed, walk, tests: exit 0 with the new seed; two earlier runs, with the old one, stopped at the `backends` command test, which loses part of its output when run after `http_server_upload`, `http_server_stream`, `thread_state` and `api` and is not about `vcs`) builds stage 1, 2 and 3 from the new seed, and `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test --workspace` pass with it. The seed now knows `dir_rmdir`, `dir_symlink` and `dir_readlink`, so check 2 of `seed.md` §5 holds for Darwin; R4 still waits for the Linux seeds (`reseed` workflow).
+
 ## 6. Decisions for the owner
 
 * **O1. Split `vcsrepo.cho` (R0) so `init`, `log` and `show` do not wait for a reseed? Recommendation: yes.** It is a small move of code that already works, and it puts the wrong-and-successful `vcs log` of §1
