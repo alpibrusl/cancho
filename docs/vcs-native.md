@@ -195,10 +195,10 @@ HEAD, and about 400 files clean and then changed; and the tag of the refusals fo
 execute bits, the directory-only rule, the suffix rule, the path rule, the `.git` skip, the order of the sort) each fail it.
 
 **A difference, said by a status and not hidden:** a symbolic link makes `status` answer `refused symlink` (30). The Rust command makes a tree entry of it (mode 120000, the blob of the target); the target cannot be read until
-
-**Closed (2026-11-11, `directory-links.md` §8 slice 3).** `dir_readlink` exists, so `vcsscan.cho` makes the tree entry of a link (mode 120000, the blob of the target text) and `status` no longer answers `refused symlink`: the difference above is gone. `vcsstatus_check.sh` holds it, byte for byte against the Rust command, on twelve states of a working copy with links.
 there is a `readlink` (#685). A name that is not UTF-8 is not refused here (the Rust command refuses it). **Speed**, 654 files and 12.3 MB (the std, docs and examples of this tree), best of 5: the Rust `vcs status`
 0.021 s, `vcsstorectl status` 0.105 s (about 117 MB/s with the reads; BLAKE3 in cancho is the cost, `docs/vcs-native.md` §2). Whole files are read into memory (at most 16 MiB each).
+
+**Closed (2026-11-11, `directory-links.md` §8 slice 3).** `dir_readlink` exists, so `vcsscan.cho` makes the tree entry of a link (mode 120000, the blob of the target text) and `status` no longer answers `refused symlink`: the difference above is gone. `vcsstatus_check.sh` holds it, byte for byte against the Rust command, on twelve states of a working copy with links.
 
 **b4d-1, measured.** `record` writes, with each change, the anchored edits that turn every modified text file of its parent into the new one, and they are hashed into the change's id, so the line diff under them has to
 be the Rust one hunk for hunk. `vcsdiff.cho` is `diff_text.rs` (the histogram algorithm of `git diff --histogram`, with the limits of 200,000 lines and of 64 occurrences) and `anchor.rs`. The lines of the two
@@ -259,7 +259,7 @@ a store the Rust command wrote, not a command.
 **Unverified.** Whether an `Fs` held by the command line can reach the directories above the current one, which discovery by walking upward needs (`repo.rs:111`): not read.
 That is checked by the first routed command, `init`, and it is the one place this audit does not say whether a primitive is missing.
 
-**Order this suggests (replaces the order of section 5, items 2 to 5, for what is left).** (1) Answer #684 and #685 (and the `realpath` of item 4): they are the only thing that
+**Order this suggests (replaces the order of section 5, items 2 to 5, for what is left; step (2) is designed in [`vcs-routing.md`](vcs-routing.md)).** (1) Answer #684 and #685 (and the `realpath` of item 4): they are the only thing that
 stops seven commands. (2) Route `log`, `show`, `status` (no-link trees), `branch` and `init` from `cli.cho` so the repository form exists as a command, with parity tests that run
 the pinned JSON of `crates/cancho/tests/vcs_pins/` against it. (3) The git bridge, which waits on no primitive. (4) `record` and the gate. (5) `switch`, `restore`, `revert`,
 `apply` once #684 and #685 land. (6) The crash test, answering #687 by trapping. (7) Mark the Rust `vcs` deprecated.

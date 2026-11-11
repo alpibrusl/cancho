@@ -36,6 +36,7 @@
 - [Connection peer address](conn-peer.md)
 - [Directory handles](directory-handles.md)
 - [Removing a directory, making and reading a link](directory-links.md)
+- [Routing `cancho vcs` through the command line in cancho](vcs-routing.md)
 - [Directory listing](directory-listing.md)
 - [Processes](processes.md)
 - [Foreign authority](foreign-authority.md)
