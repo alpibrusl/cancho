@@ -175,8 +175,7 @@ bytes is never filled (a target is at most 4,095), so the fill check of `dir_rea
 with twelve states of a working copy with links, compared byte for byte with the Rust `cancho vcs status`: a new link, recorded and clean, a changed target, a link to a directory, a dangling link,
 a relative target, a link below a directory, a 500-byte target, a link replaced by a file and back, a file replaced by a link, a link to a directory replaced by a directory, a deleted dangling link,
 `.canchoignore` skipping a link, and a target that is not UTF-8 (`path-unsupported` from both). All 31 checks of the script pass. **Mutant:** the mode written as `100644` fails nine of them.
-**Not done in 3a:** `materialize` and `remove_path` (the writes of `switch`, `restore`, `revert`, `apply` and `record`'s deletions) do not exist in cancho yet, so there is nothing for them to
-be wired into; they are slice 3b, and need the commands that call them. `vcsstatus_check.sh` is not part of `scripts/gate.sh` or CI; it was run by hand.
+**Not done in 3a:** `materialize` and `remove_path` (the writes of `switch`, `restore`, `revert`, `apply` and `record`'s deletions): slice 3b, built since in `vcsworktree.cho` ([`vcs-worktree.md`](vcs-worktree.md)); nothing calls them yet. `vcsstatus_check.sh` is not part of `scripts/gate.sh` or CI; it was run by hand.
 
 ## 9. Not measured
 

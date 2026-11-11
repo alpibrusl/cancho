@@ -1,0 +1,323 @@
+edition 12;
+module selfhost.vcsworktree;
+
+// vcsworktree.cho -- the two writes of a working copy that `switch`, `restore`, `revert`, `apply` and the deletions of `record` make
+// (`cancho-vcs/src/repo.rs`: `materialize` and `remove_path`; the design is `docs/vcs-worktree.md`).
+//
+//   materialize(heap, root, mode, path, text)   write one tree entry: `mode` 0 a file, 1 an executable, 2 a link; `text` is the blob (a link's target)
+//   remove_path(heap, root, path)               delete a file and the directories it leaves empty, never `root` itself
+//
+// Both answer `(status, errno)`: 0 and 0, 31 (`path-unsupported`: `check_path` refused the path, or a link's target is not UTF-8), or 10 (`io`) and the
+// errno. The caller reads the blob first (an object that cannot be read refuses before the working copy is touched, as in Rust).
+//
+// Differences from the Rust functions, each tested in `vcsworktree_check.sh`:
+//   * the temporary file of a write is `NAME.cancho-tmp-0` beside the destination, not in `.cancho/vcs/tmp` (`dir_rename` renames within one directory).
+//     A crash leaves it there, and `vcsscan.cho` skips that name. A name over 242 bytes cannot have one: `io` 36 (Rust writes it).
+//   * the mode of a new file is asked of `dir_open_new_mode` and the umask applies to it (Rust sets it after the file is made): the same under `022`.
+//   * a directory component that is a link is never followed: `dir_enter` refuses it. `materialize` replaces it by a directory, as Rust does;
+//     `remove_path` through one is `io` (Rust removes the file the link leads to).
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import std.utf8;
+import selfhost.filewrite;
+import selfhost.vcsobj;
+import selfhost.vcsstore;
+
+// ---- reading what is there ---------------------------------------------------------------------------------------------------
+
+// What `name` of `dir` is, a link not followed: 0 nothing, 1 a file, 2 a directory, 3 a link, 4 anything else; the second answer is an errno other than
+// "no such name", or 0.
+fn kind_at[&d, &n](dir: &d Dir, name: &n [byte]) -> [dir_read] (int, int) {
+    match dir_stat(dir, name) {
+        DirStat::Ok(kind, size, mtime) => {
+            return (kind, 0);
+        }
+        DirStat::Failed(e) => {
+            if e == 2 {
+                return (0, 0);
+            }
+            return (0, e);
+        }
+    }
+}
+
+// ---- removing ----------------------------------------------------------------------------------------------------------------
+
+// Everything beneath `dir`, and nothing of `dir` itself: files and links by `dir_remove`, a directory by the same on what it holds and then `dir_rmdir`. No
+// link is followed and nothing outside `dir` is reached. 0 or the errno.
+fn clear_dir[&h, &d](heap: &!h Heap, dir: &d Dir) -> [heap, dir_read, dir_write] int {
+    let names = dirs.list(heap, dir, 100000000);
+    var errno = 0;
+    borrow names as &nr in {
+        if dirs.failed(nr) != 0 {
+            errno = dirs.failed(nr);
+        }
+        var i = 0;
+        while i < dirs.count(nr) && errno == 0 {
+            let name = dirs.name(nr, i);
+            let kind = vcsstore.entry_kind(dir, name, dirs.kind(nr, i));
+            if kind == 2 {
+                match dir_enter(dir, name) {
+                    DirOpened::Ok(child) => {
+                        borrow child as &cd in {
+                            errno = clear_dir(heap, cd);
+                        }
+                        dir_close(child);
+                        if errno == 0 {
+                            match dir_rmdir(dir, name) {
+                                Done::Ok(k) => {
+                                }
+                                Done::Failed(e) => {
+                                    errno = e;
+                                }
+                            }
+                        }
+                    }
+                    DirOpened::Failed(e) => {
+                        errno = e;
+                    }
+                }
+            } else {
+                match dir_remove(dir, name) {
+                    Done::Ok(k) => {
+                    }
+                    Done::Failed(e) => {
+                        errno = e;
+                    }
+                }
+            }
+            i = i + 1;
+        }
+    }
+    dirs.drop(heap, names);
+    return errno;
+}
+
+// The directory `name` of `dir` and all it holds, gone: 0 or the errno.
+fn remove_tree[&h, &d, &n](heap: &!h Heap, dir: &d Dir, name: &n [byte]) -> [heap, dir_read, dir_write] int {
+    match dir_enter(dir, name) {
+        DirOpened::Ok(child) => {
+            var errno = 0;
+            borrow child as &cd in {
+                errno = clear_dir(heap, cd);
+            }
+            dir_close(child);
+            if errno != 0 {
+                return errno;
+            }
+            match dir_rmdir(dir, name) {
+                Done::Ok(k) => {
+                    return 0;
+                }
+                Done::Failed(e) => {
+                    return e;
+                }
+            }
+        }
+        DirOpened::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+fn unlink[&d, &n](dir: &d Dir, name: &n [byte]) -> [dir_write] int {
+    match dir_remove(dir, name) {
+        Done::Ok(k) => {
+            return 0;
+        }
+        Done::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+// `rel` beneath `dir`: remove the file at its end (no such name is fine), then each directory it leaves empty on the way back up. The first answer is an errno or
+// 0; a directory that cannot be removed (it is not empty) is not an error.
+fn remove_in[&h, &d, &r](heap: &!h Heap, dir: &d Dir, rel: &r [byte]) -> [heap, dir_read, dir_write] int {
+    let k = bytes.find(rel, "/");
+    if k < 0 {
+        let e = unlink(dir, rel);
+        if e == 2 {
+            return 0;
+        }
+        return e;
+    }
+    let first = rel[0..k];
+    match dir_enter(dir, first) {
+        DirOpened::Ok(child) => {
+            var errno = 0;
+            borrow child as &cd in {
+                errno = remove_in(heap, cd, rel[k + 1..len(rel)]);
+            }
+            dir_close(child);
+            if errno == 0 {
+                dir_rmdir(dir, first);
+            }
+            return errno;
+        }
+        DirOpened::Failed(e) => {
+            if e == 2 {
+                return 0;
+            }
+            return e;
+        }
+    }
+}
+
+// Delete the file `path` beneath `root` and the directories it leaves empty (never `root`).
+pub fn remove_path[&h, &d, &p](heap: &!h Heap, root: &d Dir, path: &p [byte]) -> [heap, dir_read, dir_write] (int, int) {
+    if vcsobj.check_path(path) != 0 {
+        return (31, 0);
+    }
+    let errno = remove_in(heap, root, path);
+    if errno != 0 {
+        return (10, errno);
+    }
+    return (0, 0);
+}
+
+// ---- writing -----------------------------------------------------------------------------------------------------------------
+
+// `comp` of `dir` is a directory when this returns 0: made if it is not there, and replacing a file or a link (a dangling one too) that is in its way.
+fn ensure_dir[&d, &n](dir: &d Dir, comp: &n [byte]) -> [dir_read, dir_write] int {
+    let (kind, why) = kind_at(dir, comp);
+    if why != 0 {
+        return why;
+    }
+    if kind == 2 {
+        return 0;
+    }
+    if kind != 0 {
+        let e = unlink(dir, comp);
+        if e != 0 {
+            return e;
+        }
+    }
+    match dir_mkdir(dir, comp, 493) {
+        Done::Ok(k) => {
+            return 0;
+        }
+        Done::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+// A file `name` of `dir` holding `text`, made whole under `NAME.cancho-tmp-0` and renamed over `name`.
+fn write_file[&h, &d, &n, &t](heap: &!h Heap, dir: &d Dir, name: &n [byte], executable: bool, text: &t [byte]) -> [heap, dir_write, file_write] int {
+    var temporary = buffer.append(heap, buffer.empty(heap, len(name) + 16), name);
+    temporary = buffer.append(heap, temporary, ".cancho-tmp-0");
+    var errno = 0;
+    borrow temporary as &tb in {
+        let tmp = buffer.bytes(tb);
+        unlink(dir, tmp);
+        var mode = 420;
+        if executable {
+            mode = 493;
+        }
+        match dir_open_new_mode(dir, tmp, mode) {
+            Opened::Ok(opened) => {
+                var file = opened;
+                borrow mut file as &!f in {
+                    errno = filewrite.write_all(f, text);
+                }
+                file_close(file);
+                if errno == 0 {
+                    match dir_rename(dir, tmp, name) {
+                        Done::Ok(k) => {
+                        }
+                        Done::Failed(e) => {
+                            errno = e;
+                        }
+                    }
+                }
+                if errno != 0 {
+                    unlink(dir, tmp);
+                }
+            }
+            Opened::Failed(e) => {
+                errno = e;
+            }
+        }
+    }
+    buffer.drop(heap, temporary);
+    return errno;
+}
+
+// A link `name` of `dir` to `text`: what was at the name (a file or a link) goes first.
+fn write_link[&d, &n, &t](dir: &d Dir, name: &n [byte], text: &t [byte]) -> [dir_read, dir_write, dir_symlink] int {
+    let (kind, why) = kind_at(dir, name);
+    if why != 0 {
+        return why;
+    }
+    if kind != 0 {
+        let e = unlink(dir, name);
+        if e != 0 {
+            return e;
+        }
+    }
+    match dir_symlink(dir, name, text) {
+        Done::Ok(k) => {
+            return 0;
+        }
+        Done::Failed(e) => {
+            return e;
+        }
+    }
+}
+
+// The entry at `rel` beneath `dir`: each directory on the way is made or put in place of what is in the way, then the leaf is written, a directory in its
+// place being removed with all it holds.
+fn place[&h, &d, &r, &t](heap: &!h Heap, dir: &d Dir, rel: &r [byte], mode: int, text: &t [byte]) -> [heap, dir_read, dir_write, dir_symlink, file_write] int {
+    let k = bytes.find(rel, "/");
+    if k >= 0 {
+        let first = rel[0..k];
+        var errno = ensure_dir(dir, first);
+        if errno != 0 {
+            return errno;
+        }
+        match dir_enter(dir, first) {
+            DirOpened::Ok(child) => {
+                borrow child as &cd in {
+                    errno = place(heap, cd, rel[k + 1..len(rel)], mode, text);
+                }
+                dir_close(child);
+                return errno;
+            }
+            DirOpened::Failed(e) => {
+                return e;
+            }
+        }
+    }
+    let (kind, why) = kind_at(dir, rel);
+    if why != 0 {
+        return why;
+    }
+    if kind == 2 {
+        let e = remove_tree(heap, dir, rel);
+        if e != 0 {
+            return e;
+        }
+    }
+    if mode == 2 {
+        return write_link(dir, rel, text);
+    }
+    return write_file(heap, dir, rel, mode == 1, text);
+}
+
+// Write the tree entry `path` beneath `root`. `mode` is 0 for a file, 1 for an executable and 2 for a link, whose target is `text`.
+pub fn materialize[&h, &d, &p, &t](heap: &!h Heap, root: &d Dir, mode: int, path: &p [byte], text: &t [byte]) -> [heap, dir_read, dir_write, dir_symlink, file_write] (int, int) {
+    if vcsobj.check_path(path) != 0 {
+        return (31, 0);
+    }
+    if mode == 2 && !utf8.is_valid(text) {
+        return (31, 0);
+    }
+    let errno = place(heap, root, path, mode, text);
+    if errno != 0 {
+        return (10, errno);
+    }
+    return (0, 0);
+}

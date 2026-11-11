@@ -8,6 +8,8 @@ module selfhost.vcsstorectl;
 //   put DIR KIND < FILE                  store the bytes of standard input           prints the id
 //   get DIR KIND ID                      the object's bytes on standard output       (nothing else is printed)
 //   status ROOT                          the working copy at ROOT against HEAD, as the `status` document
+//   restore ROOT PATH                    make PATH of the working copy at ROOT what HEAD's tree has (`vcsworktree.materialize`), or delete it if the tree
+//                                        has no such path (`vcsworktree.remove_path`); prints `ok`
 //   head DIR                             the change HEAD is at (or `absent`)
 //   resolve DIR REV                      the id a revision names: HEAD, @, an id or a prefix of one, a branch or tag, any of them with ~N
 //   ref-read DIR NAME                    the id a ref holds                          prints the id, or `absent`
@@ -21,6 +23,7 @@ import std.bytes;
 import selfhost.vcsobj;
 import selfhost.vcsrepo;
 import selfhost.vcsstatus;
+import selfhost.vcsworktree;
 import selfhost.vcsscan;
 import selfhost.vcsstore;
 import selfhost.lexcore as lc;
@@ -149,6 +152,101 @@ fn status_of[&h, &i, &r](heap: &!h Heap, io: &!i Io, root: &r Dir) -> [heap, io_
     return code;
 }
 
+// `restore`, with HEAD's tree in `tree`: the entry `path` is written as the tree has it, or the path is deleted if the tree has none.
+fn restore_entry[&h, &i, &r, &d, &s, &t, &p](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], path: &p [byte]) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] int {
+    var at = 0;
+    var found = 0 - 1;
+    while at < len(tree) {
+        let end = vcsscan.line_end(tree, at);
+        if bytes.equal(tree[at + 72..end], path) {
+            found = at;
+        }
+        at = end + 1;
+    }
+    var status = 0;
+    var errno = 0;
+    if found < 0 {
+        let (s0, e0) = vcsworktree.remove_path(heap, root, path);
+        status = s0;
+        errno = e0;
+    } else {
+        var mode = 0;
+        if bytes.equal(tree[found..found + 6], "100755") {
+            mode = 1;
+        } else if bytes.equal(tree[found..found + 6], "120000") {
+            mode = 2;
+        }
+        let blob = vcsstore.get(heap, vcs, scratch, "blob", tree[found + 7..found + 71]);
+        let (text, bs, be) = vcsstore.parts(blob);
+        if bs != 0 {
+            status = bs;
+            errno = be;
+        } else {
+            borrow text as &tb in {
+                let (s0, e0) = vcsworktree.materialize(heap, root, mode, path, buffer.bytes(tb));
+                status = s0;
+                errno = e0;
+            }
+        }
+        buffer.drop(heap, text);
+    }
+    if status != 0 {
+        return say_refusal(io, status, errno);
+    }
+    console.write_all(io, "ok");
+    console.newline(io);
+    return 0;
+}
+
+// `restore ROOT PATH`: HEAD's change, its tree, then `restore_entry`.
+fn restore_path[&h, &i, &r, &p](heap: &!h Heap, io: &!i Io, root: &r Dir, path: &p [byte]) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] int {
+    var code = 0;
+    match vcsstore.enter_vcs(root) {
+        DirOpened::Ok(opened) => {
+            var vcs = opened;
+            let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+            borrow vcs as &vd in {
+                borrow mut scratch as &!s in {
+                    let head = vcsrepo.head_change(heap, vd);
+                    let (change, hs, he) = vcsstore.parts(head);
+                    if hs != 0 {
+                        code = say_refusal(io, hs, he);
+                    } else {
+                        borrow change as &cb in {
+                            let found = vcsrepo.tree_id_of(heap, vd, contents(s), buffer.bytes(cb));
+                            let (tid, ts, te) = vcsstore.parts(found);
+                            if ts != 0 {
+                                code = say_refusal(io, ts, te);
+                            } else {
+                                borrow tid as &ib in {
+                                    let read = vcsrepo.tree_text(heap, vd, contents(s), buffer.bytes(ib));
+                                    let (tree, xs, xe) = vcsstore.parts(read);
+                                    if xs != 0 {
+                                        code = say_refusal(io, xs, xe);
+                                    } else {
+                                        borrow tree as &xb in {
+                                            code = restore_entry(heap, io, root, vd, contents(s), buffer.bytes(xb), path);
+                                        }
+                                    }
+                                    buffer.drop(heap, tree);
+                                }
+                            }
+                            buffer.drop(heap, tid);
+                        }
+                    }
+                    buffer.drop(heap, change);
+                }
+            }
+            unbox_slice(heap, scratch);
+            dir_close(vcs);
+        }
+        DirOpened::Failed(e) => {
+            code = say_refusal(io, 10, e);
+        }
+    }
+    return code;
+}
+
 fn command[&h, &i, &a, &d](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir) -> [heap, io_read, io_write, args, dir_read, dir_write, file_read, file_write] int {
     let verb = arg(args, 1);
     let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
@@ -229,6 +327,8 @@ fn main(world: World) -> [] int {
                                         }
                                     } else if bytes.equal(arg(a, 1), "status") {
                                         code = status_of(h, i, d);
+                                    } else if bytes.equal(arg(a, 1), "restore") && arg_count(a) > 3 {
+                                        code = restore_path(h, i, d, arg(a, 3));
                                     } else {
                                         code = command(h, i, a, d);
                                     }
