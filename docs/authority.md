@@ -127,6 +127,24 @@ path the *user* chose has no literal to narrow to — and the point here
 is that the difference is legible **from outside the program**, without
 opening either.
 
+### 2.4 What a path label does not bound
+
+`fs_read("/data")` bounds the **text** of the paths the program may name (`capability-budget.md`'s "granted prefix", checked at run time on each
+operation), not the files those names reach. Measured on `7684baa2`, with the program's `Fs` narrowed to `/tmp/x/data`:
+
+| Inside `/tmp/x/data` | `Fs` form | `Dir` form (`open_dir`, then `std.dirs.open_file`) |
+|---|---|---|
+| a plain file | read | read |
+| a symbolic link to a file outside | **read** | refused (`O_NOFOLLOW`, one component at a time) |
+| a hard link to a file outside | **read** | **read**: a hard link is another name for the same file, so no open flag can tell |
+| `..` in the path | traps (`SIGILL`; measured) | refused with `EINVAL` (`directory-handles.md` §2; not re-measured) |
+
+The report reads `fs_read("/tmp/x/data")` for the `Fs` form and `dir_read` plus `fs_read("/tmp/x/data")` (the anchor) for the `Dir` form, so a
+consumer that diffs the labels against a budget sees the same path in both and cannot tell which one holds. What it can rely on: an effect
+needs a capability, and the report lists every capability the program holds. What it cannot rely on: that a path label confines the program
+to the files under it, when something else can create links inside the directory. `AGENTS.md` §3.6 says so for agents. A field that names the
+form in `--output json` is proposed in #762; it is a compiler change and is not made here.
+
 ---
 
 ## 3. What is still open

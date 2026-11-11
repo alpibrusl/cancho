@@ -356,8 +356,13 @@ first, with the capability it is about to use (edition 9):
   trap, by the same check the operation runs, so there is no second copy of the rule to keep in step. They have no
   row: asking touches nothing, and `cancho authority` shows the same report with or without the question.
 * `true` is not "it exists" or "it is allowed to run": `/opt/x/missing` is covered and `exec_spawn` answers
-  `Spawned::Failed(ENOENT)`. The check is on the text of the path (no symlinks are followed, nothing is
+  `Spawned::Failed(ENOENT)`. The check is on the text of the path (no symlink is resolved, nothing is
   normalised), and `true..x` is outside because the rule is two dots in a row, not a path component.
+* **`Fs("/data")` bounds the text of a path, not the files it reaches.** A symbolic link inside `/data` that points
+  outside it is followed by the operation, and so is a hard link, and the report still says `fs_read("/data")`.
+  Measured: both were read. If the directory must hold against links, open it once with `open_dir` and read beneath
+  the handle (§3.7): that refuses a symbolic link and is reported as `dir_read`. It does not refuse a hard link, which
+  is another name for the same file; keep untrusted writers out of the directory.
 * Do not write your own `starts_with` over the bound. It will agree with the runtime until the first `/opt/xevil`,
   `a/../b` or 4096-byte path. `docs/processes.md` §4.13 has the rule.
 
