@@ -2,7 +2,7 @@ edition 7;
 module confined_test;
 
 // confined.cho -- `dirs.confined.open_file` (`packages/confined`) (`docs/directory-nlink.md`): a file is opened beneath a directory handle following no link, and a file with more than one
-// name is refused. `tests/programs/confined_probe.cho` prints `NAME opened` or `NAME err ERRNO`; `confined.sh` makes a tree with a file that has two names, at the top
+// name is refused. `tests/probes/confined_probe.cho` prints `NAME opened` or `NAME err ERRNO`; `confined.sh` makes a tree with a file that has two names, at the top
 // and in a subdirectory; `confined.expected` is what the probe must print.
 //
 //     cancho build tests/commands/confined.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
@@ -18,7 +18,7 @@ fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: 
         console.error_all(io, "usage: confined CANCHO [--compiler NAME] [--cache DIR]\n");
         return 2;
     }
-    let report = harness.probe_transcript(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), "confined", "tests/programs/confined_probe.cho\0packages/confined/confined.cho", "tests/commands/confined.sh", "tests/commands/confined.expected", buffer.empty(heap, 64));
+    let report = harness.probe_transcript(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), "confined", "tests/probes/confined_probe.cho\0packages/confined/confined.cho", "tests/commands/confined.sh", "tests/commands/confined.expected", buffer.empty(heap, 64));
     var status = 0;
     borrow report as &rb in {
         if len(buffer.bytes(rb)) > 0 {

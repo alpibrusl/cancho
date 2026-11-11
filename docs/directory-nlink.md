@@ -56,4 +56,6 @@ the file is named on the command line beside the program (`cancho build main.cho
 
 `tests/commands/directory_nlink.sh` (macOS aarch64): a plain file 1, two names of one file 2 and 2, a file with three names 3, a symbolic link 1, a missing name `err 2`, `..` and
 `sub/x` `err 22`. `tests/commands/confined.sh`: `plain` opened, `twin` (two names) `err 31`, the same one directory down, a missing name `err 2`, `..` and the empty name `err 22`.
-`tests/reject/dir_nlink_is_edition_twelve.cho` and `dir_nlink_not_declared.cho` hold the edition gate and the row.
+`tests/reject/dir_nlink_is_edition_twelve.cho` holds the edition gate. The probes live in `tests/probes`, not `tests/programs`: the Rust parity tests walk that directory and the Rust front end cannot parse
+`dir_nlink`. For the same reason there is no `not_declared` reject fixture: the Rust front end would refuse it with another rule. The row is held by the probe building at all (a row is exact), and the effect
+list of `dir_nlink` is `dir_mode`'s (`scripts/builtin_tables.py show dir_nlink`).

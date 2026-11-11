@@ -1,4 +1,4 @@
-# confined.sh -- the script of tests/commands/confined.cho. $1 is the probe (tests/programs/confined_probe.cho, built), $2 a scratch directory.
+# confined.sh -- the script of tests/commands/confined.cho. $1 is the probe (tests/probes/confined_probe.cho, built), $2 a scratch directory.
 # The probe opens each name with `dirs.confined.open_file` and prints `NAME opened` or `NAME err ERRNO`. A file with one name opens; a file with two names (`twin`, made with `ln`)
 # is refused with EMLINK (31), at the top and beneath a directory; a missing name, `..` and an empty name answer as `std.dirs.open_file` does.
 probe=$1

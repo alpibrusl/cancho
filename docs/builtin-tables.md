@@ -38,8 +38,8 @@ names in order; the signature stream decodes builtin by builtin with no gap; the
 3. The runtime function, in `runtime/*.c`; `runtime/make.sh` makes the `.ll` files (it also rewrites `net_*.ll` with this machine's clang: restore those if the diff is only noise);
    per-target constants go in `platform.cho` (appended to the end of `cancho_plat`, and to the `enum` in `dirs.c`).
 4. `scripts/embed_runtime.py`, so `runtime.cho` follows the `.ll` files.
-5. A command test in `tests/commands`, reject fixtures for the edition gate and the row, and their lines in `tests/reject.golden` and, while the message differs from the Rust
-   wording, `selfhost/message_gaps.txt`.
+5. A command test in `tests/commands` and its probe in `tests/probes` (not `tests/programs`: the Rust parity tests walk that and cannot parse the builtin), a reject fixture for the edition gate
+   (one the Rust front end refuses with the same rule) and its lines in `tests/reject.golden` and, while the message differs from the Rust wording, `selfhost/message_gaps.txt`.
 6. `scripts/build-standalone.sh`: the compiler must reproduce itself (stage 2 equals stage 3).
 
 ## 4. What this does not do
