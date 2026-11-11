@@ -88,6 +88,8 @@ dir_mode_is_edition_seven.cho	not-a-function	11:11	`dir_mode` is not a function 
 dir_mode_not_declared.cho	effect-not-declared	10:1	`permissions_of` performs `dir_read`, which its row [] does not declare; narrow the body or widen the row
 dir_mode_on_wasi.cho	unsupported-on-target	15:1	`main` uses `dir_own_mode`, and permission bits do not exist on `wasm32-wasip1`: WASI's stat has no permission bits (wasi-libc's `st_mode` carries the file type and nothing else), so `dir_mode` would answer 0 for every file, and the mode `dir_mkdir` and `dir_open_new_mode` are given would be ignored (docs/wasm.md)
 dir_next_not_declared.cho	effect-not-declared	10:1	`next` performs `dir_read`, which its row [] does not declare; narrow the body or widen the row
+dir_nlink_is_edition_twelve.cho	not-a-function	11:11	`dir_nlink` is not a function in this program
+dir_nlink_not_declared.cho	effect-not-declared	10:1	`remove` performs `dir_read`, which its row [] does not declare; narrow the body or widen the row
 dir_open_new_mode_is_edition_nine.cho	not-a-function	11:11	`dir_open_new_mode` is not a function in this program
 dir_open_new_mode_not_declared.cho	effect-not-declared	10:1	`make` performs `dir_write`, which its row [dir_read] does not declare; narrow the body or widen the row
 dir_open_new_mode_on_wasi.cho	unsupported-on-target	13:1	`main` uses `dir_open_new_mode`, and permission bits do not exist on `wasm32-wasip1`: WASI's stat has no permission bits (wasi-libc's `st_mode` carries the file type and nothing else), so `dir_mode` would answer 0 for every file, and the mode `dir_mkdir` and `dir_open_new_mode` are given would be ignored (docs/wasm.md)

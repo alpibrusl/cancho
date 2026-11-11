@@ -7,7 +7,7 @@ module selfhost.signatures;
 // `UPDATE_SELFHOST_TABLES=1 cargo test -p cancho-ir selfhost_tables` rewrites it.
 
 static builtin_sigs: [int] {
-    let t = alloc_slice[static](1553, 0);
+    let t = alloc_slice[static](1567, 0);
     t[1] = 2;
     t[2] = 11;
     t[4] = 13;
@@ -1123,11 +1123,21 @@ static builtin_sigs: [int] {
     t[1549] = 6;
     t[1550] = 1;
     t[1552] = 6;
+    t[1554] = 2;
+    t[1555] = 10;
+    t[1557] = 13;
+    t[1558] = 31;
+    t[1560] = 10;
+    t[1561] = 1;
+    t[1562] = 12;
+    t[1563] = 2;
+    t[1564] = 13;
+    t[1565] = 26;
     return t;
 }
 
 static builtin_sig_starts: [int] {
-    let t = alloc_slice[static](187, 0);
+    let t = alloc_slice[static](188, 0);
     t[1] = 9;
     t[2] = 21;
     t[3] = 33;
@@ -1314,6 +1324,7 @@ static builtin_sig_starts: [int] {
     t[184] = 1539;
     t[185] = 1547;
     t[186] = 1550;
+    t[187] = 1553;
     return t;
 }
 

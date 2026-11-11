@@ -1,0 +1,25 @@
+//~ ERROR `dir_nlink` is not a function in this program
+//~ RULE not-a-function
+
+// `docs/directory-nlink.md` §3: `dir_nlink` is edition 12. An older
+// file may already declare its own `dir_nlink`, so to it the name is not a
+// builtin at all (`editions.md` §7).
+
+edition 11;
+
+fn remove[&d](dir: &d Dir) -> [dir_read] int {
+    match dir_nlink(dir, "out") {
+        Done::Ok(n) => {
+            return n;
+        }
+        Done::Failed(e) => {
+            return 0 - e;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock); release(signals); release(exec); release(tty);
+    return 0;
+}

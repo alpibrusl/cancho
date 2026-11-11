@@ -83,6 +83,8 @@ dir_mkdir_not_declared.cho
 dir_mode_is_edition_seven.cho
 dir_mode_not_declared.cho
 dir_next_not_declared.cho
+dir_nlink_is_edition_twelve.cho
+dir_nlink_not_declared.cho
 dir_open_new_mode_is_edition_nine.cho
 dir_open_new_mode_not_declared.cho
 dir_read_not_declared.cho

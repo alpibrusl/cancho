@@ -44,4 +44,5 @@ conns.cho
 udps.cho
 signals.cho
 dirs.cho
+confined.cho
 process.cho

@@ -3,7 +3,7 @@ module selfhost.platform;
 // platform.cho -- the constants of the target that the directory support (`runtime/dirs.c`) reads from the array
 // `cancho_plat`, in the order of its `enum`: the open flags the steps use, `AT_FDCWD`, the no-replace rename and
 // what it answers when it cannot, `ENAMETOOLONG`, where `struct dirent` and `struct stat` keep what is read,
-// `d_type`'s values, `AT_SYMLINK_NOFOLLOW`, the mode a created file gets. `target` is 1 for Darwin, 2 for Linux on
+// `d_type`'s values, `AT_SYMLINK_NOFOLLOW`, the mode a created file gets, where `st_nlink` is and how wide. `target` is 1 for Darwin, 2 for Linux on
 // aarch64, 0 for Linux on x86-64.
 
 import selfhost.emit;
@@ -38,7 +38,7 @@ pub fn print[&s](st: &!s [int]) -> [] int {
         directory = 16384;
         nofollow = 32768;
     }
-    emit.str(st, "@cancho_plat = private constant [21 x i64] [");
+    emit.str(st, "@cancho_plat = private constant [23 x i64] [");
     value(st, directory | cloexec, true);
     value(st, directory | nofollow | cloexec, false);
     value(st, nofollow | cloexec, false);
@@ -80,6 +80,16 @@ pub fn print[&s](st: &!s [int]) -> [] int {
         value(st, 256, false);
     }
     value(st, 420, false);
+    if darwin {
+        value(st, 6, false);
+        value(st, 16, false);
+    } else if target == 2 {
+        value(st, 20, false);
+        value(st, 32, false);
+    } else {
+        value(st, 16, false);
+        value(st, 64, false);
+    }
     emit.str(st, "]\n\n");
     return 0;
 }

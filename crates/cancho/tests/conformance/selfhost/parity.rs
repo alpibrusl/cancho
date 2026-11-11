@@ -151,9 +151,9 @@ fn rules_and_builtins_are_the_goldens() {
     assert_eq!(rules, golden("rules"), "tests/rules.golden is not the rules of cancho_syntax");
     let builtins: Vec<String> =
         cancho_ir::Builtin::ALL.iter().map(|b| b.name().to_owned()).collect();
-    assert_eq!(
-        builtins,
-        golden("builtins"),
-        "tests/builtins.golden is not the builtins of cancho_ir"
+    // A builtin that only the compiler in cancho has (`scripts/builtin_tables.py append`, `docs/builtin-tables.md`) is appended after these.
+    assert!(
+        golden("builtins").starts_with(&builtins),
+        "tests/builtins.golden does not begin with the builtins of cancho_ir"
     );
 }

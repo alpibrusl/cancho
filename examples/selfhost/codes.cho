@@ -251,6 +251,9 @@ pub fn net_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     if lc.spells(text, from, to, "dir_own_mode") {
         return 69;
     }
+    if lc.spells(text, from, to, "dir_nlink") {
+        return 148;
+    }
     if lc.spells(text, from, to, "dir_open_new_mode") {
         return 140;
     }
