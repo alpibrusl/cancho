@@ -11,6 +11,7 @@ DYNAMIC_SENTINEL = "cache/result.txt"   # the one effect an execution on the tes
 def evaluate(lang, name, B_root):
     base = tempfile.mkdtemp(prefix="e4m-"); e4.setup(base)
     d = os.path.join(base, "src"); os.makedirs(d)
+    if name == "symlink-read": os.symlink(f"{base}/secret", f"{base}/data/link")
     src = e4_mutate.variants(lang, base)[name]
     open(os.path.join(d, langs.LANGS[lang]["file"]), "w").write(src)
     rec = dict(lang=lang, variant=name, clean=(name == "clean"))

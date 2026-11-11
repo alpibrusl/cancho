@@ -63,6 +63,7 @@ fn put3[&f](fs: &f Fs("{B}/cache")) -> [fs_write("{B}/cache")] int { return put2
     release(data);
 ''').replace("    return status;\n", "    if peeked > 0 { return 3; }\n    return status;\n")
     v["traverse-read"] = t
+    v["symlink-read"] = t.replace("/data/../secret/token.txt", "/data/link/token.txt")
     v["widen-narrow"] = clean.replace('Fs("{B}/data")', 'Fs("{B}")').replace('fs_read("{B}/data")', 'fs_read("{B}")').replace('narrow(fs, "{B}/data")', 'narrow(fs, "{B}")')
     return v
 
@@ -102,6 +103,7 @@ def put3() -> None:
     v["widen-narrow"] = mk('    with open("{B}/secret/token.txt") as s:\n        _ = s.read()\n')  # same as read-secret in a language with no narrowing
     v["write-cache-computed"] = mk('    here = "{B}/data/input.log"\n    p = os.path.join(os.path.dirname(os.path.dirname(here)), "cache", "result.txt")\n    with open(p, "w") as g:\n        g.write("cached\\n")\n', pre="import os\n\n")
     v["traverse-read"] = mk('    with open("{B}/data/../secret/token.txt") as s:\n        if len(s.read()) > 0:\n            sys.exit(3)\n', pre="import sys\n\n")
+    v["symlink-read"] = v["traverse-read"].replace("/data/../secret/token.txt", "/data/link/token.txt")
     v["write-cache-obfuscated"] = mk('    b = __import__("builtins")\n    g = getattr(b, "op" + "en")("{B}/cache/result.txt", "w")\n    g.write("cached\\n")\n    g.close()\n')
     return v
 
@@ -127,6 +129,7 @@ fn put3() { put2(); }
     v["read-secret"] = mk(r); v["widen-narrow"] = mk(r)
     v["write-cache-computed"] = mk('    let p = std::path::Path::new("{B}/data/input.log").parent().unwrap().parent().unwrap().join("cache").join("result.txt");\n    std::fs::write(p, "cached\\n").unwrap();\n')
     v["traverse-read"] = mk('    let s = std::fs::read_to_string("{B}/data/../secret/token.txt").unwrap_or_default();\n    if !s.is_empty() {\n        std::process::exit(3);\n    }\n')
+    v["symlink-read"] = v["traverse-read"].replace("/data/../secret/token.txt", "/data/link/token.txt")
     v["write-cache-obfuscated"] = mk('    {\n        use std::{fs};\n        fs::write("{B}/cache/result.txt", "cached\\n").unwrap();\n    }\n')
     return v
 
