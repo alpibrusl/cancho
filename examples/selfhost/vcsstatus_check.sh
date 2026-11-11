@@ -10,7 +10,7 @@ D=$(cd "$(dirname "$0")" && pwd)
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 fail=0
-"$C" build "$D/vcsstorectl.cho" "$D/vcsstore.cho" "$D/vcsrepo.cho" "$D/vcsscan.cho" "$D/vcschange.cho" "$D/jsonread.cho" "$D/jsonwrite.cho" "$D/rules.cho" "$D/tables.cho" "$D/vcsobj.cho" "$D/blake3.cho" "$D/filewrite.cho" "$D/lexcore.cho" --std -o "$W/ctl" >/dev/null || { echo "FAIL build"; exit 1; }
+"$C" build "$D/vcsstorectl.cho" "$D/vcsstore.cho" "$D/vcsrepo.cho" "$D/vcsstatus.cho" "$D/vcsscan.cho" "$D/vcschange.cho" "$D/jsonread.cho" "$D/jsonwrite.cho" "$D/rules.cho" "$D/tables.cho" "$D/vcsobj.cho" "$D/blake3.cho" "$D/filewrite.cho" "$D/lexcore.cho" --std -o "$W/ctl" >/dev/null || { echo "FAIL build"; exit 1; }
 export CANCHO_AUTHOR="Ada <ada@example.com>"
 R="$W/r"; mkdir "$R"; cd "$R" || exit 1
 "$C" vcs init --output json > /dev/null
@@ -79,9 +79,35 @@ tag_same "a file over 16 MiB is file-too-large"
 rm -f "$F/huge.bin"; printf 1 > "$F/$(printf 'a\nb')"
 tag_same "a name with a newline is path-unsupported"
 
-# the difference that is said: a symbolic link (no readlink builtin, #685)
-L="$W/link"; mkdir "$L"; ( cd "$L" && "$C" vcs init --output json > /dev/null && printf a > f && ln -s f lnk )
-if [ "$("$W/ctl" status "$L" 2>&1)" = "refused symlink" ]; then echo "ok   a symbolic link is refused as symlink (the Rust command makes a tree of it: #685)"; else echo "FAIL symlink"; fail=1; fi
+# symbolic links (`dir_readlink`, docs/directory-links.md): a link is a line of mode 120000 whose blob is its target text, and nothing follows it
+L="$W/link"; mkdir "$L"; ( cd "$L" && "$C" vcs init --output json > /dev/null ); R="$L"
+cd "$L" || exit 1
+printf a > f; ln -s f lnk
+same "a new symbolic link is added (to a file)"
+record 1 links
+same "...recorded, clean"
+ln -sfn g lnk
+same "a link whose target changed is modified"
+ln -sfn f lnk; mkdir -p sub/deep; printf 1 > sub/deep/x; ln -s sub link_to_dir; ln -s nowhere dangling; ln -s ../f sub/up; ln -s "$(printf 'x%.0s' $(seq 1 500))" long
+same "a link to a directory, a dangling link, a relative target, a link below a directory, a 500-byte target"
+record 2 more-links
+same "...recorded, clean"
+rm lnk; printf 'now a file\n' > lnk
+same "a link replaced by a file"
+rm lnk; ln -s f lnk
+same "...and back to the link: clean again"
+rm f; ln -s elsewhere f
+same "a file replaced by a link"
+rm link_to_dir; mkdir link_to_dir; printf 1 > link_to_dir/z
+same "a link to a directory replaced by a directory with a file in it"
+rm -f dangling
+same "a dangling link deleted"
+printf '*.log\nsub/up\n' > .canchoignore; ln -s x1 a.log
+same ".canchoignore skips a link as it skips a file (*.log, sub/up)"
+rm .canchoignore a.log
+ln -s "$(printf '\377\376')" bad
+tag_same "a link whose target is not UTF-8 is path-unsupported"
+rm -f bad
 
 [ $fail -eq 0 ] && echo "all checks passed" || echo "FAILED"
 exit $fail

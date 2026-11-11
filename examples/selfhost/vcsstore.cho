@@ -723,6 +723,344 @@ pub fn update_ref[&h, &d, &n, &w, &m, &t](heap: &!h Heap, vcs: &d Dir, name: &n 
     return Object { bytes: out, status: status, errno: errno };
 }
 
+// ---- deleting a ref, and listing refs ----------------------------------------------------------------------------------------
+
+// Take the lock `name` in `dir`, stamped `0 NOW`: status 0 (held), 15 `lock-held`, 10 (`errno`); `held` is true when the lock file was made, whatever came after, so the caller removes it.
+fn take_lock[&h, &d, &n](heap: &!h Heap, dir: &d Dir, name: &n [byte], now: int) -> [heap, dir_write, file_write] (int, int, bool) {
+    var stamp = buffer.append(heap, buffer.empty(heap, 24), "0 ");
+    stamp = buffer.push_nat(heap, stamp, now);
+    var status = 0;
+    var errno = 0;
+    var held = false;
+    match dir_open_new(dir, name) {
+        Opened::Ok(opened) => {
+            var f = opened;
+            borrow mut f as &!fw in {
+                borrow stamp as &sb in {
+                    errno = filewrite.write_all(fw, buffer.bytes(sb));
+                }
+            }
+            file_close(f);
+            held = true;
+            if errno != 0 {
+                status = 10;
+            }
+        }
+        Opened::Failed(e) => {
+            if e == eexist() {
+                status = 15;
+            } else {
+                status = 10;
+                errno = e;
+            }
+        }
+    }
+    buffer.drop(heap, stamp);
+    return (status, errno, held);
+}
+
+// A line `OLD NEW TIME NOTE` added to the log `logname` in `dir` and synced: 0, or why not.
+fn add_log_line[&h, &d, &l, &o, &w, &t](heap: &!h Heap, dir: &d Dir, logname: &l [byte], old: &o [byte], new: &w [byte], now: int, note: &t [byte]) -> [heap, dir_write, file_write] int {
+    var entry = buffer.append(heap, buffer.empty(heap, 192), old);
+    entry = buffer.push(heap, entry, byte_of(32));
+    entry = buffer.append(heap, entry, new);
+    entry = buffer.push(heap, entry, byte_of(32));
+    entry = buffer.push_nat(heap, entry, now);
+    entry = buffer.push(heap, entry, byte_of(32));
+    entry = buffer.append(heap, entry, note);
+    entry = buffer.push(heap, entry, byte_of(10));
+    var errno = 0;
+    borrow entry as &eb in {
+        match dir_open_append(dir, logname) {
+            Opened::Ok(opened) => {
+                var f = opened;
+                borrow mut f as &!fw in {
+                    errno = filewrite.write_all(fw, buffer.bytes(eb));
+                    if errno == 0 {
+                        match file_sync(fw) {
+                            Done::Ok(k) => {
+                            }
+                            Done::Failed(e) => {
+                                errno = e;
+                            }
+                        }
+                    }
+                }
+                file_close(f);
+            }
+            Opened::Failed(e) => {
+                errno = e;
+            }
+        }
+    }
+    buffer.drop(heap, entry);
+    return errno;
+}
+
+// Delete the ref `name` if it holds what `expect` says (`expect_any`, or `expect_id` with `want` the id), under its lock, and add a line `OLD - TIME deleted` to its log (`refs.rs: delete_ref`). 14 `ref-moved`
+// (the current id, if there is one, in `bytes`), 15 `lock-held`, 16, 17, 10. A ref that is not there is deleted already: status 0, unless `expect_id` said it was somewhere.
+pub fn delete_ref[&h, &d, &n, &w](heap: &!h Heap, vcs: &d Dir, name: &n [byte], expect: int, want: &w [byte], now: int) -> [heap, dir_read, dir_write, file_read, file_write] Object {
+    if !check_ref_name(name) {
+        return Object { bytes: buffer.empty(heap, 0), status: 16, errno: 0 };
+    }
+    if expect == 2 && !vcsobj.is_id(want) {
+        return Object { bytes: buffer.empty(heap, 0), status: 17, errno: 0 };
+    }
+    var out = buffer.empty(heap, 0);
+    var status = 0;
+    var errno = 0;
+    let dirpath = ref_dir(heap, name);
+    borrow dirpath as &pb in {
+        match walk(vcs, buffer.bytes(pb), false) {
+            DirOpened::Ok(rd0) => {
+                var rd = rd0;
+                borrow rd as &rr in {
+                    let leaf = name[leaf_at(name)..len(name)];
+                    let lock = suffixed(heap, leaf, ".lock");
+                    borrow lock as &lb in {
+                        let (ls, le, held) = take_lock(heap, rr, buffer.bytes(lb), now);
+                        status = ls;
+                        errno = le;
+                        if held && status == 0 {
+                            let read = slurp(heap, rr, leaf);
+                            let Contents { data, why } = read;
+                            var current = buffer.empty(heap, 0);
+                            var has = false;
+                            if why == 0 {
+                                borrow data as &db in {
+                                    let id = trimmed(buffer.bytes(db));
+                                    if vcsobj.is_id(id) {
+                                        current = buffer.append(heap, current, id);
+                                        has = true;
+                                    } else {
+                                        status = 3;
+                                    }
+                                }
+                            } else if why != enoent() {
+                                status = 10;
+                                errno = why;
+                            }
+                            buffer.drop(heap, data);
+                            if status == 0 {
+                                borrow current as &cb in {
+                                    if expect == 2 && (!has || !bytes.equal(buffer.bytes(cb), want)) {
+                                        status = 14;
+                                        buffer.drop(heap, out);
+                                        out = buffer.append(heap, buffer.empty(heap, 64), buffer.bytes(cb));
+                                    } else if has {
+                                        let logname = suffixed(heap, leaf, ".log");
+                                        borrow logname as &gb in {
+                                            errno = add_log_line(heap, rr, buffer.bytes(gb), buffer.bytes(cb), "-", now, "deleted");
+                                        }
+                                        buffer.drop(heap, logname);
+                                        if errno != 0 {
+                                            status = 10;
+                                        } else {
+                                            match dir_remove(rr, leaf) {
+                                                Done::Ok(k) => {
+                                                }
+                                                Done::Failed(e) => {
+                                                    status = 10;
+                                                    errno = e;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            buffer.drop(heap, current);
+                        }
+                        if held {
+                            dir_remove(rr, buffer.bytes(lb));
+                        }
+                    }
+                    buffer.drop(heap, lock);
+                }
+                dir_close(rd);
+            }
+            DirOpened::Failed(e) => {
+                if e == enoent() {
+                    if expect == 2 {
+                        status = 14;
+                    }
+                } else {
+                    status = 10;
+                    errno = e;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, dirpath);
+    return Object { bytes: out, status: status, errno: errno };
+}
+
+// The kind of the entry `name` of `dir`: the listing's, or `dir_stat`'s when the file system did not say.
+pub fn entry_kind[&d, &n](dir: &d Dir, name: &n [byte], listed: int) -> [dir_read] int {
+    if listed != 0 {
+        return listed;
+    }
+    match dir_stat(dir, name) {
+        DirStat::Ok(kind, size, mtime) => {
+            return kind;
+        }
+        DirStat::Failed(e) => {
+            return 4;
+        }
+    }
+}
+
+// The names of the refs at and below `dir` (`rel` is the path to it, ending in `/`), one to a line in `out`, in no order: `.lock` and `.log` files are not refs. The second answer is why a directory could not be read, or 0.
+fn collect_refs[&h, &d, &p](heap: &!h Heap, dir: &d Dir, rel: &p [byte], out: buffer.Buffer) -> [heap, dir_read] (buffer.Buffer, int) {
+    let names = dirs.list(heap, dir, 100000000);
+    var b = out;
+    var why = 0;
+    borrow names as &nr in {
+        if dirs.failed(nr) != 0 {
+            why = dirs.failed(nr);
+        }
+        var i = 0;
+        while i < dirs.count(nr) && why == 0 {
+            let name = dirs.name(nr, i);
+            let kind = entry_kind(dir, name, dirs.kind(nr, i));
+            if kind == 2 {
+                match dir_enter(dir, name) {
+                    DirOpened::Ok(c0) => {
+                        var child = c0;
+                        var below = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(rel) + len(name) + 2), rel), name);
+                        below = buffer.push(heap, below, byte_of(47));
+                        borrow child as &cd in {
+                            borrow below as &bb in {
+                                let (more, w) = collect_refs(heap, cd, buffer.bytes(bb), b);
+                                b = more;
+                                why = w;
+                            }
+                        }
+                        buffer.drop(heap, below);
+                        dir_close(child);
+                    }
+                    DirOpened::Failed(e) => {
+                        why = e;
+                    }
+                }
+            } else if !bytes.ends_with(name, ".lock") && !bytes.ends_with(name, ".log") {
+                b = buffer.append(heap, buffer.append(heap, b, rel), name);
+                b = buffer.push(heap, b, byte_of(10));
+            }
+            i = i + 1;
+        }
+    }
+    dirs.drop(heap, names);
+    return (b, why);
+}
+
+// `line` (and a newline) added to the lines of `sorted` at the place the bytes of the lines put it.
+fn insert_line[&h, &l](heap: &!h Heap, sorted: buffer.Buffer, line: &l [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    var placed = false;
+    borrow sorted as &sb in {
+        let text = buffer.bytes(sb);
+        var at = 0;
+        while at < len(text) {
+            var end = at;
+            while end < len(text) && text[end] != byte_of(10) {
+                end = end + 1;
+            }
+            if !placed && bytes.compare(line, text[at..end]) < 0 {
+                out = buffer.push(heap, buffer.append(heap, out, line), byte_of(10));
+                placed = true;
+            }
+            out = buffer.append(heap, out, text[at..end + 1]);
+            at = end + 1;
+        }
+        if !placed {
+            out = buffer.push(heap, buffer.append(heap, out, line), byte_of(10));
+        }
+    }
+    buffer.drop(heap, sorted);
+    return out;
+}
+
+// The refs below `refs/PREFIX` (`heads` or `tags`) as lines `NAME ID` (NAME as `heads/main`), in the order of the bytes of the names, as `refs.rs: list_refs` has them; a name whose ref has gone is left out. 10 and 3 as the reads say.
+pub fn list_refs[&h, &d, &p](heap: &!h Heap, vcs: &d Dir, prefix: &p [byte]) -> [heap, dir_read, dir_write, file_read] Object {
+    var dirpath = buffer.append(heap, buffer.empty(heap, 32), "refs/");
+    dirpath = buffer.append(heap, dirpath, prefix);
+    var listing = buffer.empty(heap, 64);
+    var status = 0;
+    var errno = 0;
+    borrow dirpath as &pb in {
+        match walk(vcs, buffer.bytes(pb), false) {
+            DirOpened::Ok(d0) => {
+                var top = d0;
+                var rel = buffer.append(heap, buffer.empty(heap, 16), prefix);
+                rel = buffer.push(heap, rel, byte_of(47));
+                borrow top as &td in {
+                    borrow rel as &rb in {
+                        let (found, why) = collect_refs(heap, td, buffer.bytes(rb), listing);
+                        listing = found;
+                        errno = why;
+                    }
+                }
+                buffer.drop(heap, rel);
+                dir_close(top);
+                if errno != 0 {
+                    status = 10;
+                }
+            }
+            DirOpened::Failed(e) => {
+                if e != enoent() {
+                    status = 10;
+                    errno = e;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, dirpath);
+    var sorted = buffer.empty(heap, 64);
+    borrow listing as &lb in {
+        let text = buffer.bytes(lb);
+        var at = 0;
+        while at < len(text) {
+            var end = at;
+            while end < len(text) && text[end] != byte_of(10) {
+                end = end + 1;
+            }
+            sorted = insert_line(heap, sorted, text[at..end]);
+            at = end + 1;
+        }
+    }
+    buffer.drop(heap, listing);
+    var out = buffer.empty(heap, 64);
+    if status == 0 {
+        borrow sorted as &sb in {
+            let text = buffer.bytes(sb);
+            var at = 0;
+            while at < len(text) && status == 0 {
+                var end = at;
+                while end < len(text) && text[end] != byte_of(10) {
+                    end = end + 1;
+                }
+                let name = text[at..end];
+                let read = read_ref(heap, vcs, name);
+                let (id, rs, re) = parts(read);
+                if rs == 0 {
+                    out = buffer.append(heap, buffer.append(heap, out, name), " ");
+                    borrow id as &ib in {
+                        out = buffer.append(heap, out, buffer.bytes(ib));
+                    }
+                    out = buffer.push(heap, out, byte_of(10));
+                } else if rs != 2 {
+                    status = rs;
+                    errno = re;
+                }
+                buffer.drop(heap, id);
+                at = end + 1;
+            }
+        }
+    }
+    buffer.drop(heap, sorted);
+    return Object { bytes: out, status: status, errno: errno };
+}
+
 // ---- init --------------------------------------------------------------------------------------------------------------------
 
 // `NAME` in `dir`, written whole through `NAME.tmp-0` and renamed, so a reader sees it whole or not at all.

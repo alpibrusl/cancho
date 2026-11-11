@@ -1,0 +1,3 @@
+module a;
+pub fn twice(n: int) -> [] int { return n + n + 0; }
+pub fn thrice(n: int) -> [] int { return n * 3; }

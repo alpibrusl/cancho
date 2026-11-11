@@ -1,0 +1,8 @@
+{
+  "command": "log",
+  "ok": false,
+  "refused": {
+    "message": "`nosuchbranch` names no change, branch or tag",
+    "tag": "bad-revision"
+  }
+}

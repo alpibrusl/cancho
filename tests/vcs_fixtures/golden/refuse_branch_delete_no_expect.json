@@ -1,0 +1,8 @@
+{
+  "command": "branch",
+  "ok": false,
+  "refused": {
+    "message": "deleting a branch needs --expect <change> (the change you believe it is at)",
+    "tag": "bad-argument"
+  }
+}

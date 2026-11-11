@@ -1,0 +1,8 @@
+{
+  "command": "branch",
+  "ok": false,
+  "refused": {
+    "message": "this needs a branch name",
+    "tag": "bad-argument"
+  }
+}

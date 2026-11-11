@@ -1,4 +1,4 @@
-edition 9;
+edition 12;
 module selfhost.vcsscan;
 
 // vcsscan.cho -- the working copy as a tree (`docs/vcs-native.md` section 6, slice b4c): a port of `Repo::scan` and `Ignore` of `crates/cancho-vcs/src/repo.rs`.
@@ -9,14 +9,17 @@ module selfhost.vcsscan;
 // name that ends so (anywhere, directories too), `A/B` a path (and what is under it), `NAME` an entry of that name anywhere; `.cancho` and `.git` at the top
 // are never versioned. Only ASCII white space is trimmed from a rule (the Rust command trims what Unicode calls white space).
 //
-// A status: 0 ok; 1 `path-escapes` and 31 `path-unsupported` (a path `vcsobj.check_path` refuses); 10 io; 13 `file-too-large`; 30 `symlink`: a symbolic link is
-// met, whose target cannot be read (there is no `readlink` builtin: #685), so a tree of a working copy with a link is not made. The Rust command makes it
-// (mode 120000, the blob of the target); that is a difference until #685, said by the status. A name that is not UTF-8 is not refused here (the Rust command
-// refuses it as `path-unsupported`).
+// A symbolic link is a line of mode 120000 whose blob is its target text (`dir_readlink`, `docs/directory-links.md`; the link is not followed), as the Rust command
+// makes it. A target that is not UTF-8 is `path-unsupported`, as there.
+//
+// A status: 0 ok; 1 `path-escapes` and 31 `path-unsupported` (a path `vcsobj.check_path` refuses, or a link target that is not UTF-8); 10 io; 13 `file-too-large`.
+// (30 `symlink`, the refusal of a link, went with #685: nothing answers it now.) A name that is not UTF-8 is not refused here (the Rust command refuses it as
+// `path-unsupported`).
 
 import std.buffer;
 import std.bytes;
 import std.dirs;
+import std.utf8;
 import selfhost.vcsobj;
 import selfhost.vcsstore;
 
@@ -108,21 +111,6 @@ pub fn skips[&g, &r](ig: &g [byte], rel: &r [byte], is_dir: bool) -> [] bool {
 
 // ---- the scan ----------------------------------------------------------------------------------------------------------------
 
-// The kind of the entry `name` of `dir`: the listing's, or `dir_stat`'s when the file system did not say.
-fn kind_of[&d, &n](dir: &d Dir, name: &n [byte], listed: int) -> [dir_read] int {
-    if listed != 0 {
-        return listed;
-    }
-    match dir_stat(dir, name) {
-        DirStat::Ok(kind, size, mtime) => {
-            return kind;
-        }
-        DirStat::Failed(e) => {
-            return 4;
-        }
-    }
-}
-
 // One line of a tree: the mode, the blob id of `content`, the path.
 fn add_entry[&h, &s, &c, &p](heap: &!h Heap, scratch: &!s [int], out: buffer.Buffer, mode: &static [byte], content: &c [byte], rel: &p [byte]) -> [heap] buffer.Buffer {
     var b = buffer.push(heap, buffer.append(heap, out, mode), byte_of(32));
@@ -175,6 +163,40 @@ fn file_entry[&h, &d, &s, &n, &p](heap: &!h Heap, dir: &d Dir, scratch: &!s [int
     return (b, code, why);
 }
 
+// The link `name` of `dir` as a line of a tree (mode 120000, the blob of its target text), or the status that stopped it: 10, or 31 for a target that is not UTF-8 or a path
+// `check_path` refuses. A target is at most 4,095 bytes, so a buffer of 4,096 is never filled (`dir_readlink` refuses a filled one as `ENAMETOOLONG`).
+fn link_entry[&h, &d, &s, &n, &p](heap: &!h Heap, dir: &d Dir, scratch: &!s [int], out: buffer.Buffer, name: &n [byte], rel: &p [byte]) -> [heap, dir_read] (buffer.Buffer, int, int) {
+    var b = out;
+    var code = 0;
+    var why = 0;
+    region a {
+        let room = alloc_slice[a](4096, byte_of(0));
+        match dir_readlink(dir, name, room) {
+            Done::Ok(n) => {
+                let target = room[0..n];
+                if !utf8.is_valid(target) {
+                    code = 31;
+                } else {
+                    let paths = vcsobj.check_path(rel);
+                    if paths == 1 {
+                        code = 1;
+                    } else if paths == 2 {
+                        code = 31;
+                    }
+                    if code == 0 {
+                        b = add_entry(heap, scratch, b, "120000", target, rel);
+                    }
+                }
+            }
+            Done::Failed(e) => {
+                code = 10;
+                why = e;
+            }
+        }
+    }
+    return (b, code, why);
+}
+
 // The entries under `dir` (a directory whose path from the root is `prefix`, empty for the root): lines are appended to `out` in no particular order.
 fn scan_dir[&h, &d, &s, &p, &g](heap: &!h Heap, dir: &d Dir, prefix: &p [byte], ig: &g [byte], scratch: &!s [int], out: buffer.Buffer) -> [heap, dir_read, file_read] (buffer.Buffer, int, int) {
     let names = dirs.list(heap, dir, 100000000);
@@ -189,7 +211,7 @@ fn scan_dir[&h, &d, &s, &p, &g](heap: &!h Heap, dir: &d Dir, prefix: &p [byte], 
         var i = 0;
         while i < dirs.count(nr) && code == 0 {
             let name = dirs.name(nr, i);
-            let kind = kind_of(dir, name, dirs.kind(nr, i));
+            let kind = vcsstore.entry_kind(dir, name, dirs.kind(nr, i));
             var rel = buffer.empty(heap, len(prefix) + len(name) + 1);
             if len(prefix) > 0 {
                 rel = buffer.push(heap, buffer.append(heap, rel, prefix), byte_of(47));
@@ -215,7 +237,10 @@ fn scan_dir[&h, &d, &s, &p, &g](heap: &!h Heap, dir: &d Dir, prefix: &p [byte], 
                         }
                     }
                 } else if kind == 3 {
-                    code = 30;
+                    let (more, c, w) = link_entry(heap, dir, scratch, b, name, path);
+                    b = more;
+                    code = c;
+                    why = w;
                 } else if kind == 1 {
                     let (more, c, w) = file_entry(heap, dir, scratch, b, name, path);
                     b = more;

@@ -20,6 +20,7 @@ import std.buffer;
 import std.bytes;
 import selfhost.vcsobj;
 import selfhost.vcsrepo;
+import selfhost.vcsstatus;
 import selfhost.vcsscan;
 import selfhost.vcsstore;
 import selfhost.lexcore as lc;
@@ -36,7 +37,7 @@ fn number[&t](text: &t [byte]) -> [] int {
 
 fn say_refusal[&i](io: &!i Io, status: int, errno: int) -> [io_write] int {
     console.write_all(io, "refused ");
-    console.write_all(io, vcsrepo.tag(status));
+    console.write_all(io, vcsstatus.tag(status));
     if status == 10 {
         console.write_all(io, " ");
         console.print_int(io, errno);
@@ -135,7 +136,7 @@ fn status_of[&h, &i, &r](heap: &!h Heap, io: &!i Io, root: &r Dir) -> [heap, io_
             let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
             borrow vcs as &vd in {
                 borrow mut scratch as &!s in {
-                    code = answered(heap, io, vcsrepo.status_command(heap, root, vd, contents(s)), true);
+                    code = answered(heap, io, vcsstatus.status_command(heap, root, vd, contents(s)), true);
                 }
             }
             unbox_slice(heap, scratch);
