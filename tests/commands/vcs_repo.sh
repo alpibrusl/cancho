@@ -88,6 +88,29 @@ repo; vcs branch delete main --expect HEAD; same "the checked-out branch cannot 
 repo; vcs branch delete nosuch;   same "deleting a branch that is not there" "$gold/branch_delete_missing.json" "$work/out.json"
 repo; vcs branch create 'a.b' > /dev/null; vcs branch create 'a/b' --from HEAD~1 > /dev/null; vcs branch create a0 --from HEAD~2 > /dev/null; vcs branch create b > /dev/null; vcs branch list; same "branch list: a.b, a/b, a0 in the order of the bytes of their paths" "$gold/branch_list_sorted.json" "$work/out.json"
 
+echo "== status"
+empty; mkdir x && cd x; "$cancho" vcs init --output json > /dev/null; printf 'module a;\npub fn twice(n: int) -> [] int { return n + n; }\n' > a.cho; printf '# notes\none\ntwo\nthree\n' > notes.md
+vcs status;                   same "status of a new repository is the pin (head null)" "$pins/status_dirty.json" "$work/out.json"; exit_is "status" 0
+repo; echo 960fd3a813e8e05e68c304a1ea92bf374b61dd07399c70166822fd6e6c7b716f > .cancho/vcs/refs/heads/main; printf 'module a;\npub fn twice(n: int) -> [] int { return n + n; }\n' > a.cho; printf '# notes\none\ntwo\nthree\n' > notes.md
+vcs status;                   same "status clean at the first change is the pin" "$pins/status_clean.json" "$work/out.json"
+repo; echo 9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442 > .cancho/vcs/refs/heads/main
+vcs status;                   same "status with one file left is the pin" "$pins/status_one_left.json" "$work/out.json"
+repo; vcs status;             same "status of the clean repository" "$gold/status_clean_fixture.json" "$work/out.json"
+repo; rm a.cho; vcs status;   same "status: a deleted file" "$gold/status_deleted.json" "$work/out.json"
+repo; mkdir -p sub/deep; printf 'x\n' > sub/deep/new.txt; printf 'y\n' > top.txt; vcs status; same "status: added files, one in a new directory" "$gold/status_added.json" "$work/out.json"
+repo; chmod +x notes.md; vcs status; same "status: the execute bit" "$gold/status_mode_changed.json" "$work/out.json"
+repo; ln -s a.cho lnk; vcs status; same "status: a link added" "$gold/status_link_added.json" "$work/out.json"
+repo; ln -s a.cho lnk; ln -s notes.md lnk2; ln -s nowhere dangling; mkdir sub; ln -s ../a.cho sub/up; ln -s sub link_to_dir; vcs status; same "status: links to a file, a name that is not there, a directory" "$gold/status_links.json" "$work/out.json"
+repo; rm notes.md; ln -s a.cho notes.md; vcs status; same "status: a file that became a link" "$gold/status_file_became_link.json" "$work/out.json"
+repo; ln -s "$(printf 'x%.0s' $(seq 1 500))" long; vcs status; same "status: a link target of 500 bytes" "$gold/status_long_link.json" "$work/out.json"
+repo; printf '*.log\nsub/up\n' > .canchoignore; ln -s x1 a.log; mkdir sub; ln -s ../a.cho sub/up; vcs status; same "status: ignored links are not listed" "$gold/status_ignored.json" "$work/out.json"
+repo; rm a.cho; mkdir a.cho; printf z > a.cho/inner; vcs status; same "status: a file that became a directory" "$gold/status_file_became_dir.json" "$work/out.json"
+repo; ln -s "$(printf '\377\376')" bad; vcs status; if grep -q '"tag": "path-unsupported"' "$work/out.json"; then echo "ok status: a link target that is not UTF-8 is path-unsupported"; else echo "FAILS bad link target"; fi; exit_is "status, bad link target" 1
+empty; "$cancho" vcs init --output json > /dev/null; vcs status; same "status of a repository with nothing in it" "$gold/status_empty_repository.json" "$work/out.json"
+empty; vcs status;            same "status with no repository is not-a-repository" "$gold/refuse_status_not_a_repository.json" "$work/out.json"; exit_is "status, no repository" 1
+repo; mkdir -p sub/deeper; cd sub/deeper || exit 1; vcs status; same "status from two directories down is the clean status" "$gold/status_clean_fixture.json" "$work/out.json"
+cd "$work" || exit 1; empty; vcs status --repo "$work/r"; same "status --repo PATH from another directory" "$gold/status_clean_fixture.json" "$work/out.json"
+
 echo "== routing"
 empty; "$cancho" vcs log > "$work/out.txt" 2>&1; echo "exit $?"; grep -c "nothing published yet" "$work/out.txt" | sed 's/^/manifest log lines: /'
 repo; "$cancho" vcs log --store elsewhere > "$work/out.txt" 2>&1; echo "exit $?"; grep -o "nothing published yet at .elsewhere." "$work/out.txt"

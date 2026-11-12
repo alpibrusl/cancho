@@ -75,6 +75,28 @@ ok the ref was kept
 ok the checked-out branch cannot be deleted
 ok deleting a branch that is not there
 ok branch list: a.b, a/b, a0 in the order of the bytes of their paths
+== status
+ok status of a new repository is the pin (head null)
+ok status (exit 0)
+ok status clean at the first change is the pin
+ok status with one file left is the pin
+ok status of the clean repository
+ok status: a deleted file
+ok status: added files, one in a new directory
+ok status: the execute bit
+ok status: a link added
+ok status: links to a file, a name that is not there, a directory
+ok status: a file that became a link
+ok status: a link target of 500 bytes
+ok status: ignored links are not listed
+ok status: a file that became a directory
+ok status: a link target that is not UTF-8 is path-unsupported
+ok status, bad link target (exit 1)
+ok status of a repository with nothing in it
+ok status with no repository is not-a-repository
+ok status, no repository (exit 1)
+ok status from two directories down is the clean status
+ok status --repo PATH from another directory
 == routing
 exit 0
 manifest log lines: 1
