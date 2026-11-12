@@ -31,7 +31,6 @@ cargo run -p cancho -- run examples/tour.cho --std
 | [`selfhost/`](selfhost/) | The cancho lexer and parser, written in cancho, checked against the Rust ones |
 | [`cut/`](cut/) | `cut -d -f`, ported to **ask** what a string library needs |
 | [`wordfreq/`](wordfreq/) | The capstone: three files, every capability doing real work |
-| [`usecases/`](usecases/) | Pipelines over the sibling tools, each with a digital twin (design only so far) |
 
 ---
 
