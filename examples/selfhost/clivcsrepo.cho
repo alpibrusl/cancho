@@ -1,7 +1,7 @@
 edition 9;
 module selfhost.clivcsrepo;
 
-// clivcsrepo.cho -- the repository side of `cancho vcs` in the command line in cancho (`docs/vcs-routing.md`, slice R1): `init`, `log`, `show` and `branch`. The libraries are `vcsstore.cho` and `vcsrepo.cho`; this module is
+// clivcsrepo.cho -- the repository side of `cancho vcs` in the command line in cancho (`docs/vcs-routing.md`, slice R1): `init`, `log`, `show`, `branch` and `status`. The libraries are `vcsstore.cho` and `vcsrepo.cho`; this module is
 // what a person types: the options, finding the repository, the one JSON document on standard output, and the exit status. `clivcs.cho` is the other side of `vcs` (`publish`, `log --store`, ...).
 //
 // Routing (`docs/vcs-routing.md` D1), as the Rust command's `cmd_vcs`: `log` is the manifest log when `--store` is named or no repository is in reach from the current directory, and the repository log
@@ -13,7 +13,7 @@ module selfhost.clivcsrepo;
 //
 // A refusal is a document `{"command", "ok": false, "refused": {"message", "tag"}}` and exit 1, an environment failure exit 3 (the Rust command's two). The message is the Rust sentence for `not-a-repository`,
 // `bad-revision` (`vcsrepo.refusal_document`) and `bad-argument`; for the tags whose Rust message carries what only the Rust store knows (an object that is damaged, the OS's words for an `io` failure) it is the
-// tag's own sentence: the tag and the status agree, the message does not.
+// tag's own sentence: the tag and the status agree, the message does not. `status` adds the refusals of the scan (`path-unsupported`, `path-escapes`, `file-too-large`): the Rust message names the path or the link, this one does not.
 
 import std.buffer;
 import std.bytes;
@@ -24,6 +24,7 @@ import selfhost.cliproject;
 import selfhost.jsonwrite;
 import selfhost.vcsobj;
 import selfhost.vcsrepo;
+import selfhost.vcsstatus;
 import selfhost.vcsstore;
 import selfhost.walk;
 
@@ -60,7 +61,7 @@ fn usage[&h, &i, &w](heap: &!h Heap, io: &!i Io, before: &static [byte], what: &
     return status;
 }
 
-// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show` and 3 for `branch`.
+// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show`, 3 for `branch` and 4 for `status`.
 fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: int) -> [heap, err_write, args] Options {
     var bad = 0;
     var repo_at = 0 - 1;
@@ -322,6 +323,18 @@ fn sentence(status: int) -> [] &static [byte] {
     if status == 15 {
         return "a lock is held";
     }
+    if status == 31 {
+        return "a path or a link target the working copy has cannot be recorded";
+    }
+    if status == 1 {
+        return "a path escapes the working copy";
+    }
+    if status == 13 {
+        return "a file is too large";
+    }
+    if status == 30 {
+        return "a link in the working copy cannot be read";
+    }
     return "the command was refused";
 }
 
@@ -343,7 +356,7 @@ fn answered[&h, &i, &c, &p](heap: &!h Heap, io: &!i Io, command: &c [byte], answ
         }
         code = 1;
     } else {
-        let said = refusal(heap, command, sentence(status), vcsstore.tag(status));
+        let said = refusal(heap, command, sentence(status), vcsstatus.tag(status));
         borrow said as &sb in {
             buffer.write(io, sb);
         }
@@ -447,6 +460,17 @@ fn show_in[&h, &i, &a, &d](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Di
     var code = 0;
     borrow mut scratch as &!s in {
         code = answered(heap, io, "show", vcsrepo.show_command(heap, vcs, contents(s), spec), spec);
+    }
+    unbox_slice(heap, scratch);
+    return code;
+}
+
+// `status` in the repository whose working copy is `root` and whose store is `vcs`: HEAD's tree against the files (R4, `vcsstatus.status_command`, which reads links with `dir_readlink`).
+fn status_in[&h, &i, &r, &d](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir) -> [heap, io_write, dir_read, dir_write, file_read] int {
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    var code = 0;
+    borrow mut scratch as &!s in {
+        code = answered(heap, io, "status", vcsstatus.status_command(heap, root, vcs, contents(s)), "");
     }
     unbox_slice(heap, scratch);
     return code;
@@ -973,10 +997,10 @@ fn branch_in[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs:
 
 // ---- the entry points --------------------------------------------------------------------------------------------------------
 
-// Whether `cancho vcs SUB` is this module's: `init` and `show` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
+// Whether `cancho vcs SUB` is this module's: `init`, `show`, `branch` and `status` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
 pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read] bool {
     let sub = arg(args, 2);
-    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") {
+    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") {
         return true;
     }
     if !bytes.equal(sub, "log") {
@@ -1002,7 +1026,7 @@ pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args,
     return found;
 }
 
-// `cancho vcs init|log|show ...`.
+// `cancho vcs init|log|show|branch|status ...`.
 pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read, file_write] int {
     let verb = arg(args, 2);
     var which = 2;
@@ -1016,6 +1040,9 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
     } else if bytes.equal(verb, "branch") {
         which = 3;
         name = "branch";
+    } else if bytes.equal(verb, "status") {
+        which = 4;
+        name = "status";
     }
     let options = options_of(heap, io, args, which);
     if options.bad != 0 {
@@ -1045,6 +1072,8 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                                 code = log_in(heap, io, args, vd, options);
                                             } else if which == 3 {
                                                 code = branch_in(heap, io, args, vd, options, clock);
+                                            } else if which == 4 {
+                                                code = status_in(heap, io, rd, vd);
                                             } else {
                                                 code = show_in(heap, io, args, vd, options);
                                             }

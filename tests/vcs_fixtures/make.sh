@@ -61,5 +61,19 @@ here; br delete main --expect HEAD > "$g/refuse_branch_delete_current.json" || t
 here; br delete nosuch > "$g/branch_delete_missing.json"
 here; br create 'a.b' > /dev/null; br create 'a/b' --from HEAD~1 > /dev/null; br create a0 --from HEAD~2 > /dev/null; br create b > /dev/null; br list > "$g/branch_list_sorted.json"
 here; br create feature --from HEAD~1 > /dev/null; br delete feature --expect HEAD~1 > /dev/null; br list > "$g/branch_list_after_delete.json"
+# status (R4): each from a copy of the repository, which is clean at HEAD; `st` is the command, then one thing done to the working copy.
+st() { "$R" vcs status --output json; }
+here; st > "$g/status_clean_fixture.json"
+here; rm a.cho; st > "$g/status_deleted.json"
+here; mkdir -p sub/deep; printf 'x\n' > sub/deep/new.txt; printf 'y\n' > top.txt; st > "$g/status_added.json"
+here; chmod +x notes.md; st > "$g/status_mode_changed.json"
+here; ln -s a.cho lnk; st > "$g/status_link_added.json"
+here; ln -s a.cho lnk; ln -s notes.md lnk2; ln -s nowhere dangling; mkdir sub; ln -s ../a.cho sub/up; ln -s sub link_to_dir; st > "$g/status_links.json"
+here; rm notes.md; ln -s a.cho notes.md; st > "$g/status_file_became_link.json"
+here; ln -s "$(printf 'x%.0s' $(seq 1 500))" long; st > "$g/status_long_link.json"
+here; printf '*.log\nsub/up\n' > .canchoignore; ln -s x1 a.log; mkdir sub; ln -s ../a.cho sub/up; st > "$g/status_ignored.json"
+here; rm a.cho; mkdir a.cho; printf z > a.cho/inner; st > "$g/status_file_became_dir.json"
+empty; st > "$g/refuse_status_not_a_repository.json" || true
+empty; "$R" vcs init --output json > /dev/null; st > "$g/status_empty_repository.json"
 rm -rf "$out/w" "$out/e"
 echo "made $out/three_changes and $out/golden"

@@ -1,0 +1,29 @@
+{
+  "branch": "main",
+  "changes": [
+    {
+      "path": "dangling",
+      "state": "added"
+    },
+    {
+      "path": "link_to_dir",
+      "state": "added"
+    },
+    {
+      "path": "lnk",
+      "state": "added"
+    },
+    {
+      "path": "lnk2",
+      "state": "added"
+    },
+    {
+      "path": "sub/up",
+      "state": "added"
+    }
+  ],
+  "clean": false,
+  "command": "status",
+  "head": "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e",
+  "ok": true
+}
