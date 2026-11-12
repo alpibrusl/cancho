@@ -18,8 +18,9 @@ decides whether the removal of Rust is reason enough (§7, D1).
 
 ## 2. What the kernel does **[measured]**
 
-`docs/assets/directory-links/probe.c`, output in `probe-linux.txt` (Linux 6.18, x86-64, one machine). Darwin was **not measured**; where this document gives a Darwin
-value it says so.
+`docs/assets/directory-links/probe.c`, output in `probe-linux.txt` (Linux 6.18, x86-64, one machine). **Darwin was measured on 2026-11-11** (macOS 26.2, Darwin 25.2.0, arm64, APFS; `probe-darwin.txt`
+and `probe2-darwin.txt`, §10), and **five rows of this table are Linux-only**: each is marked below and the Darwin values are in §10. (`probe.c` named a Linux-only scratch directory,
+`/tmp/claude-0/…`; it now takes `$TMPDIR`, and `probe-linux.txt` was not regenerated.)
 
 | call | answer |
 |---|---|
@@ -27,13 +28,13 @@ value it says so.
 | the same on a directory with a file in it | -1, `ENOTEMPTY` (39) |
 | on a missing name | -1, `ENOENT` (2) |
 | on a link to a directory, a dangling link, a regular file | -1, `ENOTDIR` (20) each: **it never follows a link and never removes one** |
-| `symlinkat("", dir, name)` | -1, `ENOENT` |
+| `symlinkat("", dir, name)` | -1, `ENOENT`. **Linux only: on Darwin it succeeds (0) and makes a link with an empty target** (§10) |
 | `symlinkat(target, dir, "taken")` and onto a dangling link | -1, `EEXIST` (17) both: it never replaces and does not follow |
-| a 4,095-byte target / a 4,096-byte target | 0 / -1, `ENAMETOOLONG` (36). **Linux's limit; Darwin's is lower:** the first run of slice 2 on a macOS runner refused a 4,095-byte target with `ENAMETOOLONG` (not measured: where its limit is) |
+| a 4,095-byte target / a 4,096-byte target | 0 / -1, `ENAMETOOLONG` (36). **Linux's limit; Darwin's is lower:** the first run of slice 2 on a macOS runner refused a 4,095-byte target with `ENAMETOOLONG`. **Measured on Darwin (§10): the longest target is 1,023 bytes; 1,024 is `ENAMETOOLONG` (63)** |
 | `readlinkat` of a 7-byte target into 8 / 7 / 4 bytes | 7 / 7 / **4**: it cuts the target silently and does not say so |
 | `readlinkat` of a regular file or a directory | -1, `EINVAL` (22) |
-| `readlinkat` of a missing name; into 0 bytes | -1, `ENOENT`; -1, `EINVAL` |
-| `openat(.., O_NOFOLLOW)` on a link (what `dir_enter` and `dir_open_read` do) | -1, `ELOOP` (40) |
+| `readlinkat` of a missing name; into 0 bytes | -1, `ENOENT`; -1, `EINVAL`. **The second is Linux only: on Darwin a 0-byte buffer answers 0, with no error** (§10) |
+| `openat(.., O_NOFOLLOW)` on a link (what `dir_open_read` does; **`dir_enter` adds `O_DIRECTORY`, and on Darwin answers `ENOTDIR` (20), not `ELOOP`**: §10) | -1, `ELOOP` (40) |
 
 Two of these shape the design: a removal that cannot remove a link (so `dir_rmdir` cannot be used to delete what `dir_remove` should), and a read that **cuts
 without saying so** (so `dir_readlink` needs a rule of its own, §4).
@@ -45,9 +46,9 @@ dir_rmdir(dir: &Dir, name: &[byte]) -> [dir_write] Done        // unlinkat(dir, 
 ```
 
 * **The shape of `dir_remove`, with one flag.** `dir_remove` is `unlinkat(dir, name, 0)` (`dirs.c:101` **[read]**); this is the same call with `AT_REMOVEDIR`
-  (`0x200` on Linux **[measured]**; `0x80` on Darwin **[read]**, from the system header, not run). Everything `directory-handles.md` §2 says of a name holds: one
+  (`0x200` on Linux **[measured]**; `0x80` on Darwin, **[measured, §10]**; it was read from the system header before). Everything `directory-handles.md` §2 says of a name holds: one
   component, `EINVAL` with no call for an empty name, `.`, `..`, a `/`, a NUL or one longer than `NAME_MAX`.
-* **Only an empty directory, and only a directory.** A non-empty one is the kernel's `ENOTEMPTY` (a value, 39 on Linux; Darwin's number **not measured**). A link, a file
+* **Only an empty directory, and only a directory.** A non-empty one is the kernel's `ENOTEMPTY` (a value, 39 on Linux and **66 on Darwin, measured**). A link, a file
   and a missing name are `ENOTDIR` or `ENOENT` as §2 shows: the caller who wants a link gone calls `dir_remove`.
 * **No recursive form.** `rm -r` is a loop of `dir_list`, `dir_enter`, `dir_remove` and `dir_rmdir` in the caller (`std.dirs` is where a helper would live), one
   component at a time, which is where the policy for what to do with a link belongs. `remove_path` of the Rust V1 is that loop upward: remove the file, then each parent
@@ -179,5 +180,39 @@ a relative target, a link below a directory, a 500-byte target, a link replaced 
 
 ## 9. Not measured
 
-Darwin: the value of `AT_REMOVEDIR`, `ENOTEMPTY`, `ELOOP` and the behaviour of every row of §2. A second kernel. What the Rust compiler does with a registered builtin it does not lower (§5).
+Darwin: measured on 2026-11-11, §10 (one machine, APFS; what is not in §10 was not run: `dir_enter` on a link on **Linux** was not run for this correction, and no test makes a link and enters it). A second kernel. What the Rust compiler does with a registered builtin it does not lower (§5).
 Whether a path-based `Fs` operation can be made to refuse a link planted inside its prefix (§4). Time: no cost was measured, because none of these is on a hot path.
+
+## 10. Darwin, measured (2026-11-11, macOS 26.2, Darwin 25.2.0, arm64, APFS)
+
+What was run, not what was expected. **Kernel level:** `probe.c` (`probe-darwin.txt`) and `probe2.c` (`probe2-darwin.txt`; new: renaming over files and links, the longest link target, the longest name),
+each built with `cc` and run once, in a directory made under `$TMPDIR`. **Through cancho:** the existing probes `tests/programs/directory_writes_probe.cho` (`dir_rename`) and `directory_handles_probe.cho`
+(`dir_enter`, `dir_open_read`), built by the compiler in cancho, on a scratch tree; and the command tests of `scripts/gate.sh`, which pass on this machine (`directory_links`, `directory_rmdir`,
+`directory_handles`, `directory_writes` and the other `directory_*`).
+
+| | Linux (§2) | Darwin, measured |
+|---|---|---|
+| `AT_REMOVEDIR` | `0x200` | `0x80` (was read from the header) |
+| `ENOTEMPTY` / `ENAMETOOLONG` / `ELOOP` | 39 / 36 / 40 | **66 / 63 / 62** (`ENOTDIR` 20, `EEXIST` 17, `ENOENT` 2, `EINVAL` 22, `EISDIR` 21 are the same) |
+| `unlinkat(.., AT_REMOVEDIR)` | empty 0; non-empty `ENOTEMPTY`; missing `ENOENT`; a link, a dangling link and a file `ENOTDIR` | **the same, with Darwin's `ENOTEMPTY` (66)**; a link is never removed |
+| `symlinkat` onto a taken name, onto a dangling link | `EEXIST` | `EEXIST` (never replaces, never follows) |
+| `symlinkat("")` | `ENOENT` | **0: it makes a link with an empty target** (`dir_symlink` refuses an empty target first, so a program cannot reach this) |
+| longest `symlinkat` target | 4,095 | **1,023**; 1,024 is `ENAMETOOLONG`; `readlinkat` of the 1,023-byte target into 5,000 gives 1,023 |
+| `readlinkat` of a 7-byte target into 8 / 7 / 4 bytes | 7 / 7 / 4 (cut silently) | 7 / 7 / 4 (the same: the fill rule of §4 is needed on both) |
+| `readlinkat` into 0 bytes | `EINVAL` | **0, no error** (`dir_readlink` refuses a 0-byte buffer first, so a program cannot reach this) |
+| `readlinkat` of a file / a directory / a missing name | `EINVAL` / `EINVAL` / `ENOENT` | the same |
+| `openat(.., O_NOFOLLOW)` on a link | `ELOOP` | `ELOOP` (62) |
+| `dir_open_read` on a link to a file, to a directory, dangling | `ELOOP` | `ELOOP` (62) for all three; a plain file is read |
+| **`dir_enter` on a link to a directory, a link to a file, a dangling link, a plain file** | `ELOOP` for a link **[not run for this correction]** | **`ENOTDIR` (20) for all four**: `dir_enter` opens `O_DIRECTORY | O_NOFOLLOW` (`directory-handles.md` §2) and Darwin reports the directory test first. A real directory is entered. `directory_handles.expected` already accepts either (`refused (ENOTDIR or ELOOP)`); **§2's row, which said `ELOOP` for `dir_enter`, was wrong for Darwin and is corrected there** |
+| `renameat` of a file over a file | not run | replaces (the target holds the new content; the source is gone) |
+| `renameat` of a file over a link (to a file, to a directory, dangling) | not run | **replaces the link by the file, follows nothing** (the link's target and the directory it pointed at are untouched) |
+| `renameat` of a link over a file | not run | replaces the file by the link |
+| a file over a directory / a directory over a file | not run | `EISDIR` (21) / `ENOTDIR` (20) |
+| a directory over an empty directory / over a non-empty one | not run | 0 / `ENOTEMPTY` (66) |
+| `dir_rename` through cancho, file over file, over a link to a file, over a link to a directory, over a dangling link, a link over a file | not run | all 0 and as the line above says; a directory over a file is `err 20` |
+| longest name `NAME` that can have `NAME.cancho-tmp-0` (13 bytes) beside it | 255 − 13 = 242, **read, not run** | **242, run** (`probe2`): 243 makes `NAME` and refuses `NAME.cancho-tmp-0` with `ENAMETOOLONG`; `NAME_MAX` itself is 255 (255 bytes made, 256 refused) |
+
+**What this changes.** Two claims were Linux's and are corrected where they were made: `dir_enter` on a link answers `ELOOP` (it answers `ENOTDIR` on Darwin), and a symlink target may be 4,095 bytes
+(1,023 on Darwin: a program that makes a long link must expect `ENAMETOOLONG`, and the command test already accepts it). Three rows differ for calls a program cannot make (an empty target, a 0-byte read
+buffer): both builtins refuse those before the kernel, which is why `directory_links` passes on both. **Not run:** the same probes on a case-sensitive or non-APFS volume; whether cancho's own
+`NAME.cancho-tmp-0` refusal for a name of 243 bytes or more is `io 63` on Darwin (`vcs-worktree.md` §6 says `io 36`, which is Linux's number): the kernel's refusal was run, `vcsworktree` was not run on such a name.
