@@ -175,6 +175,7 @@
 
 - [Related work](related-work.md)
 - [Self-hosting, measured](self-hosting.md)
+- [Pharma chain: three use cases, one digital twin](use-cases.md)
 
 ---
 
