@@ -129,6 +129,11 @@ opening either.
 
 ---
 
+**A narrowed path is a prefix, not a jail** (issue #762). `fs_read(p)` and `fs_write(p)` compare text: a link inside `p` leads out of it, and a program narrowed to `/data` that reads
+`/data/link/x` reads what `link` points at (the `..` form is stopped at run time; the link form is not). The report says `bounded` because the label names a directory, which is what it can say.
+So that a consumer that diffs the JSON against a budget need not know the history, every `fs_read` and `fs_write` label in `--output json` carries `"confinement": "lexical"`; the labels of
+no other kind have the key. A program that must hold to a directory opens it with `open_dir` and writes over `&Dir` (`agent-guidelines` section 3.7), which follows no link. The prose report is unchanged.
+
 ## 3. What is still open
 
 | Question | Why it waits |

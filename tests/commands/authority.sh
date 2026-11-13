@@ -52,7 +52,7 @@ authority tour.txt "$root/examples/tour.cho" --std
 [ "$(tr -cd '{' < tour.json | wc -c)" = "$(tr -cd '}' < tour.json | wc -c)" ] && echo "ok balanced braces" || echo "FAILS balanced braces"
 [ "$(tr -cd '[' < tour.json | wc -c)" = "$(tr -cd ']' < tour.json | wc -c)" ] && echo "ok balanced brackets" || echo "FAILS balanced brackets"
 for key in '"effects"' '"labels"' '"never_touches"' '"foreign_symbols"' '"fs_read"' '"labs"' '"never_touches": [' '"other programs"'; do has tour.json "$key" "tour.json has $key"; done
-has tour.json '{ "name": "fs_read", "argument": "/tmp", "bounded": true }' "the narrowing survives"
+has tour.json '{ "name": "fs_read", "argument": "/tmp", "bounded": true, "confinement": "lexical" }' "the narrowing survives, and says it is a lexical prefix"
 has tour.json '{ "name": "heap", "argument": null, "bounded": true }' "an unnarrowed label carries an explicit null"
 hasnt tour.json '"the filesystem"' "tour touches the filesystem, so it cannot be proven out of reach"
 has tour.txt 'fs_read("/tmp")' "the human form is unchanged by the flag"
