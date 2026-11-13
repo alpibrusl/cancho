@@ -1,0 +1,11 @@
+{
+  "command": "switch",
+  "ok": false,
+  "refused": {
+    "current": "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e",
+    "expected": "absent",
+    "message": "`heads/main` is at 3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e, not where it was expected",
+    "ref": "heads/main",
+    "tag": "ref-moved"
+  }
+}

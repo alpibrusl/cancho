@@ -134,6 +134,43 @@ vcs restore notes.md; if grep -q '"tag": "lock-held"' "$work/out.json" && grep -
 [ "$(cat notes.md)" = "scribble" ] && [ "$(cat .cancho/vcs/lock)" = "4242 1000" ] && echo "ok a held lock changes nothing and is left" || echo "FAILS the held lock was disturbed"
 printf '0 5' > .cancho/vcs/lock; vcs restore notes.md; if grep -q '"pid": null' "$work/out.json" && grep -q '"tag": "lock-held"' "$work/out.json"; then echo "ok a lock stamped with pid 0 has a null pid"; else echo "FAILS pid 0"; fi
 
+echo "== switch"
+head_is() { if cmp -s "$work/r/.cancho/vcs/HEAD" "$2"; then echo "ok $1: HEAD is as the Rust command left it"; else echo "FAILS $1: HEAD differs"; fi; }
+listing() { find . -path ./.cancho -prune -o -print | sort | while read -r f; do if [ -L "$f" ]; then echo "l $f -> $(readlink "$f")"; elif [ -d "$f" ]; then echo "d $f"; elif [ -x "$f" ]; then echo "x $f $(cksum < "$f")"; else echo "f $f $(cksum < "$f")"; fi; done; }
+wide() { rm -rf "$work/r"; mkdir -p "$work/r"; cp -R "$fx/four_changes/." "$work/r/"; cd "$work/r" || exit 1; }
+parent_files() { cmp -s notes.md "$gold/restore_from_parent.notes.md" && cmp -s a.cho "$gold/restore_from_parent.a.cho" && echo "ok $1: the files are the parent's" || echo "FAILS $1: the files are not the parent's"; }
+branch_old() { "$cancho" vcs branch create old --from HEAD~1 --output json > /dev/null; }
+repo; vcs switch main;        same "switch to the branch HEAD is on" "$gold/switch_noop.json" "$work/out.json"; exit_is "switch, nowhere" 0; no_lock "switch, nowhere"
+repo; vcs switch topic --create; same "switch --create" "$gold/switch_create.json" "$work/out.json"; head_is "switch --create" "$gold/switch_create.HEAD"; [ "$(cat .cancho/vcs/refs/heads/topic)" = "$(cat .cancho/vcs/refs/heads/main)" ] && echo "ok the new branch is at HEAD's change" || echo "FAILS the new branch is elsewhere"; no_lock "switch --create"
+repo; vcs switch topic --create --dry-run; same "switch --create --dry-run" "$gold/switch_create_dry.json" "$work/out.json"; [ -e .cancho/vcs/refs/heads/topic ] && echo "FAILS --dry-run made the branch" || echo "ok --dry-run made no branch"
+repo; vcs switch main --create; same "switch --create over a branch that exists" "$gold/refuse_switch_create_exists.json" "$work/out.json"; exit_is "switch --create, exists" 1; no_lock "switch --create, exists"
+repo; vcs switch 'bad name' --create; same "switch --create with a name that is not a ref name" "$gold/refuse_switch_create_bad_name.json" "$work/out.json"; exit_is "switch --create, bad name" 1
+empty; "$cancho" vcs init --output json > /dev/null; vcs switch x --create; same "switch --create where HEAD has no change" "$gold/refuse_switch_create_no_change.json" "$work/out.json"
+empty; "$cancho" vcs init --output json > /dev/null; vcs switch main; same "switch in a repository with no change" "$gold/refuse_switch_empty_repository.json" "$work/out.json"
+repo; branch_old; vcs switch old; same "switch to a branch" "$gold/switch_branch.json" "$work/out.json"; exit_is "switch to a branch" 0; head_is "switch to a branch" "$gold/switch_branch.HEAD"; parent_files "switch to a branch"; no_lock "switch to a branch"
+repo; branch_old; vcs switch old --dry-run; same "switch --dry-run" "$gold/switch_branch_dry.json" "$work/out.json"; [ "$(cat .cancho/vcs/HEAD)" = "ref: refs/heads/main" ] && [ "$(cat notes.md)" = "$(cd "$fx/three_changes" && cat notes.md)" ] && echo "ok --dry-run moved nothing" || echo "FAILS --dry-run moved something"
+repo; vcs switch HEAD~1;      same "switch to a change detaches" "$gold/switch_detach_parent.json" "$work/out.json"; head_is "switch to a change" "$gold/switch_detach_parent.HEAD"; parent_files "switch to a change"
+repo; vcs switch main --detach; same "switch --detach reads a branch name as a change" "$gold/switch_detach_branch.json" "$work/out.json"; head_is "switch --detach" "$gold/switch_detach_branch.HEAD"
+repo; vcs switch nosuch;      same "switch to a name that names nothing" "$gold/refuse_switch_bad_revision.json" "$work/out.json"; exit_is "switch, bad revision" 1
+repo; vcs switch;             same "switch with no argument" "$gold/refuse_switch_no_argument.json" "$work/out.json"; exit_is "switch, no argument" 1
+repo; vcs switch a b;         same "switch with two arguments" "$gold/refuse_switch_two_arguments.json" "$work/out.json"; exit_is "switch, two arguments" 1
+repo; branch_old; printf 'scribble\n' > notes.md; vcs switch old; same "switch over a dirty file the move touches" "$gold/refuse_switch_dirty.json" "$work/out.json"; exit_is "switch, dirty" 1; [ "$(cat notes.md)" = "scribble" ] && [ "$(cat .cancho/vcs/HEAD)" = "ref: refs/heads/main" ] && echo "ok a refused switch changed nothing" || echo "FAILS a refused switch changed something"; no_lock "switch, dirty"
+repo; branch_old; printf 'z\n' > zzz.txt; vcs switch old; same "switch over a dirty file the move does not touch (no flag)" "$gold/refuse_switch_dirty_other.json" "$work/out.json"
+repo; branch_old; printf 'z\n' > zzz.txt; vcs switch old --keep; same "switch --keep carries a dirty file the move does not touch" "$gold/switch_keep_carries.json" "$work/out.json"; [ "$(cat zzz.txt)" = "z" ] && parent_files "switch --keep" || echo "FAILS --keep lost the file"
+repo; branch_old; printf 'scribble\n' > notes.md; vcs switch old --keep; same "switch --keep still refuses a dirty file in the way" "$gold/refuse_switch_keep_in_the_way.json" "$work/out.json"
+repo; branch_old; printf 'scribble\n' > notes.md; printf 'z\n' > zzz.txt; vcs switch old --discard; same "switch --discard lists what it overwrote" "$gold/switch_discard.json" "$work/out.json"; parent_files "switch --discard"; [ "$(cat zzz.txt)" = "z" ] && echo "ok --discard leaves a file the move does not touch" || echo "FAILS --discard removed zzz.txt"
+repo; branch_old; printf 'scribble\n' > notes.md; vcs switch old --dry-run; same "switch --dry-run still refuses a dirty working copy" "$gold/refuse_switch_dry_dirty.json" "$work/out.json"
+repo; branch_old; vcs switch old; vcs switch main; same "switch back" "$gold/switch_back.json" "$work/out.json"; tree_is_head "switch back"; no_lock "switch back"
+wide; vcs switch wide;        same "switch to a branch that adds, removes, links and changes a mode" "$gold/switch_wide.json" "$work/out.json"; head_is "switch wide" "$gold/switch_wide.HEAD"; [ "$(listing)" = "$(cat "$gold/switch_wide.tree")" ] && echo "ok switch wide: the working copy is what the Rust command made" || { echo "FAILS switch wide: the working copy differs"; listing | diff "$gold/switch_wide.tree" - | head -8; }
+vcs switch main;              same "switch back from it" "$gold/switch_wide_back.json" "$work/out.json"; [ "$(listing)" = "$(cat "$gold/switch_wide_back.tree")" ] && echo "ok switch back: files removed, directories with them" || { echo "FAILS switch back: the working copy differs"; listing | diff "$gold/switch_wide_back.tree" - | head -8; }; tree_is_head "switch back from wide"
+wide; printf 'q\n' > unrelated.txt; vcs switch wide --keep; same "switch --keep carries a file the move does not name" "$gold/switch_wide_keep.json" "$work/out.json"; [ "$(listing)" = "$(cat "$gold/switch_wide_keep.tree")" ] && echo "ok switch --keep: the same tree" || echo "FAILS switch --keep: the tree differs"
+wide; vcs switch wide --dry-run; same "switch --dry-run to a wider branch" "$gold/switch_wide_dry.json" "$work/out.json"; tree_is_head "switch --dry-run, wide"
+wide; mkdir -p sub; vcs switch wide; cd sub || exit 1; vcs switch main; same "switch from a subdirectory" "$gold/switch_from_subdir.json" "$work/out.json"
+cd "$work/r" 2> /dev/null || cd "$work" || exit 1
+repo; branch_old; printf '4242 1000' > .cancho/vcs/lock; vcs switch old --dry-run; same "switch --dry-run takes no lock" "$gold/switch_dry_locked.json" "$work/out.json"
+vcs switch old; if grep -q '"tag": "lock-held"' "$work/out.json" && grep -q '"command": "switch"' "$work/out.json" && grep -q '"pid": 4242' "$work/out.json" && grep -q "\"lock\": \"$(cd "$work/r" && pwd -P)/.cancho/vcs/lock\"" "$work/out.json"; then echo "ok switch with the lock held: lock-held with its pid and path"; else echo "FAILS switch lock-held"; cat "$work/out.json"; fi; exit_is "switch, lock held" 1
+[ "$(cat .cancho/vcs/HEAD)" = "ref: refs/heads/main" ] && [ "$(cat .cancho/vcs/lock)" = "4242 1000" ] && echo "ok a held lock changes nothing and is left" || echo "FAILS the held lock was disturbed"
+
 echo "== routing"
 empty; "$cancho" vcs log > "$work/out.txt" 2>&1; echo "exit $?"; grep -c "nothing published yet" "$work/out.txt" | sed 's/^/manifest log lines: /'
 repo; "$cancho" vcs log --store elsewhere > "$work/out.txt" 2>&1; echo "exit $?"; grep -o "nothing published yet at .elsewhere." "$work/out.txt"

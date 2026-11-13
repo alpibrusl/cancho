@@ -132,6 +132,71 @@ ok restore with the lock held: lock-held with its pid, age and path
 ok restore, lock held (exit 1)
 ok a held lock changes nothing and is left
 ok a lock stamped with pid 0 has a null pid
+== switch
+ok switch to the branch HEAD is on
+ok switch, nowhere (exit 0)
+ok switch, nowhere: the lock is gone
+ok switch --create
+ok switch --create: HEAD is as the Rust command left it
+ok the new branch is at HEAD's change
+ok switch --create: the lock is gone
+ok switch --create --dry-run
+ok --dry-run made no branch
+ok switch --create over a branch that exists
+ok switch --create, exists (exit 1)
+ok switch --create, exists: the lock is gone
+ok switch --create with a name that is not a ref name
+ok switch --create, bad name (exit 1)
+ok switch --create where HEAD has no change
+ok switch in a repository with no change
+ok switch to a branch
+ok switch to a branch (exit 0)
+ok switch to a branch: HEAD is as the Rust command left it
+ok switch to a branch: the files are the parent's
+ok switch to a branch: the lock is gone
+ok switch --dry-run
+ok --dry-run moved nothing
+ok switch to a change detaches
+ok switch to a change: HEAD is as the Rust command left it
+ok switch to a change: the files are the parent's
+ok switch --detach reads a branch name as a change
+ok switch --detach: HEAD is as the Rust command left it
+ok switch to a name that names nothing
+ok switch, bad revision (exit 1)
+ok switch with no argument
+ok switch, no argument (exit 1)
+ok switch with two arguments
+ok switch, two arguments (exit 1)
+ok switch over a dirty file the move touches
+ok switch, dirty (exit 1)
+ok a refused switch changed nothing
+ok switch, dirty: the lock is gone
+ok switch over a dirty file the move does not touch (no flag)
+ok switch --keep carries a dirty file the move does not touch
+ok switch --keep: the files are the parent's
+ok switch --keep still refuses a dirty file in the way
+ok switch --discard lists what it overwrote
+ok switch --discard: the files are the parent's
+ok --discard leaves a file the move does not touch
+ok switch --dry-run still refuses a dirty working copy
+ok switch back
+ok switch back: the working copy is HEAD's
+ok switch back: the lock is gone
+ok switch to a branch that adds, removes, links and changes a mode
+ok switch wide: HEAD is as the Rust command left it
+ok switch wide: the working copy is what the Rust command made
+ok switch back from it
+ok switch back: files removed, directories with them
+ok switch back from wide: the working copy is HEAD's
+ok switch --keep carries a file the move does not name
+ok switch --keep: the same tree
+ok switch --dry-run to a wider branch
+ok switch --dry-run, wide: the working copy is HEAD's
+ok switch from a subdirectory
+ok switch --dry-run takes no lock
+ok switch with the lock held: lock-held with its pid and path
+ok switch, lock held (exit 1)
+ok a held lock changes nothing and is left
 == routing
 exit 0
 manifest log lines: 1

@@ -1,0 +1,8 @@
+d .
+l ./lnk -> notes.md
+x ./notes.md 4036134623 20
+d ./sub
+d ./sub/deep
+f ./sub/deep/x.txt 2192966820 2
+f ./top.txt 2205067299 2
+f ./unrelated.txt 2376846363 2

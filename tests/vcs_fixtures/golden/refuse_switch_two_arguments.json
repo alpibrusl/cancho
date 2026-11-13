@@ -1,0 +1,8 @@
+{
+  "command": "switch",
+  "ok": false,
+  "refused": {
+    "message": "`switch` takes one branch or change",
+    "tag": "bad-argument"
+  }
+}

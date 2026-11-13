@@ -78,6 +78,7 @@ vcschange.cho
 vcsobj.cho
 vcsrepo.cho
 vcsrestore.cho
+vcsswitch.cho
 vcsscan.cho
 vcsstatus.cho
 vcsstore.cho

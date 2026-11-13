@@ -1,7 +1,7 @@
 edition 9;
 module selfhost.clivcsrepo;
 
-// clivcsrepo.cho -- the repository side of `cancho vcs` in the command line in cancho (`docs/vcs-routing.md`, slice R1): `init`, `log`, `show`, `branch`, `status` and `restore`. The libraries are `vcsstore.cho` and `vcsrepo.cho`; this module is
+// clivcsrepo.cho -- the repository side of `cancho vcs` in the command line in cancho (`docs/vcs-routing.md`, slice R1): `init`, `log`, `show`, `branch`, `status`, `restore` and `switch`. The libraries are `vcsstore.cho` and `vcsrepo.cho`; this module is
 // what a person types: the options, finding the repository, the one JSON document on standard output, and the exit status. `clivcs.cho` is the other side of `vcs` (`publish`, `log --store`, ...).
 //
 // Routing (`docs/vcs-routing.md` D1), as the Rust command's `cmd_vcs`: `log` is the manifest log when `--store` is named or no repository is in reach from the current directory, and the repository log
@@ -27,6 +27,7 @@ import selfhost.vcsrepo;
 import selfhost.vcsrestore;
 import selfhost.vcsstatus;
 import selfhost.vcsstore;
+import selfhost.vcsswitch;
 import selfhost.walk;
 
 // ---- the options -------------------------------------------------------------------------------------------------------------
@@ -48,6 +49,11 @@ struct Options {
     expect_at: int,
     expect_off: int,
     dry: bool,
+    create: bool,
+    detach: bool,
+    keep: bool,
+    discard: bool,
+    positionals: int,
 }
 
 // `before`, `what` and `after`, said as a usage error.
@@ -62,7 +68,7 @@ fn usage[&h, &i, &w](heap: &!h Heap, io: &!i Io, before: &static [byte], what: &
     return status;
 }
 
-// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show`, 3 for `branch`, 4 for `status` and 5 for `restore`.
+// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show`, 3 for `branch`, 4 for `status`, 5 for `restore` and 6 for `switch`.
 fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: int) -> [heap, err_write, args] Options {
     var bad = 0;
     var repo_at = 0 - 1;
@@ -78,11 +84,17 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
     var expect_at = 0 - 1;
     var expect_off = 0;
     var dry = false;
+    var create = false;
+    var detach = false;
+    var keep = false;
+    var discard = false;
+    var positionals = 0;
     var plain_only = false;
     var n = 3;
     while n < arg_count(args) && bad == 0 {
         let word = arg(args, n);
         if plain_only || len(word) < 2 || lc.at(word, 0) != '-' || lc.at(word, 1) != '-' {
+            positionals = positionals + 1;
             if rev_at < 0 {
                 rev_at = n;
             } else if name_at < 0 {
@@ -115,6 +127,8 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
                 takes = 3;
             } else if bytes.equal(key, "--dry-run") {
                 takes = 4;
+            } else if command == 6 && (bytes.equal(key, "--create") || bytes.equal(key, "--detach") || bytes.equal(key, "--keep") || bytes.equal(key, "--discard")) {
+                takes = 5;
             }
             if takes == 0 {
                 bad = usage(heap, io, "unknown option `", key, "`");
@@ -122,6 +136,16 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
                 bad = usage(heap, io, "`", key, "` is not in this build of `cancho vcs show` (docs/vcs-routing.md D7); the Rust build has it");
             } else if takes == 4 {
                 dry = true;
+            } else if takes == 5 {
+                if bytes.equal(key, "--create") {
+                    create = true;
+                } else if bytes.equal(key, "--detach") {
+                    detach = true;
+                } else if bytes.equal(key, "--keep") {
+                    keep = true;
+                } else {
+                    discard = true;
+                }
             } else {
                 var at = n;
                 var off = inline;
@@ -163,7 +187,7 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
         }
         n = n + 1;
     }
-    return Options { bad: bad, repo_at: repo_at, repo_off: repo_off, branch_at: branch_at, branch_off: branch_off, limit_at: limit_at, limit_off: limit_off, rev_at: rev_at, name_at: name_at, from_at: from_at, from_off: from_off, expect_at: expect_at, expect_off: expect_off, dry: dry };
+    return Options { bad: bad, repo_at: repo_at, repo_off: repo_off, branch_at: branch_at, branch_off: branch_off, limit_at: limit_at, limit_off: limit_off, rev_at: rev_at, name_at: name_at, from_at: from_at, from_off: from_off, expect_at: expect_at, expect_off: expect_off, dry: dry, create: create, detach: detach, keep: keep, discard: discard, positionals: positionals };
 }
 
 // The value at argument `at`, from `off`.
@@ -484,7 +508,7 @@ fn status_in[&h, &i, &r, &d](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d D
 }
 
 // `lock-held`, said as the Rust command says it: the lock's path, the pid and the age from its text (`PID SINCE`; a pid of 0, which is what this build stamps, or a text that is not that, is `null`).
-fn lock_held[&h, &i, &p, &t](heap: &!h Heap, io: &!i Io, lock: &p [byte], stamp: &t [byte], now: int) -> [heap, io_write] int {
+fn lock_held[&h, &i, &m, &p, &t](heap: &!h Heap, io: &!i Io, command: &m [byte], lock: &p [byte], stamp: &t [byte], now: int) -> [heap, io_write] int {
     let text = vcsstore.trimmed(stamp);
     var sp = bytes.find(text, " ");
     var pid = 0 - 1;
@@ -519,7 +543,7 @@ fn lock_held[&h, &i, &p, &t](heap: &!h Heap, io: &!i Io, lock: &p [byte], stamp:
     }
     message = buffer.append(heap, message, "s; if that process is gone, run `cancho vcs unlock`");
     var b = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
-    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), "restore");
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), command);
     b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "false");
     b = buffer.push(heap, vcsrepo.member(heap, b, 1, false, "refused"), byte_of(123));
     b = vcsrepo.member(heap, b, 2, true, "age_seconds");
@@ -635,7 +659,7 @@ fn restore_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: 
                 lock = buffer.append(heap, lock, "/.cancho/vcs/lock");
                 borrow doc as &db in {
                     borrow lock as &lb in {
-                        code = lock_held(heap, io, buffer.bytes(lb), buffer.bytes(db), now);
+                        code = lock_held(heap, io, "restore", buffer.bytes(lb), buffer.bytes(db), now);
                     }
                 }
                 buffer.drop(heap, lock);
@@ -647,6 +671,78 @@ fn restore_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: 
     }
     unbox_slice(heap, scratch);
     buffer.drop(heap, selected);
+    return code;
+}
+
+// `dirty-working-copy`: the paths (one to a line) that block the switch.
+fn dirty_refusal[&h, &p](heap: &!h Heap, paths: &p [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), "switch");
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "false");
+    b = buffer.push(heap, vcsrepo.member(heap, b, 1, false, "refused"), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, true, "message"), "uncommitted changes would be lost or carried; record them, or pass --keep or --discard");
+    b = vcsswitch.string_array(heap, vcsrepo.member(heap, b, 2, false, "paths"), paths, 2);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "tag"), "dirty-working-copy");
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(125));
+    return buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+}
+
+// `switch TARGET [--create] [--detach] [--keep] [--discard] [--dry-run]` in the repository at `found` (R6, `vcsswitch.switch_command`).
+fn switch_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Args, root: &r Dir, vcs: &d Dir, found: &p [byte], options: Options, clock: &k Clock) -> [heap, io_write, args, dir_read, dir_write, dir_symlink, file_read, file_write, clock] int {
+    if options.positionals != 1 {
+        return refused(heap, io, "switch", "`switch` takes one branch or change", "bad-argument");
+    }
+    let target = arg(args, options.rev_at);
+    let rootpath = dotless(found);
+    let now = clock_unix_ms(clock) / 1000;
+    var code = 0;
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    borrow mut scratch as &!s in {
+        let answer = vcsswitch.switch_command(heap, root, vcs, contents(s), target, options.create, options.detach, options.keep, options.discard, options.dry, now);
+        let (doc, status, errno) = vcsstore.parts(answer);
+        if status == 15 {
+            var lock = buffer.append(heap, buffer.empty(heap, len(rootpath) + 24), rootpath);
+            lock = buffer.append(heap, lock, "/.cancho/vcs/lock");
+            borrow doc as &db in {
+                borrow lock as &lb in {
+                    code = lock_held(heap, io, "switch", buffer.bytes(lb), buffer.bytes(db), now);
+                }
+            }
+            buffer.drop(heap, lock);
+            buffer.drop(heap, doc);
+        } else if status == 32 {
+            borrow doc as &db in {
+                code = said(heap, io, dirty_refusal(heap, buffer.bytes(db)));
+            }
+            code = 1;
+            buffer.drop(heap, doc);
+        } else if status == 14 {
+            var refname = buffer.append(heap, buffer.empty(heap, len(target) + 8), "heads/");
+            refname = buffer.append(heap, refname, target);
+            borrow refname as &rb in {
+                borrow doc as &db in {
+                    code = said(heap, io, moved_refusal(heap, "switch", buffer.bytes(rb), buffer.bytes(db), "absent", false));
+                }
+            }
+            code = 1;
+            buffer.drop(heap, refname);
+            buffer.drop(heap, doc);
+        } else if status == 16 {
+            var message = buffer.append(heap, buffer.empty(heap, 64), "`heads/");
+            message = buffer.append(heap, buffer.append(heap, message, target), "` is not a ref name");
+            borrow message as &mb in {
+                code = refused(heap, io, "switch", buffer.bytes(mb), "bad-ref-name");
+            }
+            buffer.drop(heap, message);
+            buffer.drop(heap, doc);
+        } else if status == 33 {
+            code = refused(heap, io, "switch", "there is no change to branch from yet", "bad-revision");
+            buffer.drop(heap, doc);
+        } else {
+            code = answered(heap, io, "switch", vcsstore.Object { bytes: doc, status: status, errno: errno }, target);
+        }
+    }
+    unbox_slice(heap, scratch);
     return code;
 }
 
@@ -1174,7 +1270,7 @@ fn branch_in[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs:
 // Whether `cancho vcs SUB` is this module's: `init`, `show`, `branch`, `status` and `restore` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
 pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read] bool {
     let sub = arg(args, 2);
-    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") {
+    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") {
         return true;
     }
     if !bytes.equal(sub, "log") {
@@ -1220,6 +1316,9 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
     } else if bytes.equal(verb, "restore") {
         which = 5;
         name = "restore";
+    } else if bytes.equal(verb, "switch") {
+        which = 6;
+        name = "switch";
     }
     let options = options_of(heap, io, args, which);
     if options.bad != 0 {
@@ -1253,6 +1352,8 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                                 code = status_in(heap, io, rd, vd);
                                             } else if which == 5 {
                                                 code = restore_in(heap, io, args, rd, vd, buffer.bytes(pb), buffer.bytes(cb), options, clock);
+                                            } else if which == 6 {
+                                                code = switch_in(heap, io, args, rd, vd, buffer.bytes(pb), options, clock);
                                             } else {
                                                 code = show_in(heap, io, args, vd, options);
                                             }
