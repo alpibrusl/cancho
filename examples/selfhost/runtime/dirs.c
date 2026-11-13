@@ -13,7 +13,7 @@ extern const i64 cancho_plat[];
 enum {
   OPEN_DIR, OPEN_ENTER, OPEN_READ, OPEN_NEW, OPEN_APPEND, FDCWD, NOREPLACE, UNSUPPORTED, ENAMETOOLONG,
   D_TYPE, D_NAME, DT_UNKNOWN, DT_LNK, DT_DIR, DT_REG, ST_MODE, ST_MODE_BITS, ST_SIZE, ST_MTIME, AT_NOFOLLOW,
-  CREATE_MODE
+  CREATE_MODE, ST_NLINK, ST_NLINK_BITS
 };
 #define EINVAL 22
 #if DARWIN
@@ -277,5 +277,24 @@ void cancho_dir_mode(const i64 *dir, const u8 *name, i64 len, i64 own, i64 *out)
   i64 why = ERRNO;
   out[0] = r < 0;
   out[1] = r < 0 ? 0 : (dirrt_field(st, P(ST_MODE), P(ST_MODE_BITS)) & 07777);
+  out[2] = why;
+}
+
+/* `dir_nlink(dir, name)`: how many names the file has, as a `Done`. A hard link is another name for a file that may lie anywhere, and no open
+ * flag can refuse one, so a program that must not read through a link asks first. The parameters are those of `cancho_dir_mode`, whose call
+ * shape the code of this one shares. */
+void cancho_dir_nlink(const i64 *dir, const u8 *name, i64 len, i64 own, i64 *out) {
+  u8 copy[NAME_MAX + 1];
+  u8 st[160];
+  int r;
+  if (own) {
+    r = fstat((int)*dir, st);
+  } else {
+    if (!dirrt_component(name, len, copy)) return dirrt_refused(out);
+    r = fstatat((int)*dir, (const char *)copy, st, (int)P(AT_NOFOLLOW));
+  }
+  i64 why = ERRNO;
+  out[0] = r < 0;
+  out[1] = r < 0 ? 0 : dirrt_field(st, P(ST_NLINK), P(ST_NLINK_BITS));
   out[2] = why;
 }

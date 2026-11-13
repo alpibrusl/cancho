@@ -1325,5 +1325,101 @@ return:                                           ; preds = %cond.end, %if.then4
 
 declare i32 @fstat(i32, ptr)
 
+; Function Attrs: noinline nounwind
+define void @cancho_dir_nlink(ptr %dir, ptr %name, i64 %len, i64 %own, ptr %out) {
+entry:
+  %dir.addr = alloca ptr, align 8
+  %name.addr = alloca ptr, align 8
+  %len.addr = alloca i64, align 8
+  %own.addr = alloca i64, align 8
+  %out.addr = alloca ptr, align 8
+  %copy = alloca [256 x i8], align 1
+  %st = alloca [160 x i8], align 1
+  %r = alloca i32, align 4
+  %why = alloca i64, align 8
+  store ptr %dir, ptr %dir.addr, align 8
+  store ptr %name, ptr %name.addr, align 8
+  store i64 %len, ptr %len.addr, align 8
+  store i64 %own, ptr %own.addr, align 8
+  store ptr %out, ptr %out.addr, align 8
+  %0 = load i64, ptr %own.addr, align 8
+  %tobool = icmp ne i64 %0, 0
+  br i1 %tobool, label %if.then, label %if.else
+
+if.then:                                          ; preds = %entry
+  %1 = load ptr, ptr %dir.addr, align 8
+  %2 = load i64, ptr %1, align 8
+  %conv = trunc i64 %2 to i32
+  %arraydecay = getelementptr inbounds [160 x i8], ptr %st, i64 0, i64 0
+  %call = call i32 @fstat(i32 %conv, ptr %arraydecay)
+  store i32 %call, ptr %r, align 4
+  br label %if.end10
+
+if.else:                                          ; preds = %entry
+  %3 = load ptr, ptr %name.addr, align 8
+  %4 = load i64, ptr %len.addr, align 8
+  %arraydecay1 = getelementptr inbounds [256 x i8], ptr %copy, i64 0, i64 0
+  %call2 = call i32 @dirrt_component(ptr %3, i64 %4, ptr %arraydecay1)
+  %tobool3 = icmp ne i32 %call2, 0
+  br i1 %tobool3, label %if.end, label %if.then4
+
+if.then4:                                         ; preds = %if.else
+  %5 = load ptr, ptr %out.addr, align 8
+  call void @dirrt_refused(ptr %5)
+  br label %return
+
+if.end:                                           ; preds = %if.else
+  %6 = load ptr, ptr %dir.addr, align 8
+  %7 = load i64, ptr %6, align 8
+  %conv5 = trunc i64 %7 to i32
+  %arraydecay6 = getelementptr inbounds [256 x i8], ptr %copy, i64 0, i64 0
+  %arraydecay7 = getelementptr inbounds [160 x i8], ptr %st, i64 0, i64 0
+  %8 = load i64, ptr getelementptr inbounds ([0 x i64], ptr @cancho_plat, i64 0, i64 19), align 8
+  %conv8 = trunc i64 %8 to i32
+  %call9 = call i32 @fstatat(i32 %conv5, ptr %arraydecay6, ptr %arraydecay7, i32 %conv8)
+  store i32 %call9, ptr %r, align 4
+  br label %if.end10
+
+if.end10:                                         ; preds = %if.end, %if.then
+  %call11 = call ptr @cancho_errno_location()
+  %9 = load i32, ptr %call11, align 4
+  %conv12 = sext i32 %9 to i64
+  store i64 %conv12, ptr %why, align 8
+  %10 = load i32, ptr %r, align 4
+  %cmp = icmp slt i32 %10, 0
+  %conv13 = zext i1 %cmp to i32
+  %conv14 = sext i32 %conv13 to i64
+  %11 = load ptr, ptr %out.addr, align 8
+  %arrayidx = getelementptr inbounds i64, ptr %11, i64 0
+  store i64 %conv14, ptr %arrayidx, align 8
+  %12 = load i32, ptr %r, align 4
+  %cmp15 = icmp slt i32 %12, 0
+  br i1 %cmp15, label %cond.true, label %cond.false
+
+cond.true:                                        ; preds = %if.end10
+  br label %cond.end
+
+cond.false:                                       ; preds = %if.end10
+  %arraydecay17 = getelementptr inbounds [160 x i8], ptr %st, i64 0, i64 0
+  %13 = load i64, ptr getelementptr inbounds ([0 x i64], ptr @cancho_plat, i64 0, i64 21), align 8
+  %14 = load i64, ptr getelementptr inbounds ([0 x i64], ptr @cancho_plat, i64 0, i64 22), align 8
+  %call18 = call i64 @dirrt_field(ptr %arraydecay17, i64 %13, i64 %14)
+  br label %cond.end
+
+cond.end:                                         ; preds = %cond.false, %cond.true
+  %cond = phi i64 [ 0, %cond.true ], [ %call18, %cond.false ]
+  %15 = load ptr, ptr %out.addr, align 8
+  %arrayidx19 = getelementptr inbounds i64, ptr %15, i64 1
+  store i64 %cond, ptr %arrayidx19, align 8
+  %16 = load i64, ptr %why, align 8
+  %17 = load ptr, ptr %out.addr, align 8
+  %arrayidx20 = getelementptr inbounds i64, ptr %17, i64 2
+  store i64 %16, ptr %arrayidx20, align 8
+  br label %return
+
+return:                                           ; preds = %cond.end, %if.then4
+  ret void
+}
+
 
 

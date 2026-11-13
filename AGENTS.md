@@ -356,8 +356,17 @@ first, with the capability it is about to use (edition 9):
   trap, by the same check the operation runs, so there is no second copy of the rule to keep in step. They have no
   row: asking touches nothing, and `cancho authority` shows the same report with or without the question.
 * `true` is not "it exists" or "it is allowed to run": `/opt/x/missing` is covered and `exec_spawn` answers
-  `Spawned::Failed(ENOENT)`. The check is on the text of the path (no symlinks are followed, nothing is
+  `Spawned::Failed(ENOENT)`. The check is on the text of the path (no symlink is resolved, nothing is
   normalised), and `true..x` is outside because the rule is two dots in a row, not a path component.
+* **`Exec("/usr/bin")` allows every program in `/usr/bin`, not one.** The report says `exec("/usr/bin")`, and `/usr/bin/env` or a shell can then
+  start anything. Narrow to the program, `narrow(exec, "/usr/bin/true")`: measured, starting `/usr/bin/env` under it is refused, and the report
+  says `exec("/usr/bin/true")`. The program it allows can still start others, so allow only programs that do not.
+* **`Fs("/data")` bounds the text of a path, not the files it reaches.** A symbolic link inside `/data` that points
+  outside it is followed by the operation, and so is a hard link, and the report still says `fs_read("/data")`.
+  Measured: both were read. If the directory must hold against links, open it once with `open_dir` and read beneath
+  the handle (§3.7): that refuses a symbolic link and is reported as `dir_read`. A hard link is another name for the same
+  file, so no open flag can refuse it; `dirs.confined` (`packages/confined`, edition 12) asks `dir_nlink` first and refuses a file that has more
+  than one name. Keep untrusted writers out of the directory all the same: the question and the open are two calls.
 * Do not write your own `starts_with` over the bound. It will agree with the runtime until the first `/opt/xevil`,
   `a/../b` or 4096-byte path. `docs/processes.md` §4.13 has the rule.
 
@@ -367,6 +376,79 @@ first, with the capability it is about to use (edition 9):
 
 * **Files.** Open the directory once, `open_dir(fs, arg(g, 1))`, and write the library over `&Dir` (`std.dirs.open_file`, `dir_open_new`, `dir_rename`, ...). It is generic in the directory, its row is `dir_read`/`dir_write` with no
   path, and no link is followed. The opener's report still says `fs_read("")`: the path is not known to the program.
+Reading a file whose name comes from outside (an argument, a request) is the case where this matters. Over `Fs("/srv/data")` the name `link/x`, with `link` a symbolic link to elsewhere, is read; over a `Dir` it is refused, and so is `..`. A complete program, checked by the suite:
+
+```cancho
+edition 6;
+
+import std.dirs;
+
+// Read the first chunk of the file called `name` beneath `dir`, or answer -1. The name may come from outside: a symbolic link, a `..` or a
+// name that leads through a link is refused, so the answer never describes a file outside the directory that was opened.
+fn first_chunk[&d, &n, &b](dir: &d Dir, name: &n [byte], into: &!b [byte]) -> [dir_read, file_read] int {
+    var got = 0 - 1;
+    match dirs.open_file(dir, name) {
+        Opened::Ok(file) => {
+            var f = file;
+            borrow mut f as &!h in {
+                match file_read(h, into) {
+                    Read::Got(n) => {
+                        got = n;
+                    }
+                    Read::End => {
+                        got = 0;
+                    }
+                    Read::Failed(e) => {
+                    }
+                }
+            }
+            file_close(f);
+        }
+        Opened::Failed(e) => {
+        }
+    }
+    return got;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(io); release(ffi); release(net); release(clock); release(signals);
+    let data = narrow(fs, "/srv/data");
+    var status = 1;
+    borrow data as &f in {
+        match open_dir(f, "/srv/data") {
+            DirOpened::Ok(d) => {
+                var held = d;
+                borrow args as &g in {
+                    borrow mut heap as &!h in {
+                        let buf = box_slice(h, 4096, byte_of(0));
+                        borrow held as &dd in {
+                            borrow mut buf as &!w in {
+                                if arg_count(g) > 1 {
+                                    if first_chunk(dd, arg(g, 1), contents(w)) >= 0 {
+                                        status = 0;
+                                    }
+                                }
+                            }
+                        }
+                        unbox_slice(h, buf);
+                    }
+                }
+                dir_close(held);
+            }
+            DirOpened::Failed(e) => {
+            }
+        }
+    }
+    release(data);
+    release(args);
+    release(heap);
+    return status;
+}
+```
+
+A hard link is the one thing this does not refuse: it is another name for a file that is already inside the directory, so no open flag can tell. `dir_nlink(dir, name)` (edition 12, the compiler in cancho only) answers how many names a file has: ask it about the last component before opening, and refuse more than one. `packages/confined/confined.cho` is that walk (`dirs.confined.open_file`, same signature as `std.dirs.open_file`; name the file on the command line beside your program). The question and the open are two calls, so a link made between them is not seen: keep untrusted writers out of the directory.
+
 * **Programs** (edition 9). `exec_spawn_under(exec, dir, "worker.sh", args, env, stdin, stdout, stderr)` starts the program the name names *in that directory*, which is also the child's working directory. It needs the `Exec` that
   bounds nothing (a narrowed one is `capability-misused`: a run-time directory cannot be shown to lie under a literal), and its row is `exec_under`, so the report says "programs of a directory I was given" and not `exec("")`. The name
   is relative and has no `..` (`a/b` is fine); an empty one, a rooted one, `..` or 4096 bytes **trap**, so a supervisor asks first: `len(name) > 0 && name[0] != '/' && exec_covers(exec, name)`. `exec_spawn_detached_under` is the same for a worker that starts subprocesses of its own: the child leads a process group, so `capture`'s deadline and `child_kill_group` reach them too, and the row adds `exec_detached` (`docs/processes.md` §4.15).

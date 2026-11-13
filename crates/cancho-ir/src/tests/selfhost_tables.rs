@@ -622,7 +622,11 @@ fn render_runtime(dir: &std::path::Path) -> String {
     )
 }
 
+// The tables are owned by `examples/selfhost` since cancho#487: `scripts/builtin_tables.py` checks and extends the three builtin tables and
+// `scripts/embed_runtime.py` makes `runtime.cho`, neither needing Rust. This test would now overwrite a builtin that only the compiler in cancho
+// has (`UPDATE_SELFHOST_TABLES=1` rewrites the files from the Rust view), so it is ignored; it goes with this crate (`docs/removing-rust.md` phase 5).
 #[test]
+#[ignore = "the builtin tables are owned by examples/selfhost (cancho#487, docs/builtin-tables.md)"]
 fn selfhost_tables_are_what_the_prelude_and_the_builtins_say() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/selfhost");
     let (builtins, signatures) = render_signatures();

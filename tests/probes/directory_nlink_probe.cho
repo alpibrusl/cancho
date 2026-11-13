@@ -1,0 +1,75 @@
+edition 12;
+
+fn decimal[&i](io: &!i Io, n: int) -> [io_write] int {
+    if n >= 10 {
+        decimal(io, n / 10);
+    }
+    putchar(io, '0' + n % 10);
+    return 0;
+}
+
+fn show[&i, &n](io: &!i Io, name: &n [byte], answer: Done) -> [io_write] int {
+    write_bytes(io, name);
+    putchar(io, ' ');
+    match answer {
+        Done::Ok(links) => {
+            decimal(io, links);
+        }
+        Done::Failed(e) => {
+            write_bytes(io, "err ");
+            decimal(io, e);
+        }
+    }
+    putchar(io, 10);
+    return 0;
+}
+
+fn counts[&i, &d](io: &!i Io, dir: &d Dir) -> [io_write, dir_read] int {
+    show(io, "plain", dir_nlink(dir, "plain"));
+    show(io, "twin", dir_nlink(dir, "twin"));
+    show(io, "twin2", dir_nlink(dir, "twin2"));
+    show(io, "three", dir_nlink(dir, "three"));
+    show(io, "link", dir_nlink(dir, "link"));
+    show(io, "missing", dir_nlink(dir, "missing"));
+    show(io, "..", dir_nlink(dir, ".."));
+    show(io, "sub/x", dir_nlink(dir, "sub/x"));
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker } = split(world);
+    release(ffi);
+    release(out);
+    release(ports);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(camera);
+    release(mic);
+    release(speaker);
+    release(heap);
+    var status = 0;
+    borrow args as &a in {
+        borrow fs as &f in {
+            borrow mut io as &!o in {
+                match open_dir(f, arg(a, 1)) {
+                    DirOpened::Ok(d0) => {
+                        var d = d0;
+                        borrow d as &r in {
+                            status = counts(o, r);
+                        }
+                        dir_close(d);
+                    }
+                    DirOpened::Failed(e) => {
+                        status = 2;
+                    }
+                }
+            }
+        }
+    }
+    release(args);
+    release(fs);
+    release(io);
+    return status;
+}
