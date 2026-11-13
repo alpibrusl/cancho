@@ -175,6 +175,7 @@
 
 - [Related work](related-work.md)
 - [Self-hosting, measured](self-hosting.md)
+- [Three gaps found by building the sibling tools](gaps-from-sibling-builds.md)
 
 ---
 
