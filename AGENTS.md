@@ -173,6 +173,13 @@ a lie.
 Labels: `io_read`, `io_write`, `err_write`, `fs_read(p)`, `fs_write(p)`,
 `heap`, `args`, `ffi(lib)`.
 
+`fs_read(p)` and `fs_write(p)` are a **text prefix** of the path, and a link inside
+`p` leads out of it: a program narrowed to `fs_read("/data")` reads
+`/data/link/secret` when `link` points elsewhere, and the report still says
+`bounded` (`--output json` marks these labels `"confinement": "lexical"`).
+When a program must stay inside a directory, open it with `open_dir` and use the
+`dir_*` calls on the handle (section 3.7): no link is followed.
+
 ### 3.2 Knowing you were asked to stop is a capability, not `Ffi("libc")`
 
 `edition 6;` adds `Signals`, the eighth field of `Split`. Narrow it to the
