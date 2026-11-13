@@ -1,0 +1,298 @@
+edition 12;
+module selfhost.vcsunlock;
+
+// vcsunlock.cho -- the `unlock` command of `cancho vcs` (`docs/vcs-routing.md` section 9, E7; the Rust command is `cmd_unlock` and `locks`, `crates/cancho/src/vcs_repo.rs`, `crates/cancho-vcs/src/refs.rs`).
+//
+//   unlock_command(heap, vcs, vcspath, dry, now)
+//
+// Every lock of the store is listed and, unless `dry`, removed: a file named `lock` or ending `.lock` anywhere below `refs/`, and `lock` itself. Each is read as `PID SINCE` (two words, whitespace
+// between); `pid` is null when the first is not a number that fits 32 bits, `age_seconds` is `now - SINCE` (at least 0) or null. The document: `command`, `dry_run`, `ok`, and `removed`, a list of
+// `{"age_seconds", "lock", "pid"}` with the lock's whole path (`vcspath` and the name below it). **Known difference:** the locks come sorted by their names (the refs ones, then the top one, which Rust also
+// puts last), where Rust lists the directory's order, which nothing specifies.
+//
+// The answer is `vcsstore.Object`: the document in `bytes`, status 0; or status 44 (`io-error`) and a message, for a lock that could not be removed (those before it were).
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import selfhost.jsonwrite;
+import selfhost.vcsapply;
+import selfhost.vcsrepo;
+import selfhost.vcsscan;
+import selfhost.vcsstore;
+import selfhost.vcsworktree;
+
+// ---- finding the locks -------------------------------------------------------------------------------------------------------
+
+// The names (below `dir`; `rel` is the path to it, ending in `/`) of the files called `lock` or ending `.lock`, one to a line in `out`, in no order. The second answer is why a directory could not be read, or 0.
+fn collect_locks[&h, &d, &p](heap: &!h Heap, dir: &d Dir, rel: &p [byte], out: buffer.Buffer) -> [heap, dir_read] (buffer.Buffer, int) {
+    let names = dirs.list(heap, dir, 100000000);
+    var b = out;
+    var why = 0;
+    borrow names as &nr in {
+        if dirs.failed(nr) != 0 {
+            why = dirs.failed(nr);
+        }
+        var i = 0;
+        while i < dirs.count(nr) && why == 0 {
+            let name = dirs.name(nr, i);
+            let kind = vcsstore.entry_kind(dir, name, dirs.kind(nr, i));
+            if kind == 2 {
+                match dir_enter(dir, name) {
+                    DirOpened::Ok(c0) => {
+                        var child = c0;
+                        var below = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(rel) + len(name) + 2), rel), name);
+                        below = buffer.push(heap, below, byte_of(47));
+                        borrow child as &cd in {
+                            borrow below as &bb in {
+                                let (more, w) = collect_locks(heap, cd, buffer.bytes(bb), b);
+                                b = more;
+                                why = w;
+                            }
+                        }
+                        buffer.drop(heap, below);
+                        dir_close(child);
+                    }
+                    DirOpened::Failed(e) => {
+                        why = e;
+                    }
+                }
+            } else if bytes.equal(name, "lock") || bytes.ends_with(name, ".lock") {
+                b = buffer.append(heap, buffer.append(heap, b, rel), name);
+                b = buffer.push(heap, b, byte_of(10));
+            }
+            i = i + 1;
+        }
+    }
+    dirs.drop(heap, names);
+    return (b, why);
+}
+
+// The file at `rel` beneath `dir` removed, a link not followed on the way: 0 or the errno.
+fn remove_in[&d, &r](dir: &d Dir, rel: &r [byte]) -> [dir_read, dir_write] int {
+    let k = bytes.find(rel, "/");
+    if k >= 0 {
+        match dir_enter(dir, rel[0..k]) {
+            DirOpened::Ok(child) => {
+                var errno = 0;
+                borrow child as &cd in {
+                    errno = remove_in(cd, rel[k + 1..len(rel)]);
+                }
+                dir_close(child);
+                return errno;
+            }
+            DirOpened::Failed(e) => {
+                return e;
+            }
+        }
+    }
+    match dir_remove(dir, rel) {
+        Done::Ok(n) => {
+            return 0;
+        }
+        Done::Failed(e) => {
+            if e == 0 {
+                return 1;
+            }
+            return e;
+        }
+    }
+}
+
+// ---- reading a lock ----------------------------------------------------------------------------------------------------------
+
+fn is_space(c: int) -> [] bool {
+    return c == 32 || c == 9 || c == 10 || c == 11 || c == 12 || c == 13;
+}
+
+// The `n`th (0 or 1) word of `text`: its start and end, or -1 and -1.
+fn word[&t](text: &t [byte], n: int) -> [] (int, int) {
+    var at = 0;
+    var seen = 0;
+    while at < len(text) {
+        while at < len(text) && is_space(int_of(text[at])) {
+            at = at + 1;
+        }
+        if at >= len(text) {
+            return (0 - 1, 0 - 1);
+        }
+        let start = at;
+        while at < len(text) && !is_space(int_of(text[at])) {
+            at = at + 1;
+        }
+        if seen == n {
+            return (start, at);
+        }
+        seen = seen + 1;
+    }
+    return (0 - 1, 0 - 1);
+}
+
+// `text` as a number as Rust's `parse` reads it (an optional `+`, and a `-` when `signed`, then digits only), and whether it is one and at most `limit`.
+fn number[&t](text: &t [byte], signed: bool, limit: int) -> [] (bool, int) {
+    var at = 0;
+    var negative = false;
+    if len(text) > 0 && (text[0] == byte_of(43) || signed && text[0] == byte_of(45)) {
+        negative = text[0] == byte_of(45);
+        at = 1;
+    }
+    if at >= len(text) {
+        return (false, 0);
+    }
+    var n = 0;
+    while at < len(text) {
+        let c = int_of(text[at]);
+        if c < 48 || c > 57 {
+            return (false, 0);
+        }
+        n = n * 10 + (c - 48);
+        if n > limit {
+            return (false, 0);
+        }
+        at = at + 1;
+    }
+    if negative {
+        return (true, 0 - n);
+    }
+    return (true, n);
+}
+
+// One element of `removed`: the lock `path` whose text is `text`.
+fn item[&h, &p, &x](heap: &!h Heap, out: buffer.Buffer, first: bool, path: &p [byte], text: &x [byte], now: int) -> [heap] buffer.Buffer {
+    let (ps, pe) = word(text, 0);
+    let (ss, se) = word(text, 1);
+    var pid_ok = false;
+    var pid = 0;
+    if ps >= 0 {
+        let (ok, v) = number(text[ps..pe], false, 4294967295);
+        pid_ok = ok;
+        pid = v;
+    }
+    var age_ok = false;
+    var age = 0;
+    if ss >= 0 {
+        let (ok, v) = number(text[ss..se], true, 1000000000000000000);
+        if ok {
+            age_ok = true;
+            age = now - v;
+            if age < 0 {
+                age = 0;
+            }
+        }
+    }
+    var b = out;
+    if !first {
+        b = buffer.push(heap, b, byte_of(44));
+    }
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(123));
+    b = vcsrepo.member(heap, b, 3, true, "age_seconds");
+    if age_ok {
+        b = buffer.push_nat(heap, b, age);
+    } else {
+        b = buffer.append(heap, b, "null");
+    }
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 3, false, "lock"), path);
+    b = vcsrepo.member(heap, b, 3, false, "pid");
+    if pid_ok {
+        b = buffer.push_nat(heap, b, pid);
+    } else {
+        b = buffer.append(heap, b, "null");
+    }
+    return buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(125));
+}
+
+// ---- the command -------------------------------------------------------------------------------------------------------------
+
+// `unlock`: see the header. `vcspath` is the path of the store's directory, `now` the Unix time in seconds.
+pub fn unlock_command[&h, &d, &p](heap: &!h Heap, vcs: &d Dir, vcspath: &p [byte], dry: bool, now: int) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    var found = buffer.empty(heap, 64);
+    var why = 0;
+    match dir_enter(vcs, "refs") {
+        DirOpened::Ok(c0) => {
+            var refs = c0;
+            borrow refs as &rd in {
+                let (more, w) = collect_locks(heap, rd, "refs/", found);
+                found = more;
+                why = w;
+            }
+            dir_close(refs);
+        }
+        DirOpened::Failed(e) => {
+        }
+    }
+    if why != 0 {
+        buffer.drop(heap, found);
+        return vcsstore.Object { bytes: buffer.append(heap, buffer.empty(heap, 32), "cannot read the refs"), status: 44, errno: why };
+    }
+    var ordered = buffer.empty(heap, 0);
+    borrow found as &fb in {
+        buffer.drop(heap, ordered);
+        ordered = vcsapply.unique(heap, buffer.bytes(fb));
+    }
+    buffer.drop(heap, found);
+    match dir_stat(vcs, "lock") {
+        DirStat::Ok(kind, size, mtime) => {
+            if kind == 1 {
+                ordered = buffer.append(heap, ordered, "lock\n");
+            }
+        }
+        DirStat::Failed(e) => {
+        }
+    }
+    var list = buffer.empty(heap, 0);
+    var failed = 0;
+    var errno = 0;
+    var first = true;
+    borrow ordered as &ob in {
+        var at = 0;
+        let lines = buffer.bytes(ob);
+        while at < len(lines) && failed == 0 {
+            let end = vcsscan.line_end(lines, at);
+            let name = lines[at..end];
+            var whole = buffer.append(heap, buffer.empty(heap, len(vcspath) + len(name) + 2), vcspath);
+            whole = buffer.push(heap, whole, byte_of(47));
+            whole = buffer.append(heap, whole, name);
+            let (text, rs, re, exec) = vcsworktree.read_under(heap, vcs, name);
+            borrow whole as &wb in {
+                borrow text as &tb in {
+                    list = item(heap, list, first, buffer.bytes(wb), buffer.bytes(tb), now);
+                }
+            }
+            buffer.drop(heap, text);
+            first = false;
+            if !dry {
+                errno = remove_in(vcs, name);
+                if errno != 0 {
+                    failed = 1;
+                }
+            }
+            buffer.drop(heap, whole);
+            at = end + 1;
+        }
+    }
+    buffer.drop(heap, ordered);
+    if failed != 0 {
+        buffer.drop(heap, list);
+        return vcsstore.Object { bytes: buffer.append(heap, buffer.empty(heap, 32), "cannot remove a lock"), status: 44, errno: errno };
+    }
+    var d = buffer.push(heap, buffer.empty(heap, 192), byte_of(123));
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, true, "command"), "\"unlock\"");
+    if dry {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "dry_run"), "true");
+    } else {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "dry_run"), "false");
+    }
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "ok"), "true");
+    d = vcsrepo.member(heap, d, 1, false, "removed");
+    if first {
+        d = buffer.append(heap, d, "[]");
+    } else {
+        d = buffer.push(heap, d, byte_of(91));
+        borrow list as &lb in {
+            d = buffer.append(heap, d, buffer.bytes(lb));
+        }
+        d = buffer.push(heap, jsonwrite.newline(heap, d, 1), byte_of(93));
+    }
+    buffer.drop(heap, list);
+    return vcsstore.Object { bytes: buffer.append(heap, jsonwrite.newline(heap, d, 0), "}\n"), status: 0, errno: 0 };
+}

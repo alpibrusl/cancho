@@ -24,10 +24,12 @@ import selfhost.cliproject;
 import selfhost.jsonwrite;
 import selfhost.vcsobj;
 import selfhost.vcsrepo;
+import selfhost.vcsapply;
 import selfhost.vcsrestore;
 import selfhost.vcsstatus;
 import selfhost.vcsstore;
 import selfhost.vcsswitch;
+import selfhost.vcsunlock;
 import selfhost.walk;
 
 // ---- the options -------------------------------------------------------------------------------------------------------------
@@ -570,26 +572,11 @@ fn lock_held[&h, &i, &m, &p, &t](heap: &!h Heap, io: &!i Io, command: &m [byte],
     return 1;
 }
 
-// `path` without a final `/.` (`/a/b/.` is `/a/b`, `/.` is `/`): `absolute` collapses `a/..` but leaves a `.` at the end.
-fn dotless[&t](path: &t [byte]) -> [] &t [byte] {
-    if len(path) >= 2 && bytes.equal(path[len(path) - 2..len(path)], "/.") {
-        if len(path) == 2 {
-            return path[0..1];
-        }
-        return path[0..len(path) - 2];
-    }
-    return path;
-}
-
 // `restore PATH... [--from REV] [--dry-run]` in the repository at `rootpath` (R5, `vcsrestore.restore_command`). The paths are made relative to the root as `rel_path` does in Rust, from the
 // current directory `cwd`: `..` collapsed, and a path outside the root is `path-escapes`. A difference from Rust: that refusal is made before `--from` is resolved and before the lock is taken.
 fn restore_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &a Args, root: &r Dir, vcs: &d Dir, found: &p [byte], cwd: &c [byte], options: Options, clock: &k Clock) -> [heap, io_write, args, dir_read, dir_write, dir_symlink, file_read, file_write, clock] int {
     // The search for the repository starts at `CWD/.`, so the path it found may end in `/.`; the root is the path without it.
-    let rootpath = dotless(found);
-    var prefix = buffer.append(heap, buffer.empty(heap, len(rootpath) + 2), rootpath);
-    if !bytes.equal(rootpath, "/") {
-        prefix = buffer.push(heap, prefix, byte_of(47));
-    }
+    let rootpath = vcsapply.dotless(found);
     var selected = buffer.empty(heap, 64);
     var count = 0;
     var code = 0;
@@ -607,21 +594,13 @@ fn restore_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: 
         }
         if positional {
             count = count + 1;
-            let full = absolute(heap, cwd, word);
-            var inside = false;
-            borrow full as &fb in {
-                borrow prefix as &pb in {
-                    let all = dotless(buffer.bytes(fb));
-                    if bytes.equal(all, rootpath) {
-                        inside = true;
-                        selected = buffer.push(heap, selected, byte_of(10));
-                    } else if bytes.starts_with(all, buffer.bytes(pb)) {
-                        inside = true;
-                        selected = buffer.push(heap, buffer.append(heap, selected, all[len(buffer.bytes(pb))..len(all)]), byte_of(10));
-                    }
+            let (rel, inside) = vcsapply.relative(heap, cwd, rootpath, word);
+            if inside {
+                borrow rel as &rb in {
+                    selected = buffer.push(heap, buffer.append(heap, selected, buffer.bytes(rb)), byte_of(10));
                 }
             }
-            buffer.drop(heap, full);
+            buffer.drop(heap, rel);
             if !inside {
                 var message = buffer.push(heap, buffer.empty(heap, 64), byte_of(96));
                 message = buffer.append(heap, buffer.push(heap, buffer.append(heap, message, word), byte_of(96)), " is outside the repository");
@@ -633,7 +612,6 @@ fn restore_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: 
         }
         n = n + 1;
     }
-    buffer.drop(heap, prefix);
     if code == 0 && count == 0 {
         code = refused(heap, io, "restore", "name the paths to restore (`.` for all)", "nothing-selected");
     }
@@ -693,7 +671,7 @@ fn switch_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Ar
         return refused(heap, io, "switch", "`switch` takes one branch or change", "bad-argument");
     }
     let target = arg(args, options.rev_at);
-    let rootpath = dotless(found);
+    let rootpath = vcsapply.dotless(found);
     let now = clock_unix_ms(clock) / 1000;
     var code = 0;
     let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
@@ -743,6 +721,97 @@ fn switch_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Ar
         }
     }
     unbox_slice(heap, scratch);
+    return code;
+}
+
+// `apply FILE [--dry-run]` in the repository at `found` (R7, `vcsapply.apply_command`). `FILE` is read from the current directory `cwd`, as the Rust command reads it, and the paths in it are relative to `cwd`.
+fn apply_in[&h, &i, &a, &f, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), root: &r Dir, vcs: &d Dir, found: &p [byte], cwd: &c [byte], options: Options, clock: &k Clock) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, dir_symlink, file_read, file_write, clock] int {
+    if options.positionals != 1 {
+        return refused(heap, io, "apply", "`apply` takes a JSON file of edits", "bad-argument");
+    }
+    let file = arg(args, options.rev_at);
+    let rootpath = vcsapply.dotless(found);
+    let now = clock_unix_ms(clock) / 1000;
+    let full = cliproject.beneath(heap, cwd, file);
+    var text = buffer.empty(heap, 0);
+    var trouble = 0;
+    borrow full as &fb in {
+        let read = clibase.read_file(heap, fs, buffer.bytes(fb));
+        let clibase.Contents { bytes, failed } = read;
+        buffer.drop(heap, text);
+        text = bytes;
+        trouble = failed;
+    }
+    buffer.drop(heap, full);
+    var code = 0;
+    if trouble != 0 {
+        var message = buffer.append(heap, buffer.empty(heap, len(file) + 24), "cannot read ");
+        message = buffer.append(heap, message, file);
+        borrow message as &mb in {
+            code = refused(heap, io, "apply", buffer.bytes(mb), "io-error");
+        }
+        buffer.drop(heap, message);
+        code = 3;
+        buffer.drop(heap, text);
+        return code;
+    }
+    borrow text as &xb in {
+        let tape = box_slice(heap, vcsapply.tape_size(buffer.bytes(xb)), 0);
+        borrow mut tape as &!s in {
+            let answer = vcsapply.apply_command(heap, root, vcs, contents(s), buffer.bytes(xb), cwd, rootpath, options.dry, now);
+            let (doc, status, errno) = vcsstore.parts(answer);
+            if status == 0 {
+                borrow doc as &db in {
+                    buffer.write(io, db);
+                }
+            } else if status == 15 {
+                var lock = buffer.append(heap, buffer.empty(heap, len(rootpath) + 24), rootpath);
+                lock = buffer.append(heap, lock, "/.cancho/vcs/lock");
+                borrow doc as &db in {
+                    borrow lock as &lb in {
+                        code = lock_held(heap, io, "apply", buffer.bytes(lb), buffer.bytes(db), now);
+                    }
+                }
+                buffer.drop(heap, lock);
+            } else {
+                borrow doc as &db in {
+                    code = refused(heap, io, "apply", buffer.bytes(db), vcsapply.tag(status));
+                }
+                if status == 44 {
+                    code = 3;
+                }
+            }
+            buffer.drop(heap, doc);
+        }
+        unbox_slice(heap, tape);
+    }
+    buffer.drop(heap, text);
+    return code;
+}
+
+// `unlock [--dry-run]` in the repository at `found` (R7, `vcsunlock.unlock_command`): removes every lock of the store and says which.
+fn unlock_in[&h, &i, &d, &p, &k](heap: &!h Heap, io: &!i Io, vcs: &d Dir, found: &p [byte], options: Options, clock: &k Clock) -> [heap, io_write, dir_read, dir_write, file_read, clock] int {
+    let rootpath = vcsapply.dotless(found);
+    let now = clock_unix_ms(clock) / 1000;
+    var vcspath = buffer.append(heap, buffer.empty(heap, len(rootpath) + 16), rootpath);
+    vcspath = buffer.append(heap, vcspath, "/.cancho/vcs");
+    var code = 0;
+    borrow vcspath as &vb in {
+        let answer = vcsunlock.unlock_command(heap, vcs, buffer.bytes(vb), options.dry, now);
+        let (doc, status, errno) = vcsstore.parts(answer);
+        if status == 0 {
+            borrow doc as &db in {
+                buffer.write(io, db);
+            }
+        } else {
+            borrow doc as &db in {
+                code = refused(heap, io, "unlock", buffer.bytes(db), vcsapply.tag(status));
+            }
+            code = 3;
+        }
+        buffer.drop(heap, doc);
+    }
+    buffer.drop(heap, vcspath);
     return code;
 }
 
@@ -1270,7 +1339,7 @@ fn branch_in[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs:
 // Whether `cancho vcs SUB` is this module's: `init`, `show`, `branch`, `status` and `restore` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
 pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read] bool {
     let sub = arg(args, 2);
-    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") {
+    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") || bytes.equal(sub, "apply") || bytes.equal(sub, "unlock") {
         return true;
     }
     if !bytes.equal(sub, "log") {
@@ -1319,6 +1388,12 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
     } else if bytes.equal(verb, "switch") {
         which = 6;
         name = "switch";
+    } else if bytes.equal(verb, "apply") {
+        which = 7;
+        name = "apply";
+    } else if bytes.equal(verb, "unlock") {
+        which = 8;
+        name = "unlock";
     }
     let options = options_of(heap, io, args, which);
     if options.bad != 0 {
@@ -1354,6 +1429,10 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                                 code = restore_in(heap, io, args, rd, vd, buffer.bytes(pb), buffer.bytes(cb), options, clock);
                                             } else if which == 6 {
                                                 code = switch_in(heap, io, args, rd, vd, buffer.bytes(pb), options, clock);
+                                            } else if which == 7 {
+                                                code = apply_in(heap, io, args, fs, rd, vd, buffer.bytes(pb), buffer.bytes(cb), options, clock);
+                                            } else if which == 8 {
+                                                code = unlock_in(heap, io, vd, buffer.bytes(pb), options, clock);
                                             } else {
                                                 code = show_in(heap, io, args, vd, options);
                                             }

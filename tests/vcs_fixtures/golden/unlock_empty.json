@@ -1,0 +1,12 @@
+{
+  "command": "unlock",
+  "dry_run": false,
+  "ok": true,
+  "removed": [
+    {
+      "age_seconds": null,
+      "lock": "<root>/.cancho/vcs/lock",
+      "pid": null
+    }
+  ]
+}

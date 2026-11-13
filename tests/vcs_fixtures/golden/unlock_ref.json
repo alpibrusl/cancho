@@ -1,0 +1,12 @@
+{
+  "command": "unlock",
+  "dry_run": false,
+  "ok": true,
+  "removed": [
+    {
+      "age_seconds": 0,
+      "lock": "<root>/.cancho/vcs/refs/heads/main.lock",
+      "pid": 7
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "applied": [
+    "a.cho",
+    "notes.md"
+  ],
+  "command": "apply",
+  "dry_run": false,
+  "ok": true
+}
