@@ -255,7 +255,7 @@ fn authority[&h, &x, &c, &b, &v](heap: &!h Heap, exec: &x Exec(""), clock: &c Cl
         let said = buffer.bytes(ob);
         r = harness.require(heap, r, kind == 0 && code == 0, "spawn_under", "authority", "`authority` should answer", said);
         r = harness.require(heap, r, harness.contains(said, "\"effects\": [\"args\", \"exec_under\", \"fs_read\", \"io_write\"]"), "spawn_under", "authority", "the effects should be args, exec_under, fs_read, io_write", said);
-        r = harness.require(heap, r, harness.contains(said, "{ \"name\": \"fs_read\", \"argument\": \"\", \"bounded\": true }"), "spawn_under", "authority", "fs_read should be bounded with an empty argument", said);
+        r = harness.require(heap, r, harness.contains(said, "{ \"name\": \"fs_read\", \"argument\": \"\", \"bounded\": true, \"confinement\": \"lexical\" }"), "spawn_under", "authority", "fs_read should be bounded with an empty argument", said);
         r = harness.require(heap, r, !harness.contains(said, "\"name\": \"exec\","), "spawn_under", "authority", "the report should name no exec", said);
     }
     buffer.drop(heap, out);

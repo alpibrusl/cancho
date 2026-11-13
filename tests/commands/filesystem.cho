@@ -21,7 +21,7 @@ fn authority_flags[&h, &x, &c, &b, &m, &k, &p](heap: &!h Heap, exec: &x Exec("")
             flags = 8;
         } else {
             borrow out as &ob in {
-                if harness.contains(buffer.bytes(ob), "{ \"name\": \"fs_read\", \"argument\": \"\", \"bounded\": true }") {
+                if harness.contains(buffer.bytes(ob), "{ \"name\": \"fs_read\", \"argument\": \"\", \"bounded\": true, \"confinement\": \"lexical\" }") {
                     flags = flags + 1;
                 }
                 if harness.contains(buffer.bytes(ob), "{ \"name\": \"file_read\", \"argument\": null, \"bounded\": true }") {
