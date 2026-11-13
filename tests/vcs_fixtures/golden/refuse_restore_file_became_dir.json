@@ -1,0 +1,8 @@
+{
+  "command": "restore",
+  "ok": false,
+  "refused": {
+    "message": "cannot delete a.cho/inner: Not a directory (os error 20)",
+    "tag": "io-error"
+  }
+}

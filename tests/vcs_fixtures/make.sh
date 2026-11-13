@@ -75,5 +75,22 @@ here; printf '*.log\nsub/up\n' > .canchoignore; ln -s x1 a.log; mkdir sub; ln -s
 here; rm a.cho; mkdir a.cho; printf z > a.cho/inner; st > "$g/status_file_became_dir.json"
 empty; st > "$g/refuse_status_not_a_repository.json" || true
 empty; "$R" vcs init --output json > /dev/null; st > "$g/status_empty_repository.json"
+# restore (R5): each from a copy of the repository (clean at HEAD), something done to the working copy, then `rs`. `restore_from_parent_*` keep the files the Rust command wrote.
+rs() { "$R" vcs restore "$@" --output json; }
+here; printf 'scribble\n' > notes.md; rs notes.md > "$g/restore_one.json"
+here; printf 'scribble\n' > notes.md; rs notes.md --dry-run > "$g/restore_dry.json"
+here; rs notes.md > "$g/restore_clean.json"
+here; rm a.cho; chmod +x notes.md; ln -s a.cho lnk; mkdir -p sub/deep; printf x > sub/new; printf y > sub/deep/new2; printf z > top.txt; rs . > "$g/restore_all.json"
+here; rm a.cho; mkdir a.cho; printf z > a.cho/inner; rs . > "$g/refuse_restore_file_became_dir.json" || true
+here; mkdir -p sub/deep; printf x > sub/new; printf y > sub/deep/new2; printf z > top.txt; rs sub > "$g/restore_beneath.json"
+here; rs . --from HEAD~1 > "$g/restore_from_parent.json"; cp notes.md "$g/restore_from_parent.notes.md"; cp a.cho "$g/restore_from_parent.a.cho"
+here; rs --from HEAD~1 > "$g/refuse_restore_no_path.json" || true
+here; printf 'scribble\n' > notes.md; rs nosuchfile > "$g/restore_no_match.json"
+here; rs ../elsewhere > "$g/refuse_restore_escapes.json" || true
+here; printf 'scribble\n' > notes.md; rs notes.md --from nosuch > "$g/refuse_restore_bad_from.json" || true
+here; mkdir -p sub; printf x > sub/new; printf 'scribble\n' > notes.md; ( cd sub && rs ../notes.md > "$g/restore_from_subdir.json" )
+here; mkdir -p sub; printf x > sub/new; printf 'scribble\n' > notes.md; ( cd sub && rs . > "$g/restore_in_subdir.json" )
+here; printf 'scribble\n' > notes.md; printf '4242 1000' > .cancho/vcs/lock; rs notes.md --dry-run > "$g/restore_dry_locked.json"
+here; rm a.cho; rs a.cho notes.md > "$g/restore_two_paths.json"
 rm -rf "$out/w" "$out/e"
 echo "made $out/three_changes and $out/golden"

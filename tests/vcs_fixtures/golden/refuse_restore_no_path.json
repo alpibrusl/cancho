@@ -1,0 +1,8 @@
+{
+  "command": "restore",
+  "ok": false,
+  "refused": {
+    "message": "name the paths to restore (`.` for all)",
+    "tag": "nothing-selected"
+  }
+}

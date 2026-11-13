@@ -1,7 +1,7 @@
 edition 9;
 module selfhost.clivcsrepo;
 
-// clivcsrepo.cho -- the repository side of `cancho vcs` in the command line in cancho (`docs/vcs-routing.md`, slice R1): `init`, `log`, `show`, `branch` and `status`. The libraries are `vcsstore.cho` and `vcsrepo.cho`; this module is
+// clivcsrepo.cho -- the repository side of `cancho vcs` in the command line in cancho (`docs/vcs-routing.md`, slice R1): `init`, `log`, `show`, `branch`, `status` and `restore`. The libraries are `vcsstore.cho` and `vcsrepo.cho`; this module is
 // what a person types: the options, finding the repository, the one JSON document on standard output, and the exit status. `clivcs.cho` is the other side of `vcs` (`publish`, `log --store`, ...).
 //
 // Routing (`docs/vcs-routing.md` D1), as the Rust command's `cmd_vcs`: `log` is the manifest log when `--store` is named or no repository is in reach from the current directory, and the repository log
@@ -24,6 +24,7 @@ import selfhost.cliproject;
 import selfhost.jsonwrite;
 import selfhost.vcsobj;
 import selfhost.vcsrepo;
+import selfhost.vcsrestore;
 import selfhost.vcsstatus;
 import selfhost.vcsstore;
 import selfhost.walk;
@@ -61,7 +62,7 @@ fn usage[&h, &i, &w](heap: &!h Heap, io: &!i Io, before: &static [byte], what: &
     return status;
 }
 
-// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show`, 3 for `branch` and 4 for `status`.
+// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show`, 3 for `branch`, 4 for `status` and 5 for `restore`.
 fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: int) -> [heap, err_write, args] Options {
     var bad = 0;
     var repo_at = 0 - 1;
@@ -103,6 +104,8 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
             } else if bytes.equal(key, "--branch") && command == 0 {
                 takes = 1;
             } else if bytes.equal(key, "--limit") && command == 1 {
+                takes = 1;
+            } else if bytes.equal(key, "--from") && command == 5 {
                 takes = 1;
             } else if (bytes.equal(key, "--from") || bytes.equal(key, "--expect")) && command == 3 {
                 takes = 1;
@@ -356,7 +359,11 @@ fn answered[&h, &i, &c, &p](heap: &!h Heap, io: &!i Io, command: &c [byte], answ
         }
         code = 1;
     } else {
-        let said = refusal(heap, command, sentence(status), vcsstatus.tag(status));
+        var tag = vcsstatus.tag(status);
+        if status == 10 {
+            tag = "io-error";
+        }
+        let said = refusal(heap, command, sentence(status), tag);
         borrow said as &sb in {
             buffer.write(io, sb);
         }
@@ -473,6 +480,173 @@ fn status_in[&h, &i, &r, &d](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d D
         code = answered(heap, io, "status", vcsstatus.status_command(heap, root, vcs, contents(s)), "");
     }
     unbox_slice(heap, scratch);
+    return code;
+}
+
+// `lock-held`, said as the Rust command says it: the lock's path, the pid and the age from its text (`PID SINCE`; a pid of 0, which is what this build stamps, or a text that is not that, is `null`).
+fn lock_held[&h, &i, &p, &t](heap: &!h Heap, io: &!i Io, lock: &p [byte], stamp: &t [byte], now: int) -> [heap, io_write] int {
+    let text = vcsstore.trimmed(stamp);
+    var sp = bytes.find(text, " ");
+    var pid = 0 - 1;
+    var since = 0 - 1;
+    if sp >= 0 {
+        pid = count_of(text[0..sp]);
+        since = count_of(vcsstore.trimmed(text[sp + 1..len(text)]));
+    }
+    if pid == 0 {
+        pid = 0 - 1;
+    }
+    var age = 0 - 1;
+    if since >= 0 {
+        age = now - since;
+        if age < 0 {
+            age = 0;
+        }
+    }
+    var message = buffer.push(heap, buffer.empty(heap, 160), byte_of(96));
+    message = buffer.push(heap, buffer.append(heap, message, lock), byte_of(96));
+    message = buffer.append(heap, message, " is locked by pid ");
+    if pid >= 0 {
+        message = buffer.push_nat(heap, message, pid);
+    } else {
+        message = buffer.push(heap, message, byte_of(63));
+    }
+    message = buffer.append(heap, message, " for ");
+    if age >= 0 {
+        message = buffer.push_nat(heap, message, age);
+    } else {
+        message = buffer.push(heap, message, byte_of(63));
+    }
+    message = buffer.append(heap, message, "s; if that process is gone, run `cancho vcs unlock`");
+    var b = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), "restore");
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "false");
+    b = buffer.push(heap, vcsrepo.member(heap, b, 1, false, "refused"), byte_of(123));
+    b = vcsrepo.member(heap, b, 2, true, "age_seconds");
+    if age >= 0 {
+        b = buffer.push_nat(heap, b, age);
+    } else {
+        b = buffer.append(heap, b, "null");
+    }
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "lock"), lock);
+    borrow message as &mb in {
+        b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "message"), buffer.bytes(mb));
+    }
+    buffer.drop(heap, message);
+    b = vcsrepo.member(heap, b, 2, false, "pid");
+    if pid >= 0 {
+        b = buffer.push_nat(heap, b, pid);
+    } else {
+        b = buffer.append(heap, b, "null");
+    }
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "tag"), "lock-held");
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(125));
+    b = buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+    let sent = said(heap, io, b);
+    return 1;
+}
+
+// `path` without a final `/.` (`/a/b/.` is `/a/b`, `/.` is `/`): `absolute` collapses `a/..` but leaves a `.` at the end.
+fn dotless[&t](path: &t [byte]) -> [] &t [byte] {
+    if len(path) >= 2 && bytes.equal(path[len(path) - 2..len(path)], "/.") {
+        if len(path) == 2 {
+            return path[0..1];
+        }
+        return path[0..len(path) - 2];
+    }
+    return path;
+}
+
+// `restore PATH... [--from REV] [--dry-run]` in the repository at `rootpath` (R5, `vcsrestore.restore_command`). The paths are made relative to the root as `rel_path` does in Rust, from the
+// current directory `cwd`: `..` collapsed, and a path outside the root is `path-escapes`. A difference from Rust: that refusal is made before `--from` is resolved and before the lock is taken.
+fn restore_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &a Args, root: &r Dir, vcs: &d Dir, found: &p [byte], cwd: &c [byte], options: Options, clock: &k Clock) -> [heap, io_write, args, dir_read, dir_write, dir_symlink, file_read, file_write, clock] int {
+    // The search for the repository starts at `CWD/.`, so the path it found may end in `/.`; the root is the path without it.
+    let rootpath = dotless(found);
+    var prefix = buffer.append(heap, buffer.empty(heap, len(rootpath) + 2), rootpath);
+    if !bytes.equal(rootpath, "/") {
+        prefix = buffer.push(heap, prefix, byte_of(47));
+    }
+    var selected = buffer.empty(heap, 64);
+    var count = 0;
+    var code = 0;
+    var plain_only = false;
+    var n = 3;
+    while n < arg_count(args) && code == 0 {
+        let word = arg(args, n);
+        var positional = false;
+        if plain_only || len(word) < 2 || lc.at(word, 0) != '-' || lc.at(word, 1) != '-' {
+            positional = true;
+        } else if bytes.equal(word, "--") {
+            plain_only = true;
+        } else if bytes.find(word, "=") < 0 && (bytes.equal(word, "--output") || bytes.equal(word, "--repo") || bytes.equal(word, "--from")) {
+            n = n + 1;
+        }
+        if positional {
+            count = count + 1;
+            let full = absolute(heap, cwd, word);
+            var inside = false;
+            borrow full as &fb in {
+                borrow prefix as &pb in {
+                    let all = dotless(buffer.bytes(fb));
+                    if bytes.equal(all, rootpath) {
+                        inside = true;
+                        selected = buffer.push(heap, selected, byte_of(10));
+                    } else if bytes.starts_with(all, buffer.bytes(pb)) {
+                        inside = true;
+                        selected = buffer.push(heap, buffer.append(heap, selected, all[len(buffer.bytes(pb))..len(all)]), byte_of(10));
+                    }
+                }
+            }
+            buffer.drop(heap, full);
+            if !inside {
+                var message = buffer.push(heap, buffer.empty(heap, 64), byte_of(96));
+                message = buffer.append(heap, buffer.push(heap, buffer.append(heap, message, word), byte_of(96)), " is outside the repository");
+                borrow message as &mb in {
+                    code = refused(heap, io, "restore", buffer.bytes(mb), "path-escapes");
+                }
+                buffer.drop(heap, message);
+            }
+        }
+        n = n + 1;
+    }
+    buffer.drop(heap, prefix);
+    if code == 0 && count == 0 {
+        code = refused(heap, io, "restore", "name the paths to restore (`.` for all)", "nothing-selected");
+    }
+    if code != 0 {
+        buffer.drop(heap, selected);
+        return code;
+    }
+    var spec = "HEAD";
+    if options.from_at >= 0 {
+        spec = arg(args, options.from_at);
+        if options.from_off > 0 {
+            spec = spec[options.from_off..len(spec)];
+        }
+    }
+    let now = clock_unix_ms(clock) / 1000;
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    borrow mut scratch as &!s in {
+        borrow selected as &sb in {
+            let answer = vcsrestore.restore_command(heap, root, vcs, contents(s), spec, buffer.bytes(sb), options.dry, now);
+            let (doc, status, errno) = vcsstore.parts(answer);
+            if status == 15 {
+                var lock = buffer.append(heap, buffer.empty(heap, len(rootpath) + 24), rootpath);
+                lock = buffer.append(heap, lock, "/.cancho/vcs/lock");
+                borrow doc as &db in {
+                    borrow lock as &lb in {
+                        code = lock_held(heap, io, buffer.bytes(lb), buffer.bytes(db), now);
+                    }
+                }
+                buffer.drop(heap, lock);
+                buffer.drop(heap, doc);
+            } else {
+                code = answered(heap, io, "restore", vcsstore.Object { bytes: doc, status: status, errno: errno }, spec);
+            }
+        }
+    }
+    unbox_slice(heap, scratch);
+    buffer.drop(heap, selected);
     return code;
 }
 
@@ -997,10 +1171,10 @@ fn branch_in[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs:
 
 // ---- the entry points --------------------------------------------------------------------------------------------------------
 
-// Whether `cancho vcs SUB` is this module's: `init`, `show`, `branch` and `status` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
+// Whether `cancho vcs SUB` is this module's: `init`, `show`, `branch`, `status` and `restore` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
 pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read] bool {
     let sub = arg(args, 2);
-    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") {
+    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") {
         return true;
     }
     if !bytes.equal(sub, "log") {
@@ -1026,8 +1200,8 @@ pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args,
     return found;
 }
 
-// `cancho vcs init|log|show|branch|status ...`.
-pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read, file_write] int {
+// `cancho vcs init|log|show|branch|status|restore ...`.
+pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, io_write, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, dir_symlink, file_read, file_write] int {
     let verb = arg(args, 2);
     var which = 2;
     var name = "show";
@@ -1043,6 +1217,9 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
     } else if bytes.equal(verb, "status") {
         which = 4;
         name = "status";
+    } else if bytes.equal(verb, "restore") {
+        which = 5;
+        name = "restore";
     }
     let options = options_of(heap, io, args, which);
     if options.bad != 0 {
@@ -1074,6 +1251,8 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                                 code = branch_in(heap, io, args, vd, options, clock);
                                             } else if which == 4 {
                                                 code = status_in(heap, io, rd, vd);
+                                            } else if which == 5 {
+                                                code = restore_in(heap, io, args, rd, vd, buffer.bytes(pb), buffer.bytes(cb), options, clock);
                                             } else {
                                                 code = show_in(heap, io, args, vd, options);
                                             }

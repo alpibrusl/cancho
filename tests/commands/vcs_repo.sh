@@ -111,6 +111,29 @@ empty; vcs status;            same "status with no repository is not-a-repositor
 repo; mkdir -p sub/deeper; cd sub/deeper || exit 1; vcs status; same "status from two directories down is the clean status" "$gold/status_clean_fixture.json" "$work/out.json"
 cd "$work" || exit 1; empty; vcs status --repo "$work/r"; same "status --repo PATH from another directory" "$gold/status_clean_fixture.json" "$work/out.json"
 
+echo "== restore"
+tree_is_head() { if diff -r --exclude=.cancho "$fx/three_changes" "$work/r" > /dev/null; then echo "ok $1: the working copy is HEAD's"; else echo "FAILS $1: the working copy differs from HEAD's"; diff -r --exclude=.cancho "$fx/three_changes" "$work/r" | head -5; fi; }
+no_lock() { [ -e "$work/r/.cancho/vcs/lock" ] && echo "FAILS $1: the lock was left" || echo "ok $1: the lock is gone"; }
+repo; printf 'scribble\n' > notes.md; vcs restore notes.md; same "restore one file" "$gold/restore_one.json" "$work/out.json"; exit_is "restore" 0; tree_is_head "restore one file"; no_lock "restore"
+repo; printf 'scribble\n' > notes.md; vcs restore notes.md --dry-run; same "restore --dry-run" "$gold/restore_dry.json" "$work/out.json"; [ "$(cat notes.md)" = "scribble" ] && echo "ok --dry-run wrote nothing" || echo "FAILS --dry-run wrote"
+repo; vcs restore notes.md;   same "restore of a file that is already HEAD's" "$gold/restore_clean.json" "$work/out.json"
+repo; rm a.cho; chmod +x notes.md; ln -s a.cho lnk; mkdir -p sub/deep; printf x > sub/new; printf y > sub/deep/new2; printf z > top.txt; vcs restore .; same "restore . after every kind of change" "$gold/restore_all.json" "$work/out.json"; tree_is_head "restore ."; no_lock "restore ."
+vcs restore .;                same "restore . again restores nothing" "$gold/restore_clean.json" "$work/out.json"
+repo; rm a.cho; mkdir a.cho; printf z > a.cho/inner; vcs restore .; if grep -q '"tag": "io-error"' "$work/out.json"; then echo "ok restore . where a file became a directory: io-error, as the Rust command stops"; else echo "FAILS file became a directory"; cat "$work/out.json"; fi; exit_is "restore, file became a directory" 3; no_lock "restore, io-error"
+repo; mkdir -p sub/deep; printf x > sub/new; printf y > sub/deep/new2; printf z > top.txt; vcs restore sub; same "restore a directory" "$gold/restore_beneath.json" "$work/out.json"; [ -e top.txt ] && echo "ok a path outside the one named is left" || echo "FAILS top.txt was removed"
+repo; vcs restore . --from HEAD~1; same "restore . --from HEAD~1" "$gold/restore_from_parent.json" "$work/out.json"; cmp -s notes.md "$gold/restore_from_parent.notes.md" && cmp -s a.cho "$gold/restore_from_parent.a.cho" && echo "ok the files are the parent's" || echo "FAILS the files are not the parent's"
+repo; vcs restore --from HEAD~1; same "restore with no path" "$gold/refuse_restore_no_path.json" "$work/out.json"; exit_is "restore, no path" 1
+repo; printf 'scribble\n' > notes.md; vcs restore nosuchfile; same "restore of a name nothing has" "$gold/restore_no_match.json" "$work/out.json"; [ "$(cat notes.md)" = "scribble" ] && echo "ok nothing else was restored" || echo "FAILS another file was restored"
+repo; vcs restore ../elsewhere; same "restore of a path outside the repository" "$gold/refuse_restore_escapes.json" "$work/out.json"; exit_is "restore, path escapes" 1
+repo; vcs restore notes.md --from nosuch; same "restore --from a name that names nothing" "$gold/refuse_restore_bad_from.json" "$work/out.json"
+repo; mkdir -p sub; printf x > sub/new; printf 'scribble\n' > notes.md; cd sub || exit 1; vcs restore ../notes.md; same "restore ../notes.md from a subdirectory" "$gold/restore_from_subdir.json" "$work/out.json"
+cd "$work/r" || exit 1; printf 'scribble\n' > notes.md; cd sub || exit 1; vcs restore .; same "restore . in a subdirectory covers only it" "$gold/restore_in_subdir.json" "$work/out.json"; [ "$(cat ../notes.md)" = "scribble" ] && echo "ok the rest of the working copy is left" || echo "FAILS the rest was restored"
+cd "$work" || exit 1; repo; rm a.cho; vcs restore a.cho notes.md; same "restore with two paths" "$gold/restore_two_paths.json" "$work/out.json"
+repo; printf 'scribble\n' > notes.md; printf '4242 1000' > .cancho/vcs/lock; vcs restore notes.md --dry-run; same "restore --dry-run takes no lock" "$gold/restore_dry_locked.json" "$work/out.json"
+vcs restore notes.md; if grep -q '"tag": "lock-held"' "$work/out.json" && grep -q '"pid": 4242' "$work/out.json" && grep -q '"age_seconds": [0-9]' "$work/out.json" && grep -q "\"lock\": \"$(cd "$work/r" && pwd -P)/.cancho/vcs/lock\"" "$work/out.json" && grep -q 'is locked by pid 4242 for [0-9]*s; if that process is gone, run `cancho vcs unlock`' "$work/out.json"; then echo "ok restore with the lock held: lock-held with its pid, age and path"; else echo "FAILS lock-held"; cat "$work/out.json"; fi; exit_is "restore, lock held" 1
+[ "$(cat notes.md)" = "scribble" ] && [ "$(cat .cancho/vcs/lock)" = "4242 1000" ] && echo "ok a held lock changes nothing and is left" || echo "FAILS the held lock was disturbed"
+printf '0 5' > .cancho/vcs/lock; vcs restore notes.md; if grep -q '"pid": null' "$work/out.json" && grep -q '"tag": "lock-held"' "$work/out.json"; then echo "ok a lock stamped with pid 0 has a null pid"; else echo "FAILS pid 0"; fi
+
 echo "== routing"
 empty; "$cancho" vcs log > "$work/out.txt" 2>&1; echo "exit $?"; grep -c "nothing published yet" "$work/out.txt" | sed 's/^/manifest log lines: /'
 repo; "$cancho" vcs log --store elsewhere > "$work/out.txt" 2>&1; echo "exit $?"; grep -o "nothing published yet at .elsewhere." "$work/out.txt"

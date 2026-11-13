@@ -30,7 +30,7 @@ materialize(heap, root: &Dir, mode: int, path, text)   // mode 0 file, 1 executa
 remove_path(heap, root: &Dir, path)
 ```
 
-It is not in `cancho.files` (nothing routes to it yet), exactly as `vcsscan.cho` was in 3a, so no compiler, seed or release file changes, and no reseed.
+It was not in `cancho.files` when it was written (nothing routed to it), exactly as `vcsscan.cho` was in 3a. **Since R5 (2026-11-13) it is**: `vcsrestore.cho` calls it, `cancho.files` lists it, and the chain built from the Darwin seed of R3 reproduces itself with it (`docs/vcs-routing.md` §7).
 
 **W2. Obstacles and parents, one component at a time.** Walk `path` with `dir_enter`; at each component `dir_stat` (no follow): a missing one is `dir_mkdir` `0755`; a
 directory is entered; **anything else (file, link, dangling link) is `dir_remove`d and replaced by a directory**, as Rust does. At the leaf: a directory is removed
