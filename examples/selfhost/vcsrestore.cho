@@ -1,0 +1,295 @@
+edition 12;
+module selfhost.vcsrestore;
+
+// vcsrestore.cho -- the `restore` command of `cancho vcs` (`docs/vcs-routing.md` section 7, slice R5; the Rust command is `cmd_restore`, `crates/cancho/src/vcs_repo.rs`).
+//
+//   restore_command(heap, root, vcs, scratch, spec, selected, dry, now)
+//
+// `spec` names the change to restore from (`HEAD` when `--from` is not given); `selected` is the paths to restore, relative to the root, each followed by a newline, the root itself
+// as an empty line. The working copy is scanned and diffed against that change's tree (`work` -> `want`, so a file the person deleted is `added` and a file the tree lacks is `deleted`,
+// as `diff_trees` says it); each difference under a selected path is listed, and unless `dry` written: the tree's entry with `vcsworktree.materialize`, or the path removed with
+// `vcsworktree.remove_path`. A failure stops the command with what was written so far left in place (the Rust loop `?`s out the same way).
+//
+// The answer is `vcsstore.Object`: the document `{"command", "dry_run", "from", "ok", "restored"}` in `bytes` and status 0; or a refusal status as the other commands answer
+// (18..22 `bad-revision`, 10 `io` with the errno, the scan's statuses); 15 `lock-held` with the lock's text (`PID SINCE`) in `bytes`.
+//
+// The work lock (`.cancho/vcs/lock`, taken unless `dry`, removed when the command ends) is stamped `0 NOW`: cancho has no `getpid` (`docs/vcs-routing.md` D9, O5). A lock the Rust command
+// made carries its pid, and is refused as held all the same.
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import selfhost.jsonwrite;
+import selfhost.vcsobj;
+import selfhost.vcsrepo;
+import selfhost.vcsscan;
+import selfhost.vcsstore;
+import selfhost.vcsworktree;
+
+// Whether `path` is covered by one of `selected`: the root (an empty line) covers all, a path covers itself and what is beneath it.
+pub fn covers[&s, &p](selected: &s [byte], path: &p [byte]) -> [] bool {
+    var at = 0;
+    while at < len(selected) {
+        let end = vcsscan.line_end(selected, at);
+        let line = selected[at..end];
+        if len(line) == 0 {
+            return true;
+        }
+        if bytes.equal(line, path) {
+            return true;
+        }
+        if len(path) > len(line) && bytes.equal(path[0..len(line)], line) && path[len(line)] == byte_of(47) {
+            return true;
+        }
+        at = end + 1;
+    }
+    return false;
+}
+
+// One `{"path", "was"}` member of `restored`, its braces at 2 levels.
+fn item[&h, &p](heap: &!h Heap, out: buffer.Buffer, first: bool, path: &p [byte], was: &static [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    if !first {
+        b = buffer.push(heap, b, byte_of(44));
+    }
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 3, true, "path"), path);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 3, false, "was"), was);
+    return buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(125));
+}
+
+// Write the entry `j` of `want` into the working copy: the blob read first, then `materialize` with the tree's mode.
+fn apply[&h, &r, &d, &s, &w](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], want: &w [byte], j: int) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] (int, int) {
+    var mode = 0;
+    let m = vcsobj.entry_mode(want, j);
+    if bytes.equal(m, "100755") {
+        mode = 1;
+    } else if bytes.equal(m, "120000") {
+        mode = 2;
+    }
+    let blob = vcsstore.get(heap, vcs, scratch, "blob", vcsobj.entry_blob(want, j));
+    let (text, bs, be) = vcsstore.parts(blob);
+    var status = 0;
+    var errno = 0;
+    if bs != 0 {
+        status = bs;
+        errno = be;
+    } else {
+        borrow text as &tb in {
+            let (s0, e0) = vcsworktree.materialize(heap, root, mode, vcsobj.entry_path(want, j), buffer.bytes(tb));
+            status = s0;
+            errno = e0;
+        }
+    }
+    buffer.drop(heap, text);
+    return (status, errno);
+}
+
+// One difference: listed if `selected` covers it, and written unless `dry` (the entry `j` of `want` when `has_new`, else the path removed). Answers the list so far, the status and errno of
+// the write, and whether the path was listed.
+fn change[&h, &r, &d, &s, &w, &p, &x](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], want: &w [byte], j: int, has_new: bool, path: &p [byte], was: &static [byte], items: buffer.Buffer, first: bool, selected: &x [byte], dry: bool) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] (buffer.Buffer, int, int, bool) {
+    if !covers(selected, path) {
+        return (items, 0, 0, false);
+    }
+    let listed = item(heap, items, first, path, was);
+    var status = 0;
+    var errno = 0;
+    if !dry {
+        if has_new {
+            let (s0, e0) = apply(heap, root, vcs, scratch, want, j);
+            status = s0;
+            errno = e0;
+        } else {
+            let (s0, e0) = vcsworktree.remove_path(heap, root, path);
+            status = s0;
+            errno = e0;
+        }
+    }
+    return (listed, status, errno, true);
+}
+
+// The differences between the working copy's tree text `work` and the change's `want`, in path order, as `vcsrepo.emit_files` walks them; the list of those selected in `bytes`.
+fn walk_changes[&h, &r, &d, &s, &o, &w, &x](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], work: &o [byte], want: &w [byte], selected: &x [byte], dry: bool) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    var items = buffer.empty(heap, 0);
+    var count = 0;
+    var status = 0;
+    var errno = 0;
+    var i = 0;
+    var j = 0;
+    if len(work) == 0 {
+        i = 0 - 1;
+    }
+    if len(want) == 0 {
+        j = 0 - 1;
+    }
+    while (i >= 0 || j >= 0) && status == 0 {
+        var order = 0;
+        if i < 0 {
+            order = 1;
+        } else if j < 0 {
+            order = 0 - 1;
+        } else {
+            order = bytes.compare(vcsobj.entry_path(work, i), vcsobj.entry_path(want, j));
+        }
+        if order < 0 {
+            let (it, st, er, listed) = change(heap, root, vcs, scratch, want, 0, false, vcsobj.entry_path(work, i), "deleted", items, count == 0, selected, dry);
+            items = it;
+            status = st;
+            errno = er;
+            if listed {
+                count = count + 1;
+            }
+            i = vcsobj.entry_next(work, i);
+        } else if order > 0 {
+            let (it, st, er, listed) = change(heap, root, vcs, scratch, want, j, true, vcsobj.entry_path(want, j), "added", items, count == 0, selected, dry);
+            items = it;
+            status = st;
+            errno = er;
+            if listed {
+                count = count + 1;
+            }
+            j = vcsobj.entry_next(want, j);
+        } else {
+            var was = "";
+            if !bytes.equal(vcsobj.entry_blob(work, i), vcsobj.entry_blob(want, j)) {
+                was = "modified";
+            } else if !bytes.equal(vcsobj.entry_mode(work, i), vcsobj.entry_mode(want, j)) {
+                was = "mode";
+            }
+            if len(was) > 0 {
+                let (it, st, er, listed) = change(heap, root, vcs, scratch, want, j, true, vcsobj.entry_path(want, j), was, items, count == 0, selected, dry);
+                items = it;
+                status = st;
+                errno = er;
+                if listed {
+                    count = count + 1;
+                }
+            }
+            i = vcsobj.entry_next(work, i);
+            j = vcsobj.entry_next(want, j);
+        }
+    }
+    if status != 0 {
+        buffer.drop(heap, items);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
+    }
+    return vcsstore.Object { bytes: items, status: 0, errno: 0 };
+}
+
+// The document, from the change `from`, the list `items` (empty when nothing was restored) and `dry`.
+fn document[&h, &f, &i](heap: &!h Heap, from: &f [byte], items: &i [byte], dry: bool) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, true, "command"), "\"restore\"");
+    if dry {
+        b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "dry_run"), "true");
+    } else {
+        b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "dry_run"), "false");
+    }
+    b = vcsrepo.quoted(heap, vcsrepo.member(heap, b, 1, false, "from"), from);
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "true");
+    b = vcsrepo.member(heap, b, 1, false, "restored");
+    if len(items) == 0 {
+        b = buffer.append(heap, b, "[]");
+    } else {
+        b = buffer.push(heap, b, byte_of(91));
+        b = buffer.append(heap, b, items);
+        b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(93));
+    }
+    return buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+}
+
+// The tree text of the change `from`: in `bytes` with status 0, or the refusal status.
+fn tree_of[&h, &d, &s, &f](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], from: &f [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    let ti = vcsrepo.tree_id_of(heap, vcs, scratch, from);
+    let (tid, ts, te) = vcsstore.parts(ti);
+    if ts != 0 {
+        buffer.drop(heap, tid);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: ts, errno: te };
+    }
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    borrow tid as &tb in {
+        let (old, os, oe) = vcsstore.parts(answer);
+        buffer.drop(heap, old);
+        answer = vcsrepo.tree_text(heap, vcs, scratch, buffer.bytes(tb));
+    }
+    buffer.drop(heap, tid);
+    return answer;
+}
+
+// `restore`: see the header. `now` is the Unix time in seconds, for the lock's stamp.
+pub fn restore_command[&h, &r, &d, &s, &p, &x](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], spec: &p [byte], selected: &x [byte], dry: bool, now: int) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    let resolved = vcsrepo.resolve(heap, vcs, scratch, spec);
+    let (from, rs, re) = vcsstore.parts(resolved);
+    if rs != 0 {
+        return vcsstore.Object { bytes: from, status: rs, errno: re };
+    }
+    var want = buffer.empty(heap, 0);
+    var code = 0;
+    var errno = 0;
+    borrow from as &fb in {
+        let tt = tree_of(heap, vcs, scratch, buffer.bytes(fb));
+        let (text, xs, xe) = vcsstore.parts(tt);
+        buffer.drop(heap, want);
+        want = text;
+        code = xs;
+        errno = xe;
+    }
+    if code != 0 {
+        buffer.drop(heap, from);
+        buffer.drop(heap, want);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: code, errno: errno };
+    }
+    var held = false;
+    if !dry {
+        let (ls, le, made) = vcsstore.take_lock(heap, vcs, "lock", now);
+        held = made;
+        if ls != 0 {
+            buffer.drop(heap, from);
+            buffer.drop(heap, want);
+            var text = buffer.empty(heap, 0);
+            if ls == 15 {
+                let read = vcsstore.read_text(heap, vcs, "lock");
+                let (t, rs2, re2) = vcsstore.parts(read);
+                buffer.drop(heap, text);
+                text = t;
+            }
+            return vcsstore.Object { bytes: text, status: ls, errno: le };
+        }
+    }
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    let scanned = vcsscan.scan(heap, root, scratch);
+    let (work, ws, we) = vcsstore.parts(scanned);
+    if ws != 0 {
+        buffer.drop(heap, work);
+        let (old, os, oe) = vcsstore.parts(answer);
+        buffer.drop(heap, old);
+        answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: ws, errno: we };
+    } else {
+        borrow work as &wb in {
+            borrow want as &nb in {
+                let walked = walk_changes(heap, root, vcs, scratch, buffer.bytes(wb), buffer.bytes(nb), selected, dry);
+                let (items, ks, ke) = vcsstore.parts(walked);
+                let (old, os, oe) = vcsstore.parts(answer);
+                buffer.drop(heap, old);
+                if ks != 0 {
+                    buffer.drop(heap, items);
+                    answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: ks, errno: ke };
+                } else {
+                    borrow items as &ib in {
+                        borrow from as &fb in {
+                            answer = vcsstore.Object { bytes: document(heap, buffer.bytes(fb), buffer.bytes(ib), dry), status: 0, errno: 0 };
+                        }
+                    }
+                    buffer.drop(heap, items);
+                }
+            }
+        }
+        buffer.drop(heap, work);
+    }
+    if held {
+        dir_remove(vcs, "lock");
+    }
+    buffer.drop(heap, from);
+    buffer.drop(heap, want);
+    return answer;
+}

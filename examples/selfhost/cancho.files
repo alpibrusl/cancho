@@ -77,9 +77,11 @@ types.cho
 vcschange.cho
 vcsobj.cho
 vcsrepo.cho
+vcsrestore.cho
 vcsscan.cho
 vcsstatus.cho
 vcsstore.cho
+vcsworktree.cho
 version.cho
 walk.cho
 wordcode.cho

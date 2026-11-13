@@ -97,6 +97,41 @@ ok status with no repository is not-a-repository
 ok status, no repository (exit 1)
 ok status from two directories down is the clean status
 ok status --repo PATH from another directory
+== restore
+ok restore one file
+ok restore (exit 0)
+ok restore one file: the working copy is HEAD's
+ok restore: the lock is gone
+ok restore --dry-run
+ok --dry-run wrote nothing
+ok restore of a file that is already HEAD's
+ok restore . after every kind of change
+ok restore .: the working copy is HEAD's
+ok restore .: the lock is gone
+ok restore . again restores nothing
+ok restore . where a file became a directory: io-error, as the Rust command stops
+ok restore, file became a directory (exit 3)
+ok restore, io-error: the lock is gone
+ok restore a directory
+ok a path outside the one named is left
+ok restore . --from HEAD~1
+ok the files are the parent's
+ok restore with no path
+ok restore, no path (exit 1)
+ok restore of a name nothing has
+ok nothing else was restored
+ok restore of a path outside the repository
+ok restore, path escapes (exit 1)
+ok restore --from a name that names nothing
+ok restore ../notes.md from a subdirectory
+ok restore . in a subdirectory covers only it
+ok the rest of the working copy is left
+ok restore with two paths
+ok restore --dry-run takes no lock
+ok restore with the lock held: lock-held with its pid, age and path
+ok restore, lock held (exit 1)
+ok a held lock changes nothing and is left
+ok a lock stamped with pid 0 has a null pid
 == routing
 exit 0
 manifest log lines: 1

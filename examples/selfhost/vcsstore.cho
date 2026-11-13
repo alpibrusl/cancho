@@ -726,7 +726,7 @@ pub fn update_ref[&h, &d, &n, &w, &m, &t](heap: &!h Heap, vcs: &d Dir, name: &n 
 // ---- deleting a ref, and listing refs ----------------------------------------------------------------------------------------
 
 // Take the lock `name` in `dir`, stamped `0 NOW`: status 0 (held), 15 `lock-held`, 10 (`errno`); `held` is true when the lock file was made, whatever came after, so the caller removes it.
-fn take_lock[&h, &d, &n](heap: &!h Heap, dir: &d Dir, name: &n [byte], now: int) -> [heap, dir_write, file_write] (int, int, bool) {
+pub fn take_lock[&h, &d, &n](heap: &!h Heap, dir: &d Dir, name: &n [byte], now: int) -> [heap, dir_write, file_write] (int, int, bool) {
     var stamp = buffer.append(heap, buffer.empty(heap, 24), "0 ");
     stamp = buffer.push_nat(heap, stamp, now);
     var status = 0;
