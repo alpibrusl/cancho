@@ -7,6 +7,8 @@ turns out false is corrected here, in place.
 
 ## 1. A function, and a `static`, is named by its node number in the whole program
 
+**Tracked in #773**, with a minimal repro: adding one unused module to a three-line program renames `main` from `lexs_29` to `lexs_46`, with the same section table and only `.symtab` and `.strtab` different.
+
 **[measured]** cancho-ml's `ml`, built with the three server stores in its package set and without them (and without the `ml-serve` bin), on Linux x86-64: the files are both 2,252,128 bytes
 and are not equal. `.text` (1,777,376 bytes), `.rodata`, `.eh_frame`, the dynamic sections, the data and the program headers are byte for byte the same. `.symtab` and `.strtab` differ (12,086 and
 25,106 bytes) and nothing else does: both have 2,371 symbols, and the names that differ are 2,010 numbered functions `lexs_<n>` (the first four numbers, 5, 11, 17 and 21, agree and later ones shift), 66 static
@@ -30,6 +32,8 @@ cancho-ml `check_web_pin.py`, and its note in `docs/ci.md`.
 
 ## 2. A listener whose port is a run-time value cannot be bounded
 
+**Tracked in #774**, which asks for the language decision below.
+
 **[measured, 2026-11-13]** cancho-ml's `ml-serve` reports `bounded: false`, `unbounded_by: ['net_in("")']` at `51524d2`. **[read]** `docs/net-bounds.md` section 2.4, built: an unnarrowed `net_in("")` is unbounded.
 `ml-serve` takes `--port` when it starts, and `narrow` takes literal bounds (`docs/net-bounds.md` sections 2.2 to 2.3), so there is no literal to give it. Before section 2.4 the row read `bounded: true`.
 
@@ -46,6 +50,8 @@ sign-off standing in for a bound the language cannot state. The compiler's own e
 refused as the literal bounds are (`docs/net-bounds.md` section 2.2). **Removes:** the exception in cancho-ml's `tools.toml`, the `unbounded` rule in its `scripts/manifest.py`, and a test.
 
 ## 3. The compiler in cancho accepts a `res` value overwritten through `&!`
+
+**Already tracked as #733** (opened 2026-11-08 from the same cancho-table program); the evidence below was added there on 2026-11-13, with a minimal repro that needs nothing from cancho-table, verified against the Rust compiler, and the place in `examples/selfhost/body.cho` (the `r.x = v` branch, about lines 899 to 943, which never notes the overwrite of a `res` field; compare `scope.assign_slot`, `scope.cho:549`). The compiler in cancho also writes invalid IR for the heap variant (`store {} %t/, ptr %t2`).
 
 **[measured, 2026-11-13, `51524d2`]** `scripts/spikes/join/s8/n1_table_into_job.cho` of cancho-table: a worker lent a job by `&!` builds a table (`res`) and assigns it to a field of the job. The Rust compiler refuses it
 (`the value overwritten here is res (JTab), so it cannot be discarded`, rule `linear-value-unconsumed`, `crates/cancho-ir/src/linear.rs`, the `Discard` event). The compiler written in cancho **accepts it, and builds a
