@@ -244,8 +244,10 @@ edits (`vcsdiff`, a port of `diff_text.rs` and `anchor.rs`), the change encoder 
   tag, rule and exit for this refusal, as D5 does. `gate: {ran, checked}` lists the files checked in the order of `touched`; the attestation is `gate:cancho-check:ok:N`; `--no-gate` checks nothing and attests nothing.
 * **G4. Declarations and edits.** For each difference: a `.cho` file that parses has a declaration view (name `fn module.name` or `type Name`, signature and body ids), and the change lists `added`, `signature-changed`,
   `body-changed`, `removed`, sorted by name; any other text file that is valid UTF-8 on both sides gets the anchored edits of `derive_edits`. Natively the ids are `driver` mode 14 (`identity.pairs`), run on the one file.
-  **Not yet measured:** that mode 14's output carries the module-qualified name that `fn lib.a.f` needs, and that its signature and body ids change exactly when `cancho ids` of the Rust side does; the first thing the build
-  does is a differential on that, before anything else is written.
+  **Read in `identity.cho` after the first draft of this section, and a correction to it:** mode 14 (`pairs`) has no names; mode 15 (`published`) has `module NUL name NUL sig NUL body NUL labels` for each function and
+  static, which is what `fn module.name` needs. **No mode lists the types:** `type Name` lines exist only in `ids`' printer (mode 9, which writes to the output, not to a buffer). So G4 needs one new native function,
+  `identity.type_lines` (the printer's type lines into a buffer) and a mode for it, which is new code in `identity.cho` and the driver, not a reuse. **Not yet measured:** that the ids of mode 15 and of that new function
+  change exactly when the Rust side's `cancho_id::identify` ids do, and whether statics are in Rust's `functions`; the first thing the build does is a differential on those, before anything else is written.
 * **G5. The change object, byte for byte.** The id of a change is the hash of its encoding, so **the oracle is exact**: the same repository state with `--time` and `--author` fixed must give the same `change` and
   `tree` ids as the Rust command (measured here: `94c4bb5e…` for the scratch repository of the test). `tz` is `+0000`. Any difference in a decl, an edit or the attestation shows as a different id, which is why this
   slice can be tested by comparison rather than by reading.
