@@ -321,3 +321,75 @@ pub fn materialize[&h, &d, &p, &t](heap: &!h Heap, root: &d Dir, mode: int, path
     }
     return (0, 0);
 }
+
+// ---- reading a file in place -------------------------------------------------------------------------------------------------
+
+// The file at `rel` beneath `dir`, a link not followed anywhere on the way: its text, 0, 0 and whether any execute bit is set; or an empty text, 10 and the errno (2 a name that is not there, 21 a directory,
+// 22 a link or anything else that is not a file, or the OS's), or 31 for a path `check_path` refuses.
+fn read_in[&h, &d, &r](heap: &!h Heap, dir: &d Dir, rel: &r [byte]) -> [heap, dir_read, file_read] (buffer.Buffer, int, int, bool) {
+    let k = bytes.find(rel, "/");
+    if k >= 0 {
+        match dir_enter(dir, rel[0..k]) {
+            DirOpened::Ok(child) => {
+                var text = buffer.empty(heap, 0);
+                var status = 0;
+                var errno = 0;
+                var exec = false;
+                borrow child as &cd in {
+                    let (t2, s2, e2, x2) = read_in(heap, cd, rel[k + 1..len(rel)]);
+                    buffer.drop(heap, text);
+                    text = t2;
+                    status = s2;
+                    errno = e2;
+                    exec = x2;
+                }
+                dir_close(child);
+                return (text, status, errno, exec);
+            }
+            DirOpened::Failed(e) => {
+                return (buffer.empty(heap, 0), 10, e, false);
+            }
+        }
+    }
+    let (kind, why) = kind_at(dir, rel);
+    if why != 0 {
+        return (buffer.empty(heap, 0), 10, why, false);
+    }
+    if kind == 0 {
+        return (buffer.empty(heap, 0), 10, 2, false);
+    }
+    if kind == 2 {
+        return (buffer.empty(heap, 0), 10, 21, false);
+    }
+    if kind != 1 {
+        return (buffer.empty(heap, 0), 10, 22, false);
+    }
+    let read = vcsstore.read_text(heap, dir, rel);
+    let (text, status, errno) = vcsstore.parts(read);
+    if status != 0 {
+        buffer.drop(heap, text);
+        return (buffer.empty(heap, 0), 10, errno, false);
+    }
+    var exec = false;
+    match dir_mode(dir, rel) {
+        Done::Ok(bits) => {
+            exec = bits & 73 != 0;
+        }
+        Done::Failed(e) => {
+            buffer.drop(heap, text);
+            return (buffer.empty(heap, 0), 10, e, false);
+        }
+    }
+    return (text, 0, 0, exec);
+}
+
+// The file at `path` beneath `root`, read whole (see `read_in`).
+pub fn read_under[&h, &d, &p](heap: &!h Heap, root: &d Dir, path: &p [byte]) -> [heap, dir_read, file_read] (buffer.Buffer, int, int, bool) {
+    if len(path) == 0 {
+        return (buffer.empty(heap, 0), 10, 21, false);
+    }
+    if vcsobj.check_path(path) != 0 {
+        return (buffer.empty(heap, 0), 31, 0, false);
+    }
+    return read_in(heap, root, path);
+}

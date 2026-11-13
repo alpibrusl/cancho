@@ -74,6 +74,7 @@ tables.cho
 testscan.cho
 threadcode.cho
 types.cho
+vcsapply.cho
 vcschange.cho
 vcsobj.cho
 vcsrepo.cho
@@ -82,6 +83,7 @@ vcsscan.cho
 vcsstatus.cho
 vcsstore.cho
 vcsswitch.cho
+vcsunlock.cho
 vcsworktree.cho
 version.cho
 walk.cho

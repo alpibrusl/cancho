@@ -1,0 +1,443 @@
+edition 12;
+module selfhost.vcsapply;
+
+// vcsapply.cho -- the `apply` command of `cancho vcs` (`docs/vcs-routing.md` section 9, slice R7; the Rust command is `cmd_apply` and `apply_edits`, `crates/cancho/src/vcs_repo.rs`, `crates/cancho-vcs/src/anchor.rs`).
+//
+//   apply_command(heap, root, vcs, tape, src, cwd, rootpath, dry, now)
+//
+// `src` is the text of the edits file: a JSON array of `{"path", "old", "new"}`, all strings (other keys are ignored); `tape` has `json.tape_len(src)` ints. Each `path` is made relative to the repository
+// (`relative`: the current directory `cwd`, `..` collapsed, a path outside `rootpath` refused). The edits of one path are applied in order, each to the text the last left, and each `old` must occur
+// exactly once, counting matches that do not overlap, from the left (`aa` occurs once in `aaa`). The paths are taken in the order of their bytes; every file is read and edited before any is written, so
+// a refusal changes nothing; the work lock (`0 NOW`, D9) is taken before the first file is read, **also when `dry`**, and removed when the command ends.
+//
+// The answer is `vcsstore.Object`: the document in `bytes`, status 0; or a refusal, its message in `bytes`: 15 `lock-held` (the lock's text, as for the other commands), 31 `path-unsupported`, 40 `anchor-not-found`,
+// 41 `anchor-ambiguous`, 42 `bad-argument` (the file is not an array of edits), 43 `path-escapes`, 44 `io-error` (a file that cannot be read or written; exit 3).
+//
+// **Known differences from the Rust command** (`docs/vcs-routing.md` section 9): a file is written whole to a temporary file beside it and renamed over (`vcsworktree.materialize`), so a link is refused
+// where Rust writes through it, a mode other than 0644 and 0755 becomes one of them, and a path under `.cancho` is refused where Rust edits it; the messages of 42 and 44 are not serde's and the OS's.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import std.utf8;
+import selfhost.cliproject;
+import selfhost.jsonwrite;
+import selfhost.vcsrepo;
+import selfhost.vcsscan;
+import selfhost.vcsstore;
+import selfhost.vcsswitch;
+import selfhost.vcsworktree;
+import selfhost.walk;
+
+// The tag of a status of this module; the others are those of `vcsscan.tag`.
+pub fn tag(status: int) -> [] &static [byte] {
+    if status == 40 {
+        return "anchor-not-found";
+    }
+    if status == 41 {
+        return "anchor-ambiguous";
+    }
+    if status == 42 {
+        return "bad-argument";
+    }
+    if status == 43 {
+        return "path-escapes";
+    }
+    if status == 44 {
+        return "io-error";
+    }
+    return vcsscan.tag(status);
+}
+
+// ---- the paths ---------------------------------------------------------------------------------------------------------------
+
+// `word` (as written in the edits file, relative to `cwd` unless it starts with `/`) beneath `rootpath`: the path relative to the repository (empty for the root itself) and true, or an empty path and
+// false when it is outside. `..` and `.` are collapsed first, as `rel_path` does in Rust.
+pub fn relative[&h, &c, &r, &w](heap: &!h Heap, cwd: &c [byte], rootpath: &r [byte], word: &w [byte]) -> [heap] (buffer.Buffer, bool) {
+    var prefix = buffer.append(heap, buffer.empty(heap, len(rootpath) + 2), rootpath);
+    if !bytes.equal(rootpath, "/") {
+        prefix = buffer.push(heap, prefix, byte_of(47));
+    }
+    let joined = cliproject.beneath(heap, cwd, word);
+    var full = buffer.empty(heap, 0);
+    borrow joined as &jb in {
+        buffer.drop(heap, full);
+        full = walk.collapse(heap, buffer.bytes(jb));
+    }
+    buffer.drop(heap, joined);
+    var rel = buffer.empty(heap, 0);
+    var inside = false;
+    var plain = buffer.empty(heap, 0);
+    borrow full as &xb in {
+        buffer.drop(heap, plain);
+        plain = without_dots(heap, buffer.bytes(xb));
+    }
+    buffer.drop(heap, full);
+    borrow plain as &fb in {
+        borrow prefix as &pb in {
+            let all = dotless(buffer.bytes(fb));
+            if bytes.equal(all, rootpath) {
+                inside = true;
+            } else if bytes.starts_with(all, buffer.bytes(pb)) {
+                inside = true;
+                rel = buffer.append(heap, rel, all[len(buffer.bytes(pb))..len(all)]);
+            }
+        }
+    }
+    buffer.drop(heap, plain);
+    buffer.drop(heap, prefix);
+    return (rel, inside);
+}
+
+// `path` without its `.` components (`walk.collapse` leaves them): `/a/./b` is `/a/b`.
+fn without_dots[&h, &t](heap: &!h Heap, path: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(path) + 1);
+    var start = 0;
+    var i = 0;
+    var first = true;
+    while i <= len(path) {
+        if i == len(path) || path[i] == byte_of(47) {
+            let part = path[start..i];
+            if !bytes.equal(part, ".") || i == len(path) && first {
+                if !first {
+                    out = buffer.push(heap, out, byte_of(47));
+                }
+                out = buffer.append(heap, out, part);
+                first = false;
+            }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// `path` without a trailing `/.` (the search for the repository starts at `CWD/.`).
+pub fn dotless[&t](path: &t [byte]) -> [] &t [byte] {
+    if len(path) >= 2 && bytes.equal(path[len(path) - 2..len(path)], "/.") {
+        if len(path) == 2 {
+            return path[0..1];
+        }
+        return path[0..len(path) - 2];
+    }
+    return path;
+}
+
+// The ints a tape for `src` needs.
+pub fn tape_size[&s](src: &s [byte]) -> [] int {
+    return json.tape_len(src);
+}
+
+// ---- the edits file ----------------------------------------------------------------------------------------------------------
+
+// The string at node `node` of the tape, decoded.
+fn decoded[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], node: int) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, json.string_length(src, tape, node) + 1);
+    borrow mut b as &!c in {
+        let wrote = json.string_into(src, tape, node, buffer.room(c));
+        buffer.filled(c, wrote);
+    }
+    return b;
+}
+
+// `before`, `what`, `after` as one text.
+fn sentence[&h, &w](heap: &!h Heap, before: &static [byte], what: &w [byte], after: &static [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.empty(heap, len(what) + 64), before);
+    b = buffer.append(heap, b, what);
+    return buffer.append(heap, b, after);
+}
+
+// Whether every element of the array at the root is an object with string `path`, `old` and `new`.
+fn well_shaped[&s, &t](src: &s [byte], tape: &t [int]) -> [] bool {
+    if json.kind(tape, 0) != 6 {
+        return false;
+    }
+    let total = json.count(tape, 0);
+    var node = 1;
+    var i = 0;
+    while i < total {
+        if json.kind(tape, node) != 7 {
+            return false;
+        }
+        let p = json.get(src, tape, node, "path");
+        let o = json.get(src, tape, node, "old");
+        let n = json.get(src, tape, node, "new");
+        if p < 0 || o < 0 || n < 0 || !json.is_string(tape, p) || !json.is_string(tape, o) || !json.is_string(tape, n) {
+            return false;
+        }
+        node = json.skip(tape, node);
+        i = i + 1;
+    }
+    return true;
+}
+
+// The relative paths of the edits, one to a line in the order of the edits: status 0, or 43 and the message.
+res struct Paths {
+    lines: buffer.Buffer,
+    message: buffer.Buffer,
+    status: int,
+}
+
+fn paths_of[&h, &s, &t, &c, &r](heap: &!h Heap, src: &s [byte], tape: &t [int], cwd: &c [byte], rootpath: &r [byte]) -> [heap] Paths {
+    var lines = buffer.empty(heap, 64);
+    var message = buffer.empty(heap, 0);
+    var status = 0;
+    let total = json.count(tape, 0);
+    var node = 1;
+    var i = 0;
+    while i < total && status == 0 {
+        let word = decoded(heap, src, tape, json.get(src, tape, node, "path"));
+        borrow word as &wb in {
+            let (rel, inside) = relative(heap, cwd, rootpath, buffer.bytes(wb));
+            if inside {
+                borrow rel as &rb in {
+                    lines = buffer.push(heap, buffer.append(heap, lines, buffer.bytes(rb)), byte_of(10));
+                }
+            } else {
+                status = 43;
+                buffer.drop(heap, message);
+                message = sentence(heap, "`", buffer.bytes(wb), "` is outside the repository");
+            }
+            buffer.drop(heap, rel);
+        }
+        buffer.drop(heap, word);
+        node = json.skip(tape, node);
+        i = i + 1;
+    }
+    return Paths { lines: lines, message: message, status: status };
+}
+
+// ---- one file ----------------------------------------------------------------------------------------------------------------
+
+// The edits of the file `want` applied to it, in order: nothing written unless `write` (then the file is replaced, its execute bit kept). The answer is status 0, or a refusal with its message in `bytes`.
+fn edit_path[&h, &r, &s, &t, &l, &w](heap: &!h Heap, root: &r Dir, src: &s [byte], tape: &!t [int], lines: &l [byte], want: &w [byte], write: bool) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    let (text0, rs, re, exec) = vcsworktree.read_under(heap, root, want);
+    if rs != 0 {
+        buffer.drop(heap, text0);
+        if rs == 31 {
+            return vcsstore.Object { bytes: sentence(heap, "`", want, "` is not a path that can be edited"), status: 31, errno: 0 };
+        }
+        return vcsstore.Object { bytes: sentence(heap, "cannot read ", want, ""), status: 44, errno: re };
+    }
+    var valid = false;
+    borrow text0 as &tb in {
+        valid = utf8.is_valid(buffer.bytes(tb));
+    }
+    if !valid {
+        buffer.drop(heap, text0);
+        return vcsstore.Object { bytes: sentence(heap, "cannot read ", want, ": the file is not valid UTF-8"), status: 44, errno: 0 };
+    }
+    var cur = text0;
+    var message = buffer.empty(heap, 0);
+    var status = 0;
+    var errno = 0;
+    var at = 0;
+    var node = 1;
+    var i = 0;
+    let total = json.count(tape, 0);
+    while i < total && status == 0 {
+        let end = vcsscan.line_end(lines, at);
+        if bytes.equal(lines[at..end], want) {
+            let old = decoded(heap, src, tape, json.get(src, tape, node, "old"));
+            let new = decoded(heap, src, tape, json.get(src, tape, node, "new"));
+            let spelled = decoded(heap, src, tape, json.get(src, tape, node, "path"));
+            var next = buffer.empty(heap, 0);
+            borrow cur as &cb in {
+                borrow old as &ob in {
+                    borrow new as &nb in {
+                        borrow spelled as &sb in {
+                            let hay = buffer.bytes(cb);
+                            let needle = buffer.bytes(ob);
+                            if len(needle) == 0 {
+                                status = 40;
+                                buffer.drop(heap, message);
+                                message = sentence(heap, "an empty anchor in `", buffer.bytes(sb), "`");
+                            } else {
+                                let first = bytes.find(hay, needle);
+                                if first < 0 {
+                                    status = 40;
+                                    buffer.drop(heap, message);
+                                    message = sentence(heap, "the old text of an edit is not in `", buffer.bytes(sb), "`");
+                                } else {
+                                    let after = first + len(needle);
+                                    if bytes.find(hay[after..len(hay)], needle) >= 0 {
+                                        status = 41;
+                                        buffer.drop(heap, message);
+                                        message = sentence(heap, "the old text of an edit occurs more than once in `", buffer.bytes(sb), "`");
+                                    } else {
+                                        buffer.drop(heap, next);
+                                        next = buffer.append(heap, buffer.empty(heap, len(hay) + len(buffer.bytes(nb))), hay[0..first]);
+                                        next = buffer.append(heap, next, buffer.bytes(nb));
+                                        next = buffer.append(heap, next, hay[after..len(hay)]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, old);
+            buffer.drop(heap, new);
+            buffer.drop(heap, spelled);
+            if status == 0 {
+                buffer.drop(heap, cur);
+                cur = next;
+            } else {
+                buffer.drop(heap, next);
+            }
+        }
+        at = end + 1;
+        node = json.skip(tape, node);
+        i = i + 1;
+    }
+    if status == 0 && write {
+        var mode = 0;
+        if exec {
+            mode = 1;
+        }
+        borrow cur as &cb in {
+            let (ms, me) = vcsworktree.materialize(heap, root, mode, want, buffer.bytes(cb));
+            if ms == 31 {
+                status = 31;
+                buffer.drop(heap, message);
+                message = sentence(heap, "`", want, "` is not a path that can be edited");
+            } else if ms != 0 {
+                status = 44;
+                errno = me;
+                buffer.drop(heap, message);
+                message = sentence(heap, "cannot write ", want, "");
+            }
+        }
+    }
+    buffer.drop(heap, cur);
+    return vcsstore.Object { bytes: message, status: status, errno: errno };
+}
+
+// ---- the command -------------------------------------------------------------------------------------------------------------
+
+// The paths of `lines` (one to a line, in any order) sorted by their bytes, none twice.
+pub fn unique[&h, &l](heap: &!h Heap, lines: &l [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(lines) + 1);
+    var last_at = 0 - 1;
+    var last_end = 0;
+    var going = true;
+    while going {
+        var best = 0 - 1;
+        var best_end = 0;
+        var at = 0;
+        while at < len(lines) {
+            let end = vcsscan.line_end(lines, at);
+            var above = true;
+            if last_at >= 0 {
+                above = bytes.compare(lines[at..end], lines[last_at..last_end]) > 0;
+            }
+            if above && (best < 0 || bytes.compare(lines[at..end], lines[best..best_end]) < 0) {
+                best = at;
+                best_end = end;
+            }
+            at = end + 1;
+        }
+        if best < 0 {
+            going = false;
+        } else {
+            out = buffer.push(heap, buffer.append(heap, out, lines[best..best_end]), byte_of(10));
+            last_at = best;
+            last_end = best_end;
+        }
+    }
+    return out;
+}
+
+// The document: `applied`, `command`, `dry_run`, `ok`.
+fn document[&h, &p](heap: &!h Heap, applied: &p [byte], dry: bool) -> [heap] buffer.Buffer {
+    var d = buffer.push(heap, buffer.empty(heap, 192), byte_of(123));
+    d = vcsswitch.string_array(heap, vcsrepo.member(heap, d, 1, true, "applied"), applied, 1);
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "command"), "\"apply\"");
+    if dry {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "dry_run"), "true");
+    } else {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "dry_run"), "false");
+    }
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "ok"), "true");
+    return buffer.append(heap, jsonwrite.newline(heap, d, 0), "}\n");
+}
+
+// One pass over the files of `uniq`: `write` false checks every edit, true writes them. 0 and no message, or the first refusal.
+fn pass[&h, &r, &s, &t, &l, &u](heap: &!h Heap, root: &r Dir, src: &s [byte], tape: &!t [int], lines: &l [byte], uniq: &u [byte], write: bool) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    var at = 0;
+    while at < len(uniq) {
+        let end = vcsscan.line_end(uniq, at);
+        let one = edit_path(heap, root, src, tape, lines, uniq[at..end], write);
+        let (message, status, errno) = vcsstore.parts(one);
+        if status != 0 {
+            return vcsstore.Object { bytes: message, status: status, errno: errno };
+        }
+        buffer.drop(heap, message);
+        at = end + 1;
+    }
+    return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+}
+
+// `apply`: see the header. `now` is the Unix time in seconds, for the lock's stamp.
+pub fn apply_command[&h, &r, &d, &t, &s, &c, &p](heap: &!h Heap, root: &r Dir, vcs: &d Dir, tape: &!t [int], src: &s [byte], cwd: &c [byte], rootpath: &p [byte], dry: bool, now: int) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    let nodes = json.parse(src, tape);
+    if nodes < 0 {
+        return vcsstore.Object { bytes: sentence(heap, "not JSON: ", json.error_message(json.error_code(nodes)), ""), status: 42, errno: 0 };
+    }
+    if !well_shaped(src, tape) {
+        return vcsstore.Object { bytes: sentence(heap, "expected an array of edits, each an object with string `path`, `old` and `new`", "", ""), status: 42, errno: 0 };
+    }
+    let found = paths_of(heap, src, tape, cwd, rootpath);
+    let Paths { lines, message, status } = found;
+    if status != 0 {
+        buffer.drop(heap, lines);
+        return vcsstore.Object { bytes: message, status: status, errno: 0 };
+    }
+    buffer.drop(heap, message);
+    let (ls, le, made) = vcsstore.take_lock(heap, vcs, "lock", now);
+    if ls != 0 {
+        buffer.drop(heap, lines);
+        var text = buffer.empty(heap, 0);
+        if ls == 15 {
+            let read = vcsstore.read_text(heap, vcs, "lock");
+            let (t, rs2, re2) = vcsstore.parts(read);
+            buffer.drop(heap, text);
+            text = t;
+        }
+        return vcsstore.Object { bytes: text, status: ls, errno: le };
+    }
+    var uniq = buffer.empty(heap, 0);
+    borrow lines as &lb in {
+        buffer.drop(heap, uniq);
+        uniq = unique(heap, buffer.bytes(lb));
+    }
+    var out = buffer.empty(heap, 0);
+    var code = 0;
+    var errno = 0;
+    borrow lines as &lb in {
+        borrow uniq as &ub in {
+            let first = pass(heap, root, src, tape, buffer.bytes(lb), buffer.bytes(ub), false);
+            let (m1, s1, e1) = vcsstore.parts(first);
+            buffer.drop(heap, out);
+            out = m1;
+            code = s1;
+            errno = e1;
+            if code == 0 && !dry {
+                let second = pass(heap, root, src, tape, buffer.bytes(lb), buffer.bytes(ub), true);
+                let (m2, s2, e2) = vcsstore.parts(second);
+                buffer.drop(heap, out);
+                out = m2;
+                code = s2;
+                errno = e2;
+            }
+            if code == 0 {
+                buffer.drop(heap, out);
+                out = document(heap, buffer.bytes(ub), dry);
+            }
+        }
+    }
+    dir_remove(vcs, "lock");
+    buffer.drop(heap, lines);
+    buffer.drop(heap, uniq);
+    return vcsstore.Object { bytes: out, status: code, errno: errno };
+}

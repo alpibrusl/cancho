@@ -102,6 +102,10 @@ ok restore one file
 ok restore (exit 0)
 ok restore one file: the working copy is HEAD's
 ok restore: the lock is gone
+ok restore ./notes.md is notes.md (a dot component was once left in the path, and nothing was restored)
+ok restore ./notes.md: the working copy is HEAD's
+ok restore s/../notes.md is notes.md
+ok restore s/../notes.md: the working copy is HEAD's
 ok restore --dry-run
 ok --dry-run wrote nothing
 ok restore of a file that is already HEAD's
@@ -197,6 +201,129 @@ ok switch --dry-run takes no lock
 ok switch with the lock held: lock-held with its pid and path
 ok switch, lock held (exit 1)
 ok a held lock changes nothing and is left
+== apply
+ok apply: basic
+ok apply: basic: the working copy is as the Rust command left it
+ok apply: basic: no lock left
+ok apply: seq
+ok apply: seq: the working copy is as the Rust command left it
+ok apply: seq: no lock left
+ok apply: two files
+ok apply: two files: the working copy is as the Rust command left it
+ok apply: two files: no lock left
+ok apply: two files reversed
+ok apply: two files reversed: the working copy is as the Rust command left it
+ok apply: two files reversed: no lock left
+ok apply: overlap
+ok apply: overlap: the working copy is as the Rust command left it
+ok apply: overlap: no lock left
+ok apply: dry
+ok apply: dry: the working copy is as the Rust command left it
+ok apply: dry: no lock left
+ok apply: atomic
+ok apply: atomic: the working copy is as the Rust command left it
+ok apply: atomic: no lock left
+ok apply: atomic reversed
+ok apply: atomic reversed: the working copy is as the Rust command left it
+ok apply: atomic reversed: no lock left
+ok apply: not found
+ok apply: not found: the working copy is as the Rust command left it
+ok apply: not found: no lock left
+ok apply: ambiguous
+ok apply: ambiguous: the working copy is as the Rust command left it
+ok apply: ambiguous: no lock left
+ok apply: ambiguous code
+ok apply: ambiguous code: the working copy is as the Rust command left it
+ok apply: ambiguous code: no lock left
+ok apply: empty anchor
+ok apply: empty anchor: the working copy is as the Rust command left it
+ok apply: empty anchor: no lock left
+ok apply: escapes
+ok apply: escapes: the working copy is as the Rust command left it
+ok apply: escapes: no lock left
+ok apply: empty list
+ok apply: empty list: the working copy is as the Rust command left it
+ok apply: empty list: no lock left
+ok apply: exec
+ok apply: exec: the working copy is as the Rust command left it
+ok apply: exec: no lock left
+ok apply: unicode
+ok apply: unicode: the working copy is as the Rust command left it
+ok apply: unicode: no lock left
+ok apply: dotted
+ok apply: dotted: the working copy is as the Rust command left it
+ok apply: dotted: no lock left
+ok apply: dotted refused
+ok apply: dotted refused: the working copy is as the Rust command left it
+ok apply: dotted refused: no lock left
+ok apply: spellings
+ok apply: spellings: the working copy is as the Rust command left it
+ok apply: spellings: no lock left
+ok apply: spellings refused
+ok apply: spellings refused: the working copy is as the Rust command left it
+ok apply: spellings refused: no lock left
+ok apply: subdirectory
+ok apply: subdirectory: the working copy is as the Rust command left it
+ok apply: subdirectory: no lock left
+ok apply: crlf
+ok apply: crlf: the working copy is as the Rust command left it
+ok apply: crlf: no lock left
+ok apply: deleting
+ok apply: deleting: the working copy is as the Rust command left it
+ok apply: deleting: no lock left
+ok apply: large
+ok apply: large: the working copy is as the Rust command left it
+ok apply: large: no lock left
+ok apply: spaced json
+ok apply: spaced json: the working copy is as the Rust command left it
+ok apply: spaced json: no lock left
+ok apply: extra key
+ok apply: extra key: the working copy is as the Rust command left it
+ok apply: extra key: no lock left
+ok apply with no argument
+ok apply, no argument (exit 1)
+ok apply with two arguments
+ok apply, two arguments (exit 1)
+ok apply, a file that is not there: io-error, exit 3
+ok apply, a directory: io-error, exit 3
+ok apply, the root: io-error, exit 3
+ok apply, an empty path: io-error, exit 3
+ok apply, an object, not an array: bad-argument, exit 1
+ok apply, an edit with no new: bad-argument, exit 1
+ok apply, a number as old: bad-argument, exit 1
+ok apply, JSON that stops: bad-argument, exit 1
+ok apply, a trailing comma: bad-argument, exit 1
+ok apply, an edits file that is not there: io-error, exit 3
+ok apply --dry-run takes the lock, unlike restore and switch: lock-held
+ok a held lock is left
+ok apply from a subdirectory: paths are the current directory's
+== unlock
+ok unlock: none
+ok unlock: none: the locks left are the Rust command's
+ok unlock: none dry
+ok unlock: none dry: the locks left are the Rust command's
+ok unlock: top
+ok unlock: top: the locks left are the Rust command's
+ok unlock: top dry
+ok unlock: top dry: the locks left are the Rust command's
+ok unlock: ref
+ok unlock: ref: the locks left are the Rust command's
+ok unlock: both
+ok unlock: both: the locks left are the Rust command's
+ok unlock: garbage
+ok unlock: garbage: the locks left are the Rust command's
+ok unlock: empty
+ok unlock: empty: the locks left are the Rust command's
+ok unlock: pid only
+ok unlock: pid only: the locks left are the Rust command's
+ok unlock: big pid
+ok unlock: big pid: the locks left are the Rust command's
+ok unlock: plus
+ok unlock: plus: the locks left are the Rust command's
+ok unlock: zero
+ok unlock: zero: the locks left are the Rust command's
+ok unlock: nested
+ok unlock: nested: the locks left are the Rust command's
 == routing
 exit 0
 manifest log lines: 1

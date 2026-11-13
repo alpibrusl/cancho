@@ -1,0 +1,8 @@
+{
+  "applied": [
+    "notes.md"
+  ],
+  "command": "apply",
+  "dry_run": true,
+  "ok": true
+}

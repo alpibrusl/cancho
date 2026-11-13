@@ -1,0 +1,8 @@
+{
+  "command": "apply",
+  "ok": false,
+  "refused": {
+    "message": "the old text of an edit occurs more than once in `notes.md`",
+    "tag": "anchor-ambiguous"
+  }
+}
