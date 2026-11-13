@@ -203,6 +203,13 @@ fn print_4[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "Labels: `io_read`, `io_write`, `err_write`, `fs_read(p)`, `fs_write(p)`,\n");
     b = buffer.append(heap, b, "`heap`, `args`, `ffi(lib)`.\n");
     b = buffer.append(heap, b, "\n");
+    b = buffer.append(heap, b, "`fs_read(p)` and `fs_write(p)` are a **text prefix** of the path, and a link inside\n");
+    b = buffer.append(heap, b, "`p` leads out of it: a program narrowed to `fs_read(\"/data\")` reads\n");
+    b = buffer.append(heap, b, "`/data/link/secret` when `link` points elsewhere, and the report still says\n");
+    b = buffer.append(heap, b, "`bounded` (`--output json` marks these labels `\"confinement\": \"lexical\"`).\n");
+    b = buffer.append(heap, b, "When a program must stay inside a directory, open it with `open_dir` and use the\n");
+    b = buffer.append(heap, b, "`dir_*` calls on the handle (section 3.7): no link is followed.\n");
+    b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "### 3.2 Knowing you were asked to stop is a capability, not `Ffi(\"libc\")`\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "`edition 6;` adds `Signals`, the eighth field of `Split`. Narrow it to the\n");
