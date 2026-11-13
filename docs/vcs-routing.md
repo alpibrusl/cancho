@@ -225,3 +225,38 @@ build: the file kept its scribble). `vcsapply.relative`, now the one path helper
 checking and writing in one pass (18), `unlock --dry-run` that removes (1), the `.` components kept (6). **Known differences:** the file is replaced through a temporary beside it (E5: a link is refused, `0600` becomes `0644`, a path under `.cancho` is refused with
 `path-unsupported`); the messages of `bad-argument` and `io-error` (tag and exit are equal, and those cases are checked by tag and exit); `unlock` lists sorted by name, Rust in the directory's order (two locks in `refs/heads` came out in the other order on this
 volume). **Not covered:** `revert` (needs a native `record`), a crash between two files' writes, duplicate keys in an edit (the first wins here; serde's last), an edits file with a byte-order mark, a lock directory entry that is a link, Linux (CI).
+
+## 10. R8, `record`: the design **[read]** from `vcs_record.rs`, **[measured]** where it says so (2026-11-14; the Rust command was run on a scratch repository; nothing here is built yet)
+
+**Why `record` next.** `revert` ends in `commit_tree` (§9), and `commit_tree` is `record`: the gate, the lock, the tree and change objects, the branch move. So `record` is built to be shared (`commit_tree`'s
+shape), `revert` is the slice after it, and `tag` after that. Most of the parts exist in cancho already: the scan (`vcsscan`), the tree diff and `covers` (`vcsrestore`), blobs (`vcsstore.put`), the line diff and anchored
+edits (`vcsdiff`, a port of `diff_text.rs` and `anchor.rs`), the change encoder (`vcschange`), `update_ref`, the work lock (`take_lock`), and the compiler's own entry points in `driver.cho`.
+
+* **G1. Arguments.** Paths, or `--all`; neither: `nothing-selected` (``"name the paths to record, or pass --all"``, exit 1, measured). Each path through `vcsapply.relative` (the helper `apply` and `restore` share).
+  Options: `--author`, `--time` (unix seconds, else `bad-argument`), `--intent-prompt` with `--intent-model`, `--intent-session`, `--intent-issue` (the last three only with a prompt), `--expect REV`, `--no-gate`,
+  `--dry-run`. `CANCHO_AUTHOR` and the default `cancho <cancho@localhost>` as in Rust.
+* **G2. The new tree.** HEAD's tree with each difference between it and the scan applied that the selection covers (`vcsrestore.covers`); `touched` is those paths in the diff's order. An unchanged tree is `unchanged: true`
+  and the HEAD change (the empty repository: `nothing-to-record`); the document then repeats that change's tree, parents, decls and intent (measured).
+* **G3. The gate.** Each touched `.cho` file still in the new tree is checked as the program it belongs to: itself, the files of the tree that declare the modules it imports (transitively), and the standard
+  library when something imports `std`. **Measured, and decisive:** `cancho check` on a library file is refused (`no main function`), so the command is not what the gate runs; `driver.run_many` **mode 10**
+  (`check_quiet`) is the check "as the build checks it, with no `main` asked for", which is the Rust gate's own scope (`check_candidate` does no `main` check). The first refusal is `gate-failed`, with `path`, `rule`, and
+  `diagnostics` (measured: `a.cho: type-mismatch: expected `int`, found `bool``). **[choice]** the rule tag and path are the Rust command's; the *message* is the native checker's own words, so the golden test compares
+  tag, rule and exit for this refusal, as D5 does. `gate: {ran, checked}` lists the files checked in the order of `touched`; the attestation is `gate:cancho-check:ok:N`; `--no-gate` checks nothing and attests nothing.
+* **G4. Declarations and edits.** For each difference: a `.cho` file that parses has a declaration view (name `fn module.name` or `type Name`, signature and body ids), and the change lists `added`, `signature-changed`,
+  `body-changed`, `removed`, sorted by name; any other text file that is valid UTF-8 on both sides gets the anchored edits of `derive_edits`. Natively the ids are `driver` mode 14 (`identity.pairs`), run on the one file.
+  **Not yet measured:** that mode 14's output carries the module-qualified name that `fn lib.a.f` needs, and that its signature and body ids change exactly when `cancho ids` of the Rust side does; the first thing the build
+  does is a differential on that, before anything else is written.
+* **G5. The change object, byte for byte.** The id of a change is the hash of its encoding, so **the oracle is exact**: the same repository state with `--time` and `--author` fixed must give the same `change` and
+  `tree` ids as the Rust command (measured here: `94c4bb5e…` for the scratch repository of the test). `tz` is `+0000`. Any difference in a decl, an edit or the attestation shows as a different id, which is why this
+  slice can be tested by comparison rather than by reading.
+* **G6. Storing.** Not under `--dry-run`: take the work lock, read HEAD again under it and refuse `ref-moved` (with `current`) if it moved; write the blobs not yet stored, the tree, the change; then move the branch
+  with `update_ref` (expect: `--expect`, else HEAD's change, else absent; note `record`), or set a detached HEAD. `lock-held` as for `apply`. The lock is not taken for `--dry-run`.
+* **G7. The document.** `branch` (null when detached), `change`, `command`, `decls`, `dry_run`, `edits` (the count), `gate`, `intent`, `ok`, `parents`, `recorded` (fresh and not dry), `touched`, `tree`, `unchanged`
+  (keys sorted, as the envelope does).
+* **G8. Where.** A new `vcsrecord.cho` (selection, the new tree, the gate's program assembly, decls, the change), the command in `clivcsrepo.cho`, routed like `apply`. **A risk, said now:** the module imports
+  `driver.cho`, the compiler's entry; it is in the standalone binary already, but the *seed* knows only what the seed knows, so the first thing to check is that a program importing `vcsrecord` builds from the
+  committed seed (R0 had this problem with `dir_readlink`).
+* **Tests.** Goldens made by the Rust command with `make.sh` for: the empty repository, the first record, again (`unchanged`), `--dry-run`, a selection of one path, a deletion, a mode change, a link, a text edit
+  (`edits`), a `.cho` change of each decl kind, a gate refusal, `--no-gate`, `nothing-selected`, `--expect` wrong (`ref-moved`), a bad `--time`, `--intent-*`, a detached HEAD, `lock-held`. Each also checks the
+  working copy's store: the change loads, the tree lists, the branch is moved, the lock is gone. Mutants: the covers test, the order of `touched`, the gate on a file the change deletes, the HEAD re-read under the lock, the
+  `unchanged` branch, the attestation text.
