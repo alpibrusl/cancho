@@ -59,7 +59,7 @@ fn item[&h, &p](heap: &!h Heap, out: buffer.Buffer, first: bool, path: &p [byte]
 }
 
 // Write the entry `j` of `want` into the working copy: the blob read first, then `materialize` with the tree's mode.
-fn apply[&h, &r, &d, &s, &w](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], want: &w [byte], j: int) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] (int, int) {
+pub fn apply[&h, &r, &d, &s, &w](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], want: &w [byte], j: int) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] (int, int) {
     var mode = 0;
     let m = vcsobj.entry_mode(want, j);
     if bytes.equal(m, "100755") {
@@ -199,7 +199,7 @@ fn document[&h, &f, &i](heap: &!h Heap, from: &f [byte], items: &i [byte], dry: 
 }
 
 // The tree text of the change `from`: in `bytes` with status 0, or the refusal status.
-fn tree_of[&h, &d, &s, &f](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], from: &f [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+pub fn tree_of[&h, &d, &s, &f](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], from: &f [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
     let ti = vcsrepo.tree_id_of(heap, vcs, scratch, from);
     let (tid, ts, te) = vcsstore.parts(ti);
     if ts != 0 {

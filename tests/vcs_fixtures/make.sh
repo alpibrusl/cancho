@@ -9,7 +9,7 @@ out=$2
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
 case $R in */*) R=$(cd "$(dirname "$R")" && pwd)/$(basename "$R") ;; esac
-rm -rf "$out/three_changes" "$out/golden"
+rm -rf "$out/three_changes" "$out/four_changes" "$out/golden"
 mkdir -p "$out/three_changes" "$out/golden"
 export CANCHO_AUTHOR="Ada <ada@example.com>"
 cd "$out/three_changes"
@@ -21,6 +21,14 @@ printf 'module a;\npub fn twice(n: int) -> [] int { return n + n + 0; }\npub fn 
 printf '# notes\none\n2\nthree\n' > notes.md
 "$R" vcs record a.cho --intent-prompt second --intent-issue 7 --time 1001 --output json > /dev/null
 "$R" vcs record --all --intent-prompt "third: notes" --time 1002 --output json > /dev/null
+
+# four_changes (R6, `switch`): three_changes and a branch `wide` one change ahead of main that removes a file, adds files (one in a new directory), changes a mode and adds a link; HEAD is back on main.
+cp -R "$out/three_changes" "$out/four_changes"
+cd "$out/four_changes"
+"$R" vcs switch --create wide --output json > /dev/null
+rm a.cho; chmod +x notes.md; mkdir -p sub/deep; printf 'x\n' > sub/deep/x.txt; printf 'y\n' > top.txt; ln -s notes.md lnk
+"$R" vcs record --all --intent-prompt "fourth: wide" --time 1003 --output json > /dev/null
+"$R" vcs switch main --output json > /dev/null
 
 # The documents, each from a copy of the repository (or an empty directory), the root made `<root>`.
 g=$out/golden
@@ -92,5 +100,37 @@ here; mkdir -p sub; printf x > sub/new; printf 'scribble\n' > notes.md; ( cd sub
 here; mkdir -p sub; printf x > sub/new; printf 'scribble\n' > notes.md; ( cd sub && rs . > "$g/restore_in_subdir.json" )
 here; printf 'scribble\n' > notes.md; printf '4242 1000' > .cancho/vcs/lock; rs notes.md --dry-run > "$g/restore_dry_locked.json"
 here; rm a.cho; rs a.cho notes.md > "$g/restore_two_paths.json"
+# switch (R6): each from a copy of the repository (`here`, three changes, HEAD on main) or of four_changes (`wide`), then `sw`. `listing` is the working copy as the tests list it: kind, path, content sum, execute bit, link target.
+sw() { "$R" vcs switch "$@" --output json; }
+wide() { rm -rf "$out/w"; mkdir -p "$out/w"; cp -R "$out/four_changes/." "$out/w/"; cd "$out/w"; }
+listing() { find . -path ./.cancho -prune -o -print | sort | while read -r f; do if [ -L "$f" ]; then echo "l $f -> $(readlink "$f")"; elif [ -d "$f" ]; then echo "d $f"; elif [ -x "$f" ]; then echo "x $f $(cksum < "$f")"; else echo "f $f $(cksum < "$f")"; fi; done; }
+br() { "$R" vcs branch "$@" --output json; }
+here; sw main > "$g/switch_noop.json"
+here; sw topic --create > "$g/switch_create.json"; cp .cancho/vcs/HEAD "$g/switch_create.HEAD"
+here; sw topic --create --dry-run > "$g/switch_create_dry.json"
+here; sw main --create > "$g/refuse_switch_create_exists.json" || true
+here; sw 'bad name' --create > "$g/refuse_switch_create_bad_name.json" || true
+empty; "$R" vcs init --output json > /dev/null; sw x --create > "$g/refuse_switch_create_no_change.json" || true
+empty; "$R" vcs init --output json > /dev/null; sw main > "$g/refuse_switch_empty_repository.json" || true
+here; br create old --from HEAD~1 > /dev/null; sw old > "$g/switch_branch.json"; cp .cancho/vcs/HEAD "$g/switch_branch.HEAD"
+here; br create old --from HEAD~1 > /dev/null; sw old --dry-run > "$g/switch_branch_dry.json"
+here; sw HEAD~1 > "$g/switch_detach_parent.json"; cp .cancho/vcs/HEAD "$g/switch_detach_parent.HEAD"
+here; sw main --detach > "$g/switch_detach_branch.json"; cp .cancho/vcs/HEAD "$g/switch_detach_branch.HEAD"
+here; sw nosuch > "$g/refuse_switch_bad_revision.json" || true
+here; sw > "$g/refuse_switch_no_argument.json" || true
+here; sw a b > "$g/refuse_switch_two_arguments.json" || true
+here; br create old --from HEAD~1 > /dev/null; printf 'scribble\n' > notes.md; sw old > "$g/refuse_switch_dirty.json" || true
+here; br create old --from HEAD~1 > /dev/null; printf 'z\n' > zzz.txt; sw old > "$g/refuse_switch_dirty_other.json" || true
+here; br create old --from HEAD~1 > /dev/null; printf 'z\n' > zzz.txt; sw old --keep > "$g/switch_keep_carries.json"
+here; br create old --from HEAD~1 > /dev/null; printf 'scribble\n' > notes.md; sw old --keep > "$g/refuse_switch_keep_in_the_way.json" || true
+here; br create old --from HEAD~1 > /dev/null; printf 'scribble\n' > notes.md; printf 'z\n' > zzz.txt; sw old --discard > "$g/switch_discard.json"
+here; br create old --from HEAD~1 > /dev/null; printf 'scribble\n' > notes.md; sw old --dry-run > "$g/refuse_switch_dry_dirty.json" || true
+here; br create old --from HEAD~1 > /dev/null; sw old > /dev/null; sw main > "$g/switch_back.json"
+here; br create old --from HEAD~1 > /dev/null; printf '4242 1000' > .cancho/vcs/lock; sw old --dry-run > "$g/switch_dry_locked.json"
+wide; sw wide > "$g/switch_wide.json"; cp .cancho/vcs/HEAD "$g/switch_wide.HEAD"; listing > "$g/switch_wide.tree"
+wide; sw wide > /dev/null; sw main > "$g/switch_wide_back.json"; listing > "$g/switch_wide_back.tree"
+wide; printf 'q\n' > unrelated.txt; sw wide --keep > "$g/switch_wide_keep.json"; listing > "$g/switch_wide_keep.tree"
+wide; sw wide --dry-run > "$g/switch_wide_dry.json"
+wide; mkdir -p sub; sw wide > /dev/null; cd sub || exit 1; sw main > "$g/switch_from_subdir.json"
 rm -rf "$out/w" "$out/e"
 echo "made $out/three_changes and $out/golden"

@@ -1,0 +1,11 @@
+{
+  "command": "switch",
+  "ok": false,
+  "refused": {
+    "message": "uncommitted changes would be lost or carried; record them, or pass --keep or --discard",
+    "paths": [
+      "notes.md"
+    ],
+    "tag": "dirty-working-copy"
+  }
+}

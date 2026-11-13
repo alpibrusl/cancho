@@ -1,0 +1,9 @@
+{
+  "branch": "wide",
+  "command": "switch",
+  "discarded": [],
+  "dry_run": false,
+  "head": "a6d9f88da9b5d6c6ebf39acd9632dafbc819e3d4fa11fb4b2e03e6a634f613bb",
+  "ok": true,
+  "switched": true
+}
