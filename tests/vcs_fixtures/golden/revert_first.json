@@ -1,0 +1,8 @@
+{
+  "command": "revert",
+  "ok": false,
+  "refused": {
+    "message": "only a change with exactly one parent can be reverted in V1 (merges come with V2)",
+    "tag": "revert-unsupported"
+  }
+}

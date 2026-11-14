@@ -444,3 +444,92 @@ ok record, a gate refusal (exit 1)
 ok record, nothing selected (exit 1)
 ok record, a bad time (exit 1)
 ok record, a wrong expect (exit 1)
+== revert
+ok revert: head
+ok revert: head: the store is as the Rust command left it
+ok revert: head: the working copy is as the Rust command left it
+ok revert: head: no lock left
+ok revert: second
+ok revert: second: the store is as the Rust command left it
+ok revert: second: the working copy is as the Rust command left it
+ok revert: second: no lock left
+ok revert: first
+ok revert: first: the store is as the Rust command left it
+ok revert: first: the working copy is as the Rust command left it
+ok revert: first: no lock left
+ok revert: dry
+ok revert: dry: the store is as the Rust command left it
+ok revert: dry: the working copy is as the Rust command left it
+ok revert: dry: no lock left
+ok revert: twice
+ok revert: twice: the store is as the Rust command left it
+ok revert: twice: the working copy is as the Rust command left it
+ok revert: twice: no lock left
+ok revert: conflict
+ok revert: conflict: the store is as the Rust command left it
+ok revert: conflict: the working copy is as the Rust command left it
+ok revert: conflict: no lock left
+ok revert: dirty
+ok revert: dirty: the store is as the Rust command left it
+ok revert: dirty: the working copy is as the Rust command left it
+ok revert: dirty: no lock left
+ok revert: added
+ok revert: added: the store is as the Rust command left it
+ok revert: added: the working copy is as the Rust command left it
+ok revert: added: no lock left
+ok revert: deleted
+ok revert: deleted: the store is as the Rust command left it
+ok revert: deleted: the working copy is as the Rust command left it
+ok revert: deleted: no lock left
+ok revert: mode
+ok revert: mode: the store is as the Rust command left it
+ok revert: mode: the working copy is as the Rust command left it
+ok revert: mode: no lock left
+ok revert: intent
+ok revert: intent: the store is as the Rust command left it
+ok revert: intent: the working copy is as the Rust command left it
+ok revert: intent: no lock left
+ok revert: quote
+ok revert: quote: the store is as the Rust command left it
+ok revert: quote: the working copy is as the Rust command left it
+ok revert: quote: no lock left
+ok revert: gate: the tag, the rule and the path are the Rust command's
+ok revert: gate: the store is as the Rust command left it
+ok revert: gate: the working copy is as the Rust command left it
+ok revert: gate: no lock left
+ok revert: no gate
+ok revert: no gate: the store is as the Rust command left it
+ok revert: no gate: the working copy is as the Rust command left it
+ok revert: no gate: no lock left
+ok revert: none
+ok revert: none: the store is as the Rust command left it
+ok revert: none: the working copy is as the Rust command left it
+ok revert: none: no lock left
+ok revert: two
+ok revert: two: the store is as the Rust command left it
+ok revert: two: the working copy is as the Rust command left it
+ok revert: two: no lock left
+ok revert: bad revision
+ok revert: bad revision: the store is as the Rust command left it
+ok revert: bad revision: the working copy is as the Rust command left it
+ok revert: bad revision: no lock left
+ok revert: expect wrong: the tag, the rule and the path are the Rust command's
+ok revert: expect wrong: the store is as the Rust command left it
+ok revert: expect wrong: the working copy is as the Rust command left it
+ok revert: expect wrong: no lock left
+ok revert: expect ok
+ok revert: expect ok: the store is as the Rust command left it
+ok revert: expect ok: the working copy is as the Rust command left it
+ok revert: expect ok: no lock left
+ok revert: cho
+ok revert: cho: the store is as the Rust command left it
+ok revert: cho: the working copy is as the Rust command left it
+ok revert: cho: no lock left
+ok revert with the lock held: lock-held with its pid
+ok revert, lock held (exit 1)
+ok revert, a dirty working copy (exit 1)
+ok revert, a conflict (exit 1)
+ok revert, a first change (exit 1)
+ok revert, no change named (exit 1)
+ok revert (exit 0)
+ok revert: the log of the branch says revert

@@ -1,0 +1,11 @@
+{
+  "change": "2a66803677520d74ece185aa108cf479bc1f442941a3df1133e499c4ea12547a",
+  "command": "revert",
+  "dry_run": false,
+  "ok": true,
+  "reverted": "5e2a9d887c23aefd4b0c1c2867db534217f59096931f52fa0f42a882a11e28fd",
+  "touched": [
+    "notes.md"
+  ],
+  "unchanged": false
+}

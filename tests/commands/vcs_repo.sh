@@ -296,3 +296,37 @@ repo; printf 'module a;\npub fn twice( {\n' > a.cho; rcx --all; exit_is "record,
 repo; rcx; exit_is "record, nothing selected" 1
 repo; printf 'four\n' >> notes.md; vcs record --all --time abc; exit_is "record, a bad time" 1
 repo; printf 'four\n' >> notes.md; rcx --all --expect HEAD~1; exit_is "record, a wrong expect" 1
+
+echo "== revert"
+step() { "$cancho" vcs record --all --author "Ada <ada@example.com>" --time "$1" --output json > /dev/null; }
+stepng() { "$cancho" vcs record --all --no-gate --author "Ada <ada@example.com>" --time "$1" --output json > /dev/null; }
+stepq() { "$cancho" vcs record --all --author "Ada <ada@example.com>" --time "$1" --intent-prompt 'say "hi" \ end' --output json > /dev/null; }
+rv() { "$cancho" vcs revert "$@" --author "Ada <ada@example.com>" --time 3000 --output json; }
+rvx() { "$cancho" vcs revert "$@" --author "Ada <ada@example.com>" --time 3000 --output json > "$work/out.json" 2> "$work/err.txt"; echo $? > "$work/code.txt"; }
+repo; rvx HEAD; same "revert: head" "$gold/revert_head.json" "$work/out.json"; store_was "revert: head" revert_head.store; tree_was "revert: head" revert_head.tree; no_lock_after "revert: head"
+repo; rvx HEAD~1; same "revert: second" "$gold/revert_second.json" "$work/out.json"; store_was "revert: second" revert_second.store; tree_was "revert: second" revert_second.tree; no_lock_after "revert: second"
+repo; rvx HEAD~2; same "revert: first" "$gold/revert_first.json" "$work/out.json"; store_was "revert: first" revert_first.store; tree_was "revert: first" revert_first.tree; no_lock_after "revert: first"
+repo; rvx HEAD --dry-run; same "revert: dry" "$gold/revert_dry.json" "$work/out.json"; store_was "revert: dry" revert_dry.store; tree_was "revert: dry" revert_dry.tree; no_lock_after "revert: dry"
+repo; rv HEAD > /dev/null; rvx HEAD~1; same "revert: twice" "$gold/revert_twice.json" "$work/out.json"; store_was "revert: twice" revert_twice.store; tree_was "revert: twice" revert_twice.tree; no_lock_after "revert: twice"
+repo; printf 'five\n' >> notes.md; step 2500; rvx HEAD~1; same "revert: conflict" "$gold/revert_conflict.json" "$work/out.json"; store_was "revert: conflict" revert_conflict.store; tree_was "revert: conflict" revert_conflict.tree; no_lock_after "revert: conflict"
+repo; echo z >> notes.md; rvx HEAD; same "revert: dirty" "$gold/revert_dirty.json" "$work/out.json"; store_was "revert: dirty" revert_dirty.store; tree_was "revert: dirty" revert_dirty.tree; no_lock_after "revert: dirty"
+repo; mkdir -p d/e; printf 'x\n' > d/e/f; printf 'y\n' > g; ln -s notes.md lk; step 2500; rvx HEAD; same "revert: added" "$gold/revert_added.json" "$work/out.json"; store_was "revert: added" revert_added.store; tree_was "revert: added" revert_added.tree; no_lock_after "revert: added"
+repo; rm notes.md; step 2500; rvx HEAD; same "revert: deleted" "$gold/revert_deleted.json" "$work/out.json"; store_was "revert: deleted" revert_deleted.store; tree_was "revert: deleted" revert_deleted.tree; no_lock_after "revert: deleted"
+repo; chmod +x notes.md; step 2500; rvx HEAD; same "revert: mode" "$gold/revert_mode.json" "$work/out.json"; store_was "revert: mode" revert_mode.store; tree_was "revert: mode" revert_mode.tree; no_lock_after "revert: mode"
+repo; rvx HEAD --intent-prompt mine --intent-model m; same "revert: intent" "$gold/revert_intent.json" "$work/out.json"; store_was "revert: intent" revert_intent.store; tree_was "revert: intent" revert_intent.tree; no_lock_after "revert: intent"
+repo; printf 'q\n' >> notes.md; stepq 2500; rvx HEAD; same "revert: quote" "$gold/revert_quote.json" "$work/out.json"; store_was "revert: quote" revert_quote.store; tree_was "revert: quote" revert_quote.tree; no_lock_after "revert: quote"
+repo; printf 'module a;\npub fn twice(n: int) -> [] int { return true; }\n' > a.cho; stepng 2500; printf 'module a;\npub fn twice(n: int) -> [] int { return n; }\n' > a.cho; step 2600; rvx HEAD; same_facts "revert: gate" "$gold/revert_gate.json" "$work/out.json"; store_was "revert: gate" revert_gate.store; tree_was "revert: gate" revert_gate.tree; no_lock_after "revert: gate"
+repo; printf 'module a;\npub fn twice(n: int) -> [] int { return true; }\n' > a.cho; stepng 2500; printf 'module a;\npub fn twice(n: int) -> [] int { return n; }\n' > a.cho; step 2600; rvx HEAD --no-gate; same "revert: no gate" "$gold/revert_no_gate.json" "$work/out.json"; store_was "revert: no gate" revert_no_gate.store; tree_was "revert: no gate" revert_no_gate.tree; no_lock_after "revert: no gate"
+repo; rvx ; same "revert: none" "$gold/revert_none.json" "$work/out.json"; store_was "revert: none" revert_none.store; tree_was "revert: none" revert_none.tree; no_lock_after "revert: none"
+repo; rvx a b; same "revert: two" "$gold/revert_two.json" "$work/out.json"; store_was "revert: two" revert_two.store; tree_was "revert: two" revert_two.tree; no_lock_after "revert: two"
+repo; rvx nosuch; same "revert: bad revision" "$gold/revert_bad_revision.json" "$work/out.json"; store_was "revert: bad revision" revert_bad_revision.store; tree_was "revert: bad revision" revert_bad_revision.tree; no_lock_after "revert: bad revision"
+repo; rvx HEAD --expect HEAD~1; same_facts "revert: expect wrong" "$gold/revert_expect_wrong.json" "$work/out.json"; store_was "revert: expect wrong" revert_expect_wrong.store; tree_was "revert: expect wrong" revert_expect_wrong.tree; no_lock_after "revert: expect wrong"
+repo; rvx HEAD --expect main; same "revert: expect ok" "$gold/revert_expect_ok.json" "$work/out.json"; store_was "revert: expect ok" revert_expect_ok.store; tree_was "revert: expect ok" revert_expect_ok.tree; no_lock_after "revert: expect ok"
+repo; printf 'edition 12;\nmodule b;\npub fn k(n: int) -> [] int { return n; }\n' > b.cho; step 2500; rvx HEAD; same "revert: cho" "$gold/revert_cho.json" "$work/out.json"; store_was "revert: cho" revert_cho.store; tree_was "revert: cho" revert_cho.tree; no_lock_after "revert: cho"
+repo; printf '4242 1000' > .cancho/vcs/lock; rvx HEAD; if grep -q '"tag": "lock-held"' "$work/out.json" && grep -q '"command": "revert"' "$work/out.json" && grep -q '"pid": 4242' "$work/out.json"; then echo "ok revert with the lock held: lock-held with its pid"; else echo "FAILS revert, lock held"; cat "$work/out.json"; fi; exit_is "revert, lock held" 1
+repo; echo z >> notes.md; rvx HEAD; exit_is "revert, a dirty working copy" 1
+repo; printf 'five\n' >> notes.md; step 2500; rvx HEAD~1; exit_is "revert, a conflict" 1
+repo; rvx HEAD~2; exit_is "revert, a first change" 1
+repo; rvx; exit_is "revert, no change named" 1
+repo; rvx HEAD; exit_is "revert" 0
+repo; rvx HEAD; if [ "$(tail -n 1 .cancho/vcs/refs/heads/main.log | awk '{print $NF}')" = revert ]; then echo "ok revert: the log of the branch says revert"; else echo "FAILS revert: the note of the log"; fi

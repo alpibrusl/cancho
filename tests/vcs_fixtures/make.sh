@@ -215,5 +215,30 @@ here; "$R" vcs switch --detach HEAD~1 --output json > /dev/null; printf 'four\n'
 here; mkdir -p d; printf 'q\n' > d/y.txt; (cd d && rc y.txt ../notes.md) > "$g/record_subdir.json" || true; store > "$g/record_subdir.store"
 empty; "$R" vcs init --output json > /dev/null; rc --all > "$g/record_empty_nothing.json" || true; store > "$g/record_empty_nothing.store"
 empty; "$R" vcs init --output json > /dev/null; printf 'one\n' > f.txt; rc --all > "$g/record_empty_first.json" || true; store > "$g/record_empty_first.store"
+# revert (R9): the documents of `revert`, the store and the working copy each leaves (`.store`, `.tree`). Changes made on the way have a fixed author and time.
+step() { "$R" vcs record --all --author "Ada <ada@example.com>" --time "$1" --output json > /dev/null; }
+stepng() { "$R" vcs record --all --no-gate --author "Ada <ada@example.com>" --time "$1" --output json > /dev/null; }
+stepq() { "$R" vcs record --all --author "Ada <ada@example.com>" --time "$1" --intent-prompt 'say "hi" \ end' --output json > /dev/null; }
+rv() { "$R" vcs revert "$@" --author "Ada <ada@example.com>" --time 3000 --output json; }
+here; rv HEAD > "$g/revert_head.json" || true; store > "$g/revert_head.store"; listing > "$g/revert_head.tree"
+here; rv HEAD~1 > "$g/revert_second.json" || true; store > "$g/revert_second.store"; listing > "$g/revert_second.tree"
+here; rv HEAD~2 > "$g/revert_first.json" || true; store > "$g/revert_first.store"; listing > "$g/revert_first.tree"
+here; rv HEAD --dry-run > "$g/revert_dry.json" || true; store > "$g/revert_dry.store"; listing > "$g/revert_dry.tree"
+here; rv HEAD > /dev/null; rv HEAD~1 > "$g/revert_twice.json" || true; store > "$g/revert_twice.store"; listing > "$g/revert_twice.tree"
+here; printf 'five\n' >> notes.md; step 2500; rv HEAD~1 > "$g/revert_conflict.json" || true; store > "$g/revert_conflict.store"; listing > "$g/revert_conflict.tree"
+here; echo z >> notes.md; rv HEAD > "$g/revert_dirty.json" || true; store > "$g/revert_dirty.store"; listing > "$g/revert_dirty.tree"
+here; mkdir -p d/e; printf 'x\n' > d/e/f; printf 'y\n' > g; ln -s notes.md lk; step 2500; rv HEAD > "$g/revert_added.json" || true; store > "$g/revert_added.store"; listing > "$g/revert_added.tree"
+here; rm notes.md; step 2500; rv HEAD > "$g/revert_deleted.json" || true; store > "$g/revert_deleted.store"; listing > "$g/revert_deleted.tree"
+here; chmod +x notes.md; step 2500; rv HEAD > "$g/revert_mode.json" || true; store > "$g/revert_mode.store"; listing > "$g/revert_mode.tree"
+here; rv HEAD --intent-prompt mine --intent-model m > "$g/revert_intent.json" || true; store > "$g/revert_intent.store"; listing > "$g/revert_intent.tree"
+here; printf 'q\n' >> notes.md; stepq 2500; rv HEAD > "$g/revert_quote.json" || true; store > "$g/revert_quote.store"; listing > "$g/revert_quote.tree"
+here; printf 'module a;\npub fn twice(n: int) -> [] int { return true; }\n' > a.cho; stepng 2500; printf 'module a;\npub fn twice(n: int) -> [] int { return n; }\n' > a.cho; step 2600; rv HEAD > "$g/revert_gate.json" || true; store > "$g/revert_gate.store"; listing > "$g/revert_gate.tree"
+here; printf 'module a;\npub fn twice(n: int) -> [] int { return true; }\n' > a.cho; stepng 2500; printf 'module a;\npub fn twice(n: int) -> [] int { return n; }\n' > a.cho; step 2600; rv HEAD --no-gate > "$g/revert_no_gate.json" || true; store > "$g/revert_no_gate.store"; listing > "$g/revert_no_gate.tree"
+here; rv  > "$g/revert_none.json" || true; store > "$g/revert_none.store"; listing > "$g/revert_none.tree"
+here; rv a b > "$g/revert_two.json" || true; store > "$g/revert_two.store"; listing > "$g/revert_two.tree"
+here; rv nosuch > "$g/revert_bad_revision.json" || true; store > "$g/revert_bad_revision.store"; listing > "$g/revert_bad_revision.tree"
+here; rv HEAD --expect HEAD~1 > "$g/revert_expect_wrong.json" || true; store > "$g/revert_expect_wrong.store"; listing > "$g/revert_expect_wrong.tree"
+here; rv HEAD --expect main > "$g/revert_expect_ok.json" || true; store > "$g/revert_expect_ok.store"; listing > "$g/revert_expect_ok.tree"
+here; printf 'edition 12;\nmodule b;\npub fn k(n: int) -> [] int { return n; }\n' > b.cho; step 2500; rv HEAD > "$g/revert_cho.json" || true; store > "$g/revert_cho.store"; listing > "$g/revert_cho.tree"
 rm -rf "$out/w" "$out/e"
 echo "made $out/three_changes and $out/golden"
