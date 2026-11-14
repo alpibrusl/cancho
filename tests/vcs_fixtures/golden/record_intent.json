@@ -1,0 +1,28 @@
+{
+  "branch": "main",
+  "change": "1280bb0c202fa1808bde4b0b0d3fc86da08fe29289e10ee2e660e3f4a322493b",
+  "command": "record",
+  "decls": [],
+  "dry_run": false,
+  "edits": 1,
+  "gate": {
+    "checked": [],
+    "ran": true
+  },
+  "intent": {
+    "issue": "9",
+    "model": "m",
+    "prompt": "why: four",
+    "session": "s"
+  },
+  "ok": true,
+  "parents": [
+    "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e"
+  ],
+  "recorded": true,
+  "touched": [
+    "notes.md"
+  ],
+  "tree": "245e728df4e7ebf75bf24e7f474fa82cadb11b3e6dbe9dce881eb2e943e9fb41",
+  "unchanged": false
+}

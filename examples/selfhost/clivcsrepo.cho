@@ -25,6 +25,7 @@ import selfhost.jsonwrite;
 import selfhost.vcsobj;
 import selfhost.vcsrepo;
 import selfhost.vcsapply;
+import selfhost.vcsrecord;
 import selfhost.vcsrestore;
 import selfhost.vcsstatus;
 import selfhost.vcsstore;
@@ -70,7 +71,7 @@ fn usage[&h, &i, &w](heap: &!h Heap, io: &!i Io, before: &static [byte], what: &
     return status;
 }
 
-// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show`, 3 for `branch`, 4 for `status`, 5 for `restore` and 6 for `switch`.
+// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show`, 3 for `branch`, 4 for `status`, 5 for `restore`, 6 for `switch`, 7 for `apply`, 8 for `unlock` and 9 for `record`.
 fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: int) -> [heap, err_write, args] Options {
     var bad = 0;
     var repo_at = 0 - 1;
@@ -123,6 +124,10 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
                 takes = 1;
             } else if (bytes.equal(key, "--from") || bytes.equal(key, "--expect")) && command == 3 {
                 takes = 1;
+            } else if command == 9 && (bytes.equal(key, "--expect") || bytes.equal(key, "--author") || bytes.equal(key, "--time") || bytes.equal(key, "--intent-prompt") || bytes.equal(key, "--intent-model") || bytes.equal(key, "--intent-session") || bytes.equal(key, "--intent-issue")) {
+                takes = 1;
+            } else if command == 9 && (bytes.equal(key, "--all") || bytes.equal(key, "--no-gate")) {
+                takes = 6;
             } else if command == 1 && (bytes.equal(key, "--intent") || bytes.equal(key, "--session") || bytes.equal(key, "--issue") || bytes.equal(key, "--path") || bytes.equal(key, "--author")) {
                 takes = 2;
             } else if command == 2 && bytes.equal(key, "--patch") {
@@ -138,6 +143,8 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
                 bad = usage(heap, io, "`", key, "` is not in this build of `cancho vcs show` (docs/vcs-routing.md D7); the Rust build has it");
             } else if takes == 4 {
                 dry = true;
+            } else if takes == 6 {
+                // `--all` and `--no-gate` of `record` are read from the words themselves (`record_in`).
             } else if takes == 5 {
                 if bytes.equal(key, "--create") {
                     create = true;
@@ -815,6 +822,225 @@ fn unlock_in[&h, &i, &d, &p, &k](heap: &!h Heap, io: &!i Io, vcs: &d Dir, found:
     return code;
 }
 
+// The place of the last `--KEY VALUE` or `--KEY=VALUE` in the words after the command: the argument and the offset into it, or -1 and 0.
+fn named[&a, &k](args: &a Args, key: &k [byte]) -> [args] (int, int) {
+    var at = 0 - 1;
+    var off = 0;
+    var n = 3;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, key) {
+            if n + 1 < arg_count(args) {
+                at = n + 1;
+                off = 0;
+            }
+            n = n + 1;
+        } else if len(word) > len(key) + 1 && bytes.equal(word[0..len(key)], key) && lc.at(word, len(key)) == '=' {
+            at = n;
+            off = len(key) + 1;
+        }
+        n = n + 1;
+    }
+    return (at, off);
+}
+
+// Whether the flag `key` is among the words after the command.
+fn flagged[&a, &k](args: &a Args, key: &k [byte]) -> [args] bool {
+    var n = 3;
+    while n < arg_count(args) {
+        if bytes.equal(arg(args, n), key) {
+            return true;
+        }
+        n = n + 1;
+    }
+    return false;
+}
+
+// The `gate-failed` refusal: `detail` is the path, a NUL, the rule's tag, a NUL, its sentence.
+fn gate_refusal[&h, &d](heap: &!h Heap, detail: &d [byte]) -> [heap] buffer.Buffer {
+    let first = bytes.find(detail, "\0");
+    let path = detail[0..first];
+    let rest = detail[first + 1..len(detail)];
+    let second = bytes.find(rest, "\0");
+    let rule = rest[0..second];
+    let said = rest[second + 1..len(rest)];
+    var message = buffer.append(heap, buffer.empty(heap, 96), path);
+    message = buffer.append(heap, message, ": ");
+    message = buffer.append(heap, message, rule);
+    message = buffer.append(heap, message, ": ");
+    message = buffer.append(heap, message, said);
+    var b = buffer.push(heap, buffer.empty(heap, 320), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), "record");
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "false");
+    b = buffer.push(heap, vcsrepo.member(heap, b, 1, false, "refused"), byte_of(123));
+    b = buffer.push(heap, vcsrepo.member(heap, b, 2, true, "diagnostics"), byte_of(91));
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 3), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 4, true, "message"), said);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 4, false, "rule"), rule);
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 3), byte_of(125));
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(93));
+    borrow message as &mb in {
+        b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "message"), buffer.bytes(mb));
+    }
+    buffer.drop(heap, message);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "path"), path);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "rule"), rule);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "tag"), "gate-failed");
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(125));
+    return buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+}
+
+// `record PATH... | --all [--dry-run] [--no-gate] [--author A] [--time T] [--intent-prompt P [--intent-model M] [--intent-session S] [--intent-issue I]] [--expect REV]` (R8,
+// `vcsrecord.record_command`). The paths are made relative to the root as `restore`'s are. A difference from Rust: `CANCHO_AUTHOR` is not read (the default author is the Rust one).
+fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &a Args, root: &r Dir, vcs: &d Dir, found: &p [byte], cwd: &c [byte], options: Options, clock: &k Clock) -> [heap, io_write, args, dir_read, dir_write, file_read, file_write, clock] int {
+    let rootpath = vcsapply.dotless(found);
+    var selected = buffer.empty(heap, 64);
+    var count = 0;
+    var code = 0;
+    var plain_only = false;
+    var n = 3;
+    while n < arg_count(args) && code == 0 {
+        let word = arg(args, n);
+        var positional = false;
+        if plain_only || len(word) < 2 || lc.at(word, 0) != '-' || lc.at(word, 1) != '-' {
+            positional = true;
+        } else if bytes.equal(word, "--") {
+            plain_only = true;
+        } else if bytes.find(word, "=") < 0 && (bytes.equal(word, "--output") || bytes.equal(word, "--repo") || bytes.equal(word, "--expect") || bytes.equal(word, "--author") || bytes.equal(word, "--time") || bytes.equal(word, "--intent-prompt") || bytes.equal(word, "--intent-model") || bytes.equal(word, "--intent-session") || bytes.equal(word, "--intent-issue")) {
+            n = n + 1;
+        }
+        if positional {
+            count = count + 1;
+            let (rel, inside) = vcsapply.relative(heap, cwd, rootpath, word);
+            if inside {
+                borrow rel as &rb in {
+                    selected = buffer.push(heap, buffer.append(heap, selected, buffer.bytes(rb)), byte_of(10));
+                }
+            }
+            buffer.drop(heap, rel);
+            if !inside {
+                var message = buffer.push(heap, buffer.empty(heap, 64), byte_of(96));
+                message = buffer.append(heap, buffer.push(heap, buffer.append(heap, message, word), byte_of(96)), " is outside the repository");
+                borrow message as &mb in {
+                    code = refused(heap, io, "record", buffer.bytes(mb), "path-escapes");
+                }
+                buffer.drop(heap, message);
+            }
+        }
+        n = n + 1;
+    }
+    let all = flagged(args, "--all");
+    if code == 0 && count == 0 && !all {
+        code = refused(heap, io, "record", "name the paths to record, or pass --all", "nothing-selected");
+    }
+    if code != 0 {
+        buffer.drop(heap, selected);
+        return code;
+    }
+    if all {
+        selected = buffer.push(heap, selected, byte_of(10));
+    }
+    let now = clock_unix_ms(clock) / 1000;
+    var time = now;
+    var bad_time = false;
+    let (time_at, time_off) = named(args, "--time");
+    if time_at >= 0 {
+        let (valid, t) = vcsrecord.time_of(value_of(args, time_at, time_off));
+        bad_time = !valid;
+        time = t;
+    }
+    let (author_at, author_off) = named(args, "--author");
+    var author = buffer.append(heap, buffer.empty(heap, 64), "cancho <cancho@localhost>");
+    if author_at >= 0 {
+        buffer.drop(heap, author);
+        author = buffer.append(heap, buffer.empty(heap, 64), value_of(args, author_at, author_off));
+    }
+    var prompt = buffer.empty(heap, 0);
+    var model = buffer.empty(heap, 0);
+    var session = buffer.empty(heap, 0);
+    var issue = buffer.empty(heap, 0);
+    var has_intent = false;
+    let (prompt_at, prompt_off) = named(args, "--intent-prompt");
+    if prompt_at >= 0 {
+        has_intent = true;
+        prompt = buffer.append(heap, prompt, value_of(args, prompt_at, prompt_off));
+        let (model_at, model_off) = named(args, "--intent-model");
+        if model_at >= 0 {
+            model = buffer.append(heap, model, value_of(args, model_at, model_off));
+        }
+        let (session_at, session_off) = named(args, "--intent-session");
+        if session_at >= 0 {
+            session = buffer.append(heap, session, value_of(args, session_at, session_off));
+        }
+        let (issue_at, issue_off) = named(args, "--intent-issue");
+        if issue_at >= 0 {
+            issue = buffer.append(heap, issue, value_of(args, issue_at, issue_off));
+        }
+    }
+    var expect = buffer.empty(heap, 0);
+    if options.expect_at >= 0 {
+        expect = buffer.append(heap, expect, value_of(args, options.expect_at, options.expect_off));
+    }
+    let no_gate = flagged(args, "--no-gate");
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    borrow mut scratch as &!s in {
+        borrow selected as &sb in {
+            borrow author as &ab in {
+                borrow prompt as &pb in {
+                    borrow model as &mb in {
+                        borrow session as &nb in {
+                            borrow issue as &ib in {
+                                borrow expect as &eb in {
+                                    let answer = vcsrecord.record_command(heap, io, root, vcs, contents(s), buffer.bytes(sb), buffer.bytes(ab), has_intent, buffer.bytes(pb), buffer.bytes(mb), buffer.bytes(nb), buffer.bytes(ib), buffer.bytes(eb), options.dry, no_gate, bad_time, time, now);
+                                    let (doc, status, errno) = vcsstore.parts(answer);
+                                    if status == 15 {
+                                        var lock = buffer.append(heap, buffer.empty(heap, len(rootpath) + 24), rootpath);
+                                        lock = buffer.append(heap, lock, "/.cancho/vcs/lock");
+                                        borrow doc as &db in {
+                                            borrow lock as &lb in {
+                                                code = lock_held(heap, io, "record", buffer.bytes(lb), buffer.bytes(db), now);
+                                            }
+                                        }
+                                        buffer.drop(heap, lock);
+                                        buffer.drop(heap, doc);
+                                    } else if status == 51 {
+                                        borrow doc as &db in {
+                                            let said = gate_refusal(heap, buffer.bytes(db));
+                                            borrow said as &sd in {
+                                                buffer.write(io, sd);
+                                            }
+                                            buffer.drop(heap, said);
+                                        }
+                                        code = 1;
+                                        buffer.drop(heap, doc);
+                                    } else if status == 52 {
+                                        code = refused(heap, io, "record", "`--time` is unix seconds", "bad-argument");
+                                        buffer.drop(heap, doc);
+                                    } else if status == 50 {
+                                        code = refused(heap, io, "record", "the repository is empty and so is the working copy", "nothing-to-record");
+                                        buffer.drop(heap, doc);
+                                    } else {
+                                        code = answered(heap, io, "record", vcsstore.Object { bytes: doc, status: status, errno: errno }, buffer.bytes(eb));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, author);
+    buffer.drop(heap, prompt);
+    buffer.drop(heap, model);
+    buffer.drop(heap, session);
+    buffer.drop(heap, issue);
+    buffer.drop(heap, expect);
+    unbox_slice(heap, scratch);
+    buffer.drop(heap, selected);
+    return code;
+}
+
 // The child directory `name` of `dir`, made (mode 0755) if it is not there.
 fn make_below[&d, &n](dir: &d Dir, name: &n [byte]) -> [dir_read, dir_write] DirOpened {
     match dir_enter(dir, name) {
@@ -1339,7 +1565,7 @@ fn branch_in[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs:
 // Whether `cancho vcs SUB` is this module's: `init`, `show`, `branch`, `status` and `restore` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
 pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read] bool {
     let sub = arg(args, 2);
-    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") || bytes.equal(sub, "apply") || bytes.equal(sub, "unlock") {
+    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") || bytes.equal(sub, "apply") || bytes.equal(sub, "record") || bytes.equal(sub, "unlock") {
         return true;
     }
     if !bytes.equal(sub, "log") {
@@ -1394,6 +1620,9 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
     } else if bytes.equal(verb, "unlock") {
         which = 8;
         name = "unlock";
+    } else if bytes.equal(verb, "record") {
+        which = 9;
+        name = "record";
     }
     let options = options_of(heap, io, args, which);
     if options.bad != 0 {
@@ -1433,6 +1662,8 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                                 code = apply_in(heap, io, args, fs, rd, vd, buffer.bytes(pb), buffer.bytes(cb), options, clock);
                                             } else if which == 8 {
                                                 code = unlock_in(heap, io, vd, buffer.bytes(pb), options, clock);
+                                            } else if which == 9 {
+                                                code = record_in(heap, io, args, rd, vd, buffer.bytes(pb), buffer.bytes(cb), options, clock);
                                             } else {
                                                 code = show_in(heap, io, args, vd, options);
                                             }

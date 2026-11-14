@@ -1,0 +1,31 @@
+{
+  "branch": "main",
+  "change": "afcb351f091375a4cd1966c4a2e020baa2be8b0d3099b9d70983cf929f3e0192",
+  "command": "record",
+  "decls": [
+    {
+      "kind": "added",
+      "name": "fn b.h",
+      "path": "b.cho"
+    }
+  ],
+  "dry_run": false,
+  "edits": 0,
+  "gate": {
+    "checked": [
+      "b.cho"
+    ],
+    "ran": true
+  },
+  "intent": null,
+  "ok": true,
+  "parents": [
+    "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e"
+  ],
+  "recorded": true,
+  "touched": [
+    "b.cho"
+  ],
+  "tree": "cd06365d72873d1550f633d578fefed27020d689d4c4ba1b6d42f25cf84d37b3",
+  "unchanged": false
+}

@@ -393,3 +393,57 @@ pub fn read_under[&h, &d, &p](heap: &!h Heap, root: &d Dir, path: &p [byte]) -> 
     }
     return read_in(heap, root, path);
 }
+
+// The target of the link at `rel` beneath `dir`, a link not followed on the way (and itself not followed): its text, 0, 0; or an empty text, 10 and the errno.
+fn link_in[&h, &d, &r](heap: &!h Heap, dir: &d Dir, rel: &r [byte]) -> [heap, dir_read] (buffer.Buffer, int, int) {
+    let k = bytes.find(rel, "/");
+    if k >= 0 {
+        match dir_enter(dir, rel[0..k]) {
+            DirOpened::Ok(child) => {
+                var text = buffer.empty(heap, 0);
+                var status = 0;
+                var errno = 0;
+                borrow child as &cd in {
+                    let (t2, s2, e2) = link_in(heap, cd, rel[k + 1..len(rel)]);
+                    buffer.drop(heap, text);
+                    text = t2;
+                    status = s2;
+                    errno = e2;
+                }
+                dir_close(child);
+                return (text, status, errno);
+            }
+            DirOpened::Failed(e) => {
+                return (buffer.empty(heap, 0), 10, e);
+            }
+        }
+    }
+    var out = buffer.empty(heap, 0);
+    var status = 0;
+    var errno = 0;
+    region a {
+        let room = alloc_slice[a](4096, byte_of(0));
+        match dir_readlink(dir, rel, room) {
+            Done::Ok(n) => {
+                buffer.drop(heap, out);
+                out = buffer.append(heap, buffer.empty(heap, n + 1), room[0..n]);
+            }
+            Done::Failed(e) => {
+                status = 10;
+                errno = e;
+            }
+        }
+    }
+    return (out, status, errno);
+}
+
+// The target text of the link at `path` beneath `root` (see `link_in`).
+pub fn link_under[&h, &d, &p](heap: &!h Heap, root: &d Dir, path: &p [byte]) -> [heap, dir_read] (buffer.Buffer, int, int) {
+    if len(path) == 0 {
+        return (buffer.empty(heap, 0), 10, 21);
+    }
+    if vcsobj.check_path(path) != 0 {
+        return (buffer.empty(heap, 0), 31, 0);
+    }
+    return link_in(heap, root, path);
+}
