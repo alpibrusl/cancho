@@ -1,6 +1,6 @@
 {
   "branch": "main",
-  "change": "dc2e48a11f9a0d32dac9fd862bb63d9fea40e08cb7c0f1e0bd65637cf3d4b209",
+  "change": "0993b9376735d264898b4ac21d0d8b8131a5d947f1bd1e9c481e7aae2e1f1f15",
   "command": "record",
   "decls": [],
   "dry_run": false,
@@ -12,12 +12,12 @@
   "intent": null,
   "ok": true,
   "parents": [
-    "20d89583a1de5b6c829e3bcdd2b849ee29645967cc3f3bcbc88968397d211c46"
+    "70c699a27aad0b9ea3ca1743d99eb9010767fa696ba645535b61a1f0ae99f632"
   ],
   "recorded": true,
   "touched": [
     "lnk"
   ],
-  "tree": "3746c46d083d468e12300d01149a0fe0e594d18d4ddc1fbb82cbb203182d5835",
+  "tree": "62a5d838418169b6b9173a8d276ce6ad53220d741dd21a656330f24b6e27a845",
   "unchanged": false
 }

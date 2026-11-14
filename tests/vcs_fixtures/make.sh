@@ -210,7 +210,7 @@ here; printf 'module a;\npub fn twice( {\n' > a.cho; rc --all > "$g/record_parse
 here; rm notes.md; printf 'module a;\npub fn twice(n: int) -> [] int { return n + n + 1; }\n' > a.cho; rc a.cho > "$g/record_one_of_two.json" || true; store > "$g/record_one_of_two.store"
 here; rm a.cho; rc --all > "$g/record_delete_cho.json" || true; store > "$g/record_delete_cho.store"
 here; printf '\377\376abc' > bin.dat; "$R" vcs record --all --author "Ada <ada@example.com>" --time 1999 --output json > /dev/null; printf '\377\376abd' > bin.dat; rc --all > "$g/record_binary_change.json" || true; store > "$g/record_binary_change.store"
-here; ln -s notes.md lnk; "$R" vcs record --all --author "Ada <ada@example.com>" --time 1999 --output json > /dev/null; rm lnk; ln -s a.cho lnk; rc --all > "$g/record_link_change.json" || true; store > "$g/record_link_change.store"
+here; printf 'a.cho' > t.txt; ln -s notes.md lnk; "$R" vcs record --all --author "Ada <ada@example.com>" --time 1999 --output json > /dev/null; rm lnk; ln -s a.cho lnk; rc --all > "$g/record_link_change.json" || true; store > "$g/record_link_change.store"
 here; "$R" vcs switch --detach HEAD~1 --output json > /dev/null; printf 'four\n' >> notes.md; rc --all > "$g/record_detached.json" || true; store > "$g/record_detached.store"; cat .cancho/vcs/HEAD >> "$g/record_detached.store"
 here; mkdir -p d; printf 'q\n' > d/y.txt; (cd d && rc y.txt ../notes.md) > "$g/record_subdir.json" || true; store > "$g/record_subdir.store"
 empty; "$R" vcs init --output json > /dev/null; rc --all > "$g/record_empty_nothing.json" || true; store > "$g/record_empty_nothing.store"
