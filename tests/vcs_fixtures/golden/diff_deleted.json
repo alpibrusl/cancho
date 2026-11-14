@@ -1,0 +1,39 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "-",
+              "text": "# notes\n"
+            },
+            {
+              "op": "-",
+              "text": "one\n"
+            },
+            {
+              "op": "-",
+              "text": "2\n"
+            },
+            {
+              "op": "-",
+              "text": "three\n"
+            }
+          ],
+          "new_lines": 0,
+          "new_start": 0,
+          "old_lines": 4,
+          "old_start": 1
+        }
+      ],
+      "path": "notes.md",
+      "status": "deleted"
+    }
+  ],
+  "from": "HEAD",
+  "ok": true,
+  "to": "working copy"
+}

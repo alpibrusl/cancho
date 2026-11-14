@@ -229,7 +229,7 @@ volume). **Not covered:** `revert` (needs a native `record`), a crash between tw
 ## 10. R8, `record`: the design **[read]** from `vcs_record.rs`, **[measured]** where it says so (2026-11-14; the Rust command was run on a scratch repository; nothing here is built yet)
 
 **Why `record` next.** `revert` ends in `commit_tree` (§9), and `commit_tree` is `record`: the gate, the lock, the tree and change objects, the branch move. So `record` is built to be shared (`commit_tree`'s
-shape), `revert` is the slice after it, and `tag` after that. Most of the parts exist in cancho already: the scan (`vcsscan`), the tree diff and `covers` (`vcsrestore`), blobs (`vcsstore.put`), the line diff and anchored
+shape), `revert` is the slice after it. (This sentence first said "and `tag` after that"; the Rust `cancho vcs` has no `tag` command and `vcs-cli.md` lists it as not built, so the slice after `revert` is `diff`, §12. Corrected 2026-11-14.) Most of the parts exist in cancho already: the scan (`vcsscan`), the tree diff and `covers` (`vcsrestore`), blobs (`vcsstore.put`), the line diff and anchored
 edits (`vcsdiff`, a port of `diff_text.rs` and `anchor.rs`), the change encoder (`vcschange`), `update_ref`, the work lock (`take_lock`), and the compiler's own entry points in `driver.cho`.
 
 * **G1. Arguments.** Paths, or `--all`; neither: `nothing-selected` (``"name the paths to record, or pass --all"``, exit 1, measured). Each path through `vcsapply.relative` (the helper `apply` and `restore` share).
@@ -295,3 +295,28 @@ differential found, in R8:** `record` read from the working copy every blob it s
 **Mutants, all killed (10):** the already-undone test, the conflict test, the dirty test, the parent count, the text of the default intent, the note, the working copy not being brought, the dropped paths, the escaping of the prompt, the mode in
 the comparison of two entries. **Known differences:** those of R8 (the gate's sentence; `CANCHO_AUTHOR`), and `ref-moved`'s sentence. **Not covered:** a second writer moving HEAD between the read and the lock, a crash between the change and the working
 copy (the change exists and the files are the old ones; `status` then says what differs), a merge change (the Rust command refuses it as well), Linux (CI).
+
+## 12. R10, `diff`: built and measured against the Rust command (2026-11-14, Darwin, macOS 26.2, Apple silicon)
+
+**What `tag` was.** The order given was `record`, `revert`, `tag`. The Rust `cancho vcs` has no `tag` command (`vcs_repo.rs` dispatches `init status diff record revert log show blame branch switch restore verify unlock apply import-git export-git`;
+`vcs-cli.md` lists `tag` as not built), so there was nothing to route and no oracle to measure against; §10's "and `tag` after that" is corrected there. The next command with an oracle that is not native is `diff`.
+
+**The design is the Rust command's** (`cmd_diff`, `diff_files`, `unified`): `diff [REV [REV]] [PATH...] [--context N]`. The first two words that resolve to a change and are *not* a file or directory in the current directory are the
+revisions (a third resolvable word, or one that names a file, is a path); the rest are paths (`path-escapes` outside the repository). No revision compares HEAD's tree with the working copy, one compares that change's tree with it, two compare
+the two trees. The document is `{"command", "files", "from", "ok", "to"}` (`from` and `to` are the resolved ids, or `HEAD` and `working copy`); each file is `{"binary", "decls"?, "hunks"?, "mode"?, "path", "status"}` with `status`
+`added`, `deleted`, `modified` or `mode`. `binary` is true when either side has a NUL in its first 8,000 bytes or is not UTF-8; then there are no hunks. `decls` is there for a text `.cho` file whose sides both parse (the declaration view of
+§10); `hunks` for a text file whose status is not `mode`, unified, `--context` lines (default 3) around each change, hunks whose context touches joined. A blob the store does not have is read from the working copy (a link's blob is its target).
+
+**Built.** `vcsdiffdoc.cho` (519 lines: the unified hunks over `vcsdiff.diff_lines`, the walk of the two trees, the entries' texts, the document), `diff` in `clivcsrepo.cho` (the words, `--context`, the revision-or-path rule with
+`exists_here`; the file is 1,945 lines, 55 under the cap), `vcsdecl.decl_changes` taught a `levels` argument (0 is the compact form a change records, else the pretty form of this document) and `vcsdiff.intern` made `pub`.
+`cancho.files` gained `vcsdiffdoc.cho`. The chain built from the previous standalone compiler reproduces itself (stage 2 = stage 3), no reseed. **Measured:** about 65 scripted cases against the Rust command (a scratch repository of
+three kinds of change, then a second with Unicode, CRLF, DEL, a 3,000-line file with deletions and insertions, a 100-line file of one repeated line, a file named like a branch, a link that became a file and the reverse, a file that became a
+directory): stdout, stderr and exit status equal in all. `tests/commands/vcs_repo.sh` goes from 516 to **572 checks** with 56 more goldens made by the Rust command (`make.sh`): clean, one and two revisions, both orders, paths and
+directories, `.`, three values of `--context` (and the exact gap of `2 × context` that joins two hunks, and one more that does not), modified, no newline at the end, Unicode, added (empty, exec, binary, not UTF-8, in new directories),
+deleted, mode, mode and text, links (added, changed, to and from a file), `main` against `wide`, `.cho` bodies, signatures, additions, removals, deletions and an unparsable side, a bad or negative or valueless `--context`, a path outside, a name
+nothing has, a file or a directory named like a branch, a third revision as a path, an unknown option, no repository, and from a subdirectory (three forms). **Mutants, all killed (16):** the join of hunks that touch, the new start with a
+clamped context, the start of an empty side, the NUL scan limit, the new side's binary test, the `mode` member's condition, hunks of a mode-only change, `decls` for `.cho`, the path filter, a link's blob being its target, a name here beating a revision (a
+file, and, after the first run let it survive, a directory), at most two revisions, the `to` label, the default context, the refusal of a bad `--context`, the sign of a `+` line. Two survived the first run (the gap of exactly `2 × context`, and a *directory*
+named like a revision) and each got its case. **Known differences:** a blob read from the working copy is not checked against its id (Rust refuses with `dirty-working-copy` if the file changed while being read); the existence test of a
+revision-or-path word is "a directory, or a file that can be read" (Rust: `Path::exists`), so a file that exists and cannot be read is taken as a revision when one resolves; the `declared` view of §10's known difference applies.
+**Not covered:** a file of over 200,000 lines (one replacement, as `diff_text.rs`; unit-tested in Rust, not here), a working copy changing while it is read, Linux (CI).

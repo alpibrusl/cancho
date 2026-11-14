@@ -240,5 +240,63 @@ here; rv nosuch > "$g/revert_bad_revision.json" || true; store > "$g/revert_bad_
 here; rv HEAD --expect HEAD~1 > "$g/revert_expect_wrong.json" || true; store > "$g/revert_expect_wrong.store"; listing > "$g/revert_expect_wrong.tree"
 here; rv HEAD --expect main > "$g/revert_expect_ok.json" || true; store > "$g/revert_expect_ok.store"; listing > "$g/revert_expect_ok.tree"
 here; printf 'edition 12;\nmodule b;\npub fn k(n: int) -> [] int { return n; }\n' > b.cho; step 2500; rv HEAD > "$g/revert_cho.json" || true; store > "$g/revert_cho.store"; listing > "$g/revert_cho.tree"
+# diff (R10): the documents of `diff`, from copies of the repository (`here`, `wide`, `empty`); the working copy is changed first.
+dfj() { "$R" vcs diff "$@" --output json; }
+here; dfj  > "$g/diff_clean.json" || true
+here; dfj HEAD~1 > "$g/diff_rev.json" || true
+here; dfj HEAD~2 HEAD > "$g/diff_revs.json" || true
+here; dfj HEAD HEAD~2 > "$g/diff_revs_back.json" || true
+here; dfj HEAD HEAD > "$g/diff_same.json" || true
+here; dfj HEAD~2 HEAD~1 > "$g/diff_id_prefix.json" || true
+here; dfj HEAD~2 HEAD a.cho > "$g/diff_path.json" || true
+wide; dfj main wide sub > "$g/diff_path_dir.json" || true
+wide; dfj main wide a.cho top.txt > "$g/diff_paths_two.json" || true
+here; dfj HEAD~2 HEAD . > "$g/diff_root_dot.json" || true
+here; dfj HEAD~2 HEAD notes.md --context 0 > "$g/diff_context_0.json" || true
+here; dfj HEAD~2 HEAD notes.md --context 1 > "$g/diff_context_1.json" || true
+here; dfj HEAD~2 HEAD notes.md --context=9 > "$g/diff_context_9.json" || true
+here; printf 'four\n' >> notes.md; dfj  > "$g/diff_modified.json" || true
+here; printf 'last' > notes.md; dfj  > "$g/diff_no_newline.json" || true
+here; printf 'h\303\251llo \360\237\230\200 "q" \\ \t tab\r\nnext\177\n' > notes.md; dfj  > "$g/diff_unicode.json" || true
+here; printf 'new\n' > new.txt; : > empty.txt; mkdir -p d/e; printf 'x\n' > d/e/f; dfj  > "$g/diff_added.json" || true
+here; printf '#!/bin/sh\n' > run.sh; chmod +x run.sh; dfj  > "$g/diff_added_exec.json" || true
+here; printf 'a\000b' > bin; printf '\377\376' > bad.txt; dfj  > "$g/diff_added_binary.json" || true
+here; rm notes.md; dfj  > "$g/diff_deleted.json" || true
+here; rm notes.md a.cho; dfj  > "$g/diff_deleted_all.json" || true
+here; chmod +x notes.md; dfj  > "$g/diff_mode.json" || true
+here; chmod +x notes.md; printf 'four\n' >> notes.md; dfj  > "$g/diff_mode_and_text.json" || true
+here; ln -s notes.md lk; dfj  > "$g/diff_link_added.json" || true
+wide; sw wide > /dev/null; rm lnk; ln -s a.cho lnk; dfj wide > "$g/diff_link_changed.json" || true
+here; rm notes.md; ln -s a.cho notes.md; dfj  > "$g/diff_file_to_link.json" || true
+wide; sw wide > /dev/null; rm lnk; printf 'now a file\n' > lnk; dfj wide > "$g/diff_link_to_file.json" || true
+wide; dfj main wide > "$g/diff_wide_branch.json" || true
+wide; dfj wide > "$g/diff_wide_wc.json" || true
+here; printf 'module a;\npub fn twice(n: int) -> [] int { return n; }\npub fn thrice(n: int) -> [] int { return n * 3; }\n' > a.cho; dfj  > "$g/diff_cho_body.json" || true
+here; printf 'edition 12;\nmodule b;\npub fn k(n: int) -> [] int { return n; }\nstruct P { x: int }\n' > b.cho; dfj  > "$g/diff_cho_added.json" || true
+here; printf 'module a;\npub fn twice(n: int, m: int) -> [] int { return n; }\npub fn thrice(n: int) -> [] int { return n * 3; }\n' > a.cho; dfj  > "$g/diff_cho_signature.json" || true
+here; printf 'module a;\n' > a.cho; dfj  > "$g/diff_cho_removed.json" || true
+here; rm a.cho; dfj  > "$g/diff_cho_deleted.json" || true
+here; printf 'module a;\npub fn twice( {\n' > a.cho; dfj  > "$g/diff_cho_unparsable.json" || true
+here; printf 'module a;\npub fn twice( {\n' > a.cho; printf 'module a;\npub fn twice(n: int) -> [] int { return n; }\n' > a.cho; dfj HEAD~2 HEAD > "$g/diff_cho_unparsable_before.json" || true
+here; dfj --context x > "$g/diff_bad_context.json" || true
+here; dfj --context -1 > "$g/diff_bad_context_negative.json" || true
+here; dfj ../outside > "$g/diff_outside.json" || true
+here; dfj nosuchname > "$g/diff_nothing_named.json" || true
+here; dfj -- HEAD > "$g/diff_revision_as_path.json" || true
+here; printf 'shadow\n' > main; dfj main > "$g/diff_file_named_like_a_branch.json" || true
+here; printf 'shadow\n' > main; dfj HEAD~1 main > "$g/diff_file_named_like_a_branch_second.json" || true
+here; printf 'x\n' > HEAD~1; dfj HEAD~2 HEAD~1 HEAD > "$g/diff_third_revision_is_a_path.json" || true
+here; dfj --bogus > "$g/diff_unknown_option.json" || true
+here; dfj --context > "$g/diff_context_no_value.json" || true
+empty; dfj > "$g/diff_not_a_repository.json" || true
+here; mkdir -p sub/deep; printf 'x\n' > sub/deep/x; printf 'y\n' > sub/y; cd sub; dfj > "$g/diff_subdir.json" || true
+here; mkdir -p sub/deep; printf 'x\n' > sub/deep/x; printf 'y\n' > sub/y; cd sub; dfj . > "$g/diff_subdir_dot.json" || true
+here; mkdir -p sub/deep; printf 'x\n' > sub/deep/x; printf 'y\n' > sub/y; cd sub; dfj deep > "$g/diff_subdir_deep.json" || true
+here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==25{print "TWENTYFIVE";next}{print}' big.txt > b2; mv b2 big.txt; dfj --context 2 > "$g/diff_two_hunks.json" || true
+here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==25{print "TWENTYFIVE";next}{print}' big.txt > b2; mv b2 big.txt; dfj --context 8 > "$g/diff_two_hunks_joined.json" || true
+here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==25{print "TWENTYFIVE";next}{print}' big.txt > b2; mv b2 big.txt; dfj --context 0 > "$g/diff_two_hunks_none.json" || true
+here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==8{print "EIGHT";next}{print}' big.txt > b2; mv b2 big.txt; dfj --context 2 > "$g/diff_gap_equal.json" || true
+here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==9{print "NINE";next}{print}' big.txt > b2; mv b2 big.txt; dfj --context 2 > "$g/diff_gap_over.json" || true
+here; mkdir main; printf 'x\n' > main/f; dfj main > "$g/diff_directory_named_like_a_branch.json" || true
 rm -rf "$out/w" "$out/e"
 echo "made $out/three_changes and $out/golden"

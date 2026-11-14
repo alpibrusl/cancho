@@ -570,7 +570,7 @@ fn derive[&h, &i, &r, &d, &s, &q](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs:
                     if (old_absent || old_ok && ook) && (new_absent || new_ok && nok) {
                         borrow ov as &ovb in {
                             borrow nv as &nvb in {
-                                let (more, n) = vcsdecl.decl_changes(heap, decls, nd == 0, path, buffer.bytes(ovb), buffer.bytes(nvb));
+                                let (more, n) = vcsdecl.decl_changes(heap, decls, nd == 0, 0, path, buffer.bytes(ovb), buffer.bytes(nvb));
                                 decls = more;
                                 nd = nd + n;
                             }

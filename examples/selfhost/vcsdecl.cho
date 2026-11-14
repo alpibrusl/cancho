@@ -4,7 +4,7 @@ module selfhost.vcsdecl;
 // vcsdecl.cho -- what a change records of a file's declarations and text (`docs/vcs-routing.md` section 10, G4; the Rust side is `vcs_decl.rs` and `derive` in `vcs_record.rs`).
 //
 //   view(heap, io, text)               the declaration view of a `.cho` file, or none when it does not parse
-//   decl_changes(heap, out, first, path, old, new)   the `decls` of the move from `old` to `new` (each a view, or empty for a missing side), added to `out`
+//   decl_changes(heap, out, first, levels, path, old, new)   the `decls` of the move from `old` to `new` (each a view, or empty for a missing side), added to `out`
 //   text_edits(heap, out, first, path, old, new)     the anchored `edits` of the move between two texts (`vcsdiff.derive_edits`), added to `out`
 //
 // A view is a list of lines, sorted by their bytes and each once: `KEY`, a NUL, the 64 digits of the signature id, a NUL, the 64 of the body id. The key is `fn MODULE.NAME` (`fn NAME` for the root
@@ -16,7 +16,9 @@ import std.bytes;
 import selfhost.driver;
 import selfhost.vcsapply;
 import selfhost.vcschange;
+import selfhost.jsonwrite;
 import selfhost.vcsdiff;
+import selfhost.vcsrepo;
 import selfhost.vcsscan;
 
 // The end of the NUL-terminated field of `line` that starts at `at`.
@@ -90,9 +92,26 @@ fn key_of[&l](l: &l [byte]) -> [] &l [byte] {
     return l[0..field_end(l, 0)];
 }
 
-// The declaration changes from the view `old` to the view `new`, in the order of their keys, added to `out` as `vcschange.decl` writes them; `first` says whether `out` has none yet.
+// One declaration change: as `vcschange.decl` writes it (one line) when `levels` is 0, else as the pretty `diff` document does, its braces at `levels` + 1.
+fn decl_item[&h, &p, &n, &k](heap: &!h Heap, out: buffer.Buffer, first: bool, levels: int, path: &p [byte], name: &n [byte], kind: &k [byte]) -> [heap] buffer.Buffer {
+    if levels == 0 {
+        return vcschange.decl(heap, out, first, path, name, kind);
+    }
+    var b = out;
+    if !first {
+        b = buffer.push(heap, b, byte_of(44));
+    }
+    b = buffer.push(heap, jsonwrite.newline(heap, b, levels + 1), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, levels + 2, true, "kind"), kind);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, levels + 2, false, "name"), name);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, levels + 2, false, "path"), path);
+    return buffer.push(heap, jsonwrite.newline(heap, b, levels + 1), byte_of(125));
+}
+
+// The declaration changes from the view `old` to the view `new`, in the order of their keys, added to `out`; `first` says whether `out` has none yet; `levels` is 0 for the form a change records, else the depth of the array the
+// items of a `diff` document are in.
 // Answers the list and how many were added.
-pub fn decl_changes[&h, &p, &o, &n](heap: &!h Heap, out: buffer.Buffer, first: bool, path: &p [byte], old: &o [byte], new: &n [byte]) -> [heap] (buffer.Buffer, int) {
+pub fn decl_changes[&h, &p, &o, &n](heap: &!h Heap, out: buffer.Buffer, first: bool, levels: int, path: &p [byte], old: &o [byte], new: &n [byte]) -> [heap] (buffer.Buffer, int) {
     var b = out;
     var count = 0;
     var i = 0;
@@ -116,7 +135,7 @@ pub fn decl_changes[&h, &p, &o, &n](heap: &!h Heap, out: buffer.Buffer, first: b
         }
         if order < 0 {
             let name = key_of(old[i..oe]);
-            b = vcschange.decl(heap, b, first && count == 0, path, name, "removed");
+            b = decl_item(heap, b, first && count == 0, levels, path, name, "removed");
             count = count + 1;
             i = oe + 1;
         } else if order > 0 {
@@ -127,7 +146,7 @@ pub fn decl_changes[&h, &p, &o, &n](heap: &!h Heap, out: buffer.Buffer, first: b
                 skip = bytes.equal(key_of(new[j..ne]), key_of(new[ne + 1..nx]));
             }
             if !skip {
-                b = vcschange.decl(heap, b, first && count == 0, path, key_of(new[j..ne]), "added");
+                b = decl_item(heap, b, first && count == 0, levels, path, key_of(new[j..ne]), "added");
                 count = count + 1;
             }
             j = ne + 1;
@@ -152,10 +171,10 @@ pub fn decl_changes[&h, &p, &o, &n](heap: &!h Heap, out: buffer.Buffer, first: b
                 let obody = ol[ok + 66..len(ol)];
                 let nbody = nl[nk + 66..len(nl)];
                 if !bytes.equal(osig, nsig) {
-                    b = vcschange.decl(heap, b, first && count == 0, path, key_of(nl), "signature-changed");
+                    b = decl_item(heap, b, first && count == 0, levels, path, key_of(nl), "signature-changed");
                     count = count + 1;
                 } else if !bytes.equal(obody, nbody) {
-                    b = vcschange.decl(heap, b, first && count == 0, path, key_of(nl), "body-changed");
+                    b = decl_item(heap, b, first && count == 0, levels, path, key_of(nl), "body-changed");
                     count = count + 1;
                 }
             }

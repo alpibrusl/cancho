@@ -78,6 +78,7 @@ vcsapply.cho
 vcschange.cho
 vcsdecl.cho
 vcsdiff.cho
+vcsdiffdoc.cho
 vcsobj.cho
 vcsrecord.cho
 vcsrepo.cho

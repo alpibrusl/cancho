@@ -25,6 +25,7 @@ import selfhost.jsonwrite;
 import selfhost.vcsobj;
 import selfhost.vcsrepo;
 import selfhost.vcsapply;
+import selfhost.vcsdiffdoc;
 import selfhost.vcsrecord;
 import selfhost.vcsrestore;
 import selfhost.vcsrevert;
@@ -122,6 +123,8 @@ fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: in
             } else if bytes.equal(key, "--limit") && command == 1 {
                 takes = 1;
             } else if bytes.equal(key, "--from") && command == 5 {
+                takes = 1;
+            } else if bytes.equal(key, "--context") && command == 11 {
                 takes = 1;
             } else if (bytes.equal(key, "--from") || bytes.equal(key, "--expect")) && command == 3 {
                 takes = 1;
@@ -514,6 +517,111 @@ fn status_in[&h, &i, &r, &d](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d D
         code = answered(heap, io, "status", vcsstatus.status_command(heap, root, vcs, contents(s)), "");
     }
     unbox_slice(heap, scratch);
+    return code;
+}
+
+// Whether `word` (relative to `cwd` unless absolute) names a file or a directory, as the Rust `Path::exists` says: a revision that is also a name here is the name.
+fn exists_here[&h, &f, &c, &w](heap: &!h Heap, fs: &f Fs(""), cwd: &c [byte], word: &w [byte]) -> [heap, fs_read(""), file_read] bool {
+    let full = cliproject.beneath(heap, cwd, word);
+    var found = false;
+    borrow full as &fb in {
+        found = walk.is_directory(fs, buffer.bytes(fb));
+        if !found {
+            let read = clibase.read_file(heap, fs, buffer.bytes(fb));
+            let clibase.Contents { bytes, failed } = read;
+            found = failed == 0;
+            buffer.drop(heap, bytes);
+        }
+    }
+    buffer.drop(heap, full);
+    return found;
+}
+
+// `diff [REV [REV]] [PATH...] [--context N]` (R10, `vcsdiffdoc.diff_command`): the first two words that name a change (and are not files or directories here) are the revisions, the rest paths.
+fn diff_in[&h, &i, &a, &f, &r, &d, &p, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), root: &r Dir, vcs: &d Dir, found: &p [byte], cwd: &c [byte], options: Options) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, file_read] int {
+    var context = 3;
+    if options.limit_at >= 0 {
+        context = count_of(value_of(args, options.limit_at, options.limit_off));
+        if context < 0 {
+            return refused(heap, io, "diff", "`--context` is a count", "bad-argument");
+        }
+    }
+    let rootpath = vcsapply.dotless(found);
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    var first_id = buffer.empty(heap, 0);
+    var second_id = buffer.empty(heap, 0);
+    var revs = 0;
+    var selected = buffer.empty(heap, 64);
+    var code = 0;
+    var plain_only = false;
+    var n = 3;
+    while n < arg_count(args) && code == 0 {
+        let word = arg(args, n);
+        var positional = false;
+        if plain_only || len(word) < 2 || lc.at(word, 0) != '-' || lc.at(word, 1) != '-' {
+            positional = true;
+        } else if bytes.equal(word, "--") {
+            plain_only = true;
+        } else if bytes.find(word, "=") < 0 && (bytes.equal(word, "--output") || bytes.equal(word, "--repo") || bytes.equal(word, "--context")) {
+            n = n + 1;
+        }
+        if positional {
+            var as_rev = false;
+            if revs < 2 {
+                borrow mut scratch as &!rs in {
+                    let got = vcsrepo.resolve(heap, vcs, contents(rs), word);
+                    let (id, rstatus, rerrno) = vcsstore.parts(got);
+                    if rstatus == 0 && !exists_here(heap, fs, cwd, word) {
+                        as_rev = true;
+                        if revs == 0 {
+                            buffer.drop(heap, first_id);
+                            first_id = id;
+                        } else {
+                            buffer.drop(heap, second_id);
+                            second_id = id;
+                        }
+                        revs = revs + 1;
+                    } else {
+                        buffer.drop(heap, id);
+                    }
+                }
+            }
+            if !as_rev {
+                let (rel, inside) = vcsapply.relative(heap, cwd, rootpath, word);
+                if inside {
+                    borrow rel as &rb in {
+                        selected = buffer.push(heap, buffer.append(heap, selected, buffer.bytes(rb)), byte_of(10));
+                    }
+                }
+                buffer.drop(heap, rel);
+                if !inside {
+                    var message = buffer.push(heap, buffer.empty(heap, 64), byte_of(96));
+                    message = buffer.append(heap, buffer.push(heap, buffer.append(heap, message, word), byte_of(96)), " is outside the repository");
+                    borrow message as &mb in {
+                        code = refused(heap, io, "diff", buffer.bytes(mb), "path-escapes");
+                    }
+                    buffer.drop(heap, message);
+                }
+            }
+        }
+        n = n + 1;
+    }
+    if code == 0 {
+        borrow mut scratch as &!s in {
+            borrow first_id as &fb in {
+                borrow second_id as &sb in {
+                    borrow selected as &xb in {
+                        let answer = vcsdiffdoc.diff_command(heap, io, root, vcs, contents(s), buffer.bytes(fb), buffer.bytes(sb), buffer.bytes(xb), context);
+                        code = answered(heap, io, "diff", answer, "");
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, scratch);
+    buffer.drop(heap, first_id);
+    buffer.drop(heap, second_id);
+    buffer.drop(heap, selected);
     return code;
 }
 
@@ -1701,7 +1809,7 @@ fn branch_in[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs:
 // Whether `cancho vcs SUB` is this module's: `init`, `show`, `branch`, `status` and `restore` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
 pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read] bool {
     let sub = arg(args, 2);
-    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") || bytes.equal(sub, "apply") || bytes.equal(sub, "record") || bytes.equal(sub, "revert") || bytes.equal(sub, "unlock") {
+    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") || bytes.equal(sub, "apply") || bytes.equal(sub, "record") || bytes.equal(sub, "revert") || bytes.equal(sub, "diff") || bytes.equal(sub, "unlock") {
         return true;
     }
     if !bytes.equal(sub, "log") {
@@ -1762,6 +1870,9 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
     } else if bytes.equal(verb, "revert") {
         which = 10;
         name = "revert";
+    } else if bytes.equal(verb, "diff") {
+        which = 11;
+        name = "diff";
     }
     let options = options_of(heap, io, args, which);
     if options.bad != 0 {
@@ -1805,6 +1916,8 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                                 code = record_in(heap, io, args, rd, vd, buffer.bytes(pb), buffer.bytes(cb), options, clock);
                                             } else if which == 10 {
                                                 code = revert_in(heap, io, args, rd, vd, buffer.bytes(pb), options, clock);
+                                            } else if which == 11 {
+                                                code = diff_in(heap, io, args, fs, rd, vd, buffer.bytes(pb), buffer.bytes(cb), options);
                                             } else {
                                                 code = show_in(heap, io, args, vd, options);
                                             }

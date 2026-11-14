@@ -1,0 +1,18 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": true,
+      "path": "bad.txt",
+      "status": "added"
+    },
+    {
+      "binary": true,
+      "path": "bin",
+      "status": "added"
+    }
+  ],
+  "from": "HEAD",
+  "ok": true,
+  "to": "working copy"
+}

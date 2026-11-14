@@ -1,0 +1,47 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "-",
+              "text": "# notes\n"
+            },
+            {
+              "op": "-",
+              "text": "one\n"
+            },
+            {
+              "op": "-",
+              "text": "2\n"
+            },
+            {
+              "op": "-",
+              "text": "three\n"
+            },
+            {
+              "op": "+",
+              "text": "héllo 😀 \"q\" \\ \t tab\r\n"
+            },
+            {
+              "op": "+",
+              "text": "next\n"
+            }
+          ],
+          "new_lines": 2,
+          "new_start": 1,
+          "old_lines": 4,
+          "old_start": 1
+        }
+      ],
+      "path": "notes.md",
+      "status": "modified"
+    }
+  ],
+  "from": "HEAD",
+  "ok": true,
+  "to": "working copy"
+}

@@ -1,0 +1,31 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "-",
+              "text": "notes.md"
+            },
+            {
+              "op": "+",
+              "text": "a.cho"
+            }
+          ],
+          "new_lines": 1,
+          "new_start": 1,
+          "old_lines": 1,
+          "old_start": 1
+        }
+      ],
+      "path": "lnk",
+      "status": "modified"
+    }
+  ],
+  "from": "a6d9f88da9b5d6c6ebf39acd9632dafbc819e3d4fa11fb4b2e03e6a634f613bb",
+  "ok": true,
+  "to": "working copy"
+}
