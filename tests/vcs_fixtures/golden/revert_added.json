@@ -1,0 +1,13 @@
+{
+  "change": "aa3422e99a64c1f244912027f416fe5a88f473a979cc9c7edcec3e9765eb2dd0",
+  "command": "revert",
+  "dry_run": false,
+  "ok": true,
+  "reverted": "339c686dcf05ca9d31c4a1b9e8b07f51d8a04a9ca0a74d8955bf2572c1c5bf94",
+  "touched": [
+    "d/e/f",
+    "g",
+    "lk"
+  ],
+  "unchanged": false
+}

@@ -82,6 +82,7 @@ vcsobj.cho
 vcsrecord.cho
 vcsrepo.cho
 vcsrestore.cho
+vcsrevert.cho
 vcsscan.cho
 vcsstatus.cho
 vcsstore.cho

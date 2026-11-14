@@ -276,3 +276,22 @@ the `unchanged` branch, the attestation text, the standard library in the gate, 
 edits (the last three needed new cases first: they survived). **Known differences:** the gate's refusal sentence is the native checker's own words (tag, rule and path are Rust's); `CANCHO_AUTHOR` is not read (cancho programs have no
 environment access); two modules of one file declaring one type name keep the last by id, not by position; `ref-moved` has the generic sentence. **Not covered:** a second writer moving HEAD between the first read and the lock (the
 re-read is there; a sequential test cannot reach it), a crash between the objects and the ref, statics in the declaration view (mode 20 lists them; no sample run), a working copy of thousands of files, Linux (CI).
+
+## 11. R9, `revert`: built and measured against the Rust command (2026-11-14, Darwin, macOS 26.2, Apple silicon)
+
+**The design is the Rust command's** (`cmd_revert`): `revert CHANGE` takes one change (else `bad-argument`), which must have exactly one parent (`revert-unsupported`); a working copy that differs from HEAD is `dirty-working-copy` with the
+paths; each difference between the change's parent's tree and its own is put back on HEAD's tree when HEAD still has what the change made, skipped when HEAD already has what the parent had, and is a `revert-conflict` (with the paths)
+otherwise; the new change goes through `record`'s path (the gate over the touched files, declarations and edits, the lock, the branch move with the note `revert`; `--dry-run`, `--no-gate`, `--time`, `--author`, `--intent-*`, `--expect`), its
+intent being the person's or `Revert "SUBJECT"`, a blank line and `This reverts change ID.`; then the working copy is brought to the new tree under the lock. The document is `{"change", "command", "dry_run", "ok", "reverted", "touched",
+"unchanged"}`; when everything was already undone it is `unchanged` with HEAD's own change.
+
+**Built.** `vcsrevert.cho` (the undoing, the new tree, the working copy, the document), the command in `clivcsrepo.cho`, and in `vcsrecord.cho` `merge`, `changed` and `has_line` made `pub` and `changed` taught `revert` (the note, and answering the
+change's id) and an already-escaped prompt (`vcschange.intent_escaped`: the subject is read back from the parent change as the JSON text it was written as, and writing it through the escaper again would double the backslashes; a golden with a
+quote, a backslash and a newline in the subject pins it). **Measured:** with the author and the time fixed, the document, the change id, the tree id, the store and the working copy of the native command equal the Rust command's in about 20
+scripted scenarios and in the goldens: a text change, the change before it, a first change (`revert-unsupported`), `--dry-run`, a change already undone (`unchanged`), a conflict, a dirty working copy, files added (with a link and a new
+directory), files deleted, a mode change, a change to a `.cho` file, an intent of its own, a subject with quotes, a backslash and a newline, a revert of a revert, a gate refusal (the reverted state does not compile), `--no-gate`, `--expect`
+right and wrong, a detached HEAD, a held lock, no argument, two, a revision that does not exist. `tests/commands/vcs_repo.sh` goes from 428 to **516 checks** with 60 more goldens (the document, the store, the working copy of each). **A bug the
+differential found, in R8:** `record` read from the working copy every blob it stored, so reverting a deletion (whose blobs are in the store and whose files are not in the working copy) was an `io-error`; it now takes a blob the store has as it is.
+**Mutants, all killed (10):** the already-undone test, the conflict test, the dirty test, the parent count, the text of the default intent, the note, the working copy not being brought, the dropped paths, the escaping of the prompt, the mode in
+the comparison of two entries. **Known differences:** those of R8 (the gate's sentence; `CANCHO_AUTHOR`), and `ref-moved`'s sentence. **Not covered:** a second writer moving HEAD between the read and the lock, a crash between the change and the working
+copy (the change exists and the files are the old ones; `status` then says what differs), a merge change (the Rust command refuses it as well), Linux (CI).

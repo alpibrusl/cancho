@@ -1,0 +1,479 @@
+edition 12;
+module selfhost.vcsrevert;
+
+// vcsrevert.cho -- the `revert` command of `cancho vcs` (`docs/vcs-routing.md` section 11, slice R9; the Rust command is `cmd_revert`, `crates/cancho/src/vcs_record.rs`).
+//
+//   revert_command(heap, io, root, vcs, scratch, spec, author, has_user_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, time, now)
+//
+// The change `spec` names, which must have exactly one parent, is undone on HEAD's tree: each difference between its parent's tree and its own is put back when HEAD still has what the change made (and
+// skipped when HEAD already has what the parent had; any other state is a conflict). The new change goes through the same path as `record` (`vcsrecord.changed`: the gate, the declarations and edits, the
+// store, the branch move, with the note `revert`), and then the working copy is brought to the new tree. A working copy that differs from HEAD is refused first.
+//
+// The answer is `vcsstore.Object`: the document in `bytes`, status 0; or a refusal: 53 `revert-unsupported`, 54 `dirty-working-copy` (the paths, one to a line, in `bytes`), 55 `revert-conflict` (the paths),
+// and those of `vcsrecord` (51 `gate-failed`, 52 `bad-argument`, 14 `ref-moved`, 15 `lock-held`) and of a revision (18..22).
+
+import std.buffer;
+import std.bytes;
+import selfhost.jsonread;
+import selfhost.jsonwrite;
+import selfhost.vcschange;
+import selfhost.vcsobj;
+import selfhost.vcsrecord;
+import selfhost.vcsrepo;
+import selfhost.vcsrestore;
+import selfhost.vcsscan;
+import selfhost.vcsstatus;
+import selfhost.vcsstore;
+import selfhost.vcsswitch;
+import selfhost.vcsworktree;
+
+// The tag of a status: this module's (53, 54, 55) and `vcsrecord.tag`'s.
+pub fn tag(status: int) -> [] &static [byte] {
+    if status == 53 {
+        return "revert-unsupported";
+    }
+    if status == 54 {
+        return "dirty-working-copy";
+    }
+    if status == 55 {
+        return "revert-conflict";
+    }
+    return vcsrecord.tag(status);
+}
+
+// ---- undoing the change ------------------------------------------------------------------------------------------------------
+
+fn same_entry[&a, &b](x: &a [byte], i: int, y: &b [byte], j: int) -> [] bool {
+    return bytes.equal(vcsobj.entry_mode(x, i), vcsobj.entry_mode(y, j)) && bytes.equal(vcsobj.entry_blob(x, i), vcsobj.entry_blob(y, j));
+}
+
+// One difference between the parent's tree (entry `i` of `parent`, none when negative) and the change's (entry `j` of `target`): what HEAD (`head`) says of it. Answers the entries to set (tree lines),
+// the paths to drop, the paths touched and the paths in conflict, each with this one added when it belongs.
+fn consider[&h, &a, &b, &c, &p](heap: &!h Heap, sets: buffer.Buffer, drops: buffer.Buffer, touched: buffer.Buffer, conflicts: buffer.Buffer, head: &c [byte], parent: &a [byte], i: int, target: &b [byte], j: int, path: &p [byte]) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    let at = vcsobj.tree_find(head, path);
+    var already = false;
+    if i < 0 {
+        already = at < 0;
+    } else if at >= 0 {
+        already = same_entry(head, at, parent, i);
+    }
+    if already {
+        return (sets, drops, touched, conflicts);
+    }
+    var made = false;
+    if j < 0 {
+        made = at < 0;
+    } else if at >= 0 {
+        made = same_entry(head, at, target, j);
+    }
+    if !made {
+        return (sets, drops, touched, buffer.push(heap, buffer.append(heap, conflicts, path), byte_of(10)));
+    }
+    let seen = buffer.push(heap, buffer.append(heap, touched, path), byte_of(10));
+    if i >= 0 {
+        return (buffer.append(heap, sets, parent[i..vcsscan.line_end(parent, i) + 1]), drops, seen, conflicts);
+    }
+    return (sets, buffer.push(heap, buffer.append(heap, drops, path), byte_of(10)), seen, conflicts);
+}
+
+fn undo[&h, &a, &b, &c](heap: &!h Heap, parent: &a [byte], target: &b [byte], head: &c [byte]) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    var sets = buffer.empty(heap, 0);
+    var drops = buffer.empty(heap, 0);
+    var touched = buffer.empty(heap, 0);
+    var conflicts = buffer.empty(heap, 0);
+    var i = 0;
+    var j = 0;
+    if len(parent) == 0 {
+        i = 0 - 1;
+    }
+    if len(target) == 0 {
+        j = 0 - 1;
+    }
+    while i >= 0 || j >= 0 {
+        var order = 0;
+        if i < 0 {
+            order = 1;
+        } else if j < 0 {
+            order = 0 - 1;
+        } else {
+            order = bytes.compare(vcsobj.entry_path(parent, i), vcsobj.entry_path(target, j));
+        }
+        if order < 0 {
+            let (s1, d1, t1, c1) = consider(heap, sets, drops, touched, conflicts, head, parent, i, target, 0 - 1, vcsobj.entry_path(parent, i));
+            sets = s1;
+            drops = d1;
+            touched = t1;
+            conflicts = c1;
+            i = vcsobj.entry_next(parent, i);
+        } else if order > 0 {
+            let (s1, d1, t1, c1) = consider(heap, sets, drops, touched, conflicts, head, parent, 0 - 1, target, j, vcsobj.entry_path(target, j));
+            sets = s1;
+            drops = d1;
+            touched = t1;
+            conflicts = c1;
+            j = vcsobj.entry_next(target, j);
+        } else {
+            if !same_entry(parent, i, target, j) {
+                let (s1, d1, t1, c1) = consider(heap, sets, drops, touched, conflicts, head, parent, i, target, j, vcsobj.entry_path(parent, i));
+                sets = s1;
+                drops = d1;
+                touched = t1;
+                conflicts = c1;
+            }
+            i = vcsobj.entry_next(parent, i);
+            j = vcsobj.entry_next(target, j);
+        }
+    }
+    return (sets, drops, touched, conflicts);
+}
+
+// HEAD's tree with the entries `sets` put in (tree lines, sorted) and the paths `drops` taken out.
+fn rebuild[&h, &c, &s, &d](heap: &!h Heap, head: &c [byte], sets: &s [byte], drops: &d [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(head) + len(sets) + 1);
+    var i = 0;
+    var k = 0;
+    if len(head) == 0 {
+        i = 0 - 1;
+    }
+    if len(sets) == 0 {
+        k = 0 - 1;
+    }
+    while i >= 0 || k >= 0 {
+        var order = 0;
+        if i < 0 {
+            order = 1;
+        } else if k < 0 {
+            order = 0 - 1;
+        } else {
+            order = bytes.compare(vcsobj.entry_path(head, i), vcsobj.entry_path(sets, k));
+        }
+        if order < 0 {
+            if !vcsrecord.has_line(drops, vcsobj.entry_path(head, i)) {
+                out = buffer.append(heap, out, head[i..vcsscan.line_end(head, i) + 1]);
+            }
+            i = vcsobj.entry_next(head, i);
+        } else if order > 0 {
+            out = buffer.append(heap, out, sets[k..vcsscan.line_end(sets, k) + 1]);
+            k = vcsobj.entry_next(sets, k);
+        } else {
+            out = buffer.append(heap, out, sets[k..vcsscan.line_end(sets, k) + 1]);
+            i = vcsobj.entry_next(head, i);
+            k = vcsobj.entry_next(sets, k);
+        }
+    }
+    return out;
+}
+
+// ---- the document ------------------------------------------------------------------------------------------------------------
+
+fn document[&h, &c, &r, &t](heap: &!h Heap, change: &c [byte], reverted: &r [byte], touched: &t [byte], dry: bool, unchanged: bool) -> [heap] buffer.Buffer {
+    var d = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
+    d = vcsrepo.quoted(heap, vcsrepo.member(heap, d, 1, true, "change"), change);
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "command"), "\"revert\"");
+    if dry {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "dry_run"), "true");
+    } else {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "dry_run"), "false");
+    }
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "ok"), "true");
+    d = vcsrepo.quoted(heap, vcsrepo.member(heap, d, 1, false, "reverted"), reverted);
+    d = vcsswitch.string_array(heap, vcsrepo.member(heap, d, 1, false, "touched"), touched, 1);
+    if unchanged {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "unchanged"), "true");
+    } else {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "unchanged"), "false");
+    }
+    return buffer.append(heap, jsonwrite.newline(heap, d, 0), "}\n");
+}
+
+// What the change `data` says: how many parents, the first parent's id, its tree's id and the subject of its intent (as the JSON text it was written as); and 0 or why it could not be read.
+fn parts_of[&h, &x](heap: &!h Heap, data: &x [byte]) -> [heap] (int, buffer.Buffer, buffer.Buffer, buffer.Buffer, int) {
+    var status = 0;
+    var parents = 0;
+    var parent = buffer.empty(heap, 64);
+    var tree = buffer.empty(heap, 64);
+    var subject = buffer.empty(heap, 0);
+    let jm = box_slice(heap, jsonread.size_for(data), 0);
+    borrow mut jm as &!w in {
+        let m = contents(w);
+        if vcschange.read(m, data) != 0 {
+            status = 3;
+        } else {
+            parents = vcschange.parent_count(m, data);
+            if parents > 0 {
+                parent = buffer.append(heap, parent, vcschange.parent(m, data, 0));
+            }
+            tree = buffer.append(heap, tree, vcschange.tree(m, data));
+            subject = buffer.append(heap, subject, vcschange.subject(m, data));
+        }
+    }
+    unbox_slice(heap, jm);
+    return (parents, parent, tree, subject, status);
+}
+
+// The text of the tree of the change `id` (nothing for no change), or why not.
+fn tree_at[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    if len(id) == 0 {
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    }
+    return vcsrestore.tree_of(heap, vcs, scratch, id);
+}
+
+// The working copy brought to `tree` from HEAD's: the differences `diffs` (see `vcsrecord.merge`), under the lock. 0, or the status and errno.
+fn bring[&h, &r, &d, &s, &t, &q](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], diffs: &q [byte], now: int) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    let (ls, le, made) = vcsstore.take_lock(heap, vcs, "lock", now);
+    if ls != 0 {
+        var text = buffer.empty(heap, 0);
+        if ls == 15 {
+            let read = vcsstore.read_text(heap, vcs, "lock");
+            let (t, rs, re) = vcsstore.parts(read);
+            buffer.drop(heap, text);
+            text = t;
+        }
+        return vcsstore.Object { bytes: text, status: ls, errno: le };
+    }
+    var status = 0;
+    var errno = 0;
+    var at = 0;
+    while at < len(diffs) && status == 0 {
+        let end = vcsscan.line_end(diffs, at);
+        let line = diffs[at..end];
+        let path = line[144..len(line)];
+        if bytes.equal(line[72..78], "000000") {
+            let (st, er) = vcsworktree.remove_path(heap, root, path);
+            status = st;
+            errno = er;
+        } else {
+            let (st, er) = vcsrestore.apply(heap, root, vcs, scratch, tree, vcsobj.tree_find(tree, path));
+            status = st;
+            errno = er;
+        }
+        at = end + 1;
+    }
+    dir_remove(vcs, "lock");
+    return vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
+}
+
+// ---- the command -------------------------------------------------------------------------------------------------------------
+
+// The change `target` with its parent's tree text `parent_tree`, its own `target_tree`, HEAD's `head_tree` and `head_id`: the undoing and what follows.
+fn undone[&h, &i, &r, &d, &s, &t, &a, &b, &c, &e, &f, &g, &p, &k, &m, &n, &u, &x](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], target: &t [byte], subject: &a [byte], parent_tree: &b [byte], target_tree: &c [byte], head_tree: &e [byte], head_id: &f [byte], has_branch: bool, branch: &g [byte], author: &p [byte], has_user_intent: bool, prompt: &k [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &x [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    let (sets, drops, touched, conflicts) = undo(heap, parent_tree, target_tree, head_tree);
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    var conflicted = false;
+    borrow conflicts as &cb in {
+        conflicted = len(buffer.bytes(cb)) > 0;
+    }
+    if conflicted {
+        let (old, os, oe) = vcsstore.parts(answer);
+        buffer.drop(heap, old);
+        answer = vcsstore.Object { bytes: conflicts, status: 55, errno: 0 };
+    } else {
+        buffer.drop(heap, conflicts);
+        var tree = buffer.empty(heap, 0);
+        borrow sets as &sb in {
+            borrow drops as &db in {
+                buffer.drop(heap, tree);
+                tree = rebuild(heap, head_tree, buffer.bytes(sb), buffer.bytes(db));
+            }
+        }
+        var same = false;
+        borrow tree as &tb in {
+            same = bytes.equal(buffer.bytes(tb), head_tree);
+        }
+        if same {
+            let (old, os, oe) = vcsstore.parts(answer);
+            buffer.drop(heap, old);
+            borrow touched as &pb in {
+                answer = vcsstore.Object { bytes: document(heap, head_id, target, buffer.bytes(pb), dry, true), status: 0, errno: 0 };
+            }
+        } else {
+            var nt = buffer.empty(heap, 0);
+            var t2 = buffer.empty(heap, 0);
+            var diffs = buffer.empty(heap, 0);
+            borrow tree as &tb in {
+                let (a1, b1, c1) = vcsrecord.merge(heap, head_tree, buffer.bytes(tb), "\n");
+                buffer.drop(heap, nt);
+                buffer.drop(heap, t2);
+                buffer.drop(heap, diffs);
+                nt = a1;
+                t2 = b1;
+                diffs = c1;
+            }
+            // The intent: the person's, or `Revert "SUBJECT"` and a line saying which change (written as JSON text, as `subject` is).
+            var words = buffer.empty(heap, 0);
+            if !has_user_intent {
+                words = buffer.append(heap, buffer.append(heap, words, "Revert \\\""), subject);
+                words = buffer.append(heap, buffer.append(heap, words, "\\\"\\n\\nThis reverts change "), target);
+                words = buffer.push(heap, words, byte_of(46));
+            } else {
+                words = buffer.append(heap, words, prompt);
+            }
+            borrow nt as &nb in {
+                borrow t2 as &tb in {
+                    borrow diffs as &fb in {
+                        borrow words as &wb in {
+                            let stored = vcsrecord.changed(heap, io, root, vcs, scratch, buffer.bytes(nb), buffer.bytes(tb), buffer.bytes(fb), head_id, has_branch, branch, author, true, buffer.bytes(wb), model, session, issue, expect, dry, no_gate, bad_time, true, !has_user_intent, time, now);
+                            let (cid, ss, se) = vcsstore.parts(stored);
+                            let (old, os, oe) = vcsstore.parts(answer);
+                            buffer.drop(heap, old);
+                            if ss != 0 {
+                                answer = vcsstore.Object { bytes: cid, status: ss, errno: se };
+                            } else {
+                                var moved = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+                                if !dry {
+                                    let (e0, s0, r0) = vcsstore.parts(moved);
+                                    buffer.drop(heap, e0);
+                                    moved = bring(heap, root, vcs, scratch, buffer.bytes(nb), buffer.bytes(fb), now);
+                                }
+                                let (mb, ms, me) = vcsstore.parts(moved);
+                                if ms != 0 {
+                                    buffer.drop(heap, cid);
+                                    answer = vcsstore.Object { bytes: mb, status: ms, errno: me };
+                                } else {
+                                    buffer.drop(heap, mb);
+                                    borrow cid as &ib in {
+                                        answer = vcsstore.Object { bytes: document(heap, buffer.bytes(ib), target, buffer.bytes(tb), dry, false), status: 0, errno: 0 };
+                                    }
+                                    buffer.drop(heap, cid);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, words);
+            buffer.drop(heap, nt);
+            buffer.drop(heap, t2);
+            buffer.drop(heap, diffs);
+        }
+        buffer.drop(heap, tree);
+    }
+    buffer.drop(heap, sets);
+    buffer.drop(heap, drops);
+    buffer.drop(heap, touched);
+    return answer;
+}
+
+// HEAD read, the working copy checked against it, and the trees of the change and its parent read.
+fn prepared[&h, &i, &r, &d, &s, &t, &a, &b, &c, &p, &k, &m, &n, &u, &x](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], target: &t [byte], subject: &a [byte], parent: &b [byte], tree_id: &c [byte], author: &p [byte], has_user_intent: bool, prompt: &k [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &x [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    let head = vcsstatus.head_info(heap, vcs);
+    let (branch, has_branch, head_id, hs) = vcsstatus.head_parts(head);
+    var code = hs;
+    var errno = 0;
+    var head_tree = buffer.empty(heap, 0);
+    borrow head_id as &hb in {
+        if code == 0 && buffer.size(hb) > 0 {
+            let tt = tree_at(heap, vcs, scratch, buffer.bytes(hb));
+            let (text, ts, te) = vcsstore.parts(tt);
+            buffer.drop(heap, head_tree);
+            head_tree = text;
+            code = ts;
+            errno = te;
+        }
+    }
+    var work = buffer.empty(heap, 0);
+    if code == 0 {
+        let scanned = vcsscan.scan(heap, root, scratch);
+        let (text, ws, we) = vcsstore.parts(scanned);
+        buffer.drop(heap, work);
+        work = text;
+        code = ws;
+        errno = we;
+    }
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: code, errno: errno };
+    if code == 0 {
+        var dirty = buffer.empty(heap, 0);
+        borrow head_tree as &htb in {
+            borrow work as &wb in {
+                let (t1, t2, t3) = vcsrecord.merge(heap, buffer.bytes(htb), buffer.bytes(wb), "\n");
+                buffer.drop(heap, t1);
+                buffer.drop(heap, t3);
+                buffer.drop(heap, dirty);
+                dirty = t2;
+            }
+        }
+        var is_dirty = false;
+        borrow dirty as &db in {
+            is_dirty = len(buffer.bytes(db)) > 0;
+        }
+        let (old, os, oe) = vcsstore.parts(answer);
+        buffer.drop(heap, old);
+        if is_dirty {
+            answer = vcsstore.Object { bytes: dirty, status: 54, errno: 0 };
+        } else {
+            buffer.drop(heap, dirty);
+            let pt = tree_at(heap, vcs, scratch, parent);
+            let (parent_tree, ps, pe) = vcsstore.parts(pt);
+            let tg = vcsrepo.tree_text(heap, vcs, scratch, tree_id);
+            let (target_tree, gs, ge) = vcsstore.parts(tg);
+            if ps != 0 {
+                answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: ps, errno: pe };
+            } else if gs != 0 {
+                answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: gs, errno: ge };
+            } else {
+                borrow parent_tree as &ptb in {
+                    borrow target_tree as &ttb in {
+                        borrow head_tree as &htb in {
+                            borrow head_id as &ib in {
+                                borrow branch as &bb in {
+                                    answer = undone(heap, io, root, vcs, scratch, target, subject, buffer.bytes(ptb), buffer.bytes(ttb), buffer.bytes(htb), buffer.bytes(ib), has_branch, buffer.bytes(bb), author, has_user_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, time, now);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, parent_tree);
+            buffer.drop(heap, target_tree);
+        }
+    }
+    buffer.drop(heap, branch);
+    buffer.drop(heap, head_id);
+    buffer.drop(heap, head_tree);
+    buffer.drop(heap, work);
+    return answer;
+}
+
+// `revert`: see the header.
+pub fn revert_command[&h, &i, &r, &d, &s, &p, &a, &m, &n, &u, &e, &o](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], spec: &p [byte], author: &a [byte], has_user_intent: bool, prompt: &o [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &e [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    let resolved = vcsrepo.resolve(heap, vcs, scratch, spec);
+    let (target, rs, re) = vcsstore.parts(resolved);
+    if rs != 0 {
+        return vcsstore.Object { bytes: target, status: rs, errno: re };
+    }
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    borrow target as &tb in {
+        let got = vcsstore.get(heap, vcs, scratch, "change", buffer.bytes(tb));
+        let (data, ds, de) = vcsstore.parts(got);
+        let (old, os, oe) = vcsstore.parts(answer);
+        buffer.drop(heap, old);
+        if ds != 0 {
+            buffer.drop(heap, data);
+            answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: ds, errno: de };
+        } else {
+            borrow data as &db in {
+                let (parents, parent, tree_id, subject, ps) = parts_of(heap, buffer.bytes(db));
+                if ps != 0 {
+                    answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: ps, errno: 0 };
+                } else if parents != 1 {
+                    answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 53, errno: 0 };
+                } else {
+                    borrow parent as &pb in {
+                        borrow tree_id as &ib in {
+                            borrow subject as &sb in {
+                                answer = prepared(heap, io, root, vcs, scratch, buffer.bytes(tb), buffer.bytes(sb), buffer.bytes(pb), buffer.bytes(ib), author, has_user_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, time, now);
+                            }
+                        }
+                    }
+                }
+                buffer.drop(heap, parent);
+                buffer.drop(heap, tree_id);
+                buffer.drop(heap, subject);
+            }
+            buffer.drop(heap, data);
+        }
+    }
+    buffer.drop(heap, target);
+    return answer;
+}

@@ -1,0 +1,11 @@
+{
+  "command": "revert",
+  "ok": false,
+  "refused": {
+    "message": "later changes touched the same paths",
+    "paths": [
+      "notes.md"
+    ],
+    "tag": "revert-conflict"
+  }
+}
