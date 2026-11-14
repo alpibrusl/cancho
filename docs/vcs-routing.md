@@ -263,3 +263,16 @@ edits (`vcsdiff`, a port of `diff_text.rs` and `anchor.rs`), the change encoder 
   (`edits`), a `.cho` change of each decl kind, a gate refusal, `--no-gate`, `nothing-selected`, `--expect` wrong (`ref-moved`), a bad `--time`, `--intent-*`, a detached HEAD, `lock-held`. Each also checks the
   working copy's store: the change loads, the tree lists, the branch is moved, the lock is gone. Mutants: the covers test, the order of `touched`, the gate on a file the change deletes, the HEAD re-read under the lock, the
   `unchanged` branch, the attestation text.
+
+**R8, built and measured (2026-11-14, Darwin, macOS 26.2, Apple silicon).** `record` is `vcsrecord.cho` (new tree, gate, change, store, document), `vcsdecl.cho` (the declaration view and its changes, the anchored edits) and the command in `clivcsrepo.cho`
+(routed like `apply`; `--all`, `--no-gate`, `--author`, `--time`, `--intent-*`, `--expect`, `--dry-run`). New in the compiler's own modules: `identity.declared` and driver mode 20 (G4), `vcsworktree.link_under`, and `vcsstatus.head_info`
+and `vcsrepo`'s three `emit_*` made `pub`. **The oracle held:** with `--time` and `--author` fixed, the document, the change id, the tree id and the whole store (every object name and ref, by checksum) of the native command equal
+the Rust command's in about 30 scenarios by script (`cmpr.sh`: a first record, again, text edits, each decl kind, a deletion, a mode change, links and a link changed, binary and CRLF text, an empty file, a detached HEAD, another
+branch, one path and a path from a subdirectory, `--dry-run`, `--no-gate`, imports and `std` in the gate, a gate refusal, a parse failure, a held lock, `--expect`, bad arguments). `tests/commands/vcs_repo.sh` goes from 325
+to **428 checks** with 62 goldens made by the Rust command (`make.sh`): the document and the store of each. **Findings the measuring made:** the first run differed in the key of a type (`type P`, not `type lib.a.P`: a type is keyed by its
+name alone); Rust parses `--time` only when a change is to be made (a bad one on a clean tree is `unchanged`, not an error), and so does this now; the first goldens of `imports` and `bad time` tested nothing (a call that was not
+qualified, and a `--time` the test's own fixed one overrode), caught by reading what the golden held. **Mutants, each killed by the test (12):** the covers test for a deleted path and for an unchanged one, the gate on a deleted file,
+the `unchanged` branch, the attestation text, the standard library in the gate, signature against body, the lock under `--dry-run`, `tz`, the expected id of the ref move, the UTF-8 test of the edits, and a link's text taken for
+edits (the last three needed new cases first: they survived). **Known differences:** the gate's refusal sentence is the native checker's own words (tag, rule and path are Rust's); `CANCHO_AUTHOR` is not read (cancho programs have no
+environment access); two modules of one file declaring one type name keep the last by id, not by position; `ref-moved` has the generic sentence. **Not covered:** a second writer moving HEAD between the first read and the lock (the
+re-read is there; a sequential test cannot reach it), a crash between the objects and the ref, statics in the declaration view (mode 20 lists them; no sample run), a working copy of thousands of files, Linux (CI).
