@@ -1,0 +1,34 @@
+{
+  "branch": "main",
+  "change": "d2712f06e094b5cbc826a96afba43cabba80d6f38b1699412212056149b27c64",
+  "command": "record",
+  "decls": [
+    {
+      "kind": "removed",
+      "name": "fn a.thrice",
+      "path": "a.cho"
+    },
+    {
+      "kind": "removed",
+      "name": "fn a.twice",
+      "path": "a.cho"
+    }
+  ],
+  "dry_run": false,
+  "edits": 0,
+  "gate": {
+    "checked": [],
+    "ran": true
+  },
+  "intent": null,
+  "ok": true,
+  "parents": [
+    "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e"
+  ],
+  "recorded": true,
+  "touched": [
+    "a.cho"
+  ],
+  "tree": "e67037a920cfe794efbb65132f53f422913657fa42d132b4e9d340a1abd3e8cc",
+  "unchanged": false
+}

@@ -418,6 +418,14 @@ ok record: gate fail import: no lock left
 ok record: parse fail: the tag, the rule and the path are the Rust command's
 ok record: parse fail: the store is as the Rust command left it
 ok record: parse fail: no lock left
+ok record: one path of two changes
+ok record: one path of two changes: the store is as the Rust command left it
+ok record: a deleted code file is not checked
+ok record: a deleted code file: the store is as the Rust command left it
+ok record: a changed binary file has no edits
+ok record: a changed binary file: the store is as the Rust command left it
+ok record: a changed link has no edits
+ok record: a changed link: the store is as the Rust command left it
 ok record: detached
 ok record: detached: HEAD moved to the change, as the Rust command moves it
 ok record: from a subdirectory
