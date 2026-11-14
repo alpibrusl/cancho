@@ -1,0 +1,161 @@
+{
+  "attestations": [
+    "gate:cancho-check:ok:0"
+  ],
+  "author": "Ada <ada@example.com>",
+  "change": "a6d9f88da9b5d6c6ebf39acd9632dafbc819e3d4fa11fb4b2e03e6a634f613bb",
+  "command": "show",
+  "decls": [
+    {
+      "kind": "removed",
+      "name": "fn a.thrice",
+      "path": "a.cho"
+    },
+    {
+      "kind": "removed",
+      "name": "fn a.twice",
+      "path": "a.cho"
+    }
+  ],
+  "edits": [],
+  "files": [
+    {
+      "path": "a.cho",
+      "state": "deleted"
+    },
+    {
+      "path": "lnk",
+      "state": "added"
+    },
+    {
+      "path": "notes.md",
+      "state": "mode"
+    },
+    {
+      "path": "sub/deep/x.txt",
+      "state": "added"
+    },
+    {
+      "path": "top.txt",
+      "state": "added"
+    }
+  ],
+  "intent": {
+    "prompt": "fourth: wide"
+  },
+  "ok": true,
+  "parents": [
+    "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e"
+  ],
+  "patch": [
+    {
+      "binary": false,
+      "decls": [
+        {
+          "kind": "removed",
+          "name": "fn a.thrice",
+          "path": "a.cho"
+        },
+        {
+          "kind": "removed",
+          "name": "fn a.twice",
+          "path": "a.cho"
+        }
+      ],
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "-",
+              "text": "module a;\n"
+            },
+            {
+              "op": "-",
+              "text": "pub fn twice(n: int) -> [] int { return n + n + 0; }\n"
+            },
+            {
+              "op": "-",
+              "text": "pub fn thrice(n: int) -> [] int { return n * 3; }\n"
+            }
+          ],
+          "new_lines": 0,
+          "new_start": 0,
+          "old_lines": 3,
+          "old_start": 1
+        }
+      ],
+      "path": "a.cho",
+      "status": "deleted"
+    },
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "+",
+              "text": "notes.md"
+            }
+          ],
+          "new_lines": 1,
+          "new_start": 1,
+          "old_lines": 0,
+          "old_start": 0
+        }
+      ],
+      "path": "lnk",
+      "status": "added"
+    },
+    {
+      "binary": false,
+      "mode": {
+        "new": "100755",
+        "old": "100644"
+      },
+      "path": "notes.md",
+      "status": "mode"
+    },
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "+",
+              "text": "x\n"
+            }
+          ],
+          "new_lines": 1,
+          "new_start": 1,
+          "old_lines": 0,
+          "old_start": 0
+        }
+      ],
+      "path": "sub/deep/x.txt",
+      "status": "added"
+    },
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "+",
+              "text": "y\n"
+            }
+          ],
+          "new_lines": 1,
+          "new_start": 1,
+          "old_lines": 0,
+          "old_start": 0
+        }
+      ],
+      "path": "top.txt",
+      "status": "added"
+    }
+  ],
+  "subject": "fourth: wide",
+  "time": 1003,
+  "tree": "f3d6c10c6525d73ebe62e0745f4deff034fb30368b22c75958a7e282c855d409",
+  "tz": "+0000"
+}

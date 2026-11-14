@@ -329,11 +329,52 @@ exit 0
 manifest log lines: 1
 exit 0
 nothing published yet at `elsewhere`
-== what is not in this build, and what is not an option
-ok log --path (exit 2)
-ok log --path says it is not in this build
-ok show --patch (exit 2)
-ok show --patch says it is not in this build
+== log filters and show --patch
+ok log path file
+ok log path notes
+ok log path none
+ok log path root
+ok log path dir
+ok log path inline
+ok log path limit
+ok log path from rev
+ok log path wide deleted
+ok log path wide mode
+ok log path wide link
+ok log path wide nested
+ok log intent
+ok log intent empty
+ok log intent none
+ok log intent colon
+ok log session
+ok log session none
+ok log issue
+ok log issue empty
+ok log author
+ok log author angle
+ok log author none
+ok log author empty
+ok log two filters
+ok log all filters
+ok log many author
+ok log many session
+ok log many session limit
+ok log many path mode
+ok log many quoted
+ok log many escape
+ok log bad limit and path
+ok refuse log path outside
+ok refuse log path outside bad revision
+ok show patch
+ok show patch parent
+ok show patch root
+ok show patch first
+ok show patch wide
+ok show patch many mode
+ok show patch bad revision
+ok show patch context
+ok log path limit 0
+== what is not an option
 ok log --bogus (exit 2)
 ok log --bogus is an unknown option
 ok show --output text (exit 2)

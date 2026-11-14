@@ -1,0 +1,100 @@
+{
+  "attestations": [
+    "gate:cancho-check:ok:1"
+  ],
+  "author": "Ada <ada@example.com>",
+  "change": "960fd3a813e8e05e68c304a1ea92bf374b61dd07399c70166822fd6e6c7b716f",
+  "command": "show",
+  "decls": [
+    {
+      "kind": "added",
+      "name": "fn a.twice",
+      "path": "a.cho"
+    }
+  ],
+  "edits": [],
+  "files": [
+    {
+      "path": "a.cho",
+      "state": "added"
+    },
+    {
+      "path": "notes.md",
+      "state": "added"
+    }
+  ],
+  "intent": {
+    "model": "m1",
+    "prompt": "first",
+    "session": "s1"
+  },
+  "ok": true,
+  "parents": [],
+  "patch": [
+    {
+      "binary": false,
+      "decls": [
+        {
+          "kind": "added",
+          "name": "fn a.twice",
+          "path": "a.cho"
+        }
+      ],
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "+",
+              "text": "module a;\n"
+            },
+            {
+              "op": "+",
+              "text": "pub fn twice(n: int) -> [] int { return n + n; }\n"
+            }
+          ],
+          "new_lines": 2,
+          "new_start": 1,
+          "old_lines": 0,
+          "old_start": 0
+        }
+      ],
+      "path": "a.cho",
+      "status": "added"
+    },
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "+",
+              "text": "# notes\n"
+            },
+            {
+              "op": "+",
+              "text": "one\n"
+            },
+            {
+              "op": "+",
+              "text": "two\n"
+            },
+            {
+              "op": "+",
+              "text": "three\n"
+            }
+          ],
+          "new_lines": 4,
+          "new_start": 1,
+          "old_lines": 0,
+          "old_start": 0
+        }
+      ],
+      "path": "notes.md",
+      "status": "added"
+    }
+  ],
+  "subject": "first",
+  "time": 1000,
+  "tree": "b782db09f9ed93714834c91ed78a1b0ca7dcc1f62ed0b91ef79fd5d0e84704e7",
+  "tz": "+0000"
+}

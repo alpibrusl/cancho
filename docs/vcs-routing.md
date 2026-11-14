@@ -79,7 +79,7 @@ needs no Rust binary at test time, which is what makes it a gate stage and not a
 differential scripts stay as the check while the Rust command exists.
 
 **D7. What this does not decide. [choice]** `record` and its gate (the `driver` refactor), `switch`, `restore`, `revert`, `apply` (they need `materialize` and `remove_path`, slice 3b of
-`directory-links.md`), `diff`, `blame`, `verify`, `unlock`, the git bridge; `log --path|--intent|--session|--issue|--author` and `show --patch` (`vcs-native.md` §6 lists them as not done); the
+`directory-links.md`), `diff`, `blame`, `verify`, `unlock`, the git bridge; `log --path|--intent|--session|--issue|--author` and `show --patch` (`vcs-native.md` §6 listed them as not done; built in R11, §13); the
 crash test; and `canonicalize` (D2).
 
 ## 5. Slices
@@ -111,7 +111,7 @@ the 14 goldens of `tests/vcs_fixtures/golden/` (made by the Rust command with `t
 because it cost an afternoon of reading:** the first chain from the seed appeared to fail (stage 2 differed from stage 3 by 2.6 MB). The IR the seed-built stage 1 wrote was byte-identical to a correct compiler's; the cause was an
 edit of `clivcsrepo.cho` made while the chain was running, so stage 2 and stage 3 compiled different files. A run with nothing touched reproduced itself. **Not the Rust command's:** `--repo` is not resolved through links (D2); the
 refusal messages for the tags whose Rust sentence carries what only the Rust store knows (`object-corrupt`, the OS's words for `io`) are the tag's own sentence; `log --path|--intent|--session|--issue|--author` and `show --patch`
-are refused with exit 2; an invalid `--limit` is refused before the revision is resolved, where the Rust command resolves first.
+were refused with exit 2 (built in R11, §13); an invalid `--limit` was refused before the revision was resolved, where the Rust command resolves first (R11 made the order the Rust command's).
 
 **R2, built and measured (2026-11-11, Linux x86-64).** `branch list`, `create NAME [--from REV]` and `delete NAME --expect REV`, with `--dry-run`. In the store: `vcsstore.list_refs` (the refs under `refs/PREFIX`, sorted by the bytes
 of the whole name, as `refs.rs` does, so `a.b` comes before `a/b` and `a0`), `vcsstore.delete_ref` (the lock, the compare, a log line `OLD - TIME deleted`, then the file removed), and `vcsrepo.head_ref`. They do not touch
@@ -320,3 +320,21 @@ file, and, after the first run let it survive, a directory), at most two revisio
 named like a revision) and each got its case. **Known differences:** a blob read from the working copy is not checked against its id (Rust refuses with `dirty-working-copy` if the file changed while being read); the existence test of a
 revision-or-path word is "a directory, or a file that can be read" (Rust: `Path::exists`), so a file that exists and cannot be read is taken as a revision when one resolves; the `declared` view of §10's known difference applies.
 **Not covered:** a file of over 200,000 lines (one replacement, as `diff_text.rs`; unit-tested in Rust, not here), a working copy changing while it is read, Linux (CI).
+
+## 13. R11, `log` filters and `show --patch`: built and measured against the Rust command (2026-11-14, Darwin, macOS 26.2, Apple silicon)
+
+**The design is the Rust command's** (`cmd_log`, `touches`, `cmd_show`, `diff_files`). `log [REV] [--limit N] [--intent TEXT] [--session ID] [--issue ID] [--author TEXT] [--path PATH]`: a change is listed when its intent's prompt
+contains `--intent` (no intent: no), its intent's `session` or `issue` equals the value, its author contains `--author`, and, for `--path`, its entry for that path (blob and mode, or none) differs from its first parent's (none for a root change). A
+path names a file entry, so a directory, `.` and a path nothing has list nothing. `--limit` counts the rows that passed (and 0 still lists one). The order of the refusals is the Rust command's: the start revision, then a `--limit` that is not a
+count (`bad-argument`), then a `--path` outside the repository (`path-escapes`); in a repository with no change yet, none of them is read. `show --patch` adds `patch` (between `parents` and `subject`): the `files` array of `diff` between the change's
+tree and its first parent's, 3 lines of context.
+
+**Built.** `vcsrepo.log_document` filters (`touches`, and the matchers `vcschange.author_has|prompt_has|intent_is`, which decode the JSON string before comparing, so an escaped quote, a backslash or a newline is matched as the character);
+`vcsrepo.change_trees` and `vcsdiffdoc.show_patch_command` (the `patch` array is `files_array`, so `show --patch` and `diff` cannot drift); the options moved out of `clivcsrepo.cho` into `clivcsopts.cho` (243 lines) because five more
+valued options would have taken the file past the 2,000-line cap (it is now 1,811). **Fixed on the way:** an invalid `--limit` was refused before the revision was resolved; it is now refused after, as in Rust (§5's known difference is gone).
+**Measured:** 55 `log` and 17 `show --patch` scripted cases (a six-change repository with four authors, sessions, issues, a quoted, tabbed and non-ASCII prompt, a mode change, a deletion and a link) equal to the Rust command in stdout, stderr and
+exit status. `vcs_repo.sh` goes from 572 to **612 checks** with 44 more goldens made by the Rust command, and the two checks that said these options were "not in this build" are gone. **Mutants, all killed (19):** author equals, session contains,
+exact match without the length test, prompt equals, `touches` needing blob and mode, ignoring the mode, ignoring a deletion, no parent tree for `--patch`, a limit of 0 listing none, the row-count boundary, the bad-limit refusal, `--session` reading
+the issue and the reverse, the path filter off, no `path-escapes`, the patch's context, its key, the rows' indentation and their comma. Two survived the first run (a limit of 0 with a filter, and a patch whose context matters, which needs a file
+longer than 7 lines) and each got a case. **Not covered:** a `--path` through a link in the working directory beyond what `vcsapply.relative` already does for `diff`, an author or prompt whose JSON uses `\u` escapes the Rust writer would not have
+written, and Linux (CI).

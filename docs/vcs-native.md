@@ -124,7 +124,7 @@ command wrote:
 | b2 | `vcschange.cho`: the change object (JSON in V1's field order, written and read) | **built**, below; refs, `HEAD` and `refs/*.log` move to b3 |
 | b3 | `vcsstore.cho`: **built**, below: refs, `HEAD`, the log; the store on disk: write an object atomically (temporary name, `file_sync`, `dir_rename`, `dir_sync`), read one and re-hash it; the ref compare-and-swap under a lock file; `init` | next; needs the primitives that exist, not the five of the issues |
 | b4a | `vcsrepo.cho`: HEAD and the resolution of a revision (`HEAD`, `@`, id, branch, tag, prefix, `~N`) | **built**, below |
-| b4b | `vcsrepo.cho`: the history of a change; the documents of `log` and `show` (sorted-key pretty JSON), and the refusal document of `bad-revision` | **built**, below; without the `log` filters and `show --patch` |
+| b4b | `vcsrepo.cho`: the history of a change; the documents of `log` and `show` (sorted-key pretty JSON), and the refusal document of `bad-revision` | **built**, below; the `log` filters and `show --patch` came with R11 (`vcs-routing.md` §13) |
 | b4c | `vcsscan.cho` and `status`: the working copy scanned against HEAD's tree | **built**, below; a symbolic link is refused until #685 (`readlink`) |
 | b4d-1 | `vcsdiff.cho`: the histogram line diff and the anchored edits (`derive_edits`, `apply_edits`) a change records | **built**, below |
 | b4d-2 | `record` (snapshot of the working copy to a tree and a change; `--no-gate`, and the gate when slice d lands) | next |
@@ -183,7 +183,7 @@ Six mutants (the order of the frontier, a state name, the `--limit 0` rule, an i
 `log --limit 0` lists one change, as the Rust command does (it stops after pushing a row).
 
 One bug found by the check and fixed: `show` parsed the change into its scratch space twice but read it once, and answered from zeros (a trap). It showed as exit 132 on every `show` of a change with a tree, and
-a debugging harness of mine had also trapped on a relative path through `..`, which an `Fs` traps on (the checks pass absolute paths). **Not done:** `log --path|--intent|--session|--issue|--author`, `show --patch`, the
+a debugging harness of mine had also trapped on a relative path through `..`, which an `Fs` traps on (the checks pass absolute paths). **Not done** (the `log` filters and `show --patch` were built in R11, `vcs-routing.md` §13): the
 refusals other than `bad-revision` as documents (they are printed as `refused TAG`); the history keeps its set of reached changes as a list (quadratic; not measured at scale).
 
 **b4c, measured.** `vcsscan.cho` is `Repo::scan` and `Ignore` on a directory handle: it lists each directory (`std.dirs`), skips what `.canchoignore` says (all four kinds of rule) and `.cancho`/`.git` at the top, reads and
