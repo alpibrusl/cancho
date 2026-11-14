@@ -14,6 +14,7 @@ module selfhost.vcsdecl;
 import std.buffer;
 import std.bytes;
 import selfhost.driver;
+import selfhost.vcsapply;
 import selfhost.vcschange;
 import selfhost.vcsdiff;
 import selfhost.vcsscan;
@@ -55,39 +56,6 @@ fn keyed[&h, &r](heap: &!h Heap, raw: &r [byte]) -> [heap] buffer.Buffer {
     return out;
 }
 
-// `lines` sorted by their bytes, none twice (the lines are not path lines, but `vcsscan.line_end` and a byte comparison are all that is asked of them).
-fn sorted[&h, &l](heap: &!h Heap, lines: &l [byte]) -> [heap] buffer.Buffer {
-    var out = buffer.empty(heap, len(lines) + 1);
-    var last_at = 0 - 1;
-    var last_end = 0;
-    var going = true;
-    while going {
-        var best = 0 - 1;
-        var best_end = 0;
-        var at = 0;
-        while at < len(lines) {
-            let end = vcsscan.line_end(lines, at);
-            var above = true;
-            if last_at >= 0 {
-                above = bytes.compare(lines[at..end], lines[last_at..last_end]) > 0;
-            }
-            if above && (best < 0 || bytes.compare(lines[at..end], lines[best..best_end]) < 0) {
-                best = at;
-                best_end = end;
-            }
-            at = end + 1;
-        }
-        if best < 0 {
-            going = false;
-        } else {
-            out = buffer.push(heap, buffer.append(heap, out, lines[best..best_end]), byte_of(10));
-            last_at = best;
-            last_end = best_end;
-        }
-    }
-    return out;
-}
-
 // The declaration view of `text`: the sorted keyed lines and true, or nothing and false when the text does not parse (or has a number whose bits are not worked out).
 pub fn view[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte]) -> [heap, io_write] (buffer.Buffer, bool) {
     var raw = buffer.append(heap, buffer.empty(heap, len(text) + 24), "FILE ");
@@ -106,7 +74,7 @@ pub fn view[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte]) -> [heap, i
                 let k = keyed(heap, buffer.bytes(ib));
                 borrow k as &kb in {
                     buffer.drop(heap, lines);
-                    lines = sorted(heap, buffer.bytes(kb));
+                    lines = vcsapply.unique(heap, buffer.bytes(kb));
                 }
                 buffer.drop(heap, k);
             }
