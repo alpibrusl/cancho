@@ -76,7 +76,10 @@ threadcode.cho
 types.cho
 vcsapply.cho
 vcschange.cho
+vcsdecl.cho
+vcsdiff.cho
 vcsobj.cho
+vcsrecord.cho
 vcsrepo.cho
 vcsrestore.cho
 vcsscan.cho

@@ -1,0 +1,223 @@
+edition 12;
+module selfhost.vcsdecl;
+
+// vcsdecl.cho -- what a change records of a file's declarations and text (`docs/vcs-routing.md` section 10, G4; the Rust side is `vcs_decl.rs` and `derive` in `vcs_record.rs`).
+//
+//   view(heap, io, text)               the declaration view of a `.cho` file, or none when it does not parse
+//   decl_changes(heap, out, first, path, old, new)   the `decls` of the move from `old` to `new` (each a view, or empty for a missing side), added to `out`
+//   text_edits(heap, out, first, path, old, new)     the anchored `edits` of the move between two texts (`vcsdiff.derive_edits`), added to `out`
+//
+// A view is a list of lines, sorted by their bytes and each once: `KEY`, a NUL, the 64 digits of the signature id, a NUL, the 64 of the body id. The key is `fn MODULE.NAME` (`fn NAME` for the root
+// module) or `type NAME`, as the Rust record names a declaration. It is made from `driver` mode 20 (`identity.declared`), whose ids equal the Rust `cancho ids` ones (measured, section 10).
+// **Known difference:** when two modules of a file declare the same type name the Rust map keeps the last declared; here the lines of one key are ordered by their ids and the last of those wins.
+
+import std.buffer;
+import std.bytes;
+import selfhost.driver;
+import selfhost.vcschange;
+import selfhost.vcsdiff;
+import selfhost.vcsscan;
+
+// The end of the NUL-terminated field of `line` that starts at `at`.
+fn field_end[&l](line: &l [byte], at: int) -> [] int {
+    var e = at;
+    while e < len(line) && line[e] != byte_of(0) {
+        e = e + 1;
+    }
+    return e;
+}
+
+// The sorted lines of the raw listing `raw` (`kind NUL module NUL name NUL sig NUL body`, a newline each) as keyed lines.
+fn keyed[&h, &r](heap: &!h Heap, raw: &r [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(raw) + 16);
+    var at = 0;
+    while at < len(raw) {
+        let end = vcsscan.line_end(raw, at);
+        let line = raw[at..end];
+        let ke = field_end(line, 0);
+        let me = field_end(line, ke + 1);
+        let ne = field_end(line, me + 1);
+        let se = field_end(line, ne + 1);
+        out = buffer.append(heap, out, line[0..ke]);
+        out = buffer.push(heap, out, byte_of(32));
+        if me > ke + 1 && bytes.equal(line[0..ke], "fn") {
+            out = buffer.append(heap, out, line[ke + 1..me]);
+            out = buffer.push(heap, out, byte_of(46));
+        }
+        out = buffer.append(heap, out, line[me + 1..ne]);
+        out = buffer.push(heap, out, byte_of(0));
+        out = buffer.append(heap, out, line[ne + 1..se]);
+        out = buffer.push(heap, out, byte_of(0));
+        out = buffer.append(heap, out, line[se + 1..len(line)]);
+        out = buffer.push(heap, out, byte_of(10));
+        at = end + 1;
+    }
+    return out;
+}
+
+// `lines` sorted by their bytes, none twice (the lines are not path lines, but `vcsscan.line_end` and a byte comparison are all that is asked of them).
+fn sorted[&h, &l](heap: &!h Heap, lines: &l [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(lines) + 1);
+    var last_at = 0 - 1;
+    var last_end = 0;
+    var going = true;
+    while going {
+        var best = 0 - 1;
+        var best_end = 0;
+        var at = 0;
+        while at < len(lines) {
+            let end = vcsscan.line_end(lines, at);
+            var above = true;
+            if last_at >= 0 {
+                above = bytes.compare(lines[at..end], lines[last_at..last_end]) > 0;
+            }
+            if above && (best < 0 || bytes.compare(lines[at..end], lines[best..best_end]) < 0) {
+                best = at;
+                best_end = end;
+            }
+            at = end + 1;
+        }
+        if best < 0 {
+            going = false;
+        } else {
+            out = buffer.push(heap, buffer.append(heap, out, lines[best..best_end]), byte_of(10));
+            last_at = best;
+            last_end = best_end;
+        }
+    }
+    return out;
+}
+
+// The declaration view of `text`: the sorted keyed lines and true, or nothing and false when the text does not parse (or has a number whose bits are not worked out).
+pub fn view[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte]) -> [heap, io_write] (buffer.Buffer, bool) {
+    var raw = buffer.append(heap, buffer.empty(heap, len(text) + 24), "FILE ");
+    raw = buffer.push_nat(heap, raw, len(text));
+    raw = buffer.push(heap, raw, byte_of(10));
+    raw = buffer.append(heap, raw, text);
+    var lines = buffer.empty(heap, 0);
+    var ok = false;
+    borrow raw as &rb in {
+        let built = driver.run_many(heap, io, buffer.bytes(rb), 20, 0);
+        let driver.Built { ir, status, rule, from, to, more } = built;
+        buffer.drop(heap, more);
+        if status == 0 {
+            ok = true;
+            borrow ir as &ib in {
+                let k = keyed(heap, buffer.bytes(ib));
+                borrow k as &kb in {
+                    buffer.drop(heap, lines);
+                    lines = sorted(heap, buffer.bytes(kb));
+                }
+                buffer.drop(heap, k);
+            }
+        }
+        buffer.drop(heap, ir);
+    }
+    buffer.drop(heap, raw);
+    return (lines, ok);
+}
+
+// The key of the line `l` (up to its first NUL).
+fn key_of[&l](l: &l [byte]) -> [] &l [byte] {
+    return l[0..field_end(l, 0)];
+}
+
+// The declaration changes from the view `old` to the view `new`, in the order of their keys, added to `out` as `vcschange.decl` writes them; `first` says whether `out` has none yet.
+// Answers the list and how many were added.
+pub fn decl_changes[&h, &p, &o, &n](heap: &!h Heap, out: buffer.Buffer, first: bool, path: &p [byte], old: &o [byte], new: &n [byte]) -> [heap] (buffer.Buffer, int) {
+    var b = out;
+    var count = 0;
+    var i = 0;
+    var j = 0;
+    while i < len(old) || j < len(new) {
+        var oe = len(old);
+        var ne = len(new);
+        var order = 0;
+        if i < len(old) {
+            oe = vcsscan.line_end(old, i);
+        }
+        if j < len(new) {
+            ne = vcsscan.line_end(new, j);
+        }
+        if i >= len(old) {
+            order = 1;
+        } else if j >= len(new) {
+            order = 0 - 1;
+        } else {
+            order = bytes.compare(key_of(old[i..oe]), key_of(new[j..ne]));
+        }
+        if order < 0 {
+            let name = key_of(old[i..oe]);
+            b = vcschange.decl(heap, b, first && count == 0, path, name, "removed");
+            count = count + 1;
+            i = oe + 1;
+        } else if order > 0 {
+            // Of several lines with one key the last wins (a later one with the same key comes next).
+            var skip = false;
+            if ne + 1 < len(new) {
+                let nx = vcsscan.line_end(new, ne + 1);
+                skip = bytes.equal(key_of(new[j..ne]), key_of(new[ne + 1..nx]));
+            }
+            if !skip {
+                b = vcschange.decl(heap, b, first && count == 0, path, key_of(new[j..ne]), "added");
+                count = count + 1;
+            }
+            j = ne + 1;
+        } else {
+            var skip = false;
+            if ne + 1 < len(new) {
+                let nx = vcsscan.line_end(new, ne + 1);
+                skip = bytes.equal(key_of(new[j..ne]), key_of(new[ne + 1..nx]));
+            }
+            var skip_old = false;
+            if oe + 1 < len(old) {
+                let ox = vcsscan.line_end(old, oe + 1);
+                skip_old = bytes.equal(key_of(old[i..oe]), key_of(old[oe + 1..ox]));
+            }
+            if !skip && !skip_old {
+                let ol = old[i..oe];
+                let nl = new[j..ne];
+                let ok = field_end(ol, 0);
+                let nk = field_end(nl, 0);
+                let osig = ol[ok + 1..ok + 65];
+                let nsig = nl[nk + 1..nk + 65];
+                let obody = ol[ok + 66..len(ol)];
+                let nbody = nl[nk + 66..len(nl)];
+                if !bytes.equal(osig, nsig) {
+                    b = vcschange.decl(heap, b, first && count == 0, path, key_of(nl), "signature-changed");
+                    count = count + 1;
+                } else if !bytes.equal(obody, nbody) {
+                    b = vcschange.decl(heap, b, first && count == 0, path, key_of(nl), "body-changed");
+                    count = count + 1;
+                }
+            }
+            if skip_old {
+                i = oe + 1;
+            } else if skip {
+                j = ne + 1;
+            } else {
+                i = oe + 1;
+                j = ne + 1;
+            }
+        }
+    }
+    return (b, count);
+}
+
+// The anchored edits that turn `old` into `new`, added to `out`. Answers the list and how many were added.
+pub fn text_edits[&h, &p, &o, &n](heap: &!h Heap, out: buffer.Buffer, first: bool, path: &p [byte], old: &o [byte], new: &n [byte]) -> [heap] (buffer.Buffer, int) {
+    var b = out;
+    var count = 0;
+    let edits = vcsdiff.derive_edits(heap, old, new);
+    borrow edits as &eb in {
+        let all = buffer.bytes(eb);
+        var at = 0;
+        while at < len(all) {
+            b = vcschange.edit(heap, b, first && count == 0, path, vcsdiff.edit_old(all, at), vcsdiff.edit_new(all, at));
+            count = count + 1;
+            at = vcsdiff.edit_next(all, at);
+        }
+    }
+    buffer.drop(heap, edits);
+    return (b, count);
+}

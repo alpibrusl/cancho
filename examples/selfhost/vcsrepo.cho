@@ -470,7 +470,7 @@ pub fn member[&h, &k](heap: &!h Heap, out: buffer.Buffer, levels: int, first: bo
 }
 
 // `[]` or the ids of the parents, one to a line, the array's members at `levels + 1`.
-fn emit_parents[&h, &j, &x](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
+pub fn emit_parents[&h, &j, &x](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
     let n = vcschange.parent_count(jm, src);
     if n == 0 {
         return buffer.append(heap, out, "[]");
@@ -488,7 +488,7 @@ fn emit_parents[&h, &j, &x](heap: &!h Heap, out: buffer.Buffer, levels: int, jm:
 }
 
 // `null` or the intent as an object, its parts in the order of their names.
-fn emit_intent[&h, &j, &x](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
+pub fn emit_intent[&h, &j, &x](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
     if !vcschange.has_intent(jm, src) {
         return buffer.append(heap, out, "null");
     }
@@ -535,7 +535,7 @@ fn emit_strings[&h, &j, &x, &l](heap: &!h Heap, out: buffer.Buffer, levels: int,
 }
 
 // A list of objects with three string parts (`decls`: kind, name, path; `edits`: new, old, path), as an array of objects with those keys.
-fn emit_items[&h, &j, &x, &l, &a, &b2, &c](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte], list: &l [byte], p1: &a [byte], p2: &b2 [byte], p3: &c [byte]) -> [heap] buffer.Buffer {
+pub fn emit_items[&h, &j, &x, &l, &a, &b2, &c](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte], list: &l [byte], p1: &a [byte], p2: &b2 [byte], p3: &c [byte]) -> [heap] buffer.Buffer {
     let n = vcschange.list_count(jm, src, list);
     if n == 0 {
         return buffer.append(heap, out, "[]");
