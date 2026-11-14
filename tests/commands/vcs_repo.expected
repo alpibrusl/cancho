@@ -340,3 +340,99 @@ ok show --output text (exit 2)
 ok log --limit with no value (exit 2)
 ok it says --limit needs a value
 done
+== record
+ok record: clean
+ok record: clean: the store is as the Rust command left it
+ok record: clean: no lock left
+ok record: notes
+ok record: notes: the store is as the Rust command left it
+ok record: notes: no lock left
+ok record: notes path
+ok record: notes path: the store is as the Rust command left it
+ok record: notes path: no lock left
+ok record: cho body
+ok record: cho body: the store is as the Rust command left it
+ok record: cho body: no lock left
+ok record: cho sig
+ok record: cho sig: the store is as the Rust command left it
+ok record: cho sig: no lock left
+ok record: cho add
+ok record: cho add: the store is as the Rust command left it
+ok record: cho add: no lock left
+ok record: cho remove
+ok record: cho remove: the store is as the Rust command left it
+ok record: cho remove: no lock left
+ok record: new files
+ok record: new files: the store is as the Rust command left it
+ok record: new files: no lock left
+ok record: delete
+ok record: delete: the store is as the Rust command left it
+ok record: delete: no lock left
+ok record: mode
+ok record: mode: the store is as the Rust command left it
+ok record: mode: no lock left
+ok record: dry
+ok record: dry: the store is as the Rust command left it
+ok record: dry: no lock left
+ok record: no gate
+ok record: no gate: the store is as the Rust command left it
+ok record: no gate: no lock left
+ok record: intent
+ok record: intent: the store is as the Rust command left it
+ok record: intent: no lock left
+ok record: expect ok
+ok record: expect ok: the store is as the Rust command left it
+ok record: expect ok: no lock left
+ok record: expect wrong: the tag, the rule and the path are the Rust command's
+ok record: expect wrong: the store is as the Rust command left it
+ok record: expect wrong: no lock left
+ok record: nothing selected
+ok record: nothing selected: the store is as the Rust command left it
+ok record: nothing selected: no lock left
+ok record: bad time on a clean tree is unchanged, as in Rust
+ok record: bad time clean: the store is as the Rust command left it
+ok record: bad time
+ok record: bad time: the store is as the Rust command left it
+ok record: bad time: no lock left
+ok record: escapes
+ok record: escapes: the store is as the Rust command left it
+ok record: escapes: no lock left
+ok record: imports
+ok record: imports: the store is as the Rust command left it
+ok record: imports: no lock left
+ok record: std
+ok record: std: the store is as the Rust command left it
+ok record: std: no lock left
+ok record: binary
+ok record: binary: the store is as the Rust command left it
+ok record: binary: no lock left
+ok record: multi hunk
+ok record: multi hunk: the store is as the Rust command left it
+ok record: multi hunk: no lock left
+ok record: gate fail: the tag, the rule and the path are the Rust command's
+ok record: gate fail: the store is as the Rust command left it
+ok record: gate fail: no lock left
+ok record: gate fail import: the tag, the rule and the path are the Rust command's
+ok record: gate fail import: the store is as the Rust command left it
+ok record: gate fail import: no lock left
+ok record: parse fail: the tag, the rule and the path are the Rust command's
+ok record: parse fail: the store is as the Rust command left it
+ok record: parse fail: no lock left
+ok record: detached
+ok record: detached: HEAD moved to the change, as the Rust command moves it
+ok record: from a subdirectory
+ok record: from a subdirectory: the store is as the Rust command left it
+ok record: nothing in an empty repository
+ok record, empty and nothing (exit 1)
+ok record: nothing in an empty repository: the store is as the Rust command left it
+ok record: first change of an empty repository
+ok record: first change: the store is as the Rust command left it
+ok record with the lock held: lock-held with its pid
+ok record, lock held (exit 1)
+ok a held lock is left
+ok record --dry-run does not take the lock
+ok record, nothing changed (exit 0)
+ok record, a gate refusal (exit 1)
+ok record, nothing selected (exit 1)
+ok record, a bad time (exit 1)
+ok record, a wrong expect (exit 1)

@@ -942,13 +942,11 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
     }
     let now = clock_unix_ms(clock) / 1000;
     var time = now;
+    var bad_time = false;
     let (time_at, time_off) = named(args, "--time");
     if time_at >= 0 {
         let (valid, t) = vcsrecord.time_of(value_of(args, time_at, time_off));
-        if !valid {
-            buffer.drop(heap, selected);
-            return refused(heap, io, "record", "`--time` is unix seconds", "bad-argument");
-        }
+        bad_time = !valid;
         time = t;
     }
     let (author_at, author_off) = named(args, "--author");
@@ -993,7 +991,7 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
                         borrow session as &nb in {
                             borrow issue as &ib in {
                                 borrow expect as &eb in {
-                                    let answer = vcsrecord.record_command(heap, io, root, vcs, contents(s), buffer.bytes(sb), buffer.bytes(ab), has_intent, buffer.bytes(pb), buffer.bytes(mb), buffer.bytes(nb), buffer.bytes(ib), buffer.bytes(eb), options.dry, no_gate, time, now);
+                                    let answer = vcsrecord.record_command(heap, io, root, vcs, contents(s), buffer.bytes(sb), buffer.bytes(ab), has_intent, buffer.bytes(pb), buffer.bytes(mb), buffer.bytes(nb), buffer.bytes(ib), buffer.bytes(eb), options.dry, no_gate, bad_time, time, now);
                                     let (doc, status, errno) = vcsstore.parts(answer);
                                     if status == 15 {
                                         var lock = buffer.append(heap, buffer.empty(heap, len(rootpath) + 24), rootpath);
@@ -1014,6 +1012,9 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
                                             buffer.drop(heap, said);
                                         }
                                         code = 1;
+                                        buffer.drop(heap, doc);
+                                    } else if status == 52 {
+                                        code = refused(heap, io, "record", "`--time` is unix seconds", "bad-argument");
                                         buffer.drop(heap, doc);
                                     } else if status == 50 {
                                         code = refused(heap, io, "record", "the repository is empty and so is the working copy", "nothing-to-record");

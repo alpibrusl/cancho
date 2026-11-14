@@ -1,0 +1,8 @@
+{
+  "command": "record",
+  "ok": false,
+  "refused": {
+    "message": "the repository is empty and so is the working copy",
+    "tag": "nothing-to-record"
+  }
+}

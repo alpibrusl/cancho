@@ -3,14 +3,14 @@ module selfhost.vcsrecord;
 
 // vcsrecord.cho -- the `record` command of `cancho vcs` (`docs/vcs-routing.md` section 10, slice R8; the Rust command is `cmd_record` and `commit_tree`, `crates/cancho/src/vcs_record.rs`).
 //
-//   record_command(heap, io, root, vcs, scratch, selected, author, has_intent, prompt, model, session, issue, expect, dry, no_gate, time, now)
+//   record_command(heap, io, root, vcs, scratch, selected, author, has_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, time, now)
 //
 // `selected` is the paths to record, relative to the root, one to a line, the root itself (`--all`) as an empty line. The working copy is scanned and diffed against HEAD's tree; each difference
 // under a selected path is taken into a new tree (HEAD's tree with those differences applied), the gate checks the `.cho` files among them, the declarations and text edits of the move are derived
 // (`vcsdecl.cho`), and the change (`vcschange.cho`, byte for byte what the Rust command writes, so the same state, `--time` and `--author` give the same ids) is stored and the branch moved to it.
 //
 // The answer is `vcsstore.Object`: the document in `bytes`, status 0; or a refusal: 50 `nothing-to-record`, 51 `gate-failed` (`bytes` is `PATH`, a NUL, the rule's tag, a NUL, its sentence), 14
-// `ref-moved` (the branch's current change in `bytes`), 15 `lock-held` (the lock's text), 18..22 a revision (`--expect`), the scan's statuses, 10 `io` with the errno.
+// `ref-moved` (the branch's current change in `bytes`), 52 `bad-argument` (`bad_time`: the `--time` was not a number, which is only refused when there is a change to make, as in Rust), 15 `lock-held` (the lock's text), 18..22 a revision (`--expect`), the scan's statuses, 10 `io` with the errno.
 //
 // **Known differences** (section 10): a refusal's message by the gate is the native checker's sentence, where the Rust command gives the library's; the lock is stamped `0 NOW` (no `getpid`);
 // two modules of a file declaring one type name keep the last by ids, not by position (`vcsdecl.cho`); the gate does not run on a file the change deletes (as Rust).
@@ -850,7 +850,7 @@ fn store[&h, &r, &d, &s, &t, &q, &c, &i, &b, &e, &x, &y](heap: &!h Heap, root: &
 }
 
 // The rest of `record` once the new tree differs from HEAD's: the gate, the declarations and edits, the change, and (unless `dry`) the storing.
-fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], touched: &p [byte], diffs: &q [byte], head_id: &e [byte], has_branch: bool, branch: &b [byte], author: &a [byte], has_intent: bool, prompt: &m [byte], model: &n [byte], session: &u [byte], issue: &w [byte], expect: &x [byte], dry: bool, no_gate: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, file_read, file_write] vcsstore.Object {
+fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], touched: &p [byte], diffs: &q [byte], head_id: &e [byte], has_branch: bool, branch: &b [byte], author: &a [byte], has_intent: bool, prompt: &m [byte], model: &n [byte], session: &u [byte], issue: &w [byte], expect: &x [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, file_read, file_write] vcsstore.Object {
     var checked = buffer.empty(heap, 0);
     if !no_gate {
         let g = gate(heap, io, root, vcs, scratch, tree, touched);
@@ -868,6 +868,12 @@ fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x](heap:
     }
     let derived = derive(heap, io, root, vcs, scratch, diffs);
     let Derived { decls, ndecls, edits, nedits } = derived;
+    if bad_time {
+        buffer.drop(heap, decls);
+        buffer.drop(heap, edits);
+        buffer.drop(heap, checked);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 52, errno: 0 };
+    }
     let tid = vcsobj.object_id(heap, scratch, "tree", tree, buffer.empty(heap, 64));
     var cbytes = buffer.empty(heap, 0);
     borrow tid as &tb in {
@@ -938,7 +944,7 @@ fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x](heap:
 }
 
 // `record`: see the header. `time` is the change's own time; `now` the Unix time in seconds, for the lock's stamp and the ref's log.
-pub fn record_command[&h, &i, &r, &d, &s, &x, &a, &p, &m, &n, &u, &e](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], selected: &x [byte], author: &a [byte], has_intent: bool, prompt: &p [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &e [byte], dry: bool, no_gate: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, file_read, file_write] vcsstore.Object {
+pub fn record_command[&h, &i, &r, &d, &s, &x, &a, &p, &m, &n, &u, &e](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], selected: &x [byte], author: &a [byte], has_intent: bool, prompt: &p [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &e [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, file_read, file_write] vcsstore.Object {
     let head = vcsstatus.head_info(heap, vcs);
     let (branch, has_branch, head_id, hstatus) = vcsstatus.head_parts(head);
     var head_tree = buffer.empty(heap, 0);
@@ -997,7 +1003,7 @@ pub fn record_command[&h, &i, &r, &d, &s, &x, &a, &p, &m, &n, &u, &e](heap: &!h 
                     borrow tree as &tb in {
                         borrow touched as &pb in {
                             borrow diffs as &qb in {
-                                answer = changed(heap, io, root, vcs, scratch, buffer.bytes(tb), buffer.bytes(pb), buffer.bytes(qb), buffer.bytes(ib), has_branch, buffer.bytes(bb), author, has_intent, prompt, model, session, issue, expect, dry, no_gate, time, now);
+                                answer = changed(heap, io, root, vcs, scratch, buffer.bytes(tb), buffer.bytes(pb), buffer.bytes(qb), buffer.bytes(ib), has_branch, buffer.bytes(bb), author, has_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, time, now);
                             }
                         }
                     }

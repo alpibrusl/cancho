@@ -1,0 +1,31 @@
+{
+  "branch": "main",
+  "change": "47fb2620ccc73da8bec15d9140c10de2c84359ede937877f34f6dd4534bb619c",
+  "command": "record",
+  "decls": [
+    {
+      "kind": "signature-changed",
+      "name": "fn a.twice",
+      "path": "a.cho"
+    }
+  ],
+  "dry_run": false,
+  "edits": 0,
+  "gate": {
+    "checked": [
+      "a.cho"
+    ],
+    "ran": true
+  },
+  "intent": null,
+  "ok": true,
+  "parents": [
+    "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e"
+  ],
+  "recorded": true,
+  "touched": [
+    "a.cho"
+  ],
+  "tree": "f208e55efe43683f43ad88c291fe005ab0118aef6f3361927fd670cda56f639b",
+  "unchanged": false
+}
