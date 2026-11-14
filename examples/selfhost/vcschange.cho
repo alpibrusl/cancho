@@ -79,6 +79,16 @@ pub fn intent[&h, &p, &m, &s, &i](heap: &!h Heap, out: buffer.Buffer, prompt: &p
     return buffer.push(heap, b, byte_of(125));
 }
 
+// As `intent`, with `prompt` already escaped as JSON text (what `show` reads back from a change: `subject` answers the text as written).
+pub fn intent_escaped[&h, &p, &m, &s, &i](heap: &!h Heap, out: buffer.Buffer, prompt: &p [byte], model: &m [byte], session: &s [byte], issue: &i [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, ",\"intent\":{\"prompt\":\"");
+    b = buffer.push(heap, buffer.append(heap, b, prompt), byte_of(34));
+    b = optional(heap, b, "model", model);
+    b = optional(heap, b, "session", session);
+    b = optional(heap, b, "issue", issue);
+    return buffer.push(heap, b, byte_of(125));
+}
+
 // A list of objects or strings, under the key `name`: `,"name":[`, the items (each says whether it is the first), then `]`.
 pub fn list_open[&h, &k](heap: &!h Heap, out: buffer.Buffer, name: &k [byte]) -> [heap] buffer.Buffer {
     var b = buffer.push(heap, out, byte_of(44));

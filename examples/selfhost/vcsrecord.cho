@@ -90,7 +90,7 @@ fn diff_line[&h, &a, &b, &p](heap: &!h Heap, out: buffer.Buffer, head: &a [byte]
     return buffer.push(heap, buffer.append(heap, d, path), byte_of(10));
 }
 
-fn merge[&h, &a, &b, &s](heap: &!h Heap, head: &a [byte], work: &b [byte], selected: &s [byte]) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+pub fn merge[&h, &a, &b, &s](heap: &!h Heap, head: &a [byte], work: &b [byte], selected: &s [byte]) -> [heap] (buffer.Buffer, buffer.Buffer, buffer.Buffer) {
     var tree = buffer.empty(heap, len(head) + len(work) + 1);
     var touched = buffer.empty(heap, 0);
     var diffs = buffer.empty(heap, 0);
@@ -188,7 +188,7 @@ fn modules_of[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte]) -> [heap,
 }
 
 // Whether `line` is one of the lines of `lines`.
-fn has_line[&l, &x](lines: &l [byte], line: &x [byte]) -> [] bool {
+pub fn has_line[&l, &x](lines: &l [byte], line: &x [byte]) -> [] bool {
     var at = 0;
     while at < len(lines) {
         let end = vcsscan.line_end(lines, at);
@@ -599,10 +599,14 @@ fn derive[&h, &i, &r, &d, &s, &q](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs:
 // ---- the change and its document ---------------------------------------------------------------------------------------------
 
 // The change object's bytes.
-fn change_bytes[&h, &t, &p, &a, &r, &m, &n, &u, &x, &y](heap: &!h Heap, tree_id: &t [byte], parent: &p [byte], author: &a [byte], time: int, has_intent: bool, prompt: &r [byte], model: &m [byte], session: &n [byte], issue: &u [byte], decls: &x [byte], ndecls: int, edits: &y [byte], nedits: int, gate_count: int, gated: bool) -> [heap] buffer.Buffer {
+fn change_bytes[&h, &t, &p, &a, &r, &m, &n, &u, &x, &y](heap: &!h Heap, tree_id: &t [byte], parent: &p [byte], author: &a [byte], time: int, has_intent: bool, prompt: &r [byte], model: &m [byte], session: &n [byte], issue: &u [byte], decls: &x [byte], ndecls: int, edits: &y [byte], nedits: int, gate_count: int, gated: bool, prompt_raw: bool) -> [heap] buffer.Buffer {
     var c = vcschange.open(heap, buffer.empty(heap, 512), tree_id, parent, author, time, "+0000");
     if has_intent {
-        c = vcschange.intent(heap, c, prompt, model, session, issue);
+        if prompt_raw {
+            c = vcschange.intent_escaped(heap, c, prompt, model, session, issue);
+        } else {
+            c = vcschange.intent(heap, c, prompt, model, session, issue);
+        }
     }
     if ndecls > 0 {
         c = vcschange.decls_open(heap, c);
@@ -720,6 +724,13 @@ fn store_blob[&h, &r, &d, &s, &l](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scr
         return (0, 0);
     }
     let path = line[144..len(line)];
+    // A blob the store already has (a revert puts back what an earlier change had) needs no file to read.
+    let have = vcsstore.get(heap, vcs, scratch, "blob", line[79..143]);
+    let (held, hs, he) = vcsstore.parts(have);
+    buffer.drop(heap, held);
+    if hs == 0 {
+        return (0, 0);
+    }
     var text = buffer.empty(heap, 0);
     var status = 0;
     var errno = 0;
@@ -750,7 +761,7 @@ fn store_blob[&h, &r, &d, &s, &l](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scr
 }
 
 // Under the lock: HEAD read again, the blobs, the tree and the change stored, and the branch (or a detached HEAD) moved to the change. 0, or the refusal's status (14 with the current id in `bytes`).
-fn store[&h, &r, &d, &s, &t, &q, &c, &i, &b, &e, &x, &y](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], diffs: &q [byte], change: &c [byte], tree_id: &x [byte], change_id: &y [byte], head_id: &i [byte], has_branch: bool, branch: &b [byte], expect: &e [byte], now: int) -> [heap, dir_read, dir_write, file_read, file_write] vcsstore.Object {
+fn store[&h, &r, &d, &s, &t, &q, &c, &i, &b, &e, &x, &y](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], diffs: &q [byte], change: &c [byte], tree_id: &x [byte], change_id: &y [byte], head_id: &i [byte], has_branch: bool, branch: &b [byte], expect: &e [byte], note: &static [byte], now: int) -> [heap, dir_read, dir_write, file_read, file_write] vcsstore.Object {
     var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
     let again = vcsstatus.head_info(heap, vcs);
     let (b2, hb2, id2, s2) = vcsstatus.head_parts(again);
@@ -816,7 +827,7 @@ fn store[&h, &r, &d, &s, &t, &q, &c, &i, &b, &e, &x, &y](heap: &!h Heap, root: &
             name = buffer.append(heap, name, branch);
             borrow name as &nb in {
                 borrow want as &wb in {
-                    let moved_to = vcsstore.update_ref(heap, vcs, buffer.bytes(nb), kind, buffer.bytes(wb), change_id, "record", now);
+                    let moved_to = vcsstore.update_ref(heap, vcs, buffer.bytes(nb), kind, buffer.bytes(wb), change_id, note, now);
                     let (cur, us, ue) = vcsstore.parts(moved_to);
                     if us != 0 {
                         let (old, os, oe) = vcsstore.parts(answer);
@@ -850,7 +861,11 @@ fn store[&h, &r, &d, &s, &t, &q, &c, &i, &b, &e, &x, &y](heap: &!h Heap, root: &
 }
 
 // The rest of `record` once the new tree differs from HEAD's: the gate, the declarations and edits, the change, and (unless `dry`) the storing.
-fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], touched: &p [byte], diffs: &q [byte], head_id: &e [byte], has_branch: bool, branch: &b [byte], author: &a [byte], has_intent: bool, prompt: &m [byte], model: &n [byte], session: &u [byte], issue: &w [byte], expect: &x [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, file_read, file_write] vcsstore.Object {
+pub fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], touched: &p [byte], diffs: &q [byte], head_id: &e [byte], has_branch: bool, branch: &b [byte], author: &a [byte], has_intent: bool, prompt: &m [byte], model: &n [byte], session: &u [byte], issue: &w [byte], expect: &x [byte], dry: bool, no_gate: bool, bad_time: bool, revert: bool, prompt_raw: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, file_read, file_write] vcsstore.Object {
+    var note = "record";
+    if revert {
+        note = "revert";
+    }
     var checked = buffer.empty(heap, 0);
     if !no_gate {
         let g = gate(heap, io, root, vcs, scratch, tree, touched);
@@ -880,7 +895,7 @@ fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x](heap:
         borrow decls as &db in {
             borrow edits as &eb in {
                 buffer.drop(heap, cbytes);
-                cbytes = change_bytes(heap, buffer.bytes(tb), head_id, author, time, has_intent, prompt, model, session, issue, buffer.bytes(db), ndecls, buffer.bytes(eb), nedits, count, !no_gate);
+                cbytes = change_bytes(heap, buffer.bytes(tb), head_id, author, time, has_intent, prompt, model, session, issue, buffer.bytes(db), ndecls, buffer.bytes(eb), nedits, count, !no_gate, prompt_raw);
             }
         }
     }
@@ -914,7 +929,7 @@ fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x](heap:
                     if !dry {
                         let (old, os, oe) = vcsstore.parts(stored);
                         buffer.drop(heap, old);
-                        stored = store(heap, root, vcs, scratch, tree, diffs, buffer.bytes(cb), buffer.bytes(tb), buffer.bytes(ib), head_id, has_branch, branch, expect, now);
+                        stored = store(heap, root, vcs, scratch, tree, diffs, buffer.bytes(cb), buffer.bytes(tb), buffer.bytes(ib), head_id, has_branch, branch, expect, note, now);
                     }
                     let (sb, ss, se) = vcsstore.parts(stored);
                     let (old, os, oe) = vcsstore.parts(answer);
@@ -923,8 +938,12 @@ fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x](heap:
                         answer = vcsstore.Object { bytes: sb, status: ss, errno: se };
                     } else {
                         buffer.drop(heap, sb);
-                        borrow checked as &kb in {
-                            answer = vcsstore.Object { bytes: document(heap, buffer.bytes(cb), buffer.bytes(ib), has_branch, branch, touched, buffer.bytes(kb), !no_gate, !dry, dry, false), status: 0, errno: 0 };
+                        if revert {
+                            answer = vcsstore.Object { bytes: buffer.append(heap, buffer.empty(heap, 64), buffer.bytes(ib)), status: 0, errno: 0 };
+                        } else {
+                            borrow checked as &kb in {
+                                answer = vcsstore.Object { bytes: document(heap, buffer.bytes(cb), buffer.bytes(ib), has_branch, branch, touched, buffer.bytes(kb), !no_gate, !dry, dry, false), status: 0, errno: 0 };
+                            }
                         }
                     }
                     if held {
@@ -1003,7 +1022,7 @@ pub fn record_command[&h, &i, &r, &d, &s, &x, &a, &p, &m, &n, &u, &e](heap: &!h 
                     borrow tree as &tb in {
                         borrow touched as &pb in {
                             borrow diffs as &qb in {
-                                answer = changed(heap, io, root, vcs, scratch, buffer.bytes(tb), buffer.bytes(pb), buffer.bytes(qb), buffer.bytes(ib), has_branch, buffer.bytes(bb), author, has_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, time, now);
+                                answer = changed(heap, io, root, vcs, scratch, buffer.bytes(tb), buffer.bytes(pb), buffer.bytes(qb), buffer.bytes(ib), has_branch, buffer.bytes(bb), author, has_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, false, false, time, now);
                             }
                         }
                     }
