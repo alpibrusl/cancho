@@ -1,0 +1,139 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": " ",
+              "text": "1\n"
+            },
+            {
+              "op": " ",
+              "text": "2\n"
+            },
+            {
+              "op": "-",
+              "text": "3\n"
+            },
+            {
+              "op": "+",
+              "text": "THREE\n"
+            },
+            {
+              "op": " ",
+              "text": "4\n"
+            },
+            {
+              "op": " ",
+              "text": "5\n"
+            },
+            {
+              "op": " ",
+              "text": "6\n"
+            },
+            {
+              "op": " ",
+              "text": "7\n"
+            },
+            {
+              "op": " ",
+              "text": "8\n"
+            },
+            {
+              "op": " ",
+              "text": "9\n"
+            },
+            {
+              "op": " ",
+              "text": "10\n"
+            },
+            {
+              "op": " ",
+              "text": "11\n"
+            }
+          ],
+          "new_lines": 11,
+          "new_start": 1,
+          "old_lines": 11,
+          "old_start": 1
+        },
+        {
+          "lines": [
+            {
+              "op": " ",
+              "text": "17\n"
+            },
+            {
+              "op": " ",
+              "text": "18\n"
+            },
+            {
+              "op": " ",
+              "text": "19\n"
+            },
+            {
+              "op": " ",
+              "text": "20\n"
+            },
+            {
+              "op": " ",
+              "text": "21\n"
+            },
+            {
+              "op": " ",
+              "text": "22\n"
+            },
+            {
+              "op": " ",
+              "text": "23\n"
+            },
+            {
+              "op": " ",
+              "text": "24\n"
+            },
+            {
+              "op": "-",
+              "text": "25\n"
+            },
+            {
+              "op": "+",
+              "text": "TWENTYFIVE\n"
+            },
+            {
+              "op": " ",
+              "text": "26\n"
+            },
+            {
+              "op": " ",
+              "text": "27\n"
+            },
+            {
+              "op": " ",
+              "text": "28\n"
+            },
+            {
+              "op": " ",
+              "text": "29\n"
+            },
+            {
+              "op": " ",
+              "text": "30\n"
+            }
+          ],
+          "new_lines": 14,
+          "new_start": 17,
+          "old_lines": 14,
+          "old_start": 17
+        }
+      ],
+      "path": "big.txt",
+      "status": "modified"
+    }
+  ],
+  "from": "HEAD",
+  "ok": true,
+  "to": "working copy"
+}

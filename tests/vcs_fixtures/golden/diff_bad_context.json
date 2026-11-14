@@ -1,0 +1,8 @@
+{
+  "command": "diff",
+  "ok": false,
+  "refused": {
+    "message": "`--context` is a count",
+    "tag": "bad-argument"
+  }
+}

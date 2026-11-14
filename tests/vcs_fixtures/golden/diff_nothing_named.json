@@ -1,0 +1,7 @@
+{
+  "command": "diff",
+  "files": [],
+  "from": "HEAD",
+  "ok": true,
+  "to": "working copy"
+}

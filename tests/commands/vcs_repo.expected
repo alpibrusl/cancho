@@ -533,3 +533,60 @@ ok revert, a first change (exit 1)
 ok revert, no change named (exit 1)
 ok revert (exit 0)
 ok revert: the log of the branch says revert
+== diff
+ok diff: clean
+ok diff: rev
+ok diff: revs
+ok diff: revs back
+ok diff: same
+ok diff: id prefix
+ok diff: path
+ok diff: path dir
+ok diff: paths two
+ok diff: root dot
+ok diff: context 0
+ok diff: context 1
+ok diff: context 9
+ok diff: modified
+ok diff: no newline
+ok diff: unicode
+ok diff: added
+ok diff: added exec
+ok diff: added binary
+ok diff: deleted
+ok diff: deleted all
+ok diff: mode
+ok diff: mode and text
+ok diff: link added
+ok diff: link changed
+ok diff: file to link
+ok diff: link to file
+ok diff: wide branch
+ok diff: wide wc
+ok diff: cho body
+ok diff: cho added
+ok diff: cho signature
+ok diff: cho removed
+ok diff: cho deleted
+ok diff: cho unparsable
+ok diff: cho unparsable before
+ok diff: bad context
+ok diff: bad context negative
+ok diff: outside
+ok diff: nothing named
+ok diff: revision as path
+ok diff: file named like a branch
+ok diff: file named like a branch second
+ok diff: third revision is a path
+ok diff: unknown option
+ok diff: context no value
+ok diff: not a repository
+ok diff: from a subdirectory
+ok diff: . from a subdirectory
+ok diff: a directory from its parent
+ok diff: two hunks
+ok diff: two hunks joined
+ok diff: two hunks none
+ok diff: gap equal
+ok diff: gap over
+ok diff: directory named like a branch
