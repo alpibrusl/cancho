@@ -1,0 +1,39 @@
+{
+  "attestations": [
+    "gate:cancho-check:ok:0"
+  ],
+  "author": "Bob <bob@example.com>",
+  "change": "d27ccf50506dffa66b683dce3f95f504af9fc93e173b5c5c1a503b2e944826a3",
+  "command": "show",
+  "decls": [],
+  "edits": [],
+  "files": [
+    {
+      "path": "extra.txt",
+      "state": "mode"
+    }
+  ],
+  "intent": {
+    "prompt": "mode",
+    "session": "s2"
+  },
+  "ok": true,
+  "parents": [
+    "45f5df9d386d6a266bd28435897bf06a02968bbfebf500d52648d30b62ae4686"
+  ],
+  "patch": [
+    {
+      "binary": false,
+      "mode": {
+        "new": "100755",
+        "old": "100644"
+      },
+      "path": "extra.txt",
+      "status": "mode"
+    }
+  ],
+  "subject": "mode",
+  "time": 2002,
+  "tree": "8220cbaf93d720949923449d5f99724dab905acc92e8d5832269fa3b58c27f8f",
+  "tz": "+0000"
+}

@@ -1,0 +1,19 @@
+{
+  "changes": [
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "960fd3a813e8e05e68c304a1ea92bf374b61dd07399c70166822fd6e6c7b716f",
+      "intent": {
+        "model": "m1",
+        "prompt": "first",
+        "session": "s1"
+      },
+      "parents": [],
+      "subject": "first",
+      "time": 1000,
+      "tz": "+0000"
+    }
+  ],
+  "command": "log",
+  "ok": true
+}

@@ -1,0 +1,35 @@
+{
+  "changes": [
+    {
+      "author": "Bob <bob@example.com>",
+      "change": "d27ccf50506dffa66b683dce3f95f504af9fc93e173b5c5c1a503b2e944826a3",
+      "intent": {
+        "prompt": "mode",
+        "session": "s2"
+      },
+      "parents": [
+        "45f5df9d386d6a266bd28435897bf06a02968bbfebf500d52648d30b62ae4686"
+      ],
+      "subject": "mode",
+      "time": 2002,
+      "tz": "+0000"
+    },
+    {
+      "author": "Bob <bob@example.com>",
+      "change": "0cdd3c659e4684df9b47a50c0e2093c90661d5a45f421f71791b5477e22c108a",
+      "intent": {
+        "issue": "9",
+        "prompt": "bob adds extra",
+        "session": "s2"
+      },
+      "parents": [
+        "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e"
+      ],
+      "subject": "bob adds extra",
+      "time": 2000,
+      "tz": "+0000"
+    }
+  ],
+  "command": "log",
+  "ok": true
+}

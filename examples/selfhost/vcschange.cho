@@ -22,6 +22,7 @@ import std.buffer;
 import std.bytes;
 import selfhost.jsonread;
 import selfhost.jsonwrite;
+import selfhost.lexcore as lc;
 import selfhost.vcsobj;
 
 // ---- writing -----------------------------------------------------------------------------------------------------------------
@@ -271,6 +272,46 @@ pub fn intent_part[&j, &x, &k](jm: &!j [int], src: &x [byte], name: &k [byte]) -
         return src[0..0];
     }
     return raw(jm, src, id);
+}
+
+// Whether the string `id`, decoded, has `query` in it (`exact` false) or is it (`exact` true); false when `id` is not a string.
+fn decoded_matches[&j, &x, &q](jm: &!j [int], src: &x [byte], id: int, query: &q [byte], exact: bool) -> [] bool {
+    if !is_text(jm, id) {
+        return false;
+    }
+    let base = jsonread.scratch0(jm);
+    let n = jsonread.decode_into(jm, src, id, base);
+    let m = len(query);
+    if m > n || exact && m != n {
+        return false;
+    }
+    var at = 0;
+    while at + m <= n {
+        var k = 0;
+        while k < m && jm[base + at + k] == lc.at(query, k) {
+            k = k + 1;
+        }
+        if k == m {
+            return true;
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// Whether the author has `query` in it (Rust: `author.contains(q)`).
+pub fn author_has[&j, &x, &q](jm: &!j [int], src: &x [byte], query: &q [byte]) -> [] bool {
+    return decoded_matches(jm, src, field(jm, src, jm[1], "author"), query, false);
+}
+
+// Whether the change has an intent whose prompt has `query` in it.
+pub fn prompt_has[&j, &x, &q](jm: &!j [int], src: &x [byte], query: &q [byte]) -> [] bool {
+    return decoded_matches(jm, src, field(jm, src, field(jm, src, jm[1], "intent"), "prompt"), query, false);
+}
+
+// Whether the change has an intent whose string `name` (`session` or `issue`) is `query`.
+pub fn intent_is[&j, &x, &k, &q](jm: &!j [int], src: &x [byte], name: &k [byte], query: &q [byte]) -> [] bool {
+    return decoded_matches(jm, src, field(jm, src, field(jm, src, jm[1], "intent"), name), query, true);
 }
 
 // How many items the list `name` (`decls`, `edits`, `attestations`) has; 0 when absent.

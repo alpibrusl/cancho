@@ -298,5 +298,54 @@ here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==25{pri
 here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==8{print "EIGHT";next}{print}' big.txt > b2; mv b2 big.txt; dfj --context 2 > "$g/diff_gap_equal.json" || true
 here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==9{print "NINE";next}{print}' big.txt > b2; mv b2 big.txt; dfj --context 2 > "$g/diff_gap_over.json" || true
 here; mkdir main; printf 'x\n' > main/f; dfj main > "$g/diff_directory_named_like_a_branch.json" || true
+# log filters and show --patch (R11): the Rust command wrote each. `many` is the repository with three more changes by other authors.
+lgj() { "$R" vcs log "$@" --output json; }
+shj() { "$R" vcs show "$@" --output json; }
+many() { here; printf 'x\n' > extra.txt; "$R" vcs record --all --author "Bob <bob@example.com>" --time 2000 --intent-prompt "bob adds extra" --intent-session s2 --intent-issue 9 --output json > /dev/null; printf 'y\n' >> extra.txt; "$R" vcs record --all --author "Cy" --time 2001 --intent-prompt 'say "hi" \ x' --output json > /dev/null; chmod +x extra.txt; "$R" vcs record --all --author "Bob <bob@example.com>" --time 2002 --intent-prompt mode --intent-session s2 --output json > /dev/null; }
+here; lgj --path a.cho > "$g/log_path_file.json" || true
+here; lgj --path notes.md > "$g/log_path_notes.json" || true
+here; lgj --path nonesuch > "$g/log_path_none.json" || true
+here; lgj --path . > "$g/log_path_root.json" || true
+here; lgj --path sub > "$g/log_path_dir.json" || true
+here; lgj --path=notes.md > "$g/log_path_inline.json" || true
+here; lgj --path notes.md --limit 1 > "$g/log_path_limit.json" || true
+here; lgj HEAD~1 --path notes.md > "$g/log_path_from_rev.json" || true
+wide; lgj wide --path a.cho > "$g/log_path_wide_deleted.json" || true
+wide; lgj wide --path notes.md > "$g/log_path_wide_mode.json" || true
+wide; lgj wide --path lnk > "$g/log_path_wide_link.json" || true
+wide; lgj wide --path sub/deep/x.txt > "$g/log_path_wide_nested.json" || true
+here; lgj --intent second > "$g/log_intent.json" || true
+here; lgj --intent '' > "$g/log_intent_empty.json" || true
+here; lgj --intent nothing > "$g/log_intent_none.json" || true
+here; lgj --intent 'third: n' > "$g/log_intent_colon.json" || true
+here; lgj --session s1 > "$g/log_session.json" || true
+here; lgj --session s > "$g/log_session_none.json" || true
+here; lgj --issue 7 > "$g/log_issue.json" || true
+here; lgj --issue '' > "$g/log_issue_empty.json" || true
+here; lgj --author Ada > "$g/log_author.json" || true
+here; lgj --author '<ada@' > "$g/log_author_angle.json" || true
+here; lgj --author Bob > "$g/log_author_none.json" || true
+here; lgj --author '' > "$g/log_author_empty.json" || true
+here; lgj --author Ada --issue 7 > "$g/log_two_filters.json" || true
+here; lgj --author Ada --issue 7 --intent sec --path a.cho > "$g/log_all_filters.json" || true
+many; lgj --author Bob > "$g/log_many_author.json" || true
+many; lgj --session s2 > "$g/log_many_session.json" || true
+many; lgj --session s2 --limit 1 > "$g/log_many_session_limit.json" || true
+many; lgj --path extra.txt > "$g/log_many_path_mode.json" || true
+many; lgj --intent 'say "hi"' > "$g/log_many_quoted.json" || true
+many; lgj --intent '\ x' --author Cy > "$g/log_many_escape.json" || true
+here; lgj --limit x --path ../outside > "$g/log_bad_limit_and_path.json" || true
+here; lgj --path ../outside > "$g/refuse_log_path_outside.json" || true
+here; lgj nosuchbranch --path ../outside > "$g/refuse_log_path_outside_bad_revision.json" || true
+here; shj --patch > "$g/show_patch.json" || true
+here; shj HEAD~1 --patch > "$g/show_patch_parent.json" || true
+here; shj HEAD~2 --patch > "$g/show_patch_root.json" || true
+here; shj --patch HEAD~2 > "$g/show_patch_first.json" || true
+wide; shj --patch wide > "$g/show_patch_wide.json" || true
+many; shj --patch HEAD > "$g/show_patch_many_mode.json" || true
+here; shj --patch nosuchbranch > "$g/show_patch_bad_revision.json" || true
+longf() { here; seq 1 30 > big.txt; "$R" vcs record --all --author "Ada <ada@example.com>" --time 2000 --output json > /dev/null; awk 'NR==15{print "FIFTEEN";next}{print}' big.txt > b2; mv b2 big.txt; "$R" vcs record --all --author "Ada <ada@example.com>" --time 2001 --output json > /dev/null; }
+longf; shj --patch > "$g/show_patch_context.json" || true
+here; lgj --path notes.md --limit 0 > "$g/log_path_limit_0.json" || true
 rm -rf "$out/w" "$out/e"
 echo "made $out/three_changes and $out/golden"

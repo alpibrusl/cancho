@@ -1,0 +1,46 @@
+{
+  "changes": [
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e",
+      "intent": {
+        "prompt": "third: notes"
+      },
+      "parents": [
+        "9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442"
+      ],
+      "subject": "third: notes",
+      "time": 1002,
+      "tz": "+0000"
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442",
+      "intent": {
+        "issue": "7",
+        "prompt": "second"
+      },
+      "parents": [
+        "960fd3a813e8e05e68c304a1ea92bf374b61dd07399c70166822fd6e6c7b716f"
+      ],
+      "subject": "second",
+      "time": 1001,
+      "tz": "+0000"
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "960fd3a813e8e05e68c304a1ea92bf374b61dd07399c70166822fd6e6c7b716f",
+      "intent": {
+        "model": "m1",
+        "prompt": "first",
+        "session": "s1"
+      },
+      "parents": [],
+      "subject": "first",
+      "time": 1000,
+      "tz": "+0000"
+    }
+  ],
+  "command": "log",
+  "ok": true
+}

@@ -517,3 +517,49 @@ pub fn diff_command[&h, &i, &r, &d, &s, &f, &t, &x](heap: &!h Heap, io: &!i Io, 
     }
     return vcsstore.Object { bytes: doc, status: 0, errno: 0 };
 }
+
+// `show --patch`: the `show` document of the change `spec` names (HEAD when empty) with its `patch` member, the diff of its tree against its first parent's, 3 lines of context, as `diff` gives the files.
+pub fn show_patch_command[&h, &i, &r, &d, &s, &p](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], spec: &p [byte]) -> [heap, io_write, dir_read, dir_write, file_read] vcsstore.Object {
+    var name = spec;
+    if len(spec) == 0 {
+        name = "HEAD";
+    }
+    let r = vcsrepo.resolve(heap, vcs, scratch, name);
+    let (id, rs, re) = vcsstore.parts(r);
+    if rs != 0 {
+        return vcsstore.Object { bytes: id, status: rs, errno: re };
+    }
+    var answer = vcsrepo.failed(heap, 3);
+    borrow id as &ib in {
+        let (old_tree, new_tree, tc) = vcsrepo.change_trees(heap, vcs, scratch, buffer.bytes(ib));
+        var code = tc;
+        var patch = buffer.empty(heap, 0);
+        if code == 0 {
+            borrow old_tree as &ob in {
+                borrow new_tree as &nb in {
+                    let (files, fs) = files_array(heap, io, root, vcs, scratch, buffer.bytes(ob), buffer.bytes(nb), "", 3);
+                    buffer.drop(heap, patch);
+                    patch = files;
+                    code = fs;
+                }
+            }
+        }
+        buffer.drop(heap, old_tree);
+        buffer.drop(heap, new_tree);
+        if code != 0 {
+            let (old, os, oe) = vcsstore.parts(answer);
+            buffer.drop(heap, old);
+            answer = vcsrepo.failed(heap, code);
+        } else {
+            borrow patch as &pb in {
+                let doc = vcsrepo.show_document(heap, vcs, scratch, buffer.bytes(ib), true, buffer.bytes(pb));
+                let (old, os, oe) = vcsstore.parts(answer);
+                buffer.drop(heap, old);
+                answer = doc;
+            }
+        }
+        buffer.drop(heap, patch);
+    }
+    buffer.drop(heap, id);
+    return answer;
+}

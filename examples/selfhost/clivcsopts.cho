@@ -1,0 +1,242 @@
+edition 9;
+module selfhost.clivcsopts;
+
+// clivcsopts.cho -- the words after `cancho vcs COMMAND`, read into `Options` (split from `clivcsrepo.cho`, which keeps the commands): where each option's value is, and the usage errors for the ones that are not understood.
+
+import std.buffer;
+import std.bytes;
+import selfhost.lexcore as lc;
+import selfhost.clibase;
+
+// Where each option's value is: the index of its argument and the offset in it (0 when the value is the next argument, the place after `=` when it is inline), -1 when it was not given. `bad` is 0, or the status of
+// a usage error that has been said.
+pub struct Options {
+    bad: int,
+    repo_at: int,
+    repo_off: int,
+    branch_at: int,
+    branch_off: int,
+    limit_at: int,
+    limit_off: int,
+    rev_at: int,
+    name_at: int,
+    from_at: int,
+    from_off: int,
+    expect_at: int,
+    expect_off: int,
+    dry: bool,
+    create: bool,
+    detach: bool,
+    keep: bool,
+    discard: bool,
+    positionals: int,
+    patch: bool,
+    intent_at: int,
+    intent_off: int,
+    session_at: int,
+    session_off: int,
+    issue_at: int,
+    issue_off: int,
+    author_at: int,
+    author_off: int,
+    path_at: int,
+    path_off: int,
+}
+
+// `before`, `what` and `after`, said as a usage error.
+pub fn usage[&h, &i, &w](heap: &!h Heap, io: &!i Io, before: &static [byte], what: &w [byte], after: &static [byte]) -> [heap, err_write] int {
+    var message = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 96), before), what);
+    message = buffer.append(heap, message, after);
+    var status = 0;
+    borrow message as &mb in {
+        status = clibase.usage_error(heap, io, buffer.bytes(mb));
+    }
+    buffer.drop(heap, message);
+    return status;
+}
+
+// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show`, 3 for `branch`, 4 for `status`, 5 for `restore`, 6 for `switch`, 7 for `apply`, 8 for `unlock`, 9 for `record` and 10 for `revert`.
+pub fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: int) -> [heap, err_write, args] Options {
+    var bad = 0;
+    var repo_at = 0 - 1;
+    var repo_off = 0;
+    var branch_at = 0 - 1;
+    var branch_off = 0;
+    var limit_at = 0 - 1;
+    var limit_off = 0;
+    var rev_at = 0 - 1;
+    var name_at = 0 - 1;
+    var from_at = 0 - 1;
+    var from_off = 0;
+    var expect_at = 0 - 1;
+    var expect_off = 0;
+    var dry = false;
+    var create = false;
+    var detach = false;
+    var keep = false;
+    var discard = false;
+    var patch = false;
+    var intent_at = 0 - 1;
+    var intent_off = 0;
+    var session_at = 0 - 1;
+    var session_off = 0;
+    var issue_at = 0 - 1;
+    var issue_off = 0;
+    var author_at = 0 - 1;
+    var author_off = 0;
+    var path_at = 0 - 1;
+    var path_off = 0;
+    var positionals = 0;
+    var plain_only = false;
+    var n = 3;
+    while n < arg_count(args) && bad == 0 {
+        let word = arg(args, n);
+        if plain_only || len(word) < 2 || lc.at(word, 0) != '-' || lc.at(word, 1) != '-' {
+            positionals = positionals + 1;
+            if rev_at < 0 {
+                rev_at = n;
+            } else if name_at < 0 {
+                name_at = n;
+            }
+        } else if bytes.equal(word, "--") {
+            plain_only = true;
+        } else {
+            let eq = bytes.find(word, "=");
+            var key = word;
+            var inline = 0 - 1;
+            if eq >= 0 {
+                key = word[0..eq];
+                inline = eq + 1;
+            }
+            var takes = 0;
+            if bytes.equal(key, "--output") || bytes.equal(key, "--repo") {
+                takes = 1;
+            } else if bytes.equal(key, "--branch") && command == 0 {
+                takes = 1;
+            } else if bytes.equal(key, "--limit") && command == 1 {
+                takes = 1;
+            } else if bytes.equal(key, "--from") && command == 5 {
+                takes = 1;
+            } else if bytes.equal(key, "--context") && command == 11 {
+                takes = 1;
+            } else if (bytes.equal(key, "--from") || bytes.equal(key, "--expect")) && command == 3 {
+                takes = 1;
+            } else if (command == 9 || command == 10) && (bytes.equal(key, "--expect") || bytes.equal(key, "--author") || bytes.equal(key, "--time") || bytes.equal(key, "--intent-prompt") || bytes.equal(key, "--intent-model") || bytes.equal(key, "--intent-session") || bytes.equal(key, "--intent-issue")) {
+                takes = 1;
+            } else if (command == 9 || command == 10) && (bytes.equal(key, "--all") || bytes.equal(key, "--no-gate")) {
+                takes = 6;
+            } else if command == 1 && (bytes.equal(key, "--intent") || bytes.equal(key, "--session") || bytes.equal(key, "--issue") || bytes.equal(key, "--path") || bytes.equal(key, "--author")) {
+                takes = 2;
+            } else if command == 2 && bytes.equal(key, "--patch") {
+                takes = 3;
+            } else if bytes.equal(key, "--dry-run") {
+                takes = 4;
+            } else if command == 6 && (bytes.equal(key, "--create") || bytes.equal(key, "--detach") || bytes.equal(key, "--keep") || bytes.equal(key, "--discard")) {
+                takes = 5;
+            }
+            if takes == 0 {
+                bad = usage(heap, io, "unknown option `", key, "`");
+            } else if takes == 3 {
+                patch = true;
+            } else if takes == 4 {
+                dry = true;
+            } else if takes == 6 {
+                // `--all` and `--no-gate` of `record` are read from the words themselves (`record_in`).
+            } else if takes == 5 {
+                if bytes.equal(key, "--create") {
+                    create = true;
+                } else if bytes.equal(key, "--detach") {
+                    detach = true;
+                } else if bytes.equal(key, "--keep") {
+                    keep = true;
+                } else {
+                    discard = true;
+                }
+            } else {
+                var at = n;
+                var off = inline;
+                if inline < 0 {
+                    if n + 1 >= arg_count(args) {
+                        bad = usage(heap, io, "`", key, "` needs a value");
+                    } else {
+                        n = n + 1;
+                        at = n;
+                        off = 0;
+                    }
+                }
+                if bad == 0 {
+                    if takes == 2 {
+                        if bytes.equal(key, "--intent") {
+                            intent_at = at;
+                            intent_off = off;
+                        } else if bytes.equal(key, "--session") {
+                            session_at = at;
+                            session_off = off;
+                        } else if bytes.equal(key, "--issue") {
+                            issue_at = at;
+                            issue_off = off;
+                        } else if bytes.equal(key, "--author") {
+                            author_at = at;
+                            author_off = off;
+                        } else {
+                            path_at = at;
+                            path_off = off;
+                        }
+                    } else if bytes.equal(key, "--output") {
+                        let given = arg(args, at);
+                        if !bytes.equal(given[off..len(given)], "json") {
+                            bad = usage(heap, io, "`--output` is `json`, the only form", "", "");
+                        }
+                    } else if bytes.equal(key, "--repo") {
+                        repo_at = at;
+                        repo_off = off;
+                    } else if bytes.equal(key, "--branch") {
+                        branch_at = at;
+                        branch_off = off;
+                    } else if bytes.equal(key, "--from") {
+                        from_at = at;
+                        from_off = off;
+                    } else if bytes.equal(key, "--expect") {
+                        expect_at = at;
+                        expect_off = off;
+                    } else {
+                        limit_at = at;
+                        limit_off = off;
+                    }
+                }
+            }
+        }
+        n = n + 1;
+    }
+    return Options { bad: bad, repo_at: repo_at, repo_off: repo_off, branch_at: branch_at, branch_off: branch_off, limit_at: limit_at, limit_off: limit_off, rev_at: rev_at, name_at: name_at, from_at: from_at, from_off: from_off, expect_at: expect_at, expect_off: expect_off, dry: dry, create: create, detach: detach, keep: keep, discard: discard, positionals: positionals, patch: patch, intent_at: intent_at, intent_off: intent_off, session_at: session_at, session_off: session_off, issue_at: issue_at, issue_off: issue_off, author_at: author_at, author_off: author_off, path_at: path_at, path_off: path_off };
+}
+
+// The value at argument `at`, from `off`.
+pub fn value_of[&a](args: &a Args, at: int, off: int) -> [args] &a [byte] {
+    let text = arg(args, at);
+    return text[off..len(text)];
+}
+
+// `text` as a count the way Rust's `usize::from_str` reads one (digits, with one `+` before them allowed), or -1.
+pub fn count_of[&t](text: &t [byte]) -> [] int {
+    var at = 0;
+    if len(text) > 0 && lc.at(text, 0) == '+' {
+        at = 1;
+    }
+    if at >= len(text) {
+        return 0 - 1;
+    }
+    var n = 0;
+    while at < len(text) {
+        let c = lc.at(text, at);
+        if c < '0' || c > '9' {
+            return 0 - 1;
+        }
+        n = n * 10 + (c - '0');
+        if n > 1000000000000 {
+            n = 1000000000000;
+        }
+        at = at + 1;
+    }
+    return n;
+}
