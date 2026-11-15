@@ -199,9 +199,10 @@ jobs:
   # signal", exit 143), which is probabilistic and not a TLS failure. Shorter
   # parallel jobs reduce that exposure; they do not remove it. The step
   # commands are unchanged; only the grouping moved.
+  # Pinned to 24.04: `ubuntu-latest` is now 26.04, whose archive has no `libbotan-2-dev` (the three jobs below failed on every PR for that).
   tls-assurance:
     name: tls-assurance
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -232,7 +233,7 @@ jobs:
   # and its two fuzzing harnesses.
   tls-assurance-server:
     name: tls-assurance (server)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -291,7 +292,7 @@ jobs:
   # and the gateway copy.
   tls-assurance-examples:
     name: tls-assurance (examples)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Tools
