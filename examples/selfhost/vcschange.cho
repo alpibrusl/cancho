@@ -256,6 +256,142 @@ pub fn parent[&j, &x](jm: &!j [int], src: &x [byte], n: int) -> [] &x [byte] {
     return raw(jm, src, p);
 }
 
+// ---- the types of a change (what `serde` checks when the Rust command loads one) -------------------------------------------------
+
+// How many members of the object `obj` are called `name`.
+fn named_count[&j, &x, &k](jm: &!j [int], src: &x [byte], obj: int, name: &k [byte]) -> [] int {
+    if jsonread.kind(jm, obj) != jsonread.k_object() {
+        return 0;
+    }
+    var n = 0;
+    var m = jsonread.first(jm, obj);
+    while m >= 0 {
+        let k = jm[16 + 6 * m + 3];
+        if len(name) == jsonread.end(jm, k) - jsonread.start(jm, k) - 2 && bytes.equal(src[jsonread.start(jm, k) + 1..jsonread.end(jm, k) - 1], name) {
+            n = n + 1;
+        }
+        m = jsonread.next(jm, m);
+    }
+    return n;
+}
+
+// The member `name` of `obj` is a string; or, when not `must`, absent or null.
+fn string_member[&j, &x, &k](jm: &!j [int], src: &x [byte], obj: int, name: &k [byte], must: bool) -> [] bool {
+    if named_count(jm, src, obj, name) > 1 {
+        return false;
+    }
+    let id = field(jm, src, obj, name);
+    if id < 0 || jsonread.kind(jm, id) == jsonread.k_null() {
+        return !must;
+    }
+    return is_text(jm, id);
+}
+
+// The member `name` of `obj` is `Bytes`: a string, or an object whose `hex` is a hex string (a text with a non-ASCII character in it is not hex).
+fn bytes_member[&j, &x, &k](jm: &!j [int], src: &x [byte], obj: int, name: &k [byte]) -> [] bool {
+    if named_count(jm, src, obj, name) > 1 {
+        return false;
+    }
+    let id = field(jm, src, obj, name);
+    if id < 0 {
+        return false;
+    }
+    if is_text(jm, id) {
+        return true;
+    }
+    if jsonread.kind(jm, id) != jsonread.k_object() || named_count(jm, src, id, "hex") != 1 {
+        return false;
+    }
+    let h = field(jm, src, id, "hex");
+    if !is_text(jm, h) {
+        return false;
+    }
+    return unhex_text(jm, jsonread.decode_into(jm, src, h, jsonread.scratch0(jm)));
+}
+
+// Whether the `n` bytes decoded at the first place for decoding are hex as the Rust `unhex` reads it: an even number, each pair what `u8::from_str_radix(.., 16)` takes (so a `+` may begin a pair, and a byte
+// that is not ASCII is not a digit).
+fn unhex_text[&j](jm: &!j [int], n: int) -> [] bool {
+    if n % 2 != 0 {
+        return false;
+    }
+    let base = jsonread.scratch0(jm);
+    var i = 0;
+    while i < n {
+        let a = jm[base + i];
+        let b = jm[base + i + 1];
+        let a_digit = a >= 48 && a <= 57 || a >= 65 && a <= 70 || a >= 97 && a <= 102;
+        let b_digit = b >= 48 && b <= 57 || b >= 65 && b <= 70 || b >= 97 && b <= 102;
+        if !b_digit || !(a_digit || a == 43) {
+            return false;
+        }
+        i = i + 2;
+    }
+    return true;
+}
+
+// Every element of the array `name` of the change is an object with the strings `a`, `b` and `c` (an absent list is empty; `null` is not a list).
+fn records_ok[&j, &x, &k, &p, &q, &r](jm: &!j [int], src: &x [byte], name: &k [byte], a: &p [byte], b: &q [byte], c: &r [byte]) -> [] bool {
+    if named_count(jm, src, jm[1], name) > 1 {
+        return false;
+    }
+    let id = field(jm, src, jm[1], name);
+    if id < 0 {
+        return true;
+    }
+    if jsonread.kind(jm, id) != jsonread.k_array() {
+        return false;
+    }
+    var item = jsonread.first(jm, id);
+    while item >= 0 {
+        if jsonread.kind(jm, item) != jsonread.k_object() || !string_member(jm, src, item, a, true) || !string_member(jm, src, item, b, true) || !string_member(jm, src, item, c, true) {
+            return false;
+        }
+        item = jsonread.next(jm, item);
+    }
+    return true;
+}
+
+// Whether the change that `read` accepted is also what `serde` would load as the Rust `Change`: the optional parts are of their types, and no field it names is there twice.
+pub fn well_typed[&j, &x](jm: &!j [int], src: &x [byte]) -> [] bool {
+    let root = jm[1];
+    if named_count(jm, src, root, "tree") > 1 || named_count(jm, src, root, "parents") > 1 || named_count(jm, src, root, "author") > 1 || named_count(jm, src, root, "time") > 1 || named_count(jm, src, root, "tz") > 1 {
+        return false;
+    }
+    if named_count(jm, src, root, "intent") > 1 || named_count(jm, src, root, "attestations") > 1 || named_count(jm, src, root, "git") > 1 {
+        return false;
+    }
+    let intent = field(jm, src, root, "intent");
+    if intent >= 0 && jsonread.kind(jm, intent) != jsonread.k_null() {
+        if jsonread.kind(jm, intent) != jsonread.k_object() || !string_member(jm, src, intent, "prompt", true) || !string_member(jm, src, intent, "model", false) || !string_member(jm, src, intent, "session", false) || !string_member(jm, src, intent, "issue", false) {
+            return false;
+        }
+    }
+    if !records_ok(jm, src, "decls", "path", "name", "kind") || !records_ok(jm, src, "edits", "path", "old", "new") {
+        return false;
+    }
+    let notes = field(jm, src, root, "attestations");
+    if notes >= 0 {
+        if jsonread.kind(jm, notes) != jsonread.k_array() {
+            return false;
+        }
+        var t = jsonread.first(jm, notes);
+        while t >= 0 {
+            if !is_text(jm, t) {
+                return false;
+            }
+            t = jsonread.next(jm, t);
+        }
+    }
+    let git = field(jm, src, root, "git");
+    if git >= 0 && jsonread.kind(jm, git) != jsonread.k_null() {
+        if jsonread.kind(jm, git) != jsonread.k_object() || !bytes_member(jm, src, git, "headers") || !bytes_member(jm, src, git, "message") {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Whether the change carries an intent, and its parts: the raw text of one that is a string, empty when absent.
 pub fn has_intent[&j, &x](jm: &!j [int], src: &x [byte]) -> [] bool {
     return jsonread.kind(jm, field(jm, src, jm[1], "intent")) == jsonread.k_object();

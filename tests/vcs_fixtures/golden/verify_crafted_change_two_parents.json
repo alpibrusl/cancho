@@ -1,0 +1,23 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "2 problem(s); first: \"change ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff (parent of fe4841c032ad087ededd4aba54930d58064a8c95b925d6b7a6dbf733221df918)\"",
+    "objects": {
+      "blob": 4,
+      "change": 4,
+      "tree": 3
+    },
+    "problems": [
+      {
+        "object": "change ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff (parent of fe4841c032ad087ededd4aba54930d58064a8c95b925d6b7a6dbf733221df918)",
+        "tag": "object-missing"
+      },
+      {
+        "object": "change ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff (parent of fe4841c032ad087ededd4aba54930d58064a8c95b925d6b7a6dbf733221df918)",
+        "tag": "object-missing"
+      }
+    ],
+    "tag": "object-missing"
+  }
+}

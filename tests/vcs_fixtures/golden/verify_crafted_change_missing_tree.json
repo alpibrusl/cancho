@@ -1,0 +1,19 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "1 problem(s); first: \"tree ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff (of change 34b7880edeb3b5b19c96c5a56f7fb341044d7a0783943dbde4196c1c7cf39d04)\"",
+    "objects": {
+      "blob": 4,
+      "change": 4,
+      "tree": 3
+    },
+    "problems": [
+      {
+        "object": "tree ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff (of change 34b7880edeb3b5b19c96c5a56f7fb341044d7a0783943dbde4196c1c7cf39d04)",
+        "tag": "object-missing"
+      }
+    ],
+    "tag": "object-missing"
+  }
+}

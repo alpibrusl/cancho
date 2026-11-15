@@ -79,7 +79,7 @@ needs no Rust binary at test time, which is what makes it a gate stage and not a
 differential scripts stay as the check while the Rust command exists.
 
 **D7. What this does not decide. [choice]** `record` and its gate (the `driver` refactor), `switch`, `restore`, `revert`, `apply` (they need `materialize` and `remove_path`, slice 3b of
-`directory-links.md`), `diff`, `blame` (built in R12, §14), `verify`, `unlock`, the git bridge; `log --path|--intent|--session|--issue|--author` and `show --patch` (`vcs-native.md` §6 listed them as not done; built in R11, §13); the
+`directory-links.md`), `diff`, `blame` (built in R12, §14), `verify` (built in R13, §15), `unlock`, the git bridge; `log --path|--intent|--session|--issue|--author` and `show --patch` (`vcs-native.md` §6 listed them as not done; built in R11, §13); the
 crash test; and `canonicalize` (D2).
 
 ## 5. Slices
@@ -359,3 +359,26 @@ changes nothing once the loop ends because none is left), and one **not covered*
 Six survived the first run and each of the four that could be killed got a case (the hunk's older length needs a fourth version; the empty and one-name lists; the default revision on a branch that is not `main`; a binary parent).
 **Known differences:** the declaration view's (§10: two modules declaring the same type name); the `\u` escapes a change written by something other than the Rust command might use are read by both. **Not covered:** a merge change's second parent
 (blame follows the first, as Rust does; no case has one), a store with a missing or damaged blob, Linux (CI).
+
+## 15. R13, `verify`: built and measured against the Rust command (2026-11-15, Darwin, macOS 26.2, Apple silicon)
+
+**The design is the Rust command's** (`cmd_verify`). Every object of the store, kind by kind (`blob`, `tree`, `change`) and by id in order, is read and checked: its name is an id (else `object-corrupt`, "KIND NAME: not an object name"), the store reads it
+(`object-missing`, `object-corrupt` when it does not hash to its name, `io-error`), a tree decodes and the store has each blob it names ("blob B (in tree T, PATH)"), a change loads (the types of `Change`, a tree and at most two parents that are ids)
+and the store has its tree and each parent. Then every ref under `heads`, `tags` and `remotes` ("change C (ref heads/x)") and HEAD ("change C (HEAD)") must name a change it has. All sound: `{command, locks, objects, ok, refs, sound, tmp_garbage}` (`locks` as
+`unlock` lists them, not removed; `tmp_garbage` the entries of `tmp/`); else a refusal carrying `problems` (`{object, tag}`), `objects` and the tag of the first problem (`object-missing` or else `object-corrupt`), exit 1. A ref or HEAD that holds no id
+is refused at once, with that sentence and without the list (Rust returns the error).
+
+**What it took.** Two of the Rust decoders are not the strict readers the native commands have, and `verify` is where the difference shows: `Tree::decode` accepts a tree that is unsorted, has `\r\n` endings or no newline at the end (it reads `lines()`,
+sorts, then checks paths, duplicates and a path that is the directory of the next), and `Change::load` is `serde`: every optional part must be of its type (`intent` an object with a `prompt`, `decls` and `edits` lists of objects of strings, `attestations`
+strings, `git` with `Bytes`, which may be `{"hex": ...}` read by `from_str_radix` so that a `+` can begin a pair), and a field it names may not be there twice. `vcsverify.canonical_tree` and `vcschange.well_typed` are those rules.
+`vcsunlock.lock_items` was split out of `unlock_command` (the locks, each removed or not); `vcsstore.read_ref` and `list_refs` now say which ref held no id (so the refusal can name it); `status 50` (a complete refusal document, exit 1) is `blame`'s.
+
+**Built.** `vcsverify.cho` (about 640 lines), `verify_in` in `clivcsrepo.cho` (1,877 lines), `cancho.files` gained `vcsverify.cho`. The chain reproduces itself (stage 2 = stage 3), no reseed. **Measured:** 38 scripted corruptions of a three-object store
+(damaged, empty, missing and stray objects of each kind, refs and tags and remotes to nothing, nested refs, bad and detached and unborn HEAD, locks, `tmp` files, a damaged file that cannot be read, several problems at once, no `objects`, `refs` or `tmp`)
+and 68 crafted objects (a true hash over a tree or change the Rust decoder reads or refuses: unsorted, CRLF, blank line, duplicate, directory and file, a path with a dot or a quote, a bad mode; a change with each optional part wrong or right, hex `+f` and `abc`
+and `0g`, a float time, a time beyond 64 bits, trailing text, a duplicate field): stdout, stderr and exit status equal in all but one (below). `vcs_repo.sh` goes from 658 to **742 checks** with 77 more goldens made by the Rust command (the crafted objects are
+committed under `tests/vcs_fixtures/verify_objects/`, each one file, since the hasher that made them is not part of the repository), and checks that `verify` leaves the locks it lists and exits 0 or 1. **Mutants:** 15 and four more of the ones the first
+run let live; all killed but one that cannot be reached (`has_object` refusing a name that is not an id: every caller has checked it). Four survived the first run and three got a case (the order of the kinds needs a tree and a change that are both wrong, a
+CRLF only shows in a missing blob's path, an empty tree). **Known differences:** the shared JSON reader (`jsonread`) refuses any key written twice, `serde` only the ones `Change` names, so a change with an unknown field twice is refused here and sound
+there; the ids of a kind are sorted by directory, then name (the same as sorted whole when every directory name has two characters, as the store's do); locks come sorted (R7); a directory that is a link is not entered. **Not covered:** a store too large for
+the memory it is given (every object is read whole, as Rust does), Linux (CI), a tree with a path that is not UTF-8 (the Rust decoder refuses it with the whole tree; mine does too: compared by hand, not in the goldens).

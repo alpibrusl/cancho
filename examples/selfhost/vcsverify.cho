@@ -1,0 +1,640 @@
+edition 12;
+module selfhost.vcsverify;
+
+// vcsverify.cho -- the `verify` command of `cancho vcs` (`docs/vcs-routing.md` section 15; the Rust side is `cmd_verify` in `vcs_repo.rs`).
+//
+//   verify_command(heap, vcs, vcspath, scratch, now)
+//
+// Every object of the store is read and checked: its name is an id, it hashes to it, a tree parses and has every blob it names, a change parses and has its tree and its parents. Every ref and HEAD must name a change
+// the store has. Answered: `{command, locks, objects, ok, refs, sound, tmp_garbage}`; or, when anything is wrong, a refusal with `problems` (each `{object, tag}`), `objects` and the tag of the first problem
+// (`object-missing`, else `object-corrupt`), answered as a complete document with status 50. `locks` are those of `unlock` (not removed); `tmp_garbage` how many entries `tmp/` has.
+// **Known differences:** the ids of a kind are sorted by directory, then name (the same as sorted whole when every directory name has two characters, as the store's do); a ref that does not hold a change id is
+// refused with the tag but not the words of the Rust command (which names the ref).
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import std.utf8;
+import selfhost.jsonread;
+import selfhost.jsonwrite;
+import selfhost.vcsapply;
+import selfhost.vcschange;
+import selfhost.vcsobj;
+import selfhost.vcsrepo;
+import selfhost.vcsstore;
+import selfhost.vcsunlock;
+
+// ---- the problems ------------------------------------------------------------------------------------------------------------
+
+// The problems so far: their elements of the `problems` array, how many, the text of the first and whether its tag is `object-missing`.
+res struct Found {
+    items: buffer.Buffer,
+    count: int,
+    first: buffer.Buffer,
+    missing: bool,
+}
+
+fn no_problems[&h](heap: &!h Heap) -> [heap] Found {
+    return Found { items: buffer.empty(heap, 0), count: 0, first: buffer.empty(heap, 0), missing: false };
+}
+
+// `found` and the problem `text` with `tag`.
+fn problem[&h, &t](heap: &!h Heap, found: Found, tag: &static [byte], text: &t [byte]) -> [heap] Found {
+    let Found { items, count, first, missing } = found;
+    var b = items;
+    if count > 0 {
+        b = buffer.push(heap, b, byte_of(44));
+    }
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 3), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 4, true, "object"), text);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 4, false, "tag"), tag);
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 3), byte_of(125));
+    var f = first;
+    var m = missing;
+    if count == 0 {
+        buffer.drop(heap, f);
+        f = buffer.append(heap, buffer.empty(heap, len(text)), text);
+        m = bytes.equal(tag, "object-missing");
+    }
+    return Found { items: b, count: count + 1, first: f, missing: m };
+}
+
+// `A B C D E`: the five pieces as one text.
+fn join5[&h, &a, &b, &c, &d, &e](heap: &!h Heap, p1: &a [byte], p2: &b [byte], p3: &c [byte], p4: &d [byte], p5: &e [byte]) -> [heap] buffer.Buffer {
+    var t = buffer.append(heap, buffer.empty(heap, len(p1) + len(p2) + len(p3) + len(p4) + len(p5)), p1);
+    t = buffer.append(heap, t, p2);
+    t = buffer.append(heap, t, p3);
+    t = buffer.append(heap, t, p4);
+    return buffer.append(heap, t, p5);
+}
+
+// ---- reading the store -------------------------------------------------------------------------------------------------------
+
+// Whether the store has the object `id` of `kind` (a file at `objects/KIND/XX/REST`).
+fn has_object[&d, &k, &i](vcs: &d Dir, kind: &k [byte], id: &i [byte]) -> [dir_read] bool {
+    if !vcsobj.is_id(id) {
+        return false;
+    }
+    var found = false;
+    match dir_enter(vcs, "objects") {
+        DirOpened::Ok(o0) => {
+            var objects = o0;
+            borrow objects as &od in {
+                match dir_enter(od, kind) {
+                    DirOpened::Ok(k0) => {
+                        var kd = k0;
+                        borrow kd as &kdd in {
+                            match dir_enter(kdd, id[0..2]) {
+                                DirOpened::Ok(s0) => {
+                                    var sub = s0;
+                                    borrow sub as &sd in {
+                                        match dir_stat(sd, id[2..64]) {
+                                            DirStat::Ok(kind_of, size, mtime) => {
+                                                found = kind_of == 1;
+                                            }
+                                            DirStat::Failed(e) => {
+                                            }
+                                        }
+                                    }
+                                    dir_close(sub);
+                                }
+                                DirOpened::Failed(e) => {
+                                }
+                            }
+                        }
+                        dir_close(kd);
+                    }
+                    DirOpened::Failed(e) => {
+                    }
+                }
+            }
+            dir_close(objects);
+        }
+        DirOpened::Failed(e) => {
+        }
+    }
+    return found;
+}
+
+// The names in the directory `rel` (below `vcs`: `objects/KIND` or `tmp`), one to a line, sorted by their bytes; how many entries it has (0 when it cannot be read).
+fn names_in[&h, &d](heap: &!h Heap, dir: &d Dir) -> [heap, dir_read] (buffer.Buffer, int) {
+    let names = dirs.list(heap, dir, 100000000);
+    var lines = buffer.empty(heap, 64);
+    var n = 0;
+    borrow names as &nr in {
+        if dirs.failed(nr) == 0 {
+            n = dirs.count(nr);
+            var i = 0;
+            while i < n {
+                lines = buffer.push(heap, buffer.append(heap, lines, dirs.name(nr, i)), byte_of(10));
+                i = i + 1;
+            }
+        }
+    }
+    dirs.drop(heap, names);
+    var sorted = buffer.empty(heap, 0);
+    borrow lines as &lb in {
+        let u = vcsapply.unique(heap, buffer.bytes(lb));
+        buffer.drop(heap, sorted);
+        sorted = u;
+    }
+    buffer.drop(heap, lines);
+    return (sorted, n);
+}
+
+// The ids of `kind` the store holds, one to a line in the order of their names, and how many: the entries of each directory of `objects/KIND` that is one.
+fn ids_of[&h, &d, &k](heap: &!h Heap, vcs: &d Dir, kind: &k [byte]) -> [heap, dir_read] (buffer.Buffer, int) {
+    var ids = buffer.empty(heap, 0);
+    var count = 0;
+    match dir_enter(vcs, "objects") {
+        DirOpened::Ok(o0) => {
+            var objects = o0;
+            borrow objects as &od in {
+                match dir_enter(od, kind) {
+                    DirOpened::Ok(k0) => {
+                        var kd = k0;
+                        borrow kd as &kdd in {
+                            let (prefixes, pn) = names_in(heap, kdd);
+                            borrow prefixes as &pb in {
+                                let text = buffer.bytes(pb);
+                                var at = 0;
+                                while at < len(text) {
+                                    var end = at;
+                                    while end < len(text) && text[end] != byte_of(10) {
+                                        end = end + 1;
+                                    }
+                                    let prefix = text[at..end];
+                                    match dir_enter(kdd, prefix) {
+                                        DirOpened::Ok(s0) => {
+                                            var sub = s0;
+                                            borrow sub as &sd in {
+                                                let (inner, inn) = names_in(heap, sd);
+                                                borrow inner as &ib in {
+                                                    let it = buffer.bytes(ib);
+                                                    var ia = 0;
+                                                    while ia < len(it) {
+                                                        var ie = ia;
+                                                        while ie < len(it) && it[ie] != byte_of(10) {
+                                                            ie = ie + 1;
+                                                        }
+                                                        ids = buffer.push(heap, buffer.append(heap, buffer.append(heap, ids, prefix), it[ia..ie]), byte_of(10));
+                                                        count = count + 1;
+                                                        ia = ie + 1;
+                                                    }
+                                                }
+                                                buffer.drop(heap, inner);
+                                            }
+                                            dir_close(sub);
+                                        }
+                                        DirOpened::Failed(e) => {
+                                        }
+                                    }
+                                    at = end + 1;
+                                }
+                            }
+                            buffer.drop(heap, prefixes);
+                        }
+                        dir_close(kd);
+                    }
+                    DirOpened::Failed(e) => {
+                    }
+                }
+            }
+            dir_close(objects);
+        }
+        DirOpened::Failed(e) => {
+        }
+    }
+    return (ids, count);
+}
+
+// ---- checking an object ------------------------------------------------------------------------------------------------------
+
+// The object `id` of `kind` read: the problem it has by itself (not an id, missing, damaged, unreadable), or its bytes in the answer and status 0.
+fn read_object[&h, &d, &s, &k, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], found: Found, kind: &k [byte], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] (Found, buffer.Buffer, bool) {
+    var f = found;
+    if !vcsobj.is_id(id) {
+        let text = join5(heap, kind, " ", id, ": not an object name", "");
+        borrow text as &tb in {
+            f = problem(heap, f, "object-corrupt", buffer.bytes(tb));
+        }
+        buffer.drop(heap, text);
+        return (f, buffer.empty(heap, 0), false);
+    }
+    let got = vcsstore.get(heap, vcs, scratch, kind, id);
+    let (data, status, errno) = vcsstore.parts(got);
+    if status != 0 {
+        var tag = "object-corrupt";
+        if status == 11 {
+            tag = "object-missing";
+        } else if status == 10 {
+            tag = "io-error";
+        }
+        let text = join5(heap, kind, " ", id, "", "");
+        borrow text as &tb in {
+            f = problem(heap, f, tag, buffer.bytes(tb));
+        }
+        buffer.drop(heap, text);
+        buffer.drop(heap, data);
+        return (f, buffer.empty(heap, 0), false);
+    }
+    return (f, data, true);
+}
+
+// The tree text `text` as the Rust `Tree::decode` reads it, made the text the store writes: sorted, `MODE BLOB PATH` lines each ended by a newline. Answers it and whether the Rust command accepts the tree: UTF-8,
+// every line (`str::lines`, so a `\r\n` is one ending and the last newline may be missing) of three parts with a known mode and an id, every path a path, none twice or a directory of the one after it.
+fn canonical_tree[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] (buffer.Buffer, bool) {
+    if !utf8.is_valid(text) {
+        return (buffer.empty(heap, 0), false);
+    }
+    let cap = bytes.count_byte(text, 10) + 2;
+    let at_line = box_slice(heap, cap * 3, 0);
+    let order = box_slice(heap, cap, 0);
+    var n = 0;
+    var ok = true;
+    var out = buffer.empty(heap, len(text) + 16);
+    borrow mut at_line as &!lw in {
+        borrow mut order as &!ow in {
+            let ls = contents(lw);
+            let od = contents(ow);
+            var at = 0;
+            while at < len(text) && ok {
+                var end = at;
+                while end < len(text) && text[end] != byte_of(10) {
+                    end = end + 1;
+                }
+                var le = end;
+                if end < len(text) && le > at && text[le - 1] == byte_of(13) {
+                    le = le - 1;
+                }
+                let line = text[at..le];
+                let a = bytes.find(line, " ");
+                var b = 0 - 1;
+                if a >= 0 {
+                    b = bytes.find(line[a + 1..len(line)], " ");
+                }
+                if a < 0 || b < 0 {
+                    ok = false;
+                } else {
+                    let mode = line[0..a];
+                    let blob = line[a + 1..a + 1 + b];
+                    if !(bytes.equal(mode, "100644") || bytes.equal(mode, "100755") || bytes.equal(mode, "120000")) || !vcsobj.is_id(blob) {
+                        ok = false;
+                    } else {
+                        ls[3 * n] = at;
+                        ls[3 * n + 1] = at + a + 1 + b + 1;
+                        ls[3 * n + 2] = le;
+                        od[n] = n;
+                        n = n + 1;
+                    }
+                }
+                at = end + 1;
+            }
+            // Sorted by path (an insertion sort: the store writes them sorted, so this is one pass).
+            var i = 1;
+            while ok && i < n {
+                let moving = od[i];
+                var j = i;
+                while j > 0 && bytes.compare(text[ls[3 * od[j - 1] + 1]..ls[3 * od[j - 1] + 2]], text[ls[3 * moving + 1]..ls[3 * moving + 2]]) > 0 {
+                    od[j] = od[j - 1];
+                    j = j - 1;
+                }
+                od[j] = moving;
+                i = i + 1;
+            }
+            var k = 0;
+            while ok && k < n {
+                let path = text[ls[3 * od[k] + 1]..ls[3 * od[k] + 2]];
+                if vcsobj.check_path(path) != 0 {
+                    ok = false;
+                }
+                if ok && k > 0 {
+                    let before = text[ls[3 * od[k - 1] + 1]..ls[3 * od[k - 1] + 2]];
+                    if bytes.equal(before, path) || len(path) > len(before) && bytes.starts_with(path, before) && path[len(before)] == byte_of(47) {
+                        ok = false;
+                    }
+                }
+                if ok {
+                    let line = text[ls[3 * od[k]]..ls[3 * od[k] + 2]];
+                    out = buffer.push(heap, buffer.append(heap, out, line), byte_of(10));
+                }
+                k = k + 1;
+            }
+        }
+    }
+    unbox_slice(heap, at_line);
+    unbox_slice(heap, order);
+    return (out, ok);
+}
+
+// The tree `id` (its text `data`) checked: it decodes, and the store has every blob it names.
+fn check_tree[&h, &d, &i, &x](heap: &!h Heap, vcs: &d Dir, found: Found, id: &i [byte], data: &x [byte]) -> [heap, dir_read] Found {
+    var f = found;
+    let (canon, ok) = canonical_tree(heap, data);
+    if !ok {
+        let text = join5(heap, "tree ", id, "", "", "");
+        borrow text as &tb in {
+            f = problem(heap, f, "object-corrupt", buffer.bytes(tb));
+        }
+        buffer.drop(heap, text);
+        buffer.drop(heap, canon);
+        return f;
+    }
+    borrow canon as &cb in {
+        let tree = buffer.bytes(cb);
+        var at = 0;
+        if len(tree) == 0 {
+            at = 0 - 1;
+        }
+        while at >= 0 {
+            let blob = vcsobj.entry_blob(tree, at);
+            if !has_object(vcs, "blob", blob) {
+                var text = join5(heap, "blob ", blob, " (in tree ", id, ", ");
+                text = buffer.push(heap, buffer.append(heap, text, vcsobj.entry_path(tree, at)), byte_of(41));
+                borrow text as &tb in {
+                    f = problem(heap, f, "object-missing", buffer.bytes(tb));
+                }
+                buffer.drop(heap, text);
+            }
+            at = vcsobj.entry_next(tree, at);
+        }
+    }
+    buffer.drop(heap, canon);
+    return f;
+}
+
+// The change `id` (its text `data`) checked: it parses, and the store has its tree and its parents.
+fn check_change[&h, &d, &i, &x](heap: &!h Heap, vcs: &d Dir, found: Found, id: &i [byte], data: &x [byte]) -> [heap, dir_read] Found {
+    var f = found;
+    let jm = box_slice(heap, jsonread.size_for(data), 0);
+    borrow mut jm as &!w in {
+        let m = contents(w);
+        if vcschange.read(m, data) != 0 || !vcschange.well_typed(m, data) {
+            let text = join5(heap, "change ", id, "", "", "");
+            borrow text as &tb in {
+                f = problem(heap, f, "object-corrupt", buffer.bytes(tb));
+            }
+            buffer.drop(heap, text);
+        } else {
+            let tree = vcschange.tree(m, data);
+            if !has_object(vcs, "tree", tree) {
+                let text = join5(heap, "tree ", tree, " (of change ", id, ")");
+                borrow text as &tb in {
+                    f = problem(heap, f, "object-missing", buffer.bytes(tb));
+                }
+                buffer.drop(heap, text);
+            }
+            var k = 0;
+            while k < vcschange.parent_count(m, data) {
+                let parent = vcschange.parent(m, data, k);
+                if !has_object(vcs, "change", parent) {
+                    let text = join5(heap, "change ", parent, " (parent of ", id, ")");
+                    borrow text as &tb in {
+                        f = problem(heap, f, "object-missing", buffer.bytes(tb));
+                    }
+                    buffer.drop(heap, text);
+                }
+                k = k + 1;
+            }
+        }
+    }
+    unbox_slice(heap, jm);
+    return f;
+}
+
+// Every object of `kind`, read and checked. Answers the problems so far and how many objects there are.
+fn check_kind[&h, &d, &s, &k](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], found: Found, kind: &k [byte]) -> [heap, dir_read, dir_write, file_read] (Found, int) {
+    var f = found;
+    let (ids, count) = ids_of(heap, vcs, kind);
+    borrow ids as &ib in {
+        let text = buffer.bytes(ib);
+        var at = 0;
+        while at < len(text) {
+            var end = at;
+            while end < len(text) && text[end] != byte_of(10) {
+                end = end + 1;
+            }
+            let id = text[at..end];
+            let (f2, data, ok) = read_object(heap, vcs, scratch, f, kind, id);
+            f = f2;
+            if ok {
+                borrow data as &db in {
+                    if bytes.equal(kind, "tree") {
+                        f = check_tree(heap, vcs, f, id, buffer.bytes(db));
+                    } else if bytes.equal(kind, "change") {
+                        f = check_change(heap, vcs, f, id, buffer.bytes(db));
+                    }
+                }
+            }
+            buffer.drop(heap, data);
+            at = end + 1;
+        }
+    }
+    buffer.drop(heap, ids);
+    return (f, count);
+}
+
+// ---- the command -------------------------------------------------------------------------------------------------------------
+
+// The `objects` member: the three counts.
+fn counts_member[&h](heap: &!h Heap, out: buffer.Buffer, levels: int, blobs: int, trees: int, changes: int) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, out, byte_of(123));
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, levels + 1, true, "blob"), blobs);
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, levels + 1, false, "change"), changes);
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, levels + 1, false, "tree"), trees);
+    return buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(125));
+}
+
+// The refusal `object-corrupt` with `message` and nothing else.
+fn plain_refusal[&h, &m](heap: &!h Heap, message: &m [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, buffer.empty(heap, 192), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), "verify");
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "false");
+    b = buffer.push(heap, vcsrepo.member(heap, b, 1, false, "refused"), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, true, "message"), message);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "tag"), "object-corrupt");
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(125));
+    return buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+}
+
+// `verify` in the store `vcs` (its path `vcspath`); `now` is the Unix time in seconds.
+pub fn verify_command[&h, &d, &p, &s](heap: &!h Heap, vcs: &d Dir, vcspath: &p [byte], scratch: &!s [int], now: int) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    let (f1, blobs) = check_kind(heap, vcs, scratch, no_problems(heap), "blob");
+    let (f2, trees) = check_kind(heap, vcs, scratch, f1, "tree");
+    var found = f2;
+    let (f3, changes) = check_kind(heap, vcs, scratch, found, "change");
+    found = f3;
+    var refs = 0;
+    var code = 0;
+    var bad = buffer.empty(heap, 0);
+    var prefix = 0;
+    while prefix < 3 && code == 0 {
+        var name = "heads";
+        if prefix == 1 {
+            name = "tags";
+        } else if prefix == 2 {
+            name = "remotes";
+        }
+        let listed = vcsstore.list_refs(heap, vcs, name);
+        let (text, ls, le) = vcsstore.parts(listed);
+        if ls != 0 {
+            code = ls;
+            if ls == 3 {
+                borrow text as &bt in {
+                    buffer.drop(heap, bad);
+                    bad = buffer.append(heap, buffer.empty(heap, 64), buffer.bytes(bt));
+                }
+            }
+        } else {
+            borrow text as &tb in {
+                let lines = buffer.bytes(tb);
+                var at = 0;
+                while at < len(lines) {
+                    var end = at;
+                    while end < len(lines) && lines[end] != byte_of(10) {
+                        end = end + 1;
+                    }
+                    let line = lines[at..end];
+                    let sp = bytes.find(line, " ");
+                    refs = refs + 1;
+                    if sp > 0 && !has_object(vcs, "change", line[sp + 1..len(line)]) {
+                        var msg = join5(heap, "change ", line[sp + 1..len(line)], " (ref ", line[0..sp], ")");
+                        borrow msg as &mb in {
+                            found = problem(heap, found, "object-missing", buffer.bytes(mb));
+                        }
+                        buffer.drop(heap, msg);
+                    }
+                    at = end + 1;
+                }
+            }
+        }
+        buffer.drop(heap, text);
+        prefix = prefix + 1;
+    }
+    if code == 0 {
+        let head = vcsrepo.head_change(heap, vcs);
+        let (hid, hs, he) = vcsstore.parts(head);
+        if hs == 0 {
+            borrow hid as &hb in {
+                if !has_object(vcs, "change", buffer.bytes(hb)) {
+                    let msg = join5(heap, "change ", buffer.bytes(hb), " (HEAD)", "", "");
+                    borrow msg as &mb in {
+                        found = problem(heap, found, "object-missing", buffer.bytes(mb));
+                    }
+                    buffer.drop(heap, msg);
+                }
+            }
+        } else if hs != 2 {
+            code = hs;
+            if hs == 3 {
+                borrow hid as &hb2 in {
+                    buffer.drop(heap, bad);
+                    bad = buffer.append(heap, buffer.empty(heap, 64), buffer.bytes(hb2));
+                }
+            }
+        }
+        buffer.drop(heap, hid);
+    }
+    if code != 0 {
+        let Found { items, count, first, missing } = found;
+        buffer.drop(heap, items);
+        buffer.drop(heap, first);
+        if code == 3 {
+            // The words of the Rust command: the ref that holds no id, or HEAD that is neither a ref nor an id.
+            var message = buffer.empty(heap, 0);
+            borrow bad as &bb in {
+                var said = buffer.append(heap, buffer.empty(heap, 64), "HEAD is neither a ref nor a change id");
+                if len(buffer.bytes(bb)) > 0 {
+                    buffer.drop(heap, said);
+                    said = join5(heap, "ref `", buffer.bytes(bb), "` does not hold a change id", "", "");
+                }
+                buffer.drop(heap, message);
+                message = said;
+            }
+            buffer.drop(heap, bad);
+            var said_doc = buffer.empty(heap, 0);
+            borrow message as &mb in {
+                let made = plain_refusal(heap, buffer.bytes(mb));
+                buffer.drop(heap, said_doc);
+                said_doc = made;
+            }
+            buffer.drop(heap, message);
+            return vcsstore.Object { bytes: said_doc, status: 50, errno: 0 };
+        }
+        buffer.drop(heap, bad);
+        return vcsrepo.failed(heap, code);
+    }
+    buffer.drop(heap, bad);
+    let Found { items, count, first, missing } = found;
+    var doc = buffer.empty(heap, 0);
+    if count > 0 {
+        var tag = "object-corrupt";
+        if missing {
+            tag = "object-missing";
+        }
+        var message = buffer.append(heap, buffer.empty(heap, 64), "");
+        message = buffer.push_nat(heap, message, count);
+        message = buffer.append(heap, message, " problem(s); first: ");
+        borrow first as &fb in {
+            message = jsonwrite.string(heap, message, buffer.bytes(fb));
+        }
+        var b = buffer.push(heap, buffer.empty(heap, 512), byte_of(123));
+        b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), "verify");
+        b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "false");
+        b = buffer.push(heap, vcsrepo.member(heap, b, 1, false, "refused"), byte_of(123));
+        borrow message as &mb in {
+            b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, true, "message"), buffer.bytes(mb));
+        }
+        b = counts_member(heap, vcsrepo.member(heap, b, 2, false, "objects"), 2, blobs, trees, changes);
+        b = buffer.push(heap, vcsrepo.member(heap, b, 2, false, "problems"), byte_of(91));
+        borrow items as &ib in {
+            b = buffer.append(heap, b, buffer.bytes(ib));
+        }
+        b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(93));
+        b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "tag"), tag);
+        b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(125));
+        buffer.drop(heap, message);
+        buffer.drop(heap, doc);
+        doc = buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+        buffer.drop(heap, items);
+        buffer.drop(heap, first);
+        return vcsstore.Object { bytes: doc, status: 50, errno: 0 };
+    }
+    buffer.drop(heap, items);
+    buffer.drop(heap, first);
+    let (locks, none, ws, we) = vcsunlock.lock_items(heap, vcs, vcspath, false, now);
+    var garbage = 0;
+    match dir_enter(vcs, "tmp") {
+        DirOpened::Ok(t0) => {
+            var tmp = t0;
+            borrow tmp as &td in {
+                let (names, n) = names_in(heap, td);
+                garbage = n;
+                buffer.drop(heap, names);
+            }
+            dir_close(tmp);
+        }
+        DirOpened::Failed(e) => {
+        }
+    }
+    var b = jsonwrite.string(heap, vcsrepo.member(heap, buffer.push(heap, buffer.empty(heap, 512), byte_of(123)), 1, true, "command"), "verify");
+    b = vcsrepo.member(heap, b, 1, false, "locks");
+    if none {
+        b = buffer.append(heap, b, "[]");
+    } else {
+        b = buffer.push(heap, b, byte_of(91));
+        borrow locks as &lb in {
+            b = buffer.append(heap, b, buffer.bytes(lb));
+        }
+        b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(93));
+    }
+    buffer.drop(heap, locks);
+    b = counts_member(heap, vcsrepo.member(heap, b, 1, false, "objects"), 1, blobs, trees, changes);
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "true");
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, false, "refs"), refs);
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "sound"), "true");
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, false, "tmp_garbage"), garbage);
+    buffer.drop(heap, doc);
+    doc = buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+    return vcsstore.Object { bytes: doc, status: 0, errno: 0 };
+}

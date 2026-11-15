@@ -1,0 +1,19 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "1 problem(s); first: \"tree 0b9fb3eacb6833d07906e5d2e7ffc4a07888df759e72148fe3e926fe16052569 (of change 3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e)\"",
+    "objects": {
+      "blob": 4,
+      "change": 3,
+      "tree": 2
+    },
+    "problems": [
+      {
+        "object": "tree 0b9fb3eacb6833d07906e5d2e7ffc4a07888df759e72148fe3e926fe16052569 (of change 3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e)",
+        "tag": "object-missing"
+      }
+    ],
+    "tag": "object-missing"
+  }
+}

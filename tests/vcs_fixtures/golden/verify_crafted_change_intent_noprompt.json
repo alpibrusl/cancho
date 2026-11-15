@@ -1,0 +1,19 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "1 problem(s); first: \"change 5ad6b74cecd1b2372e28b6383e8931a2a9a988a3d1e51b5a3e938b203c953681\"",
+    "objects": {
+      "blob": 4,
+      "change": 4,
+      "tree": 3
+    },
+    "problems": [
+      {
+        "object": "change 5ad6b74cecd1b2372e28b6383e8931a2a9a988a3d1e51b5a3e938b203c953681",
+        "tag": "object-corrupt"
+      }
+    ],
+    "tag": "object-corrupt"
+  }
+}
