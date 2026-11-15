@@ -1,0 +1,19 @@
+{
+  "command": "verify",
+  "locks": [
+    {
+      "age_seconds": null,
+      "lock": "<root>/.cancho/vcs/refs/heads/main.lock",
+      "pid": null
+    }
+  ],
+  "objects": {
+    "blob": 4,
+    "change": 3,
+    "tree": 3
+  },
+  "ok": true,
+  "refs": 1,
+  "sound": true,
+  "tmp_garbage": 0
+}

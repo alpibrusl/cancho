@@ -1,0 +1,19 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "1 problem(s); first: \"blob zznotanid: not an object name\"",
+    "objects": {
+      "blob": 5,
+      "change": 3,
+      "tree": 3
+    },
+    "problems": [
+      {
+        "object": "blob zznotanid: not an object name",
+        "tag": "object-corrupt"
+      }
+    ],
+    "tag": "object-corrupt"
+  }
+}

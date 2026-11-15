@@ -421,6 +421,91 @@ ok refuse blame parent binary
 ok refuse blame decl not found one
 ok refuse blame decl not found none
 ok blame default revision on branch
+== verify
+ok verify sound
+ok verify empty
+ok verify corrupt blob
+ok verify corrupt tree
+ok verify corrupt change
+ok verify empty blob
+ok verify missing blob
+ok verify missing tree
+ok verify missing change
+ok verify missing all blobs
+ok verify stray blob
+ok verify stray short
+ok verify stray kind file
+ok verify stray dir
+ok verify ref missing
+ok verify tag missing
+ok verify remote missing
+ok verify ref extra
+ok verify ref nested
+ok verify ref garbage
+ok verify ref empty
+ok verify head detached missing
+ok verify head detached ok
+ok verify head garbage
+ok verify head unborn
+ok verify ref to missing head
+ok verify lock future
+ok verify lock top
+ok verify lock both
+ok verify lock bad
+ok verify lock empty
+ok verify lock nested
+ok verify tmp garbage
+ok verify many problems
+ok verify blob and ref
+ok verify no objects dir
+ok verify no refs dir
+ok verify no tmp dir
+ok verify crafted change attest int
+ok verify crafted change big time
+ok verify crafted change decls missing
+ok verify crafted change decls null
+ok verify crafted change dup tree
+ok verify crafted change edits ok
+ok verify crafted change extra field
+ok verify crafted change float time
+ok verify crafted change garbage
+ok verify crafted change git badhex
+ok verify crafted change git hex
+ok verify crafted change git oddhex
+ok verify crafted change git plushex
+ok verify crafted change intent full
+ok verify crafted change intent int
+ok verify crafted change intent noprompt
+ok verify crafted change missing parent
+ok verify crafted change missing tree
+ok verify crafted change three parents
+ok verify crafted change trailing
+ok verify crafted change two parents
+ok verify crafted change whitespace
+ok verify crafted tree bad mode
+ok verify crafted tree blank line
+ok verify crafted tree crlf
+ok verify crafted tree dir conflict
+ok verify crafted tree dot path
+ok verify crafted tree dup
+ok verify crafted tree garbage
+ok verify crafted tree missing blob
+ok verify crafted tree no newline
+ok verify crafted tree nonadjacent
+ok verify crafted tree quote path
+ok verify crafted tree space path
+ok verify crafted tree two missing unsorted
+ok verify crafted tree unsorted
+ok verify crafted tree empty
+ok verify crafted tree crlf missing
+ok verify crafted both kinds
+ok verify leaves the lock
+ok verify with a lock (exit 0)
+ok verify of a sound store (exit 0)
+ok verify with a missing blob (exit 1)
+ok verify with a damaged change (exit 1)
+ok verify with a ref that holds no id (exit 1)
+ok verify with HEAD that is nothing (exit 1)
 == what is not an option
 ok log --bogus (exit 2)
 ok log --bogus is an unknown option

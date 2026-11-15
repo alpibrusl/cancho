@@ -1,0 +1,19 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "1 problem(s); first: \"tree 0bshort: not an object name\"",
+    "objects": {
+      "blob": 4,
+      "change": 3,
+      "tree": 4
+    },
+    "problems": [
+      {
+        "object": "tree 0bshort: not an object name",
+        "tag": "object-corrupt"
+      }
+    ],
+    "tag": "object-corrupt"
+  }
+}

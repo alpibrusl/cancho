@@ -4,6 +4,7 @@
 #
 #   sh tests/vcs_fixtures/make.sh RUST_CANCHO OUTDIR      writes OUTDIR/three_changes and OUTDIR/golden; `diff -r` them with the committed ones (only that one log differs)
 set -eu
+src=$(cd "$(dirname "$0")" && pwd)
 R=$1
 out=$2
 mkdir -p "$out"
@@ -395,5 +396,86 @@ here; printf '\377\376' > bt.txt; stepng 3000; printf 'ok\n' > bt.txt; stepng 30
 here; printf 'module b;\npub fn k() -> [] int { return 1; }\n' > b.cho; stepng 3000; blj b.cho --decl nope > "$g/refuse_blame_decl_not_found_one.json" || true
 here; printf 'module b;\n' > b.cho; stepng 3000; blj b.cho --decl nope > "$g/refuse_blame_decl_not_found_none.json" || true
 wide; "$R" vcs switch wide --output json > /dev/null; blj notes.md > "$g/blame_default_revision_on_branch.json" || true
+# verify (R13): the Rust command wrote each; `vsetup` names three objects of the store; the lock paths are made `<root>/.cancho/vcs/...`.
+vfj() { "$R" vcs verify --output json | sed 's#"lock": ".*/\.cancho/vcs/#"lock": "<root>/.cancho/vcs/#'; }
+vsetup() { v=.cancho/vcs; b1=$(ls $v/objects/blob/*/* | head -1); t1=$(ls $v/objects/tree/*/* | head -1); c1=$(ls $v/objects/change/*/* | head -1); }
+vo=$src/verify_objects
+here; vsetup; :; vfj > "$g/verify_sound.json" || true
+empty; "$R" vcs init > /dev/null; vfj > "$g/verify_empty.json" || true
+here; vsetup; echo x > $b1; vfj > "$g/verify_corrupt_blob.json" || true
+here; vsetup; echo x > $t1; vfj > "$g/verify_corrupt_tree.json" || true
+here; vsetup; echo x > $c1; vfj > "$g/verify_corrupt_change.json" || true
+here; vsetup; : > $b1; vfj > "$g/verify_empty_blob.json" || true
+here; vsetup; rm $b1; vfj > "$g/verify_missing_blob.json" || true
+here; vsetup; rm $t1; vfj > "$g/verify_missing_tree.json" || true
+here; vsetup; rm $c1; vfj > "$g/verify_missing_change.json" || true
+here; vsetup; rm -r $v/objects/blob; vfj > "$g/verify_missing_all_blobs.json" || true
+here; vsetup; mkdir -p $v/objects/blob/zz; touch $v/objects/blob/zz/notanid; vfj > "$g/verify_stray_blob.json" || true
+here; vsetup; touch $v/objects/tree/0b/short; vfj > "$g/verify_stray_short.json" || true
+here; vsetup; touch $v/objects/blob/.DS_Store; vfj > "$g/verify_stray_kind_file.json" || true
+here; vsetup; mkdir -p $v/objects/change/ab/dir; vfj > "$g/verify_stray_dir.json" || true
+here; vsetup; printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' > $v/refs/heads/x; vfj > "$g/verify_ref_missing.json" || true
+here; vsetup; mkdir -p $v/refs/tags; printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' > $v/refs/tags/t; vfj > "$g/verify_tag_missing.json" || true
+here; vsetup; mkdir -p $v/refs/remotes/o; printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' > $v/refs/remotes/o/m; vfj > "$g/verify_remote_missing.json" || true
+here; vsetup; cp $v/refs/heads/main $v/refs/heads/y; vfj > "$g/verify_ref_extra.json" || true
+here; vsetup; mkdir -p $v/refs/heads/a; cp $v/refs/heads/main $v/refs/heads/a/b; vfj > "$g/verify_ref_nested.json" || true
+here; vsetup; echo deadbeef > $v/refs/heads/x; vfj > "$g/verify_ref_garbage.json" || true
+here; vsetup; : > $v/refs/heads/x; vfj > "$g/verify_ref_empty.json" || true
+here; vsetup; echo ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff > $v/HEAD; vfj > "$g/verify_head_detached_missing.json" || true
+here; vsetup; cp $v/refs/heads/main $v/HEAD; vfj > "$g/verify_head_detached_ok.json" || true
+here; vsetup; echo nonsense > $v/HEAD; vfj > "$g/verify_head_garbage.json" || true
+here; vsetup; echo 'ref: refs/heads/none' > $v/HEAD; vfj > "$g/verify_head_unborn.json" || true
+here; vsetup; rm $c1; printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' > $v/refs/heads/main; vfj > "$g/verify_ref_to_missing_head.json" || true
+here; vsetup; echo '4242 99999999999' > $v/refs/heads/main.lock; vfj > "$g/verify_lock_future.json" || true
+here; vsetup; echo '1 99999999999' > $v/lock; vfj > "$g/verify_lock_top.json" || true
+here; vsetup; echo '7 99999999999' > $v/lock; echo '9 99999999999' > $v/refs/heads/main.lock; vfj > "$g/verify_lock_both.json" || true
+here; vsetup; echo 'x y' > $v/refs/heads/main.lock; vfj > "$g/verify_lock_bad.json" || true
+here; vsetup; : > $v/refs/heads/main.lock; vfj > "$g/verify_lock_empty.json" || true
+here; vsetup; mkdir -p $v/refs/heads/a; echo '3 99999999999' > $v/refs/heads/a/lock; vfj > "$g/verify_lock_nested.json" || true
+here; vsetup; mkdir -p $v/tmp; touch $v/tmp/a $v/tmp/b; mkdir $v/tmp/c; vfj > "$g/verify_tmp_garbage.json" || true
+here; vsetup; echo x > $b1; rm $t1; echo x > $c1; touch $v/objects/blob/zz; printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' > $v/refs/heads/x; vfj > "$g/verify_many_problems.json" || true
+here; vsetup; rm $b1; printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' > $v/refs/heads/x; vfj > "$g/verify_blob_and_ref.json" || true
+here; vsetup; rm -r $v/objects; vfj > "$g/verify_no_objects_dir.json" || true
+here; vsetup; rm -r $v/refs; vfj > "$g/verify_no_refs_dir.json" || true
+here; vsetup; rm -rf $v/tmp; vfj > "$g/verify_no_tmp_dir.json" || true
+here; vsetup; cp -R "$vo/change_attest_int/." "$v/"; vfj > "$g/verify_crafted_change_attest_int.json" || true
+here; vsetup; cp -R "$vo/change_big_time/." "$v/"; vfj > "$g/verify_crafted_change_big_time.json" || true
+here; vsetup; cp -R "$vo/change_decls_missing/." "$v/"; vfj > "$g/verify_crafted_change_decls_missing.json" || true
+here; vsetup; cp -R "$vo/change_decls_null/." "$v/"; vfj > "$g/verify_crafted_change_decls_null.json" || true
+here; vsetup; cp -R "$vo/change_dup_tree/." "$v/"; vfj > "$g/verify_crafted_change_dup_tree.json" || true
+here; vsetup; cp -R "$vo/change_edits_ok/." "$v/"; vfj > "$g/verify_crafted_change_edits_ok.json" || true
+here; vsetup; cp -R "$vo/change_extra_field/." "$v/"; vfj > "$g/verify_crafted_change_extra_field.json" || true
+here; vsetup; cp -R "$vo/change_float_time/." "$v/"; vfj > "$g/verify_crafted_change_float_time.json" || true
+here; vsetup; cp -R "$vo/change_garbage/." "$v/"; vfj > "$g/verify_crafted_change_garbage.json" || true
+here; vsetup; cp -R "$vo/change_git_badhex/." "$v/"; vfj > "$g/verify_crafted_change_git_badhex.json" || true
+here; vsetup; cp -R "$vo/change_git_hex/." "$v/"; vfj > "$g/verify_crafted_change_git_hex.json" || true
+here; vsetup; cp -R "$vo/change_git_oddhex/." "$v/"; vfj > "$g/verify_crafted_change_git_oddhex.json" || true
+here; vsetup; cp -R "$vo/change_git_plushex/." "$v/"; vfj > "$g/verify_crafted_change_git_plushex.json" || true
+here; vsetup; cp -R "$vo/change_intent_full/." "$v/"; vfj > "$g/verify_crafted_change_intent_full.json" || true
+here; vsetup; cp -R "$vo/change_intent_int/." "$v/"; vfj > "$g/verify_crafted_change_intent_int.json" || true
+here; vsetup; cp -R "$vo/change_intent_noprompt/." "$v/"; vfj > "$g/verify_crafted_change_intent_noprompt.json" || true
+here; vsetup; cp -R "$vo/change_missing_parent/." "$v/"; vfj > "$g/verify_crafted_change_missing_parent.json" || true
+here; vsetup; cp -R "$vo/change_missing_tree/." "$v/"; vfj > "$g/verify_crafted_change_missing_tree.json" || true
+here; vsetup; cp -R "$vo/change_three_parents/." "$v/"; vfj > "$g/verify_crafted_change_three_parents.json" || true
+here; vsetup; cp -R "$vo/change_trailing/." "$v/"; vfj > "$g/verify_crafted_change_trailing.json" || true
+here; vsetup; cp -R "$vo/change_two_parents/." "$v/"; vfj > "$g/verify_crafted_change_two_parents.json" || true
+here; vsetup; cp -R "$vo/change_whitespace/." "$v/"; vfj > "$g/verify_crafted_change_whitespace.json" || true
+here; vsetup; cp -R "$vo/tree_bad_mode/." "$v/"; vfj > "$g/verify_crafted_tree_bad_mode.json" || true
+here; vsetup; cp -R "$vo/tree_blank_line/." "$v/"; vfj > "$g/verify_crafted_tree_blank_line.json" || true
+here; vsetup; cp -R "$vo/tree_crlf/." "$v/"; vfj > "$g/verify_crafted_tree_crlf.json" || true
+here; vsetup; cp -R "$vo/tree_dir_conflict/." "$v/"; vfj > "$g/verify_crafted_tree_dir_conflict.json" || true
+here; vsetup; cp -R "$vo/tree_dot_path/." "$v/"; vfj > "$g/verify_crafted_tree_dot_path.json" || true
+here; vsetup; cp -R "$vo/tree_dup/." "$v/"; vfj > "$g/verify_crafted_tree_dup.json" || true
+here; vsetup; cp -R "$vo/tree_garbage/." "$v/"; vfj > "$g/verify_crafted_tree_garbage.json" || true
+here; vsetup; cp -R "$vo/tree_missing_blob/." "$v/"; vfj > "$g/verify_crafted_tree_missing_blob.json" || true
+here; vsetup; cp -R "$vo/tree_no_newline/." "$v/"; vfj > "$g/verify_crafted_tree_no_newline.json" || true
+here; vsetup; cp -R "$vo/tree_nonadjacent/." "$v/"; vfj > "$g/verify_crafted_tree_nonadjacent.json" || true
+here; vsetup; cp -R "$vo/tree_quote_path/." "$v/"; vfj > "$g/verify_crafted_tree_quote_path.json" || true
+here; vsetup; cp -R "$vo/tree_space_path/." "$v/"; vfj > "$g/verify_crafted_tree_space_path.json" || true
+here; vsetup; cp -R "$vo/tree_two_missing_unsorted/." "$v/"; vfj > "$g/verify_crafted_tree_two_missing_unsorted.json" || true
+here; vsetup; cp -R "$vo/tree_unsorted/." "$v/"; vfj > "$g/verify_crafted_tree_unsorted.json" || true
+here; vsetup; cp -R "$vo/tree_empty/." "$v/"; vfj > "$g/verify_crafted_tree_empty.json" || true
+here; vsetup; cp -R "$vo/tree_crlf_missing/." "$v/"; vfj > "$g/verify_crafted_tree_crlf_missing.json" || true
+here; vsetup; cp -R "$vo/tree_missing_blob/." "$v/"; cp -R "$vo/change_garbage/." "$v/"; vfj > "$g/verify_crafted_both_kinds.json" || true
 rm -rf "$out/w" "$out/e"
 echo "made $out/three_changes and $out/golden"

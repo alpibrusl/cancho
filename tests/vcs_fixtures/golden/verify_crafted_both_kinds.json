@@ -1,0 +1,23 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "2 problem(s); first: \"blob ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff (in tree 0f4a9109549054f923fcf1e9fbbb8c21cced8636b1c288be92d2381cd10ac2ff, a.txt)\"",
+    "objects": {
+      "blob": 4,
+      "change": 4,
+      "tree": 4
+    },
+    "problems": [
+      {
+        "object": "blob ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff (in tree 0f4a9109549054f923fcf1e9fbbb8c21cced8636b1c288be92d2381cd10ac2ff, a.txt)",
+        "tag": "object-missing"
+      },
+      {
+        "object": "change 53f7254920ab23b15e6fd038b648e2e95c1addae7cd5c6bd37161c6b1be6cf23",
+        "tag": "object-corrupt"
+      }
+    ],
+    "tag": "object-missing"
+  }
+}
