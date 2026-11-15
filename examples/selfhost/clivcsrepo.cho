@@ -9,7 +9,7 @@ module selfhost.clivcsrepo;
 // **Not the Rust command's:** it resolves links in the start (`canonicalize`); this one takes `--repo PATH` as written (collapsing `a/..`), so a path with a link in it prints another `root` for `init`.
 //
 // Every command takes `--output json` (the only form), `--repo PATH` and `--dry-run`. `init` takes `[DIR]` and `--branch NAME`; `log` takes `[REV]`, `--limit N` and the filters `--path|--intent|--session|--issue|--author`; `show` takes `[REV]` and
-// `--patch` (R11, `docs/vcs-routing.md` section 13). The options are read in `clivcsopts.cho`.
+// `--patch` (R11, `docs/vcs-routing.md` section 13). `blame PATH [--rev REV] [--decl NAME]` is R12 (`docs/vcs-routing.md` section 14, `vcsblame.cho`). The options are read in `clivcsopts.cho`.
 //
 // A refusal is a document `{"command", "ok": false, "refused": {"message", "tag"}}` and exit 1, an environment failure exit 3 (the Rust command's two). The message is the Rust sentence for `not-a-repository`,
 // `bad-revision` (`vcsrepo.refusal_document`) and `bad-argument`; for the tags whose Rust message carries what only the Rust store knows (an object that is damaged, the OS's words for an `io` failure) it is the
@@ -26,6 +26,7 @@ import selfhost.jsonwrite;
 import selfhost.vcsobj;
 import selfhost.vcsrepo;
 import selfhost.vcsapply;
+import selfhost.vcsblame;
 import selfhost.vcsdiffdoc;
 import selfhost.vcsrecord;
 import selfhost.vcsrestore;
@@ -189,6 +190,11 @@ fn answered[&h, &i, &c, &p](heap: &!h Heap, io: &!i Io, command: &c [byte], answ
         borrow doc as &db in {
             buffer.write(io, db);
         }
+    } else if status == 50 {
+        borrow doc as &db in {
+            buffer.write(io, db);
+        }
+        code = 1;
     } else if status >= 18 && status <= 22 {
         borrow doc as &cb in {
             let said = vcsrepo.refusal_document(heap, command, status, spec, buffer.bytes(cb));
@@ -401,6 +407,37 @@ fn exists_here[&h, &f, &c, &w](heap: &!h Heap, fs: &f Fs(""), cwd: &c [byte], wo
     }
     buffer.drop(heap, full);
     return found;
+}
+
+// `blame PATH [--rev REV] [--decl NAME]` in the repository whose store is `vcs` (`vcsblame.blame_command`); `found` is the repository's path and `cwd` the current directory (PATH is relative to `cwd`).
+fn blame_in[&h, &i, &a, &d, &p, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir, found: &p [byte], cwd: &c [byte], options: opts.Options) -> [heap, io_write, args, dir_read, dir_write, file_read] int {
+    if options.positionals != 1 {
+        return refused(heap, io, "blame", "`blame` takes one path", "bad-argument");
+    }
+    let word = arg(args, options.rev_at);
+    let (rel, inside) = vcsapply.relative(heap, cwd, vcsapply.dotless(found), word);
+    var code = 0;
+    if !inside {
+        code = refused_outside(heap, io, "blame", word);
+    } else {
+        var spec = opts.value_of(args, 0, 0)[0..0];
+        if options.from_at >= 0 {
+            spec = opts.value_of(args, options.from_at, options.from_off);
+        }
+        var decl = spec;
+        if options.decl_at >= 0 {
+            decl = opts.value_of(args, options.decl_at, options.decl_off);
+        }
+        let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+        borrow rel as &lb in {
+            borrow mut scratch as &!s in {
+                code = answered(heap, io, "blame", vcsblame.blame_command(heap, io, vcs, contents(s), buffer.bytes(lb), spec, options.decl_at >= 0, decl), spec);
+            }
+        }
+        unbox_slice(heap, scratch);
+    }
+    buffer.drop(heap, rel);
+    return code;
 }
 
 // `diff [REV [REV]] [PATH...] [--context N]` (R10, `vcsdiffdoc.diff_command`): the first two words that name a change (and are not files or directories here) are the revisions, the rest paths.
@@ -1675,7 +1712,7 @@ fn branch_in[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs:
 // Whether `cancho vcs SUB` is this module's: `init`, `show`, `branch`, `status` and `restore` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
 pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read] bool {
     let sub = arg(args, 2);
-    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") || bytes.equal(sub, "apply") || bytes.equal(sub, "record") || bytes.equal(sub, "revert") || bytes.equal(sub, "diff") || bytes.equal(sub, "unlock") {
+    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") || bytes.equal(sub, "apply") || bytes.equal(sub, "record") || bytes.equal(sub, "revert") || bytes.equal(sub, "diff") || bytes.equal(sub, "blame") || bytes.equal(sub, "unlock") {
         return true;
     }
     if !bytes.equal(sub, "log") {
@@ -1739,6 +1776,9 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
     } else if bytes.equal(verb, "diff") {
         which = 11;
         name = "diff";
+    } else if bytes.equal(verb, "blame") {
+        which = 12;
+        name = "blame";
     }
     let options = opts.options_of(heap, io, args, which);
     if options.bad != 0 {
@@ -1782,6 +1822,8 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                                 code = record_in(heap, io, args, rd, vd, buffer.bytes(pb), buffer.bytes(cb), options, clock);
                                             } else if which == 10 {
                                                 code = revert_in(heap, io, args, rd, vd, buffer.bytes(pb), options, clock);
+                                            } else if which == 12 {
+                                                code = blame_in(heap, io, args, vd, buffer.bytes(pb), buffer.bytes(cb), options);
                                             } else if which == 11 {
                                                 code = diff_in(heap, io, args, fs, rd, vd, buffer.bytes(pb), buffer.bytes(cb), options);
                                             } else {

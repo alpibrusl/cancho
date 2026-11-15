@@ -1,0 +1,8 @@
+{
+  "command": "blame",
+  "ok": false,
+  "refused": {
+    "message": "`bad.txt` is not text",
+    "tag": "binary-file"
+  }
+}

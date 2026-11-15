@@ -828,16 +828,14 @@ pub fn emit_files[&h, &o, &n](heap: &!h Heap, out: buffer.Buffer, levels: int, o
     return b;
 }
 
-// The tree texts of the change `id` and of its first parent (empty for a root change): the old one, the new one and a status.
-pub fn change_trees[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, buffer.Buffer, int) {
+// The tree id and the first parent's id (empty for a root change) of the change `id`, and a status.
+pub fn change_links[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, buffer.Buffer, int) {
     let got = vcsstore.get(heap, vcs, scratch, "change", id);
     let (data, status, errno) = vcsstore.parts(got);
-    var new_text = buffer.empty(heap, 0);
-    var old_text = buffer.empty(heap, 0);
+    var tree_id = buffer.empty(heap, 0);
+    var parent_id = buffer.empty(heap, 0);
     var code = status;
     if status == 0 {
-        var tree_id = buffer.empty(heap, 0);
-        var parent_id = buffer.empty(heap, 0);
         borrow data as &db in {
             let src = buffer.bytes(db);
             let jm = box_slice(heap, jsonread.size_for(src), 0);
@@ -854,32 +852,41 @@ pub fn change_trees[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [i
             }
             unbox_slice(heap, jm);
         }
-        if code == 0 {
-            borrow tree_id as &tb in {
-                let t = tree_text(heap, vcs, scratch, buffer.bytes(tb));
-                let (text, ts, te) = vcsstore.parts(t);
-                buffer.drop(heap, new_text);
-                new_text = text;
-                code = ts;
-            }
-        }
-        var has_parent = false;
-        borrow parent_id as &pr in {
-            has_parent = len(buffer.bytes(pr)) > 0;
-        }
-        if code == 0 && has_parent {
-            borrow parent_id as &pb in {
-                let pt = parent_tree(heap, vcs, scratch, buffer.bytes(pb));
-                let (text, ps, pe) = vcsstore.parts(pt);
-                buffer.drop(heap, old_text);
-                old_text = text;
-                code = ps;
-            }
-        }
-        buffer.drop(heap, tree_id);
-        buffer.drop(heap, parent_id);
     }
     buffer.drop(heap, data);
+    return (tree_id, parent_id, code);
+}
+
+// The tree texts of the change `id` and of its first parent (empty for a root change): the old one, the new one and a status.
+pub fn change_trees[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, buffer.Buffer, int) {
+    let (tree_id, parent_id, links) = change_links(heap, vcs, scratch, id);
+    var new_text = buffer.empty(heap, 0);
+    var old_text = buffer.empty(heap, 0);
+    var code = links;
+    if code == 0 {
+        borrow tree_id as &tb in {
+            let t = tree_text(heap, vcs, scratch, buffer.bytes(tb));
+            let (text, ts, te) = vcsstore.parts(t);
+            buffer.drop(heap, new_text);
+            new_text = text;
+            code = ts;
+        }
+    }
+    var has_parent = false;
+    borrow parent_id as &pr in {
+        has_parent = len(buffer.bytes(pr)) > 0;
+    }
+    if code == 0 && has_parent {
+        borrow parent_id as &pb in {
+            let pt = parent_tree(heap, vcs, scratch, buffer.bytes(pb));
+            let (text, ps, pe) = vcsstore.parts(pt);
+            buffer.drop(heap, old_text);
+            old_text = text;
+            code = ps;
+        }
+    }
+    buffer.drop(heap, tree_id);
+    buffer.drop(heap, parent_id);
     return (old_text, new_text, code);
 }
 

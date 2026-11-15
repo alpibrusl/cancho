@@ -374,6 +374,53 @@ ok show patch many mode
 ok show patch bad revision
 ok show patch context
 ok log path limit 0
+== blame
+ok blame notes
+ok blame notes parent
+ok blame notes root
+ok blame notes inline
+ok blame cho
+ok blame decl thrice
+ok blame decl twice
+ok blame decl twice parent
+ok blame decl inline
+ok refuse blame decl not found
+ok refuse blame decl empty
+ok refuse blame decl not cho
+ok refuse blame path not found
+ok refuse blame directory
+ok refuse blame root
+ok refuse blame no path
+ok refuse blame two paths
+ok refuse blame outside
+ok refuse blame bad revision
+ok refuse blame past first
+ok refuse blame bad revision and path
+ok blame many
+ok blame many notes
+ok blame many parent
+ok blame long
+ok blame long parent
+ok blame wide mode
+ok blame wide link
+ok refuse blame wide deleted
+ok blame wide new dir
+ok refuse blame binary
+ok refuse blame binary old
+ok blame no newline
+ok blame no newline parent
+ok refuse blame decl unparsable
+ok blame unparsable lines
+ok blame from subdirectory
+ok refuse blame from subdirectory outside
+ok blame empty file
+ok refuse blame no value rev
+ok blame shifted
+ok blame shifted parent
+ok refuse blame parent binary
+ok refuse blame decl not found one
+ok refuse blame decl not found none
+ok blame default revision on branch
 == what is not an option
 ok log --bogus (exit 2)
 ok log --bogus is an unknown option

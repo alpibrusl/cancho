@@ -239,6 +239,9 @@ echo "== routing"
 empty; "$cancho" vcs log > "$work/out.txt" 2>&1; echo "exit $?"; grep -c "nothing published yet" "$work/out.txt" | sed 's/^/manifest log lines: /'
 repo; "$cancho" vcs log --store elsewhere > "$work/out.txt" 2>&1; echo "exit $?"; grep -o "nothing published yet at .elsewhere." "$work/out.txt"
 
+step() { "$cancho" vcs record --all --author "Ada <ada@example.com>" --time "$1" --output json > /dev/null; }
+stepng() { "$cancho" vcs record --all --no-gate --author "Ada <ada@example.com>" --time "$1" --output json > /dev/null; }
+stepq() { "$cancho" vcs record --all --author "Ada <ada@example.com>" --time "$1" --intent-prompt 'say "hi" \ end' --output json > /dev/null; }
 echo "== log filters and show --patch"
 lgx() { "$cancho" vcs log "$@" --output json > "$work/out.json" 2> "$work/err.txt"; echo $? > "$work/code.txt"; }
 shx() { "$cancho" vcs show "$@" --output json > "$work/out.json" 2> "$work/err.txt"; echo $? > "$work/code.txt"; }
@@ -288,6 +291,54 @@ repo; shx --patch nosuchbranch; same "show patch bad revision" "$gold/show_patch
 longf() { repo; seq 1 30 > big.txt; "$cancho" vcs record --all --author "Ada <ada@example.com>" --time 2000 --output json > /dev/null; awk 'NR==15{print "FIFTEEN";next}{print}' big.txt > b2; mv b2 big.txt; "$cancho" vcs record --all --author "Ada <ada@example.com>" --time 2001 --output json > /dev/null; }
 longf; shx --patch; same "show patch context" "$gold/show_patch_context.json" "$work/out.json"
 repo; lgx --path notes.md --limit 0; same "log path limit 0" "$gold/log_path_limit_0.json" "$work/out.json"
+echo "== blame"
+blx() { "$cancho" vcs blame "$@" --output json > "$work/out.json" 2> "$work/err.txt"; echo $? > "$work/code.txt"; }
+repo; blx notes.md; same "blame notes" "$gold/blame_notes.json" "$work/out.json"
+repo; blx notes.md --rev HEAD~1; same "blame notes parent" "$gold/blame_notes_parent.json" "$work/out.json"
+repo; blx notes.md --rev HEAD~2; same "blame notes root" "$gold/blame_notes_root.json" "$work/out.json"
+repo; blx notes.md --rev=HEAD~1; same "blame notes inline" "$gold/blame_notes_inline.json" "$work/out.json"
+repo; blx a.cho; same "blame cho" "$gold/blame_cho.json" "$work/out.json"
+repo; blx a.cho --decl 'fn a.thrice'; same "blame decl thrice" "$gold/blame_decl_thrice.json" "$work/out.json"
+repo; blx a.cho --decl 'fn a.twice'; same "blame decl twice" "$gold/blame_decl_twice.json" "$work/out.json"
+repo; blx a.cho --decl 'fn a.twice' --rev HEAD~1; same "blame decl twice parent" "$gold/blame_decl_twice_parent.json" "$work/out.json"
+repo; blx a.cho --decl='fn a.thrice'; same "blame decl inline" "$gold/blame_decl_inline.json" "$work/out.json"
+repo; blx a.cho --decl nope; same "refuse blame decl not found" "$gold/refuse_blame_decl_not_found.json" "$work/out.json"
+repo; blx a.cho --decl ''; same "refuse blame decl empty" "$gold/refuse_blame_decl_empty.json" "$work/out.json"
+repo; blx notes.md --decl 'fn a.twice'; same "refuse blame decl not cho" "$gold/refuse_blame_decl_not_cho.json" "$work/out.json"
+repo; blx nonesuch; same "refuse blame path not found" "$gold/refuse_blame_path_not_found.json" "$work/out.json"
+many; blx sub; same "refuse blame directory" "$gold/refuse_blame_directory.json" "$work/out.json"
+repo; blx .; same "refuse blame root" "$gold/refuse_blame_root.json" "$work/out.json"
+repo; blx ; same "refuse blame no path" "$gold/refuse_blame_no_path.json" "$work/out.json"
+repo; blx notes.md a.cho; same "refuse blame two paths" "$gold/refuse_blame_two_paths.json" "$work/out.json"
+repo; blx ../outside; same "refuse blame outside" "$gold/refuse_blame_outside.json" "$work/out.json"
+repo; blx notes.md --rev nosuchbranch; same "refuse blame bad revision" "$gold/refuse_blame_bad_revision.json" "$work/out.json"
+repo; blx notes.md --rev HEAD~9; same "refuse blame past first" "$gold/refuse_blame_past_first.json" "$work/out.json"
+repo; blx nonesuch --rev nosuchbranch; same "refuse blame bad revision and path" "$gold/refuse_blame_bad_revision_and_path.json" "$work/out.json"
+many; blx extra.txt; same "blame many" "$gold/blame_many.json" "$work/out.json"
+many; blx notes.md; same "blame many notes" "$gold/blame_many_notes.json" "$work/out.json"
+many; blx extra.txt --rev HEAD~1; same "blame many parent" "$gold/blame_many_parent.json" "$work/out.json"
+longf; blx big.txt; same "blame long" "$gold/blame_long.json" "$work/out.json"
+longf; blx big.txt --rev HEAD~1; same "blame long parent" "$gold/blame_long_parent.json" "$work/out.json"
+wide; blx notes.md --rev wide; same "blame wide mode" "$gold/blame_wide_mode.json" "$work/out.json"
+wide; blx lnk --rev wide; same "blame wide link" "$gold/blame_wide_link.json" "$work/out.json"
+wide; blx a.cho --rev wide; same "refuse blame wide deleted" "$gold/refuse_blame_wide_deleted.json" "$work/out.json"
+wide; blx sub/deep/x.txt --rev wide; same "blame wide new dir" "$gold/blame_wide_new_dir.json" "$work/out.json"
+repo; printf '\377\376' > bad.txt; stepng 3000; blx bad.txt; same "refuse blame binary" "$gold/refuse_blame_binary.json" "$work/out.json"
+repo; printf '\377\376' > bad.txt; stepng 3000; blx bad.txt --rev HEAD~1; same "refuse blame binary old" "$gold/refuse_blame_binary_old.json" "$work/out.json"
+repo; printf 'one\ntwo' > nonl.txt; stepng 3000; printf 'one\ntwo\nthree' > nonl.txt; stepng 3001; blx nonl.txt; same "blame no newline" "$gold/blame_no_newline.json" "$work/out.json"
+repo; printf 'one\ntwo' > nonl.txt; stepng 3000; printf 'one\ntwo\nthree' > nonl.txt; stepng 3001; blx nonl.txt --rev HEAD~1; same "blame no newline parent" "$gold/blame_no_newline_parent.json" "$work/out.json"
+repo; printf 'module b;\npub fn k( {\n' > b.cho; stepng 3000; blx b.cho --decl 'fn b.k'; same "refuse blame decl unparsable" "$gold/refuse_blame_decl_unparsable.json" "$work/out.json"
+repo; printf 'module b;\npub fn k( {\n' > b.cho; stepng 3000; blx b.cho; same "blame unparsable lines" "$gold/blame_unparsable_lines.json" "$work/out.json"
+repo; mkdir -p sub; cd sub; blx ../notes.md; same "blame from subdirectory" "$gold/blame_from_subdirectory.json" "$work/out.json"
+repo; mkdir -p sub; cd sub; blx ../../x; same "refuse blame from subdirectory outside" "$gold/refuse_blame_from_subdirectory_outside.json" "$work/out.json"
+repo; : > e.txt; stepng 3000; blx e.txt; same "blame empty file" "$gold/blame_empty_file.json" "$work/out.json"
+repo; blx notes.md --rev; same "refuse blame no value rev" "$gold/refuse_blame_no_value_rev.json" "$work/out.json"
+repo; seq 1 12 > s.txt; stepng 3000; awk 'NR==8{print "eight";next}{print}' s.txt > s2; mv s2 s.txt; stepng 3005; awk 'NR==3{print "x";next} NR==4{next}{print}' s.txt > s2; mv s2 s.txt; stepng 3001; awk 'NR==1{print "one";next}{print}' s.txt > s2; mv s2 s.txt; stepng 3002; blx s.txt; same "blame shifted" "$gold/blame_shifted.json" "$work/out.json"
+repo; seq 1 12 > s.txt; stepng 3000; awk 'NR==8{print "eight";next}{print}' s.txt > s2; mv s2 s.txt; stepng 3005; awk 'NR==3{print "x";next} NR==4{next}{print}' s.txt > s2; mv s2 s.txt; stepng 3001; awk 'NR==1{print "one";next}{print}' s.txt > s2; mv s2 s.txt; stepng 3002; blx s.txt --rev HEAD~1; same "blame shifted parent" "$gold/blame_shifted_parent.json" "$work/out.json"
+repo; printf '\377\376' > bt.txt; stepng 3000; printf 'ok\n' > bt.txt; stepng 3001; blx bt.txt; same "refuse blame parent binary" "$gold/refuse_blame_parent_binary.json" "$work/out.json"
+repo; printf 'module b;\npub fn k() -> [] int { return 1; }\n' > b.cho; stepng 3000; blx b.cho --decl nope; same "refuse blame decl not found one" "$gold/refuse_blame_decl_not_found_one.json" "$work/out.json"
+repo; printf 'module b;\n' > b.cho; stepng 3000; blx b.cho --decl nope; same "refuse blame decl not found none" "$gold/refuse_blame_decl_not_found_none.json" "$work/out.json"
+wide; "$cancho" vcs switch wide --output json > /dev/null; blx notes.md; same "blame default revision on branch" "$gold/blame_default_revision_on_branch.json" "$work/out.json"
 echo "== what is not an option"
 repo; vcs log --bogus;          exit_is "log --bogus" 2; grep -q "unknown option" "$work/err.txt" && echo "ok log --bogus is an unknown option" || echo "FAILS log --bogus"
 repo; "$cancho" vcs show --output text > "$work/out.json" 2> "$work/err.txt"; echo $? > "$work/code.txt"; exit_is "show --output text" 2
@@ -345,9 +396,6 @@ repo; printf 'four\n' >> notes.md; vcs record --all --time abc; exit_is "record,
 repo; printf 'four\n' >> notes.md; rcx --all --expect HEAD~1; exit_is "record, a wrong expect" 1
 
 echo "== revert"
-step() { "$cancho" vcs record --all --author "Ada <ada@example.com>" --time "$1" --output json > /dev/null; }
-stepng() { "$cancho" vcs record --all --no-gate --author "Ada <ada@example.com>" --time "$1" --output json > /dev/null; }
-stepq() { "$cancho" vcs record --all --author "Ada <ada@example.com>" --time "$1" --intent-prompt 'say "hi" \ end' --output json > /dev/null; }
 rv() { "$cancho" vcs revert "$@" --author "Ada <ada@example.com>" --time 3000 --output json; }
 rvx() { "$cancho" vcs revert "$@" --author "Ada <ada@example.com>" --time 3000 --output json > "$work/out.json" 2> "$work/err.txt"; echo $? > "$work/code.txt"; }
 repo; rvx HEAD; same "revert: head" "$gold/revert_head.json" "$work/out.json"; store_was "revert: head" revert_head.store; tree_was "revert: head" revert_head.tree; no_lock_after "revert: head"

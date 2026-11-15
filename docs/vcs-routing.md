@@ -79,7 +79,7 @@ needs no Rust binary at test time, which is what makes it a gate stage and not a
 differential scripts stay as the check while the Rust command exists.
 
 **D7. What this does not decide. [choice]** `record` and its gate (the `driver` refactor), `switch`, `restore`, `revert`, `apply` (they need `materialize` and `remove_path`, slice 3b of
-`directory-links.md`), `diff`, `blame`, `verify`, `unlock`, the git bridge; `log --path|--intent|--session|--issue|--author` and `show --patch` (`vcs-native.md` §6 listed them as not done; built in R11, §13); the
+`directory-links.md`), `diff`, `blame` (built in R12, §14), `verify`, `unlock`, the git bridge; `log --path|--intent|--session|--issue|--author` and `show --patch` (`vcs-native.md` §6 listed them as not done; built in R11, §13); the
 crash test; and `canonicalize` (D2).
 
 ## 5. Slices
@@ -338,3 +338,24 @@ exact match without the length test, prompt equals, `touches` needing blob and m
 the issue and the reverse, the path filter off, no `path-escapes`, the patch's context, its key, the rows' indentation and their comma. Two survived the first run (a limit of 0 with a filter, and a patch whose context matters, which needs a file
 longer than 7 lines) and each got a case. **Not covered:** a `--path` through a link in the working directory beyond what `vcsapply.relative` already does for `diff`, an author or prompt whose JSON uses `\u` escapes the Rust writer would not have
 written, and Linux (CI).
+
+## 14. R12, `blame`: built and measured against the Rust command (2026-11-15, Darwin, macOS 26.2, Apple silicon)
+
+**The design is the Rust command's** (`cmd_blame`, `blame_decl`). `blame PATH [--rev REV] [--decl NAME]`, one path (else `bad-argument`, "`blame` takes one path"), relative to the current directory and inside the repository
+(`path-escapes`). Lines: the walk is down the first parents from REV (HEAD by default). Each version's lines are compared with the next older version's by the line diff (`diff_lines`, the histogram diff of `diff`), a line the diff says the newer
+version *added* belongs to the newer change, and the rest carry on; what reaches a version with no parent, or a parent without the file, belongs to that version. The document is `{command, lines, ok, path, rev}`, each line
+`{author, change, intent, line, subject, text, time}` (`intent` is `null` without one; `text` has its `\n` taken off). A file that is not UTF-8 (a NUL is fine) is `binary-file`, in REV or in any older version the walk reaches; a path that is not a
+file in REV (a directory too) is `path-not-found` ("`P` is not in" and the first 12 digits of the change). `--decl NAME` gives, instead, the oldest change on the first-parent chain in which the declaration `NAME` (a key of the declaration view of §10,
+`fn a.twice`, `type T`) has the same signature and body as at REV: the change as `log` lists it (with `parents` and `tz`) plus `decl` and `path`; a name the file does not have is `decl-not-found` with the file's names in `declarations`, a file that
+does not parse is `binary-file` ("does not parse as cancho"); in that walk a version whose blob cannot be read or is not text or does not parse ends the walk.
+
+**Built.** `vcsblame.cho` (about 650 lines: the walk with the line map, the rows, the declaration walk, the refusal documents), `blame` in `clivcsrepo.cho` (`blame_in`; the file is 1,853 lines), `--rev` and `--decl` in `clivcsopts.cho`, and
+`vcsrepo.change_links` (the tree and first parent of a change; `change_trees` of R11 now uses it). The refusals that have words of their own are answered as whole documents with status 50, which `answered` writes and exits 1. `cancho.files` gained
+`vcsblame.cho`. The chain built from the previous compiler reproduces itself (stage 2 = stage 3), no reseed. **Measured:** 38 scripted cases, then three repositories of 18 randomized edits each (inserts, deletes and changes of a 20-line file,
+function bodies changing, a file removed and back, CRLF) blamed at every revision, as text and for each of four declarations: **345** more, then 12 more (a subdirectory, an empty file, an unparsable `.cho`, a 3,000-line file in 0.19 s against the Rust
+command's 0.05): stdout, stderr and exit status equal in all 395. `vcs_repo.sh` goes from 612 to **658 checks** with 46 more goldens made by the Rust command (the command's every refusal, the three-version case where a hunk replaces two lines by one,
+which only a fourth version can show, the default revision on another branch, a parent that is binary under a text file, one declaration and none in the list). **Mutants:** 18; 16 killed, one equivalent (not giving what is left to a parentless version
+changes nothing once the loop ends because none is left), and one **not covered**, the leniency of the declaration walk toward a blob the store cannot give (needs a store with a missing blob; the lines walk refuses there, the declaration walk stops).
+Six survived the first run and each of the four that could be killed got a case (the hunk's older length needs a fourth version; the empty and one-name lists; the default revision on a branch that is not `main`; a binary parent).
+**Known differences:** the declaration view's (§10: two modules declaring the same type name); the `\u` escapes a change written by something other than the Rust command might use are read by both. **Not covered:** a merge change's second parent
+(blame follows the first, as Rust does; no case has one), a store with a missing or damaged blob, Linux (CI).
