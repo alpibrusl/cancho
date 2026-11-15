@@ -1,0 +1,8 @@
+{
+  "command": "blame",
+  "ok": false,
+  "refused": {
+    "message": "`notes.md` does not parse as cancho",
+    "tag": "binary-file"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "command": "blame",
+  "lines": [
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "960fd3a813e8e05e68c304a1ea92bf374b61dd07399c70166822fd6e6c7b716f",
+      "intent": {
+        "model": "m1",
+        "prompt": "first",
+        "session": "s1"
+      },
+      "line": 1,
+      "subject": "first",
+      "text": "module a;",
+      "time": 1000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442",
+      "intent": {
+        "issue": "7",
+        "prompt": "second"
+      },
+      "line": 2,
+      "subject": "second",
+      "text": "pub fn twice(n: int) -> [] int { return n + n + 0; }",
+      "time": 1001
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442",
+      "intent": {
+        "issue": "7",
+        "prompt": "second"
+      },
+      "line": 3,
+      "subject": "second",
+      "text": "pub fn thrice(n: int) -> [] int { return n * 3; }",
+      "time": 1001
+    }
+  ],
+  "ok": true,
+  "path": "a.cho",
+  "rev": "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e"
+}

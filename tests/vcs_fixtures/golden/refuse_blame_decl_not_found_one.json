@@ -1,0 +1,11 @@
+{
+  "command": "blame",
+  "ok": false,
+  "refused": {
+    "declarations": [
+      "fn b.k"
+    ],
+    "message": "no declaration `nope` in `b.cho`",
+    "tag": "decl-not-found"
+  }
+}

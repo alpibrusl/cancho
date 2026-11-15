@@ -347,5 +347,53 @@ here; shj --patch nosuchbranch > "$g/show_patch_bad_revision.json" || true
 longf() { here; seq 1 30 > big.txt; "$R" vcs record --all --author "Ada <ada@example.com>" --time 2000 --output json > /dev/null; awk 'NR==15{print "FIFTEEN";next}{print}' big.txt > b2; mv b2 big.txt; "$R" vcs record --all --author "Ada <ada@example.com>" --time 2001 --output json > /dev/null; }
 longf; shj --patch > "$g/show_patch_context.json" || true
 here; lgj --path notes.md --limit 0 > "$g/log_path_limit_0.json" || true
+# blame (R12): the Rust command wrote each. Its refusals carry their own words, so the goldens are the documents.
+blj() { "$R" vcs blame "$@" --output json; }
+here; blj notes.md > "$g/blame_notes.json" || true
+here; blj notes.md --rev HEAD~1 > "$g/blame_notes_parent.json" || true
+here; blj notes.md --rev HEAD~2 > "$g/blame_notes_root.json" || true
+here; blj notes.md --rev=HEAD~1 > "$g/blame_notes_inline.json" || true
+here; blj a.cho > "$g/blame_cho.json" || true
+here; blj a.cho --decl 'fn a.thrice' > "$g/blame_decl_thrice.json" || true
+here; blj a.cho --decl 'fn a.twice' > "$g/blame_decl_twice.json" || true
+here; blj a.cho --decl 'fn a.twice' --rev HEAD~1 > "$g/blame_decl_twice_parent.json" || true
+here; blj a.cho --decl='fn a.thrice' > "$g/blame_decl_inline.json" || true
+here; blj a.cho --decl nope > "$g/refuse_blame_decl_not_found.json" || true
+here; blj a.cho --decl '' > "$g/refuse_blame_decl_empty.json" || true
+here; blj notes.md --decl 'fn a.twice' > "$g/refuse_blame_decl_not_cho.json" || true
+here; blj nonesuch > "$g/refuse_blame_path_not_found.json" || true
+many; blj sub > "$g/refuse_blame_directory.json" || true
+here; blj . > "$g/refuse_blame_root.json" || true
+here; blj  > "$g/refuse_blame_no_path.json" || true
+here; blj notes.md a.cho > "$g/refuse_blame_two_paths.json" || true
+here; blj ../outside > "$g/refuse_blame_outside.json" || true
+here; blj notes.md --rev nosuchbranch > "$g/refuse_blame_bad_revision.json" || true
+here; blj notes.md --rev HEAD~9 > "$g/refuse_blame_past_first.json" || true
+here; blj nonesuch --rev nosuchbranch > "$g/refuse_blame_bad_revision_and_path.json" || true
+many; blj extra.txt > "$g/blame_many.json" || true
+many; blj notes.md > "$g/blame_many_notes.json" || true
+many; blj extra.txt --rev HEAD~1 > "$g/blame_many_parent.json" || true
+longf; blj big.txt > "$g/blame_long.json" || true
+longf; blj big.txt --rev HEAD~1 > "$g/blame_long_parent.json" || true
+wide; blj notes.md --rev wide > "$g/blame_wide_mode.json" || true
+wide; blj lnk --rev wide > "$g/blame_wide_link.json" || true
+wide; blj a.cho --rev wide > "$g/refuse_blame_wide_deleted.json" || true
+wide; blj sub/deep/x.txt --rev wide > "$g/blame_wide_new_dir.json" || true
+here; printf '\377\376' > bad.txt; stepng 3000; blj bad.txt > "$g/refuse_blame_binary.json" || true
+here; printf '\377\376' > bad.txt; stepng 3000; blj bad.txt --rev HEAD~1 > "$g/refuse_blame_binary_old.json" || true
+here; printf 'one\ntwo' > nonl.txt; stepng 3000; printf 'one\ntwo\nthree' > nonl.txt; stepng 3001; blj nonl.txt > "$g/blame_no_newline.json" || true
+here; printf 'one\ntwo' > nonl.txt; stepng 3000; printf 'one\ntwo\nthree' > nonl.txt; stepng 3001; blj nonl.txt --rev HEAD~1 > "$g/blame_no_newline_parent.json" || true
+here; printf 'module b;\npub fn k( {\n' > b.cho; stepng 3000; blj b.cho --decl 'fn b.k' > "$g/refuse_blame_decl_unparsable.json" || true
+here; printf 'module b;\npub fn k( {\n' > b.cho; stepng 3000; blj b.cho > "$g/blame_unparsable_lines.json" || true
+here; mkdir -p sub; cd sub; blj ../notes.md > "$g/blame_from_subdirectory.json" || true
+here; mkdir -p sub; cd sub; blj ../../x > "$g/refuse_blame_from_subdirectory_outside.json" || true
+here; : > e.txt; stepng 3000; blj e.txt > "$g/blame_empty_file.json" || true
+here; blj notes.md --rev > "$g/refuse_blame_no_value_rev.json" || true
+here; seq 1 12 > s.txt; stepng 3000; awk 'NR==8{print "eight";next}{print}' s.txt > s2; mv s2 s.txt; stepng 3005; awk 'NR==3{print "x";next} NR==4{next}{print}' s.txt > s2; mv s2 s.txt; stepng 3001; awk 'NR==1{print "one";next}{print}' s.txt > s2; mv s2 s.txt; stepng 3002; blj s.txt > "$g/blame_shifted.json" || true
+here; seq 1 12 > s.txt; stepng 3000; awk 'NR==8{print "eight";next}{print}' s.txt > s2; mv s2 s.txt; stepng 3005; awk 'NR==3{print "x";next} NR==4{next}{print}' s.txt > s2; mv s2 s.txt; stepng 3001; awk 'NR==1{print "one";next}{print}' s.txt > s2; mv s2 s.txt; stepng 3002; blj s.txt --rev HEAD~1 > "$g/blame_shifted_parent.json" || true
+here; printf '\377\376' > bt.txt; stepng 3000; printf 'ok\n' > bt.txt; stepng 3001; blj bt.txt > "$g/refuse_blame_parent_binary.json" || true
+here; printf 'module b;\npub fn k() -> [] int { return 1; }\n' > b.cho; stepng 3000; blj b.cho --decl nope > "$g/refuse_blame_decl_not_found_one.json" || true
+here; printf 'module b;\n' > b.cho; stepng 3000; blj b.cho --decl nope > "$g/refuse_blame_decl_not_found_none.json" || true
+wide; "$R" vcs switch wide --output json > /dev/null; blj notes.md > "$g/blame_default_revision_on_branch.json" || true
 rm -rf "$out/w" "$out/e"
 echo "made $out/three_changes and $out/golden"

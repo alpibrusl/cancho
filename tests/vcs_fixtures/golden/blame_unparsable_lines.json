@@ -1,0 +1,26 @@
+{
+  "command": "blame",
+  "lines": [
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "8e71f11d05ef1b85037d1df9319b3909ec148d86f5558411bcfd551e7c34f67d",
+      "intent": null,
+      "line": 1,
+      "subject": "",
+      "text": "module b;",
+      "time": 3000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "8e71f11d05ef1b85037d1df9319b3909ec148d86f5558411bcfd551e7c34f67d",
+      "intent": null,
+      "line": 2,
+      "subject": "",
+      "text": "pub fn k( {",
+      "time": 3000
+    }
+  ],
+  "ok": true,
+  "path": "b.cho",
+  "rev": "8e71f11d05ef1b85037d1df9319b3909ec148d86f5558411bcfd551e7c34f67d"
+}

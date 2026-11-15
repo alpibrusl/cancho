@@ -1,0 +1,32 @@
+{
+  "command": "blame",
+  "lines": [
+    {
+      "author": "Bob <bob@example.com>",
+      "change": "0cdd3c659e4684df9b47a50c0e2093c90661d5a45f421f71791b5477e22c108a",
+      "intent": {
+        "issue": "9",
+        "prompt": "bob adds extra",
+        "session": "s2"
+      },
+      "line": 1,
+      "subject": "bob adds extra",
+      "text": "x",
+      "time": 2000
+    },
+    {
+      "author": "Cy",
+      "change": "45f5df9d386d6a266bd28435897bf06a02968bbfebf500d52648d30b62ae4686",
+      "intent": {
+        "prompt": "say \"hi\" \\ x"
+      },
+      "line": 2,
+      "subject": "say \"hi\" \\ x",
+      "text": "y",
+      "time": 2001
+    }
+  ],
+  "ok": true,
+  "path": "extra.txt",
+  "rev": "45f5df9d386d6a266bd28435897bf06a02968bbfebf500d52648d30b62ae4686"
+}
