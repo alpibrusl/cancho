@@ -336,6 +336,13 @@ fn the_router_agrees_with_a_reference_matcher() {
         script.push_str(&format!("R {method} {pattern} {id}\n"));
         routes.push(RefRoute { method, pattern, id });
     }
+    // The root route is in the table in every run: a router that holds `/` was once asked to match it against every other path by a 405, and read past the end of the pattern
+    // (`tests/lex/route_test.cho`, `test_the_root_route_and_the_405`).
+    if !routes.iter().any(|r| r.method == "GET" && r.pattern == "/") {
+        let id = routes.len();
+        script.push_str(&format!("R GET / {id}\n"));
+        routes.push(RefRoute { method: "GET", pattern: "/".to_string(), id });
+    }
     for _ in 0..4000 {
         // Paths from the same alphabet, with the awkward ones mixed in:
         // empty segments, trailing slashes, escapes.
@@ -359,12 +366,22 @@ fn the_router_agrees_with_a_reference_matcher() {
         queries.push((method, path));
     }
 
+    // What a 405 lists, for the first 1200 paths: asked after every route is in the table (`A <path>`).
+    let listed_paths: Vec<String> = queries.iter().take(1200).map(|(_, p)| p.clone()).collect();
+    for p in &listed_paths {
+        script.push_str(&format!("A {p}\n"));
+    }
+
     let (dir, exe) = build_driver("route-driver", "route_driver.cho");
     let out = feed(&exe, script.as_bytes());
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    // `lines()` drops nothing a query prints, but an empty answer is an empty line: split on '\n' and drop the one after the last
     let text = String::from_utf8_lossy(&out.stdout);
-    let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), queries.len());
+    let mut all: Vec<&str> = text.split('\n').collect();
+    all.pop();
+    assert_eq!(all.len(), queries.len() + listed_paths.len());
+    let lines: Vec<&str> = all[..queries.len()].to_vec();
+    let allowed_lines: Vec<&str> = all[queries.len()..].to_vec();
 
     let mut counts = [0usize; 3];
     for ((method, path), line) in queries.iter().zip(&lines) {
@@ -386,6 +403,25 @@ fn the_router_agrees_with_a_reference_matcher() {
             2
         }] += 1;
     }
+    // The methods a 405 lists: those of the routes that fit the path, in the order the routes were added, each once.
+    let fits = |r: &RefRoute, path: &str| {
+        let is_static = !r.pattern.contains(':') && !r.pattern.contains('*');
+        if is_static { r.pattern == path } else { ref_segments(&r.pattern, path).is_some() }
+    };
+    let mut listed_root = 0usize;
+    for (path, line) in listed_paths.iter().zip(&allowed_lines) {
+        let mut methods: Vec<&str> = Vec::new();
+        for r in routes.iter().filter(|r| fits(r, path)) {
+            if !methods.contains(&r.method) {
+                methods.push(r.method);
+            }
+        }
+        assert_eq!(*line, methods.join(", "), "allowed for {path}");
+        if path == "/" && !methods.is_empty() {
+            listed_root += 1;
+        }
+    }
+    assert!(listed_root > 0, "the corpus must ask what the root route allows");
     eprintln!(
         "routes {}, queries: matched {}, wrong method {}, no route {}",
         routes.len(),
