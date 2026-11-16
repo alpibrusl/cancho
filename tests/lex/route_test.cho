@@ -132,6 +132,69 @@ fn test_the_methods_a_path_allows[&h](heap: &!h Heap) -> [heap] int {
     return 0;
 }
 
+// The root route `/` is a pattern with no segment after its slash. A 405 asks every route whether it fits the path, so a router that holds `/` was asked
+// to match `/` against `/health`, and read a byte past the end of the pattern: the first request with the wrong method killed the service.
+fn test_the_root_route_and_the_405[&h](heap: &!h Heap) -> [heap] int {
+    var r = route.empty(heap);
+    r = route.add(heap, r, "GET", "/", 1);
+    r = route.add(heap, r, "POST", "/", 2);
+    r = route.add(heap, r, "GET", "/health", 3);
+    r = route.add(heap, r, "GET", "/users/:id", 4);
+    var widest = 0;
+    borrow r as &rr in {
+        widest = route.most_params(rr);
+    }
+    let table = box_slice(heap, 2 * widest, 0);
+    borrow mut table as &!w in {
+        let t = contents(w);
+        borrow r as &rr in {
+            test.assert_eq(route.find(rr, "GET", "/", t), 1);
+            test.assert_eq(route.find(rr, "POST", "/", t), 2);
+            // the wrong method for the root route, and for the others, with the root route in the table
+            test.assert_eq(route.find(rr, "PUT", "/", t), 0 - 2);
+            test.assert_eq(route.find(rr, "PUT", "/health", t), 0 - 2);
+            test.assert_eq(route.find(rr, "POST", "/users/7", t), 0 - 2);
+            test.assert_eq(route.find(rr, "GET", "/nowhere", t), 0 - 1);
+        }
+        // `allowed` is what a 405 says: the root route is for `/` and for nothing else
+        var a = buffer.empty(heap, 16);
+        borrow r as &rr in {
+            a = route.allowed(heap, rr, "/health", t, a);
+        }
+        borrow a as &ab in {
+            test.assert(bytes.equal(buffer.bytes(ab), "GET"));
+        }
+        buffer.drop(heap, a);
+        var b = buffer.empty(heap, 16);
+        borrow r as &rr in {
+            b = route.allowed(heap, rr, "/", t, b);
+        }
+        borrow b as &bb in {
+            test.assert(bytes.equal(buffer.bytes(bb), "GET, POST"));
+        }
+        buffer.drop(heap, b);
+        var c = buffer.empty(heap, 16);
+        borrow r as &rr in {
+            c = route.allowed(heap, rr, "/users/7", t, c);
+        }
+        borrow c as &cb in {
+            test.assert(bytes.equal(buffer.bytes(cb), "GET"));
+        }
+        buffer.drop(heap, c);
+        var d = buffer.empty(heap, 16);
+        borrow r as &rr in {
+            d = route.allowed(heap, rr, "/nowhere", t, d);
+        }
+        borrow d as &db in {
+            test.assert_eq(len(buffer.bytes(db)), 0);
+        }
+        buffer.drop(heap, d);
+    }
+    unbox_slice(heap, table);
+    route.drop(heap, r);
+    return 0;
+}
+
 fn test_typed_parameters[&h](heap: &!h Heap) -> [heap] int {
     var r = route.empty(heap);
     r = route.add(heap, r, "GET", "/users/:id/posts/:post", 1);
