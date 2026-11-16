@@ -43,6 +43,8 @@ floats.cho
 fold.cho
 foreign.cho
 formatting.cho
+gitparse.cho
+gitread.cho
 guidelines.cho
 identity.cho
 ingest.cho
@@ -67,6 +69,7 @@ rules.cho
 runtime.cho
 satisfytext.cho
 scope.cho
+sha1.cho
 signatures.cho
 sink.cho
 stdorder.cho
@@ -81,6 +84,7 @@ vcschange.cho
 vcsdecl.cho
 vcsdiff.cho
 vcsdiffdoc.cho
+vcsgit.cho
 vcsobj.cho
 vcsrecord.cho
 vcsrepo.cho

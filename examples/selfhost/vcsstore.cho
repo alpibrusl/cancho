@@ -128,13 +128,13 @@ fn walk[&d, &p](dir: &d Dir, path: &p [byte], make: bool) -> [dir_read, dir_writ
 // ---- files -------------------------------------------------------------------------------------------------------------------
 
 // What a file holds, and the errno (0 when it was read to its end).
-res struct Contents {
+pub res struct Contents {
     data: buffer.Buffer,
     why: int,
 }
 
 // The rest of `file`, in chunks of 64 KiB, appended to `out`.
-fn read_all[&h, &w](heap: &!h Heap, file: &!w File, out: buffer.Buffer) -> [heap, file_read] Contents {
+pub fn read_all[&h, &w](heap: &!h Heap, file: &!w File, out: buffer.Buffer) -> [heap, file_read] Contents {
     var bytes = out;
     var chunk = buffer.empty(heap, 65536);
     var errno = 0;
