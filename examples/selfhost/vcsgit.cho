@@ -45,7 +45,7 @@ fn tag_name(code: int) -> [] &static [byte] {
 }
 
 // A refusal as a `Got`: `kind` is the tag code, `status` 1.
-fn fault[&h, &m](heap: &!h Heap, code: int, message: &m [byte]) -> [heap] gitread.Got {
+pub fn fault[&h, &m](heap: &!h Heap, code: int, message: &m [byte]) -> [heap] gitread.Got {
     return gitread.Got { body: buffer.empty(heap, 0), kind: code, status: 1, why: buffer.append(heap, buffer.empty(heap, len(message)), message) };
 }
 
@@ -56,12 +56,12 @@ fn faulted[&h, &a, &b, &c](heap: &!h Heap, code: int, first: &a [byte], second: 
     return gitread.Got { body: buffer.empty(heap, 0), kind: code, status: 1, why: w };
 }
 
-fn no_fault[&h](heap: &!h Heap) -> [heap] gitread.Got {
+pub fn no_fault[&h](heap: &!h Heap) -> [heap] gitread.Got {
     return gitread.Got { body: buffer.empty(heap, 0), kind: 0, status: 0, why: buffer.empty(heap, 0) };
 }
 
 // `old` ended and `next` in its place.
-fn replace_got[&h](heap: &!h Heap, old: gitread.Got, next: gitread.Got) -> [heap] gitread.Got {
+pub fn replace_got[&h](heap: &!h Heap, old: gitread.Got, next: gitread.Got) -> [heap] gitread.Got {
     let (b, k, s, w) = gitread.got_parts(old);
     buffer.drop(heap, b);
     buffer.drop(heap, w);
@@ -69,7 +69,7 @@ fn replace_got[&h](heap: &!h Heap, old: gitread.Got, next: gitread.Got) -> [heap
 }
 
 // The status of `g`, which stays.
-fn status_of[&g](g: &g gitread.Got) -> [] int {
+pub fn status_of[&g](g: &g gitread.Got) -> [] int {
     return gitread.got_status(g);
 }
 
@@ -86,7 +86,7 @@ fn refusal_document[&h, &t, &m](heap: &!h Heap, tag: &t [byte], message: &m [byt
 }
 
 // `got` (a failure) as the answer of the command: status 50 and the document, or status 10 for a failure of the machine.
-fn failure_answer[&h](heap: &!h Heap, got: gitread.Got) -> [heap] vcsstore.Object {
+pub fn failure_answer[&h](heap: &!h Heap, got: gitread.Got) -> [heap] vcsstore.Object {
     let (b, kind, status, why) = gitread.got_parts(got);
     buffer.drop(heap, b);
     var doc = buffer.empty(heap, 0);
@@ -540,7 +540,7 @@ fn count_loose[&h, &d, &o](heap: &!h Heap, root: &d Dir, odirs: &o [byte]) -> [h
 // ---- the import --------------------------------------------------------------------------------------------------------------
 
 // The commit `id` as a `Got` with its body, or the refusal.
-fn read_commit[&h, &d, &o, &x, &k, &m, &s, &i](heap: &!h Heap, root: &d Dir, od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, file_read] gitread.Got {
+pub fn read_commit[&h, &d, &o, &x, &k, &m, &s, &i](heap: &!h Heap, root: &d Dir, od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, file_read] gitread.Got {
     let g = gitread.read_object(heap, root, od, ix, pk, meta, scratch, id);
     let (body, kind, status, why) = gitread.got_parts(g);
     if status != 0 {
@@ -591,38 +591,63 @@ fn same_bytes[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
     return bytes.equal(x, y);
 }
 
-// The document of a dry run that read `commits` new commits and `already` known ones; `mismatches` holds a line `GIT RECOMPUTED\n` of 81 bytes for each.
-fn report_document[&h, &m](heap: &!h Heap, commits: int, already: int, mismatches: &m [byte]) -> [heap] buffer.Buffer {
+// The members `name` of a document of the import, an array at level 1 of `items`, lines `A B\n` (two strings: `first` and `second` name their keys) or, when `second` is empty, lines `A\n`
+// (one string each).
+fn list_member[&h, &t, &f, &g](heap: &!h Heap, out: buffer.Buffer, name: &static [byte], items: &t [byte], first: &f [byte], second: &g [byte]) -> [heap] buffer.Buffer {
+    var b = vcsrepo.member(heap, out, 1, false, name);
+    if len(items) == 0 {
+        return buffer.append(heap, b, "[]");
+    }
+    b = buffer.push(heap, b, byte_of(91));
+    var at = 0;
+    var n = 0;
+    while at < len(items) {
+        var end = at;
+        while end < len(items) && items[end] != byte_of(10) {
+            end = end + 1;
+        }
+        if n > 0 {
+            b = buffer.push(heap, b, byte_of(44));
+        }
+        b = jsonwrite.newline(heap, b, 2);
+        if len(second) == 0 {
+            b = jsonwrite.string(heap, b, items[at..end]);
+        } else {
+            var sp = at;
+            while items[sp] != byte_of(32) {
+                sp = sp + 1;
+            }
+            b = buffer.push(heap, b, byte_of(123));
+            b = jsonwrite.string(heap, vcsrepo.member(heap, b, 3, true, first), items[at..sp]);
+            b = jsonwrite.string(heap, vcsrepo.member(heap, b, 3, false, second), items[sp + 1..end]);
+            b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(125));
+        }
+        n = n + 1;
+        at = end + 1;
+    }
+    return buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(93));
+}
+
+// The document of an import that read `commits` new commits and `already` known ones, as `ImportReport::to_json` and the command make it. `mismatches` holds a line `GIT RECOMPUTED\n` of
+// 82 bytes for each; `branches`, `remotes` and `tags` lines `CHANGE NAME\n`; `kept` a line of text for each ref kept.
+pub fn report_document[&h, &m, &x, &y, &z, &w](heap: &!h Heap, commits: int, already: int, new_blobs: int, dry: bool, checked_out: int, branches: &x [byte], remotes: &y [byte], tags: &z [byte], kept: &w [byte], mismatches: &m [byte]) -> [heap] buffer.Buffer {
     var b = buffer.push(heap, buffer.empty(heap, 512), byte_of(123));
     b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, true, "already_imported"), already);
-    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "branches"), "[]");
-    b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, false, "checked_out"), 0);
+    b = list_member(heap, b, "branches", branches, "change", "name");
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, false, "checked_out"), checked_out);
     b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, false, "command"), "import-git");
     b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, false, "commits"), commits);
-    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "dry_run"), "true");
-    b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, false, "new_blobs"), 0);
-    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "true");
-    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "refs_kept"), "[]");
-    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "remotes"), "[]");
-    b = vcsrepo.member(heap, b, 1, false, "self_check_mismatches");
-    if len(mismatches) == 0 {
-        b = buffer.append(heap, b, "[]");
+    if dry {
+        b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "dry_run"), "true");
     } else {
-        b = buffer.push(heap, b, byte_of(91));
-        var at = 0;
-        while at < len(mismatches) {
-            if at > 0 {
-                b = buffer.push(heap, b, byte_of(44));
-            }
-            b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(123));
-            b = jsonwrite.string(heap, vcsrepo.member(heap, b, 3, true, "git"), mismatches[at..at + 40]);
-            b = jsonwrite.string(heap, vcsrepo.member(heap, b, 3, false, "recomputed"), mismatches[at + 41..at + 81]);
-            b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(125));
-            at = at + 82;
-        }
-        b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(93));
+        b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "dry_run"), "false");
     }
-    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "tags"), "[]");
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, false, "new_blobs"), new_blobs);
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "true");
+    b = list_member(heap, b, "refs_kept", kept, "", "");
+    b = list_member(heap, b, "remotes", remotes, "change", "name");
+    b = list_member(heap, b, "self_check_mismatches", mismatches, "git", "recomputed");
+    b = list_member(heap, b, "tags", tags, "change", "name");
     return buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
 }
 
@@ -673,16 +698,108 @@ fn load_gitmap[&h, &d, &t](heap: &!h Heap, vcs: &d Dir, table: &!t [int], mask: 
     return count;
 }
 
-// The whole of the dry run, over a catalog that has been read.
-fn run_import[&h, &d, &v, &g, &o, &x, &k, &m, &s](heap: &!h Heap, root: &d Dir, vcs: &v Dir, gitpath: &g [byte], od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int]) -> [heap, dir_read, file_read] vcsstore.Object {
+// One commit that is not known yet, checked as the Rust command checks it: read, its tree read and checked (a refusal as the `Got`), and the commit rendered again from its
+// parts. The second answer is the line `GIT RECOMPUTED\n` when it does not render as itself, else empty. `tr` and `bl` are the tables of trees and blobs seen, `w` 40 bytes of
+// work and `hs` the room of `sha1`.
+pub fn check_commit[&h, &d, &o, &x, &k, &m, &s, &t, &b, &w2, &q, &i](heap: &!h Heap, root: &d Dir, od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], tr: &!t [int], bl: &!b [int], mask: int, w: &!w2 [byte], hs: &!q [int], gid: &i [byte]) -> [heap, dir_read, file_read] (gitread.Got, buffer.Buffer) {
+    var failure = no_fault(heap);
+    var failed = false;
+    var mismatches = buffer.empty(heap, 0);
+    let cg = read_commit(heap, root, od, ix, pk, meta, scratch, gid);
+    let (body, kind, status, why) = gitread.got_parts(cg);
+    if status != 0 {
+        buffer.drop(heap, body);
+        failure = replace_got(heap, failure, gitread.Got { body: buffer.empty(heap, 0), kind: kind, status: status, why: why });
+        failed = true;
+    } else {
+        buffer.drop(heap, why);
+        borrow body as &bb in {
+            let b = buffer.bytes(bb);
+            let parsed = gitparse.commit_parse(heap, b);
+            let (tree, parents, headers_at, head_end, message_at, pstatus) = gitparse.commit_parts(parsed);
+            borrow tree as &trb2 in {
+                let (vg, flags) = visit_tree(heap, root, od, ix, pk, meta, scratch, tr, bl, mask, buffer.bytes(trb2));
+                var vstatus = 0;
+                borrow vg as &vgb in {
+                    vstatus = status_of(vgb);
+                }
+                if vstatus != 0 {
+                    failure = replace_got(heap, failure, vg);
+                    failed = true;
+                } else {
+                    failure = replace_got(heap, failure, vg);
+                    if flags & 6 != 0 {
+                        let eg = exact_check(heap, root, od, ix, pk, meta, scratch, buffer.bytes(trb2));
+                        var estatus = 0;
+                        borrow eg as &egb in {
+                            estatus = status_of(egb);
+                        }
+                        failure = replace_got(heap, failure, eg);
+                        if estatus != 0 {
+                            failed = true;
+                        }
+                    }
+                    if !failed {
+                        borrow parents as &pab in {
+                            let again = rendered(heap, b, buffer.bytes(trb2), buffer.bytes(pab), headers_at, head_end, message_at);
+                            borrow again as &agb in {
+                                if !same_bytes(buffer.bytes(agb), b) {
+                                    var head = buffer.append(heap, buffer.empty(heap, 32), "commit ");
+                                    head = buffer.push_nat(heap, head, len(buffer.bytes(agb)));
+                                    head = buffer.push(heap, head, byte_of(0));
+                                    sha1.init(hs, 0);
+                                    borrow head as &hdb in {
+                                        sha1.update(hs, 0, buffer.bytes(hdb));
+                                    }
+                                    sha1.update(hs, 0, buffer.bytes(agb));
+                                    sha1.finish(hs, 0, w[0..20]);
+                                    buffer.drop(heap, head);
+                                    let gh = gitread.hex_of(heap, gid);
+                                    let rh = gitread.hex_of(heap, w[0..20]);
+                                    borrow gh as &ghb in {
+                                        borrow rh as &rhb in {
+                                            mismatches = buffer.append(heap, mismatches, buffer.bytes(ghb));
+                                            mismatches = buffer.push(heap, mismatches, byte_of(32));
+                                            mismatches = buffer.append(heap, mismatches, buffer.bytes(rhb));
+                                            mismatches = buffer.push(heap, mismatches, byte_of(10));
+                                        }
+                                    }
+                                    buffer.drop(heap, gh);
+                                    buffer.drop(heap, rh);
+                                }
+                            }
+                            buffer.drop(heap, again);
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, tree);
+            buffer.drop(heap, parents);
+        }
+        buffer.drop(heap, body);
+    }
+    if failed {
+        buffer.drop(heap, mismatches);
+        return (failure, buffer.empty(heap, 0));
+    }
+    return (failure, mismatches);
+}
+
+// How many objects the git directory has: the loose ones and the ones the packs of the catalog `meta` hold.
+pub fn object_total[&h, &d, &o, &m](heap: &!h Heap, root: &d Dir, od: &o [byte], meta: &m [int]) -> [heap, dir_read] int {
     var nobj = count_loose(heap, root, od);
     var p = 0;
     while p < meta[0] {
         nobj = nobj + meta[3 + 5 * p];
         p = p + 1;
     }
-    let ints = gitparse.table_ints(nobj + 8);
-    let mask = ints / 4 - 1;
+    return nobj;
+}
+
+// The whole of the dry run, over a catalog that has been read.
+// What both the dry run and the import start from: the commits to be imported, parents before children, as the 20-byte ids one after the other (an empty
+// buffer and `failed` when something could not be read; `failure` says what). `nobj` is how many objects the git directory has, `mask` the mask of a table for them.
+pub fn plan[&h, &d, &g, &o, &x, &k, &m, &s](heap: &!h Heap, root: &d Dir, gitpath: &g [byte], od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], nobj: int, ints: int, mask: int) -> [heap, dir_read, file_read] (buffer.Buffer, gitread.Got, bool) {
     var failure = no_fault(heap);
     var failed = false;
     // the tips: the refs, then HEAD when it is detached
@@ -904,6 +1021,20 @@ fn run_import[&h, &d, &v, &g, &o, &x, &k, &m, &s](heap: &!h Heap, root: &d Dir, 
     unbox_slice(heap, cur);
     if failed {
         buffer.drop(heap, order);
+        return (buffer.empty(heap, 0), failure, true);
+    }
+    return (order, failure, false);
+}
+
+fn run_import[&h, &d, &v, &g, &o, &x, &k, &m, &s](heap: &!h Heap, root: &d Dir, vcs: &v Dir, gitpath: &g [byte], od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int]) -> [heap, dir_read, file_read] vcsstore.Object {
+    let nobj = object_total(heap, root, od, meta);
+    let ints = gitparse.table_ints(nobj + 8);
+    let mask = ints / 4 - 1;
+    let (order, failure0, failed0) = plan(heap, root, gitpath, od, ix, pk, meta, scratch, nobj, ints, mask);
+    var failure = failure0;
+    var failed = failed0;
+    if failed {
+        buffer.drop(heap, order);
         return failure_answer(heap, failure);
     }
     // each commit that is not known yet: its tree, and the commit it would be rendered as
@@ -934,79 +1065,21 @@ fn run_import[&h, &d, &v, &g, &o, &x, &k, &m, &s](heap: &!h Heap, root: &d Dir, 
                                 if gitparse.table_get(kn, mask, gid) >= 0 {
                                     already = already + 1;
                                 } else {
-                                    let cg = read_commit(heap, root, od, ix, pk, meta, scratch, gid);
-                                    let (body, kind, status, why) = gitread.got_parts(cg);
-                                    if status != 0 {
-                                        buffer.drop(heap, body);
-                                        failure = replace_got(heap, failure, gitread.Got { body: buffer.empty(heap, 0), kind: kind, status: status, why: why });
+                                    let (cf, mline) = check_commit(heap, root, od, ix, pk, meta, scratch, tr, bl, mask, w, hs, gid);
+                                    var cstatus = 0;
+                                    borrow cf as &cfb in {
+                                        cstatus = status_of(cfb);
+                                    }
+                                    failure = replace_got(heap, failure, cf);
+                                    if cstatus != 0 {
                                         failed = true;
+                                        buffer.drop(heap, mline);
                                     } else {
-                                        buffer.drop(heap, why);
-                                        borrow body as &bb in {
-                                            let b = buffer.bytes(bb);
-                                            let parsed = gitparse.commit_parse(heap, b);
-                                            let (tree, parents, headers_at, head_end, message_at, pstatus) = gitparse.commit_parts(parsed);
-                                            borrow tree as &trb2 in {
-                                                let (vg, flags) = visit_tree(heap, root, od, ix, pk, meta, scratch, tr, bl, mask, buffer.bytes(trb2));
-                                                var vstatus = 0;
-                                                borrow vg as &vgb in {
-                                                    vstatus = status_of(vgb);
-                                                }
-                                                if vstatus != 0 {
-                                                    failure = replace_got(heap, failure, vg);
-                                                    failed = true;
-                                                } else {
-                                                    failure = replace_got(heap, failure, vg);
-                                                    if flags & 6 != 0 {
-                                                        let eg = exact_check(heap, root, od, ix, pk, meta, scratch, buffer.bytes(trb2));
-                                                        var estatus = 0;
-                                                        borrow eg as &egb in {
-                                                            estatus = status_of(egb);
-                                                        }
-                                                        failure = replace_got(heap, failure, eg);
-                                                        if estatus != 0 {
-                                                            failed = true;
-                                                        }
-                                                    }
-                                                    if !failed {
-                                                        borrow parents as &pab in {
-                                                            let again = rendered(heap, b, buffer.bytes(trb2), buffer.bytes(pab), headers_at, head_end, message_at);
-                                                            borrow again as &agb in {
-                                                                if !same_bytes(buffer.bytes(agb), b) {
-                                                                    var head = buffer.append(heap, buffer.empty(heap, 32), "commit ");
-                                                                    head = buffer.push_nat(heap, head, len(buffer.bytes(agb)));
-                                                                    head = buffer.push(heap, head, byte_of(0));
-                                                                    sha1.init(hs, 0);
-                                                                    borrow head as &hdb in {
-                                                                        sha1.update(hs, 0, buffer.bytes(hdb));
-                                                                    }
-                                                                    sha1.update(hs, 0, buffer.bytes(agb));
-                                                                    sha1.finish(hs, 0, w[0..20]);
-                                                                    buffer.drop(heap, head);
-                                                                    let gh = gitread.hex_of(heap, gid);
-                                                                    let rh = gitread.hex_of(heap, w[0..20]);
-                                                                    borrow gh as &ghb in {
-                                                                        borrow rh as &rhb in {
-                                                                            mismatches = buffer.append(heap, mismatches, buffer.bytes(ghb));
-                                                                            mismatches = buffer.push(heap, mismatches, byte_of(32));
-                                                                            mismatches = buffer.append(heap, mismatches, buffer.bytes(rhb));
-                                                                            mismatches = buffer.push(heap, mismatches, byte_of(10));
-                                                                        }
-                                                                    }
-                                                                    buffer.drop(heap, gh);
-                                                                    buffer.drop(heap, rh);
-                                                                }
-                                                            }
-                                                            buffer.drop(heap, again);
-                                                        }
-                                                        commits = commits + 1;
-                                                    }
-                                                }
-                                            }
-                                            buffer.drop(heap, tree);
-                                            buffer.drop(heap, parents);
+                                        borrow mline as &mlb in {
+                                            mismatches = buffer.append(heap, mismatches, buffer.bytes(mlb));
                                         }
-                                        buffer.drop(heap, body);
+                                        buffer.drop(heap, mline);
+                                        commits = commits + 1;
                                     }
                                 }
                                 n = n + 1;
@@ -1033,7 +1106,7 @@ fn run_import[&h, &d, &v, &g, &o, &x, &k, &m, &s](heap: &!h Heap, root: &d Dir, 
     var doc = buffer.empty(heap, 0);
     borrow mismatches as &mmb in {
         buffer.drop(heap, doc);
-        doc = report_document(heap, commits, already, buffer.bytes(mmb));
+        doc = report_document(heap, commits, already, 0, true, 0, "", "", "", "", buffer.bytes(mmb));
     }
     buffer.drop(heap, mismatches);
     return vcsstore.Object { bytes: doc, status: 0, errno: 0 };

@@ -20,6 +20,7 @@ import std.bytes;
 import std.io as console;
 import selfhost.lexcore as lc;
 import selfhost.clibase;
+import selfhost.clivcsout;
 import selfhost.clivcsopts as opts;
 import selfhost.cliproject;
 import selfhost.jsonwrite;
@@ -29,6 +30,7 @@ import selfhost.vcsapply;
 import selfhost.vcsblame;
 import selfhost.vcsdiffdoc;
 import selfhost.vcsgit;
+import selfhost.vcsgitput;
 import selfhost.vcsrecord;
 import selfhost.vcsrestore;
 import selfhost.vcsrevert;
@@ -129,117 +131,11 @@ fn find_root[&h, &f, &s](heap: &!h Heap, fs: &f Fs(""), start: &s [byte]) -> [he
     return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: 0 };
 }
 
-// `path` as an absolute path: it as it is when it begins with `/`, else beneath `cwd`; `a/..` pairs collapsed (an `Fs` traps on `..`).
-fn absolute[&h, &c, &p](heap: &!h Heap, cwd: &c [byte], path: &p [byte]) -> [heap] buffer.Buffer {
-    var joined = cliproject.beneath(heap, cwd, path);
-    var made = buffer.empty(heap, 0);
-    borrow joined as &jb in {
-        buffer.drop(heap, made);
-        made = walk.collapse(heap, buffer.bytes(jb));
-    }
-    buffer.drop(heap, joined);
-    return made;
-}
-
-// ---- the documents -----------------------------------------------------------------------------------------------------------
-
-// `{"command": COMMAND, "ok": false, "refused": {"message": MESSAGE, "tag": TAG}}`.
-fn refusal[&h, &c, &m, &t](heap: &!h Heap, command: &c [byte], message: &m [byte], tag: &t [byte]) -> [heap] buffer.Buffer {
-    var b = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
-    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), command);
-    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "false");
-    b = buffer.push(heap, vcsrepo.member(heap, b, 1, false, "refused"), byte_of(123));
-    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, true, "message"), message);
-    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "tag"), tag);
-    b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(125));
-    return buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
-}
-
-// The sentence for a status of the store that this module has no Rust sentence for (see the header).
-fn sentence(status: int) -> [] &static [byte] {
-    if status == 10 {
-        return "an input/output error";
-    }
-    if status == 3 {
-        return "the store holds an object that does not match its id";
-    }
-    if status == 11 {
-        return "the store has no such object";
-    }
-    if status == 15 {
-        return "a lock is held";
-    }
-    if status == 31 {
-        return "a path or a link target the working copy has cannot be recorded";
-    }
-    if status == 1 {
-        return "a path escapes the working copy";
-    }
-    if status == 13 {
-        return "a file is too large";
-    }
-    if status == 30 {
-        return "a link in the working copy cannot be read";
-    }
-    return "the command was refused";
-}
-
-// `answer` (the store's: a document in `bytes` and status 0, or a refusal status) said as `command` says it. `spec` is the revision given, for `bad-revision`.
-fn answered[&h, &i, &c, &p](heap: &!h Heap, io: &!i Io, command: &c [byte], answer: vcsstore.Object, spec: &p [byte]) -> [heap, io_write] int {
-    let (doc, status, errno) = vcsstore.parts(answer);
-    var code = 0;
-    if status == 0 {
-        borrow doc as &db in {
-            buffer.write(io, db);
-        }
-    } else if status == 50 {
-        borrow doc as &db in {
-            buffer.write(io, db);
-        }
-        code = 1;
-    } else if status >= 18 && status <= 22 {
-        borrow doc as &cb in {
-            let said = vcsrepo.refusal_document(heap, command, status, spec, buffer.bytes(cb));
-            borrow said as &sb in {
-                buffer.write(io, sb);
-            }
-            buffer.drop(heap, said);
-        }
-        code = 1;
-    } else {
-        var tag = vcsstatus.tag(status);
-        if status == 10 {
-            tag = "io-error";
-        }
-        let said = refusal(heap, command, sentence(status), tag);
-        borrow said as &sb in {
-            buffer.write(io, sb);
-        }
-        buffer.drop(heap, said);
-        code = 1;
-        if status == 10 {
-            code = 3;
-        }
-    }
-    buffer.drop(heap, doc);
-    return code;
-}
-
-// A refusal that this module makes itself, said.
-fn refused[&h, &i, &c, &m, &t](heap: &!h Heap, io: &!i Io, command: &c [byte], message: &m [byte], tag: &t [byte]) -> [heap, io_write] int {
-    let said = refusal(heap, command, message, tag);
-    borrow said as &sb in {
-        buffer.write(io, sb);
-    }
-    buffer.drop(heap, said);
-    return 1;
-}
-
 // ---- the commands ------------------------------------------------------------------------------------------------------------
 
 // The repository found upward from `given` (taken from `cwd`): status 0 and its path in `bytes`, or the refusal said (its exit status in `errno`, status 1).
 fn locate_from[&h, &i, &f, &c, &g, &n](heap: &!h Heap, io: &!i Io, fs: &f Fs(""), cwd: &c [byte], given: &g [byte], command: &n [byte]) -> [heap, io_write, fs_read(""), dir_read, dir_write, file_read] vcsstore.Object {
-    let start = absolute(heap, cwd, given);
+    let start = clivcsout.absolute(heap, cwd, given);
     var found = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: 0 };
     borrow start as &sb in {
         let (old, os, oe) = vcsstore.parts(found);
@@ -264,7 +160,7 @@ fn locate_from[&h, &i, &f, &c, &g, &n](heap: &!h Heap, io: &!i Io, fs: &f Fs("")
     }
     message = buffer.push(heap, message, byte_of(96));
     borrow message as &mb in {
-        code = refused(heap, io, command, buffer.bytes(mb), "not-a-repository");
+        code = clivcsout.refused(heap, io, command, buffer.bytes(mb), "not-a-repository");
     }
     buffer.drop(heap, message);
     buffer.drop(heap, path);
@@ -287,7 +183,7 @@ fn refused_outside[&h, &i, &c, &w](heap: &!h Heap, io: &!i Io, command: &c [byte
     message = buffer.append(heap, buffer.push(heap, buffer.append(heap, message, word), byte_of(96)), " is outside the repository");
     var code = 0;
     borrow message as &mb in {
-        code = refused(heap, io, command, buffer.bytes(mb), "path-escapes");
+        code = clivcsout.refused(heap, io, command, buffer.bytes(mb), "path-escapes");
     }
     buffer.drop(heap, message);
     return code;
@@ -350,12 +246,12 @@ fn log_in[&h, &i, &a, &d, &p, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs
             let (doc, status, errno) = vcsstore.parts(answer);
             if status == 100 {
                 buffer.drop(heap, doc);
-                code = refused(heap, io, "log", "`--limit` is a count", "bad-argument");
+                code = clivcsout.refused(heap, io, "log", "`--limit` is a count", "bad-argument");
             } else if status == 101 {
                 buffer.drop(heap, doc);
                 code = refused_outside(heap, io, "log", word);
             } else {
-                code = answered(heap, io, "log", vcsstore.Object { bytes: doc, status: status, errno: errno }, spec);
+                code = clivcsout.answered(heap, io, "log", vcsstore.Object { bytes: doc, status: status, errno: errno }, spec);
             }
         }
     }
@@ -374,9 +270,9 @@ fn show_in[&h, &i, &a, &r, &d](heap: &!h Heap, io: &!i Io, args: &a Args, root: 
     var code = 0;
     borrow mut scratch as &!s in {
         if options.patch {
-            code = answered(heap, io, "show", vcsdiffdoc.show_patch_command(heap, io, root, vcs, contents(s), spec), spec);
+            code = clivcsout.answered(heap, io, "show", vcsdiffdoc.show_patch_command(heap, io, root, vcs, contents(s), spec), spec);
         } else {
-            code = answered(heap, io, "show", vcsrepo.show_command(heap, vcs, contents(s), spec), spec);
+            code = clivcsout.answered(heap, io, "show", vcsrepo.show_command(heap, vcs, contents(s), spec), spec);
         }
     }
     unbox_slice(heap, scratch);
@@ -388,7 +284,7 @@ fn status_in[&h, &i, &r, &d](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d D
     let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
     var code = 0;
     borrow mut scratch as &!s in {
-        code = answered(heap, io, "status", vcsstatus.status_command(heap, root, vcs, contents(s)), "");
+        code = clivcsout.answered(heap, io, "status", vcsstatus.status_command(heap, root, vcs, contents(s)), "");
     }
     unbox_slice(heap, scratch);
     return code;
@@ -414,7 +310,7 @@ fn exists_here[&h, &f, &c, &w](heap: &!h Heap, fs: &f Fs(""), cwd: &c [byte], wo
 // `blame PATH [--rev REV] [--decl NAME]` in the repository whose store is `vcs` (`vcsblame.blame_command`); `found` is the repository's path and `cwd` the current directory (PATH is relative to `cwd`).
 fn blame_in[&h, &i, &a, &d, &p, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir, found: &p [byte], cwd: &c [byte], options: opts.Options) -> [heap, io_write, args, dir_read, dir_write, file_read] int {
     if options.positionals != 1 {
-        return refused(heap, io, "blame", "`blame` takes one path", "bad-argument");
+        return clivcsout.refused(heap, io, "blame", "`blame` takes one path", "bad-argument");
     }
     let word = arg(args, options.rev_at);
     let (rel, inside) = vcsapply.relative(heap, cwd, vcsapply.dotless(found), word);
@@ -433,7 +329,7 @@ fn blame_in[&h, &i, &a, &d, &p, &c](heap: &!h Heap, io: &!i Io, args: &a Args, v
         let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
         borrow rel as &lb in {
             borrow mut scratch as &!s in {
-                code = answered(heap, io, "blame", vcsblame.blame_command(heap, io, vcs, contents(s), buffer.bytes(lb), spec, options.decl_at >= 0, decl), spec);
+                code = clivcsout.answered(heap, io, "blame", vcsblame.blame_command(heap, io, vcs, contents(s), buffer.bytes(lb), spec, options.decl_at >= 0, decl), spec);
             }
         }
         unbox_slice(heap, scratch);
@@ -448,7 +344,7 @@ fn diff_in[&h, &i, &a, &f, &r, &d, &p, &c](heap: &!h Heap, io: &!i Io, args: &a 
     if options.limit_at >= 0 {
         context = opts.count_of(opts.value_of(args, options.limit_at, options.limit_off));
         if context < 0 {
-            return refused(heap, io, "diff", "`--context` is a count", "bad-argument");
+            return clivcsout.refused(heap, io, "diff", "`--context` is a count", "bad-argument");
         }
     }
     let rootpath = vcsapply.dotless(found);
@@ -503,7 +399,7 @@ fn diff_in[&h, &i, &a, &f, &r, &d, &p, &c](heap: &!h Heap, io: &!i Io, args: &a 
                     var message = buffer.push(heap, buffer.empty(heap, 64), byte_of(96));
                     message = buffer.append(heap, buffer.push(heap, buffer.append(heap, message, word), byte_of(96)), " is outside the repository");
                     borrow message as &mb in {
-                        code = refused(heap, io, "diff", buffer.bytes(mb), "path-escapes");
+                        code = clivcsout.refused(heap, io, "diff", buffer.bytes(mb), "path-escapes");
                     }
                     buffer.drop(heap, message);
                 }
@@ -517,7 +413,7 @@ fn diff_in[&h, &i, &a, &f, &r, &d, &p, &c](heap: &!h Heap, io: &!i Io, args: &a 
                 borrow second_id as &sb in {
                     borrow selected as &xb in {
                         let answer = vcsdiffdoc.diff_command(heap, io, root, vcs, contents(s), buffer.bytes(fb), buffer.bytes(sb), buffer.bytes(xb), context);
-                        code = answered(heap, io, "diff", answer, "");
+                        code = clivcsout.answered(heap, io, "diff", answer, "");
                     }
                 }
             }
@@ -626,7 +522,7 @@ fn restore_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: 
                 var message = buffer.push(heap, buffer.empty(heap, 64), byte_of(96));
                 message = buffer.append(heap, buffer.push(heap, buffer.append(heap, message, word), byte_of(96)), " is outside the repository");
                 borrow message as &mb in {
-                    code = refused(heap, io, "restore", buffer.bytes(mb), "path-escapes");
+                    code = clivcsout.refused(heap, io, "restore", buffer.bytes(mb), "path-escapes");
                 }
                 buffer.drop(heap, message);
             }
@@ -634,7 +530,7 @@ fn restore_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: 
         n = n + 1;
     }
     if code == 0 && count == 0 {
-        code = refused(heap, io, "restore", "name the paths to restore (`.` for all)", "nothing-selected");
+        code = clivcsout.refused(heap, io, "restore", "name the paths to restore (`.` for all)", "nothing-selected");
     }
     if code != 0 {
         buffer.drop(heap, selected);
@@ -664,7 +560,7 @@ fn restore_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: 
                 buffer.drop(heap, lock);
                 buffer.drop(heap, doc);
             } else {
-                code = answered(heap, io, "restore", vcsstore.Object { bytes: doc, status: status, errno: errno }, spec);
+                code = clivcsout.answered(heap, io, "restore", vcsstore.Object { bytes: doc, status: status, errno: errno }, spec);
             }
         }
     }
@@ -689,7 +585,7 @@ fn dirty_refusal[&h, &p](heap: &!h Heap, paths: &p [byte]) -> [heap] buffer.Buff
 // `switch TARGET [--create] [--detach] [--keep] [--discard] [--dry-run]` in the repository at `found` (R6, `vcsswitch.switch_command`).
 fn switch_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Args, root: &r Dir, vcs: &d Dir, found: &p [byte], options: opts.Options, clock: &k Clock) -> [heap, io_write, args, dir_read, dir_write, dir_symlink, file_read, file_write, clock] int {
     if options.positionals != 1 {
-        return refused(heap, io, "switch", "`switch` takes one branch or change", "bad-argument");
+        return clivcsout.refused(heap, io, "switch", "`switch` takes one branch or change", "bad-argument");
     }
     let target = arg(args, options.rev_at);
     let rootpath = vcsapply.dotless(found);
@@ -730,15 +626,15 @@ fn switch_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Ar
             var message = buffer.append(heap, buffer.empty(heap, 64), "`heads/");
             message = buffer.append(heap, buffer.append(heap, message, target), "` is not a ref name");
             borrow message as &mb in {
-                code = refused(heap, io, "switch", buffer.bytes(mb), "bad-ref-name");
+                code = clivcsout.refused(heap, io, "switch", buffer.bytes(mb), "bad-ref-name");
             }
             buffer.drop(heap, message);
             buffer.drop(heap, doc);
         } else if status == 33 {
-            code = refused(heap, io, "switch", "there is no change to branch from yet", "bad-revision");
+            code = clivcsout.refused(heap, io, "switch", "there is no change to branch from yet", "bad-revision");
             buffer.drop(heap, doc);
         } else {
-            code = answered(heap, io, "switch", vcsstore.Object { bytes: doc, status: status, errno: errno }, target);
+            code = clivcsout.answered(heap, io, "switch", vcsstore.Object { bytes: doc, status: status, errno: errno }, target);
         }
     }
     unbox_slice(heap, scratch);
@@ -748,7 +644,7 @@ fn switch_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Ar
 // `apply FILE [--dry-run]` in the repository at `found` (R7, `vcsapply.apply_command`). `FILE` is read from the current directory `cwd`, as the Rust command reads it, and the paths in it are relative to `cwd`.
 fn apply_in[&h, &i, &a, &f, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), root: &r Dir, vcs: &d Dir, found: &p [byte], cwd: &c [byte], options: opts.Options, clock: &k Clock) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, dir_symlink, file_read, file_write, clock] int {
     if options.positionals != 1 {
-        return refused(heap, io, "apply", "`apply` takes a JSON file of edits", "bad-argument");
+        return clivcsout.refused(heap, io, "apply", "`apply` takes a JSON file of edits", "bad-argument");
     }
     let file = arg(args, options.rev_at);
     let rootpath = vcsapply.dotless(found);
@@ -769,7 +665,7 @@ fn apply_in[&h, &i, &a, &f, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args
         var message = buffer.append(heap, buffer.empty(heap, len(file) + 24), "cannot read ");
         message = buffer.append(heap, message, file);
         borrow message as &mb in {
-            code = refused(heap, io, "apply", buffer.bytes(mb), "io-error");
+            code = clivcsout.refused(heap, io, "apply", buffer.bytes(mb), "io-error");
         }
         buffer.drop(heap, message);
         code = 3;
@@ -796,7 +692,7 @@ fn apply_in[&h, &i, &a, &f, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args
                 buffer.drop(heap, lock);
             } else {
                 borrow doc as &db in {
-                    code = refused(heap, io, "apply", buffer.bytes(db), vcsapply.tag(status));
+                    code = clivcsout.refused(heap, io, "apply", buffer.bytes(db), vcsapply.tag(status));
                 }
                 if status == 44 {
                     code = 3;
@@ -826,7 +722,7 @@ fn unlock_in[&h, &i, &d, &p, &k](heap: &!h Heap, io: &!i Io, vcs: &d Dir, found:
             }
         } else {
             borrow doc as &db in {
-                code = refused(heap, io, "unlock", buffer.bytes(db), vcsapply.tag(status));
+                code = clivcsout.refused(heap, io, "unlock", buffer.bytes(db), vcsapply.tag(status));
             }
             code = 3;
         }
@@ -846,7 +742,7 @@ fn verify_in[&h, &i, &d, &p, &k](heap: &!h Heap, io: &!i Io, vcs: &d Dir, found:
     var code = 0;
     borrow vcspath as &vb in {
         borrow mut scratch as &!s in {
-            code = answered(heap, io, "verify", vcsverify.verify_command(heap, vcs, buffer.bytes(vb), contents(s), now), "");
+            code = clivcsout.answered(heap, io, "verify", vcsverify.verify_command(heap, vcs, buffer.bytes(vb), contents(s), now), "");
         }
     }
     unbox_slice(heap, scratch);
@@ -954,7 +850,7 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
                 var message = buffer.push(heap, buffer.empty(heap, 64), byte_of(96));
                 message = buffer.append(heap, buffer.push(heap, buffer.append(heap, message, word), byte_of(96)), " is outside the repository");
                 borrow message as &mb in {
-                    code = refused(heap, io, "record", buffer.bytes(mb), "path-escapes");
+                    code = clivcsout.refused(heap, io, "record", buffer.bytes(mb), "path-escapes");
                 }
                 buffer.drop(heap, message);
             }
@@ -963,7 +859,7 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
     }
     let all = flagged(args, "--all");
     if code == 0 && count == 0 && !all {
-        code = refused(heap, io, "record", "name the paths to record, or pass --all", "nothing-selected");
+        code = clivcsout.refused(heap, io, "record", "name the paths to record, or pass --all", "nothing-selected");
     }
     if code != 0 {
         buffer.drop(heap, selected);
@@ -1046,13 +942,13 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
                                         code = 1;
                                         buffer.drop(heap, doc);
                                     } else if status == 52 {
-                                        code = refused(heap, io, "record", "`--time` is unix seconds", "bad-argument");
+                                        code = clivcsout.refused(heap, io, "record", "`--time` is unix seconds", "bad-argument");
                                         buffer.drop(heap, doc);
                                     } else if status == 50 {
-                                        code = refused(heap, io, "record", "the repository is empty and so is the working copy", "nothing-to-record");
+                                        code = clivcsout.refused(heap, io, "record", "the repository is empty and so is the working copy", "nothing-to-record");
                                         buffer.drop(heap, doc);
                                     } else {
-                                        code = answered(heap, io, "record", vcsstore.Object { bytes: doc, status: status, errno: errno }, buffer.bytes(eb));
+                                        code = clivcsout.answered(heap, io, "record", vcsstore.Object { bytes: doc, status: status, errno: errno }, buffer.bytes(eb));
                                     }
                                 }
                             }
@@ -1089,7 +985,7 @@ fn paths_refusal[&h, &c, &m, &p, &t](heap: &!h Heap, command: &c [byte], message
 // `revert CHANGE [--dry-run] [--no-gate] [--author A] [--time T] [--intent-prompt P ...] [--expect REV]` (R9, `vcsrevert.revert_command`).
 fn revert_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Args, root: &r Dir, vcs: &d Dir, found: &p [byte], options: opts.Options, clock: &k Clock) -> [heap, io_write, args, dir_read, dir_write, dir_symlink, file_read, file_write, clock] int {
     if options.positionals != 1 {
-        return refused(heap, io, "revert", "`revert` takes one change", "bad-argument");
+        return clivcsout.refused(heap, io, "revert", "`revert` takes one change", "bad-argument");
     }
     let rootpath = vcsapply.dotless(found);
     let spec = arg(args, options.rev_at);
@@ -1167,10 +1063,10 @@ fn revert_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Ar
                                     code = 1;
                                     buffer.drop(heap, doc);
                                 } else if status == 52 {
-                                    code = refused(heap, io, "revert", "`--time` is unix seconds", "bad-argument");
+                                    code = clivcsout.refused(heap, io, "revert", "`--time` is unix seconds", "bad-argument");
                                     buffer.drop(heap, doc);
                                 } else if status == 53 {
-                                    code = refused(heap, io, "revert", "only a change with exactly one parent can be reverted in V1 (merges come with V2)", "revert-unsupported");
+                                    code = clivcsout.refused(heap, io, "revert", "only a change with exactly one parent can be reverted in V1 (merges come with V2)", "revert-unsupported");
                                     buffer.drop(heap, doc);
                                 } else if status == 54 || status == 55 {
                                     borrow doc as &db in {
@@ -1189,7 +1085,7 @@ fn revert_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Ar
                                     code = 1;
                                     buffer.drop(heap, doc);
                                 } else {
-                                    code = answered(heap, io, "revert", vcsstore.Object { bytes: doc, status: status, errno: errno }, spec);
+                                    code = clivcsout.answered(heap, io, "revert", vcsstore.Object { bytes: doc, status: status, errno: errno }, spec);
                                 }
                             }
                         }
@@ -1298,7 +1194,7 @@ fn init_command[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args, f
         let text = arg(args, options.branch_at);
         branch = text[options.branch_off..len(text)];
     }
-    let target = absolute(heap, cwd, given);
+    let target = clivcsout.absolute(heap, cwd, given);
     var code = 0;
     borrow target as &tb in {
         if options.dry {
@@ -1334,15 +1230,15 @@ fn init_command[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args, f
                         message = buffer.append(heap, message, branch);
                         message = buffer.append(heap, message, "` is not a ref name");
                         borrow message as &mb in {
-                            code = refused(heap, io, "init", buffer.bytes(mb), "bad-ref-name");
+                            code = clivcsout.refused(heap, io, "init", buffer.bytes(mb), "bad-ref-name");
                         }
                         buffer.drop(heap, message);
                     } else {
-                        code = answered(heap, io, "init", vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: errno }, "");
+                        code = clivcsout.answered(heap, io, "init", vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: errno }, "");
                     }
                 }
                 DirOpened::Failed(e) => {
-                    code = answered(heap, io, "init", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+                    code = clivcsout.answered(heap, io, "init", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
                 }
             }
         }
@@ -1470,7 +1366,7 @@ fn said[&h, &i](heap: &!h Heap, io: &!i Io, document: buffer.Buffer) -> [heap, i
 // The ref `heads/NAME` of the branch the command names (the second word): status 0 and the ref in `bytes`, or the refusal said (exit status in `errno`, status 1).
 fn branch_ref[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, options: opts.Options) -> [heap, io_write, args] vcsstore.Object {
     if options.name_at < 0 {
-        let code = refused(heap, io, "branch", "this needs a branch name", "bad-argument");
+        let code = clivcsout.refused(heap, io, "branch", "this needs a branch name", "bad-argument");
         return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: code };
     }
     let name = arg(args, options.name_at);
@@ -1488,7 +1384,7 @@ fn branch_ref[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, options: op
         message = buffer.append(heap, message, "` is not a ref name");
         var code = 1;
         borrow message as &mb in {
-            code = refused(heap, io, "branch", buffer.bytes(mb), "bad-ref-name");
+            code = clivcsout.refused(heap, io, "branch", buffer.bytes(mb), "bad-ref-name");
         }
         buffer.drop(heap, message);
         buffer.drop(heap, full);
@@ -1503,14 +1399,14 @@ fn branch_list[&h, &i, &d](heap: &!h Heap, io: &!i Io, vcs: &d Dir) -> [heap, io
     let (current, hs, he) = vcsstore.parts(heads);
     if hs != 0 && hs != 2 {
         buffer.drop(heap, current);
-        return answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 3, errno: 0 }, "");
+        return clivcsout.answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 3, errno: 0 }, "");
     }
     let listed = vcsstore.list_refs(heap, vcs, "heads");
     let (lines, ls, le) = vcsstore.parts(listed);
     var code = 0;
     if ls != 0 {
         buffer.drop(heap, lines);
-        code = answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: ls, errno: le }, "");
+        code = clivcsout.answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: ls, errno: le }, "");
     } else {
         borrow lines as &lb in {
             borrow current as &cb in {
@@ -1535,7 +1431,7 @@ fn resolved[&h, &i, &d, &s, &p](heap: &!h Heap, io: &!i Io, vcs: &d Dir, scratch
     if status == 0 {
         return vcsstore.Object { bytes: id, status: 0, errno: 0 };
     }
-    let code = answered(heap, io, "branch", vcsstore.Object { bytes: id, status: status, errno: errno }, spec);
+    let code = clivcsout.answered(heap, io, "branch", vcsstore.Object { bytes: id, status: status, errno: errno }, spec);
     return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: code };
 }
 
@@ -1574,7 +1470,7 @@ fn branch_create[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, 
                     }
                     buffer.drop(heap, have);
                     if es != 0 && es != 2 {
-                        code = answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: es, errno: ee }, "");
+                        code = clivcsout.answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: es, errno: ee }, "");
                     } else if same {
                         code = said(heap, io, branch_result(heap, name, true, buffer.bytes(ib), "created", false, false));
                     } else if options.dry {
@@ -1590,7 +1486,7 @@ fn branch_create[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, 
                             }
                             code = 1;
                         } else {
-                            code = answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: us, errno: ue }, "");
+                            code = clivcsout.answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: us, errno: ue }, "");
                         }
                         buffer.drop(heap, current);
                     }
@@ -1626,7 +1522,7 @@ fn branch_delete[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, 
     borrow headref as &hb in {
         borrow full as &fb in {
             if hs == 0 && bytes.equal(buffer.bytes(hb), buffer.bytes(fb)) {
-                code = refused(heap, io, "branch", "the checked-out branch cannot be deleted", "ref-protected");
+                code = clivcsout.refused(heap, io, "branch", "the checked-out branch cannot be deleted", "ref-protected");
                 finished = true;
             }
         }
@@ -1649,10 +1545,10 @@ fn branch_delete[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, 
             code = said(heap, io, branch_result(heap, name, false, "", "deleted", false, false));
             finished = true;
         } else if cs != 0 {
-            code = answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: cs, errno: ce }, "");
+            code = clivcsout.answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: cs, errno: ce }, "");
             finished = true;
         } else if options.expect_at < 0 {
-            code = refused(heap, io, "branch", "deleting a branch needs --expect <change> (the change you believe it is at)", "bad-argument");
+            code = clivcsout.refused(heap, io, "branch", "deleting a branch needs --expect <change> (the change you believe it is at)", "bad-argument");
             finished = true;
         }
     }
@@ -1684,7 +1580,7 @@ fn branch_delete[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, 
                                     }
                                     code = 1;
                                 } else {
-                                    code = answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: gs, errno: ge }, "");
+                                    code = clivcsout.answered(heap, io, "branch", vcsstore.Object { bytes: buffer.empty(heap, 0), status: gs, errno: ge }, "");
                                 }
                                 buffer.drop(heap, now_at);
                             }
@@ -1721,7 +1617,7 @@ fn branch_in[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs:
     message = buffer.append(heap, message, "`: expected list, create or delete");
     var code = 1;
     borrow message as &mb in {
-        code = refused(heap, io, "branch", buffer.bytes(mb), "bad-argument");
+        code = clivcsout.refused(heap, io, "branch", buffer.bytes(mb), "bad-argument");
     }
     buffer.drop(heap, message);
     return code;
@@ -1730,10 +1626,10 @@ fn branch_in[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs:
 // `import-git DIR` is refused before the repository is looked for, as the Rust command does: not one directory given, or not a git repository.
 fn import_precheck[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), cwd: &c [byte], options: opts.Options) -> [heap, io_write, args, fs_read(""), dir_read, file_read] int {
     if options.positionals != 1 {
-        return refused(heap, io, "import-git", "`import-git` takes a git repository directory", "bad-argument");
+        return clivcsout.refused(heap, io, "import-git", "`import-git` takes a git repository directory", "bad-argument");
     }
     let given = arg(args, options.rev_at);
-    let target = absolute(heap, cwd, given);
+    let target = clivcsout.absolute(heap, cwd, given);
     var code = 0;
     match open_dir(fs, "/") {
         DirOpened::Ok(r0) => {
@@ -1751,7 +1647,7 @@ fn import_precheck[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                         message = buffer.append(heap, message, given);
                         message = buffer.append(heap, message, "` is not a git repository");
                         borrow message as &mb in {
-                            code = refused(heap, io, "import-git", buffer.bytes(mb), "git-unreadable");
+                            code = clivcsout.refused(heap, io, "import-git", buffer.bytes(mb), "git-unreadable");
                         }
                         buffer.drop(heap, message);
                     }
@@ -1760,7 +1656,7 @@ fn import_precheck[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args
             dir_close(root);
         }
         DirOpened::Failed(e) => {
-            code = answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+            code = clivcsout.answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
         }
     }
     buffer.drop(heap, target);
@@ -1769,7 +1665,7 @@ fn import_precheck[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args
 
 // `import-git DIR --dry-run` in the repository whose store is `vcs` (`vcsgit.import_command`).
 fn import_in[&h, &i, &a, &f, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), vcs: &d Dir, cwd: &c [byte], options: opts.Options) -> [heap, io_write, args, fs_read(""), dir_read, file_read] int {
-    let target = absolute(heap, cwd, arg(args, options.rev_at));
+    let target = clivcsout.absolute(heap, cwd, arg(args, options.rev_at));
     var code = 0;
     match open_dir(fs, "/") {
         DirOpened::Ok(r0) => {
@@ -1778,7 +1674,7 @@ fn import_in[&h, &i, &a, &f, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, 
                 borrow target as &tb in {
                     let gitdir = vcsgit.git_dir_of(heap, rd, buffer.bytes(tb));
                     borrow gitdir as &gb in {
-                        code = answered(heap, io, "import-git", vcsgit.import_command(heap, rd, vcs, buffer.bytes(gb)), "");
+                        code = clivcsout.answered(heap, io, "import-git", vcsgit.import_command(heap, rd, vcs, buffer.bytes(gb)), "");
                     }
                     buffer.drop(heap, gitdir);
                 }
@@ -1786,10 +1682,76 @@ fn import_in[&h, &i, &a, &f, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, 
             dir_close(root);
         }
         DirOpened::Failed(e) => {
-            code = answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+            code = clivcsout.answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
         }
     }
     buffer.drop(heap, target);
+    return code;
+}
+
+// `import-git DIR` without `--dry-run`: the git repository `DIR` imported into the repository whose working copy is `work` and whose store is `vcs`.
+fn import_write_in[&h, &i, &a, &f, &w, &d, &c, &k](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), work: &w Dir, vcs: &d Dir, cwd: &c [byte], options: opts.Options, clock: &k Clock) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, dir_symlink, file_read, file_write, clock] int {
+    let target = clivcsout.absolute(heap, cwd, arg(args, options.rev_at));
+    let now = clock_unix_ms(clock) / 1000;
+    var code = 0;
+    match open_dir(fs, "/") {
+        DirOpened::Ok(r0) => {
+            var top = r0;
+            borrow top as &td in {
+                borrow target as &tb in {
+                    let gitdir = vcsgit.git_dir_of(heap, td, buffer.bytes(tb));
+                    borrow gitdir as &gb in {
+                        code = clivcsout.answered(heap, io, "import-git", vcsgitput.import_write(heap, td, work, vcs, buffer.bytes(gb), flagged(args, "--no-checkout"), now), "");
+                    }
+                    buffer.drop(heap, gitdir);
+                }
+            }
+            dir_close(top);
+        }
+        DirOpened::Failed(e) => {
+            code = clivcsout.answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+        }
+    }
+    buffer.drop(heap, target);
+    return code;
+}
+
+// A repository is made where `import-git` is run when there is none at or above `--repo` (or `.`), as the Rust command does unless `--dry-run`. The exit status, 0 when nothing is wrong.
+fn import_prepare[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), cwd: &c [byte], options: opts.Options) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, file_read, file_write] int {
+    var start = buffer.empty(heap, 0);
+    if options.repo_at >= 0 {
+        buffer.drop(heap, start);
+        start = clivcsout.absolute(heap, cwd, opts.value_of(args, options.repo_at, options.repo_off));
+    } else {
+        buffer.drop(heap, start);
+        start = clivcsout.absolute(heap, cwd, ".");
+    }
+    var code = 0;
+    borrow start as &sb in {
+        let found = find_root(heap, fs, buffer.bytes(sb));
+        let (path, status, errno) = vcsstore.parts(found);
+        buffer.drop(heap, path);
+        if status == 1 {
+            match open_dir(fs, "/") {
+                DirOpened::Ok(t0) => {
+                    var top = t0;
+                    borrow top as &td in {
+                        let made = init_below(heap, td, buffer.bytes(sb), 0, "main");
+                        let (mt, ms, me) = vcsstore.parts(made);
+                        buffer.drop(heap, mt);
+                        if ms != 0 {
+                            code = clivcsout.answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: ms, errno: me }, "");
+                        }
+                    }
+                    dir_close(top);
+                }
+                DirOpened::Failed(e) => {
+                    code = clivcsout.answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+                }
+            }
+        }
+    }
+    buffer.drop(heap, start);
     return code;
 }
 
@@ -1802,7 +1764,7 @@ pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args,
         return true;
     }
     if bytes.equal(sub, "import-git") {
-        return flagged(args, "--dry-run");
+        return true;
     }
     if !bytes.equal(sub, "log") {
         return false;
@@ -1889,6 +1851,15 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
             buffer.drop(heap, cwd);
             return pre;
         }
+        if !options.dry {
+            borrow cwd as &c1 in {
+                pre = import_prepare(heap, io, args, fs, buffer.bytes(c1), options);
+            }
+            if pre != 0 {
+                buffer.drop(heap, cwd);
+                return pre;
+            }
+        }
     }
     var code = 0;
     borrow cwd as &cb in {
@@ -1928,7 +1899,11 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                             } else if which == 10 {
                                                 code = revert_in(heap, io, args, rd, vd, buffer.bytes(pb), options, clock);
                                             } else if which == 14 {
-                                                code = import_in(heap, io, args, fs, vd, buffer.bytes(cb), options);
+                                                if options.dry {
+                                                    code = import_in(heap, io, args, fs, vd, buffer.bytes(cb), options);
+                                                } else {
+                                                    code = import_write_in(heap, io, args, fs, rd, vd, buffer.bytes(cb), options, clock);
+                                                }
                                             } else if which == 13 {
                                                 code = verify_in(heap, io, vd, buffer.bytes(pb), clock);
                                             } else if which == 12 {
@@ -1942,14 +1917,14 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                         dir_close(vcs);
                                     }
                                     DirOpened::Failed(e) => {
-                                        code = answered(heap, io, name, vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+                                        code = clivcsout.answered(heap, io, name, vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
                                     }
                                 }
                             }
                             dir_close(root);
                         }
                         DirOpened::Failed(e) => {
-                            code = answered(heap, io, name, vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+                            code = clivcsout.answered(heap, io, name, vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
                         }
                     }
                 }

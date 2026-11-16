@@ -1,0 +1,14 @@
+{
+  "already_imported": 0,
+  "branches": [],
+  "checked_out": 0,
+  "command": "import-git",
+  "commits": 1,
+  "dry_run": true,
+  "new_blobs": 0,
+  "ok": true,
+  "refs_kept": [],
+  "remotes": [],
+  "self_check_mismatches": [],
+  "tags": []
+}

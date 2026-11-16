@@ -1,0 +1,19 @@
+{
+  "already_imported": 0,
+  "branches": [
+    {
+      "change": "e224b4809413e2cf14813cb6a9be625878f641bf0fba1126baec628c16e986f0",
+      "name": "heads/main"
+    }
+  ],
+  "checked_out": 0,
+  "command": "import-git",
+  "commits": 14,
+  "dry_run": false,
+  "new_blobs": 28,
+  "ok": true,
+  "refs_kept": [],
+  "remotes": [],
+  "self_check_mismatches": [],
+  "tags": []
+}

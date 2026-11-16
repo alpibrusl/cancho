@@ -581,7 +581,7 @@ gg=$fx/golden_git
 rm -rf "$work/g"; mkdir -p "$work/g"; cp -R "$fx/git/." "$work/g/"; mkdir "$work/g/notgit.git"
 empty; vcs init > /dev/null; mkdir -p "$work/k"; cp -R "$work/e/." "$work/k/"; cp "$gg/plain_known.gitmap" "$work/k/.cancho/vcs/gitmap"
 ig() { ( cd "$work/g" && "$cancho" vcs import-git "$@" --repo "$work/e" --output json > "$work/out.json" 2> "$work/err.txt"; echo $? > "$work/code.txt" ); }
-for n in plain packed refdelta packedrefs alternate odd detached blobref filedir_apart canchodir twobad octal89 headers badtag packedremote alternate2 remotes tags notgit missing corrupt truncated submodule badmode badmodetext nonutf8name gitdir newline dupname filedir dotdot emptyname blobkind treekind badtree truncatedtree; do
+for n in plain packed refdelta packedrefs alternate odd detached blobref filedir_apart canchodir twobad octal89 headers badtag packedremote alternate2 remotes tags notgit missing corrupt truncated submodule badmode badmodetext nonutf8name gitdir newline dupname filedir dotdot emptyname blobkind treekind badtree truncatedtree many trunk oddref; do
     ig "$n.git" --dry-run; same "import-git $n" "$gg/$n.json" "$work/out.json"; exit_is "import-git $n" "$(cat "$gg/$n.code")"
 done
 ig plain.git --dry-run --no-checkout; same "import-git --no-checkout" "$gg/nocheckout.json" "$work/out.json"
@@ -592,3 +592,26 @@ mkdir -p "$work/wt"; cp -R "$work/g/plain.git" "$work/wt/.git"
 ( cd "$work/g" && "$cancho" vcs import-git ../wt --dry-run --repo "$work/e" --output json > "$work/out.json" 2> "$work/err.txt" ); same "import-git of a work tree reads its .git" "$gg/plain.json" "$work/out.json"
 mkdir -p "$work/none"; ( cd "$work/none" && "$cancho" vcs import-git ../g/plain.git --dry-run --output json 2> /dev/null > "$work/out.json" ); same "import-git with no repository is not-a-repository" "$gg/norepo.json" "$work/out.json"
 [ ! -e "$work/e/.cancho/vcs/gitmap" ] && echo "ok a dry run writes no gitmap" || echo "FAILS a dry run wrote a gitmap"
+
+echo "== import-git (writing)"
+gi=$fx/golden_import
+store_list() { ( cd "$1" && find .cancho -type f ! -name '*.log' ! -path '*/tmp/*' | sort | while read -r f; do echo "$f $(cksum < "$f" | tr ' ' ':')"; done ); }
+wc_list() { ( cd "$1" && find . -path ./.cancho -prune -o -type f -print -o -type l -print | sort | while read -r f; do if [ -L "$f" ]; then echo "$f -> $(readlink "$f")"; else echo "$f $(cksum < "$f" | tr ' ' ':') $([ -x "$f" ] && echo x)"; fi; done ); }
+fresh() { rm -rf "$work/w"; mkdir -p "$work/w"; ( cd "$work/w" && "$cancho" vcs init > /dev/null ); }
+iw() { ( cd "$work/g" && "$cancho" vcs import-git "$@" --repo "$work/w" --output json > "$work/out.json" 2> "$work/err.txt"; echo $? > "$work/code.txt" ); }
+for f in "$gi"/*.code; do
+    n=$(basename "$f" .code)
+    case $n in again|kept|known) continue ;; esac
+    fresh; iw "$n.git" --no-checkout; same "import $n: the document" "$gi/$n.json" "$work/out.json"; exit_is "import $n" "$(cat "$gi/$n.code")"
+    if [ "$(cat "$gi/$n.code")" = 0 ]; then store_list "$work/w" > "$work/store.txt"; else store_list "$work/w" | grep -v '^\.cancho/vcs/objects/' > "$work/store.txt"; fi
+    same "import $n: the store" "$gi/$n.store" "$work/store.txt"
+    fresh; iw "$n.git"; wc_list "$work/w" > "$work/wc.txt"; same "import $n: the working copy" "$gi/$n.wc" "$work/wc.txt"
+done
+fresh; iw plain.git --no-checkout; iw plain.git --no-checkout; same "a second import is a no-op: the document" "$gi/again.json" "$work/out.json"
+store_list "$work/w" > "$work/store.txt"; same "a second import is a no-op: the store" "$gi/again.store" "$work/store.txt"
+fresh; iw plain.git --no-checkout; iw headers.git --no-checkout; same "a ref that is at another change is kept: the document" "$gi/kept.json" "$work/out.json"
+store_list "$work/w" > "$work/store.txt"; same "a ref that is at another change is kept: the store" "$gi/kept.store" "$work/store.txt"
+fresh; cp "$gg/plain_known.gitmap" "$work/w/.cancho/vcs/gitmap"; iw plain.git --no-checkout; same "a gitmap whose changes are not in the store is not believed: the document" "$gi/known.json" "$work/out.json"
+store_list "$work/w" > "$work/store.txt"; same "a gitmap whose changes are not in the store is not believed: the store" "$gi/known.store" "$work/store.txt"
+rm -rf "$work/fresh"; mkdir -p "$work/fresh"; ( cd "$work/fresh" && "$cancho" vcs import-git ../g/plain.git --no-checkout --output json > "$work/out.json" 2> "$work/err.txt" )
+[ -e "$work/fresh/.cancho/vcs/format" ] && echo "ok an import makes the repository when there is none" || echo "FAILS an import made no repository"

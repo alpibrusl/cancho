@@ -7,7 +7,8 @@ module selfhost.vcschange;
 //    [,"decls":[{"path":S,"name":S,"kind":S},..]][,"edits":[{"path":S,"old":S,"new":S},..]][,"attestations":[S,..]]}
 //
 // An optional part is left out when it is empty, so adding a part later does not change the id of an old change. The `git` part (what a git commit
-// has that a change must keep to get the same git id) is the bridge's and is not written or read here yet.
+// has that a change must keep to get the same git id) is the bridge's: `git_member` writes it, after the lists and before `close`
+// (`,"git":{"headers":B,"message":B}`, where B is the bytes as a string when they are UTF-8 and `{"hex":"..."}` when they are not).
 //
 // Writing: `open`, then in this order `intent`, `decls_open` with one `decl` each and `list_close`, `edits_open`/`edit`/`list_close`,
 // `attestations_open`/`attestation`/`list_close`, then `close`. A text is escaped as serde_json escapes it (`jsonwrite.string`: `"` `\`, the
@@ -20,6 +21,7 @@ module selfhost.vcschange;
 
 import std.buffer;
 import std.bytes;
+import std.utf8;
 import selfhost.jsonread;
 import selfhost.jsonwrite;
 import selfhost.lexcore as lc;
@@ -144,6 +146,31 @@ pub fn edit[&h, &p, &o, &n](heap: &!h Heap, out: buffer.Buffer, first: bool, pat
 
 pub fn attestation[&h, &t](heap: &!h Heap, out: buffer.Buffer, first: bool, text: &t [byte]) -> [heap] buffer.Buffer {
     return jsonwrite.string(heap, separator(heap, out, first), text);
+}
+
+// Bytes the way `change::Bytes` writes them: a string when they are UTF-8, else `{"hex":"<lowercase digits>"}`.
+fn bytes_value[&h, &t](heap: &!h Heap, out: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    if utf8.is_valid(text) {
+        return jsonwrite.string(heap, out, text);
+    }
+    var b = buffer.append(heap, out, "{\"hex\":\"");
+    var at = 0;
+    while at < len(text) {
+        let c = int_of(text[at]);
+        b = buffer.push(heap, b, "0123456789abcdef"[c / 16]);
+        b = buffer.push(heap, b, "0123456789abcdef"[c % 16]);
+        at = at + 1;
+    }
+    return buffer.append(heap, b, "\"}");
+}
+
+// `,"git":{"headers":B,"message":B}`: what a git commit has that a change must keep (the header lines after the last `parent`, and the message).
+pub fn git_member[&h, &x, &y](heap: &!h Heap, out: buffer.Buffer, headers: &x [byte], message: &y [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, ",\"git\":{\"headers\":");
+    b = bytes_value(heap, b, headers);
+    b = buffer.append(heap, b, ",\"message\":");
+    b = bytes_value(heap, b, message);
+    return buffer.push(heap, b, byte_of(125));
 }
 
 pub fn close[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {

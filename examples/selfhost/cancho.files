@@ -23,6 +23,7 @@ clisync.cho
 clitest.cho
 clivcs.cho
 clivcsopts.cho
+clivcsout.cho
 clivcsrepo.cho
 codes.cho
 commandtree.cho
@@ -85,6 +86,8 @@ vcsdecl.cho
 vcsdiff.cho
 vcsdiffdoc.cho
 vcsgit.cho
+vcsgitput.cho
+vcsgitw.cho
 vcsobj.cho
 vcsrecord.cho
 vcsrepo.cho

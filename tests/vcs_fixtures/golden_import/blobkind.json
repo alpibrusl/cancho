@@ -1,0 +1,8 @@
+{
+  "command": "import-git",
+  "ok": false,
+  "refused": {
+    "message": "6f691ed2dbad9564846898904e8243f349bdc602 is not a blob",
+    "tag": "git-unreadable"
+  }
+}

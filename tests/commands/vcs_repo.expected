@@ -836,6 +836,12 @@ ok import-git badtree
 ok import-git badtree (exit 1)
 ok import-git truncatedtree
 ok import-git truncatedtree (exit 1)
+ok import-git many
+ok import-git many (exit 1)
+ok import-git trunk
+ok import-git trunk (exit 0)
+ok import-git oddref
+ok import-git oddref (exit 0)
 ok import-git --no-checkout
 ok import-git with no directory
 ok import-git, no directory (exit 1)
@@ -844,3 +850,163 @@ ok import-git knows two commits from the gitmap
 ok import-git of a work tree reads its .git
 ok import-git with no repository is not-a-repository
 ok a dry run writes no gitmap
+== import-git (writing)
+ok import alternate: the document
+ok import alternate (exit 0)
+ok import alternate: the store
+ok import alternate: the working copy
+ok import alternate2: the document
+ok import alternate2 (exit 0)
+ok import alternate2: the store
+ok import alternate2: the working copy
+ok import badmode: the document
+ok import badmode (exit 1)
+ok import badmode: the store
+ok import badmode: the working copy
+ok import badmodetext: the document
+ok import badmodetext (exit 1)
+ok import badmodetext: the store
+ok import badmodetext: the working copy
+ok import badtag: the document
+ok import badtag (exit 0)
+ok import badtag: the store
+ok import badtag: the working copy
+ok import badtree: the document
+ok import badtree (exit 1)
+ok import badtree: the store
+ok import badtree: the working copy
+ok import blobkind: the document
+ok import blobkind (exit 1)
+ok import blobkind: the store
+ok import blobkind: the working copy
+ok import blobref: the document
+ok import blobref (exit 0)
+ok import blobref: the store
+ok import blobref: the working copy
+ok import canchodir: the document
+ok import canchodir (exit 1)
+ok import canchodir: the store
+ok import canchodir: the working copy
+ok import corrupt: the document
+ok import corrupt (exit 1)
+ok import corrupt: the store
+ok import corrupt: the working copy
+ok import detached: the document
+ok import detached (exit 0)
+ok import detached: the store
+ok import detached: the working copy
+ok import dotdot: the document
+ok import dotdot (exit 1)
+ok import dotdot: the store
+ok import dotdot: the working copy
+ok import dupname: the document
+ok import dupname (exit 1)
+ok import dupname: the store
+ok import dupname: the working copy
+ok import emptyname: the document
+ok import emptyname (exit 1)
+ok import emptyname: the store
+ok import emptyname: the working copy
+ok import filedir: the document
+ok import filedir (exit 1)
+ok import filedir: the store
+ok import filedir: the working copy
+ok import filedir_apart: the document
+ok import filedir_apart (exit 0)
+ok import filedir_apart: the store
+ok import filedir_apart: the working copy
+ok import gitdir: the document
+ok import gitdir (exit 1)
+ok import gitdir: the store
+ok import gitdir: the working copy
+ok import headers: the document
+ok import headers (exit 0)
+ok import headers: the store
+ok import headers: the working copy
+ok import many: the document
+ok import many (exit 1)
+ok import many: the store
+ok import many: the working copy
+ok import missing: the document
+ok import missing (exit 1)
+ok import missing: the store
+ok import missing: the working copy
+ok import newline: the document
+ok import newline (exit 1)
+ok import newline: the store
+ok import newline: the working copy
+ok import nonutf8name: the document
+ok import nonutf8name (exit 1)
+ok import nonutf8name: the store
+ok import nonutf8name: the working copy
+ok import octal89: the document
+ok import octal89 (exit 1)
+ok import octal89: the store
+ok import octal89: the working copy
+ok import odd: the document
+ok import odd (exit 0)
+ok import odd: the store
+ok import odd: the working copy
+ok import oddref: the document
+ok import oddref (exit 0)
+ok import oddref: the store
+ok import oddref: the working copy
+ok import packed: the document
+ok import packed (exit 0)
+ok import packed: the store
+ok import packed: the working copy
+ok import packedrefs: the document
+ok import packedrefs (exit 0)
+ok import packedrefs: the store
+ok import packedrefs: the working copy
+ok import packedremote: the document
+ok import packedremote (exit 0)
+ok import packedremote: the store
+ok import packedremote: the working copy
+ok import plain: the document
+ok import plain (exit 0)
+ok import plain: the store
+ok import plain: the working copy
+ok import refdelta: the document
+ok import refdelta (exit 0)
+ok import refdelta: the store
+ok import refdelta: the working copy
+ok import remotes: the document
+ok import remotes (exit 0)
+ok import remotes: the store
+ok import remotes: the working copy
+ok import submodule: the document
+ok import submodule (exit 1)
+ok import submodule: the store
+ok import submodule: the working copy
+ok import tags: the document
+ok import tags (exit 0)
+ok import tags: the store
+ok import tags: the working copy
+ok import treekind: the document
+ok import treekind (exit 1)
+ok import treekind: the store
+ok import treekind: the working copy
+ok import truncated: the document
+ok import truncated (exit 1)
+ok import truncated: the store
+ok import truncated: the working copy
+ok import truncatedtree: the document
+ok import truncatedtree (exit 1)
+ok import truncatedtree: the store
+ok import truncatedtree: the working copy
+ok import trunk: the document
+ok import trunk (exit 0)
+ok import trunk: the store
+ok import trunk: the working copy
+ok import twobad: the document
+ok import twobad (exit 1)
+ok import twobad: the store
+ok import twobad: the working copy
+ok a second import is a no-op: the document
+ok a second import is a no-op: the store
+ok a ref that is at another change is kept: the document
+ok a ref that is at another change is kept: the store
+ok a gitmap whose changes are not in the store is not believed: the document
+ok a gitmap whose changes are not in the store is not believed: the store
+ok an import makes the repository when there is none

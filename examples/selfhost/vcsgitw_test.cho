@@ -1,0 +1,167 @@
+module selfhost.vcsgitw_test;
+
+// vcsgitw_test.cho -- tests of `vcsgitw.cho`, run by `examples/selfhost/test.sh`. The oracle is the Rust `cancho vcs import-git`: given a gitmap of the
+// text `junk()` it wrote the file `rust_made()`; and for `headers.git` (five commits, no gitmap before) the file `five()`.
+
+import std.buffer;
+import std.bytes;
+import selfhost.vcsgitw;
+
+fn junk() -> [] &static [byte] {
+    return "zz qq\naa bb\naa cc\nnospace\nx y z\nk1 v1\r\n b\n";
+}
+
+fn rust_made() -> [] &static [byte] {
+    return " b\naa cc\nk1 v1\nx y z\nzz qq\n";
+}
+
+fn shuffled() -> [] &static [byte] {
+    return "ab592bbba1505d6ff9d046913b900b2d21498989 90e23e70bf39b93947b90eeda7baaf8f5436542a105ada0aa716f86d1e1ca98c\n9333ce4189c9b9071bda73bc4a4cd9f9d3d9c424 893aae7e119ef0d9aaa75bc177a022a9f0185476e92395f32fd6d3fa217cca0c\n771f9bc4d553380f6bd00b8fd3a11a8761d1ba90 4b5800100848aaca722385cc1eb42e36a4592aaaaff138240127a7f3e3dcc367\nb49853c350a5dce81b6d269673183fdf7bff8747 5c0812a252cbd0be53bfe3d9e13e588d91c1a0c4775bfa9fd49aab26e27ebe2f\n7b156958b0a324808e04fc54e0b164896d918431 b296b16182a15694bfa334eec7426e02b6a5db1198bbbd9921dbe49e3b8666f2\n";
+}
+
+fn five() -> [] &static [byte] {
+    return "771f9bc4d553380f6bd00b8fd3a11a8761d1ba90 4b5800100848aaca722385cc1eb42e36a4592aaaaff138240127a7f3e3dcc367\n7b156958b0a324808e04fc54e0b164896d918431 b296b16182a15694bfa334eec7426e02b6a5db1198bbbd9921dbe49e3b8666f2\n9333ce4189c9b9071bda73bc4a4cd9f9d3d9c424 893aae7e119ef0d9aaa75bc177a022a9f0185476e92395f32fd6d3fa217cca0c\nab592bbba1505d6ff9d046913b900b2d21498989 90e23e70bf39b93947b90eeda7baaf8f5436542a105ada0aa716f86d1e1ca98c\nb49853c350a5dce81b6d269673183fdf7bff8747 5c0812a252cbd0be53bfe3d9e13e588d91c1a0c4775bfa9fd49aab26e27ebe2f\n";
+}
+
+fn same[&h, &a](heap: &!h Heap, built: buffer.Buffer, want: &a [byte]) -> [heap] bool {
+    var differ = true;
+    borrow built as &r in {
+        differ = bytes.compare(buffer.bytes(r), want) != 0;
+    }
+    buffer.drop(heap, built);
+    return !differ;
+}
+
+pub fn test_a_gitmap_with_junk_is_written_as_the_rust_command_wrote_it[&h](heap: &!h Heap) -> [heap] int {
+    let n = vcsgitw.normalized(heap, junk());
+    var out = buffer.empty(heap, 8);
+    borrow n as &nr in {
+        buffer.drop(heap, out);
+        out = vcsgitw.sorted(heap, buffer.bytes(nr));
+    }
+    buffer.drop(heap, n);
+    if !same(heap, out, rust_made()) {
+        return 1;
+    }
+    return 0;
+}
+
+pub fn test_five_commits_sort_to_the_file_of_the_rust_command[&h](heap: &!h Heap) -> [heap] int {
+    let out = vcsgitw.sorted(heap, shuffled());
+    if !same(heap, out, five()) {
+        return 1;
+    }
+    let again = vcsgitw.sorted(heap, five());
+    if !same(heap, again, five()) {
+        return 2;
+    }
+    return 0;
+}
+
+pub fn test_the_last_line_of_a_key_wins_and_nothing_is_a_trap[&h](heap: &!h Heap) -> [heap] int {
+    let a = vcsgitw.sorted(heap, "k 1\nk 2\nj 3\nk 0\n");
+    if !same(heap, a, "j 3\nk 0\n") {
+        return 1;
+    }
+    let e = vcsgitw.sorted(heap, "");
+    if !same(heap, e, "") {
+        return 2;
+    }
+    let one = vcsgitw.sorted(heap, "a b\n");
+    if !same(heap, one, "a b\n") {
+        return 3;
+    }
+    let bare = vcsgitw.normalized(heap, "x y\r");
+    if !same(heap, bare, "x y\r\n") {
+        return 4;
+    }
+    return 0;
+}
+
+// 20,000 lines made by a congruential generator (so there are repeated keys): the answer is sorted, has one line for each key, and the last line of a key.
+pub fn test_twenty_thousand_lines_come_out_sorted_and_unique[&h](heap: &!h Heap) -> [heap] int {
+    var text = buffer.empty(heap, 1 << 20);
+    var seed = 12345;
+    var i = 0;
+    while i < 20000 {
+        seed = seed * 1103515245 + 12345 & 0x7fffffff;
+        let key = seed % 5000;
+        text = buffer.push_nat(heap, buffer.append(heap, text, "k"), key);
+        text = buffer.push_nat(heap, buffer.append(heap, text, " c"), i);
+        text = buffer.push(heap, text, byte_of(10));
+        i = i + 1;
+    }
+    var code = 0;
+    borrow text as &tr in {
+        let out = vcsgitw.sorted(heap, buffer.bytes(tr));
+        borrow out as &o in {
+            let b = buffer.bytes(o);
+            var lines = 0;
+            var prev_start = 0;
+            var prev_end = 0;
+            var last_start = 0;
+            var at = 0;
+            while at < len(b) {
+                if b[at] == byte_of(10) {
+                    if lines > 0 && bytes.compare(b[prev_start..prev_end], b[last_start..at]) >= 0 {
+                        code = 9;
+                    }
+                    prev_start = last_start;
+                    prev_end = at;
+                    lines = lines + 1;
+                    last_start = at + 1;
+                }
+                at = at + 1;
+            }
+            if lines > 5000 || lines < 4000 {
+                code = 1;
+            }
+        }
+        buffer.drop(heap, out);
+    }
+    buffer.drop(heap, text);
+    return code;
+}
+
+pub fn test_the_prompt_is_lossy_and_trimmed_and_the_author_is_split_from_the_right[&h](heap: &!h Heap) -> [heap] int {
+    var m = buffer.append(heap, buffer.empty(heap, 16), "caf");
+    m = buffer.push(heap, m, byte_of(233));
+    m = buffer.append(heap, m, " x \n\t");
+    m = buffer.push(heap, m, byte_of(194));
+    m = buffer.push(heap, m, byte_of(160));
+    var code = 0;
+    borrow m as &mr in {
+        if !same(heap, vcsgitw.prompt_of(heap, buffer.bytes(mr)), "caf� x") {
+            code = 1;
+        }
+    }
+    buffer.drop(heap, m);
+    if !same(heap, vcsgitw.prompt_of(heap, " \n"), "") {
+        code = 2;
+    }
+    let (who, time, tz) = vcsgitw.author_fields(heap, "tree x\nauthor Ada L <ada@x.org> 1700000060 -0130\ncommitter z\n");
+    let who_ok = same(heap, who, "Ada L <ada@x.org>");
+    let tz_ok = same(heap, tz, "-0130");
+    if !who_ok || time != 1700000060 || !tz_ok {
+        code = 3;
+    }
+    let (who2, time2, tz2) = vcsgitw.author_fields(heap, "author Ada 12x +0000\n");
+    let who2_ok = same(heap, who2, "Ada 12x +0000");
+    let tz2_ok = same(heap, tz2, "+0000");
+    if !who2_ok || time2 != 0 || !tz2_ok {
+        code = 4;
+    }
+    let (who3, time3, tz3) = vcsgitw.author_fields(heap, "committer z\n");
+    let who3_ok = same(heap, who3, "");
+    let tz3_ok = same(heap, tz3, "+0000");
+    if !who3_ok || time3 != 0 || !tz3_ok {
+        code = 5;
+    }
+    let (who4, time4, tz4) = vcsgitw.author_fields(heap, "author a -5 +0100\n");
+    let who4_ok = same(heap, who4, "a");
+    let tz4_ok = same(heap, tz4, "+0100");
+    if !who4_ok || time4 != 0 - 5 || !tz4_ok {
+        code = 6;
+    }
+    return code;
+}
