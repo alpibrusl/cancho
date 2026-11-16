@@ -1010,3 +1010,84 @@ ok a ref that is at another change is kept: the store
 ok a gitmap whose changes are not in the store is not believed: the document
 ok a gitmap whose changes are not in the store is not believed: the store
 ok an import makes the repository when there is none
+== export-git
+ok export alternate: the document
+ok export alternate (exit 0)
+ok export alternate: the git directory, file for file
+ok export alternate2: the document
+ok export alternate2 (exit 0)
+ok export alternate2: the git directory, file for file
+ok export badtag: the document
+ok export badtag (exit 0)
+ok export badtag: the git directory, file for file
+ok export blobref: the document
+ok export blobref (exit 0)
+ok export blobref: the git directory, file for file
+ok export detached: the document
+ok export detached (exit 0)
+ok export detached: the git directory, file for file
+ok export filedir_apart: the document
+ok export filedir_apart (exit 0)
+ok export filedir_apart: the git directory, file for file
+ok export headers: the document
+ok export headers (exit 0)
+ok export headers: the git directory, file for file
+ok export odd: the document (as a set of lines)
+ok export odd (exit 0)
+ok export odd: the git directory, file for file
+ok export oddref: the document
+ok export oddref (exit 0)
+ok export oddref: the git directory, file for file
+ok export packed: the document
+ok export packed (exit 0)
+ok export packed: the git directory, file for file
+ok export packedrefs: the document
+ok export packedrefs (exit 0)
+ok export packedrefs: the git directory, file for file
+ok export packedremote: the document
+ok export packedremote (exit 0)
+ok export packedremote: the git directory, file for file
+ok export plain: the document
+ok export plain (exit 0)
+ok export plain: the git directory, file for file
+ok export refdelta: the document
+ok export refdelta (exit 0)
+ok export refdelta: the git directory, file for file
+ok export remotes: the document
+ok export remotes (exit 0)
+ok export remotes: the git directory, file for file
+ok export tags: the document
+ok export tags (exit 0)
+ok export tags: the git directory, file for file
+ok export trunk: the document
+ok export trunk (exit 0)
+ok export trunk: the git directory, file for file
+ok export made: the document
+ok export made (exit 0)
+ok export made: the git directory, file for file
+ok export mixed: the document
+ok export mixed (exit 0)
+ok export mixed: the git directory, file for file
+ok export empty: the document
+ok export empty (exit 0)
+ok export empty: the git directory, file for file
+ok export headonly: the document
+ok export headonly (exit 0)
+ok export headonly: the git directory, file for file
+ok export --dry-run: the document
+ok export --dry-run (exit 0)
+ok a dry run writes no directory
+ok export --dry-run of an import: the document (as a set of lines)
+ok an export again writes no object
+ok export with no directory: the document
+ok export with no directory (exit 1)
+ok export with two directories: the document
+ok export with two directories (exit 1)
+ok export outside a repository: the document
+ok export outside a repository (exit 1)
+ok export into a directory that cannot be made: the tag
+ok export into a directory that cannot be made (exit 3)
+ok export with a change missing from the store: the tag
+ok export with a change missing from the store (exit 1)
+ok export with a change of three parents: the tag
+ok export with a change of three parents (exit 1)

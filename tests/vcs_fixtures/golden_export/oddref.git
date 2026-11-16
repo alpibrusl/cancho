@@ -1,0 +1,16 @@
+./
+./HEAD 4289624258:21
+./config 3299449894:66
+./objects/
+./objects/20/
+./objects/20/e50a07feffafe7699bf38ff4027a606f406eaa 2419996265:52
+./objects/4f/
+./objects/4f/8c200652ceac9a7ac5bfbe92e2e7e68fb2a716 3413337838:170
+./objects/56/
+./objects/56/26abf0f72e58d7a153368ba57db4c673c0e171 2688969042:22
+./objects/tmp/
+./refs/
+./refs/heads/
+./refs/heads/main 3432038549:41
+./refs/tags/
+./refs/tags/v2 3432038549:41

@@ -1,0 +1,49 @@
+./
+./HEAD 4289624258:21
+./config 3299449894:66
+./objects/
+./objects/0a/
+./objects/0a/803d040b087892bfff82a58e3129b6a96ac21a 3501306749:52
+./objects/1b/
+./objects/1b/913b7cbd5eb76f6e749799f188aec468afde2a 469351999:52
+./objects/41/
+./objects/41/63036efa65bd4a469e752267498f01ea36a55c 2179388793:37
+./objects/47/
+./objects/47/afc77a85f3e419f74359a3152eb24c6e1a6dc8 2412759959:362
+./objects/56/
+./objects/56/26abf0f72e58d7a153368ba57db4c673c0e171 2688969042:22
+./objects/6a/
+./objects/6a/2b485b0d6fff0cc7deb2da1201f137726d0d89 861641637:182
+./objects/6f/
+./objects/6f/691ed2dbad9564846898904e8243f349bdc602 1024209711:182
+./objects/77/
+./objects/77/1f9bc4d553380f6bd00b8fd3a11a8761d1ba90 2768099559:170
+./objects/8d/
+./objects/8d/14cbf983b3fad683171c9418998d9f68340823 2999074691:23
+./objects/8e/
+./objects/8e/df9a593c3f5a89c449c53479698673790eb1aa 3642506929:182
+./objects/93/
+./objects/93/33ce4189c9b9071bda73bc4a4cd9f9d3d9c424 1505614579:272
+./objects/ab/
+./objects/ab/592bbba1505d6ff9d046913b900b2d21498989 1329518988:227
+./objects/af/
+./objects/af/9c6fd168ea28cf99aa2c2dd9057a8b720e2262 2063012263:22
+./objects/b4/
+./objects/b4/9853c350a5dce81b6d269673183fdf7bff8747 370406080:228
+./objects/b9/
+./objects/b9/0d918c6196dd2f1c4094089f36d30e5bbd0678 3878607192:26
+./objects/bd/
+./objects/bd/46cf2dd8a0efb8d22237b97619a246c884b6c7 627621596:26
+./objects/e6/
+./objects/e6/9de29bb2d1d6434b8b29ae775ad8c2e48c5391 4024116395:18
+./objects/fe/
+./objects/fe/eca67c6c778fb1a40b34c21f915bd62d78ab91 1665796279:182
+./objects/tmp/
+./refs/
+./refs/heads/
+./refs/remotes/
+./refs/remotes/up/
+./refs/remotes/up/signed 3678915116:41
+./refs/tags/
+./refs/tags/light 2154790139:41
+./refs/tags/v1 3746196293:41

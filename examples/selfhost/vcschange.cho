@@ -526,3 +526,74 @@ pub fn subject[&j, &x](jm: &!j [int], src: &x [byte]) -> [] &x [byte] {
     }
     return p;
 }
+
+// ---- reading the text of a change (what `export-git` writes into a commit) -------------------------------------------------------
+
+// The string `id`, decoded, as a buffer.
+fn decoded[&h, &j, &x](heap: &!h Heap, jm: &!j [int], src: &x [byte], id: int) -> [heap] buffer.Buffer {
+    let base = jsonread.scratch0(jm);
+    let n = jsonread.decode_into(jm, src, id, base);
+    var out = buffer.empty(heap, n + 1);
+    var i = 0;
+    while i < n {
+        out = buffer.push(heap, out, byte_of(jm[base + i]));
+        i = i + 1;
+    }
+    return out;
+}
+
+// The author, decoded.
+pub fn author_text[&h, &j, &x](heap: &!h Heap, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
+    return decoded(heap, jm, src, field(jm, src, jm[1], "author"));
+}
+
+// The zone, decoded.
+pub fn tz_text[&h, &j, &x](heap: &!h Heap, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
+    return decoded(heap, jm, src, field(jm, src, jm[1], "tz"));
+}
+
+// The part `name` of the intent (`prompt`, `session`, `model`, `issue`), decoded; empty when it is not a string.
+pub fn intent_text[&h, &j, &x, &k](heap: &!h Heap, jm: &!j [int], src: &x [byte], name: &k [byte]) -> [heap] buffer.Buffer {
+    let id = field(jm, src, field(jm, src, jm[1], "intent"), name);
+    if !is_text(jm, id) {
+        return buffer.empty(heap, 0);
+    }
+    return decoded(heap, jm, src, id);
+}
+
+// Whether the change has the `git` member the bridge writes (an object).
+pub fn has_git[&j, &x](jm: &!j [int], src: &x [byte]) -> [] bool {
+    return jsonread.kind(jm, field(jm, src, jm[1], "git")) == jsonread.k_object();
+}
+
+fn hex_digit(c: int) -> [] int {
+    if c <= 57 {
+        return c - 48;
+    }
+    return (c | 32) - 87;
+}
+
+// The bytes `git.headers` or `git.message` (`name`) holds: the string as it is decoded, or the bytes of the `hex` of an object (a pair that begins with `+` is its second digit, as the Rust `unhex` reads it).
+pub fn git_bytes[&h, &j, &x, &k](heap: &!h Heap, jm: &!j [int], src: &x [byte], name: &k [byte]) -> [heap] buffer.Buffer {
+    let id = field(jm, src, field(jm, src, jm[1], "git"), name);
+    if is_text(jm, id) {
+        return decoded(heap, jm, src, id);
+    }
+    let hex = field(jm, src, id, "hex");
+    if !is_text(jm, hex) {
+        return buffer.empty(heap, 0);
+    }
+    let base = jsonread.scratch0(jm);
+    let n = jsonread.decode_into(jm, src, hex, base);
+    var out = buffer.empty(heap, n / 2 + 1);
+    var i = 0;
+    while i + 1 < n {
+        var high = hex_digit(jm[base + i]);
+        if jm[base + i] == 43 {
+            high = 0;
+        }
+        out = buffer.push(heap, out, byte_of(high * 16 + hex_digit(jm[base + i + 1])));
+        i = i + 2;
+    }
+    return out;
+}

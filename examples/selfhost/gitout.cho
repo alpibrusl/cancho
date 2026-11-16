@@ -1,0 +1,144 @@
+edition 9;
+module selfhost.gitout;
+
+// gitout.cho -- the bytes `cancho vcs export-git` writes (`docs/vcs-routing.md` section 19; the Rust is `zlib_store`, `commit_bytes` and `native_message` of
+// `crates/cancho-vcs`): a loose git object as a zlib stream of stored blocks, the head of a commit, the message of a change made here, and the object name (SHA-1)
+// of a body. Pure: no capability.
+
+import std.buffer;
+import std.bytes;
+import std.flate;
+import selfhost.gitread;
+import selfhost.sha1;
+
+// `data` as a zlib stream of stored blocks of at most 65,535 bytes: `78 01`, each block (`1` when it is the last, its length and the complement of it, little endian, then
+// the bytes), and the Adler-32 of `data`, big endian. An empty input is one empty last block.
+pub fn zlib_store[&h, &d](heap: &!h Heap, data: &d [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.push(heap, buffer.empty(heap, len(data) + 64), byte_of(120));
+    out = buffer.push(heap, out, byte_of(1));
+    if len(data) == 0 {
+        out = buffer.push(heap, out, byte_of(1));
+        out = buffer.push(heap, out, byte_of(0));
+        out = buffer.push(heap, out, byte_of(0));
+        out = buffer.push(heap, out, byte_of(255));
+        out = buffer.push(heap, out, byte_of(255));
+    }
+    var at = 0;
+    while at < len(data) {
+        var n = len(data) - at;
+        var last = 1;
+        if n > 65535 {
+            n = 65535;
+            last = 0;
+        }
+        out = buffer.push(heap, out, byte_of(last));
+        out = buffer.push(heap, out, byte_of(n & 255));
+        out = buffer.push(heap, out, byte_of(n >> 8 & 255));
+        out = buffer.push(heap, out, byte_of(255 - (n & 255)));
+        out = buffer.push(heap, out, byte_of(255 - (n >> 8 & 255)));
+        out = buffer.append(heap, out, data[at..at + n]);
+        at = at + n;
+    }
+    let sum = flate.adler32_of(data);
+    out = buffer.push(heap, out, byte_of(sum >> 24 & 255));
+    out = buffer.push(heap, out, byte_of(sum >> 16 & 255));
+    out = buffer.push(heap, out, byte_of(sum >> 8 & 255));
+    return buffer.push(heap, out, byte_of(sum & 255));
+}
+
+// The loose object `KIND LENGTH\0` and `body`.
+pub fn loose[&h, &k, &b](heap: &!h Heap, kind: &k [byte], body: &b [byte]) -> [heap] buffer.Buffer {
+    var raw = buffer.push(heap, buffer.append(heap, buffer.empty(heap, len(body) + 32), kind), byte_of(32));
+    raw = buffer.push(heap, buffer.push_nat(heap, raw, len(body)), byte_of(0));
+    return buffer.append(heap, raw, body);
+}
+
+// The name of the git object of `kind` with `body`: 20 bytes into `out`. `hs` is `sha1.size()` integers.
+pub fn object_name[&h, &q, &k, &b, &o](heap: &!h Heap, hs: &!q [int], kind: &k [byte], body: &b [byte], out: &!o [byte]) -> [heap] int {
+    var head = buffer.push(heap, buffer.append(heap, buffer.empty(heap, 32), kind), byte_of(32));
+    head = buffer.push(heap, buffer.push_nat(heap, head, len(body)), byte_of(0));
+    sha1.init(hs, 0);
+    borrow head as &hb in {
+        sha1.update(hs, 0, buffer.bytes(hb));
+    }
+    sha1.update(hs, 0, body);
+    sha1.finish(hs, 0, out[0..20]);
+    buffer.drop(heap, head);
+    return 0;
+}
+
+// `tree TREE\n` and a `parent P\n` for each of the 20-byte ids of `parents`, the ids in hexadecimal.
+pub fn commit_head[&h, &t, &p](heap: &!h Heap, tree: &t [byte], parents: &p [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buffer.empty(heap, 256), "tree ");
+    let th = gitread.hex_of(heap, tree);
+    borrow th as &tb in {
+        out = buffer.append(heap, out, buffer.bytes(tb));
+    }
+    buffer.drop(heap, th);
+    out = buffer.push(heap, out, byte_of(10));
+    var n = 0;
+    while n * 20 < len(parents) {
+        out = buffer.append(heap, out, "parent ");
+        let ph = gitread.hex_of(heap, parents[n * 20..n * 20 + 20]);
+        borrow ph as &pb in {
+            out = buffer.append(heap, out, buffer.bytes(pb));
+        }
+        buffer.drop(heap, ph);
+        out = buffer.push(heap, out, byte_of(10));
+        n = n + 1;
+    }
+    return out;
+}
+
+// The commit of a change that came from git: the head, the stored header lines, a newline, the stored message.
+pub fn commit_imported[&h, &t, &p, &x, &y](heap: &!h Heap, tree: &t [byte], parents: &p [byte], headers: &x [byte], message: &y [byte]) -> [heap] buffer.Buffer {
+    var out = commit_head(heap, tree, parents);
+    out = buffer.append(heap, out, headers);
+    out = buffer.push(heap, out, byte_of(10));
+    return buffer.append(heap, out, message);
+}
+
+// The commit of a change made here: the head, `author WHO` and `committer WHO` (`WHO` is `AUTHOR TIME TZ`), an empty line, the message.
+pub fn commit_native[&h, &t, &p, &w, &m](heap: &!h Heap, tree: &t [byte], parents: &p [byte], who: &w [byte], message: &m [byte]) -> [heap] buffer.Buffer {
+    var out = commit_head(heap, tree, parents);
+    out = buffer.append(heap, out, "author ");
+    out = buffer.push(heap, buffer.append(heap, out, who), byte_of(10));
+    out = buffer.append(heap, out, "committer ");
+    out = buffer.push(heap, buffer.append(heap, out, who), byte_of(10));
+    out = buffer.push(heap, out, byte_of(10));
+    return buffer.append(heap, out, message);
+}
+
+// The message of a change made here (`native_message`): the prompt (already without its trailing white space) and a newline when there is an intent, an empty line, then the trailers
+// one to a line: `Cancho-Change: ID`, `Cancho-Intent: recorded` when there is an intent, and `extra` (the lines for session, model and issue, as they are to be written).
+pub fn native_message[&h, &i, &p, &x](heap: &!h Heap, id: &i [byte], intent: bool, prompt: &p [byte], extra: &x [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(prompt) + len(extra) + 128);
+    if intent {
+        out = buffer.push(heap, buffer.append(heap, out, prompt), byte_of(10));
+    }
+    out = buffer.push(heap, out, byte_of(10));
+    out = buffer.append(heap, out, "Cancho-Change: ");
+    out = buffer.push(heap, buffer.append(heap, out, id), byte_of(10));
+    if intent {
+        out = buffer.append(heap, out, "Cancho-Intent: recorded\n");
+    }
+    return buffer.append(heap, out, extra);
+}
+
+fn nibble(c: int) -> [] int {
+    if c <= 57 {
+        return c - 48;
+    }
+    return c - 87;
+}
+
+// The 20 bytes of the first 40 lowercase hexadecimal digits of `text` from `at`, into `out`: the key a table of git ids is searched with, for a git id or for the id of an object of the
+// store (whose first 160 bits are as good a name as all of them).
+pub fn key20[&t, &o](text: &t [byte], at: int, out: &!o [byte]) -> [] int {
+    var i = 0;
+    while i < 20 {
+        out[i] = byte_of(nibble(int_of(text[at + 2 * i])) * 16 + nibble(int_of(text[at + 2 * i + 1])));
+        i = i + 1;
+    }
+    return 0;
+}

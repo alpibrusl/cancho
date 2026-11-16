@@ -118,3 +118,15 @@ pub fn refused[&h, &i, &c, &m, &t](heap: &!h Heap, io: &!i Io, command: &c [byte
     buffer.drop(heap, said);
     return 1;
 }
+
+// Whether the flag `key` is among the words after the command.
+pub fn flagged[&a, &k](args: &a Args, key: &k [byte]) -> [args] bool {
+    var n = 3;
+    while n < arg_count(args) {
+        if bytes.equal(arg(args, n), key) {
+            return true;
+        }
+        n = n + 1;
+    }
+    return false;
+}

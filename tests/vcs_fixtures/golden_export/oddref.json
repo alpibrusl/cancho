@@ -1,0 +1,20 @@
+{
+  "command": "export-git",
+  "commits": 1,
+  "compared_with_import": 1,
+  "dry_run": false,
+  "equal": 1,
+  "mismatches": [],
+  "objects_written": 3,
+  "ok": true,
+  "refs": [
+    {
+      "git": "4f8c200652ceac9a7ac5bfbe92e2e7e68fb2a716",
+      "name": "refs/heads/main"
+    },
+    {
+      "git": "4f8c200652ceac9a7ac5bfbe92e2e7e68fb2a716",
+      "name": "refs/tags/v2"
+    }
+  ]
+}

@@ -1,0 +1,133 @@
+edition 9;
+module selfhost.clivcsgit;
+
+// clivcsgit.cho -- `cancho vcs import-git` and `export-git` as the command line in cancho says them (`docs/vcs-routing.md` sections 17 to 19): the arguments, the git directory made absolute, and the one
+// document. Moved out of `clivcsrepo.cho`, which has a file limit (`crates/cancho/tests/files.rs`). The libraries are `vcsgit.cho`, `vcsgitput.cho` (import) and `vcsgitout.cho` (export).
+
+import std.buffer;
+import std.bytes;
+import selfhost.clivcsout;
+import selfhost.clivcsopts as opts;
+import selfhost.vcsgit;
+import selfhost.vcsgitout;
+import selfhost.vcsgitput;
+import selfhost.vcsstore;
+
+// `import-git DIR` is refused before the repository is looked for, as the Rust command does: not one directory given, or not a git repository.
+pub fn import_precheck[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), cwd: &c [byte], options: opts.Options) -> [heap, io_write, args, fs_read(""), dir_read, file_read] int {
+    if options.positionals != 1 {
+        return clivcsout.refused(heap, io, "import-git", "`import-git` takes a git repository directory", "bad-argument");
+    }
+    let given = arg(args, options.rev_at);
+    let target = clivcsout.absolute(heap, cwd, given);
+    var code = 0;
+    match open_dir(fs, "/") {
+        DirOpened::Ok(r0) => {
+            var root = r0;
+            borrow root as &rd in {
+                borrow target as &tb in {
+                    let gitdir = vcsgit.git_dir_of(heap, rd, buffer.bytes(tb));
+                    var found = false;
+                    borrow gitdir as &gb in {
+                        found = len(buffer.bytes(gb)) > 0;
+                    }
+                    buffer.drop(heap, gitdir);
+                    if !found {
+                        var message = buffer.append(heap, buffer.empty(heap, 64), "`");
+                        message = buffer.append(heap, message, given);
+                        message = buffer.append(heap, message, "` is not a git repository");
+                        borrow message as &mb in {
+                            code = clivcsout.refused(heap, io, "import-git", buffer.bytes(mb), "git-unreadable");
+                        }
+                        buffer.drop(heap, message);
+                    }
+                }
+            }
+            dir_close(root);
+        }
+        DirOpened::Failed(e) => {
+            code = clivcsout.answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+        }
+    }
+    buffer.drop(heap, target);
+    return code;
+}
+
+// `import-git DIR --dry-run` in the repository whose store is `vcs` (`vcsgit.import_command`).
+pub fn import_in[&h, &i, &a, &f, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), vcs: &d Dir, cwd: &c [byte], options: opts.Options) -> [heap, io_write, args, fs_read(""), dir_read, file_read] int {
+    let target = clivcsout.absolute(heap, cwd, arg(args, options.rev_at));
+    var code = 0;
+    match open_dir(fs, "/") {
+        DirOpened::Ok(r0) => {
+            var root = r0;
+            borrow root as &rd in {
+                borrow target as &tb in {
+                    let gitdir = vcsgit.git_dir_of(heap, rd, buffer.bytes(tb));
+                    borrow gitdir as &gb in {
+                        code = clivcsout.answered(heap, io, "import-git", vcsgit.import_command(heap, rd, vcs, buffer.bytes(gb)), "");
+                    }
+                    buffer.drop(heap, gitdir);
+                }
+            }
+            dir_close(root);
+        }
+        DirOpened::Failed(e) => {
+            code = clivcsout.answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+        }
+    }
+    buffer.drop(heap, target);
+    return code;
+}
+
+// `import-git DIR` without `--dry-run`: the git repository `DIR` imported into the repository whose working copy is `work` and whose store is `vcs`.
+pub fn import_write_in[&h, &i, &a, &f, &w, &d, &c, &k](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), work: &w Dir, vcs: &d Dir, cwd: &c [byte], options: opts.Options, clock: &k Clock) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, dir_symlink, file_read, file_write, clock] int {
+    let target = clivcsout.absolute(heap, cwd, arg(args, options.rev_at));
+    let now = clock_unix_ms(clock) / 1000;
+    var code = 0;
+    match open_dir(fs, "/") {
+        DirOpened::Ok(r0) => {
+            var top = r0;
+            borrow top as &td in {
+                borrow target as &tb in {
+                    let gitdir = vcsgit.git_dir_of(heap, td, buffer.bytes(tb));
+                    borrow gitdir as &gb in {
+                        code = clivcsout.answered(heap, io, "import-git", vcsgitput.import_write(heap, td, work, vcs, buffer.bytes(gb), clivcsout.flagged(args, "--no-checkout"), now), "");
+                    }
+                    buffer.drop(heap, gitdir);
+                }
+            }
+            dir_close(top);
+        }
+        DirOpened::Failed(e) => {
+            code = clivcsout.answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+        }
+    }
+    buffer.drop(heap, target);
+    return code;
+}
+
+// `export-git DIR [--dry-run]` in the repository whose store is `vcs`: the git directory is made where the command was run (not at the root of the repository), as the Rust command does. Exactly one directory is
+// taken, and the check comes after the repository has been found, as the Rust command's does.
+pub fn export_in[&h, &i, &a, &f, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), vcs: &d Dir, cwd: &c [byte], options: opts.Options) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, file_read, file_write] int {
+    if options.positionals != 1 {
+        return clivcsout.refused(heap, io, "export-git", "`export-git` takes a directory for the git repository", "bad-argument");
+    }
+    let target = clivcsout.absolute(heap, cwd, arg(args, options.rev_at));
+    var code = 0;
+    match open_dir(fs, "/") {
+        DirOpened::Ok(r0) => {
+            var top = r0;
+            borrow top as &td in {
+                borrow target as &tb in {
+                    code = clivcsout.answered(heap, io, "export-git", vcsgitout.export_command(heap, td, vcs, buffer.bytes(tb), options.dry), "");
+                }
+            }
+            dir_close(top);
+        }
+        DirOpened::Failed(e) => {
+            code = clivcsout.answered(heap, io, "export-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
+        }
+    }
+    buffer.drop(heap, target);
+    return code;
+}

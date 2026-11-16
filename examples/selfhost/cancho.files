@@ -22,6 +22,7 @@ clistore.cho
 clisync.cho
 clitest.cho
 clivcs.cho
+clivcsgit.cho
 clivcsopts.cho
 clivcsout.cho
 clivcsrepo.cho
@@ -44,6 +45,8 @@ floats.cho
 fold.cho
 foreign.cho
 formatting.cho
+gitidtab.cho
+gitout.cho
 gitparse.cho
 gitread.cho
 guidelines.cho
@@ -86,6 +89,7 @@ vcsdecl.cho
 vcsdiff.cho
 vcsdiffdoc.cho
 vcsgit.cho
+vcsgitout.cho
 vcsgitput.cho
 vcsgitw.cho
 vcsobj.cho

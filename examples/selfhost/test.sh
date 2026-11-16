@@ -23,4 +23,6 @@ run vcsobj hex blake3
 run vcsdiff
 run vcschange vcsobj blake3 jsonread jsonwrite lexcore rules tables
 run vcsgitw
+run gitout gitread vcsstore vcsobj blake3 hex filewrite sha1
+run gitidtab gitread vcsstore vcsobj blake3 hex filewrite sha1
 exit $status

@@ -57,7 +57,7 @@ pub fn usage[&h, &i, &w](heap: &!h Heap, io: &!i Io, before: &static [byte], wha
     return status;
 }
 
-// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show`, 3 for `branch`, 4 for `status`, 5 for `restore`, 6 for `switch`, 7 for `apply`, 8 for `unlock`, 9 for `record`, 10 for `revert`, 11 for `diff`, 12 for `blame`, 13 for `verify` and 14 for `import-git`.
+// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show`, 3 for `branch`, 4 for `status`, 5 for `restore`, 6 for `switch`, 7 for `apply`, 8 for `unlock`, 9 for `record`, 10 for `revert`, 11 for `diff`, 12 for `blame`, 13 for `verify`, 14 for `import-git` and 15 for `export-git`.
 pub fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: int) -> [heap, err_write, args] Options {
     var bad = 0;
     var repo_at = 0 - 1;

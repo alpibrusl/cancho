@@ -95,7 +95,7 @@ fn enter[&d, &n](dir: &d Dir, name: &n [byte], make: bool) -> [dir_read, dir_wri
 }
 
 // The directory at the relative path `path` (components between `/`, none empty) beneath `dir`, each made if `make`.
-fn walk[&d, &p](dir: &d Dir, path: &p [byte], make: bool) -> [dir_read, dir_write] DirOpened {
+pub fn walk[&d, &p](dir: &d Dir, path: &p [byte], make: bool) -> [dir_read, dir_write] DirOpened {
     var cut = 0;
     while cut < len(path) && path[cut] != byte_of(47) {
         cut = cut + 1;
