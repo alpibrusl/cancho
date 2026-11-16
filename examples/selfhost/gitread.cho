@@ -1,0 +1,1447 @@
+edition 12;
+module selfhost.gitread;
+
+// gitread.cho -- a git repository's objects read without git (`docs/vcs-routing.md` section 16, R14; the Rust is `crates/cancho-vcs/src/gitread.rs`): loose
+// objects, pack files through their `.idx` (version 2), `ofs-delta` and `ref-delta`, and the object directories of `objects/info/alternates`.
+// Everything read is untrusted bytes, so every length is bounded and every failure is a status and a message, never a trap.
+//
+// The catalog. The idx files and the pack files of all the object directories are read whole and joined, each kind into one buffer; `meta` says where each
+// one is: `meta[0]` is how many packs, and pack `n` has the five ints at `1 + 5 * n`: where its idx starts in `idx`, how long the idx is, how many objects it
+// holds, where the pack starts in `pk` and how long it is. The object directories are one buffer of relative paths (from the root `Dir` the caller gives, so
+// without a leading `/`), one on each line.
+//
+// An object is answered as `Got`: `kind` 1 commit, 2 tree, 3 blob, 4 tag (the pack type numbers); `status` 0 ok, 1 `git-unreadable` (`why` is the sentence the
+// Rust command says), 2 `io-error` (`why` is the sentence).
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import std.flate;
+import std.utf8;
+import selfhost.vcsstore;
+
+// No single git object is believed past this size.
+pub fn max_object() -> [] int {
+    return 1073741824;
+}
+
+// How deep a delta chain is followed.
+pub fn max_depth() -> [] int {
+    return 5000;
+}
+
+// The most packs a catalog holds.
+pub fn max_packs() -> [] int {
+    return 1024;
+}
+
+pub fn meta_size() -> [] int {
+    return 1 + 5 * 1024;
+}
+
+// What `read_object` needs for its chain: three ints for each entry of a delta chain.
+pub fn scratch_size() -> [] int {
+    return 3 * 5010 + 16;
+}
+
+pub res struct Got {
+    body: buffer.Buffer,
+    kind: int,
+    status: int,
+    why: buffer.Buffer,
+}
+
+pub fn got_status[&g](g: &g Got) -> [] int {
+    return g.status;
+}
+
+pub fn got_parts(g: Got) -> [] (buffer.Buffer, int, int, buffer.Buffer) {
+    let Got { body, kind, status, why } = g;
+    return (body, kind, status, why);
+}
+
+fn ok_got[&h](heap: &!h Heap, kind: int, body: buffer.Buffer) -> [heap] Got {
+    return Got { body: body, kind: kind, status: 0, why: buffer.empty(heap, 0) };
+}
+
+pub fn fail[&h, &m](heap: &!h Heap, message: &m [byte]) -> [heap] Got {
+    return Got { body: buffer.empty(heap, 0), kind: 0, status: 1, why: buffer.append(heap, buffer.empty(heap, len(message)), message) };
+}
+
+fn fail_with[&h, &a, &b](heap: &!h Heap, first: &a [byte], second: &b [byte]) -> [heap] Got {
+    var w = buffer.append(heap, buffer.empty(heap, len(first) + len(second)), first);
+    w = buffer.append(heap, w, second);
+    return Got { body: buffer.empty(heap, 0), kind: 0, status: 1, why: w };
+}
+
+pub fn kind_name(kind: int) -> [] &static [byte] {
+    if kind == 1 {
+        return "commit";
+    }
+    if kind == 2 {
+        return "tree";
+    }
+    if kind == 3 {
+        return "blob";
+    }
+    return "tag";
+}
+
+// ---- reading whole files -----------------------------------------------------------------------------------------------------
+
+pub res struct Contents {
+    data: buffer.Buffer,
+    why: int,
+}
+
+pub fn contents_parts(c: Contents) -> [] (buffer.Buffer, int) {
+    let Contents { data, why } = c;
+    return (data, why);
+}
+
+// The file `path` (components separated by `/`, none of them a link) beneath `dir`, read whole: its bytes and 0, or empty and the errno (2 is ENOENT).
+pub fn slurp[&h, &d, &p](heap: &!h Heap, dir: &d Dir, path: &p [byte]) -> [heap, dir_read, file_read] Contents {
+    match dirs.open_file(dir, path) {
+        Opened::Ok(opened) => {
+            var file = opened;
+            var read = Contents { data: buffer.empty(heap, 0), why: 0 };
+            borrow mut file as &!f in {
+                let got = vcsstore.read_all(heap, f, buffer.empty(heap, 4096));
+                let (old, oldwhy) = contents_parts(read);
+                buffer.drop(heap, old);
+                let vcsstore.Contents { data, why } = got;
+                read = Contents { data: data, why: why };
+            }
+            file_close(file);
+            return read;
+        }
+        Opened::Failed(e) => {
+            var errno = e;
+            if errno == 0 {
+                errno = 1;
+            }
+            return Contents { data: buffer.empty(heap, 0), why: errno };
+        }
+    }
+}
+
+// ---- numbers and hexadecimal -------------------------------------------------------------------------------------------------
+
+pub fn be32[&s](d: &s [byte], at: int) -> [] int {
+    return int_of(d[at]) << 24 | int_of(d[at + 1]) << 16 | int_of(d[at + 2]) << 8 | int_of(d[at + 3]);
+}
+
+pub fn be64[&s](d: &s [byte], at: int) -> [] int {
+    return be32(d, at) << 32 | be32(d, at + 4);
+}
+
+fn nibble(c: int) -> [] int {
+    let digits = "0123456789abcdef";
+    var k = 0;
+    while k < 16 {
+        if c == int_of(digits[k]) || k > 9 && c == int_of(digits[k]) - 32 {
+            return k;
+        }
+        k = k + 1;
+    }
+    return 0 - 1;
+}
+
+// The 20 bytes of the 40 hexadecimal digits `text` (any case), or an empty buffer when it is not that.
+pub fn unhex_id[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 20);
+    if len(text) != 40 {
+        return out;
+    }
+    var k = 0;
+    while k < 20 {
+        let hi = nibble(int_of(text[2 * k]));
+        let lo = nibble(int_of(text[2 * k + 1]));
+        if hi < 0 || lo < 0 {
+            buffer.drop(heap, out);
+            return buffer.empty(heap, 0);
+        }
+        out = buffer.push(heap, out, byte_of(hi * 16 + lo));
+        k = k + 1;
+    }
+    return out;
+}
+
+// The 40 lowercase digits of the 20 bytes `id`.
+pub fn hex_of[&h, &i](heap: &!h Heap, id: &i [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 2 * len(id));
+    var k = 0;
+    while k < len(id) {
+        let v = int_of(id[k]);
+        out = buffer.push(heap, out, "0123456789abcdef"[v / 16]);
+        out = buffer.push(heap, out, "0123456789abcdef"[v % 16]);
+        k = k + 1;
+    }
+    return out;
+}
+
+// ---- zlib --------------------------------------------------------------------------------------------------------------------
+
+// The sentence for a status of `std.flate.unzlib`. A damaged DEFLATE stream (status 1) is one sentence here; the Rust command says which way it is damaged.
+fn zlib_sentence(status: int) -> [] &static [byte] {
+    if status == 2 {
+        return "truncated";
+    }
+    if status == 3 {
+        return "output too large";
+    }
+    if status == 20 {
+        return "not a zlib stream";
+    }
+    if status == 21 {
+        return "preset dictionary";
+    }
+    if status == 22 {
+        return "adler32 mismatch";
+    }
+    return "invalid deflate data";
+}
+
+// ---- loose objects -----------------------------------------------------------------------------------------------------------
+
+fn parse_kind[&k](text: &k [byte]) -> [] int {
+    if bytes.equal(text, "commit") {
+        return 1;
+    }
+    if bytes.equal(text, "tree") {
+        return 2;
+    }
+    if bytes.equal(text, "blob") {
+        return 3;
+    }
+    if bytes.equal(text, "tag") {
+        return 4;
+    }
+    return 0;
+}
+
+// The digits of `text` as a number, or -1 when it is not one (Rust's `usize::from_str`: an optional `+`, then digits, and not too many of them).
+fn parse_usize[&t](text: &t [byte]) -> [] int {
+    var at = 0;
+    if len(text) > 0 && text[0] == byte_of(43) {
+        at = 1;
+    }
+    if at >= len(text) || len(text) - at > 18 {
+        return 0 - 1;
+    }
+    var v = 0;
+    while at < len(text) {
+        let c = int_of(text[at]);
+        if c < 48 || c > 57 {
+            return 0 - 1;
+        }
+        v = v * 10 + c - 48;
+        at = at + 1;
+    }
+    return v;
+}
+
+fn name_prefixed[&h, &n, &m](heap: &!h Heap, name: &n [byte], message: &m [byte]) -> [heap] Got {
+    return fail_with(heap, name, message);
+}
+
+fn with_name[&h, &n, &m](heap: &!h Heap, name: &n [byte], sentence: &m [byte]) -> [heap] Got {
+    var w = buffer.append(heap, buffer.empty(heap, len(name) + len(sentence) + 2), name);
+    w = buffer.append(heap, w, ": ");
+    w = buffer.append(heap, w, sentence);
+    let g = Got { body: buffer.empty(heap, 0), kind: 0, status: 1, why: w };
+    return g;
+}
+
+// The loose object `name` (40 digits) found in the object directory `odir`: status 0 and the object, status 1 and a sentence, or status 3 when there is no such file.
+fn read_loose_in[&h, &d, &o, &n](heap: &!h Heap, root: &d Dir, odir: &o [byte], name: &n [byte]) -> [heap, dir_read, file_read] Got {
+    var path = buffer.append(heap, buffer.empty(heap, len(odir) + 44), odir);
+    path = buffer.push(heap, path, byte_of(47));
+    path = buffer.append(heap, path, name[0..2]);
+    path = buffer.push(heap, path, byte_of(47));
+    path = buffer.append(heap, path, name[2..40]);
+    var read = Contents { data: buffer.empty(heap, 0), why: 0 };
+    borrow path as &pb in {
+        let r = slurp(heap, root, buffer.bytes(pb));
+        let Contents { data, why } = read;
+        buffer.drop(heap, data);
+        read = r;
+    }
+    buffer.drop(heap, path);
+    let (raw, why) = contents_parts(read);
+    if why != 0 {
+        buffer.drop(heap, raw);
+        return Got { body: buffer.empty(heap, 0), kind: 0, status: 3, why: buffer.empty(heap, 0) };
+    }
+    var result = fail(heap, "");
+    borrow raw as &rb in {
+        let src = buffer.bytes(rb);
+        let (data, status, after) = flate.unzlib(heap, src, 0, len(src), max_object());
+        if status != 0 {
+            buffer.drop(heap, data);
+            let g = with_name(heap, name, zlib_sentence(status));
+            let (b0, k0, s0, w0) = got_parts(result);
+            buffer.drop(heap, b0);
+            buffer.drop(heap, w0);
+            result = g;
+        } else {
+            borrow data as &db in {
+                let d = buffer.bytes(db);
+                var nul = 0;
+                while nul < len(d) && d[nul] != byte_of(0) {
+                    nul = nul + 1;
+                }
+                var g = with_name(heap, name, "no header");
+                if nul < len(d) {
+                    var sp = 0;
+                    while sp < nul && d[sp] != byte_of(32) {
+                        sp = sp + 1;
+                    }
+                    if sp >= nul {
+                        let (b1, k1, s1, w1) = got_parts(g);
+                        buffer.drop(heap, b1);
+                        buffer.drop(heap, w1);
+                        g = with_name(heap, name, "bad header");
+                    } else {
+                        let kind = parse_kind(d[0..sp]);
+                        let size = parse_usize(d[sp + 1..nul]);
+                        let (b1, k1, s1, w1) = got_parts(g);
+                        buffer.drop(heap, b1);
+                        buffer.drop(heap, w1);
+                        if kind == 0 {
+                            g = with_name(heap, name, "unknown kind");
+                        } else if size < 0 {
+                            g = with_name(heap, name, "bad length");
+                        } else if len(d) - nul - 1 != size {
+                            g = with_name(heap, name, "length mismatch");
+                        } else {
+                            g = ok_got(heap, kind, buffer.append(heap, buffer.empty(heap, size), d[nul + 1..len(d)]));
+                        }
+                    }
+                }
+                let (b0, k0, s0, w0) = got_parts(result);
+                buffer.drop(heap, b0);
+                buffer.drop(heap, w0);
+                result = g;
+            }
+            buffer.drop(heap, data);
+        }
+    }
+    buffer.drop(heap, raw);
+    return result;
+}
+
+// The loose object `name` in the first object directory (one path on each line of `odirs`) that has it: as `read_loose_in`.
+fn read_loose[&h, &d, &o, &n](heap: &!h Heap, root: &d Dir, odirs: &o [byte], name: &n [byte]) -> [heap, dir_read, file_read] Got {
+    var at = 0;
+    while at < len(odirs) {
+        var end = at;
+        while end < len(odirs) && odirs[end] != byte_of(10) {
+            end = end + 1;
+        }
+        let g = read_loose_in(heap, root, odirs[at..end], name);
+        var gs = 0;
+        borrow g as &gb in {
+            gs = got_status(gb);
+        }
+        if gs != 3 {
+            return g;
+        }
+        let (b, k, s, w) = got_parts(g);
+        buffer.drop(heap, b);
+        buffer.drop(heap, w);
+        at = end + 1;
+    }
+    return Got { body: buffer.empty(heap, 0), kind: 0, status: 3, why: buffer.empty(heap, 0) };
+}
+
+// ---- pack indexes ------------------------------------------------------------------------------------------------------------
+
+fn idx_fanout[&x, &m](idx: &x [byte], meta: &m [int], p: int, n: int) -> [] int {
+    return be32(idx, meta[1 + 5 * p] + 8 + 4 * n);
+}
+
+// Where the object `id` (20 bytes) is in pack `p`, as an offset into that pack, or -1 when it is not there (or the idx cannot say).
+fn find_in_pack[&x, &m, &i](idx: &x [byte], meta: &m [int], p: int, id: &i [byte]) -> [] int {
+    let io = meta[1 + 5 * p];
+    let count = meta[3 + 5 * p];
+    let first = int_of(id[0]);
+    var lo = 0;
+    if first > 0 {
+        lo = idx_fanout(idx, meta, p, first - 1);
+    }
+    var hi = idx_fanout(idx, meta, p, first);
+    if hi > count {
+        hi = count;
+    }
+    let shas = io + 8 + 1024;
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        var c = 0;
+        var k = 0;
+        while k < 20 && c == 0 {
+            let a = int_of(idx[shas + mid * 20 + k]);
+            let b = int_of(id[k]);
+            if a < b {
+                c = 0 - 1;
+            } else if a > b {
+                c = 1;
+            }
+            k = k + 1;
+        }
+        if c == 0 {
+            let base = shas + count * 20 + count * 4;
+            let at = base + mid * 4;
+            if at + 4 > io + meta[2 + 5 * p] {
+                return 0 - 1;
+            }
+            let raw = be32(idx, at);
+            if raw < 2147483648 {
+                return raw;
+            }
+            let big = base + count * 4 + (raw - 2147483648) * 8;
+            if big + 8 > io + meta[2 + 5 * p] {
+                return 0 - 1;
+            }
+            return be64(idx, big);
+        }
+        if c < 0 {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return 0 - 1;
+}
+
+// ---- deltas ------------------------------------------------------------------------------------------------------------------
+
+// A size in the little-endian base-128 of a delta: its value and where it ends, or -1 and the position of the error (-2 too large, -3 truncated).
+fn delta_varint[&d](delta: &d [byte], at: int) -> [] (int, int) {
+    var v = 0;
+    var shift = 0;
+    var p = at;
+    while true {
+        if p >= len(delta) {
+            return (0 - 3, p);
+        }
+        let b = int_of(delta[p]);
+        p = p + 1;
+        if shift > 56 {
+            return (0 - 2, p);
+        }
+        v = v | (b & 127) << shift;
+        shift = shift + 7;
+        if b < 128 {
+            return (v, p);
+        }
+    }
+    return (0 - 3, p);
+}
+
+// `delta` applied to `base`: the result as an object body, or a sentence.
+fn apply_delta[&h, &b, &d](heap: &!h Heap, base: &b [byte], delta: &d [byte]) -> [heap] Got {
+    let (want, p0) = delta_varint(delta, 0);
+    if want == 0 - 3 {
+        return fail(heap, "truncated delta");
+    }
+    if want == 0 - 2 {
+        return fail(heap, "delta size too large");
+    }
+    if want != len(base) {
+        return fail(heap, "delta base size mismatch");
+    }
+    let (target, p1) = delta_varint(delta, p0);
+    if target == 0 - 3 {
+        return fail(heap, "truncated delta");
+    }
+    if target == 0 - 2 {
+        return fail(heap, "delta size too large");
+    }
+    if target > max_object() {
+        return fail(heap, "delta target too large");
+    }
+    var p = p1;
+    var out = buffer.empty(heap, target);
+    var have = 0;
+    var why = "";
+    while p < len(delta) && len(why) == 0 {
+        let op = int_of(delta[p]);
+        p = p + 1;
+        if op >= 128 {
+            var off = 0;
+            var n = 0;
+            var i = 0;
+            while i < 4 && len(why) == 0 {
+                if op & 1 << i != 0 {
+                    if p >= len(delta) {
+                        why = "truncated delta";
+                    } else {
+                        off = off | int_of(delta[p]) << 8 * i;
+                        p = p + 1;
+                    }
+                }
+                i = i + 1;
+            }
+            i = 0;
+            while i < 3 && len(why) == 0 {
+                if op & 16 << i != 0 {
+                    if p >= len(delta) {
+                        why = "truncated delta";
+                    } else {
+                        n = n | int_of(delta[p]) << 8 * i;
+                        p = p + 1;
+                    }
+                }
+                i = i + 1;
+            }
+            if len(why) == 0 {
+                if n == 0 {
+                    n = 65536;
+                }
+                if off + n > len(base) {
+                    why = "copy out of range";
+                } else {
+                    out = buffer.append(heap, out, base[off..off + n]);
+                    have = have + n;
+                }
+            }
+        } else if op != 0 {
+            if p + op > len(delta) {
+                why = "truncated insert";
+            } else {
+                out = buffer.append(heap, out, delta[p..p + op]);
+                have = have + op;
+                p = p + op;
+            }
+        } else {
+            why = "delta opcode 0";
+        }
+        if len(why) == 0 && have > target {
+            why = "delta overruns its target";
+        }
+    }
+    if len(why) == 0 && have != target {
+        why = "delta result size mismatch";
+    }
+    if len(why) > 0 {
+        buffer.drop(heap, out);
+        return fail(heap, why);
+    }
+    return ok_got(heap, 0, out);
+}
+
+// ---- pack entries ------------------------------------------------------------------------------------------------------------
+
+// `old` ended and the sentence `text` in its place.
+fn say[&h, &t](heap: &!h Heap, old: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    buffer.drop(heap, old);
+    return buffer.append(heap, buffer.empty(heap, len(text)), text);
+}
+
+// The sentence `first` + `second`, `old` ended.
+fn say2[&h, &a, &b](heap: &!h Heap, old: buffer.Buffer, first: &a [byte], second: &b [byte]) -> [heap] buffer.Buffer {
+    buffer.drop(heap, old);
+    var w = buffer.append(heap, buffer.empty(heap, len(first) + len(second)), first);
+    return buffer.append(heap, w, second);
+}
+
+// The object that starts at `off0` of pack `pack`. The chain of deltas is followed down to a whole object and then applied back up, with no recursion: the entries
+// of the chain are kept in `scratch` (three ints each: the pack, where the delta's zlib stream starts, and its declared size).
+pub fn read_packed[&h, &d, &o, &x, &k, &m, &s](heap: &!h Heap, root: &d Dir, odirs: &o [byte], idx: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], pack: int, off0: int) -> [heap, dir_read, file_read] Got {
+    var cur_pack = pack;
+    var cur_off = off0;
+    var depth = 0;
+    var levels = 0;
+    var body = buffer.empty(heap, 0);
+    var kind = 0;
+    var have_base = false;
+    var failed = false;
+    var fault = buffer.empty(heap, 0);
+    var fstatus = 1;
+    while !have_base && !failed {
+        if depth > max_depth() || levels > 5005 {
+            failed = true;
+            fault = say(heap, fault, "delta chain too deep");
+        } else {
+            let start = meta[4 + 5 * cur_pack];
+            let end = start + meta[5 + 5 * cur_pack];
+            let at0 = start + cur_off;
+            if cur_off < 0 || at0 >= end {
+                failed = true;
+                fault = say(heap, fault, "offset past the pack");
+            } else {
+                let first = int_of(pk[at0]);
+                var p = at0 + 1;
+                let ty = first / 16 % 8;
+                var size = first % 16;
+                var shift = 4;
+                var b = first;
+                while b >= 128 && !failed {
+                    if p >= end {
+                        failed = true;
+                        fault = say(heap, fault, "truncated object header");
+                    } else {
+                        b = int_of(pk[p]);
+                        p = p + 1;
+                        if shift > 56 {
+                            failed = true;
+                            fault = say(heap, fault, "object size too large");
+                        } else {
+                            size = size | (b & 127) << shift;
+                            shift = shift + 7;
+                        }
+                    }
+                }
+                if !failed && size > max_object() {
+                    failed = true;
+                    fault = say(heap, fault, "object too large");
+                }
+                if !failed {
+                    if ty >= 1 && ty <= 4 {
+                        let (whole, status, after) = flate.unzlib(heap, pk, p, end, size);
+                        var whole_size = 0;
+                        borrow whole as &wb in {
+                            whole_size = buffer.size(wb);
+                        }
+                        if status != 0 {
+                            buffer.drop(heap, whole);
+                            failed = true;
+                            fault = say2(heap, fault, "pack object: ", zlib_sentence(status));
+                        } else if whole_size != size {
+                            buffer.drop(heap, whole);
+                            failed = true;
+                            fault = say(heap, fault, "pack object length mismatch");
+                        } else {
+                            buffer.drop(heap, body);
+                            body = whole;
+                            kind = ty;
+                            have_base = true;
+                        }
+                    } else if ty == 6 {
+                        if p >= end {
+                            failed = true;
+                            fault = say(heap, fault, "truncated");
+                        } else {
+                            var c = int_of(pk[p]);
+                            p = p + 1;
+                            var dist = c % 128;
+                            while c >= 128 && !failed {
+                                if p >= end {
+                                    failed = true;
+                                    fault = say(heap, fault, "truncated");
+                                } else {
+                                    c = int_of(pk[p]);
+                                    p = p + 1;
+                                    if dist >= 72057594037927935 {
+                                        failed = true;
+                                        fault = say(heap, fault, "bad offset");
+                                    } else {
+                                        dist = (dist + 1) * 128 | c % 128;
+                                    }
+                                }
+                            }
+                            if !failed {
+                                if cur_off < dist {
+                                    failed = true;
+                                    fault = say(heap, fault, "delta base before the pack");
+                                } else {
+                                    scratch[3 * levels] = cur_pack;
+                                    scratch[3 * levels + 1] = p;
+                                    scratch[3 * levels + 2] = size;
+                                    levels = levels + 1;
+                                    cur_off = cur_off - dist;
+                                    depth = depth + 1;
+                                }
+                            }
+                        }
+                    } else if ty == 7 {
+                        if p + 20 > end {
+                            failed = true;
+                            fault = say(heap, fault, "truncated");
+                        } else {
+                            let id = pk[p..p + 20];
+                            scratch[3 * levels] = cur_pack;
+                            scratch[3 * levels + 1] = p + 20;
+                            scratch[3 * levels + 2] = size;
+                            levels = levels + 1;
+                            let name = hex_of(heap, id);
+                            borrow name as &nb in {
+                                let loose = read_loose(heap, root, odirs, buffer.bytes(nb));
+                                let (lb, lk, ls, lw) = got_parts(loose);
+                                if ls == 3 {
+                                    buffer.drop(heap, lb);
+                                    buffer.drop(heap, lw);
+                                    var q = 0;
+                                    var found_pack = 0 - 1;
+                                    var found_off = 0 - 1;
+                                    while q < meta[0] && found_pack < 0 {
+                                        let at = find_in_pack(idx, meta, q, id);
+                                        if at >= 0 {
+                                            found_pack = q;
+                                            found_off = at;
+                                        }
+                                        q = q + 1;
+                                    }
+                                    if found_pack < 0 {
+                                        failed = true;
+                                        fault = buffer.append(heap, say2(heap, fault, "object ", buffer.bytes(nb)), " not found");
+                                    } else {
+                                        cur_pack = found_pack;
+                                        cur_off = found_off;
+                                        depth = 0;
+                                    }
+                                } else if ls != 0 {
+                                    buffer.drop(heap, lb);
+                                    failed = true;
+                                    fstatus = ls;
+                                    buffer.drop(heap, fault);
+                                    fault = lw;
+                                } else {
+                                    buffer.drop(heap, lw);
+                                    buffer.drop(heap, body);
+                                    body = lb;
+                                    kind = lk;
+                                    have_base = true;
+                                }
+                            }
+                            buffer.drop(heap, name);
+                        }
+                    } else {
+                        failed = true;
+                        fault = buffer.push_nat(heap, say(heap, fault, "unknown pack object type "), ty);
+                    }
+                }
+            }
+        }
+    }
+    if failed {
+        buffer.drop(heap, body);
+        return Got { body: buffer.empty(heap, 0), kind: 0, status: fstatus, why: fault };
+    }
+    buffer.drop(heap, fault);
+    var level = levels;
+    while level > 0 && !failed {
+        level = level - 1;
+        let lp = scratch[3 * level];
+        let lz = scratch[3 * level + 1];
+        let ls = scratch[3 * level + 2];
+        let (delta, status, after) = flate.unzlib(heap, pk, lz, meta[4 + 5 * lp] + meta[5 + 5 * lp], ls);
+        if status != 0 {
+            buffer.drop(heap, delta);
+            buffer.drop(heap, body);
+            return fail_with(heap, "delta: ", zlib_sentence(status));
+        }
+        var next = fail(heap, "");
+        borrow body as &bb in {
+            borrow delta as &db in {
+                let g = apply_delta(heap, buffer.bytes(bb), buffer.bytes(db));
+                let (n0, n1, n2, n3) = got_parts(next);
+                buffer.drop(heap, n0);
+                buffer.drop(heap, n3);
+                next = g;
+            }
+        }
+        buffer.drop(heap, delta);
+        buffer.drop(heap, body);
+        let (nb, nk, ns, nw) = got_parts(next);
+        if ns != 0 {
+            buffer.drop(heap, nb);
+            return Got { body: buffer.empty(heap, 0), kind: 0, status: ns, why: nw };
+        }
+        buffer.drop(heap, nw);
+        body = nb;
+    }
+    return ok_got(heap, kind, body);
+}
+
+// The object `id` (20 bytes): looked for loose in each object directory, and then in each pack, as the Rust command does.
+pub fn read_object[&h, &d, &o, &x, &k, &m, &s, &i](heap: &!h Heap, root: &d Dir, odirs: &o [byte], idx: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, file_read] Got {
+    let name = hex_of(heap, id);
+    var result = fail(heap, "");
+    var done = false;
+    borrow name as &nb in {
+        let loose = read_loose(heap, root, odirs, buffer.bytes(nb));
+        var ls = 0;
+        borrow loose as &lb in {
+            ls = got_status(lb);
+        }
+        if ls != 3 {
+            let (b0, k0, s0, w0) = got_parts(result);
+            buffer.drop(heap, b0);
+            buffer.drop(heap, w0);
+            result = loose;
+            done = true;
+        } else {
+            let (b1, k1, s1, w1) = got_parts(loose);
+            buffer.drop(heap, b1);
+            buffer.drop(heap, w1);
+        }
+        var q = 0;
+        while q < meta[0] && !done {
+            let at = find_in_pack(idx, meta, q, id);
+            if at >= 0 {
+                let g = read_packed(heap, root, odirs, idx, pk, meta, scratch, q, at);
+                let (b0, k0, s0, w0) = got_parts(result);
+                buffer.drop(heap, b0);
+                buffer.drop(heap, w0);
+                result = g;
+                done = true;
+            }
+            q = q + 1;
+        }
+        if !done {
+            let (b0, k0, s0, w0) = got_parts(result);
+            buffer.drop(heap, b0);
+            buffer.drop(heap, w0);
+            var w = buffer.append(heap, buffer.empty(heap, 64), "object ");
+            w = buffer.append(heap, w, buffer.bytes(nb));
+            w = buffer.append(heap, w, " not found");
+            result = Got { body: buffer.empty(heap, 0), kind: 0, status: 1, why: w };
+        }
+    }
+    buffer.drop(heap, name);
+    return result;
+}
+
+// ---- the catalog -------------------------------------------------------------------------------------------------------------
+
+// `status` 0 ok, 1 `git-unreadable` and `why` the sentence, 2 `io-error`, `why` the context and `errno` the number.
+pub res struct Cat {
+    odirs: buffer.Buffer,
+    idx: buffer.Buffer,
+    pk: buffer.Buffer,
+    status: int,
+    errno: int,
+    why: buffer.Buffer,
+}
+
+pub fn cat_parts(c: Cat) -> [] (buffer.Buffer, buffer.Buffer, buffer.Buffer, int, int, buffer.Buffer) {
+    let Cat { odirs, idx, pk, status, errno, why } = c;
+    return (odirs, idx, pk, status, errno, why);
+}
+
+// `path` with the empty and `.` components dropped and each `..` taking the component before it away: a path relative to the root `Dir`, with no leading `/`.
+pub fn normalized[&h, &p](heap: &!h Heap, path: &p [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(path));
+    var olen = 0;
+    var at = 0;
+    while at <= len(path) {
+        var end = at;
+        while end < len(path) && path[end] != byte_of(47) {
+            end = end + 1;
+        }
+        let part = path[at..end];
+        if len(part) == 0 || bytes.equal(part, ".") {
+        } else if bytes.equal(part, "..") {
+            var cut = 0;
+            var scan = 0;
+            borrow out as &ob in {
+                let o = buffer.bytes(ob);
+                while scan < len(o) {
+                    if o[scan] == byte_of(47) {
+                        cut = scan;
+                    }
+                    scan = scan + 1;
+                }
+                if bytes.count_byte(o, 47) == 0 {
+                    cut = 0;
+                }
+            }
+            var kept = buffer.empty(heap, len(path));
+            borrow out as &ob in {
+                kept = buffer.append(heap, kept, buffer.bytes(ob)[0..cut]);
+            }
+            buffer.drop(heap, out);
+            out = kept;
+            olen = cut;
+        } else {
+            if olen > 0 {
+                out = buffer.push(heap, out, byte_of(47));
+                olen = olen + 1;
+            }
+            out = buffer.append(heap, out, part);
+            olen = olen + len(part);
+        }
+        at = end + 1;
+    }
+    return out;
+}
+
+// Whether the directory `path` (relative to `root`) exists.
+pub fn is_dir[&d, &p](root: &d Dir, path: &p [byte]) -> [dir_read] bool {
+    match dirs.enter(root, path) {
+        DirOpened::Ok(d0) => {
+            dir_close(d0);
+            return true;
+        }
+        DirOpened::Failed(e) => {
+            return false;
+        }
+    }
+}
+
+// Whether `lines` (newline separated) has the line `line`.
+fn has_line[&l, &n](lines: &l [byte], line: &n [byte]) -> [] bool {
+    var at = 0;
+    while at < len(lines) {
+        var end = at;
+        while end < len(lines) && lines[end] != byte_of(10) {
+            end = end + 1;
+        }
+        if bytes.equal(lines[at..end], line) {
+            return true;
+        }
+        at = end + 1;
+    }
+    return false;
+}
+
+pub fn cat_fail[&h, &m](heap: &!h Heap, status: int, message: &m [byte]) -> [heap] Cat {
+    return Cat { odirs: buffer.empty(heap, 0), idx: buffer.empty(heap, 0), pk: buffer.empty(heap, 0), status: status, errno: 0, why: buffer.append(heap, buffer.empty(heap, len(message)), message) };
+}
+
+// The object directories: `gitpath/objects` and, from `objects/info/alternates` of each (at most 8 directories are looked at), the ones it names that exist.
+fn object_dirs[&h, &d, &g](heap: &!h Heap, root: &d Dir, gitpath: &g [byte]) -> [heap, dir_read, file_read] buffer.Buffer {
+    var odirs = buffer.append(heap, buffer.empty(heap, 256), gitpath);
+    odirs = buffer.append(heap, odirs, "/objects");
+    var count = 1;
+    var i = 0;
+    while i < count && i < 8 {
+        var at = 0;
+        var end = 0;
+        var seen = 0;
+        borrow odirs as &ob in {
+            let o = buffer.bytes(ob);
+            while at < len(o) && seen < i {
+                if o[at] == byte_of(10) {
+                    seen = seen + 1;
+                }
+                at = at + 1;
+            }
+            end = at;
+            while end < len(o) && o[end] != byte_of(10) {
+                end = end + 1;
+            }
+        }
+        var cur = buffer.empty(heap, end - at + 24);
+        borrow odirs as &ob in {
+            cur = buffer.append(heap, cur, buffer.bytes(ob)[at..end]);
+        }
+        borrow cur as &cb in {
+            var apath = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(cb)) + 24), buffer.bytes(cb));
+            apath = buffer.append(heap, apath, "/info/alternates");
+            var read = Contents { data: buffer.empty(heap, 0), why: 0 };
+            borrow apath as &ap in {
+                let r = slurp(heap, root, buffer.bytes(ap));
+                let Contents { data, why } = read;
+                buffer.drop(heap, data);
+                read = r;
+            }
+            buffer.drop(heap, apath);
+            let (text, why) = contents_parts(read);
+            if why == 0 {
+                borrow text as &tb in {
+                    let t = buffer.bytes(tb);
+                    if utf8.is_valid(t) {
+                        var ls = 0;
+                        while ls < len(t) {
+                            var le = ls;
+                            while le < len(t) && t[le] != byte_of(10) {
+                                le = le + 1;
+                            }
+                            var line = t[ls..le];
+                            if len(line) > 0 && line[len(line) - 1] == byte_of(13) {
+                                line = line[0..len(line) - 1];
+                            }
+                            if len(line) > 0 && line[0] != byte_of(35) {
+                                var joined = buffer.empty(heap, len(line) + len(buffer.bytes(cb)) + 2);
+                                if line[0] != byte_of(47) {
+                                    joined = buffer.append(heap, joined, buffer.bytes(cb));
+                                    joined = buffer.push(heap, joined, byte_of(47));
+                                }
+                                joined = buffer.append(heap, joined, line);
+                                var norm = buffer.empty(heap, 0);
+                                borrow joined as &jb in {
+                                    buffer.drop(heap, norm);
+                                    norm = normalized(heap, buffer.bytes(jb));
+                                }
+                                buffer.drop(heap, joined);
+                                borrow norm as &nb in {
+                                    if is_dir(root, buffer.bytes(nb)) {
+                                        var present = false;
+                                        borrow odirs as &ob2 in {
+                                            present = has_line(buffer.bytes(ob2), buffer.bytes(nb));
+                                        }
+                                        if !present {
+                                            odirs = buffer.append(heap, buffer.push(heap, odirs, byte_of(10)), buffer.bytes(nb));
+                                            count = count + 1;
+                                        }
+                                    }
+                                }
+                                buffer.drop(heap, norm);
+                            }
+                            ls = le + 1;
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, text);
+        }
+        buffer.drop(heap, cur);
+        i = i + 1;
+    }
+    return odirs;
+}
+
+// Every idx file of the object directory `odir` (`odir/pack/NAME.idx`), the names one on each line, sorted.
+fn idx_names[&h, &d, &o](heap: &!h Heap, root: &d Dir, odir: &o [byte]) -> [heap, dir_read] buffer.Buffer {
+    var out = buffer.empty(heap, 0);
+    var pdir = buffer.append(heap, buffer.empty(heap, len(odir) + 8), odir);
+    pdir = buffer.append(heap, pdir, "/pack");
+    borrow pdir as &pb in {
+        match dirs.enter(root, buffer.bytes(pb)) {
+            DirOpened::Ok(p0) => {
+                var pd = p0;
+                borrow pd as &pdd in {
+                    let names = dirs.list(heap, pdd, 100000);
+                    borrow names as &nr in {
+                        var i = 0;
+                        while i < dirs.count(nr) {
+                            let n = dirs.name(nr, i);
+                            if len(n) > 4 && bytes.ends_with(n, ".idx") {
+                                out = buffer.push(heap, buffer.append(heap, out, n[0..len(n) - 4]), byte_of(10));
+                            }
+                            i = i + 1;
+                        }
+                    }
+                    dirs.drop(heap, names);
+                }
+                dir_close(pd);
+            }
+            DirOpened::Failed(e) => {
+            }
+        }
+    }
+    buffer.drop(heap, pdir);
+    return out;
+}
+
+// One pack of `odir`, named `stem`: its idx and pack read whole, checked as the Rust command checks them, and appended to `idx0` and `pk0` with its five ints
+// in `meta`.
+res struct Loaded {
+    idx: buffer.Buffer,
+    pk: buffer.Buffer,
+    packs: int,
+    status: int,
+    errno: int,
+    why: buffer.Buffer,
+}
+
+fn loaded_parts(l: Loaded) -> [] (buffer.Buffer, buffer.Buffer, int, int, int, buffer.Buffer) {
+    let Loaded { idx, pk, packs, status, errno, why } = l;
+    return (idx, pk, packs, status, errno, why);
+}
+
+fn path_of[&h, &o, &n, &x](heap: &!h Heap, odir: &o [byte], stem: &n [byte], ext: &x [byte]) -> [heap] buffer.Buffer {
+    var p = buffer.append(heap, buffer.empty(heap, len(odir) + len(stem) + len(ext) + 8), odir);
+    p = buffer.append(heap, p, "/pack/");
+    p = buffer.append(heap, p, stem);
+    return buffer.append(heap, p, ext);
+}
+
+fn slurp_of[&h, &d, &p](heap: &!h Heap, root: &d Dir, path: &p buffer.Buffer) -> [heap, dir_read, file_read] Contents {
+    return slurp(heap, root, buffer.bytes(path));
+}
+
+// `/PATH` and the sentence `tail`.
+fn sentence[&h, &p, &t](heap: &!h Heap, head: &static [byte], path: &p buffer.Buffer, tail: &t [byte]) -> [heap] buffer.Buffer {
+    var w = buffer.append(heap, buffer.empty(heap, 96), head);
+    w = buffer.append(heap, w, buffer.bytes(path));
+    return buffer.append(heap, w, tail);
+}
+
+fn is_idx_v2[&x](ib: &x [byte]) -> [] bool {
+    if len(ib) < 1032 {
+        return false;
+    }
+    return int_of(ib[0]) == 255 && ib[1] == byte_of(116) && ib[2] == byte_of(79) && ib[3] == byte_of(99) && int_of(ib[4]) == 0 && int_of(ib[5]) == 0 && int_of(ib[6]) == 0 && int_of(ib[7]) == 2;
+}
+
+fn load_pack[&h, &d, &o, &n, &m](heap: &!h Heap, root: &d Dir, odir: &o [byte], stem: &n [byte], idx0: buffer.Buffer, pk0: buffer.Buffer, packs: int, meta: &!m [int]) -> [heap, dir_read, file_read] Loaded {
+    let ipath = path_of(heap, odir, stem, ".idx");
+    let ppath = path_of(heap, odir, stem, ".pack");
+    var iread = Contents { data: buffer.empty(heap, 0), why: 0 };
+    var pread = Contents { data: buffer.empty(heap, 0), why: 0 };
+    borrow ipath as &ip in {
+        let r = slurp_of(heap, root, ip);
+        let (d0, w0) = contents_parts(iread);
+        buffer.drop(heap, d0);
+        iread = r;
+    }
+    borrow ppath as &pp in {
+        let r = slurp_of(heap, root, pp);
+        let (d0, w0) = contents_parts(pread);
+        buffer.drop(heap, d0);
+        pread = r;
+    }
+    let (itext, iwhy) = contents_parts(iread);
+    let (ptext, pwhy) = contents_parts(pread);
+    var idx = idx0;
+    var pk = pk0;
+    var status = 0;
+    var errno = 0;
+    var why = buffer.empty(heap, 0);
+    var count = packs;
+    if iwhy != 0 {
+        status = 2;
+        errno = iwhy;
+        borrow ipath as &q in {
+            buffer.drop(heap, why);
+            why = sentence(heap, "cannot read /", q, "");
+        }
+    } else if pwhy != 0 {
+        status = 2;
+        errno = pwhy;
+        borrow ppath as &q in {
+            buffer.drop(heap, why);
+            why = sentence(heap, "cannot read /", q, "");
+        }
+    } else {
+        borrow itext as &ib in {
+            borrow ptext as &pb in {
+                let i = buffer.bytes(ib);
+                let p = buffer.bytes(pb);
+                if !is_idx_v2(i) {
+                    status = 1;
+                    borrow ipath as &q in {
+                        buffer.drop(heap, why);
+                        why = sentence(heap, "/", q, " is not a version 2 pack index");
+                    }
+                } else if len(i) < 1032 + be32(i, 1028) * 28 + 40 {
+                    status = 1;
+                    borrow ipath as &q in {
+                        buffer.drop(heap, why);
+                        why = sentence(heap, "/", q, " is truncated");
+                    }
+                } else if len(p) < 12 || !bytes.equal(p[0..4], "PACK") {
+                    status = 1;
+                    borrow ppath as &q in {
+                        buffer.drop(heap, why);
+                        why = sentence(heap, "/", q, " is not a pack");
+                    }
+                } else if packs >= max_packs() {
+                    status = 1;
+                    borrow ipath as &q in {
+                        buffer.drop(heap, why);
+                        why = sentence(heap, "too many packs: ", q, "");
+                    }
+                } else {
+                    var idx_at = 0;
+                    var pk_at = 0;
+                    if packs > 0 {
+                        idx_at = meta[1 + 5 * (packs - 1)] + meta[2 + 5 * (packs - 1)];
+                        pk_at = meta[4 + 5 * (packs - 1)] + meta[5 + 5 * (packs - 1)];
+                    }
+                    meta[1 + 5 * packs] = idx_at;
+                    meta[2 + 5 * packs] = len(i);
+                    meta[3 + 5 * packs] = be32(i, 1028);
+                    meta[4 + 5 * packs] = pk_at;
+                    meta[5 + 5 * packs] = len(p);
+                    meta[0] = packs + 1;
+                    idx = buffer.append(heap, idx, i);
+                    pk = buffer.append(heap, pk, p);
+                    count = packs + 1;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, itext);
+    buffer.drop(heap, ptext);
+    buffer.drop(heap, ipath);
+    buffer.drop(heap, ppath);
+    return Loaded { idx: idx, pk: pk, packs: count, status: status, errno: errno, why: why };
+}
+
+// The catalog of the git directory `gitpath` (relative to `root`): the object directories, then every idx and pack of each read whole, with `meta` filled in.
+pub fn open_catalog[&h, &d, &g, &m](heap: &!h Heap, root: &d Dir, gitpath: &g [byte], meta: &!m [int]) -> [heap, dir_read, file_read] Cat {
+    let odirs = object_dirs(heap, root, gitpath);
+    var idx = buffer.empty(heap, 0);
+    var pk = buffer.empty(heap, 0);
+    var packs = 0;
+    meta[0] = 0;
+    var status = 0;
+    var errno = 0;
+    var why = buffer.empty(heap, 0);
+    var at = 0;
+    borrow odirs as &ob in {
+        let o = buffer.bytes(ob);
+        while at < len(o) && status == 0 {
+            var end = at;
+            while end < len(o) && o[end] != byte_of(10) {
+                end = end + 1;
+            }
+            let odir = o[at..end];
+            let names = idx_names(heap, root, odir);
+            borrow names as &nb in {
+                let ns = buffer.bytes(nb);
+                var na = 0;
+                while na < len(ns) && status == 0 {
+                    var ne = na;
+                    while ne < len(ns) && ns[ne] != byte_of(10) {
+                        ne = ne + 1;
+                    }
+                    let l = load_pack(heap, root, odir, ns[na..ne], idx, pk, packs, meta);
+                    let (i2, p2, n2, s2, e2, w2) = loaded_parts(l);
+                    idx = i2;
+                    pk = p2;
+                    packs = n2;
+                    status = s2;
+                    errno = e2;
+                    buffer.drop(heap, why);
+                    why = w2;
+                    na = ne + 1;
+                }
+            }
+            buffer.drop(heap, names);
+            at = end + 1;
+        }
+    }
+    return Cat { odirs: odirs, idx: idx, pk: pk, status: status, errno: errno, why: why };
+}
+
+// ---- refs and HEAD -----------------------------------------------------------------------------------------------------------
+
+// The branch, tag and remote-tracking refs of the git directory `gitpath` as lines `NAME ID\n` (the id as 40 lowercase digits), sorted by name: the ones of
+// `packed-refs`, then the loose ones, which win. A file that is not text or holds no id is not a ref.
+fn add_ref[&h, &n, &t](heap: &!h Heap, out: buffer.Buffer, name: &n [byte], text: &t [byte]) -> [heap] buffer.Buffer {
+    var t2 = text;
+    var a = 0;
+    while a < len(t2) && int_of(t2[a]) <= 32 {
+        a = a + 1;
+    }
+    var z = len(t2);
+    while z > a && int_of(t2[z - 1]) <= 32 {
+        z = z - 1;
+    }
+    t2 = t2[a..z];
+    let id = unhex_id(heap, t2);
+    var o = out;
+    borrow id as &ib in {
+        if len(buffer.bytes(ib)) == 20 {
+            o = buffer.append(heap, o, name);
+            o = buffer.push(heap, o, byte_of(32));
+            let lower = hex_of(heap, buffer.bytes(ib));
+            borrow lower as &lw in {
+                o = buffer.append(heap, o, buffer.bytes(lw));
+            }
+            buffer.drop(heap, lower);
+            o = buffer.push(heap, o, byte_of(10));
+        }
+    }
+    buffer.drop(heap, id);
+    return o;
+}
+
+fn walk_refs[&h, &d, &p, &x](heap: &!h Heap, root: &d Dir, dir: &p [byte], prefix: &x [byte], out: buffer.Buffer) -> [heap, dir_read, file_read] buffer.Buffer {
+    var o = out;
+    match dirs.enter(root, dir) {
+        DirOpened::Ok(d0) => {
+            var dd = d0;
+            borrow dd as &ddd in {
+                let names = dirs.list(heap, ddd, 1000000);
+                borrow names as &nr in {
+                    var i = 0;
+                    while i < dirs.count(nr) {
+                        let n = dirs.name(nr, i);
+                        let k = dirs.kind(nr, i);
+                        var path = buffer.append(heap, buffer.empty(heap, len(dir) + len(n) + 2), dir);
+                        path = buffer.push(heap, path, byte_of(47));
+                        path = buffer.append(heap, path, n);
+                        var full = buffer.append(heap, buffer.empty(heap, len(prefix) + len(n) + 2), prefix);
+                        full = buffer.append(heap, full, n);
+                        if k == dirs.kind_directory() {
+                            full = buffer.push(heap, full, byte_of(47));
+                            borrow path as &pb in {
+                                borrow full as &fb in {
+                                    o = walk_refs(heap, root, buffer.bytes(pb), buffer.bytes(fb), o);
+                                }
+                            }
+                        } else if k == dirs.kind_file() {
+                            var read = Contents { data: buffer.empty(heap, 0), why: 0 };
+                            borrow path as &pb in {
+                                let r = slurp(heap, root, buffer.bytes(pb));
+                                let (d1, w1) = contents_parts(read);
+                                buffer.drop(heap, d1);
+                                read = r;
+                            }
+                            let (text, why) = contents_parts(read);
+                            if why == 0 {
+                                borrow text as &tb in {
+                                    if utf8.is_valid(buffer.bytes(tb)) {
+                                        borrow full as &fb in {
+                                            o = add_ref(heap, o, buffer.bytes(fb), buffer.bytes(tb));
+                                        }
+                                    }
+                                }
+                            }
+                            buffer.drop(heap, text);
+                        }
+                        buffer.drop(heap, path);
+                        buffer.drop(heap, full);
+                        i = i + 1;
+                    }
+                }
+                dirs.drop(heap, names);
+            }
+            dir_close(dd);
+        }
+        DirOpened::Failed(e) => {
+        }
+    }
+    return o;
+}
+
+fn ref_wanted[&n](name: &n [byte]) -> [] bool {
+    return bytes.starts_with(name, "refs/heads/") || bytes.starts_with(name, "refs/tags/") || bytes.starts_with(name, "refs/remotes/");
+}
+
+// The lines `lines` stably sorted by the name (what comes before the last space), the last of equal names kept.
+fn sorted_refs[&h, &l](heap: &!h Heap, lines: &l [byte]) -> [heap] buffer.Buffer {
+    let n = bytes.count_byte(lines, 10);
+    let slots = box_slice(heap, 2 * n + 2, 0);
+    var out = buffer.empty(heap, len(lines));
+    borrow mut slots as &!sb in {
+        let sl = contents(sb);
+        var count = 0;
+        var at = 0;
+        while at < len(lines) {
+            var end = at;
+            while end < len(lines) && lines[end] != byte_of(10) {
+                end = end + 1;
+            }
+            // insert after the last line whose name is not greater: binary search by the name
+            var lo = 0;
+            var hi = count;
+            let name = lines[at..end - 41];
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                let other = lines[sl[2 * mid]..sl[2 * mid + 1] - 41];
+                if bytes.compare(other, name) <= 0 {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            var k = count;
+            while k > lo {
+                sl[2 * k] = sl[2 * k - 2];
+                sl[2 * k + 1] = sl[2 * k - 1];
+                k = k - 1;
+            }
+            sl[2 * lo] = at;
+            sl[2 * lo + 1] = end;
+            count = count + 1;
+            at = end + 1;
+        }
+        var i = 0;
+        while i < count {
+            var last = true;
+            if i + 1 < count {
+                let a = lines[sl[2 * i]..sl[2 * i + 1] - 41];
+                let b = lines[sl[2 * i + 2]..sl[2 * i + 3] - 41];
+                if bytes.equal(a, b) {
+                    last = false;
+                }
+            }
+            if last {
+                out = buffer.append(heap, out, lines[sl[2 * i]..sl[2 * i + 1]]);
+                out = buffer.push(heap, out, byte_of(10));
+            }
+            i = i + 1;
+        }
+    }
+    unbox_slice(heap, slots);
+    return out;
+}
+
+pub fn refs[&h, &d, &g](heap: &!h Heap, root: &d Dir, gitpath: &g [byte]) -> [heap, dir_read, file_read] buffer.Buffer {
+    var lines = buffer.empty(heap, 1024);
+    var ppath = buffer.append(heap, buffer.empty(heap, len(gitpath) + 16), gitpath);
+    ppath = buffer.append(heap, ppath, "/packed-refs");
+    var read = Contents { data: buffer.empty(heap, 0), why: 0 };
+    borrow ppath as &pb in {
+        let r = slurp(heap, root, buffer.bytes(pb));
+        let (d1, w1) = contents_parts(read);
+        buffer.drop(heap, d1);
+        read = r;
+    }
+    buffer.drop(heap, ppath);
+    let (text, why) = contents_parts(read);
+    if why == 0 {
+        borrow text as &tb in {
+            let t = buffer.bytes(tb);
+            if utf8.is_valid(t) {
+                var at = 0;
+                while at < len(t) {
+                    var end = at;
+                    while end < len(t) && t[end] != byte_of(10) {
+                        end = end + 1;
+                    }
+                    var line = t[at..end];
+                    if len(line) > 0 && line[len(line) - 1] == byte_of(13) {
+                        line = line[0..len(line) - 1];
+                    }
+                    if len(line) > 0 && line[0] != byte_of(35) && line[0] != byte_of(94) {
+                        var sp = 0;
+                        while sp < len(line) && line[sp] != byte_of(32) {
+                            sp = sp + 1;
+                        }
+                        if sp < len(line) && ref_wanted(line[sp + 1..len(line)]) {
+                            let hexed = line[0..sp];
+                            // `parse_id` takes the whole text before the space, exactly 40 digits
+                            lines = add_ref_exact(heap, lines, line[sp + 1..len(line)], hexed);
+                        }
+                    }
+                    at = end + 1;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, text);
+    var which = 0;
+    while which < 3 {
+        var base = "refs/heads";
+        var prefix = "refs/heads/";
+        if which == 1 {
+            base = "refs/tags";
+            prefix = "refs/tags/";
+        } else if which == 2 {
+            base = "refs/remotes";
+            prefix = "refs/remotes/";
+        }
+        var dir = buffer.append(heap, buffer.empty(heap, len(gitpath) + 16), gitpath);
+        dir = buffer.push(heap, dir, byte_of(47));
+        dir = buffer.append(heap, dir, base);
+        borrow dir as &db in {
+            lines = walk_refs(heap, root, buffer.bytes(db), prefix, lines);
+        }
+        buffer.drop(heap, dir);
+        which = which + 1;
+    }
+    var out = buffer.empty(heap, 0);
+    borrow lines as &lb in {
+        buffer.drop(heap, out);
+        out = sorted_refs(heap, buffer.bytes(lb));
+    }
+    buffer.drop(heap, lines);
+    return out;
+}
+
+// A packed-refs line `ID NAME` as the line `NAME ID\n`, when `hexed` is exactly 40 digits.
+fn add_ref_exact[&h, &n, &x](heap: &!h Heap, out: buffer.Buffer, name: &n [byte], hexed: &x [byte]) -> [heap] buffer.Buffer {
+    if len(hexed) != 40 {
+        return out;
+    }
+    return add_ref(heap, out, name, hexed);
+}

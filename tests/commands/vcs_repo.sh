@@ -574,3 +574,21 @@ repo; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==25{pri
 repo; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==8{print "EIGHT";next}{print}' big.txt > b2; mv b2 big.txt; dfx --context 2; same "diff: gap equal" "$gold/diff_gap_equal.json" "$work/out.json"
 repo; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==9{print "NINE";next}{print}' big.txt > b2; mv b2 big.txt; dfx --context 2; same "diff: gap over" "$gold/diff_gap_over.json" "$work/out.json"
 repo; mkdir main; printf 'x\n' > main/f; dfx main; same "diff: directory named like a branch" "$gold/diff_directory_named_like_a_branch.json" "$work/out.json"
+
+# ---- import-git --dry-run (R14): the repositories of tests/vcs_fixtures/git (made by make_git.sh with `git`, a measuring tool; the gate does not run it), against what the Rust command printed (tests/vcs_fixtures/golden_git)
+echo "== import-git --dry-run"
+gg=$fx/golden_git
+rm -rf "$work/g"; mkdir -p "$work/g"; cp -R "$fx/git/." "$work/g/"; mkdir "$work/g/notgit.git"
+empty; vcs init > /dev/null; mkdir -p "$work/k"; cp -R "$work/e/." "$work/k/"; cp "$gg/plain_known.gitmap" "$work/k/.cancho/vcs/gitmap"
+ig() { ( cd "$work/g" && "$cancho" vcs import-git "$@" --repo "$work/e" --output json > "$work/out.json" 2> "$work/err.txt"; echo $? > "$work/code.txt" ); }
+for n in plain packed refdelta packedrefs alternate odd detached blobref filedir_apart canchodir twobad octal89 headers badtag packedremote alternate2 remotes tags notgit missing corrupt truncated submodule badmode badmodetext nonutf8name gitdir newline dupname filedir dotdot emptyname blobkind treekind badtree truncatedtree; do
+    ig "$n.git" --dry-run; same "import-git $n" "$gg/$n.json" "$work/out.json"; exit_is "import-git $n" "$(cat "$gg/$n.code")"
+done
+ig plain.git --dry-run --no-checkout; same "import-git --no-checkout" "$gg/nocheckout.json" "$work/out.json"
+ig --dry-run; same "import-git with no directory" "$gg/noarg.json" "$work/out.json"; exit_is "import-git, no directory" 1
+ig plain.git packed.git --dry-run; same "import-git with two directories" "$gg/twoargs.json" "$work/out.json"
+( cd "$work/g" && "$cancho" vcs import-git plain.git --dry-run --repo "$work/k" --output json > "$work/out.json" 2> "$work/err.txt" ); same "import-git knows two commits from the gitmap" "$gg/plain_known.json" "$work/out.json"
+mkdir -p "$work/wt"; cp -R "$work/g/plain.git" "$work/wt/.git"
+( cd "$work/g" && "$cancho" vcs import-git ../wt --dry-run --repo "$work/e" --output json > "$work/out.json" 2> "$work/err.txt" ); same "import-git of a work tree reads its .git" "$gg/plain.json" "$work/out.json"
+mkdir -p "$work/none"; ( cd "$work/none" && "$cancho" vcs import-git ../g/plain.git --dry-run --output json 2> /dev/null > "$work/out.json" ); same "import-git with no repository is not-a-repository" "$gg/norepo.json" "$work/out.json"
+[ ! -e "$work/e/.cancho/vcs/gitmap" ] && echo "ok a dry run writes no gitmap" || echo "FAILS a dry run wrote a gitmap"

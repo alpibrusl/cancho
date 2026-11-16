@@ -1,0 +1,8 @@
+{
+  "command": "import-git",
+  "ok": false,
+  "refused": {
+    "message": "a path with a newline or NUL cannot be stored",
+    "tag": "path-unsupported"
+  }
+}
