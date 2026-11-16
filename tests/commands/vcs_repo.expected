@@ -763,3 +763,84 @@ ok diff: two hunks none
 ok diff: gap equal
 ok diff: gap over
 ok diff: directory named like a branch
+== import-git --dry-run
+ok import-git plain
+ok import-git plain (exit 0)
+ok import-git packed
+ok import-git packed (exit 0)
+ok import-git refdelta
+ok import-git refdelta (exit 0)
+ok import-git packedrefs
+ok import-git packedrefs (exit 0)
+ok import-git alternate
+ok import-git alternate (exit 0)
+ok import-git odd
+ok import-git odd (exit 0)
+ok import-git detached
+ok import-git detached (exit 0)
+ok import-git blobref
+ok import-git blobref (exit 0)
+ok import-git filedir_apart
+ok import-git filedir_apart (exit 0)
+ok import-git canchodir
+ok import-git canchodir (exit 1)
+ok import-git twobad
+ok import-git twobad (exit 1)
+ok import-git octal89
+ok import-git octal89 (exit 1)
+ok import-git headers
+ok import-git headers (exit 0)
+ok import-git badtag
+ok import-git badtag (exit 0)
+ok import-git packedremote
+ok import-git packedremote (exit 0)
+ok import-git alternate2
+ok import-git alternate2 (exit 0)
+ok import-git remotes
+ok import-git remotes (exit 0)
+ok import-git tags
+ok import-git tags (exit 0)
+ok import-git notgit
+ok import-git notgit (exit 1)
+ok import-git missing
+ok import-git missing (exit 1)
+ok import-git corrupt
+ok import-git corrupt (exit 1)
+ok import-git truncated
+ok import-git truncated (exit 1)
+ok import-git submodule
+ok import-git submodule (exit 1)
+ok import-git badmode
+ok import-git badmode (exit 1)
+ok import-git badmodetext
+ok import-git badmodetext (exit 1)
+ok import-git nonutf8name
+ok import-git nonutf8name (exit 1)
+ok import-git gitdir
+ok import-git gitdir (exit 1)
+ok import-git newline
+ok import-git newline (exit 1)
+ok import-git dupname
+ok import-git dupname (exit 1)
+ok import-git filedir
+ok import-git filedir (exit 1)
+ok import-git dotdot
+ok import-git dotdot (exit 1)
+ok import-git emptyname
+ok import-git emptyname (exit 1)
+ok import-git blobkind
+ok import-git blobkind (exit 1)
+ok import-git treekind
+ok import-git treekind (exit 1)
+ok import-git badtree
+ok import-git badtree (exit 1)
+ok import-git truncatedtree
+ok import-git truncatedtree (exit 1)
+ok import-git --no-checkout
+ok import-git with no directory
+ok import-git, no directory (exit 1)
+ok import-git with two directories
+ok import-git knows two commits from the gitmap
+ok import-git of a work tree reads its .git
+ok import-git with no repository is not-a-repository
+ok a dry run writes no gitmap

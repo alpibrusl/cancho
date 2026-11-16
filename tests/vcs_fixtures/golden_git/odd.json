@@ -1,0 +1,23 @@
+{
+  "already_imported": 0,
+  "branches": [],
+  "checked_out": 0,
+  "command": "import-git",
+  "commits": 8,
+  "dry_run": true,
+  "new_blobs": 0,
+  "ok": true,
+  "refs_kept": [],
+  "remotes": [],
+  "self_check_mismatches": [
+    {
+      "git": "c5299f6177eac9affdafe758cb65a440c6ff0a84",
+      "recomputed": "e857f1eefa55700169152f1ddb1ec479778cb68b"
+    },
+    {
+      "git": "e94f2741f2b51b558fdee19b5d75911233dbc388",
+      "recomputed": "48f328c9bc6a741939d3ccd92cda78a37b718eb2"
+    }
+  ],
+  "tags": []
+}
