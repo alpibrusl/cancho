@@ -26,7 +26,6 @@ mod origin;
 mod parity;
 mod statics;
 mod store;
-mod vcs;
 use cases::BODY_EDGE;
 
 #[allow(dead_code)]

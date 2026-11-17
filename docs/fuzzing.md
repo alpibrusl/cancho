@@ -1,5 +1,17 @@
 # Fuzzing the compiler
 
+> **Corrected (2026-11-17, `gate.md` G4 wave 4):** the fuzzer is no longer `crates/cancho/tests/fuzz.rs`.
+> It is `tests/commands/fuzz.sh` with the mutator `tests/programs/fuzz_mutate.awk` (the same edits,
+> a Park-Miller generator instead of xorshift64\*, so a seed does not reproduce the Rust fuzzer's
+> mutants), and it runs the compiler under test as a process: `print` (what parses prints, the
+> printed text prints as itself, and `print --output json` of both is the same tree), `check
+> --output json` (every refusal has a rule tag, none is `internal`) and `build --emit obj`
+> (what the checker accepts, the backend compiles), with the same floors of reach (10% parse,
+> 2% check, 2% build). Sections 1 to 4 describe the Rust fuzzer and its four findings as they
+> were; section 5 and 7 are corrected below. The first run against the compiler in cancho found
+> one gap (a float of a large exponent is printed in full, and the reader refuses more than 120
+> digits), pinned in `fuzz.expected` as a `GAP:` line.
+
 > **Status: a test, and it found four bugs, all in the printer.**
 >
 > Every other suite here checks programs someone chose to write. A
@@ -246,30 +258,26 @@ discipline `FUEL` already had.
 
 ## 5. Running it
 
-In CI it is part of `cargo test --workspace`: 3,000 mutants, seed
-`0x5eed1e55`, under a debug build, in about 15 s. That is a smoke test
-that fails the build on any finding. A long run is a local command:
+*(Corrected 2026-11-17.)* It is a script of `tests/commands/` (stage `tests` of `scripts/gate.sh`):
+1,500 mutants, seed 1577, in about 55 s with four workers. That is a smoke test that fails on any
+finding. A long run is a local command, from the root of the repository:
 
 ```sh
-CANCHO_FUZZ_ITERATIONS=150000 CANCHO_FUZZ_SEED=0x0badcafe \
-    cargo test --release -p cancho --test fuzz -- --nocapture
+CANCHO_FUZZ_ITERATIONS=50000 CANCHO_FUZZ_SEED=12345 \
+    sh tests/commands/fuzz.sh PATH/TO/cancho /tmp/cancho-fuzz-work
 ```
 
-Both variables take decimal or `0x` hex. A value that does not parse
-**fails the run** instead of falling back to the default. The first long
-runs here found that out the hard way: `0x0badcafe` was silently
-replaced by the default seed, and the "second seed" repeated the first
-exactly, down to the last count.
+Both variables are decimal (the Rust test took `0x` hex too). A value that is not a number
+**fails the run** (exit 2), as the Rust one did, instead of being read as 0 by `awk`.
 
 A finding is written to `$TMPDIR/cancho-fuzz/finding-N.cho` as one line
-of space-separated tokens. `cancho print` makes it readable. A tree
-mismatch is headed by `//` lines naming the first node that differs,
-before and after. `CANCHO_FUZZ_REPLAY=<file>` runs one saved finding
-through the same pipeline:
+of space-separated tokens. `cancho print` makes it readable.
+`CANCHO_FUZZ_REPLAY=<file>` runs one saved finding through the same
+properties and says what it did (`finding STAGE 'WHY' FILE` lines, then `reach P C B`):
 
 ```sh
 CANCHO_FUZZ_REPLAY=/tmp/cancho-fuzz/finding-0.cho \
-    cargo test --release -p cancho --test fuzz a_saved_finding_replays
+    sh tests/commands/fuzz.sh PATH/TO/cancho /tmp/cancho-fuzz-work
 ```
 
 There is no automatic minimizer. The four bugs above were cut down by
@@ -301,8 +309,8 @@ hand, and each became a unit test beside the code it fixed.
 
 | Test | What it pins |
 |---|---|
-| `mutants_never_crash_the_compiler` (`tests/fuzz.rs`) | §3: the three properties on 3,000 mutants, and the reach floors |
-| `a_saved_finding_replays` (`tests/fuzz.rs`) | §5: one finding, when `CANCHO_FUZZ_REPLAY` names it; nothing otherwise |
+| `mutants_never_crash_the_compiler` (`tests/commands/fuzz.sh`; was `tests/fuzz.rs`) | §3: the three properties on 1,500 mutants, and the reach floors |
+| `a_saved_finding_replays` (`tests/commands/fuzz.sh`; was `tests/fuzz.rs`) | §5: one finding, when `CANCHO_FUZZ_REPLAY` names it; nothing otherwise |
 | `a_one_part_tuple_keeps_its_comma` (`print.rs`) | §4.1 |
 | `a_label_argument_keeps_its_escapes` (`print.rs`) | §4.2 |
 | `prefix_and_postfix_bind_tighter_than_every_binary_operator` (`print.rs`) | §4.3, and that no operator binds as tightly as a prefix |
