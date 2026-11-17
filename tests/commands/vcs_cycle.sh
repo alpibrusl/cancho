@@ -1,7 +1,6 @@
 # vcs_cycle.sh -- the script of tests/commands/script_tests.cho that was most of crates/cancho/tests/vcs_repo.rs (docs/gate.md G4, wave 4): `cancho vcs` as a repository (docs/vcs-cli.md sections 4, 5, 7 and 9, slice V1): every
 # command's JSON pinned in tests/vcs_fixtures/pins/*.json (moved from crates/cancho/tests/vcs_pins/; the pins were made by the Rust command, and the command in cancho prints them byte for byte), every refusal tag V1 has
-# reached, a binary file and a link, an anchored edit that applies once, two writers racing on a ref with one winner, and the publish log when no repository is near. What stays in Rust: the kill at every write
-# (`CANCHO_VCS_CRASH_AT`), which the command in cancho has no failpoint for (issue 687). $1 is the compiler, $2 a scratch directory; run from the root of the repository.
+# reached, a binary file and a link, an anchored edit that applies once, two writers racing on a ref with one winner, and the publish log when no repository is near. The kill part-way is `tests/commands/vcs_crash.sh`. $1 is the compiler, $2 a scratch directory; run from the root of the repository.
 cancho=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 work=$2
 root=$(pwd)

@@ -177,8 +177,11 @@ fn ids_of[&h, &d, &k](heap: &!h Heap, vcs: &d Dir, kind: &k [byte]) -> [heap, di
                                                         while ie < len(it) && it[ie] != byte_of(10) {
                                                             ie = ie + 1;
                                                         }
-                                                        ids = buffer.push(heap, buffer.append(heap, buffer.append(heap, ids, prefix), it[ia..ie]), byte_of(10));
-                                                        count = count + 1;
+                                                        // A `.tmp-` file is the half-written object of a command that was killed (docs/vcs-native.md): not an object, not a problem.
+                                                        if !bytes.starts_with(it[ia..ie], ".tmp-") {
+                                                            ids = buffer.push(heap, buffer.append(heap, buffer.append(heap, ids, prefix), it[ia..ie]), byte_of(10));
+                                                            count = count + 1;
+                                                        }
                                                         ia = ie + 1;
                                                     }
                                                 }

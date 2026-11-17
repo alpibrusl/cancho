@@ -248,7 +248,7 @@ a store the Rust command wrote, not a command.
    (section 4) lists one asker each; the answer for #685 is the same seven commands, but they are one asker, `cancho vcs`.
 2. **#687 (exit at a chosen point) is probably not needed. [read]** The crash test (`vcs_repo.rs:356`, `397`) runs a command once per failpoint and treats exit code 137 as
    "the failpoint fired". A cancho program that reaches the same point with `trap()` ends by a signal, which `spawn_capture` already reports in `code` (`gate.md` G4), and the test
-   can ask "ended by a signal" where it asked "ended 137". What is lost is the number 137. The issue should be answered by the first crash test (slice 3 of section 5), not built first.
+   can ask "ended by a signal" where it asked "ended 137". What is lost is the number 137. The issue should be answered by the first crash test (slice 3 of section 5), not built first. **Answered (2026-11-17, `docs/gate.md` G4 wave 4):** not by a trap and not by a failpoint but by `kill -9` from outside, `tests/commands/vcs_crash.sh`; it found three bugs that a kill at a write boundary would not have.
 3. **#688 (process id) is cosmetic. [read]** A lock file holds `pid time` and the pid only appears in the refusal and in `unlock`'s report. The pinned test writes the lock by
    hand with pid 99999 (`vcs_repo.rs:238`), so the native command only has to read one. Without a primitive the lock a native command writes would carry a pid it cannot know;
    that is a visible difference to say, not a blocker.

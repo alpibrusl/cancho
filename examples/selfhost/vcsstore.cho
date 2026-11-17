@@ -224,6 +224,26 @@ fn make_file[&d, &n, &b](dir: &d Dir, name: &n [byte], bytes: &b [byte]) -> [dir
     }
 }
 
+// `bytes` written whole to a new temporary file of `dir` named `base`, or, when a killed command left one by that name (the nonce is a second, so a retry in the same second meets it), `base-1`, `base-2`,
+// and so on (a stale file is never removed: a second writer of the same object may be using it). The name that was made, and 0, or the errno.
+fn make_temp[&h, &d, &n, &b](heap: &!h Heap, dir: &d Dir, base: &n [byte], text: &b [byte]) -> [heap, dir_write, file_write] (buffer.Buffer, int) {
+    var name = buffer.append(heap, buffer.empty(heap, len(base) + 8), base);
+    var errno = 0;
+    borrow name as &nb in {
+        errno = make_file(dir, buffer.bytes(nb), text);
+    }
+    var attempt = 1;
+    while errno == eexist() && attempt < 16 {
+        buffer.drop(heap, name);
+        name = buffer.push_nat(heap, buffer.push(heap, buffer.append(heap, buffer.empty(heap, len(base) + 8), base), byte_of(45)), attempt);
+        borrow name as &nb in {
+            errno = make_file(dir, buffer.bytes(nb), text);
+        }
+        attempt = attempt + 1;
+    }
+    return (name, errno);
+}
+
 // ---- objects -----------------------------------------------------------------------------------------------------------------
 
 // What `put` and `get` answer: the id (put) or the bytes (get), a status, and the errno of an `io`.
@@ -281,20 +301,22 @@ pub fn put[&h, &d, &s, &k, &b](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], 
                             temporary = buffer.push(heap, temporary, byte_of(45));
                             temporary = buffer.push_nat(heap, temporary, nonce);
                             borrow temporary as &tb in {
-                                let made = make_file(sd, buffer.bytes(tb), data);
+                                let (used, made) = make_temp(heap, sd, buffer.bytes(tb), data);
                                 if made != 0 {
                                     status = 10;
                                     errno = made;
                                 } else {
-                                    match dir_rename_new(sd, buffer.bytes(tb), rest) {
-                                        Done::Ok(n) => {
-                                        }
-                                        Done::Failed(e) => {
-                                            // Another writer finished the same object first: the bytes are the same.
-                                            dir_remove(sd, buffer.bytes(tb));
-                                            if e != eexist() {
-                                                status = 10;
-                                                errno = e;
+                                    borrow used as &ub in {
+                                        match dir_rename_new(sd, buffer.bytes(ub), rest) {
+                                            Done::Ok(n) => {
+                                            }
+                                            Done::Failed(e) => {
+                                                // Another writer finished the same object first: the bytes are the same.
+                                                dir_remove(sd, buffer.bytes(ub));
+                                                if e != eexist() {
+                                                    status = 10;
+                                                    errno = e;
+                                                }
                                             }
                                         }
                                     }
@@ -309,6 +331,7 @@ pub fn put[&h, &d, &s, &k, &b](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], 
                                         }
                                     }
                                 }
+                                buffer.drop(heap, used);
                             }
                             buffer.drop(heap, temporary);
                         }
@@ -620,21 +643,24 @@ pub fn update_ref[&h, &d, &n, &w, &m, &t](heap: &!h Heap, vcs: &d Dir, name: &n 
                                         line = buffer.push(heap, line, byte_of(10));
                                         borrow temporary as &tb in {
                                             borrow line as &ln in {
-                                                let made = make_file(rr, buffer.bytes(tb), buffer.bytes(ln));
+                                                let (used, made) = make_temp(heap, rr, buffer.bytes(tb), buffer.bytes(ln));
                                                 if made != 0 {
                                                     status = 10;
                                                     errno = made;
                                                 } else {
-                                                    match dir_rename(rr, buffer.bytes(tb), leaf) {
-                                                        Done::Ok(k) => {
-                                                        }
-                                                        Done::Failed(e) => {
-                                                            status = 10;
-                                                            errno = e;
-                                                            dir_remove(rr, buffer.bytes(tb));
+                                                    borrow used as &ub in {
+                                                        match dir_rename(rr, buffer.bytes(ub), leaf) {
+                                                            Done::Ok(k) => {
+                                                            }
+                                                            Done::Failed(e) => {
+                                                                status = 10;
+                                                                errno = e;
+                                                                dir_remove(rr, buffer.bytes(ub));
+                                                            }
                                                         }
                                                     }
                                                 }
+                                                buffer.drop(heap, used);
                                             }
                                         }
                                         buffer.drop(heap, line);
@@ -950,7 +976,8 @@ fn collect_refs[&h, &d, &p](heap: &!h Heap, dir: &d Dir, rel: &p [byte], out: bu
                         why = e;
                     }
                 }
-            } else if !bytes.ends_with(name, ".lock") && !bytes.ends_with(name, ".log") {
+            } else if !bytes.ends_with(name, ".lock") && !bytes.ends_with(name, ".log") && bytes.find(name, ".tmp-") < 0 {
+                // A `NAME.tmp-N` is the half-written new value of a ref that a killed command left; it is not a ref (the rename that makes it one never ran).
                 b = buffer.append(heap, buffer.append(heap, b, rel), name);
                 b = buffer.push(heap, b, byte_of(10));
             }
@@ -1088,17 +1115,21 @@ pub fn put_whole[&h, &d, &n, &b](heap: &!h Heap, dir: &d Dir, name: &n [byte], t
     let temporary = suffixed(heap, name, ".tmp-0");
     var errno = 0;
     borrow temporary as &tb in {
-        errno = make_file(dir, buffer.bytes(tb), text);
+        let (used, made) = make_temp(heap, dir, buffer.bytes(tb), text);
+        errno = made;
         if errno == 0 {
-            match dir_rename(dir, buffer.bytes(tb), name) {
-                Done::Ok(k) => {
-                }
-                Done::Failed(e) => {
-                    errno = e;
-                    dir_remove(dir, buffer.bytes(tb));
+            borrow used as &ub in {
+                match dir_rename(dir, buffer.bytes(ub), name) {
+                    Done::Ok(k) => {
+                    }
+                    Done::Failed(e) => {
+                        errno = e;
+                        dir_remove(dir, buffer.bytes(ub));
+                    }
                 }
             }
         }
+        buffer.drop(heap, used);
     }
     buffer.drop(heap, temporary);
     return errno;
