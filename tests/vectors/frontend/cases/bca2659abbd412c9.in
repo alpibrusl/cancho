@@ -1,0 +1,2 @@
+static T: [int] { return alloc_free(); }
+pub static U: [byte] { return "a\\b\n\t\0\""; }

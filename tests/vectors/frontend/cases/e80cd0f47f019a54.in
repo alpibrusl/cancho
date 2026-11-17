@@ -1,0 +1,1 @@
+fn f[T, U: val, &r, &q where r <= q](a: &r T, b: &!q U) -> [] int { return 0; }

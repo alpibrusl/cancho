@@ -1,0 +1,2 @@
+fn g[&r](s: &!r [int]) -> [] int { s[0] = 4; return s[0]; }
+fn f() -> [] int { region a { let s = alloc_slice[a](3, 0); return g(s); } }

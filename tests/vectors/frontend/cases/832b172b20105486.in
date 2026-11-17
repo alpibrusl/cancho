@@ -1,0 +1,37 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [
+        "bogus",
+        {
+          "name": "ffi",
+          "argument": "libc"
+        },
+        {
+          "name": "fs_read",
+          "argument": "x\n"
+        }
+      ],
+      "ret": {
+        "name": ""
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "int",
+            "value": 0
+          }
+        }
+      ]
+    }
+  ]
+}

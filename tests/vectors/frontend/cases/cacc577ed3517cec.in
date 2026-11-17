@@ -1,0 +1,37 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": null,
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "call",
+            "name": "g",
+            "args": [
+              {
+                "kind": "int",
+                "value": 1
+              },
+              {
+                "kind": "str",
+                "value": "x"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

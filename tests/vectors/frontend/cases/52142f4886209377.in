@@ -1,0 +1,2 @@
+fn g[&r](a: &r int) -> [] int { return 1; }
+fn f() -> [] int { return 1; }

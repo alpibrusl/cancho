@@ -1,0 +1,1 @@
+fn f(world: World) -> [] int { return 0; }

@@ -1,0 +1,12 @@
+// compiler.cho -- the compiler, for a program of several files.
+//
+// Stage 4 of the self-hosting port (`docs/self-hosting.md` section 6, epic #295). Reads a program on
+// standard input (a stream of files, see `driver.cho`) and writes the LLVM IR of it on the standard
+// output; `clang` makes the program of that. Built by the Rust compiler, it is the first compiler; built
+// by itself, it is the second.
+
+import selfhost.driver;
+
+fn main(world: World) -> [] int {
+    return driver.drive(world, 3, true);
+}

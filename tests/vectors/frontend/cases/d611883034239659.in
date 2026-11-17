@@ -1,0 +1,6 @@
+FILE 54
+module a;
+fn g[&r](x: &r int) -> [] int { return *x; }FILE 68
+module b;
+import a;
+fn f[&q](p: &q int) -> [] int { return a.g(p); }

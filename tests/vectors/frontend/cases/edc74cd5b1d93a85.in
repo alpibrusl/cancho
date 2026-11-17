@@ -1,0 +1,23 @@
+{
+  "items": [
+    {
+      "kind": "enum",
+      "public": false,
+      "name": "Shape",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "variants": [
+        {
+          "name": "Circle",
+          "payload": [
+            {
+              "name": "int"
+            }
+          ]
+        }
+      ]
+    },
+    true
+  ]
+}

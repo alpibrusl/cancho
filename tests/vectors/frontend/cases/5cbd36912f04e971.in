@@ -1,0 +1,3 @@
+struct P { x: int, y: int }
+fn g[&q](a: &q P) -> [] int { return a.x; }
+fn f[&r](p: &!r P) -> [] int { return g(p); }

@@ -1,0 +1,15 @@
+  fn steal[&h, &p](heap: &!h Heap, pair: &p (Box[int], int)) -> [heap] int { let held = pair.0;
+ return unbox(heap, held);
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(ffi);
+ release(fs);
+ release(io);
+  var status = 0;
+ borrow mut heap as &!h in { let pair = (box(h, 41), 1);
+ borrow pair as &p in { status = steal(h, p);
+ } let (held, tag) = pair;
+ status = status + unbox(h, held) + tag;
+ } release(heap);
+ return status;
+ } 

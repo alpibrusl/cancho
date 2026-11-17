@@ -1,0 +1,3 @@
+edition 6;
+fn sqrt32(n: int) -> [] int { return n; }
+fn f[&r]() -> [] int { return sqrt32(2); }

@@ -1,0 +1,2 @@
+struct X { int: int }
+fn f[&r]() -> [] int { let p = X { int: 1 }; return p.int; }

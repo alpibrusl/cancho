@@ -1,0 +1,32 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": 4294967296,
+      "effects": [],
+      "ret": {
+        "kind": "tuple",
+        "parts": [
+          {
+            "name": "int"
+          }
+        ]
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "tuple",
+            "parts": 18446744073709551616
+          }
+        }
+      ]
+    }
+  ]
+}

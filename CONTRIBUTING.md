@@ -57,8 +57,8 @@ follows it** or the gap is written down. That means a new or changed:
 
 What checks this, in order of how early it fails:
 
-1. `selfhost::parity` fails when Rust has a rule or a builtin that no source of `examples/selfhost` names. List it in
-   `tests/conformance/selfhost/unported_rules.txt` (or `unported_builtins.txt`) with the issue that will port it, or port it.
+1. `tests/commands/parity.sh` fails when Rust has a rule or a builtin that no source of `examples/selfhost` names. List it in
+   `tests/unported_rules.txt` (or `tests/unported_builtins.txt`) with the issue that will port it, or port it.
 2. `refusals_agree_with_the_rust_front_end` fails when a program of `tests/reject/` is refused by another rule than Rust's
    by the compiler in cancho, unless it is in `reject_gaps.txt`; a listed one that now agrees fails until the line is
    taken out, so the list only shrinks.

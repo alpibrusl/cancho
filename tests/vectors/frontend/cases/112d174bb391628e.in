@@ -1,0 +1,2 @@
+fn mk[&a](n: int) -> [] &a int { return mk(n); }
+fn f[&r]() -> [] int { var pad = 7; var pad2 = 8; var x = 1; var o = mk(1); borrow x as &p in { o = p; } }

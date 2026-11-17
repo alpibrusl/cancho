@@ -1,0 +1,13 @@
+  edition 5;
+ fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+ release(io);
+ release(ffi);
+ release(heap);
+ release(args);
+ release(net);
+ release(clock);
+ var status = 0;
+ borrow fs as &f in { status = open_dir(f, "/");
+ } release(fs);
+ return status;
+ } 

@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { let e = World::A; return 1; }

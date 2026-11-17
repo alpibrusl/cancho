@@ -1,0 +1,1 @@
+fn f[T: val](x: T) -> [] T { let y: int = x; return x; }

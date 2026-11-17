@@ -1,0 +1,9 @@
+//~ ERROR `total` is immutable; declare it with `var` to assign to it
+//~ RULE assign-to-immutable
+
+fn main(world: World) -> [] int {
+    release(world);
+    let total = 1;
+    total = total + 1;
+    return total;
+}

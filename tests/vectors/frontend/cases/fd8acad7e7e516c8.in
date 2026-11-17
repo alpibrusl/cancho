@@ -1,0 +1,1 @@
+fn getchar() -> [] int { return 1; }

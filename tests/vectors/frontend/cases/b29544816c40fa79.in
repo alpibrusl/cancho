@@ -1,0 +1,1 @@
+fn f() -> [] int { return m.g(m.S { x: 1 }, m.E::A(2), E::B, S { y: 3 }, p.x, p.0, a[1], a[1..2]); }

@@ -1,0 +1,16 @@
+ struct Bytes { len: int, }  fn len_of[&r](b: &r Bytes) -> [] int { return b.len;
+ }  fn run[&i](io: &!i Io) -> [io_write] int { let buf = Bytes { len: 3 };
+  borrow buf as &a in { borrow buf as &b in { putchar(io, '0' + len_of(a));
+ putchar(io, '0' + len_of(b));
+ } }  putchar(io, 10);
+ return 0;
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(fs);
+ release(ffi);
+ var status = 0;
+ borrow mut io as &!i in { status = run(i);
+ } release(io);
+ return status;
+ } 

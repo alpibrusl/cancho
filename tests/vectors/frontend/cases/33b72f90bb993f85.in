@@ -1,0 +1,2 @@
+fn g[&j](io: &!j Io) -> [io_write] int { return putchar(io, 1); }
+fn f[&i](io: &!i Io) -> [io_write] int { return g(io); }

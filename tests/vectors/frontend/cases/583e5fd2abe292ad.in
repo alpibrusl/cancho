@@ -1,0 +1,12 @@
+//~ ERROR is a struct, not an enum
+//~ RULE match-on-a-non-enum
+
+struct Point { x: int }
+
+fn main() -> [] int {
+    // Parenthesised, because a bare struct literal here would be taken for
+
+    match (Point { x: 1 }) {
+        _ => { return 0; }
+    }
+}

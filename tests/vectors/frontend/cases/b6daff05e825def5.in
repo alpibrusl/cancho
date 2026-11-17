@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { let n = is_nan(1.0); if n { return 1; } return 2; }

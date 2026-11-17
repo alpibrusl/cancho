@@ -1,0 +1,2 @@
+pub static N: int { return 1; }
+static M: [byte] { return "a\n\t\r\0\\\"\x"; }

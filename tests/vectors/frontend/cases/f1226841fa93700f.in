@@ -1,0 +1,2 @@
+edition 5;
+fn f[&r](d: &r Done) -> [] int { return d.x; }

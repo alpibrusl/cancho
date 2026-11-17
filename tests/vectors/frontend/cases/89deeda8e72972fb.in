@@ -1,0 +1,2 @@
+edition 5;
+fn f[&r](s: &!r [byte]) -> [] int { return copy_within(s, 0, 1, true); }

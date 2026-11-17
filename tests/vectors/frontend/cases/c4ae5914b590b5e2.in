@@ -1,0 +1,31 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "unary",
+            "op": "bogus",
+            "operand": {
+              "kind": "bool",
+              "value": true
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

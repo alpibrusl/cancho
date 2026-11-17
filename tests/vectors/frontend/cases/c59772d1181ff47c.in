@@ -1,0 +1,30 @@
+{
+  "module": "m.n",
+  "imports": [
+    {
+      "path": "std.io"
+    }
+  ],
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": -1
+        }
+      ]
+    }
+  ]
+}

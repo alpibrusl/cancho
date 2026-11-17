@@ -1,0 +1,2 @@
+edition 5;
+fn f[&r](u: &r Conn) -> [] int { return udp_local_port(u); }

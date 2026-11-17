@@ -1,0 +1,7 @@
+  edition 4;
+  struct Point { x: int, y: int }  fn worker(p: Point) -> [] int { return p.x;
+ }  fn main() -> [conc] int { let p = Point { x: 1, y: 2 };
+ let w = worker;
+ let h = spawn(p, w);
+ return join(h);
+ } 

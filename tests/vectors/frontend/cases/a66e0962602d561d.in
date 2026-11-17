@@ -1,0 +1,7 @@
+static tbl: [int] {
+    let t = alloc_slice[static](4, 0);
+    t[1] = 5;
+    return t;
+}
+fn g[&r](s: &r [int]) -> [] int { return s[0]; }
+fn f() -> [] int { return g(tbl); }

@@ -1,0 +1,1 @@
+static t: [f32] { return 1; }

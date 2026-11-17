@@ -1,0 +1,5 @@
+static fl: [bool] {
+    let t = alloc_slice[static](2, false);
+    return t;
+}
+fn f() -> [] bool { return fl[1]; }

@@ -1,0 +1,8 @@
+  fn main(world: World) -> [] bool { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(fs);
+ release(ffi);
+ release(io);
+ return true;
+ } 

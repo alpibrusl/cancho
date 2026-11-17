@@ -1,0 +1,2 @@
+extern fn g[&f, &r, &i, &h](ffi: &f Ffi("libc"), io: &!i Io) -> [ffi("libc"), io_read, io_write, err_write] int;
+fn main(world: World) -> [] int {  return 0; }

@@ -1,0 +1,4 @@
+module m;
+import m as x;
+struct T { a: int }
+struct S { a: x.T }

@@ -1,0 +1,3 @@
+ fn f[int](x: int) -> [] int { return x;
+ }  fn main() -> [] int { return 0;
+ } 

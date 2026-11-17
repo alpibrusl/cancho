@@ -1,0 +1,12 @@
+  extern fn labs[&f](ffi: &f Ffi("libc"), n: int) -> [] int;
+  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(fs);
+ release(io);
+ let libc = narrow(ffi, "libc");
+ var n = 0;
+ borrow libc as &f in { n = labs(f, 0 - 7);
+ } release(libc);
+ return n - 7;
+ } 

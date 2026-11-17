@@ -1,0 +1,1 @@
+fn f[&r, &s]() -> [] &r int { return 1; }

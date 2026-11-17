@@ -1,0 +1,2 @@
+fn g[&j](io: &!j Io) -> [] int { return 1; }
+fn f[&i](io: &i Io) -> [] int { return g(io); }

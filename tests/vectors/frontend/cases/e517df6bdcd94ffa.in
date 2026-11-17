@@ -1,0 +1,2 @@
+edition 5;
+fn f(p: Poller) -> [] int { return poller_close(p); }

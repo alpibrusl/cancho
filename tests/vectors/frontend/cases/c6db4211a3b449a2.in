@@ -1,0 +1,2 @@
+fn first[T: val, U: val](a: T) -> [] U { return first(a); }
+fn f[&r]() -> [] int { let x: int = first(1); return x; }

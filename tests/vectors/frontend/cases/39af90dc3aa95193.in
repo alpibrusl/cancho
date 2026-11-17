@@ -1,0 +1,22 @@
+{
+  "items": [
+    null,
+    {
+      "kind": "static",
+      "public": false,
+      "name": "u",
+      "ty": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "int",
+            "value": 2
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "imports": [
+    {
+      "path": "std.io",
+      "as": "console"
+    },
+    "2fast",
+    {
+      "path": "x.y"
+    }
+  ],
+  "items": []
+}

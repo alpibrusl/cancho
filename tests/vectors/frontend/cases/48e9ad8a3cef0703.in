@@ -1,0 +1,1 @@
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"float"}, "body": [{"kind":"return","value":{"kind":"str","value":"a\u0001\u00e9\ud800\n\"\\/"}}]}]}

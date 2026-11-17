@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "kind": "struct",
+      "public": false,
+      "name": "int",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "fields": [
+        {
+          "name": "x",
+          "ty": {
+            "name": "int"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": 18446744073709551616
+        }
+      ]
+    }
+  ]
+}

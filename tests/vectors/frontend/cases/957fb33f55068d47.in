@@ -1,0 +1,28 @@
+ import std.io;
+  fn label[&i, &s](io: &!i Io, name: &s [byte], value: int) -> [io_write] int { io.write_all(io, name);
+ io.space(io);
+ io.print_int(io, value);
+ io.newline(io);
+ return 0;
+ }  fn factorial(n: int) -> [] int { if n < 2 { return 1;
+ } return n * factorial(n - 1);
+ }  fn fib(n: int) -> [] int { if n < 2 { return n;
+ } return fib(n - 1) + fib(n - 2);
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(fs);
+ release(ffi);
+  borrow mut io as &!i in { label(i, "arithmetic", 2 + 3 * 4 - 14);
+ label(i, "nested", factorial(5));
+ label(i, "recursion", fib(10));
+ label(i, "bits", (1 << 8) - 1);
+ label(i, "comparison", flag(1 < 2));
+  var ten = 0;
+ ten = ten + 10;
+ label(i, "runtime", fib(ten));
+ }  release(io);
+ return 0;
+ }  fn flag(b: bool) -> [] int { if b { return 1;
+ } return 0;
+ } 

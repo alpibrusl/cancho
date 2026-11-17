@@ -1,0 +1,4 @@
+ fn quiet() -> [io_write] int { return 1;
+ }  fn main(world: World) -> [] int { release(world);
+ return quiet();
+ } 

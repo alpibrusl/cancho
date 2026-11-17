@@ -1,0 +1,23 @@
+{
+  "items": [
+    {
+      "kind": "enum",
+      "public": false,
+      "name": "A",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "variants": [
+        {
+          "name": "One",
+          "payload": []
+        },
+        {
+          "name": "One",
+          "payload": []
+        }
+      ]
+    },
+    4294967296
+  ]
+}

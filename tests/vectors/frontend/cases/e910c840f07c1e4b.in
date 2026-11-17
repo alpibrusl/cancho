@@ -1,0 +1,1 @@
+fn f(a: int) -> [] int { return ((a)) + (((a + 1))); }

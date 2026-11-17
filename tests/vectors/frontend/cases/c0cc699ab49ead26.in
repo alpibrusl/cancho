@@ -1,0 +1,2 @@
+enum V { A, B, C, D, E }
+fn f[&r](e: V) -> [] int { match e { V::A => { return 1; } V::B => { return 2; } V::D => { return 4; } V::E => { return 5; } } }

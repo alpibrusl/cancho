@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "let",
+          "mutable": false,
+          "name": "x",
+          "ty": {
+            "name": "int"
+          },
+          "value": "2fast"
+        },
+        {
+          "kind": "return",
+          "value": {
+            "kind": "name",
+            "name": "x"
+          }
+        }
+      ]
+    }
+  ]
+}

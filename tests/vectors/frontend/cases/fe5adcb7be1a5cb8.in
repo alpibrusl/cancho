@@ -1,0 +1,32 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "quiet",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [
+        {
+          "name": "io_write"
+        }
+      ],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "int",
+            "value": 1
+          }
+        }
+      ]
+    },
+    {}
+  ]
+}

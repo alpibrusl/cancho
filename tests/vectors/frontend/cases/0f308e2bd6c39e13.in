@@ -1,0 +1,16 @@
+ module http.response;
+  import net.sockets;
+  pub fn send_all[&f, &b](libc: &f Ffi("libc"), fd: int, data: &b [byte]) -> [ffi("libc")] bool { var sent = 0;
+ while sent < len(data) { let n = sockets.write(libc, fd, data[sent..len(data)]);
+ if n <= 0 { return false;
+ } sent = sent + n;
+ } return true;
+ }  pub fn status_of[&h](head: &h [byte]) -> [] int { if len(head) < 12 || int_of(head[0]) != 'H' || int_of(head[1]) != 'T' || int_of(head[2]) != 'T' || int_of(head[3]) != 'P' || int_of(head[4]) != '/' || int_of(head[5]) != '1' || int_of(head[6]) != '.' || int_of(head[8]) != ' ' { return 0 - 1;
+ } var code = 0;
+ var i = 9;
+ while i < 12 { let c = int_of(head[i]);
+ if c < '0' || c > '9' { return 0 - 1;
+ } code = code * 10 + (c - '0');
+ i = i + 1;
+ } return code;
+ } 

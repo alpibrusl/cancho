@@ -1,0 +1,5 @@
+import std.io;
+fn f() -> [] int { return 0; }
+
+
+fn g() -> [] int { return 1; }

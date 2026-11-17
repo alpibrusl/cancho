@@ -1,0 +1,18 @@
+ fn double(n: int) -> [] int { return n * 2;
+ }  fn emit[&i](io: &!i Io, c: int) -> [io_write] int { return putchar(io, c);
+ }  fn banner[&i](io: &!i Io) -> [io_write] int { emit(io, 65);
+ return emit(io, 66);
+ }  fn run[&i](io: &!i Io) -> [io_write] int { banner(io);
+ let last = emit(io, '0' + double(3));
+ emit(io, 10);
+ return last - 54;
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(fs);
+ release(ffi);
+ var status = 0;
+ borrow mut io as &!i in { status = run(i);
+ } release(io);
+ return status;
+ } 

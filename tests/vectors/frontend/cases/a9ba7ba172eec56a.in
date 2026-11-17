@@ -1,0 +1,6 @@
+fn f() -> [] int {
+    {
+        // in a block
+    }
+    return 0;
+}

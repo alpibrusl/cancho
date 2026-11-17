@@ -1,0 +1,1 @@
+fn f[T, U: val, &r, &s where r <= s, s <= r](a: &r T) -> [io, ffi("libc")] U { return a; }

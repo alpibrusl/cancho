@@ -1,0 +1,2 @@
+edition 7;
+fn f[&r](c: &r Child) -> [] int { return child_kill(c, 9); }

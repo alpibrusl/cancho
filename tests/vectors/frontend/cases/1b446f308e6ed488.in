@@ -1,0 +1,33 @@
+{
+  "items": [
+    {
+      "kind": "extern",
+      "name": "system",
+      "regions": [
+        "c"
+      ],
+      "params": [
+        {
+          "name": "command",
+          "ty": {
+            "kind": "ref",
+            "unique": false,
+            "region": "c",
+            "inner": {
+              "kind": "slice",
+              "inner": {
+                "name": "byte"
+              }
+            }
+          }
+        }
+      ],
+      "effects": [],
+      "ret": {
+        "name": "c_int"
+      },
+      "symbol": "system"
+    },
+    true
+  ]
+}

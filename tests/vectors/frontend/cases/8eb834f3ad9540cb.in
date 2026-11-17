@@ -1,0 +1,1 @@
+fn f[&i, &q](io: &!i Io, s: &q [byte]) -> [io_write] int { return write_bytes(io, s); }

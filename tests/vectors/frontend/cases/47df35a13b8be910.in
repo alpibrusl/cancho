@@ -1,0 +1,1 @@
+fn f[&r](x: int) -> [] int { borrow mut x as &!p in { *p = 2; } return 0; }

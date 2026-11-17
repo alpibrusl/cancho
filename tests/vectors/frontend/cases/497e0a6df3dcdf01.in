@@ -1,0 +1,2 @@
+fn head[T: val, &r](s: &r [T]) -> [] T { return s[0]; }
+fn f[&r](s: &!r [int]) -> [] int { return head(s); }

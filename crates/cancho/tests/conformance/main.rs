@@ -93,15 +93,6 @@ fn make_removable(dir: &Path) {
     }
 }
 
-/// A catalogue the front end keeps (`tests/rules.golden`: the tag of every refusal rule; `tests/builtins.golden`: the name of every builtin), one a line, in
-/// the order the compiler lists them: recorded once from the Rust crates (`rules_and_builtins_are_the_goldens`, in `selfhost/parity.rs`, holds the two together
-/// until the crates go), so that the tests that need the list read a file and not a Rust crate (`docs/removing-rust.md` phase 1b). It was in `corpus.rs`.
-pub(crate) fn golden(name: &str) -> Vec<String> {
-    let text = std::fs::read_to_string(repo_root().join(format!("tests/{name}.golden")))
-        .unwrap_or_else(|e| panic!("tests/{name}.golden is read: {e}"));
-    text.lines().map(str::to_owned).collect()
-}
-
 /// Every `.cho` file under `dir`, recursively, skipping `.cancho-vcs` -- content-addressed package-store blobs, copies by design. It was in `duplication.rs`.
 pub(crate) fn walk_ls_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };

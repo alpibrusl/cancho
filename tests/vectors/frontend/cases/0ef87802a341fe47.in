@@ -1,0 +1,9 @@
+  res struct Ticket { serial: int }  fn peek[&r](t: &r Ticket) -> [] Ticket { return *t;
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(fs);
+ release(ffi);
+ release(io);
+ return 0;
+ } 

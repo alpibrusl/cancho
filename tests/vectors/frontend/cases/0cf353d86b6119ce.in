@@ -1,0 +1,13 @@
+//~ ERROR `camera_close` is not a function in this program
+//~ RULE not-a-function
+
+// `camera_open` and the other device verbs are absent before edition 12: an edition-11 file may declare the names for itself. (`docs/camera.md` §6.)
+
+    // inserted 73
+edition 11;
+    // inserted 60
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty } = split(world); // end 0
+    release(io);
+    return camera_close(0);
+}

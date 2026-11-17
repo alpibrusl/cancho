@@ -1,0 +1,1 @@
+fn f[&r, &s](s: &r [float]) -> [] int { return s[0]; }

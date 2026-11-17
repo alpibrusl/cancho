@@ -1,0 +1,13 @@
+//~ ERROR `open_new` is not a function in this program
+//~ RULE not-a-function
+
+
+edition 4;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net } = split(world);
+    release(args); release(heap); release(ffi); release(io); release(net);
+    let d = narrow(fs, "/tmp");
+
+    release(d);
+    return 0;
+}

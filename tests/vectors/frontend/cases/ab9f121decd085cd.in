@@ -1,0 +1,4 @@
+fn f() -> [] int {
+    let s = "// not a comment";
+    return 0;
+}

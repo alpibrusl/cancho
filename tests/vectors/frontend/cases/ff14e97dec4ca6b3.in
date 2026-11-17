@@ -1,0 +1,2 @@
+edition 5;
+fn f(d: Done) -> [] Done { let a = d; let b = d; return a; }

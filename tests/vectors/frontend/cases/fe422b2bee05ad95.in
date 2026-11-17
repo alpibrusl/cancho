@@ -1,0 +1,2 @@
+fn f(a: int) -> [] int { while a < 3 { defer g(a); } return a; }
+fn g(a: int) -> [] int { return a; }

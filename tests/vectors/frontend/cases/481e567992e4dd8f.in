@@ -1,0 +1,2 @@
+struct S { a: float, b: byte, c: bool, d: int }
+fn main(world: World) -> [] int {  return 0; }

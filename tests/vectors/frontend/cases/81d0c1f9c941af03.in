@@ -1,0 +1,2 @@
+fn pick[T: val](a: T, b: T) -> [] T { return a; }
+fn f[&r, &s where r <= s](p: &r int, q: &s int) -> [] int { return *pick(p, q); }

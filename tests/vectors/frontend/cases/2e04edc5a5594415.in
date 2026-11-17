@@ -1,0 +1,1 @@
+fn f[&i](h: &!i Heap) -> [] int { return 1; }

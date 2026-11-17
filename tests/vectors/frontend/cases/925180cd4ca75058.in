@@ -1,0 +1,2 @@
+edition 2;
+fn f(a: Split) -> [] int { return 1; }

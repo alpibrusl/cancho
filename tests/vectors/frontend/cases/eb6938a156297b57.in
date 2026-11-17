@@ -1,0 +1,1 @@
+fn f() -> [io_write] int { return 1; }

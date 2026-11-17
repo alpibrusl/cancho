@@ -1,0 +1,3 @@
+FILE 45
+extern fn g[&f](f: &f Ffi("libc")) -> [] int;FILE 30
+fn f() -> [] int { return 1; }

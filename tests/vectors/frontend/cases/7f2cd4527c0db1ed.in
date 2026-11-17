@@ -1,0 +1,1 @@
+extern fn g[&r, &r](ffi: &f Ffi("libc")) -> [ffi("libc")] int;
