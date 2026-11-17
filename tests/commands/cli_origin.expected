@@ -1,0 +1,29 @@
+commits: fc4a541d30b93155ff9dfa64e50ff444958b6d2b fc353e82921eaa9e2b70b36f34a3948ef15879e2
+checkout of fc4a541d30b93155ff9dfa64e50ff444958b6d2b:
+  ./.cancho-vcs/
+  ./.cancho-vcs/inner/
+  ./.cancho-vcs/inner/a.txt 2864300220
+  ./.cancho-vcs/manifest.json 3586053867
+  ./other/
+  ./other/b.txt 3862190835
+checkout of fc353e82921eaa9e2b70b36f34a3948ef15879e2:
+  ./.cancho-vcs/
+  ./.cancho-vcs/inner/
+  ./.cancho-vcs/inner/a.txt 2864300220
+  ./.cancho-vcs/manifest.json 3586053867
+  ./other/
+  ./other/b.txt 2196883511
+the cache holds: fc353e82921eaa9e2b70b36f34a3948ef15879e2 fc4a541d30b93155ff9dfa64e50ff444958b6d2b 
+a second ask: exit 0
+no such path: exit 3, said: commit fc4a541d30b93155ff9dfa64e50ff444958b6d2b of `URL` has no directory `nothere`, the cache holds: fc4a541d30b93155ff9dfa64e50ff444958b6d2b 
+not a hash: exit 1, said: origin `rev` must be a full commit hash (40 or 64 lowercase hex digits), found `abc`; a branch or tag name moves, so a lock never holds one, the cache holds: 
+no such commit: exit 3, said: `git` failed to check out the commit: fatal: unable to read tree (0000000000000000000000000000000000000000), the cache holds: 
+an escaping path: exit 1, said: origin `path` must be a relative path inside the repository, found `../x`, the cache holds: 
+an absolute path: exit 1, said: origin `path` must be a relative path inside the repository, found `/x`, the cache holds: 
+ref HEAD: exit 0 fc353e82921eaa9e2b70b36f34a3948ef15879e2
+ref v1: exit 0 fc4a541d30b93155ff9dfa64e50ff444958b6d2b
+ref nope: exit 3, said: `URL` has no ref `nope`
+ref -x: exit 3, said: not a repository location: `-x`
+ref ext::sh: exit 3, said: not a repository location: `ext::sh`
+ref -x: exit 3, said: not a ref name: `-x`
+ok the_origin_cache_in_cancho_makes_the_checkout_the_rust_code_makes

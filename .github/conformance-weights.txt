@@ -4,33 +4,12 @@
 # A module (or a test of a split module) not listed weighs 3. To remeasure, run the command above and regenerate this file.
 
 selfhost::vcs::vcs_publish_dir_in_cancho_publishes_the_libraries_of_packages 301
-selfhost::cli::the_command_line_in_cancho_runs_like_cancho_run 284
-selfhost::cli::the_command_line_in_cancho_formats_like_cancho_fmt 211
-selfhost::cli::the_command_line_in_cancho_builds_like_cancho_build 113
 selfhost::vcs::vcs_publish_in_cancho_logs_a_file_like_cancho_vcs_publish 103
-selfhost::cli::the_command_line_in_cancho_walks_directories_like_cancho_fmt 72
-selfhost::cli::the_command_line_in_cancho_writes_the_identities_like_cancho_ids 59
-selfhost::cli::the_command_line_in_cancho_carries_the_standard_library 57
-selfhost::cli::the_command_line_in_cancho_reports_layout_like_cancho_layout 56
 selfhost::vcs::vcs_fetch_and_resolve_in_cancho_check_a_store_like_cancho_vcs 53
-selfhost::cli::the_command_line_in_cancho_says_its_version_and_checks_the_pin_like_cancho 44
-selfhost::cli::the_command_line_in_cancho_says_what_this_build_does_not_carry 32
-selfhost::cli::the_command_line_in_cancho_checks_like_cancho_check 30
 selfhost::vcs::vcs_lock_in_cancho_pins_like_cancho_vcs_lock 28
-selfhost::cli::the_command_line_in_cancho_prints_and_ingests_like_the_rust_front_end 27
 selfhost::vcs::vcs_publish_dir_in_cancho_publishes_a_library_like_cancho_vcs_publish 26
-selfhost::cli::the_command_line_in_cancho_works_in_a_project_like_cancho 24
 selfhost::vcs::vcs_sync_in_cancho_indexes_a_tree_like_cancho_vcs_sync 24
 selfhost::vcs::vcs_log_in_cancho_lists_a_store_like_cancho_vcs_log 23
-selfhost::cli::the_command_line_in_cancho_tests_like_cancho_test 21
-selfhost::cli::the_command_line_in_cancho_satisfies_like_cancho_satisfy 21
-selfhost::cli::the_command_line_in_cancho_writes_the_agent_guidelines 17
-selfhost::cli::the_command_line_in_cancho_answers_help_and_the_command_tree_like_cancho 15
-selfhost::messages::the_message_of_a_refusal_holds_the_text_its_fixture_expects 15
-selfhost::cli::the_command_line_in_cancho_reads_a_path_with_dot_dot_like_cancho 15
-selfhost::cli::the_command_line_in_cancho_words_a_program_with_no_main_like_cancho 15
-selfhost::origin::the_origin_cache_in_cancho_makes_the_checkout_the_rust_code_makes 4
-selfhost::cli::the_stamp_script_refuses_what_is_not_a_commit 1
 
 
 
