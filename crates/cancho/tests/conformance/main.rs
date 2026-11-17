@@ -34,10 +34,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-
 mod conn_peer;
-mod devices;
-
 mod devices;
 
 mod http;
@@ -121,25 +118,4 @@ pub(crate) fn walk_ls_files(dir: &Path, out: &mut Vec<PathBuf>) {
             out.push(path);
         }
     }
-}
-
-/// Read `cancho authority --output json` for one program.
-fn authority_json(source: &str, tag: &str) -> String {
-    let dir = scratch(tag);
-    let path = dir.join("program.cho");
-    std::fs::write(&path, source).expect("a writable fixture");
-    let out = Command::new(BIN)
-        .args([
-            "authority".as_ref(),
-            "--std".as_ref(),
-            "--output".as_ref(),
-            "json".as_ref(),
-            path.as_os_str(),
-        ])
-        .output()
-        .expect("the compiler runs");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
-    text
 }
