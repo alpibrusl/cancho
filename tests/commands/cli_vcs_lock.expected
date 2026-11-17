@@ -1,0 +1,576 @@
+== a store of packages/, all: agent-wire/.cancho-vcs
+step 1: vcs lock --store <root>/packages/agent-wire/.cancho-vcs -o out.lock --all
+  exit 0
+  out| locked end_of_quoted
+  out| locked find_after
+  out| locked goal_end_of
+  out| locked goal_start_of
+  out| locked step_of
+  err: (nothing)
+  file ./out.lock 3569777976 1450
+== a store of packages/, all: http-client/.cancho-vcs/http_client
+step 1: vcs lock --store <root>/packages/http-client/.cancho-vcs/http_client -o out.lock --all
+  exit 0
+  out: 108 lines, 1122299504 1795
+  err: (nothing)
+  file ./out.lock 2672014273 30652
+== a store of packages/, all: http-client/.cancho-vcs/http_client_slot
+step 1: vcs lock --store <root>/packages/http-client/.cancho-vcs/http_client_slot -o out.lock --all
+  exit 0
+  out: 67 lines, 2191733922 1071
+  err: (nothing)
+  file ./out.lock 387564687 18981
+== a store of packages/, all: http-client/.cancho-vcs/http_client_wire
+step 1: vcs lock --store <root>/packages/http-client/.cancho-vcs/http_client_wire -o out.lock --all
+  exit 0
+  out: 89 lines, 1040322343 1649
+  err: (nothing)
+  file ./out.lock 2778769799 25433
+== a store of packages/, all: http-request/.cancho-vcs
+step 1: vcs lock --store <root>/packages/http-request/.cancho-vcs -o out.lock --all
+  exit 0
+  out| locked content_length_of
+  out| locked find
+  out| locked read_request
+  err: (nothing)
+  file ./out.lock 1236447855 879
+== a store of packages/, all: http-response/.cancho-vcs
+step 1: vcs lock --store <root>/packages/http-response/.cancho-vcs -o out.lock --all
+  exit 0
+  out| locked send_all
+  out| locked status_of
+  err: (nothing)
+  file ./out.lock 48583359 588
+== a store of packages/, all: http-server/.cancho-vcs
+step 1: vcs lock --store <root>/packages/http-server/.cancho-vcs -o out.lock --all
+  exit 0
+  out: 86 lines, 2064232230 1362
+  err: (nothing)
+  file ./out.lock 436619807 24345
+== a store of packages/, all: net-connect/.cancho-vcs
+step 1: vcs lock --store <root>/packages/net-connect/.cancho-vcs -o out.lock --all
+  exit 0
+  out| locked address
+  out| locked connect
+  out| locked connect_to
+  out| locked octets_of
+  out| locked port_of
+  err: (nothing)
+  file ./out.lock 3264620840 1436
+== a store of packages/, all: net-sockets/.cancho-vcs
+step 1: vcs lock --store <root>/packages/net-sockets/.cancho-vcs -o out.lock --all
+  exit 0
+  out| locked accept
+  out| locked bind
+  out| locked close
+  out| locked listen
+  out| locked put
+  out| locked put_nat
+  out| locked read
+  out| locked setsockopt
+  out| locked socket
+  out| locked write
+  err: (nothing)
+  file ./out.lock 1670522609 2827
+== a store of packages/, all: tls/.cancho-vcs/tls
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls -o out.lock --all
+  exit 0
+  out: 134 lines, 3931298804 2431
+  err: (nothing)
+  file ./out.lock 753370866 38230
+== a store of packages/, all: tls/.cancho-vcs/tls_cident
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls_cident -o out.lock --all
+  exit 0
+  out: 32 lines, 4290005691 500
+  err: (nothing)
+  file ./out.lock 3881266489 9065
+== a store of packages/, all: tls/.cancho-vcs/tls_client
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls_client -o out.lock --all
+  exit 0
+  out: 47 lines, 1744349800 869
+  err: (nothing)
+  file ./out.lock 3861752737 13439
+== a store of packages/, all: tls/.cancho-vcs/tls_client12
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls_client12 -o out.lock --all
+  exit 0
+  out| locked answer_request
+  out| locked certificate_verify_message
+  out| locked client_not_after
+  out| locked identity_current
+  out| locked key_block
+  out| locked on_ccs12
+  out| locked on_certificate12
+  out| locked on_finished12
+  out| locked on_key_exchange
+  out| locked on_message12
+  out| locked on_server_done
+  out| locked on_server_hello12
+  out| locked take_alpn
+  out| locked verify_data
+  err: (nothing)
+  file ./out.lock 2802928033 4067
+== a store of packages/, all: tls/.cancho-vcs/tls_clientauth
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls_clientauth -o out.lock --all
+  exit 0
+  out| locked begin
+  out| locked certificate
+  out| locked certified
+  out| locked clock
+  out| locked established
+  out| locked fingerprint
+  out| locked fingerprint_of
+  out| locked forget
+  out| locked generation
+  out| locked keep
+  out| locked kept
+  out| locked leaf_view
+  out| locked max_certificates
+  out| locked max_intermediates
+  out| locked max_message
+  out| locked on_certificate
+  out| locked on_certificate_verify
+  out| locked request
+  out| locked requested
+  out| locked verified
+  out| locked view_of
+  err: (nothing)
+  file ./out.lock 3486606462 6005
+== a store of packages/, all: tls/.cancho-vcs/tls_hello
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls_hello -o out.lock --all
+  exit 0
+  out: 45 lines, 2126694377 929
+  err: (nothing)
+  file ./out.lock 306472534 12965
+== a store of packages/, all: tls/.cancho-vcs/tls_identity
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls_identity -o out.lock --all
+  exit 0
+  out: 44 lines, 988741913 750
+  err: (nothing)
+  file ./out.lock 4256055423 12519
+== a store of packages/, all: tls/.cancho-vcs/tls_message
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls_message -o out.lock --all
+  exit 0
+  out: 84 lines, 1744400968 1828
+  err: (nothing)
+  file ./out.lock 2894166630 24277
+== a store of packages/, all: tls/.cancho-vcs/tls_record
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls_record -o out.lock --all
+  exit 0
+  out: 128 lines, 1254199232 3024
+  err: (nothing)
+  file ./out.lock 1404359633 37221
+== a store of packages/, all: tls/.cancho-vcs/tls_saved
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls_saved -o out.lock --all
+  exit 0
+  out| locked e_host
+  out| locked e_psk
+  out| locked entry_bytes
+  out| locked held
+  out| locked in_pool
+  out| locked may_offer
+  out| locked pick
+  out| locked t_capacity
+  out| locked t_entries
+  out| locked t_fields
+  out| locked t_hand
+  out| locked t_max_age
+  out| locked t_next_pool
+  out| locked t_per_pool
+  out| locked t_resume
+  out| locked t_saves
+  out| locked t_trust
+  out| locked tf
+  out| locked wipe
+  err: (nothing)
+  file ./out.lock 3420943068 5383
+== a store of packages/, all: tls/.cancho-vcs/tls_server
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls_server -o out.lock --all
+  exit 0
+  out: 24 lines, 1673269056 462
+  err: (nothing)
+  file ./out.lock 675140899 6891
+== a store of packages/, all: tls/.cancho-vcs/tls_slot
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls_slot -o out.lock --all
+  exit 0
+  out: 193 lines, 612495687 3779
+  err: (nothing)
+  file ./out.lock 963074461 55331
+== a store of packages/, all: tls/.cancho-vcs/tls_ticket
+step 1: vcs lock --store <root>/packages/tls/.cancho-vcs/tls_ticket -o out.lock --all
+  exit 0
+  out: 75 lines, 331522224 1164
+  err: (nothing)
+  file ./out.lock 147509420 21210
+== a store of packages/, all: x509/.cancho-vcs/x509
+step 1: vcs lock --store <root>/packages/x509/.cancho-vcs/x509 -o out.lock --all
+  exit 0
+  out: 84 lines, 4294645374 1614
+  err: (nothing)
+  file ./out.lock 3926750914 24063
+== a store of packages/, all: x509/.cancho-vcs/x509_key
+step 1: vcs lock --store <root>/packages/x509/.cancho-vcs/x509_key -o out.lock --all
+  exit 0
+  out: 22 lines, 230410994 405
+  err: (nothing)
+  file ./out.lock 2101495111 6300
+== a store of packages/, all: x509/.cancho-vcs/x509_names
+step 1: vcs lock --store <root>/packages/x509/.cancho-vcs/x509_names -o out.lock --all
+  exit 0
+  out| locked constrained_dns
+  out| locked constraints_ok
+  out| locked dns_char
+  out| locked dns_matches
+  out| locked dns_ok
+  out| locked dns_within
+  out| locked hex_digit
+  out| locked host_parse
+  out| locked ip_within
+  out| locked ipv4
+  out| locked ipv6
+  out| locked max_comparisons
+  out| locked max_subtrees
+  out| locked name_constraint
+  out| locked name_mismatch
+  out| locked name_ok
+  out| locked same
+  out| locked san_matches
+  out| locked subtrees
+  err: (nothing)
+  file ./out.lock 3165208394 5431
+== a store of packages/, all: x509/.cancho-vcs/x509_verify
+step 1: vcs lock --store <root>/packages/x509/.cancho-vcs/x509_verify -o out.lock --all
+  exit 0
+  out: 55 lines, 3115577637 1050
+  err: (nothing)
+  file ./out.lock 2541794527 15756
+== names
+step 1: vcs lock --store st -o out.lock alpha beta Zed
+  exit 0
+  out| locked alpha
+  out| locked beta
+  out| locked Zed
+  err: (nothing)
+  file ./out.lock 3020488326 858
+  file ./st/manifest.json 357478587 1700
+== escapes
+step 1: vcs lock --store st -o out.lock q"uoteacké
+  exit 0
+  out| locked q"uote\backé
+  err: (nothing)
+  file ./out.lock 437389738 317
+  file ./st/manifest.json 357478587 1700
+== ambiguous
+step 1: vcs lock --store st -o out.lock alpha same
+  exit 1
+  out| locked alpha
+  err| `same` is ambiguous at `st`: 2 declarations share that name
+  file ./st/manifest.json 357478587 1700
+== ambiguous all
+step 1: vcs lock --store st -o out.lock --all
+  exit 1
+  out| locked Zed
+  out| locked alpha
+  out| locked beta
+  out| locked q"uote\backé
+  err| `same` is ambiguous at `st`: 2 declarations share that name
+  file ./st/manifest.json 357478587 1700
+== not published
+step 1: vcs lock --store st -o out.lock alpha nothing
+  exit 1
+  out| locked alpha
+  err| `nothing` is not published at `st`
+  file ./st/manifest.json 357478587 1700
+== a name twice
+step 1: vcs lock --store st -o out.lock alpha alpha beta
+  exit 0
+  out| locked alpha
+  out| locked alpha
+  out| locked beta
+  err: (nothing)
+  file ./out.lock 3165759635 580
+  file ./st/manifest.json 357478587 1700
+== no manifest
+step 1: vcs lock --store st -o out.lock --all
+  exit 1
+  out: (nothing)
+  err| nothing is published at `st`
+  file ./st/other 12738659 1
+== no store
+step 1: vcs lock --store absent -o out.lock alpha
+  exit 1
+  out: (nothing)
+  err| `alpha` is not published at `absent`
+== empty store, name
+step 1: vcs lock --store st -o out.lock alpha
+  exit 1
+  out: (nothing)
+  err| `alpha` is not published at `st`
+  file ./st/manifest.json 1226093241 19
+== bad manifest
+step 1: vcs lock --store st -o out.lock alpha
+  exit 3
+  out: (nothing)
+  err| cannot read manifest at `st`
+  file ./st/manifest.json 1915305904 1
+== extend a lock
+step 1: vcs lock --store st -o out.lock beta alpha
+  exit 0
+  out| locked beta
+  out| locked alpha
+  err: (nothing)
+  file ./out.lock 4081174694 669
+  file ./st/manifest.json 357478587 1700
+== extend, all
+step 1: vcs lock --store st -o out.lock beta
+  exit 0
+  out| locked beta
+  err: (nothing)
+  file ./out.lock 2235918838 492
+  file ./st/manifest.json 357478587 1700
+== a lock with an origin, a store
+step 1: vcs lock --store st -o out.lock beta
+  exit 1
+  out: (nothing)
+  err| `out.lock` already pins a different store; delete it to lock a new one, or pick another `-o`
+  file ./out.lock 2097246547 339
+  file ./st/manifest.json 357478587 1700
+== an empty lock with an origin
+step 1: vcs lock --store st -o out.lock beta
+  exit 0
+  out| locked beta
+  err: (nothing)
+  file ./out.lock 284417196 300
+  file ./st/manifest.json 357478587 1700
+== a lock with a bad origin
+step 1: vcs lock --store st -o out.lock beta
+  exit 3
+  out: (nothing)
+  err| cannot read lock file at `out.lock`
+  file ./out.lock 433048216 303
+  file ./st/manifest.json 357478587 1700
+== a lock that is not JSON
+step 1: vcs lock --store st -o out.lock beta
+  exit 3
+  out: (nothing)
+  err| cannot read lock file at `out.lock`
+  file ./out.lock 1915305904 1
+  file ./st/manifest.json 357478587 1700
+== a lock without entries
+step 1: vcs lock --store st -o out.lock beta
+  exit 3
+  out: (nothing)
+  err| cannot read lock file at `out.lock`
+  file ./out.lock 3332656686 2
+  file ./st/manifest.json 357478587 1700
+== -o in a new directory
+step 1: vcs lock --store st -o a/b/out.lock beta
+  exit 0
+  out| locked beta
+  err: (nothing)
+  file ./a/b/out.lock 284417196 300
+  file ./st/manifest.json 357478587 1700
+== -o a directory
+step 1: vcs lock --store st -o out.lock beta
+  exit 3
+  out: (nothing)
+  err| cannot read lock file at `out.lock`
+  file ./out.lock/x 3537609151 1
+  file ./st/manifest.json 357478587 1700
+== no -o
+step 1: vcs lock --store st beta
+  exit 2
+  out: (nothing)
+  err| `vcs lock` needs `-o <lockfile>`
+  file ./st/manifest.json 357478587 1700
+== no name
+step 1: vcs lock --store st -o out.lock
+  exit 2
+  out: (nothing)
+  err| `vcs lock` needs at least one declaration name, or `--all`
+  file ./st/manifest.json 357478587 1700
+== --all and a name
+step 1: vcs lock --store st -o out.lock --all beta
+  exit 2
+  out: (nothing)
+  err| `--all` pins every declaration; it cannot be combined with names
+  file ./st/manifest.json 357478587 1700
+== --git and --store
+step 1: vcs lock --store st --git x -o out.lock beta
+  exit 2
+  out: (nothing)
+  err| `--git` and `--store` both say where the store is; give one
+  file ./st/manifest.json 357478587 1700
+== neither
+step 1: vcs lock -o out.lock beta
+  exit 2
+  out: (nothing)
+  err| `vcs lock` needs `--store <dir>` or `--git <url>`
+  file ./st/manifest.json 357478587 1700
+== --rev with --store
+step 1: vcs lock --store st --rev a -o out.lock beta
+  exit 2
+  out: (nothing)
+  err| `--rev`, `--ref` and `--path` go with `--git`
+  file ./st/manifest.json 357478587 1700
+== --ref with --store
+step 1: vcs lock --store st --ref a -o out.lock beta
+  exit 2
+  out: (nothing)
+  err| `--rev`, `--ref` and `--path` go with `--git`
+  file ./st/manifest.json 357478587 1700
+== --path with --store
+step 1: vcs lock --store st --path a -o out.lock beta
+  exit 2
+  out: (nothing)
+  err| `--rev`, `--ref` and `--path` go with `--git`
+  file ./st/manifest.json 357478587 1700
+== --git alone
+step 1: vcs lock --git x -o out.lock beta
+  exit 2
+  out: (nothing)
+  err| `--git` needs `--rev <hash>` or `--ref <name>`
+== --rev and --ref
+step 1: vcs lock --git x --rev a --ref b -o out.lock beta
+  exit 2
+  out: (nothing)
+  err| give `--rev` or `--ref`, not both
+== -o last
+step 1: vcs lock --store st -o
+  exit 2
+  out: (nothing)
+  err| `-o` needs a value
+== --store last
+step 1: vcs lock -o x --store
+  exit 2
+  out: (nothing)
+  err| `--store` needs a value
+== --git last
+step 1: vcs lock --git
+  exit 2
+  out: (nothing)
+  err| `--git` needs a value
+== --rev last
+step 1: vcs lock --rev
+  exit 2
+  out: (nothing)
+  err| `--rev` needs a value
+== --ref last
+step 1: vcs lock --ref
+  exit 2
+  out: (nothing)
+  err| `--ref` needs a value
+== --path last
+step 1: vcs lock --path
+  exit 2
+  out: (nothing)
+  err| `--path` needs a value
+== an option
+step 1: vcs lock --bogus
+  exit 2
+  out: (nothing)
+  err| unknown option `--bogus`
+== nothing
+step 1: vcs lock 
+  exit 2
+  out: (nothing)
+  err| `vcs lock` needs `-o <lockfile>`
+== a bad rev
+step 1: vcs lock --git https://x/y --rev main -o out.lock beta
+  exit 3
+  out: (nothing)
+  err| origin `rev` must be a full commit hash (40 or 64 lowercase hex digits), found `main`; a branch or tag name moves, so a lock never holds one
+== a bad git
+step 1: vcs lock --git --bogus --rev aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -o out.lock beta
+  exit 3
+  out: (nothing)
+  err| origin `git` is not a repository location: `--bogus`
+== a bad path
+step 1: vcs lock --git https://x/y --rev aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --path /abs -o out.lock beta
+  exit 3
+  out: (nothing)
+  err| origin `path` must be a relative path inside the repository, found `/abs`
+== git, rev, all
+step 1: vcs lock --git file://<work>/repository --rev <rev:repository> --path packages/net-sockets/.cancho-vcs -o out.lock --all
+  exit 0
+  out| locked accept
+  out| locked bind
+  out| locked close
+  out| locked listen
+  out| locked put
+  out| locked put_nat
+  out| locked read
+  out| locked setsockopt
+  out| locked socket
+  out| locked write
+  err: (nothing)
+  file ./out.lock 3635701877 2963
+== git, ref HEAD
+step 1: vcs lock --git file://<work>/repository --ref HEAD --path packages/net-sockets/.cancho-vcs -o out.lock bind listen
+  exit 0
+  out| HEAD is <rev:repository>
+  out| locked bind
+  out| locked listen
+  err: (nothing)
+  file ./out.lock 1413207487 717
+== git, same origin extended
+step 1: vcs lock --git file://<work>/repository --rev <rev:repository> --path packages/net-sockets/.cancho-vcs -o out.lock bind
+  exit 0
+  out| locked bind
+  err: (nothing)
+  file ./out.lock 473701565 436
+== git, another path
+step 1: vcs lock --git file://<work>/repository --rev <rev:repository> --path packages/http-response/.cancho-vcs -o out.lock --all
+  exit 1
+  out: (nothing)
+  err| `out.lock` already pins a different store; delete it to lock a new one, or pick another `-o`
+  file ./out.lock 2779378014 246
+== git, a path that is not there
+step 1: vcs lock --git file://<work>/repository --rev <rev:repository> --path packages/nope -o out.lock --all
+  exit 3
+  out: (nothing)
+  err| commit <rev:repository> of `file://<work>/repository` has no directory `packages/nope`
+== git, a ref that is not there
+step 1: vcs lock --git file://<work>/repository --ref no-such-branch --path packages/net-sockets/.cancho-vcs -o out.lock --all
+  exit 3
+  out: (nothing)
+  err| `file://<work>/repository` has no ref `no-such-branch`
+== git, a commit that is not there
+step 1: vcs lock --git file://<work>/repository --rev 1111111111111111111111111111111111111111 --path packages/net-sockets/.cancho-vcs -o out.lock --all
+  exit 3
+  out: (nothing)
+  err| `git` failed to check out the commit: fatal: unable to read tree (1111111111111111111111111111111111111111)
+== git, the default path
+step 1: vcs lock --git file://<work>/plain --rev <rev:plain> -o out.lock --all
+  exit 0
+  out| locked accept
+  out| locked bind
+  out| locked close
+  out| locked listen
+  out| locked put
+  out| locked put_nat
+  out| locked read
+  out| locked setsockopt
+  out| locked socket
+  out| locked write
+  err: (nothing)
+  file ./out.lock 1382773109 2932
+== git, the default path, ref
+step 1: vcs lock --git file://<work>/plain --ref HEAD -o out.lock bind
+  exit 0
+  out| HEAD is <rev:plain>
+  out| locked bind
+  err: (nothing)
+  file ./out.lock 71073139 405
+== an origin with no path, the same
+step 1: vcs lock --git file://<work>/plain --rev <rev:plain> -o out.lock bind
+  exit 0
+  out| locked bind
+  err: (nothing)
+  file ./out.lock 1892279111 494
+== an origin with no path, another path
+step 1: vcs lock --git file://<work>/plain --rev <rev:plain> --path other -o out.lock bind
+  exit 3
+  out: (nothing)
+  err| commit <rev:plain> of `file://<work>/plain` has no directory `other`
+  file ./out.lock 1289074237 188
+ok vcs_lock_in_cancho_pins_like_cancho_vcs_lock

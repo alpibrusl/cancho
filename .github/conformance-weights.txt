@@ -3,13 +3,6 @@
 # Only the proportions matter: scripts/conformance_shard.py packs the units (a module, or each test of a split module) into shards by them.
 # A module (or a test of a split module) not listed weighs 3. To remeasure, run the command above and regenerate this file.
 
-selfhost::vcs::vcs_publish_dir_in_cancho_publishes_the_libraries_of_packages 301
-selfhost::vcs::vcs_publish_in_cancho_logs_a_file_like_cancho_vcs_publish 103
-selfhost::vcs::vcs_fetch_and_resolve_in_cancho_check_a_store_like_cancho_vcs 53
-selfhost::vcs::vcs_lock_in_cancho_pins_like_cancho_vcs_lock 28
-selfhost::vcs::vcs_publish_dir_in_cancho_publishes_a_library_like_cancho_vcs_publish 26
-selfhost::vcs::vcs_sync_in_cancho_indexes_a_tree_like_cancho_vcs_sync 24
-selfhost::vcs::vcs_log_in_cancho_lists_a_store_like_cancho_vcs_log 23
 
 
 

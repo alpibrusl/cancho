@@ -6,8 +6,6 @@
 
 use super::*;
 
-mod store;
-mod vcs;
 
 #[allow(dead_code)]
 #[path = "../../../cancho-syntax/examples/dump_ast.rs"]
