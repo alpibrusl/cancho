@@ -1,0 +1,88 @@
+edition 9;
+
+import std.buffer;
+import std.io as console;
+
+// Random bytes for `tests/programs/http_driver.cho` (`tests/commands/http.sh`): CASES cases of random length (under 120), framed as the driver reads them (the length in
+// decimal and a newline, then that many bytes), biased towards the bytes the grammar of a request is made of so that a good share get past the first character.
+//
+//     http_fuzz_gen SEED CASES
+//
+// The generator is Park-Miller (an overflow here is a trap, so a 64-bit one is not an option).
+
+fn number[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) && int_of(b[i]) >= '0' && int_of(b[i]) <= '9' {
+        n = n * 10 + (int_of(b[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn below[&s](state: &!s [int], n: int) -> [] int {
+    state[0] = state[0] * 16807 % 2147483647;
+    return state[0] % n;
+}
+
+fn emit[&h, &i](heap: &!h Heap, io: &!i Io, seed: int, cases: int) -> [heap, io_write] int {
+    let alphabet = "GET POST/?:#%\r\n \tHTTP/1.01Host:Content-Length:0123456789a";
+    region r {
+        let state = alloc_slice[r](1, seed);
+        var done = 0;
+        while done < cases {
+            let size = below(state, 120);
+            var frame = buffer.empty(heap, 200);
+            frame = buffer.push_nat(heap, frame, size);
+            frame = buffer.push(heap, frame, byte_of(10));
+            var j = 0;
+            while j < size {
+                if below(state, 5) == 0 {
+                    frame = buffer.push(heap, frame, byte_of(below(state, 256)));
+                } else {
+                    // The alphabet and the two bytes after it, NUL and 0xff.
+                    let pick = below(state, len(alphabet) + 2);
+                    if pick < len(alphabet) {
+                        frame = buffer.push(heap, frame, alphabet[pick]);
+                    } else if pick == len(alphabet) {
+                        frame = buffer.push(heap, frame, byte_of(0));
+                    } else {
+                        frame = buffer.push(heap, frame, byte_of(255));
+                    }
+                }
+                j = j + 1;
+            }
+            borrow frame as &fb in {
+                console.write_all(io, buffer.bytes(fb));
+            }
+            buffer.drop(heap, frame);
+            done = done + 1;
+        }
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(ffi);
+    release(fs);
+    var status = 64;
+    borrow mut io as &!i in {
+        borrow mut heap as &!h in {
+            borrow args as &a in {
+                if arg_count(a) >= 3 {
+                    status = emit(h, i, number(arg(a, 1)), number(arg(a, 2)));
+                }
+            }
+        }
+    }
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

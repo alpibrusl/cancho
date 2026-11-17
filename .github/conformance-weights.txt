@@ -68,19 +68,13 @@ selfhost::bootstrap::the_file_list_of_the_standalone_build_is_the_import_closure
 selfhost::statics::guidelines_module_is_the_text_of_agents_md 1
 selfhost::parity::rules_and_builtins_are_the_goldens 1
 selfhost::statics::std_order_module_is_the_std_table_of_cancho 1
-udp 129
-sockets 115
 binary32 98
 json 79
 f32_text 60
 http 53
-net 50
-conn_peer 6
-http_server 39
 float_text 37
 http_fetch_nb 30
 floats 25
-ports 16
 
 
 crypto_builtins 10
