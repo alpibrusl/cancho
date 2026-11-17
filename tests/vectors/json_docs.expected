@@ -1,0 +1,1508 @@
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+A [1,-2,3.5,-0.25,10000000000.0,0.00001,0,0,true,false,null,"s","",{},[]]
+A {"esc":"quote\" back\\ slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+A {"spaced":[1,2,3],"k":"v"}
+A {"a":{"b":{"c":{"d":{"e":[[[[[1]]]]]}}}}}
+A [0.1,0.2,0.3,123456789.12345679,2.5e-8,1.5e22,100,200,300]
+A "just a string"
+A -0.0125
+A true
+A {"":"empty key","a b":1,"\u0000":2}
+E
+E
+E
+E
+A -12
+E
+A 0.0125
+A {"name":"Ade","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+A -1
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"":"2pty key","a b":1,"\u0000":2}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1e31}]}}
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a",""],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A [0.1,0.2,0.3,123456789.12345679,1.5e-8,1.5e22,200,200,300]
+A "ust a string"
+E
+E
+E
+A {"spac,d":[1,2,3],"k":"v"}
+E
+E
+E
+E
+E
+A "j'ust a string"
+A {"esc":"quote\" back\\ slash/ nl\n cr\r}tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"esc":"qu te\" back\\oslash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+A [0.1,0.2,0.3,123456789.12345679,2.5e-7,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+E
+A [1,-2,3.5,-0.25,10000000000.0,0.00001,0,0,true,false,null,"s","",{},[]]
+E
+E
+A "ust a string"
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A [0.3,0.2,0.3,123456789.12345679,2.5e-8,1.5e22,100,200,100]
+E
+E
+E
+E
+A "jst a str8ng"
+E
+E
+E
+A {"esc":"qu te\"oback\\ slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"":"emptykey","a b":1,"\u0000":2}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"space":[1,2,3],"k":"v"}
+E
+E
+A [1,-2,35,-0.25,10000000000.0,0.00001,0,0,true,false,null,"s","",{},[]]
+E
+A {"spac0ed":[1,2,3],"k":"v"}
+A [0.1,0.2,0.3,12345689.12345679,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+E
+E
+E
+A [0.1,0.2,0.37123456,89.123456789,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A -1.25e-8
+E
+E
+E
+E
+E
+E
+E
+A {"esc":"quote\" back\\cslash/ nl\n  r\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A [0.1,0.2,0.3,123456789.12346789,2.5e-8,1.5e22,100,200,300]
+A {"space":[1,2,3],"k":"v"}
+E
+E
+A -0.0215
+E
+A {"":"empty key","a a":1,"\u0000":2}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A [0.1,0.2,0.3,123456789.1234567,9,2.5e-8,1.5e22,100,200,30]
+E
+E
+E
+A -0.0125
+E
+E
+A [0.1,0.2,3.3,123456789.12045678,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+A -12
+E
+E
+E
+E
+E
+E
+E
+E
+A [1,-2,3.5,-70.25,10000000000.0,0.00001,0,0,true,false,null,"s","",{},[]]
+A "just a string"
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[10,2,{"y":-1000.0}]}}
+E
+E
+E
+E
+E
+E
+A {"":"empty keey","a b":1,"\u0000":2}
+A {"spaced":[1,2,3],"k":""}
+E
+E
+E
+E
+E
+E
+E
+A [1,-2,3.5,-0.25,10000000000.0,1e-50,0,true,false,null,"s","",{},[]]
+E
+E
+A {"name":"Ada","age":36,"pi":3.14169,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+E
+A {"esc":"quote\" back\\ slash/ nl\n cr\r tab\t bs\b ff\f","un'":"é日😀","raw":"é日😀"}
+A {"":"empty key","a -b":1,"\u0000":2}
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"[":-1000.0}]}}
+E
+E
+A "tut a sjring"
+E
+E
+A "just a strin2"
+E
+A "junt a strisg"
+A "jusu a string"
+E
+A {"spaced":[3,2,3],"k":"v"}
+E
+E
+E
+E
+A true
+E
+E
+E
+E
+E
+E
+A {"esc":"quote\" back\\ slasu/ nl\n cr\r tab\t bs\b ff\f","hni":"é日😀","raw":"é日😀"}
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"esc":"quote\" back\\ slash/ nl\n cr\r tab\t \bsub ff\f","\ni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+E
+E
+E
+A "juEt a stri[g"
+E
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+A {"name":"Ada","age":36,"/i":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+A -1
+A "just a]st.ing"
+A "just a sring"
+E
+E
+E
+E
+E
+E
+E
+A {"":"empty1key","a b":1,"\u0000":2}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+A -0.0215
+E
+E
+E
+E
+E
+A [1,-2,3.5,-0.25,10000000000.0,0.00001,0,0,true,false,null,"s","",{},[]]
+E
+A [0.1,0.2,0.3,12345078.12345679,2.5e-8,1.5e22,100,200,360]
+E
+E
+E
+A {"a":{"b":{"c":{"d":{"e":[[[[[1]]]]]}}}}}
+E
+E
+E
+E
+A "just a st8ing"
+E
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+E
+E
+A {"e/sc":"quote\" back\\ slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+E
+E
+A {"name":"Ada","ae":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+A {"":"empty key","a 0":1,"଀f":2}
+E
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+E
+E
+E
+E
+A "sust a jtring"
+E
+E
+E
+E
+A [0.1,0.2,0.3,123456789.12346567,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+E
+A "j st austxring"
+E
+A "just a string"
+E
+E
+E
+A {"name":"Ada","age":36,"pi":3.1415,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[0,2,{"y":-1000.0}]}}
+E
+A {"esc":"quote\"rback\\ slash/ nl\n c \r tab\t bs\b ff\f","ni":"é日😀","raw":"é日😀"}
+A -0.125
+A {"space":[1,2,3],"k":"v"}
+E
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"[tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+A {"esc":"quote\" back\\,slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+A "jist a stung"
+E
+E
+A "jus0a string"
+A {"a":{"":{"c":{"d":{"e":[[[[[1]]]]]}}}}}
+E
+E
+E
+A -12.5
+E
+E
+A [0.1,0.2,0.3,133456789.12245679,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A "jus a string"
+E
+A "just a  st5ing"
+E
+E
+E
+E
+E
+A -1
+E
+E
+E
+A -12
+E
+A {"spalced":[1,2,3],"k":"v"}
+A " ust ajstring"
+A [0.1,0.2,0.3,12345678.12345679,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+A {"esc":"quote\" back\\ slash/ nl\n crnr tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+A "just a rts5ing"
+E
+E
+E
+E
+E
+E
+A "just ustring"
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A 0.0125
+E
+E
+E
+E
+E
+A [0.1,0.2,3,123456789.12345679,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A -1.5
+E
+E
+E
+A "9just a string"
+E
+E
+E
+E
+A {"esc":"quote'\" back\\ slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+E
+A "jst a string"
+E
+E
+E
+A -12
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"es":"qote\" back\\ slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A true
+A ":just a string"
+E
+E
+E
+A 0.125
+E
+E
+A [0.1,0.2,0.3,123456789.2345679,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+E
+A {"a":{"b":{"c":{"d":{"e":[[[[[1]]]]]}}}}}
+E
+E
+A [0.1,0.2,0.3,123456789.12345679,2.5e-8,1.5e22,100,20,300]
+E
+E
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+E
+E
+E
+A -125000.0
+E
+A 0.0125
+A [0.1,0.2,0.3,123456789.12345679,2.5e-8,1.5e22,100,20,300]
+E
+E
+E
+E
+E
+E
+A {"":"empty.key","a ":1,"\u0000":2}
+E
+E
+E
+A [0.1,0.2,0.3,123456789.42345679,2.5e-8,150.0,100,200,300]
+A [0.1,0.2,0.3,123456789.1254568,2.3e-8,1.5e22,100,20,300]
+E
+E
+E
+E
+A "just a sti9ng"
+A [1,-2,35,-0.25,10000000000.0,0.00001,0,0,true,false,null,"s","",{},[]]
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":1000.0}]}}
+A [0.1,0.2,0.3,123456789.12345679,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+A {"":"empty key","a bu":1,"\u0000":2}
+E
+A {"esc":"quote\" balk\\ slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+A true
+E
+E
+E
+E
+E
+A "just  sting"
+E
+E
+A "jutt a ssring"
+A "juts a string"
+E
+E
+E
+E
+E
+E
+A [0.1,0.8,0.3,123406729.12345679,2.5e-8,1.5e22,100,250,300]
+E
+E
+E
+E
+E
+A [0.1,0.2,0.3,123456789.12134568,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+A "just a strEng"
+E
+A {"esc":"quote\" back\\ slash/ nl\n cr\r tab\t s\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+A "ust a stjing"
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A "just string"
+E
+E
+E
+A {"":"empy key","a b":1,"\u0000":2}
+E
+E
+E
+E
+E
+A -0.0025
+E
+E
+A "2ust a string"
+E
+E
+E
+E
+E
+E
+E
+A {"name":"Ada","9ge":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+A "justa string"
+E
+E
+E
+E
+E
+E
+A {"name":"Ada","ag":3000000.0,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"spaced":[1,2,3],"3":"v"}
+E
+E
+E
+A "ust a string"
+E
+E
+E
+E
+E
+E
+A {"esc":"quote\" back\\ slash/ nl\n cr\r tabbt bs\\ ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+E
+E
+A -0.0125
+E
+E
+E
+E
+E
+A [0.1,0.2,0.3,13456789.12345679,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+A [1,-23.5,-0.25,10000000000.0,0.00001,0,0,true,false,null,"s","",{},[]]
+E
+A {"wsc":"quote\" back\\ slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","rae":"é日😀"}
+A [0.1,0.2,0.1,123456789.1245679,2.5e-8,3.5e22,100,200,300]
+E
+E
+E
+E
+A {"esc":"quote\" back\\ slsh/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+A -0.01255
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"esc":"quote\" back\\ slash/ nl\n c}\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+E
+E
+E
+A {"":"empty key","a b":1,"u0000":2}
+A -0.01215
+E
+E
+E
+E
+E
+E
+E
+A -12
+E
+E
+E
+E
+A [0.1,0.2,0.3,123456789.12345679,2.5e-8,5e21,101,200,300]
+E
+A [0.1,0.2,0.3,1234567,9.123456789,2.5e-8,1.5e22,1008200,300]
+E
+A "just a sirtng"
+E
+A "just a gtrins"
+E
+E
+E
+E
+E
+A {"":"empty key","a b":1,"\u0000":2}
+E
+E
+E
+E
+E
+A [0.1,0.2,0.3,1,3456709.123456789,2.5e-8,1.5e22,108,2002300]
+E
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+A {"a":{"b":{"c":{"d":{"e":[[[[[1]]]]]}}}}}
+A "ju6t a string"
+A "just a s9trng"
+E
+E
+A "aust a string"
+E
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tag{s":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+E
+E
+E
+E
+E
+A [0.1,0.2,0.3,123456789.12345679,2.5e-8,1.5e22,100,200,8300]
+E
+E
+E
+A [1,-2,3.5,-0.25,10000000000.0,0.00004,0,0,true,false,null,"s","",{},[]]
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A "just astrin'g"
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A [0.1,0.2,0.3,123056789.12345679,2.5e-8,1.5e22,100,240,300]
+E
+E
+E
+A {"spaced":[1,2,3],"k":""}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A -3.25
+E
+E
+E
+E
+E
+E
+E
+A "justa string"
+A {"":"empty ke","a b":1,"\u0000":2}
+E
+E
+E
+E
+E
+A [1,-2,3.5,-0.25,10000000000.0,0.00001,0,0,true,false,null,"s"," ",{},[]]
+A "jst a[string"
+E
+A "just a sring"
+A [0.1,0.2,8.3,123456789.12345679,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+E
+E
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"n9one":null,"tags":["a","b"],"nest":{"ux":[1,2,{"y":-1000.0}]}}
+A {"name":"Ada","age":36,"pi":3.1419,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+A [0.1,0.2,0.3,1,3456789.123456789,2.5e-8,1.5e22,100,2002300]
+E
+E
+A {"name":"Ada","age":36,"pi":3.4159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+E
+E
+E
+A -0.0125
+A -0.01256
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+E
+A {"esc":"quote\" back\\ slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"À日😩"}
+E
+E
+E
+A [0.1,0.2,0.3,123456789.2345679,2.5e-8,1.5e22,100,200,300]
+E
+A {"sc":"quote\" back\\ slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+A {"esc":"quote\" back\\ slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","'aw":"é日😀"}
+A "just  strin-g"
+E
+E
+E
+E
+A {"esc":"quote\" ack\\ slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+A {"esc":"uote\" back\\ slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+A "just a stri1"
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A [1,-2,3.5,-0.25,1.0,1e65,0,0,true,false,null,"s","",{},[]]
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A "just a }tring"
+E
+E
+A "justsa  tring"
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"esc":"quote\" back\\ sl,ash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"non8":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"esc":"quote\" back\\ slash0/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+A [0.1,0.2,0.3,123456789.12345679,2.5e-8,1.5e22,100,200,300]
+A [1,-2,3.5,-0.25,10000000000.0,0.00001,0,0,true,false,null,"s","",{},[]]
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"non6":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A -12.5
+E
+E
+E
+A "jurt a stsing"
+E
+A {"":"empty ke1y","a b":1,"\u0000":2}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"esc":"quote\" back\\ slash/ nl\n c\r tab\t bs\bxff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+A "just a string"
+E
+E
+E
+E
+E
+E
+E
+E
+A {",ame":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+A {"a":{"b":{"c":{"d":{"e":[[[[[1]]]]]}}}}}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"esc":"quote\" back\\ slash/5 nl\n cr\r tabt bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A "just+a string"
+A "just a strng"
+E
+E
+A "jst a string"
+A {".paced":[1,2,3],"k":"v"}
+E
+E
+E
+E
+A {"n7ame":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+A "jus a string"
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A [0.1,2.2,0.3,123056789.12345679,2.5e-8,150.0,100,200,340]
+E
+E
+E
+E
+E
+A {"":"empty k0y","a b":1,"\u000e":2}
+E
+A "jus1 a string"
+E
+E
+E
+E
+E
+E
+A {"esc":"quote\" back\\ slash/ nl\n cr\r tab\tebs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+A {"spa:ed":[1,2,3],"k":"v"}
+E
+E
+E
+A {"esc":"quote\" bck\\ slash/ nl\n cr\r tab\t bs\b ff\f","un:i":"é日😀","raw":"é日😀"}
+A "jst a string"
+A {"a":{"b":{"c":{"d":{"e":[[[[[1]]]]]}}}}}
+E
+A {"":"empty key1","a b":1,"\u0000":2}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"esc":"quote\" back\\ slash/ nl\b cr\r tab\t bs\n ff\f","uni":"é日😀","raw":"é日😀"}
+E
+A [0.1,0.2,0.3,12356789.12345679,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+E
+A {"ehc":"quote\" back\\ slass/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+E
+A -1
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A -0.125
+E
+A [0.1,0.2,0.3,123456789.12345679,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+A "just a str,ing"
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+E
+E
+E
+A "justu a string"
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+A {"esc":"quote\" back\\ slash/ nl\n cr\r tab\t bs\b} ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+A "just istr ng"
+E
+A [1,-2,3.5,-0.52,10000000000.0,0.00001,0,0,true,false,null,"s","",{},[]]
+E
+E
+A "jus  string"
+A {"spaced":[1,2,3],"":"v"}
+E
+E
+E
+E
+E
+E
+E
+E
+A [1,2,3.5,-0.25,10000000000.0,0.00001,0,0,true,false,null,"s","",{},[]]
+E
+E
+E
+E
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+A [0.1,0.2,0.3,123456789.12345679,2.5e68,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+E
+A [0.1,0.2,0.3,123456789.12345679,2.5e-8,1.45e22,100,200,300]
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+E
+E
+A {"esc":"quote\"ab2ck\\ sl sh/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a","b"],"nexst":{" ":[1,2,{"y":-1000.0}]}}
+E
+E
+A "just a string2"
+E
+A "jut a string"
+E
+E
+A {"a":{"b":{"":{"d":{"e":[[[[[1]]]]]}}}}}
+E
+E
+E
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"noe":null,"tags":["a","b"],"nest":{"x+":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+E
+E
+E
+E
+A {"":"empty uey","a b":1,"\u0000":2}
+A {"name":"Ada","age":36,"pi":3.14159,"ok":true,"none":null,"tags":["a",":"],"nest":{"x":[1,2,{"y":-1000.0}]}}
+E
+E
+E
+E
+E
+E
+E
+A [0.1,0.2,3,123456789.12345679,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+E
+A {"spaced":[1,2,3],"":"v"}
+E
+E
+E
+E
+E
+E
+A "just a str ing"
+E
+E
+E
+E
+E
+E
+E
+E
+A "nust a strijg"
+E
+E
+A -0.0225
+E
+E
+E
+E
+E
+E
+A [1,-2,3.5,-0.25,1210,0.00001,0,0,true,false,null,"s","",{},[]]
+E
+A [0.1,0.2,0.3,123456789.12384568,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+A {"":{"b":{"c":{"d":{"e":[[[[[1]]]]]}}}}}
+A "just a stning"
+E
+E
+E
+E
+E
+A -0.1825
+E
+E
+A "justa string"
+E
+E
+E
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+A "just+a st5ing"
+A 0.0125
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+E
+E
+A "just a s ring"
+E
+A {"esc":"quote\" back\\ {slash/ nl\n cr\r tab\t bs\b ff\f","uni":"é日😀","raw":"é日😀"}
+E
+E
+E
+E
+E
+A [0.1,0.2,0.3,123456789.12345679,2.5e-8,1.5e22,100,200,300]
+E
+E
+E
+E
+E
+E
+A [0.1,0.2,0.3,123456789.12345679,2.5e-8,1.5e22,100,200,30]
+E
+E
+E
+A {"spaced":[1,2,3],"k":"v"}
+E
+E
+A "jutt a ssring"
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E
+E

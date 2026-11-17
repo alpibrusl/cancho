@@ -5,13 +5,13 @@
 //
 // A foreign signature cannot carry a `float` (`opaque-pointers.md`), so the C
 // library's own answers cannot be called from here. The comparison is made
-// from outside: `conformance/mathfn.rs` replays the same arguments -- a fixed
+// from outside: `tests/commands/mathfn.sh` replays the same arguments -- a fixed
 // linear-congruential sequence scaled onto `[centre - width, centre + width]`,
 // every step of which is exact or correctly rounded, so Rust and this program
-// compute the same argument bit for bit -- and measures the distance from the
+// compute the same argument bit for bit -- and measures (`math_ulps.cho`) the distance from the
 // library's answer in units in the last place.
 //
-// The tables below are repeated in `mathfn.rs`; a mismatch shows up as an
+// The tables below are the ones `tests/vectors/mathfn.txt` was recorded from; a mismatch shows up as an
 // enormous error rather than a quiet one, because the arguments differ.
 import std.io;
 import std.math;
