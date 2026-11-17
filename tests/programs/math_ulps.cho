@@ -1,0 +1,129 @@
+// `docs/float-math.md` §9: the distance, in units in the last place, between pairs of floats; the comparison `tests/commands/mathfn.sh` makes between `math_samples` and the recorded answers of the
+// C library (`tests/vectors/mathfn.txt`).
+//
+// Reads one JSON array of integers on standard input, `[a0, b0, a1, b1, ...]`, each the 64 bits of a double as a signed `int` (the form `math_samples` prints), and prints one line,
+// `WORST DIFFER`: the largest distance between `a` and `b` over the pairs, and how many pairs are not the same float. The distance is how many representable floats lie between two: the
+// sign-magnitude bits are mapped onto a line where adjacent floats are adjacent integers, so -0.0 and +0.0 are one point, two NaNs are no distance apart, and a NaN against a number is as far
+// as it gets. A distance that would not fit an `int` (an infinity against its opposite, say) is also as far as it gets.
+edition 7;
+
+import std.buffer;
+import std.io;
+import std.json;
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn key(bits: int) -> [] int {
+    if bits < 0 {
+        return 0 - (bits & 9223372036854775807);
+    }
+    return bits;
+}
+
+fn nan_bits(bits: int) -> [] bool {
+    return (bits >> 52 & 2047) == 2047 && (bits & 4503599627370495) != 0;
+}
+
+fn far() -> [] int {
+    return 9223372036854775807;
+}
+
+fn ulps(a: int, b: int) -> [] int {
+    if nan_bits(a) && nan_bits(b) {
+        return 0;
+    }
+    if nan_bits(a) || nan_bits(b) {
+        return far();
+    }
+    let ka = key(a);
+    let kb = key(b);
+    if ka >= 0 && kb < 0 {
+        if ka > 4611686018427387903 || kb < 0 - 4611686018427387903 {
+            return far();
+        }
+        return ka - kb;
+    }
+    if kb >= 0 && ka < 0 {
+        if kb > 4611686018427387903 || ka < 0 - 4611686018427387903 {
+            return far();
+        }
+        return kb - ka;
+    }
+    if ka >= kb {
+        return ka - kb;
+    }
+    return kb - ka;
+}
+
+fn report[&i, &s, &t](io: &!i Io, src: &s [byte], tape: &t [int], nodes: int) -> [io_write] int {
+    var worst = 0;
+    var differ = 0;
+    var j = 1;
+    while j < nodes {
+        let a = json.to_int(src, tape, j);
+        j = json.skip(tape, j);
+        let b = json.to_int(src, tape, j);
+        j = json.skip(tape, j);
+        let d = ulps(a, b);
+        if d > 0 {
+            differ = differ + 1;
+        }
+        if d > worst {
+            worst = d;
+        }
+    }
+    io.print_int(io, worst);
+    io.space(io);
+    io.print_int(io, differ);
+    io.newline(io);
+    return 0;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read, io_write] int {
+    var text = buffer.empty(heap, 4096);
+    text = read_stdin(heap, io, text);
+    var status = 0;
+    borrow text as &b in {
+        let src = buffer.bytes(b);
+        let tape = box_slice(heap, json.tape_len(src), 0);
+        borrow mut tape as &!w in {
+            let nodes = json.parse(src, contents(w));
+            if nodes < 0 {
+                status = 1;
+            } else {
+                report(io, src, contents(w), nodes);
+            }
+        }
+        unbox_slice(heap, tape);
+    }
+    buffer.drop(heap, text);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(args);
+    release(fs);
+    release(ffi);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}

@@ -6,3 +6,13 @@ http_server_bytes | 19 | --std packages/http-server/server.cho tests/packages/ht
 http_server_body | 7 | --std packages/http-server/server.cho tests/packages/body_support.cho tests/packages/http_server_body_test.cho
 http_server_body_flow | 15 | --std packages/http-server/server.cho tests/packages/body_support.cho tests/packages/http_server_body_flow_test.cho
 http_client | 118 | --std packages/http-client/slot.cho packages/http-client/wire.cho packages/http-client/client.cho tests/packages/http_client_harness.cho tests/packages/http_client_test.cho tests/packages/http_client_pool_test.cho tests/packages/http_client_time_test.cho tests/packages/http_client_wire_test.cho tests/packages/http_client_flow_test.cho tests/packages/http_client_edge_test.cho
+# G4, wave 4: `conformance/json.rs`'s `the_library_tests_pass_on_both_backends` walked `tests/lex/*.cho`, one `cancho test` each (85 tests in all).
+lex_buffer | 3 | --std tests/lex/buffer_test.cho
+lex_field25519_51 | 5 | --std tests/lex/field25519_51_test.cho
+lex_field25519 | 2 | --std tests/lex/field25519_test.cho
+lex_flate | 12 | --std tests/lex/flate_test.cho
+lex_http | 16 | --std tests/lex/http_test.cho
+lex_json_parse | 20 | --std tests/lex/json_parse_test.cho
+lex_json_write | 16 | --std tests/lex/json_write_test.cho
+lex_map | 5 | --std tests/lex/map_test.cho
+lex_route | 6 | --std tests/lex/route_test.cho

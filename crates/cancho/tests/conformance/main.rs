@@ -35,18 +35,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 mod benchmarks;
-mod binary32;
 
 mod compile_time;
 mod conn_peer;
 mod corpus;
-mod crypto_builtins;
 mod devices;
 
 mod duplication;
 mod f32_text;
 mod float_text;
-mod floats;
 mod formatting;
 mod global_state;
 mod http;
@@ -54,12 +51,10 @@ mod http_fetch_nb;
 mod http_server;
 mod https_hello;
 mod json;
-mod mathfn;
 mod net;
 
 mod ports;
 mod selfhost;
-mod sha256_builtins;
 mod sockets;
 
 mod tls;
@@ -76,7 +71,6 @@ mod vcs_remote;
 mod vcs_std;
 mod vcs_sync;
 mod wasm_target;
-mod wide_multiply;
 
 const BIN: &str = env!("CARGO_BIN_EXE_cancho");
 

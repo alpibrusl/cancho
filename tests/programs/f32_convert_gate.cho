@@ -28,7 +28,7 @@
 //   int_of_f32  toward zero, from the bit fields; second route
 //               `truncate(float_of32(x))`. Only inputs below 2^63 in
 //               magnitude, since the rest trap and a trap ends the
-//               process (the trap cases are `conformance/binary32.rs`'s).
+//               process (the trap cases are `tests/commands/binary32.sh`'s).
 //
 // Counters, per operation at `op * 16`: cases, bad against the integer
 // oracle, bad against the second route, flag, first input, first got,

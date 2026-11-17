@@ -86,7 +86,6 @@ benchmarks::benchmark_game_programs_print_the_published_answer 15
 benchmarks::fasta_and_reverse_complement_print_the_published_answer 11
 udp 129
 sockets 115
-binary32 98
 tls 81
 json 79
 tls_fuzz 65
@@ -99,7 +98,6 @@ http_server 39
 float_text 37
 tls_echo 36
 http_fetch_nb 30
-floats 25
 https_hello 24
 tls_auth 23
 tls_echo_fixed 21
@@ -112,14 +110,10 @@ vcs_std 14
 
 global_state 11
 
-crypto_builtins 10
 
 vcs 7
-wide_multiply 6
-sha256_builtins 6
 vcs_remote 5
 wasm_target 4
-mathfn 3
 duplication 1
 devices 1
 vcs_sync 1
