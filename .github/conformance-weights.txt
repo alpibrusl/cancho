@@ -71,7 +71,6 @@ selfhost::statics::std_order_module_is_the_std_table_of_cancho 1
 
 
 
-devices 1
 http 5
 http_fetch_nb 30
 conn_peer 6

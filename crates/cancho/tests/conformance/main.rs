@@ -35,14 +35,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 mod conn_peer;
-mod devices;
 
 mod http;
 mod http_fetch_nb;
 mod json;
 
 mod selfhost;
-mod sockets;
 mod tls_support;
 // The TLS files moved to `tests/commands` (G4, wave 4); `http_fetch_nb` still names these three modules.
 use tls_support::{https_hello, tls_echo, tls_server};
