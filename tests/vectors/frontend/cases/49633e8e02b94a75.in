@@ -1,0 +1,2 @@
+enum R res { A(int), B }
+fn f[&r]() -> [] int { let e = R::A(1); return 1; }

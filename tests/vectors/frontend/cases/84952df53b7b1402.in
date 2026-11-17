@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": [],
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": 1.5,
+            "value": true
+          }
+        }
+      ]
+    }
+  ]
+}

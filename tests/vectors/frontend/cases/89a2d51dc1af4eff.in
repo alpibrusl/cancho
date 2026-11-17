@@ -1,0 +1,1 @@
+extern fn g[&f, &r, &i, &h](x: int) -> [] int;

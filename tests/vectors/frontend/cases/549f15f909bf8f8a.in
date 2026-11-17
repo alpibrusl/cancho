@@ -1,0 +1,16 @@
+{
+  "module": null,
+  "imports": [
+    {
+      "path": "a"
+    },
+    {
+      "path": "b.c"
+    },
+    {
+      "path": "e.f.g",
+      "as": "h"
+    }
+  ],
+  "items": {}
+}

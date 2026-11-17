@@ -1,0 +1,7 @@
+module std.option;
+   pub enum Option[T] { None, Some(T), }  pub fn unwrap_or[T: val](o: Option[T], fallback: T) -> [] T { match o { Option::None => { return fallback;
+ } Option::Some(v) => { return v;
+ } } }  pub fn is_some[T, &o](o: &o Option[T]) -> [] bool { match o { Option::None => { return false;
+ } Option::Some(_) => { return true;
+ } } }  pub fn is_none[T, &o](o: &o Option[T]) -> [] bool { return is_some(o) == false;
+ } 

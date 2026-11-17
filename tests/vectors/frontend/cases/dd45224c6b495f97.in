@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "kind": "struct",
+      "public": false,
+      "name": "Counter",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "fields": [
+        {
+          "name": "n",
+          "ty": 7
+        }
+      ]
+    },
+    "x"
+  ]
+}

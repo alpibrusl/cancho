@@ -1,0 +1,2 @@
+pub static t: [int] { return 1; }
+static u: int { return 2; }

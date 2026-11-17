@@ -1,0 +1,6 @@
+FILE 55
+module a;
+pub fn id[T: val](x: T) -> [] T { return x; }FILE 56
+module b;
+import a;
+fn f() -> [] int { return a.id(3); }

@@ -1,0 +1,4 @@
+FILE 9
+module m;FILE 0
+FILE 20
+struct S { a: Nope }

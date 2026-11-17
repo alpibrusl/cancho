@@ -1,0 +1,9 @@
+fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(fs);
+ release(ffi);
+ borrow mut io as &!i in { write_bytes(i, "hi");
+ } release(io);
+ return 0;
+ } 

@@ -1,0 +1,13 @@
+{
+  "module": "a.b.c",
+  "imports": [
+    {
+      "path": "std.io"
+    },
+    {
+      "path": "std.buffer",
+      "as": "b"
+    }
+  ],
+  "items": 1.5
+}

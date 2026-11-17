@@ -1,0 +1,1 @@
+{"items": [{"kind": "fn", "name": "f", "generics": [], "regions": [], "outlives": [{"inner": "r", "outer": "s"}], "params": [], "ret": {"name":"int"}, "body": []}]}

@@ -1,0 +1,33 @@
+{
+  "items": [
+    {
+      "kind": "enum",
+      "public": false,
+      "name": "Void",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "variants": []
+    },
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": "while"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+fn f[&r](a: &r [int], b: &!r [int]) -> [] int { return 1; }
+fn main(world: World) -> [] int {  return 0; }

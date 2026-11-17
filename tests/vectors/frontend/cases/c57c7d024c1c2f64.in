@@ -1,0 +1,24 @@
+ fn print_nat[&i](io: &!i Io, n: int) -> [io_write] int { if n >= 10 { print_nat(io, n / 10);
+ } return putchar(io, '0' + n % 10);
+ }  struct Point { x: int, y: int, }  fn run[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_write] int { let b = box(heap, Point { x: 3, y: 4 });
+  var sum = 0;
+ borrow b as &r in { sum = contents(r).x + contents(r).y;
+ } print_nat(io, sum);
+ putchar(io, 10);
+  borrow mut b as &!w in { contents(w).x = 10;
+ }  let p = unbox(heap, b);
+ print_nat(io, p.x);
+ putchar(io, 32);
+ print_nat(io, p.y);
+ putchar(io, 10);
+ return sum;
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(ffi);
+ release(fs);
+  var status = 0;
+ borrow mut heap as &!h in { borrow mut io as &!i in { status = run(h, i);
+ } } release(heap);
+ release(io);
+ return status - 7;
+ } 

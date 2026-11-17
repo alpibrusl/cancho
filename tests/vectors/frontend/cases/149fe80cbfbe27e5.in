@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { let e = Io::A; return 1; }

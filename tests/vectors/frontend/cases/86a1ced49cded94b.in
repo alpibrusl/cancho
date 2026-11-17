@@ -1,0 +1,2 @@
+fn g[&a](x: &a int, y: bool) -> [] int { return *x; }
+fn f[&r, &s](p: &r int) -> [] int { return g(p, "x"[0] == "y"[0]); }

@@ -1,0 +1,2 @@
+fn id[&a](x: &a int) -> [] &a int { return x; }
+fn f[&r]() -> [] int { var pad = 7; var pad2 = 8; var x = 1; borrow x as &p in { return *id(p); } return 0; }

@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [
+        {
+          "name": "t",
+          "ty": {
+            "name": "int"
+          }
+        }
+      ],
+      "effects": [],
+      "ret": {
+        "kind": "tuple",
+        "parts": [
+          {
+            "name": "int"
+          },
+          {
+            "name": "int"
+          }
+        ]
+      },
+      "body": -1
+    }
+  ]
+}

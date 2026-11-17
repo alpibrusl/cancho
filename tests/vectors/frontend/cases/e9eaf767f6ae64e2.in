@@ -1,0 +1,4 @@
+static wd: [byte] {
+    return "abc";
+}
+fn f() -> [] int { return int_of(wd[1]) + len(wd); }

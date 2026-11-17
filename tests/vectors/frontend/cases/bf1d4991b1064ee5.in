@@ -1,0 +1,2 @@
+struct P { x: int }
+fn f() -> [] int { while (P { x: 1 }).x < 3 { return 1; } return 0; }

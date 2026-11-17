@@ -1,0 +1,6 @@
+FILE 44
+module a;
+pub fn g() -> [] int { return 1; }FILE 54
+module b;
+import a;
+fn f() -> [] int { return a.g(); }

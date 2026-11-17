@@ -1,0 +1,1 @@
+fn f[&a, &b where a <= b, b <= a](p: &a int) -> [] int { let q: &b int = p; return *q; }

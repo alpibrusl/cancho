@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "kind": "struct",
+      "public": false,
+      "name": "f32",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "fields": [
+        {
+          "name": "bits",
+          "ty": {
+            "name": "int"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [
+        {
+          "name": "world",
+          "ty": {
+            "name": "World"
+          }
+        }
+      ],
+      "effects": [],
+      "ret": null,
+      "body": {}
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+fn f() -> [] int {
+    return 0;
+}
+
+import std.io;

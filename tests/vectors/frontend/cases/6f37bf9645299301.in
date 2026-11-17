@@ -1,0 +1,2 @@
+struct P { x: int, y: int }
+fn f[&r](p: &!r int) -> [] int { p.x = 5; return 0; }

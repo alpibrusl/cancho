@@ -1,0 +1,2 @@
+struct P { a: int }
+fn f[&r]() -> [] int { var v = P { a: 1 }; borrow v as &p in { return p.a; } return 0; }

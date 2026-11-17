@@ -1,0 +1,1 @@
+fn f[&r](s: &r [int]) -> [] int { borrow s as &p in { return len(*p); } return 0; }

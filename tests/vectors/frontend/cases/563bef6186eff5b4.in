@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "kind": "enum",
+      "public": false,
+      "name": "Void",
+      "mode": null,
+      "generics": [],
+      "bounds": null,
+      "variants": []
+    },
+    18446744073709551616
+  ]
+}

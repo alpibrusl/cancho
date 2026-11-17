@@ -1,0 +1,1 @@
+fn f() -> [] int { var i = 0; var t = 0; while i < 3 { region a { let s = alloc_slice[a](2, i); t = t + s[1]; } i = i + 1; } return t; }

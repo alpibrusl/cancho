@@ -1,0 +1,2 @@
+edition 1;
+extern fn connect[&f, &r, &i, &h](ffi: &f Ffi("libc")) -> [ffi("libc")] int;

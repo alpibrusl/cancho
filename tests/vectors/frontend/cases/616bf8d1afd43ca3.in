@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { return truncate(2.5); }

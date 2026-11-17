@@ -1,0 +1,1 @@
+fn f[&r, T, &q](a: T) -> [heap, ffi("libc"), io_write] int { return 0; }

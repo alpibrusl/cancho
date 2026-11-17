@@ -1,0 +1,2 @@
+fn g() -> [fs_read("/x")] int { return 1; }
+fn f() -> [fs_read("/x")] int { return g(); }

@@ -1,0 +1,1 @@
+fn f[&r](q: &r int) -> [] int { var x = 1; borrow x as &p in { let y: &r int = q; return *y; } return 0; }

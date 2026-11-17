@@ -1,0 +1,7 @@
+//~ ERROR `bool` has no arithmetic (`int`, `float` and `f32` do)
+    // inserted 79
+//~ RULE operator-type-mismatch
+
+fn main() -> [] int {
+    return true + false;
+}

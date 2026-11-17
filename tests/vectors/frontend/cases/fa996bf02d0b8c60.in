@@ -1,0 +1,2 @@
+  res struct Ticket { fd: int }  val struct Wrapper { f: Ticket, }  fn main() -> [] int { return 0;
+ } 

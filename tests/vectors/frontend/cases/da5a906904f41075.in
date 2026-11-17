@@ -1,0 +1,1 @@
+fn f() -> [] int { var t = 0; region a { var s = alloc_slice[a](3, 5); s[1] = 7; t = s[0] + s[1] + len(s); } return t; }

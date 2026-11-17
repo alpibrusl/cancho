@@ -1,0 +1,35 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "while",
+          "cond": {
+            "kind": "int",
+            "value": 1
+          },
+          "body": []
+        },
+        {
+          "kind": "return",
+          "value": {
+            "kind": null,
+            "value": 0
+          }
+        }
+      ]
+    }
+  ]
+}

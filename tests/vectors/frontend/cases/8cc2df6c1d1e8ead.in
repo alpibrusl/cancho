@@ -1,0 +1,26 @@
+//~ ERROR `dir_open_new_mode` is not a function in this program
+//~ RULE not-a-function
+
+// `docs/directory-handles.md` §3, slice 6: `dir_open_new_mode` is edition 9. An older
+// file may already declare its own `dir_open_new_mode`, so to it the name is not a
+// builtin at all (`editions.md` §7).
+
+edition 8;
+
+fn make[&d](dir: &d Dir) -> [dir_write] int {
+    match dir_open_new_mode(dir, "out", 493) {
+        Opened::Ok(f) => {
+            file_close(f);
+            return 0;
+        }
+        Opened::Failed(e) => {
+            return 0 - e;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals); release(exec); release(tty);
+    return 0;
+}

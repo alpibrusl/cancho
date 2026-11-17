@@ -1,0 +1,2 @@
+fn index_of_byte(s: int) -> [] int { return s; }
+fn f[&r]() -> [] int { return index_of_byte(3); }

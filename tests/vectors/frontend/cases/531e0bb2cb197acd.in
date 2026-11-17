@@ -1,0 +1,2 @@
+enum V val { A(int), B }
+fn f[&r]() -> [] int { let e = V::A(1); return 1; }

@@ -1,0 +1,1 @@
+fn f[T: val, U](x: T, y: U) -> [] T { return x; }

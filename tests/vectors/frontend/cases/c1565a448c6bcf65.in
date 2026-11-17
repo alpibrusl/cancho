@@ -1,0 +1,12 @@
+  edition 5;
+  extern fn memchr[&f](ffi: &f Ffi("libc"), p: c_ptr, c: int, n: int) -> [ffi("libc")] c_ptr;
+  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+ release(ffi);
+ release(fs);
+ release(args);
+ release(net);
+ release(clock);
+ release(io);
+ release(heap);
+ return index_of_byte("abc", byte_of('c')) - 2;
+ } 

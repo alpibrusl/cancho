@@ -1,0 +1,2 @@
+
+ {	"items" :[ { "kind" : "static" , "name" : "x" , "ty" : { "name" : "int" } , "body" : [ ] } ] } 

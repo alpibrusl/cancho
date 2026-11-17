@@ -1,0 +1,2 @@
+struct P { x: int }
+fn f() -> [] int { match (P { x: 1 }).x { } return 0; }

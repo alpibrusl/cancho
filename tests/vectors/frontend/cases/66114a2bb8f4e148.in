@@ -1,0 +1,23 @@
+struct P {  
+    // the x  
+    x: int, // x end  
+    y: int,  
+}  
+
+enum E {  
+    A, // first  
+    // second  
+    B(int),  
+}  
+
+fn f(e: E) -> [] int {  
+    match e {  
+        // arm a  
+        E::A => {  
+            return 0; // zero  
+        }  
+        E::B(n) => {  
+            return n;  
+        }  
+    }  
+}  

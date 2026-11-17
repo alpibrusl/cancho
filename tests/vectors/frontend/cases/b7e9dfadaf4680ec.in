@@ -1,0 +1,2 @@
+fn g() -> [] bool { return true; }
+fn f() -> [] int { if g() { return 1; } return 2; }

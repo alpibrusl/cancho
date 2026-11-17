@@ -1,0 +1,3 @@
+fn say[&j](io: &!j Io) -> [io_write] int { return putchar(io, 65); }
+fn mid[&k](io: &!k Io) -> [] int { return say(io); }
+fn f[&i](io: &!i Io) -> [io_write] int { return mid(io); }

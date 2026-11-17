@@ -1,0 +1,1 @@
+extern fn g[&r](x: &r [byte], n: int) -> [ffi("libc")] int;

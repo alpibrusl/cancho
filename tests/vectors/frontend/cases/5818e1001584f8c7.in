@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "kind": "struct",
+      "public": false,
+      "name": "Point",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "fields": {}
+    },
+    1.5
+  ]
+}

@@ -1,0 +1,11 @@
+  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(ffi);
+ release(heap);
+ release(fs);
+  var read = 0;
+ region a { let buffer = alloc_slice[a](16, byte_of(0));
+ borrow mut io as &!i in { read = fs_read(i, "/tmp/anything", buffer);
+ } } release(io);
+ return read;
+ } 

@@ -1,0 +1,27 @@
+//~ ERROR is still live at the end of this block
+//~ RULE linear-value-unconsumed
+
+// `docs/udp.md` §3: a `Udp` is a `res` value, so leaking one is a compile
+// error with no new machinery -- as a `Conn`'s is.
+
+edition 5;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    let bound = narrow(net, "127.0.0.1:53");
+    borrow bound as &n in {
+        match udp_connect(n, "127.0.0.1", 53) {
+            UdpOpened::Ok(u) => {
+            }
+            UdpOpened::Failed(e) => {
+            }
+        }
+    }
+    release(bound);
+    return 0;
+}

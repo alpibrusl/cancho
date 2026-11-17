@@ -1,0 +1,2 @@
+fn g[T](a: T) -> [] int { return 1; }
+fn f() -> [] int { return 1; }

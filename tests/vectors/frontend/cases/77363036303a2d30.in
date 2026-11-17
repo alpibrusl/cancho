@@ -1,0 +1,5 @@
+  edition 11;
+ fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+ release(io);
+ return 0;
+ } 

@@ -1,0 +1,1 @@
+fn f() -> [] int { let t = (1, 2); return 1; }

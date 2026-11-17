@@ -1,0 +1,5 @@
+module a.b.c;
+import std.io;
+import x.y as z;
+import p.q as q;
+fn f() -> [] int { return q.g(a.B::C(1), E::D); }

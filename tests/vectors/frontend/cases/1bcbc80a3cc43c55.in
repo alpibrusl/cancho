@@ -1,0 +1,2 @@
+edition 6;
+fn f[&r]() -> [] int { return bits_of32(f32_of(1.0)); }

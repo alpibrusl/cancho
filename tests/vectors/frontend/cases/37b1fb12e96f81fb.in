@@ -1,0 +1,2 @@
+edition 5;
+fn f() -> [] f32 { return 1.5f32; }

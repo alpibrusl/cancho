@@ -1,0 +1,2 @@
+fn keep[T](x: T) -> [] T { return x; }
+fn f[&r]() -> [] int { let b: bool = keep(4); return 1; }

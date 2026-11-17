@@ -1,0 +1,3 @@
+struct P { x: int }
+enum N { A(P), B }
+fn f[&r]() -> [] int { let e = N::A(P { x: 1 }); return 1; }

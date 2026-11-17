@@ -1,0 +1,2 @@
+enum E { A, B(int) }
+fn f[&r]() -> [] int { var pad = 7; var pad2 = 8; var e = E::A; borrow mut e as &!p in { match e { E::A => { return 1; } _ => { return 2; } } } }

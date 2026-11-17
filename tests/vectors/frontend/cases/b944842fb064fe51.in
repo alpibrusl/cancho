@@ -1,0 +1,2 @@
+struct S { a: int }
+extern fn g[&f, &r, &i, &h](ffi: &f Ffi("libc"), x: S) -> [ffi("libc")] int;

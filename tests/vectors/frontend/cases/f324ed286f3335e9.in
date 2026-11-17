@@ -1,0 +1,2 @@
+struct P { a: int }
+fn f[&r]() -> [] int { var z0 = 0; borrow z0 as &w0 in { } region w1 { } var v = P { a: 1 }; borrow mut v as &!p in { let b = v.a; } return 0; }

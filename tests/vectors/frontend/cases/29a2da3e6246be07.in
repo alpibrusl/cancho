@@ -1,0 +1,3 @@
+edition 5;
+fn g(d: Done) -> [] Done { return d; }
+fn f(d: Done) -> [] Done { return g(d); }

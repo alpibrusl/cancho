@@ -1,0 +1,1 @@
+static t: &static [int] { return 1; }

@@ -1,0 +1,1 @@
+{"items": [{"kind": "fn", "name": "f", "params": [{"name": "a"}], "ret": {"name":"int"}, "body": []}]}

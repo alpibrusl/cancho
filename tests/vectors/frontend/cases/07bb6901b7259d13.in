@@ -1,0 +1,1 @@
+fn f[&r, &s](p: &r int, q: fn(int) -> [] int) -> [] int { return 1; }

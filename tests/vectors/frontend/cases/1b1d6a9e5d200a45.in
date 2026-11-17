@@ -1,0 +1,3 @@
+module m.n;
+import std.io;
+fn f() -> [] int { return 0; }

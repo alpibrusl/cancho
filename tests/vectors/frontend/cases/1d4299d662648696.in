@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { var f = 1.5; borrow f as &p in { let g: float = *p; } }

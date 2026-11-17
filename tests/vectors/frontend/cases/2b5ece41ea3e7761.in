@@ -1,0 +1,2 @@
+fn f[&a, &b where a <= b](x: &a int, y: &b int) -> [] int { return 1; }
+fn main(world: World) -> [] int {  return 0; }

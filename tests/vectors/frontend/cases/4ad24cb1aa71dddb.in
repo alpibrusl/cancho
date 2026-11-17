@@ -1,0 +1,12 @@
+{
+  "module": "socket",
+  "imports": [
+    {
+      "path": "net.sockets"
+    },
+    {
+      "path": "net.connect"
+    }
+  ],
+  "items": ""
+}

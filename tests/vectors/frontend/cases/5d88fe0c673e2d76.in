@@ -1,0 +1,1 @@
+fn f[T: val, &r](s: &r [T]) -> [] int { return len(s); }

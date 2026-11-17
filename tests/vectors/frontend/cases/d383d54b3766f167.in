@@ -1,0 +1,2 @@
+fn pure(n: int) -> [] int { return n; }
+fn f[&i](io: &!i Io) -> [] int { return pure(3); }

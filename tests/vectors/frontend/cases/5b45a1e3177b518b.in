@@ -1,0 +1,39 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": "while",
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [
+        -1
+      ],
+      "effects": [],
+      "ret": {
+        "kind": "tuple",
+        "parts": [
+          {
+            "name": "int"
+          }
+        ]
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "tuple",
+            "parts": [
+              {
+                "kind": "name",
+                "name": "t"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

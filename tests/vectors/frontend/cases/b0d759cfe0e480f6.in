@@ -1,0 +1,5 @@
+pub struct S[T] { a: T, b: [T], }
+pub res struct R { a: int }
+val struct V { a: int }
+res enum Q { A(R) }
+pub val enum W { A }
