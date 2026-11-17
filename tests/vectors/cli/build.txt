@@ -1,0 +1,226 @@
+examples/hello.cho|2151240614|b|0 1639980005
+examples/hello.cho|2151240614|r|0 1639980005 4294967295
+examples/tls_nb/gaps/a2_scope_is_nominal.cho|442560071|b|0 4294967295
+examples/tls_nb/gaps/a2_scope_is_nominal.cho|442560071|r|0 4294967295 4294967295
+examples/tls_nb/gaps/g3_cptr_array.cho|746460071|b|0 4294967295
+examples/tls_nb/gaps/g3_cptr_array.cho|746460071|r|0 4294967295 4294967295
+examples/tls_nb/gaps/g4_generic.cho|747476497|b|0 4294967295
+examples/tls_nb/gaps/g4_generic.cho|747476497|r|0 4294967295 4294967295
+examples/tls_nb/gaps/g6_extern_free.cho|1446005074|b|0 4294967295
+examples/tls_nb/gaps/g6_extern_free.cho|1446005074|r|0 4294967295 4294967295
+examples/tls_nb/gaps/g7_two_strings.cho|1847288281|b|139 4294967295
+examples/tls_nb/gaps/g7_two_strings.cho|1847288281|r|3 4294967295 4294967295
+examples/tls_nb/gaps/t1_spawn_job.cho|349688796|b|0 4294967295
+examples/tls_nb/gaps/t1_spawn_job.cho|349688796|r|0 4294967295 4294967295
+examples/tls_nb/gaps/t3_shared_ffi_payload.cho|1466291102|b|0 4294967295
+examples/tls_nb/gaps/t3_shared_ffi_payload.cho|1466291102|r|0 4294967295 4294967295
+tests/accept/arena_roundtrip.cho|2637188033|b|0 366723454
+tests/accept/arena_roundtrip.cho|2637188033|r|0 366723454 4294967295
+tests/accept/arguments.cho|1958088646|b|0 1624351474
+tests/accept/arguments.cho|1958088646|r|0 1624351474 4294967295
+tests/accept/arithmetic.cho|1515971577|b|0 4007194313
+tests/accept/arithmetic.cho|1515971577|r|0 4007194313 4294967295
+tests/accept/booleans.cho|1906473949|b|0 59782203
+tests/accept/booleans.cho|1906473949|r|0 59782203 4294967295
+tests/accept/borrow_and_return.cho|1513952601|b|0 941366887
+tests/accept/borrow_and_return.cho|1513952601|r|0 941366887 4294967295
+tests/accept/box_roundtrip.cho|4191707499|b|0 3692153344
+tests/accept/box_roundtrip.cho|4191707499|r|0 3692153344 4294967295
+tests/accept/boxed_slice.cho|3475918369|b|0 2095862043
+tests/accept/boxed_slice.cho|3475918369|r|0 2095862043 4294967295
+tests/accept/bytes_to_c.cho|2146068687|b|0 2172264168
+tests/accept/bytes_to_c.cho|2146068687|r|0 2172264168 4294967295
+tests/accept/consume_on_both_paths.cho|525929513|b|0 408326301
+tests/accept/consume_on_both_paths.cho|525929513|r|0 408326301 4294967295
+tests/accept/consume_once.cho|768574156|b|0 4042981741
+tests/accept/consume_once.cho|768574156|r|0 4042981741 4294967295
+tests/accept/control_flow.cho|1082801023|b|0 2236887275
+tests/accept/control_flow.cho|1082801023|r|0 2236887275 4294967295
+tests/accept/copy_within.cho|428522521|b|0 4294967295
+tests/accept/copy_within.cho|428522521|r|0 4294967295 4294967295
+tests/accept/defer.cho|2116119435|b|0 640858611
+tests/accept/defer.cho|2116119435|r|0 640858611 4294967295
+tests/accept/defunctionalized_stream.cho|1094692416|b|0 3015617425
+tests/accept/defunctionalized_stream.cho|1094692416|r|0 3015617425 4294967295
+tests/accept/deref_roundtrip.cho|1372808291|b|0 2065062260
+tests/accept/deref_roundtrip.cho|1372808291|r|0 2065062260 4294967295
+tests/accept/destructuring.cho|3852437079|b|0 1963352564
+tests/accept/destructuring.cho|3852437079|r|0 1963352564 4294967295
+tests/accept/effect_exact.cho|3114328400|b|0 3334683555
+tests/accept/effect_exact.cho|3114328400|r|0 3334683555 4294967295
+tests/accept/enums.cho|2014563704|b|0 2490346052
+tests/accept/enums.cho|2014563704|r|0 2490346052 4294967295
+tests/accept/exit_status.cho|3430795969|b|7 4294967295
+tests/accept/exit_status.cho|3430795969|r|7 4294967295 4294967295
+tests/accept/file_roundtrip.cho|173934221|b|0 3241308415
+tests/accept/file_roundtrip.cho|173934221|r|0 3241308415 4294967295
+tests/accept/foreign_two_libraries.cho|625732726|b|7 4294967295
+tests/accept/foreign_two_libraries.cho|625732726|r|7 4294967295 4294967295
+tests/accept/fork_clock_row.cho|541553114|b|0 4294967295
+tests/accept/fork_clock_row.cho|541553114|r|0 4294967295 4294967295
+tests/accept/fork_clock_workers.cho|2793637945|b|0 4294967295
+tests/accept/fork_clock_workers.cho|2793637945|r|0 4294967295 4294967295
+tests/accept/fork_heap_workers.cho|2838536678|b|0 4294967295
+tests/accept/fork_heap_workers.cho|2838536678|r|0 4294967295 4294967295
+tests/accept/forward_reference.cho|372841766|b|0 2164743594
+tests/accept/forward_reference.cho|372841766|r|0 2164743594 4294967295
+tests/accept/fs_narrowed.cho|966891869|b|0 4242694087
+tests/accept/fs_narrowed.cho|966891869|r|0 4242694087 4294967295
+tests/accept/generics.cho|73144805|b|0 1938749223
+tests/accept/generics.cho|73144805|r|0 1938749223 4294967295
+tests/accept/index_of_byte_beside_own_memchr.cho|1771414347|b|0 4294967295
+tests/accept/index_of_byte_beside_own_memchr.cho|1771414347|r|0 4294967295 4294967295
+tests/accept/linked_list.cho|1011449777|b|0 2276470738
+tests/accept/linked_list.cho|1011449777|r|0 2276470738 4294967295
+tests/accept/listen_accept_bad_fd.cho|3468945761|b|0 4294967295
+tests/accept/listen_accept_bad_fd.cho|3468945761|r|0 4294967295 4294967295
+tests/accept/llvm_arith.cho|1893769332|b|0 781631908
+tests/accept/llvm_arith.cho|1893769332|r|0 781631908 4294967295
+tests/accept/llvm_control.cho|1728792579|b|0 3033677496
+tests/accept/llvm_control.cho|1728792579|r|0 3033677496 4294967295
+tests/accept/llvm_smoke.cho|1667138708|b|0 2782050392
+tests/accept/llvm_smoke.cho|1667138708|r|0 2782050392 4294967295
+tests/accept/match_a_reference.cho|2163451958|b|0 2800071491
+tests/accept/match_a_reference.cho|2163451958|r|0 2800071491 4294967295
+tests/accept/narrow_many_exec.cho|1883057958|b|0 4219530715
+tests/accept/narrow_many_exec.cho|1883057958|r|0 4219530715 4294967295
+tests/accept/narrow_many_in_struct.cho|1091819394|b|0 1004160540
+tests/accept/narrow_many_in_struct.cho|1091819394|r|0 1004160540 4294967295
+tests/accept/narrow_many_net.cho|4237247164|b|0 4200087900
+tests/accept/narrow_many_net.cho|4237247164|r|0 4200087900 4294967295
+tests/accept/narrow_many_net_exact_hosts.cho|4261294131|b|0 4294967295
+tests/accept/narrow_many_net_exact_hosts.cho|4261294131|r|0 4294967295 4294967295
+tests/accept/narrow_many_net_ports.cho|1558843263|b|0 4200087900
+tests/accept/narrow_many_net_ports.cho|1558843263|r|0 4200087900 4294967295
+tests/accept/narrow_net_hosts_edition_ten.cho|1702461998|b|0 4294967295
+tests/accept/narrow_net_hosts_edition_ten.cho|1702461998|r|0 4294967295 4294967295
+tests/accept/narrow_three_paths_forms.cho|1474880880|b|0 1004160540
+tests/accept/narrow_three_paths_forms.cho|1474880880|r|0 1004160540 4294967295
+tests/accept/narrow_two_paths.cho|1404869779|b|0 2158157017
+tests/accept/narrow_two_paths.cho|1404869779|r|0 2158157017 4294967295
+tests/accept/narrowed_capability.cho|1407534068|b|0 4283631305
+tests/accept/narrowed_capability.cho|1407534068|r|0 4283631305 4294967295
+tests/accept/nested_regions.cho|405948061|b|0 2354105433
+tests/accept/nested_regions.cho|405948061|r|0 2354105433 4294967295
+tests/accept/process_group_kill.cho|4080858683|b|0 1442068034
+tests/accept/process_group_kill.cho|4080858683|r|0 1442068034 4294967295
+tests/accept/process_release.cho|2110270434|b|0 3106026834
+tests/accept/process_release.cho|2110270434|r|0 3106026834 4294967295
+tests/accept/process_spawn.cho|3580666555|b|0 3733384285
+tests/accept/process_spawn.cho|3580666555|r|0 3733384285 4294967295
+tests/accept/scopes.cho|440483202|b|0 318826401
+tests/accept/scopes.cho|440483202|r|0 318826401 4294967295
+tests/accept/shadowing.cho|1441820257|b|0 3483436302
+tests/accept/shadowing.cho|1441820257|r|0 3483436302 4294967295
+tests/accept/short_circuit.cho|228085188|b|0 1897832518
+tests/accept/short_circuit.cho|228085188|r|0 1897832518 4294967295
+tests/accept/slices.cho|339138512|b|0 2537041184
+tests/accept/slices.cho|339138512|r|0 2537041184 4294967295
+tests/accept/socket_names_are_edition_five.cho|3969722729|b|0 4294967295
+tests/accept/socket_names_are_edition_five.cho|3969722729|r|0 4294967295 4294967295
+tests/accept/spawn_heap_in_struct.cho|2323868693|b|0 4294967295
+tests/accept/spawn_heap_in_struct.cho|2323868693|r|0 4294967295 4294967295
+tests/accept/spawn_join_operands.cho|3345455107|b|0 4294967295
+tests/accept/spawn_join_operands.cho|3345455107|r|0 4294967295 4294967295
+tests/accept/spawn_owned_clock.cho|2272222556|b|0 4294967295
+tests/accept/spawn_owned_clock.cho|2272222556|r|0 4294967295 4294967295
+tests/accept/spawn_owned_net.cho|2634079480|b|0 4294967295
+tests/accept/spawn_owned_net.cho|2634079480|r|0 4294967295 4294967295
+tests/accept/spawn_row.cho|3538882855|b|0 4294967295
+tests/accept/spawn_row.cho|3538882855|r|0 4294967295 4294967295
+tests/accept/spawn_struct_ref.cho|2378817265|b|0 4294967295
+tests/accept/spawn_struct_ref.cho|2378817265|r|0 4294967295 4294967295
+tests/accept/spawn_unique_join_first.cho|3855608073|b|0 4103939428
+tests/accept/spawn_unique_join_first.cho|3855608073|r|0 4103939428 4294967295
+tests/accept/split_out_ports.cho|1592524809|b|0 4294967295
+tests/accept/split_out_ports.cho|1592524809|r|0 4294967295 4294967295
+tests/accept/stdin_roundtrip.cho|3106395987|b|244 3844628461
+tests/accept/stdin_roundtrip.cho|3106395987|r|244 3844628461 4294967295
+tests/accept/string_buffer.cho|2088561363|b|0 3941944806
+tests/accept/string_buffer.cho|2088561363|r|0 3941944806 4294967295
+tests/accept/string_literal.cho|3859740462|b|0 3108774324
+tests/accept/string_literal.cho|3859740462|r|0 3108774324 4294967295
+tests/accept/structs.cho|576620573|b|0 3673149634
+tests/accept/structs.cho|576620573|r|0 3673149634 4294967295
+tests/accept/threaded_io.cho|4009875303|b|0 2544369682
+tests/accept/threaded_io.cho|4009875303|r|0 2544369682 4294967295
+tests/accept/tuple_of_res.cho|465484230|b|0 3364687583
+tests/accept/tuple_of_res.cho|465484230|r|0 3364687583 4294967295
+tests/accept/tuple_roundtrip.cho|3514677847|b|0 1096324848
+tests/accept/tuple_roundtrip.cho|3514677847|r|0 1096324848 4294967295
+tests/accept/two_shared_borrows.cho|3893047556|b|0 2172285022
+tests/accept/two_shared_borrows.cho|3893047556|r|0 2172285022 4294967295
+tests/accept/unique_borrow.cho|896832359|b|0 1178883303
+tests/accept/unique_borrow.cho|896832359|r|0 1178883303 4294967295
+tests/accept/wide_returns.cho|1610740903|b|0 3961091020
+tests/accept/wide_returns.cho|1610740903|r|0 3961091020 4294967295
+tests/accept/word_scan.cho|2034258095|b|0 4294967295
+tests/accept/word_scan.cho|2034258095|r|0 4294967295 4294967295
+tests/accept/word_scan_beside_own_names.cho|2055359099|b|0 4294967295
+tests/accept/word_scan_beside_own_names.cho|2055359099|r|0 4294967295 4294967295
+tests/accept/wrapping_arithmetic.cho|1399581121|b|0 2262726721
+tests/accept/wrapping_arithmetic.cho|1399581121|r|0 2262726721 4294967295
+tests/programs/args_echo.cho|2559445175|b|0 4219530715
+tests/programs/args_echo.cho|2559445175|r|0 4219530715 4294967295
+tests/programs/args_past_end.cho|2705648679|b|132 4294967295
+tests/programs/args_past_end.cho|2705648679|r|3 4294967295 4294967295
+tests/programs/checked_output_authority.cho|512872762|b|0 4294967295
+tests/programs/checked_output_authority.cho|512872762|r|0 4294967295 4294967295
+tests/programs/checked_output_probe.cho|3171195669|b|100 3015617425
+tests/programs/checked_output_probe.cho|3171195669|r|100 3015617425 4294967295
+tests/programs/close_on_exec.cho|2102080651|b|132 4294967295
+tests/programs/close_on_exec.cho|2102080651|r|3 4294967295 4294967295
+tests/programs/directory_handles_prefix_probe.cho|2304857676|b|132 4294967295
+tests/programs/directory_handles_prefix_probe.cho|2304857676|r|3 4294967295 4294967295
+tests/programs/directory_links_probe.cho|1090713925|b|132 4294967295
+tests/programs/directory_links_probe.cho|1090713925|r|3 4294967295 4294967295
+tests/programs/directory_mkdir_probe.cho|1343924375|b|132 4294967295
+tests/programs/directory_mkdir_probe.cho|1343924375|r|3 4294967295 4294967295
+tests/programs/directory_modes_probe.cho|1764507466|b|132 4294967295
+tests/programs/directory_modes_probe.cho|1764507466|r|3 4294967295 4294967295
+tests/programs/directory_open_new_mode_probe.cho|1943763185|b|132 4294967295
+tests/programs/directory_open_new_mode_probe.cho|1943763185|r|3 4294967295 4294967295
+tests/programs/directory_rename_new_probe.cho|376697823|b|132 4294967295
+tests/programs/directory_rename_new_probe.cho|376697823|r|3 4294967295 4294967295
+tests/programs/directory_rmdir_probe.cho|3528921049|b|132 4294967295
+tests/programs/directory_rmdir_probe.cho|3528921049|r|3 4294967295 4294967295
+tests/programs/directory_writes_probe.cho|860555747|b|132 4294967295
+tests/programs/directory_writes_probe.cho|860555747|r|3 4294967295 4294967295
+tests/programs/file_writes_authority_append.cho|3106477381|b|102 4294967295
+tests/programs/file_writes_authority_append.cho|3106477381|r|102 4294967295 4294967295
+tests/programs/file_writes_authority_rename.cho|1408794534|b|102 4294967295
+tests/programs/file_writes_authority_rename.cho|1408794534|r|102 4294967295 4294967295
+tests/programs/filesystem_authority_handle.cho|696413284|b|0 4294967295
+tests/programs/filesystem_authority_handle.cho|696413284|r|0 4294967295 4294967295
+tests/programs/filesystem_authority_path.cho|3381868770|b|0 4294967295
+tests/programs/filesystem_authority_path.cho|3381868770|r|0 4294967295 4294967295
+tests/programs/filesystem_probe.cho|2454636371|b|132 4294967295
+tests/programs/filesystem_probe.cho|2454636371|r|3 4294967295 4294967295
+tests/programs/io_authority_diagnostic.cho|783125018|b|1 4294967295
+tests/programs/io_authority_diagnostic.cho|783125018|r|1 4294967295 2505192839
+tests/programs/io_authority_putchar.cho|1504193873|b|0 2352138605
+tests/programs/io_authority_putchar.cho|1504193873|r|0 2352138605 4294967295
+tests/programs/io_authority_write_bytes.cho|3800700772|b|0 2352138605
+tests/programs/io_authority_write_bytes.cho|3800700772|r|0 2352138605 4294967295
+tests/programs/io_ordering_probe.cho|1562790457|b|0 1342898263
+tests/programs/io_ordering_probe.cho|1562790457|r|0 1342898263 4294967295
+tests/programs/io_trap_probe.cho|475950953|b|132 4294967295
+tests/programs/io_trap_probe.cho|475950953|r|3 4294967295 2104985708
+tests/programs/listen_host_poller.cho|816753403|b|0 4294967295
+tests/programs/listen_host_poller.cho|816753403|r|0 4294967295 4294967295
+tests/programs/process_cwd.cho|3261470589|b|132 4294967295
+tests/programs/process_cwd.cho|3261470589|r|3 4294967295 4294967295
+tests/programs/process_probe.cho|577240013|b|132 4294967295
+tests/programs/process_probe.cho|577240013|r|3 4294967295 4294967295
+tests/programs/process_release.cho|596283444|b|132 4294967295
+tests/programs/process_release.cho|596283444|r|3 4294967295 4294967295
+tests/programs/process_release_bound.cho|2020159514|b|132 4294967295
+tests/programs/process_release_bound.cho|2020159514|r|3 4294967295 4294967295
+tests/programs/process_traps.cho|3657371988|b|132 4294967295
+tests/programs/process_traps.cho|3657371988|r|3 4294967295 4294967295
+tests/programs/process_waiter.cho|2225858951|b|132 4294967295
+tests/programs/process_waiter.cho|2225858951|r|3 4294967295 4294967295
+tests/programs/tty_probe.cho|1342388212|b|132 4294967295
+tests/programs/tty_probe.cho|1342388212|r|3 4294967295 4294967295
+tests/programs/zeroed_read_back.cho|357316910|b|0 4294967295
+tests/programs/zeroed_read_back.cho|357316910|r|0 4294967295 4294967295
