@@ -40,7 +40,6 @@ mod http;
 mod http_fetch_nb;
 mod json;
 
-mod selfhost;
 mod tls_support;
 // The TLS files moved to `tests/commands` (G4, wave 4); `http_fetch_nb` still names these three modules.
 use tls_support::{https_hello, tls_echo, tls_server};
@@ -89,22 +88,6 @@ fn make_removable(dir: &Path) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             make_removable(&entry.path());
-        }
-    }
-}
-
-/// Every `.cho` file under `dir`, recursively, skipping `.cancho-vcs` -- content-addressed package-store blobs, copies by design. It was in `duplication.rs`.
-pub(crate) fn walk_ls_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries {
-        let path = entry.expect("a readable directory entry").path();
-        if path.is_dir() {
-            if path.file_name().and_then(|n| n.to_str()) == Some(".cancho-vcs") {
-                continue;
-            }
-            walk_ls_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "cho") {
-            out.push(path);
         }
     }
 }
