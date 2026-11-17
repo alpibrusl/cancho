@@ -6,10 +6,7 @@
 
 use super::*;
 
-mod authority;
-mod bootstrap;
 mod cli;
-mod compile;
 mod messages;
 mod origin;
 mod store;
@@ -573,13 +570,3 @@ fn spoil(text: &str, how: usize, seed: &mut u64) -> String {
     }
 }
 
-/// The first line of the input of the compiler in cancho: the system, and the architecture where Linux has two.
-pub(crate) fn target_line() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "darwin"
-    } else if cfg!(target_arch = "aarch64") {
-        "linux aarch64"
-    } else {
-        "linux"
-    }
-}

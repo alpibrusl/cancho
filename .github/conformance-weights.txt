@@ -3,13 +3,10 @@
 # Only the proportions matter: scripts/conformance_shard.py packs the units (a module, or each test of a split module) into shards by them.
 # A module (or a test of a split module) not listed weighs 3. To remeasure, run the command above and regenerate this file.
 
-selfhost::compile::the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do 377
 selfhost::vcs::vcs_publish_dir_in_cancho_publishes_the_libraries_of_packages 301
 selfhost::cli::the_command_line_in_cancho_runs_like_cancho_run 284
-selfhost::authority::authority_in_cancho_reports_like_cancho_authority 241
 selfhost::cli::the_command_line_in_cancho_formats_like_cancho_fmt 211
 selfhost::cli::the_command_line_in_cancho_builds_like_cancho_build 113
-selfhost::bootstrap::the_standalone_build_reproduces_itself 105
 selfhost::vcs::vcs_publish_in_cancho_logs_a_file_like_cancho_vcs_publish 103
 selfhost::cli::the_command_line_in_cancho_walks_directories_like_cancho_fmt 72
 selfhost::cli::the_command_line_in_cancho_writes_the_identities_like_cancho_ids 59
@@ -21,33 +18,19 @@ selfhost::cli::the_command_line_in_cancho_says_what_this_build_does_not_carry 32
 selfhost::cli::the_command_line_in_cancho_checks_like_cancho_check 30
 selfhost::vcs::vcs_lock_in_cancho_pins_like_cancho_vcs_lock 28
 selfhost::cli::the_command_line_in_cancho_prints_and_ingests_like_the_rust_front_end 27
-selfhost::compile::build_with_the_compiler_in_cancho_from_the_command_line 27
 selfhost::vcs::vcs_publish_dir_in_cancho_publishes_a_library_like_cancho_vcs_publish 26
 selfhost::cli::the_command_line_in_cancho_works_in_a_project_like_cancho 24
 selfhost::vcs::vcs_sync_in_cancho_indexes_a_tree_like_cancho_vcs_sync 24
 selfhost::vcs::vcs_log_in_cancho_lists_a_store_like_cancho_vcs_log 23
-selfhost::bootstrap::the_builder_in_cancho_builds_itself_with_no_help 23
-selfhost::store::the_stores_of_packages_are_fetched_in_cancho_as_cancho_install_fetches_them 22
 selfhost::cli::the_command_line_in_cancho_tests_like_cancho_test 21
 selfhost::cli::the_command_line_in_cancho_satisfies_like_cancho_satisfy 21
-selfhost::store::the_command_line_in_cancho_installs_dependencies_like_cancho 20
-selfhost::compile::builds_that_start_together_with_an_empty_cache_all_succeed 19
-selfhost::store::the_command_line_in_cancho_adds_dependencies_like_cancho 18
 selfhost::cli::the_command_line_in_cancho_writes_the_agent_guidelines 17
-selfhost::bootstrap::the_compiler_in_cancho_compiles_itself_to_a_fixed_point 16
-selfhost::store::a_store_that_does_not_hold_is_refused_in_cancho_as_cancho_install_refuses_it 16
-selfhost::authority::authority_in_cancho_reports_each_family_of_labels 16
 selfhost::cli::the_command_line_in_cancho_answers_help_and_the_command_tree_like_cancho 15
 selfhost::messages::the_message_of_a_refusal_holds_the_text_its_fixture_expects 15
 selfhost::cli::the_command_line_in_cancho_reads_a_path_with_dot_dot_like_cancho 15
 selfhost::cli::the_command_line_in_cancho_words_a_program_with_no_main_like_cancho 15
-selfhost::compile::refusals_agree_with_the_rust_front_end 13
-selfhost::compile::the_default_build_checks_with_rust_only_while_a_gap_is_listed 10
-selfhost::compile::a_function_the_compiler_cannot_write_is_a_refusal_when_the_program_reaches_it 9
-selfhost::compile::a_default_build_falls_back_to_the_rust_compiler_for_what_the_other_has_no_code_for 9
 selfhost::origin::the_origin_cache_in_cancho_makes_the_checkout_the_rust_code_makes 4
 selfhost::cli::the_stamp_script_refuses_what_is_not_a_commit 1
-selfhost::bootstrap::the_file_list_of_the_standalone_build_is_the_import_closure_of_cli 1
 
 
 
