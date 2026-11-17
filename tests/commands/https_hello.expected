@@ -1,0 +1,3 @@
+ok the example reports a bounded authority and no foreign code (15 labels, pinned)
+ok the server answers many clients, reloads and stops cleanly (64 connections, 4 handshakes at a time)
+ok the server resumes the package's own client when tickets are on (--tickets 2: 8 resumed)

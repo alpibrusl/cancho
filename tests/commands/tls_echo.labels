@@ -1,0 +1,15 @@
+"args", "argument": null
+"clock", "argument": null
+"conn_accept", "argument": null
+"conn_read", "argument": null
+"conn_write", "argument": null
+"dir_read", "argument": null
+"err_write", "argument": null
+"file_read", "argument": null
+"fs_read", "argument": ""
+"heap", "argument": null
+"io_write", "argument": null
+"net_in", "argument": ""
+"poll", "argument": null
+"signals", "argument": "HUP,INT,TERM"
+"signals_read", "argument": null

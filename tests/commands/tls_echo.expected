@@ -1,0 +1,3 @@
+ok the example reports a bounded authority and no foreign code (15 labels, pinned)
+ok the echo serves many connections, reloads and stops cleanly (64 connections, 4 handshakes at a time)
+ok the echo resumes the package's own client and reloads its ticket keys (8 resumed, then 8, then 8)

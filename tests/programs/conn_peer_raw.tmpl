@@ -1,0 +1,68 @@
+edition 5;
+import std.io;
+
+fn show[&i, &b](io: &!i Io, name: &static [byte], code: int, b: &b [byte]) -> [io_write] int {
+    io.write_all(io, name);
+    io.write_all(io, " ");
+    io.print_int(io, code);
+    var k = 0;
+    while k < len(b) {
+        io.write_all(io, " ");
+        io.print_int(io, int_of(b[k]));
+        k = k + 1;
+    }
+    io.newline(io);
+    return 0;
+}
+
+fn run(bound: Net("PORT"), io: Io) -> [] int {
+    var o = io;
+    borrow mut o as &!i in {
+        borrow bound as &n in {
+            match tcp_listen(n, PORT, 8, 0) {
+                Listening::Ok(l) => {
+                    var listener = l;
+                    borrow mut listener as &!lh in {
+                        io.error_all(i, "ready\n");
+                        match tcp_accept(lh) {
+                            Accepted::Ok(c) => {
+                                var conn = c;
+                                borrow mut conn as &!ch in {
+                                    region a {
+                                        let small = alloc_slice[a](18, byte_of(170));
+                                        let code = conn_peer(ch, small);
+                                        show(i, "short", code, small);
+                                        let exact = alloc_slice[a](19, byte_of(170));
+                                        let code2 = conn_peer(ch, exact);
+                                        show(i, "exact", code2, exact);
+                                        let empty = alloc_slice[a](0, byte_of(170));
+                                        let code3 = conn_peer(ch, empty);
+                                        show(i, "empty", code3, empty);
+                                        let big = alloc_slice[a](25, byte_of(170));
+                                        let code4 = conn_peer(ch, big);
+                                        show(i, "big", code4, big);
+                                    }
+                                }
+                                conn_close(conn);
+                            }
+                            Accepted::Again => { }
+                            Accepted::Failed(e) => { }
+                        }
+                    }
+                    listener_close(listener);
+                }
+                Listening::Failed(e) => { }
+            }
+        }
+    }
+    release(bound);
+    release(o);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(heap); release(args); release(clock);
+    let bound = narrow(net, "PORT");
+    return run(bound, io);
+}
