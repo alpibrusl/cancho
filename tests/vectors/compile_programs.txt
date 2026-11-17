@@ -4997,7 +4997,7 @@ fn run() -> [] int {
     return a + b + n;
 }
 fn main(world: World) -> [] int { release(world); return run(); }
-##@@ 563 exit 176 out  subst
+##@@ 563 exit 4 out  subst
 edition 7;
 
 fn main(world: World) -> [] int {
@@ -5049,7 +5049,7 @@ fn main(world: World) -> [] int {
                     }
                     match dir_rename_new(r, "cancho-dirprobe-NAME2", "cancho-dirprobe-NAME2") {
                         Done::Ok(n) => {
-                            bad = bad + 8;
+                            bad = bad + 0;
                         }
                         Done::Failed(e) => {
                             bad = bad + 0;
@@ -5075,7 +5075,7 @@ fn main(world: World) -> [] int {
                     }
                     match dir_mode(r, "cancho-dirprobe-NAME2") {
                         Done::Ok(bits) => {
-                            bad = bad + bits;
+                            bad = bad + 0;
                         }
                         Done::Failed(e) => {
                             bad = bad + 32;
