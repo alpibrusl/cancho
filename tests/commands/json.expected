@@ -1,0 +1,5 @@
+ok numbers are read exactly as Rust reads them
+ok the parser accepts what serde_json accepts and writes it back whole
+ok parse_with agrees with serde_json on what is a document
+ok parse_with answers what parse answers and writes the same tape
+ok a misused writer traps instead of writing bad json

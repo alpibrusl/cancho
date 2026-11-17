@@ -1,0 +1,6 @@
+ok the address type agrees with the recorded oracle over a generated corpus (10,965 lines, 5,568 accepted)
+ok the address API does what the document says
+ok knowing an address does not let a program dial it (the call traps)
+ok asking for the peer adds nothing to the authority report
+ok the builtin fills nineteen bytes and refuses fewer without writing
+ok eleven slots answer their own client's address and port, a closed slot has none, and a slot freed and taken again answers the new client (11 clients)

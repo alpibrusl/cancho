@@ -1,0 +1,819 @@
+#### again
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match udp_connect(n, "127.0.0.1", PORT) {
+            UdpOpened::Ok(u) => {
+                var sock = u;
+                borrow mut sock as &!uh in {
+                    if udp_nonblocking(uh) != 0 {
+                        status = 3;
+                    } else {
+                        region a {
+                            var buf = alloc_slice[a](16, byte_of(0));
+                            match udp_recv(uh, buf) {
+                                Datagram::Got(k) => { status = 5; }
+                                Datagram::Truncated(k) => { status = 6; }
+                                Datagram::Again => { status = 0; }
+                                Datagram::Failed(e) => { status = 8; }
+                            }
+                            var empty = alloc_slice[a](0, byte_of(0));
+                            match udp_recv(uh, empty) {
+                                Datagram::Failed(e) => { if e != 22 { status = 9; } }
+                                Datagram::Got(k) => { status = 10; }
+                                Datagram::Truncated(k) => { status = 11; }
+                                Datagram::Again => { status = 12; }
+                            }
+                        }
+                    }
+                }
+                udp_close(sock);
+            }
+            UdpOpened::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+#### bind_outside
+fn run(bound: Net("PORT"), io: Io) -> [] int {
+    borrow bound as &n in {
+        match udp_bind(n, 1, 0) {
+            UdpOpened::Ok(u) => { udp_close(u); }
+            UdpOpened::Failed(e) => { }
+        }
+    }
+    release(bound);
+    release(io);
+    return 1;
+}
+#### echo
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match udp_connect(n, "127.0.0.1", PORT) {
+            UdpOpened::Ok(u) => {
+                var sock = u;
+                borrow mut sock as &!uh in {
+                    match udp_send(uh, "ping") {
+                        Sent::Wrote(w) => {
+                            region a {
+                                var buf = alloc_slice[a](16, byte_of(0));
+                                match udp_recv(uh, buf) {
+                                    Datagram::Got(k) => {
+                                        if k == 4 && int_of(buf[0]) == 80 { status = 0; } else { status = 5; }
+                                    }
+                                    Datagram::Truncated(k) => { status = 6; }
+                                    Datagram::Again => { status = 7; }
+                                    Datagram::Failed(e) => { status = 8; }
+                                }
+                            }
+                        }
+                        Sent::Again => { status = 9; }
+                        Sent::Failed(e) => { status = 10; }
+                    }
+                }
+                udp_close(sock);
+            }
+            UdpOpened::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+#### empty
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match udp_connect(n, "127.0.0.1", PORT) {
+            UdpOpened::Ok(u) => {
+                var sock = u;
+                borrow mut sock as &!uh in {
+                    udp_send(uh, "x");
+                    region a {
+                        var buf = alloc_slice[a](16, byte_of(0));
+                        match udp_recv(uh, buf) {
+                            Datagram::Got(k) => { if k == 0 { status = 0; } else { status = 5; } }
+                            Datagram::Truncated(k) => { status = 6; }
+                            Datagram::Again => { status = 7; }
+                            Datagram::Failed(e) => { status = 8; }
+                        }
+                    }
+                }
+                udp_close(sock);
+            }
+            UdpOpened::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+#### no_cell
+fn run(bound: Net("PORT"), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow bound as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    borrow mut sock as &!uh in {
+                        udp_nonblocking(uh);
+                        io.error_all(i, "ready\n");
+                        region a {
+                            var buf = alloc_slice[a](64, byte_of(0));
+                            var none = alloc_slice[a](0, 0);
+                            var who = alloc_slice[a](1, 7);
+                            var seen = 0;
+                            match udp_recv_from(uh, buf, none) {
+                                Datagram::Failed(e) => { if e == 22 { seen = seen + 1; } }
+                                Datagram::Got(k) => { }
+                                Datagram::Truncated(k) => { }
+                                Datagram::Again => { }
+                            }
+                            match udp_recv_from(uh, buf, who) {
+                                Datagram::Again => { if who[0] == 7 { seen = seen + 1; } }
+                                Datagram::Got(k) => { }
+                                Datagram::Truncated(k) => { }
+                                Datagram::Failed(e) => { }
+                            }
+                            if seen == 2 { status = 0; }
+                        }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+#### outside_host
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    borrow bound as &n in {
+        match udp_connect(n, "127.0.0.2", PORT) {
+            UdpOpened::Ok(u) => { udp_close(u); }
+            UdpOpened::Failed(e) => { }
+        }
+    }
+    release(bound);
+    release(io);
+    return 1;
+}
+#### outside_port
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    borrow bound as &n in {
+        match udp_connect(n, "127.0.0.1", 1) {
+            UdpOpened::Ok(u) => { udp_close(u); }
+            UdpOpened::Failed(e) => { }
+        }
+    }
+    release(bound);
+    release(io);
+    return 1;
+}
+#### polled
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match udp_connect(n, "127.0.0.1", PORT) {
+            UdpOpened::Ok(u) => {
+                var sock = u;
+                match poller_new() {
+                    Polling::Ok(p0) => {
+                        var poller = p0;
+                        borrow mut sock as &!uh in {
+                            borrow mut poller as &!ph in {
+                                udp_send(uh, "x");
+                                poller_add_udp(ph, uh, 7, 1);
+                                region a {
+                                    var ev = alloc_slice[a](4, 0);
+                                    let ready = poller_wait(ph, ev, 5000);
+                                    if ready < 1 || ev[0] != 7 {
+                                        status = 3;
+                                    } else {
+                                        var buf = alloc_slice[a](16, byte_of(0));
+                                        match udp_recv(uh, buf) {
+                                            Datagram::Got(k) => { if k == 4 { status = 0; } else { status = 5; } }
+                                            Datagram::Truncated(k) => { status = 6; }
+                                            Datagram::Again => { status = 7; }
+                                            Datagram::Failed(e) => { status = 8; }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        poller_close(poller);
+                    }
+                    Polling::Failed(e) => { status = 2; }
+                }
+                udp_close(sock);
+            }
+            UdpOpened::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+#### ports
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match udp_connect(n, "127.0.0.1", PORT) {
+            UdpOpened::Ok(a0) => {
+                var first = a0;
+                match udp_connect(n, "127.0.0.1", PORT) {
+                    UdpOpened::Ok(b0) => {
+                        var second = b0;
+                        borrow first as &fa in {
+                            borrow second as &sb in {
+                                let p = udp_local_port(fa);
+                                let q = udp_local_port(sb);
+                                if p > 1023 && q > 1023 && p != q { status = 0; } else { status = 5; }
+                            }
+                        }
+                        udp_close(second);
+                    }
+                    UdpOpened::Failed(e) => { status = 3; }
+                }
+                udp_close(first);
+            }
+            UdpOpened::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+#### serve_echo
+fn run(bound: Net("PORT"), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow bound as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    borrow mut sock as &!uh in {
+                        io.error_all(i, "ready\n");
+                        region a {
+                            var buf = alloc_slice[a](64, byte_of(0));
+                            var who = alloc_slice[a](1, 0);
+                            match udp_recv_from(uh, buf, who) {
+                                Datagram::Got(k) => {
+                                    match udp_send_to(uh, buf[0..k], who[0]) {
+                                        Sent::Wrote(w) => { if w == k { status = 0; } else { status = 5; } }
+                                        Sent::Again => { status = 6; }
+                                        Sent::Failed(e) => { status = 7; }
+                                    }
+                                }
+                                Datagram::Truncated(k) => { status = 3; }
+                                Datagram::Again => { status = 4; }
+                                Datagram::Failed(e) => { status = 8; }
+                            }
+                        }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+#### serve_two
+fn run(bound: Net("PORT"), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow bound as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    borrow mut sock as &!uh in {
+                        io.error_all(i, "ready\n");
+                        region a {
+                            var buf = alloc_slice[a](64, byte_of(0));
+                            var first = alloc_slice[a](1, 0);
+                            var second = alloc_slice[a](1, 0);
+                            match udp_recv_from(uh, buf, first) {
+                                Datagram::Got(k) => {
+                                    match udp_recv_from(uh, buf, second) {
+                                        Datagram::Got(m) => {
+                                            var both = 0;
+                                            match udp_send_to(uh, "to-second", second[0]) {
+                                                Sent::Wrote(w) => { both = both + 1; }
+                                                Sent::Again => { }
+                                                Sent::Failed(e) => { }
+                                            }
+                                            match udp_send_to(uh, "to-first", first[0]) {
+                                                Sent::Wrote(w) => { both = both + 1; }
+                                                Sent::Again => { }
+                                                Sent::Failed(e) => { }
+                                            }
+                                            if both == 2 { status = 0; }
+                                        }
+                                        Datagram::Truncated(m) => { status = 3; }
+                                        Datagram::Again => { status = 4; }
+                                        Datagram::Failed(e) => { status = 8; }
+                                    }
+                                }
+                                Datagram::Truncated(k) => { status = 3; }
+                                Datagram::Again => { status = 4; }
+                                Datagram::Failed(e) => { status = 8; }
+                            }
+                        }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+#### stale
+fn run(net: Net(""), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow net as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    borrow mut sock as &!uh in {
+                        io.error_all(i, "ready\n");
+                        region a {
+                            var buf = alloc_slice[a](64, byte_of(0));
+                            var who = alloc_slice[a](1, 0);
+                            match udp_recv_from(uh, buf, who) {
+                                Datagram::Got(k) => {
+                                    let first = who[0];
+                                    match udp_connect(n, "127.0.0.1", PORT) {
+                                        UdpOpened::Ok(c) => {
+                                            var feeder = c;
+                                            var count = 0;
+                                            var healthy = true;
+                                            borrow mut feeder as &!fh in {
+                                                while count < 65536 && healthy {
+                                                    match udp_send(fh, "x") {
+                                                        Sent::Wrote(w) => { }
+                                                        Sent::Again => { healthy = false; }
+                                                        Sent::Failed(e) => { healthy = false; }
+                                                    }
+                                                    match udp_recv_from(uh, buf, who) {
+                                                        Datagram::Got(m) => { }
+                                                        Datagram::Truncated(m) => { healthy = false; }
+                                                        Datagram::Again => { healthy = false; }
+                                                        Datagram::Failed(e) => { healthy = false; }
+                                                    }
+                                                    count = count + 1;
+                                                }
+                                            }
+                                            udp_close(feeder);
+                                            match udp_send_to(uh, "late", first) {
+                                                Sent::Failed(e) => { if e == 9 && healthy { status = 0; } else { status = 5; } }
+                                                Sent::Wrote(w) => { status = 6; }
+                                                Sent::Again => { status = 7; }
+                                            }
+                                        }
+                                        UdpOpened::Failed(e) => { status = 9; }
+                                    }
+                                }
+                                Datagram::Truncated(k) => { status = 3; }
+                                Datagram::Again => { status = 4; }
+                                Datagram::Failed(e) => { status = 8; }
+                            }
+                        }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(net);
+    release(io);
+    return status;
+}
+#### stranger
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match udp_connect(n, "127.0.0.1", PORT) {
+            UdpOpened::Ok(u) => {
+                var sock = u;
+                borrow mut sock as &!uh in {
+                    udp_send(uh, "x");
+                    region a {
+                        var buf = alloc_slice[a](16, byte_of(0));
+                        match udp_recv(uh, buf) {
+                            Datagram::Got(k) => { if k == 4 && int_of(buf[0]) == 103 { status = 0; } else { status = 5; } }
+                            Datagram::Truncated(k) => { status = 6; }
+                            Datagram::Again => { status = 7; }
+                            Datagram::Failed(e) => { status = 8; }
+                        }
+                    }
+                }
+                udp_close(sock);
+            }
+            UdpOpened::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+#### tcp_ticket
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match tcp_connect(n, "127.0.0.1", PORT) {
+            Dialed::Ok(c) => {
+                let ticket = conn_detach(c);
+                var score = 0;
+                match udp_attach(ticket) {
+                    UdpOpened::Failed(e) => { if e == 9 { score = score + 1; } }
+                    UdpOpened::Ok(x) => { udp_close(x); }
+                }
+                match conn_attach(ticket) {
+                    Attached::Ok(back) => { conn_close(back); score = score + 1; }
+                    Attached::Failed(e) => { }
+                }
+                if score == 2 { status = 0; } else { status = 10 + score; }
+            }
+            Dialed::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+#### truncated
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match udp_connect(n, "127.0.0.1", PORT) {
+            UdpOpened::Ok(u) => {
+                var sock = u;
+                borrow mut sock as &!uh in {
+                    udp_send(uh, "x");
+                    region a {
+                        var buf = alloc_slice[a](16, byte_of(0));
+                        match udp_recv(uh, buf) {
+                            Datagram::Got(k) => { status = 5; }
+                            Datagram::Truncated(k) => { if k == EXPECT { status = 0; } else { status = 6; } }
+                            Datagram::Again => { status = 7; }
+                            Datagram::Failed(e) => { status = 8; }
+                        }
+                    }
+                }
+                udp_close(sock);
+            }
+            UdpOpened::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+#### udp_peer
+fn run(net: Net(""), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow net as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    match udp_bind(n, OTHER, 0) {
+                        UdpOpened::Ok(v) => {
+                            var stranger = v;
+                            borrow mut sock as &!uh in {
+                                borrow stranger as &sh in {
+                                    io.error_all(i, "ready\n");
+                                    region a {
+                                        var buf = alloc_slice[a](64, byte_of(0));
+                                        var who = alloc_slice[a](1, 0);
+                                        var out = alloc_slice[a](19, byte_of(7));
+                                        var short = alloc_slice[a](18, byte_of(7));
+                                        var spare = alloc_slice[a](19, byte_of(7));
+                                        match udp_recv_from(uh, buf, who) {
+                                            Datagram::Got(k) => {
+                                                var bad = 0;
+                                                if udp_peer(uh, 0, spare) != 9 { bad = bad + 1; }
+                                                if udp_peer(uh, 0 - 5, spare) != 9 { bad = bad + 1; }
+                                                if udp_peer(uh, who[0] + 1000, spare) != 9 { bad = bad + 1; }
+                                                if udp_peer(uh, who[0] + 65536, spare) != 9 { bad = bad + 1; }
+                                                if udp_peer(uh, who[0] - 65536, spare) != 9 { bad = bad + 1; }
+                                                if udp_peer(sh, who[0], spare) != 9 { bad = bad + 1; }
+                                                if udp_peer(uh, who[0], short) != 22 { bad = bad + 1; }
+                                                if int_of(short[0]) != 7 || int_of(short[17]) != 7 || int_of(spare[0]) != 7 || int_of(spare[18]) != 7 { bad = bad + 1; }
+                                                let ok = udp_peer(uh, who[0], out);
+                                                if ok == 0 && bad == 0 {
+                                                    match udp_send_to(uh, out, who[0]) {
+                                                        Sent::Wrote(w) => { status = 0; }
+                                                        Sent::Again => { status = 6; }
+                                                        Sent::Failed(e) => { status = 7; }
+                                                    }
+                                                } else {
+                                                    status = 10 + bad;
+                                                }
+                                            }
+                                            Datagram::Truncated(k) => { status = 3; }
+                                            Datagram::Again => { status = 4; }
+                                            Datagram::Failed(e) => { status = 8; }
+                                        }
+                                    }
+                                }
+                            }
+                            udp_close(stranger);
+                        }
+                        UdpOpened::Failed(e) => { status = 9; }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(net);
+    release(io);
+    return status;
+}
+#### udps
+edition 5;
+import std.conns;
+import std.udps;
+import std.io;
+
+fn first[&t, &b](table: &!t conns.Table, slot: int, buf: &!b [byte]) -> [udp_recv] int {
+    match udps.recv(table, slot, buf) {
+        Datagram::Got(n) => { return int_of(buf[0]); }
+        Datagram::Truncated(n) => { return 0 - 1; }
+        Datagram::Again => { return 0 - 2; }
+        Datagram::Failed(e) => { return 0 - 3; }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(args); release(clock);
+    var h = heap;
+    let bound = narrow(net, "BOUND");
+    var score = 0;
+    borrow mut h as &!hh in {
+        borrow bound as &n in {
+            var table = conns.empty(hh, 2);
+            var k = 0;
+            while k < 3 {
+                match udp_connect(n, "127.0.0.1", PORT) {
+                    UdpOpened::Ok(u) => {
+                        let (t2, slot) = udps.put(hh, table, u);
+                        table = t2;
+                        if slot == k { score = score + 1; }
+                    }
+                    UdpOpened::Failed(e) => { }
+                }
+                k = k + 1;
+            }
+            region r {
+                var buf = alloc_slice[r](8, byte_of(0));
+                borrow mut table as &!tb in {
+                    udps.send(tb, 0, "a");
+                    udps.send(tb, 1, "b");
+                    udps.send(tb, 2, "c");
+                    if first(tb, 1, buf) == 66 { score = score + 1; }
+                    if first(tb, 0, buf) == 65 { score = score + 1; }
+                    if first(tb, 2, buf) == 67 { score = score + 1; }
+                    if udps.close(tb, 0) == 0 && conns.live(tb) == 2 { score = score + 1; }
+                    match udps.send(tb, 0, "x") {
+                        Sent::Failed(e) => { if e == 9 { score = score + 1; } }
+                        Sent::Wrote(w) => { }
+                        Sent::Again => { }
+                    }
+                    if udps.close(tb, 0) == 9 { score = score + 1; }
+                }
+            }
+            match udp_connect(n, "127.0.0.1", PORT) {
+                UdpOpened::Ok(u) => {
+                    let (t3, slot) = udps.put(hh, table, u);
+                    table = t3;
+                    if slot == 0 { score = score + 1; }
+                }
+                UdpOpened::Failed(e) => { }
+            }
+            if udps.drop(hh, table) == 3 { score = score + 1; }
+        }
+    }
+    release(bound);
+    release(io);
+    release(h);
+    if score == 11 {
+        return 0;
+    }
+    return 100 + score;
+}
+#### wrong_socket
+fn run(net: Net(""), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow net as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    match udp_bind(n, OTHER, 0) {
+                        UdpOpened::Ok(v) => {
+                            var stranger = v;
+                            borrow mut sock as &!uh in {
+                                borrow mut stranger as &!sh in {
+                                    io.error_all(i, "ready\n");
+                                    region a {
+                                        var buf = alloc_slice[a](64, byte_of(0));
+                                        var who = alloc_slice[a](1, 0);
+                                        match udp_recv_from(uh, buf, who) {
+                                            Datagram::Got(k) => {
+                                                var wrong = 0;
+                                                match udp_send_to(sh, "bad", who[0]) {
+                                                    Sent::Failed(e) => { if e == 9 { wrong = 1; } }
+                                                    Sent::Wrote(w) => { }
+                                                    Sent::Again => { }
+                                                }
+                                                match udp_send_to(uh, "ok", who[0]) {
+                                                    Sent::Wrote(w) => { if wrong == 1 { status = 0; } else { status = 5; } }
+                                                    Sent::Again => { status = 6; }
+                                                    Sent::Failed(e) => { status = 7; }
+                                                }
+                                            }
+                                            Datagram::Truncated(k) => { status = 3; }
+                                            Datagram::Again => { status = 4; }
+                                            Datagram::Failed(e) => { status = 8; }
+                                        }
+                                    }
+                                }
+                            }
+                            udp_close(stranger);
+                        }
+                        UdpOpened::Failed(e) => { status = 9; }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(net);
+    release(io);
+    return status;
+}
+#### forged
+fn run(bound: Net("PORT"), io: Io) -> [] int {
+    var status = 1;
+    borrow mut io as &!i in {
+        borrow bound as &n in {
+            match udp_bind(n, PORT, 0) {
+                UdpOpened::Ok(u) => {
+                    var sock = u;
+                    borrow mut sock as &!uh in {
+                        io.error_all(i, "ready\n");
+                        region a {
+                            var buf = alloc_slice[a](64, byte_of(0));
+                            var who = alloc_slice[a](1, 0);
+                            match udp_recv_from(uh, buf, who) {
+                                Datagram::Got(k) => {
+                                    var refused = 0;
+                                    match udp_send_to(uh, "bad", who[0] + 1000) {
+                                        Sent::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                                        Sent::Wrote(w) => { }
+                                        Sent::Again => { }
+                                    }
+                                    match udp_send_to(uh, "bad", 0) {
+                                        Sent::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                                        Sent::Wrote(w) => { }
+                                        Sent::Again => { }
+                                    }
+                                    match udp_send_to(uh, "bad", 0 - 5) {
+                                        Sent::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                                        Sent::Wrote(w) => { }
+                                        Sent::Again => { }
+                                    }
+                                    match udp_send_to(uh, "bad", who[0] + 65536) {
+                                        Sent::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                                        Sent::Wrote(w) => { }
+                                        Sent::Again => { }
+                                    }
+                                    match udp_send_to(uh, "bad", who[0] - 65536) {
+                                        Sent::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                                        Sent::Wrote(w) => { }
+                                        Sent::Again => { }
+                                    }
+                                    match udp_send_to(uh, "ok", who[0]) {
+                                        Sent::Wrote(w) => { if refused == 5 && w == 2 { status = 0; } else { status = 5; } }
+                                        Sent::Again => { status = 6; }
+                                        Sent::Failed(e) => { status = 7; }
+                                    }
+                                }
+                                Datagram::Truncated(k) => { status = 3; }
+                                Datagram::Again => { status = 4; }
+                                Datagram::Failed(e) => { status = 8; }
+                            }
+                        }
+                    }
+                    udp_close(sock);
+                }
+                UdpOpened::Failed(e) => { status = 2; }
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+#### tickets
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        match udp_connect(n, "127.0.0.1", PORT) {
+            UdpOpened::Ok(u) => {
+                let ticket = udp_detach(u);
+                var refused = 0;
+                if ticket > 0 {
+                    match udp_attach(0) {
+                        UdpOpened::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                        UdpOpened::Ok(x) => { udp_close(x); }
+                    }
+                    match udp_attach(0 - 1) {
+                        UdpOpened::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                        UdpOpened::Ok(x) => { udp_close(x); }
+                    }
+                    match udp_attach(1) {
+                        UdpOpened::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                        UdpOpened::Ok(x) => { udp_close(x); }
+                    }
+                    match udp_attach(9223372036854775807) {
+                        UdpOpened::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                        UdpOpened::Ok(x) => { udp_close(x); }
+                    }
+                    match udp_attach(ticket + 1) {
+                        UdpOpened::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                        UdpOpened::Ok(x) => { udp_close(x); }
+                    }
+                    match udp_attach(ticket + 8589934592) {
+                        UdpOpened::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                        UdpOpened::Ok(x) => { udp_close(x); }
+                    }
+                    match udp_attach(ticket - 2147483648) {
+                        UdpOpened::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                        UdpOpened::Ok(x) => { udp_close(x); }
+                    }
+                    match conn_attach(ticket) {
+                        Attached::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                        Attached::Ok(x) => { conn_close(x); }
+                    }
+                    match udp_attach(ticket) {
+                        UdpOpened::Ok(back) => {
+                            var sock = back;
+                            borrow mut sock as &!uh in {
+                                match udp_send(uh, "ping") {
+                                    Sent::Wrote(w) => {
+                                        region a {
+                                            var buf = alloc_slice[a](16, byte_of(0));
+                                            match udp_recv(uh, buf) {
+                                                Datagram::Got(k) => {
+                                                    if k == 4 && int_of(buf[0]) == 80 { status = 0; } else { status = 5; }
+                                                }
+                                                Datagram::Truncated(k) => { status = 6; }
+                                                Datagram::Again => { status = 7; }
+                                                Datagram::Failed(e) => { status = 8; }
+                                            }
+                                        }
+                                    }
+                                    Sent::Again => { status = 9; }
+                                    Sent::Failed(e) => { status = 10; }
+                                }
+                            }
+                            udp_close(sock);
+                        }
+                        UdpOpened::Failed(e) => { status = 3; }
+                    }
+                    match udp_attach(ticket) {
+                        UdpOpened::Failed(e) => { if e == 9 { refused = refused + 1; } }
+                        UdpOpened::Ok(x) => { udp_close(x); }
+                    }
+                    if status == 0 && refused != 9 { status = 20 + refused; }
+                } else {
+                    status = 4;
+                }
+            }
+            UdpOpened::Failed(e) => { status = 2; }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}

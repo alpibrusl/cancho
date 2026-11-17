@@ -4,7 +4,7 @@
 > *(read)* is from the source or a design document; *(measured)* was run on 2026-11-05 on macOS arm64 with the
 > compiler of `main` (c7435d6e). The rule behind it: new features are written in `examples/selfhost`, the Rust compiler is
 > being deprecated, so **no new Rust**, and a missing primitive stops the work with an issue instead of a fallback to Rust.
-> The Rust V1 (`crates/cancho-vcs`, `crates/cancho/src/vcs_*.rs`) and its pinned JSON (`crates/cancho/tests/vcs_pins/`)
+> The Rust V1 (`crates/cancho-vcs`, `crates/cancho/src/vcs_*.rs`) and its pinned JSON (`tests/vcs_fixtures/pins/`)
 > are the oracle. A Rust V2 (merge, `resolve`, `replay`, a gate that resolves modules outside the tree, deflate and delta
 > packs; branch `claude/vcs-v2-db1c7e`, PR #682, closed unmerged) exists only as a **reference for algorithms and
 > measurements**: its R3 numbers (82 historical merges, 700 random pairs, against `git merge-tree`) are the oracle for the
@@ -261,5 +261,5 @@ That is checked by the first routed command, `init`, and it is the one place thi
 
 **Order this suggests (replaces the order of section 5, items 2 to 5, for what is left; step (2) is designed in [`vcs-routing.md`](vcs-routing.md)).** (1) Answer #684 and #685 (and the `realpath` of item 4): they are the only thing that
 stops seven commands. (2) Route `log`, `show`, `status` (no-link trees), `branch` and `init` from `cli.cho` so the repository form exists as a command, with parity tests that run
-the pinned JSON of `crates/cancho/tests/vcs_pins/` against it. (3) The git bridge, which waits on no primitive. (4) `record` and the gate. (5) `switch`, `restore`, `revert`,
+the pinned JSON of `tests/vcs_fixtures/pins/` against it. (3) The git bridge, which waits on no primitive. (4) `record` and the gate. (5) `switch`, `restore`, `revert`,
 `apply` once #684 and #685 land. (6) The crash test, answering #687 by trapping. (7) Mark the Rust `vcs` deprecated.

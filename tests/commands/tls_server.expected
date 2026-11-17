@@ -1,0 +1,2 @@
+ok every lying client is refused with its own tag (190)
+ok the client's bytes in any split give the same connection (the honest connections, one byte a line)

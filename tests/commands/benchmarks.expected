@@ -1,0 +1,7 @@
+benchmark pairs run: 5
+ok every_benchmark_pair_agrees
+guard kernels run: 12
+ok every_guard_kernel_agrees_across_its_three_modes
+ok the_three_language_benchmarks_agree
+ok benchmark_game_programs_print_the_published_answer
+ok fasta_and_reverse_complement_print_the_published_answer

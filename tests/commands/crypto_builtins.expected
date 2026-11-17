@@ -1,0 +1,2 @@
+ok the hardware builtins agree with FIPS, NIST and the references
+ok a wrong length, counter or round count traps

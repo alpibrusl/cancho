@@ -1,0 +1,5 @@
+ok the shortest round-trip over a sample of the 2^32 patterns matches Rust's {:?}
+ok {:?} matches Rust
+ok {:.N} matches Rust, ties included
+ok parse matches Rust
+ok parse does not round twice

@@ -34,49 +34,18 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-mod benchmarks;
-mod binary32;
-
-mod compile_time;
 mod conn_peer;
-mod corpus;
-mod crypto_builtins;
-mod devices;
 
-mod duplication;
-mod f32_text;
-mod float_text;
-mod floats;
-mod formatting;
-mod global_state;
 mod http;
 mod http_fetch_nb;
-mod http_server;
-mod https_hello;
 mod json;
-mod mathfn;
-mod net;
 
-mod ports;
 mod selfhost;
-mod sha256_builtins;
-mod sockets;
+mod tls_support;
+// The TLS files moved to `tests/commands` (G4, wave 4); `http_fetch_nb` still names these three modules.
+use tls_support::{https_hello, tls_echo, tls_server};
 
-mod tls;
-mod tls_auth;
-mod tls_client_auth;
-mod tls_echo;
-mod tls_echo_fixed;
-mod tls_fuzz;
-mod tls_pool;
-mod tls_server;
-mod udp;
-mod vcs;
-mod vcs_remote;
-mod vcs_std;
-mod vcs_sync;
 mod wasm_target;
-mod wide_multiply;
 
 const BIN: &str = env!("CARGO_BIN_EXE_cancho");
 
@@ -124,286 +93,27 @@ fn make_removable(dir: &Path) {
     }
 }
 
-fn fixtures(kind: &str) -> Vec<PathBuf> {
-    let dir = repo_root().join("tests").join(kind);
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("cannot read `{}`: {e}", dir.display()))
-        .map(|entry| entry.expect("a readable directory entry").path())
-        .filter(|p| p.extension().is_some_and(|e| e == "cho"))
-        .collect();
-    paths.sort();
-    assert!(!paths.is_empty(), "no fixtures in `{}`", dir.display());
-    paths
+/// A catalogue the front end keeps (`tests/rules.golden`: the tag of every refusal rule; `tests/builtins.golden`: the name of every builtin), one a line, in
+/// the order the compiler lists them: recorded once from the Rust crates (`rules_and_builtins_are_the_goldens`, in `selfhost/parity.rs`, holds the two together
+/// until the crates go), so that the tests that need the list read a file and not a Rust crate (`docs/removing-rust.md` phase 1b). It was in `corpus.rs`.
+pub(crate) fn golden(name: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(repo_root().join(format!("tests/{name}.golden")))
+        .unwrap_or_else(|e| panic!("tests/{name}.golden is read: {e}"));
+    text.lines().map(str::to_owned).collect()
 }
 
-/// Read `cancho authority --output json` for one program.
-fn authority_json(source: &str, tag: &str) -> String {
-    let dir = scratch(tag);
-    let path = dir.join("program.cho");
-    std::fs::write(&path, source).expect("a writable fixture");
-    let out = Command::new(BIN)
-        .args([
-            "authority".as_ref(),
-            "--std".as_ref(),
-            "--output".as_ref(),
-            "json".as_ref(),
-            path.as_os_str(),
-        ])
-        .output()
-        .expect("the compiler runs");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
-    text
-}
-
-/// `authority_of`, over more than one file -- what a program that
-/// `import`s a fetched package needs, since `net.sockets`
-/// (`packages/net-sockets/`, `docs/package-system.md` §6) is not on the
-/// command line by itself.
-fn authority_of_paths(paths: &[PathBuf]) -> (Vec<String>, Vec<String>, Vec<String>) {
-    let mut command = Command::new(BIN);
-    command.arg("authority");
-    for path in paths {
-        command.arg(path);
-    }
-    command.args(["--std", "--output", "json"]);
-    let out = command.output().expect("the compiler runs");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let text = String::from_utf8(out.stdout).expect("the report is utf-8");
-
-    // A small reader rather than a JSON dependency: this crate has none,
-    // and the three fields below are flat arrays of strings and objects.
-    fn array(text: &str, key: &str) -> Vec<String> {
-        let Some(at) = text.find(&format!("\"{key}\"")) else { return Vec::new() };
-        let rest = &text[at..];
-        let Some(open) = rest.find('[') else { return Vec::new() };
-        let Some(close) = rest[open..].find(']') else { return Vec::new() };
-        let body = &rest[open + 1..open + close];
-        body.split(',')
-            .filter_map(|piece| {
-                let piece = piece.trim();
-                let start = piece.find('"')?;
-                let end = piece[start + 1..].find('"')? + start + 1;
-                Some(piece[start + 1..end].to_owned())
-            })
-            .collect()
-    }
-
-    // `labels` is objects, so read the pairs out of the same slice.
-    let mut labels = Vec::new();
-    if let Some(at) = text.find("\"labels\"") {
-        let rest = &text[at..];
-        if let (Some(open), Some(close)) = (rest.find('['), rest.find(']')) {
-            for row in rest[open + 1..close].split('}') {
-                let Some(name_at) = row.find("\"name\":") else { continue };
-                let name: String = row[name_at + 7..]
-                    .trim_start()
-                    .trim_start_matches('"')
-                    .chars()
-                    .take_while(|c| *c != '"')
-                    .collect();
-                let argument = row.find("\"argument\":").map(|a| {
-                    let tail = row[a + 11..].trim_start();
-                    if tail.starts_with("null") {
-                        String::new()
-                    } else {
-                        tail.trim_start_matches('"').chars().take_while(|c| *c != '"').collect()
-                    }
-                });
-                match argument.as_deref() {
-                    Some("") | None => labels.push(name),
-                    Some(value) => labels.push(format!("{name}={value}")),
-                }
-            }
-        }
-    }
-
-    (array(&text, "effects"), array(&text, "foreign_symbols"), labels)
-}
-
-fn build_example(tag: &str, relative: &str, binary: &str) -> (PathBuf, PathBuf) {
-    build_example_paths(tag, &[repo_root().join(relative)], binary)
-}
-
-/// `build_example`, over more than one file -- what a program that
-/// `import`s a fetched package needs.
-fn build_example_paths(tag: &str, paths: &[PathBuf], binary: &str) -> (PathBuf, PathBuf) {
-    let dir = scratch(tag);
-    let exe = dir.join(binary);
-    let mut command = Command::new(BIN);
-    command.arg("build");
-    for path in paths {
-        command.arg(path);
-    }
-    command.args(["--std".as_ref(), "-o".as_ref(), exe.as_os_str()]);
-    let build = command.output().expect("the compiler runs");
-    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
-    (dir, exe)
-}
-
-/// Fetch several locked dependencies fresh, one `vcs fetch` per
-/// `(lock, store)` pair, all into the *same* scratch directory, and hand
-/// back every distinct file written across all of them -- composed with
-/// no new tooling, the same way `examples/fetch/fetch.cho` composes two
-/// real packages (`net.sockets` and `net.connect`) at its own command
-/// line. Every test that builds or authority-checks a program that
-/// imports a fetched package calls this first, re-verifying every pin
-/// the same way `vcs resolve` always does rather than trusting a
-/// checked-in copy.
-///
-/// One shared directory, not one per pair: `vcs fetch` writes each file
-/// as `<source_hash>.cho`, so two pairs whose closures overlap (`net.
-/// connect` and `http.response` now both transitively require `net.
-/// sockets`, `docs/package-system.md` §6) write the *same* path twice
-/// with identical content rather than the same content at two different
-/// paths -- the latter is what `build`/`check` refuse as a duplicate
-/// declaration.
-fn fetch_net_dependencies(tag: &str, pairs: &[(&str, &str)]) -> Vec<PathBuf> {
-    let dir = scratch(&format!("{tag}-fetch"));
-    for (lock, store) in pairs {
-        let fetch = Command::new(BIN)
-            .args([
-                "vcs".as_ref(),
-                "fetch".as_ref(),
-                "--lock".as_ref(),
-                repo_root().join(lock).as_os_str(),
-                "--store".as_ref(),
-                repo_root().join(store).as_os_str(),
-                "-o".as_ref(),
-                dir.as_os_str(),
-            ])
-            .output()
-            .expect("the compiler runs");
-        assert!(fetch.status.success(), "{}", String::from_utf8_lossy(&fetch.stderr));
-    }
-    let mut files = Vec::new();
-    for entry in std::fs::read_dir(&dir).expect("fetch wrote its output directory") {
+/// Every `.cho` file under `dir`, recursively, skipping `.cancho-vcs` -- content-addressed package-store blobs, copies by design. It was in `duplication.rs`.
+pub(crate) fn walk_ls_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries {
         let path = entry.expect("a readable directory entry").path();
-        if path.extension().is_some_and(|e| e == "cho") {
-            files.push(path);
+        if path.is_dir() {
+            if path.file_name().and_then(|n| n.to_str()) == Some(".cancho-vcs") {
+                continue;
+            }
+            walk_ls_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "cho") {
+            out.push(path);
         }
     }
-    files
-}
-
-/// `net.sockets` (`packages/net-sockets/`), this repository's first real
-/// `cancho-vcs` package (`docs/package-system.md` §6), fetched fresh
-/// and handed back as the one file `vcs fetch` wrote. Every test that
-/// builds or authority-checks `examples/serve/serve.cho` or
-/// `examples/results_stub/results_stub.cho` -- both of which `import
-/// net.sockets` rather than duplicating its declarations -- calls this.
-fn fetch_net_sockets(tag: &str, lock_relative: &str) -> PathBuf {
-    let mut files =
-        fetch_net_dependencies(tag, &[(lock_relative, "packages/net-sockets/.cancho-vcs")]);
-    assert_eq!(files.len(), 1, "`net.sockets` should fetch to exactly one file, found {files:?}");
-    files.remove(0)
-}
-
-fn build_serve(tag: &str) -> (PathBuf, PathBuf) {
-    let fetched = fetch_net_sockets(&format!("{tag}-fetch"), "examples/serve/net.lock");
-    build_example_paths(tag, &[repo_root().join("examples/serve/serve.cho"), fetched], "serve")
-}
-
-fn authority_of_serve(tag: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
-    let fetched = fetch_net_sockets(&format!("{tag}-fetch"), "examples/serve/net.lock");
-    authority_of_paths(&[repo_root().join("examples/serve/serve.cho"), fetched])
-}
-
-/// `examples/fetch/fetch.cho`: `net.connect` (extended with
-/// `octets_of`/`port_of`/`connect_to`) and `http.response`
-/// (`send_all`/`status_of`, the fifth real package and the
-/// client-side mirror of `http.request`, `docs/package-system.md` §6)
-/// -- both now transitively require `net.sockets` too, so no separate
-/// `net.sockets` lock is needed, the same reason `build_collect` below
-/// dropped its own.
-fn fetch_dependencies(tag: &str) -> Vec<PathBuf> {
-    fetch_net_dependencies(
-        tag,
-        &[
-            ("examples/fetch/connect.lock", "packages/net-connect/.cancho-vcs"),
-            ("examples/fetch/response.lock", "packages/http-response/.cancho-vcs"),
-        ],
-    )
-}
-
-fn build_fetch(tag: &str) -> (PathBuf, PathBuf) {
-    let mut paths = vec![repo_root().join("examples/fetch/fetch.cho")];
-    paths.extend(fetch_dependencies(&format!("{tag}-fetch")));
-    build_example_paths(tag, &paths, "fetch")
-}
-
-fn authority_of_fetch(tag: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
-    let mut paths = vec![repo_root().join("examples/fetch/fetch.cho")];
-    paths.extend(fetch_dependencies(&format!("{tag}-fetch")));
-    authority_of_paths(&paths)
-}
-
-/// `examples/report/report.cho`: outbound, the same shape as `fetch.cho`
-/// (`net.connect` and `http.response`).
-fn fetch_report_dependencies(tag: &str) -> Vec<PathBuf> {
-    fetch_net_dependencies(
-        tag,
-        &[
-            ("examples/report/connect.lock", "packages/net-connect/.cancho-vcs"),
-            ("examples/report/response.lock", "packages/http-response/.cancho-vcs"),
-        ],
-    )
-}
-
-fn build_report(tag: &str) -> (PathBuf, PathBuf) {
-    let mut paths = vec![repo_root().join("examples/report/report.cho")];
-    paths.extend(fetch_report_dependencies(&format!("{tag}-fetch")));
-    build_example_paths(tag, &paths, "report")
-}
-
-/// `examples/collect/collect.cho`: `http.request` (`packages/http-request/
-/// request.cho`, `docs/package-system.md` §4.6), the fourth real package
-/// and the first that itself depends on a package. One fetch is enough:
-/// a store is always exactly one file (`vcs publish` takes one input),
-/// so fetching any of `http.request`'s own declarations transitively
-/// writes the *whole* `net.sockets` file too -- every direct
-/// `sockets.*` call `collect.cho` still makes resolves from the same
-/// fetched file, with no separate `net.sockets` lock needed.
-fn build_collect(tag: &str) -> (PathBuf, PathBuf) {
-    let fetched = fetch_net_dependencies(
-        &format!("{tag}-fetch"),
-        &[("examples/collect/request.lock", "packages/http-request/.cancho-vcs")],
-    );
-    let mut paths = vec![repo_root().join("examples/collect/collect.cho")];
-    paths.extend(fetched);
-    build_example_paths(tag, &paths, "collect")
-}
-
-/// `examples/agent_guest/agent_guest.cho`: outbound, `net.connect` and
-/// `http.response` the same shape as `fetch.cho`/`report.cho`, plus
-/// `agent.wire` for the same decoder `vsock.cho`'s own header once
-/// copied by hand.
-fn fetch_agent_guest_dependencies(tag: &str) -> Vec<PathBuf> {
-    fetch_net_dependencies(
-        tag,
-        &[
-            ("examples/agent_guest/connect.lock", "packages/net-connect/.cancho-vcs"),
-            ("examples/agent_guest/response.lock", "packages/http-response/.cancho-vcs"),
-            ("examples/agent_guest/wire.lock", "packages/agent-wire/.cancho-vcs"),
-        ],
-    )
-}
-
-fn build_agent_guest(tag: &str) -> (PathBuf, PathBuf) {
-    let mut paths = vec![repo_root().join("examples/agent_guest/agent_guest.cho")];
-    paths.extend(fetch_agent_guest_dependencies(&format!("{tag}-fetch")));
-    build_example_paths(tag, &paths, "agent_guest")
-}
-
-/// `examples/agent_supervisor/agent_supervisor.cho`: `http.request`, the
-/// same one-fetch shape `build_collect` uses and for the same reason.
-fn build_agent_supervisor(tag: &str) -> (PathBuf, PathBuf) {
-    let fetched = fetch_net_dependencies(
-        &format!("{tag}-fetch"),
-        &[("examples/agent_supervisor/request.lock", "packages/http-request/.cancho-vcs")],
-    );
-    let mut paths = vec![repo_root().join("examples/agent_supervisor/agent_supervisor.cho")];
-    paths.extend(fetched);
-    build_example_paths(tag, &paths, "agent_supervisor")
 }

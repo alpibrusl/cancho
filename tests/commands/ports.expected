@@ -1,0 +1,8 @@
+ok base64_agrees_with_coreutils
+ok sort_agrees_with_gnu_sort
+ok cut_agrees_with_gnu_cut
+ok cut_reports_a_bad_field_list_like_gnu_cut
+ok both_ports_match_gnu_on_every_spelling
+ok sort_names_the_file_it_cannot_read
+ok base64_reports_invalid_input_like_gnu_base64
+ok cut_reports_a_long_line_like_gnu_cut

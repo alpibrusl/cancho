@@ -9,7 +9,7 @@
 >
 > **The compiler in cancho writes the camera verbs too** (`examples/selfhost/runtime/camera.c`, built into `camera_linux.ll` and
 > `camera_darwin.ll` by `runtime/make.sh`; builtins 141-144 in `codes.cho`, `netcode.cho`): the same walk, as C over byte offsets.
-> Microphone and speaker are still the Rust compiler's (#665).
+> Microphone and speaker are **retired** with the Rust compiler (decision 2026-11-17, #665): the compiler in cancho will not write them, and `Capture` and `Playback` leave the language when the Rust compiler is deleted.
 
 ## 1. The handle is a pointer to a state block
 
@@ -126,7 +126,4 @@ run time (no handle exists) but must still be emitted, so they may emit the same
 
 ## 12. What the conformance suite holds both backends to
 
-`crates/cancho/tests/conformance/devices.rs`: a missing node is `Failed`; `/dev/null` opens and the first configure
-answers `ENOTTY`; a non-positive size or rate is `EINVAL` before the device is touched (so `/dev/null` does **not**
-answer `ENOTTY`); a path outside the bound traps; and, with `CANCHO_DEVICE_HW=1` and `/dev/video0` present, a 320x240
-camera delivers 76,800 bytes.
+The Rust conformance file `devices.rs` (four tests: a missing node, a node that is not a device, a size or rate with no meaning, a path outside the bound) is deleted, not moved (2026-11-17): it exercised the verbs that are retired. The camera is checked by its own scripts in `tests/commands/`.

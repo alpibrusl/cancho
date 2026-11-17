@@ -1,0 +1,11 @@
+ok the driver builds
+ok every recorded handshake replays byte for byte (14)
+ok every lying server is refused with its own tag (84)
+ok the same bytes in any split give the same connection (one byte a line, and the flight in one line)
+ok a certificate from another CA is refused
+ok every ServerHello rule is refused with its own tag (26), and a bit flipped in the encrypted flight is a bad record MAC
+ok RFC 8448's server flight opens under AES-128-GCM and is refused with a bit flipped (3 questions)
+ok the TLS 1.2 PRF matches OpenSSL's (40 rows)
+ok 64 connections on one thread, fed one byte and in bulk, each answered from a recorded stream; and the same server cut short, every connection fails tls-peer-closed (3 rounds)
+ok a record opens into the received data and leaves no plaintext (18 checks)
+ok the engine offers a ticket only where the rules allow (20 cases)
