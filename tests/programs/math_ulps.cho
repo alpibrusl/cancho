@@ -29,7 +29,7 @@ fn key(bits: int) -> [] int {
 }
 
 fn nan_bits(bits: int) -> [] bool {
-    return (bits >> 52 & 2047) == 2047 && (bits & 4503599627370495) != 0;
+    return bits >> 52 & 2047 == 2047 && bits & 4503599627370495 != 0;
 }
 
 fn far() -> [] int {

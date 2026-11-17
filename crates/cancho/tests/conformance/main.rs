@@ -42,8 +42,6 @@ mod corpus;
 mod devices;
 
 mod duplication;
-mod f32_text;
-mod float_text;
 mod formatting;
 mod global_state;
 mod http;

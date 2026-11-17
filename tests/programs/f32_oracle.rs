@@ -1,6 +1,6 @@
 // `docs/f32.md` §5.3's oracle: what Rust's own formatting and parsing say about
-// an `f32`, for `conformance/f32_text.rs` to hold `std.fmt32` against byte for
-// byte. Compiled with `rustc -O` by the test that needs it; it reads stdin and
+// an `f32`, for `tests/commands/f32_text.sh` to hold `std.fmt32` against byte for
+// byte (its answers are recorded in `tests/vectors/f32_text_*`, since G4 wave 4 no test compiles it: it regenerates them). Compiled with `rustc -O`; it reads stdin and
 // writes stdout, and has no dependency.
 //
 //     f32_oracle debug               one `{:?}` per line, from decimal bit patterns

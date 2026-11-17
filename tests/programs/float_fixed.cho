@@ -2,7 +2,7 @@
 //
 // Reads one JSON array of integers on standard input, in pairs: the 64 bits of a double as a signed `int`, then the number of
 // decimals. Prints for each pair one line: `float_fixed_into` of `float_of_bits(bits)` with that precision, or `short` when the
-// 1500-byte buffer refused it. `float_text.rs` and `scripts/float_differential.py` write the array and compare every line with
+// 1500-byte buffer refused it. `tests/commands/float_text.sh` and `scripts/float_differential.py` write the array and compare every line with
 // Rust's `{:.*}` and with Python's `%.*f`.
 edition 7;
 
