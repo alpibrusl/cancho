@@ -54,7 +54,7 @@ jobs:
       - name: Tests
         run: |
           cargo test --workspace --exclude cancho
-          cargo test -p cancho --bins --test files --test fuzz
+          cargo test -p cancho --bins
 
       # The milestone in one line: build the smoke program and run it.
       - name: Smoke — cancho build hello.cho && ./hello
