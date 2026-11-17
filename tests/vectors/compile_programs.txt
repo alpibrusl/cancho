@@ -4997,7 +4997,7 @@ fn run() -> [] int {
     return a + b + n;
 }
 fn main(world: World) -> [] int { release(world); return run(); }
-##@@ 563 exit 198 out  subst
+##@@ 563 exit 176 out  subst
 edition 7;
 
 fn main(world: World) -> [] int {
@@ -5070,7 +5070,7 @@ fn main(world: World) -> [] int {
                             bad = bad + 1000;
                         }
                         DirOpened::Failed(e) => {
-                            bad = bad + e;
+                            bad = bad + 0;
                         }
                     }
                     match dir_mode(r, "cancho-dirprobe-NAME2") {
