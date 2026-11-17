@@ -8,7 +8,7 @@
 //! lexer and the parser by the differential tests of this module. This is what they cannot see: a name nobody wrote
 //! code for.
 
-use crate::corpus::golden;
+use crate::golden;
 use std::collections::BTreeSet;
 use std::path::Path;
 

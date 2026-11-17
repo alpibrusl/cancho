@@ -284,7 +284,7 @@ fn sources() -> Vec<(String, String)> {
     let root = repo_root();
     let mut files = Vec::new();
     for dir in ["std", "examples", "packages", "tests/accept", "tests/reject", "tests/programs"] {
-        super::duplication::walk_ls_files(&root.join(dir), &mut files);
+        super::walk_ls_files(&root.join(dir), &mut files);
     }
     files.sort();
     let mut out = Vec::new();

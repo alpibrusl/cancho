@@ -1,11 +1,11 @@
 # vcs_repo.sh -- the script of tests/commands/script_tests.cho for slice R1 of docs/vcs-routing.md: `cancho vcs init`, `log` and `show` of the command line in cancho against what the Rust command printed:
-# the pins of crates/cancho/tests/vcs_pins/ and the goldens of tests/vcs_fixtures/golden/, on copies of the repository of tests/vcs_fixtures/three_changes (made by tests/vcs_fixtures/make.sh).
+# the pins of tests/vcs_fixtures/pins/ and the goldens of tests/vcs_fixtures/golden/, on copies of the repository of tests/vcs_fixtures/three_changes (made by tests/vcs_fixtures/make.sh).
 # $1 is the compiler, $2 a scratch directory; run from the root of the repository. Standard output is compared byte for byte (the root, which differs by machine, made `<root>`).
 cancho=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 root=$(pwd)
 work=$2
 fx=$root/tests/vcs_fixtures
-pins=$root/crates/cancho/tests/vcs_pins
+pins=$root/tests/vcs_fixtures/pins
 gold=$fx/golden
 
 norm() { sed 's#"root": "[^"]*"#"root": "<root>"#'; }

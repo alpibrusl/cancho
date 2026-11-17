@@ -1,0 +1,10 @@
+ok every_tracked_program_formats_and_is_formatted
+damaged programs formatted: 483
+ok formatting_never_panics_on_a_damaged_program
+ok already_formatted_files_are_a_fixed_point_of_the_command
+ok check_reports_and_writes_nothing_and_fmt_rewrites
+ok a_directory_is_walked_and_hidden_directories_are_not
+ok a_file_it_cannot_format_is_left_untouched_and_the_rest_are_still_done
+GAP: fmt reports where a file does not parse: the Rust compiler says bad.cho:LINE:COLUMN: error: and the sentence, the compiler in cancho says `ERR type-mismatch 6 7` (the rule, and two offsets)
+ok a_file_that_does_not_parse_is_reported_with_its_position
+ok printing_a_comment_free_program_and_formatting_it_agree

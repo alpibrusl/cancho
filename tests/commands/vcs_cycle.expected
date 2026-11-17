@@ -1,0 +1,8 @@
+ok the_whole_cycle_is_pinned
+GAP: ref-moved says where the winner left the ref: the Rust compiler also says the ref, the head it is at and the one expected, the compiler in cancho says the tag and a sentence only
+ok every_refusal_has_its_tag
+ok an_anchored_edit_applies_once_or_not_at_all
+ok a_binary_file_is_a_snapshot_and_a_symlink_is_a_link
+ok two_writers_racing_one_ref_have_one_winner
+ok a_directory_that_is_not_git_is_refused_with_its_tag
+ok the_old_publish_log_is_still_the_log_when_no_repository_is_near
