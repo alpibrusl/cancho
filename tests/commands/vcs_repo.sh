@@ -615,3 +615,48 @@ fresh; cp "$gg/plain_known.gitmap" "$work/w/.cancho/vcs/gitmap"; iw plain.git --
 store_list "$work/w" > "$work/store.txt"; same "a gitmap whose changes are not in the store is not believed: the store" "$gi/known.store" "$work/store.txt"
 rm -rf "$work/fresh"; mkdir -p "$work/fresh"; ( cd "$work/fresh" && "$cancho" vcs import-git ../g/plain.git --no-checkout --output json > "$work/out.json" 2> "$work/err.txt" )
 [ -e "$work/fresh/.cancho/vcs/format" ] && echo "ok an import makes the repository when there is none" || echo "FAILS an import made no repository"
+
+echo "== export-git"
+ge=$fx/golden_export
+gitdir=$work/g
+. "$fx/export_scenarios.sh"
+git_list() { ( cd "$1" && find . | sort | while read -r f; do if [ -d "$f" ]; then echo "$f/"; else echo "$f $(cksum < "$f" | tr ' ' ':')"; fi; done ); }
+ex() { ( cd "$work" && "$cancho" vcs export-git x.git --repo r --output json "$@" > "$work/out.json" 2> "$work/err.txt"; echo $? > "$work/code.txt" ); }
+here_r() { rm -rf "$work/r" "$work/x.git"; mkdir "$work/r"; }
+# The Rust command walks a hash map to list the commits that do not come back as they were, so two or more of them are in no fixed order: those documents are compared line by line, sorted.
+doc_is() { # NAME GOLDEN
+    if [ "$(grep -c '"original"' "$2")" -gt 1 ]; then
+        if [ "$(sort "$2")" = "$(sort "$work/out.json")" ]; then echo "ok $1: the document (as a set of lines)"; else echo "FAILS $1: the document"; fi
+    else
+        same "$1: the document" "$2" "$work/out.json"
+    fi
+}
+for f in "$ge"/*.git; do
+    n=$(basename "$f" .git)
+    case $n in made|mixed|empty|headonly) continue ;; esac
+    here_r; ( cd "$work/r" && "$cancho" vcs init > /dev/null ); ( cd "$work/g" && "$cancho" vcs import-git "$n.git" --no-checkout --repo "$work/r" --output json > /dev/null 2>&1 )
+    [ "$n" = odd ] && rm -f "$work"/r/.cancho/vcs/refs/heads/octopus*
+    ex; doc_is "export $n" "$ge/$n.json"; exit_is "export $n" "$(cat "$ge/$n.code")"
+    git_list "$work/x.git" > "$work/gitlist.txt"; same "export $n: the git directory, file for file" "$ge/$n.git" "$work/gitlist.txt"
+done
+for s in made mixed empty headonly; do
+    here_r; ( cd "$work/r" && "scn_$s" )
+    ex; doc_is "export $s" "$ge/$s.json"; exit_is "export $s" "$(cat "$ge/$s.code")"
+    git_list "$work/x.git" > "$work/gitlist.txt"; same "export $s: the git directory, file for file" "$ge/$s.git" "$work/gitlist.txt"
+done
+here_r; ( cd "$work/r" && scn_made ); ex --dry-run; same "export --dry-run: the document" "$ge/dry_made.json" "$work/out.json"; exit_is "export --dry-run" 0
+[ ! -e "$work/x.git" ] && echo "ok a dry run writes no directory" || echo "FAILS a dry run made a directory"
+here_r; ( cd "$work/r" && "$cancho" vcs init > /dev/null ); ( cd "$work/g" && "$cancho" vcs import-git plain.git --no-checkout --repo "$work/r" --output json > /dev/null 2>&1 )
+ex --dry-run; doc_is "export --dry-run of an import" "$ge/dry_plain.json"
+here_r; ( cd "$work/r" && "$cancho" vcs init > /dev/null ); ( cd "$work/g" && "$cancho" vcs import-git plain.git --no-checkout --repo "$work/r" --output json > /dev/null 2>&1 )
+ex; ex; if grep -q '"objects_written": 0,' "$work/out.json"; then echo "ok an export again writes no object"; else echo "FAILS an export again wrote objects"; fi
+here_r; ( cd "$work/r" && "$cancho" vcs init > /dev/null ); ( cd "$work/r" && "$cancho" vcs export-git --output json > "$work/out.json" 2> /dev/null; echo $? > "$work/code.txt" ); same "export with no directory: the document" "$ge/refuse_no_dir.json" "$work/out.json"; exit_is "export with no directory" "$(cat "$ge/refuse_no_dir.code")"
+( cd "$work/r" && "$cancho" vcs export-git a b --output json > "$work/out.json" 2> /dev/null; echo $? > "$work/code.txt" ); same "export with two directories: the document" "$ge/refuse_two_dirs.json" "$work/out.json"; exit_is "export with two directories" "$(cat "$ge/refuse_two_dirs.code")"
+rm -rf "$work/nr"; mkdir -p "$work/nr"; ( cd "$work/nr" && "$cancho" vcs export-git x.git --output json > "$work/out.json" 2> /dev/null; echo $? > "$work/code.txt" ); same "export outside a repository: the document" "$ge/refuse_no_repository.json" "$work/out.json"; exit_is "export outside a repository" "$(cat "$ge/refuse_no_repository.code")"
+# Refusals whose Rust message carries what only the Rust store knows (the id of a change, the OS's words) are compared by their rule tag and exit status.
+: > "$work/afile"; ( cd "$work/r" && "$cancho" vcs export-git ../afile/sub.git --output json > "$work/out.json" 2> /dev/null; echo $? > "$work/code.txt" )
+[ "$(grep '"tag"' "$work/out.json")" = "$(grep '"tag"' "$ge/refuse_unwritable.json")" ] && echo "ok export into a directory that cannot be made: the tag" || echo "FAILS export into a directory that cannot be made: the tag"; exit_is "export into a directory that cannot be made" "$(cat "$ge/refuse_unwritable.code")"
+here_r; ( cd "$work/r" && scn_made ); c=$(cat "$work/r/.cancho/vcs/refs/heads/main"); rm -f "$work/r/.cancho/vcs/objects/change/$(echo "$c" | cut -c1-2)/$(echo "$c" | cut -c3-)"
+ex; [ "$(grep '"tag"' "$work/out.json")" = "$(grep '"tag"' "$ge/refuse_missing_change.json")" ] && echo "ok export with a change missing from the store: the tag" || echo "FAILS export with a change missing from the store: the tag"; exit_is "export with a change missing from the store" "$(cat "$ge/refuse_missing_change.code")"
+here_r; ( cd "$work/r" && "$cancho" vcs init > /dev/null ); ( cd "$work/g" && "$cancho" vcs import-git odd.git --no-checkout --repo "$work/r" --output json > /dev/null 2>&1 )
+ex; [ "$(grep '"tag"' "$work/out.json")" = "$(grep '"tag"' "$ge/refuse_octopus.json")" ] && echo "ok export with a change of three parents: the tag" || echo "FAILS export with a change of three parents: the tag"; exit_is "export with a change of three parents" "$(cat "$ge/refuse_octopus.code")"

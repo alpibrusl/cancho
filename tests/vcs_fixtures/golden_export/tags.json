@@ -1,0 +1,28 @@
+{
+  "command": "export-git",
+  "commits": 5,
+  "compared_with_import": 5,
+  "dry_run": false,
+  "equal": 5,
+  "mismatches": [],
+  "objects_written": 18,
+  "ok": true,
+  "refs": [
+    {
+      "git": "771f9bc4d553380f6bd00b8fd3a11a8761d1ba90",
+      "name": "refs/tags/light"
+    },
+    {
+      "git": "9d04ce8789a6d3e89fdbcc6e60ff732087387415",
+      "name": "refs/tags/orphan_tag"
+    },
+    {
+      "git": "9d04ce8789a6d3e89fdbcc6e60ff732087387415",
+      "name": "refs/tags/tag_of_tag"
+    },
+    {
+      "git": "9333ce4189c9b9071bda73bc4a4cd9f9d3d9c424",
+      "name": "refs/tags/v1"
+    }
+  ]
+}

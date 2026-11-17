@@ -1,0 +1,8 @@
+{
+  "command": "export-git",
+  "ok": false,
+  "refused": {
+    "message": "no `.cancho/vcs` at or above `.`",
+    "tag": "not-a-repository"
+  }
+}

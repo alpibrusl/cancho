@@ -20,6 +20,7 @@ import std.bytes;
 import std.io as console;
 import selfhost.lexcore as lc;
 import selfhost.clibase;
+import selfhost.clivcsgit;
 import selfhost.clivcsout;
 import selfhost.clivcsopts as opts;
 import selfhost.cliproject;
@@ -29,8 +30,6 @@ import selfhost.vcsrepo;
 import selfhost.vcsapply;
 import selfhost.vcsblame;
 import selfhost.vcsdiffdoc;
-import selfhost.vcsgit;
-import selfhost.vcsgitput;
 import selfhost.vcsrecord;
 import selfhost.vcsrestore;
 import selfhost.vcsrevert;
@@ -772,18 +771,6 @@ fn named[&a, &k](args: &a Args, key: &k [byte]) -> [args] (int, int) {
     return (at, off);
 }
 
-// Whether the flag `key` is among the words after the command.
-fn flagged[&a, &k](args: &a Args, key: &k [byte]) -> [args] bool {
-    var n = 3;
-    while n < arg_count(args) {
-        if bytes.equal(arg(args, n), key) {
-            return true;
-        }
-        n = n + 1;
-    }
-    return false;
-}
-
 // The `gate-failed` refusal: `detail` is the path, a NUL, the rule's tag, a NUL, its sentence.
 fn gate_refusal[&h, &d](heap: &!h Heap, detail: &d [byte]) -> [heap] buffer.Buffer {
     let first = bytes.find(detail, "\0");
@@ -857,7 +844,7 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
         }
         n = n + 1;
     }
-    let all = flagged(args, "--all");
+    let all = clivcsout.flagged(args, "--all");
     if code == 0 && count == 0 && !all {
         code = clivcsout.refused(heap, io, "record", "name the paths to record, or pass --all", "nothing-selected");
     }
@@ -909,7 +896,7 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
     if options.expect_at >= 0 {
         expect = buffer.append(heap, expect, opts.value_of(args, options.expect_at, options.expect_off));
     }
-    let no_gate = flagged(args, "--no-gate");
+    let no_gate = clivcsout.flagged(args, "--no-gate");
     let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
     borrow mut scratch as &!s in {
         borrow selected as &sb in {
@@ -1030,7 +1017,7 @@ fn revert_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Ar
     if options.expect_at >= 0 {
         expect = buffer.append(heap, expect, opts.value_of(args, options.expect_at, options.expect_off));
     }
-    let no_gate = flagged(args, "--no-gate");
+    let no_gate = clivcsout.flagged(args, "--no-gate");
     var code = 0;
     let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
     borrow mut scratch as &!s in {
@@ -1623,99 +1610,6 @@ fn branch_in[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs:
     return code;
 }
 
-// `import-git DIR` is refused before the repository is looked for, as the Rust command does: not one directory given, or not a git repository.
-fn import_precheck[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), cwd: &c [byte], options: opts.Options) -> [heap, io_write, args, fs_read(""), dir_read, file_read] int {
-    if options.positionals != 1 {
-        return clivcsout.refused(heap, io, "import-git", "`import-git` takes a git repository directory", "bad-argument");
-    }
-    let given = arg(args, options.rev_at);
-    let target = clivcsout.absolute(heap, cwd, given);
-    var code = 0;
-    match open_dir(fs, "/") {
-        DirOpened::Ok(r0) => {
-            var root = r0;
-            borrow root as &rd in {
-                borrow target as &tb in {
-                    let gitdir = vcsgit.git_dir_of(heap, rd, buffer.bytes(tb));
-                    var found = false;
-                    borrow gitdir as &gb in {
-                        found = len(buffer.bytes(gb)) > 0;
-                    }
-                    buffer.drop(heap, gitdir);
-                    if !found {
-                        var message = buffer.append(heap, buffer.empty(heap, 64), "`");
-                        message = buffer.append(heap, message, given);
-                        message = buffer.append(heap, message, "` is not a git repository");
-                        borrow message as &mb in {
-                            code = clivcsout.refused(heap, io, "import-git", buffer.bytes(mb), "git-unreadable");
-                        }
-                        buffer.drop(heap, message);
-                    }
-                }
-            }
-            dir_close(root);
-        }
-        DirOpened::Failed(e) => {
-            code = clivcsout.answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
-        }
-    }
-    buffer.drop(heap, target);
-    return code;
-}
-
-// `import-git DIR --dry-run` in the repository whose store is `vcs` (`vcsgit.import_command`).
-fn import_in[&h, &i, &a, &f, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), vcs: &d Dir, cwd: &c [byte], options: opts.Options) -> [heap, io_write, args, fs_read(""), dir_read, file_read] int {
-    let target = clivcsout.absolute(heap, cwd, arg(args, options.rev_at));
-    var code = 0;
-    match open_dir(fs, "/") {
-        DirOpened::Ok(r0) => {
-            var root = r0;
-            borrow root as &rd in {
-                borrow target as &tb in {
-                    let gitdir = vcsgit.git_dir_of(heap, rd, buffer.bytes(tb));
-                    borrow gitdir as &gb in {
-                        code = clivcsout.answered(heap, io, "import-git", vcsgit.import_command(heap, rd, vcs, buffer.bytes(gb)), "");
-                    }
-                    buffer.drop(heap, gitdir);
-                }
-            }
-            dir_close(root);
-        }
-        DirOpened::Failed(e) => {
-            code = clivcsout.answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
-        }
-    }
-    buffer.drop(heap, target);
-    return code;
-}
-
-// `import-git DIR` without `--dry-run`: the git repository `DIR` imported into the repository whose working copy is `work` and whose store is `vcs`.
-fn import_write_in[&h, &i, &a, &f, &w, &d, &c, &k](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), work: &w Dir, vcs: &d Dir, cwd: &c [byte], options: opts.Options, clock: &k Clock) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, dir_symlink, file_read, file_write, clock] int {
-    let target = clivcsout.absolute(heap, cwd, arg(args, options.rev_at));
-    let now = clock_unix_ms(clock) / 1000;
-    var code = 0;
-    match open_dir(fs, "/") {
-        DirOpened::Ok(r0) => {
-            var top = r0;
-            borrow top as &td in {
-                borrow target as &tb in {
-                    let gitdir = vcsgit.git_dir_of(heap, td, buffer.bytes(tb));
-                    borrow gitdir as &gb in {
-                        code = clivcsout.answered(heap, io, "import-git", vcsgitput.import_write(heap, td, work, vcs, buffer.bytes(gb), flagged(args, "--no-checkout"), now), "");
-                    }
-                    buffer.drop(heap, gitdir);
-                }
-            }
-            dir_close(top);
-        }
-        DirOpened::Failed(e) => {
-            code = clivcsout.answered(heap, io, "import-git", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: e }, "");
-        }
-    }
-    buffer.drop(heap, target);
-    return code;
-}
-
 // A repository is made where `import-git` is run when there is none at or above `--repo` (or `.`), as the Rust command does unless `--dry-run`. The exit status, 0 when nothing is wrong.
 fn import_prepare[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), cwd: &c [byte], options: opts.Options) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, file_read, file_write] int {
     var start = buffer.empty(heap, 0);
@@ -1763,7 +1657,7 @@ pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args,
     if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") || bytes.equal(sub, "apply") || bytes.equal(sub, "record") || bytes.equal(sub, "revert") || bytes.equal(sub, "diff") || bytes.equal(sub, "blame") || bytes.equal(sub, "verify") || bytes.equal(sub, "unlock") {
         return true;
     }
-    if bytes.equal(sub, "import-git") {
+    if bytes.equal(sub, "import-git") || bytes.equal(sub, "export-git") {
         return true;
     }
     if !bytes.equal(sub, "log") {
@@ -1836,6 +1730,9 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
     } else if bytes.equal(verb, "import-git") {
         which = 14;
         name = "import-git";
+    } else if bytes.equal(verb, "export-git") {
+        which = 15;
+        name = "export-git";
     }
     let options = opts.options_of(heap, io, args, which);
     if options.bad != 0 {
@@ -1845,7 +1742,7 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
     if which == 14 {
         var pre = 0;
         borrow cwd as &c0 in {
-            pre = import_precheck(heap, io, args, fs, buffer.bytes(c0), options);
+            pre = clivcsgit.import_precheck(heap, io, args, fs, buffer.bytes(c0), options);
         }
         if pre != 0 {
             buffer.drop(heap, cwd);
@@ -1898,11 +1795,13 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                                 code = record_in(heap, io, args, rd, vd, buffer.bytes(pb), buffer.bytes(cb), options, clock);
                                             } else if which == 10 {
                                                 code = revert_in(heap, io, args, rd, vd, buffer.bytes(pb), options, clock);
+                                            } else if which == 15 {
+                                                code = clivcsgit.export_in(heap, io, args, fs, vd, buffer.bytes(cb), options);
                                             } else if which == 14 {
                                                 if options.dry {
-                                                    code = import_in(heap, io, args, fs, vd, buffer.bytes(cb), options);
+                                                    code = clivcsgit.import_in(heap, io, args, fs, vd, buffer.bytes(cb), options);
                                                 } else {
-                                                    code = import_write_in(heap, io, args, fs, rd, vd, buffer.bytes(cb), options, clock);
+                                                    code = clivcsgit.import_write_in(heap, io, args, fs, rd, vd, buffer.bytes(cb), options, clock);
                                                 }
                                             } else if which == 13 {
                                                 code = verify_in(heap, io, vd, buffer.bytes(pb), clock);
