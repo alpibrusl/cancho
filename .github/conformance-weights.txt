@@ -84,8 +84,6 @@ benchmarks::the_three_language_benchmarks_agree 31
 benchmarks::every_benchmark_pair_agrees 28
 benchmarks::benchmark_game_programs_print_the_published_answer 15
 benchmarks::fasta_and_reverse_complement_print_the_published_answer 11
-udp 129
-sockets 115
 binary32 98
 tls 81
 json 79
@@ -93,9 +91,7 @@ tls_fuzz 65
 formatting 63
 f32_text 60
 http 53
-net 50
 conn_peer 44
-http_server 39
 float_text 37
 tls_echo 36
 http_fetch_nb 30
@@ -105,7 +101,6 @@ tls_auth 23
 tls_echo_fixed 21
 tls_client_auth 19
 tls_server 19
-ports 16
 compile_time 16
 tls_pool 14
 vcs_std 14
