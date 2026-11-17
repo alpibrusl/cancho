@@ -354,3 +354,50 @@ pub fn test_the_subject_is_the_first_line[&h](heap: &!h Heap) -> [heap] int {
     }
     return 0;
 }
+
+// The two changes the Rust `import-git` wrote for fixtures (`tests/vcs_fixtures/git/headers.git`, commit "first", and `odd.git`, whose commit message is
+// not UTF-8), whose names are their ids: the `git` member as text, and as `{"hex": ...}`.
+fn imported_text() -> [] &static [byte] {
+    return "{\"tree\":\"9d6a618bb7ea27d356b7c7b11ced69fc46c54f53b3dd0558a9f1fce79c8aa5a4\",\"parents\":[],\"author\":\"Ada <ada@example.com>\",\"time\":1700000060,\"tz\":\"+0000\",\"intent\":{\"prompt\":\"first\"},\"git\":{\"headers\":\"author Ada <ada@example.com> 1700000060 +0000\\ncommitter Ada <ada@example.com> 1700000060 +0000\\n\",\"message\":\"first\\n\"}}";
+}
+
+fn imported_hex_text() -> [] &static [byte] {
+    return "{\"tree\":\"c5cbc2b9b6cc075a7799d3034b81e3250c8451de92182466b1cf881bc36b280d\",\"parents\":[],\"author\":\"Ada <ada@example.com>\",\"time\":1700009000,\"tz\":\"+0000\",\"intent\":{\"prompt\":\"caf� not utf-8\"},\"git\":{\"headers\":\"author Ada <ada@example.com> 1700009000 +0000\\ncommitter Ada <ada@example.com> 1700009000 +0000\\n\",\"message\":{\"hex\":\"636166e9206e6f74207574662d380a\"}}}";
+}
+
+pub fn test_the_git_member_is_what_the_bridge_wrote[&h](heap: &!h Heap) -> [heap] int {
+    var b = vcschange.open(heap, buffer.empty(heap, 64), "9d6a618bb7ea27d356b7c7b11ced69fc46c54f53b3dd0558a9f1fce79c8aa5a4", "", "Ada <ada@example.com>", 1700000060, "+0000");
+    b = vcschange.intent(heap, b, "first", "", "", "");
+    b = vcschange.git_member(heap, b, "author Ada <ada@example.com> 1700000060 +0000\ncommitter Ada <ada@example.com> 1700000060 +0000\n", "first\n");
+    b = vcschange.close(heap, b);
+    if !same(heap, b, imported_text()) {
+        return 1;
+    }
+    var m = buffer.append(heap, buffer.empty(heap, 16), "caf");
+    m = buffer.push(heap, m, byte_of(233));
+    m = buffer.append(heap, m, " not utf-8\n");
+    var h = vcschange.open(heap, buffer.empty(heap, 64), "c5cbc2b9b6cc075a7799d3034b81e3250c8451de92182466b1cf881bc36b280d", "", "Ada <ada@example.com>", 1700009000, "+0000");
+    h = vcschange.intent(heap, h, "caf� not utf-8", "", "", "");
+    borrow m as &mr in {
+        h = vcschange.git_member(heap, h, "author Ada <ada@example.com> 1700009000 +0000\ncommitter Ada <ada@example.com> 1700009000 +0000\n", buffer.bytes(mr));
+    }
+    buffer.drop(heap, m);
+    h = vcschange.close(heap, h);
+    if !same(heap, h, imported_hex_text()) {
+        return 2;
+    }
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    var code = 0;
+    borrow mut scratch as &!s in {
+        let id = vcsobj.object_id(heap, contents(s), "change", imported_text(), buffer.empty(heap, 64));
+        if !same(heap, id, "4b5800100848aaca722385cc1eb42e36a4592aaaaff138240127a7f3e3dcc367") {
+            code = 3;
+        }
+        let id2 = vcsobj.object_id(heap, contents(s), "change", imported_hex_text(), buffer.empty(heap, 64));
+        if !same(heap, id2, "9db5248e5bed3fde45b68974a11805f441b01f90fa52b82a2e02249cd3ea622f") {
+            code = 4;
+        }
+    }
+    unbox_slice(heap, scratch);
+    return code;
+}

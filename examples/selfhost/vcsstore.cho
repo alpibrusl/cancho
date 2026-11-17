@@ -242,7 +242,8 @@ fn fan_out[&h, &k, &i](heap: &!h Heap, kind: &k [byte], id: &i [byte]) -> [heap]
 }
 
 // Store `data` as an object of kind `kind` beneath `vcs` (the `.cancho/vcs` directory): the id in `bytes`. A name already there is left alone (the same
-// bytes, as the name is their hash). `scratch` is `vcsobj.scratch_size()` integers; `nonce` makes the temporary name unique among writers.
+// bytes, as the name is their hash; then `errno` is 1 in the answer, 0 when the object was written now). `scratch` is `vcsobj.scratch_size()` integers;
+// `nonce` makes the temporary name unique among writers.
 pub fn put[&h, &d, &s, &k, &b](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], kind: &k [byte], data: &b [byte], nonce: int) -> [heap, dir_read, dir_write, file_write] Object {
     if bytes.equal(kind, "blob") && len(data) > max_blob() {
         return Object { bytes: buffer.empty(heap, 0), status: 13, errno: 0 };
@@ -250,6 +251,7 @@ pub fn put[&h, &d, &s, &k, &b](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], 
     let id = vcsobj.object_id(heap, scratch, kind, data, buffer.empty(heap, 64));
     var status = 0;
     var errno = 0;
+    var was_there = 0;
     borrow id as &ib in {
         let name = buffer.bytes(ib);
         let path = fan_out(heap, kind, name);
@@ -264,6 +266,7 @@ pub fn put[&h, &d, &s, &k, &b](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], 
                             Opened::Ok(f) => {
                                 file_close(f);
                                 present = true;
+                                was_there = 1;
                             }
                             Opened::Failed(e) => {
                                 if e != enoent() {
@@ -324,7 +327,7 @@ pub fn put[&h, &d, &s, &k, &b](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], 
         buffer.drop(heap, id);
         return Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
     }
-    return Object { bytes: id, status: 0, errno: 0 };
+    return Object { bytes: id, status: 0, errno: was_there };
 }
 
 // The bytes of the object `id` of kind `kind`, hashed again: 17 for a name that is not an id, 11 if it is not there, 3 if the bytes are not what the

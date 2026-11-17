@@ -1,0 +1,8 @@
+{
+  "command": "import-git",
+  "ok": false,
+  "refused": {
+    "message": "`.cancho` is inside `.cancho`",
+    "tag": "path-escapes"
+  }
+}

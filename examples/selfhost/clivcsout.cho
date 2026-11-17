@@ -1,0 +1,120 @@
+edition 9;
+module selfhost.clivcsout;
+
+// clivcsout.cho -- what the commands of `cancho vcs` in cancho (`clivcsrepo.cho`) say: a path made absolute, the refusal document, and an answer of the store said as the Rust command says it.
+// Moved out of `clivcsrepo.cho`, which has a file limit (`crates/cancho/tests/files.rs`).
+
+import std.buffer;
+import std.bytes;
+import selfhost.cliproject;
+import selfhost.jsonwrite;
+import selfhost.vcsrepo;
+import selfhost.vcsstatus;
+import selfhost.vcsstore;
+import selfhost.walk;
+
+// `path` as an absolute path: it as it is when it begins with `/`, else beneath `cwd`; `a/..` pairs collapsed (an `Fs` traps on `..`).
+pub fn absolute[&h, &c, &p](heap: &!h Heap, cwd: &c [byte], path: &p [byte]) -> [heap] buffer.Buffer {
+    var joined = cliproject.beneath(heap, cwd, path);
+    var made = buffer.empty(heap, 0);
+    borrow joined as &jb in {
+        buffer.drop(heap, made);
+        made = walk.collapse(heap, buffer.bytes(jb));
+    }
+    buffer.drop(heap, joined);
+    return made;
+}
+
+// ---- the documents -----------------------------------------------------------------------------------------------------------
+
+// `{"command": COMMAND, "ok": false, "refused": {"message": MESSAGE, "tag": TAG}}`.
+pub fn refusal[&h, &c, &m, &t](heap: &!h Heap, command: &c [byte], message: &m [byte], tag: &t [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), command);
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "false");
+    b = buffer.push(heap, vcsrepo.member(heap, b, 1, false, "refused"), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, true, "message"), message);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "tag"), tag);
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(125));
+    return buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+}
+
+// The sentence for a status of the store that this module has no Rust sentence for (see the header).
+pub fn sentence(status: int) -> [] &static [byte] {
+    if status == 10 {
+        return "an input/output error";
+    }
+    if status == 3 {
+        return "the store holds an object that does not match its id";
+    }
+    if status == 11 {
+        return "the store has no such object";
+    }
+    if status == 15 {
+        return "a lock is held";
+    }
+    if status == 31 {
+        return "a path or a link target the working copy has cannot be recorded";
+    }
+    if status == 1 {
+        return "a path escapes the working copy";
+    }
+    if status == 13 {
+        return "a file is too large";
+    }
+    if status == 30 {
+        return "a link in the working copy cannot be read";
+    }
+    return "the command was refused";
+}
+
+// `answer` (the store's: a document in `bytes` and status 0, or a refusal status) said as `command` says it. `spec` is the revision given, for `bad-revision`.
+pub fn answered[&h, &i, &c, &p](heap: &!h Heap, io: &!i Io, command: &c [byte], answer: vcsstore.Object, spec: &p [byte]) -> [heap, io_write] int {
+    let (doc, status, errno) = vcsstore.parts(answer);
+    var code = 0;
+    if status == 0 {
+        borrow doc as &db in {
+            buffer.write(io, db);
+        }
+    } else if status == 50 {
+        borrow doc as &db in {
+            buffer.write(io, db);
+        }
+        code = 1;
+    } else if status >= 18 && status <= 22 {
+        borrow doc as &cb in {
+            let said = vcsrepo.refusal_document(heap, command, status, spec, buffer.bytes(cb));
+            borrow said as &sb in {
+                buffer.write(io, sb);
+            }
+            buffer.drop(heap, said);
+        }
+        code = 1;
+    } else {
+        var tag = vcsstatus.tag(status);
+        if status == 10 {
+            tag = "io-error";
+        }
+        let said = refusal(heap, command, sentence(status), tag);
+        borrow said as &sb in {
+            buffer.write(io, sb);
+        }
+        buffer.drop(heap, said);
+        code = 1;
+        if status == 10 {
+            code = 3;
+        }
+    }
+    buffer.drop(heap, doc);
+    return code;
+}
+
+// A refusal that this module makes itself, said.
+pub fn refused[&h, &i, &c, &m, &t](heap: &!h Heap, io: &!i Io, command: &c [byte], message: &m [byte], tag: &t [byte]) -> [heap, io_write] int {
+    let said = refusal(heap, command, message, tag);
+    borrow said as &sb in {
+        buffer.write(io, sb);
+    }
+    buffer.drop(heap, said);
+    return 1;
+}

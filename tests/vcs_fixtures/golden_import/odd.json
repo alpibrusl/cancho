@@ -1,0 +1,56 @@
+{
+  "already_imported": 0,
+  "branches": [
+    {
+      "change": "1396de04595c9fb7bb4e862d75a9455f80a7d51ec4ba96ac128eecd989a3f042",
+      "name": "heads/br1"
+    },
+    {
+      "change": "11214b71a1df8038ed55253f5912ac5b4cb294d59dd2638a05720dc106391cc2",
+      "name": "heads/br2"
+    },
+    {
+      "change": "b36d9c5a821c59e2429620185a9f7e4aa7c05de58ecbd4ec16054217b435a2dd",
+      "name": "heads/br3"
+    },
+    {
+      "change": "0aaadd85645b1713903e282b0408e008b5f297ddf721bfb1f1bd2f84fb46a057",
+      "name": "heads/main"
+    },
+    {
+      "change": "75f0ff5c26a49cfe345d28260e1b09127b67d1014493f657fd73d13511738c3d",
+      "name": "heads/nobreak"
+    },
+    {
+      "change": "9db5248e5bed3fde45b68974a11805f441b01f90fa52b82a2e02249cd3ea622f",
+      "name": "heads/nonutf8"
+    },
+    {
+      "change": "460546f2b4e0f84647bdc0e12d1a9703e15d1f0a6c0eeeba6870f3d7df9a3c96",
+      "name": "heads/octopus"
+    },
+    {
+      "change": "ecb8932a872402bb4022fa57166faea8d5d52da49eee044754ab367b7a1511b4",
+      "name": "heads/upper"
+    }
+  ],
+  "checked_out": 0,
+  "command": "import-git",
+  "commits": 8,
+  "dry_run": false,
+  "new_blobs": 4,
+  "ok": true,
+  "refs_kept": [],
+  "remotes": [],
+  "self_check_mismatches": [
+    {
+      "git": "c5299f6177eac9affdafe758cb65a440c6ff0a84",
+      "recomputed": "e857f1eefa55700169152f1ddb1ec479778cb68b"
+    },
+    {
+      "git": "e94f2741f2b51b558fdee19b5d75911233dbc388",
+      "recomputed": "48f328c9bc6a741939d3ccd92cda78a37b718eb2"
+    }
+  ],
+  "tags": []
+}

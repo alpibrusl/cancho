@@ -1,0 +1,1005 @@
+edition 12;
+module selfhost.vcsgitput;
+
+// vcsgitput.cho -- `cancho vcs import-git DIR` without `--dry-run`: the writes (`docs/vcs-routing.md` section 18). The checks are the dry run's (`vcsgit.check_commit`,
+// `vcsgit.plan`); this module adds, for each commit that is new, the blobs, the tree and the change in the store and the line of the gitmap, then the refs, HEAD and the
+// working copy.
+//
+// A tree is flattened once for each git tree id: the text of the store's tree (`MODE BLOB PATH` on each line) with paths relative to that tree is kept, and the text of
+// a parent is made by putting the name of the directory in front of each path of the child's. Git's order of a tree is the order of the bytes of the flattened paths
+// (a directory counts as `name/`), so the lines need no sorting unless a tree is out of order (the dry run's flag 2), when the whole text is sorted by path.
+//
+// Where it differs from the Rust command on purpose: a commit the dry run's checks refuse is refused before any of its objects is written (Rust has put the blobs it read before it
+// refused).
+
+import std.buffer;
+import std.bytes;
+import std.utf8;
+import selfhost.gitparse;
+import selfhost.gitread;
+import selfhost.sha1;
+import selfhost.vcsgit;
+import selfhost.vcsgitw;
+import selfhost.vcsobj;
+import selfhost.vcsscan;
+import selfhost.vcsstore;
+import selfhost.vcschange;
+import selfhost.vcsrepo;
+import selfhost.vcsworktree;
+
+// The mode of a tree line for the number git has for it.
+fn mode_text(mode: int) -> [] &static [byte] {
+    if mode == 33261 {
+        return "100755";
+    }
+    if mode == 40960 {
+        return "120000";
+    }
+    return "100644";
+}
+
+// What went wrong in a write, in the ints `st`: [0] a counter for temporary names, [1] the blobs that were new, [2] a status (0 well; 1 a git object that cannot be read as what it
+// should be; 2 the store refused), [3] the store's status, [4] its errno.
+fn note_store[&z](st: &!z [int], status: int, errno: int) -> [] int {
+    st[2] = 2;
+    st[3] = status;
+    st[4] = errno;
+    return 0;
+}
+
+// The text of the tree `tid` with every path below it, as lines `MODE BLOB PATH`, in the cache `texts` (a record is four bytes of length, then the text; `trees` maps a git
+// tree id to the place of its record), the blobs put in the store as they are met (`bids` holds the 64 digits of each, `blobs` maps a git blob id to its place). The place of the record.
+fn flat_tree[&h, &d, &v, &o, &x, &k, &m, &s, &p, &t, &b, &z, &i](heap: &!h Heap, root: &d Dir, vcs: &v Dir, od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], ps: &!p [int], trees: &!t [int], blobs: &!b [int], st: &!z [int], mask: int, tid: &i [byte], texts: buffer.Buffer, bids: buffer.Buffer) -> [heap, dir_read, dir_write, file_read, file_write] (buffer.Buffer, buffer.Buffer, int) {
+    let seen = gitparse.table_get(trees, mask, tid);
+    if seen >= 0 {
+        return (texts, bids, seen);
+    }
+    let g = gitread.read_object(heap, root, od, ix, pk, meta, scratch, tid);
+    let (body, kind, status, why) = gitread.got_parts(g);
+    buffer.drop(heap, why);
+    if status != 0 || kind != 2 {
+        buffer.drop(heap, body);
+        st[2] = 1;
+        return (texts, bids, 0);
+    }
+    var ts = texts;
+    var bs = bids;
+    var mine = buffer.empty(heap, 256);
+    let at = box_slice(heap, 4, 0);
+    borrow body as &bb in {
+        let tb = buffer.bytes(bb);
+        borrow mut at as &!ab in {
+            let a = contents(ab);
+            var pos = 0;
+            while pos < len(tb) && st[2] == 0 {
+                let mode = gitparse.tree_entry(tb, pos, a);
+                let name = tb[a[0]..a[1]];
+                let eid = tb[a[2]..a[3]];
+                let next = a[3];
+                if mode == 16384 {
+                    let (t2, b2, off) = flat_tree(heap, root, vcs, od, ix, pk, meta, scratch, ps, trees, blobs, st, mask, eid, ts, bs);
+                    ts = t2;
+                    bs = b2;
+                    if st[2] == 0 {
+                        borrow ts as &tsb in {
+                            let all = buffer.bytes(tsb);
+                            let size = gitread.be32(all, off);
+                            let child = all[off + 4..off + 4 + size];
+                            var q = 0;
+                            while q < len(child) {
+                                let le = vcsscan.line_end(child, q);
+                                mine = buffer.append(heap, mine, child[q..q + 72]);
+                                mine = buffer.append(heap, mine, name);
+                                mine = buffer.push(heap, mine, byte_of(47));
+                                mine = buffer.append(heap, mine, child[q + 72..le + 1]);
+                                q = le + 1;
+                            }
+                        }
+                    }
+                } else {
+                    var place = gitparse.table_get(blobs, mask, eid);
+                    if place < 0 {
+                        let bg = gitread.read_object(heap, root, od, ix, pk, meta, scratch, eid);
+                        let (bbody, bkind, bstatus, bwhy) = gitread.got_parts(bg);
+                        buffer.drop(heap, bwhy);
+                        if bstatus != 0 || bkind != 3 {
+                            st[2] = 1;
+                        } else {
+                            st[0] = st[0] + 1;
+                            borrow bbody as &bbr in {
+                                let put = vcsstore.put(heap, vcs, ps, "blob", buffer.bytes(bbr), st[0]);
+                                let (pid, pstatus, perrno) = vcsstore.parts(put);
+                                if pstatus != 0 {
+                                    note_store(st, pstatus, perrno);
+                                } else {
+                                    if perrno == 0 {
+                                        st[1] = st[1] + 1;
+                                    }
+                                    borrow pid as &pidr in {
+                                        bs = buffer.append(heap, bs, buffer.bytes(pidr));
+                                    }
+                                    borrow bs as &bsz in {
+                                        place = buffer.size(bsz) / 64 - 1;
+                                    }
+                                    gitparse.table_put(blobs, mask, eid, place);
+                                }
+                                buffer.drop(heap, pid);
+                            }
+                        }
+                        buffer.drop(heap, bbody);
+                    }
+                    if st[2] == 0 {
+                        mine = buffer.append(heap, mine, mode_text(mode));
+                        mine = buffer.push(heap, mine, byte_of(32));
+                        borrow bs as &bsb in {
+                            mine = buffer.append(heap, mine, buffer.bytes(bsb)[place * 64..place * 64 + 64]);
+                        }
+                        mine = buffer.push(heap, mine, byte_of(32));
+                        mine = buffer.append(heap, mine, name);
+                        mine = buffer.push(heap, mine, byte_of(10));
+                    }
+                }
+                pos = next;
+            }
+        }
+    }
+    unbox_slice(heap, at);
+    buffer.drop(heap, body);
+    var offset = 0;
+    if st[2] == 0 {
+        borrow ts as &tsz in {
+            offset = buffer.size(tsz);
+        }
+        borrow mine as &mb in {
+            let n = len(buffer.bytes(mb));
+            ts = buffer.push(heap, ts, byte_of(n / 16777216 % 256));
+            ts = buffer.push(heap, ts, byte_of(n / 65536 % 256));
+            ts = buffer.push(heap, ts, byte_of(n / 256 % 256));
+            ts = buffer.push(heap, ts, byte_of(n % 256));
+            ts = buffer.append(heap, ts, buffer.bytes(mb));
+        }
+        gitparse.table_put(trees, mask, tid, offset);
+    }
+    buffer.drop(heap, mine);
+    return (ts, bs, offset);
+}
+
+// ---- the gitmap ---------------------------------------------------------------------------------------------------------------
+
+// The lines of `.cancho/vcs/gitmap` as `vcsgitw.normalized` keeps them (a file that is not UTF-8, or not there, is no lines), with `known` mapping the git id of each line whose
+// key is 40 lowercase digits to the place of the line in the answer.
+fn read_gitmap[&h, &d, &t](heap: &!h Heap, vcs: &d Dir, known: &!t [int], mask: int) -> [heap, dir_read, file_read] buffer.Buffer {
+    let read = gitread.slurp(heap, vcs, "gitmap");
+    let (text, why) = gitread.contents_parts(read);
+    var lines = buffer.empty(heap, 1024);
+    if why == 0 {
+        borrow text as &tb in {
+            if utf8.is_valid(buffer.bytes(tb)) {
+                buffer.drop(heap, lines);
+                lines = vcsgitw.normalized(heap, buffer.bytes(tb));
+            }
+        }
+    }
+    buffer.drop(heap, text);
+    borrow lines as &lb in {
+        let t = buffer.bytes(lb);
+        var at = 0;
+        while at < len(t) {
+            let end = vcsscan.line_end(t, at);
+            if end - at > 41 && t[at + 40] == byte_of(32) {
+                var lower = true;
+                var k = at;
+                while k < at + 40 {
+                    let c = int_of(t[k]);
+                    if !(c >= 48 && c <= 57 || c >= 97 && c <= 102) {
+                        lower = false;
+                    }
+                    k = k + 1;
+                }
+                if lower {
+                    let id = gitread.unhex_id(heap, t[at..at + 40]);
+                    borrow id as &ib in {
+                        gitparse.table_put(known, mask, buffer.bytes(ib), at);
+                    }
+                    buffer.drop(heap, id);
+                }
+            }
+            at = end + 1;
+        }
+    }
+    return lines;
+}
+
+// The change id of the line of the gitmap that starts at `off`.
+fn line_change[&t](gm: &t [byte], off: int) -> [] &t [byte] {
+    return gm[off + 41..vcsscan.line_end(gm, off)];
+}
+
+// `gitmap` written whole from `lines`, as the Rust command's `save_gitmap` writes it. The errno, 0 when it is written.
+fn save_gitmap[&h, &d, &t](heap: &!h Heap, vcs: &d Dir, lines: &t [byte]) -> [heap, dir_write, file_write] int {
+    let text = vcsgitw.sorted(heap, lines);
+    var errno = 0;
+    borrow text as &r in {
+        errno = vcsstore.put_whole(heap, vcs, "gitmap", buffer.bytes(r));
+    }
+    buffer.drop(heap, text);
+    return errno;
+}
+
+// ---- one commit -------------------------------------------------------------------------------------------------------------
+
+// Whether the change `id` is in the store.
+fn change_there[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, ps: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] bool {
+    let got = vcsstore.get(heap, vcs, ps, "change", id);
+    let (data, status, errno) = vcsstore.parts(got);
+    buffer.drop(heap, data);
+    return status == 0;
+}
+
+// Whether the lines of the tree text `text` are in the order of the bytes of their paths (a path starts at the 73rd byte of a line).
+fn in_path_order[&t](text: &t [byte]) -> [] bool {
+    var at = 0;
+    var prev_at = 0 - 1;
+    var prev_end = 0;
+    while at < len(text) {
+        let end = vcsscan.line_end(text, at);
+        if prev_at >= 0 && bytes.compare(text[prev_at + 72..prev_end], text[at + 72..end]) >= 0 {
+            return false;
+        }
+        prev_at = at;
+        prev_end = end;
+        at = end + 1;
+    }
+    return true;
+}
+
+// Write what the commit `gid` is: its tree and its change in the store (its blobs on the way), and a line of the gitmap, appended to `gm`. `texts` and `bids` are the caches of
+// `flat_tree`. A status in `st[2]` when something could not be done.
+fn write_commit[&h, &d, &v, &o, &x, &k, &m, &s, &p, &t, &b, &z, &n, &i](heap: &!h Heap, root: &d Dir, vcs: &v Dir, od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], ps: &!p [int], ctrees: &!t [int], cblobs: &!b [int], known: &!n [int], st: &!z [int], mask: int, gid: &i [byte], texts: buffer.Buffer, bids: buffer.Buffer, gm: buffer.Buffer) -> [heap, dir_read, dir_write, file_read, file_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    var ts = texts;
+    var bs = bids;
+    var lines = gm;
+    let cg = vcsgit.read_commit(heap, root, od, ix, pk, meta, scratch, gid);
+    let (body, ckind, cstatus, cwhy) = gitread.got_parts(cg);
+    buffer.drop(heap, cwhy);
+    if cstatus != 0 {
+        buffer.drop(heap, body);
+        st[2] = 1;
+        return (ts, bs, lines);
+    }
+    borrow body as &bb in {
+        let b = buffer.bytes(bb);
+        let parsed = gitparse.commit_parse(heap, b);
+        let (tree, parents, headers_at, head_end, message_at, pstatus) = gitparse.commit_parts(parsed);
+        borrow tree as &trb in {
+            let (t2, b2, off) = flat_tree(heap, root, vcs, od, ix, pk, meta, scratch, ps, ctrees, cblobs, st, mask, buffer.bytes(trb), ts, bs);
+            ts = t2;
+            bs = b2;
+            var tree_id = buffer.empty(heap, 0);
+            if st[2] == 0 {
+                borrow ts as &tsb in {
+                    let all = buffer.bytes(tsb);
+                    let size = gitread.be32(all, off);
+                    let text = all[off + 4..off + 4 + size];
+                    st[0] = st[0] + 1;
+                    var put = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+                    if in_path_order(text) {
+                        let old = put;
+                        let (ob, os, oe) = vcsstore.parts(old);
+                        buffer.drop(heap, ob);
+                        put = vcsstore.put(heap, vcs, ps, "tree", text, st[0]);
+                    } else {
+                        let again = vcsscan.sorted(heap, text);
+                        borrow again as &agb in {
+                            let old = put;
+                            let (ob, os, oe) = vcsstore.parts(old);
+                            buffer.drop(heap, ob);
+                            put = vcsstore.put(heap, vcs, ps, "tree", buffer.bytes(agb), st[0]);
+                        }
+                        buffer.drop(heap, again);
+                    }
+                    let (pid, pstatus2, perrno) = vcsstore.parts(put);
+                    if pstatus2 != 0 {
+                        note_store(st, pstatus2, perrno);
+                        buffer.drop(heap, pid);
+                    } else {
+                        buffer.drop(heap, tree_id);
+                        tree_id = pid;
+                    }
+                }
+            }
+            if st[2] == 0 {
+                // the parents' changes, 64 digits each
+                var pids = buffer.empty(heap, 128);
+                borrow parents as &pab in {
+                    let pl = buffer.bytes(pab);
+                    var q = 0;
+                    while q * 20 < len(pl) && st[2] == 0 {
+                        let at = gitparse.table_get(known, mask, pl[q * 20..q * 20 + 20]);
+                        if at < 0 {
+                            st[2] = 1;
+                        } else {
+                            borrow lines as &lnb in {
+                                pids = buffer.append(heap, pids, line_change(buffer.bytes(lnb), at));
+                            }
+                        }
+                        q = q + 1;
+                    }
+                }
+                if st[2] == 0 {
+                    let headers = b[headers_at..head_end];
+                    let message = b[message_at..len(b)];
+                    let (who, time, tz) = vcsgitw.author_fields(heap, headers);
+                    let prompt = vcsgitw.prompt_of(heap, message);
+                    var change = buffer.empty(heap, 512);
+                    borrow tree_id as &tidb in {
+                        borrow pids as &pidb in {
+                            borrow who as &whob in {
+                                borrow tz as &tzb in {
+                                    change = vcschange.open(heap, change, buffer.bytes(tidb), buffer.bytes(pidb), buffer.bytes(whob), time, buffer.bytes(tzb));
+                                }
+                            }
+                        }
+                    }
+                    borrow prompt as &prb in {
+                        change = vcschange.intent(heap, change, buffer.bytes(prb), "", "", "");
+                    }
+                    change = vcschange.git_member(heap, change, headers, message);
+                    change = vcschange.close(heap, change);
+                    buffer.drop(heap, who);
+                    buffer.drop(heap, tz);
+                    buffer.drop(heap, prompt);
+                    st[0] = st[0] + 1;
+                    var chid = buffer.empty(heap, 0);
+                    borrow change as &chb in {
+                        let put = vcsstore.put(heap, vcs, ps, "change", buffer.bytes(chb), st[0]);
+                        let (pid, pstatus3, perrno3) = vcsstore.parts(put);
+                        if pstatus3 != 0 {
+                            note_store(st, pstatus3, perrno3);
+                            buffer.drop(heap, pid);
+                        } else {
+                            buffer.drop(heap, chid);
+                            chid = pid;
+                        }
+                    }
+                    buffer.drop(heap, change);
+                    if st[2] == 0 {
+                        let hx = gitread.hex_of(heap, gid);
+                        var place = 0;
+                        borrow lines as &lnb2 in {
+                            place = len(buffer.bytes(lnb2));
+                        }
+                        borrow hx as &hxb in {
+                            lines = buffer.append(heap, lines, buffer.bytes(hxb));
+                        }
+                        lines = buffer.push(heap, lines, byte_of(32));
+                        borrow chid as &cidb in {
+                            lines = buffer.append(heap, lines, buffer.bytes(cidb));
+                        }
+                        lines = buffer.push(heap, lines, byte_of(10));
+                        gitparse.table_put(known, mask, gid, place);
+                        buffer.drop(heap, hx);
+                    }
+                    buffer.drop(heap, chid);
+                }
+                buffer.drop(heap, pids);
+            }
+            buffer.drop(heap, tree_id);
+        }
+        buffer.drop(heap, tree);
+        buffer.drop(heap, parents);
+    }
+    buffer.drop(heap, body);
+    return (ts, bs, lines);
+}
+
+// ---- the commit loop -----------------------------------------------------------------------------------------------------------
+
+// Every commit of `order` (20-byte ids, parents first): the ones the gitmap knows (and whose change is in the store) are counted, the others checked as the dry run checks them and
+// written. The gitmap is saved every 200 new commits. What it answers: the failure (a `Got` of status 0 when well), the lines of self-check mismatches, the lines of the gitmap, the
+// number of new commits, of known ones, and of new blobs; `st[2]` says when a write failed.
+fn write_commits[&h, &d, &v, &o, &x, &k, &m, &s, &r, &n, &z](heap: &!h Heap, root: &d Dir, vcs: &v Dir, od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], order: &r [byte], known: &!n [int], st: &!z [int], ints: int, mask: int, gm0: buffer.Buffer) -> [heap, dir_read, dir_write, file_read, file_write] (gitread.Got, buffer.Buffer, buffer.Buffer, int, int) {
+    let tr = box_slice(heap, ints, 0);
+    let bl = box_slice(heap, ints, 0);
+    let ctrees = box_slice(heap, ints, 0);
+    let cblobs = box_slice(heap, ints, 0);
+    let work = box_slice(heap, 40, byte_of(0));
+    let hashing = box_slice(heap, sha1.size(), 0);
+    let ps = box_slice(heap, vcsobj.scratch_size(), 0);
+    var failure = vcsgit.no_fault(heap);
+    var mismatches = buffer.empty(heap, 0);
+    var lines = gm0;
+    var texts = buffer.empty(heap, 1 << 20);
+    var bids = buffer.empty(heap, 1 << 16);
+    var commits = 0;
+    var already = 0;
+    var since = 0;
+    var failed = false;
+    borrow mut tr as &!trb in {
+        borrow mut bl as &!blb in {
+            borrow mut ctrees as &!ctb in {
+                borrow mut cblobs as &!cbb in {
+                    borrow mut work as &!wb in {
+                        borrow mut hashing as &!hsb in {
+                            borrow mut ps as &!psb in {
+                                let t1 = contents(trb);
+                                let b1 = contents(blb);
+                                let t2 = contents(ctb);
+                                let b2 = contents(cbb);
+                                let w = contents(wb);
+                                let hs = contents(hsb);
+                                let pscratch = contents(psb);
+                                var at = 0;
+                                while at * 20 < len(order) && !failed {
+                                    let gid = order[at * 20..at * 20 + 20];
+                                    let place = gitparse.table_get(known, mask, gid);
+                                    var have = false;
+                                    if place >= 0 {
+                                        borrow lines as &lnb in {
+                                            have = change_there(heap, vcs, pscratch, line_change(buffer.bytes(lnb), place));
+                                        }
+                                    }
+                                    if have {
+                                        already = already + 1;
+                                    } else {
+                                        let (cf, mline) = vcsgit.check_commit(heap, root, od, ix, pk, meta, scratch, t1, b1, mask, w, hs, gid);
+                                        var cstatus = 0;
+                                        borrow cf as &cfb in {
+                                            cstatus = vcsgit.status_of(cfb);
+                                        }
+                                        failure = vcsgit.replace_got(heap, failure, cf);
+                                        if cstatus != 0 {
+                                            failed = true;
+                                            buffer.drop(heap, mline);
+                                        } else {
+                                            borrow mline as &mlb in {
+                                                mismatches = buffer.append(heap, mismatches, buffer.bytes(mlb));
+                                            }
+                                            buffer.drop(heap, mline);
+                                            let (a, b, c) = write_commit(heap, root, vcs, od, ix, pk, meta, scratch, pscratch, t2, b2, known, st, mask, gid, texts, bids, lines);
+                                            texts = a;
+                                            bids = b;
+                                            lines = c;
+                                            if st[2] != 0 {
+                                                failed = true;
+                                            } else {
+                                                commits = commits + 1;
+                                                since = since + 1;
+                                                if since >= 200 {
+                                                    borrow lines as &lnb2 in {
+                                                        let errno = save_gitmap(heap, vcs, buffer.bytes(lnb2));
+                                                        if errno != 0 {
+                                                            note_store(st, 10, errno);
+                                                            failed = true;
+                                                        }
+                                                    }
+                                                    since = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    at = at + 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, tr);
+    unbox_slice(heap, bl);
+    unbox_slice(heap, ctrees);
+    unbox_slice(heap, cblobs);
+    unbox_slice(heap, work);
+    unbox_slice(heap, hashing);
+    unbox_slice(heap, ps);
+    buffer.drop(heap, texts);
+    buffer.drop(heap, bids);
+    return (failure, mismatches, lines, commits, already);
+}
+
+// ---- the refs, HEAD, the working copy -----------------------------------------------------------------------------------------------
+
+// What the refs stage made: the lines `CHANGE NAME\n` of the branches, remotes and tags put, the lines of the refs kept, and a store status and errno when it failed.
+res struct Refs {
+    branches: buffer.Buffer,
+    remotes: buffer.Buffer,
+    tags: buffer.Buffer,
+    kept: buffer.Buffer,
+    status: int,
+    errno: int,
+}
+
+// Every ref of the git repository, moved to the change of the commit it names (an annotated tag peeled, at most 8 steps), as `import_git` does after the commits: `heads/B`,
+// `tags/T`, `remotes/R`; a name the store refuses, or a ref that is there and holds another change, is kept and said. `gm` holds the gitmap's lines and `known` maps a git id to one.
+fn put_refs[&h, &d, &v, &g, &o, &x, &k, &m, &s, &n, &w](heap: &!h Heap, root: &d Dir, vcs: &v Dir, gitpath: &g [byte], od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], known: &n [int], mask: int, gm: &w [byte], now: int) -> [heap, dir_read, dir_write, file_read, file_write] Refs {
+    var branches = buffer.empty(heap, 256);
+    var remotes = buffer.empty(heap, 256);
+    var tags = buffer.empty(heap, 256);
+    var kept = buffer.empty(heap, 64);
+    var status = 0;
+    var errno = 0;
+    let list = gitread.refs(heap, root, gitpath);
+    let cur = box_slice(heap, 20, byte_of(0));
+    borrow list as &lb in {
+        let r = buffer.bytes(lb);
+        var at = 0;
+        while at < len(r) && status == 0 {
+            let end = vcsscan.line_end(r, at);
+            let name = r[at..end - 41];
+            let id = gitread.unhex_id(heap, r[end - 40..end]);
+            var change = buffer.empty(heap, 0);
+            borrow id as &idb in {
+                borrow mut cur as &!cb in {
+                    let c = contents(cb);
+                    var k2 = 0;
+                    while k2 < 20 {
+                        c[k2] = buffer.bytes(idb)[k2];
+                        k2 = k2 + 1;
+                    }
+                    var step = 0;
+                    var going = true;
+                    while step < 8 && going {
+                        let place = gitparse.table_get(known, mask, c);
+                        if place >= 0 {
+                            buffer.drop(heap, change);
+                            change = buffer.append(heap, buffer.empty(heap, 64), line_change(gm, place));
+                            going = false;
+                        } else {
+                            let og = gitread.read_object(heap, root, od, ix, pk, meta, scratch, c);
+                            let (body, kind, ostatus, why) = gitread.got_parts(og);
+                            buffer.drop(heap, why);
+                            if ostatus != 0 || kind != 4 {
+                                going = false;
+                            } else {
+                                borrow body as &bb in {
+                                    let target = gitparse.tag_target(heap, buffer.bytes(bb));
+                                    borrow target as &tgb in {
+                                        if len(buffer.bytes(tgb)) == 20 {
+                                            var k3 = 0;
+                                            while k3 < 20 {
+                                                c[k3] = buffer.bytes(tgb)[k3];
+                                                k3 = k3 + 1;
+                                            }
+                                        } else {
+                                            going = false;
+                                        }
+                                    }
+                                    buffer.drop(heap, target);
+                                }
+                            }
+                            buffer.drop(heap, body);
+                        }
+                        step = step + 1;
+                    }
+                }
+            }
+            buffer.drop(heap, id);
+            var which = 0;
+            var short = buffer.empty(heap, 0);
+            if bytes.starts_with(name, "refs/heads/") {
+                which = 1;
+                buffer.drop(heap, short);
+                short = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(name)), "heads/"), name[11..len(name)]);
+            } else if bytes.starts_with(name, "refs/tags/") {
+                which = 2;
+                buffer.drop(heap, short);
+                short = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(name)), "tags/"), name[10..len(name)]);
+            } else if bytes.starts_with(name, "refs/remotes/") {
+                which = 3;
+                buffer.drop(heap, short);
+                short = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(name)), "remotes/"), name[13..len(name)]);
+            }
+            borrow change as &chb in {
+                borrow short as &shb in {
+                    if len(buffer.bytes(chb)) > 0 && which > 0 {
+                        if !vcsstore.check_ref_name(buffer.bytes(shb)) {
+                            kept = buffer.append(heap, kept, name);
+                            kept = buffer.append(heap, kept, ": not a valid ref name here\n");
+                        } else {
+                            let existing = vcsstore.read_ref(heap, vcs, buffer.bytes(shb));
+                            let (eid, estatus, eerrno) = vcsstore.parts(existing);
+                            var same_change = false;
+                            borrow eid as &eb0 in {
+                                same_change = bytes.equal(buffer.bytes(eb0), buffer.bytes(chb));
+                            }
+                            if estatus != 0 && estatus != 2 {
+                                status = estatus;
+                                errno = eerrno;
+                            } else if estatus == 0 && !same_change {
+                                borrow eid as &eb in {
+                                    kept = buffer.append(heap, kept, buffer.bytes(shb));
+                                    kept = buffer.append(heap, kept, ": already at ");
+                                    kept = buffer.append(heap, kept, buffer.bytes(eb));
+                                    kept = buffer.push(heap, kept, byte_of(10));
+                                }
+                            } else {
+                                let moved = vcsstore.update_ref(heap, vcs, buffer.bytes(shb), vcsstore.expect_any(), "", buffer.bytes(chb), "import-git", now);
+                                let (mid, mstatus, merrno) = vcsstore.parts(moved);
+                                buffer.drop(heap, mid);
+                                if mstatus != 0 {
+                                    status = mstatus;
+                                    errno = merrno;
+                                } else {
+                                    var line = buffer.append(heap, buffer.empty(heap, 128), buffer.bytes(chb));
+                                    line = buffer.push(heap, line, byte_of(32));
+                                    line = buffer.append(heap, line, buffer.bytes(shb));
+                                    line = buffer.push(heap, line, byte_of(10));
+                                    borrow line as &lnb in {
+                                        if which == 1 {
+                                            branches = buffer.append(heap, branches, buffer.bytes(lnb));
+                                        } else if which == 2 {
+                                            tags = buffer.append(heap, tags, buffer.bytes(lnb));
+                                        } else {
+                                            remotes = buffer.append(heap, remotes, buffer.bytes(lnb));
+                                        }
+                                    }
+                                    buffer.drop(heap, line);
+                                }
+                            }
+                            buffer.drop(heap, eid);
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, change);
+            buffer.drop(heap, short);
+            at = end + 1;
+        }
+    }
+    unbox_slice(heap, cur);
+    buffer.drop(heap, list);
+    return Refs { branches: branches, remotes: remotes, tags: tags, kept: kept, status: status, errno: errno };
+}
+
+fn refs_parts(r: Refs) -> [] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, int, int) {
+    let Refs { branches, remotes, tags, kept, status, errno } = r;
+    return (branches, remotes, tags, kept, status, errno);
+}
+
+// HEAD follows git's when this repository has no change at HEAD: git's HEAD is `ref: refs/heads/B` naming a ref that exists and the store has `heads/B`. The errno, 0 well.
+fn follow_head[&h, &d, &v, &g](heap: &!h Heap, root: &d Dir, vcs: &v Dir, gitpath: &g [byte]) -> [heap, dir_read, dir_write, file_read, file_write] int {
+    var hpath = buffer.append(heap, buffer.empty(heap, len(gitpath) + 8), gitpath);
+    hpath = buffer.append(heap, hpath, "/HEAD");
+    var errno = 0;
+    borrow hpath as &hb in {
+        let read = gitread.slurp(heap, root, buffer.bytes(hb));
+        let (text, why) = gitread.contents_parts(read);
+        if why == 0 {
+            borrow text as &tb in {
+                let t = vcsstore.trimmed(buffer.bytes(tb));
+                if bytes.starts_with(t, "ref: refs/heads/") && len(t) > 16 {
+                    // the ref must exist in git
+                    var exists = false;
+                    let list = gitread.refs(heap, root, gitpath);
+                    borrow list as &lb in {
+                        let r = buffer.bytes(lb);
+                        var at = 0;
+                        while at < len(r) {
+                            let end = vcsscan.line_end(r, at);
+                            if bytes.equal(r[at..end - 41], t[5..len(t)]) {
+                                exists = true;
+                            }
+                            at = end + 1;
+                        }
+                    }
+                    buffer.drop(heap, list);
+                    if exists {
+                        let hc = vcsrepo.head_change(heap, vcs);
+                        let (hid, hstatus, herrno) = vcsstore.parts(hc);
+                        buffer.drop(heap, hid);
+                        if hstatus == 2 {
+                            var short = buffer.append(heap, buffer.empty(heap, len(t)), "heads/");
+                            short = buffer.append(heap, short, t[16..len(t)]);
+                            borrow short as &sb in {
+                                let have = vcsstore.read_ref(heap, vcs, buffer.bytes(sb));
+                                let (rid, rstatus, rerrno) = vcsstore.parts(have);
+                                buffer.drop(heap, rid);
+                                if rstatus == 0 {
+                                    var line = buffer.append(heap, buffer.empty(heap, len(t) + 8), "ref: refs/");
+                                    line = buffer.append(heap, line, buffer.bytes(sb));
+                                    line = buffer.push(heap, line, byte_of(10));
+                                    borrow line as &lnb in {
+                                        errno = vcsstore.put_whole(heap, vcs, "HEAD", buffer.bytes(lnb));
+                                    }
+                                    buffer.drop(heap, line);
+                                }
+                            }
+                            buffer.drop(heap, short);
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, text);
+    }
+    buffer.drop(heap, hpath);
+    return errno;
+}
+
+// The files of HEAD's tree written to the working copy `work` when HEAD is at a change and the working copy has no versioned file (what the Rust command does unless `--no-checkout`).
+// A store status (0 well), its errno, and how many files were written.
+fn check_out[&h, &w, &v, &s](heap: &!h Heap, work: &w Dir, vcs: &v Dir, ps: &!s [int]) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] (int, int, int) {
+    let hc = vcsrepo.head_change(heap, vcs);
+    let (hid, hstatus, herrno) = vcsstore.parts(hc);
+    var status = 0;
+    var errno = 0;
+    var count = 0;
+    if hstatus == 0 {
+        let found = vcsscan.scan(heap, work, ps);
+        let (ftext, fstatus, ferrno) = vcsstore.parts(found);
+        var none = false;
+        borrow ftext as &fb0 in {
+            none = len(buffer.bytes(fb0)) == 0;
+        }
+        if fstatus != 0 {
+            status = fstatus;
+            errno = ferrno;
+        } else if none {
+            borrow hid as &hb in {
+                let tid = vcsrepo.tree_id_of(heap, vcs, ps, buffer.bytes(hb));
+                let (tidb, tstatus, terrno) = vcsstore.parts(tid);
+                if tstatus != 0 {
+                    status = tstatus;
+                    errno = terrno;
+                } else {
+                    borrow tidb as &tb in {
+                        let tt = vcsrepo.tree_text(heap, vcs, ps, buffer.bytes(tb));
+                        let (text, ttatus, tterrno) = vcsstore.parts(tt);
+                        if ttatus != 0 {
+                            status = ttatus;
+                            errno = tterrno;
+                        } else {
+                            borrow text as &xb in {
+                                let t = buffer.bytes(xb);
+                                var at = 0;
+                                while at < len(t) && status == 0 {
+                                    let end = vcsscan.line_end(t, at);
+                                    var mode = 0;
+                                    if bytes.equal(t[at..at + 6], "100755") {
+                                        mode = 1;
+                                    } else if bytes.equal(t[at..at + 6], "120000") {
+                                        mode = 2;
+                                    }
+                                    let blob = vcsstore.get(heap, vcs, ps, "blob", t[at + 7..at + 71]);
+                                    let (data, bstatus, berrno) = vcsstore.parts(blob);
+                                    if bstatus != 0 {
+                                        status = bstatus;
+                                        errno = berrno;
+                                    } else {
+                                        borrow data as &db in {
+                                            let (mstatus, merrno) = vcsworktree.materialize(heap, work, mode, t[at + 72..end], buffer.bytes(db));
+                                            if mstatus != 0 {
+                                                status = mstatus;
+                                                errno = merrno;
+                                            } else {
+                                                count = count + 1;
+                                            }
+                                        }
+                                    }
+                                    buffer.drop(heap, data);
+                                    at = end + 1;
+                                }
+                            }
+                        }
+                        buffer.drop(heap, text);
+                    }
+                }
+                buffer.drop(heap, tidb);
+            }
+        }
+        buffer.drop(heap, ftext);
+    }
+    buffer.drop(heap, hid);
+    return (status, errno, count);
+}
+
+// ---- the command ---------------------------------------------------------------------------------------------------------------
+
+// The import over a catalog that has been read.
+fn run_write[&h, &d, &w, &v, &g, &o, &x, &k, &m, &s](heap: &!h Heap, groot: &d Dir, work: &w Dir, vcs: &v Dir, gitpath: &g [byte], od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], no_checkout: bool, now: int) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    let nobj = vcsgit.object_total(heap, groot, od, meta);
+    let ints = gitparse.table_ints(nobj + 8);
+    let mask = ints / 4 - 1;
+    let (order, failure0, failed0) = vcsgit.plan(heap, groot, gitpath, od, ix, pk, meta, scratch, nobj, ints, mask);
+    if failed0 {
+        buffer.drop(heap, order);
+        return vcsgit.failure_answer(heap, failure0);
+    }
+    let (b0, k0, s0, w0) = gitread.got_parts(failure0);
+    buffer.drop(heap, b0);
+    buffer.drop(heap, w0);
+    let known = box_slice(heap, ints, 0);
+    let st = box_slice(heap, 8, 0);
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    var done = false;
+    borrow mut known as &!kb in {
+        borrow mut st as &!sb in {
+            let kn = contents(kb);
+            let s2 = contents(sb);
+            let gm0 = read_gitmap(heap, vcs, kn, mask);
+            var failure = vcsgit.no_fault(heap);
+            var mismatches = buffer.empty(heap, 0);
+            var lines = buffer.empty(heap, 0);
+            var commits = 0;
+            var already = 0;
+            borrow order as &orb in {
+                let (f, mm, ln, cm, al) = write_commits(heap, groot, vcs, od, ix, pk, meta, scratch, buffer.bytes(orb), kn, s2, ints, mask, gm0);
+                let (fb0, fk0, fs0, fw0) = gitread.got_parts(failure);
+                buffer.drop(heap, fb0);
+                buffer.drop(heap, fw0);
+                failure = f;
+                buffer.drop(heap, mismatches);
+                mismatches = mm;
+                buffer.drop(heap, lines);
+                lines = ln;
+                commits = cm;
+                already = al;
+            }
+            var fstatus = 0;
+            borrow failure as &fb in {
+                fstatus = vcsgit.status_of(fb);
+            }
+            if fstatus != 0 {
+                let old = answer;
+                let (ob, os, oe) = vcsstore.parts(old);
+                buffer.drop(heap, ob);
+                answer = vcsgit.failure_answer(heap, failure);
+                done = true;
+            } else if s2[2] == 1 {
+                let (fb2, fk2, fs2, fw2) = gitread.got_parts(failure);
+                buffer.drop(heap, fb2);
+                buffer.drop(heap, fw2);
+                let old = answer;
+                let (ob, os, oe) = vcsstore.parts(old);
+                buffer.drop(heap, ob);
+                answer = vcsgit.failure_answer(heap, vcsgit.fault(heap, 0, "a git object could not be read"));
+                done = true;
+            } else if s2[2] == 2 {
+                let (fb2, fk2, fs2, fw2) = gitread.got_parts(failure);
+                buffer.drop(heap, fb2);
+                buffer.drop(heap, fw2);
+                let old = answer;
+                let (ob, os, oe) = vcsstore.parts(old);
+                buffer.drop(heap, ob);
+                answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: s2[3], errno: s2[4] };
+                done = true;
+            } else {
+                let (fb2, fk2, fs2, fw2) = gitread.got_parts(failure);
+                buffer.drop(heap, fb2);
+                buffer.drop(heap, fw2);
+            }
+            if !done {
+                var errno = 0;
+                borrow lines as &lnb in {
+                    errno = save_gitmap(heap, vcs, buffer.bytes(lnb));
+                }
+                if errno != 0 {
+                    let old = answer;
+                    let (ob, os, oe) = vcsstore.parts(old);
+                    buffer.drop(heap, ob);
+                    answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: errno };
+                    done = true;
+                }
+            }
+            if !done {
+                var refs = Refs { branches: buffer.empty(heap, 0), remotes: buffer.empty(heap, 0), tags: buffer.empty(heap, 0), kept: buffer.empty(heap, 0), status: 0, errno: 0 };
+                borrow lines as &lnb2 in {
+                    let r2 = put_refs(heap, groot, vcs, gitpath, od, ix, pk, meta, scratch, kn, mask, buffer.bytes(lnb2), now);
+                    let old = refs;
+                    let (b1, b2, b3, b4, b5, b6) = refs_parts(old);
+                    buffer.drop(heap, b1);
+                    buffer.drop(heap, b2);
+                    buffer.drop(heap, b3);
+                    buffer.drop(heap, b4);
+                    refs = r2;
+                }
+                let (branches, remotes, tags, kept, rstatus, rerrno) = refs_parts(refs);
+                if rstatus != 0 {
+                    let old = answer;
+                    let (ob, os, oe) = vcsstore.parts(old);
+                    buffer.drop(heap, ob);
+                    answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: rstatus, errno: rerrno };
+                    done = true;
+                }
+                var checked = 0;
+                if !done {
+                    let herr = follow_head(heap, groot, vcs, gitpath);
+                    if herr != 0 {
+                        let old = answer;
+                        let (ob, os, oe) = vcsstore.parts(old);
+                        buffer.drop(heap, ob);
+                        answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: herr };
+                        done = true;
+                    }
+                }
+                if !done && !no_checkout {
+                    let ps = box_slice(heap, vcsobj.scratch_size(), 0);
+                    borrow mut ps as &!psb in {
+                        let (cs, ce, cn) = check_out(heap, work, vcs, contents(psb));
+                        if cs != 0 {
+                            let old = answer;
+                            let (ob, os, oe) = vcsstore.parts(old);
+                            buffer.drop(heap, ob);
+                            answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: cs, errno: ce };
+                            done = true;
+                        } else {
+                            checked = cn;
+                        }
+                    }
+                    unbox_slice(heap, ps);
+                }
+                if !done {
+                    let old = answer;
+                    let (ob, os, oe) = vcsstore.parts(old);
+                    buffer.drop(heap, ob);
+                    var doc = buffer.empty(heap, 0);
+                    borrow branches as &b1 in {
+                        borrow remotes as &b2 in {
+                            borrow tags as &b3 in {
+                                borrow kept as &b4 in {
+                                    borrow mismatches as &mmb in {
+                                        buffer.drop(heap, doc);
+                                        doc = vcsgit.report_document(heap, commits, already, s2[1], false, checked, buffer.bytes(b1), buffer.bytes(b2), buffer.bytes(b3), buffer.bytes(b4), buffer.bytes(mmb));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    answer = vcsstore.Object { bytes: doc, status: 0, errno: 0 };
+                }
+                buffer.drop(heap, branches);
+                buffer.drop(heap, remotes);
+                buffer.drop(heap, tags);
+                buffer.drop(heap, kept);
+            }
+            buffer.drop(heap, mismatches);
+            buffer.drop(heap, lines);
+        }
+    }
+    unbox_slice(heap, known);
+    unbox_slice(heap, st);
+    buffer.drop(heap, order);
+    return answer;
+}
+
+// `cancho vcs import-git DIR` (without `--dry-run`) for the git directory `gitpath` (relative to `groot`, the `Dir` of `/`), into the repository whose working copy is `work` and
+// whose store is `vcs`. `now` is the time in seconds, for the logs of the refs.
+pub fn import_write[&h, &d, &w, &v, &g](heap: &!h Heap, groot: &d Dir, work: &w Dir, vcs: &v Dir, gitpath: &g [byte], no_checkout: bool, now: int) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    let meta = box_slice(heap, gitread.meta_size(), 0);
+    let scratch = box_slice(heap, gitread.scratch_size(), 0);
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    borrow mut meta as &!mb in {
+        borrow mut scratch as &!sb in {
+            let mm = contents(mb);
+            let sc = contents(sb);
+            let cat = gitread.open_catalog(heap, groot, gitpath, mm);
+            let (odirs, idx, pk, cstatus, cerrno, why) = gitread.cat_parts(cat);
+            if cstatus != 0 {
+                let old = answer;
+                let (oo, os, oe) = vcsstore.parts(old);
+                buffer.drop(heap, oo);
+                answer = vcsgit.failure_answer(heap, gitread.Got { body: buffer.empty(heap, 0), kind: 0, status: cstatus, why: why });
+            } else {
+                buffer.drop(heap, why);
+                borrow odirs as &odb in {
+                    borrow idx as &ixb in {
+                        borrow pk as &pkb in {
+                            let old = answer;
+                            let (oo, os, oe) = vcsstore.parts(old);
+                            buffer.drop(heap, oo);
+                            answer = run_write(heap, groot, work, vcs, gitpath, buffer.bytes(odb), buffer.bytes(ixb), buffer.bytes(pkb), mm, sc, no_checkout, now);
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, odirs);
+            buffer.drop(heap, idx);
+            buffer.drop(heap, pk);
+        }
+    }
+    unbox_slice(heap, meta);
+    unbox_slice(heap, scratch);
+    return answer;
+}

@@ -1,0 +1,41 @@
+{
+  "already_imported": 0,
+  "branches": [
+    {
+      "change": "893aae7e119ef0d9aaa75bc177a022a9f0185476e92395f32fd6d3fa217cca0c",
+      "name": "heads/main"
+    },
+    {
+      "change": "5c0812a252cbd0be53bfe3d9e13e588d91c1a0c4775bfa9fd49aab26e27ebe2f",
+      "name": "heads/topic"
+    }
+  ],
+  "checked_out": 0,
+  "command": "import-git",
+  "commits": 5,
+  "dry_run": false,
+  "new_blobs": 7,
+  "ok": true,
+  "refs_kept": [],
+  "remotes": [
+    {
+      "change": "e68a664bf9ecfe64ec3aa84a549b53c5c856d362bbabc57d7d01ded1fae8d60d",
+      "name": "remotes/origin/signed"
+    },
+    {
+      "change": "5c0812a252cbd0be53bfe3d9e13e588d91c1a0c4775bfa9fd49aab26e27ebe2f",
+      "name": "remotes/up/topic"
+    }
+  ],
+  "self_check_mismatches": [],
+  "tags": [
+    {
+      "change": "4b5800100848aaca722385cc1eb42e36a4592aaaaff138240127a7f3e3dcc367",
+      "name": "tags/light"
+    },
+    {
+      "change": "893aae7e119ef0d9aaa75bc177a022a9f0185476e92395f32fd6d3fa217cca0c",
+      "name": "tags/v1"
+    }
+  ]
+}

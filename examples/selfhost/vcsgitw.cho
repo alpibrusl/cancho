@@ -1,0 +1,298 @@
+edition 9;
+module selfhost.vcsgitw;
+
+// vcsgitw.cho -- the writing half of `cancho vcs import-git` (`docs/vcs-routing.md` section 18). This file so far: the `gitmap`.
+//
+// `.cancho/vcs/gitmap` is `GITID CHANGEID` on each line, sorted by the whole line, written whole. The Rust command (`bridge.rs`, `load_gitmap` and
+// `save_gitmap`) reads it into a map (a file that is not UTF-8 is read as empty; each line is split at its first space, a line with no space is
+// dropped, a `\r` before the `\n` is dropped, and a key that comes twice keeps its last line), then writes `KEY CHANGE\n` for every entry, sorted.
+// `normalized` is the reading, `sorted` the writing; both were checked against what the Rust command did to a gitmap with such lines in it.
+
+import std.buffer;
+import std.bytes;
+import std.utf8;
+
+// The lines of `text` the way the Rust command keeps them: each with a first space, a `\r\n` ending made `\n`, a last line with no `\n` kept as it is
+// (a bare `\r` at the end of the last line stays). Each answered line ends with a `\n`.
+pub fn normalized[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text) + 1);
+    var at = 0;
+    while at < len(text) {
+        var end = at;
+        while end < len(text) && text[end] != byte_of(10) {
+            end = end + 1;
+        }
+        var stop = end;
+        if stop > at && end < len(text) && text[stop - 1] == byte_of(13) {
+            stop = stop - 1;
+        }
+        var sp = at;
+        while sp < stop && text[sp] != byte_of(32) {
+            sp = sp + 1;
+        }
+        if sp < stop {
+            out = buffer.append(heap, out, text[at..stop]);
+            out = buffer.push(heap, out, byte_of(10));
+        }
+        at = end + 1;
+    }
+    return out;
+}
+
+// How many lines `text` has (each ends with `\n`).
+fn line_count[&t](text: &t [byte]) -> [] int {
+    var n = 0;
+    var left = len(text);
+    while left > 0 {
+        left = left - 1;
+        if text[left] == byte_of(10) {
+            n = n + 1;
+        }
+    }
+    return n;
+}
+
+// Line `i` of `text` without its `\n`; `w` holds the starts at `[0, n)` and the ends at `[n, 2n)`.
+fn line_of[&t, &w](text: &t [byte], w: &w [int], n: int, i: int) -> [] &t [byte] {
+    return text[w[i]..w[n + i]];
+}
+
+// The order of lines `i` and `j`: by the bytes of the line, then by place (so the sort is stable).
+fn before[&t, &w](text: &t [byte], w: &w [int], n: int, i: int, j: int) -> [] bool {
+    let c = bytes.compare(line_of(text, w, n, i), line_of(text, w, n, j));
+    if c != 0 {
+        return c < 0;
+    }
+    return i < j;
+}
+
+// The line `i` up to its first space.
+fn key_of[&t, &w](text: &t [byte], w: &w [int], n: int, i: int) -> [] &t [byte] {
+    let line = line_of(text, w, n, i);
+    var sp = 0;
+    while sp < len(line) && line[sp] != byte_of(32) {
+        sp = sp + 1;
+    }
+    return line[0..sp];
+}
+
+// `lines` (as `normalized` answers them, in the order they were read or made) sorted by the whole line, with one line for each key: the last one.
+pub fn sorted[&h, &t](heap: &!h Heap, lines: &t [byte]) -> [heap] buffer.Buffer {
+    let n = line_count(lines);
+    let space = box_slice(heap, 4 * n + 4, 0);
+    var out = buffer.empty(heap, len(lines) + 1);
+    borrow mut space as &!s in {
+        let w = contents(s);
+        var at = 0;
+        var i = 0;
+        while at < len(lines) {
+            var end = at;
+            while end < len(lines) && lines[end] != byte_of(10) {
+                end = end + 1;
+            }
+            w[i] = at;
+            w[n + i] = end;
+            w[2 * n + i] = i;
+            i = i + 1;
+            at = end + 1;
+        }
+        // Bottom-up merge sort of the places in `w[2n, 3n)`, with `w[3n, 4n)` to merge into.
+        var width = 1;
+        while width < n {
+            var lo = 0;
+            while lo < n {
+                var mid = lo + width;
+                if mid > n {
+                    mid = n;
+                }
+                var hi = lo + 2 * width;
+                if hi > n {
+                    hi = n;
+                }
+                var a = lo;
+                var b = mid;
+                var k = lo;
+                while k < hi {
+                    if a < mid && (b >= hi || !before(lines, w, n, w[2 * n + b], w[2 * n + a])) {
+                        w[3 * n + k] = w[2 * n + a];
+                        a = a + 1;
+                    } else {
+                        w[3 * n + k] = w[2 * n + b];
+                        b = b + 1;
+                    }
+                    k = k + 1;
+                }
+                lo = lo + 2 * width;
+            }
+            var c = 0;
+            while c < n {
+                w[2 * n + c] = w[3 * n + c];
+                c = c + 1;
+            }
+            width = width * 2;
+        }
+        // One line for each key: of the lines of a key, which are together, the one that was read last.
+        var p = 0;
+        while p < n {
+            var q = p;
+            var best = w[2 * n + p];
+            while q + 1 < n && bytes.equal(key_of(lines, w, n, w[2 * n + q + 1]), key_of(lines, w, n, w[2 * n + p])) {
+                q = q + 1;
+                if w[2 * n + q] > best {
+                    best = w[2 * n + q];
+                }
+            }
+            out = buffer.append(heap, out, line_of(lines, w, n, best));
+            out = buffer.push(heap, out, byte_of(10));
+            p = q + 1;
+        }
+    }
+    unbox_slice(heap, space);
+    return out;
+}
+
+// ---- the change of a commit ---------------------------------------------------------------------------------------------------
+
+// `text` as Rust's `String::from_utf8_lossy` makes it: each maximal ill-formed run is one U+FFFD (`std.utf8.decode` has the same rule).
+pub fn lossy[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(text) + 4);
+    var at = 0;
+    while at < len(text) {
+        match utf8.decode(text, at) {
+            utf8.Step::Code(_, width) => {
+                out = buffer.append(heap, out, text[at..at + width]);
+                at = at + width;
+            }
+            utf8.Step::Invalid(width) => {
+                out = buffer.push(heap, out, byte_of(239));
+                out = buffer.push(heap, out, byte_of(191));
+                out = buffer.push(heap, out, byte_of(189));
+                at = at + width;
+            }
+        }
+    }
+    return out;
+}
+
+// Whether the code point has the Unicode property White_Space (what `str::trim_end` takes off).
+fn is_space(c: int) -> [] bool {
+    return c >= 9 && c <= 13 || c == 32 || c == 133 || c == 160 || c == 5760 || c >= 8192 && c <= 8202 || c == 8232 || c == 8233 || c == 8239 || c == 8287 || c == 12288;
+}
+
+// The intent prompt of a git commit message: lossy, with white space off its end (`String::from_utf8_lossy(message).trim_end()`).
+pub fn prompt_of[&h, &t](heap: &!h Heap, message: &t [byte]) -> [heap] buffer.Buffer {
+    let text = lossy(heap, message);
+    var out = buffer.empty(heap, 0);
+    borrow text as &tr in {
+        let t = buffer.bytes(tr);
+        var end = len(t);
+        var going = true;
+        while going && end > 0 {
+            var start = end - 1;
+            while start > 0 && int_of(t[start]) >= 128 && int_of(t[start]) < 192 {
+                start = start - 1;
+            }
+            match utf8.decode(t, start) {
+                utf8.Step::Code(c, width) => {
+                    if is_space(c) {
+                        end = start;
+                    } else {
+                        going = false;
+                    }
+                }
+                utf8.Step::Invalid(width) => {
+                    going = false;
+                }
+            }
+        }
+        buffer.drop(heap, out);
+        out = buffer.append(heap, buffer.empty(heap, end + 1), t[0..end]);
+    }
+    buffer.drop(heap, text);
+    return out;
+}
+
+// `s.parse::<i64>()`: an optional sign and at least one digit, nothing else, and it fits. The number, and whether it parsed.
+fn parse_i64[&t](text: &t [byte]) -> [] (int, bool) {
+    var at = 0;
+    var negative = false;
+    if len(text) > 0 && (text[0] == byte_of(43) || text[0] == byte_of(45)) {
+        negative = text[0] == byte_of(45);
+        at = 1;
+    }
+    if at >= len(text) {
+        return (0, false);
+    }
+    var v = 0;
+    while at < len(text) {
+        let d = int_of(text[at]) - 48;
+        if d < 0 || d > 9 {
+            return (0, false);
+        }
+        // v * 10 + d must fit: the largest magnitude is 2^63 - 1, or 2^63 for a negative one, which the check below stops one short of (-9223372036854775808 is refused here).
+        if v > (9223372036854775807 - d) / 10 {
+            return (0, false);
+        }
+        v = v * 10 + d;
+        at = at + 1;
+    }
+    if negative {
+        return (0 - v, true);
+    }
+    return (v, true);
+}
+
+// `author_fields`: from the header lines of a commit (the first that begins `author `), the lossy text of the rest of the line split from the right at two
+// spaces into who, time and zone; when that does not parse, the whole of it, time 0 and `+0000`; with no such line, nothing, 0 and `+0000`.
+pub fn author_fields[&h, &t](heap: &!h Heap, headers: &t [byte]) -> [heap] (buffer.Buffer, int, buffer.Buffer) {
+    var at = 0;
+    while at < len(headers) {
+        var end = at;
+        while end < len(headers) && headers[end] != byte_of(10) {
+            end = end + 1;
+        }
+        if end - at >= 7 && bytes.equal(headers[at..at + 7], "author ") {
+            let rest = lossy(heap, headers[at + 7..end]);
+            var who = buffer.empty(heap, 0);
+            var time = 0;
+            var tz = buffer.empty(heap, 0);
+            var parsed = false;
+            borrow rest as &rr in {
+                let r = buffer.bytes(rr);
+                var last = len(r);
+                while last > 0 && r[last - 1] != byte_of(32) {
+                    last = last - 1;
+                }
+                if last > 0 {
+                    var mid = last - 1;
+                    while mid > 0 && r[mid - 1] != byte_of(32) {
+                        mid = mid - 1;
+                    }
+                    if mid > 0 {
+                        let (n, ok) = parse_i64(r[mid..last - 1]);
+                        if ok {
+                            time = n;
+                            parsed = true;
+                            buffer.drop(heap, who);
+                            buffer.drop(heap, tz);
+                            who = buffer.append(heap, buffer.empty(heap, mid), r[0..mid - 1]);
+                            tz = buffer.append(heap, buffer.empty(heap, len(r) - last + 1), r[last..len(r)]);
+                        }
+                    }
+                }
+                if !parsed {
+                    buffer.drop(heap, who);
+                    buffer.drop(heap, tz);
+                    who = buffer.append(heap, buffer.empty(heap, len(r) + 1), r);
+                    tz = buffer.append(heap, buffer.empty(heap, 8), "+0000");
+                }
+            }
+            buffer.drop(heap, rest);
+            return (who, time, tz);
+        }
+        at = end + 1;
+    }
+    return (buffer.empty(heap, 0), 0, buffer.append(heap, buffer.empty(heap, 8), "+0000"));
+}
+
+// (Writing the file is `vcsstore.put_whole(heap, vcs, "gitmap", sorted(..))`, in the importer that holds the directory: this module needs no capability.)
