@@ -16,11 +16,8 @@
 
 use super::*;
 
-mod authority;
-mod bootstrap;
 mod cases;
 mod cli;
-mod compile;
 mod messages;
 mod origin;
 mod parity;
@@ -1424,15 +1421,4 @@ fn the_formatter_in_cancho_agrees_with_the_rust_formatter() {
     assert!(refused >= 10, "only {refused} programs were refused by the formatter");
     assert!(unchanged > 300, "only {unchanged} programs were already formatted");
     let _ = std::fs::remove_dir_all(exe.parent().expect("a scratch directory"));
-}
-
-/// The first line of the input of the compiler in cancho: the system, and the architecture where Linux has two.
-pub(crate) fn target_line() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "darwin"
-    } else if cfg!(target_arch = "aarch64") {
-        "linux aarch64"
-    } else {
-        "linux"
-    }
 }

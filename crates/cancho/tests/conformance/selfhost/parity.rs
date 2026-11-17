@@ -117,8 +117,8 @@ fn closure() -> Vec<String> {
     seen
 }
 
-/// A module the compiler imports but a test's own list of the compiler's files leaves out makes it refuse its own
-/// source with `unknown-name`: this says which list, before a long test does.
+/// A module the compiler imports but the list of the compiler's files leaves out makes it refuse its own
+/// source with `unknown-name`: this says so before a long test does. (The list of `bootstrap.rs` `own_source` is `tests/commands/bootstrap.sh` now, which fails on it.)
 #[test]
 fn every_module_of_the_compiler_is_in_the_lists_the_tests_keep_of_them() {
     // `with_front_end` in selfhost.rs reads `cancho.files`, so that file is the list it keeps.
@@ -129,17 +129,6 @@ fn every_module_of_the_compiler_is_in_the_lists_the_tests_keep_of_them() {
             front_end.lines().any(|f| f == format!("{module}.cho")),
             "the module `{module}` of examples/selfhost is not in examples/selfhost/cancho.files, which selfhost.rs `with_front_end` reads"
         );
-    }
-    let lists = [("selfhost/bootstrap.rs `own_source`", include_str!("bootstrap.rs"))];
-    for module in closure() {
-        for (which, text) in lists {
-            let named = text.contains(&format!("\"{module}.cho\""))
-                || text.contains(&format!("\"{module}\""));
-            assert!(
-                named,
-                "the module `{module}` of examples/selfhost is not in {which}; add it, before the modules that import it"
-            );
-        }
     }
 }
 
