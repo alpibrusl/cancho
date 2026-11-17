@@ -1,6 +1,6 @@
 # make.sh -- how tests/vcs_fixtures/ was made, and a check that it can be made again: the repository of `crates/cancho/tests/vcs_repo.rs`'s `two_changes` and its third record (three changes,
 # fixed times and author, so every object, change and ref is the same each time; only the wall-clock seconds in `refs/heads/main.log`, which nothing reads, differ), and the documents the Rust `cancho vcs` prints for the commands of `docs/vcs-routing.md`
-# slice R1 that `crates/cancho/tests/vcs_pins/` does not pin. Written once by the Rust command; the tests of the command line in cancho compare with them, so they outlive the Rust code (D6).
+# slice R1 that `tests/vcs_fixtures/pins/` does not pin. Written once by the Rust command; the tests of the command line in cancho compare with them, so they outlive the Rust code (D6).
 #
 #   sh tests/vcs_fixtures/make.sh RUST_CANCHO OUTDIR      writes OUTDIR/three_changes and OUTDIR/golden; `diff -r` them with the committed ones (only that one log differs)
 set -eu

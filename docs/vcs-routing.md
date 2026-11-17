@@ -34,7 +34,7 @@ repository and checks the exit status passes on the cancho-written command and r
 * **The output**: one pretty JSON document on stdout, keys sorted, `{"ok": true, "command": …, …}` or `{"ok": false, "command": …, "refused": {"tag", "message", …}}`; a refusal exits 1, an
   environment failure 3 (`vcs_args.rs:78`, `main.rs:221`). `docs/vcs-cli.md` §4 says "text is a rendering of the same result"; the code prints the document in both cases, so **the document is what
   parity means**.
-* **The oracle after Rust is checked in:** `crates/cancho/tests/vcs_pins/` holds 38 documents (init, status, log, show, branch, 5 refusals, …) from the Rust command, and `crates/cancho/tests/vcs_repo.rs` compares the
+* **The oracle after Rust is checked in:** `tests/vcs_fixtures/pins/` holds 38 documents (init, status, log, show, branch, 5 refusals, …) from the Rust command, and `crates/cancho/tests/vcs_repo.rs` compares the
   Rust command with them with the root normalised (`normalise`, line 86).
 
 ## 3. The bootstrap rule decides the order **[read]**
@@ -106,7 +106,7 @@ no behaviour, no `.expected`, no pin; `cancho.files` (nothing here is in it yet)
 
 **R1, built and measured (2026-11-11, Linux x86-64).** `clivcsrepo.cho` (the options, discovery, the envelope and the refusal documents) and the routing in `cli.cho` (D1: `init` and `show` always, `log` unless `--store` is
 named or no repository is in reach). `cancho.files` gained five modules, `clivcsrepo`, `vcsrepo`, `vcsstore`, `vcsobj` and `vcschange`, and **not** `vcsscan` or `vcsstatus` (R0 did that). **The chain built from the committed
-seed reproduces itself with it** (stage 2 = stage 3), so R1 needed no reseed, as §3 said. `tests/commands/vcs_repo.sh` (in `script_tests.cho`) holds `init`, `log` and `show` against the pins of `crates/cancho/tests/vcs_pins/` and
+seed reproduces itself with it** (stage 2 = stage 3), so R1 needed no reseed, as §3 said. `tests/commands/vcs_repo.sh` (in `script_tests.cho`) holds `init`, `log` and `show` against the pins of `tests/vcs_fixtures/pins/` and
 the 14 goldens of `tests/vcs_fixtures/golden/` (made by the Rust command with `tests/vcs_fixtures/make.sh`), on copies of `tests/vcs_fixtures/three_changes`, byte for byte, with the root made `<root>`. **A false alarm, said
 because it cost an afternoon of reading:** the first chain from the seed appeared to fail (stage 2 differed from stage 3 by 2.6 MB). The IR the seed-built stage 1 wrote was byte-identical to a correct compiler's; the cause was an
 edit of `clivcsrepo.cho` made while the chain was running, so stage 2 and stage 3 compiled different files. A run with nothing touched reproduced itself. **Not the Rust command's:** `--repo` is not resolved through links (D2); the

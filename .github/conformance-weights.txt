@@ -68,27 +68,10 @@ selfhost::bootstrap::the_file_list_of_the_standalone_build_is_the_import_closure
 selfhost::statics::guidelines_module_is_the_text_of_agents_md 1
 selfhost::parity::rules_and_builtins_are_the_goldens 1
 selfhost::statics::std_order_module_is_the_std_table_of_cancho 1
-corpus::accepted_programs_build_and_run 176
-corpus::every_example_runs_and_prints_what_it_says 52
-corpus::refused_programs_are_refused_with_the_stated_reason 5
-corpus::the_slab_example_builds_and_runs 3
-corpus::the_multi_file_example_builds_and_runs 3
-corpus::the_growable_buffer_example_builds_and_runs 3
-corpus::the_modular_example_builds_and_runs 3
-corpus::run_builds_and_executes_in_one_step 3
-corpus::emitting_a_bare_object_file_works 1
-corpus::every_rule_has_a_fixture 1
-corpus::a_wrong_command_line_is_a_usage_error_not_a_refusal 1
-benchmarks::every_guard_kernel_agrees_across_its_three_modes 79
-benchmarks::the_three_language_benchmarks_agree 31
-benchmarks::every_benchmark_pair_agrees 28
-benchmarks::benchmark_game_programs_print_the_published_answer 15
-benchmarks::fasta_and_reverse_complement_print_the_published_answer 11
 udp 129
 sockets 115
 binary32 98
 json 79
-formatting 63
 f32_text 60
 http 53
 net 50
@@ -98,19 +81,12 @@ float_text 37
 http_fetch_nb 30
 floats 25
 ports 16
-compile_time 16
-vcs_std 14
 
-global_state 11
 
 crypto_builtins 10
 
-vcs 7
 wide_multiply 6
 sha256_builtins 6
-vcs_remote 5
 wasm_target 4
 mathfn 3
-duplication 1
 devices 1
-vcs_sync 1

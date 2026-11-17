@@ -34,21 +34,15 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-mod benchmarks;
 mod binary32;
 
-mod compile_time;
 mod conn_peer;
-mod corpus;
 mod crypto_builtins;
 mod devices;
 
-mod duplication;
 mod f32_text;
 mod float_text;
 mod floats;
-mod formatting;
-mod global_state;
 mod http;
 mod http_fetch_nb;
 mod http_server;
@@ -65,10 +59,6 @@ mod tls_support;
 use tls_support::{https_hello, tls_echo, tls_server};
 
 mod udp;
-mod vcs;
-mod vcs_remote;
-mod vcs_std;
-mod vcs_sync;
 mod wasm_target;
 mod wide_multiply;
 
@@ -118,16 +108,29 @@ fn make_removable(dir: &Path) {
     }
 }
 
-fn fixtures(kind: &str) -> Vec<PathBuf> {
-    let dir = repo_root().join("tests").join(kind);
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("cannot read `{}`: {e}", dir.display()))
-        .map(|entry| entry.expect("a readable directory entry").path())
-        .filter(|p| p.extension().is_some_and(|e| e == "cho"))
-        .collect();
-    paths.sort();
-    assert!(!paths.is_empty(), "no fixtures in `{}`", dir.display());
-    paths
+/// A catalogue the front end keeps (`tests/rules.golden`: the tag of every refusal rule; `tests/builtins.golden`: the name of every builtin), one a line, in
+/// the order the compiler lists them: recorded once from the Rust crates (`rules_and_builtins_are_the_goldens`, in `selfhost/parity.rs`, holds the two together
+/// until the crates go), so that the tests that need the list read a file and not a Rust crate (`docs/removing-rust.md` phase 1b). It was in `corpus.rs`.
+pub(crate) fn golden(name: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(repo_root().join(format!("tests/{name}.golden")))
+        .unwrap_or_else(|e| panic!("tests/{name}.golden is read: {e}"));
+    text.lines().map(str::to_owned).collect()
+}
+
+/// Every `.cho` file under `dir`, recursively, skipping `.cancho-vcs` -- content-addressed package-store blobs, copies by design. It was in `duplication.rs`.
+pub(crate) fn walk_ls_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries {
+        let path = entry.expect("a readable directory entry").path();
+        if path.is_dir() {
+            if path.file_name().and_then(|n| n.to_str()) == Some(".cancho-vcs") {
+                continue;
+            }
+            walk_ls_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "cho") {
+            out.push(path);
+        }
+    }
 }
 
 /// Read `cancho authority --output json` for one program.
