@@ -5049,7 +5049,7 @@ fn main(world: World) -> [] int {
                     }
                     match dir_rename_new(r, "cancho-dirprobe-NAME2", "cancho-dirprobe-NAME2") {
                         Done::Ok(n) => {
-                            bad = bad + 0;
+                            bad = bad + 8;
                         }
                         Done::Failed(e) => {
                             bad = bad + 0;
