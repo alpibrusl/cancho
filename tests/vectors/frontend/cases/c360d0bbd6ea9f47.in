@@ -1,0 +1,2 @@
+edition 5;
+fn f(a: f32, b: f32) -> [] f32 { return a + b; }

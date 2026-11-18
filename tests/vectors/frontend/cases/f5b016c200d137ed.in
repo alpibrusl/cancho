@@ -1,0 +1,2 @@
+struct S { a: int }
+pub fn f[&r](a: &r S) -> [] int { return 1; }

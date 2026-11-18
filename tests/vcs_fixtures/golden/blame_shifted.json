@@ -1,0 +1,107 @@
+{
+  "command": "blame",
+  "lines": [
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "6915170191b396cdc9558f324ffd5839a16cfdb678e253e03bd8511578597b6f",
+      "intent": null,
+      "line": 1,
+      "subject": "",
+      "text": "one",
+      "time": 3002
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "6df0e00d1571e02a2ea5b6a5e5d06cd827bd2fcb6af4af02172b4710c19bb1c4",
+      "intent": null,
+      "line": 2,
+      "subject": "",
+      "text": "2",
+      "time": 3000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "84c8c1af8467c3582c2ff830788714ef64d32cb141fdc54f012bfc1169ce96ba",
+      "intent": null,
+      "line": 3,
+      "subject": "",
+      "text": "x",
+      "time": 3001
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "6df0e00d1571e02a2ea5b6a5e5d06cd827bd2fcb6af4af02172b4710c19bb1c4",
+      "intent": null,
+      "line": 4,
+      "subject": "",
+      "text": "5",
+      "time": 3000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "6df0e00d1571e02a2ea5b6a5e5d06cd827bd2fcb6af4af02172b4710c19bb1c4",
+      "intent": null,
+      "line": 5,
+      "subject": "",
+      "text": "6",
+      "time": 3000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "6df0e00d1571e02a2ea5b6a5e5d06cd827bd2fcb6af4af02172b4710c19bb1c4",
+      "intent": null,
+      "line": 6,
+      "subject": "",
+      "text": "7",
+      "time": 3000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "6d60a46bb822217ef89a3af25eb429eedb919c92ed8c7d7808f88d2a96030911",
+      "intent": null,
+      "line": 7,
+      "subject": "",
+      "text": "eight",
+      "time": 3005
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "6df0e00d1571e02a2ea5b6a5e5d06cd827bd2fcb6af4af02172b4710c19bb1c4",
+      "intent": null,
+      "line": 8,
+      "subject": "",
+      "text": "9",
+      "time": 3000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "6df0e00d1571e02a2ea5b6a5e5d06cd827bd2fcb6af4af02172b4710c19bb1c4",
+      "intent": null,
+      "line": 9,
+      "subject": "",
+      "text": "10",
+      "time": 3000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "6df0e00d1571e02a2ea5b6a5e5d06cd827bd2fcb6af4af02172b4710c19bb1c4",
+      "intent": null,
+      "line": 10,
+      "subject": "",
+      "text": "11",
+      "time": 3000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "6df0e00d1571e02a2ea5b6a5e5d06cd827bd2fcb6af4af02172b4710c19bb1c4",
+      "intent": null,
+      "line": 11,
+      "subject": "",
+      "text": "12",
+      "time": 3000
+    }
+  ],
+  "ok": true,
+  "path": "s.txt",
+  "rev": "6915170191b396cdc9558f324ffd5839a16cfdb678e253e03bd8511578597b6f"
+}

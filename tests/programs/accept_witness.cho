@@ -1,0 +1,69 @@
+edition 9;
+
+import std.io as console;
+
+// A server that hangs up on every connection at once and says `connected` for each one (`tests/commands/vcs_remote.sh`: the stand-in for a cleartext server, where a connection to it is the failure).
+//   argv[1]  the port
+// It says `ready` when it listens, and `connected` for each connection, on standard error (unbuffered). Exit 3 when the port cannot be listened on.
+
+fn number[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) && int_of(b[i]) >= '0' && int_of(b[i]) <= '9' {
+        n = n * 10 + (int_of(b[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn witness[&i, &l](io: &!i Io, listener: &!l Listener) -> [err_write, conn_accept] int {
+    console.error_all(io, "ready\n");
+    var going = true;
+    while going {
+        match tcp_accept(listener) {
+            Accepted::Ok(c) => {
+                conn_close(c);
+                console.error_all(io, "connected\n");
+            }
+            Accepted::Again => {
+            }
+            Accepted::Failed(e) => {
+                going = false;
+            }
+        }
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(heap);
+    var status = 3;
+    borrow mut io as &!ih in {
+        borrow args as &a in {
+            borrow net as &nn in {
+                match tcp_listen(nn, number(arg(a, 1)), 128, 0) {
+                    Listening::Ok(l) => {
+                        var listener = l;
+                        borrow mut listener as &!lh in {
+                            status = witness(ih, lh);
+                        }
+                        listener_close(listener);
+                    }
+                    Listening::Failed(e) => {
+                    }
+                }
+            }
+        }
+    }
+    release(net);
+    release(args);
+    release(io);
+    return status;
+}

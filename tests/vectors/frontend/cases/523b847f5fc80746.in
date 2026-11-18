@@ -1,0 +1,33 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": 7,
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "binary",
+            "op": "+",
+            "lhs": {
+              "kind": "bool",
+              "value": true
+            },
+            "rhs": {
+              "kind": "bool",
+              "value": false
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

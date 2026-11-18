@@ -1,0 +1,6 @@
+FILE 34
+module a;
+pub enum E { A, B(int) }FILE 99
+module b;
+import a;
+fn f(e: a.E) -> [] int { match e { E::A => { return 1; } _ => { return 2; } } }

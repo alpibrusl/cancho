@@ -1,0 +1,5 @@
+struct A { b: B }
+struct B { a: A, c: C }
+struct C { x: int }
+enum E { X(A), Y }
+fn f(a: A, e: E, c: C) -> [] int { return 0; }

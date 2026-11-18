@@ -1,0 +1,1 @@
+fn f(a: fn(int, &r [byte]) -> [io_write] (int, bool), b: Ffi("libc"), c: io.Buffer[int, (int, int)]) -> [] int { return 1; }

@@ -1,0 +1,2 @@
+fn lab[T: val](x: T) -> [heap] T { return x; }
+fn f[&r]() -> [] int { return lab(4); }

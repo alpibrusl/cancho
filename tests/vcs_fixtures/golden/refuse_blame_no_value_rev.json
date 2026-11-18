@@ -1,0 +1,8 @@
+{
+  "command": "blame",
+  "ok": false,
+  "refused": {
+    "message": "`blame` takes one path",
+    "tag": "bad-argument"
+  }
+}

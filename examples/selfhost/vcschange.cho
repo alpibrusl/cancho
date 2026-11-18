@@ -7,7 +7,8 @@ module selfhost.vcschange;
 //    [,"decls":[{"path":S,"name":S,"kind":S},..]][,"edits":[{"path":S,"old":S,"new":S},..]][,"attestations":[S,..]]}
 //
 // An optional part is left out when it is empty, so adding a part later does not change the id of an old change. The `git` part (what a git commit
-// has that a change must keep to get the same git id) is the bridge's and is not written or read here yet.
+// has that a change must keep to get the same git id) is the bridge's: `git_member` writes it, after the lists and before `close`
+// (`,"git":{"headers":B,"message":B}`, where B is the bytes as a string when they are UTF-8 and `{"hex":"..."}` when they are not).
 //
 // Writing: `open`, then in this order `intent`, `decls_open` with one `decl` each and `list_close`, `edits_open`/`edit`/`list_close`,
 // `attestations_open`/`attestation`/`list_close`, then `close`. A text is escaped as serde_json escapes it (`jsonwrite.string`: `"` `\`, the
@@ -20,8 +21,10 @@ module selfhost.vcschange;
 
 import std.buffer;
 import std.bytes;
+import std.utf8;
 import selfhost.jsonread;
 import selfhost.jsonwrite;
+import selfhost.lexcore as lc;
 import selfhost.vcsobj;
 
 // ---- writing -----------------------------------------------------------------------------------------------------------------
@@ -73,6 +76,16 @@ fn optional[&h, &k, &v](heap: &!h Heap, out: buffer.Buffer, name: &k [byte], val
 pub fn intent[&h, &p, &m, &s, &i](heap: &!h Heap, out: buffer.Buffer, prompt: &p [byte], model: &m [byte], session: &s [byte], issue: &i [byte]) -> [heap] buffer.Buffer {
     var b = buffer.append(heap, out, ",\"intent\":{\"prompt\":");
     b = jsonwrite.string(heap, b, prompt);
+    b = optional(heap, b, "model", model);
+    b = optional(heap, b, "session", session);
+    b = optional(heap, b, "issue", issue);
+    return buffer.push(heap, b, byte_of(125));
+}
+
+// As `intent`, with `prompt` already escaped as JSON text (what `show` reads back from a change: `subject` answers the text as written).
+pub fn intent_escaped[&h, &p, &m, &s, &i](heap: &!h Heap, out: buffer.Buffer, prompt: &p [byte], model: &m [byte], session: &s [byte], issue: &i [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, ",\"intent\":{\"prompt\":\"");
+    b = buffer.push(heap, buffer.append(heap, b, prompt), byte_of(34));
     b = optional(heap, b, "model", model);
     b = optional(heap, b, "session", session);
     b = optional(heap, b, "issue", issue);
@@ -133,6 +146,31 @@ pub fn edit[&h, &p, &o, &n](heap: &!h Heap, out: buffer.Buffer, first: bool, pat
 
 pub fn attestation[&h, &t](heap: &!h Heap, out: buffer.Buffer, first: bool, text: &t [byte]) -> [heap] buffer.Buffer {
     return jsonwrite.string(heap, separator(heap, out, first), text);
+}
+
+// Bytes the way `change::Bytes` writes them: a string when they are UTF-8, else `{"hex":"<lowercase digits>"}`.
+fn bytes_value[&h, &t](heap: &!h Heap, out: buffer.Buffer, text: &t [byte]) -> [heap] buffer.Buffer {
+    if utf8.is_valid(text) {
+        return jsonwrite.string(heap, out, text);
+    }
+    var b = buffer.append(heap, out, "{\"hex\":\"");
+    var at = 0;
+    while at < len(text) {
+        let c = int_of(text[at]);
+        b = buffer.push(heap, b, "0123456789abcdef"[c / 16]);
+        b = buffer.push(heap, b, "0123456789abcdef"[c % 16]);
+        at = at + 1;
+    }
+    return buffer.append(heap, b, "\"}");
+}
+
+// `,"git":{"headers":B,"message":B}`: what a git commit has that a change must keep (the header lines after the last `parent`, and the message).
+pub fn git_member[&h, &x, &y](heap: &!h Heap, out: buffer.Buffer, headers: &x [byte], message: &y [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, ",\"git\":{\"headers\":");
+    b = bytes_value(heap, b, headers);
+    b = buffer.append(heap, b, ",\"message\":");
+    b = bytes_value(heap, b, message);
+    return buffer.push(heap, b, byte_of(125));
 }
 
 pub fn close[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
@@ -245,6 +283,142 @@ pub fn parent[&j, &x](jm: &!j [int], src: &x [byte], n: int) -> [] &x [byte] {
     return raw(jm, src, p);
 }
 
+// ---- the types of a change (what `serde` checks when the Rust command loads one) -------------------------------------------------
+
+// How many members of the object `obj` are called `name`.
+fn named_count[&j, &x, &k](jm: &!j [int], src: &x [byte], obj: int, name: &k [byte]) -> [] int {
+    if jsonread.kind(jm, obj) != jsonread.k_object() {
+        return 0;
+    }
+    var n = 0;
+    var m = jsonread.first(jm, obj);
+    while m >= 0 {
+        let k = jm[16 + 6 * m + 3];
+        if len(name) == jsonread.end(jm, k) - jsonread.start(jm, k) - 2 && bytes.equal(src[jsonread.start(jm, k) + 1..jsonread.end(jm, k) - 1], name) {
+            n = n + 1;
+        }
+        m = jsonread.next(jm, m);
+    }
+    return n;
+}
+
+// The member `name` of `obj` is a string; or, when not `must`, absent or null.
+fn string_member[&j, &x, &k](jm: &!j [int], src: &x [byte], obj: int, name: &k [byte], must: bool) -> [] bool {
+    if named_count(jm, src, obj, name) > 1 {
+        return false;
+    }
+    let id = field(jm, src, obj, name);
+    if id < 0 || jsonread.kind(jm, id) == jsonread.k_null() {
+        return !must;
+    }
+    return is_text(jm, id);
+}
+
+// The member `name` of `obj` is `Bytes`: a string, or an object whose `hex` is a hex string (a text with a non-ASCII character in it is not hex).
+fn bytes_member[&j, &x, &k](jm: &!j [int], src: &x [byte], obj: int, name: &k [byte]) -> [] bool {
+    if named_count(jm, src, obj, name) > 1 {
+        return false;
+    }
+    let id = field(jm, src, obj, name);
+    if id < 0 {
+        return false;
+    }
+    if is_text(jm, id) {
+        return true;
+    }
+    if jsonread.kind(jm, id) != jsonread.k_object() || named_count(jm, src, id, "hex") != 1 {
+        return false;
+    }
+    let h = field(jm, src, id, "hex");
+    if !is_text(jm, h) {
+        return false;
+    }
+    return unhex_text(jm, jsonread.decode_into(jm, src, h, jsonread.scratch0(jm)));
+}
+
+// Whether the `n` bytes decoded at the first place for decoding are hex as the Rust `unhex` reads it: an even number, each pair what `u8::from_str_radix(.., 16)` takes (so a `+` may begin a pair, and a byte
+// that is not ASCII is not a digit).
+fn unhex_text[&j](jm: &!j [int], n: int) -> [] bool {
+    if n % 2 != 0 {
+        return false;
+    }
+    let base = jsonread.scratch0(jm);
+    var i = 0;
+    while i < n {
+        let a = jm[base + i];
+        let b = jm[base + i + 1];
+        let a_digit = a >= 48 && a <= 57 || a >= 65 && a <= 70 || a >= 97 && a <= 102;
+        let b_digit = b >= 48 && b <= 57 || b >= 65 && b <= 70 || b >= 97 && b <= 102;
+        if !b_digit || !(a_digit || a == 43) {
+            return false;
+        }
+        i = i + 2;
+    }
+    return true;
+}
+
+// Every element of the array `name` of the change is an object with the strings `a`, `b` and `c` (an absent list is empty; `null` is not a list).
+fn records_ok[&j, &x, &k, &p, &q, &r](jm: &!j [int], src: &x [byte], name: &k [byte], a: &p [byte], b: &q [byte], c: &r [byte]) -> [] bool {
+    if named_count(jm, src, jm[1], name) > 1 {
+        return false;
+    }
+    let id = field(jm, src, jm[1], name);
+    if id < 0 {
+        return true;
+    }
+    if jsonread.kind(jm, id) != jsonread.k_array() {
+        return false;
+    }
+    var item = jsonread.first(jm, id);
+    while item >= 0 {
+        if jsonread.kind(jm, item) != jsonread.k_object() || !string_member(jm, src, item, a, true) || !string_member(jm, src, item, b, true) || !string_member(jm, src, item, c, true) {
+            return false;
+        }
+        item = jsonread.next(jm, item);
+    }
+    return true;
+}
+
+// Whether the change that `read` accepted is also what `serde` would load as the Rust `Change`: the optional parts are of their types, and no field it names is there twice.
+pub fn well_typed[&j, &x](jm: &!j [int], src: &x [byte]) -> [] bool {
+    let root = jm[1];
+    if named_count(jm, src, root, "tree") > 1 || named_count(jm, src, root, "parents") > 1 || named_count(jm, src, root, "author") > 1 || named_count(jm, src, root, "time") > 1 || named_count(jm, src, root, "tz") > 1 {
+        return false;
+    }
+    if named_count(jm, src, root, "intent") > 1 || named_count(jm, src, root, "attestations") > 1 || named_count(jm, src, root, "git") > 1 {
+        return false;
+    }
+    let intent = field(jm, src, root, "intent");
+    if intent >= 0 && jsonread.kind(jm, intent) != jsonread.k_null() {
+        if jsonread.kind(jm, intent) != jsonread.k_object() || !string_member(jm, src, intent, "prompt", true) || !string_member(jm, src, intent, "model", false) || !string_member(jm, src, intent, "session", false) || !string_member(jm, src, intent, "issue", false) {
+            return false;
+        }
+    }
+    if !records_ok(jm, src, "decls", "path", "name", "kind") || !records_ok(jm, src, "edits", "path", "old", "new") {
+        return false;
+    }
+    let notes = field(jm, src, root, "attestations");
+    if notes >= 0 {
+        if jsonread.kind(jm, notes) != jsonread.k_array() {
+            return false;
+        }
+        var t = jsonread.first(jm, notes);
+        while t >= 0 {
+            if !is_text(jm, t) {
+                return false;
+            }
+            t = jsonread.next(jm, t);
+        }
+    }
+    let git = field(jm, src, root, "git");
+    if git >= 0 && jsonread.kind(jm, git) != jsonread.k_null() {
+        if jsonread.kind(jm, git) != jsonread.k_object() || !bytes_member(jm, src, git, "headers") || !bytes_member(jm, src, git, "message") {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Whether the change carries an intent, and its parts: the raw text of one that is a string, empty when absent.
 pub fn has_intent[&j, &x](jm: &!j [int], src: &x [byte]) -> [] bool {
     return jsonread.kind(jm, field(jm, src, jm[1], "intent")) == jsonread.k_object();
@@ -261,6 +435,46 @@ pub fn intent_part[&j, &x, &k](jm: &!j [int], src: &x [byte], name: &k [byte]) -
         return src[0..0];
     }
     return raw(jm, src, id);
+}
+
+// Whether the string `id`, decoded, has `query` in it (`exact` false) or is it (`exact` true); false when `id` is not a string.
+fn decoded_matches[&j, &x, &q](jm: &!j [int], src: &x [byte], id: int, query: &q [byte], exact: bool) -> [] bool {
+    if !is_text(jm, id) {
+        return false;
+    }
+    let base = jsonread.scratch0(jm);
+    let n = jsonread.decode_into(jm, src, id, base);
+    let m = len(query);
+    if m > n || exact && m != n {
+        return false;
+    }
+    var at = 0;
+    while at + m <= n {
+        var k = 0;
+        while k < m && jm[base + at + k] == lc.at(query, k) {
+            k = k + 1;
+        }
+        if k == m {
+            return true;
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// Whether the author has `query` in it (Rust: `author.contains(q)`).
+pub fn author_has[&j, &x, &q](jm: &!j [int], src: &x [byte], query: &q [byte]) -> [] bool {
+    return decoded_matches(jm, src, field(jm, src, jm[1], "author"), query, false);
+}
+
+// Whether the change has an intent whose prompt has `query` in it.
+pub fn prompt_has[&j, &x, &q](jm: &!j [int], src: &x [byte], query: &q [byte]) -> [] bool {
+    return decoded_matches(jm, src, field(jm, src, field(jm, src, jm[1], "intent"), "prompt"), query, false);
+}
+
+// Whether the change has an intent whose string `name` (`session` or `issue`) is `query`.
+pub fn intent_is[&j, &x, &k, &q](jm: &!j [int], src: &x [byte], name: &k [byte], query: &q [byte]) -> [] bool {
+    return decoded_matches(jm, src, field(jm, src, field(jm, src, jm[1], "intent"), name), query, true);
 }
 
 // How many items the list `name` (`decls`, `edits`, `attestations`) has; 0 when absent.
@@ -311,4 +525,75 @@ pub fn subject[&j, &x](jm: &!j [int], src: &x [byte]) -> [] &x [byte] {
         }
     }
     return p;
+}
+
+// ---- reading the text of a change (what `export-git` writes into a commit) -------------------------------------------------------
+
+// The string `id`, decoded, as a buffer.
+fn decoded[&h, &j, &x](heap: &!h Heap, jm: &!j [int], src: &x [byte], id: int) -> [heap] buffer.Buffer {
+    let base = jsonread.scratch0(jm);
+    let n = jsonread.decode_into(jm, src, id, base);
+    var out = buffer.empty(heap, n + 1);
+    var i = 0;
+    while i < n {
+        out = buffer.push(heap, out, byte_of(jm[base + i]));
+        i = i + 1;
+    }
+    return out;
+}
+
+// The author, decoded.
+pub fn author_text[&h, &j, &x](heap: &!h Heap, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
+    return decoded(heap, jm, src, field(jm, src, jm[1], "author"));
+}
+
+// The zone, decoded.
+pub fn tz_text[&h, &j, &x](heap: &!h Heap, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
+    return decoded(heap, jm, src, field(jm, src, jm[1], "tz"));
+}
+
+// The part `name` of the intent (`prompt`, `session`, `model`, `issue`), decoded; empty when it is not a string.
+pub fn intent_text[&h, &j, &x, &k](heap: &!h Heap, jm: &!j [int], src: &x [byte], name: &k [byte]) -> [heap] buffer.Buffer {
+    let id = field(jm, src, field(jm, src, jm[1], "intent"), name);
+    if !is_text(jm, id) {
+        return buffer.empty(heap, 0);
+    }
+    return decoded(heap, jm, src, id);
+}
+
+// Whether the change has the `git` member the bridge writes (an object).
+pub fn has_git[&j, &x](jm: &!j [int], src: &x [byte]) -> [] bool {
+    return jsonread.kind(jm, field(jm, src, jm[1], "git")) == jsonread.k_object();
+}
+
+fn hex_digit(c: int) -> [] int {
+    if c <= 57 {
+        return c - 48;
+    }
+    return (c | 32) - 87;
+}
+
+// The bytes `git.headers` or `git.message` (`name`) holds: the string as it is decoded, or the bytes of the `hex` of an object (a pair that begins with `+` is its second digit, as the Rust `unhex` reads it).
+pub fn git_bytes[&h, &j, &x, &k](heap: &!h Heap, jm: &!j [int], src: &x [byte], name: &k [byte]) -> [heap] buffer.Buffer {
+    let id = field(jm, src, field(jm, src, jm[1], "git"), name);
+    if is_text(jm, id) {
+        return decoded(heap, jm, src, id);
+    }
+    let hex = field(jm, src, id, "hex");
+    if !is_text(jm, hex) {
+        return buffer.empty(heap, 0);
+    }
+    let base = jsonread.scratch0(jm);
+    let n = jsonread.decode_into(jm, src, hex, base);
+    var out = buffer.empty(heap, n / 2 + 1);
+    var i = 0;
+    while i + 1 < n {
+        var high = hex_digit(jm[base + i]);
+        if jm[base + i] == 43 {
+            high = 0;
+        }
+        out = buffer.push(heap, out, byte_of(high * 16 + hex_digit(jm[base + i + 1])));
+        i = i + 2;
+    }
+    return out;
 }

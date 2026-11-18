@@ -1,0 +1,8 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "ref `heads/x` does not hold a change id",
+    "tag": "object-corrupt"
+  }
+}

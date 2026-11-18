@@ -1,0 +1,8 @@
+{
+  "command": "branch",
+  "ok": false,
+  "refused": {
+    "message": "the checked-out branch cannot be deleted",
+    "tag": "ref-protected"
+  }
+}

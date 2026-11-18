@@ -1,0 +1,12 @@
+  edition 4;
+ fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args, net } = split(world);
+ release(io);
+ release(ffi);
+ release(fs);
+ release(heap);
+ release(args);
+ let bound = narrow(net, "127.0.0.1:53");
+ borrow bound as &n in { match udp_connect(n, "127.0.0.1", 53) { UdpOpened::Ok(u) => { udp_close(u);
+ } UdpOpened::Failed(e) => { } } } release(bound);
+ return 0;
+ } 

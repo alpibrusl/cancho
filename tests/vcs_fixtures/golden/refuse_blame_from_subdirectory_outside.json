@@ -1,0 +1,8 @@
+{
+  "command": "blame",
+  "ok": false,
+  "refused": {
+    "message": "`../../x` is outside the repository",
+    "tag": "path-escapes"
+  }
+}

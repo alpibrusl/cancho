@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "kind": null,
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "float"
+      },
+      "body": []
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+extern fn g[&f, &r, &i, &h](ffi: &f Ffi("libc"), fs: &r Fs("/tmp")) -> [ffi("libc"), fs_read("/var"), fs_write("/tmp"), file_read, file_write, dir_read, dir_write] int;

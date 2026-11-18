@@ -1,0 +1,545 @@
+== net-sockets/.cancho-vcs
+step 1: vcs publish --store <work>/case/st <root>/packages/net-sockets/.cancho-vcs/sources/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho
+  exit 0
+  out| published socket
+  out| published setsockopt
+  out| published bind
+  out| published listen
+  out| published accept
+  out| published read
+  out| published write
+  out| published close
+  out| published put
+  out| published put_nat
+  err: (nothing)
+step 2: vcs publish --std --store <work>/case/st <root>/packages/net-sockets/.cancho-vcs/sources/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho
+  exit 0
+  out| nothing new (10 declaration(s) unchanged)
+  err: (nothing)
+  file ./st/manifest.json 1652476281 3057
+  file ./st/ops/0a0166ad62d4c4b53a1913985ffbd6115da3a4a630755fe3c3f8184174f69ace.json 3100926122 359
+  file ./st/ops/1c7449e6556af1ecf6b90ec9a4e142b3752b32d5a4b53ab846e54d9893f372e2.json 2789720165 359
+  file ./st/ops/241ca2de89903f006d1f527a57494457a3b1a66ec0222e17dcb9399702ad9bdf.json 1748971986 359
+  file ./st/ops/4fae2a9f9d4520f19828f5abfd90568f79503a70ba90cdd382603fcee1daf49a.json 1798714085 359
+  file ./st/ops/9b543fc9a75f860757ae7e3b809208edb51d2d8d2abdf53b99d4a6e24e682312.json 200601334 332
+  file ./st/ops/acbed62f89c399d2125ab8374271e08a1b48fc487759190f947c45ae45b8de17.json 2239832251 359
+  file ./st/ops/b1e6a51d82e87c57a24a1ddc2c53ee2c81228d8248c4269d745b3ac85bf6c9b9.json 556771177 359
+  file ./st/ops/cd98160a2f8d8ec69e7d66950c0cac46da5c66bdaea5b780024e322e60d55f3d.json 3541844458 359
+  file ./st/ops/dac9ea4cd6f0c5aa77e7339c20401229ce7cc3f04884b5babcd1750210726a56.json 4128186340 332
+  file ./st/ops/ff174c5de184a587d0c930a06f4d40bf5d2322999ca1ebdee62719fb21ccc40d.json 3582074025 359
+  file ./st/sources/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+== http-response/.cancho-vcs
+step 1: vcs publish --store <work>/case/st --requires <work>/locks/http-response_.cancho-vcs-0.lock:<root>/packages/net-sockets/.cancho-vcs <root>/packages/http-response/.cancho-vcs/sources/1230e7090783b33feff02ce041feba369db4b87f577a0c58fbfa3a06aeb0c07c.cho
+  exit 0
+  out| published send_all
+  out| published status_of
+  err: (nothing)
+step 2: vcs publish --std --store <work>/case/st --requires <work>/locks/http-response_.cancho-vcs-0.lock:<root>/packages/net-sockets/.cancho-vcs <root>/packages/http-response/.cancho-vcs/sources/1230e7090783b33feff02ce041feba369db4b87f577a0c58fbfa3a06aeb0c07c.cho
+  exit 0
+  out| nothing new (2 declaration(s) unchanged)
+  err: (nothing)
+  file ./st/manifest.json 865646411 634
+  file ./st/ops/7f7685912332b7c4ba376cda44043abbc85b88d736af0bd80fb3efc9f78ae4be.json 2984299586 332
+  file ./st/ops/c30b9a13e57058358422fcdef9cb96b2cee98f9c53fd5ad1e7862be7310aa8bc.json 2612464548 359
+  file ./st/requires/0.json 315992465 392
+  file ./st/sources/1230e7090783b33feff02ce041feba369db4b87f577a0c58fbfa3a06aeb0c07c.cho 2397366418 2476
+== x509/.cancho-vcs/x509_verify
+step 1: vcs publish --store <work>/case/st --requires <work>/locks/x509_.cancho-vcs_x509_verify-0.lock:<root>/packages/x509/.cancho-vcs/x509 --requires <work>/locks/x509_.cancho-vcs_x509_verify-1.lock:<root>/packages/x509/.cancho-vcs/x509_names <root>/packages/x509/.cancho-vcs/x509_verify/sources/2c93327d4796c8761ebfe3769b633e87ade07d12ae0f58f74fa0fdaf505d6b96.cho
+  exit 1
+  out: (nothing)
+  err| `<root>/packages/x509/.cancho-vcs/x509_verify/sources/2c93327d4796c8761ebfe3769b633e87ade07d12ae0f58f74fa0fdaf505d6b96.cho` imports `std` (directly or through a `--requires` package) but `vcs publish` was not given `--std`; pass `--std` to publish against the library (docs/package-system.md §7)
+step 2: vcs publish --std --store <work>/case/st --requires <work>/locks/x509_.cancho-vcs_x509_verify-0.lock:<root>/packages/x509/.cancho-vcs/x509 --requires <work>/locks/x509_.cancho-vcs_x509_verify-1.lock:<root>/packages/x509/.cancho-vcs/x509_names <root>/packages/x509/.cancho-vcs/x509_verify/sources/2c93327d4796c8761ebfe3769b633e87ade07d12ae0f58f74fa0fdaf505d6b96.cho
+  exit 0
+  out: 55 lines, 1128168834 1215
+  err: (nothing)
+  file ./st/manifest.json 2165937770 16966
+  file ./st/ops/05b3f7fde892044c781548ae6ee698aea450885c6ab8866b4832c42099292bda.json 3343229249 332
+  file ./st/ops/081ae6a4aa10199047fdc9bab79e34f586c838f7b23ef868f6da02c8b599d125.json 1950282252 332
+  file ./st/ops/0a031ff87e07a88a6a9dd701f97471973d5de2dd946ce2a4e871eaebea3f61e8.json 3552857607 332
+  file ./st/ops/0ad77f74d8c738f507ee2687c6cdb166a3502e1bacea8dcb1313fa89ea56b5e0.json 3842910606 332
+  file ./st/ops/0adfba3ec3a88287dd7130f3f6531adc4d286fe08c382b7b37f457083b2a46f1.json 4131799460 332
+  file ./st/ops/0fea8dd0af6188361f8857fa2abd96087f3737bb3ede85e7dae48833252bc646.json 1695022535 332
+  file ./st/ops/1201c2de2bd8791b80cd1ceec96c3cdf96578d60648ee4cf878e56cccd661b79.json 2854847549 332
+  file ./st/ops/2215b0ead9f29579fe41170ceb9181c1f875a4feaa5aad0a4a556997d25cb572.json 2716626589 332
+  file ./st/ops/25e893ad3767d837419f9537bb8647d99b4e5844e9830652509811edebba7773.json 1462365255 332
+  file ./st/ops/271d621821faa28c7e3e801c0150fb33a780fdc3070461d1a14e16038b8fed1e.json 2214081871 332
+  file ./st/ops/29f9a04567e95bde6e3312f22a78e9a022373e1c92cda37f2744c3bfd0867ffa.json 72187015 332
+  file ./st/ops/34dd85854072d42d17ac6ff1272c798d56082971a008d9047edd0fc7bf323cac.json 2971144091 332
+  file ./st/ops/37a8b47f7a3550a3365cff8d0d78afb244521dd1aab1a176c713705a96c21e66.json 1557865491 332
+  file ./st/ops/3b38404732e7d8811b6be7a3d9e344ec411306d900601907898d47e851c6d58c.json 3165738609 332
+  file ./st/ops/3d30019e949e405e61f49ce1cf4c32a95dfe937d0737ee244a36c36df1fe178c.json 839408719 332
+  file ./st/ops/40b22efc17109852373c4dd2f5a15a8b4af1ad6dc6b79ea4d0714e3124ba0f30.json 4284805177 332
+  file ./st/ops/425318b7e6a1fa92d052781de177f1b4b5f2571b83888f9b7c1bc0ad11ba45a9.json 4230345536 332
+  file ./st/ops/4d010c8d13c804e342460b9c17948a88a6d6d392b1c71ccf33c2c20a005a5ecf.json 2660758430 332
+  file ./st/ops/518e48a3eb833d7dd9a577fa64864582c0c25425db5b558f49ff8788b2a4ce06.json 1656182103 332
+  file ./st/ops/52fcf435025c43b9db8e911a59aa789d947696d65ff1e412d119ae2a6632c504.json 2620276784 332
+  file ./st/ops/54077fdb8c9ef9c2097c7291b48edb0f77bdd324ee0d1d50f01df1a6340d5ab9.json 932550647 332
+  file ./st/ops/5569801553b1138b698684902ee93348ab57a6c98eebf9e387b5dd2c6d459a20.json 4108073011 332
+  file ./st/ops/645a14b34ea4959dd94195ea5ba32fef33dccdea15ca8c5abd2dcbb2e0148b86.json 2700665560 332
+  file ./st/ops/6ac8c88264b6627ed28cd2dc136b3dc9bc2347d0353068197137493f18767c3c.json 4049963586 332
+  file ./st/ops/6df9c42095e817bc38eb74bfa0411f69b526fd08b1d09b366268ad56b9dccb78.json 2825505124 332
+  file ./st/ops/6e800046ef76ea4999d5127fd7ba4dd5bf50bd1c4c5ec5ae9955823d87f5d39a.json 3552468376 332
+  file ./st/ops/72240fef31637a49d5486063243f6a9c153b744f43e8e9eb843779cdd7802294.json 773196886 332
+  file ./st/ops/74f911bad956d704a600c76e137b97ea7bc3e905ad0d57dc8ec819063f24833e.json 888805168 332
+  file ./st/ops/75d10d7f3ca8c8882ee3ce60b4cb3f9a77deb44f14ccb10110a5f2559b2a5e5e.json 2280058798 332
+  file ./st/ops/7d37ad7eb2066a4fbff4f377fa501e6e14bb555cae38bb575f8499f5c7bfdbef.json 1183703891 332
+  file ./st/ops/841161e6db4a6b92e2b54c1ff38d85151463c6d13baf7aa7d78872a9b74de586.json 174386994 332
+  file ./st/ops/97be928d6d8e243d33001b143bf36dafe186d0f8e326c8ed4e4928df03ae6855.json 993789313 332
+  file ./st/ops/9f27ec7d8ab0741be726e08bd6eb145d96ea28e6e9101ef035b9d3dbd9eaa09b.json 2594997286 332
+  file ./st/ops/a2382753505b0a593f239dda7ee40763755719bc3d62d8d0a9178667821bfce9.json 535270668 332
+  file ./st/ops/b25eb1d877d9d47df9183f631feba79f61adb91043c052e0b3068709f4bf4194.json 3250951549 332
+  file ./st/ops/b32448ca522d8a6875a447108ce74e4fd2697ad108ba872d24429a6c16b8108a.json 286735477 332
+  file ./st/ops/b34addf73241e07df513cb8e106eb4670ee1ec1a0cbc7cf4c3cdc37233f5186b.json 1435751203 332
+  file ./st/ops/b71b5ddbc0bbca4248071e5cad584f84bf855750dd06cf6a50851048e333de96.json 3767892867 332
+  file ./st/ops/b94219cbc3b6a9fc8257993cfc376858a9d206860242f6eda0c32ada40fb0e87.json 1134108682 332
+  file ./st/ops/ba3582a4b07d8895861fd80b71e41eb880e06049986fb968c6755b3224a9754b.json 2093515181 332
+  file ./st/ops/bcc3e0b2d294a5b3e553d03c57b51863424a70ade26409f9593b8a3142d0fe7a.json 2115680514 332
+  file ./st/ops/bf679e08982d3264257916a3c93cedf78319f9a0915195913e2097a44348c922.json 3560489474 332
+  file ./st/ops/bff2b22654c3440884b87b8de1994114d1202b6e0e1e3efec1e9506851c919fb.json 333806479 332
+  file ./st/ops/cafd3cf9070e1231c2a08ab50ada14e259265b1f5ca66e6bcd96966db8ea5416.json 4238121745 332
+  file ./st/ops/cf7dd069f687c53c061ae7f0a49591598b1fe1370128a14195c8b109158d7e52.json 3537735696 332
+  file ./st/ops/dc5aac3bb59cc91f4ae3697a981f80367ebd9f39d215e3b942f84468b1e063a2.json 2993784144 332
+  file ./st/ops/e2fdb3bfb1dd471860e697ea95cbbfa2a4b6bf5cb225b914b1da4d43daf77ff2.json 2732506753 332
+  file ./st/ops/e5221a2f4798f85aff2887319aa61ebe0062fbe9b9c94fce7eda6220de5351ec.json 2445289547 332
+  file ./st/ops/e6fe24d8eb1c86913d0a4852c5a89fbb07831f88885a3d0e9cb6d0f41d300ae9.json 453409821 332
+  file ./st/ops/e80c1d5f47c69009dc0f05fc65b5233bbdf349aecc99974e21fa9ec12f1c38eb.json 2599258552 332
+  file ./st/ops/e938ff493507fcb8cb37fbe002f3fbc37c09954c8e5ca4c292bd9b25384d6523.json 2496116982 332
+  file ./st/ops/f2599a94bf3d7877082f02f51ad92432965f31acb9aa5c7d6faf54ffad5832aa.json 4083207725 332
+  file ./st/ops/f8fade270654b04d9e0ba975aca5f8ea0c86a0f85386d90d547703ace9ccedae.json 897501211 332
+  file ./st/ops/fbab59a5d460416f915a35811cd633e243faaa15f26c78e69e5b3898b771abdf.json 4170352919 332
+  file ./st/ops/fc2de2a4ecd5ab760da66d0ed32980fb182f7dd880bf8efcb59c8c49c3563940.json 3913693680 332
+  file ./st/requires/0.json 3914694050 24982
+  file ./st/requires/1.json 778220522 5706
+  file ./st/sources/2c93327d4796c8761ebfe3769b633e87ade07d12ae0f58f74fa0fdaf505d6b96.cho 965567575 35315
+== tls/.cancho-vcs/tls_hello
+step 1: vcs publish --store <work>/case/st --requires <work>/locks/tls_.cancho-vcs_tls_hello-0.lock:<root>/packages/tls/.cancho-vcs/tls_message --requires <work>/locks/tls_.cancho-vcs_tls_hello-1.lock:<root>/packages/tls/.cancho-vcs/tls_record <root>/packages/tls/.cancho-vcs/tls_hello/sources/fc8c882384626803a2f33a2cfe213572760e0463a04db0f7cf9a4e2255fe7353.cho
+  exit 1
+  out: (nothing)
+  err| `<root>/packages/tls/.cancho-vcs/tls_hello/sources/fc8c882384626803a2f33a2cfe213572760e0463a04db0f7cf9a4e2255fe7353.cho` imports `std` (directly or through a `--requires` package) but `vcs publish` was not given `--std`; pass `--std` to publish against the library (docs/package-system.md §7)
+step 2: vcs publish --std --store <work>/case/st --requires <work>/locks/tls_.cancho-vcs_tls_hello-0.lock:<root>/packages/tls/.cancho-vcs/tls_message --requires <work>/locks/tls_.cancho-vcs_tls_hello-1.lock:<root>/packages/tls/.cancho-vcs/tls_record <root>/packages/tls/.cancho-vcs/tls_hello/sources/fc8c882384626803a2f33a2cfe213572760e0463a04db0f7cf9a4e2255fe7353.cho
+  exit 0
+  out: 45 lines, 2482423245 1064
+  err: (nothing)
+  file ./st/manifest.json 502002889 14000
+  file ./st/ops/00746e56908d454ae674a57f6137b44dd32d404d32252f3f82f856bf8e61c7bd.json 3256483336 332
+  file ./st/ops/0173a6a95f109a77a1e4c8b48ee085ff381c57eb5041f0e46ff2fb826921f948.json 1392482121 332
+  file ./st/ops/03654d2f6bc3ff1bdc0cfad42ba0d3b849dd475878f8a73ae640806be0a7b197.json 3683303355 332
+  file ./st/ops/05fde8556ed77ebdf1264c16b7bad074ba23f9196adfe5a4983060068249d462.json 256765692 332
+  file ./st/ops/0634ec08c11f265bcda2777aee98f8a7a3ecda4aa4dbdb3fdf50dca6b4f4bb58.json 1084672968 332
+  file ./st/ops/0d9adfff15e30147376447d19e1382789bb8b2b263b6be6e3a1d6049b55de87c.json 3205889848 332
+  file ./st/ops/14a9bdd6f02e0c8e337ab3262019a07c24794bb5ca2668fe14a89d2fa854a717.json 3743248857 332
+  file ./st/ops/187662536fd5d4fd551faa174182f9abd71d7bb025868c3450d22df480b4c126.json 3279912054 332
+  file ./st/ops/20f14e5279c97f97e6262fe7c0891e84f61684d94915cbc61e511563125bc1c3.json 2148210967 332
+  file ./st/ops/24c3cf4c451617ed544f5df7dea658fd138c3070271ed3c9a5c786bbe7db5974.json 3744692475 332
+  file ./st/ops/28a81bf56bf7a7358bc72618dd655bdd8eb43c8a11d64f8538bf7370e461c9f1.json 928777520 332
+  file ./st/ops/2d6059711a65eaf30ebac8d75b234b03101fdef5685148508d568176c9176284.json 1352532874 332
+  file ./st/ops/3875ecf6ebb3caf6950e9d16e732a4503d789339479ba5e0c5b1dd11403b6fd2.json 162487015 332
+  file ./st/ops/3ae3d3121c937881415e534f4da427ef585dd85ad8559cba792497f41028ac5c.json 1705888167 332
+  file ./st/ops/3ddf678852a33131b33fa45756bf77d971258314395abcab2cb8d31b1888d720.json 487489179 332
+  file ./st/ops/482bdef6df652b3e2ca3e680e00773dd21c6bd2968c362f2272a5cb11266832b.json 4218948923 332
+  file ./st/ops/4edc321f815dfd03bf8a3332d37e7bc34da0edb5ff89748ffee79533b5464215.json 321263981 332
+  file ./st/ops/51f41a097e415d9b3932360f1daeaedafdc1e74b15545f376b62043667ded4f0.json 2111307461 332
+  file ./st/ops/5e37cc435e59db9c812c80390809fb7d35fd50e5b001bcab59197532d68f983a.json 3940447082 332
+  file ./st/ops/5f86de64ff081a482a517e478f0699289f1326dade19b13c88f31047ba155ccf.json 1437612441 332
+  file ./st/ops/684816d9806cd48b4bed6af8f562aa99e03bff25c0d80e15dcd62a3242d7c034.json 1472566130 332
+  file ./st/ops/729b6f3d674f7810d1a0045e7173fb298f70b9a46d9be576348d2600a16efee7.json 3366417097 332
+  file ./st/ops/83b28b22c50d67cd5290687e04704ed53f221c955463be36673a733a8a34a8c2.json 4228318829 332
+  file ./st/ops/8b209d4a787edd2f088c80b83e7c3d2febdf5251239ad3019b1fb136954bfd92.json 2888051296 332
+  file ./st/ops/8e9c3451c81ae50b1dc6182310e3e71dd0e8b70d09c0df1d06863c1b97fb50bb.json 3511095794 332
+  file ./st/ops/915d665b6b8b3563eb47d9d1ee9b363c9d06063be3c523d0254bf6c3a7a1a0da.json 1551554004 332
+  file ./st/ops/a3107af0fa354660b07e4744192ddc5532e8cec78540fb58c123dbbb2233462f.json 1688094253 332
+  file ./st/ops/a87d99eada4be9da431063774a3494de02078d5dcf334c2c4a5f19c727e65e63.json 4129086220 332
+  file ./st/ops/ad7c7c44abf575bfb6b693b0b40276bbd170ff94d9e59963b9f3eb33a0d6f508.json 460060417 332
+  file ./st/ops/adee355964bcda4f2be9700b719ba82507acb6739d2bf5cd4215c135540f2e37.json 778853848 332
+  file ./st/ops/b5b52d09467047a56b20957b15fdf54bc199b082730d5578695892da8e58a6d5.json 3022896470 332
+  file ./st/ops/c7f309c2a3ccd1f5d04d7ad048bccdd020a6633f9ffaee795ed4e22ef2c896ac.json 3598063894 332
+  file ./st/ops/cdd913261c523f8e3a8535f2c7e9e47b19d73b5fa4a9885484f48f7d654faa60.json 3283054330 332
+  file ./st/ops/d10571daa59a5c8ef32a3a0bc415eb4b5a54a11b28d2fcdcd0415a3f883f9ae2.json 1286502022 332
+  file ./st/ops/d4280d5bb232d24ae3739da2518c25a399549486907ebaa5ee8b56110541f32a.json 105486099 332
+  file ./st/ops/d5011cc6d2c1ac4974f127a0abfcb5eb6c870edbd23ebe5243c8a0e752de432d.json 2592792060 332
+  file ./st/ops/d65942b406acc587c7a819593c2d68d359184b62a027cc4e4fb721b31c0b874a.json 184398850 332
+  file ./st/ops/d6812d00cffab4020af2eb978a639c68d06b80e292302c3a97799e13eb2901c0.json 3175791197 332
+  file ./st/ops/e63c33ce0245eeed1ec47f0570035eb2219488cc8bc60aa14aca69086f145436.json 2358023534 332
+  file ./st/ops/ed3a42a7bd4bb7eaa1ca2d50798f2523261bfc8f6d5a1415df8bbd1df46510d0.json 1688714214 332
+  file ./st/ops/ef5df1be1187875673717e5abfb419a330b2d8d8702b2e17809508ae42a3fbf5.json 1564859464 332
+  file ./st/ops/f132e7358023d8db68946975d4bad4899e94adf47342e31ff81ff3778408614a.json 2100054782 332
+  file ./st/ops/f665255f264da7117f86c80916dfe1797484c07014a55b5ac61317df97eb6d46.json 1245491718 332
+  file ./st/ops/fee97583d9f3ac4fcd956f82a85695e26d9a56b29afa22c90cdcfa99b5c8a561.json 4139173913 332
+  file ./st/ops/ffde320d514ba5c4c03c8f663e6af76aa7b2b525dedc189d78d3e29d558a0afa.json 297528593 332
+  file ./st/requires/0.json 3377238866 25202
+  file ./st/requires/1.json 267873404 38585
+  file ./st/sources/fc8c882384626803a2f33a2cfe213572760e0463a04db0f7cf9a4e2255fe7353.cho 1175401082 28812
+== again, and a comment
+step 1: vcs publish --store st a.cho
+  exit 0
+  out| published socket
+  out| published setsockopt
+  out| published bind
+  out| published listen
+  out| published accept
+  out| published read
+  out| published write
+  out| published close
+  out| published put
+  out| published put_nat
+  err: (nothing)
+step 2: vcs publish --store st a.cho
+  exit 0
+  out| nothing new (10 declaration(s) unchanged)
+  err: (nothing)
+step 3: vcs publish --store st a.cho
+  exit 0
+  out| nothing new (10 declaration(s) unchanged)
+  err: (nothing)
+  file ./a.cho 1981762197 3234
+  file ./st/manifest.json 1652476281 3057
+  file ./st/ops/0a0166ad62d4c4b53a1913985ffbd6115da3a4a630755fe3c3f8184174f69ace.json 3100926122 359
+  file ./st/ops/1c7449e6556af1ecf6b90ec9a4e142b3752b32d5a4b53ab846e54d9893f372e2.json 2789720165 359
+  file ./st/ops/241ca2de89903f006d1f527a57494457a3b1a66ec0222e17dcb9399702ad9bdf.json 1748971986 359
+  file ./st/ops/4fae2a9f9d4520f19828f5abfd90568f79503a70ba90cdd382603fcee1daf49a.json 1798714085 359
+  file ./st/ops/9b543fc9a75f860757ae7e3b809208edb51d2d8d2abdf53b99d4a6e24e682312.json 200601334 332
+  file ./st/ops/acbed62f89c399d2125ab8374271e08a1b48fc487759190f947c45ae45b8de17.json 2239832251 359
+  file ./st/ops/b1e6a51d82e87c57a24a1ddc2c53ee2c81228d8248c4269d745b3ac85bf6c9b9.json 556771177 359
+  file ./st/ops/cd98160a2f8d8ec69e7d66950c0cac46da5c66bdaea5b780024e322e60d55f3d.json 3541844458 359
+  file ./st/ops/dac9ea4cd6f0c5aa77e7339c20401229ce7cc3f04884b5babcd1750210726a56.json 4128186340 332
+  file ./st/ops/ff174c5de184a587d0c930a06f4d40bf5d2322999ca1ebdee62719fb21ccc40d.json 3582074025 359
+  file ./st/sources/a469629b5c333efc3689a10033c9238af3ec33a4de798b463c50a48331b3e809.cho 1981762197 3234
+  file ./st/sources/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+== a body changed
+step 1: vcs publish --store st a.cho
+  exit 0
+  out| published socket
+  out| published setsockopt
+  out| published bind
+  out| published listen
+  out| published accept
+  out| published read
+  out| published write
+  out| published close
+  out| published put
+  out| published put_nat
+  err: (nothing)
+step 2: vcs publish --store st a.cho
+  exit 1
+  out: (nothing)
+  err: (nothing)
+  file ./a.cho 2478108761 3210
+  file ./st/manifest.json 1652476281 3057
+  file ./st/ops/0a0166ad62d4c4b53a1913985ffbd6115da3a4a630755fe3c3f8184174f69ace.json 3100926122 359
+  file ./st/ops/1c7449e6556af1ecf6b90ec9a4e142b3752b32d5a4b53ab846e54d9893f372e2.json 2789720165 359
+  file ./st/ops/241ca2de89903f006d1f527a57494457a3b1a66ec0222e17dcb9399702ad9bdf.json 1748971986 359
+  file ./st/ops/4fae2a9f9d4520f19828f5abfd90568f79503a70ba90cdd382603fcee1daf49a.json 1798714085 359
+  file ./st/ops/9b543fc9a75f860757ae7e3b809208edb51d2d8d2abdf53b99d4a6e24e682312.json 200601334 332
+  file ./st/ops/acbed62f89c399d2125ab8374271e08a1b48fc487759190f947c45ae45b8de17.json 2239832251 359
+  file ./st/ops/b1e6a51d82e87c57a24a1ddc2c53ee2c81228d8248c4269d745b3ac85bf6c9b9.json 556771177 359
+  file ./st/ops/cd98160a2f8d8ec69e7d66950c0cac46da5c66bdaea5b780024e322e60d55f3d.json 3541844458 359
+  file ./st/ops/dac9ea4cd6f0c5aa77e7339c20401229ce7cc3f04884b5babcd1750210726a56.json 4128186340 332
+  file ./st/ops/ff174c5de184a587d0c930a06f4d40bf5d2322999ca1ebdee62719fb21ccc40d.json 3582074025 359
+  file ./st/sources/17c53b56d310c19a1850486a99f2c0602629faf7beccc85a61f39e202e5dcc4f.cho 2478108761 3210
+  file ./st/sources/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+== a new function
+step 1: vcs publish --store st a.cho
+  exit 0
+  out| published socket
+  out| published setsockopt
+  out| published bind
+  out| published listen
+  out| published accept
+  out| published read
+  out| published write
+  out| published close
+  out| published put
+  out| published put_nat
+  err: (nothing)
+step 2: vcs publish --store st a.cho
+  exit 0
+  out| published twice
+  err: (nothing)
+step 3: vcs publish --store st a.cho
+  exit 0
+  out| nothing new (11 declaration(s) unchanged)
+  err: (nothing)
+  file ./a.cho 2531399676 3260
+  file ./st/manifest.json 3713155198 3360
+  file ./st/ops/0a0166ad62d4c4b53a1913985ffbd6115da3a4a630755fe3c3f8184174f69ace.json 3100926122 359
+  file ./st/ops/1c7449e6556af1ecf6b90ec9a4e142b3752b32d5a4b53ab846e54d9893f372e2.json 2789720165 359
+  file ./st/ops/241ca2de89903f006d1f527a57494457a3b1a66ec0222e17dcb9399702ad9bdf.json 1748971986 359
+  file ./st/ops/4fae2a9f9d4520f19828f5abfd90568f79503a70ba90cdd382603fcee1daf49a.json 1798714085 359
+  file ./st/ops/56496e6d5f03b9acfc70f8c4dc6817c405e47702057dc23ae1142664ea93f47c.json 3634250863 332
+  file ./st/ops/9b543fc9a75f860757ae7e3b809208edb51d2d8d2abdf53b99d4a6e24e682312.json 200601334 332
+  file ./st/ops/acbed62f89c399d2125ab8374271e08a1b48fc487759190f947c45ae45b8de17.json 2239832251 359
+  file ./st/ops/b1e6a51d82e87c57a24a1ddc2c53ee2c81228d8248c4269d745b3ac85bf6c9b9.json 556771177 359
+  file ./st/ops/cd98160a2f8d8ec69e7d66950c0cac46da5c66bdaea5b780024e322e60d55f3d.json 3541844458 359
+  file ./st/ops/dac9ea4cd6f0c5aa77e7339c20401229ce7cc3f04884b5babcd1750210726a56.json 4128186340 332
+  file ./st/ops/ff174c5de184a587d0c930a06f4d40bf5d2322999ca1ebdee62719fb21ccc40d.json 3582074025 359
+  file ./st/sources/a793547dfb072a731b6d1b7c3cf5582c6c21ad11bd69667c855b7cf2b33416da.cho 2531399676 3260
+  file ./st/sources/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+== a new effect row
+step 1: vcs publish --store st a.cho
+  exit 0
+  out| published socket
+  out| published setsockopt
+  out| published bind
+  out| published listen
+  out| published accept
+  out| published read
+  out| published write
+  out| published close
+  out| published put
+  out| published put_nat
+  out| published kept
+  err: (nothing)
+  file ./a.cho 2016872511 3338
+  file ./st/manifest.json 3822936203 3359
+  file ./st/ops/0a0166ad62d4c4b53a1913985ffbd6115da3a4a630755fe3c3f8184174f69ace.json 3100926122 359
+  file ./st/ops/1c7449e6556af1ecf6b90ec9a4e142b3752b32d5a4b53ab846e54d9893f372e2.json 2789720165 359
+  file ./st/ops/241ca2de89903f006d1f527a57494457a3b1a66ec0222e17dcb9399702ad9bdf.json 1748971986 359
+  file ./st/ops/4fae2a9f9d4520f19828f5abfd90568f79503a70ba90cdd382603fcee1daf49a.json 1798714085 359
+  file ./st/ops/76789b44cda92fa32dba7fd118112da6861b3c0a2f6329ef259a1e4105937cc0.json 82768846 350
+  file ./st/ops/9b543fc9a75f860757ae7e3b809208edb51d2d8d2abdf53b99d4a6e24e682312.json 200601334 332
+  file ./st/ops/acbed62f89c399d2125ab8374271e08a1b48fc487759190f947c45ae45b8de17.json 2239832251 359
+  file ./st/ops/b1e6a51d82e87c57a24a1ddc2c53ee2c81228d8248c4269d745b3ac85bf6c9b9.json 556771177 359
+  file ./st/ops/cd98160a2f8d8ec69e7d66950c0cac46da5c66bdaea5b780024e322e60d55f3d.json 3541844458 359
+  file ./st/ops/dac9ea4cd6f0c5aa77e7339c20401229ce7cc3f04884b5babcd1750210726a56.json 4128186340 332
+  file ./st/ops/ff174c5de184a587d0c930a06f4d40bf5d2322999ca1ebdee62719fb21ccc40d.json 3582074025 359
+  file ./st/sources/a7fd44fa05b4bfb35502c8ce289f705443941c9bfdb7f10b2ded071657abf7d5.cho 2016872511 3338
+== a second module in the store
+step 1: vcs publish --store st a.cho
+  exit 0
+  out| published socket
+  out| published setsockopt
+  out| published bind
+  out| published listen
+  out| published accept
+  out| published read
+  out| published write
+  out| published close
+  out| published put
+  out| published put_nat
+  err: (nothing)
+step 2: vcs publish --store st b.cho
+  exit 0
+  out| published same
+  err: (nothing)
+  file ./a.cho 3802202760 3206
+  file ./b.cho 500954149 67
+  file ./st/manifest.json 1272366831 3359
+  file ./st/ops/0a0166ad62d4c4b53a1913985ffbd6115da3a4a630755fe3c3f8184174f69ace.json 3100926122 359
+  file ./st/ops/1c7449e6556af1ecf6b90ec9a4e142b3752b32d5a4b53ab846e54d9893f372e2.json 2789720165 359
+  file ./st/ops/241ca2de89903f006d1f527a57494457a3b1a66ec0222e17dcb9399702ad9bdf.json 1748971986 359
+  file ./st/ops/2e989d6c89429b5f5dbbee782acdfe178266df964d195ee6885f6e8192fc00e5.json 3321102798 332
+  file ./st/ops/4fae2a9f9d4520f19828f5abfd90568f79503a70ba90cdd382603fcee1daf49a.json 1798714085 359
+  file ./st/ops/9b543fc9a75f860757ae7e3b809208edb51d2d8d2abdf53b99d4a6e24e682312.json 200601334 332
+  file ./st/ops/acbed62f89c399d2125ab8374271e08a1b48fc487759190f947c45ae45b8de17.json 2239832251 359
+  file ./st/ops/b1e6a51d82e87c57a24a1ddc2c53ee2c81228d8248c4269d745b3ac85bf6c9b9.json 556771177 359
+  file ./st/ops/cd98160a2f8d8ec69e7d66950c0cac46da5c66bdaea5b780024e322e60d55f3d.json 3541844458 359
+  file ./st/ops/dac9ea4cd6f0c5aa77e7339c20401229ce7cc3f04884b5babcd1750210726a56.json 4128186340 332
+  file ./st/ops/ff174c5de184a587d0c930a06f4d40bf5d2322999ca1ebdee62719fb21ccc40d.json 3582074025 359
+  file ./st/sources/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+  file ./st/sources/ea9c8e613003ff37dd6a9b83a65e7590deadbcdacbd441167cbbc116ba10c4bb.cho 500954149 67
+== a file that does not parse
+step 1: vcs publish --store st a.cho
+  exit 1
+  out: (nothing)
+  err: (nothing)
+  file ./a.cho 3334473857 3218
+== a file that is refused
+step 1: vcs publish --store st a.cho
+  exit 1
+  out: (nothing)
+  err: (nothing)
+  file ./a.cho 2078252238 3259
+== a file that imports std
+step 1: vcs publish --store st a.cho
+  exit 1
+  out: (nothing)
+  err| `a.cho` imports `std` (directly or through a `--requires` package) but `vcs publish` was not given `--std`; pass `--std` to publish against the library (docs/package-system.md §7)
+step 2: vcs publish --std --store st a.cho
+  exit 0
+  out| published same
+  err: (nothing)
+step 3: vcs publish --std --store st a.cho
+  exit 0
+  out| nothing new (1 declaration(s) unchanged)
+  err: (nothing)
+  file ./a.cho 3964515473 127
+  file ./st/manifest.json 4180172125 322
+  file ./st/ops/bf85fe96143333af8c4b000deb16820fa3b77cc80b3760b254a4576cb6ae9a85.json 782574900 332
+  file ./st/sources/4a40c18bdea3cff8d1c76cb12979bba9b089c6037250462bc710aecafe07c3b8.cho 3964515473 127
+== the default store
+step 1: vcs publish a.cho
+  exit 0
+  out| published socket
+  out| published setsockopt
+  out| published bind
+  out| published listen
+  out| published accept
+  out| published read
+  out| published write
+  out| published close
+  out| published put
+  out| published put_nat
+  err: (nothing)
+step 2: vcs publish a.cho
+  exit 0
+  out| nothing new (10 declaration(s) unchanged)
+  err: (nothing)
+  file ./.cancho-vcs/manifest.json 1652476281 3057
+  file ./.cancho-vcs/ops/0a0166ad62d4c4b53a1913985ffbd6115da3a4a630755fe3c3f8184174f69ace.json 3100926122 359
+  file ./.cancho-vcs/ops/1c7449e6556af1ecf6b90ec9a4e142b3752b32d5a4b53ab846e54d9893f372e2.json 2789720165 359
+  file ./.cancho-vcs/ops/241ca2de89903f006d1f527a57494457a3b1a66ec0222e17dcb9399702ad9bdf.json 1748971986 359
+  file ./.cancho-vcs/ops/4fae2a9f9d4520f19828f5abfd90568f79503a70ba90cdd382603fcee1daf49a.json 1798714085 359
+  file ./.cancho-vcs/ops/9b543fc9a75f860757ae7e3b809208edb51d2d8d2abdf53b99d4a6e24e682312.json 200601334 332
+  file ./.cancho-vcs/ops/acbed62f89c399d2125ab8374271e08a1b48fc487759190f947c45ae45b8de17.json 2239832251 359
+  file ./.cancho-vcs/ops/b1e6a51d82e87c57a24a1ddc2c53ee2c81228d8248c4269d745b3ac85bf6c9b9.json 556771177 359
+  file ./.cancho-vcs/ops/cd98160a2f8d8ec69e7d66950c0cac46da5c66bdaea5b780024e322e60d55f3d.json 3541844458 359
+  file ./.cancho-vcs/ops/dac9ea4cd6f0c5aa77e7339c20401229ce7cc3f04884b5babcd1750210726a56.json 4128186340 332
+  file ./.cancho-vcs/ops/ff174c5de184a587d0c930a06f4d40bf5d2322999ca1ebdee62719fb21ccc40d.json 3582074025 359
+  file ./.cancho-vcs/sources/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+  file ./a.cho 3802202760 3206
+== a store that is a file
+step 1: vcs publish --store st a.cho
+  exit 3
+  out: (nothing)
+  err| cannot open store at `st`
+  file ./a.cho 3802202760 3206
+  file ./st 1875991436 15
+== a manifest that is not JSON
+step 1: vcs publish --store st a.cho
+  exit 3
+  out: (nothing)
+  err| cannot read manifest at `st`
+  file ./a.cho 3802202760 3206
+  file ./st/manifest.json 1915305904 1
+== no file
+step 1: vcs publish 
+  exit 2
+  out: (nothing)
+  err| no input file given
+  file ./a.cho 3802202760 3206
+== a file that is not there
+step 1: vcs publish --store st absent.cho
+  exit 3
+  out: (nothing)
+  err| cannot read `absent.cho`
+  file ./a.cho 3802202760 3206
+== two files
+step 1: vcs publish a.cho b.cho
+  exit 2
+  out: (nothing)
+  err| `vcs publish` takes exactly one file today; multi-file attribution (many-files.md) is not built yet
+  file ./a.cho 3802202760 3206
+== --dir with a file
+step 1: vcs publish --dir d a.cho
+  exit 2
+  out: (nothing)
+  err| `--dir` publishes a whole directory and works out each file's `--requires` from its imports; it cannot be combined with input files or `--requires`
+  file ./a.cho 3802202760 3206
+== --dir with --requires
+step 1: vcs publish --dir d --requires x
+  exit 2
+  out: (nothing)
+  err| `--dir` publishes a whole directory and works out each file's `--requires` from its imports; it cannot be combined with input files or `--requires`
+  file ./a.cho 3802202760 3206
+== a lock that is not there, no store
+step 1: vcs publish --requires absent.lock a.cho
+  exit 2
+  out: (nothing)
+  err| this lock has no origin, so the store must be named: add `--store <dir>`
+  file ./a.cho 3802202760 3206
+== a lock that is not there, a store
+step 1: vcs publish --requires absent.lock:st2 a.cho
+  exit 0
+  out| published socket
+  out| published setsockopt
+  out| published bind
+  out| published listen
+  out| published accept
+  out| published read
+  out| published write
+  out| published close
+  out| published put
+  out| published put_nat
+  err: (nothing)
+  file ./.cancho-vcs/manifest.json 1652476281 3057
+  file ./.cancho-vcs/ops/0a0166ad62d4c4b53a1913985ffbd6115da3a4a630755fe3c3f8184174f69ace.json 3100926122 359
+  file ./.cancho-vcs/ops/1c7449e6556af1ecf6b90ec9a4e142b3752b32d5a4b53ab846e54d9893f372e2.json 2789720165 359
+  file ./.cancho-vcs/ops/241ca2de89903f006d1f527a57494457a3b1a66ec0222e17dcb9399702ad9bdf.json 1748971986 359
+  file ./.cancho-vcs/ops/4fae2a9f9d4520f19828f5abfd90568f79503a70ba90cdd382603fcee1daf49a.json 1798714085 359
+  file ./.cancho-vcs/ops/9b543fc9a75f860757ae7e3b809208edb51d2d8d2abdf53b99d4a6e24e682312.json 200601334 332
+  file ./.cancho-vcs/ops/acbed62f89c399d2125ab8374271e08a1b48fc487759190f947c45ae45b8de17.json 2239832251 359
+  file ./.cancho-vcs/ops/b1e6a51d82e87c57a24a1ddc2c53ee2c81228d8248c4269d745b3ac85bf6c9b9.json 556771177 359
+  file ./.cancho-vcs/ops/cd98160a2f8d8ec69e7d66950c0cac46da5c66bdaea5b780024e322e60d55f3d.json 3541844458 359
+  file ./.cancho-vcs/ops/dac9ea4cd6f0c5aa77e7339c20401229ce7cc3f04884b5babcd1750210726a56.json 4128186340 332
+  file ./.cancho-vcs/ops/ff174c5de184a587d0c930a06f4d40bf5d2322999ca1ebdee62719fb21ccc40d.json 3582074025 359
+  file ./.cancho-vcs/requires/0.json 448870892 58
+  file ./.cancho-vcs/sources/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+  file ./a.cho 3802202760 3206
+== an option
+step 1: vcs publish --bogus
+  exit 2
+  out: (nothing)
+  err| unknown option `--bogus`
+  file ./a.cho 3802202760 3206
+== --store last
+step 1: vcs publish --store
+  exit 2
+  out: (nothing)
+  err| `--store` needs a path
+  file ./a.cho 3802202760 3206
+== --dir last
+step 1: vcs publish --dir
+  exit 2
+  out: (nothing)
+  err| `--dir` needs a directory
+  file ./a.cho 3802202760 3206
+== --requires last
+step 1: vcs publish --requires
+  exit 2
+  out: (nothing)
+  err| `--requires` needs `<lock-file>:<dep-store>`
+  file ./a.cho 3802202760 3206
+== requirements dropped
+step 1: vcs publish --store st --requires n.lock:<root>/packages/net-sockets/.cancho-vcs a.cho
+  exit 0
+  out| published one
+  err: (nothing)
+step 2: vcs publish --store st a.cho
+  exit 0
+  out| nothing new (1 declaration(s) unchanged)
+  err: (nothing)
+  file ./a.cho 2667102904 62
+  file ./n.lock 1670522609 2827
+  file ./st/manifest.json 4011455348 322
+  file ./st/ops/66e9a7ea63682b93df9bddf58c4b00744873f4a3491d46ed69dbd4c0f3bbb93b.json 3864518067 332
+  file ./st/sources/814a2d5dbcce93fddc4a11ebf1f3396d6de4364e01837bcdaa045acd7dc9e4a8.cho 2667102904 62
+== a row of two labels
+step 1: vcs publish --store st a.cho
+  exit 0
+  out| published socket
+  out| published setsockopt
+  out| published bind
+  out| published listen
+  out| published accept
+  out| published read
+  out| published write
+  out| published close
+  out| published put
+  out| published put_nat
+  out| published two
+  err: (nothing)
+  file ./a.cho 2146118627 3384
+  file ./st/manifest.json 2411048657 3358
+  file ./st/ops/0a0166ad62d4c4b53a1913985ffbd6115da3a4a630755fe3c3f8184174f69ace.json 3100926122 359
+  file ./st/ops/1c7449e6556af1ecf6b90ec9a4e142b3752b32d5a4b53ab846e54d9893f372e2.json 2789720165 359
+  file ./st/ops/241ca2de89903f006d1f527a57494457a3b1a66ec0222e17dcb9399702ad9bdf.json 1748971986 359
+  file ./st/ops/4fae2a9f9d4520f19828f5abfd90568f79503a70ba90cdd382603fcee1daf49a.json 1798714085 359
+  file ./st/ops/9b543fc9a75f860757ae7e3b809208edb51d2d8d2abdf53b99d4a6e24e682312.json 200601334 332
+  file ./st/ops/acbed62f89c399d2125ab8374271e08a1b48fc487759190f947c45ae45b8de17.json 2239832251 359
+  file ./st/ops/b1e6a51d82e87c57a24a1ddc2c53ee2c81228d8248c4269d745b3ac85bf6c9b9.json 556771177 359
+  file ./st/ops/cd98160a2f8d8ec69e7d66950c0cac46da5c66bdaea5b780024e322e60d55f3d.json 3541844458 359
+  file ./st/ops/da07cc3311ec56542a7b6dd33dbbdc6e9ee1cd5c6c6dd9542db782fe5e65d2f1.json 2753896821 368
+  file ./st/ops/dac9ea4cd6f0c5aa77e7339c20401229ce7cc3f04884b5babcd1750210726a56.json 4128186340 332
+  file ./st/ops/ff174c5de184a587d0c930a06f4d40bf5d2322999ca1ebdee62719fb21ccc40d.json 3582074025 359
+  file ./st/sources/2c1036aa3db821ea9af68db5a668081f00ba67687ac298bd0a12aeb0e384a61d.cho 2146118627 3384
+ok vcs_publish_in_cancho_logs_a_file_like_cancho_vcs_publish

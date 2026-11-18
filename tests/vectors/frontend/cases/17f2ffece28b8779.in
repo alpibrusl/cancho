@@ -1,0 +1,3 @@
+module m;
+struct A { a: int }
+struct A { b: int }

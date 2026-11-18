@@ -1,0 +1,1 @@
+fn f[T: val, &r](s: &r [T], i: bool) -> [] T { return s[i]; }

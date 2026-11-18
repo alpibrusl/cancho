@@ -1,0 +1,16 @@
+{
+  "command": "export-git",
+  "commits": 1,
+  "compared_with_import": 1,
+  "dry_run": false,
+  "equal": 1,
+  "mismatches": [],
+  "objects_written": 9,
+  "ok": true,
+  "refs": [
+    {
+      "git": "08dadb6af200d4b26b367cb7629d1e74e2385f61",
+      "name": "refs/heads/main"
+    }
+  ]
+}

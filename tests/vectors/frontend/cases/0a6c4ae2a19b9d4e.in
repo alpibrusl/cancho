@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": null,
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "f32",
+            "bits": 2139095039
+          }
+        }
+      ]
+    }
+  ]
+}

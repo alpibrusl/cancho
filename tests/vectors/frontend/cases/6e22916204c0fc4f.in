@@ -1,0 +1,22 @@
+ import std.io;
+  extern fn access[&f, &p](ffi: &f Ffi("libc"), path: &p [byte], mode: int) -> [ffi("libc")] c_int;
+  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(fs);
+ release(heap);
+ release(args);
+  let libc = narrow(ffi, "libc");
+ borrow mut io as &!i in { borrow libc as &f in { region scratch { let here = alloc_slice[scratch](2, byte_of(0));
+ here[0] = byte_of('.');
+ if access(f, here, 0) == 0 { io.write_all(i, "ok\n");
+ } else { io.write_all(i, "unexpected\n");
+ }  let text = "/no/such/path/at/all/cancho-probe";
+ let missing = alloc_slice[scratch](len(text) + 1, byte_of(0));
+ var j = 0;
+ while j < len(text) { missing[j] = text[j];
+ j = j + 1;
+ } io.print_int(i, access(f, missing, 0));
+ io.newline(i);
+ } } } release(libc);
+ release(io);
+ return 0;
+ } 

@@ -1,0 +1,481 @@
+# make.sh -- how tests/vcs_fixtures/ was made, and a check that it can be made again: the repository of `crates/cancho/tests/vcs_repo.rs`'s `two_changes` and its third record (three changes,
+# fixed times and author, so every object, change and ref is the same each time; only the wall-clock seconds in `refs/heads/main.log`, which nothing reads, differ), and the documents the Rust `cancho vcs` prints for the commands of `docs/vcs-routing.md`
+# slice R1 that `tests/vcs_fixtures/pins/` does not pin. Written once by the Rust command; the tests of the command line in cancho compare with them, so they outlive the Rust code (D6).
+#
+#   sh tests/vcs_fixtures/make.sh RUST_CANCHO OUTDIR      writes OUTDIR/three_changes and OUTDIR/golden; `diff -r` them with the committed ones (only that one log differs)
+set -eu
+src=$(cd "$(dirname "$0")" && pwd)
+R=$1
+out=$2
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+case $R in */*) R=$(cd "$(dirname "$R")" && pwd)/$(basename "$R") ;; esac
+rm -rf "$out/three_changes" "$out/four_changes" "$out/golden"
+mkdir -p "$out/three_changes" "$out/golden"
+export CANCHO_AUTHOR="Ada <ada@example.com>"
+cd "$out/three_changes"
+printf 'module a;\npub fn twice(n: int) -> [] int { return n + n; }\n' > a.cho
+printf '# notes\none\ntwo\nthree\n' > notes.md
+"$R" vcs init --output json > /dev/null
+"$R" vcs record --all --intent-prompt first --intent-model m1 --intent-session s1 --time 1000 --output json > /dev/null
+printf 'module a;\npub fn twice(n: int) -> [] int { return n + n + 0; }\npub fn thrice(n: int) -> [] int { return n * 3; }\n' > a.cho
+printf '# notes\none\n2\nthree\n' > notes.md
+"$R" vcs record a.cho --intent-prompt second --intent-issue 7 --time 1001 --output json > /dev/null
+"$R" vcs record --all --intent-prompt "third: notes" --time 1002 --output json > /dev/null
+
+# four_changes (R6, `switch`): three_changes and a branch `wide` one change ahead of main that removes a file, adds files (one in a new directory), changes a mode and adds a link; HEAD is back on main.
+cp -R "$out/three_changes" "$out/four_changes"
+cd "$out/four_changes"
+"$R" vcs switch --create wide --output json > /dev/null
+rm a.cho; chmod +x notes.md; mkdir -p sub/deep; printf 'x\n' > sub/deep/x.txt; printf 'y\n' > top.txt; ln -s notes.md lnk
+"$R" vcs record --all --intent-prompt "fourth: wide" --time 1003 --output json > /dev/null
+"$R" vcs switch main --output json > /dev/null
+
+# The documents, each from a copy of the repository (or an empty directory), the root made `<root>`.
+g=$out/golden
+norm() { sed 's#"root": "[^"]*"#"root": "<root>"#'; }
+here() { rm -rf "$out/w"; mkdir -p "$out/w"; cp -R "$out/three_changes/." "$out/w/"; cd "$out/w"; }
+empty() { rm -rf "$out/e"; mkdir -p "$out/e"; cd "$out/e"; }
+here; "$R" vcs log HEAD~1 --output json > "$g/log_rev.json"
+here; "$R" vcs log --limit 1 --output json > "$g/log_limit_1.json"
+here; "$R" vcs log --limit 0 --output json > "$g/log_limit_0.json"
+here; "$R" vcs log nosuchbranch --output json > "$g/refuse_log_bad_revision.json" || true
+here; "$R" vcs log --limit x --output json > "$g/refuse_log_bad_limit.json" || true
+here; "$R" vcs show HEAD~1 --output json > "$g/show_parent.json"
+here; "$R" vcs show nosuchbranch --output json > "$g/refuse_show_bad_revision.json" || true
+here; "$R" vcs show HEAD~9 --output json > "$g/refuse_show_past_the_first.json" || true
+empty; "$R" vcs show --output json > "$g/refuse_show_not_a_repository.json" || true
+empty; "$R" vcs init --dry-run --output json > "$g/init_dry.json"
+here; "$R" vcs init --dry-run --output json > "$g/init_dry_existing.json"
+empty; "$R" vcs init --branch dev --output json | norm > "$g/init_branch_dev.json"
+empty; "$R" vcs init sub/new --output json | sed 's#"root": ".*/sub/new"#"root": "<root>/sub/new"#' > "$g/init_new_directory.json"
+empty; "$R" vcs init --branch 'bad name' --output json > "$g/refuse_init_bad_branch.json" || true
+# branch (R2): each from a copy of the repository; `$R vcs branch ...` is run as the commands before it were.
+br() { "$R" vcs branch "$@" --output json; }
+here; br list > "$g/branch_list_initial.json"
+empty; "$R" vcs init --output json > /dev/null; br list > "$g/branch_list_empty.json"
+empty; "$R" vcs init --output json > /dev/null; br create x > "$g/refuse_branch_create_no_change.json" || true
+here; br create topic > "$g/branch_create_head.json"
+here; br create feature --from HEAD~1 > /dev/null; br create feature --from HEAD~1 > "$g/branch_create_again.json"
+here; br create feature --from HEAD~1 > /dev/null; br create feature --from HEAD > "$g/refuse_branch_create_moved.json" || true
+here; br create feature --dry-run > "$g/branch_create_dry.json"
+here; br create 'bad name' > "$g/refuse_branch_name.json" || true
+here; br create > "$g/refuse_branch_no_name.json" || true
+here; br create x --from nosuch > "$g/refuse_branch_create_bad_from.json" || true
+here; br frobnicate > "$g/refuse_branch_unknown.json" || true
+here; br create feature --from HEAD~1 > /dev/null; br delete feature --expect HEAD~1 --dry-run > "$g/branch_delete_dry.json"
+here; br create feature --from HEAD~1 > /dev/null; br delete feature > "$g/refuse_branch_delete_no_expect.json" || true
+here; br create feature --from HEAD~1 > /dev/null; br delete feature --expect HEAD > "$g/refuse_branch_delete_moved.json" || true
+here; br delete main --expect HEAD > "$g/refuse_branch_delete_current.json" || true
+here; br delete nosuch > "$g/branch_delete_missing.json"
+here; br create 'a.b' > /dev/null; br create 'a/b' --from HEAD~1 > /dev/null; br create a0 --from HEAD~2 > /dev/null; br create b > /dev/null; br list > "$g/branch_list_sorted.json"
+here; br create feature --from HEAD~1 > /dev/null; br delete feature --expect HEAD~1 > /dev/null; br list > "$g/branch_list_after_delete.json"
+# status (R4): each from a copy of the repository, which is clean at HEAD; `st` is the command, then one thing done to the working copy.
+st() { "$R" vcs status --output json; }
+here; st > "$g/status_clean_fixture.json"
+here; rm a.cho; st > "$g/status_deleted.json"
+here; mkdir -p sub/deep; printf 'x\n' > sub/deep/new.txt; printf 'y\n' > top.txt; st > "$g/status_added.json"
+here; chmod +x notes.md; st > "$g/status_mode_changed.json"
+here; ln -s a.cho lnk; st > "$g/status_link_added.json"
+here; ln -s a.cho lnk; ln -s notes.md lnk2; ln -s nowhere dangling; mkdir sub; ln -s ../a.cho sub/up; ln -s sub link_to_dir; st > "$g/status_links.json"
+here; rm notes.md; ln -s a.cho notes.md; st > "$g/status_file_became_link.json"
+here; ln -s "$(printf 'x%.0s' $(seq 1 500))" long; st > "$g/status_long_link.json"
+here; printf '*.log\nsub/up\n' > .canchoignore; ln -s x1 a.log; mkdir sub; ln -s ../a.cho sub/up; st > "$g/status_ignored.json"
+here; rm a.cho; mkdir a.cho; printf z > a.cho/inner; st > "$g/status_file_became_dir.json"
+empty; st > "$g/refuse_status_not_a_repository.json" || true
+empty; "$R" vcs init --output json > /dev/null; st > "$g/status_empty_repository.json"
+# restore (R5): each from a copy of the repository (clean at HEAD), something done to the working copy, then `rs`. `restore_from_parent_*` keep the files the Rust command wrote.
+rs() { "$R" vcs restore "$@" --output json; }
+here; printf 'scribble\n' > notes.md; rs notes.md > "$g/restore_one.json"
+here; printf 'scribble\n' > notes.md; rs notes.md --dry-run > "$g/restore_dry.json"
+here; rs notes.md > "$g/restore_clean.json"
+here; rm a.cho; chmod +x notes.md; ln -s a.cho lnk; mkdir -p sub/deep; printf x > sub/new; printf y > sub/deep/new2; printf z > top.txt; rs . > "$g/restore_all.json"
+here; rm a.cho; mkdir a.cho; printf z > a.cho/inner; rs . > "$g/refuse_restore_file_became_dir.json" || true
+here; mkdir -p sub/deep; printf x > sub/new; printf y > sub/deep/new2; printf z > top.txt; rs sub > "$g/restore_beneath.json"
+here; rs . --from HEAD~1 > "$g/restore_from_parent.json"; cp notes.md "$g/restore_from_parent.notes.md"; cp a.cho "$g/restore_from_parent.a.cho"
+here; rs --from HEAD~1 > "$g/refuse_restore_no_path.json" || true
+here; printf 'scribble\n' > notes.md; rs nosuchfile > "$g/restore_no_match.json"
+here; rs ../elsewhere > "$g/refuse_restore_escapes.json" || true
+here; printf 'scribble\n' > notes.md; rs notes.md --from nosuch > "$g/refuse_restore_bad_from.json" || true
+here; mkdir -p sub; printf x > sub/new; printf 'scribble\n' > notes.md; ( cd sub && rs ../notes.md > "$g/restore_from_subdir.json" )
+here; mkdir -p sub; printf x > sub/new; printf 'scribble\n' > notes.md; ( cd sub && rs . > "$g/restore_in_subdir.json" )
+here; printf 'scribble\n' > notes.md; printf '4242 1000' > .cancho/vcs/lock; rs notes.md --dry-run > "$g/restore_dry_locked.json"
+here; rm a.cho; rs a.cho notes.md > "$g/restore_two_paths.json"
+# switch (R6): each from a copy of the repository (`here`, three changes, HEAD on main) or of four_changes (`wide`), then `sw`. `listing` is the working copy as the tests list it: kind, path, content sum, execute bit, link target.
+sw() { "$R" vcs switch "$@" --output json; }
+wide() { rm -rf "$out/w"; mkdir -p "$out/w"; cp -R "$out/four_changes/." "$out/w/"; cd "$out/w"; }
+listing() { find . -path ./.cancho -prune -o -print | sort | while read -r f; do if [ -L "$f" ]; then echo "l $f -> $(readlink "$f")"; elif [ -d "$f" ]; then echo "d $f"; elif [ -x "$f" ]; then echo "x $f $(cksum < "$f")"; else echo "f $f $(cksum < "$f")"; fi; done; }
+br() { "$R" vcs branch "$@" --output json; }
+here; sw main > "$g/switch_noop.json"
+here; sw topic --create > "$g/switch_create.json"; cp .cancho/vcs/HEAD "$g/switch_create.HEAD"
+here; sw topic --create --dry-run > "$g/switch_create_dry.json"
+here; sw main --create > "$g/refuse_switch_create_exists.json" || true
+here; sw 'bad name' --create > "$g/refuse_switch_create_bad_name.json" || true
+empty; "$R" vcs init --output json > /dev/null; sw x --create > "$g/refuse_switch_create_no_change.json" || true
+empty; "$R" vcs init --output json > /dev/null; sw main > "$g/refuse_switch_empty_repository.json" || true
+here; br create old --from HEAD~1 > /dev/null; sw old > "$g/switch_branch.json"; cp .cancho/vcs/HEAD "$g/switch_branch.HEAD"
+here; br create old --from HEAD~1 > /dev/null; sw old --dry-run > "$g/switch_branch_dry.json"
+here; sw HEAD~1 > "$g/switch_detach_parent.json"; cp .cancho/vcs/HEAD "$g/switch_detach_parent.HEAD"
+here; sw main --detach > "$g/switch_detach_branch.json"; cp .cancho/vcs/HEAD "$g/switch_detach_branch.HEAD"
+here; sw nosuch > "$g/refuse_switch_bad_revision.json" || true
+here; sw > "$g/refuse_switch_no_argument.json" || true
+here; sw a b > "$g/refuse_switch_two_arguments.json" || true
+here; br create old --from HEAD~1 > /dev/null; printf 'scribble\n' > notes.md; sw old > "$g/refuse_switch_dirty.json" || true
+here; br create old --from HEAD~1 > /dev/null; printf 'z\n' > zzz.txt; sw old > "$g/refuse_switch_dirty_other.json" || true
+here; br create old --from HEAD~1 > /dev/null; printf 'z\n' > zzz.txt; sw old --keep > "$g/switch_keep_carries.json"
+here; br create old --from HEAD~1 > /dev/null; printf 'scribble\n' > notes.md; sw old --keep > "$g/refuse_switch_keep_in_the_way.json" || true
+here; br create old --from HEAD~1 > /dev/null; printf 'scribble\n' > notes.md; printf 'z\n' > zzz.txt; sw old --discard > "$g/switch_discard.json"
+here; br create old --from HEAD~1 > /dev/null; printf 'scribble\n' > notes.md; sw old --dry-run > "$g/refuse_switch_dry_dirty.json" || true
+here; br create old --from HEAD~1 > /dev/null; sw old > /dev/null; sw main > "$g/switch_back.json"
+here; br create old --from HEAD~1 > /dev/null; printf '4242 1000' > .cancho/vcs/lock; sw old --dry-run > "$g/switch_dry_locked.json"
+wide; sw wide > "$g/switch_wide.json"; cp .cancho/vcs/HEAD "$g/switch_wide.HEAD"; listing > "$g/switch_wide.tree"
+wide; sw wide > /dev/null; sw main > "$g/switch_wide_back.json"; listing > "$g/switch_wide_back.tree"
+wide; printf 'q\n' > unrelated.txt; sw wide --keep > "$g/switch_wide_keep.json"; listing > "$g/switch_wide_keep.tree"
+wide; sw wide --dry-run > "$g/switch_wide_dry.json"
+wide; mkdir -p sub; sw wide > /dev/null; cd sub || exit 1; sw main > "$g/switch_from_subdir.json"
+# apply (R7): the documents of `apply FILE`, and the working copy each leaves (`.tree`); the edits are written to OUT/edits.json and named by their absolute path.
+ap() { printf '%s' "$1" > "$out/edits.json"; shift; "$R" vcs apply "$out/edits.json" "$@" --output json; }
+here; ap '[{"path":"notes.md","old":"2","new":"two"}]'  > "$g/apply_basic.json" || true; listing > "$g/apply_basic.tree"
+here; ap '[{"path":"notes.md","old":"one","new":"uno"},{"path":"notes.md","old":"uno\n","new":"UNO\n"}]'  > "$g/apply_seq.json" || true; listing > "$g/apply_seq.tree"
+here; ap '[{"path":"notes.md","old":"one","new":"1"},{"path":"a.cho","old":"twice","new":"TWICE"}]'  > "$g/apply_two_files.json" || true; listing > "$g/apply_two_files.tree"
+here; ap '[{"path":"a.cho","old":"twice","new":"TWICE"},{"path":"notes.md","old":"one","new":"1"}]'  > "$g/apply_two_files_reversed.json" || true; listing > "$g/apply_two_files_reversed.tree"
+here; printf 'aaa\n' > notes.md; ap '[{"path":"notes.md","old":"aa","new":"b"}]'  > "$g/apply_overlap.json" || true; listing > "$g/apply_overlap.tree"
+here; ap '[{"path":"notes.md","old":"2","new":"two"}]' --dry-run > "$g/apply_dry.json" || true; listing > "$g/apply_dry.tree"
+here; ap '[{"path":"a.cho","old":"twice","new":"TWICE"},{"path":"notes.md","old":"zzz","new":"b"}]'  > "$g/apply_atomic.json" || true; listing > "$g/apply_atomic.tree"
+here; ap '[{"path":"notes.md","old":"zzz","new":"b"},{"path":"a.cho","old":"twice","new":"TWICE"}]'  > "$g/apply_atomic_reversed.json" || true; listing > "$g/apply_atomic_reversed.tree"
+here; ap '[{"path":"notes.md","old":"zzz","new":"b"}]'  > "$g/apply_not_found.json" || true; listing > "$g/apply_not_found.tree"
+here; printf 'x x\n' > notes.md; ap '[{"path":"notes.md","old":"x","new":"b"}]'  > "$g/apply_ambiguous.json" || true; listing > "$g/apply_ambiguous.tree"
+here; ap '[{"path":"a.cho","old":"fn","new":"FN"}]'  > "$g/apply_ambiguous_code.json" || true; listing > "$g/apply_ambiguous_code.tree"
+here; ap '[{"path":"notes.md","old":"","new":"b"}]'  > "$g/apply_empty_anchor.json" || true; listing > "$g/apply_empty_anchor.tree"
+here; ap '[{"path":"../x","old":"a","new":"b"}]'  > "$g/apply_escapes.json" || true; listing > "$g/apply_escapes.tree"
+here; ap '[]'  > "$g/apply_empty_list.json" || true; listing > "$g/apply_empty_list.tree"
+here; chmod +x notes.md; ap '[{"path":"notes.md","old":"2","new":"two"}]'  > "$g/apply_exec.json" || true; listing > "$g/apply_exec.tree"
+here; printf 'caf\303\251 ok\n' > notes.md; ap '[{"path":"notes.md","old":"caf\u00e9","new":"tea \ud83d\ude00"}]'  > "$g/apply_unicode.json" || true; listing > "$g/apply_unicode.tree"
+here; ap '[{"path":"./sub/../notes.md","old":"2","new":"two"}]'  > "$g/apply_dotted.json" || true; listing > "$g/apply_dotted.tree"
+here; ap '[{"path":"./sub/../notes.md","old":"zz","new":"two"}]'  > "$g/apply_dotted_refused.json" || true; listing > "$g/apply_dotted_refused.tree"
+here; ap '[{"path":"notes.md","old":"one","new":"1"},{"path":"./notes.md","old":"2","new":"two"}]'  > "$g/apply_spellings.json" || true; listing > "$g/apply_spellings.tree"
+here; ap '[{"path":"notes.md","old":"one","new":"1"},{"path":"./notes.md","old":"qq","new":"two"}]'  > "$g/apply_spellings_refused.json" || true; listing > "$g/apply_spellings_refused.tree"
+here; mkdir -p s/t; printf 'x y\n' > s/t/f.txt; ap '[{"path":"s/t/f.txt","old":"y","new":"z"}]'  > "$g/apply_subdirectory.json" || true; listing > "$g/apply_subdirectory.tree"
+here; printf 'a\r\nb\r\n' > notes.md; ap '[{"path":"notes.md","old":"a\r\nb","new":"c"}]'  > "$g/apply_crlf.json" || true; listing > "$g/apply_crlf.tree"
+here; ap '[{"path":"notes.md","old":"one\n","new":""}]'  > "$g/apply_deleting.json" || true; listing > "$g/apply_deleting.tree"
+here; seq 1 5000 > notes.md; ap '[{"path":"notes.md","old":"\n2500\n","new":"\nX\n"}]'  > "$g/apply_large.json" || true; listing > "$g/apply_large.tree"
+here; ap '  [ { "new" : "ONE" , "old" : "one" , "path" : "notes.md" } ]  '  > "$g/apply_spaced_json.json" || true; listing > "$g/apply_spaced_json.tree"
+here; ap '[{"path":"notes.md","old":"2","new":"two","note":1}]'  > "$g/apply_extra_key.json" || true; listing > "$g/apply_extra_key.tree"
+here; "$R" vcs apply --output json > "$g/refuse_apply_no_argument.json" || true
+here; "$R" vcs apply a b --output json > "$g/refuse_apply_two_arguments.json" || true
+# unlock (R7): the documents of `unlock` (the root made <root>, every SINCE in the future so that the age is 0) and the locks left (`.left`).
+ul() { r=$(pwd -P); "$R" vcs unlock "$@" --output json | sed "s#$r#<root>#g"; }
+left() { find .cancho/vcs -name '*lock*' | sort; }
+here; ul  > "$g/unlock_none.json"; left > "$g/unlock_none.left"
+here; ul --dry-run > "$g/unlock_none_dry.json"; left > "$g/unlock_none_dry.left"
+here; echo '4242 99999999999' > .cancho/vcs/lock; ul  > "$g/unlock_top.json"; left > "$g/unlock_top.left"
+here; echo '4242 99999999999' > .cancho/vcs/lock; ul --dry-run > "$g/unlock_top_dry.json"; left > "$g/unlock_top_dry.left"
+here; echo '7 99999999999' > .cancho/vcs/refs/heads/main.lock; ul  > "$g/unlock_ref.json"; left > "$g/unlock_ref.left"
+here; echo '7 99999999999' > .cancho/vcs/refs/heads/main.lock; echo '9 99999999999' > .cancho/vcs/lock; ul  > "$g/unlock_both.json"; left > "$g/unlock_both.left"
+here; echo xyz > .cancho/vcs/lock; ul  > "$g/unlock_garbage.json"; left > "$g/unlock_garbage.left"
+here; : > .cancho/vcs/lock; ul  > "$g/unlock_empty.json"; left > "$g/unlock_empty.left"
+here; echo 12 > .cancho/vcs/lock; ul  > "$g/unlock_pid_only.json"; left > "$g/unlock_pid_only.left"
+here; echo '99999999999 99999999999' > .cancho/vcs/lock; ul  > "$g/unlock_big_pid.json"; left > "$g/unlock_big_pid.left"
+here; echo '+12 +99999999999' > .cancho/vcs/lock; ul  > "$g/unlock_plus.json"; left > "$g/unlock_plus.left"
+here; echo '0 99999999999' > .cancho/vcs/lock; ul  > "$g/unlock_zero.json"; left > "$g/unlock_zero.left"
+here; mkdir -p .cancho/vcs/refs/heads/a/b; echo '1 99999999999' > .cancho/vcs/refs/heads/a/b/x.lock; ul  > "$g/unlock_nested.json"; left > "$g/unlock_nested.left"
+# record (R8): the documents of `record` and the store each leaves (`.store`: the objects and the refs by name and checksum). The author and the time are fixed, so every id is the same each time.
+rc() { "$R" vcs record "$@" --author "Ada <ada@example.com>" --time 2000 --output json; }
+store() { find .cancho/vcs -type f -not -name '*.log' -not -name lock | sort | while read -r f; do echo "$f $(cksum < "$f")"; done; }
+here; rc --all > "$g/record_clean.json" || true; store > "$g/record_clean.store"
+here; printf 'four\n' >> notes.md; rc --all > "$g/record_notes.json" || true; store > "$g/record_notes.store"
+here; printf 'four\n' >> notes.md; printf 'module a;\npub fn twice(n: int) -> [] int { return n + n + 1; }\n' > a.cho; rc notes.md > "$g/record_notes_path.json" || true; store > "$g/record_notes_path.store"
+here; printf 'module a;\npub fn twice(n: int) -> [] int { return n + n + 1; }\npub fn thrice(n: int) -> [] int { return n * 3; }\n' > a.cho; rc a.cho > "$g/record_cho_body.json" || true; store > "$g/record_cho_body.store"
+here; printf 'module a;\npub fn twice(n: int, m: int) -> [] int { return n + m; }\npub fn thrice(n: int) -> [] int { return n * 3; }\n' > a.cho; rc a.cho > "$g/record_cho_sig.json" || true; store > "$g/record_cho_sig.store"
+here; printf 'module a;\npub fn twice(n: int) -> [] int { return n + n + 0; }\npub fn thrice(n: int) -> [] int { return n * 3; }\npub struct P { x: int }\n' > a.cho; rc a.cho > "$g/record_cho_add.json" || true; store > "$g/record_cho_add.store"
+here; printf 'module a;\npub fn twice(n: int) -> [] int { return n + n + 0; }\n' > a.cho; rc a.cho > "$g/record_cho_remove.json" || true; store > "$g/record_cho_remove.store"
+here; mkdir -p d/e; printf 'x\n' > d/e/x.txt; printf 'y\n' > y.txt; ln -s notes.md lnk; rc --all > "$g/record_new_files.json" || true; store > "$g/record_new_files.store"
+here; rm notes.md; rc --all > "$g/record_delete.json" || true; store > "$g/record_delete.store"
+here; chmod +x notes.md; rc --all > "$g/record_mode.json" || true; store > "$g/record_mode.store"
+here; printf 'four\n' >> notes.md; rc --all --dry-run > "$g/record_dry.json" || true; store > "$g/record_dry.store"
+here; printf 'module a;\npub fn twice(n: int) -> [] int { return true; }\n' > a.cho; rc --all --no-gate > "$g/record_no_gate.json" || true; store > "$g/record_no_gate.store"
+here; printf 'four\n' >> notes.md; rc --all --intent-prompt 'why: four' --intent-model m --intent-session s --intent-issue 9 > "$g/record_intent.json" || true; store > "$g/record_intent.store"
+here; printf 'four\n' >> notes.md; rc --all --expect main > "$g/record_expect_ok.json" || true; store > "$g/record_expect_ok.store"
+here; printf 'four\n' >> notes.md; rc --all --expect HEAD~1 > "$g/record_expect_wrong.json" || true; store > "$g/record_expect_wrong.store"
+here; rc  > "$g/record_nothing_selected.json" || true; store > "$g/record_nothing_selected.store"
+here; "$R" vcs record --all --time abc --output json > "$g/record_bad_time_clean.json" || true; store > "$g/record_bad_time_clean.store"
+here; printf 'four\n' >> notes.md; "$R" vcs record --all --time abc --output json > "$g/record_bad_time.json" || true; store > "$g/record_bad_time.store"
+here; rc ../x > "$g/record_escapes.json" || true; store > "$g/record_escapes.store"
+here; printf 'module b;\nimport a;\npub fn h() -> [] int { return a.twice(1); }\n' > b.cho; rc --all > "$g/record_imports.json" || true; store > "$g/record_imports.store"
+here; printf 'edition 12;\nmodule s;\nimport std.bytes;\npub fn h() -> [] bool { return bytes.equal("a", "b"); }\n' > s.cho; rc --all > "$g/record_std.json" || true; store > "$g/record_std.store"
+here; printf '\377\376abc' > bin.dat; rc --all > "$g/record_binary.json" || true; store > "$g/record_binary.store"
+here; seq 1 40 > notes.md; rc --all > "$g/record_multi_hunk.json" || true; store > "$g/record_multi_hunk.store"
+here; printf 'module a;\npub fn twice(n: int) -> [] int { return true; }\n' > a.cho; rc --all > "$g/record_gate_fail.json" || true; store > "$g/record_gate_fail.store"
+here; printf 'module b;\nimport a;\npub fn h() -> [] int { return nope(1); }\n' > b.cho; rc --all > "$g/record_gate_fail_import.json" || true; store > "$g/record_gate_fail_import.store"
+here; printf 'module a;\npub fn twice( {\n' > a.cho; rc --all > "$g/record_parse_fail.json" || true; store > "$g/record_parse_fail.store"
+here; rm notes.md; printf 'module a;\npub fn twice(n: int) -> [] int { return n + n + 1; }\n' > a.cho; rc a.cho > "$g/record_one_of_two.json" || true; store > "$g/record_one_of_two.store"
+here; rm a.cho; rc --all > "$g/record_delete_cho.json" || true; store > "$g/record_delete_cho.store"
+here; printf '\377\376abc' > bin.dat; "$R" vcs record --all --author "Ada <ada@example.com>" --time 1999 --output json > /dev/null; printf '\377\376abd' > bin.dat; rc --all > "$g/record_binary_change.json" || true; store > "$g/record_binary_change.store"
+here; printf 'a.cho' > t.txt; ln -s notes.md lnk; "$R" vcs record --all --author "Ada <ada@example.com>" --time 1999 --output json > /dev/null; rm lnk; ln -s a.cho lnk; rc --all > "$g/record_link_change.json" || true; store > "$g/record_link_change.store"
+here; "$R" vcs switch --detach HEAD~1 --output json > /dev/null; printf 'four\n' >> notes.md; rc --all > "$g/record_detached.json" || true; store > "$g/record_detached.store"; cat .cancho/vcs/HEAD >> "$g/record_detached.store"
+here; mkdir -p d; printf 'q\n' > d/y.txt; (cd d && rc y.txt ../notes.md) > "$g/record_subdir.json" || true; store > "$g/record_subdir.store"
+empty; "$R" vcs init --output json > /dev/null; rc --all > "$g/record_empty_nothing.json" || true; store > "$g/record_empty_nothing.store"
+empty; "$R" vcs init --output json > /dev/null; printf 'one\n' > f.txt; rc --all > "$g/record_empty_first.json" || true; store > "$g/record_empty_first.store"
+# revert (R9): the documents of `revert`, the store and the working copy each leaves (`.store`, `.tree`). Changes made on the way have a fixed author and time.
+step() { "$R" vcs record --all --author "Ada <ada@example.com>" --time "$1" --output json > /dev/null; }
+stepng() { "$R" vcs record --all --no-gate --author "Ada <ada@example.com>" --time "$1" --output json > /dev/null; }
+stepq() { "$R" vcs record --all --author "Ada <ada@example.com>" --time "$1" --intent-prompt 'say "hi" \ end' --output json > /dev/null; }
+rv() { "$R" vcs revert "$@" --author "Ada <ada@example.com>" --time 3000 --output json; }
+here; rv HEAD > "$g/revert_head.json" || true; store > "$g/revert_head.store"; listing > "$g/revert_head.tree"
+here; rv HEAD~1 > "$g/revert_second.json" || true; store > "$g/revert_second.store"; listing > "$g/revert_second.tree"
+here; rv HEAD~2 > "$g/revert_first.json" || true; store > "$g/revert_first.store"; listing > "$g/revert_first.tree"
+here; rv HEAD --dry-run > "$g/revert_dry.json" || true; store > "$g/revert_dry.store"; listing > "$g/revert_dry.tree"
+here; rv HEAD > /dev/null; rv HEAD~1 > "$g/revert_twice.json" || true; store > "$g/revert_twice.store"; listing > "$g/revert_twice.tree"
+here; printf 'five\n' >> notes.md; step 2500; rv HEAD~1 > "$g/revert_conflict.json" || true; store > "$g/revert_conflict.store"; listing > "$g/revert_conflict.tree"
+here; echo z >> notes.md; rv HEAD > "$g/revert_dirty.json" || true; store > "$g/revert_dirty.store"; listing > "$g/revert_dirty.tree"
+here; mkdir -p d/e; printf 'x\n' > d/e/f; printf 'y\n' > g; ln -s notes.md lk; step 2500; rv HEAD > "$g/revert_added.json" || true; store > "$g/revert_added.store"; listing > "$g/revert_added.tree"
+here; rm notes.md; step 2500; rv HEAD > "$g/revert_deleted.json" || true; store > "$g/revert_deleted.store"; listing > "$g/revert_deleted.tree"
+here; chmod +x notes.md; step 2500; rv HEAD > "$g/revert_mode.json" || true; store > "$g/revert_mode.store"; listing > "$g/revert_mode.tree"
+here; rv HEAD --intent-prompt mine --intent-model m > "$g/revert_intent.json" || true; store > "$g/revert_intent.store"; listing > "$g/revert_intent.tree"
+here; printf 'q\n' >> notes.md; stepq 2500; rv HEAD > "$g/revert_quote.json" || true; store > "$g/revert_quote.store"; listing > "$g/revert_quote.tree"
+here; printf 'module a;\npub fn twice(n: int) -> [] int { return true; }\n' > a.cho; stepng 2500; printf 'module a;\npub fn twice(n: int) -> [] int { return n; }\n' > a.cho; step 2600; rv HEAD > "$g/revert_gate.json" || true; store > "$g/revert_gate.store"; listing > "$g/revert_gate.tree"
+here; printf 'module a;\npub fn twice(n: int) -> [] int { return true; }\n' > a.cho; stepng 2500; printf 'module a;\npub fn twice(n: int) -> [] int { return n; }\n' > a.cho; step 2600; rv HEAD --no-gate > "$g/revert_no_gate.json" || true; store > "$g/revert_no_gate.store"; listing > "$g/revert_no_gate.tree"
+here; rv  > "$g/revert_none.json" || true; store > "$g/revert_none.store"; listing > "$g/revert_none.tree"
+here; rv a b > "$g/revert_two.json" || true; store > "$g/revert_two.store"; listing > "$g/revert_two.tree"
+here; rv nosuch > "$g/revert_bad_revision.json" || true; store > "$g/revert_bad_revision.store"; listing > "$g/revert_bad_revision.tree"
+here; rv HEAD --expect HEAD~1 > "$g/revert_expect_wrong.json" || true; store > "$g/revert_expect_wrong.store"; listing > "$g/revert_expect_wrong.tree"
+here; rv HEAD --expect main > "$g/revert_expect_ok.json" || true; store > "$g/revert_expect_ok.store"; listing > "$g/revert_expect_ok.tree"
+here; printf 'edition 12;\nmodule b;\npub fn k(n: int) -> [] int { return n; }\n' > b.cho; step 2500; rv HEAD > "$g/revert_cho.json" || true; store > "$g/revert_cho.store"; listing > "$g/revert_cho.tree"
+# diff (R10): the documents of `diff`, from copies of the repository (`here`, `wide`, `empty`); the working copy is changed first.
+dfj() { "$R" vcs diff "$@" --output json; }
+here; dfj  > "$g/diff_clean.json" || true
+here; dfj HEAD~1 > "$g/diff_rev.json" || true
+here; dfj HEAD~2 HEAD > "$g/diff_revs.json" || true
+here; dfj HEAD HEAD~2 > "$g/diff_revs_back.json" || true
+here; dfj HEAD HEAD > "$g/diff_same.json" || true
+here; dfj HEAD~2 HEAD~1 > "$g/diff_id_prefix.json" || true
+here; dfj HEAD~2 HEAD a.cho > "$g/diff_path.json" || true
+wide; dfj main wide sub > "$g/diff_path_dir.json" || true
+wide; dfj main wide a.cho top.txt > "$g/diff_paths_two.json" || true
+here; dfj HEAD~2 HEAD . > "$g/diff_root_dot.json" || true
+here; dfj HEAD~2 HEAD notes.md --context 0 > "$g/diff_context_0.json" || true
+here; dfj HEAD~2 HEAD notes.md --context 1 > "$g/diff_context_1.json" || true
+here; dfj HEAD~2 HEAD notes.md --context=9 > "$g/diff_context_9.json" || true
+here; printf 'four\n' >> notes.md; dfj  > "$g/diff_modified.json" || true
+here; printf 'last' > notes.md; dfj  > "$g/diff_no_newline.json" || true
+here; printf 'h\303\251llo \360\237\230\200 "q" \\ \t tab\r\nnext\177\n' > notes.md; dfj  > "$g/diff_unicode.json" || true
+here; printf 'new\n' > new.txt; : > empty.txt; mkdir -p d/e; printf 'x\n' > d/e/f; dfj  > "$g/diff_added.json" || true
+here; printf '#!/bin/sh\n' > run.sh; chmod +x run.sh; dfj  > "$g/diff_added_exec.json" || true
+here; printf 'a\000b' > bin; printf '\377\376' > bad.txt; dfj  > "$g/diff_added_binary.json" || true
+here; rm notes.md; dfj  > "$g/diff_deleted.json" || true
+here; rm notes.md a.cho; dfj  > "$g/diff_deleted_all.json" || true
+here; chmod +x notes.md; dfj  > "$g/diff_mode.json" || true
+here; chmod +x notes.md; printf 'four\n' >> notes.md; dfj  > "$g/diff_mode_and_text.json" || true
+here; ln -s notes.md lk; dfj  > "$g/diff_link_added.json" || true
+wide; sw wide > /dev/null; rm lnk; ln -s a.cho lnk; dfj wide > "$g/diff_link_changed.json" || true
+here; rm notes.md; ln -s a.cho notes.md; dfj  > "$g/diff_file_to_link.json" || true
+wide; sw wide > /dev/null; rm lnk; printf 'now a file\n' > lnk; dfj wide > "$g/diff_link_to_file.json" || true
+wide; dfj main wide > "$g/diff_wide_branch.json" || true
+wide; dfj wide > "$g/diff_wide_wc.json" || true
+here; printf 'module a;\npub fn twice(n: int) -> [] int { return n; }\npub fn thrice(n: int) -> [] int { return n * 3; }\n' > a.cho; dfj  > "$g/diff_cho_body.json" || true
+here; printf 'edition 12;\nmodule b;\npub fn k(n: int) -> [] int { return n; }\nstruct P { x: int }\n' > b.cho; dfj  > "$g/diff_cho_added.json" || true
+here; printf 'module a;\npub fn twice(n: int, m: int) -> [] int { return n; }\npub fn thrice(n: int) -> [] int { return n * 3; }\n' > a.cho; dfj  > "$g/diff_cho_signature.json" || true
+here; printf 'module a;\n' > a.cho; dfj  > "$g/diff_cho_removed.json" || true
+here; rm a.cho; dfj  > "$g/diff_cho_deleted.json" || true
+here; printf 'module a;\npub fn twice( {\n' > a.cho; dfj  > "$g/diff_cho_unparsable.json" || true
+here; printf 'module a;\npub fn twice( {\n' > a.cho; printf 'module a;\npub fn twice(n: int) -> [] int { return n; }\n' > a.cho; dfj HEAD~2 HEAD > "$g/diff_cho_unparsable_before.json" || true
+here; dfj --context x > "$g/diff_bad_context.json" || true
+here; dfj --context -1 > "$g/diff_bad_context_negative.json" || true
+here; dfj ../outside > "$g/diff_outside.json" || true
+here; dfj nosuchname > "$g/diff_nothing_named.json" || true
+here; dfj -- HEAD > "$g/diff_revision_as_path.json" || true
+here; printf 'shadow\n' > main; dfj main > "$g/diff_file_named_like_a_branch.json" || true
+here; printf 'shadow\n' > main; dfj HEAD~1 main > "$g/diff_file_named_like_a_branch_second.json" || true
+here; printf 'x\n' > HEAD~1; dfj HEAD~2 HEAD~1 HEAD > "$g/diff_third_revision_is_a_path.json" || true
+here; dfj --bogus > "$g/diff_unknown_option.json" || true
+here; dfj --context > "$g/diff_context_no_value.json" || true
+empty; dfj > "$g/diff_not_a_repository.json" || true
+here; mkdir -p sub/deep; printf 'x\n' > sub/deep/x; printf 'y\n' > sub/y; cd sub; dfj > "$g/diff_subdir.json" || true
+here; mkdir -p sub/deep; printf 'x\n' > sub/deep/x; printf 'y\n' > sub/y; cd sub; dfj . > "$g/diff_subdir_dot.json" || true
+here; mkdir -p sub/deep; printf 'x\n' > sub/deep/x; printf 'y\n' > sub/y; cd sub; dfj deep > "$g/diff_subdir_deep.json" || true
+here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==25{print "TWENTYFIVE";next}{print}' big.txt > b2; mv b2 big.txt; dfj --context 2 > "$g/diff_two_hunks.json" || true
+here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==25{print "TWENTYFIVE";next}{print}' big.txt > b2; mv b2 big.txt; dfj --context 8 > "$g/diff_two_hunks_joined.json" || true
+here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==25{print "TWENTYFIVE";next}{print}' big.txt > b2; mv b2 big.txt; dfj --context 0 > "$g/diff_two_hunks_none.json" || true
+here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==8{print "EIGHT";next}{print}' big.txt > b2; mv b2 big.txt; dfj --context 2 > "$g/diff_gap_equal.json" || true
+here; seq 1 30 > big.txt; stepng 2500; awk 'NR==3{print "THREE";next} NR==9{print "NINE";next}{print}' big.txt > b2; mv b2 big.txt; dfj --context 2 > "$g/diff_gap_over.json" || true
+here; mkdir main; printf 'x\n' > main/f; dfj main > "$g/diff_directory_named_like_a_branch.json" || true
+# log filters and show --patch (R11): the Rust command wrote each. `many` is the repository with three more changes by other authors.
+lgj() { "$R" vcs log "$@" --output json; }
+shj() { "$R" vcs show "$@" --output json; }
+many() { here; printf 'x\n' > extra.txt; "$R" vcs record --all --author "Bob <bob@example.com>" --time 2000 --intent-prompt "bob adds extra" --intent-session s2 --intent-issue 9 --output json > /dev/null; printf 'y\n' >> extra.txt; "$R" vcs record --all --author "Cy" --time 2001 --intent-prompt 'say "hi" \ x' --output json > /dev/null; chmod +x extra.txt; "$R" vcs record --all --author "Bob <bob@example.com>" --time 2002 --intent-prompt mode --intent-session s2 --output json > /dev/null; }
+here; lgj --path a.cho > "$g/log_path_file.json" || true
+here; lgj --path notes.md > "$g/log_path_notes.json" || true
+here; lgj --path nonesuch > "$g/log_path_none.json" || true
+here; lgj --path . > "$g/log_path_root.json" || true
+here; lgj --path sub > "$g/log_path_dir.json" || true
+here; lgj --path=notes.md > "$g/log_path_inline.json" || true
+here; lgj --path notes.md --limit 1 > "$g/log_path_limit.json" || true
+here; lgj HEAD~1 --path notes.md > "$g/log_path_from_rev.json" || true
+wide; lgj wide --path a.cho > "$g/log_path_wide_deleted.json" || true
+wide; lgj wide --path notes.md > "$g/log_path_wide_mode.json" || true
+wide; lgj wide --path lnk > "$g/log_path_wide_link.json" || true
+wide; lgj wide --path sub/deep/x.txt > "$g/log_path_wide_nested.json" || true
+here; lgj --intent second > "$g/log_intent.json" || true
+here; lgj --intent '' > "$g/log_intent_empty.json" || true
+here; lgj --intent nothing > "$g/log_intent_none.json" || true
+here; lgj --intent 'third: n' > "$g/log_intent_colon.json" || true
+here; lgj --session s1 > "$g/log_session.json" || true
+here; lgj --session s > "$g/log_session_none.json" || true
+here; lgj --issue 7 > "$g/log_issue.json" || true
+here; lgj --issue '' > "$g/log_issue_empty.json" || true
+here; lgj --author Ada > "$g/log_author.json" || true
+here; lgj --author '<ada@' > "$g/log_author_angle.json" || true
+here; lgj --author Bob > "$g/log_author_none.json" || true
+here; lgj --author '' > "$g/log_author_empty.json" || true
+here; lgj --author Ada --issue 7 > "$g/log_two_filters.json" || true
+here; lgj --author Ada --issue 7 --intent sec --path a.cho > "$g/log_all_filters.json" || true
+many; lgj --author Bob > "$g/log_many_author.json" || true
+many; lgj --session s2 > "$g/log_many_session.json" || true
+many; lgj --session s2 --limit 1 > "$g/log_many_session_limit.json" || true
+many; lgj --path extra.txt > "$g/log_many_path_mode.json" || true
+many; lgj --intent 'say "hi"' > "$g/log_many_quoted.json" || true
+many; lgj --intent '\ x' --author Cy > "$g/log_many_escape.json" || true
+here; lgj --limit x --path ../outside > "$g/log_bad_limit_and_path.json" || true
+here; lgj --path ../outside > "$g/refuse_log_path_outside.json" || true
+here; lgj nosuchbranch --path ../outside > "$g/refuse_log_path_outside_bad_revision.json" || true
+here; shj --patch > "$g/show_patch.json" || true
+here; shj HEAD~1 --patch > "$g/show_patch_parent.json" || true
+here; shj HEAD~2 --patch > "$g/show_patch_root.json" || true
+here; shj --patch HEAD~2 > "$g/show_patch_first.json" || true
+wide; shj --patch wide > "$g/show_patch_wide.json" || true
+many; shj --patch HEAD > "$g/show_patch_many_mode.json" || true
+here; shj --patch nosuchbranch > "$g/show_patch_bad_revision.json" || true
+longf() { here; seq 1 30 > big.txt; "$R" vcs record --all --author "Ada <ada@example.com>" --time 2000 --output json > /dev/null; awk 'NR==15{print "FIFTEEN";next}{print}' big.txt > b2; mv b2 big.txt; "$R" vcs record --all --author "Ada <ada@example.com>" --time 2001 --output json > /dev/null; }
+longf; shj --patch > "$g/show_patch_context.json" || true
+here; lgj --path notes.md --limit 0 > "$g/log_path_limit_0.json" || true
+# blame (R12): the Rust command wrote each. Its refusals carry their own words, so the goldens are the documents.
+blj() { "$R" vcs blame "$@" --output json; }
+here; blj notes.md > "$g/blame_notes.json" || true
+here; blj notes.md --rev HEAD~1 > "$g/blame_notes_parent.json" || true
+here; blj notes.md --rev HEAD~2 > "$g/blame_notes_root.json" || true
+here; blj notes.md --rev=HEAD~1 > "$g/blame_notes_inline.json" || true
+here; blj a.cho > "$g/blame_cho.json" || true
+here; blj a.cho --decl 'fn a.thrice' > "$g/blame_decl_thrice.json" || true
+here; blj a.cho --decl 'fn a.twice' > "$g/blame_decl_twice.json" || true
+here; blj a.cho --decl 'fn a.twice' --rev HEAD~1 > "$g/blame_decl_twice_parent.json" || true
+here; blj a.cho --decl='fn a.thrice' > "$g/blame_decl_inline.json" || true
+here; blj a.cho --decl nope > "$g/refuse_blame_decl_not_found.json" || true
+here; blj a.cho --decl '' > "$g/refuse_blame_decl_empty.json" || true
+here; blj notes.md --decl 'fn a.twice' > "$g/refuse_blame_decl_not_cho.json" || true
+here; blj nonesuch > "$g/refuse_blame_path_not_found.json" || true
+many; blj sub > "$g/refuse_blame_directory.json" || true
+here; blj . > "$g/refuse_blame_root.json" || true
+here; blj  > "$g/refuse_blame_no_path.json" || true
+here; blj notes.md a.cho > "$g/refuse_blame_two_paths.json" || true
+here; blj ../outside > "$g/refuse_blame_outside.json" || true
+here; blj notes.md --rev nosuchbranch > "$g/refuse_blame_bad_revision.json" || true
+here; blj notes.md --rev HEAD~9 > "$g/refuse_blame_past_first.json" || true
+here; blj nonesuch --rev nosuchbranch > "$g/refuse_blame_bad_revision_and_path.json" || true
+many; blj extra.txt > "$g/blame_many.json" || true
+many; blj notes.md > "$g/blame_many_notes.json" || true
+many; blj extra.txt --rev HEAD~1 > "$g/blame_many_parent.json" || true
+longf; blj big.txt > "$g/blame_long.json" || true
+longf; blj big.txt --rev HEAD~1 > "$g/blame_long_parent.json" || true
+wide; blj notes.md --rev wide > "$g/blame_wide_mode.json" || true
+wide; blj lnk --rev wide > "$g/blame_wide_link.json" || true
+wide; blj a.cho --rev wide > "$g/refuse_blame_wide_deleted.json" || true
+wide; blj sub/deep/x.txt --rev wide > "$g/blame_wide_new_dir.json" || true
+here; printf '\377\376' > bad.txt; stepng 3000; blj bad.txt > "$g/refuse_blame_binary.json" || true
+here; printf '\377\376' > bad.txt; stepng 3000; blj bad.txt --rev HEAD~1 > "$g/refuse_blame_binary_old.json" || true
+here; printf 'one\ntwo' > nonl.txt; stepng 3000; printf 'one\ntwo\nthree' > nonl.txt; stepng 3001; blj nonl.txt > "$g/blame_no_newline.json" || true
+here; printf 'one\ntwo' > nonl.txt; stepng 3000; printf 'one\ntwo\nthree' > nonl.txt; stepng 3001; blj nonl.txt --rev HEAD~1 > "$g/blame_no_newline_parent.json" || true
+here; printf 'module b;\npub fn k( {\n' > b.cho; stepng 3000; blj b.cho --decl 'fn b.k' > "$g/refuse_blame_decl_unparsable.json" || true
+here; printf 'module b;\npub fn k( {\n' > b.cho; stepng 3000; blj b.cho > "$g/blame_unparsable_lines.json" || true
+here; mkdir -p sub; cd sub; blj ../notes.md > "$g/blame_from_subdirectory.json" || true
+here; mkdir -p sub; cd sub; blj ../../x > "$g/refuse_blame_from_subdirectory_outside.json" || true
+here; : > e.txt; stepng 3000; blj e.txt > "$g/blame_empty_file.json" || true
+here; blj notes.md --rev > "$g/refuse_blame_no_value_rev.json" || true
+here; seq 1 12 > s.txt; stepng 3000; awk 'NR==8{print "eight";next}{print}' s.txt > s2; mv s2 s.txt; stepng 3005; awk 'NR==3{print "x";next} NR==4{next}{print}' s.txt > s2; mv s2 s.txt; stepng 3001; awk 'NR==1{print "one";next}{print}' s.txt > s2; mv s2 s.txt; stepng 3002; blj s.txt > "$g/blame_shifted.json" || true
+here; seq 1 12 > s.txt; stepng 3000; awk 'NR==8{print "eight";next}{print}' s.txt > s2; mv s2 s.txt; stepng 3005; awk 'NR==3{print "x";next} NR==4{next}{print}' s.txt > s2; mv s2 s.txt; stepng 3001; awk 'NR==1{print "one";next}{print}' s.txt > s2; mv s2 s.txt; stepng 3002; blj s.txt --rev HEAD~1 > "$g/blame_shifted_parent.json" || true
+here; printf '\377\376' > bt.txt; stepng 3000; printf 'ok\n' > bt.txt; stepng 3001; blj bt.txt > "$g/refuse_blame_parent_binary.json" || true
+here; printf 'module b;\npub fn k() -> [] int { return 1; }\n' > b.cho; stepng 3000; blj b.cho --decl nope > "$g/refuse_blame_decl_not_found_one.json" || true
+here; printf 'module b;\n' > b.cho; stepng 3000; blj b.cho --decl nope > "$g/refuse_blame_decl_not_found_none.json" || true
+wide; "$R" vcs switch wide --output json > /dev/null; blj notes.md > "$g/blame_default_revision_on_branch.json" || true
+# verify (R13): the Rust command wrote each; `vsetup` names three objects of the store; the lock paths are made `<root>/.cancho/vcs/...`.
+vfj() { "$R" vcs verify --output json | sed 's#"lock": ".*/\.cancho/vcs/#"lock": "<root>/.cancho/vcs/#'; }
+vsetup() { v=.cancho/vcs; b1=$(ls $v/objects/blob/*/* | head -1); t1=$(ls $v/objects/tree/*/* | head -1); c1=$(ls $v/objects/change/*/* | head -1); }
+vo=$src/verify_objects
+here; vsetup; :; vfj > "$g/verify_sound.json" || true
+empty; "$R" vcs init > /dev/null; vfj > "$g/verify_empty.json" || true
+here; vsetup; echo x > $b1; vfj > "$g/verify_corrupt_blob.json" || true
+here; vsetup; echo x > $t1; vfj > "$g/verify_corrupt_tree.json" || true
+here; vsetup; echo x > $c1; vfj > "$g/verify_corrupt_change.json" || true
+here; vsetup; : > $b1; vfj > "$g/verify_empty_blob.json" || true
+here; vsetup; rm $b1; vfj > "$g/verify_missing_blob.json" || true
+here; vsetup; rm $t1; vfj > "$g/verify_missing_tree.json" || true
+here; vsetup; rm $c1; vfj > "$g/verify_missing_change.json" || true
+here; vsetup; rm -r $v/objects/blob; vfj > "$g/verify_missing_all_blobs.json" || true
+here; vsetup; mkdir -p $v/objects/blob/zz; touch $v/objects/blob/zz/notanid; vfj > "$g/verify_stray_blob.json" || true
+here; vsetup; touch $v/objects/tree/0b/short; vfj > "$g/verify_stray_short.json" || true
+here; vsetup; touch $v/objects/blob/.DS_Store; vfj > "$g/verify_stray_kind_file.json" || true
+here; vsetup; mkdir -p $v/objects/change/ab/dir; vfj > "$g/verify_stray_dir.json" || true
+here; vsetup; printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' > $v/refs/heads/x; vfj > "$g/verify_ref_missing.json" || true
+here; vsetup; mkdir -p $v/refs/tags; printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' > $v/refs/tags/t; vfj > "$g/verify_tag_missing.json" || true
+here; vsetup; mkdir -p $v/refs/remotes/o; printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' > $v/refs/remotes/o/m; vfj > "$g/verify_remote_missing.json" || true
+here; vsetup; cp $v/refs/heads/main $v/refs/heads/y; vfj > "$g/verify_ref_extra.json" || true
+here; vsetup; mkdir -p $v/refs/heads/a; cp $v/refs/heads/main $v/refs/heads/a/b; vfj > "$g/verify_ref_nested.json" || true
+here; vsetup; echo deadbeef > $v/refs/heads/x; vfj > "$g/verify_ref_garbage.json" || true
+here; vsetup; : > $v/refs/heads/x; vfj > "$g/verify_ref_empty.json" || true
+here; vsetup; echo ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff > $v/HEAD; vfj > "$g/verify_head_detached_missing.json" || true
+here; vsetup; cp $v/refs/heads/main $v/HEAD; vfj > "$g/verify_head_detached_ok.json" || true
+here; vsetup; echo nonsense > $v/HEAD; vfj > "$g/verify_head_garbage.json" || true
+here; vsetup; echo 'ref: refs/heads/none' > $v/HEAD; vfj > "$g/verify_head_unborn.json" || true
+here; vsetup; rm $c1; printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' > $v/refs/heads/main; vfj > "$g/verify_ref_to_missing_head.json" || true
+here; vsetup; echo '4242 99999999999' > $v/refs/heads/main.lock; vfj > "$g/verify_lock_future.json" || true
+here; vsetup; echo '1 99999999999' > $v/lock; vfj > "$g/verify_lock_top.json" || true
+here; vsetup; echo '7 99999999999' > $v/lock; echo '9 99999999999' > $v/refs/heads/main.lock; vfj > "$g/verify_lock_both.json" || true
+here; vsetup; echo 'x y' > $v/refs/heads/main.lock; vfj > "$g/verify_lock_bad.json" || true
+here; vsetup; : > $v/refs/heads/main.lock; vfj > "$g/verify_lock_empty.json" || true
+here; vsetup; mkdir -p $v/refs/heads/a; echo '3 99999999999' > $v/refs/heads/a/lock; vfj > "$g/verify_lock_nested.json" || true
+here; vsetup; mkdir -p $v/tmp; touch $v/tmp/a $v/tmp/b; mkdir $v/tmp/c; vfj > "$g/verify_tmp_garbage.json" || true
+here; vsetup; echo x > $b1; rm $t1; echo x > $c1; touch $v/objects/blob/zz; printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' > $v/refs/heads/x; vfj > "$g/verify_many_problems.json" || true
+here; vsetup; rm $b1; printf 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n' > $v/refs/heads/x; vfj > "$g/verify_blob_and_ref.json" || true
+here; vsetup; rm -r $v/objects; vfj > "$g/verify_no_objects_dir.json" || true
+here; vsetup; rm -r $v/refs; vfj > "$g/verify_no_refs_dir.json" || true
+here; vsetup; rm -rf $v/tmp; vfj > "$g/verify_no_tmp_dir.json" || true
+here; vsetup; cp -R "$vo/change_attest_int/." "$v/"; vfj > "$g/verify_crafted_change_attest_int.json" || true
+here; vsetup; cp -R "$vo/change_big_time/." "$v/"; vfj > "$g/verify_crafted_change_big_time.json" || true
+here; vsetup; cp -R "$vo/change_decls_missing/." "$v/"; vfj > "$g/verify_crafted_change_decls_missing.json" || true
+here; vsetup; cp -R "$vo/change_decls_null/." "$v/"; vfj > "$g/verify_crafted_change_decls_null.json" || true
+here; vsetup; cp -R "$vo/change_dup_tree/." "$v/"; vfj > "$g/verify_crafted_change_dup_tree.json" || true
+here; vsetup; cp -R "$vo/change_edits_ok/." "$v/"; vfj > "$g/verify_crafted_change_edits_ok.json" || true
+here; vsetup; cp -R "$vo/change_extra_field/." "$v/"; vfj > "$g/verify_crafted_change_extra_field.json" || true
+here; vsetup; cp -R "$vo/change_float_time/." "$v/"; vfj > "$g/verify_crafted_change_float_time.json" || true
+here; vsetup; cp -R "$vo/change_garbage/." "$v/"; vfj > "$g/verify_crafted_change_garbage.json" || true
+here; vsetup; cp -R "$vo/change_git_badhex/." "$v/"; vfj > "$g/verify_crafted_change_git_badhex.json" || true
+here; vsetup; cp -R "$vo/change_git_hex/." "$v/"; vfj > "$g/verify_crafted_change_git_hex.json" || true
+here; vsetup; cp -R "$vo/change_git_oddhex/." "$v/"; vfj > "$g/verify_crafted_change_git_oddhex.json" || true
+here; vsetup; cp -R "$vo/change_git_plushex/." "$v/"; vfj > "$g/verify_crafted_change_git_plushex.json" || true
+here; vsetup; cp -R "$vo/change_intent_full/." "$v/"; vfj > "$g/verify_crafted_change_intent_full.json" || true
+here; vsetup; cp -R "$vo/change_intent_int/." "$v/"; vfj > "$g/verify_crafted_change_intent_int.json" || true
+here; vsetup; cp -R "$vo/change_intent_noprompt/." "$v/"; vfj > "$g/verify_crafted_change_intent_noprompt.json" || true
+here; vsetup; cp -R "$vo/change_missing_parent/." "$v/"; vfj > "$g/verify_crafted_change_missing_parent.json" || true
+here; vsetup; cp -R "$vo/change_missing_tree/." "$v/"; vfj > "$g/verify_crafted_change_missing_tree.json" || true
+here; vsetup; cp -R "$vo/change_three_parents/." "$v/"; vfj > "$g/verify_crafted_change_three_parents.json" || true
+here; vsetup; cp -R "$vo/change_trailing/." "$v/"; vfj > "$g/verify_crafted_change_trailing.json" || true
+here; vsetup; cp -R "$vo/change_two_parents/." "$v/"; vfj > "$g/verify_crafted_change_two_parents.json" || true
+here; vsetup; cp -R "$vo/change_whitespace/." "$v/"; vfj > "$g/verify_crafted_change_whitespace.json" || true
+here; vsetup; cp -R "$vo/tree_bad_mode/." "$v/"; vfj > "$g/verify_crafted_tree_bad_mode.json" || true
+here; vsetup; cp -R "$vo/tree_blank_line/." "$v/"; vfj > "$g/verify_crafted_tree_blank_line.json" || true
+here; vsetup; cp -R "$vo/tree_crlf/." "$v/"; vfj > "$g/verify_crafted_tree_crlf.json" || true
+here; vsetup; cp -R "$vo/tree_dir_conflict/." "$v/"; vfj > "$g/verify_crafted_tree_dir_conflict.json" || true
+here; vsetup; cp -R "$vo/tree_dot_path/." "$v/"; vfj > "$g/verify_crafted_tree_dot_path.json" || true
+here; vsetup; cp -R "$vo/tree_dup/." "$v/"; vfj > "$g/verify_crafted_tree_dup.json" || true
+here; vsetup; cp -R "$vo/tree_garbage/." "$v/"; vfj > "$g/verify_crafted_tree_garbage.json" || true
+here; vsetup; cp -R "$vo/tree_missing_blob/." "$v/"; vfj > "$g/verify_crafted_tree_missing_blob.json" || true
+here; vsetup; cp -R "$vo/tree_no_newline/." "$v/"; vfj > "$g/verify_crafted_tree_no_newline.json" || true
+here; vsetup; cp -R "$vo/tree_nonadjacent/." "$v/"; vfj > "$g/verify_crafted_tree_nonadjacent.json" || true
+here; vsetup; cp -R "$vo/tree_quote_path/." "$v/"; vfj > "$g/verify_crafted_tree_quote_path.json" || true
+here; vsetup; cp -R "$vo/tree_space_path/." "$v/"; vfj > "$g/verify_crafted_tree_space_path.json" || true
+here; vsetup; cp -R "$vo/tree_two_missing_unsorted/." "$v/"; vfj > "$g/verify_crafted_tree_two_missing_unsorted.json" || true
+here; vsetup; cp -R "$vo/tree_unsorted/." "$v/"; vfj > "$g/verify_crafted_tree_unsorted.json" || true
+here; vsetup; cp -R "$vo/tree_empty/." "$v/"; vfj > "$g/verify_crafted_tree_empty.json" || true
+here; vsetup; cp -R "$vo/tree_crlf_missing/." "$v/"; vfj > "$g/verify_crafted_tree_crlf_missing.json" || true
+here; vsetup; cp -R "$vo/tree_missing_blob/." "$v/"; cp -R "$vo/change_garbage/." "$v/"; vfj > "$g/verify_crafted_both_kinds.json" || true
+rm -rf "$out/w" "$out/e"
+echo "made $out/three_changes and $out/golden"

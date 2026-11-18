@@ -1,0 +1,23 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "2 problem(s); first: \"change 3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e (ref heads/main)\"",
+    "objects": {
+      "blob": 0,
+      "change": 0,
+      "tree": 0
+    },
+    "problems": [
+      {
+        "object": "change 3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e (ref heads/main)",
+        "tag": "object-missing"
+      },
+      {
+        "object": "change 3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e (HEAD)",
+        "tag": "object-missing"
+      }
+    ],
+    "tag": "object-missing"
+  }
+}

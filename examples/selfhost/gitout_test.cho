@@ -1,0 +1,209 @@
+module selfhost.gitout_test;
+
+// gitout_test.cho -- tests of `gitout.cho`, run by `examples/selfhost/test.sh`. The oracles: `git hash-object` for the names, the Rust `zlib_store` for the stream of "hello"
+// (`78 01 01 05 00 fa ff` then the bytes then the Adler-32 `062c0215`), and `std.flate.unzlib` for any length.
+
+import std.buffer;
+import std.bytes;
+import std.flate;
+import selfhost.gitout;
+import selfhost.sha1;
+
+fn named[&h, &k, &b](heap: &!h Heap, kind: &k [byte], body: &b [byte], want: &static [byte]) -> [heap] bool {
+    let hs = box_slice(heap, sha1.size(), 0);
+    let out = box_slice(heap, 20, byte_of(0));
+    var ok = false;
+    borrow mut hs as &!hb in {
+        borrow mut out as &!ob in {
+            let h2 = contents(hb);
+            let o2 = contents(ob);
+            gitout.object_name(heap, h2, kind, body, o2);
+            let hex = gitread_hex(heap, o2);
+            borrow hex as &xb in {
+                ok = bytes.equal(buffer.bytes(xb), want);
+            }
+            buffer.drop(heap, hex);
+        }
+    }
+    unbox_slice(heap, hs);
+    unbox_slice(heap, out);
+    return ok;
+}
+
+fn gitread_hex[&h, &i](heap: &!h Heap, id: &i [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 40);
+    var i = 0;
+    while i < len(id) {
+        let c = int_of(id[i]);
+        out = buffer.push(heap, out, "0123456789abcdef"[c / 16]);
+        out = buffer.push(heap, out, "0123456789abcdef"[c % 16]);
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn test_an_object_is_named_as_git_names_it[&h](heap: &!h Heap) -> [heap] int {
+    if !named(heap, "blob", "", "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391") {
+        return 1;
+    }
+    if !named(heap, "blob", "hello", "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0") {
+        return 2;
+    }
+    if !named(heap, "tree", "", "4b825dc642cb6eb9a060e54bf8d69288fbee4904") {
+        return 3;
+    }
+    return 0;
+}
+
+pub fn test_a_stored_stream_is_the_one_rust_wrote[&h](heap: &!h Heap) -> [heap] int {
+    let z = gitout.zlib_store(heap, "hello");
+    var ok = false;
+    borrow z as &zb in {
+        let s = buffer.bytes(zb);
+        ok = len(s) == 16 && int_of(s[0]) == 120 && int_of(s[1]) == 1 && int_of(s[2]) == 1 && int_of(s[3]) == 5 && int_of(s[4]) == 0 && int_of(s[5]) == 250 && int_of(s[6]) == 255 && bytes.equal(s[7..12], "hello") && int_of(s[12]) == 6 && int_of(s[13]) == 44 && int_of(s[14]) == 2 && int_of(s[15]) == 21;
+    }
+    buffer.drop(heap, z);
+    if !ok {
+        return 1;
+    }
+    let e = gitout.zlib_store(heap, "");
+    var empty_ok = false;
+    borrow e as &eb in {
+        let s = buffer.bytes(eb);
+        empty_ok = len(s) == 11 && int_of(s[2]) == 1 && int_of(s[3]) == 0 && int_of(s[4]) == 0 && int_of(s[5]) == 255 && int_of(s[6]) == 255 && int_of(s[10]) == 1;
+    }
+    buffer.drop(heap, e);
+    if !empty_ok {
+        return 2;
+    }
+    return 0;
+}
+
+pub fn test_a_stored_stream_of_many_blocks_inflates_to_its_input[&h](heap: &!h Heap) -> [heap] int {
+    var data = buffer.empty(heap, 140000);
+    var i = 0;
+    while i < 140000 {
+        data = buffer.push(heap, data, byte_of(i * 7 % 251));
+        i = i + 1;
+    }
+    var code = 0;
+    borrow data as &db in {
+        let z = gitout.zlib_store(heap, buffer.bytes(db));
+        borrow z as &zb in {
+            let s = buffer.bytes(zb);
+            let (back, status, after) = flate.unzlib(heap, s, 0, len(s), 1000000);
+            if status != 0 || after != len(s) {
+                code = 1;
+            } else {
+                borrow back as &bb in {
+                    if bytes.compare(buffer.bytes(bb), buffer.bytes(db)) != 0 {
+                        code = 2;
+                    }
+                }
+            }
+            buffer.drop(heap, back);
+            // 140,000 bytes are three blocks: 65,535, 65,535 and 8,930; the first is not the last (0), has the length ffff and the complement 0000.
+            if len(s) != 140000 + 3 * 5 + 6 || int_of(s[2]) != 0 || int_of(s[3]) != 255 || int_of(s[4]) != 255 || int_of(s[5]) != 0 || int_of(s[6]) != 0 || int_of(s[7 + 65535]) != 0 {
+                code = 3;
+            }
+        }
+        buffer.drop(heap, z);
+    }
+    buffer.drop(heap, data);
+    return code;
+}
+
+pub fn test_a_message_made_here_has_its_trailers_in_order[&h](heap: &!h Heap) -> [heap] int {
+    let with = gitout.native_message(heap, "abc", true, "fix it", "Cancho-Session: s1\nCancho-Model: m\n");
+    var ok = false;
+    borrow with as &wb in {
+        ok = bytes.equal(buffer.bytes(wb), "fix it\n\nCancho-Change: abc\nCancho-Intent: recorded\nCancho-Session: s1\nCancho-Model: m\n");
+    }
+    buffer.drop(heap, with);
+    if !ok {
+        return 1;
+    }
+    let without = gitout.native_message(heap, "abc", false, "", "");
+    var ok2 = false;
+    borrow without as &nb in {
+        ok2 = bytes.equal(buffer.bytes(nb), "\nCancho-Change: abc\n");
+    }
+    buffer.drop(heap, without);
+    if !ok2 {
+        return 2;
+    }
+    return 0;
+}
+
+pub fn test_a_commit_has_its_tree_and_parents_then_its_own_lines[&h](heap: &!h Heap) -> [heap] int {
+    var tree = box_slice(heap, 20, byte_of(171));
+    var parents = box_slice(heap, 40, byte_of(1));
+    var code = 0;
+    borrow mut tree as &!tb in {
+        borrow mut parents as &!pb in {
+            let t = contents(tb);
+            let p = contents(pb);
+            let a = gitout.commit_imported(heap, t, p, "author a 1 +0000\ncommitter a 1 +0000\n", "msg\n");
+            borrow a as &ab in {
+                let want = "tree abababababababababababababababababababab\nparent 0101010101010101010101010101010101010101\nparent 0101010101010101010101010101010101010101\nauthor a 1 +0000\ncommitter a 1 +0000\n\nmsg\n";
+                if bytes.compare(buffer.bytes(ab), want) != 0 {
+                    code = 1;
+                }
+            }
+            buffer.drop(heap, a);
+            let n = gitout.commit_native(heap, t, p[0..0], "x 2 +0100", "m\n");
+            borrow n as &nb in {
+                let want2 = "tree abababababababababababababababababababab\nauthor x 2 +0100\ncommitter x 2 +0100\n\nm\n";
+                if bytes.compare(buffer.bytes(nb), want2) != 0 {
+                    code = 2;
+                }
+            }
+            buffer.drop(heap, n);
+        }
+    }
+    unbox_slice(heap, tree);
+    unbox_slice(heap, parents);
+    return code;
+}
+
+pub fn test_the_first_forty_digits_are_the_key[&h](heap: &!h Heap) -> [heap] int {
+    let out = box_slice(heap, 20, byte_of(0));
+    var code = 0;
+    borrow mut out as &!ob in {
+        let o = contents(ob);
+        gitout.key20("00ff10abcdef0123456789abcdef0123456789abXXXXXXXXXXXXXXXXXXXXXXXX", 0, o);
+        if int_of(o[0]) != 0 || int_of(o[1]) != 255 || int_of(o[2]) != 16 || int_of(o[3]) != 171 || int_of(o[19]) != 171 {
+            code = 1;
+        }
+    }
+    unbox_slice(heap, out);
+    return code;
+}
+
+pub fn test_a_block_of_exactly_the_longest_length_is_the_last[&h](heap: &!h Heap) -> [heap] int {
+    var data = buffer.empty(heap, 65536);
+    var i = 0;
+    while i < 65535 {
+        data = buffer.push(heap, data, byte_of(i % 253));
+        i = i + 1;
+    }
+    var code = 0;
+    borrow data as &db in {
+        let z = gitout.zlib_store(heap, buffer.bytes(db));
+        borrow z as &zb in {
+            let s = buffer.bytes(zb);
+            // One block, and the last: 2 header bytes, 5 for the block, 65,535 bytes, 4 of Adler-32.
+            if len(s) != 2 + 5 + 65535 + 4 || int_of(s[2]) != 1 {
+                code = 1;
+            }
+            let (back, status, after) = flate.unzlib(heap, s, 0, len(s), 1000000);
+            if status != 0 || after != len(s) {
+                code = 2;
+            }
+            buffer.drop(heap, back);
+        }
+        buffer.drop(heap, z);
+    }
+    buffer.drop(heap, data);
+    return code;
+}

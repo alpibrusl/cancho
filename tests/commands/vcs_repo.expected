@@ -1,0 +1,1093 @@
+== log
+ok log is the pin
+ok log (exit 0)
+ok log HEAD~1
+ok log --limit 1
+ok log --limit=1 is the same
+ok log --limit 0 lists one change, as the Rust command does
+ok log of a name that names nothing
+ok log refused (exit 1)
+ok log --limit x is a bad argument
+ok log --limit x refused (exit 1)
+== show
+ok show HEAD is the pin
+ok show (exit 0)
+ok show with no revision is HEAD
+ok show HEAD~1
+ok show of a name that names nothing
+ok show refused (exit 1)
+ok show past the first change
+ok show with no repository is not-a-repository
+ok show, no repository (exit 1)
+== finding the repository
+ok show from two directories down
+ok log from two directories down is the repository log
+ok show --repo PATH from another directory
+ok show --repo=PATH from a directory of the repository
+== init
+ok init is the pin
+ok init (exit 0)
+ok init made a store with HEAD on main
+ok init again is the pin
+ok show in the new repository: HEAD has no change yet
+ok init --dry-run
+ok --dry-run made nothing
+ok init --dry-run in a repository
+ok init --branch dev
+ok HEAD is on dev
+ok init of a directory that is not there
+ok the directory was made, with its store
+ok init with a bad branch name
+ok init, bad branch (exit 1)
+== branch
+ok branch create is the pin
+ok branch create (exit 0)
+ok the ref file holds the id and a newline
+ok the lock is gone
+ok the ref log has the line the Rust command writes (time made T)
+ok branch list is the pin
+ok branch with no word is branch list
+ok branch delete is the pin
+ok branch delete (exit 0)
+ok the ref file is gone
+ok the lock is gone
+ok the ref log has the deletion too
+ok branch list after the delete
+ok branch list of the repository
+ok branch list of an empty repository
+ok branch create when HEAD has no change yet
+ok branch create, no change (exit 1)
+ok branch create from HEAD
+ok branch create again is created: false
+ok branch create where it is elsewhere is ref-moved
+ok ref-moved (exit 1)
+ok branch create --dry-run
+ok --dry-run made nothing
+ok branch create with a bad name
+ok branch create with no name
+ok branch create --from a name that names nothing
+ok branch with a word it does not know
+ok branch delete --dry-run
+ok --dry-run kept the ref
+ok branch delete needs --expect
+ok branch delete --expect the wrong change is ref-moved
+ok the ref was kept
+ok the checked-out branch cannot be deleted
+ok deleting a branch that is not there
+ok branch list: a.b, a/b, a0 in the order of the bytes of their paths
+== status
+ok status of a new repository is the pin (head null)
+ok status (exit 0)
+ok status clean at the first change is the pin
+ok status with one file left is the pin
+ok status of the clean repository
+ok status: a deleted file
+ok status: added files, one in a new directory
+ok status: the execute bit
+ok status: a link added
+ok status: links to a file, a name that is not there, a directory
+ok status: a file that became a link
+ok status: a link target of 500 bytes
+ok status: ignored links are not listed
+ok status: a file that became a directory
+ok status: a link target that is not UTF-8 is path-unsupported
+ok status, bad link target (exit 1)
+ok status of a repository with nothing in it
+ok status with no repository is not-a-repository
+ok status, no repository (exit 1)
+ok status from two directories down is the clean status
+ok status --repo PATH from another directory
+== restore
+ok restore one file
+ok restore (exit 0)
+ok restore one file: the working copy is HEAD's
+ok restore: the lock is gone
+ok restore ./notes.md is notes.md (a dot component was once left in the path, and nothing was restored)
+ok restore ./notes.md: the working copy is HEAD's
+ok restore s/../notes.md is notes.md
+ok restore s/../notes.md: the working copy is HEAD's
+ok restore --dry-run
+ok --dry-run wrote nothing
+ok restore of a file that is already HEAD's
+ok restore . after every kind of change
+ok restore .: the working copy is HEAD's
+ok restore .: the lock is gone
+ok restore . again restores nothing
+ok restore . where a file became a directory: io-error, as the Rust command stops
+ok restore, file became a directory (exit 3)
+ok restore, io-error: the lock is gone
+ok restore a directory
+ok a path outside the one named is left
+ok restore . --from HEAD~1
+ok the files are the parent's
+ok restore with no path
+ok restore, no path (exit 1)
+ok restore of a name nothing has
+ok nothing else was restored
+ok restore of a path outside the repository
+ok restore, path escapes (exit 1)
+ok restore --from a name that names nothing
+ok restore ../notes.md from a subdirectory
+ok restore . in a subdirectory covers only it
+ok the rest of the working copy is left
+ok restore with two paths
+ok restore --dry-run takes no lock
+ok restore with the lock held: lock-held with its pid, age and path
+ok restore, lock held (exit 1)
+ok a held lock changes nothing and is left
+ok a lock stamped with pid 0 has a null pid
+== switch
+ok switch to the branch HEAD is on
+ok switch, nowhere (exit 0)
+ok switch, nowhere: the lock is gone
+ok switch --create
+ok switch --create: HEAD is as the Rust command left it
+ok the new branch is at HEAD's change
+ok switch --create: the lock is gone
+ok switch --create --dry-run
+ok --dry-run made no branch
+ok switch --create over a branch that exists
+ok switch --create, exists (exit 1)
+ok switch --create, exists: the lock is gone
+ok switch --create with a name that is not a ref name
+ok switch --create, bad name (exit 1)
+ok switch --create where HEAD has no change
+ok switch in a repository with no change
+ok switch to a branch
+ok switch to a branch (exit 0)
+ok switch to a branch: HEAD is as the Rust command left it
+ok switch to a branch: the files are the parent's
+ok switch to a branch: the lock is gone
+ok switch --dry-run
+ok --dry-run moved nothing
+ok switch to a change detaches
+ok switch to a change: HEAD is as the Rust command left it
+ok switch to a change: the files are the parent's
+ok switch --detach reads a branch name as a change
+ok switch --detach: HEAD is as the Rust command left it
+ok switch to a name that names nothing
+ok switch, bad revision (exit 1)
+ok switch with no argument
+ok switch, no argument (exit 1)
+ok switch with two arguments
+ok switch, two arguments (exit 1)
+ok switch over a dirty file the move touches
+ok switch, dirty (exit 1)
+ok a refused switch changed nothing
+ok switch, dirty: the lock is gone
+ok switch over a dirty file the move does not touch (no flag)
+ok switch --keep carries a dirty file the move does not touch
+ok switch --keep: the files are the parent's
+ok switch --keep still refuses a dirty file in the way
+ok switch --discard lists what it overwrote
+ok switch --discard: the files are the parent's
+ok --discard leaves a file the move does not touch
+ok switch --dry-run still refuses a dirty working copy
+ok switch back
+ok switch back: the working copy is HEAD's
+ok switch back: the lock is gone
+ok switch to a branch that adds, removes, links and changes a mode
+ok switch wide: HEAD is as the Rust command left it
+ok switch wide: the working copy is what the Rust command made
+ok switch back from it
+ok switch back: files removed, directories with them
+ok switch back from wide: the working copy is HEAD's
+ok switch --keep carries a file the move does not name
+ok switch --keep: the same tree
+ok switch --dry-run to a wider branch
+ok switch --dry-run, wide: the working copy is HEAD's
+ok switch from a subdirectory
+ok switch --dry-run takes no lock
+ok switch with the lock held: lock-held with its pid and path
+ok switch, lock held (exit 1)
+ok a held lock changes nothing and is left
+== apply
+ok apply: basic
+ok apply: basic: the working copy is as the Rust command left it
+ok apply: basic: no lock left
+ok apply: seq
+ok apply: seq: the working copy is as the Rust command left it
+ok apply: seq: no lock left
+ok apply: two files
+ok apply: two files: the working copy is as the Rust command left it
+ok apply: two files: no lock left
+ok apply: two files reversed
+ok apply: two files reversed: the working copy is as the Rust command left it
+ok apply: two files reversed: no lock left
+ok apply: overlap
+ok apply: overlap: the working copy is as the Rust command left it
+ok apply: overlap: no lock left
+ok apply: dry
+ok apply: dry: the working copy is as the Rust command left it
+ok apply: dry: no lock left
+ok apply: atomic
+ok apply: atomic: the working copy is as the Rust command left it
+ok apply: atomic: no lock left
+ok apply: atomic reversed
+ok apply: atomic reversed: the working copy is as the Rust command left it
+ok apply: atomic reversed: no lock left
+ok apply: not found
+ok apply: not found: the working copy is as the Rust command left it
+ok apply: not found: no lock left
+ok apply: ambiguous
+ok apply: ambiguous: the working copy is as the Rust command left it
+ok apply: ambiguous: no lock left
+ok apply: ambiguous code
+ok apply: ambiguous code: the working copy is as the Rust command left it
+ok apply: ambiguous code: no lock left
+ok apply: empty anchor
+ok apply: empty anchor: the working copy is as the Rust command left it
+ok apply: empty anchor: no lock left
+ok apply: escapes
+ok apply: escapes: the working copy is as the Rust command left it
+ok apply: escapes: no lock left
+ok apply: empty list
+ok apply: empty list: the working copy is as the Rust command left it
+ok apply: empty list: no lock left
+ok apply: exec
+ok apply: exec: the working copy is as the Rust command left it
+ok apply: exec: no lock left
+ok apply: unicode
+ok apply: unicode: the working copy is as the Rust command left it
+ok apply: unicode: no lock left
+ok apply: dotted
+ok apply: dotted: the working copy is as the Rust command left it
+ok apply: dotted: no lock left
+ok apply: dotted refused
+ok apply: dotted refused: the working copy is as the Rust command left it
+ok apply: dotted refused: no lock left
+ok apply: spellings
+ok apply: spellings: the working copy is as the Rust command left it
+ok apply: spellings: no lock left
+ok apply: spellings refused
+ok apply: spellings refused: the working copy is as the Rust command left it
+ok apply: spellings refused: no lock left
+ok apply: subdirectory
+ok apply: subdirectory: the working copy is as the Rust command left it
+ok apply: subdirectory: no lock left
+ok apply: crlf
+ok apply: crlf: the working copy is as the Rust command left it
+ok apply: crlf: no lock left
+ok apply: deleting
+ok apply: deleting: the working copy is as the Rust command left it
+ok apply: deleting: no lock left
+ok apply: large
+ok apply: large: the working copy is as the Rust command left it
+ok apply: large: no lock left
+ok apply: spaced json
+ok apply: spaced json: the working copy is as the Rust command left it
+ok apply: spaced json: no lock left
+ok apply: extra key
+ok apply: extra key: the working copy is as the Rust command left it
+ok apply: extra key: no lock left
+ok apply with no argument
+ok apply, no argument (exit 1)
+ok apply with two arguments
+ok apply, two arguments (exit 1)
+ok apply, a file that is not there: io-error, exit 3
+ok apply, a directory: io-error, exit 3
+ok apply, the root: io-error, exit 3
+ok apply, an empty path: io-error, exit 3
+ok apply, an object, not an array: bad-argument, exit 1
+ok apply, an edit with no new: bad-argument, exit 1
+ok apply, a number as old: bad-argument, exit 1
+ok apply, JSON that stops: bad-argument, exit 1
+ok apply, a trailing comma: bad-argument, exit 1
+ok apply, an edits file that is not there: io-error, exit 3
+ok apply --dry-run takes the lock, unlike restore and switch: lock-held
+ok a held lock is left
+ok apply from a subdirectory: paths are the current directory's
+== unlock
+ok unlock: none
+ok unlock: none: the locks left are the Rust command's
+ok unlock: none dry
+ok unlock: none dry: the locks left are the Rust command's
+ok unlock: top
+ok unlock: top: the locks left are the Rust command's
+ok unlock: top dry
+ok unlock: top dry: the locks left are the Rust command's
+ok unlock: ref
+ok unlock: ref: the locks left are the Rust command's
+ok unlock: both
+ok unlock: both: the locks left are the Rust command's
+ok unlock: garbage
+ok unlock: garbage: the locks left are the Rust command's
+ok unlock: empty
+ok unlock: empty: the locks left are the Rust command's
+ok unlock: pid only
+ok unlock: pid only: the locks left are the Rust command's
+ok unlock: big pid
+ok unlock: big pid: the locks left are the Rust command's
+ok unlock: plus
+ok unlock: plus: the locks left are the Rust command's
+ok unlock: zero
+ok unlock: zero: the locks left are the Rust command's
+ok unlock: nested
+ok unlock: nested: the locks left are the Rust command's
+== routing
+exit 0
+manifest log lines: 1
+exit 0
+nothing published yet at `elsewhere`
+== log filters and show --patch
+ok log path file
+ok log path notes
+ok log path none
+ok log path root
+ok log path dir
+ok log path inline
+ok log path limit
+ok log path from rev
+ok log path wide deleted
+ok log path wide mode
+ok log path wide link
+ok log path wide nested
+ok log intent
+ok log intent empty
+ok log intent none
+ok log intent colon
+ok log session
+ok log session none
+ok log issue
+ok log issue empty
+ok log author
+ok log author angle
+ok log author none
+ok log author empty
+ok log two filters
+ok log all filters
+ok log many author
+ok log many session
+ok log many session limit
+ok log many path mode
+ok log many quoted
+ok log many escape
+ok log bad limit and path
+ok refuse log path outside
+ok refuse log path outside bad revision
+ok show patch
+ok show patch parent
+ok show patch root
+ok show patch first
+ok show patch wide
+ok show patch many mode
+ok show patch bad revision
+ok show patch context
+ok log path limit 0
+== blame
+ok blame notes
+ok blame notes parent
+ok blame notes root
+ok blame notes inline
+ok blame cho
+ok blame decl thrice
+ok blame decl twice
+ok blame decl twice parent
+ok blame decl inline
+ok refuse blame decl not found
+ok refuse blame decl empty
+ok refuse blame decl not cho
+ok refuse blame path not found
+ok refuse blame directory
+ok refuse blame root
+ok refuse blame no path
+ok refuse blame two paths
+ok refuse blame outside
+ok refuse blame bad revision
+ok refuse blame past first
+ok refuse blame bad revision and path
+ok blame many
+ok blame many notes
+ok blame many parent
+ok blame long
+ok blame long parent
+ok blame wide mode
+ok blame wide link
+ok refuse blame wide deleted
+ok blame wide new dir
+ok refuse blame binary
+ok refuse blame binary old
+ok blame no newline
+ok blame no newline parent
+ok refuse blame decl unparsable
+ok blame unparsable lines
+ok blame from subdirectory
+ok refuse blame from subdirectory outside
+ok blame empty file
+ok refuse blame no value rev
+ok blame shifted
+ok blame shifted parent
+ok refuse blame parent binary
+ok refuse blame decl not found one
+ok refuse blame decl not found none
+ok blame default revision on branch
+== verify
+ok verify sound
+ok verify empty
+ok verify corrupt blob
+ok verify corrupt tree
+ok verify corrupt change
+ok verify empty blob
+ok verify missing blob
+ok verify missing tree
+ok verify missing change
+ok verify missing all blobs
+ok verify stray blob
+ok verify stray short
+ok verify stray kind file
+ok verify stray dir
+ok verify ref missing
+ok verify tag missing
+ok verify remote missing
+ok verify ref extra
+ok verify ref nested
+ok verify ref garbage
+ok verify ref empty
+ok verify head detached missing
+ok verify head detached ok
+ok verify head garbage
+ok verify head unborn
+ok verify ref to missing head
+ok verify lock future
+ok verify lock top
+ok verify lock both
+ok verify lock bad
+ok verify lock empty
+ok verify lock nested
+ok verify tmp garbage
+ok verify many problems
+ok verify blob and ref
+ok verify no objects dir
+ok verify no refs dir
+ok verify no tmp dir
+ok verify crafted change attest int
+ok verify crafted change big time
+ok verify crafted change decls missing
+ok verify crafted change decls null
+ok verify crafted change dup tree
+ok verify crafted change edits ok
+ok verify crafted change extra field
+ok verify crafted change float time
+ok verify crafted change garbage
+ok verify crafted change git badhex
+ok verify crafted change git hex
+ok verify crafted change git oddhex
+ok verify crafted change git plushex
+ok verify crafted change intent full
+ok verify crafted change intent int
+ok verify crafted change intent noprompt
+ok verify crafted change missing parent
+ok verify crafted change missing tree
+ok verify crafted change three parents
+ok verify crafted change trailing
+ok verify crafted change two parents
+ok verify crafted change whitespace
+ok verify crafted tree bad mode
+ok verify crafted tree blank line
+ok verify crafted tree crlf
+ok verify crafted tree dir conflict
+ok verify crafted tree dot path
+ok verify crafted tree dup
+ok verify crafted tree garbage
+ok verify crafted tree missing blob
+ok verify crafted tree no newline
+ok verify crafted tree nonadjacent
+ok verify crafted tree quote path
+ok verify crafted tree space path
+ok verify crafted tree two missing unsorted
+ok verify crafted tree unsorted
+ok verify crafted tree empty
+ok verify crafted tree crlf missing
+ok verify crafted both kinds
+ok verify leaves the lock
+ok verify with a lock (exit 0)
+ok verify of a sound store (exit 0)
+ok verify with a missing blob (exit 1)
+ok verify with a damaged change (exit 1)
+ok verify with a ref that holds no id (exit 1)
+ok verify with HEAD that is nothing (exit 1)
+== what is not an option
+ok log --bogus (exit 2)
+ok log --bogus is an unknown option
+ok show --output text (exit 2)
+ok log --limit with no value (exit 2)
+ok it says --limit needs a value
+done
+== record
+ok record: clean
+ok record: clean: the store is as the Rust command left it
+ok record: clean: no lock left
+ok record: notes
+ok record: notes: the store is as the Rust command left it
+ok record: notes: no lock left
+ok record: notes path
+ok record: notes path: the store is as the Rust command left it
+ok record: notes path: no lock left
+ok record: cho body
+ok record: cho body: the store is as the Rust command left it
+ok record: cho body: no lock left
+ok record: cho sig
+ok record: cho sig: the store is as the Rust command left it
+ok record: cho sig: no lock left
+ok record: cho add
+ok record: cho add: the store is as the Rust command left it
+ok record: cho add: no lock left
+ok record: cho remove
+ok record: cho remove: the store is as the Rust command left it
+ok record: cho remove: no lock left
+ok record: new files
+ok record: new files: the store is as the Rust command left it
+ok record: new files: no lock left
+ok record: delete
+ok record: delete: the store is as the Rust command left it
+ok record: delete: no lock left
+ok record: mode
+ok record: mode: the store is as the Rust command left it
+ok record: mode: no lock left
+ok record: dry
+ok record: dry: the store is as the Rust command left it
+ok record: dry: no lock left
+ok record: no gate
+ok record: no gate: the store is as the Rust command left it
+ok record: no gate: no lock left
+ok record: intent
+ok record: intent: the store is as the Rust command left it
+ok record: intent: no lock left
+ok record: expect ok
+ok record: expect ok: the store is as the Rust command left it
+ok record: expect ok: no lock left
+ok record: expect wrong: the tag, the rule and the path are the Rust command's
+ok record: expect wrong: the store is as the Rust command left it
+ok record: expect wrong: no lock left
+ok record: nothing selected
+ok record: nothing selected: the store is as the Rust command left it
+ok record: nothing selected: no lock left
+ok record: bad time on a clean tree is unchanged, as in Rust
+ok record: bad time clean: the store is as the Rust command left it
+ok record: bad time
+ok record: bad time: the store is as the Rust command left it
+ok record: bad time: no lock left
+ok record: escapes
+ok record: escapes: the store is as the Rust command left it
+ok record: escapes: no lock left
+ok record: imports
+ok record: imports: the store is as the Rust command left it
+ok record: imports: no lock left
+ok record: std
+ok record: std: the store is as the Rust command left it
+ok record: std: no lock left
+ok record: binary
+ok record: binary: the store is as the Rust command left it
+ok record: binary: no lock left
+ok record: multi hunk
+ok record: multi hunk: the store is as the Rust command left it
+ok record: multi hunk: no lock left
+ok record: gate fail: the tag, the rule and the path are the Rust command's
+ok record: gate fail: the store is as the Rust command left it
+ok record: gate fail: no lock left
+ok record: gate fail import: the tag, the rule and the path are the Rust command's
+ok record: gate fail import: the store is as the Rust command left it
+ok record: gate fail import: no lock left
+ok record: parse fail: the tag, the rule and the path are the Rust command's
+ok record: parse fail: the store is as the Rust command left it
+ok record: parse fail: no lock left
+ok record: one path of two changes
+ok record: one path of two changes: the store is as the Rust command left it
+ok record: a deleted code file is not checked
+ok record: a deleted code file: the store is as the Rust command left it
+ok record: a changed binary file has no edits
+ok record: a changed binary file: the store is as the Rust command left it
+ok record: a changed link has no edits
+ok record: a changed link: the store is as the Rust command left it
+ok record: detached
+ok record: detached: HEAD moved to the change, as the Rust command moves it
+ok record: from a subdirectory
+ok record: from a subdirectory: the store is as the Rust command left it
+ok record: nothing in an empty repository
+ok record, empty and nothing (exit 1)
+ok record: nothing in an empty repository: the store is as the Rust command left it
+ok record: first change of an empty repository
+ok record: first change: the store is as the Rust command left it
+ok record with the lock held: lock-held with its pid
+ok record, lock held (exit 1)
+ok a held lock is left
+ok record --dry-run does not take the lock
+ok record, nothing changed (exit 0)
+ok record, a gate refusal (exit 1)
+ok record, nothing selected (exit 1)
+ok record, a bad time (exit 1)
+ok record, a wrong expect (exit 1)
+== revert
+ok revert: head
+ok revert: head: the store is as the Rust command left it
+ok revert: head: the working copy is as the Rust command left it
+ok revert: head: no lock left
+ok revert: second
+ok revert: second: the store is as the Rust command left it
+ok revert: second: the working copy is as the Rust command left it
+ok revert: second: no lock left
+ok revert: first
+ok revert: first: the store is as the Rust command left it
+ok revert: first: the working copy is as the Rust command left it
+ok revert: first: no lock left
+ok revert: dry
+ok revert: dry: the store is as the Rust command left it
+ok revert: dry: the working copy is as the Rust command left it
+ok revert: dry: no lock left
+ok revert: twice
+ok revert: twice: the store is as the Rust command left it
+ok revert: twice: the working copy is as the Rust command left it
+ok revert: twice: no lock left
+ok revert: conflict
+ok revert: conflict: the store is as the Rust command left it
+ok revert: conflict: the working copy is as the Rust command left it
+ok revert: conflict: no lock left
+ok revert: dirty
+ok revert: dirty: the store is as the Rust command left it
+ok revert: dirty: the working copy is as the Rust command left it
+ok revert: dirty: no lock left
+ok revert: added
+ok revert: added: the store is as the Rust command left it
+ok revert: added: the working copy is as the Rust command left it
+ok revert: added: no lock left
+ok revert: deleted
+ok revert: deleted: the store is as the Rust command left it
+ok revert: deleted: the working copy is as the Rust command left it
+ok revert: deleted: no lock left
+ok revert: mode
+ok revert: mode: the store is as the Rust command left it
+ok revert: mode: the working copy is as the Rust command left it
+ok revert: mode: no lock left
+ok revert: intent
+ok revert: intent: the store is as the Rust command left it
+ok revert: intent: the working copy is as the Rust command left it
+ok revert: intent: no lock left
+ok revert: quote
+ok revert: quote: the store is as the Rust command left it
+ok revert: quote: the working copy is as the Rust command left it
+ok revert: quote: no lock left
+ok revert: gate: the tag, the rule and the path are the Rust command's
+ok revert: gate: the store is as the Rust command left it
+ok revert: gate: the working copy is as the Rust command left it
+ok revert: gate: no lock left
+ok revert: no gate
+ok revert: no gate: the store is as the Rust command left it
+ok revert: no gate: the working copy is as the Rust command left it
+ok revert: no gate: no lock left
+ok revert: none
+ok revert: none: the store is as the Rust command left it
+ok revert: none: the working copy is as the Rust command left it
+ok revert: none: no lock left
+ok revert: two
+ok revert: two: the store is as the Rust command left it
+ok revert: two: the working copy is as the Rust command left it
+ok revert: two: no lock left
+ok revert: bad revision
+ok revert: bad revision: the store is as the Rust command left it
+ok revert: bad revision: the working copy is as the Rust command left it
+ok revert: bad revision: no lock left
+ok revert: expect wrong: the tag, the rule and the path are the Rust command's
+ok revert: expect wrong: the store is as the Rust command left it
+ok revert: expect wrong: the working copy is as the Rust command left it
+ok revert: expect wrong: no lock left
+ok revert: expect ok
+ok revert: expect ok: the store is as the Rust command left it
+ok revert: expect ok: the working copy is as the Rust command left it
+ok revert: expect ok: no lock left
+ok revert: cho
+ok revert: cho: the store is as the Rust command left it
+ok revert: cho: the working copy is as the Rust command left it
+ok revert: cho: no lock left
+ok revert with the lock held: lock-held with its pid
+ok revert, lock held (exit 1)
+ok revert, a dirty working copy (exit 1)
+ok revert, a conflict (exit 1)
+ok revert, a first change (exit 1)
+ok revert, no change named (exit 1)
+ok revert (exit 0)
+ok revert: the log of the branch says revert
+== diff
+ok diff: clean
+ok diff: rev
+ok diff: revs
+ok diff: revs back
+ok diff: same
+ok diff: id prefix
+ok diff: path
+ok diff: path dir
+ok diff: paths two
+ok diff: root dot
+ok diff: context 0
+ok diff: context 1
+ok diff: context 9
+ok diff: modified
+ok diff: no newline
+ok diff: unicode
+ok diff: added
+ok diff: added exec
+ok diff: added binary
+ok diff: deleted
+ok diff: deleted all
+ok diff: mode
+ok diff: mode and text
+ok diff: link added
+ok diff: link changed
+ok diff: file to link
+ok diff: link to file
+ok diff: wide branch
+ok diff: wide wc
+ok diff: cho body
+ok diff: cho added
+ok diff: cho signature
+ok diff: cho removed
+ok diff: cho deleted
+ok diff: cho unparsable
+ok diff: cho unparsable before
+ok diff: bad context
+ok diff: bad context negative
+ok diff: outside
+ok diff: nothing named
+ok diff: revision as path
+ok diff: file named like a branch
+ok diff: file named like a branch second
+ok diff: third revision is a path
+ok diff: unknown option
+ok diff: context no value
+ok diff: not a repository
+ok diff: from a subdirectory
+ok diff: . from a subdirectory
+ok diff: a directory from its parent
+ok diff: two hunks
+ok diff: two hunks joined
+ok diff: two hunks none
+ok diff: gap equal
+ok diff: gap over
+ok diff: directory named like a branch
+== import-git --dry-run
+ok import-git plain
+ok import-git plain (exit 0)
+ok import-git packed
+ok import-git packed (exit 0)
+ok import-git refdelta
+ok import-git refdelta (exit 0)
+ok import-git packedrefs
+ok import-git packedrefs (exit 0)
+ok import-git alternate
+ok import-git alternate (exit 0)
+ok import-git odd
+ok import-git odd (exit 0)
+ok import-git detached
+ok import-git detached (exit 0)
+ok import-git blobref
+ok import-git blobref (exit 0)
+ok import-git filedir_apart
+ok import-git filedir_apart (exit 0)
+ok import-git canchodir
+ok import-git canchodir (exit 1)
+ok import-git twobad
+ok import-git twobad (exit 1)
+ok import-git octal89
+ok import-git octal89 (exit 1)
+ok import-git headers
+ok import-git headers (exit 0)
+ok import-git badtag
+ok import-git badtag (exit 0)
+ok import-git packedremote
+ok import-git packedremote (exit 0)
+ok import-git alternate2
+ok import-git alternate2 (exit 0)
+ok import-git remotes
+ok import-git remotes (exit 0)
+ok import-git tags
+ok import-git tags (exit 0)
+ok import-git notgit
+ok import-git notgit (exit 1)
+ok import-git missing
+ok import-git missing (exit 1)
+ok import-git corrupt
+ok import-git corrupt (exit 1)
+ok import-git truncated
+ok import-git truncated (exit 1)
+ok import-git submodule
+ok import-git submodule (exit 1)
+ok import-git badmode
+ok import-git badmode (exit 1)
+ok import-git badmodetext
+ok import-git badmodetext (exit 1)
+ok import-git nonutf8name
+ok import-git nonutf8name (exit 1)
+ok import-git gitdir
+ok import-git gitdir (exit 1)
+ok import-git newline
+ok import-git newline (exit 1)
+ok import-git dupname
+ok import-git dupname (exit 1)
+ok import-git filedir
+ok import-git filedir (exit 1)
+ok import-git dotdot
+ok import-git dotdot (exit 1)
+ok import-git emptyname
+ok import-git emptyname (exit 1)
+ok import-git blobkind
+ok import-git blobkind (exit 1)
+ok import-git treekind
+ok import-git treekind (exit 1)
+ok import-git badtree
+ok import-git badtree (exit 1)
+ok import-git truncatedtree
+ok import-git truncatedtree (exit 1)
+ok import-git many
+ok import-git many (exit 1)
+ok import-git trunk
+ok import-git trunk (exit 0)
+ok import-git oddref
+ok import-git oddref (exit 0)
+ok import-git --no-checkout
+ok import-git with no directory
+ok import-git, no directory (exit 1)
+ok import-git with two directories
+ok import-git knows two commits from the gitmap
+ok import-git of a work tree reads its .git
+ok import-git with no repository is not-a-repository
+ok a dry run writes no gitmap
+== import-git (writing)
+ok import alternate: the document
+ok import alternate (exit 0)
+ok import alternate: the store
+ok import alternate: the working copy
+ok import alternate2: the document
+ok import alternate2 (exit 0)
+ok import alternate2: the store
+ok import alternate2: the working copy
+ok import badmode: the document
+ok import badmode (exit 1)
+ok import badmode: the store
+ok import badmode: the working copy
+ok import badmodetext: the document
+ok import badmodetext (exit 1)
+ok import badmodetext: the store
+ok import badmodetext: the working copy
+ok import badtag: the document
+ok import badtag (exit 0)
+ok import badtag: the store
+ok import badtag: the working copy
+ok import badtree: the document
+ok import badtree (exit 1)
+ok import badtree: the store
+ok import badtree: the working copy
+ok import blobkind: the document
+ok import blobkind (exit 1)
+ok import blobkind: the store
+ok import blobkind: the working copy
+ok import blobref: the document
+ok import blobref (exit 0)
+ok import blobref: the store
+ok import blobref: the working copy
+ok import canchodir: the document
+ok import canchodir (exit 1)
+ok import canchodir: the store
+ok import canchodir: the working copy
+ok import corrupt: the document
+ok import corrupt (exit 1)
+ok import corrupt: the store
+ok import corrupt: the working copy
+ok import detached: the document
+ok import detached (exit 0)
+ok import detached: the store
+ok import detached: the working copy
+ok import dotdot: the document
+ok import dotdot (exit 1)
+ok import dotdot: the store
+ok import dotdot: the working copy
+ok import dupname: the document
+ok import dupname (exit 1)
+ok import dupname: the store
+ok import dupname: the working copy
+ok import emptyname: the document
+ok import emptyname (exit 1)
+ok import emptyname: the store
+ok import emptyname: the working copy
+ok import filedir: the document
+ok import filedir (exit 1)
+ok import filedir: the store
+ok import filedir: the working copy
+ok import filedir_apart: the document
+ok import filedir_apart (exit 0)
+ok import filedir_apart: the store
+ok import filedir_apart: the working copy
+ok import gitdir: the document
+ok import gitdir (exit 1)
+ok import gitdir: the store
+ok import gitdir: the working copy
+ok import headers: the document
+ok import headers (exit 0)
+ok import headers: the store
+ok import headers: the working copy
+ok import many: the document
+ok import many (exit 1)
+ok import many: the store
+ok import many: the working copy
+ok import missing: the document
+ok import missing (exit 1)
+ok import missing: the store
+ok import missing: the working copy
+ok import newline: the document
+ok import newline (exit 1)
+ok import newline: the store
+ok import newline: the working copy
+ok import nonutf8name: the document
+ok import nonutf8name (exit 1)
+ok import nonutf8name: the store
+ok import nonutf8name: the working copy
+ok import octal89: the document
+ok import octal89 (exit 1)
+ok import octal89: the store
+ok import octal89: the working copy
+ok import odd: the document
+ok import odd (exit 0)
+ok import odd: the store
+ok import odd: the working copy
+ok import oddref: the document
+ok import oddref (exit 0)
+ok import oddref: the store
+ok import oddref: the working copy
+ok import packed: the document
+ok import packed (exit 0)
+ok import packed: the store
+ok import packed: the working copy
+ok import packedrefs: the document
+ok import packedrefs (exit 0)
+ok import packedrefs: the store
+ok import packedrefs: the working copy
+ok import packedremote: the document
+ok import packedremote (exit 0)
+ok import packedremote: the store
+ok import packedremote: the working copy
+ok import plain: the document
+ok import plain (exit 0)
+ok import plain: the store
+ok import plain: the working copy
+ok import refdelta: the document
+ok import refdelta (exit 0)
+ok import refdelta: the store
+ok import refdelta: the working copy
+ok import remotes: the document
+ok import remotes (exit 0)
+ok import remotes: the store
+ok import remotes: the working copy
+ok import submodule: the document
+ok import submodule (exit 1)
+ok import submodule: the store
+ok import submodule: the working copy
+ok import tags: the document
+ok import tags (exit 0)
+ok import tags: the store
+ok import tags: the working copy
+ok import treekind: the document
+ok import treekind (exit 1)
+ok import treekind: the store
+ok import treekind: the working copy
+ok import truncated: the document
+ok import truncated (exit 1)
+ok import truncated: the store
+ok import truncated: the working copy
+ok import truncatedtree: the document
+ok import truncatedtree (exit 1)
+ok import truncatedtree: the store
+ok import truncatedtree: the working copy
+ok import trunk: the document
+ok import trunk (exit 0)
+ok import trunk: the store
+ok import trunk: the working copy
+ok import twobad: the document
+ok import twobad (exit 1)
+ok import twobad: the store
+ok import twobad: the working copy
+ok a second import is a no-op: the document
+ok a second import is a no-op: the store
+ok a ref that is at another change is kept: the document
+ok a ref that is at another change is kept: the store
+ok a gitmap whose changes are not in the store is not believed: the document
+ok a gitmap whose changes are not in the store is not believed: the store
+ok an import makes the repository when there is none
+== export-git
+ok export alternate: the document
+ok export alternate (exit 0)
+ok export alternate: the git directory, file for file
+ok export alternate2: the document
+ok export alternate2 (exit 0)
+ok export alternate2: the git directory, file for file
+ok export badtag: the document
+ok export badtag (exit 0)
+ok export badtag: the git directory, file for file
+ok export blobref: the document
+ok export blobref (exit 0)
+ok export blobref: the git directory, file for file
+ok export detached: the document
+ok export detached (exit 0)
+ok export detached: the git directory, file for file
+ok export filedir_apart: the document
+ok export filedir_apart (exit 0)
+ok export filedir_apart: the git directory, file for file
+ok export headers: the document
+ok export headers (exit 0)
+ok export headers: the git directory, file for file
+ok export odd: the document (as a set of lines)
+ok export odd (exit 0)
+ok export odd: the git directory, file for file
+ok export oddref: the document
+ok export oddref (exit 0)
+ok export oddref: the git directory, file for file
+ok export packed: the document
+ok export packed (exit 0)
+ok export packed: the git directory, file for file
+ok export packedrefs: the document
+ok export packedrefs (exit 0)
+ok export packedrefs: the git directory, file for file
+ok export packedremote: the document
+ok export packedremote (exit 0)
+ok export packedremote: the git directory, file for file
+ok export plain: the document
+ok export plain (exit 0)
+ok export plain: the git directory, file for file
+ok export refdelta: the document
+ok export refdelta (exit 0)
+ok export refdelta: the git directory, file for file
+ok export remotes: the document
+ok export remotes (exit 0)
+ok export remotes: the git directory, file for file
+ok export tags: the document
+ok export tags (exit 0)
+ok export tags: the git directory, file for file
+ok export trunk: the document
+ok export trunk (exit 0)
+ok export trunk: the git directory, file for file
+ok export made: the document
+ok export made (exit 0)
+ok export made: the git directory, file for file
+ok export mixed: the document
+ok export mixed (exit 0)
+ok export mixed: the git directory, file for file
+ok export empty: the document
+ok export empty (exit 0)
+ok export empty: the git directory, file for file
+ok export headonly: the document
+ok export headonly (exit 0)
+ok export headonly: the git directory, file for file
+ok export --dry-run: the document
+ok export --dry-run (exit 0)
+ok a dry run writes no directory
+ok export --dry-run of an import: the document (as a set of lines)
+ok an export again writes no object
+ok export with no directory: the document
+ok export with no directory (exit 1)
+ok export with two directories: the document
+ok export with two directories (exit 1)
+ok export outside a repository: the document
+ok export outside a repository (exit 1)
+ok export into a directory that cannot be made: the tag
+ok export into a directory that cannot be made (exit 3)
+ok export with a change missing from the store: the tag
+ok export with a change missing from the store (exit 1)
+ok export with a change of three parents: the tag
+ok export with a change of three parents (exit 1)

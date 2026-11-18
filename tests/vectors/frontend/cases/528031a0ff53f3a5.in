@@ -1,0 +1,2 @@
+fn g() -> [io_write] int { return 1; }
+fn f() -> [] int { return g(); }

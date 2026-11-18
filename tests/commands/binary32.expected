@@ -1,0 +1,4 @@
+ok f32 operations match binary64 and integer arithmetic
+ok f32 sqrt and the integer conversions match integer oracles
+ok the layout report says what an f32 costs
+ok int_of_f32 traps where truncate does

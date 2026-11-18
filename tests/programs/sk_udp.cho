@@ -1,0 +1,379 @@
+edition 9;
+
+import std.bytes;
+import std.io as console;
+
+// The datagram peers and clients of `tests/commands/udp.sh` (docs/gate.md, G4 wave 4), in cancho.
+//
+//     sk_udp MODE PORT [ARGUMENT...]
+//
+// A peer binds PORT on the loopback address and says `listening` on standard error (the shell waits for it); the program under test dials it:
+//     upper N      N times: receive a datagram, answer its sender with the same bytes in capitals
+//     empty        receive one, answer with an empty datagram
+//     pong         receive one, answer with `pong`
+//     big          receive one, answer with 100 bytes of 7
+//     stranger     receive one; from a socket of its own (so another source port) send `evil`, wait 100 ms, then answer `good` from PORT
+// A client dials PORT (a server the shell started) and prints what it got:
+//     ask TEXT FIRST_MS EXTRA_MS   send TEXT; the first datagram that comes within FIRST_MS (`reply: TEXT`, or `reply: none`); then any more within EXTRA_MS (`extra: yes|no`)
+//     two                          two sockets: one sends `one`, 200 ms later the other `two`; prints what each got (`first: ..`, `second: ..`)
+//     peerbytes                    send `hi`, print the 19 bytes that came back as numbers, and the port of the socket (`local port: N`)
+// Exit 0 when it ran, 2 when a socket could not be made, 64 for a bad call.
+
+fn number[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) && int_of(b[i]) >= '0' && int_of(b[i]) <= '9' {
+        n = n * 10 + (int_of(b[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn is[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    return bytes.equal(x, y);
+}
+
+// Wait up to `ms` for a datagram and read it: its length, -1 when none came, -2 truncated, -3 failed.
+fn recv_within[&u, &p, &b](udp: &!u Udp, poller: &!p Poller, buf: &!b [byte], ms: int) -> [poll, udp_recv] int {
+    var answer = 0 - 1;
+    region r {
+        let ev = alloc_slice[r](8, 0);
+        if poller_wait(poller, ev, ms) > 0 {
+            match udp_recv(udp, buf) {
+                Datagram::Got(k) => {
+                    answer = k;
+                }
+                Datagram::Truncated(k) => {
+                    answer = 0 - 2;
+                }
+                Datagram::Again => {
+                    answer = 0 - 1;
+                }
+                Datagram::Failed(e) => {
+                    answer = 0 - 3;
+                }
+            }
+        }
+    }
+    return answer;
+}
+
+fn print_reply[&i, &l, &t](io: &!i Io, label: &l [byte], buf: &t [byte], got: int) -> [io_write] int {
+    console.write_all(io, label);
+    if got >= 0 {
+        console.write_all(io, buf[0..got]);
+    } else {
+        console.write_all(io, "none");
+    }
+    console.newline(io);
+    return 0;
+}
+
+// A connected socket of the client modes, nonblocking and registered with a poller of its own.
+fn ask[&i, &n, &t](io: &!i Io, net: &n Net(""), port: int, text: &t [byte], first_ms: int, extra_ms: int) -> [io_write, net_out(""), udp_send, udp_recv, poll] int {
+    match udp_connect(net, "127.0.0.1", port) {
+        UdpOpened::Ok(u) => {
+            var udp = u;
+            borrow mut udp as &!uh in {
+                udp_nonblocking(uh);
+            }
+            match poller_new() {
+                Polling::Ok(p) => {
+                    var poller = p;
+                    borrow udp as &ur in {
+                        borrow mut poller as &!ph in {
+                            poller_add_udp(ph, ur, 1, 1);
+                        }
+                    }
+                    region r {
+                        let buf = alloc_slice[r](64, byte_of(0));
+                        borrow mut udp as &!uh in {
+                            borrow mut poller as &!ph in {
+                                udp_send(uh, text);
+                                let got = recv_within(uh, ph, buf, first_ms);
+                                print_reply(io, "reply: ", buf, got);
+                                if extra_ms > 0 {
+                                    let more = recv_within(uh, ph, buf, extra_ms);
+                                    console.write_all(io, "extra: ");
+                                    if more >= 0 {
+                                        console.write_all(io, "yes\n");
+                                    } else {
+                                        console.write_all(io, "no\n");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    poller_close(poller);
+                }
+                Polling::Failed(e) => {
+                    udp_close(udp);
+                    return 2;
+                }
+            }
+            udp_close(udp);
+            return 0;
+        }
+        UdpOpened::Failed(e) => {
+            return 2;
+        }
+    }
+}
+
+// Two connected sockets to the same port: the first sends `one`, 200 ms later the second sends `two`; each prints what it got.
+fn two[&i, &n](io: &!i Io, net: &n Net(""), port: int) -> [io_write, net_out(""), udp_send, udp_recv, poll] int {
+    match udp_connect(net, "127.0.0.1", port) {
+        UdpOpened::Ok(a0) => {
+            var a = a0;
+            match udp_connect(net, "127.0.0.1", port) {
+                UdpOpened::Ok(b0) => {
+                    var b = b0;
+                    match poller_new() {
+                        Polling::Ok(pa) => {
+                            var poller_a = pa;
+                            match poller_new() {
+                                Polling::Ok(pb) => {
+                                    var poller_b = pb;
+                                    borrow mut a as &!ah in {
+                                        udp_nonblocking(ah);
+                                    }
+                                    borrow mut b as &!bh in {
+                                        udp_nonblocking(bh);
+                                    }
+                                    borrow a as &ar in {
+                                        borrow mut poller_a as &!ph in {
+                                            poller_add_udp(ph, ar, 1, 1);
+                                        }
+                                    }
+                                    borrow b as &br in {
+                                        borrow mut poller_b as &!ph in {
+                                            poller_add_udp(ph, br, 1, 1);
+                                        }
+                                    }
+                                    region r {
+                                        let buf = alloc_slice[r](64, byte_of(0));
+                                        borrow mut a as &!ah in {
+                                            udp_send(ah, "one");
+                                        }
+                                        borrow mut poller_a as &!ph in {
+                                            poller_wait(ph, alloc_slice[r](8, 0), 200);
+                                        }
+                                        borrow mut b as &!bh in {
+                                            udp_send(bh, "two");
+                                        }
+                                        borrow mut a as &!ah in {
+                                            borrow mut poller_a as &!ph in {
+                                                let got = recv_within(ah, ph, buf, 10000);
+                                                print_reply(io, "first: ", buf, got);
+                                            }
+                                        }
+                                        borrow mut b as &!bh in {
+                                            borrow mut poller_b as &!ph in {
+                                                let got = recv_within(bh, ph, buf, 10000);
+                                                print_reply(io, "second: ", buf, got);
+                                            }
+                                        }
+                                    }
+                                    poller_close(poller_b);
+                                }
+                                Polling::Failed(e) => {
+                                }
+                            }
+                            poller_close(poller_a);
+                        }
+                        Polling::Failed(e) => {
+                        }
+                    }
+                    udp_close(b);
+                }
+                UdpOpened::Failed(e) => {
+                    udp_close(a);
+                    return 2;
+                }
+            }
+            udp_close(a);
+            return 0;
+        }
+        UdpOpened::Failed(e) => {
+            return 2;
+        }
+    }
+}
+
+// Send `hi` and print the 19 bytes of the sender address that the server wrote into its answer, and the port of this socket.
+fn peerbytes[&i, &n](io: &!i Io, net: &n Net(""), port: int) -> [io_write, net_out(""), udp_send, udp_recv, poll] int {
+    match udp_connect(net, "127.0.0.1", port) {
+        UdpOpened::Ok(u) => {
+            var udp = u;
+            borrow mut udp as &!uh in {
+                udp_nonblocking(uh);
+            }
+            match poller_new() {
+                Polling::Ok(p) => {
+                    var poller = p;
+                    borrow udp as &ur in {
+                        borrow mut poller as &!ph in {
+                            poller_add_udp(ph, ur, 1, 1);
+                        }
+                    }
+                    region r {
+                        let buf = alloc_slice[r](64, byte_of(0));
+                        borrow mut udp as &!uh in {
+                            borrow mut poller as &!ph in {
+                                udp_send(uh, "hi");
+                                let got = recv_within(uh, ph, buf, 10000);
+                                console.write_all(io, "bytes:");
+                                var j = 0;
+                                while j < got {
+                                    console.write_all(io, " ");
+                                    console.print_int(io, int_of(buf[j]));
+                                    j = j + 1;
+                                }
+                                console.newline(io);
+                            }
+                        }
+                        borrow udp as &ur in {
+                            console.write_all(io, "local port: ");
+                            console.print_int(io, udp_local_port(ur));
+                            console.newline(io);
+                        }
+                    }
+                    poller_close(poller);
+                }
+                Polling::Failed(e) => {
+                    udp_close(udp);
+                    return 2;
+                }
+            }
+            udp_close(udp);
+            return 0;
+        }
+        UdpOpened::Failed(e) => {
+            return 2;
+        }
+    }
+}
+
+fn upper_case[&b](buf: &!b [byte], n: int) -> [] int {
+    var j = 0;
+    while j < n {
+        let c = int_of(buf[j]);
+        if c >= 'a' && c <= 'z' {
+            buf[j] = byte_of(c - 32);
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// The peer modes: bind, say `listening`, serve.
+fn peer[&i, &n, &t](io: &!i Io, net: &n Net(""), port: int, mode: &t [byte], rounds: int) -> [err_write, net_in(""), net_out(""), udp_send, udp_recv, poll] int {
+    match udp_bind(net, port, 0) {
+        UdpOpened::Ok(u) => {
+            var sock = u;
+            console.error_all(io, "listening\n");
+            region r {
+                let buf = alloc_slice[r](64, byte_of(0));
+                let who = alloc_slice[r](1, 0);
+                let out = alloc_slice[r](19, byte_of(0));
+                let sevens = alloc_slice[r](100, byte_of(7));
+                borrow mut sock as &!uh in {
+                    var round = 0;
+                    while round < rounds {
+                        match udp_recv_from(uh, buf, who) {
+                            Datagram::Got(k) => {
+                                if is(mode, "upper") {
+                                    upper_case(buf, k);
+                                    udp_send_to(uh, buf[0..k], who[0]);
+                                } else if is(mode, "empty") {
+                                    udp_send_to(uh, buf[0..0], who[0]);
+                                } else if is(mode, "pong") {
+                                    udp_send_to(uh, "pong", who[0]);
+                                } else if is(mode, "big") {
+                                    udp_send_to(uh, sevens, who[0]);
+                                } else if is(mode, "stranger") {
+                                    // The client's address is in the ticket; a socket of our own connects to it and sends from another port.
+                                    if udp_peer(uh, who[0], out) == 0 {
+                                        let client = int_of(out[17]) * 256 + int_of(out[18]);
+                                        match udp_connect(net, "127.0.0.1", client) {
+                                            UdpOpened::Ok(s) => {
+                                                var stranger = s;
+                                                borrow mut stranger as &!sh in {
+                                                    udp_send(sh, "evil");
+                                                }
+                                                udp_close(stranger);
+                                            }
+                                            UdpOpened::Failed(e) => {
+                                            }
+                                        }
+                                    }
+                                    match poller_new() {
+                                        Polling::Ok(p) => {
+                                            var napper = p;
+                                            borrow mut napper as &!ph in {
+                                                poller_wait(ph, alloc_slice[r](8, 0), 100);
+                                            }
+                                            poller_close(napper);
+                                        }
+                                        Polling::Failed(e) => {
+                                        }
+                                    }
+                                    udp_send_to(uh, "good", who[0]);
+                                }
+                            }
+                            Datagram::Truncated(k) => {
+                            }
+                            Datagram::Again => {
+                            }
+                            Datagram::Failed(e) => {
+                            }
+                        }
+                        round = round + 1;
+                    }
+                }
+            }
+            udp_close(sock);
+            return 0;
+        }
+        UdpOpened::Failed(e) => {
+            return 2;
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var status = 64;
+    borrow mut io as &!i in {
+        borrow args as &a in {
+            borrow net as &nn in {
+                if arg_count(a) >= 3 {
+                    let mode = arg(a, 1);
+                    let port = number(arg(a, 2));
+                    if is(mode, "upper") {
+                        status = peer(i, nn, port, mode, number(arg(a, 3)));
+                    } else if is(mode, "empty") || is(mode, "big") || is(mode, "stranger") || is(mode, "pong") {
+                        status = peer(i, nn, port, mode, 1);
+                    } else if is(mode, "ask") {
+                        status = ask(i, nn, port, arg(a, 3), number(arg(a, 4)), number(arg(a, 5)));
+                    } else if is(mode, "two") {
+                        status = two(i, nn, port);
+                    } else if is(mode, "peerbytes") {
+                        status = peerbytes(i, nn, port);
+                    }
+                }
+            }
+        }
+    }
+    release(net);
+    release(args);
+    release(io);
+    return status;
+}

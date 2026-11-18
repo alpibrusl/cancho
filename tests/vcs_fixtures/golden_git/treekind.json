@@ -1,0 +1,8 @@
+{
+  "command": "import-git",
+  "ok": false,
+  "refused": {
+    "message": "bd46cf2dd8a0efb8d22237b97619a246c884b6c7 is not a tree",
+    "tag": "git-unreadable"
+  }
+}

@@ -1,0 +1,2 @@
+ok the report names the two paths and no fs_read of the root (16 labels, pinned)
+ok it serves from the fixed directory and refuses --dir (8 connections; status 2, 0 and 5)

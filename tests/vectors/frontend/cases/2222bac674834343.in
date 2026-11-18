@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": 18446744073709551616,
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "c_ptr"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "call",
+            "name": "null_ptr",
+            "args": []
+          }
+        }
+      ]
+    }
+  ]
+}

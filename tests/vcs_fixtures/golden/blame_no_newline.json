@@ -1,0 +1,35 @@
+{
+  "command": "blame",
+  "lines": [
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "7cb491ddef6093232e411902311779a51b9f232bebaa42c7bcb9b5f33725009d",
+      "intent": null,
+      "line": 1,
+      "subject": "",
+      "text": "one",
+      "time": 3000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "d41881b0cf5bc3dc0a3d7d5aa6d6644f35b1ee9eefa341d18af82a20d5bc7451",
+      "intent": null,
+      "line": 2,
+      "subject": "",
+      "text": "two",
+      "time": 3001
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "d41881b0cf5bc3dc0a3d7d5aa6d6644f35b1ee9eefa341d18af82a20d5bc7451",
+      "intent": null,
+      "line": 3,
+      "subject": "",
+      "text": "three",
+      "time": 3001
+    }
+  ],
+  "ok": true,
+  "path": "nonl.txt",
+  "rev": "d41881b0cf5bc3dc0a3d7d5aa6d6644f35b1ee9eefa341d18af82a20d5bc7451"
+}

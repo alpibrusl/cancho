@@ -19,7 +19,7 @@ run r one 2 r seven 8 r l255 256 r l1000 1001
 for n in one seven l255 l1000; do [ -L "$root/$n" ] && echo "$n is a link of $(printf %s "$(readlink "$root/$n")" | wc -c | tr -d ' ') bytes"; done
 [ "$(readlink "$root/seven")" = 1234567 ] && echo "seven is what the shell reads too"
 
-# The longest target is the kernel's: 4,095 bytes on Linux, fewer on Darwin (the first run on a macOS runner refused 4,095 with ENAMETOOLONG; its limit is not measured here).
+# The longest target is the kernel's: 4,095 bytes on Linux, 1,023 on Darwin (measured, docs/directory-links.md §10).
 # So a 4,095-byte target is either made, and then reads back whole, or is ENAMETOOLONG; anything else is wrong.
 echo "== the longest target"
 out=$("$probe" "$root" s l4095 "$x4095")

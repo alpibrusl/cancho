@@ -1,0 +1,3 @@
+struct S { a: int }
+struct S { b: bool }
+fn f(s: S) -> [] int { return 0; }

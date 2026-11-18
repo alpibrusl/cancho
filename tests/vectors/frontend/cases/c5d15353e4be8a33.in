@@ -1,0 +1,1 @@
+fn f() -> [] int { var t = 0; region a { let s = alloc_slice[a](4, byte_of(9)); t = int_of(s[3]); } return t; }

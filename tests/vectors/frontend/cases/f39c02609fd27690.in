@@ -1,0 +1,2 @@
+fn m[A: val, B: val, C: val, D: val](a: A, b: B, c: C, d: D) -> [] D { return d; }
+fn f[&r]() -> [] int { return m(1, true, 2.5, false); }

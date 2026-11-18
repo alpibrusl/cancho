@@ -1,0 +1,11 @@
+  res struct Ticket { serial: int }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(ffi);
+ release(fs);
+ release(io);
+  var n = 0;
+ borrow mut heap as &!h in { let many = box_slice(h, 4, Ticket { serial: 1 });
+ n = unbox_slice(h, many);
+ } release(heap);
+ return n;
+ } 

@@ -1,0 +1,8 @@
+{
+  "command": "blame",
+  "ok": false,
+  "refused": {
+    "message": "`nonesuch` is not in 304052356270",
+    "tag": "path-not-found"
+  }
+}

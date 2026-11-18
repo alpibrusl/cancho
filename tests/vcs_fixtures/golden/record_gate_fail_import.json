@@ -1,0 +1,16 @@
+{
+  "command": "record",
+  "ok": false,
+  "refused": {
+    "diagnostics": [
+      {
+        "message": "`nope` is not a function in this program",
+        "rule": "not-a-function"
+      }
+    ],
+    "message": "b.cho: not-a-function: `nope` is not a function in this program",
+    "path": "b.cho",
+    "rule": "not-a-function",
+    "tag": "gate-failed"
+  }
+}

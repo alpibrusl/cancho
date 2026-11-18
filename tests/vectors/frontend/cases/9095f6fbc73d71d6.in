@@ -1,0 +1,1 @@
+fn f(a: bool, b: bool, c: bool) -> [] bool { return a && b || c && !(a || b); }

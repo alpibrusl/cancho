@@ -1,0 +1,4 @@
+GAP: import-git of a path through a symbolic link: the Rust compiler reads the repository, the compiler in cancho says git-unreadable, not a git repository
+ok import_then_export_reproduces_every_commit_id_from_loose_objects
+GAP: import-git of a path through a symbolic link: the Rust compiler reads the repository, the compiler in cancho says git-unreadable, not a git repository
+ok import_then_export_reproduces_every_commit_id_from_a_pack

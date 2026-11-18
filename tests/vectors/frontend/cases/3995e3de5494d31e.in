@@ -1,0 +1,4 @@
+module a.b;
+import a.b as q;
+fn g() -> [] int { return 1; }
+fn f() -> [] int { return q.g(); }

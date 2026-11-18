@@ -1,0 +1,6 @@
+ok shortest printing agrees with the oracle
+ok the values with no literal are spelled
+ok a short buffer is refused rather than overrun
+ok every NaN has one bit pattern
+ok sqrt is correctly rounded
+ok exp, log and pow agree with the hardware within the stated accuracy

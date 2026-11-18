@@ -1,0 +1,1 @@
+fn f[&i](io: &!i Io) -> [io_write] int { if false { let a = putchar(io, 65); } return 1; }

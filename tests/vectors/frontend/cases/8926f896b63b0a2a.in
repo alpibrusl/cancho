@@ -1,0 +1,40 @@
+{
+  "module": "m.n",
+  "imports": [
+    {
+      "path": "a"
+    },
+    {
+      "path": "b.c"
+    },
+    {
+      "path": "e.f.g",
+      "as": "h"
+    }
+  ],
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": -1,
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "int",
+            "value": 1
+          }
+        }
+      ]
+    }
+  ]
+}

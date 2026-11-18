@@ -1,0 +1,1 @@
+fn f[T: val](c: bool, x: T, y: int) -> [] T { if c { return x; } return y; }

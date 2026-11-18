@@ -1,0 +1,16 @@
+// header
+
+// second
+import std.io as console;   // trailing import
+
+// doc for f
+fn f(a: int) -> [] int {   // after brace
+// leading
+let x = 'a' + 0x10 + (a);  // trailing x
+
+
+let y = 1.50;
+// dangling at end
+return x;
+}
+// end of file

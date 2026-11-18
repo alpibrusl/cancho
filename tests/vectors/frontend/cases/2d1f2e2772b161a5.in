@@ -1,0 +1,34 @@
+edition 5;
+
+import std.io;
+
+fn run(bound: Net("127.0.0.1:9"), io: Io) -> [] int {
+    var status = 1;
+    borrow bound as &n in {
+        // An address the program was "told" (a Peer is only four integers), spelled out.
+        let somebody = addr.v4(203, 0, 113, 7, 80);
+        match tcp_connect(n, "203.0.113.7", addr.port(somebody)) {
+            Dialed::Ok(c) => {
+
+                status = 2;
+
+            Dialed::Failed(e) => {
+                status = 3;
+            }
+        }
+    }
+    release(bound);
+    release(io);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    let bound = narrow(net, "127.0.0.1:9");
+    return run(bound, io);
+}

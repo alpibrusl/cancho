@@ -1,0 +1,11 @@
+  fn sneaky() -> [] int { let io = Io { };
+ release(io);
+ return 0;
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(fs);
+ release(ffi);
+ release(io);
+ return sneaky();
+ } 

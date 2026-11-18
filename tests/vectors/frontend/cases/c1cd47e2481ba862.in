@@ -1,0 +1,1 @@
+fn f() -> [] int { return m.g(1) + m.E::V(2) + m.E::W + E::C(); }

@@ -1,0 +1,18 @@
+edition 5;
+ extern fn labs[&f](ffi: &f Ffi("libc"), n: int) -> [ffi("libc")] int;
+  extern fn SSL_free[&f](ffi: &f Ffi("tls"), ssl: int) -> [ffi("tls")] int;
+  fn both[&a, &b](libc: &a Ffi("libc"), tls: &b Ffi("tls")) -> [ffi("libc"), ffi("tls")] int { return labs(libc, 0 - 3) + SSL_free(tls, 0);
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+ release(io);
+ release(fs);
+ release(heap);
+ release(args);
+ release(net);
+ release(clock);
+ let libc = narrow(ffi, "libc");
+ let tls = narrow(ffi, "tls");
+ borrow libc as &a in { borrow tls as &b in { both(a, b);
+ } } release(libc);
+ release(tls);
+ return 0;
+ } 

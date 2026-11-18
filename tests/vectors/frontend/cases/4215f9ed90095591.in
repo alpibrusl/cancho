@@ -1,0 +1,2 @@
+extern fn g[&f, &r, &i, &h](ffi: &f Ffi("libc")) -> [ffi("libc"), ffi("libc")] int;
+fn main(world: World) -> [] int {  return 0; }

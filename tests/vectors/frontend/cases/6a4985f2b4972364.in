@@ -1,0 +1,2 @@
+edition 5;
+fn f[&r](c: &r Conn) -> [] int { return conn_nonblocking(c); }

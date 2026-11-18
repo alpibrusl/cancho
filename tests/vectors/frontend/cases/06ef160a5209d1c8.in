@@ -1,0 +1,1 @@
+fn f(h: &!r Heap) -> [heap] int { borrow mut h as &!r2 in { borrow x as &r3 in { } } region r { let p = alloc[r](1); let q = alloc_slice[r](4, 0); } defer g(); return 0; }

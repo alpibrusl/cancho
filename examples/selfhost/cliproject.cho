@@ -22,7 +22,7 @@ import selfhost.cliprog;
 import selfhost.clitest;
 
 // The directory the command was run in, as the system says it: `/bin/pwd` with no environment to tell it a logical one, as the Rust command asks the system for it.
-fn current_directory[&h, &i, &x, &c](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, exec(""), clock, poll] buffer.Buffer {
+pub fn current_directory[&h, &i, &x, &c](heap: &!h Heap, io: &!i Io, exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, exec(""), clock, poll] buffer.Buffer {
     let got = cliprog.run_capture(heap, io, exec, clock, "/bin/pwd", "", "");
     let cliprog.Captured { out, err, kind, value } = got;
     var text = buffer.empty(heap, 64);
@@ -42,7 +42,7 @@ fn current_directory[&h, &i, &x, &c](heap: &!h Heap, io: &!i Io, exec: &x Exec("
 }
 
 // `path` with its last `up` components taken off (`/a/b/c` and 1 is `/a/b`; it never goes above `/`).
-fn ancestor[&h, &p](heap: &!h Heap, path: &p [byte], up: int) -> [heap] buffer.Buffer {
+pub fn ancestor[&h, &p](heap: &!h Heap, path: &p [byte], up: int) -> [heap] buffer.Buffer {
     var end = len(path);
     var left = up;
     while left > 0 && end > 1 {
@@ -59,7 +59,7 @@ fn ancestor[&h, &p](heap: &!h Heap, path: &p [byte], up: int) -> [heap] buffer.B
 }
 
 // `entry` beneath the directory `root`: the entry itself if it is an absolute path.
-fn beneath[&h, &r, &e](heap: &!h Heap, root: &r [byte], entry: &e [byte]) -> [heap] buffer.Buffer {
+pub fn beneath[&h, &r, &e](heap: &!h Heap, root: &r [byte], entry: &e [byte]) -> [heap] buffer.Buffer {
     if len(entry) > 0 && lc.at(entry, 0) == '/' {
         return buffer.append(heap, buffer.empty(heap, len(entry) + 1), entry);
     }

@@ -1,0 +1,35 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [
+        {
+          "name": "h",
+          "ty": {
+            "kind": "ref",
+            "unique": true,
+            "region": "r",
+            "inner": {
+              "name": "Heap"
+            }
+          }
+        }
+      ],
+      "effects": [
+        {
+          "name": "heap"
+        }
+      ],
+      "ret": {
+        "name": "int"
+      },
+      "body": "x"
+    }
+  ]
+}

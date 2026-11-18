@@ -1,0 +1,102 @@
+ok the_command_line_in_cancho_formats_like_cancho_fmt
+fmt --check A B C D top.cho .: exit 1
+  would reformat A/Zed.cho
+  would reformat A/a.cho
+  would reformat A/b-1.cho
+  would reformat A/b_1.cho
+  would reformat A/sub/m.cho
+  would reformat A/z.cho
+  would reformat B/x.cho/in.cho
+  would reformat top.cho
+  would reformat ./A/Zed.cho
+  would reformat ./A/a.cho
+  would reformat ./A/b-1.cho
+  would reformat ./A/b_1.cho
+  would reformat ./A/sub/m.cho
+  would reformat ./A/z.cho
+  would reformat ./B/x.cho/in.cho
+  would reformat ./link/Zed.cho
+  would reformat ./link/a.cho
+  would reformat ./link/b-1.cho
+  would reformat ./link/b_1.cho
+  would reformat ./link/sub/m.cho
+  would reformat ./link/z.cho
+  would reformat ./top.cho
+  stderr: a refusal
+  file ./A/.dot.cho 2736761419
+  file ./A/.hidden/h.cho 2736761419
+  file ./A/Zed.cho 2736761419
+  file ./A/a.cho 2736761419
+  file ./A/b-1.cho 2736761419
+  file ./A/b_1.cho 2736761419
+  file ./A/bad.cho 2120623173
+  file ./A/ok.cho 4107256229
+  file ./A/sub/m.cho 2736761419
+  file ./A/z.cho 2736761419
+  file ./B/notes.txt 2736761419
+  file ./B/x.cho/in.cho 2736761419
+  file ./C/Q.CHO 2736761419
+  file ./top.cho 2736761419
+fmt --check A/ ./B: exit 1
+  would reformat A/Zed.cho
+  would reformat A/a.cho
+  would reformat A/b-1.cho
+  would reformat A/b_1.cho
+  would reformat A/sub/m.cho
+  would reformat A/z.cho
+  would reformat ./B/x.cho/in.cho
+  stderr: a refusal
+  file ./A/.dot.cho 2736761419
+  file ./A/.hidden/h.cho 2736761419
+  file ./A/Zed.cho 2736761419
+  file ./A/a.cho 2736761419
+  file ./A/b-1.cho 2736761419
+  file ./A/b_1.cho 2736761419
+  file ./A/bad.cho 2120623173
+  file ./A/ok.cho 4107256229
+  file ./A/sub/m.cho 2736761419
+  file ./A/z.cho 2736761419
+  file ./B/notes.txt 2736761419
+  file ./B/x.cho/in.cho 2736761419
+  file ./C/Q.CHO 2736761419
+  file ./top.cho 2736761419
+fmt D: exit 0
+  file ./A/.dot.cho 2736761419
+  file ./A/.hidden/h.cho 2736761419
+  file ./A/Zed.cho 2736761419
+  file ./A/a.cho 2736761419
+  file ./A/b-1.cho 2736761419
+  file ./A/b_1.cho 2736761419
+  file ./A/bad.cho 2120623173
+  file ./A/ok.cho 4107256229
+  file ./A/sub/m.cho 2736761419
+  file ./A/z.cho 2736761419
+  file ./B/notes.txt 2736761419
+  file ./B/x.cho/in.cho 2736761419
+  file ./C/Q.CHO 2736761419
+  file ./top.cho 2736761419
+fmt A B C top.cho link: exit 1
+  formatted A/Zed.cho
+  formatted A/a.cho
+  formatted A/b-1.cho
+  formatted A/b_1.cho
+  formatted A/sub/m.cho
+  formatted A/z.cho
+  formatted B/x.cho/in.cho
+  formatted top.cho
+  stderr: a refusal
+  file ./A/.dot.cho 2736761419
+  file ./A/.hidden/h.cho 2736761419
+  file ./A/Zed.cho 2378595260
+  file ./A/a.cho 2378595260
+  file ./A/b-1.cho 2378595260
+  file ./A/b_1.cho 2378595260
+  file ./A/bad.cho 2120623173
+  file ./A/ok.cho 4107256229
+  file ./A/sub/m.cho 2378595260
+  file ./A/z.cho 2378595260
+  file ./B/notes.txt 2736761419
+  file ./B/x.cho/in.cho 2378595260
+  file ./C/Q.CHO 2736761419
+  file ./top.cho 2378595260
+ok the_command_line_in_cancho_walks_directories_like_cancho_fmt

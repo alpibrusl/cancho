@@ -1,0 +1,692 @@
+json - 1051984706-340 tests/accept/region_slice_at_chunk.cho
+json - 1078663628-347 tests/accept/booleans.cho
+json - 1082716478-599 tests/accept/crc_check_values.cho
+json - 1103193766-412 tests/accept/match_a_reference.cho
+json - 1159139491-358 tests/accept/nested_regions.cho
+json - 1164708848-399 tests/accept/destructuring.cho
+json - 1235826130-345 tests/accept/control_flow.cho
+json - 124588271-367 tests/accept/compile_time.cho
+json - 1259533113-1018 examples/tls_client/socket.cho examples/tls_client/tls_client.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho
+json - 1275217901-445 tests/accept/fs_narrowed.cho
+json - 1276585474-348 tests/accept/effect_exact.cho
+json - 1276585474-348 tests/accept/threaded_io.cho
+json - 1291759290-462 examples/wordcount.cho
+json - 1307103318-413 tests/accept/stdin_roundtrip.cho
+json - 1318674816-532 tests/accept/file_roundtrip.cho
+json - 1377056418-340 tests/accept/llvm_arith.cho
+json - 1377056418-340 tests/accept/narrow_many_net_ports.cho
+json - 1385982735-512 tests/accept/signals_claim.cho
+json - 1446389304-350 tests/accept/string_literal.cho
+json - 1450405669-366 tests/accept/f32.cho
+json - 149166514-340 tests/accept/aliasing_through_a_return.cho
+json - 149166514-340 tests/accept/wide_multiply.cho
+json - 149441773-347 tests/accept/slices.cho
+json - 1501027500-526 tests/accept/narrow_many_in_struct.cho
+json - 1501027500-526 tests/accept/narrow_three_paths_forms.cho
+json - 1501027500-526 tests/accept/narrow_two_paths.cho
+json - 150867040-358 tests/accept/enums.cho
+json - 1509575129-414 tests/accept/spawn_row.cho
+json - 1533353876-696 examples/report/report.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho
+json - 1564632559-496 examples/entropy.cho
+json - 1661870067-417 tests/accept/defunctionalized_stream.cho
+json - 1682189394-340 tests/accept/bulk_write.cho
+json - 1682189394-340 tests/accept/edition_marker.cho
+json - 1682189394-340 tests/accept/llvm_control.cho
+json - 1682189394-340 tests/accept/short_circuit.cho
+json - 1682189394-340 tests/accept/unique_borrow.cho
+json - 1691348063-342 tests/accept/copy_into.cho
+json - 1698349354-807 examples/agent_supervisor/agent_supervisor.cho packages/net-sockets/sockets.cho packages/http-request/request.cho
+json - 1700168038-948 tests/accept/math_floats.cho
+json - 1759497609-364 tests/accept/word_scan_beside_own_names.cho
+json - 1768620681-416 tests/accept/fork_clock_workers.cho
+json - 1779808094-374 tests/accept/assert.cho
+json - 1786918278-429 examples/slab/main.cho examples/slab/slab.cho
+json - 1811467922-346 tests/accept/enum_float_payload.cho
+json - 1851051564-373 tests/accept/sha512.cho
+json - 185234229-579 examples/decay.cho
+json - 1892776800-429 tests/accept/spawn_parallel_sleep.cho
+json - 1908147341-360 tests/accept/bytes_to_c.cho
+json - 1909235816-395 examples/buffer/buffer.cho examples/buffer/main.cho
+json - 1916997617-416 tests/accept/spawn_owned_clock.cho
+json - 1945191471-472 examples/pipeline.cho
+json - 1961304355-359 tests/accept/spawn_join_operands.cho
+json - 2042522262-525 tests/accept/slicing.cho
+json - 2070734157-421 tests/accept/split_out_ports.cho
+json - 2071259768-16853 examples/tls_echo/echo.cho examples/tls_echo/front.cho examples/tls_echo/identity.cho examples/tls_echo/tls_echo.cho packages/tls/tls.cho packages/x509/x509.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+json - 2072357290-373 tests/accept/wide_returns.cho
+json - 2084951194-502 tests/accept/ed25519_long.cho
+json - 2136839278-356 tests/accept/function_value_operand.cho
+json - 2137792810-340 examples/hello.cho
+json - 2137792810-340 tests/accept/arithmetic.cho
+json - 2137792810-340 tests/accept/llvm_smoke.cho
+json - 2137792810-340 tests/accept/scopes.cho
+json - 2168107975-443 examples/tree.cho
+json - 2197047684-361 tests/accept/static_data.cho
+json - 2231834068-457 tests/accept/ed25519.cho
+json - 2284200565-401 tests/accept/bytes_library.cho
+json - 2303031753-569 examples/tty_hello.cho
+json - 2320266483-735 examples/audio_hello.cho
+json - 2332766718-576 tests/accept/tty_narrowing.cho
+json - 2386634207-468 tests/accept/process_spawn.cho
+json - 2394708159-402 tests/accept/spawn_struct_ref.cho
+json - 2398108197-346 tests/accept/float_of_bits.cho
+json - 2398108197-346 tests/accept/floating_point.cho
+json - 2424066074-340 tests/accept/bitwise.cho
+json - 2424066074-340 tests/accept/character_literals.cho
+json - 2435235152-365 tests/accept/structs.cho
+json - 2460686118-417 tests/accept/vec_shrink.cho
+json - 2569804840-406 tests/accept/generics.cho
+json - 2665271640-395 tests/accept/box_roundtrip.cho
+json - 2665271640-395 tests/accept/shadowing.cho
+json - 270696013-579 examples/growth.cho
+json - 2713682675-373 tests/accept/consume_on_both_paths.cho
+json - 2723816598-434 tests/accept/utf8_decode.cho
+json - 2736262110-520 tests/accept/directory_handles.cho
+json - 2765804213-423 tests/accept/flags.cho
+json - 2772242883-387 tests/accept/arguments.cho
+json - 2772534105-644 examples/wordfreq/counts.cho examples/wordfreq/main.cho examples/wordfreq/text.cho
+json - 2775942023-302 tests/accept/socket_names_are_edition_five.cho
+json - 2780306702-480 tests/accept/exec_spawn_under.cho
+json - 2786804533-361 tests/accept/index_of_byte.cho
+json - 2901731671-839 examples/seek/seek.cho
+json - 2909242800-730 examples/collect/collect.cho packages/net-sockets/sockets.cho packages/http-request/request.cho
+json - 292236013-471 tests/accept/narrow_many_exec.cho
+json - 2927170052-835 examples/vsock/vsock.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/agent-wire/wire.cho
+json - 2934787453-719 examples/cut/cut.cho
+json - 2939194124-363 tests/accept/defer.cho
+json - 2976973220-17916 examples/http_fetch_nb/fetch.cho examples/http_fetch_nb/fetch_io.cho packages/http-client/client.cho packages/tls/tls.cho packages/http-client/slot.cho packages/http-client/wire.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/x509.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+json - 3028657394-427 examples/pipeline_checks.cho
+json - 3032594495-432 examples/tally.cho
+json - 3078307086-598 examples/base64/base64.cho
+json - 3117466508-366 tests/accept/borrow_and_return.cho
+json - 3185589407-346 tests/accept/deref_roundtrip.cho
+json - 3211913004-349 tests/accept/value_barrier.cho
+json - 3228336516-299 tests/accept/fork_clock_row.cho
+json - 3247708754-770 examples/agent_guest/agent_guest.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho packages/agent-wire/wire.cho
+json - 3281719430-385 tests/accept/word_scan.cho
+json - 3291283016-395 tests/accept/boxed_slice.cho
+json - 3291283016-395 tests/accept/linked_list.cho
+json - 332141770-340 tests/accept/aliasing_in_a_slice_of_references.cho
+json - 332141770-340 tests/accept/aliasing_same_place_twice.cho
+json - 332141770-340 tests/accept/aliasing_through_a_copy.cho
+json - 332141770-340 tests/accept/sibling_regions.cho
+json - 3339340461-418 tests/accept/narrowed_capability.cho
+json - 3439418490-595 tests/accept/file_handle.cho
+json - 3483733373-666 examples/serve/serve.cho packages/net-sockets/sockets.cho
+json - 3512693281-456 tests/accept/collections.cho
+json - 3534003311-364 tests/accept/consume_once.cho
+json - 3556090028-472 tests/accept/foreign_two_libraries.cho
+json - 3561781167-402 tests/accept/spawn_heap_in_struct.cho
+json - 3570583841-662 tests/accept/spawn_owned_file.cho
+json - 3578238585-362 examples/modular/counts.cho examples/modular/main.cho examples/modular/text.cho
+json - 3641563715-353 tests/accept/tuple_roundtrip.cho
+json - 3688505230-368 tests/accept/sha256.cho
+json - 3690469332-348 tests/accept/two_shared_borrows.cho
+json - 3705979446-350 tests/accept/arena_roundtrip.cho
+json - 3713445119-501 tests/accept/spawn_thread_ids.cho
+json - 3741643568-395 tests/accept/tuple_of_res.cho
+json - 3755502032-379 tests/accept/linalg_hand_checked.cho
+json - 3784408573-289 tests/accept/index_of_byte_beside_own_memchr.cho
+json - 3784408573-289 tests/accept/listen_accept_bad_fd.cho
+json - 3784408573-289 tests/accept/narrow_many_net_exact_hosts.cho
+json - 3784408573-289 tests/accept/narrow_net_hosts_edition_ten.cho
+json - 3886251760-353 tests/accept/forward_reference.cho
+json - 3913745934-800 examples/sort/sort.cho
+json - 3941083126-296 tests/accept/exit_status.cho
+json - 3978789325-451 tests/accept/opaque_pointer.cho
+json - 4002691802-366 tests/accept/string_buffer.cho
+json - 4097542440-615 examples/tty_wait.cho
+json - 4126263698-522 examples/newton.cho
+json - 4148491783-565 tests/accept/exec_spawn_detached_under.cho
+json - 4193744930-348 tests/accept/function_value.cho
+json - 423986802-407 tests/accept/connect_a_refused_address.cho
+json - 4251567896-359 tests/accept/wrapping_arithmetic.cho
+json - 4270003758-447 tests/accept/borrowed_fields.cho
+json - 448609788-696 examples/fetch/fetch.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho
+json - 489852618-2512 examples/api/api.cho packages/http-server/server.cho
+json - 526131049-428 tests/accept/spawn_owned_net.cho
+json - 527297890-298 tests/accept/copy_within.cho
+json - 531402881-481 tests/accept/narrow_many_net.cho
+json - 53173522-586 examples/lines.cho
+json - 54474066-415 tests/accept/spawn_join.cho
+json - 547028306-565 tests/accept/process_group_kill.cho
+json - 581897602-407 tests/accept/spawn_owned_io.cho
+json - 581897602-407 tests/accept/spawn_unique_join_first.cho
+json - 633254858-432 examples/queue.cho
+json - 646407071-410 tests/accept/fork_heap_workers.cho
+json - 698610930-391 tests/accept/f32_names_are_edition_five.cho
+json - 721960448-922 examples/tour.cho
+json - 737460705-626 tests/accept/directory_listing.cho
+json - 784705923-702 tests/accept/f32_text.cho
+json - 795986207-506 examples/rational.cho
+json - 907747313-902 examples/results_stub/results_stub.cho packages/net-sockets/sockets.cho
+json - 910207346-632 examples/camera_hello.cho
+json - 919065580-411 tests/accept/mode_polymorphism.cho
+json - 970035163-362 tests/accept/path_covers_asks_first.cho
+json - 972959971-417 tests/accept/standard_error.cho
+json - 983263440-422 tests/accept/foreign_narrow_return.cho
+json - 989968567-476 tests/accept/process_release.cho
+json - refused examples/https_hello/app.cho examples/https_hello/hello.cho examples/https_hello/loop.cho packages/http-server/server.cho packages/tls/tls.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/x509.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+json - refused examples/ocpp_ws/b64.cho examples/ocpp_ws/ocpp.cho examples/ocpp_ws/ocpp_ws_test.cho examples/ocpp_ws/probe.cho examples/ocpp_ws/server.cho examples/ocpp_ws/sha1.cho examples/ocpp_ws/timefmt.cho examples/ocpp_ws/ws.cho
+json - refused examples/selfhost/allocs.cho examples/selfhost/ast.cho examples/selfhost/atoms.cho examples/selfhost/authority.cho examples/selfhost/authwasi.cho examples/selfhost/binops.cho examples/selfhost/blake3.cho examples/selfhost/blake3sum.cho examples/selfhost/bodies.cho examples/selfhost/bodies_files.cho examples/selfhost/body.cho examples/selfhost/builder.cho examples/selfhost/builtins.cho examples/selfhost/census.cho examples/selfhost/check.cho examples/selfhost/check_files.cho examples/selfhost/checker.cho examples/selfhost/cli.cho examples/selfhost/clibase.cho examples/selfhost/clidir.cho examples/selfhost/clifetch.cho examples/selfhost/clifmt.cho examples/selfhost/clilock.cho examples/selfhost/cliorigin.cho examples/selfhost/cliprog.cho examples/selfhost/cliproject.cho examples/selfhost/clipublish.cho examples/selfhost/clistore.cho examples/selfhost/clisync.cho examples/selfhost/clitest.cho examples/selfhost/clivcs.cho examples/selfhost/clivcsgit.cho examples/selfhost/clivcsopts.cho examples/selfhost/clivcsout.cho examples/selfhost/clivcsrepo.cho examples/selfhost/codes.cho examples/selfhost/commandtree.cho examples/selfhost/compile.cho examples/selfhost/compiler.cho examples/selfhost/consteval.cho examples/selfhost/cryptocode.cho examples/selfhost/diagnose.cho examples/selfhost/driver.cho examples/selfhost/effects.cho examples/selfhost/emit.cho examples/selfhost/ex.cho examples/selfhost/exprs.cho examples/selfhost/externcode.cho examples/selfhost/filecode.cho examples/selfhost/filewrite.cho examples/selfhost/floatcode.cho examples/selfhost/floatprint.cho examples/selfhost/floats.cho examples/selfhost/fold.cho examples/selfhost/foreign.cho examples/selfhost/formatter.cho examples/selfhost/formatting.cho examples/selfhost/gitcheck.cho examples/selfhost/gitdry.cho examples/selfhost/gitidtab.cho examples/selfhost/gitidtab_test.cho examples/selfhost/gitout.cho examples/selfhost/gitout_test.cho examples/selfhost/gitparse.cho examples/selfhost/gitread.cho examples/selfhost/guidelines.cho examples/selfhost/hex.cho examples/selfhost/identity.cho examples/selfhost/ids.cho examples/selfhost/ingest.cho examples/selfhost/ingester.cho examples/selfhost/instances.cho examples/selfhost/jsonprint.cho examples/selfhost/jsonprinter.cho examples/selfhost/jsonread.cho examples/selfhost/jsonwrite.cho examples/selfhost/kinds.cho examples/selfhost/layoutrep.cho examples/selfhost/lexcore.cho examples/selfhost/lexer.cho examples/selfhost/listing.cho examples/selfhost/lookup.cho examples/selfhost/narrowing.cho examples/selfhost/netcode.cho examples/selfhost/origincheck.cho examples/selfhost/parser.cho examples/selfhost/parser_files.cho examples/selfhost/pass1.cho examples/selfhost/platform.cho examples/selfhost/prims.cho examples/selfhost/printer.cho examples/selfhost/printing.cho examples/selfhost/projfile.cho examples/selfhost/prune.cho examples/selfhost/regen.cho examples/selfhost/rules.cho examples/selfhost/runtime.cho examples/selfhost/satisfytext.cho examples/selfhost/scope.cho examples/selfhost/sha1.cho examples/selfhost/sha1_test.cho examples/selfhost/sha1sum.cho examples/selfhost/signatures.cho examples/selfhost/sink.cho examples/selfhost/stdorder.cho examples/selfhost/stdsource.cho examples/selfhost/storecheck.cho examples/selfhost/tables.cho examples/selfhost/testscan.cho examples/selfhost/threadcode.cho examples/selfhost/types.cho examples/selfhost/vcsapply.cho examples/selfhost/vcsblame.cho examples/selfhost/vcschange.cho examples/selfhost/vcschange_test.cho examples/selfhost/vcsdecl.cho examples/selfhost/vcsdiff.cho examples/selfhost/vcsdiff_test.cho examples/selfhost/vcsdiffdoc.cho examples/selfhost/vcsdifftool.cho examples/selfhost/vcsgit.cho examples/selfhost/vcsgitout.cho examples/selfhost/vcsgitput.cho examples/selfhost/vcsgitw.cho examples/selfhost/vcsgitw_test.cho examples/selfhost/vcsid.cho examples/selfhost/vcsobj.cho examples/selfhost/vcsobj_test.cho examples/selfhost/vcsrecord.cho examples/selfhost/vcsrepo.cho examples/selfhost/vcsrestore.cho examples/selfhost/vcsrevert.cho examples/selfhost/vcsscan.cho examples/selfhost/vcsstatus.cho examples/selfhost/vcsstore.cho examples/selfhost/vcsstorectl.cho examples/selfhost/vcsswitch.cho examples/selfhost/vcsunlock.cho examples/selfhost/vcsverify.cho examples/selfhost/vcsworktree.cho examples/selfhost/version.cho examples/selfhost/walk.cho examples/selfhost/wordcode.cho
+json - refused examples/tls_echo_fixed/tls_echo_fixed.cho packages/tls/tls.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/x509.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+json - refused examples/tls_nb/dns.cho examples/tls_nb/dns_fuzz.cho examples/tls_nb/nat.cho examples/tls_nb/pin.cho examples/tls_nb/pin_check.cho examples/tls_nb/resolve_demo.cho examples/tls_nb/rtcp.cho examples/tls_nb/rthread.cho examples/tls_nb/tls.cho examples/tls_nb/tls_nb.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho
+json wasm32-wasip1 1002324822-541 tests/accept/defer.cho
+json wasm32-wasip1 1028009122-531 tests/accept/tuple_roundtrip.cho
+json wasm32-wasip1 1043684620-544 tests/accept/string_buffer.cho
+json wasm32-wasip1 1070447128-452 tests/accept/exit_status.cho
+json wasm32-wasip1 1090604505-564 tests/accept/spawn_struct_ref.cho
+json wasm32-wasip1 1103219363-517 tests/accept/index_of_byte.cho
+json wasm32-wasip1 1110150221-612 tests/accept/utf8_decode.cho
+json wasm32-wasip1 11598675-1094 examples/wordfreq/counts.cho examples/wordfreq/main.cho examples/wordfreq/text.cho
+json wasm32-wasip1 1170417316-633 tests/accept/foreign_two_libraries.cho
+json wasm32-wasip1 1180443227-537 tests/accept/wrapping_arithmetic.cho
+json wasm32-wasip1 1185666425-552 tests/accept/assert.cho
+json wasm32-wasip1 1209409921-858 examples/base64/base64.cho
+json wasm32-wasip1 123755592-990 examples/audio_hello.cho
+json wasm32-wasip1 1265244015-595 tests/accept/defunctionalized_stream.cho
+json wasm32-wasip1 1293588876-17464 examples/tls_echo/echo.cho examples/tls_echo/front.cho examples/tls_echo/identity.cho examples/tls_echo/tls_echo.cho packages/tls/tls.cho packages/x509/x509.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+json wasm32-wasip1 1298707828-661 tests/accept/flags.cho
+json wasm32-wasip1 1344291397-584 tests/accept/generics.cho
+json wasm32-wasip1 1349627959-518 examples/hello.cho
+json wasm32-wasip1 1349627959-518 tests/accept/arithmetic.cho
+json wasm32-wasip1 1349627959-518 tests/accept/llvm_smoke.cho
+json wasm32-wasip1 1349627959-518 tests/accept/scopes.cho
+json wasm32-wasip1 1401288674-527 tests/accept/value_barrier.cho
+json wasm32-wasip1 1438362537-605 examples/pipeline_checks.cho
+json wasm32-wasip1 1442480160-625 tests/accept/arguments.cho
+json wasm32-wasip1 1470395577-572 tests/accept/fork_heap_workers.cho
+json wasm32-wasip1 1487012786-655 examples/pipeline.cho
+json wasm32-wasip1 150958564-607 examples/slab/main.cho examples/slab/slab.cho
+json wasm32-wasip1 1522381230-880 tests/accept/f32_text.cho
+json wasm32-wasip1 1544958737-1036 examples/lines.cho
+json wasm32-wasip1 1558799559-847 examples/tty_wait.cho
+json wasm32-wasip1 1641243212-1013 examples/agent_guest/agent_guest.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho packages/agent-wire/wire.cho
+json wasm32-wasip1 1674334425-613 tests/accept/stdin_roundtrip.cho
+json wasm32-wasip1 1700629939-601 tests/accept/narrowed_capability.cho
+json wasm32-wasip1 1750475542-518 tests/accept/region_slice_at_chunk.cho
+json wasm32-wasip1 1755212929-621 examples/tree.cho
+json wasm32-wasip1 1788577153-757 examples/growth.cho
+json wasm32-wasip1 1795330662-498 tests/accept/copy_into.cho
+json wasm32-wasip1 1797212118-632 examples/tally.cho
+json wasm32-wasip1 1814122696-518 tests/accept/bitwise.cho
+json wasm32-wasip1 1814122696-518 tests/accept/character_literals.cho
+json wasm32-wasip1 1855391945-544 tests/accept/f32.cho
+json wasm32-wasip1 1859740649-536 tests/accept/enums.cho
+json wasm32-wasip1 1862307518-521 tests/accept/spawn_join_operands.cho
+json wasm32-wasip1 1892250968-696 examples/entropy.cho
+json wasm32-wasip1 1896685224-534 tests/accept/function_value_operand.cho
+json wasm32-wasip1 1975483256-528 tests/accept/string_literal.cho
+json wasm32-wasip1 2039420548-584 tests/accept/spawn_row.cho
+json wasm32-wasip1 2063354572-577 tests/accept/destructuring.cho
+json wasm32-wasip1 207954236-860 examples/camera_hello.cho
+json wasm32-wasip1 2112626116-862 tests/accept/slicing.cho
+json wasm32-wasip1 2125756422-551 tests/accept/wide_returns.cho
+json wasm32-wasip1 2150008878-518 tests/accept/bulk_write.cho
+json wasm32-wasip1 2150008878-518 tests/accept/edition_marker.cho
+json wasm32-wasip1 2150008878-518 tests/accept/llvm_control.cho
+json wasm32-wasip1 2150008878-518 tests/accept/short_circuit.cho
+json wasm32-wasip1 2150008878-518 tests/accept/unique_borrow.cho
+json wasm32-wasip1 2211446227-551 tests/accept/consume_on_both_paths.cho
+json wasm32-wasip1 2290722910-612 tests/accept/fork_clock_workers.cho
+json wasm32-wasip1 231420319-540 tests/accept/path_covers_asks_first.cho
+json wasm32-wasip1 2335519560-715 tests/accept/signals_claim.cho
+json wasm32-wasip1 2366201123-881 tests/accept/narrow_many_in_struct.cho
+json wasm32-wasip1 2366201123-881 tests/accept/narrow_three_paths_forms.cho
+json wasm32-wasip1 2366201123-881 tests/accept/narrow_two_paths.cho
+json wasm32-wasip1 2393121761-540 examples/modular/counts.cho examples/modular/main.cho examples/modular/text.cho
+json wasm32-wasip1 2401317116-596 tests/accept/spawn_parallel_sleep.cho
+json wasm32-wasip1 2450724197-1078 examples/vsock/vsock.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/agent-wire/wire.cho
+json wasm32-wasip1 2529479143-939 examples/fetch/fetch.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho
+json wasm32-wasip1 260419158-455 tests/accept/fork_clock_row.cho
+json wasm32-wasip1 2606041989-1008 tests/accept/file_handle.cho
+json wasm32-wasip1 2633566270-545 tests/accept/compile_time.cho
+json wasm32-wasip1 2650421027-690 tests/accept/spawn_thread_ids.cho
+json wasm32-wasip1 2652837587-847 tests/accept/exec_spawn_under.cho
+json wasm32-wasip1 2723301100-539 tests/accept/static_data.cho
+json wasm32-wasip1 2736438359-595 tests/accept/standard_error.cho
+json wasm32-wasip1 273657620-655 tests/accept/narrow_many_exec.cho
+json wasm32-wasip1 275569614-573 tests/accept/boxed_slice.cho
+json wasm32-wasip1 275569614-573 tests/accept/linked_list.cho
+json wasm32-wasip1 2765123421-680 tests/accept/ed25519_long.cho
+json wasm32-wasip1 2782083230-601 tests/accept/spawn_owned_net.cho
+json wasm32-wasip1 2808451478-700 examples/newton.cho
+json wasm32-wasip1 2818012959-612 tests/accept/spawn_owned_clock.cho
+json wasm32-wasip1 2836608868-922 tests/accept/file_roundtrip.cho
+json wasm32-wasip1 2915773097-531 tests/accept/forward_reference.cho
+json wasm32-wasip1 2929639402-569 tests/accept/f32_names_are_edition_five.cho
+json wasm32-wasip1 2936299017-551 tests/accept/sha512.cho
+json wasm32-wasip1 296140117-589 tests/accept/mode_polymorphism.cho
+json wasm32-wasip1 3043774666-521 tests/accept/bytes_to_c.cho
+json wasm32-wasip1 3046041691-677 tests/accept/process_release.cho
+json wasm32-wasip1 3057624203-454 tests/accept/copy_within.cho
+json wasm32-wasip1 306104858-1377 examples/tour.cho
+json wasm32-wasip1 3080393743-979 examples/cut/cut.cho
+json wasm32-wasip1 3116408226-2844 examples/api/api.cho packages/http-server/server.cho
+json wasm32-wasip1 3118633708-777 tests/accept/crc_check_values.cho
+json wasm32-wasip1 3130956785-524 tests/accept/deref_roundtrip.cho
+json wasm32-wasip1 3133980056-757 examples/decay.cho
+json wasm32-wasip1 3145601849-525 tests/accept/booleans.cho
+json wasm32-wasip1 3147246324-557 tests/accept/linalg_hand_checked.cho
+json wasm32-wasip1 3182977625-579 tests/accept/bytes_library.cho
+json wasm32-wasip1 321810163-546 tests/accept/sha256.cho
+json wasm32-wasip1 3225150423-573 tests/accept/tuple_of_res.cho
+json wasm32-wasip1 3247934925-596 tests/accept/split_out_ports.cho
+json wasm32-wasip1 327935090-782 tests/accept/fs_narrowed.cho
+json wasm32-wasip1 3293351945-573 examples/buffer/buffer.cho examples/buffer/main.cho
+json wasm32-wasip1 3307991351-1081 tests/accept/spawn_owned_file.cho
+json wasm32-wasip1 3315854531-445 tests/accept/index_of_byte_beside_own_memchr.cho
+json wasm32-wasip1 3315854531-445 tests/accept/listen_accept_bad_fd.cho
+json wasm32-wasip1 3315854531-445 tests/accept/narrow_many_net_exact_hosts.cho
+json wasm32-wasip1 3315854531-445 tests/accept/narrow_net_hosts_edition_ten.cho
+json wasm32-wasip1 3341394225-782 examples/tty_hello.cho
+json wasm32-wasip1 334697142-949 tests/accept/exec_spawn_detached_under.cho
+json wasm32-wasip1 3347547749-789 tests/accept/tty_narrowing.cho
+json wasm32-wasip1 3363210099-1009 tests/accept/directory_listing.cho
+json wasm32-wasip1 3398045790-526 tests/accept/two_shared_borrows.cho
+json wasm32-wasip1 3408749687-974 tests/accept/directory_handles.cho
+json wasm32-wasip1 3415127417-1288 examples/seek/seek.cho
+json wasm32-wasip1 3426307731-518 tests/accept/aliasing_through_a_return.cho
+json wasm32-wasip1 3426307731-518 tests/accept/wide_multiply.cho
+json wasm32-wasip1 3428279870-599 tests/accept/spawn_join.cho
+json wasm32-wasip1 3440256132-668 tests/accept/narrow_many_net.cho
+json wasm32-wasip1 3528798485-524 tests/accept/float_of_bits.cho
+json wasm32-wasip1 3528798485-524 tests/accept/floating_point.cho
+json wasm32-wasip1 3535890822-1145 examples/results_stub/results_stub.cho packages/net-sockets/sockets.cho
+json wasm32-wasip1 3603064189-885 examples/serve/serve.cho packages/net-sockets/sockets.cho
+json wasm32-wasip1 3616849752-520 tests/accept/word_scan_beside_own_names.cho
+json wasm32-wasip1 3705390469-544 tests/accept/borrow_and_return.cho
+json wasm32-wasip1 3721484795-528 tests/accept/arena_roundtrip.cho
+json wasm32-wasip1 3748844072-939 examples/report/report.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho
+json wasm32-wasip1 3851532661-526 tests/accept/function_value.cho
+json wasm32-wasip1 3881875685-536 tests/accept/nested_regions.cho
+json wasm32-wasip1 3938926025-524 tests/accept/enum_float_payload.cho
+json wasm32-wasip1 3939160566-590 tests/accept/match_a_reference.cho
+json wasm32-wasip1 3940909345-542 tests/accept/consume_once.cho
+json wasm32-wasip1 3981854177-782 tests/accept/process_group_kill.cho
+json wasm32-wasip1 3997732394-543 tests/accept/structs.cho
+json wasm32-wasip1 4041873072-525 tests/accept/slices.cho
+json wasm32-wasip1 4162613494-573 tests/accept/box_roundtrip.cho
+json wasm32-wasip1 4162613494-573 tests/accept/shadowing.cho
+json wasm32-wasip1 4178356439-640 examples/wordcount.cho
+json wasm32-wasip1 4209208060-665 tests/accept/process_spawn.cho
+json wasm32-wasip1 4214606278-564 tests/accept/spawn_heap_in_struct.cho
+json wasm32-wasip1 4234319926-610 examples/queue.cho
+json wasm32-wasip1 463137324-605 tests/accept/foreign_narrow_return.cho
+json wasm32-wasip1 477001354-518 tests/accept/aliasing_in_a_slice_of_references.cho
+json wasm32-wasip1 477001354-518 tests/accept/aliasing_same_place_twice.cho
+json wasm32-wasip1 477001354-518 tests/accept/aliasing_through_a_copy.cho
+json wasm32-wasip1 477001354-518 tests/accept/sibling_regions.cho
+json wasm32-wasip1 560820687-634 tests/accept/collections.cho
+json wasm32-wasip1 573561419-684 examples/rational.cho
+json wasm32-wasip1 575449349-1249 examples/sort/sort.cho
+json wasm32-wasip1 608822699-518 tests/accept/llvm_arith.cho
+json wasm32-wasip1 608822699-518 tests/accept/narrow_many_net_ports.cho
+json wasm32-wasip1 631307263-625 tests/accept/borrowed_fields.cho
+json wasm32-wasip1 632266436-591 tests/accept/spawn_owned_io.cho
+json wasm32-wasip1 632266436-591 tests/accept/spawn_unique_join_first.cho
+json wasm32-wasip1 668083871-1050 examples/agent_supervisor/agent_supervisor.cho packages/net-sockets/sockets.cho packages/http-request/request.cho
+json wasm32-wasip1 67390363-458 tests/accept/socket_names_are_edition_five.cho
+json wasm32-wasip1 685001546-541 tests/accept/word_scan.cho
+json wasm32-wasip1 703195226-523 tests/accept/control_flow.cho
+json wasm32-wasip1 793805379-1126 tests/accept/math_floats.cho
+json wasm32-wasip1 812402851-1261 examples/tls_client/socket.cho examples/tls_client/tls_client.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho
+json wasm32-wasip1 812728994-635 tests/accept/ed25519.cho
+json wasm32-wasip1 833745586-526 tests/accept/effect_exact.cho
+json wasm32-wasip1 833745586-526 tests/accept/threaded_io.cho
+json wasm32-wasip1 846805776-634 tests/accept/opaque_pointer.cho
+json wasm32-wasip1 869765483-595 tests/accept/vec_shrink.cho
+json wasm32-wasip1 872824678-973 examples/collect/collect.cho packages/net-sockets/sockets.cho packages/http-request/request.cho
+json wasm32-wasip1 928196308-594 tests/accept/connect_a_refused_address.cho
+json wasm32-wasip1 937444549-18422 examples/http_fetch_nb/fetch.cho examples/http_fetch_nb/fetch_io.cho packages/http-client/client.cho packages/tls/tls.cho packages/http-client/slot.cho packages/http-client/wire.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/x509.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+json wasm32-wasip1 refused examples/https_hello/app.cho examples/https_hello/hello.cho examples/https_hello/loop.cho packages/http-server/server.cho packages/tls/tls.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/x509.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+json wasm32-wasip1 refused examples/ocpp_ws/b64.cho examples/ocpp_ws/ocpp.cho examples/ocpp_ws/ocpp_ws_test.cho examples/ocpp_ws/probe.cho examples/ocpp_ws/server.cho examples/ocpp_ws/sha1.cho examples/ocpp_ws/timefmt.cho examples/ocpp_ws/ws.cho
+json wasm32-wasip1 refused examples/selfhost/allocs.cho examples/selfhost/ast.cho examples/selfhost/atoms.cho examples/selfhost/authority.cho examples/selfhost/authwasi.cho examples/selfhost/binops.cho examples/selfhost/blake3.cho examples/selfhost/blake3sum.cho examples/selfhost/bodies.cho examples/selfhost/bodies_files.cho examples/selfhost/body.cho examples/selfhost/builder.cho examples/selfhost/builtins.cho examples/selfhost/census.cho examples/selfhost/check.cho examples/selfhost/check_files.cho examples/selfhost/checker.cho examples/selfhost/cli.cho examples/selfhost/clibase.cho examples/selfhost/clidir.cho examples/selfhost/clifetch.cho examples/selfhost/clifmt.cho examples/selfhost/clilock.cho examples/selfhost/cliorigin.cho examples/selfhost/cliprog.cho examples/selfhost/cliproject.cho examples/selfhost/clipublish.cho examples/selfhost/clistore.cho examples/selfhost/clisync.cho examples/selfhost/clitest.cho examples/selfhost/clivcs.cho examples/selfhost/clivcsgit.cho examples/selfhost/clivcsopts.cho examples/selfhost/clivcsout.cho examples/selfhost/clivcsrepo.cho examples/selfhost/codes.cho examples/selfhost/commandtree.cho examples/selfhost/compile.cho examples/selfhost/compiler.cho examples/selfhost/consteval.cho examples/selfhost/cryptocode.cho examples/selfhost/diagnose.cho examples/selfhost/driver.cho examples/selfhost/effects.cho examples/selfhost/emit.cho examples/selfhost/ex.cho examples/selfhost/exprs.cho examples/selfhost/externcode.cho examples/selfhost/filecode.cho examples/selfhost/filewrite.cho examples/selfhost/floatcode.cho examples/selfhost/floatprint.cho examples/selfhost/floats.cho examples/selfhost/fold.cho examples/selfhost/foreign.cho examples/selfhost/formatter.cho examples/selfhost/formatting.cho examples/selfhost/gitcheck.cho examples/selfhost/gitdry.cho examples/selfhost/gitidtab.cho examples/selfhost/gitidtab_test.cho examples/selfhost/gitout.cho examples/selfhost/gitout_test.cho examples/selfhost/gitparse.cho examples/selfhost/gitread.cho examples/selfhost/guidelines.cho examples/selfhost/hex.cho examples/selfhost/identity.cho examples/selfhost/ids.cho examples/selfhost/ingest.cho examples/selfhost/ingester.cho examples/selfhost/instances.cho examples/selfhost/jsonprint.cho examples/selfhost/jsonprinter.cho examples/selfhost/jsonread.cho examples/selfhost/jsonwrite.cho examples/selfhost/kinds.cho examples/selfhost/layoutrep.cho examples/selfhost/lexcore.cho examples/selfhost/lexer.cho examples/selfhost/listing.cho examples/selfhost/lookup.cho examples/selfhost/narrowing.cho examples/selfhost/netcode.cho examples/selfhost/origincheck.cho examples/selfhost/parser.cho examples/selfhost/parser_files.cho examples/selfhost/pass1.cho examples/selfhost/platform.cho examples/selfhost/prims.cho examples/selfhost/printer.cho examples/selfhost/printing.cho examples/selfhost/projfile.cho examples/selfhost/prune.cho examples/selfhost/regen.cho examples/selfhost/rules.cho examples/selfhost/runtime.cho examples/selfhost/satisfytext.cho examples/selfhost/scope.cho examples/selfhost/sha1.cho examples/selfhost/sha1_test.cho examples/selfhost/sha1sum.cho examples/selfhost/signatures.cho examples/selfhost/sink.cho examples/selfhost/stdorder.cho examples/selfhost/stdsource.cho examples/selfhost/storecheck.cho examples/selfhost/tables.cho examples/selfhost/testscan.cho examples/selfhost/threadcode.cho examples/selfhost/types.cho examples/selfhost/vcsapply.cho examples/selfhost/vcsblame.cho examples/selfhost/vcschange.cho examples/selfhost/vcschange_test.cho examples/selfhost/vcsdecl.cho examples/selfhost/vcsdiff.cho examples/selfhost/vcsdiff_test.cho examples/selfhost/vcsdiffdoc.cho examples/selfhost/vcsdifftool.cho examples/selfhost/vcsgit.cho examples/selfhost/vcsgitout.cho examples/selfhost/vcsgitput.cho examples/selfhost/vcsgitw.cho examples/selfhost/vcsgitw_test.cho examples/selfhost/vcsid.cho examples/selfhost/vcsobj.cho examples/selfhost/vcsobj_test.cho examples/selfhost/vcsrecord.cho examples/selfhost/vcsrepo.cho examples/selfhost/vcsrestore.cho examples/selfhost/vcsrevert.cho examples/selfhost/vcsscan.cho examples/selfhost/vcsstatus.cho examples/selfhost/vcsstore.cho examples/selfhost/vcsstorectl.cho examples/selfhost/vcsswitch.cho examples/selfhost/vcsunlock.cho examples/selfhost/vcsverify.cho examples/selfhost/vcsworktree.cho examples/selfhost/version.cho examples/selfhost/walk.cho examples/selfhost/wordcode.cho
+json wasm32-wasip1 refused examples/tls_echo_fixed/tls_echo_fixed.cho packages/tls/tls.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/x509.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+json wasm32-wasip1 refused examples/tls_nb/dns.cho examples/tls_nb/dns_fuzz.cho examples/tls_nb/nat.cho examples/tls_nb/pin.cho examples/tls_nb/pin_check.cho examples/tls_nb/resolve_demo.cho examples/tls_nb/rtcp.cho examples/tls_nb/rthread.cho examples/tls_nb/tls.cho examples/tls_nb/tls_nb.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho
+prose - 1010174181-256 examples/sort/sort.cho
+prose - 10361277-204 tests/accept/spawn_join_operands.cho
+prose - 1072044459-193 tests/accept/match_a_reference.cho
+prose - 1138659632-202 tests/accept/path_covers_asks_first.cho
+prose - 1148821562-169 tests/accept/process_release.cho
+prose - 1158303653-276 tests/accept/word_scan_beside_own_names.cho
+prose - 1189722983-689 examples/tour.cho
+prose - 1242810124-199 tests/accept/wrapping_arithmetic.cho
+prose - 1340105525-558 examples/report/report.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho
+prose - 137324227-215 tests/accept/wide_returns.cho
+prose - 1375612054-201 examples/tty_hello.cho
+prose - 1394796078-174 tests/accept/spawn_row.cho
+prose - 1439653677-844 tests/accept/math_floats.cho
+prose - 1494391779-210 tests/accept/socket_names_are_edition_five.cho
+prose - 1594500489-424 tests/accept/narrowed_capability.cho
+prose - 1600432430-2224 examples/api/api.cho packages/http-server/server.cho
+prose - 1627446842-259 examples/base64/base64.cho
+prose - 1632875349-299 examples/seek/seek.cho
+prose - 1639707809-231 tests/accept/borrowed_fields.cho
+prose - 1669572763-187 tests/accept/effect_exact.cho
+prose - 1669572763-187 tests/accept/threaded_io.cho
+prose - 1682179525-192 tests/accept/forward_reference.cho
+prose - 1713819892-211 examples/tally.cho
+prose - 1741899840-254 tests/accept/mode_polymorphism.cho
+prose - 1777195682-186 tests/accept/slices.cho
+prose - 1787675796-202 examples/wordfreq/counts.cho examples/wordfreq/main.cho examples/wordfreq/text.cho
+prose - 1829550243-201 examples/camera_hello.cho
+prose - 184941445-240 tests/accept/collections.cho
+prose - 1859862518-188 tests/accept/value_barrier.cho
+prose - 1970038309-242 examples/audio_hello.cho
+prose - 198782947-17118 examples/tls_echo/echo.cho examples/tls_echo/front.cho examples/tls_echo/identity.cho examples/tls_echo/tls_echo.cho packages/tls/tls.cho packages/x509/x509.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+prose - 2011203764-185 tests/accept/float_of_bits.cho
+prose - 2011203764-185 tests/accept/floating_point.cho
+prose - 2018505570-184 tests/accept/control_flow.cho
+prose - 2081535508-186 tests/accept/booleans.cho
+prose - 2160006594-280 tests/accept/utf8_decode.cho
+prose - 2164177328-205 tests/accept/consume_once.cho
+prose - 2170783952-153 examples/hello.cho
+prose - 2170783952-153 tests/accept/aliasing_in_a_slice_of_references.cho
+prose - 2170783952-153 tests/accept/aliasing_same_place_twice.cho
+prose - 2170783952-153 tests/accept/aliasing_through_a_copy.cho
+prose - 2170783952-153 tests/accept/aliasing_through_a_return.cho
+prose - 2170783952-153 tests/accept/arithmetic.cho
+prose - 2170783952-153 tests/accept/bitwise.cho
+prose - 2170783952-153 tests/accept/bulk_write.cho
+prose - 2170783952-153 tests/accept/character_literals.cho
+prose - 2170783952-153 tests/accept/edition_marker.cho
+prose - 2170783952-153 tests/accept/llvm_arith.cho
+prose - 2170783952-153 tests/accept/llvm_control.cho
+prose - 2170783952-153 tests/accept/llvm_smoke.cho
+prose - 2170783952-153 tests/accept/narrow_many_net_ports.cho
+prose - 2170783952-153 tests/accept/region_slice_at_chunk.cho
+prose - 2170783952-153 tests/accept/scopes.cho
+prose - 2170783952-153 tests/accept/short_circuit.cho
+prose - 2170783952-153 tests/accept/sibling_regions.cho
+prose - 2170783952-153 tests/accept/unique_borrow.cho
+prose - 2170783952-153 tests/accept/wide_multiply.cho
+prose - 2192759438-208 tests/accept/tty_narrowing.cho
+prose - 2240238081-214 examples/queue.cho
+prose - 2266136714-195 tests/accept/fork_heap_workers.cho
+prose - 2286058192-309 examples/wordcount.cho
+prose - 2330895559-207 tests/accept/f32.cho
+prose - 2382090783-146 tests/accept/exec_spawn_under.cho
+prose - 240249990-221 tests/accept/linalg_hand_checked.cho
+prose - 2527824660-189 tests/accept/arena_roundtrip.cho
+prose - 2540371065-637 examples/agent_guest/agent_guest.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho packages/agent-wire/wire.cho
+prose - 2609040339-18455 examples/http_fetch_nb/fetch.cho examples/http_fetch_nb/fetch_io.cho packages/http-client/client.cho packages/tls/tls.cho packages/http-client/slot.cho packages/http-client/wire.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/x509.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+prose - 2615230893-204 tests/accept/defer.cho
+prose - 2629595051-645 examples/vsock/vsock.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/agent-wire/wire.cho
+prose - 2640726207-222 examples/tty_wait.cho
+prose - 2655221659-417 tests/accept/spawn_owned_net.cho
+prose - 2668187718-164 tests/accept/exec_spawn_detached_under.cho
+prose - 2741038223-426 tests/accept/foreign_narrow_return.cho
+prose - 2752089888-274 tests/accept/index_of_byte.cho
+prose - 2759313942-215 tests/accept/assert.cho
+prose - 2761288006-161 tests/accept/spawn_heap_in_struct.cho
+prose - 2761288006-161 tests/accept/spawn_struct_ref.cho
+prose - 2791435687-615 examples/serve/serve.cho packages/net-sockets/sockets.cho
+prose - 2791837749-149 examples/buffer/buffer.cho examples/buffer/main.cho
+prose - 2791837749-149 tests/accept/box_roundtrip.cho
+prose - 2791837749-149 tests/accept/boxed_slice.cho
+prose - 2791837749-149 tests/accept/linked_list.cho
+prose - 2791837749-149 tests/accept/shadowing.cho
+prose - 2791837749-149 tests/accept/tuple_of_res.cho
+prose - 2834699059-196 tests/accept/index_of_byte_beside_own_memchr.cho
+prose - 2834699059-196 tests/accept/listen_accept_bad_fd.cho
+prose - 2834699059-196 tests/accept/narrow_many_net_exact_hosts.cho
+prose - 2834699059-196 tests/accept/narrow_net_hosts_edition_ten.cho
+prose - 2843515975-558 examples/fetch/fetch.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho
+prose - 2845427737-225 tests/accept/slicing.cho
+prose - 2872739273-438 tests/accept/spawn_parallel_sleep.cho
+prose - 2909147539-198 tests/accept/vec_shrink.cho
+prose - 2918553401-616 examples/collect/collect.cho packages/net-sockets/sockets.cho packages/http-request/request.cho
+prose - 2919865875-289 tests/accept/ed25519_long.cho
+prose - 2972153983-207 tests/accept/fork_clock_row.cho
+prose - 2974370052-360 examples/rational.cho
+prose - 3045797599-428 tests/accept/bytes_to_c.cho
+prose - 3063633429-206 tests/accept/string_buffer.cho
+prose - 3123828314-165 tests/accept/process_spawn.cho
+prose - 3146240983-245 tests/accept/bytes_library.cho
+prose - 3164903751-248 tests/accept/generics.cho
+prose - 3203312989-233 tests/accept/f32_names_are_edition_five.cho
+prose - 3217483810-209 examples/pipeline_checks.cho
+prose - 3241956404-328 examples/cut/cut.cho
+prose - 330800230-162 tests/accept/spawn_owned_io.cho
+prose - 330800230-162 tests/accept/spawn_unique_join_first.cho
+prose - 33399987-437 examples/decay.cho
+prose - 334375436-181 tests/accept/file_handle.cho
+prose - 3347402910-175 tests/accept/fs_narrowed.cho
+prose - 3352934500-185 tests/accept/deref_roundtrip.cho
+prose - 3359582623-280 examples/entropy.cho
+prose - 3360489083-508 examples/pipeline.cho
+prose - 3377417482-441 tests/accept/spawn_thread_ids.cho
+prose - 34396656-215 tests/accept/directory_handles.cho
+prose - 3469501041-207 tests/accept/borrow_and_return.cho
+prose - 3470329153-185 tests/accept/copy_into.cho
+prose - 3511812036-242 tests/accept/destructuring.cho
+prose - 35203085-454 tests/accept/crc_check_values.cho
+prose - 3541317693-206 tests/accept/flags.cho
+prose - 354696025-567 tests/accept/f32_text.cho
+prose - 3575339542-215 tests/accept/consume_on_both_paths.cho
+prose - 3580570814-175 tests/accept/fork_clock_workers.cho
+prose - 3580570814-175 tests/accept/spawn_owned_clock.cho
+prose - 3613777099-141 tests/accept/arguments.cho
+prose - 3626295672-165 tests/accept/stdin_roundtrip.cho
+prose - 368754448-187 tests/accept/two_shared_borrows.cho
+prose - 3709368399-437 examples/growth.cho
+prose - 3742341307-167 tests/accept/defunctionalized_stream.cho
+prose - 3742341307-167 tests/accept/standard_error.cho
+prose - 3767285801-206 tests/accept/copy_within.cho
+prose - 3778187830-493 tests/accept/foreign_two_libraries.cho
+prose - 3832739047-208 tests/accept/compile_time.cho
+prose - 3892727208-187 tests/accept/function_value.cho
+prose - 3893362082-299 tests/accept/word_scan.cho
+prose - 3913747429-377 examples/newton.cho
+prose - 3968793913-704 examples/results_stub/results_stub.cho packages/net-sockets/sockets.cho
+prose - 3970604688-196 tests/accept/spawn_join.cho
+prose - 3978991851-205 tests/accept/structs.cho
+prose - 4062412452-209 tests/accept/sha256.cho
+prose - 4098649786-190 tests/accept/spawn_owned_file.cho
+prose - 4112335603-727 examples/tls_client/socket.cho examples/tls_client/tls_client.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho
+prose - 4125720361-630 examples/agent_supervisor/agent_supervisor.cho packages/net-sockets/sockets.cho packages/http-request/request.cho
+prose - 4128121776-212 examples/slab/main.cho examples/slab/slab.cho
+prose - 4163512973-227 examples/tree.cho
+prose - 4174773999-201 tests/accept/static_data.cho
+prose - 4285310986-230 tests/accept/signals_claim.cho
+prose - 463656345-442 tests/accept/opaque_pointer.cho
+prose - 584614077-185 tests/accept/enum_float_payload.cho
+prose - 624977292-304 tests/accept/ed25519.cho
+prose - 642524472-187 tests/accept/narrow_many_in_struct.cho
+prose - 642524472-187 tests/accept/narrow_three_paths_forms.cho
+prose - 642524472-187 tests/accept/narrow_two_paths.cho
+prose - 664373265-203 examples/modular/counts.cho examples/modular/main.cho examples/modular/text.cho
+prose - 744941698-187 tests/accept/split_out_ports.cho
+prose - 783814653-204 tests/accept/exit_status.cho
+prose - 806646081-164 tests/accept/connect_a_refused_address.cho
+prose - 817220601-187 tests/accept/narrow_many_exec.cho
+prose - 830753725-198 tests/accept/enums.cho
+prose - 855204270-192 tests/accept/process_group_kill.cho
+prose - 872902141-194 tests/accept/narrow_many_net.cho
+prose - 876998070-198 tests/accept/nested_regions.cho
+prose - 885463182-207 tests/accept/file_roundtrip.cho
+prose - 89732816-193 tests/accept/tuple_roundtrip.cho
+prose - 905091541-338 tests/accept/directory_listing.cho
+prose - 930262158-203 examples/lines.cho
+prose - 935337660-189 tests/accept/string_literal.cho
+prose - 943443122-214 tests/accept/sha512.cho
+prose - 966017091-196 tests/accept/function_value_operand.cho
+prose - refused examples/https_hello/app.cho examples/https_hello/hello.cho examples/https_hello/loop.cho packages/http-server/server.cho packages/tls/tls.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/x509.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+prose - refused examples/ocpp_ws/b64.cho examples/ocpp_ws/ocpp.cho examples/ocpp_ws/ocpp_ws_test.cho examples/ocpp_ws/probe.cho examples/ocpp_ws/server.cho examples/ocpp_ws/sha1.cho examples/ocpp_ws/timefmt.cho examples/ocpp_ws/ws.cho
+prose - refused examples/selfhost/allocs.cho examples/selfhost/ast.cho examples/selfhost/atoms.cho examples/selfhost/authority.cho examples/selfhost/authwasi.cho examples/selfhost/binops.cho examples/selfhost/blake3.cho examples/selfhost/blake3sum.cho examples/selfhost/bodies.cho examples/selfhost/bodies_files.cho examples/selfhost/body.cho examples/selfhost/builder.cho examples/selfhost/builtins.cho examples/selfhost/census.cho examples/selfhost/check.cho examples/selfhost/check_files.cho examples/selfhost/checker.cho examples/selfhost/cli.cho examples/selfhost/clibase.cho examples/selfhost/clidir.cho examples/selfhost/clifetch.cho examples/selfhost/clifmt.cho examples/selfhost/clilock.cho examples/selfhost/cliorigin.cho examples/selfhost/cliprog.cho examples/selfhost/cliproject.cho examples/selfhost/clipublish.cho examples/selfhost/clistore.cho examples/selfhost/clisync.cho examples/selfhost/clitest.cho examples/selfhost/clivcs.cho examples/selfhost/clivcsgit.cho examples/selfhost/clivcsopts.cho examples/selfhost/clivcsout.cho examples/selfhost/clivcsrepo.cho examples/selfhost/codes.cho examples/selfhost/commandtree.cho examples/selfhost/compile.cho examples/selfhost/compiler.cho examples/selfhost/consteval.cho examples/selfhost/cryptocode.cho examples/selfhost/diagnose.cho examples/selfhost/driver.cho examples/selfhost/effects.cho examples/selfhost/emit.cho examples/selfhost/ex.cho examples/selfhost/exprs.cho examples/selfhost/externcode.cho examples/selfhost/filecode.cho examples/selfhost/filewrite.cho examples/selfhost/floatcode.cho examples/selfhost/floatprint.cho examples/selfhost/floats.cho examples/selfhost/fold.cho examples/selfhost/foreign.cho examples/selfhost/formatter.cho examples/selfhost/formatting.cho examples/selfhost/gitcheck.cho examples/selfhost/gitdry.cho examples/selfhost/gitidtab.cho examples/selfhost/gitidtab_test.cho examples/selfhost/gitout.cho examples/selfhost/gitout_test.cho examples/selfhost/gitparse.cho examples/selfhost/gitread.cho examples/selfhost/guidelines.cho examples/selfhost/hex.cho examples/selfhost/identity.cho examples/selfhost/ids.cho examples/selfhost/ingest.cho examples/selfhost/ingester.cho examples/selfhost/instances.cho examples/selfhost/jsonprint.cho examples/selfhost/jsonprinter.cho examples/selfhost/jsonread.cho examples/selfhost/jsonwrite.cho examples/selfhost/kinds.cho examples/selfhost/layoutrep.cho examples/selfhost/lexcore.cho examples/selfhost/lexer.cho examples/selfhost/listing.cho examples/selfhost/lookup.cho examples/selfhost/narrowing.cho examples/selfhost/netcode.cho examples/selfhost/origincheck.cho examples/selfhost/parser.cho examples/selfhost/parser_files.cho examples/selfhost/pass1.cho examples/selfhost/platform.cho examples/selfhost/prims.cho examples/selfhost/printer.cho examples/selfhost/printing.cho examples/selfhost/projfile.cho examples/selfhost/prune.cho examples/selfhost/regen.cho examples/selfhost/rules.cho examples/selfhost/runtime.cho examples/selfhost/satisfytext.cho examples/selfhost/scope.cho examples/selfhost/sha1.cho examples/selfhost/sha1_test.cho examples/selfhost/sha1sum.cho examples/selfhost/signatures.cho examples/selfhost/sink.cho examples/selfhost/stdorder.cho examples/selfhost/stdsource.cho examples/selfhost/storecheck.cho examples/selfhost/tables.cho examples/selfhost/testscan.cho examples/selfhost/threadcode.cho examples/selfhost/types.cho examples/selfhost/vcsapply.cho examples/selfhost/vcsblame.cho examples/selfhost/vcschange.cho examples/selfhost/vcschange_test.cho examples/selfhost/vcsdecl.cho examples/selfhost/vcsdiff.cho examples/selfhost/vcsdiff_test.cho examples/selfhost/vcsdiffdoc.cho examples/selfhost/vcsdifftool.cho examples/selfhost/vcsgit.cho examples/selfhost/vcsgitout.cho examples/selfhost/vcsgitput.cho examples/selfhost/vcsgitw.cho examples/selfhost/vcsgitw_test.cho examples/selfhost/vcsid.cho examples/selfhost/vcsobj.cho examples/selfhost/vcsobj_test.cho examples/selfhost/vcsrecord.cho examples/selfhost/vcsrepo.cho examples/selfhost/vcsrestore.cho examples/selfhost/vcsrevert.cho examples/selfhost/vcsscan.cho examples/selfhost/vcsstatus.cho examples/selfhost/vcsstore.cho examples/selfhost/vcsstorectl.cho examples/selfhost/vcsswitch.cho examples/selfhost/vcsunlock.cho examples/selfhost/vcsverify.cho examples/selfhost/vcsworktree.cho examples/selfhost/version.cho examples/selfhost/walk.cho examples/selfhost/wordcode.cho
+prose - refused examples/tls_echo_fixed/tls_echo_fixed.cho packages/tls/tls.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/x509.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+prose - refused examples/tls_nb/dns.cho examples/tls_nb/dns_fuzz.cho examples/tls_nb/nat.cho examples/tls_nb/pin.cho examples/tls_nb/pin_check.cho examples/tls_nb/resolve_demo.cho examples/tls_nb/rtcp.cho examples/tls_nb/rthread.cho examples/tls_nb/tls.cho examples/tls_nb/tls_nb.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho
+prose wasm32-wasi 100158421-364 tests/accept/fork_clock_workers.cho
+prose wasm32-wasi 100158421-364 tests/accept/spawn_owned_clock.cho
+prose wasm32-wasi 1020417123-396 tests/accept/process_group_kill.cho
+prose wasm32-wasi 1036849434-612 tests/accept/directory_listing.cho
+prose wasm32-wasi 1044834874-960 examples/tls_client/socket.cho examples/tls_client/tls_client.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho
+prose wasm32-wasi 1079518543-294 tests/accept/string_literal.cho
+prose wasm32-wasi 1236660243-505 tests/accept/exec_spawn_detached_under.cho
+prose wasm32-wasi 1243638525-937 examples/results_stub/results_stub.cho packages/net-sockets/sockets.cho
+prose wasm32-wasi 1250851859-304 tests/accept/wrapping_arithmetic.cho
+prose wasm32-wasi 1264219890-289 tests/accept/control_flow.cho
+prose wasm32-wasi 1264822620-428 examples/base64/base64.cho
+prose wasm32-wasi 1272931152-462 tests/accept/slicing.cho
+prose wasm32-wasi 1283851503-258 examples/hello.cho
+prose wasm32-wasi 1283851503-258 tests/accept/aliasing_in_a_slice_of_references.cho
+prose wasm32-wasi 1283851503-258 tests/accept/aliasing_same_place_twice.cho
+prose wasm32-wasi 1283851503-258 tests/accept/aliasing_through_a_copy.cho
+prose wasm32-wasi 1283851503-258 tests/accept/aliasing_through_a_return.cho
+prose wasm32-wasi 1283851503-258 tests/accept/arithmetic.cho
+prose wasm32-wasi 1283851503-258 tests/accept/bitwise.cho
+prose wasm32-wasi 1283851503-258 tests/accept/bulk_write.cho
+prose wasm32-wasi 1283851503-258 tests/accept/character_literals.cho
+prose wasm32-wasi 1283851503-258 tests/accept/edition_marker.cho
+prose wasm32-wasi 1283851503-258 tests/accept/llvm_arith.cho
+prose wasm32-wasi 1283851503-258 tests/accept/llvm_control.cho
+prose wasm32-wasi 1283851503-258 tests/accept/llvm_smoke.cho
+prose wasm32-wasi 1283851503-258 tests/accept/narrow_many_net_ports.cho
+prose wasm32-wasi 1283851503-258 tests/accept/region_slice_at_chunk.cho
+prose wasm32-wasi 1283851503-258 tests/accept/scopes.cho
+prose wasm32-wasi 1283851503-258 tests/accept/short_circuit.cho
+prose wasm32-wasi 1283851503-258 tests/accept/sibling_regions.cho
+prose wasm32-wasi 1283851503-258 tests/accept/unique_borrow.cho
+prose wasm32-wasi 1283851503-258 tests/accept/wide_multiply.cho
+prose wasm32-wasi 1293325870-298 tests/accept/match_a_reference.cho
+prose wasm32-wasi 1348128823-345 tests/accept/collections.cho
+prose wasm32-wasi 1438049892-332 examples/tally.cho
+prose wasm32-wasi 1520703629-290 tests/accept/enum_float_payload.cho
+prose wasm32-wasi 155292903-291 tests/accept/slices.cho
+prose wasm32-wasi 1560838889-423 tests/accept/signals_claim.cho
+prose wasm32-wasi 1714176281-310 tests/accept/consume_once.cho
+prose wasm32-wasi 1730573824-280 tests/accept/copy_into.cho
+prose wasm32-wasi 1731698095-436 tests/accept/narrow_many_in_struct.cho
+prose wasm32-wasi 1731698095-436 tests/accept/narrow_three_paths_forms.cho
+prose wasm32-wasi 1731698095-436 tests/accept/narrow_two_paths.cho
+prose wasm32-wasi 1750378813-303 tests/accept/nested_regions.cho
+prose wasm32-wasi 1752945664-611 tests/accept/foreign_narrow_return.cho
+prose wasm32-wasi 1778014653-578 examples/sort/sort.cho
+prose wasm32-wasi 1783264761-473 tests/accept/exec_spawn_under.cho
+prose wasm32-wasi 1888208205-359 tests/accept/mode_polymorphism.cho
+prose wasm32-wasi 1950111002-482 examples/newton.cho
+prose wasm32-wasi 1987868346-338 tests/accept/f32_names_are_edition_five.cho
+prose wasm32-wasi 2068384946-557 tests/accept/spawn_owned_file.cho
+prose wasm32-wasi 2113968732-346 tests/accept/spawn_row.cho
+prose wasm32-wasi 2119373000-369 tests/accept/index_of_byte.cho
+prose wasm32-wasi 2129505410-339 tests/accept/spawn_owned_io.cho
+prose wasm32-wasi 2129505410-339 tests/accept/spawn_unique_join_first.cho
+prose wasm32-wasi 2129904259-294 tests/accept/arena_roundtrip.cho
+prose wasm32-wasi 2139980299-319 examples/queue.cho
+prose wasm32-wasi 2164666072-320 tests/accept/wide_returns.cho
+prose wasm32-wasi 219392504-401 examples/entropy.cho
+prose wasm32-wasi 2230710460-542 examples/decay.cho
+prose wasm32-wasi 2237157693-297 tests/accept/forward_reference.cho
+prose wasm32-wasi 2291613543-308 examples/modular/counts.cho examples/modular/main.cho examples/modular/text.cho
+prose wasm32-wasi 230308812-878 examples/vsock/vsock.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/agent-wire/wire.cho
+prose wasm32-wasi 2309309057-497 examples/cut/cut.cho
+prose wasm32-wasi 232987200-542 examples/growth.cho
+prose wasm32-wasi 2366092338-292 tests/accept/effect_exact.cho
+prose wasm32-wasi 2366092338-292 tests/accept/threaded_io.cho
+prose wasm32-wasi 2370401509-313 tests/accept/compile_time.cho
+prose wasm32-wasi 2446308880-849 examples/collect/collect.cho packages/net-sockets/sockets.cho packages/http-request/request.cho
+prose wasm32-wasi 2451615084-272 tests/accept/defunctionalized_stream.cho
+prose wasm32-wasi 2451615084-272 tests/accept/standard_error.cho
+prose wasm32-wasi 2469036599-374 tests/accept/narrow_many_net.cho
+prose wasm32-wasi 2478343146-412 tests/accept/fs_narrowed.cho
+prose wasm32-wasi 2492406124-298 tests/accept/tuple_roundtrip.cho
+prose wasm32-wasi 2496111502-292 tests/accept/function_value.cho
+prose wasm32-wasi 2498424853-309 tests/accept/defer.cho
+prose wasm32-wasi 2514898814-401 examples/tty_hello.cho
+prose wasm32-wasi 2516763833-286 tests/accept/stdin_roundtrip.cho
+prose wasm32-wasi 2523555970-368 examples/camera_hello.cho
+prose wasm32-wasi 2534494047-693 examples/pipeline.cho
+prose wasm32-wasi 2569802592-312 tests/accept/f32.cho
+prose wasm32-wasi 2610120206-408 tests/accept/tty_narrowing.cho
+prose wasm32-wasi 2639215954-409 tests/accept/ed25519.cho
+prose wasm32-wasi 2644968454-317 examples/slab/main.cho examples/slab/slab.cho
+prose wasm32-wasi 2645311836-302 tests/accept/fork_clock_row.cho
+prose wasm32-wasi 2659613015-320 tests/accept/assert.cho
+prose wasm32-wasi 2670229636-528 examples/wordfreq/counts.cho examples/wordfreq/main.cho examples/wordfreq/text.cho
+prose wasm32-wasi 2675123415-364 tests/accept/narrow_many_exec.cho
+prose wasm32-wasi 2698740769-371 tests/accept/spawn_join_operands.cho
+prose wasm32-wasi 2731683341-359 tests/accept/flags.cho
+prose wasm32-wasi 2752014401-336 tests/accept/borrowed_fields.cho
+prose wasm32-wasi 276902584-863 examples/agent_supervisor/agent_supervisor.cho packages/net-sockets/sockets.cho packages/http-request/request.cho
+prose wasm32-wasi 2795089059-371 tests/accept/word_scan_beside_own_names.cho
+prose wasm32-wasi 2830711385-476 tests/accept/file_handle.cho
+prose wasm32-wasi 2853794213-307 tests/accept/path_covers_asks_first.cho
+prose wasm32-wasi 2907913655-353 tests/accept/generics.cho
+prose wasm32-wasi 2920563366-290 tests/accept/deref_roundtrip.cho
+prose wasm32-wasi 2921702284-320 tests/accept/consume_on_both_paths.cho
+prose wasm32-wasi 2933173290-319 tests/accept/sha512.cho
+prose wasm32-wasi 2954266883-344 tests/accept/connect_a_refused_address.cho
+prose wasm32-wasi 3019470716-438 examples/tty_wait.cho
+prose wasm32-wasi 308520453-362 tests/accept/fork_heap_workers.cho
+prose wasm32-wasi 3122292792-294 tests/accept/arguments.cho
+prose wasm32-wasi 3135195261-292 tests/accept/two_shared_borrows.cho
+prose wasm32-wasi 3210841136-791 examples/report/report.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho
+prose wasm32-wasi 3233630905-870 examples/agent_guest/agent_guest.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho packages/agent-wire/wire.cho
+prose wasm32-wasi 3248344019-949 tests/accept/math_floats.cho
+prose wasm32-wasi 3275280398-621 examples/seek/seek.cho
+prose wasm32-wasi 3284405155-314 examples/pipeline_checks.cho
+prose wasm32-wasi 3374784520-603 tests/accept/bytes_to_c.cho
+prose wasm32-wasi 3445211571-350 tests/accept/bytes_library.cho
+prose wasm32-wasi 3451084816-306 tests/accept/static_data.cho
+prose wasm32-wasi 3457623723-290 tests/accept/float_of_bits.cho
+prose wasm32-wasi 3457623723-290 tests/accept/floating_point.cho
+prose wasm32-wasi 3473624939-2519 examples/api/api.cho packages/http-server/server.cho
+prose wasm32-wasi 3489860052-303 tests/accept/enums.cho
+prose wasm32-wasi 3504953738-559 tests/accept/crc_check_values.cho
+prose wasm32-wasi 3600665995-592 tests/accept/spawn_owned_net.cho
+prose wasm32-wasi 363430625-485 tests/accept/file_roundtrip.cho
+prose wasm32-wasi 3656403621-312 tests/accept/borrow_and_return.cho
+prose wasm32-wasi 3712531029-685 tests/accept/spawn_parallel_sleep.cho
+prose wasm32-wasi 371410668-394 tests/accept/ed25519_long.cho
+prose wasm32-wasi 3733598933-627 tests/accept/opaque_pointer.cho
+prose wasm32-wasi 3744947107-548 tests/accept/directory_handles.cho
+prose wasm32-wasi 3836623249-310 tests/accept/structs.cho
+prose wasm32-wasi 3862268402-830 examples/serve/serve.cho packages/net-sockets/sockets.cho
+prose wasm32-wasi 3910825814-314 tests/accept/sha256.cho
+prose wasm32-wasi 3958943161-293 tests/accept/value_barrier.cho
+prose wasm32-wasi 4010534180-791 examples/fetch/fetch.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho
+prose wasm32-wasi 401403696-394 tests/accept/word_scan.cho
+prose wasm32-wasi 4097235212-328 tests/accept/spawn_heap_in_struct.cho
+prose wasm32-wasi 4097235212-328 tests/accept/spawn_struct_ref.cho
+prose wasm32-wasi 4101623963-303 tests/accept/vec_shrink.cho
+prose wasm32-wasi 411206845-430 examples/audio_hello.cho
+prose wasm32-wasi 4180481709-609 tests/accept/narrowed_capability.cho
+prose wasm32-wasi 4207449533-414 examples/wordcount.cho
+prose wasm32-wasi 4208929086-305 tests/accept/socket_names_are_edition_five.cho
+prose wasm32-wasi 425421792-347 tests/accept/destructuring.cho
+prose wasm32-wasi 4262831447-332 examples/tree.cho
+prose wasm32-wasi 4277733871-291 tests/accept/index_of_byte_beside_own_memchr.cho
+prose wasm32-wasi 4277733871-291 tests/accept/listen_accept_bad_fd.cho
+prose wasm32-wasi 4277733871-291 tests/accept/narrow_many_net_exact_hosts.cho
+prose wasm32-wasi 4277733871-291 tests/accept/narrow_net_hosts_edition_ten.cho
+prose wasm32-wasi 439561728-254 examples/buffer/buffer.cho examples/buffer/main.cho
+prose wasm32-wasi 439561728-254 tests/accept/box_roundtrip.cho
+prose wasm32-wasi 439561728-254 tests/accept/boxed_slice.cho
+prose wasm32-wasi 439561728-254 tests/accept/linked_list.cho
+prose wasm32-wasi 439561728-254 tests/accept/shadowing.cho
+prose wasm32-wasi 439561728-254 tests/accept/tuple_of_res.cho
+prose wasm32-wasi 448466908-326 tests/accept/linalg_hand_checked.cho
+prose wasm32-wasi 514439184-18891 examples/http_fetch_nb/fetch.cho examples/http_fetch_nb/fetch_io.cho packages/http-client/client.cho packages/tls/tls.cho packages/http-client/slot.cho packages/http-client/wire.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/x509.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+prose wasm32-wasi 533770725-291 tests/accept/booleans.cho
+prose wasm32-wasi 557019050-17638 examples/tls_echo/echo.cho examples/tls_echo/front.cho examples/tls_echo/identity.cho examples/tls_echo/tls_echo.cho packages/tls/tls.cho packages/x509/x509.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+prose wasm32-wasi 651679652-373 tests/accept/spawn_join.cho
+prose wasm32-wasi 652323626-385 tests/accept/utf8_decode.cho
+prose wasm32-wasi 659376457-1095 examples/tour.cho
+prose wasm32-wasi 68584577-364 tests/accept/split_out_ports.cho
+prose wasm32-wasi 738278675-299 tests/accept/exit_status.cho
+prose wasm32-wasi 746835019-360 tests/accept/process_release.cho
+prose wasm32-wasi 769432951-668 tests/accept/foreign_two_libraries.cho
+prose wasm32-wasi 800697394-311 tests/accept/string_buffer.cho
+prose wasm32-wasi 819361006-301 tests/accept/copy_within.cho
+prose wasm32-wasi 829500807-698 tests/accept/spawn_thread_ids.cho
+prose wasm32-wasi 846929472-529 examples/lines.cho
+prose wasm32-wasi 854731834-465 examples/rational.cho
+prose wasm32-wasi 924485972-352 tests/accept/process_spawn.cho
+prose wasm32-wasi 95703573-301 tests/accept/function_value_operand.cho
+prose wasm32-wasi 987422572-672 tests/accept/f32_text.cho
+prose wasm32-wasi refused examples/https_hello/app.cho examples/https_hello/hello.cho examples/https_hello/loop.cho packages/http-server/server.cho packages/tls/tls.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/x509.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+prose wasm32-wasi refused examples/ocpp_ws/b64.cho examples/ocpp_ws/ocpp.cho examples/ocpp_ws/ocpp_ws_test.cho examples/ocpp_ws/probe.cho examples/ocpp_ws/server.cho examples/ocpp_ws/sha1.cho examples/ocpp_ws/timefmt.cho examples/ocpp_ws/ws.cho
+prose wasm32-wasi refused examples/selfhost/allocs.cho examples/selfhost/ast.cho examples/selfhost/atoms.cho examples/selfhost/authority.cho examples/selfhost/authwasi.cho examples/selfhost/binops.cho examples/selfhost/blake3.cho examples/selfhost/blake3sum.cho examples/selfhost/bodies.cho examples/selfhost/bodies_files.cho examples/selfhost/body.cho examples/selfhost/builder.cho examples/selfhost/builtins.cho examples/selfhost/census.cho examples/selfhost/check.cho examples/selfhost/check_files.cho examples/selfhost/checker.cho examples/selfhost/cli.cho examples/selfhost/clibase.cho examples/selfhost/clidir.cho examples/selfhost/clifetch.cho examples/selfhost/clifmt.cho examples/selfhost/clilock.cho examples/selfhost/cliorigin.cho examples/selfhost/cliprog.cho examples/selfhost/cliproject.cho examples/selfhost/clipublish.cho examples/selfhost/clistore.cho examples/selfhost/clisync.cho examples/selfhost/clitest.cho examples/selfhost/clivcs.cho examples/selfhost/clivcsgit.cho examples/selfhost/clivcsopts.cho examples/selfhost/clivcsout.cho examples/selfhost/clivcsrepo.cho examples/selfhost/codes.cho examples/selfhost/commandtree.cho examples/selfhost/compile.cho examples/selfhost/compiler.cho examples/selfhost/consteval.cho examples/selfhost/cryptocode.cho examples/selfhost/diagnose.cho examples/selfhost/driver.cho examples/selfhost/effects.cho examples/selfhost/emit.cho examples/selfhost/ex.cho examples/selfhost/exprs.cho examples/selfhost/externcode.cho examples/selfhost/filecode.cho examples/selfhost/filewrite.cho examples/selfhost/floatcode.cho examples/selfhost/floatprint.cho examples/selfhost/floats.cho examples/selfhost/fold.cho examples/selfhost/foreign.cho examples/selfhost/formatter.cho examples/selfhost/formatting.cho examples/selfhost/gitcheck.cho examples/selfhost/gitdry.cho examples/selfhost/gitidtab.cho examples/selfhost/gitidtab_test.cho examples/selfhost/gitout.cho examples/selfhost/gitout_test.cho examples/selfhost/gitparse.cho examples/selfhost/gitread.cho examples/selfhost/guidelines.cho examples/selfhost/hex.cho examples/selfhost/identity.cho examples/selfhost/ids.cho examples/selfhost/ingest.cho examples/selfhost/ingester.cho examples/selfhost/instances.cho examples/selfhost/jsonprint.cho examples/selfhost/jsonprinter.cho examples/selfhost/jsonread.cho examples/selfhost/jsonwrite.cho examples/selfhost/kinds.cho examples/selfhost/layoutrep.cho examples/selfhost/lexcore.cho examples/selfhost/lexer.cho examples/selfhost/listing.cho examples/selfhost/lookup.cho examples/selfhost/narrowing.cho examples/selfhost/netcode.cho examples/selfhost/origincheck.cho examples/selfhost/parser.cho examples/selfhost/parser_files.cho examples/selfhost/pass1.cho examples/selfhost/platform.cho examples/selfhost/prims.cho examples/selfhost/printer.cho examples/selfhost/printing.cho examples/selfhost/projfile.cho examples/selfhost/prune.cho examples/selfhost/regen.cho examples/selfhost/rules.cho examples/selfhost/runtime.cho examples/selfhost/satisfytext.cho examples/selfhost/scope.cho examples/selfhost/sha1.cho examples/selfhost/sha1_test.cho examples/selfhost/sha1sum.cho examples/selfhost/signatures.cho examples/selfhost/sink.cho examples/selfhost/stdorder.cho examples/selfhost/stdsource.cho examples/selfhost/storecheck.cho examples/selfhost/tables.cho examples/selfhost/testscan.cho examples/selfhost/threadcode.cho examples/selfhost/types.cho examples/selfhost/vcsapply.cho examples/selfhost/vcsblame.cho examples/selfhost/vcschange.cho examples/selfhost/vcschange_test.cho examples/selfhost/vcsdecl.cho examples/selfhost/vcsdiff.cho examples/selfhost/vcsdiff_test.cho examples/selfhost/vcsdiffdoc.cho examples/selfhost/vcsdifftool.cho examples/selfhost/vcsgit.cho examples/selfhost/vcsgitout.cho examples/selfhost/vcsgitput.cho examples/selfhost/vcsgitw.cho examples/selfhost/vcsgitw_test.cho examples/selfhost/vcsid.cho examples/selfhost/vcsobj.cho examples/selfhost/vcsobj_test.cho examples/selfhost/vcsrecord.cho examples/selfhost/vcsrepo.cho examples/selfhost/vcsrestore.cho examples/selfhost/vcsrevert.cho examples/selfhost/vcsscan.cho examples/selfhost/vcsstatus.cho examples/selfhost/vcsstore.cho examples/selfhost/vcsstorectl.cho examples/selfhost/vcsswitch.cho examples/selfhost/vcsunlock.cho examples/selfhost/vcsverify.cho examples/selfhost/vcsworktree.cho examples/selfhost/version.cho examples/selfhost/walk.cho examples/selfhost/wordcode.cho
+prose wasm32-wasi refused examples/tls_echo_fixed/tls_echo_fixed.cho packages/tls/tls.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/x509.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
+prose wasm32-wasi refused examples/tls_nb/dns.cho examples/tls_nb/dns_fuzz.cho examples/tls_nb/nat.cho examples/tls_nb/pin.cho examples/tls_nb/pin_check.cho examples/tls_nb/resolve_demo.cho examples/tls_nb/rtcp.cho examples/tls_nb/rthread.cho examples/tls_nb/tls.cho examples/tls_nb/tls_nb.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho

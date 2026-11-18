@@ -1,0 +1,2 @@
+edition 6;
+fn f[&r]() -> [] int { return truncate(float_of32(f32_of(2.5))); }

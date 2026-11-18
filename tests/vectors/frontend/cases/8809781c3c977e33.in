@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { var x = 1; var i = 0; while i < 3 { borrow x as &p in { i = i + *p; } } return i; }

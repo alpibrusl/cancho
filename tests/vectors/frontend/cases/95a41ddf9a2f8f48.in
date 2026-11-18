@@ -1,0 +1,9 @@
+//~ ERROR can finish without returning a value
+//~ RULE missing-return
+
+    // inserted 86
+fn main() -> [] int {
+    if true {
+        return 0;
+    }
+}

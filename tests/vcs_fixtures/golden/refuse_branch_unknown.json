@@ -1,0 +1,8 @@
+{
+  "command": "branch",
+  "ok": false,
+  "refused": {
+    "message": "`branch frobnicate`: expected list, create or delete",
+    "tag": "bad-argument"
+  }
+}

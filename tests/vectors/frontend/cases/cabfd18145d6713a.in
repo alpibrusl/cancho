@@ -1,0 +1,31 @@
+//~ ERROR is not a borrowed
+//~ RULE capability-misused
+
+// A dial takes the outbound half. `Ports` holds the listening one, so a program that holds only `Ports` cannot dial. (`docs/net-bounds.md` §3.)
+
+edition 11;
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(out);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    borrow ports as &p in {
+        match tcp_connect(p, "127.0.0.1", 53) {
+            Dialed::Ok(c) => {
+                conn_close(c);
+            }
+            Dialed::Failed(e) => {
+                let ignored = e;
+            }
+        }
+    }
+    release(ports);
+    return 0;
+}

@@ -1,0 +1,9 @@
+  extern fn system[&c](command: &c [byte]) -> [] c_int;
+  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(fs);
+ release(ffi);
+ release(io);
+ return system("true\0");
+ } 

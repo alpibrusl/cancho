@@ -1,0 +1,1 @@
+fn g[&i](x: &i Io, y: fn(int) -> [io, io, fs_read] int) -> [ffi("b"), ffi("a"), ffi("a"), io, ffi("a\n")] int { return 0; }

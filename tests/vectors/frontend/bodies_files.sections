@@ -1,0 +1,92 @@
+## f d783a03cb81b3f68 ok tests/vectors/frontend/cases/9da5d9c1fa66ac7e.in
+fn 0 45 ERR linear-value-unconsumed 34 43
+fn 46 81 OK
+## f 674ebeb9617f8e78 ok tests/vectors/frontend/cases/a405141224fa9e93.in
+fn 20 50 OK
+fn 61 91 OK
+## f cf7d05e3037d5ffa ERR:duplicate-declaration tests/vectors/frontend/cases/b2e1f9c3c571a58a.in
+ERR duplicate-declaration 40 59
+## f 1d6bd8d88485d316 ok tests/vectors/frontend/cases/1610078aea85ce41.in
+## f 157eccea9bf25511 ok tests/vectors/frontend/cases/fe67693456cd4734.in
+## f 8cd869e641a1da73 ERR:not-public tests/vectors/frontend/cases/35642b850bf8117e.in
+ERR not-public 64 65
+## f 1d5a1b961c0c1a41 ok tests/vectors/frontend/cases/b030863dea00790d.in
+## f ec521e2ccc99d0df ERR:duplicate-declaration tests/vectors/frontend/cases/6c33317ff390799c.in
+ERR duplicate-declaration 31 50
+## f df20dc50ff9df167 ERR:duplicate-declaration tests/vectors/frontend/cases/44d84db1ef78ece0.in
+ERR duplicate-declaration 31 50
+## f b7eac50c600c94fc ok tests/vectors/frontend/cases/cde1b92d6c58cea5.in
+fn 12 42 OK
+## f 6356211c1143b0f2 ok tests/vectors/frontend/cases/ec8006e5d99b0ec1.in
+fn 0 30 OK
+## f eb0929e3a34f2953 ERR:unexpected-character tests/vectors/frontend/cases/5530c204af9ad9fe.in
+ERR unexpected-character 27 28
+## f 126d497c31e7f6e1 ERR:unexpected-character tests/vectors/frontend/cases/d7a97febe75666d8.in
+ERR unexpected-character 58 59
+## f c4cbd5c58f768323 ERR:duplicate-declaration tests/vectors/frontend/cases/8c18ed283788cf79.in
+ERR duplicate-declaration 31 61
+## f 15e351ebc3ac0aca ERR:duplicate-declaration tests/vectors/frontend/cases/7c4bab9e38cc1b7c.in
+ERR duplicate-declaration 51 81
+## f 76334cb2e179e03f ok tests/vectors/frontend/cases/cee1843ef61126ed.in
+## f 9bb58a945147eacb ok tests/vectors/frontend/cases/041d269305f284b8.in
+## f 695cc0bba6e1889d ok tests/vectors/frontend/cases/00919031a7ae3265.in
+## f db767ad77fad4df0 ERR:unknown-name tests/vectors/frontend/cases/2ac96d6f70cd6f8d.in
+ERR unknown-name 25 29
+## f 50b08a93d623ea72 ERR:infinite-type tests/vectors/frontend/cases/4d1aed749e9987a5.in
+ERR infinite-type 0 17
+## f 709acb3772e239d4 ERR:foreign-declaration tests/vectors/frontend/cases/fb26c8e29195c337.in
+ERR foreign-declaration 77 133
+## f 80f5c6541059cdf1 ERR:effect-not-declared tests/vectors/frontend/cases/0b2231309f9a5acb.in
+ERR effect-not-declared 0 45
+## f cdb3f885db536872 ok tests/vectors/frontend/cases/7b3409f6ad8da0c7.in
+fn 10 40 OK
+fn 61 95 ERR not-public 87 92
+## f ca5acc9e253349c9 ok tests/vectors/frontend/cases/fc531e1dad501edc.in
+fn 14 44 OK
+fn 65 99 OK
+## f 3b7c7e426d249df7 ok tests/vectors/frontend/cases/30e5d1b0f19d3247.in
+fn 14 50 OK
+fn 71 109 ERR type-mismatch 101 105
+## f 623daec2028dce25 ok tests/vectors/frontend/cases/2ab32a8c72175b4a.in
+fn 14 58 OK
+fn 79 127 OK
+## f ee824acdf75b456f ok tests/vectors/frontend/cases/d611883034239659.in
+fn 10 54 OK
+fn 75 123 ERR not-public 114 120
+## f 3170f091c5f94cc2 ok tests/vectors/frontend/cases/2fcccb9079d79141.in
+fn 0 32 OK
+fn 33 63 OK
+## f 7f9113bb06a9d36f ok tests/vectors/frontend/cases/e0e33e82596d7855.in
+fn 0 32 ERR not-a-function 26 29
+fn 43 73 OK
+## f 94c33afb49cee7b3 ERR:foreign-declaration tests/vectors/frontend/cases/17d97879453fd67a.in
+ERR foreign-declaration 0 30
+## f 3267c981ebb46cef ok tests/vectors/frontend/cases/8a09741612bd88cb.in
+fn 55 157 OK
+## f 060151916b4adaff ok tests/vectors/frontend/cases/8e1570ba1ab5105f.in
+fn 51 97 ERR not-public 78 84
+## f 498f9552bcee2040 ok tests/vectors/frontend/cases/f0fced85bfff7ab8.in
+fn 72 153 ERR unknown-name 97 151
+## f 4126b7cd6a7a226f ok tests/vectors/frontend/cases/d6fd97c8a9653f17.in
+fn 55 134 ERR unknown-name 80 132
+## f a0b48e370f3cb282 ok tests/vectors/frontend/cases/c2818a7c94380af1.in
+fn 55 136 ERR module-not-imported 80 134
+## f 3f1cd08c2fb5e8b0 ok tests/vectors/frontend/cases/7622be088e908d56.in
+fn 14 55 OK
+fn 76 112 OK
+## f 41b628d66b604850 ok tests/vectors/frontend/cases/3d62ef0fa037cb8a.in
+fn 10 51 OK
+fn 72 108 ERR not-public 98 105
+## f 6ec76fccd3bcdaec ok tests/vectors/frontend/cases/427f5d6b17f08666.in
+fn 14 55 OK
+fn 76 113 ERR type-mismatch 103 110
+## f ce96fb03b9910080 ok tests/vectors/frontend/cases/efc7a57a0c472552.in
+fn 14 58 ERR ambiguous-type 49 55
+fn 79 116 ERR ambiguous-type 105 113
+## f 567466b0c2702c0e ok tests/vectors/frontend/cases/bb8ce593188570d0.in
+fn 14 61 OK
+fn 82 162 ERR unreachable-statement 151 160
+## f c44c2c3334810d8e ERR:region-not-in-scope tests/vectors/frontend/cases/a4bd8708798672c5.in
+ERR region-not-in-scope 90 96
+## l 55ba88789d44a323 ok tests/vectors/frontend/cases/915a34ce99755046.in
+fn 0 45 ERR linear-value-unconsumed 34 43

@@ -1,0 +1,8 @@
+{
+  "command": "export-git",
+  "ok": false,
+  "refused": {
+    "message": "no change `c7c4f73c10f67792e8b24b75b9b8741ed32ed3e89773ca27527980b2b062318d`",
+    "tag": "object-missing"
+  }
+}

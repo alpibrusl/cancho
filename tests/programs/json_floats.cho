@@ -3,7 +3,7 @@
 //
 // Reads one JSON array of numbers on standard input and prints, for each
 // element, the bit pattern of `json.to_float` and then `json.to_int`, one
-// element per line. `conformance/json.rs` writes the array (random doubles
+// element per line. `tests/commands/json.sh` (and `float_text.sh`) feed it the array (random doubles
 // in their shortest form, halfway cases between two floats, subnormals, the
 // overflow edge, integers at the ends of `int`) and compares every line with
 // what Rust's own `str::parse::<f64>` -- correctly rounded -- says.

@@ -1,0 +1,51 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": false,
+      "decls": [
+        {
+          "kind": "added",
+          "name": "fn b.k",
+          "path": "b.cho"
+        },
+        {
+          "kind": "added",
+          "name": "type P",
+          "path": "b.cho"
+        }
+      ],
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "+",
+              "text": "edition 12;\n"
+            },
+            {
+              "op": "+",
+              "text": "module b;\n"
+            },
+            {
+              "op": "+",
+              "text": "pub fn k(n: int) -> [] int { return n; }\n"
+            },
+            {
+              "op": "+",
+              "text": "struct P { x: int }\n"
+            }
+          ],
+          "new_lines": 4,
+          "new_start": 1,
+          "old_lines": 0,
+          "old_start": 0
+        }
+      ],
+      "path": "b.cho",
+      "status": "added"
+    }
+  ],
+  "from": "HEAD",
+  "ok": true,
+  "to": "working copy"
+}

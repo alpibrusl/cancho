@@ -1,0 +1,2 @@
+fn f() -> [] int { return 0 + 1 - 2 * 3 / 4 % 5; }
+fn g(a: bool, b: bool, x: int, y: int) -> [] bool { return a && b || !a && x == y && x != y || x < y && x <= y || x > y && x >= y || x | y == x ^ y && x & y == ~x && x << 1 == y >> 2; }

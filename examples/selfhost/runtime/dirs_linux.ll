@@ -255,6 +255,7 @@ entry:
   %b = alloca [256 x i8], align 1
   %fd = alloca i32, align 4
   %r = alloca i32, align 4
+  %st = alloca [160 x i8], align 1
   %why = alloca i64, align 8
   store ptr %dir, ptr %dir.addr, align 8
   store ptr %from, ptr %from.addr, align 8
@@ -299,56 +300,98 @@ if.then5:                                         ; preds = %if.end
   %arraydecay7 = getelementptr inbounds [256 x i8], ptr %b, i64 0, i64 0
   %call8 = call i32 @renameat(i32 %8, ptr %arraydecay6, i32 %9, ptr %arraydecay7)
   store i32 %call8, ptr %r, align 4
-  br label %if.end13
+  br label %if.end30
 
 if.else:                                          ; preds = %if.end
-  %10 = load i32, ptr %fd, align 4
-  %arraydecay9 = getelementptr inbounds [256 x i8], ptr %a, i64 0, i64 0
-  %11 = load i32, ptr %fd, align 4
-  %arraydecay10 = getelementptr inbounds [256 x i8], ptr %b, i64 0, i64 0
-  %12 = load i64, ptr getelementptr inbounds ([0 x i64], ptr @cancho_plat, i64 0, i64 6), align 8
-  %conv11 = trunc i64 %12 to i32
-  %call12 = call i32 @renameat2(i32 %10, ptr %arraydecay9, i32 %11, ptr %arraydecay10, i32 %conv11)
-  store i32 %call12, ptr %r, align 4
-  br label %if.end13
+  %10 = load i64, ptr %flen.addr, align 8
+  %11 = load i64, ptr %tlen.addr, align 8
+  %cmp = icmp eq i64 %10, %11
+  br i1 %cmp, label %land.lhs.true, label %if.else24
 
-if.end13:                                         ; preds = %if.else, %if.then5
-  %call14 = call ptr @cancho_errno_location()
-  %13 = load i32, ptr %call14, align 4
-  %conv15 = sext i32 %13 to i64
-  store i64 %conv15, ptr %why, align 8
-  %14 = load i64, ptr %fresh.addr, align 8
-  %tobool16 = icmp ne i64 %14, 0
-  br i1 %tobool16, label %land.lhs.true, label %if.end22
+land.lhs.true:                                    ; preds = %if.else
+  %arraydecay10 = getelementptr inbounds [256 x i8], ptr %a, i64 0, i64 0
+  %arraydecay11 = getelementptr inbounds [256 x i8], ptr %b, i64 0, i64 0
+  %12 = load i64, ptr %flen.addr, align 8
+  %call12 = call i32 @memcmp(ptr %arraydecay10, ptr %arraydecay11, i64 %12)
+  %cmp13 = icmp eq i32 %call12, 0
+  br i1 %cmp13, label %if.then15, label %if.else24
 
-land.lhs.true:                                    ; preds = %if.end13
+if.then15:                                        ; preds = %land.lhs.true
+  %13 = load i32, ptr %fd, align 4
+  %arraydecay16 = getelementptr inbounds [256 x i8], ptr %a, i64 0, i64 0
+  %arraydecay17 = getelementptr inbounds [160 x i8], ptr %st, i64 0, i64 0
+  %14 = load i64, ptr getelementptr inbounds ([0 x i64], ptr @cancho_plat, i64 0, i64 19), align 8
+  %conv18 = trunc i64 %14 to i32
+  %call19 = call i32 @fstatat(i32 %13, ptr %arraydecay16, ptr %arraydecay17, i32 %conv18)
+  store i32 %call19, ptr %r, align 4
   %15 = load i32, ptr %r, align 4
-  %cmp = icmp slt i32 %15, 0
-  br i1 %cmp, label %land.lhs.true18, label %if.end22
+  %cmp20 = icmp eq i32 %15, 0
+  br i1 %cmp20, label %if.then22, label %if.end23
 
-land.lhs.true18:                                  ; preds = %land.lhs.true
-  %16 = load i64, ptr %why, align 8
-  %cmp19 = icmp eq i64 %16, 22
-  br i1 %cmp19, label %if.then21, label %if.end22
-
-if.then21:                                        ; preds = %land.lhs.true18
-  %17 = load i64, ptr getelementptr inbounds ([0 x i64], ptr @cancho_plat, i64 0, i64 7), align 8
-  store i64 %17, ptr %why, align 8
-  br label %if.end22
-
-if.end22:                                         ; preds = %if.then21, %land.lhs.true18, %land.lhs.true, %if.end13
-  %18 = load ptr, ptr %out.addr, align 8
-  %19 = load i32, ptr %r, align 4
-  %conv23 = sext i32 %19 to i64
-  %20 = load i64, ptr %why, align 8
-  call void @dirrt_triple(ptr %18, i64 %conv23, i64 %20)
+if.then22:                                        ; preds = %if.then15
+  %16 = load ptr, ptr %out.addr, align 8
+  call void @dirrt_triple(ptr %16, i64 -1, i64 17)
   br label %return
 
-return:                                           ; preds = %if.end22, %if.then
+if.end23:                                         ; preds = %if.then15
+  br label %if.end29
+
+if.else24:                                        ; preds = %land.lhs.true, %if.else
+  %17 = load i32, ptr %fd, align 4
+  %arraydecay25 = getelementptr inbounds [256 x i8], ptr %a, i64 0, i64 0
+  %18 = load i32, ptr %fd, align 4
+  %arraydecay26 = getelementptr inbounds [256 x i8], ptr %b, i64 0, i64 0
+  %19 = load i64, ptr getelementptr inbounds ([0 x i64], ptr @cancho_plat, i64 0, i64 6), align 8
+  %conv27 = trunc i64 %19 to i32
+  %call28 = call i32 @renameat2(i32 %17, ptr %arraydecay25, i32 %18, ptr %arraydecay26, i32 %conv27)
+  store i32 %call28, ptr %r, align 4
+  br label %if.end29
+
+if.end29:                                         ; preds = %if.else24, %if.end23
+  br label %if.end30
+
+if.end30:                                         ; preds = %if.end29, %if.then5
+  %call31 = call ptr @cancho_errno_location()
+  %20 = load i32, ptr %call31, align 4
+  %conv32 = sext i32 %20 to i64
+  store i64 %conv32, ptr %why, align 8
+  %21 = load i64, ptr %fresh.addr, align 8
+  %tobool33 = icmp ne i64 %21, 0
+  br i1 %tobool33, label %land.lhs.true34, label %if.end41
+
+land.lhs.true34:                                  ; preds = %if.end30
+  %22 = load i32, ptr %r, align 4
+  %cmp35 = icmp slt i32 %22, 0
+  br i1 %cmp35, label %land.lhs.true37, label %if.end41
+
+land.lhs.true37:                                  ; preds = %land.lhs.true34
+  %23 = load i64, ptr %why, align 8
+  %cmp38 = icmp eq i64 %23, 22
+  br i1 %cmp38, label %if.then40, label %if.end41
+
+if.then40:                                        ; preds = %land.lhs.true37
+  %24 = load i64, ptr getelementptr inbounds ([0 x i64], ptr @cancho_plat, i64 0, i64 7), align 8
+  store i64 %24, ptr %why, align 8
+  br label %if.end41
+
+if.end41:                                         ; preds = %if.then40, %land.lhs.true37, %land.lhs.true34, %if.end30
+  %25 = load ptr, ptr %out.addr, align 8
+  %26 = load i32, ptr %r, align 4
+  %conv42 = sext i32 %26 to i64
+  %27 = load i64, ptr %why, align 8
+  call void @dirrt_triple(ptr %25, i64 %conv42, i64 %27)
+  br label %return
+
+return:                                           ; preds = %if.end41, %if.then22, %if.then
   ret void
 }
 
 declare i32 @renameat(i32, ptr, i32, ptr)
+
+; Function Attrs: nounwind
+declare i32 @memcmp(ptr, ptr, i64)
+
+declare i32 @fstatat(i32, ptr, ptr, i32)
 
 declare i32 @renameat2(i32, ptr, i32, ptr, i32)
 
@@ -1173,8 +1216,6 @@ cond.end26:                                       ; preds = %cond.end, %cond.tru
 return:                                           ; preds = %cond.end26, %if.then11, %if.then
   ret void
 }
-
-declare i32 @fstatat(i32, ptr, ptr, i32)
 
 ; Function Attrs: noinline nounwind
 define internal i64 @dirrt_field(ptr %st, i64 %at, i64 %bits) {

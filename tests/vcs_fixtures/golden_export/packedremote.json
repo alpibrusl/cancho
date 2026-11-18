@@ -1,0 +1,24 @@
+{
+  "command": "export-git",
+  "commits": 5,
+  "compared_with_import": 5,
+  "dry_run": false,
+  "equal": 5,
+  "mismatches": [],
+  "objects_written": 18,
+  "ok": true,
+  "refs": [
+    {
+      "git": "771f9bc4d553380f6bd00b8fd3a11a8761d1ba90",
+      "name": "refs/tags/light"
+    },
+    {
+      "git": "9333ce4189c9b9071bda73bc4a4cd9f9d3d9c424",
+      "name": "refs/tags/v1"
+    },
+    {
+      "git": "47afc77a85f3e419f74359a3152eb24c6e1a6dc8",
+      "name": "refs/remotes/up/signed"
+    }
+  ]
+}

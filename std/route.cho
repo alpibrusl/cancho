@@ -148,7 +148,8 @@ fn matches[&p, &q, &t](pattern: &p [byte], path: &q [byte], params: &!t [int]) -
         while pe < len(pattern) && int_of(pattern[pe]) != 47 {
             pe = pe + 1;
         }
-        if int_of(pattern[p]) == 42 {
+        // The root route `/` is a pattern with no segment after its slash: nothing to read at `p`, and the segment it has is empty (`docs/http.md` §5).
+        if pe > p && int_of(pattern[p]) == 42 {
             params[2 * k] = q;
             params[2 * k + 1] = len(path);
             return true;
@@ -157,7 +158,7 @@ fn matches[&p, &q, &t](pattern: &p [byte], path: &q [byte], params: &!t [int]) -
         while qe < len(path) && int_of(path[qe]) != 47 {
             qe = qe + 1;
         }
-        if int_of(pattern[p]) == 58 {
+        if pe > p && int_of(pattern[p]) == 58 {
             if qe == q {
                 return false;
             }

@@ -1,0 +1,82 @@
+edition 9;
+module selfhost.gitidtab;
+
+// gitidtab.cho -- a table from a 20-byte key to a small record, for `export-git` (`docs/vcs-routing.md` section 19): which changes have been met, the git name of what has been written
+// (a commit, a tree, a blob), found by the first 160 bits of the id of the change or object of the store. `gitparse.cho` has the table of `import-git`, whose value is one number;
+// this one holds a tag, a number and a 20-byte id for each key, so the export keeps no buffer of ids beside it.
+//
+// The ints of a table are eight for each slot: the key as three ints, the tag (0 for a slot that is empty), a number, and the id as three ints. `mask` is the number of slots less one.
+
+import selfhost.gitread;
+
+// How many ints a table for `n` keys needs: a power of two of slots, at least twice as many as the keys.
+pub fn ints(n: int) -> [] int {
+    var slots = 1024;
+    while slots < 2 * n + 16 {
+        slots = slots * 2;
+    }
+    return 8 * slots;
+}
+
+// The slot of `key`: the one that holds it, or the empty one it would go in.
+fn slot_of[&t, &k](t: &t [int], mask: int, key: &k [byte]) -> [] int {
+    let k0 = gitread.be64(key, 0);
+    let k1 = gitread.be64(key, 8);
+    let k2 = gitread.be32(key, 16);
+    var s = gitread.be32(key, 0) & mask;
+    while t[8 * s + 3] != 0 {
+        if t[8 * s] == k0 && t[8 * s + 1] == k1 && t[8 * s + 2] == k2 {
+            return s;
+        }
+        s = s + 1 & mask;
+    }
+    return s;
+}
+
+// The tag of `key`, 0 when it is not in the table.
+pub fn tag[&t, &k](t: &t [int], mask: int, key: &k [byte]) -> [] int {
+    return t[8 * slot_of(t, mask, key) + 3];
+}
+
+// The number of `key` (what `put` was given).
+pub fn number[&t, &k](t: &t [int], mask: int, key: &k [byte]) -> [] int {
+    return t[8 * slot_of(t, mask, key) + 4];
+}
+
+// `key` with the tag `tag` (not 0) and the number `n`; its id is left as it was.
+pub fn put[&t, &k](t: &!t [int], mask: int, key: &k [byte], tag: int, n: int) -> [] int {
+    let s = slot_of(t, mask, key);
+    t[8 * s] = gitread.be64(key, 0);
+    t[8 * s + 1] = gitread.be64(key, 8);
+    t[8 * s + 2] = gitread.be32(key, 16);
+    t[8 * s + 3] = tag;
+    t[8 * s + 4] = n;
+    return s;
+}
+
+// The id of `key` (20 bytes).
+pub fn set_id[&t, &k, &i](t: &!t [int], mask: int, key: &k [byte], id: &i [byte]) -> [] int {
+    let s = slot_of(t, mask, key);
+    t[8 * s + 5] = gitread.be64(id, 0);
+    t[8 * s + 6] = gitread.be64(id, 8);
+    t[8 * s + 7] = gitread.be32(id, 16);
+    return s;
+}
+
+fn put_be[&o](out: &!o [byte], at: int, value: int, width: int) -> [] int {
+    var i = 0;
+    while i < width {
+        out[at + i] = byte_of(value >> 8 * (width - 1 - i) & 255);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// The id of `key`, into the 20 bytes of `out`.
+pub fn id_of[&t, &k, &o](t: &t [int], mask: int, key: &k [byte], out: &!o [byte]) -> [] int {
+    let s = slot_of(t, mask, key);
+    put_be(out, 0, t[8 * s + 5], 8);
+    put_be(out, 8, t[8 * s + 6], 8);
+    put_be(out, 16, t[8 * s + 7], 4);
+    return 0;
+}

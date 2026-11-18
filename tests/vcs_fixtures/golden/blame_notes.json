@@ -1,0 +1,58 @@
+{
+  "command": "blame",
+  "lines": [
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "960fd3a813e8e05e68c304a1ea92bf374b61dd07399c70166822fd6e6c7b716f",
+      "intent": {
+        "model": "m1",
+        "prompt": "first",
+        "session": "s1"
+      },
+      "line": 1,
+      "subject": "first",
+      "text": "# notes",
+      "time": 1000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "960fd3a813e8e05e68c304a1ea92bf374b61dd07399c70166822fd6e6c7b716f",
+      "intent": {
+        "model": "m1",
+        "prompt": "first",
+        "session": "s1"
+      },
+      "line": 2,
+      "subject": "first",
+      "text": "one",
+      "time": 1000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e",
+      "intent": {
+        "prompt": "third: notes"
+      },
+      "line": 3,
+      "subject": "third: notes",
+      "text": "2",
+      "time": 1002
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "960fd3a813e8e05e68c304a1ea92bf374b61dd07399c70166822fd6e6c7b716f",
+      "intent": {
+        "model": "m1",
+        "prompt": "first",
+        "session": "s1"
+      },
+      "line": 4,
+      "subject": "first",
+      "text": "three",
+      "time": 1000
+    }
+  ],
+  "ok": true,
+  "path": "notes.md",
+  "rev": "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e"
+}

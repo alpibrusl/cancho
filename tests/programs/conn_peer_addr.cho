@@ -1,0 +1,172 @@
+edition 5;
+import std.addr;
+import std.io;
+
+// A line into `buf`: its length, -1 at the end of input, -2 if it did not fit (the rest is consumed).
+fn read_line[&i, &b](io: &!i Io, buf: &!b [byte]) -> [io_read] int {
+    var n = 0;
+    var over = false;
+    var going = true;
+    while going {
+        let c = getchar(io);
+        if c < 0 {
+            if n == 0 && !over {
+                return 0 - 1;
+            }
+            going = false;
+        } else if c == 10 {
+            going = false;
+        } else if n < len(buf) {
+            buf[n] = byte_of(c);
+            n = n + 1;
+        } else {
+            over = true;
+        }
+    }
+    if over {
+        return 0 - 2;
+    }
+    return n;
+}
+
+fn hex(c: int) -> [] int {
+    if c >= '0' && c <= '9' {
+        return c - '0';
+    }
+    if c >= 'a' && c <= 'f' {
+        return c - 'a' + 10;
+    }
+    return 0 - 1;
+}
+
+// The peer as the 19 bytes `conn_peer` writes, spelled as an IPv6 socket would spell it (an IPv4
+// address mapped), so `decode` is asked to normalise it.
+fn mapped_raw[&b](p: addr.Peer, raw: &!b [byte]) -> [] int {
+    raw[0] = byte_of(6);
+    var w = 0;
+    while w < 4 {
+        var word = addr.word(p, w);
+        if addr.family(p) == 4 && w == 2 {
+            word = 0xffff;
+        }
+        var k = 0;
+        while k < 4 {
+            raw[1 + w * 4 + k] = byte_of(word >> 24 - 8 * k & 255);
+            k = k + 1;
+        }
+        w = w + 1;
+    }
+    raw[17] = byte_of(addr.port(p) >> 8 & 255);
+    raw[18] = byte_of(addr.port(p) & 255);
+    return 0;
+}
+
+fn answer_parse[&i, &s](io: &!i Io, s: &s [byte]) -> [io_write] int {
+    match addr.parse(s) {
+        addr.Parsed::Ok(p) => {
+            region r {
+                let buf = alloc_slice[r](64, byte_of(0));
+                let k = addr.text(p, buf);
+                io.write_all(io, buf[0..k]);
+                let key = addr.key(p);
+                io.write_all(io, " ");
+                io.print_int(io, addr.key_family(key));
+                io.write_all(io, " ");
+                io.print_int(io, addr.key_bits(key));
+                // The text parses back to the same address; so does the mapped raw form.
+                match addr.parse(buf[0..k]) {
+                    addr.Parsed::Ok(q) => {
+                        if !addr.same(p, q) {
+                            io.write_all(io, " ROUNDTRIP-FAIL");
+                        }
+                    }
+                    addr.Parsed::Bad => {
+                        io.write_all(io, " ROUNDTRIP-BAD");
+                    }
+                }
+                let raw = alloc_slice[r](19, byte_of(0));
+                mapped_raw(p, raw);
+                match addr.decode(raw) {
+                    addr.Parsed::Ok(q) => {
+                        if !addr.same(p, q) {
+                            io.write_all(io, " DECODE-FAIL");
+                        }
+                    }
+                    addr.Parsed::Bad => {
+                        io.write_all(io, " DECODE-BAD");
+                    }
+                }
+                // A buffer under the maximum is refused and left alone.
+                let small = alloc_slice[r](46, byte_of(7));
+                if addr.text(p, small) != 0 - 1 || int_of(small[0]) != 7 {
+                    io.write_all(io, " SMALL-FAIL");
+                }
+            }
+        }
+        addr.Parsed::Bad => {
+            io.write_all(io, "bad");
+        }
+    }
+    io.newline(io);
+    return 0;
+}
+
+fn answer_raw[&i, &s](io: &!i Io, s: &s [byte]) -> [io_write] int {
+    if len(s) != 38 {
+        io.write_all(io, "bad\n");
+        return 0;
+    }
+    region r {
+        let raw = alloc_slice[r](19, byte_of(0));
+        var k = 0;
+        while k < 19 {
+            raw[k] = byte_of(hex(int_of(s[2 * k])) * 16 + hex(int_of(s[2 * k + 1])));
+            k = k + 1;
+        }
+        match addr.decode(raw) {
+            addr.Parsed::Ok(p) => {
+                let buf = alloc_slice[r](64, byte_of(0));
+                let n = addr.text_port(p, buf);
+                io.write_all(io, buf[0..n]);
+            }
+            addr.Parsed::Bad => {
+                io.write_all(io, "bad");
+            }
+        }
+    }
+    io.newline(io);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    var o = io;
+    borrow mut o as &!i in {
+        region r {
+            let line = alloc_slice[r](64, byte_of(0));
+            var going = true;
+            while going {
+                let n = read_line(i, line);
+                if n == 0 - 1 {
+                    going = false;
+                } else if n == 0 - 2 {
+                    io.write_all(i, "bad\n");
+                } else if n >= 2 && int_of(line[0]) == 'A' {
+                    answer_parse(i, line[2..n]);
+                } else if n >= 2 && int_of(line[0]) == 'R' {
+                    answer_raw(i, line[2..n]);
+                } else {
+                    io.write_all(i, "bad\n");
+                }
+            }
+        }
+    }
+    release(o);
+    return 0;
+}

@@ -11,14 +11,14 @@ module selfhost.vcsrepo;
 // tag; 19 a prefix more than one change starts with (their ids are in `bytes`); 20 HEAD has no change yet; 21 a `~N` that goes back past the first change; 22 a `~` that
 // is not followed by a count.
 //
-// Next (b4b): the history of a change, and the documents of `log` and `show`. Not here: `record`, `status`, the gate.
+// Next (b4b): the history of a change, and the documents of `log` and `show`. Not here: `record`, the gate, and `status` (`vcsstatus.cho`: it reads the working copy with `vcsscan.cho`, which uses
+// `dir_readlink`, an edition-12 builtin that a seed older than #760 does not compile; this module and the commands that need only it stay free of that, `docs/vcs-routing.md` section 3).
 
 import std.buffer;
 import std.bytes;
 import selfhost.jsonread;
 import selfhost.jsonwrite;
 import selfhost.vcschange;
-import selfhost.vcsscan;
 import selfhost.vcsobj;
 import selfhost.vcsstore;
 
@@ -26,10 +26,11 @@ pub fn tag(status: int) -> [] &static [byte] {
     if status >= 18 && status <= 22 {
         return "bad-revision";
     }
-    return vcsscan.tag(status);
+    return vcsstore.tag(status);
 }
 
-fn failed[&h](heap: &!h Heap, status: int) -> [heap] vcsstore.Object {
+// Shared with `vcsstatus.cho` (the `status` command lives there so that this module imports nothing of `vcsscan`).
+pub fn failed[&h](heap: &!h Heap, status: int) -> [heap] vcsstore.Object {
     return vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: 0 };
 }
 
@@ -63,6 +64,29 @@ pub fn head_change[&h, &d](heap: &!h Heap, vcs: &d Dir) -> [heap, dir_read, dir_
     }
     buffer.drop(heap, bytes);
     return vcsstore.Object { bytes: held, status: code, errno: why };
+}
+
+// What HEAD names: status 0 and the ref (`heads/main`: what follows `ref: refs/`) in `bytes`; 2 when HEAD is a change id (detached); 3 when it is neither.
+pub fn head_ref[&h, &d](heap: &!h Heap, vcs: &d Dir) -> [heap, dir_read, file_read] vcsstore.Object {
+    let read = vcsstore.read_text(heap, vcs, "HEAD");
+    let vcsstore.Object { bytes, status, errno } = read;
+    if status != 0 {
+        buffer.drop(heap, bytes);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
+    }
+    var held = buffer.empty(heap, 0);
+    var code = 3;
+    borrow bytes as &b in {
+        let text = vcsstore.trimmed(buffer.bytes(b));
+        if bytes.starts_with(text, "ref: refs/") {
+            held = buffer.append(heap, held, text[10..len(text)]);
+            code = 0;
+        } else if vcsobj.is_id(text) {
+            code = 2;
+        }
+    }
+    buffer.drop(heap, bytes);
+    return vcsstore.Object { bytes: held, status: code, errno: 0 };
 }
 
 // ---- resolving a revision ----------------------------------------------------------------------------------------------------
@@ -430,12 +454,14 @@ pub fn history[&h, &d, &s, &f](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], 
 
 // ---- documents ---------------------------------------------------------------------------------------------------------------
 
-fn quoted[&h, &t](heap: &!h Heap, out: buffer.Buffer, raw: &t [byte]) -> [heap] buffer.Buffer {
+// Shared with `vcsstatus.cho`.
+pub fn quoted[&h, &t](heap: &!h Heap, out: buffer.Buffer, raw: &t [byte]) -> [heap] buffer.Buffer {
     return buffer.push(heap, buffer.append(heap, buffer.push(heap, out, byte_of(34)), raw), byte_of(34));
 }
 
 // The next member of an object whose members are at `levels`: a comma unless it is the first, a newline, the indentation, `"name": `.
-fn member[&h, &k](heap: &!h Heap, out: buffer.Buffer, levels: int, first: bool, name: &k [byte]) -> [heap] buffer.Buffer {
+// Shared with `vcsstatus.cho`.
+pub fn member[&h, &k](heap: &!h Heap, out: buffer.Buffer, levels: int, first: bool, name: &k [byte]) -> [heap] buffer.Buffer {
     var b = out;
     if !first {
         b = buffer.push(heap, b, byte_of(44));
@@ -444,7 +470,7 @@ fn member[&h, &k](heap: &!h Heap, out: buffer.Buffer, levels: int, first: bool, 
 }
 
 // `[]` or the ids of the parents, one to a line, the array's members at `levels + 1`.
-fn emit_parents[&h, &j, &x](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
+pub fn emit_parents[&h, &j, &x](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
     let n = vcschange.parent_count(jm, src);
     if n == 0 {
         return buffer.append(heap, out, "[]");
@@ -462,7 +488,7 @@ fn emit_parents[&h, &j, &x](heap: &!h Heap, out: buffer.Buffer, levels: int, jm:
 }
 
 // `null` or the intent as an object, its parts in the order of their names.
-fn emit_intent[&h, &j, &x](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
+pub fn emit_intent[&h, &j, &x](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte]) -> [heap] buffer.Buffer {
     if !vcschange.has_intent(jm, src) {
         return buffer.append(heap, out, "null");
     }
@@ -509,7 +535,7 @@ fn emit_strings[&h, &j, &x, &l](heap: &!h Heap, out: buffer.Buffer, levels: int,
 }
 
 // A list of objects with three string parts (`decls`: kind, name, path; `edits`: new, old, path), as an array of objects with those keys.
-fn emit_items[&h, &j, &x, &l, &a, &b2, &c](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte], list: &l [byte], p1: &a [byte], p2: &b2 [byte], p3: &c [byte]) -> [heap] buffer.Buffer {
+pub fn emit_items[&h, &j, &x, &l, &a, &b2, &c](heap: &!h Heap, out: buffer.Buffer, levels: int, jm: &!j [int], src: &x [byte], list: &l [byte], p1: &a [byte], p2: &b2 [byte], p3: &c [byte]) -> [heap] buffer.Buffer {
     let n = vcschange.list_count(jm, src, list);
     if n == 0 {
         return buffer.append(heap, out, "[]");
@@ -543,12 +569,46 @@ fn emit_entry[&h, &j, &x, &i](heap: &!h Heap, out: buffer.Buffer, levels: int, j
     return buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(125));
 }
 
-// The change `id` read and parsed, and `emit` run on it: see the callers. Answers the document so far and a status.
-fn log_one[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte], out: buffer.Buffer, levels: int) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, int) {
+// Whether the change `m`/`src` touches `path`: its entry there (blob and mode, or none) differs from the first parent's (none for a root change). A status when a tree cannot be read.
+fn touches[&h, &d, &s, &j, &x, &p](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], jm: &!j [int], src: &x [byte], path: &p [byte]) -> [heap, dir_read, dir_write, file_read] (bool, int) {
+    let t = tree_text(heap, vcs, scratch, vcschange.tree(jm, src));
+    let (new_text, ns, ne) = vcsstore.parts(t);
+    var old_text = buffer.empty(heap, 0);
+    var code = ns;
+    if code == 0 && vcschange.parent_count(jm, src) > 0 {
+        let pt = parent_tree(heap, vcs, scratch, vcschange.parent(jm, src, 0));
+        let (text, ps, pe) = vcsstore.parts(pt);
+        buffer.drop(heap, old_text);
+        old_text = text;
+        code = ps;
+    }
+    var differs = false;
+    if code == 0 {
+        borrow new_text as &nb in {
+            borrow old_text as &ob in {
+                let at = vcsobj.tree_find(buffer.bytes(nb), path);
+                let before = vcsobj.tree_find(buffer.bytes(ob), path);
+                if at >= 0 && before >= 0 {
+                    differs = !bytes.equal(vcsobj.entry_blob(buffer.bytes(nb), at), vcsobj.entry_blob(buffer.bytes(ob), before)) || !bytes.equal(vcsobj.entry_mode(buffer.bytes(nb), at), vcsobj.entry_mode(buffer.bytes(ob), before));
+                } else {
+                    differs = at >= 0 || before >= 0;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, new_text);
+    buffer.drop(heap, old_text);
+    return (differs, code);
+}
+
+// The change `id` read and parsed, and the row for it added to `out` when it passes the filters of `log`: `mask` says which are given (1 `--intent`, 2 `--session`, 4 `--issue`, 8 `--author`, 16 `--path`, `path` relative to the
+// repository). Answers the rows so far, a status, and whether a row was added.
+fn log_one[&h, &d, &s, &i, &n, &a, &b, &c, &e](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte], out: buffer.Buffer, first: bool, mask: int, intent: &n [byte], session: &a [byte], issue: &b [byte], author: &c [byte], path: &e [byte]) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, int, bool) {
     let got = vcsstore.get(heap, vcs, scratch, "change", id);
     let (data, status, errno) = vcsstore.parts(got);
-    var b = out;
+    var b2 = out;
     var code = status;
+    var added = false;
     if status == 0 {
         borrow data as &db in {
             let src = buffer.bytes(db);
@@ -558,45 +618,73 @@ fn log_one[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: 
                 if vcschange.read(m, src) != 0 {
                     code = 3;
                 } else {
-                    b = emit_entry(heap, b, levels, m, src, id);
+                    var ok = true;
+                    if ok && mask % 2 == 1 {
+                        ok = vcschange.prompt_has(m, src, intent);
+                    }
+                    if ok && mask / 2 % 2 == 1 {
+                        ok = vcschange.intent_is(m, src, "session", session);
+                    }
+                    if ok && mask / 4 % 2 == 1 {
+                        ok = vcschange.intent_is(m, src, "issue", issue);
+                    }
+                    if ok && mask / 8 % 2 == 1 {
+                        ok = vcschange.author_has(m, src, author);
+                    }
+                    if ok && mask / 16 % 2 == 1 {
+                        let (hit, why) = touches(heap, vcs, scratch, m, src, path);
+                        ok = hit;
+                        code = why;
+                    }
+                    if ok && code == 0 {
+                        if !first {
+                            b2 = buffer.push(heap, b2, byte_of(44));
+                        }
+                        b2 = buffer.push(heap, jsonwrite.newline(heap, b2, 2), byte_of(123));
+                        b2 = emit_entry(heap, b2, 2, m, src, id);
+                        added = true;
+                    }
                 }
             }
             unbox_slice(heap, jm);
         }
     }
     buffer.drop(heap, data);
-    return (b, code);
+    return (b2, code, added);
 }
 
-// The `log` document for the changes `ids` (64 digits each, in order), at most `limit` of them (a negative limit is no limit).
-pub fn log_document[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], ids: &i [byte], limit: int) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
-    var count = len(ids) / 64;
+// The `log` document for the changes `ids` (64 digits each, in order) that pass the filters (see `log_one`), at most `limit` of them (a negative limit is no limit).
+pub fn log_document[&h, &d, &s, &i, &n, &a, &b, &c, &e](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], ids: &i [byte], limit: int, mask: int, intent: &n [byte], session: &a [byte], issue: &b [byte], author: &c [byte], path: &e [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    let total = len(ids) / 64;
     // The Rust command stops after pushing a row once it has `limit` of them, so a limit of 0 still lists one.
-    if limit >= 0 && limit < count {
-        count = limit;
-        if count == 0 {
-            count = 1;
+    var want = limit;
+    if limit == 0 {
+        want = 1;
+    }
+    var items = buffer.empty(heap, 0);
+    var rows = 0;
+    var code = 0;
+    var k = 0;
+    while k < total && code == 0 && (want < 0 || rows < want) {
+        let (more, why, added) = log_one(heap, vcs, scratch, ids[k * 64..k * 64 + 64], items, rows == 0, mask, intent, session, issue, author, path);
+        items = more;
+        code = why;
+        if added {
+            rows = rows + 1;
         }
+        k = k + 1;
     }
     var b = member(heap, buffer.push(heap, buffer.empty(heap, 256), byte_of(123)), 1, true, "changes");
-    var code = 0;
-    if count == 0 {
+    if rows == 0 {
         b = buffer.append(heap, b, "[]");
     } else {
         b = buffer.push(heap, b, byte_of(91));
-        var k = 0;
-        while k < count && code == 0 {
-            if k > 0 {
-                b = buffer.push(heap, b, byte_of(44));
-            }
-            b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(123));
-            let (more, why) = log_one(heap, vcs, scratch, ids[k * 64..k * 64 + 64], b, 2);
-            b = more;
-            code = why;
-            k = k + 1;
+        borrow items as &ib in {
+            b = buffer.append(heap, b, buffer.bytes(ib));
         }
         b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(93));
     }
+    buffer.drop(heap, items);
     b = buffer.append(heap, member(heap, b, 1, false, "command"), "\"log\"");
     b = buffer.append(heap, member(heap, b, 1, false, "ok"), "true");
     b = buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
@@ -628,7 +716,8 @@ fn parent_tree[&h, &d, &s, &p](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], 
 }
 
 // The tree text of the tree object `tree_id`, checked: 3 `object-corrupt` if it is not a tree.
-fn tree_text[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], tree_id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+// Shared with `vcsstatus.cho`.
+pub fn tree_text[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], tree_id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
     let got = vcsstore.get(heap, vcs, scratch, "tree", tree_id);
     let (text, status, errno) = vcsstore.parts(got);
     if status != 0 {
@@ -647,7 +736,8 @@ fn tree_text[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], tr
 }
 
 // The id of the tree of the change `id`.
-fn tree_id_of[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+// Shared with `vcsstatus.cho`.
+pub fn tree_id_of[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
     let got = vcsstore.get(heap, vcs, scratch, "change", id);
     let (data, status, errno) = vcsstore.parts(got);
     var out = buffer.empty(heap, 0);
@@ -683,7 +773,8 @@ fn state_item[&h, &p](heap: &!h Heap, out: buffer.Buffer, levels: int, first: bo
 }
 
 // The paths that differ between two trees, in path order, as `diff_trees` finds them: `added`, `deleted`, `modified` (another blob), `mode` (the same blob).
-fn emit_files[&h, &o, &n](heap: &!h Heap, out: buffer.Buffer, levels: int, old: &o [byte], new: &n [byte]) -> [heap] buffer.Buffer {
+// Shared with `vcsstatus.cho`.
+pub fn emit_files[&h, &o, &n](heap: &!h Heap, out: buffer.Buffer, levels: int, old: &o [byte], new: &n [byte]) -> [heap] buffer.Buffer {
     var items = buffer.empty(heap, 0);
     var count = 0;
     var i = 0;
@@ -737,9 +828,71 @@ fn emit_files[&h, &o, &n](heap: &!h Heap, out: buffer.Buffer, levels: int, old: 
     return b;
 }
 
-// The `show` document for the change `id` (without `--patch`): the change as `log` lists it, and its tree, the files it changed against its first parent, its
+// The tree id and the first parent's id (empty for a root change) of the change `id`, and a status.
+pub fn change_links[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, buffer.Buffer, int) {
+    let got = vcsstore.get(heap, vcs, scratch, "change", id);
+    let (data, status, errno) = vcsstore.parts(got);
+    var tree_id = buffer.empty(heap, 0);
+    var parent_id = buffer.empty(heap, 0);
+    var code = status;
+    if status == 0 {
+        borrow data as &db in {
+            let src = buffer.bytes(db);
+            let jm = box_slice(heap, jsonread.size_for(src), 0);
+            borrow mut jm as &!w in {
+                let m = contents(w);
+                if vcschange.read(m, src) != 0 {
+                    code = 3;
+                } else {
+                    tree_id = buffer.append(heap, tree_id, vcschange.tree(m, src));
+                    if vcschange.parent_count(m, src) > 0 {
+                        parent_id = buffer.append(heap, parent_id, vcschange.parent(m, src, 0));
+                    }
+                }
+            }
+            unbox_slice(heap, jm);
+        }
+    }
+    buffer.drop(heap, data);
+    return (tree_id, parent_id, code);
+}
+
+// The tree texts of the change `id` and of its first parent (empty for a root change): the old one, the new one and a status.
+pub fn change_trees[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, buffer.Buffer, int) {
+    let (tree_id, parent_id, links) = change_links(heap, vcs, scratch, id);
+    var new_text = buffer.empty(heap, 0);
+    var old_text = buffer.empty(heap, 0);
+    var code = links;
+    if code == 0 {
+        borrow tree_id as &tb in {
+            let t = tree_text(heap, vcs, scratch, buffer.bytes(tb));
+            let (text, ts, te) = vcsstore.parts(t);
+            buffer.drop(heap, new_text);
+            new_text = text;
+            code = ts;
+        }
+    }
+    var has_parent = false;
+    borrow parent_id as &pr in {
+        has_parent = len(buffer.bytes(pr)) > 0;
+    }
+    if code == 0 && has_parent {
+        borrow parent_id as &pb in {
+            let pt = parent_tree(heap, vcs, scratch, buffer.bytes(pb));
+            let (text, ps, pe) = vcsstore.parts(pt);
+            buffer.drop(heap, old_text);
+            old_text = text;
+            code = ps;
+        }
+    }
+    buffer.drop(heap, tree_id);
+    buffer.drop(heap, parent_id);
+    return (old_text, new_text, code);
+}
+
+// The `show` document for the change `id` (`patch`, the text of an array, is the `patch` member when `has_patch`): the change as `log` lists it, and its tree, the files it changed against its first parent, its
 // declarations, its anchored edits and its attestations.
-pub fn show_document[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+pub fn show_document[&h, &d, &s, &i, &p](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte], has_patch: bool, patch: &p [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
     let got = vcsstore.get(heap, vcs, scratch, "change", id);
     let (data, status, errno) = vcsstore.parts(got);
     if status != 0 {
@@ -811,6 +964,9 @@ pub fn show_document[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [
                         b = emit_intent(heap, member(heap, b, 1, false, "intent"), 1, m, src);
                         b = buffer.append(heap, member(heap, b, 1, false, "ok"), "true");
                         b = emit_parents(heap, member(heap, b, 1, false, "parents"), 1, m, src);
+                        if has_patch {
+                            b = buffer.append(heap, member(heap, b, 1, false, "patch"), patch);
+                        }
                         b = quoted(heap, member(heap, b, 1, false, "subject"), vcschange.subject(m, src));
                         b = vcschange.number(heap, member(heap, b, 1, false, "time"), vcschange.time(m, src));
                         b = quoted(heap, member(heap, b, 1, false, "tree"), vcschange.tree(m, src));
@@ -896,7 +1052,7 @@ pub fn refusal_document[&h, &c, &p, &k](heap: &!h Heap, command: &c [byte], stat
 // ---- the commands ------------------------------------------------------------------------------------------------------------
 
 // `log [REV] [--limit N]`: the document of the changes reachable from `spec`, or from HEAD when `have` is false (an empty list if HEAD has no change yet).
-pub fn log_command[&h, &d, &s, &p](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], spec: &p [byte], have: bool, limit: int) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+pub fn log_command[&h, &d, &s, &p, &n, &a, &b, &c, &e](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], spec: &p [byte], have: bool, limit: int, mask: int, intent: &n [byte], session: &a [byte], issue: &b [byte], author: &c [byte], path: &e [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
     var start = buffer.empty(heap, 0);
     var code = 0;
     var empty = false;
@@ -916,6 +1072,15 @@ pub fn log_command[&h, &d, &s, &p](heap: &!h Heap, vcs: &d Dir, scratch: &!s [in
         } else {
             code = hs;
         }
+    }
+    // After the start is found the Rust command reads `--limit` and then `--path`: status 100 is a limit that is not a count, 101 a path outside the repository.
+    if code == 0 && !empty && limit < 0 - 1 {
+        buffer.drop(heap, start);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 100, errno: 0 };
+    }
+    if code == 0 && !empty && mask / 32 % 2 == 1 {
+        buffer.drop(heap, start);
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 101, errno: 0 };
     }
     var ids = buffer.empty(heap, 0);
     if code == 0 && !empty {
@@ -938,7 +1103,7 @@ pub fn log_command[&h, &d, &s, &p](heap: &!h Heap, vcs: &d Dir, scratch: &!s [in
     }
     var answer = failed(heap, 3);
     borrow ids as &ib in {
-        let doc = log_document(heap, vcs, scratch, buffer.bytes(ib), limit);
+        let doc = log_document(heap, vcs, scratch, buffer.bytes(ib), limit, mask, intent, session, issue, author, path);
         let (old, os, oe) = vcsstore.parts(answer);
         buffer.drop(heap, old);
         answer = doc;
@@ -960,160 +1125,11 @@ pub fn show_command[&h, &d, &s, &p](heap: &!h Heap, vcs: &d Dir, scratch: &!s [i
     }
     var answer = failed(heap, 3);
     borrow id as &ib in {
-        let doc = show_document(heap, vcs, scratch, buffer.bytes(ib));
+        let doc = show_document(heap, vcs, scratch, buffer.bytes(ib), false, "");
         let (old, os, oe) = vcsstore.parts(answer);
         buffer.drop(heap, old);
         answer = doc;
     }
     buffer.drop(heap, id);
     return answer;
-}
-
-// ---- status ------------------------------------------------------------------------------------------------------------------
-
-// What HEAD says: the branch (without `heads/`) in `bytes` and `has_branch` true, or HEAD detached; the change HEAD is at in `head` (empty if the branch has none).
-res struct HeadInfo {
-    branch: buffer.Buffer,
-    has_branch: bool,
-    head: buffer.Buffer,
-    status: int,
-}
-
-fn head_parts(h: HeadInfo) -> [] (buffer.Buffer, bool, buffer.Buffer, int) {
-    let HeadInfo { branch, has_branch, head, status } = h;
-    return (branch, has_branch, head, status);
-}
-
-fn head_info[&h, &d](heap: &!h Heap, vcs: &d Dir) -> [heap, dir_read, dir_write, file_read] HeadInfo {
-    let read = vcsstore.read_text(heap, vcs, "HEAD");
-    let (text, status, errno) = vcsstore.parts(read);
-    var branch = buffer.empty(heap, 0);
-    var head = buffer.empty(heap, 0);
-    var has = false;
-    var code = status;
-    if status == 0 {
-        code = 3;
-        borrow text as &tb in {
-            let t = vcsstore.trimmed(buffer.bytes(tb));
-            if bytes.starts_with(t, "ref: refs/") {
-                var name = t[10..len(t)];
-                if bytes.starts_with(name, "heads/") {
-                    branch = buffer.append(heap, branch, name[6..len(name)]);
-                } else {
-                    branch = buffer.append(heap, branch, name);
-                }
-                has = true;
-                let followed = vcsstore.read_ref(heap, vcs, name);
-                let (id, fs, fe) = vcsstore.parts(followed);
-                if fs == 0 {
-                    buffer.drop(heap, head);
-                    head = id;
-                    code = 0;
-                } else if fs == 2 {
-                    buffer.drop(heap, id);
-                    code = 0;
-                } else {
-                    buffer.drop(heap, id);
-                    code = fs;
-                }
-            } else if vcsobj.is_id(t) {
-                buffer.drop(heap, head);
-                head = buffer.append(heap, buffer.empty(heap, 64), t);
-                code = 0;
-            }
-        }
-    }
-    buffer.drop(heap, text);
-    return HeadInfo { branch: branch, has_branch: has, head: head, status: code };
-}
-
-// The `status` document: the branch and change HEAD is at, and the paths whose files differ from HEAD's tree (as `diff_trees` finds them: `added`, `deleted`,
-// `modified`, `mode`), with `clean` when there are none. `root` is the working copy's directory, `vcs` the store's.
-pub fn status_command[&h, &r, &d, &s](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
-    let info = head_info(heap, vcs);
-    let (branch, has_branch, head, status) = head_parts(info);
-    if status != 0 {
-        buffer.drop(heap, branch);
-        buffer.drop(heap, head);
-        return failed(heap, status);
-    }
-    var old_tree = buffer.empty(heap, 0);
-    var code = 0;
-    var has_head = false;
-    borrow head as &hb in {
-        has_head = len(buffer.bytes(hb)) > 0;
-        if has_head {
-            let ti = tree_id_of(heap, vcs, scratch, buffer.bytes(hb));
-            let (tid, ts, te) = vcsstore.parts(ti);
-            if ts != 0 {
-                code = ts;
-            } else {
-                borrow tid as &tb in {
-                    let tt = tree_text(heap, vcs, scratch, buffer.bytes(tb));
-                    let (text, xs, xe) = vcsstore.parts(tt);
-                    buffer.drop(heap, old_tree);
-                    old_tree = text;
-                    code = xs;
-                }
-            }
-            buffer.drop(heap, tid);
-        }
-    }
-    var doc = buffer.empty(heap, 0);
-    if code == 0 {
-        let scanned = vcsscan.scan(heap, root, scratch);
-        let (work, ws, we) = vcsstore.parts(scanned);
-        if ws != 0 {
-            code = ws;
-            buffer.drop(heap, work);
-        } else {
-            borrow old_tree as &ob in {
-                borrow work as &wb in {
-                    var b = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
-                    b = member(heap, b, 1, true, "branch");
-                    if has_branch {
-                        borrow branch as &bb in {
-                            b = jsonwrite.string(heap, b, buffer.bytes(bb));
-                        }
-                    } else {
-                        b = buffer.append(heap, b, "null");
-                    }
-                    let changes = emit_files(heap, buffer.empty(heap, 16), 1, buffer.bytes(ob), buffer.bytes(wb));
-                    var clean = false;
-                    borrow changes as &cb in {
-                        clean = len(buffer.bytes(cb)) == 2;
-                        b = buffer.append(heap, member(heap, b, 1, false, "changes"), buffer.bytes(cb));
-                    }
-                    buffer.drop(heap, changes);
-                    if clean {
-                        b = buffer.append(heap, member(heap, b, 1, false, "clean"), "true");
-                    } else {
-                        b = buffer.append(heap, member(heap, b, 1, false, "clean"), "false");
-                    }
-                    b = buffer.append(heap, member(heap, b, 1, false, "command"), "\"status\"");
-                    b = member(heap, b, 1, false, "head");
-                    if has_head {
-                        borrow head as &hb in {
-                            b = quoted(heap, b, buffer.bytes(hb));
-                        }
-                    } else {
-                        b = buffer.append(heap, b, "null");
-                    }
-                    b = buffer.append(heap, member(heap, b, 1, false, "ok"), "true");
-                    b = buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
-                    buffer.drop(heap, doc);
-                    doc = b;
-                }
-            }
-            buffer.drop(heap, work);
-        }
-    }
-    buffer.drop(heap, branch);
-    buffer.drop(heap, head);
-    buffer.drop(heap, old_tree);
-    if code != 0 {
-        buffer.drop(heap, doc);
-        return failed(heap, code);
-    }
-    return vcsstore.Object { bytes: doc, status: 0, errno: 0 };
 }

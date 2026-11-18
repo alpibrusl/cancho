@@ -1,0 +1,5 @@
+program-exit 3
+program-out from the compiler in cancho
+refused-position refused.cho:3:12
+refused-rule type-mismatch
+refused-sentence An expression's type does not match what the context requires — a return type, an annotation, a parameter, or the mode of a reference.

@@ -1,0 +1,1 @@
+{"tree":"b782db09f9ed93714834c91ed78a1b0ca7dcc1f62ed0b91ef79fd5d0e84704e7","parents":[],"author":"Ada <ada@example.com>","time":1000,"tz":"+0000","intent":{"prompt":"first","model":"m1","session":"s1"},"decls":[{"path":"a.cho","name":"fn a.twice","kind":"added"}],"attestations":["gate:cancho-check:ok:1"]}

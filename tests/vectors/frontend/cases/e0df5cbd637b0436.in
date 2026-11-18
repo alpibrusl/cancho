@@ -1,0 +1,1 @@
+{"items": [{"kind": "extern", "name": "getpid", "params": [], "ret": {"name":"int"}}]}

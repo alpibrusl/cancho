@@ -1,0 +1,2 @@
+edition 6;
+fn f[&r]() -> [] int { let x = f32_of_int(3); return int_of_f32(x); }

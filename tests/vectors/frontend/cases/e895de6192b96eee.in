@@ -1,0 +1,5 @@
+edition 2;  
+
+fn f() -> [] int {  
+    return 0;  
+}  

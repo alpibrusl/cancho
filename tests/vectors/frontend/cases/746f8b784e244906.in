@@ -1,0 +1,2 @@
+edition 5;
+fn f[&r, &q](d: &!r [byte], s: &q [byte]) -> [] int { return copy_into(s, d); }

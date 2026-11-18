@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": 7,
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": "bogus"
+    }
+  ]
+}

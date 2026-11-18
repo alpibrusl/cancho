@@ -1,0 +1,19 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "1 problem(s); first: \"tree f1dcdff55fe998c15b897f4f68e164a9c20ca2b2bff98f3f06fac4778828547b\"",
+    "objects": {
+      "blob": 4,
+      "change": 3,
+      "tree": 4
+    },
+    "problems": [
+      {
+        "object": "tree f1dcdff55fe998c15b897f4f68e164a9c20ca2b2bff98f3f06fac4778828547b",
+        "tag": "object-corrupt"
+      }
+    ],
+    "tag": "object-corrupt"
+  }
+}

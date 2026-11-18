@@ -1,0 +1,19 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "1 problem(s); first: \"change ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff (ref tags/t)\"",
+    "objects": {
+      "blob": 4,
+      "change": 3,
+      "tree": 3
+    },
+    "problems": [
+      {
+        "object": "change ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff (ref tags/t)",
+        "tag": "object-missing"
+      }
+    ],
+    "tag": "object-missing"
+  }
+}

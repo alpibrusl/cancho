@@ -1,0 +1,5 @@
+ fn main(world: World) -> [] int { release(world);
+ let total = 1;
+ total = total + 1;
+ return total;
+ } 

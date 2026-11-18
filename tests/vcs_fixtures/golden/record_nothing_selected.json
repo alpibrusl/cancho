@@ -1,0 +1,8 @@
+{
+  "command": "record",
+  "ok": false,
+  "refused": {
+    "message": "name the paths to record, or pass --all",
+    "tag": "nothing-selected"
+  }
+}

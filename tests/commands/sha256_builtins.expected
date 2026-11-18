@@ -1,0 +1,2 @@
+ok the sha256 builtins agree with FIPS 180-4 and the reference
+ok a wrong length traps

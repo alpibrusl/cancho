@@ -1,0 +1,130 @@
+edition 5;
+import std.addr;
+import std.test;
+
+fn text_of[&b](p: addr.Peer, buf: &!b [byte]) -> [] int {
+    return addr.text(p, buf);
+}
+
+fn is_text[&b](p: addr.Peer, buf: &!b [byte], want: &static [byte]) -> [] bool {
+    let n = addr.text(p, buf);
+    if n != len(want) {
+        return false;
+    }
+    var i = 0;
+    while i < n {
+        if buf[i] != want[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    region r {
+        let buf = alloc_slice[r](64, byte_of(0));
+        // Constructors mask: an octet is 8 bits, a port 16.
+        test.assert(is_text(addr.v4(256 + 10, 0, 0, 1, 70000), buf, "10.0.0.1"));
+        test.assert_eq(addr.port(addr.v4(1, 2, 3, 4, 65536 + 80)), 80);
+        // ...and the word is the 32-bit address, not what spilled over it.
+        test.assert_eq(addr.word(addr.v4(256 + 10, 0, 0, 1, 1), 3), 0x0a000001);
+        test.assert_eq(addr.word(addr.v4(10, 0, 0, 256 + 1, 1), 3), 0x0a000001);
+        test.assert_eq(addr.word(addr.v4(10, 0, 0, 1, 1), 0), 0);
+        // `from_parts` is the inverse of `family`, `word` and `port`, for both families and for
+        // the mapped range.
+        test.assert(addr.same(addr.from_parts(4, 0, 0, 0, 0x01020304, 9), addr.v4(1, 2, 3, 4, 9)));
+        test.assert_eq(addr.family(addr.from_parts(4, 0, 0, 0, 0x01020304, 9)), 4);
+        test.assert(addr.same(addr.from_parts(6, 0x20010db8, 1, 2, 3, 9), addr.v6(0x20010db8, 1, 2, 3, 9)));
+        test.assert_eq(addr.family(addr.from_parts(6, 0, 0, 0, 1, 9)), 6);
+        test.assert_eq(addr.family(addr.from_parts(6, 0, 0, 0xffff, 0x01020304, 9)), 4);
+        test.assert_eq(addr.port(addr.from_parts(6, 0, 0, 0, 1, 70000)), 70000 - 65536);
+        // The mapped range is IPv4, whichever constructor made it, and nothing near it is.
+        test.assert(addr.same(addr.v6(0, 0, 0xffff, 0x01020304, 9), addr.v4(1, 2, 3, 4, 9)));
+        test.assert_eq(addr.family(addr.v6(0, 0, 0xffff, 0, 1)), 4);
+        test.assert_eq(addr.family(addr.v6(0, 0, 0xfffe, 0x01020304, 1)), 6);
+        test.assert_eq(addr.family(addr.v6(0, 1, 0xffff, 0x01020304, 1)), 6);
+        test.assert_eq(addr.family(addr.v6(1, 0, 0xffff, 0x01020304, 1)), 6);
+        test.assert_eq(addr.family(addr.v6(0, 0, 0, 0x01020304, 1)), 6);
+        // Equality: the port is part of `same`, not of `same_address`.
+        test.assert(!addr.same(addr.v4(1, 2, 3, 4, 1), addr.v4(1, 2, 3, 4, 2)));
+        test.assert(addr.same_address(addr.v4(1, 2, 3, 4, 1), addr.v4(1, 2, 3, 4, 2)));
+        test.assert(!addr.same_address(addr.v4(0, 0, 0, 1, 1), addr.v6(0, 0, 0, 1, 1)));
+        test.assert_eq(addr.port(addr.with_port(addr.v4(1, 2, 3, 4, 1), 443)), 443);
+        // Keys: an IPv4 address is its own key; an IPv6 address is its /64.
+        test.assert(addr.same_key(addr.key(addr.v4(9, 9, 9, 9, 1)), addr.key(addr.v4(9, 9, 9, 9, 2))));
+        test.assert(!addr.same_key(addr.key(addr.v4(9, 9, 9, 9, 1)), addr.key(addr.v4(9, 9, 9, 8, 1))));
+        test.assert(addr.same_key(addr.key(addr.v6(0x20010db8, 1, 5, 6, 1)), addr.key(addr.v6(0x20010db8, 1, 0xffffffff, 0xffffffff, 2))));
+        test.assert(!addr.same_key(addr.key(addr.v6(0x20010db8, 1, 5, 6, 1)), addr.key(addr.v6(0x20010db8, 2, 5, 6, 1))));
+        test.assert(!addr.same_key(addr.key(addr.v6(0x20010db9, 1, 5, 6, 1)), addr.key(addr.v6(0x20010db8, 1, 5, 6, 1))));
+        // The last bit of the /64 matters; the first bit of the rest does not.
+        test.assert(!addr.same_key(addr.key(addr.v6(0, 0, 0, 1, 1)), addr.key(addr.v6(0, 1, 0, 1, 1))));
+        test.assert(addr.same_key(addr.key(addr.v6(0, 0, 0, 1, 1)), addr.key(addr.v6(0, 0, 0x80000000, 1, 1))));
+        // The two families never share a key, even for the same bits: `::` and `0.0.0.0`.
+        test.assert(!addr.same_key(addr.key(addr.v4(0, 0, 0, 0, 1)), addr.key(addr.v6(0, 0, 0, 0, 1))));
+        // A key rebuilt from its parts is the key.
+        let k = addr.key(addr.v6(0xfe800000, 0x00000001, 7, 7, 1));
+        test.assert(addr.same_key(k, addr.key_from(addr.key_family(k), addr.key_bits(k))));
+        // A top bit set is a negative number, and still a key.
+        test.assert(addr.key_bits(addr.key(addr.v6(0x80000000, 0, 0, 0, 1))) < 0);
+        // Text and its limits.
+        test.assert(is_text(addr.v6(0x20010db8, 0, 0, 1, 1), buf, "2001:db8::1"));
+        test.assert(is_text(addr.v6(0, 0, 0, 0, 1), buf, "::"));
+        test.assert(is_text(addr.v6(0x00010000, 0x00020000, 0x00030000, 0x00040000, 1), buf, "1:0:2:0:3:0:4:0"));
+        test.assert_eq(addr.text_port(addr.v4(1, 2, 3, 4, 80), buf), 10);
+        test.assert_eq(addr.text_port(addr.v6(0, 0, 0, 1, 65535), buf), 11);
+        test.assert_eq(addr.max_text(), 47);
+        test.assert_eq(addr.raw_len(), 19);
+        let small = alloc_slice[r](46, byte_of(9));
+        test.assert_eq(addr.text(addr.v4(1, 2, 3, 4, 1), small), 0 - 1);
+        test.assert_eq(addr.text_port(addr.v4(1, 2, 3, 4, 1), small), 0 - 1);
+        test.assert_eq(int_of(small[0]), 9);
+        // The longest text there is.
+        let long = addr.v6(0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff, 65535);
+        test.assert_eq(addr.text_port(long, buf), 47);
+        // `decode` refuses what is not 19 bytes of family 4 or 6.
+        let short = alloc_slice[r](18, byte_of(0));
+        short[0] = byte_of(4);
+        match addr.decode(short) {
+            addr.Parsed::Ok(p) => {
+                test.assert(false);
+            }
+            addr.Parsed::Bad => {
+            }
+        }
+        let raw = alloc_slice[r](19, byte_of(0));
+        match addr.decode(raw) {
+            addr.Parsed::Ok(p) => {
+                test.assert(false);
+            }
+            addr.Parsed::Bad => {
+            }
+        }
+        raw[0] = byte_of(6);
+        raw[12] = byte_of(0xff);
+        raw[11] = byte_of(0xff);
+        raw[13] = byte_of(10);
+        raw[14] = byte_of(1);
+        raw[15] = byte_of(2);
+        raw[16] = byte_of(3);
+        raw[17] = byte_of(1);
+        raw[18] = byte_of(187);
+        match addr.decode(raw) {
+            addr.Parsed::Ok(p) => {
+                test.assert(addr.same(p, addr.v4(10, 1, 2, 3, 443)));
+            }
+            addr.Parsed::Bad => {
+                test.assert(false);
+            }
+        }
+    }
+    return 0;
+}

@@ -1,0 +1,1 @@
+fn f[T: val, &r, &s where r <= s](x: &s T, y: &r T) -> [] T { return *x; }

@@ -1,0 +1,1 @@
+{"items": [{"kind": "extern", "name": "getpid", "regions": ["f"], "params": [], "effects": [], "ret": {"name":"int"}, "symbol": "getpid"}]}

@@ -1,0 +1,47 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "-",
+              "text": "3\n"
+            },
+            {
+              "op": "+",
+              "text": "THREE\n"
+            }
+          ],
+          "new_lines": 1,
+          "new_start": 3,
+          "old_lines": 1,
+          "old_start": 3
+        },
+        {
+          "lines": [
+            {
+              "op": "-",
+              "text": "25\n"
+            },
+            {
+              "op": "+",
+              "text": "TWENTYFIVE\n"
+            }
+          ],
+          "new_lines": 1,
+          "new_start": 25,
+          "old_lines": 1,
+          "old_start": 25
+        }
+      ],
+      "path": "big.txt",
+      "status": "modified"
+    }
+  ],
+  "from": "HEAD",
+  "ok": true,
+  "to": "working copy"
+}

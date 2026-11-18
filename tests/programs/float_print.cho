@@ -3,7 +3,7 @@
 //
 // Reads one JSON array of integers on standard input, each the 64 bits of a
 // double as a signed `int`, and prints for each one line: `float_into` of
-// `float_of_bits(n)`. `float_text.rs` and `scripts/float_differential.py`
+// `float_of_bits(n)`. `tests/commands/float_text.sh` and `scripts/float_differential.py`
 // write the array and compare every line with Python's `repr` and Rust's
 // `{:e}`, as exact decimal rationals.
 edition 7;

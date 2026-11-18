@@ -1,0 +1,27 @@
+{
+  "already_imported": 0,
+  "branches": [
+    {
+      "change": "222da9b021109243ce52d0cd4271bbe9483b0727eaff2a086f0aecf378564860",
+      "name": "heads/main"
+    }
+  ],
+  "checked_out": 0,
+  "command": "import-git",
+  "commits": 1,
+  "dry_run": false,
+  "new_blobs": 1,
+  "ok": true,
+  "refs_kept": [
+    "refs/heads/a+b: not a valid ref name here",
+    "refs/tags/v+1: not a valid ref name here"
+  ],
+  "remotes": [],
+  "self_check_mismatches": [],
+  "tags": [
+    {
+      "change": "222da9b021109243ce52d0cd4271bbe9483b0727eaff2a086f0aecf378564860",
+      "name": "tags/v2"
+    }
+  ]
+}

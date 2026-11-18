@@ -1,0 +1,6 @@
+record killed at least 10 times: yes
+record: at least 4 distinct states of the store seen after a kill: yes
+ok a_kill_during_record_leaves_a_sound_store
+switch killed at least 5 times: yes
+switch: at least 2 distinct states of the store seen after a kill: yes
+ok a_kill_during_switch_leaves_a_sound_store

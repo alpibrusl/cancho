@@ -1,0 +1,24 @@
+edition 8;
+  import std.io;
+  fn probe[&t](tty: &t Tty("/dev/serial")) -> [tty_open("/dev/serial"), tty_read, tty_write] int { match tty_open(tty, "/dev/serial/ttyACM0") { TtyOpened::Ok(port) => { borrow mut port as &!p in { if tty_configure(p, 1000000) == 0 { region r { let reply = alloc_slice[r](8, byte_of(0));
+ tty_flush_input(p);
+ let got = tty_read(p, reply);
+ tty_write(p, "x");
+ } } } return tty_close(port);
+ } TtyOpened::Failed(errno) => { return 0;
+ } } }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+ release(ffi);
+ release(fs);
+ release(heap);
+ release(args);
+ release(net);
+ release(clock);
+ release(signals);
+ release(exec);
+   let serial = narrow(tty, "/dev/serial");
+ borrow serial as &s in { probe(s);
+ } release(serial);
+  borrow mut io as &!i in { io.write_all(i, "tty_open(\"/dev/serial\")\n");
+ } release(io);
+ return 0;
+ } 

@@ -7,7 +7,13 @@ import std.conns;
 
 // A scripted socket client for the command tests (docs/gate.md, G4 wave 3), in cancho.
 //
-//     sk_client PORT SCRIPT
+//     sk_client PORT SCRIPT [serve]
+//
+// With a third argument (`serve`) it is a server instead: it listens on PORT, says `listening`, and the script's `accept S` takes the next client into slot S
+// (the rest of the commands are the same; `readreq S MS` reads a whole request, `sums` and `reqparts` give the length and checksum of what was read). A fourth argument,
+// a port, is where `open S` dials in that mode (so one script holds a server's clients and the peer the server dials: `tests/commands/http_server.sh`).
+// Also (wave 4, docs/gate.md): `wait` blocks until one byte comes on standard input (the test's shell writes it when the program under test has said something),
+// `readn S N MS` reads until N bytes (`shows` prints them), and `flushpart S` and `exchange S N MS` write the pending bytes without blocking and while reading.
 //
 // SCRIPT is one argument: lines of commands, run in order against a server that is already listening (the test's shell script starts it).
 // Connections are numbered slots 0 to 15. The client prints a transcript that the test compares with a file; several clients at once are
@@ -428,6 +434,142 @@ fn read_until[&h, &t, &k, &n, &s](heap: &!h Heap, table: &!t conns.Table, clock:
     return out;
 }
 
+// ` n=LENGTH c=CHECKSUM` and a newline: the line `gen` prints for what it sent.
+fn print_sum[&i, &t](io: &!i Io, text: &t [byte]) -> [io_write] int {
+    console.write_all(io, " n=");
+    console.print_int(io, len(text));
+    console.write_all(io, " c=");
+    console.print_int(io, checksum_of(text));
+    console.newline(io);
+    return 0;
+}
+
+// Write what the kernel takes of `data` now, without waiting: how many bytes went.
+fn write_now[&t, &d](table: &!t conns.Table, slot: int, data: &d [byte]) -> [conn_write] int {
+    var off = 0;
+    var going = true;
+    while going && off < len(data) {
+        match conns.write(table, slot, data[off..len(data)]) {
+            Sent::Wrote(n) => {
+                off = off + n;
+            }
+            Sent::Again => {
+                going = false;
+            }
+            Sent::Failed(e) => {
+                going = false;
+            }
+        }
+    }
+    return off;
+}
+
+// Read into `got` (cleared first) until `n` bytes have come, the connection ends or `ms` pass.
+fn read_count[&h, &t, &k](heap: &!h Heap, table: &!t conns.Table, clock: &k Clock, slot: int, n: int, ms: int, got: buffer.Buffer) -> [heap, conn_read, poll, clock] buffer.Buffer {
+    var out = got;
+    borrow mut out as &!ow in {
+        buffer.clear(ow);
+    }
+    let start = clock_ms(clock);
+    var going = true;
+    var have = 0;
+    region r {
+        let chunk = alloc_slice[r](8192, byte_of(0));
+        while going && have < n && clock_ms(clock) - start < ms {
+            let m = recv_some(table, slot, chunk, 50);
+            if m > 0 {
+                out = buffer.append(heap, out, chunk[0..m]);
+                have = have + m;
+            } else if m == 0 || m == 0 - 2 {
+                going = false;
+            }
+        }
+    }
+    return out;
+}
+
+// Write the `pending` bytes and read at the same time, until all are written and `n` bytes have come, the connection ends or `ms` pass: what is still
+// pending, and what was read (`got` is cleared first).
+fn exchange[&h, &t, &k](heap: &!h Heap, table: &!t conns.Table, clock: &k Clock, slot: int, pending: buffer.Buffer, n: int, ms: int, got: buffer.Buffer) -> [heap, conn_read, conn_write, poll, clock] (buffer.Buffer, buffer.Buffer) {
+    var out = got;
+    borrow mut out as &!ow in {
+        buffer.clear(ow);
+    }
+    var left = pending;
+    let start = clock_ms(clock);
+    var going = true;
+    var have = 0;
+    var owed = 0;
+    borrow left as &lb in {
+        owed = len(buffer.bytes(lb));
+    }
+    region r {
+        let chunk = alloc_slice[r](8192, byte_of(0));
+        while going && (owed > 0 || have < n) && clock_ms(clock) - start < ms {
+            if owed > 0 {
+                var taken = 0;
+                borrow left as &lb in {
+                    taken = write_now(table, slot, buffer.bytes(lb));
+                }
+                if taken > 0 {
+                    var rest = buffer.empty(heap, owed - taken + 8);
+                    borrow left as &lb in {
+                        rest = buffer.append(heap, rest, buffer.bytes(lb)[taken..len(buffer.bytes(lb))]);
+                    }
+                    buffer.drop(heap, left);
+                    left = rest;
+                    owed = owed - taken;
+                }
+            }
+            let m = recv_some(table, slot, chunk, 20);
+            if m > 0 {
+                out = buffer.append(heap, out, chunk[0..m]);
+                have = have + m;
+            } else if m == 0 || m == 0 - 2 {
+                going = false;
+            }
+        }
+    }
+    return (left, out);
+}
+
+// Read into `got` (cleared first) a whole request: until the blank line has come and then as many bytes as its Content-Length says, the connection
+// ends or `ms` pass.
+fn read_request[&h, &t, &k](heap: &!h Heap, table: &!t conns.Table, clock: &k Clock, slot: int, ms: int, got: buffer.Buffer) -> [heap, conn_read, poll, clock] buffer.Buffer {
+    var out = got;
+    borrow mut out as &!ow in {
+        buffer.clear(ow);
+    }
+    let start = clock_ms(clock);
+    var going = true;
+    region r {
+        let chunk = alloc_slice[r](8192, byte_of(0));
+        while going && clock_ms(clock) - start < ms {
+            let n = recv_some(table, slot, chunk, 50);
+            if n > 0 {
+                out = buffer.append(heap, out, chunk[0..n]);
+                borrow out as &ob in {
+                    let all = buffer.bytes(ob);
+                    let blank = bytes.find(all, "\r\n\r\n");
+                    if blank >= 0 {
+                        var length = 0;
+                        let at = bytes.find(all[0..blank], "Content-Length: ");
+                        if at >= 0 {
+                            length = number(all[at + 16..blank]);
+                        }
+                        if len(all) >= blank + 4 + length {
+                            going = false;
+                        }
+                    }
+                }
+            } else if n == 0 || n == 0 - 2 {
+                going = false;
+            }
+        }
+    }
+    return out;
+}
+
 fn check_chunks[&i, &t](io: &!i Io, all: &t [byte], taken: int, blind: int) -> [io_write] int {
     let head = bytes.find(all, "\r\n\r\n") + 4;
     let text = all[head..len(all)];
@@ -473,7 +615,7 @@ fn check_chunks[&i, &t](io: &!i Io, all: &t [byte], taken: int, blind: int) -> [
 }
 
 // One command that works on connections already open: the pending bytes, and 0 or 3 for a line it does not understand.
-fn step[&h, &i, &k, &t, &s, &l](heap: &!h Heap, io: &!i Io, clock: &k Clock, table: &!t conns.Table, pending: buffer.Buffer, got: buffer.Buffer, st: &!s [int], line: &l [byte]) -> [heap, io_write, conn_read, conn_write, poll, clock] (buffer.Buffer, buffer.Buffer, int) {
+fn step[&h, &i, &k, &t, &s, &l](heap: &!h Heap, io: &!i Io, clock: &k Clock, table: &!t conns.Table, pending: buffer.Buffer, got: buffer.Buffer, st: &!s [int], line: &l [byte]) -> [heap, io_write, io_read, conn_read, conn_write, poll, clock] (buffer.Buffer, buffer.Buffer, int) {
     var keep = pending;
     var seen = got;
     var status = 0;
@@ -693,6 +835,79 @@ fn step[&h, &i, &k, &t, &s, &l](heap: &!h Heap, io: &!i Io, clock: &k Clock, tab
         }
     } else if is(cmd, "stats") {
         status = stats(heap, io, table, slot, st);
+    } else if is(cmd, "readreq") {
+        // readreq S MS: a whole request (the head, then the bytes its Content-Length says) is read, or the connection ends, or MS pass.
+        seen = read_request(heap, table, clock, slot, number(bytes.field(line, ' ', 3)), seen);
+        borrow seen as &sb in {
+            console.write_all(io, "readreq bytes: ");
+            console.print_int(io, len(buffer.bytes(sb)));
+            console.newline(io);
+        }
+    } else if is(cmd, "wait") {
+        // wait: one byte on standard input, which the test's shell writes when the program under test has said what is waited for.
+        region wr {
+            let one = alloc_slice[wr](1, byte_of(0));
+            match read_bytes(io, one) {
+                Read::Got(n) => {
+                }
+                Read::End => {
+                }
+                Read::Failed(e) => {
+                }
+            }
+        }
+    } else if is(cmd, "readn") {
+        // readn S N MS: read until N bytes have come (into what `shows` and `sums` print), the connection ends or MS pass.
+        seen = read_count(heap, table, clock, slot, number(bytes.field(line, ' ', 3)), number(bytes.field(line, ' ', 4)), seen);
+        borrow seen as &sb in {
+            console.write_all(io, "readn complete: ");
+            yes_no(io, len(buffer.bytes(sb)) >= number(bytes.field(line, ' ', 3)));
+        }
+    } else if is(cmd, "flushpart") {
+        // flushpart S: write what the kernel takes of the pending bytes now, without waiting; the rest stays pending (`exchange` or `flush` ends it).
+        var left = 0;
+        var taken = 0;
+        borrow keep as &kb in {
+            taken = write_now(table, slot, buffer.bytes(kb));
+            left = len(buffer.bytes(kb)) - taken;
+        }
+        var rest = buffer.empty(heap, left + 8);
+        borrow keep as &kb in {
+            rest = buffer.append(heap, rest, buffer.bytes(kb)[taken..len(buffer.bytes(kb))]);
+        }
+        buffer.drop(heap, keep);
+        keep = rest;
+        console.write_all(io, "flushpart: some bytes left pending: ");
+        yes_no(io, left > 0);
+    } else if is(cmd, "exchange") {
+        // exchange S N MS: write the pending bytes and read at the same time, until all are written and N bytes have come, or MS pass.
+        let (more, reread) = exchange(heap, table, clock, slot, keep, number(bytes.field(line, ' ', 3)), number(bytes.field(line, ' ', 4)), seen);
+        keep = more;
+        seen = reread;
+        borrow seen as &sb in {
+            console.write_all(io, "exchange complete: ");
+            yes_no(io, len(buffer.bytes(sb)) >= number(bytes.field(line, ' ', 3)));
+        }
+    } else if is(cmd, "sums") {
+        // sums: the length and checksum of what was read (the checksum of `gen`).
+        borrow seen as &sb in {
+            console.write_all(io, "read");
+            print_sum(io, buffer.bytes(sb));
+        }
+    } else if is(cmd, "reqparts") {
+        // reqparts: what was read, split at the blank line: the head escaped, the body's length and checksum.
+        borrow seen as &sb in {
+            let all = buffer.bytes(sb);
+            let cut = bytes.find(all, "\r\n\r\n");
+            if cut >= 0 {
+                console.write_all(io, "head: ");
+                print_escaped(io, all[0..cut + 4]);
+                console.write_all(io, "body");
+                print_sum(io, all[cut + 4..len(all)]);
+            } else {
+                console.write_all(io, "no blank line\n");
+            }
+        }
     } else if is(cmd, "head") {
         response(heap, io, table, slot, false);
     } else if is(cmd, "resp") {
@@ -926,7 +1141,71 @@ fn ends[&t](table: &!t conns.Table, slot: int, ms: int) -> [conn_read, poll] boo
     return done;
 }
 
-fn run[&h, &i, &n, &k, &s](heap: &!h Heap, io: &!i Io, net: &n Net(""), clock: &k Clock, port: int, script: &s [byte]) -> [heap, io_write, net_out(""), conn_read, conn_write, poll, clock] int {
+// `accept S`: wait for a client of the listener and put it in slot S (serving mode).
+fn accept_slot[&h, &l, &s](heap: &!h Heap, listener: &!l Listener, table: conns.Table, st: &!s [int], slot: int) -> [heap, conn_accept] (conns.Table, int) {
+    var t = table;
+    match tcp_accept(listener) {
+        Accepted::Ok(c) => {
+            let (t2, real) = conns.put(heap, t, c);
+            t = t2;
+            borrow mut t as &!tw in {
+                conns.nonblocking(tw, real);
+            }
+            st[slot] = real + 1;
+            return (t, 0);
+        }
+        Accepted::Again => {
+            return (t, 2);
+        }
+        Accepted::Failed(e) => {
+            return (t, 2);
+        }
+    }
+}
+
+// `run`, as a server: the listener is on the port, `listening` is said, and `accept S` takes the next client into slot S (the other commands are the same).
+fn serve_run[&h, &i, &l, &n, &k, &s](heap: &!h Heap, io: &!i Io, listener: &!l Listener, net: &n Net(""), clock: &k Clock, dial: int, script: &s [byte]) -> [heap, io_write, io_read, err_write, conn_accept, net_out(""), conn_read, conn_write, poll, clock] int {
+    var table = conns.empty(heap, 16);
+    var pending = buffer.empty(heap, 256);
+    var seen = buffer.empty(heap, 4096);
+    var status = 0;
+    console.error_all(io, "listening\n");
+    region r {
+        let st = alloc_slice[r](32, 0);
+        let lines = bytes.count_byte(script, 10) + 1;
+        var at = 1;
+        while at <= lines && status == 0 {
+            let line = bytes.field(script, 10, at);
+            at = at + 1;
+            if len(line) > 0 && int_of(line[0]) != '#' {
+                if is(bytes.field(line, ' ', 1), "accept") {
+                    let (t2, code) = accept_slot(heap, listener, table, st, number(bytes.field(line, ' ', 2)));
+                    table = t2;
+                    status = code;
+                } else if is(bytes.field(line, ' ', 1), "open") {
+                    let (t2, code) = open_slot(heap, io, net, dial, table, st, number(bytes.field(line, ' ', 2)));
+                    table = t2;
+                    status = code;
+                } else {
+                    var code = 0;
+                    borrow mut table as &!tw in {
+                        let (kept, reread, c) = step(heap, io, clock, tw, pending, seen, st, line);
+                        pending = kept;
+                        seen = reread;
+                        code = c;
+                    }
+                    status = code;
+                }
+            }
+        }
+    }
+    conns.drop(heap, table);
+    buffer.drop(heap, pending);
+    buffer.drop(heap, seen);
+    return status;
+}
+
+fn run[&h, &i, &n, &k, &s](heap: &!h Heap, io: &!i Io, net: &n Net(""), clock: &k Clock, port: int, script: &s [byte]) -> [heap, io_write, io_read, net_out(""), conn_read, conn_write, poll, clock] int {
     var table = conns.empty(heap, 16);
     var pending = buffer.empty(heap, 256);
     var seen = buffer.empty(heap, 4096);
@@ -976,7 +1255,26 @@ fn main(world: World) -> [] int {
             borrow args as &a in {
                 borrow net as &nn in {
                     borrow clock as &k in {
-                        if arg_count(a) >= 3 {
+                        if arg_count(a) >= 4 {
+                            // Serving mode: `sk_client PORT SCRIPT serve` listens on the port and says `listening`; the script's `accept S` takes a client.
+                            status = 4;
+                            match tcp_listen(nn, number(arg(a, 1)), 16, 0) {
+                                Listening::Ok(l) => {
+                                    var listener = l;
+                                    borrow mut listener as &!lh in {
+                                        var dial = 0;
+                                        if arg_count(a) >= 5 {
+                                            dial = number(arg(a, 4));
+                                        }
+                                        status = serve_run(h, i, lh, nn, k, dial, arg(a, 2));
+                                    }
+                                    listener_close(listener);
+                                }
+                                Listening::Failed(e) => {
+                                    console.write_all(i, "cannot listen\n");
+                                }
+                            }
+                        } else if arg_count(a) >= 3 {
                             status = run(h, i, nn, k, number(arg(a, 1)), arg(a, 2));
                         }
                     }

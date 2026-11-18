@@ -1,0 +1,2 @@
+enum E { A, B(int), C(int, bool) }
+fn f[&r](e: E) -> [] int { var i = 0; while i < 3 { match e { E::A => { i = i + 1; } _ => { i = i + 2; } } } return i; }

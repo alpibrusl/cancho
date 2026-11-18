@@ -1,0 +1,8 @@
+{
+  "command": "show",
+  "ok": false,
+  "refused": {
+    "message": "`HEAD~9` goes back past the first change",
+    "tag": "bad-revision"
+  }
+}

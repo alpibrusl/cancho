@@ -6,6 +6,9 @@ same inode
 EEXIST 
 src=NEW! held=KEEP
 same inode
+== the same name on both sides: refused with EEXIST (macOS's RENAME_EXCL alone answers success there, so the runtime asks first), the file stays; a missing name is ENOENT
+EEXIST ENOENT 
+held=KEEP
 == a destination that is a link, dangling or not, is a name that is taken: the link stays and nothing is written through it
 EEXIST EEXIST 
 src=NEW! target=OUTSIDE absent=<absent>

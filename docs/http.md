@@ -157,8 +157,22 @@ security bug:
 5. **Methods are exact and case-sensitive** (RFC 9110 §9.1). `get` is not
    `GET`.
 6. **405 is not 404.** `find` answers `-2` for a path some route has under
-   another method, `-1` for a path no route has. (It does not say *which*
-   methods, so no `Allow` header; §8.)
+   another method, `-1` for a path no route has. `allowed(path)` says *which*
+   methods, in the order the routes were added, each once, for the `Allow`
+   header of the 405. *(Corrected: this rule said `find` could not say which
+   methods and there was no `Allow` header; `allowed` was added later and the
+   rule was not changed.)*
+7. **The root route `/` is a route.** It matches the path `/` and nothing else
+   (rule 4: no normalisation), by hash like any static pattern. *(Found by
+   cancho-sheets' `examples/pg-browser`: a router that held `/` trapped, and a
+   service died, on the first request with the wrong method for any other route,
+   because `allowed` asks every route whether it fits the path and `matches` read
+   `pattern[p]` one byte past the end of a pattern whose only segment is empty.
+   `find` never reached it: a static pattern is found by hash. Fixed: an empty
+   pattern segment is read as nothing and compared with the path's segment. The
+   router test against the reference matcher now also asks what a 405 would list,
+   with `/` in the table in every run, and `tests/lex/route_test.cho` has the
+   reduced case; both fail on the old `matches`, **measured**.)*
 
 A malformed pattern, an id below zero, an empty method, or a second static
 route for the same method and path **traps at registration** -- the program

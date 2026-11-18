@@ -1,0 +1,3 @@
+ok numbers are read as Rust reads them, halfway cases included
+ok exact ties between two shortest decimals print the even one and everything reads back
+ok fixed printing rounds the exact value half to even and refuses what does not fit

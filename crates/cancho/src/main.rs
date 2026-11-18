@@ -1402,9 +1402,15 @@ fn print_authority(
                     Some(value) => format!("\"{}\"", escaped(value)),
                     None => "null".to_owned(),
                 };
+                // `fs_read(p)` and `fs_write(p)` are a text prefix that a link inside leads out of (#762).
+                let confinement = if name == "fs_read" || name == "fs_write" {
+                    ", \"confinement\": \"lexical\""
+                } else {
+                    ""
+                };
                 writeln!(
                     out,
-                    "    {{ \"name\": \"{}\", \"argument\": {argument}, \"bounded\": {} }}{comma}",
+                    "    {{ \"name\": \"{}\", \"argument\": {argument}, \"bounded\": {}{confinement} }}{comma}",
                     escaped(name),
                     bounds
                 )?;

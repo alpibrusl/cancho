@@ -1,0 +1,9 @@
+    // inserted 34
+fn f() -> [] int {
+    // inserted 21
+
+    let x = 1;
+
+    return x;
+
+}

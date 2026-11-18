@@ -1,0 +1,27 @@
+//~ ERROR the value matched here is `res`  
+//~ RULE linear-value-unconsumed  
+
+// §4.1: destructuring consumes by producing the parts. A `_` arm consumes the  
+// scrutinee and produces nothing, which is a silent drop by another name.  
+
+res struct Ticket { fd: int }  
+
+enum Slot {  
+    Empty,  
+    Full(Ticket),  
+}  
+
+fn size(s: Slot) -> [] int {  
+    match s {  
+        Slot::Empty => {  
+            return 0;  
+        }  
+        _ => {  
+            return 1;  
+        }  
+    }  
+}  
+
+fn main() -> [] int {  
+    return 0;  
+}  

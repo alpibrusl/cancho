@@ -1,0 +1,11 @@
+{
+  "command": "revert",
+  "ok": false,
+  "refused": {
+    "message": "record or restore the working copy before a revert",
+    "paths": [
+      "notes.md"
+    ],
+    "tag": "dirty-working-copy"
+  }
+}

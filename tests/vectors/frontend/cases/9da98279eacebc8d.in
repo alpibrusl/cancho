@@ -1,0 +1,1 @@
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"if","cond":{"kind":"bool","value":true},"then":[],"else":[{"kind":"if","cond":{"kind":"bool","value":false},"then":[],"else":null}]},{"kind":"if","cond":{"kind":"bool","value":true},"then":[],"else":[]}]}]}

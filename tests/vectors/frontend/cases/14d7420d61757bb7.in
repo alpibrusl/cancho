@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [
+        {
+          "name": "a",
+          "ty": {
+            "kind": "slice",
+            "inner": {
+              "name": "int"
+            }
+          }
+        }
+      ],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      }
+    }
+  ]
+}

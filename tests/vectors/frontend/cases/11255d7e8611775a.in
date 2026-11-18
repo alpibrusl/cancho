@@ -1,0 +1,2 @@
+struct W[T] { a: T }
+struct S { a: W[S] }

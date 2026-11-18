@@ -1,0 +1,51 @@
+{
+  "command": "export-git",
+  "commits": 7,
+  "compared_with_import": 7,
+  "dry_run": false,
+  "equal": 5,
+  "mismatches": [
+    {
+      "change": "ecb8932a872402bb4022fa57166faea8d5d52da49eee044754ab367b7a1511b4",
+      "exported": "48f328c9bc6a741939d3ccd92cda78a37b718eb2",
+      "original": "e94f2741f2b51b558fdee19b5d75911233dbc388"
+    },
+    {
+      "change": "75f0ff5c26a49cfe345d28260e1b09127b67d1014493f657fd73d13511738c3d",
+      "exported": "e857f1eefa55700169152f1ddb1ec479778cb68b",
+      "original": "c5299f6177eac9affdafe758cb65a440c6ff0a84"
+    }
+  ],
+  "objects_written": 15,
+  "ok": true,
+  "refs": [
+    {
+      "git": "bc60c8336b530b9bf6fe4c9b1cd65c9b3da66d67",
+      "name": "refs/heads/br1"
+    },
+    {
+      "git": "68010f679f7c4d37ff577bbcf01e3ee07dc1ae8c",
+      "name": "refs/heads/br2"
+    },
+    {
+      "git": "2a87d7c6f5c0b885bd334b0d1028d7cfe29ce7ff",
+      "name": "refs/heads/br3"
+    },
+    {
+      "git": "e1b46012bd91c559625e9ac30b44a942028123cf",
+      "name": "refs/heads/main"
+    },
+    {
+      "git": "e857f1eefa55700169152f1ddb1ec479778cb68b",
+      "name": "refs/heads/nobreak"
+    },
+    {
+      "git": "b42db0c30a493afc3bd72bc1cac1e040be06260d",
+      "name": "refs/heads/nonutf8"
+    },
+    {
+      "git": "48f328c9bc6a741939d3ccd92cda78a37b718eb2",
+      "name": "refs/heads/upper"
+    }
+  ]
+}

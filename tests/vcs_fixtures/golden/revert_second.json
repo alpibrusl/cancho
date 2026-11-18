@@ -1,0 +1,11 @@
+{
+  "change": "059f93e4d73e049c29981cead216f47d83f3ced666c3ba016b82df459a0b87de",
+  "command": "revert",
+  "dry_run": false,
+  "ok": true,
+  "reverted": "9e58c8a764b7d26837b806d291d8f7e50838343c3bd37076d1bc4bb5b1aaf442",
+  "touched": [
+    "a.cho"
+  ],
+  "unchanged": false
+}

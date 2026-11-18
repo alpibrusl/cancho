@@ -94,7 +94,8 @@ required, not before.
 
 **Phase 4: the release without Rust.** `release.yml` builds from the seed (stage 0 = the seed, not a Rust build), runs stages 1 to 3,
 publishes stage 2, and the smoke test (`install.sh` then build hello) stays. The `cancho-rust` backup asset is last published in the release
-before deletion and named in its notes.
+before deletion and named in its notes. *Done in the workflow (2026-11-18):* `release.yml` builds no Rust unless the dispatch input `rust_backup`
+is set, which is done once, with `publish`, for that last release.
 
 **Phase 5: delete the crates**, in this order, each a PR with the §4 gates (D2, amended 2026-11-10: no WebAssembly port to wait for, so only the open pull requests and the gates of §4 order them): `cancho-codegen` (Cranelift), `cancho-codegen-llvm`, `cancho-ir`,
 `cancho-syntax`, `cancho-types`, `cancho-id`, `cancho-vcs`, then `crates/cancho` and the workspace `Cargo.toml`, `Cargo.lock`,
@@ -127,7 +128,12 @@ sources), `CANCHO_SELFHOST_SOURCES`, `docs/*.md` links (a link checker belongs i
   (phase 1) and the reject corpus (339 of 339 today), kept and not regenerated from the new compiler.
 - **Seed rot.** A seed nobody rebuilds stops matching the source. The rule, and what CI checks, is in [`seed.md`](seed.md) §5.
 - **Code quality.** Measured once and again with `-O2` (`bootstrap.md`: within 1.3 on 36 rows; the P-256 rows 1.03 to 1.05). The
-  `tls-perf` job is pinned to the Rust compiler; its baseline must be re-recorded with the compiler in cancho **before** phase 5.
+  `tls-perf` job now builds the compiler in cancho from the seed and runs the guard with it (phase 4, 2026-11-18), against the baseline the
+  Rust compiler's code recorded. *Corrected:* this paragraph said the baseline "must be re-recorded with the compiler in cancho before phase 5".
+  It need not be: the guard compares instruction counts against fixed numbers and does not need the Rust compiler to exist; the compiler in
+  cancho is within 1.05 of them, inside the 1.3 the guard allows. Re-recording would only move the baseline by that 5 %, and needs valgrind on
+  each machine of the file (`linux-x86_64` is a CI runner this repository cannot reproduce locally); it is done when a primitive gets cheaper by
+  more than the guard's reciprocal and the guard asks for it.
 - **Compile time and `clang`.** 33 s a stage for the 77-file command line. The compiler still needs `clang` (#489); say so in the install docs.
 - **Windows.** Out of scope until D4.
 - **Flaky tests** (`dup2`, #592) are noise in the gates; fix or quarantine them in phase 0.

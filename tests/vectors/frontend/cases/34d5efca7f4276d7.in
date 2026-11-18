@@ -1,0 +1,25 @@
+//~ ERROR `child_kill_group` is not a function in this program
+//~ RULE not-a-function
+
+// `docs/processes.md` §4.12: `child_kill_group` is edition 9, so an edition-7
+// file that declares or calls a function by that name is unchanged
+// (`docs/editions.md` §5).
+
+edition 7;
+fn stop[&c](child: &c Child) -> [child_signal] int {
+    return child_kill_group(child, 256);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    return 0;
+}

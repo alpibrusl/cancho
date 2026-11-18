@@ -1,0 +1,8 @@
+{
+  "command": "export-git",
+  "ok": false,
+  "refused": {
+    "message": "`export-git` takes a directory for the git repository",
+    "tag": "bad-argument"
+  }
+}

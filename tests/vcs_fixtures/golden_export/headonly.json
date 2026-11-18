@@ -1,0 +1,11 @@
+{
+  "command": "export-git",
+  "commits": 2,
+  "compared_with_import": 0,
+  "dry_run": false,
+  "equal": 0,
+  "mismatches": [],
+  "objects_written": 6,
+  "ok": true,
+  "refs": []
+}

@@ -1,0 +1,7 @@
+ok folding_a_byte_returning_call
+GAP: the report counts what folded: the Rust compiler says folded_operators > 0 and folded_calls 1, the compiler in cancho has no folded_operators and no folded_calls
+ok constants_are_evaluated_at_compile_time
+GAP: the report counts what folded: the Rust compiler says folded_calls 1: fib(23) is inside the budget and fib(24) is not, the compiler in cancho has no folded_calls
+ok running_out_of_fuel_leaves_a_working_program
+ok a_possible_trap_still_traps
+ok a_folded_float_is_the_same_float

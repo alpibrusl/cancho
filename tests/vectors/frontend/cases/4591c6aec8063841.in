@@ -1,0 +1,1 @@
+fn f[&r](w: World) -> [] int { return 1; }

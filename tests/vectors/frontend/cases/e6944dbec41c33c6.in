@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { return bits_of(1.5); }

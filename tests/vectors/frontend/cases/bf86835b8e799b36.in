@@ -1,0 +1,11 @@
+  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(io);
+ release(ffi);
+ release(heap);
+ release(args);
+ let tmp = narrow(fs, "/tmp");
+ let (a, b) = narrow(tmp, "/tmp/a", "/tmpevil");
+ release(a);
+ release(b);
+ return 0;
+ } 

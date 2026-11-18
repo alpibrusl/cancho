@@ -1,0 +1,16 @@
+//~ ERROR defined twice
+//~ RULE duplicate-declaration
+    // inserted 75
+
+fn f() -> [] int {
+    return 1;
+}
+
+fn f() -> [] int { // end 68
+    return 2;
+}
+
+fn main() -> [] int {
+    return f(); // end 2
+    // inserted 45
+}

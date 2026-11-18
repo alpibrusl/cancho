@@ -1,0 +1,208 @@
+== store agent-wire/.cancho-vcs
+step 1: vcs log --store <root>/packages/agent-wire/.cancho-vcs
+  exit 0
+  out: 5 lines, 4021655303 825
+  err: (nothing)
+== store http-client/.cancho-vcs/http_client
+step 1: vcs log --store <root>/packages/http-client/.cancho-vcs/http_client
+  exit 0
+  out: 108 lines, 711163811 17820
+  err: (nothing)
+== store http-client/.cancho-vcs/http_client_slot
+step 1: vcs log --store <root>/packages/http-client/.cancho-vcs/http_client_slot
+  exit 0
+  out: 67 lines, 833550011 11055
+  err: (nothing)
+== store http-client/.cancho-vcs/http_client_wire
+step 1: vcs log --store <root>/packages/http-client/.cancho-vcs/http_client_wire
+  exit 0
+  out: 89 lines, 3350861136 15130
+  err: (nothing)
+== store http-request/.cancho-vcs
+step 1: vcs log --store <root>/packages/http-request/.cancho-vcs
+  exit 0
+  out: 3 lines, 1276138491 495
+  err: (nothing)
+== store http-response/.cancho-vcs
+step 1: vcs log --store <root>/packages/http-response/.cancho-vcs
+  exit 0
+  out| send_all                 sig d32e76aa1da6cdcbef66286db108f5bef3390deeae353aacd8d81eaf7f45f9ef  body 25b3d6dbd84ddc47c7a793d7a653f9b02c3062433d51f9aa6ea083babcb64b86
+  out| status_of                sig b41cd75530e2653f6fd0e4ddb47460b2f98d104c4d466f3869b1e64b9147ffae  body f5bec95033007de386169d7b0cbfc1841253e8aaf166d559c39a9aaaff0b4ef9
+  err: (nothing)
+== store http-server/.cancho-vcs
+step 1: vcs log --store <root>/packages/http-server/.cancho-vcs
+  exit 0
+  out: 86 lines, 869935026 14620
+  err: (nothing)
+== store net-connect/.cancho-vcs
+step 1: vcs log --store <root>/packages/net-connect/.cancho-vcs
+  exit 0
+  out: 5 lines, 25070701 825
+  err: (nothing)
+== store net-sockets/.cancho-vcs
+step 1: vcs log --store <root>/packages/net-sockets/.cancho-vcs
+  exit 0
+  out: 10 lines, 2565900965 1650
+  err: (nothing)
+== store tls/.cancho-vcs/tls
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls
+  exit 0
+  out: 134 lines, 904374839 22780
+  err: (nothing)
+== store tls/.cancho-vcs/tls_cident
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls_cident
+  exit 0
+  out: 32 lines, 3772800689 5440
+  err: (nothing)
+== store tls/.cancho-vcs/tls_client
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls_client
+  exit 0
+  out: 47 lines, 2213835291 7990
+  err: (nothing)
+== store tls/.cancho-vcs/tls_client12
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls_client12
+  exit 0
+  out: 14 lines, 3186812615 2382
+  err: (nothing)
+== store tls/.cancho-vcs/tls_clientauth
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls_clientauth
+  exit 0
+  out: 21 lines, 1938151029 3570
+  err: (nothing)
+== store tls/.cancho-vcs/tls_hello
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls_hello
+  exit 0
+  out: 45 lines, 2322896522 7425
+  err: (nothing)
+== store tls/.cancho-vcs/tls_identity
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls_identity
+  exit 0
+  out: 44 lines, 3017393257 7480
+  err: (nothing)
+== store tls/.cancho-vcs/tls_message
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls_message
+  exit 0
+  out: 84 lines, 3299080890 13864
+  err: (nothing)
+== store tls/.cancho-vcs/tls_record
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls_record
+  exit 0
+  out: 128 lines, 3128605598 21844
+  err: (nothing)
+== store tls/.cancho-vcs/tls_saved
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls_saved
+  exit 0
+  out: 19 lines, 1204383575 3135
+  err: (nothing)
+== store tls/.cancho-vcs/tls_server
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls_server
+  exit 0
+  out: 24 lines, 4129641499 4080
+  err: (nothing)
+== store tls/.cancho-vcs/tls_slot
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls_slot
+  exit 0
+  out: 193 lines, 2024149301 32817
+  err: (nothing)
+== store tls/.cancho-vcs/tls_ticket
+step 1: vcs log --store <root>/packages/tls/.cancho-vcs/tls_ticket
+  exit 0
+  out: 75 lines, 538444620 12750
+  err: (nothing)
+== store x509/.cancho-vcs/x509
+step 1: vcs log --store <root>/packages/x509/.cancho-vcs/x509
+  exit 0
+  out: 84 lines, 956334905 13860
+  err: (nothing)
+== store x509/.cancho-vcs/x509_key
+step 1: vcs log --store <root>/packages/x509/.cancho-vcs/x509_key
+  exit 0
+  out: 22 lines, 561590853 3740
+  err: (nothing)
+== store x509/.cancho-vcs/x509_names
+step 1: vcs log --store <root>/packages/x509/.cancho-vcs/x509_names
+  exit 0
+  out: 19 lines, 3602110276 3230
+  err: (nothing)
+== store x509/.cancho-vcs/x509_verify
+step 1: vcs log --store <root>/packages/x509/.cancho-vcs/x509_verify
+  exit 0
+  out: 55 lines, 1561323813 9350
+  err: (nothing)
+== the stores made for the case
+== log --store made/names
+step 1: vcs log --store made/names
+  exit 0
+  out: 7 lines, 3416923797 1192
+  err: (nothing)
+== log --store made/none
+step 2: vcs log --store made/none
+  exit 0
+  out| nothing published yet at `made/none`
+  err: (nothing)
+== log --store made/empty
+step 3: vcs log --store made/empty
+  exit 0
+  out| nothing published yet at `made/empty`
+  err: (nothing)
+== log --store made/absent
+step 4: vcs log --store made/absent
+  exit 0
+  out| nothing published yet at `made/absent`
+  err: (nothing)
+== log
+step 5: vcs log 
+  exit 0
+  out| nothing published yet at `.cancho-vcs`
+  err: (nothing)
+== log --std --store made/names
+step 6: vcs log --std --store made/names
+  exit 0
+  out: 7 lines, 3416923797 1192
+  err: (nothing)
+== log --dir x --store made/names
+step 7: vcs log --dir x --store made/names
+  exit 0
+  out: 7 lines, 3416923797 1192
+  err: (nothing)
+== log --requires a:b --store made/names
+step 8: vcs log --requires a:b --store made/names
+  exit 0
+  out: 7 lines, 3416923797 1192
+  err: (nothing)
+== log --store
+step 9: vcs log --store
+  exit 2
+  out: (nothing)
+  err| `--store` needs a path
+== log --dir
+step 10: vcs log --dir
+  exit 2
+  out: (nothing)
+  err| `--dir` needs a directory
+== log --requires
+step 11: vcs log --requires
+  exit 2
+  out: (nothing)
+  err| `--requires` needs `<lock-file>:<dep-store>`
+== log x.cho
+step 12: vcs log x.cho
+  exit 2
+  out: (nothing)
+  err| `vcs log` takes no input files, only `--store`
+== log --bogus
+step 13: vcs log --bogus
+  exit 2
+  out: (nothing)
+  err| unknown option `--bogus`
+== made/text
+step 14: vcs log --store made/text
+  exit 3
+  out: (nothing)
+  err| cannot read manifest at `made/text`
+== made/wrong
+step 15: vcs log --store made/wrong
+  exit 3
+  out: (nothing)
+  err| cannot read manifest at `made/wrong`
+ok vcs_log_in_cancho_lists_a_store_like_cancho_vcs_log

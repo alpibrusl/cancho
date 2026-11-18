@@ -1,0 +1,52 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "+",
+              "text": "x\n"
+            }
+          ],
+          "new_lines": 1,
+          "new_start": 1,
+          "old_lines": 0,
+          "old_start": 0
+        }
+      ],
+      "path": "d/e/f",
+      "status": "added"
+    },
+    {
+      "binary": false,
+      "hunks": [],
+      "path": "empty.txt",
+      "status": "added"
+    },
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "+",
+              "text": "new\n"
+            }
+          ],
+          "new_lines": 1,
+          "new_start": 1,
+          "old_lines": 0,
+          "old_start": 0
+        }
+      ],
+      "path": "new.txt",
+      "status": "added"
+    }
+  ],
+  "from": "HEAD",
+  "ok": true,
+  "to": "working copy"
+}

@@ -27,8 +27,8 @@ stage-by-stage record and the measurements, and the plan to finish is epic
   build with it.
 - **It refuses what the language refuses.** Of the 339 programs in `tests/reject/` that are not a
   property of a target (marked `//~ TARGET`), it refuses all 339 with the rule the Rust compiler gives (Linux x86-64;
-  `reject_gaps.txt` is empty, [#512](https://github.com/alpibrusl/cancho/issues/512)). So the default no longer lets the
-  Rust front end check first (`RUST_CHECKS_FIRST` is false, and a test says so). What a person sees change: a refusal is
+  the gap list `reject_gaps.txt` was empty, [#512](https://github.com/alpibrusl/cancho/issues/512); it and the test that held it are gone, and stage `walk` of `scripts/gate.sh` holds the same). So the default no longer lets the
+  Rust front end check first (`RUST_CHECKS_FIRST` is false). What a person sees change: a refusal is
   the sentence of the rule, the same for every program it refuses, and not the Rust compiler's message with its names and
   sizes (#479); `CANCHO_COMPILER=rust` has the Rust compiler's.
 - **A refusal says why without the Rust front end** when the compiler in cancho is named alone:

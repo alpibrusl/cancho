@@ -1,0 +1,1210 @@
+edition 12;
+module selfhost.vcsgit;
+
+// vcsgit.cho -- `cancho vcs import-git DIR --dry-run`, natively (`docs/vcs-routing.md` section 16, R14; the Rust is `import_git` in `crates/cancho-vcs/src/bridge.rs`). It
+// reads a git repository's whole history (`gitread.cho`, `gitparse.cho`) exactly as the real import does, writes nothing, and says how many commits it would make,
+// how many the repository already has (`.cancho/vcs/gitmap`), and for which of them a commit rendered back from its change would not be the commit it came from.
+//
+// A refusal is a tag and a sentence: `git-unreadable` (an object that cannot be read, or is not what its place says), `path-unsupported` (a name that is not UTF-8,
+// a path with a newline), `submodule-unsupported`, `mode-unsupported`, `path-escapes` and `tree-invalid` (what the tree of a commit may not hold).
+//
+// What differs from the Rust command, on purpose, and why it cannot be seen: the change, tree and blob ids of the cancho store are not computed (a dry run does not
+// say them), so the blob contents are read, which is what can fail, and not hashed.
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import std.utf8;
+import selfhost.gitparse;
+import selfhost.gitread;
+import selfhost.jsonwrite;
+import selfhost.sha1;
+import selfhost.vcsrepo;
+import selfhost.vcsstore;
+
+// ---- the answers -------------------------------------------------------------------------------------------------------------
+
+// The tag of a refusal code: 0 `git-unreadable`, 1 `path-unsupported`, 2 `submodule-unsupported`, 3 `mode-unsupported`, 4 `path-escapes`, 5 `tree-invalid`.
+fn tag_name(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "path-unsupported";
+    }
+    if code == 2 {
+        return "submodule-unsupported";
+    }
+    if code == 3 {
+        return "mode-unsupported";
+    }
+    if code == 4 {
+        return "path-escapes";
+    }
+    if code == 5 {
+        return "tree-invalid";
+    }
+    return "git-unreadable";
+}
+
+// A refusal as a `Got`: `kind` is the tag code, `status` 1.
+pub fn fault[&h, &m](heap: &!h Heap, code: int, message: &m [byte]) -> [heap] gitread.Got {
+    return gitread.Got { body: buffer.empty(heap, 0), kind: code, status: 1, why: buffer.append(heap, buffer.empty(heap, len(message)), message) };
+}
+
+fn faulted[&h, &a, &b, &c](heap: &!h Heap, code: int, first: &a [byte], second: &b [byte], third: &c [byte]) -> [heap] gitread.Got {
+    var w = buffer.append(heap, buffer.empty(heap, len(first) + len(second) + len(third)), first);
+    w = buffer.append(heap, w, second);
+    w = buffer.append(heap, w, third);
+    return gitread.Got { body: buffer.empty(heap, 0), kind: code, status: 1, why: w };
+}
+
+pub fn no_fault[&h](heap: &!h Heap) -> [heap] gitread.Got {
+    return gitread.Got { body: buffer.empty(heap, 0), kind: 0, status: 0, why: buffer.empty(heap, 0) };
+}
+
+// `old` ended and `next` in its place.
+pub fn replace_got[&h](heap: &!h Heap, old: gitread.Got, next: gitread.Got) -> [heap] gitread.Got {
+    let (b, k, s, w) = gitread.got_parts(old);
+    buffer.drop(heap, b);
+    buffer.drop(heap, w);
+    return next;
+}
+
+// The status of `g`, which stays.
+pub fn status_of[&g](g: &g gitread.Got) -> [] int {
+    return gitread.got_status(g);
+}
+
+// A refusal document, in the shape every command's refusal has.
+fn refusal_document[&h, &t, &m](heap: &!h Heap, tag: &t [byte], message: &m [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, buffer.empty(heap, 192), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), "import-git");
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "false");
+    b = buffer.push(heap, vcsrepo.member(heap, b, 1, false, "refused"), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, true, "message"), message);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, false, "tag"), tag);
+    b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(125));
+    return buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+}
+
+// `got` (a failure) as the answer of the command: status 50 and the document, or status 10 for a failure of the machine.
+pub fn failure_answer[&h](heap: &!h Heap, got: gitread.Got) -> [heap] vcsstore.Object {
+    let (b, kind, status, why) = gitread.got_parts(got);
+    buffer.drop(heap, b);
+    var doc = buffer.empty(heap, 0);
+    var code = 50;
+    if status == 2 {
+        code = 10;
+    }
+    borrow why as &wb in {
+        buffer.drop(heap, doc);
+        doc = refusal_document(heap, tag_name(kind), buffer.bytes(wb));
+    }
+    buffer.drop(heap, why);
+    return vcsstore.Object { bytes: doc, status: code, errno: 0 };
+}
+
+// ---- trees -------------------------------------------------------------------------------------------------------------------
+
+// Byte `i` of the key git sorts a tree entry by: its name, and for a directory a `/` after it; -1 past the end.
+fn key_byte[&t](body: &t [byte], at: int, end: int, dir: bool, i: int) -> [] int {
+    let n = end - at;
+    if i < n {
+        return int_of(body[at + i]);
+    }
+    if i == n && dir {
+        return 47;
+    }
+    return 0 - 1;
+}
+
+fn key_compare[&t](body: &t [byte], a_at: int, a_end: int, a_dir: bool, b_at: int, b_end: int, b_dir: bool) -> [] int {
+    var i = 0;
+    while true {
+        let x = key_byte(body, a_at, a_end, a_dir, i);
+        let y = key_byte(body, b_at, b_end, b_dir, i);
+        if x != y {
+            if x < y {
+                return 0 - 1;
+            }
+            return 1;
+        }
+        if x < 0 {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Whether a name could be a component of a path the store takes: not empty, not `.` or `..`, with no `/` and no newline.
+fn name_is_plain[&n](name: &n [byte]) -> [] bool {
+    if len(name) == 0 || bytes.equal(name, ".") || bytes.equal(name, "..") {
+        return false;
+    }
+    var k = 0;
+    while k < len(name) {
+        if name[k] == byte_of(47) || name[k] == byte_of(10) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// The octal digits of `mode`.
+fn octal[&h](heap: &!h Heap, mode: int) -> [heap] buffer.Buffer {
+    var digits = buffer.empty(heap, 16);
+    if mode == 0 {
+        return buffer.push(heap, digits, byte_of(48));
+    }
+    var rev = buffer.empty(heap, 16);
+    var m = mode;
+    while m > 0 {
+        rev = buffer.push(heap, rev, byte_of(48 + m % 8));
+        m = m / 8;
+    }
+    borrow rev as &rb in {
+        let r = buffer.bytes(rb);
+        var k = len(r);
+        while k > 0 {
+            k = k - 1;
+            digits = buffer.push(heap, digits, r[k]);
+        }
+    }
+    buffer.drop(heap, rev);
+    return digits;
+}
+
+// `tid` and what is below it, read in the order the Rust command reads them (`flatten`), once each: a refusal as a `Got` with `status` 1, else the flags of the tree: 1
+// visited, 2 something below it could not be a path of the store (so the exact check is needed), 4 a name in it is `.git` or `.cancho` (a refusal when it is the root).
+fn visit_tree[&h, &d, &o, &x, &k, &m, &s, &t, &b, &i](heap: &!h Heap, root: &d Dir, od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], trees: &!t [int], blobs: &!b [int], mask: int, tid: &i [byte]) -> [heap, dir_read, file_read] (gitread.Got, int) {
+    let seen = gitparse.table_get(trees, mask, tid);
+    if seen >= 0 {
+        return (no_fault(heap), seen);
+    }
+    let g = gitread.read_object(heap, root, od, ix, pk, meta, scratch, tid);
+    let (body, kind, status, why) = gitread.got_parts(g);
+    if status != 0 {
+        buffer.drop(heap, body);
+        return (gitread.Got { body: buffer.empty(heap, 0), kind: 0, status: status, why: why }, 0);
+    }
+    buffer.drop(heap, why);
+    var failure = no_fault(heap);
+    var flags = 1;
+    if kind != 2 {
+        let name = gitread.hex_of(heap, tid);
+        borrow name as &nb in {
+            failure = replace_got(heap, failure, faulted(heap, 0, buffer.bytes(nb), " is not a tree", ""));
+        }
+        buffer.drop(heap, name);
+    } else {
+        borrow body as &bb in {
+            let tb = buffer.bytes(bb);
+            let check = gitparse.tree_check(tb);
+            if check != 0 {
+                var sentence = "bad tree entry";
+                if check == 2 {
+                    sentence = "bad tree mode";
+                } else if check == 3 {
+                    sentence = "truncated tree";
+                }
+                failure = replace_got(heap, failure, fault(heap, 0, sentence));
+            } else {
+                let at = box_slice(heap, 4, 0);
+                let ent = box_slice(heap, 3 * (len(tb) / 22 + 1), 0);
+                borrow mut at as &!ab in {
+                    borrow mut ent as &!eb in {
+                        let a = contents(ab);
+                        let e = contents(eb);
+                        var count = 0;
+                        var p = 0;
+                        var failed = false;
+                        while p < len(tb) && !failed {
+                            let mode = gitparse.tree_entry(tb, p, a);
+                            let name = tb[a[0]..a[1]];
+                            let eid = tb[a[2]..a[3]];
+                            let is_dir = mode == 16384;
+                            // the shape of the names, for the exact check
+                            if !name_is_plain(name) {
+                                flags = flags | 2;
+                            }
+                            if bytes.equal(name, ".git") || bytes.equal(name, ".cancho") {
+                                flags = flags | 4;
+                            }
+                            if count > 0 {
+                                if key_compare(tb, e[3 * count - 3], e[3 * count - 2], e[3 * count - 1] == 1, a[0], a[1], is_dir) >= 0 {
+                                    flags = flags | 2;
+                                }
+                            }
+                            if is_dir {
+                                var back = count;
+                                while back > 0 {
+                                    back = back - 1;
+                                    let bn = tb[e[3 * back]..e[3 * back + 1]];
+                                    if len(bn) >= len(name) && bytes.equal(bn[0..len(name)], name) {
+                                        if len(bn) == len(name) && e[3 * back + 2] == 0 {
+                                            flags = flags | 2;
+                                        }
+                                    } else {
+                                        back = 0;
+                                    }
+                                }
+                            }
+                            e[3 * count] = a[0];
+                            e[3 * count + 1] = a[1];
+                            if is_dir {
+                                e[3 * count + 2] = 1;
+                            } else {
+                                e[3 * count + 2] = 0;
+                            }
+                            count = count + 1;
+                            // the walk, as `flatten` does it
+                            if !utf8.is_valid(name) {
+                                failure = replace_got(heap, failure, fault(heap, 1, "a file name that is not UTF-8"));
+                                failed = true;
+                            } else if is_dir {
+                                let (cg, cflags) = visit_tree(heap, root, od, ix, pk, meta, scratch, trees, blobs, mask, eid);
+                                var cstatus = 0;
+                                borrow cg as &cgb in {
+                                    cstatus = status_of(cgb);
+                                }
+                                if cstatus != 0 {
+                                    failure = replace_got(heap, failure, cg);
+                                    failed = true;
+                                } else {
+                                    failure = replace_got(heap, failure, cg);
+                                    flags = flags | cflags & 2;
+                                }
+                            } else if mode == 57344 {
+                                failure = replace_got(heap, failure, faulted(heap, 2, "`", name, "` is a submodule"));
+                                failed = true;
+                            } else if mode != 33188 && mode != 33261 && mode != 40960 {
+                                let digits = octal(heap, mode);
+                                borrow digits as &db in {
+                                    var w = buffer.append(heap, buffer.empty(heap, 64), "`");
+                                    w = buffer.append(heap, w, name);
+                                    w = buffer.append(heap, w, "` has mode ");
+                                    w = buffer.append(heap, w, buffer.bytes(db));
+                                    borrow w as &wb in {
+                                        failure = replace_got(heap, failure, fault(heap, 3, buffer.bytes(wb)));
+                                    }
+                                    buffer.drop(heap, w);
+                                }
+                                buffer.drop(heap, digits);
+                                failed = true;
+                            } else if gitparse.table_get(blobs, mask, eid) < 0 {
+                                let bg = gitread.read_object(heap, root, od, ix, pk, meta, scratch, eid);
+                                let (bbody, bkind, bstatus, bwhy) = gitread.got_parts(bg);
+                                buffer.drop(heap, bbody);
+                                if bstatus != 0 {
+                                    failure = replace_got(heap, failure, gitread.Got { body: buffer.empty(heap, 0), kind: 0, status: bstatus, why: bwhy });
+                                    failed = true;
+                                } else {
+                                    buffer.drop(heap, bwhy);
+                                    if bkind != 3 {
+                                        let hx = gitread.hex_of(heap, eid);
+                                        borrow hx as &hb in {
+                                            failure = replace_got(heap, failure, faulted(heap, 0, buffer.bytes(hb), " is not a blob", ""));
+                                        }
+                                        buffer.drop(heap, hx);
+                                        failed = true;
+                                    } else {
+                                        gitparse.table_put(blobs, mask, eid, 1);
+                                    }
+                                }
+                            }
+                            p = a[3];
+                        }
+                    }
+                }
+                unbox_slice(heap, at);
+                unbox_slice(heap, ent);
+            }
+        }
+    }
+    buffer.drop(heap, body);
+    var ok = false;
+    borrow failure as &fb in {
+        ok = status_of(fb) == 0;
+    }
+    if ok {
+        gitparse.table_put(trees, mask, tid, flags);
+    }
+    return (failure, flags);
+}
+
+// ---- the exact check of a tree's paths ---------------------------------------------------------------------------------------
+
+// The paths below `tid` as records (four bytes of length, then the path), in the order `flatten` makes them, appended to `out`; and how many. The tree has been
+// read once already, so a failure of a read is not looked for again.
+fn collect_paths[&h, &d, &o, &x, &k, &m, &s, &i, &p](heap: &!h Heap, root: &d Dir, od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], tid: &i [byte], prefix: &p [byte], out: buffer.Buffer, count: int) -> [heap, dir_read, file_read] (buffer.Buffer, int) {
+    let g = gitread.read_object(heap, root, od, ix, pk, meta, scratch, tid);
+    let (body, kind, status, why) = gitread.got_parts(g);
+    buffer.drop(heap, why);
+    var o2 = out;
+    var n = count;
+    if status == 0 && kind == 2 {
+        let at = box_slice(heap, 4, 0);
+        borrow mut at as &!ab in {
+            let a = contents(ab);
+            borrow body as &bb in {
+                let tb = buffer.bytes(bb);
+                var p = 0;
+                while p < len(tb) {
+                    let mode = gitparse.tree_entry(tb, p, a);
+                    let name = tb[a[0]..a[1]];
+                    let eid = tb[a[2]..a[3]];
+                    if mode == 16384 {
+                        var sub = buffer.append(heap, buffer.empty(heap, len(prefix) + len(name) + 2), prefix);
+                        sub = buffer.append(heap, sub, name);
+                        sub = buffer.push(heap, sub, byte_of(47));
+                        borrow sub as &sb in {
+                            let (o3, n3) = collect_paths(heap, root, od, ix, pk, meta, scratch, eid, buffer.bytes(sb), o2, n);
+                            o2 = o3;
+                            n = n3;
+                        }
+                        buffer.drop(heap, sub);
+                    } else {
+                        let total = len(prefix) + len(name);
+                        o2 = buffer.push(heap, o2, byte_of(total / 16777216 % 256));
+                        o2 = buffer.push(heap, o2, byte_of(total / 65536 % 256));
+                        o2 = buffer.push(heap, o2, byte_of(total / 256 % 256));
+                        o2 = buffer.push(heap, o2, byte_of(total % 256));
+                        o2 = buffer.append(heap, o2, prefix);
+                        o2 = buffer.append(heap, o2, name);
+                        n = n + 1;
+                    }
+                    p = a[3];
+                }
+            }
+        }
+        unbox_slice(heap, at);
+    }
+    buffer.drop(heap, body);
+    return (o2, n);
+}
+
+// `check_path` of the Rust command: `no_fault` when `path` can be a path of the store, else the refusal.
+fn path_fault[&h, &p](heap: &!h Heap, path: &p [byte]) -> [heap] gitread.Got {
+    if len(path) == 0 || path[0] == byte_of(47) {
+        return faulted(heap, 4, "`", path, "` is not a relative path");
+    }
+    var at = 0;
+    var first = true;
+    while at <= len(path) {
+        var end = at;
+        while end < len(path) && path[end] != byte_of(47) {
+            end = end + 1;
+        }
+        let part = path[at..end];
+        if len(part) == 0 || bytes.equal(part, ".") || bytes.equal(part, "..") {
+            return faulted(heap, 4, "`", path, "` has an empty or dot component");
+        }
+        if first && (bytes.equal(part, ".cancho") || bytes.equal(part, ".git")) {
+            var w = buffer.append(heap, buffer.empty(heap, len(path) + 32), "`");
+            w = buffer.append(heap, w, path);
+            w = buffer.append(heap, w, "` is inside `");
+            w = buffer.append(heap, w, part);
+            w = buffer.push(heap, w, byte_of(96));
+            var g = no_fault(heap);
+            borrow w as &wb in {
+                g = replace_got(heap, g, fault(heap, 4, buffer.bytes(wb)));
+            }
+            buffer.drop(heap, w);
+            return g;
+        }
+        first = false;
+        at = end + 1;
+    }
+    var k = 0;
+    while k < len(path) {
+        if path[k] == byte_of(10) || path[k] == byte_of(0) {
+            return fault(heap, 1, "a path with a newline or NUL cannot be stored");
+        }
+        k = k + 1;
+    }
+    return no_fault(heap);
+}
+
+// `Tree::new` on the whole tree `tid`: the paths sorted, each checked in that order, then no path twice and none a file and a directory.
+fn exact_check[&h, &d, &o, &x, &k, &m, &s, &i](heap: &!h Heap, root: &d Dir, od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], tid: &i [byte]) -> [heap, dir_read, file_read] gitread.Got {
+    let (paths, count) = collect_paths(heap, root, od, ix, pk, meta, scratch, tid, "", buffer.empty(heap, 1024), 0);
+    var result = no_fault(heap);
+    let slots = box_slice(heap, 2 * count + 2, 0);
+    borrow mut slots as &!sb in {
+        let sl = contents(sb);
+        borrow paths as &pb in {
+            let pbytes = buffer.bytes(pb);
+            var n = 0;
+            var at = 0;
+            while n < count {
+                let size = int_of(pbytes[at]) * 16777216 + int_of(pbytes[at + 1]) * 65536 + int_of(pbytes[at + 2]) * 256 + int_of(pbytes[at + 3]);
+                var j = n;
+                while j > 0 && bytes.compare(pbytes[sl[2 * (j - 1)]..sl[2 * (j - 1) + 1]], pbytes[at + 4..at + 4 + size]) > 0 {
+                    sl[2 * j] = sl[2 * (j - 1)];
+                    sl[2 * j + 1] = sl[2 * (j - 1) + 1];
+                    j = j - 1;
+                }
+                sl[2 * j] = at + 4;
+                sl[2 * j + 1] = at + 4 + size;
+                at = at + 4 + size;
+                n = n + 1;
+            }
+            var i2 = 0;
+            var found = false;
+            while i2 < count && !found {
+                let g = path_fault(heap, pbytes[sl[2 * i2]..sl[2 * i2 + 1]]);
+                var st = 0;
+                borrow g as &gb in {
+                    st = status_of(gb);
+                }
+                if st != 0 {
+                    result = replace_got(heap, result, g);
+                    found = true;
+                } else {
+                    result = replace_got(heap, result, g);
+                }
+                i2 = i2 + 1;
+            }
+            var w = 0;
+            while w + 1 < count && !found {
+                let a = pbytes[sl[2 * w]..sl[2 * w + 1]];
+                let b = pbytes[sl[2 * w + 2]..sl[2 * w + 3]];
+                if bytes.equal(a, b) {
+                    result = replace_got(heap, result, faulted(heap, 5, "`", a, "` appears twice"));
+                    found = true;
+                } else if len(b) > len(a) && bytes.equal(b[0..len(a)], a) && b[len(a)] == byte_of(47) {
+                    result = replace_got(heap, result, faulted(heap, 5, "`", a, "` is both a file and a directory"));
+                    found = true;
+                }
+                w = w + 1;
+            }
+        }
+    }
+    unbox_slice(heap, slots);
+    buffer.drop(heap, paths);
+    return result;
+}
+
+// ---- counting objects --------------------------------------------------------------------------------------------------------
+
+// How many loose objects the object directories (one path on each line of `odirs`) hold.
+fn count_loose[&h, &d, &o](heap: &!h Heap, root: &d Dir, odirs: &o [byte]) -> [heap, dir_read] int {
+    var total = 0;
+    var at = 0;
+    while at < len(odirs) {
+        var end = at;
+        while end < len(odirs) && odirs[end] != byte_of(10) {
+            end = end + 1;
+        }
+        match dirs.enter(root, odirs[at..end]) {
+            DirOpened::Ok(d0) => {
+                var od = d0;
+                borrow od as &odd in {
+                    let fans = dirs.list(heap, odd, 100000);
+                    borrow fans as &fr in {
+                        var f = 0;
+                        while f < dirs.count(fr) {
+                            let fname = dirs.name(fr, f);
+                            if len(fname) == 2 {
+                                match dirs.enter(odd, fname) {
+                                    DirOpened::Ok(s0) => {
+                                        var sd = s0;
+                                        borrow sd as &sdd in {
+                                            let names = dirs.list(heap, sdd, 1000000);
+                                            borrow names as &nr in {
+                                                total = total + dirs.count(nr);
+                                            }
+                                            dirs.drop(heap, names);
+                                        }
+                                        dir_close(sd);
+                                    }
+                                    DirOpened::Failed(e) => {
+                                    }
+                                }
+                            }
+                            f = f + 1;
+                        }
+                    }
+                    dirs.drop(heap, fans);
+                }
+                dir_close(od);
+            }
+            DirOpened::Failed(e) => {
+            }
+        }
+        at = end + 1;
+    }
+    return total;
+}
+
+// ---- the import --------------------------------------------------------------------------------------------------------------
+
+// The commit `id` as a `Got` with its body, or the refusal.
+pub fn read_commit[&h, &d, &o, &x, &k, &m, &s, &i](heap: &!h Heap, root: &d Dir, od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, file_read] gitread.Got {
+    let g = gitread.read_object(heap, root, od, ix, pk, meta, scratch, id);
+    let (body, kind, status, why) = gitread.got_parts(g);
+    if status != 0 {
+        buffer.drop(heap, body);
+        return gitread.Got { body: buffer.empty(heap, 0), kind: 0, status: status, why: why };
+    }
+    buffer.drop(heap, why);
+    if kind != 1 {
+        buffer.drop(heap, body);
+        let hx = gitread.hex_of(heap, id);
+        var result = no_fault(heap);
+        borrow hx as &hb in {
+            result = replace_got(heap, result, faulted(heap, 0, buffer.bytes(hb), " is not a commit", ""));
+        }
+        buffer.drop(heap, hx);
+        return result;
+    }
+    return gitread.Got { body: body, kind: 1, status: 0, why: buffer.empty(heap, 0) };
+}
+
+// The git commit a change would render as, for the commit `body` (the Rust `commit_bytes` of an imported change): the tree and the parents as parsed, the headers
+// and the message as they were.
+fn rendered[&h, &b, &t, &p](heap: &!h Heap, body: &b [byte], tree: &t [byte], parents: &p [byte], headers_at: int, head_end: int, message_at: int) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buffer.empty(heap, len(body) + 64), "tree ");
+    let th = gitread.hex_of(heap, tree);
+    borrow th as &tb in {
+        out = buffer.append(heap, out, buffer.bytes(tb));
+    }
+    buffer.drop(heap, th);
+    out = buffer.push(heap, out, byte_of(10));
+    var n = 0;
+    while n * 20 < len(parents) {
+        out = buffer.append(heap, out, "parent ");
+        let ph = gitread.hex_of(heap, parents[n * 20..n * 20 + 20]);
+        borrow ph as &pb in {
+            out = buffer.append(heap, out, buffer.bytes(pb));
+        }
+        buffer.drop(heap, ph);
+        out = buffer.push(heap, out, byte_of(10));
+        n = n + 1;
+    }
+    out = buffer.append(heap, out, body[headers_at..head_end]);
+    out = buffer.push(heap, out, byte_of(10));
+    return buffer.append(heap, out, body[message_at..len(body)]);
+}
+
+fn same_bytes[&a, &b](x: &a [byte], y: &b [byte]) -> [] bool {
+    return bytes.equal(x, y);
+}
+
+// The members `name` of a document of the import, an array at level 1 of `items`, lines `A B\n` (two strings: `first` and `second` name their keys) or, when `second` is empty, lines `A\n`
+// (one string each).
+fn list_member[&h, &t, &f, &g](heap: &!h Heap, out: buffer.Buffer, name: &static [byte], items: &t [byte], first: &f [byte], second: &g [byte]) -> [heap] buffer.Buffer {
+    var b = vcsrepo.member(heap, out, 1, false, name);
+    if len(items) == 0 {
+        return buffer.append(heap, b, "[]");
+    }
+    b = buffer.push(heap, b, byte_of(91));
+    var at = 0;
+    var n = 0;
+    while at < len(items) {
+        var end = at;
+        while end < len(items) && items[end] != byte_of(10) {
+            end = end + 1;
+        }
+        if n > 0 {
+            b = buffer.push(heap, b, byte_of(44));
+        }
+        b = jsonwrite.newline(heap, b, 2);
+        if len(second) == 0 {
+            b = jsonwrite.string(heap, b, items[at..end]);
+        } else {
+            var sp = at;
+            while items[sp] != byte_of(32) {
+                sp = sp + 1;
+            }
+            b = buffer.push(heap, b, byte_of(123));
+            b = jsonwrite.string(heap, vcsrepo.member(heap, b, 3, true, first), items[at..sp]);
+            b = jsonwrite.string(heap, vcsrepo.member(heap, b, 3, false, second), items[sp + 1..end]);
+            b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(125));
+        }
+        n = n + 1;
+        at = end + 1;
+    }
+    return buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(93));
+}
+
+// The document of an import that read `commits` new commits and `already` known ones, as `ImportReport::to_json` and the command make it. `mismatches` holds a line `GIT RECOMPUTED\n` of
+// 82 bytes for each; `branches`, `remotes` and `tags` lines `CHANGE NAME\n`; `kept` a line of text for each ref kept.
+pub fn report_document[&h, &m, &x, &y, &z, &w](heap: &!h Heap, commits: int, already: int, new_blobs: int, dry: bool, checked_out: int, branches: &x [byte], remotes: &y [byte], tags: &z [byte], kept: &w [byte], mismatches: &m [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, buffer.empty(heap, 512), byte_of(123));
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, true, "already_imported"), already);
+    b = list_member(heap, b, "branches", branches, "change", "name");
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, false, "checked_out"), checked_out);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, false, "command"), "import-git");
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, false, "commits"), commits);
+    if dry {
+        b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "dry_run"), "true");
+    } else {
+        b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "dry_run"), "false");
+    }
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, false, "new_blobs"), new_blobs);
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "true");
+    b = list_member(heap, b, "refs_kept", kept, "", "");
+    b = list_member(heap, b, "remotes", remotes, "change", "name");
+    b = list_member(heap, b, "self_check_mismatches", mismatches, "git", "recomputed");
+    b = list_member(heap, b, "tags", tags, "change", "name");
+    return buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+}
+
+// The ids of `.cancho/vcs/gitmap` (`GIT CHANGE` on each line) that are 40 lowercase digits, put in `table` with the value 1.
+fn load_gitmap[&h, &d, &t](heap: &!h Heap, vcs: &d Dir, table: &!t [int], mask: int) -> [heap, dir_read, file_read] int {
+    let read = gitread.slurp(heap, vcs, "gitmap");
+    let (text, why) = gitread.contents_parts(read);
+    var count = 0;
+    if why == 0 {
+        borrow text as &tb in {
+            let t = buffer.bytes(tb);
+            if utf8.is_valid(t) {
+                var at = 0;
+                while at < len(t) {
+                    var end = at;
+                    while end < len(t) && t[end] != byte_of(10) {
+                        end = end + 1;
+                    }
+                    var sp = at;
+                    while sp < end && t[sp] != byte_of(32) {
+                        sp = sp + 1;
+                    }
+                    if sp < end && sp - at == 40 {
+                        var lower = true;
+                        var k = at;
+                        while k < sp {
+                            let c = int_of(t[k]);
+                            if !(c >= 48 && c <= 57 || c >= 97 && c <= 102) {
+                                lower = false;
+                            }
+                            k = k + 1;
+                        }
+                        if lower {
+                            let id = gitread.unhex_id(heap, t[at..sp]);
+                            borrow id as &ib in {
+                                gitparse.table_put(table, mask, buffer.bytes(ib), 1);
+                            }
+                            buffer.drop(heap, id);
+                            count = count + 1;
+                        }
+                    }
+                    at = end + 1;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, text);
+    return count;
+}
+
+// One commit that is not known yet, checked as the Rust command checks it: read, its tree read and checked (a refusal as the `Got`), and the commit rendered again from its
+// parts. The second answer is the line `GIT RECOMPUTED\n` when it does not render as itself, else empty. `tr` and `bl` are the tables of trees and blobs seen, `w` 40 bytes of
+// work and `hs` the room of `sha1`.
+pub fn check_commit[&h, &d, &o, &x, &k, &m, &s, &t, &b, &w2, &q, &i](heap: &!h Heap, root: &d Dir, od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], tr: &!t [int], bl: &!b [int], mask: int, w: &!w2 [byte], hs: &!q [int], gid: &i [byte]) -> [heap, dir_read, file_read] (gitread.Got, buffer.Buffer) {
+    var failure = no_fault(heap);
+    var failed = false;
+    var mismatches = buffer.empty(heap, 0);
+    let cg = read_commit(heap, root, od, ix, pk, meta, scratch, gid);
+    let (body, kind, status, why) = gitread.got_parts(cg);
+    if status != 0 {
+        buffer.drop(heap, body);
+        failure = replace_got(heap, failure, gitread.Got { body: buffer.empty(heap, 0), kind: kind, status: status, why: why });
+        failed = true;
+    } else {
+        buffer.drop(heap, why);
+        borrow body as &bb in {
+            let b = buffer.bytes(bb);
+            let parsed = gitparse.commit_parse(heap, b);
+            let (tree, parents, headers_at, head_end, message_at, pstatus) = gitparse.commit_parts(parsed);
+            borrow tree as &trb2 in {
+                let (vg, flags) = visit_tree(heap, root, od, ix, pk, meta, scratch, tr, bl, mask, buffer.bytes(trb2));
+                var vstatus = 0;
+                borrow vg as &vgb in {
+                    vstatus = status_of(vgb);
+                }
+                if vstatus != 0 {
+                    failure = replace_got(heap, failure, vg);
+                    failed = true;
+                } else {
+                    failure = replace_got(heap, failure, vg);
+                    if flags & 6 != 0 {
+                        let eg = exact_check(heap, root, od, ix, pk, meta, scratch, buffer.bytes(trb2));
+                        var estatus = 0;
+                        borrow eg as &egb in {
+                            estatus = status_of(egb);
+                        }
+                        failure = replace_got(heap, failure, eg);
+                        if estatus != 0 {
+                            failed = true;
+                        }
+                    }
+                    if !failed {
+                        borrow parents as &pab in {
+                            let again = rendered(heap, b, buffer.bytes(trb2), buffer.bytes(pab), headers_at, head_end, message_at);
+                            borrow again as &agb in {
+                                if !same_bytes(buffer.bytes(agb), b) {
+                                    var head = buffer.append(heap, buffer.empty(heap, 32), "commit ");
+                                    head = buffer.push_nat(heap, head, len(buffer.bytes(agb)));
+                                    head = buffer.push(heap, head, byte_of(0));
+                                    sha1.init(hs, 0);
+                                    borrow head as &hdb in {
+                                        sha1.update(hs, 0, buffer.bytes(hdb));
+                                    }
+                                    sha1.update(hs, 0, buffer.bytes(agb));
+                                    sha1.finish(hs, 0, w[0..20]);
+                                    buffer.drop(heap, head);
+                                    let gh = gitread.hex_of(heap, gid);
+                                    let rh = gitread.hex_of(heap, w[0..20]);
+                                    borrow gh as &ghb in {
+                                        borrow rh as &rhb in {
+                                            mismatches = buffer.append(heap, mismatches, buffer.bytes(ghb));
+                                            mismatches = buffer.push(heap, mismatches, byte_of(32));
+                                            mismatches = buffer.append(heap, mismatches, buffer.bytes(rhb));
+                                            mismatches = buffer.push(heap, mismatches, byte_of(10));
+                                        }
+                                    }
+                                    buffer.drop(heap, gh);
+                                    buffer.drop(heap, rh);
+                                }
+                            }
+                            buffer.drop(heap, again);
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, tree);
+            buffer.drop(heap, parents);
+        }
+        buffer.drop(heap, body);
+    }
+    if failed {
+        buffer.drop(heap, mismatches);
+        return (failure, buffer.empty(heap, 0));
+    }
+    return (failure, mismatches);
+}
+
+// How many objects the git directory has: the loose ones and the ones the packs of the catalog `meta` hold.
+pub fn object_total[&h, &d, &o, &m](heap: &!h Heap, root: &d Dir, od: &o [byte], meta: &m [int]) -> [heap, dir_read] int {
+    var nobj = count_loose(heap, root, od);
+    var p = 0;
+    while p < meta[0] {
+        nobj = nobj + meta[3 + 5 * p];
+        p = p + 1;
+    }
+    return nobj;
+}
+
+// The whole of the dry run, over a catalog that has been read.
+// What both the dry run and the import start from: the commits to be imported, parents before children, as the 20-byte ids one after the other (an empty
+// buffer and `failed` when something could not be read; `failure` says what). `nobj` is how many objects the git directory has, `mask` the mask of a table for them.
+pub fn plan[&h, &d, &g, &o, &x, &k, &m, &s](heap: &!h Heap, root: &d Dir, gitpath: &g [byte], od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int], nobj: int, ints: int, mask: int) -> [heap, dir_read, file_read] (buffer.Buffer, gitread.Got, bool) {
+    var failure = no_fault(heap);
+    var failed = false;
+    // the tips: the refs, then HEAD when it is detached
+    let refs = gitread.refs(heap, root, gitpath);
+    var tips = buffer.empty(heap, 256);
+    borrow refs as &rb in {
+        let r = buffer.bytes(rb);
+        var at = 0;
+        while at < len(r) {
+            var end = at;
+            while end < len(r) && r[end] != byte_of(10) {
+                end = end + 1;
+            }
+            let id = gitread.unhex_id(heap, r[end - 40..end]);
+            borrow id as &ib in {
+                tips = buffer.append(heap, tips, buffer.bytes(ib));
+            }
+            buffer.drop(heap, id);
+            at = end + 1;
+        }
+    }
+    var hpath = buffer.append(heap, buffer.empty(heap, len(gitpath) + 8), gitpath);
+    hpath = buffer.append(heap, hpath, "/HEAD");
+    var hread = gitread.Contents { data: buffer.empty(heap, 0), why: 0 };
+    borrow hpath as &hb in {
+        let r = gitread.slurp(heap, root, buffer.bytes(hb));
+        let (d0, w0) = gitread.contents_parts(hread);
+        buffer.drop(heap, d0);
+        hread = r;
+    }
+    buffer.drop(heap, hpath);
+    let (htext, hwhy) = gitread.contents_parts(hread);
+    borrow htext as &htb in {
+        var readable = hwhy == 0;
+        if readable && !utf8.is_valid(buffer.bytes(htb)) {
+            readable = false;
+        }
+        if !readable {
+            failure = replace_got(heap, failure, gitread.Got { body: buffer.empty(heap, 0), kind: 0, status: 2, why: buffer.append(heap, buffer.empty(heap, 32), "cannot read git HEAD") });
+            failed = true;
+        } else {
+            var t = buffer.bytes(htb);
+            var a = 0;
+            while a < len(t) && int_of(t[a]) <= 32 {
+                a = a + 1;
+            }
+            var z = len(t);
+            while z > a && int_of(t[z - 1]) <= 32 {
+                z = z - 1;
+            }
+            t = t[a..z];
+            if !bytes.starts_with(t, "ref: ") {
+                let id = gitread.unhex_id(heap, t);
+                borrow id as &ib in {
+                    tips = buffer.append(heap, tips, buffer.bytes(ib));
+                }
+                buffer.drop(heap, id);
+            }
+        }
+    }
+    buffer.drop(heap, htext);
+    buffer.drop(heap, refs);
+    // peel the annotated tags to the commits they name
+    var commit_tips = buffer.empty(heap, 256);
+    let cur = box_slice(heap, 20, byte_of(0));
+    borrow mut cur as &!cb in {
+        let c = contents(cb);
+        borrow tips as &tb in {
+            let all = buffer.bytes(tb);
+            var n = 0;
+            while n * 20 < len(all) && !failed {
+                var k2 = 0;
+                while k2 < 20 {
+                    c[k2] = all[n * 20 + k2];
+                    k2 = k2 + 1;
+                }
+                var step = 0;
+                var going = true;
+                while step < 8 && going && !failed {
+                    let g = gitread.read_object(heap, root, od, ix, pk, meta, scratch, c);
+                    let (body, kind, status, why) = gitread.got_parts(g);
+                    if status != 0 {
+                        buffer.drop(heap, body);
+                        failure = replace_got(heap, failure, gitread.Got { body: buffer.empty(heap, 0), kind: 0, status: status, why: why });
+                        failed = true;
+                    } else {
+                        buffer.drop(heap, why);
+                        if kind == 1 {
+                            commit_tips = buffer.append(heap, commit_tips, c);
+                            going = false;
+                        } else if kind == 4 {
+                            borrow body as &bb in {
+                                let target = gitparse.tag_target(heap, buffer.bytes(bb));
+                                borrow target as &tgb in {
+                                    if len(buffer.bytes(tgb)) == 20 {
+                                        var k3 = 0;
+                                        while k3 < 20 {
+                                            c[k3] = buffer.bytes(tgb)[k3];
+                                            k3 = k3 + 1;
+                                        }
+                                    } else {
+                                        going = false;
+                                    }
+                                }
+                                buffer.drop(heap, target);
+                            }
+                        } else {
+                            going = false;
+                        }
+                        buffer.drop(heap, body);
+                    }
+                    step = step + 1;
+                }
+                n = n + 1;
+            }
+        }
+    }
+    buffer.drop(heap, tips);
+    // the commits, parents before children
+    var order = buffer.empty(heap, 1024);
+    let done = box_slice(heap, ints, 0);
+    let cap = 4 * nobj + 1024;
+    let stack = box_slice(heap, 21 * cap, byte_of(0));
+    if !failed {
+        borrow mut done as &!db in {
+            borrow mut stack as &!stb in {
+                borrow mut cur as &!cb2 in {
+                    let dn = contents(db);
+                    let st = contents(stb);
+                    let c = contents(cb2);
+                    borrow commit_tips as &ctb in {
+                        let ct = buffer.bytes(ctb);
+                        var ti = 0;
+                        var top = 0;
+                        while ti * 20 < len(ct) && !failed {
+                            var k4 = 0;
+                            while k4 < 20 {
+                                st[k4] = ct[ti * 20 + k4];
+                                k4 = k4 + 1;
+                            }
+                            st[20] = byte_of(0);
+                            top = 1;
+                            while top > 0 && !failed {
+                                top = top - 1;
+                                k4 = 0;
+                                while k4 < 20 {
+                                    c[k4] = st[21 * top + k4];
+                                    k4 = k4 + 1;
+                                }
+                                if int_of(st[21 * top + 20]) == 1 {
+                                    order = buffer.append(heap, order, c);
+                                } else if gitparse.table_get(dn, mask, c) < 0 {
+                                    gitparse.table_put(dn, mask, c, 1);
+                                    let cg = read_commit(heap, root, od, ix, pk, meta, scratch, c);
+                                    let (body, kind, status, why) = gitread.got_parts(cg);
+                                    if status != 0 {
+                                        buffer.drop(heap, body);
+                                        failure = replace_got(heap, failure, gitread.Got { body: buffer.empty(heap, 0), kind: kind, status: status, why: why });
+                                        failed = true;
+                                    } else {
+                                        buffer.drop(heap, why);
+                                        borrow body as &bb in {
+                                            let parsed2 = gitparse.commit_parse(heap, buffer.bytes(bb));
+                                            let (tree, parents, headers_at, head_end, message_at, pstatus) = gitparse.commit_parts(parsed2);
+                                            if pstatus != 0 {
+                                                var sentence = "bad parent line";
+                                                if pstatus == 2 {
+                                                    sentence = "commit without a tree";
+                                                }
+                                                failure = replace_got(heap, failure, fault(heap, 0, sentence));
+                                                failed = true;
+                                            } else {
+                                                borrow parents as &pab in {
+                                                    let pl = buffer.bytes(pab);
+                                                    if top + 1 + len(pl) / 20 >= cap {
+                                                        failure = replace_got(heap, failure, fault(heap, 0, "the history is too large"));
+                                                        failed = true;
+                                                    } else {
+                                                        k4 = 0;
+                                                        while k4 < 20 {
+                                                            st[21 * top + k4] = c[k4];
+                                                            k4 = k4 + 1;
+                                                        }
+                                                        st[21 * top + 20] = byte_of(1);
+                                                        top = top + 1;
+                                                        var pn = len(pl) / 20;
+                                                        while pn > 0 {
+                                                            pn = pn - 1;
+                                                            if gitparse.table_get(dn, mask, pl[pn * 20..pn * 20 + 20]) < 0 {
+                                                                k4 = 0;
+                                                                while k4 < 20 {
+                                                                    st[21 * top + k4] = pl[pn * 20 + k4];
+                                                                    k4 = k4 + 1;
+                                                                }
+                                                                st[21 * top + 20] = byte_of(0);
+                                                                top = top + 1;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            buffer.drop(heap, tree);
+                                            buffer.drop(heap, parents);
+                                        }
+                                        buffer.drop(heap, body);
+                                    }
+                                }
+                            }
+                            ti = ti + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, stack);
+    unbox_slice(heap, done);
+    buffer.drop(heap, commit_tips);
+    unbox_slice(heap, cur);
+    if failed {
+        buffer.drop(heap, order);
+        return (buffer.empty(heap, 0), failure, true);
+    }
+    return (order, failure, false);
+}
+
+fn run_import[&h, &d, &v, &g, &o, &x, &k, &m, &s](heap: &!h Heap, root: &d Dir, vcs: &v Dir, gitpath: &g [byte], od: &o [byte], ix: &x [byte], pk: &k [byte], meta: &m [int], scratch: &!s [int]) -> [heap, dir_read, file_read] vcsstore.Object {
+    let nobj = object_total(heap, root, od, meta);
+    let ints = gitparse.table_ints(nobj + 8);
+    let mask = ints / 4 - 1;
+    let (order, failure0, failed0) = plan(heap, root, gitpath, od, ix, pk, meta, scratch, nobj, ints, mask);
+    var failure = failure0;
+    var failed = failed0;
+    if failed {
+        buffer.drop(heap, order);
+        return failure_answer(heap, failure);
+    }
+    // each commit that is not known yet: its tree, and the commit it would be rendered as
+    let known = box_slice(heap, gitparse.table_ints(nobj + 8), 0);
+    let trees = box_slice(heap, ints, 0);
+    let blobs = box_slice(heap, ints, 0);
+    let work = box_slice(heap, 40, byte_of(0));
+    let hashing = box_slice(heap, sha1.size(), 0);
+    var commits = 0;
+    var already = 0;
+    var mismatches = buffer.empty(heap, 0);
+    borrow mut known as &!kb in {
+        borrow mut trees as &!trb in {
+            borrow mut blobs as &!bsb in {
+                borrow mut work as &!wb in {
+                    borrow mut hashing as &!hsb in {
+                        let kn = contents(kb);
+                        let tr = contents(trb);
+                        let bl = contents(bsb);
+                        let w = contents(wb);
+                        let hs = contents(hsb);
+                        let loaded = load_gitmap(heap, vcs, kn, mask);
+                        borrow order as &orb in {
+                            let all = buffer.bytes(orb);
+                            var n = 0;
+                            while n * 20 < len(all) && !failed {
+                                let gid = all[n * 20..n * 20 + 20];
+                                if gitparse.table_get(kn, mask, gid) >= 0 {
+                                    already = already + 1;
+                                } else {
+                                    let (cf, mline) = check_commit(heap, root, od, ix, pk, meta, scratch, tr, bl, mask, w, hs, gid);
+                                    var cstatus = 0;
+                                    borrow cf as &cfb in {
+                                        cstatus = status_of(cfb);
+                                    }
+                                    failure = replace_got(heap, failure, cf);
+                                    if cstatus != 0 {
+                                        failed = true;
+                                        buffer.drop(heap, mline);
+                                    } else {
+                                        borrow mline as &mlb in {
+                                            mismatches = buffer.append(heap, mismatches, buffer.bytes(mlb));
+                                        }
+                                        buffer.drop(heap, mline);
+                                        commits = commits + 1;
+                                    }
+                                }
+                                n = n + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, known);
+    unbox_slice(heap, trees);
+    unbox_slice(heap, blobs);
+    unbox_slice(heap, work);
+    unbox_slice(heap, hashing);
+    buffer.drop(heap, order);
+    if failed {
+        buffer.drop(heap, mismatches);
+        return failure_answer(heap, failure);
+    }
+    let (b0, k0, s0, w0) = gitread.got_parts(failure);
+    buffer.drop(heap, b0);
+    buffer.drop(heap, w0);
+    var doc = buffer.empty(heap, 0);
+    borrow mismatches as &mmb in {
+        buffer.drop(heap, doc);
+        doc = report_document(heap, commits, already, 0, true, 0, "", "", "", "", buffer.bytes(mmb));
+    }
+    buffer.drop(heap, mismatches);
+    return vcsstore.Object { bytes: doc, status: 0, errno: 0 };
+}
+
+// `cancho vcs import-git --dry-run` for the git directory `gitpath` (relative to `root`, the `Dir` of `/`), in the repository whose store is `vcs`.
+pub fn import_command[&h, &d, &v, &g](heap: &!h Heap, root: &d Dir, vcs: &v Dir, gitpath: &g [byte]) -> [heap, dir_read, file_read] vcsstore.Object {
+    let meta = box_slice(heap, gitread.meta_size(), 0);
+    let scratch = box_slice(heap, gitread.scratch_size(), 0);
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    borrow mut meta as &!mb in {
+        borrow mut scratch as &!sb in {
+            let mm = contents(mb);
+            let sc = contents(sb);
+            let cat = gitread.open_catalog(heap, root, gitpath, mm);
+            let (odirs, idx, pk, cstatus, cerrno, why) = gitread.cat_parts(cat);
+            if cstatus != 0 {
+                let old = answer;
+                let (oo, os, oe) = vcsstore.parts(old);
+                buffer.drop(heap, oo);
+                answer = failure_answer(heap, gitread.Got { body: buffer.empty(heap, 0), kind: 0, status: cstatus, why: why });
+            } else {
+                buffer.drop(heap, why);
+                borrow odirs as &odb in {
+                    borrow idx as &ixb in {
+                        borrow pk as &pkb in {
+                            let old = answer;
+                            let (oo, os, oe) = vcsstore.parts(old);
+                            buffer.drop(heap, oo);
+                            answer = run_import(heap, root, vcs, gitpath, buffer.bytes(odb), buffer.bytes(ixb), buffer.bytes(pkb), mm, sc);
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, odirs);
+            buffer.drop(heap, idx);
+            buffer.drop(heap, pk);
+        }
+    }
+    unbox_slice(heap, meta);
+    unbox_slice(heap, scratch);
+    return answer;
+}
+
+// The git directory of the directory `abs` (an absolute path): `abs/.git` when that is a directory, else `abs` itself, and it must have `objects` and a `HEAD`. Answers
+// the path without its leading `/` (a path for the `Dir` of `/`), or an empty buffer when this is not a git repository.
+pub fn git_dir_of[&h, &d, &p](heap: &!h Heap, root: &d Dir, abs: &p [byte]) -> [heap, dir_read, file_read] buffer.Buffer {
+    let norm = gitread.normalized(heap, abs);
+    var chosen = buffer.empty(heap, 0);
+    borrow norm as &nb in {
+        var dotgit = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(nb)) + 8), buffer.bytes(nb));
+        if len(buffer.bytes(nb)) > 0 {
+            dotgit = buffer.push(heap, dotgit, byte_of(47));
+        }
+        dotgit = buffer.append(heap, dotgit, ".git");
+        var use_dotgit = false;
+        borrow dotgit as &gb in {
+            use_dotgit = gitread.is_dir(root, buffer.bytes(gb));
+        }
+        buffer.drop(heap, chosen);
+        if use_dotgit {
+            chosen = dotgit;
+        } else {
+            buffer.drop(heap, dotgit);
+            chosen = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(nb)) + 8), buffer.bytes(nb));
+        }
+    }
+    buffer.drop(heap, norm);
+    var good = false;
+    borrow chosen as &cb in {
+        var objects = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(cb)) + 16), buffer.bytes(cb));
+        if len(buffer.bytes(cb)) > 0 {
+            objects = buffer.push(heap, objects, byte_of(47));
+        }
+        var head = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(cb)) + 16), buffer.bytes(cb));
+        if len(buffer.bytes(cb)) > 0 {
+            head = buffer.push(heap, head, byte_of(47));
+        }
+        objects = buffer.append(heap, objects, "objects");
+        head = buffer.append(heap, head, "HEAD");
+        var has_objects = false;
+        borrow objects as &ob in {
+            has_objects = gitread.is_dir(root, buffer.bytes(ob));
+        }
+        var has_head = false;
+        borrow head as &hb in {
+            let r = gitread.slurp(heap, root, buffer.bytes(hb));
+            let (data, why) = gitread.contents_parts(r);
+            buffer.drop(heap, data);
+            has_head = why == 0 || why != 2;
+        }
+        buffer.drop(heap, objects);
+        buffer.drop(heap, head);
+        good = has_objects && has_head;
+    }
+    if !good {
+        buffer.drop(heap, chosen);
+        return buffer.empty(heap, 0);
+    }
+    return chosen;
+}

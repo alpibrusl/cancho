@@ -1,0 +1,6 @@
+FILE 50
+module a;
+import a;
+fn f() -> [] int { return 1; }FILE 40
+module a;
+fn g() -> [] int { return 2; }

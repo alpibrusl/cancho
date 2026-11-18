@@ -771,11 +771,11 @@ pub fn build_text[&h, &x, &c, &f, &b, &v, &d, &n, &t, &g](heap: &!h Heap, exec: 
 // Run the shell command `server` in the background in `dir` (its standard output in `server.out`, its standard error in `server.err`), wait until either file holds `ready` (at most 15 s), run the
 // shell commands in `probes` (one client after another, or several with `&` and `wait`), then give the server up to 5 s to end by itself and kill it if it has not. The `Ended` is the shell's: `out` is
 // what the probes printed, then the line `server: exit N` (it ended with code N; `server: killed` if it had to be killed, `server: never ready` if it was not ready in time, `server: died by signal N` or `server: died N` if it ended before it was ready), then `-- server.out`
-// and the contents of that file, then `-- server.err` and the contents of that one. `$SP` is the server's pid in the probes. Core dumps are off (a trapped server costs a dump where they are piped).
+// and the contents of that file, then `-- server.err` and the contents of that one. `$SP` is the server's pid in the probes. Core dumps are off (a trapped server costs a dump where they are piped). The two files are emptied *before* the server starts: the server's own redirection empties them only when its subshell runs, and a `grep ready` that ran first matched the text an earlier case had left in the same directory (a trapped server was then reported as `server: exit 132`, found by CI, 2 runs in 300 when reproduced).
 pub fn serve_and_probe[&h, &x, &c, &d, &s, &r, &p](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, dir: &d [byte], server: &s [byte], ready: &r [byte], probes: &p [byte]) -> [heap, exec(""), clock, poll] Ended {
     var script = buffer.append(heap, buffer.empty(heap, 512), "ulimit -c 0; cd '");
     script = buffer.append(heap, script, dir);
-    script = buffer.append(heap, script, "' || exit 99; ( ");
+    script = buffer.append(heap, script, "' || exit 99; : >server.out; : >server.err; ( ");
     script = buffer.append(heap, script, server);
     script = buffer.append(heap, script, " ) >server.out 2>server.err & SP=$!; i=0; ok=0; while [ $i -lt 300 ]; do if grep -q '");
     script = buffer.append(heap, script, ready);

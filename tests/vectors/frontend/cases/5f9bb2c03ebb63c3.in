@@ -1,0 +1,2 @@
+fn g[&x, &y, &z where x <= y, y <= z](u: &x int, v: &z int) -> [] int { return *u; }
+fn f[&a, &b where a <= b](p: &a int, q: &b int) -> [] int { return g(p, q); }

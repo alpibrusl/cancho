@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "let",
+          "mutable": false,
+          "name": "x",
+          "ty": null,
+          "value": {
+            "kind": "int",
+            "value": 1
+          }
+        },
+        {
+          "value": {
+            "kind": "field",
+            "base": {
+              "kind": "name",
+              "name": "x"
+            },
+            "name": "y"
+          }
+        }
+      ]
+    }
+  ]
+}

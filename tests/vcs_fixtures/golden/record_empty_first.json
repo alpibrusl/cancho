@@ -1,0 +1,21 @@
+{
+  "branch": "main",
+  "change": "71c5da65a9b375f10644710e9c15955f92f67d5e59a7bcc9b51bb40698e90fe9",
+  "command": "record",
+  "decls": [],
+  "dry_run": false,
+  "edits": 0,
+  "gate": {
+    "checked": [],
+    "ran": true
+  },
+  "intent": null,
+  "ok": true,
+  "parents": [],
+  "recorded": true,
+  "touched": [
+    "f.txt"
+  ],
+  "tree": "1788f044c4b896418d41d3f640a14b8b633db8e9778207029033f51dcc0195c7",
+  "unchanged": false
+}

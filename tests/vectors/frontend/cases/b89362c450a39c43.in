@@ -1,0 +1,5 @@
+ struct Counter { n: int }  fn main(world: World) -> [] int { release(world);
+ var c = Counter { n: 1 };
+ borrow c as &r in { r.n = 2;
+ } return c.n;
+ } 

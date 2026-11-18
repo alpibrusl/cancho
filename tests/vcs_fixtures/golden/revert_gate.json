@@ -1,0 +1,16 @@
+{
+  "command": "revert",
+  "ok": false,
+  "refused": {
+    "diagnostics": [
+      {
+        "message": "expected `int`, found `bool`",
+        "rule": "type-mismatch"
+      }
+    ],
+    "message": "a.cho: type-mismatch: expected `int`, found `bool`",
+    "path": "a.cho",
+    "rule": "type-mismatch",
+    "tag": "gate-failed"
+  }
+}

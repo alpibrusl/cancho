@@ -1,0 +1,8 @@
+{
+  "command": "import-git",
+  "ok": false,
+  "refused": {
+    "message": "b90d918c6196dd2f1c4094089f36d30e5bbd0678: not a zlib stream",
+    "tag": "git-unreadable"
+  }
+}

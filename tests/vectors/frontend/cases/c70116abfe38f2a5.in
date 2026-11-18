@@ -1,0 +1,5 @@
+module m.n;
+import a;
+fn f() -> [] int { return 1; }
+import b.c;
+import e.f.g as h;

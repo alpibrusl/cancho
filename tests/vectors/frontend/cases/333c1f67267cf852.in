@@ -1,0 +1,37 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "if",
+          "cond": {
+            "kind": "bool",
+            "value": true
+          },
+          "then": [
+            {
+              "kind": "return",
+              "value": {
+                "kind": "int",
+                "value": null
+              }
+            }
+          ],
+          "else": null
+        }
+      ]
+    }
+  ]
+}

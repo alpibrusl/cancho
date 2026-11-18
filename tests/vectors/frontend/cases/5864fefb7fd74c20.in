@@ -1,0 +1,4 @@
+  fn shout[&i, &r](out: &!i Io, s: &r [byte]) -> [io_write] int { return write_bytes(out, s);
+ }  fn call_it[&i, &r](out: &!i Io, s: &r [byte], f: fn(&!i Io, &r [byte]) -> [io_write] int) -> [] int { return f(out, s);
+ }  fn main() -> [] int { return 0;
+ } 

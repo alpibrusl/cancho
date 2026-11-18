@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { let b: bool = wrapping_add(1, 2); return 0; }

@@ -39,8 +39,6 @@ rest:
 | where | what | the invariant it relies on, and where it is enforced |
 |---|---|---|
 | `mathfn.rs:9` `unsafe extern "C"` | libm's `sin`, `cos`, `exp`, ... declared `safe fn` | pure functions of a `f64`; no `unsafe` block is needed to call them. A test only |
-| `conn_peer.rs:260`, `:270` | `setsockopt(SO_LINGER)` to make a socket reset | `// SAFETY:` in the file: `linger` outlives the call, `len` is its size, the descriptor is open (the stream is owned by the caller) |
-| `conn_peer.rs:575`, `:598` | `dup2` in a `pre_exec` | async-signal-safe, between `fork` and `exec`, allocates nothing; the descriptor is the listener's, open in the parent |
 | `signals.rs:18`, `:158` | `kill(2)` on the test's own child | two integers; the pid is a child not yet waited for |
 | `processes.rs:743`, `:764`, `:770` | `prctl` with a seccomp filter in a `pre_exec`; `unsafe impl Sync` for a wrapper of the filter | the filter is a `static` never written (`// SAFETY:`); `prctl` is async-signal-safe |
 | `capture.rs:138`, `:154` | `wait4` with a `rusage` | the driver is this test's own child, not yet waited for; `Usage` is at least as large as `struct rusage` on both targets |

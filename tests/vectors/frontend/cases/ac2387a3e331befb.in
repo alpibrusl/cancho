@@ -1,0 +1,1 @@
+fn f() -> [] int { if true { let y = 1; } return y; }

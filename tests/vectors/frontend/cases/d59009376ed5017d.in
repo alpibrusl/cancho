@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { var z0 = 0; borrow z0 as &w0 in { } region w1 { } var x = 1; borrow x as &p in { let a = *p; } borrow x as &q in { let b = *q; } }

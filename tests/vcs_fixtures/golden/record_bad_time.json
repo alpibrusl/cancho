@@ -1,0 +1,8 @@
+{
+  "command": "record",
+  "ok": false,
+  "refused": {
+    "message": "`--time` is unix seconds",
+    "tag": "bad-argument"
+  }
+}

@@ -1,0 +1,6 @@
+FILE 50
+module a;
+pub fn g(x: int) -> [] int { return x; }FILE 58
+module b;
+import a;
+fn f() -> [] int { return a.g(true); }

@@ -1,0 +1,8 @@
+{
+  "command": "apply",
+  "ok": false,
+  "refused": {
+    "message": "`apply` takes a JSON file of edits",
+    "tag": "bad-argument"
+  }
+}

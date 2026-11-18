@@ -1,0 +1,8 @@
+{
+  "command": "branch",
+  "ok": false,
+  "refused": {
+    "message": "HEAD has no change yet",
+    "tag": "bad-revision"
+  }
+}

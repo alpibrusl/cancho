@@ -1,0 +1,27 @@
+{
+  "items": [
+    {
+      "kind": "struct",
+      "public": false,
+      "name": "P",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "fields": [
+        {
+          "name": "x",
+          "ty": {
+            "name": "int"
+          }
+        },
+        {
+          "name": "y",
+          "ty": {
+            "name": "int"
+          }
+        }
+      ]
+    },
+    true
+  ]
+}

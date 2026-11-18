@@ -1,0 +1,54 @@
+#### json000 nonl
+#### json001 nonl
+import std.io;
+#### json002 nonl
+import std.io as console;
+import a.b.c as d;
+import x.y as y;
+#### json003 nonl
+module m.n;
+#### json004 nonl
+module m.n;
+import std.io;
+fn f() -> [] int { return 0; }
+#### json005 nonl
+module m;
+fn f() -> [] int { return 0; }
+module n;
+import q;
+fn g() -> [] int { return 1; }
+#### json006 nonl
+fn f[T, U: val, &r, &s where r <= s, s <= r](a: &r T) -> [io, ffi("libc")] U { return a; }
+#### json007 nonl
+pub extern fn getpid[&f](ffi: &f Ffi("libc"), x: fn(int, [byte]) -> [io] (int, int)) -> [ffi("libc")] int;
+#### json008 nonl
+pub val struct P[T, U: val] { x: T, y: (U, int), z: [byte], w: &r Q[T, Ffi("a")] }
+res struct R { }
+struct S { a: int }
+#### json009 nonl
+pub enum E[T] { A, B(int, T), C(&r [byte]) }
+val enum F { X }
+res enum G { Y(int) }
+#### json010 nonl
+pub static N: int { return 1; }
+static M: [byte] { return "a\n\t\r\0\\\"\x"; }
+#### json011 nonl
+fn f() -> [] int { let (a, b) = g(); let S { x, y } = h(); let q.S { x } = h(); let T { } = h(); return a; }
+#### json012 nonl
+fn f() -> [] int { var x: int = 1; let y: (int, [byte]) = (1, "s"); x = y.0; a[1] = 2; a[1..2] = b; return x; }
+#### json013 nonl
+fn f() -> [] int { match e { _ => { } E::A => { } q.E::B(a, _) => { } E::C() => { } } return 0; }
+#### json014 nonl
+fn f(h: &!r Heap) -> [heap] int { borrow mut h as &!r2 in { borrow x as &r3 in { } } region r { let p = alloc[r](1); let q = alloc_slice[r](4, 0); } defer g(); return 0; }
+#### json015 nonl
+fn f() -> [] int { if a { } if b { x(); } else { y(); } if c { } else if d { } else { } while e { f(); } return -1 + !a * ~b + *c; }
+#### json016 nonl
+fn f() -> [] bool { return a && b || c == d != e < f <= g > h >= i | j ^ k & l << m >> n + o - p * q / r % s; }
+#### json017 nonl
+fn f() -> [] int { return q.g(a.B::C(1), E::D, s.T { x: 1, y: 2 }, q.U { }, 9223372036854775807, 0, true, false); }
+#### json018 nonl
+fn f() -> [] int { return 'a' + '\n' + '\'' + "\u".len; }
+#### json019 nonl
+fn f() -> [] float { return 0.0 + 1.0 + 1e308 + 5e-324 + 2.2250738585072014e-308 + 1.7976931348623157e308 + 123456789.123456789; }
+#### json020 nonl
+fn f() -> [] f32 { return 0.0f32 + 1f32 + 1e-45f32 + 1.1754942e-38f32 + 1.1754944e-38f32 + 3.4028235e38f32 + 16777216f32; }

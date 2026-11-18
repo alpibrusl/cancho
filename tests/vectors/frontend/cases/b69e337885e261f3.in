@@ -1,0 +1,11 @@
+    // inserted 20
+fn f(a: int) -> [] int {
+    if a == 1 {
+        return 1; // end 83
+    } else {
+        if a == 2 {
+            return 2; // end 40
+        }
+    }
+    return 3;
+}

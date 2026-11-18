@@ -1,0 +1,2 @@
+fn id[T: val](x: T) -> [] T { return x; }
+fn f[&r]() -> [] int { let b: bool = id(true); return 1; }

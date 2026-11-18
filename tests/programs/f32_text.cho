@@ -1,5 +1,5 @@
 // `docs/f32.md` §5.3's driver: `std.fmt32` as a filter, for
-// `conformance/f32_text.rs` to hold against Rust's own formatting and
+// `tests/commands/f32_text.sh` to hold against Rust's own formatting and
 // parsing (`f32_oracle.rs` is the other side, line for line).
 //
 //     f32_text debug            one `f32_into` per line, from decimal bit patterns

@@ -1,0 +1,565 @@
+edition 12;
+module selfhost.vcsdiffdoc;
+
+// vcsdiffdoc.cho -- the `diff` command of `cancho vcs` (`docs/vcs-routing.md` section 12; the Rust side is `cmd_diff` and `diff_files` in `vcs_repo.rs`, and `unified` in `diff_text.rs`).
+//
+// The document is `{"command", "files", "from", "ok", "to"}`. `files` lists the paths that differ between two trees, in path order, each as `{"binary", "decls"?, "hunks"?, "mode"?, "path", "status"}`: `status` is `added`,
+// `deleted`, `modified` or `mode`; `binary` is true when either side is not text (a NUL in its first 8,000 bytes, or not UTF-8); `mode` (`{"new", "old"}`) is there when both sides exist and their modes differ; `decls` (a
+// `.cho` file whose sides parse) and `hunks` (unified, with `--context` lines around each change) are there for text files whose status is not `mode`. The hunks are the histogram diff of `vcsdiff` (the Rust `diff_text`).
+// A blob the store does not have is a file of the working copy (a link's blob is its target).
+
+import std.buffer;
+import std.bytes;
+import std.utf8;
+import selfhost.jsonwrite;
+import selfhost.vcsdecl;
+import selfhost.vcsdiff;
+import selfhost.vcsobj;
+import selfhost.vcsrepo;
+import selfhost.vcsrestore;
+import selfhost.vcsscan;
+import selfhost.vcsstatus;
+import selfhost.vcsstore;
+import selfhost.vcsworktree;
+
+// ---- the unified hunks -------------------------------------------------------------------------------------------------------
+
+// One line of a hunk: `{"op", "text"}`, its braces at `levels`.
+fn line_item[&h, &t](heap: &!h Heap, out: buffer.Buffer, first: bool, levels: int, op: &static [byte], text: &t [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    if !first {
+        b = buffer.push(heap, b, byte_of(44));
+    }
+    b = buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(123));
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, levels + 1, true, "op"), op);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, levels + 1, false, "text"), text);
+    return buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(125));
+}
+
+// The hunk made of the diff hunks `h` to `e` (`hd` holds four integers each: start in the old text, length there, start in the new, length there), with `context` lines around: its braces at `levels` + 1.
+// Line `r` of the old text is `text[st[r]..st[r + 1]]`, line `j` of the new one is line `na + j`.
+fn group_item[&h, &t, &x, &y](heap: &!h Heap, out: buffer.Buffer, first: bool, levels: int, text: &t [byte], st: &x [int], na: int, hd: &y [int], h: int, e: int, context: int) -> [heap] buffer.Buffer {
+    let first_a = hd[4 * h];
+    let first_b = hd[4 * h + 2];
+    var a_from = first_a - context;
+    if a_from < 0 {
+        a_from = 0;
+    }
+    let b_from = first_b - (first_a - a_from);
+    var a_to = hd[4 * e] + hd[4 * e + 1] + context;
+    if a_to > na {
+        a_to = na;
+    }
+    var removed = 0;
+    var added = 0;
+    var k = h;
+    while k <= e {
+        removed = removed + hd[4 * k + 1];
+        added = added + hd[4 * k + 3];
+        k = k + 1;
+    }
+    let old_lines = a_to - a_from;
+    let new_lines = old_lines - removed + added;
+    var old_start = a_from;
+    if old_lines > 0 {
+        old_start = a_from + 1;
+    }
+    var new_start = b_from;
+    if new_lines > 0 {
+        new_start = b_from + 1;
+    }
+    var b = out;
+    if !first {
+        b = buffer.push(heap, b, byte_of(44));
+    }
+    b = buffer.push(heap, jsonwrite.newline(heap, b, levels + 1), byte_of(123));
+    b = buffer.push(heap, vcsrepo.member(heap, b, levels + 2, true, "lines"), byte_of(91));
+    var ai = a_from;
+    var lines = 0;
+    k = h;
+    while k <= e {
+        while ai < hd[4 * k] {
+            b = line_item(heap, b, lines == 0, levels + 3, " ", text[st[ai]..st[ai + 1]]);
+            lines = lines + 1;
+            ai = ai + 1;
+        }
+        var r = 0;
+        while r < hd[4 * k + 1] {
+            let at = hd[4 * k] + r;
+            b = line_item(heap, b, lines == 0, levels + 3, "-", text[st[at]..st[at + 1]]);
+            lines = lines + 1;
+            r = r + 1;
+        }
+        r = 0;
+        while r < hd[4 * k + 3] {
+            let at = na + hd[4 * k + 2] + r;
+            b = line_item(heap, b, lines == 0, levels + 3, "+", text[st[at]..st[at + 1]]);
+            lines = lines + 1;
+            r = r + 1;
+        }
+        ai = hd[4 * k] + hd[4 * k + 1];
+        k = k + 1;
+    }
+    while ai < a_to {
+        b = line_item(heap, b, lines == 0, levels + 3, " ", text[st[ai]..st[ai + 1]]);
+        lines = lines + 1;
+        ai = ai + 1;
+    }
+    b = buffer.push(heap, jsonwrite.newline(heap, b, levels + 2), byte_of(93));
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, levels + 2, false, "new_lines"), new_lines);
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, levels + 2, false, "new_start"), new_start);
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, levels + 2, false, "old_lines"), old_lines);
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, levels + 2, false, "old_start"), old_start);
+    return buffer.push(heap, jsonwrite.newline(heap, b, levels + 1), byte_of(125));
+}
+
+// The unified hunks of the move from `old` to `new`, as a JSON array that is a member of an object at `levels`, added to `out`: `[]` when the texts are equal. Hunks whose context would touch are joined.
+pub fn unified[&h, &o, &n](heap: &!h Heap, out: buffer.Buffer, levels: int, old: &o [byte], new: &n [byte], context: int) -> [heap] buffer.Buffer {
+    let na = vcsdiff.count_lines(old);
+    let nb = vcsdiff.count_lines(new);
+    let all = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(old) + len(new)), old), new);
+    let starts = box_slice(heap, na + nb + 1, 0);
+    let ids = box_slice(heap, na + nb + 1, 0);
+    var items = buffer.empty(heap, 0);
+    var emitted = 0;
+    borrow all as &ab in {
+        let text = buffer.bytes(ab);
+        borrow mut starts as &!sw in {
+            borrow mut ids as &!iw in {
+                let st = contents(sw);
+                let id = contents(iw);
+                vcsdiff.fill_starts(old, st, 0, 0);
+                vcsdiff.fill_starts(new, st, na, len(old));
+                let distinct = vcsdiff.intern(heap, text, st, na + nb, id);
+                let hunks = vcsdiff.diff_lines(heap, id[0..na], id[na..na + nb], na, nb, distinct);
+                let vcsdiff.Hunks { data, count } = hunks;
+                borrow data as &hbox in {
+                    let hd = contents(hbox);
+                    var h = 0;
+                    while h < count {
+                        var e = h;
+                        while e + 1 < count && hd[4 * (e + 1)] <= hd[4 * e] + hd[4 * e + 1] + 2 * context {
+                            e = e + 1;
+                        }
+                        items = group_item(heap, items, emitted == 0, levels, text, st, na, hd, h, e, context);
+                        emitted = emitted + 1;
+                        h = e + 1;
+                    }
+                }
+                unbox_slice(heap, data);
+            }
+        }
+    }
+    buffer.drop(heap, all);
+    unbox_slice(heap, starts);
+    unbox_slice(heap, ids);
+    var b = out;
+    if emitted == 0 {
+        b = buffer.append(heap, b, "[]");
+    } else {
+        b = buffer.push(heap, b, byte_of(91));
+        borrow items as &ib in {
+            b = buffer.append(heap, b, buffer.bytes(ib));
+        }
+        b = buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(93));
+    }
+    buffer.drop(heap, items);
+    return b;
+}
+
+// ---- the files ---------------------------------------------------------------------------------------------------------------
+
+// Text, as the Rust `is_text` says: no NUL among the first 8,000 bytes, and valid UTF-8.
+fn is_text[&t](text: &t [byte]) -> [] bool {
+    var i = 0;
+    while i < len(text) && i < 8000 {
+        if text[i] == byte_of(0) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return utf8.is_valid(text);
+}
+
+// The bytes of the blob `blob` of the entry `path` (mode `mode`): the store's, or the working copy's when the store does not have it (a link's target). The status is 0, or what stopped it.
+fn entry_text[&h, &r, &d, &s, &m, &b, &p](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], mode: &m [byte], blob: &b [byte], path: &p [byte]) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, int) {
+    let got = vcsstore.get(heap, vcs, scratch, "blob", blob);
+    let (text, status, errno) = vcsstore.parts(got);
+    if status == 0 {
+        return (text, 0);
+    }
+    buffer.drop(heap, text);
+    if bytes.equal(mode, "120000") {
+        let (t1, s1, e1) = vcsworktree.link_under(heap, root, path);
+        if s1 != 0 {
+            buffer.drop(heap, t1);
+            return (buffer.empty(heap, 0), s1);
+        }
+        return (t1, 0);
+    }
+    let (t2, s2, e2, x2) = vcsworktree.read_under(heap, root, path);
+    if s2 != 0 {
+        buffer.drop(heap, t2);
+        return (buffer.empty(heap, 0), s2);
+    }
+    return (t2, 0);
+}
+
+// The declaration changes of a `.cho` file, as the array that is the member `decls` of an object at `levels`; false (and nothing added) when a side does not parse.
+fn decls_member[&h, &i, &p, &o, &n](heap: &!h Heap, io: &!i Io, out: buffer.Buffer, levels: int, path: &p [byte], has_old: bool, old: &o [byte], has_new: bool, new: &n [byte]) -> [heap, io_write] (buffer.Buffer, bool) {
+    var old_view = buffer.empty(heap, 0);
+    var new_view = buffer.empty(heap, 0);
+    var old_ok = true;
+    var new_ok = true;
+    if has_old {
+        let (v, ok) = vcsdecl.view(heap, io, old);
+        buffer.drop(heap, old_view);
+        old_view = v;
+        old_ok = ok;
+    }
+    if has_new {
+        let (v, ok) = vcsdecl.view(heap, io, new);
+        buffer.drop(heap, new_view);
+        new_view = v;
+        new_ok = ok;
+    }
+    var b = out;
+    let good = old_ok && new_ok;
+    if good {
+        b = vcsrepo.member(heap, b, levels, false, "decls");
+        borrow old_view as &ob in {
+            borrow new_view as &nb in {
+                let (items, count) = vcsdecl.decl_changes(heap, buffer.empty(heap, 0), true, levels, path, buffer.bytes(ob), buffer.bytes(nb));
+                if count == 0 {
+                    b = buffer.append(heap, b, "[]");
+                } else {
+                    b = buffer.push(heap, b, byte_of(91));
+                    borrow items as &ib in {
+                        b = buffer.append(heap, b, buffer.bytes(ib));
+                    }
+                    b = buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(93));
+                }
+                buffer.drop(heap, items);
+            }
+        }
+    }
+    buffer.drop(heap, old_view);
+    buffer.drop(heap, new_view);
+    return (b, good);
+}
+
+// One file of the document, its braces at 2 levels, added to `out`: the entries of `path` on each side (a side that is not there has `has_* ` false), the `status`. Answers the document and a status (0, or what stopped
+// reading a blob).
+fn file_item[&h, &i, &r, &d, &s, &p, &m, &b, &q, &c](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], out: buffer.Buffer, first: bool, path: &p [byte], kind: &static [byte], has_old: bool, old_mode: &m [byte], old_blob: &b [byte], has_new: bool, new_mode: &q [byte], new_blob: &c [byte], context: int) -> [heap, io_write, dir_read, dir_write, file_read] (buffer.Buffer, int) {
+    var old_text = buffer.empty(heap, 0);
+    var new_text = buffer.empty(heap, 0);
+    var code = 0;
+    if has_old {
+        let (t, s) = entry_text(heap, root, vcs, scratch, old_mode, old_blob, path);
+        buffer.drop(heap, old_text);
+        old_text = t;
+        code = s;
+    }
+    if code == 0 && has_new {
+        let (t, s) = entry_text(heap, root, vcs, scratch, new_mode, new_blob, path);
+        buffer.drop(heap, new_text);
+        new_text = t;
+        code = s;
+    }
+    var doc = out;
+    if code == 0 {
+        if !first {
+            doc = buffer.push(heap, doc, byte_of(44));
+        }
+        doc = buffer.push(heap, jsonwrite.newline(heap, doc, 2), byte_of(123));
+        borrow old_text as &ot in {
+            borrow new_text as &nt in {
+                var binary = false;
+                if has_old && !is_text(buffer.bytes(ot)) {
+                    binary = true;
+                }
+                if has_new && !is_text(buffer.bytes(nt)) {
+                    binary = true;
+                }
+                if binary {
+                    doc = buffer.append(heap, vcsrepo.member(heap, doc, 3, true, "binary"), "true");
+                } else {
+                    doc = buffer.append(heap, vcsrepo.member(heap, doc, 3, true, "binary"), "false");
+                }
+                let text_kind = !binary && !bytes.equal(kind, "mode");
+                if text_kind && bytes.ends_with(path, ".cho") {
+                    let (with, ok) = decls_member(heap, io, doc, 3, path, has_old, buffer.bytes(ot), has_new, buffer.bytes(nt));
+                    doc = with;
+                }
+                if text_kind {
+                    doc = unified(heap, vcsrepo.member(heap, doc, 3, false, "hunks"), 3, buffer.bytes(ot), buffer.bytes(nt), context);
+                }
+                if has_old && has_new && !bytes.equal(old_mode, new_mode) {
+                    doc = buffer.push(heap, vcsrepo.member(heap, doc, 3, false, "mode"), byte_of(123));
+                    doc = jsonwrite.string(heap, vcsrepo.member(heap, doc, 4, true, "new"), new_mode);
+                    doc = jsonwrite.string(heap, vcsrepo.member(heap, doc, 4, false, "old"), old_mode);
+                    doc = buffer.push(heap, jsonwrite.newline(heap, doc, 3), byte_of(125));
+                }
+            }
+        }
+        doc = jsonwrite.string(heap, vcsrepo.member(heap, doc, 3, false, "path"), path);
+        doc = jsonwrite.string(heap, vcsrepo.member(heap, doc, 3, false, "status"), kind);
+        doc = buffer.push(heap, jsonwrite.newline(heap, doc, 2), byte_of(125));
+    }
+    buffer.drop(heap, old_text);
+    buffer.drop(heap, new_text);
+    return (doc, code);
+}
+
+// Whether `path` is one the files are limited to: every path when `selected` is empty.
+fn wanted[&s, &p](selected: &s [byte], path: &p [byte]) -> [] bool {
+    return len(selected) == 0 || vcsrestore.covers(selected, path);
+}
+
+// The `files` array: the entries of the two trees (`old`, `new`; an empty text has none) that differ, in path order, those `selected` (lines; none means every path) only. Answers the array and a status.
+fn files_array[&h, &i, &r, &d, &s, &o, &n, &x](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], old: &o [byte], new: &n [byte], selected: &x [byte], context: int) -> [heap, io_write, dir_read, dir_write, file_read] (buffer.Buffer, int) {
+    var items = buffer.empty(heap, 0);
+    var count = 0;
+    var code = 0;
+    var i = 0;
+    var j = 0;
+    if len(old) == 0 {
+        i = 0 - 1;
+    }
+    if len(new) == 0 {
+        j = 0 - 1;
+    }
+    while (i >= 0 || j >= 0) && code == 0 {
+        var order = 0;
+        if i < 0 {
+            order = 1;
+        } else if j < 0 {
+            order = 0 - 1;
+        } else {
+            order = bytes.compare(vcsobj.entry_path(old, i), vcsobj.entry_path(new, j));
+        }
+        var kind = "";
+        if order < 0 {
+            kind = "deleted";
+        } else if order > 0 {
+            kind = "added";
+        } else if !bytes.equal(vcsobj.entry_blob(old, i), vcsobj.entry_blob(new, j)) {
+            kind = "modified";
+        } else if !bytes.equal(vcsobj.entry_mode(old, i), vcsobj.entry_mode(new, j)) {
+            kind = "mode";
+        }
+        if len(kind) > 0 {
+            var status = 0;
+            var shown = false;
+            if order < 0 {
+                let path = vcsobj.entry_path(old, i);
+                if wanted(selected, path) {
+                    let (d2, s2) = file_item(heap, io, root, vcs, scratch, items, count == 0, path, kind, true, vcsobj.entry_mode(old, i), vcsobj.entry_blob(old, i), false, "", "", context);
+                    items = d2;
+                    status = s2;
+                    shown = true;
+                }
+            } else if order > 0 {
+                let path = vcsobj.entry_path(new, j);
+                if wanted(selected, path) {
+                    let (d2, s2) = file_item(heap, io, root, vcs, scratch, items, count == 0, path, kind, false, "", "", true, vcsobj.entry_mode(new, j), vcsobj.entry_blob(new, j), context);
+                    items = d2;
+                    status = s2;
+                    shown = true;
+                }
+            } else {
+                let path = vcsobj.entry_path(new, j);
+                if wanted(selected, path) {
+                    let (d2, s2) = file_item(heap, io, root, vcs, scratch, items, count == 0, path, kind, true, vcsobj.entry_mode(old, i), vcsobj.entry_blob(old, i), true, vcsobj.entry_mode(new, j), vcsobj.entry_blob(new, j), context);
+                    items = d2;
+                    status = s2;
+                    shown = true;
+                }
+            }
+            if shown {
+                code = status;
+                count = count + 1;
+            }
+        }
+        if order <= 0 {
+            i = vcsobj.entry_next(old, i);
+        }
+        if order >= 0 {
+            j = vcsobj.entry_next(new, j);
+        }
+    }
+    var b = buffer.empty(heap, 0);
+    if count == 0 {
+        b = buffer.append(heap, b, "[]");
+    } else {
+        b = buffer.push(heap, b, byte_of(91));
+        borrow items as &ib in {
+            b = buffer.append(heap, b, buffer.bytes(ib));
+        }
+        b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(93));
+    }
+    buffer.drop(heap, items);
+    return (b, code);
+}
+
+// ---- the command -------------------------------------------------------------------------------------------------------------
+
+// The tree text of the change `id`, and 0, or a status.
+fn tree_of_change[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: &i [byte]) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, int) {
+    let ti = vcsrepo.tree_id_of(heap, vcs, scratch, id);
+    let (tid, ts, te) = vcsstore.parts(ti);
+    var text = buffer.empty(heap, 0);
+    var code = ts;
+    if ts == 0 {
+        borrow tid as &tb in {
+            let tt = vcsrepo.tree_text(heap, vcs, scratch, buffer.bytes(tb));
+            let (t2, xs, xe) = vcsstore.parts(tt);
+            buffer.drop(heap, text);
+            text = t2;
+            code = xs;
+        }
+    }
+    buffer.drop(heap, tid);
+    return (text, code);
+}
+
+// The tree text HEAD is at (empty when HEAD has no change yet), and 0, or a status.
+fn head_tree[&h, &d, &s](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int]) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, int) {
+    let info = vcsstatus.head_info(heap, vcs);
+    let (branch, has_branch, head, status) = vcsstatus.head_parts(info);
+    buffer.drop(heap, branch);
+    var text = buffer.empty(heap, 0);
+    var code = status;
+    if status == 0 {
+        borrow head as &hb in {
+            if len(buffer.bytes(hb)) > 0 {
+                let (t, s) = tree_of_change(heap, vcs, scratch, buffer.bytes(hb));
+                buffer.drop(heap, text);
+                text = t;
+                code = s;
+            }
+        }
+    }
+    buffer.drop(heap, head);
+    return (text, code);
+}
+
+// The `diff` document. `from` and `to` are the ids of the changes compared (resolved), or empty: an empty `from` is HEAD, an empty `to` is the working copy under `root`. `selected` lists the paths (one a line, empty for the
+// root) the files are limited to; none means all. `context` is the number of lines around each change.
+pub fn diff_command[&h, &i, &r, &d, &s, &f, &t, &x](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], from: &f [byte], to: &t [byte], selected: &x [byte], context: int) -> [heap, io_write, dir_read, dir_write, file_read] vcsstore.Object {
+    var old_tree = buffer.empty(heap, 0);
+    var new_tree = buffer.empty(heap, 0);
+    var code = 0;
+    if len(from) == 0 {
+        let (tx, s0) = head_tree(heap, vcs, scratch);
+        buffer.drop(heap, old_tree);
+        old_tree = tx;
+        code = s0;
+    } else {
+        let (tx, s0) = tree_of_change(heap, vcs, scratch, from);
+        buffer.drop(heap, old_tree);
+        old_tree = tx;
+        code = s0;
+    }
+    if code == 0 {
+        if len(to) == 0 {
+            let scanned = vcsscan.scan(heap, root, scratch);
+            let (work, ws, we) = vcsstore.parts(scanned);
+            buffer.drop(heap, new_tree);
+            new_tree = work;
+            code = ws;
+        } else {
+            let (tx, s1) = tree_of_change(heap, vcs, scratch, to);
+            buffer.drop(heap, new_tree);
+            new_tree = tx;
+            code = s1;
+        }
+    }
+    var doc = buffer.empty(heap, 0);
+    if code == 0 {
+        borrow old_tree as &ob in {
+            borrow new_tree as &nb in {
+                let (files, fs) = files_array(heap, io, root, vcs, scratch, buffer.bytes(ob), buffer.bytes(nb), selected, context);
+                code = fs;
+                if code == 0 {
+                    var b = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
+                    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, true, "command"), "diff");
+                    b = vcsrepo.member(heap, b, 1, false, "files");
+                    borrow files as &fb in {
+                        b = buffer.append(heap, b, buffer.bytes(fb));
+                    }
+                    b = vcsrepo.member(heap, b, 1, false, "from");
+                    if len(from) == 0 {
+                        b = jsonwrite.string(heap, b, "HEAD");
+                    } else {
+                        b = jsonwrite.string(heap, b, from);
+                    }
+                    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "true");
+                    b = vcsrepo.member(heap, b, 1, false, "to");
+                    if len(to) == 0 {
+                        b = jsonwrite.string(heap, b, "working copy");
+                    } else {
+                        b = jsonwrite.string(heap, b, to);
+                    }
+                    b = buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n");
+                    buffer.drop(heap, doc);
+                    doc = b;
+                }
+                buffer.drop(heap, files);
+            }
+        }
+    }
+    buffer.drop(heap, old_tree);
+    buffer.drop(heap, new_tree);
+    if code != 0 {
+        buffer.drop(heap, doc);
+        return vcsrepo.failed(heap, code);
+    }
+    return vcsstore.Object { bytes: doc, status: 0, errno: 0 };
+}
+
+// `show --patch`: the `show` document of the change `spec` names (HEAD when empty) with its `patch` member, the diff of its tree against its first parent's, 3 lines of context, as `diff` gives the files.
+pub fn show_patch_command[&h, &i, &r, &d, &s, &p](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], spec: &p [byte]) -> [heap, io_write, dir_read, dir_write, file_read] vcsstore.Object {
+    var name = spec;
+    if len(spec) == 0 {
+        name = "HEAD";
+    }
+    let r = vcsrepo.resolve(heap, vcs, scratch, name);
+    let (id, rs, re) = vcsstore.parts(r);
+    if rs != 0 {
+        return vcsstore.Object { bytes: id, status: rs, errno: re };
+    }
+    var answer = vcsrepo.failed(heap, 3);
+    borrow id as &ib in {
+        let (old_tree, new_tree, tc) = vcsrepo.change_trees(heap, vcs, scratch, buffer.bytes(ib));
+        var code = tc;
+        var patch = buffer.empty(heap, 0);
+        if code == 0 {
+            borrow old_tree as &ob in {
+                borrow new_tree as &nb in {
+                    let (files, fs) = files_array(heap, io, root, vcs, scratch, buffer.bytes(ob), buffer.bytes(nb), "", 3);
+                    buffer.drop(heap, patch);
+                    patch = files;
+                    code = fs;
+                }
+            }
+        }
+        buffer.drop(heap, old_tree);
+        buffer.drop(heap, new_tree);
+        if code != 0 {
+            let (old, os, oe) = vcsstore.parts(answer);
+            buffer.drop(heap, old);
+            answer = vcsrepo.failed(heap, code);
+        } else {
+            borrow patch as &pb in {
+                let doc = vcsrepo.show_document(heap, vcs, scratch, buffer.bytes(ib), true, buffer.bytes(pb));
+                let (old, os, oe) = vcsstore.parts(answer);
+                buffer.drop(heap, old);
+                answer = doc;
+            }
+        }
+        buffer.drop(heap, patch);
+    }
+    buffer.drop(heap, id);
+    return answer;
+}

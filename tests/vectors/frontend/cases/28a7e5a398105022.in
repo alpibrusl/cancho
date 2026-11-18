@@ -1,0 +1,2 @@
+fn id[T: val](x: T) -> [] T { return x; }
+fn f[T: val](x: T) -> [] int { return id(x); }

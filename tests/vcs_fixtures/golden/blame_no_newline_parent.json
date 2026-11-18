@@ -1,0 +1,26 @@
+{
+  "command": "blame",
+  "lines": [
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "7cb491ddef6093232e411902311779a51b9f232bebaa42c7bcb9b5f33725009d",
+      "intent": null,
+      "line": 1,
+      "subject": "",
+      "text": "one",
+      "time": 3000
+    },
+    {
+      "author": "Ada <ada@example.com>",
+      "change": "7cb491ddef6093232e411902311779a51b9f232bebaa42c7bcb9b5f33725009d",
+      "intent": null,
+      "line": 2,
+      "subject": "",
+      "text": "two",
+      "time": 3000
+    }
+  ],
+  "ok": true,
+  "path": "nonl.txt",
+  "rev": "7cb491ddef6093232e411902311779a51b9f232bebaa42c7bcb9b5f33725009d"
+}

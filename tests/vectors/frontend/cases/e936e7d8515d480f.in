@@ -1,0 +1,2 @@
+enum E { A, B(int), C(int, bool) }
+fn f[&r]() -> [] int { let e = int::A; return 1; }
