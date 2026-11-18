@@ -1,0 +1,12 @@
+"args", "argument": null
+"clock", "argument": null
+"conn_read", "argument": null
+"conn_write", "argument": null
+"err_write", "argument": null
+"fs_read", "argument": "/dev/urandom"
+"fs_read", "argument": "/etc/cancho/http_fetch_nb"
+"heap", "argument": null
+"io_read", "argument": null
+"io_write", "argument": null
+"net_out", "argument": ""
+"poll", "argument": null

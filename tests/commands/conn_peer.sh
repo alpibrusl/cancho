@@ -1,8 +1,8 @@
 # conn_peer.sh -- the script of tests/commands/tls_scripts.cho for most of `conformance/conn_peer.rs` (docs/conn-peer.md): the other end of a connection over real sockets, and the address type (`std.addr`) against an oracle.
 # Moved: the eleven slots that answer their own client's address and port, the builtin by itself (19 bytes), the authority report, the refusal to dial a host outside the bound, the address type over a corpus of 10,965 lines
 # (its oracle was Rust's `std::net` parser and an RFC 5952 formatter: the answers are now a recording of them, tests/vectors/conn_peer_addr.want, written once by the Rust test's own generator, splitmix64 seed 0xc0ffee, and
-# tests/vectors/conn_peer_addr.in is what it was fed), and the address API by hand. Left in Rust (conn_peer.rs): the IPv6 test (it needs a dual-stack socket made by the test and put under the program's listener) and the reset test
-# (it needs `SO_LINGER` with a zero timeout on the client's socket). The programs are tests/programs/conn_peer_*.
+# tests/vectors/conn_peer_addr.in is what it was fed), and the address API by hand. The last two tests of the Rust file are tests/commands/conn_peer_sock.sh (the IPv6 socket and the reset).
+# The programs are tests/programs/conn_peer_*.
 # The client's own port, which the Rust tests took from `TcpStream::local_addr`, is read with `lsof` (the client is tests/programs/sk_client.cho, holding its connections open for a few seconds) where `lsof` exists; where it
 # does not, the check keeps the rest (the address, the family, the layout, that the ports are distinct and the same after a slot is freed and taken again) and prints what a pass prints.
 # $1 is the compiler, $2 a scratch directory; run from the root of the repository. One backend (LLVM): the Cranelift legs of the Rust tests went with D2.

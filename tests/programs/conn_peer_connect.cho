@@ -1,0 +1,22 @@
+// conn_peer_connect.cho -- `connect`, `bind` and `listen` for tests/programs/conn_peer_sock.tmpl. From edition 2 on, `connect` names a builtin and cannot be declared again, so the declaration lives in a module of edition 1
+// (the way packages/net-connect/connect.cho does), and `dial` is what the program calls. The address crosses as a pointer and a length: the slice is the `struct sockaddr` and its length the `socklen_t`.
+
+module conn_peer_connect;
+
+extern fn connect[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte]) -> [ffi("libc")] c_int;
+
+pub fn dial[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte]) -> [ffi("libc")] int {
+    return connect(ffi, fd, addr);
+}
+
+extern fn bind[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte]) -> [ffi("libc")] c_int;
+
+extern fn listen[&f](ffi: &f Ffi("libc"), fd: int, backlog: int) -> [ffi("libc")] c_int;
+
+pub fn bind_to[&f, &a](ffi: &f Ffi("libc"), fd: int, addr: &a [byte]) -> [ffi("libc")] int {
+    return bind(ffi, fd, addr);
+}
+
+pub fn listen_on[&f](ffi: &f Ffi("libc"), fd: int, backlog: int) -> [ffi("libc")] int {
+    return listen(ffi, fd, backlog);
+}

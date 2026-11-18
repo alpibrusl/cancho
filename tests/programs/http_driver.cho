@@ -8,9 +8,9 @@
 //        <version> <headers> <body_start> <content_length> <flags>
 //        {<ns> <ne> <vs> <ve>}*
 //
-// `conformance/http.rs` writes the frames (valid requests, and every
-// mutation of them) and compares every line with what the reference parser
-// says about the same bytes.
+// `tests/commands/http.sh` feeds it the frames of `tests/vectors/http_parse.bin`
+// (valid requests, and mutations of them) and compares every line with what
+// `httparse` said about the same bytes (`http_parse.expected`).
 import std.buffer;
 import std.http;
 import std.io;
