@@ -37,7 +37,6 @@ json - 1682189394-340 tests/accept/unique_borrow.cho
 json - 1691348063-342 tests/accept/copy_into.cho
 json - 1698349354-807 examples/agent_supervisor/agent_supervisor.cho packages/net-sockets/sockets.cho packages/http-request/request.cho
 json - 1700168038-948 tests/accept/math_floats.cho
-json - 1735252450-502 tests/accept/ed25519_long.cho
 json - 1759497609-364 tests/accept/word_scan_beside_own_names.cho
 json - 1768620681-416 tests/accept/fork_clock_workers.cho
 json - 1779808094-374 tests/accept/assert.cho
@@ -55,6 +54,7 @@ json - 2042522262-525 tests/accept/slicing.cho
 json - 2070734157-421 tests/accept/split_out_ports.cho
 json - 2071259768-16853 examples/tls_echo/echo.cho examples/tls_echo/front.cho examples/tls_echo/identity.cho examples/tls_echo/tls_echo.cho packages/tls/tls.cho packages/x509/x509.cho packages/tls/cident.cho packages/tls/client.cho packages/tls/clientauth.cho packages/tls/identity.cho packages/tls/record.cho packages/tls/saved.cho packages/tls/server.cho packages/tls/slot.cho packages/tls/ticket.cho packages/x509/key.cho packages/x509/verify.cho packages/tls/message.cho packages/x509/names.cho packages/tls/client12.cho packages/tls/hello.cho
 json - 2072357290-373 tests/accept/wide_returns.cho
+json - 2084951194-502 tests/accept/ed25519_long.cho
 json - 2136839278-356 tests/accept/function_value_operand.cho
 json - 2137792810-340 examples/hello.cho
 json - 2137792810-340 tests/accept/arithmetic.cho
@@ -62,6 +62,7 @@ json - 2137792810-340 tests/accept/llvm_smoke.cho
 json - 2137792810-340 tests/accept/scopes.cho
 json - 2168107975-443 examples/tree.cho
 json - 2197047684-361 tests/accept/static_data.cho
+json - 2231834068-457 tests/accept/ed25519.cho
 json - 2284200565-401 tests/accept/bytes_library.cho
 json - 2303031753-569 examples/tty_hello.cho
 json - 2320266483-735 examples/audio_hello.cho
@@ -75,7 +76,6 @@ json - 2424066074-340 tests/accept/character_literals.cho
 json - 2435235152-365 tests/accept/structs.cho
 json - 2460686118-417 tests/accept/vec_shrink.cho
 json - 2569804840-406 tests/accept/generics.cho
-json - 2653886636-457 tests/accept/ed25519.cho
 json - 2665271640-395 tests/accept/box_roundtrip.cho
 json - 2665271640-395 tests/accept/shadowing.cho
 json - 270696013-579 examples/growth.cho
@@ -216,7 +216,6 @@ json wasm32-wasip1 1859740649-536 tests/accept/enums.cho
 json wasm32-wasip1 1862307518-521 tests/accept/spawn_join_operands.cho
 json wasm32-wasip1 1892250968-696 examples/entropy.cho
 json wasm32-wasip1 1896685224-534 tests/accept/function_value_operand.cho
-json wasm32-wasip1 1955026756-680 tests/accept/ed25519_long.cho
 json wasm32-wasip1 1975483256-528 tests/accept/string_literal.cho
 json wasm32-wasip1 2039420548-584 tests/accept/spawn_row.cho
 json wasm32-wasip1 2063354572-577 tests/accept/destructuring.cho
@@ -249,6 +248,7 @@ json wasm32-wasip1 2736438359-595 tests/accept/standard_error.cho
 json wasm32-wasip1 273657620-655 tests/accept/narrow_many_exec.cho
 json wasm32-wasip1 275569614-573 tests/accept/boxed_slice.cho
 json wasm32-wasip1 275569614-573 tests/accept/linked_list.cho
+json wasm32-wasip1 2765123421-680 tests/accept/ed25519_long.cho
 json wasm32-wasip1 2782083230-601 tests/accept/spawn_owned_net.cho
 json wasm32-wasip1 2808451478-700 examples/newton.cho
 json wasm32-wasip1 2818012959-612 tests/accept/spawn_owned_clock.cho
@@ -298,7 +298,6 @@ json wasm32-wasip1 3616849752-520 tests/accept/word_scan_beside_own_names.cho
 json wasm32-wasip1 3705390469-544 tests/accept/borrow_and_return.cho
 json wasm32-wasip1 3721484795-528 tests/accept/arena_roundtrip.cho
 json wasm32-wasip1 3748844072-939 examples/report/report.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho
-json wasm32-wasip1 3760618171-635 tests/accept/ed25519.cho
 json wasm32-wasip1 3851532661-526 tests/accept/function_value.cho
 json wasm32-wasip1 3881875685-536 tests/accept/nested_regions.cho
 json wasm32-wasip1 3938926025-524 tests/accept/enum_float_payload.cho
@@ -332,6 +331,7 @@ json wasm32-wasip1 685001546-541 tests/accept/word_scan.cho
 json wasm32-wasip1 703195226-523 tests/accept/control_flow.cho
 json wasm32-wasip1 793805379-1126 tests/accept/math_floats.cho
 json wasm32-wasip1 812402851-1261 examples/tls_client/socket.cho examples/tls_client/tls_client.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho
+json wasm32-wasip1 812728994-635 tests/accept/ed25519.cho
 json wasm32-wasip1 833745586-526 tests/accept/effect_exact.cho
 json wasm32-wasip1 833745586-526 tests/accept/threaded_io.cho
 json wasm32-wasip1 846805776-634 tests/accept/opaque_pointer.cho
@@ -435,9 +435,9 @@ prose - 2834699059-196 tests/accept/narrow_net_hosts_edition_ten.cho
 prose - 2843515975-558 examples/fetch/fetch.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho
 prose - 2845427737-225 tests/accept/slicing.cho
 prose - 2872739273-438 tests/accept/spawn_parallel_sleep.cho
-prose - 2888196790-289 tests/accept/ed25519_long.cho
 prose - 2909147539-198 tests/accept/vec_shrink.cho
 prose - 2918553401-616 examples/collect/collect.cho packages/net-sockets/sockets.cho packages/http-request/request.cho
+prose - 2919865875-289 tests/accept/ed25519_long.cho
 prose - 2972153983-207 tests/accept/fork_clock_row.cho
 prose - 2974370052-360 examples/rational.cho
 prose - 3045797599-428 tests/accept/bytes_to_c.cho
@@ -448,7 +448,6 @@ prose - 3164903751-248 tests/accept/generics.cho
 prose - 3203312989-233 tests/accept/f32_names_are_edition_five.cho
 prose - 3217483810-209 examples/pipeline_checks.cho
 prose - 3241956404-328 examples/cut/cut.cho
-prose - 3263903415-304 tests/accept/ed25519.cho
 prose - 330800230-162 tests/accept/spawn_owned_io.cho
 prose - 330800230-162 tests/accept/spawn_unique_join_first.cho
 prose - 33399987-437 examples/decay.cho
@@ -493,6 +492,7 @@ prose - 4174773999-201 tests/accept/static_data.cho
 prose - 4285310986-230 tests/accept/signals_claim.cho
 prose - 463656345-442 tests/accept/opaque_pointer.cho
 prose - 584614077-185 tests/accept/enum_float_payload.cho
+prose - 624977292-304 tests/accept/ed25519.cho
 prose - 642524472-187 tests/accept/narrow_many_in_struct.cho
 prose - 642524472-187 tests/accept/narrow_three_paths_forms.cho
 prose - 642524472-187 tests/accept/narrow_two_paths.cho
@@ -599,13 +599,13 @@ prose wasm32-wasi 2523555970-368 examples/camera_hello.cho
 prose wasm32-wasi 2534494047-693 examples/pipeline.cho
 prose wasm32-wasi 2569802592-312 tests/accept/f32.cho
 prose wasm32-wasi 2610120206-408 tests/accept/tty_narrowing.cho
+prose wasm32-wasi 2639215954-409 tests/accept/ed25519.cho
 prose wasm32-wasi 2644968454-317 examples/slab/main.cho examples/slab/slab.cho
 prose wasm32-wasi 2645311836-302 tests/accept/fork_clock_row.cho
 prose wasm32-wasi 2659613015-320 tests/accept/assert.cho
 prose wasm32-wasi 2670229636-528 examples/wordfreq/counts.cho examples/wordfreq/main.cho examples/wordfreq/text.cho
 prose wasm32-wasi 2675123415-364 tests/accept/narrow_many_exec.cho
 prose wasm32-wasi 2698740769-371 tests/accept/spawn_join_operands.cho
-prose wasm32-wasi 2717677219-409 tests/accept/ed25519.cho
 prose wasm32-wasi 2731683341-359 tests/accept/flags.cho
 prose wasm32-wasi 2752014401-336 tests/accept/borrowed_fields.cho
 prose wasm32-wasi 276902584-863 examples/agent_supervisor/agent_supervisor.cho packages/net-sockets/sockets.cho packages/http-request/request.cho
@@ -623,7 +623,6 @@ prose wasm32-wasi 3122292792-294 tests/accept/arguments.cho
 prose wasm32-wasi 3135195261-292 tests/accept/two_shared_borrows.cho
 prose wasm32-wasi 3210841136-791 examples/report/report.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho
 prose wasm32-wasi 3233630905-870 examples/agent_guest/agent_guest.cho packages/net-sockets/sockets.cho packages/net-connect/connect.cho packages/http-response/response.cho packages/agent-wire/wire.cho
-prose wasm32-wasi 3235621045-394 tests/accept/ed25519_long.cho
 prose wasm32-wasi 3248344019-949 tests/accept/math_floats.cho
 prose wasm32-wasi 3275280398-621 examples/seek/seek.cho
 prose wasm32-wasi 3284405155-314 examples/pipeline_checks.cho
@@ -639,6 +638,7 @@ prose wasm32-wasi 3600665995-592 tests/accept/spawn_owned_net.cho
 prose wasm32-wasi 363430625-485 tests/accept/file_roundtrip.cho
 prose wasm32-wasi 3656403621-312 tests/accept/borrow_and_return.cho
 prose wasm32-wasi 3712531029-685 tests/accept/spawn_parallel_sleep.cho
+prose wasm32-wasi 371410668-394 tests/accept/ed25519_long.cho
 prose wasm32-wasi 3733598933-627 tests/accept/opaque_pointer.cho
 prose wasm32-wasi 3744947107-548 tests/accept/directory_handles.cho
 prose wasm32-wasi 3836623249-310 tests/accept/structs.cho
