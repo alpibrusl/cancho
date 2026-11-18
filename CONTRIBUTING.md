@@ -9,17 +9,30 @@ by the build.
 
 ## The gate
 
-CI runs these on linux-x86_64 and darwin-aarch64, and a change is not
-done until all of them pass locally:
+CI runs the gate on linux-x86_64 and darwin-aarch64, and a change is not
+done until it passes locally:
+
+```sh
+scripts/gate.sh
+```
+
+It builds a compiler from the committed seed (no Rust, only clang) and
+runs six stages: `fmt` (`cancho fmt --check`), `files` (the file budget
+below), `seed` (the committed seed matches its hash and builds), `walk`
+(`tests/run.cho` over `tests/accept`, `tests/reject` and `examples`),
+`tests` (the `cancho test` runs of `tests/cancho-tests.txt` and the
+scripts of `tests/commands`, which build and run real programs) and
+`reject`. `scripts/gate.sh --only STAGE` runs one. `docs/gate.md` says what
+each stage replaced and how it was measured.
+
+While Rust crates remain on disk (`docs/removing-rust.md`), the Rust
+side also has its own checks:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo test --workspace
 ```
-
-`cargo test` includes the conformance suite, which builds and runs real
-programs, the documentation link check, and the file budget below.
 
 ---
 
@@ -53,7 +66,7 @@ follows it** or the gap is written down. That means a new or changed:
   `UPDATE_SELFHOST_TABLES=1 cargo test -p cancho-ir selfhost_tables`, and the code for it goes in `examples/selfhost`;
 - **runtime support or code generation** (`crates/cancho-codegen-llvm`): the same text in `examples/selfhost/runtime*`
   and `runtime/` (`runtime/make.sh`), and the backend's behaviour in `emit.cho`;
-- **fixture** in `tests/reject/` or `tests/accept/`: it is built through the compiler in cancho by the conformance suite.
+- **fixture** in `tests/reject/` or `tests/accept/`: it is built through the compiler in cancho by stage `walk` of the gate.
 
 What checks this, in order of how early it fails:
 
@@ -62,25 +75,24 @@ What checks this, in order of how early it fails:
 2. Stage `walk` of `scripts/gate.sh` fails when a program of `tests/reject/` is refused by another rule than the one it declares
    (`//~ RULE`) by the compiler in cancho, unless it is in `tests/reject.known`; a listed one that now agrees fails until the line is
    taken out, so the list only shrinks.
-3. The `selfhost` job of CI runs the whole conformance suite with `CANCHO_COMPILER=auto`. A failure that is not in
-   `.github/selfhost-known-differences.txt` is a difference you introduced.
+3. Stage `tests` of the gate runs the scripts of `tests/commands` against the compiler in cancho; their expected outputs
+   are the Rust compiler's recorded answers (`tests/vectors/`), so a difference is one you introduced.
 
-Run 3 locally with `CANCHO_COMPILER=auto cargo test -p cancho --test conformance`. A PR that adds to any of the three lists
+A PR that adds to any of the lists (`tests/unported_rules.txt`, `tests/unported_builtins.txt`, `tests/reject.known`)
 says why, in its description, and links the issue.
 
 ---
 
 ## Files
 
-**No source file over 2,000 lines.** `crates/cancho/tests/files.rs`
-enforces it on every `.rs`, `.cho`, `.py` and `.c` file in the
+**No source file over 2,000 lines.** Stage `files` of the gate
+(`scripts/files-budget.cho`) enforces it on every `.rs`, `.cho`, `.py` and `.c` file in the
 repository. rustc's own `tidy` refuses files over 3,000 lines, and these
 crates are smaller. A file over the budget can be given a **ceiling**,
 its current size, which may only come down: the number drops as the
 file shrinks and the row is deleted once it is under the budget.
-Raising a ceiling is not a fix. The table is empty today: the three
-files that were over the line (`cancho-ir`, `cancho-codegen`, and the
-conformance suite) were each split when the rule arrived.
+Raising a ceiling is not a fix. The table is empty today: the files
+that were over the line were each split when the rule arrived.
 
 When a file gets close, split it **by concern**, not by size:
 
@@ -96,10 +108,9 @@ When a file gets close, split it **by concern**, not by size:
 - **Unit tests live in their own files**, beside the code. They are
   declared with `#[cfg(test)] #[path = "tests/…"] mod …;` so a test's
   name does not change when it moves.
-- **Integration tests are one binary with topic modules**:
-  `tests/conformance/main.rs` holds the shared helpers and each topic
-  (`traps`, `net`, `ports`, …) is a module beside it. One binary links
-  once; a helper used by one topic lives in that topic's file.
+- **Integration tests are scripts**: a test of a command or a program is `tests/commands/NAME.sh` and its
+  `NAME.expected`, named in `tests/commands/script_tests.cho`; one that needs no shell is a `cancho test` file named in
+  `tests/cancho-tests.txt`.
 - **A move is a pure move.** Splitting a file changes no behaviour, and
   shows that: the same test names and counts before and after, and
   every line of the old file present in the new ones apart from
@@ -121,8 +132,8 @@ When a file gets close, split it **by concern**, not by size:
   an invariant between the checker and the backend, with its reason in
   the message. If one ever fires, it is reported as an `internal`
   refusal at the function it fired in, not as a crash
-  (`docs/internal-errors.md`). `tests/fuzz.rs` goes looking for one in
-  every `cargo test` run (`docs/fuzzing.md`).
+  (`docs/internal-errors.md`). `tests/commands/fuzz.sh` goes looking for one in
+  every gate run (`docs/fuzzing.md`).
 - **Comments say why, not what.** Each one cites the document or section
   its decision comes from.
 

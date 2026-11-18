@@ -64,7 +64,7 @@ jobs:
           test "$(./hello)" = "Hello, world!"
 
   # docs/gate.md, step G2: the gate without Rust. `scripts/gate.sh` builds the compiler from the committed seed (no Rust, only clang) and runs the stages
-  # that need no `cargo`: fmt, the files budget, the seed's hash and the reject goldens. Not required yet (G5 makes it so); it is here to be green on main first.
+  # that need no `cargo`: fmt, the files budget, the seed's hash and the reject goldens. G5: this is the check a change is judged by (CONTRIBUTING.md); the Rust jobs above stay while Rust crates remain on disk.
   gate:
     name: gate (${{ matrix.target }})
     runs-on: ${{ matrix.os }}

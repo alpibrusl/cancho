@@ -8,11 +8,11 @@
 #   --only STAGE   run one stage: fmt, files, seed, walk, tests or reject
 #   --skip STAGE   leave a stage out (more than once is allowed); the seed stage rebuilds the compiler three times and is the dear one
 #
-# Stages: fmt (`cancho fmt --check` over the corpus of conformance/formatting.rs), files (scripts/files-budget.cho: no source file over 2,000
+# Stages: fmt (`cancho fmt --check`), files (scripts/files-budget.cho: no source file over 2,000
 # lines), seed (scripts/seed-build.sh against the committed seed: the hash matches and clang builds it), walk (tests/run.cho: every fixture of
 # tests/accept and every example built and run, every fixture of tests/reject refused by its rule; `--selfhost`, since the compiler is the one in cancho), reject
-# (scripts/reject_golden.py check against tests/reject.golden), tests (every `cancho test` run listed in tests/cancho-tests.txt, with the number of tests it must pass; the
-# conformance tests join it as they move, G4).
+# (scripts/reject_golden.py check against tests/reject.golden), tests (every `cancho test` run listed in tests/cancho-tests.txt, with the number of tests it must pass; the scripts of
+# tests/commands run through tests/commands/script_tests.cho, which are what the Rust conformance suite was, G4).
 # Run from anywhere; it works from the root of the repository. Exit status: 0 if every stage ran and passed, 1 if one failed, 2 for a bad call.
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
