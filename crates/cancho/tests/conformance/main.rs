@@ -30,19 +30,13 @@
 //! rule needs a must-reject fixture (#1, #2); the discipline starts at M0, when
 //! it is cheap.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 mod conn_peer;
 
 mod http;
-mod http_fetch_nb;
 mod json;
-
-mod tls_support;
-// The TLS files moved to `tests/commands` (G4, wave 4); `http_fetch_nb` still names these three modules.
-use tls_support::{https_hello, tls_echo, tls_server};
 
 mod wasm_target;
 

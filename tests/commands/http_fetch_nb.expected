@@ -1,0 +1,4 @@
+ok the example reports a bounded authority and no foreign code (12 labels, pinned)
+ok it fetches over plain TCP on connections it keeps (8 requests on 2 connections; a 404, a closed port and a bad command line)
+ok it fetches over TLS from https_hello, verifying the name and closing with close_notify (9 requests on 3 connections)
+ok it offers ALPN to https_hello and refuses what it cannot send
