@@ -1,0 +1,219 @@
+#### ingest000 nonl
+#### ingest001 nonl
+  
+#### ingest002 nonl
+{
+#### ingest003 nonl
+}
+#### ingest004 nonl
+[
+#### ingest005 nonl
+[1,]
+#### ingest006 nonl
+[1 2]
+#### ingest007 nonl
+{"a":1,}
+#### ingest008 nonl
+{"a" 1}
+#### ingest009 nonl
+{1:2}
+#### ingest010 nonl
+{"a":1 "b":2}
+#### ingest011 nonl
+{"a":1,"a":2}
+#### ingest012 nonl
+"abc
+#### ingest013 nonl
+"\q"
+#### ingest014 nonl
+"\u12"
+#### ingest015 nonl
+"\u12G4"
+#### ingest016 nonl
+"a\
+#### ingest017 nonl
+tru
+#### ingest018 nonl
+nul
+#### ingest019 nonl
+nullx
+#### ingest020 nonl
+truefalse
+#### ingest021 nonl
+-
+#### ingest022 nonl
+--1
+#### ingest023 nonl
+1.5
+#### ingest024 nonl
+1e5
+#### ingest025 nonl
+99999999999999999999
+#### ingest026 nonl
+-9223372036854775808
+#### ingest027 nonl
+-9223372036854775809
+#### ingest028 nonl
+9223372036854775807
+#### ingest029 nonl
+9223372036854775808
+#### ingest030 nonl
+007
+#### ingest031 nonl
+[1] x
+#### ingest032 nonl
+x
+#### ingest033 nonl
+{} {}
+#### ingest034 nonl
+[]
+#### ingest035 nonl
+7
+#### ingest036 nonl
+null
+#### ingest037 nonl
+"s"
+#### ingest038 nonl
+{}
+#### ingest039 nonl
+{"items": []}
+#### ingest040 nonl
+{"items": 5}
+#### ingest041 nonl
+{"items": {}}
+#### ingest042 nonl
+{"edition": 1}
+#### ingest043 nonl
+{"foo": 1}
+#### ingest044 nonl
+{"module": 5}
+#### ingest045 nonl
+{"module": ""}
+#### ingest046 nonl
+{"module": "a..b", "items": [{"kind":"static","name":"x","ty":{"name":"int"},"body":[]}]}
+#### ingest047 nonl
+{"module": "a.b", "items": [{"kind":"static","name":"x","ty":{"name":"int"},"body":[]}]}
+#### ingest048 nonl
+{"module": "fn.b"}
+#### ingest049 nonl
+{"imports": [{}]}
+#### ingest050 nonl
+{"imports": [5]}
+#### ingest051 nonl
+{"imports": {"path": "a"}}
+#### ingest052 nonl
+{"imports": [{"path": "std.io", "x": 1}]}
+#### ingest053 nonl
+{"imports": [{"path": "std.io", "as": "console"}]}
+#### ingest054 nonl
+{"imports": [{"path": "std.io", "as": 3}]}
+#### ingest055 nonl
+{"imports": [{"path": "std..io"}]}
+#### ingest056 nonl
+{"imports": [{"path": "std.io", "as": "2x"}]}
+#### ingest057 nonl
+{"items": [5]}
+#### ingest058 nonl
+{"items": [{}]}
+#### ingest059 nonl
+{"items": [{"kind": 5}]}
+#### ingest060 nonl
+{"items": [{"kind": "bogus"}]}
+#### ingest061 nonl
+{"items": [{"kind": "fn"}]}
+#### ingest062 nonl
+{"items": [{"kind": "fn", "name": "f"}]}
+#### ingest063 nonl
+{"items": [{"kind": "fn", "name": "while", "params": [], "ret": {"name":"int"}, "body": []}]}
+#### ingest064 nonl
+{"items": [{"kind": "fn", "name": "f", "public": 1, "params": [], "ret": {"name":"int"}, "body": []}]}
+#### ingest065 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"return","value":{"kind":"int","value":1}}]}]}
+#### ingest066 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"return","value":{"kind":"int","value":"1"}}]}]}
+#### ingest067 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"return","value":{"kind":"tuple","parts":[]}}]}]}
+#### ingest068 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"return","value":{"kind":"tuple_field","base":{"kind":"name","name":"a"},"index":-1}}]}]}
+#### ingest069 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"return","value":{"kind":"tuple_field","base":{"kind":"name","name":"a"},"index":4294967297}}]}]}
+#### ingest070 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"return","value":{"kind":"unary","op":"?","operand":{"kind":"int","value":1}}}]}]}
+#### ingest071 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"return","value":{"kind":"binary","op":"**","lhs":{"kind":"int","value":1},"rhs":{"kind":"int","value":2}}}]}]}
+#### ingest072 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"return","value":{"kind":"unary","op":"-","operand":{"kind":"int","value":-5}}}]}]}
+#### ingest073 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"float"}, "body": [{"kind":"return","value":{"kind":"float","bits":18442240474082181120}},{"kind":"return","value":{"kind":"float","bits":9218868437227405312}},{"kind":"return","value":{"kind":"float","bits":9221120237041090560}},{"kind":"return","value":{"kind":"f32","bits":2139095040}},{"kind":"return","value":{"kind":"f32","bits":2143289344}},{"kind":"return","value":{"kind":"f32","bits":4286578688}},{"kind":"return","value":{"kind":"f32","bits":1}},{"kind":"return","value":{"kind":"float","bits":9223372036854775808}},{"kind":"return","value":{"kind":"float","bits":0}}]}]}
+#### ingest074 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"float"}, "body": [{"kind":"return","value":{"kind":"f32","bits":4294967295}}]}]}
+#### ingest075 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"float"}, "body": [{"kind":"return","value":{"kind":"f32","bits":4294967296}}]}]}
+#### ingest076 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"float"}, "body": [{"kind":"return","value":{"kind":"float","bits":18446744073709551616}}]}]}
+#### ingest077 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"float"}, "body": [{"kind":"return","value":{"kind":"float","bits":-1}}]}]}
+#### ingest078 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"float"}, "body": [{"kind":"return","value":{"kind":"float","bits":1.5}}]}]}
+#### ingest079 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"float"}, "body": [{"kind":"return","value":{"kind":"str","value":"a\u0001\u00e9\ud800\n\"\\/"}}]}]}
+#### ingest080 nonl
+{"items": [{"kind": "fn", "name": "f", "generics": ["T", "U"], "bounds": [null, "val", "val", "res"], "regions": ["r"], "outlives": [{"inner": "r", "outer": "r"}], "params": [], "effects": [{"name": "io"}, {"name": "ffi", "argument": "libc"}], "ret": {"name":"int"}, "body": []}]}
+#### ingest081 nonl
+{"items": [{"kind": "fn", "name": "f", "generics": [], "regions": [], "outlives": [{"inner": "r", "outer": "s"}], "params": [], "ret": {"name":"int"}, "body": []}]}
+#### ingest082 nonl
+{"items": [{"kind": "fn", "name": "f", "bounds": ["mut"], "params": [], "ret": {"name":"int"}, "body": []}]}
+#### ingest083 nonl
+{"items": [{"kind": "fn", "name": "f", "bounds": [5], "params": [], "ret": {"name":"int"}, "body": []}]}
+#### ingest084 nonl
+{"items": [{"kind": "fn", "name": "f", "effects": [{"name": "ffi", "argument": 5}], "params": [], "ret": {"name":"int"}, "body": []}]}
+#### ingest085 nonl
+{"items": [{"kind": "fn", "name": "f", "effects": null, "params": [], "ret": {"name":"int"}, "body": []}]}
+#### ingest086 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [{"name": "a"}], "ret": {"name":"int"}, "body": []}]}
+#### ingest087 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [{"name": "a", "ty": 5}], "ret": {"name":"int"}, "body": []}]}
+#### ingest088 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [{"name": "a", "ty": {"kind": 5}}], "ret": {"name":"int"}, "body": []}]}
+#### ingest089 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [{"name": "a", "ty": {"kind": "zzz"}}], "ret": {"name":"int"}, "body": []}]}
+#### ingest090 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [{"name": "a", "ty": {"kind": "ref", "unique": true, "region": "r", "inner": {"kind": "slice", "inner": {"kind": "tuple", "parts": [{"name": "int", "qualifier": "q", "args": [{"kind": "lit", "value": "libc"}, {"kind": "fn", "params": [{"name":"int"}], "effects": [{"name":"io"}], "ret": {"name":"int"}}]}]}}}}], "ret": {"name":"int"}, "body": []}]}
+#### ingest091 nonl
+{"items": [{"kind": "extern", "name": "getpid", "regions": ["f"], "params": [], "effects": [], "ret": {"name":"int"}, "symbol": "getpid"}]}
+#### ingest092 nonl
+{"items": [{"kind": "extern", "name": "getpid", "params": [], "ret": {"name":"int"}}]}
+#### ingest093 nonl
+{"items": [{"kind": "struct", "name": "S", "fields": []}]}
+#### ingest094 nonl
+{"items": [{"kind": "struct", "name": "S", "mode": "zzz", "fields": []}]}
+#### ingest095 nonl
+{"items": [{"kind": "struct", "name": "S", "mode": 5, "fields": []}]}
+#### ingest096 nonl
+{"items": [{"kind": "struct", "name": "S", "mode": "res", "generics": ["T"], "bounds": ["val"], "fields": [{"name": "x", "ty": {"name": "T"}}]}]}
+#### ingest097 nonl
+{"items": [{"kind": "enum", "name": "E", "variants": [{"name": "A"}, {"name": "B", "payload": [{"name": "int"}]}]}]}
+#### ingest098 nonl
+{"items": [{"kind": "enum", "name": "E", "variants": [{"name": "A", "payload": null}]}]}
+#### ingest099 nonl
+{"items": [{"kind": "enum", "name": "E"}]}
+#### ingest100 nonl
+{"items": [{"kind": "static", "name": "N", "public": true, "ty": {"name": "int"}, "body": []}]}
+#### ingest101 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"match","scrutinee":{"kind":"name","name":"e"},"arms":[{"pattern":{"kind":"wildcard"},"body":[]},{"pattern":{"kind":"variant","qualifier":"q","name":"E","variant":"A","bindings":[null,"x"]},"body":[]},{"pattern":{"kind":"variant","name":"E","variant":"B","bindings":[]},"body":[]}]}]}]}
+#### ingest102 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"match","scrutinee":{"kind":"name","name":"e"},"arms":[{"pattern":{"kind":"zzz"},"body":[]}]}]}]}
+#### ingest103 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"match","scrutinee":{"kind":"name","name":"e"},"arms":[{"pattern":{"kind":"variant","name":"E","variant":"A","bindings":[5]},"body":[]}]}]}]}
+#### ingest104 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"if","cond":{"kind":"bool","value":true},"then":[],"else":[{"kind":"if","cond":{"kind":"bool","value":false},"then":[],"else":null}]},{"kind":"if","cond":{"kind":"bool","value":true},"then":[],"else":[]}]}]}
+#### ingest105 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"if","cond":{"kind":"struct_lit","name":"S","fields":[]},"then":[]}]}]}
+#### ingest106 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"destructure","qualifier":"q","name":"S","fields":["a","b"],"value":{"kind":"name","name":"s"}},{"kind":"destructure_tuple","names":["a"],"value":{"kind":"name","name":"s"}},{"kind":"borrow","value":"x","unique":true,"region":"r","body":[]},{"kind":"region","region":"r","body":[]},{"kind":"defer","value":{"kind":"call","name":"g","args":[]}},{"kind":"assign","place":{"kind":"index","base":{"kind":"name","name":"a"},"index":{"kind":"int","value":1}},"value":{"kind":"slice","base":{"kind":"name","name":"a"},"start":{"kind":"int","value":1},"end":{"kind":"int","value":2}}},{"kind":"let","mutable":true,"name":"y","ty":null,"value":{"kind":"alloc","region":"r","value":{"kind":"alloc_slice","region":"r","count":{"kind":"int","value":1},"fill":{"kind":"int","value":0}}}}]}]}
+#### ingest107 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"destructure","name":"S","fields":["a",5],"value":{"kind":"name","name":"s"}}]}]}
+#### ingest108 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"expr","value":{"kind":"variant","qualifier":"q","name":"E","variant":"A","args":[{"kind":"int","value":1}]}},{"kind":"expr","value":{"kind":"variant","name":"E","variant":"A"}},{"kind":"expr","value":{"kind":"field","base":{"kind":"int","value":1},"name":"f"}},{"kind":"expr","value":{"kind":"tuple_field","base":{"kind":"float","bits":4607182418800017408},"index":0}},{"kind":"expr","value":{"kind":"tuple","parts":[{"kind":"int","value":1}]}}]}]}
+#### ingest109 nonl
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"expr","value":{"kind":"binary","op":"*","lhs":{"kind":"binary","op":"+","lhs":{"kind":"int","value":1},"rhs":{"kind":"int","value":2}},"rhs":{"kind":"binary","op":"-","lhs":{"kind":"int","value":3},"rhs":{"kind":"binary","op":"-","lhs":{"kind":"int","value":4},"rhs":{"kind":"int","value":5}}}}}]}]}

@@ -1,0 +1,2 @@
+ok the wide builtins agree with u128
+ok on wasm32 the wide builtins link and give the native checksum

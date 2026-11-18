@@ -1,0 +1,3 @@
+module a.b;
+import a.b;
+import a.b as b;

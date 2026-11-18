@@ -1,0 +1,2 @@
+edition 3;
+fn f[&r]() -> [] int { let p = null_ptr(); return 1; }

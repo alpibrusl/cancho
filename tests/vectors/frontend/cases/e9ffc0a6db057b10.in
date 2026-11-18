@@ -1,0 +1,2 @@
+enum G[T] { A(T), B }
+fn f[&r]() -> [] int { let e = G::A(1); return 1; }

@@ -1,0 +1,2 @@
+edition 5;
+fn f[&r](l: &!r Listener) -> [] int { return conn_nodelay(l); }

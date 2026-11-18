@@ -1,0 +1,1 @@
+fn f() -> [io_write, ffi("libc"), fs_read("x\n")] int { return 0; }

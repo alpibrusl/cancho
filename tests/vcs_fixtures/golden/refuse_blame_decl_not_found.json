@@ -1,0 +1,12 @@
+{
+  "command": "blame",
+  "ok": false,
+  "refused": {
+    "declarations": [
+      "fn a.thrice",
+      "fn a.twice"
+    ],
+    "message": "no declaration `nope` in `a.cho`",
+    "tag": "decl-not-found"
+  }
+}

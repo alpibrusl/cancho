@@ -1,0 +1,12 @@
+fn f(
+
+    a: int, // a
+
+    b: int, // b
+
+) -> [] int {
+
+    return a + b;
+
+}
+

@@ -1,0 +1,10 @@
+  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(io);
+ release(ffi);
+ release(heap);
+ release(args);
+ let (a, b) = narrow(fs, "/etc/ssl", "/etc/ssl");
+ release(a);
+ release(b);
+ return 0;
+ } 

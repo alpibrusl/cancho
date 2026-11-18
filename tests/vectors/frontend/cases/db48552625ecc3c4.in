@@ -1,0 +1,16 @@
+{
+  "imports": [
+    {
+      "path": "std.io",
+      "as": "console"
+    },
+    {
+      "path": "a.b.c",
+      "as": null
+    },
+    {
+      "path": null
+    }
+  ],
+  "items": []
+}

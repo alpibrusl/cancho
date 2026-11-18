@@ -1,0 +1,1 @@
+fn f[&i](io: &!i Io, n: int) -> [io_write] int { if n == 0 { return putchar(io, 65); } return f(io, n - 1); }

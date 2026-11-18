@@ -1,0 +1,3 @@
+ok every client certificate case replays with its own tag (81)
+ok the recording reaches every refusal of the client's flight (22 tags)
+ok the client's flight in any split gives the same connection (the honest connections, one byte a line)

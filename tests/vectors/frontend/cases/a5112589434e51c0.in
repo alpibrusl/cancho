@@ -1,0 +1,5 @@
+  struct Bytes { len: int, }  enum Holder[T] { Empty, Full(T), }  fn main() -> [] int { let b = Bytes { len: 1 };
+ let hole = Holder::Empty;
+ borrow b as &r in { let used: Holder[&r Bytes] = hole;
+ } return 0;
+ } 

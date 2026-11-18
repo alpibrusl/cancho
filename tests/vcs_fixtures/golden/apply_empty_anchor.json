@@ -1,0 +1,8 @@
+{
+  "command": "apply",
+  "ok": false,
+  "refused": {
+    "message": "an empty anchor in `notes.md`",
+    "tag": "anchor-not-found"
+  }
+}

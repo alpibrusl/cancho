@@ -1,0 +1,1 @@
+fn f() -> [] int { var x: int = 1; let y: (int, [byte]) = (1, "s"); x = y.0; a[1] = 2; return x; }

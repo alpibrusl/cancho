@@ -1,0 +1,4 @@
+fn f() -> [] int {
+    return g(1, // one
+        2);
+}

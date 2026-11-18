@@ -1,0 +1,2 @@
+fn put[T: val, &r](s: &!r [T], v: T) -> [] int { s[0] = v; return 0; }
+fn f[&r](s: &r [int]) -> [] int { return put(s, 1); }

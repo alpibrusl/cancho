@@ -1,0 +1,33 @@
+{
+  "already_imported": 0,
+  "branches": [
+    {
+      "change": "b296b16182a15694bfa334eec7426e02b6a5db1198bbbd9921dbe49e3b8666f2",
+      "name": "heads/main"
+    }
+  ],
+  "checked_out": 0,
+  "command": "import-git",
+  "commits": 5,
+  "dry_run": false,
+  "new_blobs": 7,
+  "ok": true,
+  "refs_kept": [],
+  "remotes": [],
+  "self_check_mismatches": [
+    {
+      "git": "7b156958b0a324808e04fc54e0b164896d918431",
+      "recomputed": "525696220b0fa88d8693ee74cbd269857722f311"
+    }
+  ],
+  "tags": [
+    {
+      "change": "4b5800100848aaca722385cc1eb42e36a4592aaaaff138240127a7f3e3dcc367",
+      "name": "tags/light"
+    },
+    {
+      "change": "893aae7e119ef0d9aaa75bc177a022a9f0185476e92395f32fd6d3fa217cca0c",
+      "name": "tags/v1"
+    }
+  ]
+}

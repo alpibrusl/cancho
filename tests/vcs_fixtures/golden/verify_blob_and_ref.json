@@ -1,0 +1,27 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "3 problem(s); first: \"blob 188cdd732ea47e5a337fbd4eea0382fdb969e64d5a1dd4d8740092c16b4ae754 (in tree 0b9fb3eacb6833d07906e5d2e7ffc4a07888df759e72148fe3e926fe16052569, a.cho)\"",
+    "objects": {
+      "blob": 3,
+      "change": 3,
+      "tree": 3
+    },
+    "problems": [
+      {
+        "object": "blob 188cdd732ea47e5a337fbd4eea0382fdb969e64d5a1dd4d8740092c16b4ae754 (in tree 0b9fb3eacb6833d07906e5d2e7ffc4a07888df759e72148fe3e926fe16052569, a.cho)",
+        "tag": "object-missing"
+      },
+      {
+        "object": "blob 188cdd732ea47e5a337fbd4eea0382fdb969e64d5a1dd4d8740092c16b4ae754 (in tree 9e43c746edc5bb2117c3e37bae9e27641258b9dce2f3614e9d494825f11665d3, a.cho)",
+        "tag": "object-missing"
+      },
+      {
+        "object": "change ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff (ref heads/x)",
+        "tag": "object-missing"
+      }
+    ],
+    "tag": "object-missing"
+  }
+}

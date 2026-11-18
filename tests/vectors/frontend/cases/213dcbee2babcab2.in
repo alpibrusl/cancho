@@ -1,0 +1,2 @@
+edition 7;
+fn f[&r](p: &!r Pipe) -> [] int { return pipe_nonblocking(p); }

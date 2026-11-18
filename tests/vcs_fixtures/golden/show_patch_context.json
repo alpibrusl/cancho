@@ -1,0 +1,80 @@
+{
+  "attestations": [
+    "gate:cancho-check:ok:0"
+  ],
+  "author": "Ada <ada@example.com>",
+  "change": "9f9b37871d00bea4d1216d5462e0824eb85bdc6ef8af4ee4de16a26c8b1b18e7",
+  "command": "show",
+  "decls": [],
+  "edits": [
+    {
+      "new": "FIFTEEN\n",
+      "old": "15\n",
+      "path": "big.txt"
+    }
+  ],
+  "files": [
+    {
+      "path": "big.txt",
+      "state": "modified"
+    }
+  ],
+  "intent": null,
+  "ok": true,
+  "parents": [
+    "878d0f357c24cd62c1d13525ffdf45f5d2e2870bc3cb74b53fb20a74115498b4"
+  ],
+  "patch": [
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": " ",
+              "text": "12\n"
+            },
+            {
+              "op": " ",
+              "text": "13\n"
+            },
+            {
+              "op": " ",
+              "text": "14\n"
+            },
+            {
+              "op": "-",
+              "text": "15\n"
+            },
+            {
+              "op": "+",
+              "text": "FIFTEEN\n"
+            },
+            {
+              "op": " ",
+              "text": "16\n"
+            },
+            {
+              "op": " ",
+              "text": "17\n"
+            },
+            {
+              "op": " ",
+              "text": "18\n"
+            }
+          ],
+          "new_lines": 7,
+          "new_start": 12,
+          "old_lines": 7,
+          "old_start": 12
+        }
+      ],
+      "path": "big.txt",
+      "status": "modified"
+    }
+  ],
+  "subject": "",
+  "time": 2001,
+  "tree": "3288f10a8a6f347805c48fccc24769151d5f3d2e982f57e1962848123c202af1",
+  "tz": "+0000"
+}

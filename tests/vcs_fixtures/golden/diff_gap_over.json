@@ -1,0 +1,79 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": " ",
+              "text": "1\n"
+            },
+            {
+              "op": " ",
+              "text": "2\n"
+            },
+            {
+              "op": "-",
+              "text": "3\n"
+            },
+            {
+              "op": "+",
+              "text": "THREE\n"
+            },
+            {
+              "op": " ",
+              "text": "4\n"
+            },
+            {
+              "op": " ",
+              "text": "5\n"
+            }
+          ],
+          "new_lines": 5,
+          "new_start": 1,
+          "old_lines": 5,
+          "old_start": 1
+        },
+        {
+          "lines": [
+            {
+              "op": " ",
+              "text": "7\n"
+            },
+            {
+              "op": " ",
+              "text": "8\n"
+            },
+            {
+              "op": "-",
+              "text": "9\n"
+            },
+            {
+              "op": "+",
+              "text": "NINE\n"
+            },
+            {
+              "op": " ",
+              "text": "10\n"
+            },
+            {
+              "op": " ",
+              "text": "11\n"
+            }
+          ],
+          "new_lines": 5,
+          "new_start": 7,
+          "old_lines": 5,
+          "old_start": 7
+        }
+      ],
+      "path": "big.txt",
+      "status": "modified"
+    }
+  ],
+  "from": "HEAD",
+  "ok": true,
+  "to": "working copy"
+}

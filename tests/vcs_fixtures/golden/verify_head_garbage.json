@@ -1,0 +1,8 @@
+{
+  "command": "verify",
+  "ok": false,
+  "refused": {
+    "message": "HEAD is neither a ref nor a change id",
+    "tag": "object-corrupt"
+  }
+}

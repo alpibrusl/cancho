@@ -2,7 +2,7 @@
 //
 // Prints `E <code> <position>` if `std.json` refuses the document, or the
 // document re-serialised by `std.json`'s writer from the tape otherwise.
-// `conformance/json.rs` feeds it valid documents, and the same documents
+// `tests/commands/json.sh` feeds `json_docs.cho` (this one, for a list of documents) valid documents, and the same documents
 // with bytes damaged, and checks both halves against `serde_json`: that the
 // two parsers accept and refuse the same inputs, and that what comes back
 // out means what went in.

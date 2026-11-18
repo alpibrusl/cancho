@@ -1,0 +1,1 @@
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"match","scrutinee":{"kind":"name","name":"e"},"arms":[{"pattern":{"kind":"wildcard"},"body":[]},{"pattern":{"kind":"variant","qualifier":"q","name":"E","variant":"A","bindings":[null,"x"]},"body":[]},{"pattern":{"kind":"variant","name":"E","variant":"B","bindings":[]},"body":[]}]}]}]}

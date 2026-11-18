@@ -118,7 +118,7 @@ fn sort_pass[&t, &x, &f, &o](all: &t [byte], st: &x [int], from: &f [int], to: &
 }
 
 // Number the `n` lines so that equal lines have the same number in `ids`; answers how many different lines there are.
-fn intern[&h, &t, &x, &d](heap: &!h Heap, all: &t [byte], st: &x [int], n: int, ids: &!d [int]) -> [heap] int {
+pub fn intern[&h, &t, &x, &d](heap: &!h Heap, all: &t [byte], st: &x [int], n: int, ids: &!d [int]) -> [heap] int {
     if n == 0 {
         return 0;
     }

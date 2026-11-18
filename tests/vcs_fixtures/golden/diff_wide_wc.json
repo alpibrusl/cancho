@@ -1,0 +1,113 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": false,
+      "decls": [
+        {
+          "kind": "added",
+          "name": "fn a.thrice",
+          "path": "a.cho"
+        },
+        {
+          "kind": "added",
+          "name": "fn a.twice",
+          "path": "a.cho"
+        }
+      ],
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "+",
+              "text": "module a;\n"
+            },
+            {
+              "op": "+",
+              "text": "pub fn twice(n: int) -> [] int { return n + n + 0; }\n"
+            },
+            {
+              "op": "+",
+              "text": "pub fn thrice(n: int) -> [] int { return n * 3; }\n"
+            }
+          ],
+          "new_lines": 3,
+          "new_start": 1,
+          "old_lines": 0,
+          "old_start": 0
+        }
+      ],
+      "path": "a.cho",
+      "status": "added"
+    },
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "-",
+              "text": "notes.md"
+            }
+          ],
+          "new_lines": 0,
+          "new_start": 0,
+          "old_lines": 1,
+          "old_start": 1
+        }
+      ],
+      "path": "lnk",
+      "status": "deleted"
+    },
+    {
+      "binary": false,
+      "mode": {
+        "new": "100644",
+        "old": "100755"
+      },
+      "path": "notes.md",
+      "status": "mode"
+    },
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "-",
+              "text": "x\n"
+            }
+          ],
+          "new_lines": 0,
+          "new_start": 0,
+          "old_lines": 1,
+          "old_start": 1
+        }
+      ],
+      "path": "sub/deep/x.txt",
+      "status": "deleted"
+    },
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "-",
+              "text": "y\n"
+            }
+          ],
+          "new_lines": 0,
+          "new_start": 0,
+          "old_lines": 1,
+          "old_start": 1
+        }
+      ],
+      "path": "top.txt",
+      "status": "deleted"
+    }
+  ],
+  "from": "a6d9f88da9b5d6c6ebf39acd9632dafbc819e3d4fa11fb4b2e03e6a634f613bb",
+  "ok": true,
+  "to": "working copy"
+}

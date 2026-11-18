@@ -1,0 +1,2 @@
+edition 9;
+fn f() -> [] int { return 1; }

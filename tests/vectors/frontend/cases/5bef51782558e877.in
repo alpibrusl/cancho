@@ -1,0 +1,1 @@
+fn f() -> [] int { nope; return 1; }

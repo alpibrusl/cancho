@@ -1,0 +1,8 @@
+ok the der corpus never traps (236 inputs)
+ok the chain corpus never traps (237 inputs)
+ok the messages corpus never traps (129 inputs)
+ok the client corpus never traps (398 inputs)
+ok the flight corpus never traps (410 inputs)
+ok the hello corpus never traps (93 inputs)
+ok the server corpus never traps (150 inputs)
+ok the clientauth corpus never traps (272 inputs)

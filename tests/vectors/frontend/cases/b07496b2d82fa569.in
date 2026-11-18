@@ -1,0 +1,2 @@
+edition 1;
+fn connect() -> [] int { return 1; }

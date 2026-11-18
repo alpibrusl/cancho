@@ -1,0 +1,1 @@
+fn f[&i](io: &!i Io) -> [err_write] int { return write_err(io, "hi"); }

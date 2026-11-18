@@ -1,0 +1,1 @@
+{"items": [{"kind": "fn", "name": "f", "generics": ["T", "U"], "bounds": [null, "val", "val", "res"], "regions": ["r"], "outlives": [{"inner": "r", "outer": "r"}], "params": [], "effects": [{"name": "io"}, {"name": "ffi", "argument": "libc"}], "ret": {"name":"int"}, "body": []}]}

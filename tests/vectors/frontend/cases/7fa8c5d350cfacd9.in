@@ -1,0 +1,1 @@
+fn f[&r](a: int, b: int) -> [] int { return wrapping_add(a, b); }

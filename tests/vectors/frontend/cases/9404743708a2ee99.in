@@ -1,0 +1,1 @@
+fn f[&r, &s](s: &!r [int]) -> [] int { s[0] = nope; return 1; }

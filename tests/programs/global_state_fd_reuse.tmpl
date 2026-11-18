@@ -1,0 +1,56 @@
+edition 5;
+import std.io;
+
+// The program of `tests/commands/global_state.sh` (docs/unsafe-and-global-state.md section 5): a ticket from `conn_detach` names a descriptor and the epoch it had; when a connection ends and another takes its
+// descriptor number, the first one's ticket must not reach the second (the use-after-free of a descriptor). The program arranges the reuse and checks that it happened (equal numbers) before it asks.
+// `BOUND` and `PORT` are replaced by the script (a `host:port` the capability is narrowed to, and the port of the server it dials); the exit status is 0 when all three things hold.
+
+fn run(bound: Net("BOUND"), io: Io) -> [] int {
+    var score = 0;
+    borrow bound as &n in {
+        match tcp_connect(n, "127.0.0.1", PORT) {
+            Dialed::Ok(a) => {
+                let first = conn_detach(a);
+                match conn_attach(first) {
+                    Attached::Ok(back) => {
+                        // The connection ends and the kernel may give its number to the next one.
+                        conn_close(back);
+                        match tcp_connect(n, "127.0.0.1", PORT) {
+                            Dialed::Ok(b) => {
+                                let second = conn_detach(b);
+                                // The same descriptor number, held by another connection: the case the epoch is for.
+                                if first & 4294967295 == second & 4294967295 { score = score + 1; }
+                                // The old ticket must not reach the new connection...
+                                match conn_attach(first) {
+                                    Attached::Ok(stolen) => { conn_close(stolen); }
+                                    Attached::Failed(e) => { if e == 9 { score = score + 1; } }
+                                }
+                                // ...which is still there for the ticket that is its own.
+                                match conn_attach(second) {
+                                    Attached::Ok(own) => { score = score + 1; conn_close(own); }
+                                    Attached::Failed(e) => { }
+                                }
+                            }
+                            Dialed::Failed(e) => { }
+                        }
+                    }
+                    Attached::Failed(e) => { }
+                }
+            }
+            Dialed::Failed(e) => { }
+        }
+    }
+    release(bound);
+    release(io);
+    if score == 3 {
+        return 0;
+    }
+    return 100 + score;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi); release(fs); release(heap); release(args); release(clock);
+    let bound = narrow(net, "BOUND");
+    return run(bound, io);
+}

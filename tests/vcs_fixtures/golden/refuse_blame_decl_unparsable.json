@@ -1,0 +1,8 @@
+{
+  "command": "blame",
+  "ok": false,
+  "refused": {
+    "message": "`b.cho` does not parse as cancho",
+    "tag": "binary-file"
+  }
+}

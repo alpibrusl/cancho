@@ -1,0 +1,7 @@
+module std.result;
+   pub enum Result[T, E] { Ok(T), Err(E), }  pub fn unwrap_or[T: val, E: val](r: Result[T, E], fallback: T) -> [] T { match r { Result::Ok(v) => { return v;
+ } Result::Err(_) => { return fallback;
+ } } }  pub fn is_ok[T, E, &r](r: &r Result[T, E]) -> [] bool { match r { Result::Ok(_) => { return true;
+ } Result::Err(_) => { return false;
+ } } }  pub fn is_err[T, E, &r](r: &r Result[T, E]) -> [] bool { return is_ok(r) == false;
+ } 

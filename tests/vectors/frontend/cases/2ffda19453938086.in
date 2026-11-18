@@ -1,0 +1,1 @@
+fn f[&i](io: &!i Io) -> [] int { return putchar(io, 65); }

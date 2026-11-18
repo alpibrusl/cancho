@@ -1,0 +1,4 @@
+val struct V[T: val] { t: T }
+res struct R { v: V[int], r: &q int }
+enum G[T] { A(T), B }
+res enum H[T: val, U] { C(T, U) }

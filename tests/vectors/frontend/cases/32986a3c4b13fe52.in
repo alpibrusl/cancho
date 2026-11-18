@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { return wrapping_add(wrapping_mul(2, 3), wrapping_sub(5, 1)); }

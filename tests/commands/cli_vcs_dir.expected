@@ -1,0 +1,783 @@
+== a chain
+step 1: vcs publish --dir lib --store st
+  exit 0
+  out| skipped lib/prog.cho (no `module` declaration: a program, not a library module)
+  out| == lib.base (st/lib.base)
+  out| published one
+  out| == lib.mid (st/lib.mid)
+  out| published two
+  out| == lib.top (st/lib.top)
+  out| published three
+  err: (nothing)
+  file ./lib/base.cho 1800255980 66
+  file ./lib/mid.cho 757111257 96
+  file ./lib/notes.txt 1001231173 12
+  file ./lib/prog.cho 2378595260 38
+  file ./lib/sub/deep.cho 3277887053 66
+  file ./lib/top.cho 2326544624 123
+  file ./st/lib.base/manifest.json 879738203 322
+  file ./st/lib.base/ops/66e9a7ea63682b93df9bddf58c4b00744873f4a3491d46ed69dbd4c0f3bbb93b.json 3864518067 332
+  file ./st/lib.base/sources/6daba606cf906e9422767498d00df4a790a91a4b6a3351de27cbc6a6c7ce09d0.cho 1800255980 66
+  file ./st/lib.mid/manifest.json 3274536860 322
+  file ./st/lib.mid/ops/ffcd57f5ad63b23222f79e59a8a847822749047d30f6c97ef525366480fe39fd.json 278748115 332
+  file ./st/lib.mid/requires/0.json 2834194895 355
+  file ./st/lib.mid/sources/fb0ecc1363dd245426c3a8fdf6f8764cda9d80a6537ae31e3e9f5ec2000aa370.cho 757111257 96
+  file ./st/lib.top/manifest.json 1877731560 324
+  file ./st/lib.top/ops/3a798b17d342f75fb900aba359088895a165dc8d18792f09880ea2a8c3b768f1.json 3285642984 332
+  file ./st/lib.top/requires/0.json 1417523365 354
+  file ./st/lib.top/requires/1.json 2834194895 355
+  file ./st/lib.top/sources/38ef21f4762a3867dc001e7c13950e6820b97c7aac3e87dae8eed1e17c1c0d4c.cho 2326544624 123
+== a chain, again, and a body changed
+step 1: vcs publish --dir lib --store st
+  exit 0
+  out| skipped lib/prog.cho (no `module` declaration: a program, not a library module)
+  out| == lib.base (st/lib.base)
+  out| published one
+  out| == lib.mid (st/lib.mid)
+  out| published two
+  out| == lib.top (st/lib.top)
+  out| published three
+  err: (nothing)
+step 2: vcs publish --dir lib --store st
+  exit 0
+  out| skipped lib/prog.cho (no `module` declaration: a program, not a library module)
+  out| == lib.base (st/lib.base)
+  out| published one
+  out| == lib.mid (st/lib.mid)
+  out| published two
+  out| == lib.top (st/lib.top)
+  out| published three
+  err: (nothing)
+step 3: vcs publish --dir lib --store st
+  exit 0
+  out| skipped lib/prog.cho (no `module` declaration: a program, not a library module)
+  out| == lib.base (st/lib.base)
+  out| published one
+  out| == lib.mid (st/lib.mid)
+  out| published two
+  out| == lib.top (st/lib.top)
+  out| published three
+  err: (nothing)
+  file ./lib/base.cho 3638505390 70
+  file ./lib/mid.cho 757111257 96
+  file ./lib/notes.txt 1001231173 12
+  file ./lib/prog.cho 2378595260 38
+  file ./lib/sub/deep.cho 3277887053 66
+  file ./lib/top.cho 2326544624 123
+  file ./st/lib.base/manifest.json 2228135501 322
+  file ./st/lib.base/ops/9e9cf364bd6aded439f5cad87ed33c400aa5a3f19e7e0e0a16e1190b2d2cd00f.json 4183440888 332
+  file ./st/lib.base/sources/a7799a69297822baf7056e65097b08c96d0b4396e699bd1b6b3c3193df54092f.cho 3638505390 70
+  file ./st/lib.mid/manifest.json 3274536860 322
+  file ./st/lib.mid/ops/ffcd57f5ad63b23222f79e59a8a847822749047d30f6c97ef525366480fe39fd.json 278748115 332
+  file ./st/lib.mid/requires/0.json 4072152627 355
+  file ./st/lib.mid/sources/fb0ecc1363dd245426c3a8fdf6f8764cda9d80a6537ae31e3e9f5ec2000aa370.cho 757111257 96
+  file ./st/lib.top/manifest.json 1877731560 324
+  file ./st/lib.top/ops/3a798b17d342f75fb900aba359088895a165dc8d18792f09880ea2a8c3b768f1.json 3285642984 332
+  file ./st/lib.top/requires/0.json 1417523365 354
+  file ./st/lib.top/requires/1.json 4072152627 355
+  file ./st/lib.top/sources/38ef21f4762a3867dc001e7c13950e6820b97c7aac3e87dae8eed1e17c1c0d4c.cho 2326544624 123
+== a store with a stranger in it
+step 1: vcs publish --dir lib --store st
+  exit 0
+  out| skipped lib/prog.cho (no `module` declaration: a program, not a library module)
+  out| == lib.base (st/lib.base)
+  out| published one
+  out| == lib.mid (st/lib.mid)
+  out| published two
+  out| == lib.top (st/lib.top)
+  out| published three
+  err: (nothing)
+step 2: vcs publish --dir lib --store st
+  exit 0
+  out| skipped lib/prog.cho (no `module` declaration: a program, not a library module)
+  out| == lib.base (st/lib.base)
+  out| published one
+  out| == lib.mid (st/lib.mid)
+  out| published two
+  out| == lib.top (st/lib.top)
+  out| published three
+  err: (nothing)
+  file ./lib/base.cho 1800255980 66
+  file ./lib/mid.cho 757111257 96
+  file ./lib/notes.txt 1001231173 12
+  file ./lib/prog.cho 2378595260 38
+  file ./lib/sub/deep.cho 3277887053 66
+  file ./lib/top.cho 2326544624 123
+  file ./st/lib.base/manifest.json 879738203 322
+  file ./st/lib.base/ops/66e9a7ea63682b93df9bddf58c4b00744873f4a3491d46ed69dbd4c0f3bbb93b.json 3864518067 332
+  file ./st/lib.base/sources/6daba606cf906e9422767498d00df4a790a91a4b6a3351de27cbc6a6c7ce09d0.cho 1800255980 66
+  file ./st/lib.mid/manifest.json 3274536860 322
+  file ./st/lib.mid/ops/ffcd57f5ad63b23222f79e59a8a847822749047d30f6c97ef525366480fe39fd.json 278748115 332
+  file ./st/lib.mid/requires/0.json 2834194895 355
+  file ./st/lib.mid/sources/fb0ecc1363dd245426c3a8fdf6f8764cda9d80a6537ae31e3e9f5ec2000aa370.cho 757111257 96
+  file ./st/lib.top/manifest.json 1877731560 324
+  file ./st/lib.top/ops/3a798b17d342f75fb900aba359088895a165dc8d18792f09880ea2a8c3b768f1.json 3285642984 332
+  file ./st/lib.top/requires/0.json 1417523365 354
+  file ./st/lib.top/requires/1.json 2834194895 355
+  file ./st/lib.top/sources/38ef21f4762a3867dc001e7c13950e6820b97c7aac3e87dae8eed1e17c1c0d4c.cho 2326544624 123
+== a store that is a file
+step 1: vcs publish --dir lib --store st
+  exit 3
+  out| skipped lib/prog.cho (no `module` declaration: a program, not a library module)
+  err| cannot clear the store `st/lib.base`
+  file ./lib/base.cho 1800255980 66
+  file ./lib/mid.cho 757111257 96
+  file ./lib/notes.txt 1001231173 12
+  file ./lib/prog.cho 2378595260 38
+  file ./lib/sub/deep.cho 3277887053 66
+  file ./lib/top.cho 2326544624 123
+  file ./st/lib.base 2243764009 6
+== a diamond
+step 1: vcs publish --dir lib --store st
+  exit 0
+  out| == lib.a (st/lib.a)
+  out| published one
+  out| == lib.b (st/lib.b)
+  out| published two
+  out| == lib.c (st/lib.c)
+  out| published three
+  out| == lib.d (st/lib.d)
+  out| published four
+  err: (nothing)
+  file ./lib/a.cho 416439313 63
+  file ./lib/b.cho 3998255368 88
+  file ./lib/c.cho 2254422907 97
+  file ./lib/d.cho 3360373860 112
+  file ./st/lib.a/manifest.json 3803565368 322
+  file ./st/lib.a/ops/66e9a7ea63682b93df9bddf58c4b00744873f4a3491d46ed69dbd4c0f3bbb93b.json 3864518067 332
+  file ./st/lib.a/sources/9bd2ce699323d16bc25ae794821a1393b784aa310577a06b9e8c8741e4fbea3f.cho 416439313 63
+  file ./st/lib.b/manifest.json 239648603 322
+  file ./st/lib.b/ops/ffcd57f5ad63b23222f79e59a8a847822749047d30f6c97ef525366480fe39fd.json 278748115 332
+  file ./st/lib.b/requires/0.json 918998282 352
+  file ./st/lib.b/sources/a16c207148f3e9e7ebe3c8ca6c39c7c6dba366dbda0248e8b793504dba253891.cho 3998255368 88
+  file ./st/lib.c/manifest.json 4987680 324
+  file ./st/lib.c/ops/59a1e0db1ae6e40703f52c1f55f8de17b5620fef9cdde56dc96d113b0832bebf.json 1331515841 332
+  file ./st/lib.c/requires/0.json 918998282 352
+  file ./st/lib.c/sources/5df8ed8268828c2327fcefbff3c2e40403c1bcd47777ca07255084513cfe202d.cho 2254422907 97
+  file ./st/lib.d/manifest.json 302275535 323
+  file ./st/lib.d/ops/2cda6c260972518e5f68b580adeeb39fb4bd536196c367064e62e93f8af261ba.json 182194475 332
+  file ./st/lib.d/requires/0.json 2137828024 352
+  file ./st/lib.d/requires/1.json 2890079168 354
+  file ./st/lib.d/sources/80c976296addfa316189b29168498049bb27897542dc4fba6923e1942cc37095.cho 3360373860 112
+== the library
+step 1: vcs publish --dir lib --store st
+  exit 1
+  out| == lib.s (st/lib.s)
+  err| `lib/s.cho` imports `std` (directly or through a `--requires` package) but `vcs publish` was not given `--std`; pass `--std` to publish against the library (docs/package-system.md §7)
+step 2: vcs publish --dir lib --store st --std
+  exit 0
+  out| == lib.s (st/lib.s)
+  out| published same
+  err: (nothing)
+step 3: vcs publish --dir lib --store st --std
+  exit 0
+  out| == lib.s (st/lib.s)
+  out| published same
+  err: (nothing)
+  file ./lib/s.cho 3964515473 127
+  file ./st/lib.s/manifest.json 4180172125 322
+  file ./st/lib.s/ops/bf85fe96143333af8c4b000deb16820fa3b77cc80b3760b254a4576cb6ae9a85.json 782574900 332
+  file ./st/lib.s/sources/4a40c18bdea3cff8d1c76cb12979bba9b089c6037250462bc710aecafe07c3b8.cho 3964515473 127
+== modules that import each other
+step 1: vcs publish --dir lib --store st
+  exit 1
+  out: (nothing)
+  err| modules import each other: lib.a -> lib.b -> lib.c -> lib.a
+  file ./lib/a.cho 689750475 77
+  file ./lib/b.cho 2759618264 77
+  file ./lib/c.cho 2074643422 77
+== a module that imports itself
+step 1: vcs publish --dir lib --store st
+  exit 1
+  out: (nothing)
+  err| modules import each other: lib.a -> lib.a
+  file ./lib/a.cho 2487087951 77
+== a module that sorts before what it imports
+step 1: vcs publish --dir lib --store st
+  exit 0
+  out| == lib.mmm (st/lib.mmm)
+  out| published one
+  out| == lib.zzz (st/lib.zzz)
+  out| published one
+  out| == lib.aaa (st/lib.aaa)
+  out| published one
+  err: (nothing)
+  file ./lib/a.cho 2208118594 97
+  file ./lib/m.cho 2149543226 65
+  file ./lib/z.cho 1846241714 65
+  file ./st/lib.aaa/manifest.json 1708038887 322
+  file ./st/lib.aaa/ops/66e9a7ea63682b93df9bddf58c4b00744873f4a3491d46ed69dbd4c0f3bbb93b.json 3864518067 332
+  file ./st/lib.aaa/requires/0.json 2947538211 354
+  file ./st/lib.aaa/requires/1.json 1502916184 354
+  file ./st/lib.aaa/sources/845c2370c2bbdd623325b677ab4be4dd3b4c52e18adb294ea36eb82b2a7be701.cho 2208118594 97
+  file ./st/lib.mmm/manifest.json 1556255509 322
+  file ./st/lib.mmm/ops/66e9a7ea63682b93df9bddf58c4b00744873f4a3491d46ed69dbd4c0f3bbb93b.json 3864518067 332
+  file ./st/lib.mmm/sources/b04fb95733e8cb2859e27a9377159ea5faaefe9df70dc7abdaf37710a9b2598c.cho 2149543226 65
+  file ./st/lib.zzz/manifest.json 3606095793 322
+  file ./st/lib.zzz/ops/66e9a7ea63682b93df9bddf58c4b00744873f4a3491d46ed69dbd4c0f3bbb93b.json 3864518067 332
+  file ./st/lib.zzz/sources/18123e544a59d955d462a21eeac4960e0a93f5decc6268fc3ef296cf01527844.cho 1846241714 65
+== a module that is not there
+step 1: vcs publish --dir lib --store st
+  exit 1
+  out: (nothing)
+  err| `lib/a.cho` imports `lib.gone`, which is neither `std` nor a module of `lib`; a dependency in another repository is published as its own store and required with `vcs publish --requires`
+  file ./lib/a.cho 4119071300 80
+== one module in two files
+step 1: vcs publish --dir lib --store st
+  exit 1
+  out: (nothing)
+  err| module `lib.a` is declared by both `lib/a.cho` and `lib/b.cho`
+  file ./lib/a.cho 416439313 63
+  file ./lib/b.cho 416439313 63
+== two modules in a file
+step 1: vcs publish --dir lib --store st
+  exit 1
+  out: (nothing)
+  err: (nothing)
+  file ./lib/a.cho 2993510875 126
+== a file that does not parse
+step 1: vcs publish --dir lib --store st
+  exit 1
+  out: (nothing)
+  err: (nothing)
+  file ./lib/a.cho 3627522449 24
+== only programs
+step 1: vcs publish --dir lib --store st
+  exit 1
+  out| skipped lib/a.cho (no `module` declaration: a program, not a library module)
+  err| no file of `lib` declares a `module`
+  file ./lib/a.cho 2378595260 38
+== no source
+step 1: vcs publish --dir lib --store st
+  exit 1
+  out: (nothing)
+  err| no `.cho` files in `lib`
+  file ./lib/notes.txt 12738659 1
+== a directory that is not there
+step 1: vcs publish --dir lib --store st
+  exit 3
+  out: (nothing)
+  err| cannot read directory `lib`
+== a directory that is a file
+step 1: vcs publish --dir lib --store st
+  exit 3
+  out: (nothing)
+  err| cannot read directory `lib`
+  file ./lib 2243764009 6
+== the default store
+step 1: vcs publish --dir lib
+  exit 0
+  out| skipped lib/prog.cho (no `module` declaration: a program, not a library module)
+  out| == lib.base (.cancho-vcs/lib.base)
+  out| published one
+  out| == lib.mid (.cancho-vcs/lib.mid)
+  out| published two
+  out| == lib.top (.cancho-vcs/lib.top)
+  out| published three
+  err: (nothing)
+step 2: vcs publish --dir lib
+  exit 0
+  out| skipped lib/prog.cho (no `module` declaration: a program, not a library module)
+  out| == lib.base (.cancho-vcs/lib.base)
+  out| published one
+  out| == lib.mid (.cancho-vcs/lib.mid)
+  out| published two
+  out| == lib.top (.cancho-vcs/lib.top)
+  out| published three
+  err: (nothing)
+  file ./.cancho-vcs/lib.base/manifest.json 879738203 322
+  file ./.cancho-vcs/lib.base/ops/66e9a7ea63682b93df9bddf58c4b00744873f4a3491d46ed69dbd4c0f3bbb93b.json 3864518067 332
+  file ./.cancho-vcs/lib.base/sources/6daba606cf906e9422767498d00df4a790a91a4b6a3351de27cbc6a6c7ce09d0.cho 1800255980 66
+  file ./.cancho-vcs/lib.mid/manifest.json 3274536860 322
+  file ./.cancho-vcs/lib.mid/ops/ffcd57f5ad63b23222f79e59a8a847822749047d30f6c97ef525366480fe39fd.json 278748115 332
+  file ./.cancho-vcs/lib.mid/requires/0.json 2834194895 355
+  file ./.cancho-vcs/lib.mid/sources/fb0ecc1363dd245426c3a8fdf6f8764cda9d80a6537ae31e3e9f5ec2000aa370.cho 757111257 96
+  file ./.cancho-vcs/lib.top/manifest.json 1877731560 324
+  file ./.cancho-vcs/lib.top/ops/3a798b17d342f75fb900aba359088895a165dc8d18792f09880ea2a8c3b768f1.json 3285642984 332
+  file ./.cancho-vcs/lib.top/requires/0.json 1417523365 354
+  file ./.cancho-vcs/lib.top/requires/1.json 2834194895 355
+  file ./.cancho-vcs/lib.top/sources/38ef21f4762a3867dc001e7c13950e6820b97c7aac3e87dae8eed1e17c1c0d4c.cho 2326544624 123
+  file ./lib/base.cho 1800255980 66
+  file ./lib/mid.cho 757111257 96
+  file ./lib/notes.txt 1001231173 12
+  file ./lib/prog.cho 2378595260 38
+  file ./lib/sub/deep.cho 3277887053 66
+  file ./lib/top.cho 2326544624 123
+ok vcs_publish_dir_in_cancho_publishes_a_library_like_cancho_vcs_publish
+== x509
+step 1: vcs publish --dir lib --store st --std
+  exit 0
+  out: 184 lines, 595991285 4052
+  err: (nothing)
+  file ./st/x509/manifest.json 2131083992 25995
+  file ./st/x509/ops/037b858d6293436e2c6eb098b5f315016ddff4022a8c21f9292b0fbc3d9cd14c.json 2825881884 332
+  file ./st/x509/ops/075c0560f9c79b4b02d411dd62acbd953af7f2a037de69a940a8de8d7a788ca3.json 1413580697 332
+  file ./st/x509/ops/10ce5b93aac37488c931501c3f28f1dda9ddb0ed0a70d76530f4022abb3ee443.json 312878842 332
+  file ./st/x509/ops/1724f6edc75e7b403bb08310f82a6f94aec8ea262097896285ef83a8425b10e0.json 379189718 332
+  file ./st/x509/ops/177dd8b9d38f6e039d9d9a23ece1ed328aa33990822e1b75e169ca451082e185.json 833716015 332
+  file ./st/x509/ops/18ee840b48d2005b2c73a5c4ff73f6ab0e3fb5b813518152881f2b8ab40e8df4.json 504799409 332
+  file ./st/x509/ops/1a8ea49404d64530804d0bf6f20080216f998fb29301f4ed4a9a77f8a4026279.json 3564403832 332
+  file ./st/x509/ops/1adc831465235650ce77bfda209a81330e62f3cca40f58561540d5aeb470ae4a.json 421516808 332
+  file ./st/x509/ops/1c36c7e77469e5040666cf51c5c9e58c413a73387c78e948207f4f893ca91365.json 3358190748 332
+  file ./st/x509/ops/1c6250320c246b53a57a28d026782ed9e2a5e7e800d85b1d02d65785da64dd0c.json 2472885470 332
+  file ./st/x509/ops/1fb6ac3b432aa879273513146152ea81f089da3003b112ae8aff189ae2aedcbe.json 423386346 332
+  file ./st/x509/ops/22551e3c1d53455f165e5b4e3814b813b15ca45f66c37301e4d95e8fd3eae189.json 692164244 332
+  file ./st/x509/ops/24a6899d3bd1a6a1fee009e28ff8146b5511e95ee9fdd6c73c97107433e8c591.json 3579971543 332
+  file ./st/x509/ops/25027af74a2640405a965220d32804c7a8e3eb00a6f166b6229ad837e4521117.json 2790019216 332
+  file ./st/x509/ops/26ab402c73b06f55039e4abcc0d464a11dd7c7e0a881e050707047ef1bce42b6.json 842778729 332
+  file ./st/x509/ops/26b62dff9ae12d9110610a3f1572856e68206b656364a88683ceeebe288cf36d.json 520315312 332
+  file ./st/x509/ops/2d56890d0b8cd06dc7f4ff2bdc46c23f39e7aa4d7c058e7c8efb0a3c3a9ab904.json 1093649241 332
+  file ./st/x509/ops/30ef2be1ba9f6f874fd3fdf12ccf77d0fa3e8a94a30215ddebda99d590b875da.json 69786712 332
+  file ./st/x509/ops/33e7f36a3c28e701e1bdf1551adebe6455d326ee39d0afa92fd8ec3f547bb932.json 768837269 332
+  file ./st/x509/ops/348d3668be51870562f2eabc6c6e21e0415f93e80ae6548bc68ee88e3048a89b.json 2171894682 332
+  file ./st/x509/ops/36c21e1ec49ba12bf911654bc0e4d01c7c5e51523d7c62f482037e715a28dce3.json 23090598 332
+  file ./st/x509/ops/382e16fc9498de867be77f897d0b35dbcc4494ff65a044b7734457fc6ffc064b.json 416943106 332
+  file ./st/x509/ops/3a3a8769cc2a7c53546b631044fce83cdb87f9f87e03d86b550511192fd4fdae.json 4106995176 332
+  file ./st/x509/ops/3c49d398e945348d4e8d6cdf1e4133056bbea4a3b08be0f613f127d3ab8bd158.json 2156633875 332
+  file ./st/x509/ops/3f22345210e93851791d70d7d5aa24302ed7fa4249e726b18f60ef5f34a2d578.json 1576149591 332
+  file ./st/x509/ops/46749fbf469342010e8a5a1a8487378e6720bd49745f583b474120fd12c5d6ee.json 2295747883 332
+  file ./st/x509/ops/55cac641f861e14ef6489443a1ea46981253392208b3aa0b5f5c959a4565c992.json 1029953830 332
+  file ./st/x509/ops/57de350981f3140c174fd92a6779de870d1402ecf38cb7a961a4497cb9f6885c.json 1363820127 332
+  file ./st/x509/ops/5c6143398a9273ae752f2b0374e1ae0fab73634e043e3798e0b96f3823478b41.json 1213539488 332
+  file ./st/x509/ops/5ec792237be65556c42c6b51242a900f899722594706af74e43f3b8166cedca5.json 4075630715 332
+  file ./st/x509/ops/61464b22db4896b947469ab6e8889922058a1acf8340086e95c8bf437d00ce88.json 1904015066 332
+  file ./st/x509/ops/63ab3dabc4320a3df4a230823b919b017ab2524ddb08b106df2daa46bdbcc44e.json 3939534114 332
+  file ./st/x509/ops/64726eb0bdee1dbd3b808c52c4fe02278bcbfef2f9354cd0b6b9cffaf53bdfd3.json 1595261347 332
+  file ./st/x509/ops/6929b16d2b9fc6689f68efb816472153b27dae9f16fd58580a0a6e736b4429a9.json 4064681246 332
+  file ./st/x509/ops/6bcbdcab45763d52a3c4314af555c32f8ff6542ad44036bef98613fef5a1eecf.json 1331405689 332
+  file ./st/x509/ops/6e92eed733183fcb6a845da1071aadd10e3bebb353a0c12056c8ab43bf071883.json 3096372345 332
+  file ./st/x509/ops/7ad5fc52c2ece6a93394aa7ea3ad88f129d6df55d8b93ffaca1d3bbfc4f1f8d3.json 3688660745 332
+  file ./st/x509/ops/7adf17d18ddc50e1032f6711c5935aaa74c4db18c7a108c1bc64cda91ac63d6d.json 1603561306 332
+  file ./st/x509/ops/7ed0defb6352b2adeb59a555022db144a31432befb629415e8299bc66a351915.json 434252940 332
+  file ./st/x509/ops/800903d2421468f6977669c5207e2878a9dca90c4e38d18538daff6c2c219d22.json 3906528720 332
+  file ./st/x509/ops/8447957c66119b2e25cfa77b597951b62207ee6dba92bc30a4e873588b437a01.json 56300114 332
+  file ./st/x509/ops/87f160f9987880b21295f1855f426b1ca69d3419fe4677c256ca29a39b7dff19.json 794125243 332
+  file ./st/x509/ops/8b9f95ffb26ce4b4a384ad3fcb737d9cc1732ca5bdd567b4783e5c96f3ffa701.json 2646919429 332
+  file ./st/x509/ops/8bc99ea35f439aec90a0f83d65e8e66c8ff61621376308b79bf80a2c99960eb0.json 1424738901 332
+  file ./st/x509/ops/8cca16bafa1b34609247296acbdc2922792b3d2fd8c778d24ffe63dc2f743d89.json 4197293986 332
+  file ./st/x509/ops/94f72ec836f6f32bc6770e4654b2a1ef3ba6a2a92cf6e8cc2be188a60d5810a7.json 3955438872 332
+  file ./st/x509/ops/98833ab72c59b0fa9fc431c7eb91535162441dfb0ac9055653d65b8a150b7d92.json 1364315124 332
+  file ./st/x509/ops/99043d9c88ad5852020673b6692b3fa8b7249da5bea28c1612cbbf36e58c5a67.json 2542874580 332
+  file ./st/x509/ops/9cf3cf2da7fa434e78e9a98ac8c58564f4396e4dc444d2701a9d8186c9362697.json 2597406784 332
+  file ./st/x509/ops/9d0feb1b812537a5ae53edcdc96fea93bef4124694128e5b764eb3970043dc39.json 2544688744 332
+  file ./st/x509/ops/9da62aea76ef8d60368e354c9d4ac989e2ef39fe8c03dc8ec903b14f2850318c.json 1729888390 332
+  file ./st/x509/ops/a37bb9944e02aedf817ec88776ed4301c81d3b86e3a7d4e1742c3c9b3b37572d.json 2969613018 332
+  file ./st/x509/ops/a53c58180bd0fb303d3a3f6bb62de7635aa401909dda873dbbd5a31ccd718bb3.json 2010537535 332
+  file ./st/x509/ops/a5526b01bbab64abb7fbaaa2993040369f453f0af56e8b5bbb08f3de13dbf784.json 418985207 332
+  file ./st/x509/ops/a7045d5d19ab2aa21e61b3942f07b79ebae342780177bac0eff43258c426f40c.json 612015318 332
+  file ./st/x509/ops/ae7d38009bff4cc40dbbb101e007339f8b7ffdcd34082c7928b83b1254ebaa2c.json 4086318377 332
+  file ./st/x509/ops/b3078fd58f9757f731d9f207d70cff3a5d7c3e827663d1531ee816209141f2ee.json 1424145744 332
+  file ./st/x509/ops/b798964958c7d7e4b580453ce6fc16ea624bd7e6e963e71cc6975ac558e04095.json 1070457373 332
+  file ./st/x509/ops/b99e780563313efcb5148ee614c53db77d8777b4319e28fd9c9c43d334af68bc.json 2886397793 332
+  file ./st/x509/ops/ba93f0fd5e7ae9e90f1a434914061049c5cc976ba5f8a92946c5d16f282d8c93.json 1620339104 332
+  file ./st/x509/ops/bcfbf658bf81decf507df43adf8909d08801509635234c8f0c89bdb301bbb7b9.json 764523605 332
+  file ./st/x509/ops/bdd7cafecdf6666d7176bc6e2f6ea282f7648da61aaba1215d1782b55582a2e9.json 1409290979 332
+  file ./st/x509/ops/be8f7450d876636280bfcbe9da12c974ba0eb77bebabba7d4c2eae5af370af5e.json 2050256558 332
+  file ./st/x509/ops/c09c4b8c3c1f2213f6e17c277f3c490552af97ef816c7ba1ee280048294261d5.json 1570122162 332
+  file ./st/x509/ops/c0f70f120d10d14ed18f085afcbcbf0dae409237ded7a09de8ec273940dfc884.json 497985482 332
+  file ./st/x509/ops/c9651d2afc91d5071461c27c2d5d06c8cef4a23090f47482c05784046d65e11e.json 2794236663 332
+  file ./st/x509/ops/ca1ed3e456fe9008913a65e2034bcf02b3784c02c9b36d70f464d444b7137548.json 120062829 332
+  file ./st/x509/ops/cbd834c992aae3003bc605effc4f46342f41a2eb79174ef18d06d3e40089e084.json 1367519856 332
+  file ./st/x509/ops/cd1c9489a507bff1263b87821a0a65ec9af57551913fa4baabd63da177b2aabe.json 1568245118 332
+  file ./st/x509/ops/cda21c9c18d0e93216e0401ff6b4b1430596e97c271fea4a429e792a078e1d36.json 2631874031 332
+  file ./st/x509/ops/cf5972e3cf04185a713790c2c60d97351dbfade907f5912bca9b9fdf35163663.json 3473101985 332
+  file ./st/x509/ops/d2647362b4edb30e2c3dabb68324b8f8f6c52e55d0b80819f639e4c9e7ec7f41.json 3729461407 332
+  file ./st/x509/ops/d2c2099feb20a27992c4cc41be1489b78be1e6df5288f9615c10699ab5268892.json 4294600157 332
+  file ./st/x509/ops/d98559904a1279c4ea691c28fdce86b69962806336dd4aa0c4c7aed0c94a4634.json 1313588164 332
+  file ./st/x509/ops/dca85a9bd307be8515b967b0c9f1dfc55009221bc6111da22681fff2508c6184.json 2657951234 332
+  file ./st/x509/ops/de107e728a9c0b0d48dd6065a70cd06de95a72180b0492898c33c99fc0a88c05.json 1969283164 332
+  file ./st/x509/ops/e2c6c7ae6ac1c1c95f19fe6cb65c5df4ebe3f3f37e883a9e8b9ca33f4117bbcf.json 1172698147 332
+  file ./st/x509/ops/f11bef52a840c7e0f2b6fc96be93981e77512a4bbd252099b2a9380161242644.json 1862079552 332
+  file ./st/x509/ops/f2e1a711621088ec532c5f2708718846030d92aeac72b3d35dc9a587ea6fa960.json 2490127635 332
+  file ./st/x509/ops/f60848e2f256ba4b318f372816e140e366cab4893f9792910909bead43870fd3.json 1553006826 332
+  file ./st/x509/ops/f7c5cbdc155d5bfe258066dd79edd63ffe5fc46eb17e893f9f3b9649a113ef48.json 3534496743 332
+  file ./st/x509/ops/fa43c261e1ee3be109367f419e8dbdf147036015810132f8ed9d81bec7c83c16.json 543738840 332
+  file ./st/x509/ops/fa50876466ff28dd6ae2136fd54c46561072edf50ef09ddb83921a5fa5750cb0.json 1136589647 332
+  file ./st/x509/ops/fc29708e7adca4a27cfd4153c61ae7e8b01dd4874d1c9bb4139909339b016f18.json 4226175288 332
+  file ./st/x509/sources/fea7a74f2c05297d86b5e73ca13b02598108af63682a47df5dce8a8e9f4dd9fe.cho 3603830086 44710
+  file ./st/x509_key/manifest.json 2360337056 6784
+  file ./st/x509_key/ops/045c8688583c2b48b00d0ee6e9f8cc1450cdd99b268fd2905bfcdfc4bd25430e.json 3520804180 332
+  file ./st/x509_key/ops/1a1325acc23f51d2676764f4902b88ed9be4b231020d599165795f4dc6f4607c.json 2487900461 332
+  file ./st/x509_key/ops/1fe38feafb39bf329a79878e7f2b0edec4f8d33e905fd8274a745c58a12e58e8.json 2172776989 332
+  file ./st/x509_key/ops/25027af74a2640405a965220d32804c7a8e3eb00a6f166b6229ad837e4521117.json 2790019216 332
+  file ./st/x509_key/ops/29156278b5f8ef9ed732d41853c4be9ed16c8f189370e8619adcb6c001b668d3.json 1497647467 332
+  file ./st/x509_key/ops/34712033e82c4da17df93c665f6ff89ddb3e628c6a07d3518aa329f07f606b4d.json 4034446741 332
+  file ./st/x509_key/ops/392f3260f03fde3e62a31b9eba79dd950d09af67b3cf139323123aac384f40fe.json 1895196769 332
+  file ./st/x509_key/ops/3c1560eed252b2ec689f3168d20ffc4f4f1eb72b06303208e775e7df3edc5bef.json 1169974237 332
+  file ./st/x509_key/ops/4619760b26ede3b027e6b03ddda62b702460c2ea48a8a0b5b3e169c5fafafa47.json 123883973 332
+  file ./st/x509_key/ops/46fbad76c78ddce08baf80f45237907ffcefac15f3c49bc3616b20fe5a1d5159.json 247786467 332
+  file ./st/x509_key/ops/54dc6fc9ae9bd63d2f6d1e64012e0f5bc90557c5564b12fa1c214aaa7727f2b1.json 54612811 332
+  file ./st/x509_key/ops/55c27cf0c440e74e50af3d72b90451f9932590a16f3d2b18b545a2d5c26a59d1.json 2320469147 332
+  file ./st/x509_key/ops/5ab958aa00c32310ed1985d85a1445cd8b031afa915069f945f036a222b3e2d6.json 1277042212 332
+  file ./st/x509_key/ops/69a24d20a08b49647efcb72991e38f6e4a9d77f727178dcd659f4ce09c87ba65.json 488876614 332
+  file ./st/x509_key/ops/79a968e3926260b7545d683a753c211e911b9bb9d6ef35cbf157bc59ceb4ad49.json 4245935881 332
+  file ./st/x509_key/ops/83e43279e7736c89d25843481b3c3f9e31dab0ddd56b5f66d5cee7d198ffb6bb.json 935614962 332
+  file ./st/x509_key/ops/a614577c447c71e0fd83af80775ee513a4543cd223d01fed5c4b2c36664137ff.json 4224425250 332
+  file ./st/x509_key/ops/abaf9a3d5f65e25df5e101f2a78c6ea6f8655743753ff66ce74fc2a427d83cb5.json 2575634249 332
+  file ./st/x509_key/ops/b8471cb3cfe4a8e0af65e1ff6b1f78aa63fdaa24511a0f44c06de0154f6479bb.json 3600072454 332
+  file ./st/x509_key/ops/bdc4246d87501ddbb3a5698bcc945e3dd998fb16547e76a2a413708463c4adb5.json 3652034635 332
+  file ./st/x509_key/ops/f2b4f06f9a47037f225f829fb9bca2ccfeb1eb478b50fe22adb11c7ddb55e8fc.json 2511473798 332
+  file ./st/x509_key/ops/f8c45f4b366827f287af5bf6aba9bc1c3e6e16ce817b89f9f82744fc6e3dcaa3.json 2716036317 332
+  file ./st/x509_key/requires/0.json 1961218890 24945
+  file ./st/x509_key/sources/76854bb809e888d6229377b1aba116e61669f14cb635c34819a39b44b03f3323.cho 2247221319 16645
+  file ./st/x509_names/manifest.json 44834805 5849
+  file ./st/x509_names/ops/0c2294e362213838aa284cbba71b62df108fcf8dc65bbe31b8c17cb959be9a3b.json 561517830 332
+  file ./st/x509_names/ops/0c29cd2fa7bf9b44ec0a8744820f1d96fbee89c65ae1c869b9ce58da3cee6cd1.json 1492546672 332
+  file ./st/x509_names/ops/1947dd72b2f2ca71564f9f4e5a85a8c6f6f738bd68f1943c1810397879d65f24.json 2963484014 332
+  file ./st/x509_names/ops/1e9c5b191c825e42188bd4bf2641db565cfd0e9aa668cc388b8b7c682211aa98.json 2507423708 332
+  file ./st/x509_names/ops/2538feaf5d26802b08b5b005898a8493720142aee4d85354a00796bddfdcd26e.json 2316524649 332
+  file ./st/x509_names/ops/2d07a45d6aaac42a4fcda54b9a589ddf3b5e52d66e811cc5f7c236de6e0fed7c.json 2091173428 332
+  file ./st/x509_names/ops/3fbdc28e1c14dbe88e8a3e65b2251fed7d82b7f43953a19b3e9a3bb0fe8aca01.json 41786231 332
+  file ./st/x509_names/ops/51212799fb4072391b8fe5043c6adaff5de6917fd0d5a34039d1a53b812b8ec0.json 1553327347 332
+  file ./st/x509_names/ops/6cb976911924b923190aa0c1ed7495b8031f2b7c68c8a6ea0a351de06324351d.json 1242093356 332
+  file ./st/x509_names/ops/77bdf25c2adac882c7532234c5cea9289774128791f000eee242a43483beb077.json 2546753851 332
+  file ./st/x509_names/ops/7b3ad46bb97c5c0018200052521c2c7be9e49fb30ed6f678124d4ac97cdb887d.json 1482369262 332
+  file ./st/x509_names/ops/96a3489e60de717f89e1f4f9a50631efa8931bf6c216d00157183885fb9632df.json 2817024376 332
+  file ./st/x509_names/ops/ac0a6844a3ddcab8800378477fd943545c1e6bde40fb50e435f475b9f1545e3c.json 229568276 332
+  file ./st/x509_names/ops/bfe96441348e597ed49d1d57374466bd22ac61bea98b93db3c2b1dff40f24b85.json 2759105639 332
+  file ./st/x509_names/ops/c129b70e48f01f495801224e00c24d0157fa06858a599659a68eca185590322c.json 1107873257 332
+  file ./st/x509_names/ops/e604f0878a8b9dec7044d63c7d91e6f8103e67d1212bc84ff4b9295719ab8785.json 3921520679 332
+  file ./st/x509_names/ops/f17cf346d3371aaf774f5487f87951b635cdfe7259fdab33619abd9d6b9f8282.json 2261197476 332
+  file ./st/x509_names/ops/fb48e41467d73c438b3ce30cfaa80ccf4d3303338f623cfa811db38eac5d9864.json 388002264 332
+  file ./st/x509_names/ops/ff333b500e1c49eccc82b91738da126d1d6f3c4e7bbf2f726dc36cd1ad9eeaa1.json 2685904200 332
+  file ./st/x509_names/requires/0.json 1961218890 24945
+  file ./st/x509_names/sources/eb70b128f5070752408d0bfd9937850bfbf92050b3a4e9671ce1a8d58dac6f0f.cho 313796755 18135
+  file ./st/x509_verify/manifest.json 2165937770 16966
+  file ./st/x509_verify/ops/05b3f7fde892044c781548ae6ee698aea450885c6ab8866b4832c42099292bda.json 3343229249 332
+  file ./st/x509_verify/ops/081ae6a4aa10199047fdc9bab79e34f586c838f7b23ef868f6da02c8b599d125.json 1950282252 332
+  file ./st/x509_verify/ops/0a031ff87e07a88a6a9dd701f97471973d5de2dd946ce2a4e871eaebea3f61e8.json 3552857607 332
+  file ./st/x509_verify/ops/0ad77f74d8c738f507ee2687c6cdb166a3502e1bacea8dcb1313fa89ea56b5e0.json 3842910606 332
+  file ./st/x509_verify/ops/0adfba3ec3a88287dd7130f3f6531adc4d286fe08c382b7b37f457083b2a46f1.json 4131799460 332
+  file ./st/x509_verify/ops/0fea8dd0af6188361f8857fa2abd96087f3737bb3ede85e7dae48833252bc646.json 1695022535 332
+  file ./st/x509_verify/ops/1201c2de2bd8791b80cd1ceec96c3cdf96578d60648ee4cf878e56cccd661b79.json 2854847549 332
+  file ./st/x509_verify/ops/2215b0ead9f29579fe41170ceb9181c1f875a4feaa5aad0a4a556997d25cb572.json 2716626589 332
+  file ./st/x509_verify/ops/25e893ad3767d837419f9537bb8647d99b4e5844e9830652509811edebba7773.json 1462365255 332
+  file ./st/x509_verify/ops/271d621821faa28c7e3e801c0150fb33a780fdc3070461d1a14e16038b8fed1e.json 2214081871 332
+  file ./st/x509_verify/ops/29f9a04567e95bde6e3312f22a78e9a022373e1c92cda37f2744c3bfd0867ffa.json 72187015 332
+  file ./st/x509_verify/ops/34dd85854072d42d17ac6ff1272c798d56082971a008d9047edd0fc7bf323cac.json 2971144091 332
+  file ./st/x509_verify/ops/37a8b47f7a3550a3365cff8d0d78afb244521dd1aab1a176c713705a96c21e66.json 1557865491 332
+  file ./st/x509_verify/ops/3b38404732e7d8811b6be7a3d9e344ec411306d900601907898d47e851c6d58c.json 3165738609 332
+  file ./st/x509_verify/ops/3d30019e949e405e61f49ce1cf4c32a95dfe937d0737ee244a36c36df1fe178c.json 839408719 332
+  file ./st/x509_verify/ops/40b22efc17109852373c4dd2f5a15a8b4af1ad6dc6b79ea4d0714e3124ba0f30.json 4284805177 332
+  file ./st/x509_verify/ops/425318b7e6a1fa92d052781de177f1b4b5f2571b83888f9b7c1bc0ad11ba45a9.json 4230345536 332
+  file ./st/x509_verify/ops/4d010c8d13c804e342460b9c17948a88a6d6d392b1c71ccf33c2c20a005a5ecf.json 2660758430 332
+  file ./st/x509_verify/ops/518e48a3eb833d7dd9a577fa64864582c0c25425db5b558f49ff8788b2a4ce06.json 1656182103 332
+  file ./st/x509_verify/ops/52fcf435025c43b9db8e911a59aa789d947696d65ff1e412d119ae2a6632c504.json 2620276784 332
+  file ./st/x509_verify/ops/54077fdb8c9ef9c2097c7291b48edb0f77bdd324ee0d1d50f01df1a6340d5ab9.json 932550647 332
+  file ./st/x509_verify/ops/5569801553b1138b698684902ee93348ab57a6c98eebf9e387b5dd2c6d459a20.json 4108073011 332
+  file ./st/x509_verify/ops/645a14b34ea4959dd94195ea5ba32fef33dccdea15ca8c5abd2dcbb2e0148b86.json 2700665560 332
+  file ./st/x509_verify/ops/6ac8c88264b6627ed28cd2dc136b3dc9bc2347d0353068197137493f18767c3c.json 4049963586 332
+  file ./st/x509_verify/ops/6df9c42095e817bc38eb74bfa0411f69b526fd08b1d09b366268ad56b9dccb78.json 2825505124 332
+  file ./st/x509_verify/ops/6e800046ef76ea4999d5127fd7ba4dd5bf50bd1c4c5ec5ae9955823d87f5d39a.json 3552468376 332
+  file ./st/x509_verify/ops/72240fef31637a49d5486063243f6a9c153b744f43e8e9eb843779cdd7802294.json 773196886 332
+  file ./st/x509_verify/ops/74f911bad956d704a600c76e137b97ea7bc3e905ad0d57dc8ec819063f24833e.json 888805168 332
+  file ./st/x509_verify/ops/75d10d7f3ca8c8882ee3ce60b4cb3f9a77deb44f14ccb10110a5f2559b2a5e5e.json 2280058798 332
+  file ./st/x509_verify/ops/7d37ad7eb2066a4fbff4f377fa501e6e14bb555cae38bb575f8499f5c7bfdbef.json 1183703891 332
+  file ./st/x509_verify/ops/841161e6db4a6b92e2b54c1ff38d85151463c6d13baf7aa7d78872a9b74de586.json 174386994 332
+  file ./st/x509_verify/ops/97be928d6d8e243d33001b143bf36dafe186d0f8e326c8ed4e4928df03ae6855.json 993789313 332
+  file ./st/x509_verify/ops/9f27ec7d8ab0741be726e08bd6eb145d96ea28e6e9101ef035b9d3dbd9eaa09b.json 2594997286 332
+  file ./st/x509_verify/ops/a2382753505b0a593f239dda7ee40763755719bc3d62d8d0a9178667821bfce9.json 535270668 332
+  file ./st/x509_verify/ops/b25eb1d877d9d47df9183f631feba79f61adb91043c052e0b3068709f4bf4194.json 3250951549 332
+  file ./st/x509_verify/ops/b32448ca522d8a6875a447108ce74e4fd2697ad108ba872d24429a6c16b8108a.json 286735477 332
+  file ./st/x509_verify/ops/b34addf73241e07df513cb8e106eb4670ee1ec1a0cbc7cf4c3cdc37233f5186b.json 1435751203 332
+  file ./st/x509_verify/ops/b71b5ddbc0bbca4248071e5cad584f84bf855750dd06cf6a50851048e333de96.json 3767892867 332
+  file ./st/x509_verify/ops/b94219cbc3b6a9fc8257993cfc376858a9d206860242f6eda0c32ada40fb0e87.json 1134108682 332
+  file ./st/x509_verify/ops/ba3582a4b07d8895861fd80b71e41eb880e06049986fb968c6755b3224a9754b.json 2093515181 332
+  file ./st/x509_verify/ops/bcc3e0b2d294a5b3e553d03c57b51863424a70ade26409f9593b8a3142d0fe7a.json 2115680514 332
+  file ./st/x509_verify/ops/bf679e08982d3264257916a3c93cedf78319f9a0915195913e2097a44348c922.json 3560489474 332
+  file ./st/x509_verify/ops/bff2b22654c3440884b87b8de1994114d1202b6e0e1e3efec1e9506851c919fb.json 333806479 332
+  file ./st/x509_verify/ops/cafd3cf9070e1231c2a08ab50ada14e259265b1f5ca66e6bcd96966db8ea5416.json 4238121745 332
+  file ./st/x509_verify/ops/cf7dd069f687c53c061ae7f0a49591598b1fe1370128a14195c8b109158d7e52.json 3537735696 332
+  file ./st/x509_verify/ops/dc5aac3bb59cc91f4ae3697a981f80367ebd9f39d215e3b942f84468b1e063a2.json 2993784144 332
+  file ./st/x509_verify/ops/e2fdb3bfb1dd471860e697ea95cbbfa2a4b6bf5cb225b914b1da4d43daf77ff2.json 2732506753 332
+  file ./st/x509_verify/ops/e5221a2f4798f85aff2887319aa61ebe0062fbe9b9c94fce7eda6220de5351ec.json 2445289547 332
+  file ./st/x509_verify/ops/e6fe24d8eb1c86913d0a4852c5a89fbb07831f88885a3d0e9cb6d0f41d300ae9.json 453409821 332
+  file ./st/x509_verify/ops/e80c1d5f47c69009dc0f05fc65b5233bbdf349aecc99974e21fa9ec12f1c38eb.json 2599258552 332
+  file ./st/x509_verify/ops/e938ff493507fcb8cb37fbe002f3fbc37c09954c8e5ca4c292bd9b25384d6523.json 2496116982 332
+  file ./st/x509_verify/ops/f2599a94bf3d7877082f02f51ad92432965f31acb9aa5c7d6faf54ffad5832aa.json 4083207725 332
+  file ./st/x509_verify/ops/f8fade270654b04d9e0ba975aca5f8ea0c86a0f85386d90d547703ace9ccedae.json 897501211 332
+  file ./st/x509_verify/ops/fbab59a5d460416f915a35811cd633e243faaa15f26c78e69e5b3898b771abdf.json 4170352919 332
+  file ./st/x509_verify/ops/fc2de2a4ecd5ab760da66d0ed32980fb182f7dd880bf8efcb59c8c49c3563940.json 3913693680 332
+  file ./st/x509_verify/requires/0.json 1961218890 24945
+  file ./st/x509_verify/requires/1.json 3577727218 5669
+  file ./st/x509_verify/sources/2c93327d4796c8761ebfe3769b633e87ade07d12ae0f58f74fa0fdaf505d6b96.cho 965567575 35315
+  files beneath lib: 198, 1891202272 22837
+== http-client
+step 1: vcs publish --dir lib --store st --std
+  exit 0
+  out: 267 lines, 3421533373 5423
+  err: (nothing)
+  file ./st/http_client/manifest.json 1625007985 33136
+  file ./st/http_client/ops/017dda6d7917ce0bc0a878795f3ed0f2522d877886c6c835114e394dc2380090.json 4168746713 332
+  file ./st/http_client/ops/08103b7d9f300f46de41480e4bb0300ae8ddc766845eb6d1faeb18740ce31516.json 31364025 332
+  file ./st/http_client/ops/082f1578141e9fff9ce6af9b3e48fab04de2f56258ac2fa2ab2e13532c5494b2.json 2547613862 332
+  file ./st/http_client/ops/0acd4ebc8ce7b677f3430761f1404514566be2fa9fcfcd6b1c20bbc8dd4773d3.json 3112375085 332
+  file ./st/http_client/ops/0d7924f0eae34ffb5f226bac99ea3fede6e36dcb41b35bef461b2e1f5443bd79.json 3110578895 332
+  file ./st/http_client/ops/0fd33e603f810f58ef71f056939197d7673e0c4159e5e48c8a644474062d91a7.json 442730537 332
+  file ./st/http_client/ops/11efab4e6e45ee168a0871e554e0ceea6bd51a7a211cd941a7943e01b575c2dd.json 907772360 332
+  file ./st/http_client/ops/1508162d384f26809cb359ba26cc10217de27f7f2ec07c0238ac324119544776.json 3663472904 332
+  file ./st/http_client/ops/1c9efde538cf6d9735d0cbe5bcd42fe0c9e2e818298f49e2a07b6ea03755bb9f.json 2350418818 332
+  file ./st/http_client/ops/2191cc142cef231ae48180c40c975b294546a561b4dbf83019be7a6fa555ddae.json 3052421259 332
+  file ./st/http_client/ops/284db2552b97e6eb023d43274c5d49bb90b1ff1bcf26d952faf991e391008ebd.json 3366299979 332
+  file ./st/http_client/ops/29b61c079be462e80f2c9ccb71f570417146f02531bb2998315d3fb8d8a7fe8a.json 2468947786 332
+  file ./st/http_client/ops/2a15e4a1d6313ac227452866c16e2ecdc8ee95257ada2a3fb70d5e802237aa3b.json 3591636057 332
+  file ./st/http_client/ops/2b225cd07d1a4d4bcf19fc361c18db1958c850dbf1c81d26af392d0c3bbc46ed.json 841256225 332
+  file ./st/http_client/ops/2ed69ae9727a96ca715b875191abb8e64a8cb79792ea9277eb3ec016257afb9b.json 1608556273 332
+  file ./st/http_client/ops/2f0d1a34ecdb3db1c7b9386221dce232cfbcd378b485d8f8329c5b259bc40bb7.json 3235426508 332
+  file ./st/http_client/ops/312ed8858ffdafc9c5e16292cef64920dac1c99268dd6ef83af31e6dc8f54cda.json 2790199482 332
+  file ./st/http_client/ops/36efb0cb5f283a50e01472cb6afb3c80a1a8c626ef4458b88e9ad666055fb565.json 1051013340 332
+  file ./st/http_client/ops/38f1ab882fbb2d7d14e0da662d4dba4579003f30e8a97f8ecd948f04f7cf36d3.json 2757127834 332
+  file ./st/http_client/ops/38f3ce78253709778cc99c4c9bf69a0803150a01410807e8086b238dacd9e212.json 3799809445 332
+  file ./st/http_client/ops/390ce8d208011f442d7a31cff644eef7fb4501780edfc861b4a79840eb70a241.json 1137065542 332
+  file ./st/http_client/ops/3e2ed5848ba171c8e21cd535dce9bf5ac32a4bd4eb49b5141066b28e6273bd67.json 3807662077 332
+  file ./st/http_client/ops/40f98781c1239b88cb89c3fbd8f31af462a83f5291d6a208b6de3c29fd9e3314.json 1616688781 332
+  file ./st/http_client/ops/41bb56839a3cf27b2a360ce027123c659f15b5be2fe8a34fcc47a85daf790742.json 3900954496 332
+  file ./st/http_client/ops/41ca4fe6cc2ec93eda17e7f26f72797c0d3e6e8b491f5b981589584a5fa3ee5f.json 535674846 332
+  file ./st/http_client/ops/41dcdaf72cd22fe831caeb6bcfae1f16067eb1f14b44fcdd40c0f38224e131fe.json 4190009758 332
+  file ./st/http_client/ops/4b3bcfb8ebb11cbd13ce07ed599780b0513cb28fe601239d1e3148d75c4363bc.json 691653701 332
+  file ./st/http_client/ops/4ccd8fb22b5915f95c0051b78de81b181c405f6c0df294de11af133eb00d88d1.json 169636856 332
+  file ./st/http_client/ops/4cf1cdbd6cd34588a1ff8fada084e741710c833c2d33d9fa3a23dcd070b7b130.json 373520024 332
+  file ./st/http_client/ops/511aa06db8572924190a35c09cfebc30b6c79fc172968b372e83a416992ffae6.json 3902172778 332
+  file ./st/http_client/ops/52f2b14807c05223ba95406f479d358b28f0d0589b9b3df26a20a1f4d3339178.json 4253703707 332
+  file ./st/http_client/ops/53b67d3bd1dd68049271b41b12f698c2c74ad13d8672ee5c61aa520ecb4c60aa.json 844265964 332
+  file ./st/http_client/ops/557bf7f48650235fee4689295f06cb5d58245cf0992973c4b53109138b7c2f91.json 1362900323 332
+  file ./st/http_client/ops/5a0557be7794d57ada08114de31ac75e9f627b35d93d07197dd992b4d6f2ac18.json 534660984 332
+  file ./st/http_client/ops/5efb30274b9dea66c7a63dddf2ccd33098e8ff9881d43e178c911fd0172c0103.json 1380589471 332
+  file ./st/http_client/ops/676880651cc0c1545dfa353167ca6fcd9d3f67ebd00af2eb630caf4bd6f8f972.json 2579121001 332
+  file ./st/http_client/ops/683c6d241d2213e2e91332413548751c1355894ee06ac24f3ec88174a60aacc6.json 1674649738 332
+  file ./st/http_client/ops/68517c44989854c085cda3a408830dc64529facc324b7d04a307bc70b2354ee3.json 283999164 332
+  file ./st/http_client/ops/6898103815775a3ea352b209ec3952b08d1ff3d7f996a0e56f9ff3ea1fc57b6e.json 3777195704 332
+  file ./st/http_client/ops/693467880a88b3a5578002aad4082b9ae9774061e1f57598ac4e45a832a1c225.json 3740386309 332
+  file ./st/http_client/ops/7367554d006f6a9deef8c0ef8f64b542bacbd2599bb3e1256c9f4ce6d5faf50f.json 1307898084 332
+  file ./st/http_client/ops/759368387f4d0361d17aa50da932cecc0771d51b0bbfd296b6877a97d03477f4.json 467948063 332
+  file ./st/http_client/ops/7642178fd1ea44f10264703b20936a1f04699db5d1a3bf33180d46cce4681540.json 636939772 332
+  file ./st/http_client/ops/7a8bb6a6723660ed28a0ba77f81619421316858e825e14e19e90a18f5e31b45b.json 2306399272 332
+  file ./st/http_client/ops/7be70809de7132bc07a86c9b1ec1a9fb16c30fa2870c0fb1d33f2ae9f69516a9.json 1204006321 332
+  file ./st/http_client/ops/7c1f3120037c99e785ba6912a63409920ec9c9ecf5bef0e980dde44b9b8e9269.json 3727810094 332
+  file ./st/http_client/ops/7dcf36ab837aa7a5220e2f7181612b1a1a1e0530ed17637d625afe9169ad1f6f.json 3195711441 332
+  file ./st/http_client/ops/7f2c09f94877aa8f6f8b2498eb8561cba39664579f89182084f4697b331b26e6.json 3205027473 332
+  file ./st/http_client/ops/818febdd4f8ece483eafe559288236736f546a83719e47c5b0b03014ba22fa84.json 2765484688 332
+  file ./st/http_client/ops/82402ec46e09d668382345f25168b3117e0050313a0fc3e9cd0eaa030f74327f.json 2347829309 332
+  file ./st/http_client/ops/82e98a7f43a62dfe79b3154c8202868e9da187197ef91ce09f5ec957c2926ea8.json 436716984 332
+  file ./st/http_client/ops/89a1b0b027de9f88851306c8de787b3eb057914ab14fe5f367498767498fdda5.json 2092057974 332
+  file ./st/http_client/ops/8a04b786e27aa6e7ded6a4c4110fb19406f49218b66fe9ccac9357a07df06d9e.json 4063003260 332
+  file ./st/http_client/ops/90991cdfe6403bac59c1a93e2f142af2a5e2b74c543cc08c3c215097aca50eaa.json 3526933933 332
+  file ./st/http_client/ops/91a615830725f52cb0e06f2d026bf9324ceaab6e4fd42fc845d4485ade01060c.json 4132687631 332
+  file ./st/http_client/ops/92d5afe375905486989738c85d4080faf297c0535bb63df5f11f66d6eb77d2ac.json 234330129 332
+  file ./st/http_client/ops/933acfb89c171a8bcc3b0988b0ad5695ba83d907f6055d536a2c73fdba636ae0.json 2578168870 332
+  file ./st/http_client/ops/9411b6bb821c278452f5f3547d8b6a4e004e7eba038fa23fc733a0a1312266c5.json 3903418633 332
+  file ./st/http_client/ops/9930f87ef87708dde13730aad48ae35fc5ab965c4335682d198c4ff0e8b6b9d1.json 1518852585 332
+  file ./st/http_client/ops/99ff3b4eb124d435651f2ef7a70419246aa1827d6ffda12e9d11e01c4f6058c8.json 2555098763 332
+  file ./st/http_client/ops/9a56e402cd98ed80cbe10c687467a38d2f48ef378ddf537cd0b5033d563db094.json 1510736238 332
+  file ./st/http_client/ops/9ad0617409eb53ac6860c6a7aab0a3daa0cacbb41a654985fc0c2be0ecea7f15.json 3155491158 332
+  file ./st/http_client/ops/9bc3ab39ba73bc1c3aba8dd5e0ceeed2e1d7b8c4b8ac8669626c75102eb5e7d6.json 2641529649 332
+  file ./st/http_client/ops/9e051333090ac4f68c2cff046c7b0b51e1ce5c1dbd4be3858bcda0a0bb281681.json 717919974 332
+  file ./st/http_client/ops/a2e1f834ea3963981b73d2aa3091b901fd747c8158e8bb7cd7867dbe25eb552d.json 2297241287 332
+  file ./st/http_client/ops/a4a655e156645640f9f22d48832874ccade3acbd6e5d16149930d04d36302a06.json 3120997616 332
+  file ./st/http_client/ops/a5e84ceae4b8747d0df6a48a5ecae637832b5f20f2ca3dbb62654d4955ff5ae5.json 1688430264 332
+  file ./st/http_client/ops/ac649cc900385f6c8264540d385748025cd38ef68f33e7ea8ab8b84e2bcb16aa.json 3329353764 332
+  file ./st/http_client/ops/acb453d5678211915bd74beb8b7ad06444899d3fdceec106ea0b5346847ea08f.json 4017458057 332
+  file ./st/http_client/ops/b0beb1f459e60d5e4825f1fae366bbf022d847db2ea9fd15d3783fe1f2295833.json 2190385208 332
+  file ./st/http_client/ops/b24d8275d7d304912a6a93356b70b0110fbe36e847e3ee59a431c481d005ed71.json 3114055812 332
+  file ./st/http_client/ops/b5288cd8f0f4b854c8ddf5e4658f665e837a4c968e1d78de8c73101a976a841b.json 4247892671 332
+  file ./st/http_client/ops/b604c2107bfd15eedde34a804fce2e8bf2ff2e075e763e88226227b3171be7b7.json 1460951209 332
+  file ./st/http_client/ops/b6962f0f835732731f807aa3c71fb28c5d124773af021abd3b9209ac78cb704a.json 2198929751 332
+  file ./st/http_client/ops/bc74f64f8489a0cef221ec63637051b2eb38c79f1ca7095583ff3e635f63dd4f.json 2215463955 332
+  file ./st/http_client/ops/bc91c16bae0887d25116834c264c735bf485147be951566943b5c1fe71f32d55.json 1477028420 332
+  file ./st/http_client/ops/bd4b67f9aa8cacb5840bb006bc2deab7df2f0b8fbfa077fcd5d882f7f0a3fb81.json 724319359 332
+  file ./st/http_client/ops/c0a87986948299bf63a8d3d3876175e09d2714879f491a5d94f5545449b47bf6.json 2180270910 332
+  file ./st/http_client/ops/c305aac056fc5de4794487e295d11ee0afd0b88f7440d27f00ae82b49116e866.json 1382311721 332
+  file ./st/http_client/ops/c4b520ad6b3e65f72403bab7a1e188051b3cad780cbdb7422ad763fbf30b3df5.json 1018143147 332
+  file ./st/http_client/ops/c712d496b309905147b2387b8099afebb6bd458f89e1bcb5ebeb88adcc042bff.json 2635549762 350
+  file ./st/http_client/ops/c9247f29fe0248ab0fbba086053c3f094870281c0666c75406799ac3e7828c65.json 2002605182 332
+  file ./st/http_client/ops/cc5dc276bd4c71f1942fb79fea8a502551b7d1db58fc73943cd936f5ce39c434.json 1685141738 332
+  file ./st/http_client/ops/d4d62ae8b4659bdb7abf67afeef558d68aed028847d7787fb49e8c3ab5f3c009.json 2694573924 332
+  file ./st/http_client/ops/d69aa571c515f154551c4b71021a3a65e1da63a6a3ed538fa4230c828bf9f7f5.json 1655189937 332
+  file ./st/http_client/ops/d7feb6f5ebd1632dd8fc061709b949a7f69adbbb91a3051b7ab4e196d1106aae.json 1405653201 332
+  file ./st/http_client/ops/db40fd2d7bf29faa240ff0a14a1a5fcdf652636674d376e24de3cb35b8d588f3.json 1308642413 332
+  file ./st/http_client/ops/e19b137d5bb1dd169282dacea665f5a147332a7e931be2f119886829690f091b.json 891785812 332
+  file ./st/http_client/ops/e2aaf3d7320a60c1f2d01e4e16479214340898b0b75afeaac8aafc77f703ce84.json 4159902920 332
+  file ./st/http_client/ops/e407348f33d2bddb29b7b3de52af21dcf4c80275d5f9fd4f1ae8daab8585cb59.json 419593746 332
+  file ./st/http_client/ops/e5d265e93980835f15bb729ec5468792138944d4c3a3a00413cfc553b9791773.json 1070240944 332
+  file ./st/http_client/ops/ebd7cb6f2debe44a1c274c56d305c95ea197b69173fa159ea27d3fee2ffcc04d.json 836048626 332
+  file ./st/http_client/ops/edea4fcaae867d51dacc8bb65244f060ed6fb824bc63f05a13f96d5462c17939.json 2274801300 332
+  file ./st/http_client/ops/ee01582c3d8ef45c3e3009b80e773864b661aa195cc39a4b8fa56e002545122a.json 2644919372 332
+  file ./st/http_client/ops/ee444eb16c0a0443ea39048510f68ee9f98bb04644c2f3c0146a23a166a032f4.json 615069138 350
+  file ./st/http_client/ops/eea231b1d48ea915eae7b6b59d6968add5032445f50d201a1ac30658f0614fc1.json 564308097 332
+  file ./st/http_client/ops/eebdfb4249e2bd760bb22d60c64006badeea5335a54d0681a71ee0d3fe43d0ae.json 1007249046 332
+  file ./st/http_client/ops/f0405906189faed1a810dec3b43612750267342ada3814250b93f45c94ade2ee.json 2863595202 332
+  file ./st/http_client/ops/f3946929b75e1fdccfc72581c427783a596836382930d627c6d46b941f084097.json 1936881993 332
+  file ./st/http_client/ops/f3fe9ff7763c0357ba8b044e07f7b0be9ed80830ce6d50a87f7bc2e5034ce90c.json 84855470 332
+  file ./st/http_client/ops/f69ba751ec1961e20da5c0158587df1c41723b8a92f4aeec14e17a88766791bc.json 2149047369 332
+  file ./st/http_client/ops/f6a256388ec516f46b1439ef347d87e3f8ae9f448ebd346c6e5ac47c84e3a691.json 1902487450 332
+  file ./st/http_client/ops/f723a61bd4cf149001e1238e6e6433d627258ee0393f686a8afd1a704f40fb3d.json 3819233027 332
+  file ./st/http_client/ops/f8bdfcf1c88e4317934c2c2fb863801f9bd82d90f7f6493123ad9527fbeb56c9.json 1029986238 332
+  file ./st/http_client/ops/fa87bc9f420fd664ab47276b0001eabcb25c9b939c8eee1fd504448f41670cc1.json 3649559512 332
+  file ./st/http_client/ops/fb99e3f5433bc731d3e2f802aa0106a94e945f6f14a6c370dfe9e0232c2e881f.json 3331592118 332
+  file ./st/http_client/ops/fcce8c95ff6f5cdd8694cd84edbb04ef813ec21753168c7f247d29942cdd466c.json 2599840646 332
+  file ./st/http_client/ops/fe6a0f9a20bc8a0bf61ba2c829584d9e7f850ebd000ba6c797b4f26b700e51d7.json 465789458 332
+  file ./st/http_client/requires/0.json 1665069212 19705
+  file ./st/http_client/requires/1.json 1843495113 26377
+  file ./st/http_client/sources/e2764f53fb5827d194705f70e232a4ada52382d52a8d892093bc109d811b62cf.cho 224596150 56961
+  file ./st/http_client_slot/manifest.json 3945052973 20522
+  file ./st/http_client_slot/ops/04fc324c2b1a85a6cc8cddef2f6e78c6ee073d3a914bdf2600b455dde6c41a52.json 711278209 332
+  file ./st/http_client_slot/ops/05092eb88722cb06744f0f7419baea8eef65a6a35b0900591afe85f5fb201006.json 3149769700 332
+  file ./st/http_client_slot/ops/05f6375c4e53b7211cb6f4590030fb8ab27cee52fa1ce7a0eeefccce78f93c16.json 554759207 332
+  file ./st/http_client_slot/ops/08ff0fe42588a8bf0e13ac9a2b3952e0c60413ca086eccb5b61f8a699d23e792.json 483283271 332
+  file ./st/http_client_slot/ops/0eb41ea344e8d6839159efdb25d3b813d0a0a34dd92c6dea9d2fb1c2e4d82617.json 742412080 332
+  file ./st/http_client_slot/ops/118656bf95fc0cc685977e0c720e3e39745d533d7379299b312abf3497a027c2.json 2119502690 332
+  file ./st/http_client_slot/ops/12cd89b78607b1423c57b0139bb779e1d0c3d40e4bc171b8ffa31bc0a299995a.json 103290029 332
+  file ./st/http_client_slot/ops/14d5a62a104819466918b1bf6d51b5878e8d7fb86db85b0901c7ee84c72139df.json 819053748 332
+  file ./st/http_client_slot/ops/1701f2487352561317b41102b9dad7d1e51b1fbe6eac6b4d0fa897a520cb3bdf.json 3015912332 332
+  file ./st/http_client_slot/ops/18641d7f5ef729e7f3fd0a43feb9d7c6b937b1344eaca1de189ab432c3f73ff5.json 499302509 332
+  file ./st/http_client_slot/ops/1b1dbd6a43e311f1430a654a81fb3bbdbf1e631d2df0324b27dd488931443542.json 1818025584 332
+  file ./st/http_client_slot/ops/236dea5c0ad1fdf7e954f04b71db2117b3df7e7f12594d79a3c1f47a7f1a3856.json 2693744342 332
+  file ./st/http_client_slot/ops/2d26c9e3e7d082a1f68f3c7a98587960374db2778b6b01684808b23353084865.json 2750348284 332
+  file ./st/http_client_slot/ops/2f384a377e6791723221c69b7d0d110fbefa2c9c96b9a75132b5c35944c2cc0a.json 3087318803 332
+  file ./st/http_client_slot/ops/302a3b80428bc6c0ed7a863a6cc17a8ef606d1545ef50780bd56584a26b67ce1.json 3220997398 332
+  file ./st/http_client_slot/ops/32d936d24648ca5ecea8b0e67333adb79209e120f2e2cb01780c638cfd7b2d0a.json 83907942 332
+  file ./st/http_client_slot/ops/3a18bf570a4a87911d2171a0a51dc01ef8889f8f43497f382587a9a8161b4f80.json 1318095166 332
+  file ./st/http_client_slot/ops/433992efa0c06f5be2398f8762c926626b3c4238397ed775c76c2b4e11b79d99.json 1131842376 332
+  file ./st/http_client_slot/ops/452e333c712ee66edb031355fd64fbce4baef73f7672dd228e17e3bb52806a44.json 4279281379 332
+  file ./st/http_client_slot/ops/4cf27f2513276a2dbf37008b42591949e60b2441cf55609fd379fa72d9c9f099.json 33783799 332
+  file ./st/http_client_slot/ops/4fd1028deb7b7029aed97b3522b6240f5f8fac11df7a25b634649f24d2616439.json 1201913902 332
+  file ./st/http_client_slot/ops/50ddcf9e8a4cdafea6032f7e2b43bceefba429ba34168945a07f7e96a1d83f23.json 843477387 332
+  file ./st/http_client_slot/ops/524d2e17bc1025eea5e4e8672f7aec5d2a5983db0c09a6571d01a88d143b7e8d.json 1467842888 332
+  file ./st/http_client_slot/ops/52ab7c05b4c3bec15b77aa053921eef981197dc14d7ca8fa2fbcb4fd30bab179.json 2726893466 332
+  file ./st/http_client_slot/ops/536f101d101b533a9034c92dcd1d79d44819dd053f85bd04499893a86a9a5050.json 3142380851 332
+  file ./st/http_client_slot/ops/5936e60243080491423bd427ff5519e648fd86489da65b8129bbd679a49f739e.json 2833226606 332
+  file ./st/http_client_slot/ops/5cd7813373efcaa155eccc220d7e278db696842daab300ad00f22c93e19f0e08.json 3653510906 332
+  file ./st/http_client_slot/ops/5e99326f9f6037d4d5c8db478cc4ceec0f96c18a418be0f13fe215791376e74c.json 3231045329 332
+  file ./st/http_client_slot/ops/6386aa9ef03c3c834a1351e0e9ffcbe3ba228975009b52cde645354c10ac0a97.json 2721991582 332
+  file ./st/http_client_slot/ops/64bd8f5f19c6d6ec26e8e4e80fb54e62689a7b5e8f3a8ca36cd4366bb24fb640.json 1232031519 332
+  file ./st/http_client_slot/ops/663dec607c4e942459f64d306f907dab3e8b1c1bc0311dda5384700e0a4321b6.json 589285379 332
+  file ./st/http_client_slot/ops/6ddb8fa33b31989937f0f7ec45197f5c2e0181fc1038dfe46c77d844a6888ea7.json 3366008726 332
+  file ./st/http_client_slot/ops/75e6f71ae9dce252ca1209b45c86f7282356531fb1d5f2f315e25164af8d440d.json 459916950 332
+  file ./st/http_client_slot/ops/7699cc7e3a4b2f2e3413188de7c9483b3b314b10fa7a8b1bcbae40a6dfedf55e.json 2868300010 332
+  file ./st/http_client_slot/ops/79a105aa50ab9728cce7b7b43913125d5f9b45237f9379ca0fca847473249e6e.json 3929315897 332
+  file ./st/http_client_slot/ops/821f10a813cc80f47653d8be394305dc9fe3fecf0ca12b07fda915ae2ec61d59.json 1308221267 332
+  file ./st/http_client_slot/ops/861411a5e0f52d035fe6d128ff2ab0205ce9be4196443f7bd24e92216701256a.json 470167959 332
+  file ./st/http_client_slot/ops/889c5d04a362cf469e8409131681c166c98472232a227542c82aa56c7cd23cb5.json 3394608295 332
+  file ./st/http_client_slot/ops/8e6c5f83687cd47df8f87ae7de9218338eb065e53a277348d43c8102af4e5db1.json 4121554799 332
+  file ./st/http_client_slot/ops/99f2613dea0b11eea930f3eb1cc1b4b5a6c405644c48784aa277a0b8e5a8d4f0.json 1010383129 332
+  file ./st/http_client_slot/ops/9d28a2449473fecad046e9c65fe3082b0379ab2c0fd7391796a76f5b98a053e7.json 678040283 332
+  file ./st/http_client_slot/ops/a043cff2405e09efa11399cd3bf4ff8474c78387db55b76d46228817087c1122.json 3274432372 332
+  file ./st/http_client_slot/ops/a12a3f7335814d8152a67faa0a231ab9918e4ccc6c7068429d477a8af4140713.json 245435402 332
+  file ./st/http_client_slot/ops/a270ff562efa5c2afd543ba3707e2922721dd083bddefed7f7e7b1d6db67775a.json 2558047317 332
+  file ./st/http_client_slot/ops/ab8e546f30743dc7985b43de4c16cadda7ab48c0d609a030f8a129cff13b3cc7.json 3864174811 332
+  file ./st/http_client_slot/ops/ae5a6b6a018093fa97c265146f6303aff95dc7ad9f0b5227fa6d555c4e7b393b.json 3954501932 332
+  file ./st/http_client_slot/ops/b44a460f6441d15bb085a060150bbd8ba5c78137ccda65872d8ec694111687e9.json 811153602 332
+  file ./st/http_client_slot/ops/ba682d97b46d4fe44936d4e0df4fae0745110f7b3f3b7fd143cd1ede84ddb835.json 2171662661 332
+  file ./st/http_client_slot/ops/bbe10d640ab4f0dd81081a02091bdb5bd5bcf0b8b9054734a07dff6e7844e750.json 3195699942 332
+  file ./st/http_client_slot/ops/bef0f91b36b5b8ccab38f5df82d3bfac26b5d416b951522a2bef7a2f600929b1.json 1388418702 332
+  file ./st/http_client_slot/ops/c4e543396f62b8ae9336f302b78e3239ba24608be532ca078172ab7814bf0c1e.json 3828758580 332
+  file ./st/http_client_slot/ops/c5a9459b8300e273b1a326b904765a5681e4975d102ed6631fc44b803e82e341.json 3596224758 332
+  file ./st/http_client_slot/ops/c5fe542a4072b76f9c8bfa84c3567292e449504d5350f14772f71488ce69aa42.json 4035738476 332
+  file ./st/http_client_slot/ops/ca40c7e0a870434394dd722cee6b4552b9df03b44a836322d7d2563fa24e79df.json 3463858404 332
+  file ./st/http_client_slot/ops/caa051ae52d7d4add7ce05f1eec2676cd2c473e293c5ceca6dab2fbe62d2beaf.json 3927503451 332
+  file ./st/http_client_slot/ops/cf05bff6fc0306df93871af5fb0ca7053efc6575e4e6707c234dd7e1052f58e1.json 912628433 332
+  file ./st/http_client_slot/ops/d16db6294e6ef48a22790dd1ba15548f3693ed94b28d55d02fb580b984d17a1e.json 313860280 332
+  file ./st/http_client_slot/ops/d4cba0802abb1c1da83aa77423ef814a1654253b70b162de135fa84e695d5af6.json 1381829271 332
+  file ./st/http_client_slot/ops/d4d8122fa87dd4161560262fe5bdf2a2e0e9b4a485e4f1afe6390943d8d1d485.json 3271480545 332
+  file ./st/http_client_slot/ops/d62a6b0b28716575c4559acc744721c7b51d4e2b192a56a058e3520b8749b86e.json 741438349 332
+  file ./st/http_client_slot/ops/d702e1413266b743b62871b86d0db222b07266a74f0ae9ae899591048d406f2f.json 4188041456 332
+  file ./st/http_client_slot/ops/d91b9b38c43d60d2858f4627a3dfcc1a3d90926d19642b85c415415633e434e3.json 2915667333 332
+  file ./st/http_client_slot/ops/f0350bcfeec1dec5d52bcdccc2265bb723bc93b83d69b551490d7d78f1923a94.json 1878197779 332
+  file ./st/http_client_slot/ops/f917f84bac0ad9c0dde8f95f7dd5d824bc91606b8c29334de36d3537e07b7536.json 3865598322 332
+  file ./st/http_client_slot/ops/f982dff13823e1837bc03b1da2614814c1e0a6546f51738ff6c16502712767c2.json 4186325247 332
+  file ./st/http_client_slot/ops/fa833962890fa0ff9c18c0977cc996947ac29311fcb059c8932bbcd6619221a4.json 10106452 332
+  file ./st/http_client_slot/ops/fbf2c5f58c6aec9672b95fddd9e2af7a8773e97dab2fe37d64fd74811e4d4a5b.json 2310175739 332
+  file ./st/http_client_slot/sources/ad57876687876ab0c06de637782af35b28f31803ad40649b0e46b9681aff3ad9.cho 1294113058 4427
+  file ./st/http_client_wire/manifest.json 4028832157 27391
+  file ./st/http_client_wire/ops/02b44fc292db184972a40f755ea509dc8d12ab9332a09c7dfa6f8c47f512a7e8.json 662167990 332
+  file ./st/http_client_wire/ops/03a0140cf226ea13f366a3a5a68a3b5245a893f7a705455c81e53b7963a6bc18.json 678450558 332
+  file ./st/http_client_wire/ops/03bdfadb967e80fc570d8f0ed443d57e20c3ef30f53cce94d69aa4bb35677da5.json 3274682811 332
+  file ./st/http_client_wire/ops/04786b46de2b41ffe6ddd4243789704fd1f84d272fbbd7cfc265fd03b01f3d89.json 3374336030 332
+  file ./st/http_client_wire/ops/04f5dffaaf60bf84d9ed162ee1a1b5a38a2bf1593ef57666e8b3a35ea09790f7.json 3180964469 332
+  file ./st/http_client_wire/ops/04f7d7793cd8a484ab403ce562de22ed85c63859ad4b238a2dfce8ef437b4049.json 3842061879 332
+  file ./st/http_client_wire/ops/0ea2837ddcdce4cf0fd395f2095f9c95f56f7f80da721d437b2c543c49e35300.json 543942237 332
+  file ./st/http_client_wire/ops/0f1aba80c1b683c07ddd9c3d4b7e4f1267a65d121ac555f062d683ab32734fc0.json 4000759353 332
+  file ./st/http_client_wire/ops/126307321b57a6c9a950181deab8b3a3874909ec311166485b729d5742f72a9c.json 54999764 332
+  file ./st/http_client_wire/ops/1583c83aa702cd34dc453a8e05c10cc3dc8bc2eed81d508eeb30ec25dd44cd6e.json 3838576479 332
+  file ./st/http_client_wire/ops/19f74f1c5beea329e1deda3c59e99c1c082e31120b02acc0f6665409d622bb95.json 2930729393 332
+  file ./st/http_client_wire/ops/1c1e67339d190118f4084d83d8a1d88beabaab1d6593e97e172dd5f8d01bc5ed.json 2930525234 332
+  file ./st/http_client_wire/ops/20db2cb27db52b34e77f15d5c00704b4067c8a42421fba5409e2f43d565cd6a9.json 4128726778 332
+  file ./st/http_client_wire/ops/2129f0cbc5a221166d5771a3992236b57f903c3f816d43ad16fd5e30bfcdfd87.json 4248234644 332
+  file ./st/http_client_wire/ops/257ca624cd5d22f9a9570427e4020ed2b6d1268b5b817f460a5b25ea39172d72.json 2897371959 332
+  file ./st/http_client_wire/ops/26c02dbf5b4ff12258bd1d6b1cfc1830ac4eb2169b23f2ed8a57861b6c355388.json 1707321426 332
+  file ./st/http_client_wire/ops/2bcbe41a862d6bcb2c7af3cbd489f0943f6312166beb8d1429c1582c92680fa6.json 48719482 332
+  file ./st/http_client_wire/ops/2f8a17472e7b2e4d6c37d65925fb1baacb9cab67b20209eb9e6f813b5b34befb.json 3145825397 332
+  file ./st/http_client_wire/ops/305c6c55c01015c7d90575a79df452492497b063381063b8c2c738eb7ea3d974.json 3247107384 332
+  file ./st/http_client_wire/ops/34c00431dc029a2b8acfc4e7d2850d35d1b75cfec0b30c82eb908b8133b102d9.json 2934322892 332
+  file ./st/http_client_wire/ops/34fd9778bc982b187952193da73b41fa2dea5d52925c41a73bada91412a380ee.json 2856052982 332
+  file ./st/http_client_wire/ops/3798d8c213901752d1492d619db0b5d9c49a53fe8ea156bc5396526178fd696d.json 3216317087 332
+  file ./st/http_client_wire/ops/3b23f82856e99c5ce997a32c9e7b625fd980e700784ef8a6afd70f9570f3b31d.json 1650702121 332
+  file ./st/http_client_wire/ops/3bc1f0a5b9867c433659fc55e7294425d858a964886b2ae8c87d5c3646568022.json 3432412061 332
+  file ./st/http_client_wire/ops/3cb46d4dd97abaf05d7ffe8c814f73b4e8b884d3fd1fe2ecd3972247cb3be682.json 3231972552 332
+  file ./st/http_client_wire/ops/3ccc1ad9c5f509f11f04aead33ce9af4a3074bfb8c10eb7ed0e9f31066c225a7.json 1320176589 332
+  file ./st/http_client_wire/ops/3f7e84fcbb4dcab43575926f1f711cd157857358aff8effdc1915ad4161cb6f1.json 3552677729 332
+  file ./st/http_client_wire/ops/478fa059a76d758f7545dff3b17ae47953ce42ec04ef13839206117105d8fcee.json 3720814821 332
+  file ./st/http_client_wire/ops/47a415b27a8b6ffb908fd6bdccb5dd65bc55c0b0ce10a014a904d714c5e87796.json 2599356009 332
+  file ./st/http_client_wire/ops/4852c47cd5c1aa133f97fce9975684a82749a85217842dbf5edb87c2fe6b97f1.json 2600813906 332
+  file ./st/http_client_wire/ops/4e252acc8520ceaa28b17d222442d4fbb2b64179fed9a0ec86a4ba7489970228.json 896459359 332
+  file ./st/http_client_wire/ops/4fb2583f8769709be80b75384571b8ebaa86e3670cebc3a400baf4cddc20b783.json 2785020411 332
+  file ./st/http_client_wire/ops/5310fab52fe08965882f3b0f0ca9b7d707969936890f5cb83852a30a6cb7b3af.json 1595306018 332
+  file ./st/http_client_wire/ops/56edff28f75470e70cb7ce484951964e66892f020beed76db1ece036364883b6.json 2509356661 332
+  file ./st/http_client_wire/ops/574d9d48e047c0044cf5a52aff25b54382f832bbdff98c68223b9ea4696c08f5.json 3555903323 332
+  file ./st/http_client_wire/ops/57e780e1ff53c57e8a42d490abdb2e24ad68602ec19a0a2ea79077581c0ae222.json 2038587430 332
+  file ./st/http_client_wire/ops/5e9b557dd52d9c0cab8520f04613a4ba2fea1daa6f9cd29256af39df19e8cd33.json 1697186576 332
+  file ./st/http_client_wire/ops/6075cb28fadb65f52c505077b84f0a2f1faf96719625476a99e765b4c7b89694.json 505650287 332
+  file ./st/http_client_wire/ops/6267b38e348115bdcdca595ae32a59fd7575e82489203107e9d0215bf0cc6e59.json 1848905003 332
+  file ./st/http_client_wire/ops/6e20d4456710769938db9b0383747f7971a9d8e1f8577991262c6f8d33ff38c8.json 34647669 332
+  file ./st/http_client_wire/ops/7239dfc6882f694d6bd3c9b1d08bc155d8df7d75c402b30f656b133f99f843ab.json 432234299 332
+  file ./st/http_client_wire/ops/73521673453f6e0833d1c353334a1943a181416d3f72807db48324cbeb9b2c00.json 3689031366 332
+  file ./st/http_client_wire/ops/768a4073f3171f6d02add8db36a99ca628e1a830a8a01ff7052752e24807664c.json 973805936 332
+  file ./st/http_client_wire/ops/78584c9969fb57832dc9c7ad00558a7a2f7d1c54ab7be2827490ddf63f81681e.json 3255119020 332
+  file ./st/http_client_wire/ops/79d05404ecbda129200285e73f3315a356e98450bb8b681c70990e764aa0b40b.json 1706363293 332
+  file ./st/http_client_wire/ops/7a02a228d561dfc864e7c6430a6e5de54fe477ee0ead859ee3f11a70ca4e4239.json 3113298703 332
+  file ./st/http_client_wire/ops/7b55df3b37a3be303e588f27a80f5ede6013cc62654a410654a342455e44f3c3.json 2035247113 332
+  file ./st/http_client_wire/ops/7ecd592117ea4604f000f7e702e9e11f69be2de0978740c4d60e9820fa7bd1ca.json 4219790887 332
+  file ./st/http_client_wire/ops/7f10cc6d154607891958a6d23559b536701b27ca019da82e21704a7c5fd501e4.json 477785301 332
+  file ./st/http_client_wire/ops/82c7b756bc737efe5cbfb9f33d5581875901a728339eca00a5adaa3f41793a88.json 1248232609 332
+  file ./st/http_client_wire/ops/838e61eccee4da25ee73828d3c899706c3576f02bdb8275c205ddbf9b862a139.json 1385037790 332
+  file ./st/http_client_wire/ops/84840cea3192b8452bf01c65317937cdd80c277cb0be87b3c299d2c6d1f9bd16.json 1438718587 332
+  file ./st/http_client_wire/ops/8493b8fe29823da62f837cd3ab6dfb618d3901d6cd47e09d55bcb9cd3495ee65.json 3906725240 332
+  file ./st/http_client_wire/ops/87bab73237953b9859ad49bc91b8bd923e6c74cce2c31854f6dd4147723f4739.json 1326269750 332
+  file ./st/http_client_wire/ops/88793cd9555a36e13ae06328b07ceb2481e7ddf58fb9ac914e15d3ec8a98d0eb.json 2350431306 332
+  file ./st/http_client_wire/ops/8a67a972c08e2e0a787d985b81e65610f01fdb895cfefc865d06fc78a1ea0a70.json 3975562592 332
+  file ./st/http_client_wire/ops/8d6afa1abbe1fc9867162f5a6e10da8bd85fa591be73be11b37d8537dc709379.json 3421075553 332
+  file ./st/http_client_wire/ops/8dec5a6678b3867570c00d75803a1074fa6c206d6be03f29a496892c84a655ae.json 812036728 332
+  file ./st/http_client_wire/ops/90e1fdea40f7a35b6046de4be7f7bfd40565f98a7a936c43b845138734ee80c7.json 3976034776 332
+  file ./st/http_client_wire/ops/9114b62231cf2c5bc5def709e92c8e8959486a992e91c5c1c7983304ca40915a.json 911412665 332
+  file ./st/http_client_wire/ops/963475cf1ec0c033a03ec3957697756f7db40302ecd0fdc1a0b6804ea43bc44f.json 2255309442 332
+  file ./st/http_client_wire/ops/9643b94416b5514a5bb1b7ea2df6b7c2b2176d408273a2af4c72c3aba820b94a.json 270465407 332
+  file ./st/http_client_wire/ops/9beb5c803e19c066b5d91ddd2becc84edc92b4aba20b2d8e653f8ac1a134b88a.json 644247041 332
+  file ./st/http_client_wire/ops/a03709e1eaf38cbc7c569c3cd6a6230279b4b6aaa1f9e1961797a0ca71f33ae3.json 4193656181 332
+  file ./st/http_client_wire/ops/a0fe11039b1ca03738840ee9e26cd25aa7d4d0db16d0c51dd52c758f5edbe633.json 862384944 332
+  file ./st/http_client_wire/ops/a47ea2ccab3c8ac846703a99c206f15000f3adb655bae6f618c694b2c61ccf1a.json 2577143861 332
+  file ./st/http_client_wire/ops/a4a3f431f5dfc3a07f9facf836869f45a189627012c9c7936b8509bffe2ae241.json 1626709537 332
+  file ./st/http_client_wire/ops/a9d4ae6e62ea2f95bc2cf75ce0ebaafd9a40a7bdea1c12ec907dbb92ce4bb086.json 1058575644 332
+  file ./st/http_client_wire/ops/ac5be9904e6bc5437dab9c3b2164111a61c414b8df41af50d70af29a5663fb4d.json 3751153700 332
+  file ./st/http_client_wire/ops/acf47265fd2c5e7a5e73dfe9abc1b6a489e8954c1119d9d2c63e144a80ab2974.json 3166182652 332
+  file ./st/http_client_wire/ops/b0fa9e8cda7cd0c5fb7b72d358f2e67963bb375fe68dd7d17b3cc4766cdefa8e.json 539048708 332
+  file ./st/http_client_wire/ops/b26484f70181d1446e15926f9182c46c38c3219c2076eeebefd7e2455308363a.json 2820430495 332
+  file ./st/http_client_wire/ops/b575d2611a658755a0fe232b88f1a0f68bfdd2a82599fa38c978bd674fbf1959.json 4209792657 332
+  file ./st/http_client_wire/ops/b8cebedba1de0cda3fa4e05b310130c43f2bdb9104c0691f707029bf253d8052.json 1574661631 332
+  file ./st/http_client_wire/ops/ba4185e26904b34b7aa1cd5e32a81127709d03741e4fb0ed36499bb6905c2b6a.json 628058459 332
+  file ./st/http_client_wire/ops/c4f4850ffc96981c7344e5e9c51720a7deb02fc812aacb776058c054a3ac188f.json 3474065191 332
+  file ./st/http_client_wire/ops/c999fdb637352a39e8af5028f8feb007e908f14a35e2de0f8cf2604c72ebc384.json 4066290919 332
+  file ./st/http_client_wire/ops/cc71793407fa565cb5fe130598902789f3b515e95cc887ae60e93a886f71507b.json 1104102309 332
+  file ./st/http_client_wire/ops/e2ca1427fcda8fc60022bfb7ed829574f7e11666b4ebd04ee12a88689af3e4a5.json 1665241138 332
+  file ./st/http_client_wire/ops/e733a7906c5200f3fb50229049d3298b7612e42587a5ad096bec92b0fa118759.json 692403220 332
+  file ./st/http_client_wire/ops/eafa302f339a183340ac3fe42e5c212a55c2182afb915466bd525bf361cc375c.json 852041962 332
+  file ./st/http_client_wire/ops/ebebebd70eb6d83065842cb76efa06d32473aaea1b0d878a8f9d51cecd12b211.json 3245762441 332
+  file ./st/http_client_wire/ops/ec33fbdfa57bafb5079808a079c1b3a7eb160f50fa1c8787e3f53fc3d9a35982.json 66942536 332
+  file ./st/http_client_wire/ops/eee2ab0620937f320c1382d0f83a13eedd565ce7546d4ed7541a30c0a71b925e.json 2336010867 332
+  file ./st/http_client_wire/ops/f0a07a78a420a6202c0b566d247fadb25ddf6f56efdcdcd7666ce67f01bcf41c.json 1278412174 332
+  file ./st/http_client_wire/ops/f3679ceb1dc78305c6eb9bd650c21da530ca13daa07ce0415812ced087c1b003.json 1525099631 332
+  file ./st/http_client_wire/ops/f77346c95d1f3701c06c6a6928ac7c5df4ff884541d558741d976a6cafd8aa07.json 1836997656 332
+  file ./st/http_client_wire/ops/f938705560bab4b9b680dad672a5ab183bfd6fdea518d9e4180b9c73631e9ea1.json 2313462692 332
+  file ./st/http_client_wire/ops/fb293bfeaae92932f1d43e95e18b745e190128de9615f8763f210adf4b659159.json 36951800 332
+  file ./st/http_client_wire/sources/7affb4fa1266a8527705868dd713e53e7d4b64362067d6608d5a206cc721f0e8.cho 1680548803 30657
+  files beneath lib: 277, 3682324735 34362
+ok vcs_publish_dir_in_cancho_publishes_the_libraries_of_packages

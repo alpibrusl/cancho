@@ -1,0 +1,13 @@
+{
+  "command": "verify",
+  "locks": [],
+  "objects": {
+    "blob": 0,
+    "change": 0,
+    "tree": 0
+  },
+  "ok": true,
+  "refs": 0,
+  "sound": true,
+  "tmp_garbage": 0
+}

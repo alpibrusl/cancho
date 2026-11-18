@@ -1,0 +1,2 @@
+enum E[T] { A, B(T) }
+fn f(e: E[int]) -> [] int { match e { E::A => { } E::B(_) => { } } return 0; }

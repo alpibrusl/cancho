@@ -1,0 +1,503 @@
+edition 12;
+module selfhost.vcsswitch;
+
+// vcsswitch.cho -- the `switch` command of `cancho vcs` (`docs/vcs-routing.md` section 8, slice R6; the Rust command is `cmd_switch` and `move_working_copy`, `crates/cancho/src/vcs_repo.rs`).
+//
+//   switch_command(heap, root, vcs, scratch, target, create, detach, keep, discard, dry, now)
+//
+// `target` is a branch or a change; `create` makes it a new branch at HEAD's change, `detach` reads it as a change even if a branch has the name. The working copy is moved from HEAD's tree to the
+// target's: every path the two trees differ in is written (the target's entry) or removed (the path the target lacks), in path order, with `vcsrestore.apply` and `vcsworktree.remove_path`; then HEAD
+// is written (`ref: refs/heads/NAME` or the change id). A path that is dirty (differs from HEAD's tree) blocks the move, unless `keep` (only a dirty path the move would touch blocks) or `discard`
+// (none does; the paths the move overwrites are listed as `discarded`). Unless `dry` the work lock is taken (stamped `0 NOW`, `docs/vcs-routing.md` D9) and removed when the command ends.
+//
+// The answer is `vcsstore.Object`: the document in `bytes` and status 0; or a refusal status. Besides the statuses of the other commands (18..22 `bad-revision`, 10 `io` with the errno, the scan's):
+// 14 `ref-moved` (`--create` over a branch that exists; the branch's change is in `bytes`), 15 `lock-held` (the lock's text in `bytes`), 16 `bad-ref-name`, 32 `dirty-working-copy` (the blocked
+// paths, one to a line, in `bytes`) and 33 (`--create` with no change at HEAD).
+//
+// **Known difference:** HEAD is written through `HEAD.tmp-0` beside it, not through `.cancho/vcs/tmp` (`vcsstore.put_whole`; D14).
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import selfhost.jsonwrite;
+import selfhost.vcsobj;
+import selfhost.vcsrepo;
+import selfhost.vcsrestore;
+import selfhost.vcsscan;
+import selfhost.vcsstore;
+import selfhost.vcsworktree;
+
+// Whether the entries `i` of `old` and `j` of `new` (same path) differ in blob or mode.
+fn differ[&o, &n](old: &o [byte], i: int, new: &n [byte], j: int) -> [] bool {
+    if !bytes.equal(vcsobj.entry_blob(old, i), vcsobj.entry_blob(new, j)) {
+        return true;
+    }
+    return !bytes.equal(vcsobj.entry_mode(old, i), vcsobj.entry_mode(new, j));
+}
+
+// Which path comes first in the walk of `old` (entry `i`, -1 when done) and `new` (entry `j`): -1 `old`'s, 1 `new`'s, 0 both.
+fn order_of[&o, &n](old: &o [byte], i: int, new: &n [byte], j: int) -> [] int {
+    if i < 0 {
+        return 1;
+    }
+    if j < 0 {
+        return 0 - 1;
+    }
+    return bytes.compare(vcsobj.entry_path(old, i), vcsobj.entry_path(new, j));
+}
+
+// The paths on which the tree texts `old` and `new` differ (added, deleted, modified or mode), one to a line, in path order.
+fn diff_paths[&h, &o, &n](heap: &!h Heap, old: &o [byte], new: &n [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 0);
+    var i = 0;
+    var j = 0;
+    if len(old) == 0 {
+        i = 0 - 1;
+    }
+    if len(new) == 0 {
+        j = 0 - 1;
+    }
+    while i >= 0 || j >= 0 {
+        let order = order_of(old, i, new, j);
+        if order < 0 {
+            out = buffer.push(heap, buffer.append(heap, out, vcsobj.entry_path(old, i)), byte_of(10));
+            i = vcsobj.entry_next(old, i);
+        } else if order > 0 {
+            out = buffer.push(heap, buffer.append(heap, out, vcsobj.entry_path(new, j)), byte_of(10));
+            j = vcsobj.entry_next(new, j);
+        } else {
+            if differ(old, i, new, j) {
+                out = buffer.push(heap, buffer.append(heap, out, vcsobj.entry_path(new, j)), byte_of(10));
+            }
+            i = vcsobj.entry_next(old, i);
+            j = vcsobj.entry_next(new, j);
+        }
+    }
+    return out;
+}
+
+// The lines both `left` and `right` have (each sorted as the walks give them).
+fn common[&h, &l, &r](heap: &!h Heap, left: &l [byte], right: &r [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 0);
+    var x = 0;
+    var y = 0;
+    while x < len(left) && y < len(right) {
+        let xe = vcsscan.line_end(left, x);
+        let ye = vcsscan.line_end(right, y);
+        let c = bytes.compare(left[x..xe], right[y..ye]);
+        if c == 0 {
+            out = buffer.push(heap, buffer.append(heap, out, left[x..xe]), byte_of(10));
+            x = xe + 1;
+            y = ye + 1;
+        } else if c < 0 {
+            x = xe + 1;
+        } else {
+            y = ye + 1;
+        }
+    }
+    return out;
+}
+
+// Move the working copy along the difference `old` -> `new`: the new entry written, or the path the new tree lacks removed, in path order. Stops at the first failure: (status, errno).
+fn apply_moves[&h, &r, &d, &s, &o, &n](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], old: &o [byte], new: &n [byte]) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] (int, int) {
+    var status = 0;
+    var errno = 0;
+    var i = 0;
+    var j = 0;
+    if len(old) == 0 {
+        i = 0 - 1;
+    }
+    if len(new) == 0 {
+        j = 0 - 1;
+    }
+    while (i >= 0 || j >= 0) && status == 0 {
+        let order = order_of(old, i, new, j);
+        if order < 0 {
+            let (s0, e0) = vcsworktree.remove_path(heap, root, vcsobj.entry_path(old, i));
+            status = s0;
+            errno = e0;
+            i = vcsobj.entry_next(old, i);
+        } else if order > 0 {
+            let (s0, e0) = vcsrestore.apply(heap, root, vcs, scratch, new, j);
+            status = s0;
+            errno = e0;
+            j = vcsobj.entry_next(new, j);
+        } else {
+            if differ(old, i, new, j) {
+                let (s0, e0) = vcsrestore.apply(heap, root, vcs, scratch, new, j);
+                status = s0;
+                errno = e0;
+            }
+            i = vcsobj.entry_next(old, i);
+            j = vcsobj.entry_next(new, j);
+        }
+    }
+    return (status, errno);
+}
+
+// `lines` (one path to a line) as a JSON array of strings whose members are at `level` + 1: `[]` when there are none.
+pub fn string_array[&h, &l](heap: &!h Heap, out: buffer.Buffer, lines: &l [byte], level: int) -> [heap] buffer.Buffer {
+    if len(lines) == 0 {
+        return buffer.append(heap, out, "[]");
+    }
+    var b = buffer.push(heap, out, byte_of(91));
+    var at = 0;
+    var first = true;
+    while at < len(lines) {
+        let end = vcsscan.line_end(lines, at);
+        if !first {
+            b = buffer.push(heap, b, byte_of(44));
+        }
+        first = false;
+        b = jsonwrite.string(heap, jsonwrite.newline(heap, b, level + 1), lines[at..end]);
+        at = end + 1;
+    }
+    return buffer.push(heap, jsonwrite.newline(heap, b, level), byte_of(93));
+}
+
+// What `target` is: the text of HEAD once switched (`head`), the change it is at (`change`), the branch (`branch`, empty when detached); or why not (`status`, and for 14 the branch's
+// change in `change`).
+res struct Plan {
+    head: buffer.Buffer,
+    change: buffer.Buffer,
+    branch: buffer.Buffer,
+    status: int,
+    errno: int,
+}
+
+fn plan_parts(p: Plan) -> [] (buffer.Buffer, buffer.Buffer, buffer.Buffer, int, int) {
+    let Plan { head, change, branch, status, errno } = p;
+    return (head, change, branch, status, errno);
+}
+
+// The text of HEAD for the branch `name`.
+fn branch_head[&h, &n](heap: &!h Heap, name: &n [byte]) -> [heap] buffer.Buffer {
+    return buffer.push(heap, buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(name) + 24), "ref: refs/heads/"), name), byte_of(10));
+}
+
+// Decide what `target` is, as `cmd_switch` does: with `create` a new branch at `cur` (made unless `dry`); else, unless `detach`, a branch that exists; else a change.
+fn plan[&h, &d, &s, &t, &c](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], target: &t [byte], cur: &c [byte], create: bool, detach: bool, dry: bool, now: int) -> [heap, dir_read, dir_write, file_read, file_write] Plan {
+    var refname = buffer.append(heap, buffer.empty(heap, len(target) + 8), "heads/");
+    refname = buffer.append(heap, refname, target);
+    var okname = false;
+    borrow refname as &rb in {
+        okname = vcsstore.check_ref_name(buffer.bytes(rb));
+    }
+    var head = buffer.empty(heap, 0);
+    var change = buffer.empty(heap, 0);
+    var branch = buffer.empty(heap, 0);
+    var status = 0;
+    var errno = 0;
+    var as_branch = false;
+    if create {
+        if !okname {
+            status = 16;
+        } else if len(cur) == 0 {
+            status = 33;
+        } else {
+            if !dry {
+                borrow refname as &rb in {
+                    let moved = vcsstore.update_ref(heap, vcs, buffer.bytes(rb), vcsstore.expect_absent(), "", cur, "switch --create", now);
+                    let (current, us, ue) = vcsstore.parts(moved);
+                    status = us;
+                    errno = ue;
+                    if us == 14 {
+                        buffer.drop(heap, change);
+                        change = current;
+                    } else {
+                        buffer.drop(heap, current);
+                    }
+                }
+            }
+            if status == 0 {
+                buffer.drop(heap, change);
+                change = buffer.append(heap, buffer.empty(heap, 64), cur);
+                as_branch = true;
+            }
+        }
+    } else if !detach && okname {
+        borrow refname as &rb in {
+            let read = vcsstore.read_ref(heap, vcs, buffer.bytes(rb));
+            let (id, rs, re) = vcsstore.parts(read);
+            if rs == 0 {
+                buffer.drop(heap, change);
+                change = id;
+                as_branch = true;
+            } else {
+                buffer.drop(heap, id);
+                if rs != 2 {
+                    status = rs;
+                    errno = re;
+                }
+            }
+        }
+    }
+    if status == 0 && as_branch {
+        buffer.drop(heap, head);
+        head = branch_head(heap, target);
+        buffer.drop(heap, branch);
+        branch = buffer.append(heap, buffer.empty(heap, len(target)), target);
+    } else if status == 0 && !create {
+        let resolved = vcsrepo.resolve(heap, vcs, scratch, target);
+        let (id, rs, re) = vcsstore.parts(resolved);
+        if rs != 0 {
+            buffer.drop(heap, id);
+            status = rs;
+            errno = re;
+        } else {
+            borrow id as &ib in {
+                buffer.drop(heap, head);
+                head = buffer.push(heap, buffer.append(heap, buffer.empty(heap, 72), buffer.bytes(ib)), byte_of(10));
+            }
+            buffer.drop(heap, change);
+            change = id;
+        }
+    }
+    buffer.drop(heap, refname);
+    return Plan { head: head, change: change, branch: branch, status: status, errno: errno };
+}
+
+// The document of a switch: `branch` (null when detached), `command`, `discarded`, `dry_run`, `head` (the change), `ok` and `switched`.
+fn document[&h, &b, &c, &x](heap: &!h Heap, branch: &b [byte], change: &c [byte], discarded: &x [byte], dry: bool) -> [heap] buffer.Buffer {
+    var d = buffer.push(heap, buffer.empty(heap, 320), byte_of(123));
+    d = vcsrepo.member(heap, d, 1, true, "branch");
+    if len(branch) == 0 {
+        d = buffer.append(heap, d, "null");
+    } else {
+        d = jsonwrite.string(heap, d, branch);
+    }
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "command"), "\"switch\"");
+    d = string_array(heap, vcsrepo.member(heap, d, 1, false, "discarded"), discarded, 1);
+    if dry {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "dry_run"), "true");
+    } else {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "dry_run"), "false");
+    }
+    d = vcsrepo.quoted(heap, vcsrepo.member(heap, d, 1, false, "head"), change);
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "ok"), "true");
+    if dry {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "switched"), "false");
+    } else {
+        d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "switched"), "true");
+    }
+    return buffer.append(heap, jsonwrite.newline(heap, d, 0), "}\n");
+}
+
+// The document when HEAD already is the target: `command`, `head`, `ok` and `switched: false`.
+fn unchanged[&h, &c](heap: &!h Heap, change: &c [byte]) -> [heap] buffer.Buffer {
+    var d = buffer.push(heap, buffer.empty(heap, 192), byte_of(123));
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, true, "command"), "\"switch\"");
+    d = vcsrepo.quoted(heap, vcsrepo.member(heap, d, 1, false, "head"), change);
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "ok"), "true");
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "switched"), "false");
+    return buffer.append(heap, jsonwrite.newline(heap, d, 0), "}\n");
+}
+
+fn failure[&h](heap: &!h Heap, status: int, errno: int) -> [heap] vcsstore.Object {
+    return vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: errno };
+}
+
+// The move itself, with the lock held: `old` is HEAD's tree text, `plan` says where to. See `switch_command`.
+fn move_to[&h, &r, &d, &s, &o, &t, &c](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], old: &o [byte], target: &t [byte], cur: &c [byte], create: bool, detach: bool, keep: bool, discard: bool, dry: bool, now: int) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    let planned = plan(heap, vcs, scratch, target, cur, create, detach, dry, now);
+    let (head, change, branch, ps, pe) = plan_parts(planned);
+    if ps != 0 {
+        buffer.drop(heap, head);
+        buffer.drop(heap, branch);
+        return vcsstore.Object { bytes: change, status: ps, errno: pe };
+    }
+    // Already there: HEAD's text is the same.
+    let current = vcsstore.read_text(heap, vcs, "HEAD");
+    let (htext, hs, he) = vcsstore.parts(current);
+    if hs != 0 {
+        buffer.drop(heap, htext);
+        buffer.drop(heap, head);
+        buffer.drop(heap, change);
+        buffer.drop(heap, branch);
+        return failure(heap, hs, he);
+    }
+    var same = false;
+    borrow htext as &hb in {
+        borrow head as &nb in {
+            same = bytes.equal(vcsstore.trimmed(buffer.bytes(hb)), vcsstore.trimmed(buffer.bytes(nb)));
+        }
+    }
+    buffer.drop(heap, htext);
+    if same {
+        var said = buffer.empty(heap, 0);
+        borrow change as &cb in {
+            buffer.drop(heap, said);
+            said = unchanged(heap, buffer.bytes(cb));
+        }
+        buffer.drop(heap, head);
+        buffer.drop(heap, change);
+        buffer.drop(heap, branch);
+        return vcsstore.Object { bytes: said, status: 0, errno: 0 };
+    }
+    var wanted = failure(heap, 0, 0);
+    borrow change as &cb in {
+        let (old0, os0, oe0) = vcsstore.parts(wanted);
+        buffer.drop(heap, old0);
+        wanted = vcsrestore.tree_of(heap, vcs, scratch, buffer.bytes(cb));
+    }
+    let (want, ws, we) = vcsstore.parts(wanted);
+    if ws != 0 {
+        buffer.drop(heap, want);
+        buffer.drop(heap, head);
+        buffer.drop(heap, change);
+        buffer.drop(heap, branch);
+        return failure(heap, ws, we);
+    }
+    let scanned = vcsscan.scan(heap, root, scratch);
+    let (work, ss, se) = vcsstore.parts(scanned);
+    if ss != 0 {
+        buffer.drop(heap, work);
+        buffer.drop(heap, want);
+        buffer.drop(heap, head);
+        buffer.drop(heap, change);
+        buffer.drop(heap, branch);
+        return failure(heap, ss, se);
+    }
+    var code = 0;
+    var errno = 0;
+    var blocked = buffer.empty(heap, 0);
+    var carried = buffer.empty(heap, 0);
+    borrow work as &wb in {
+        borrow want as &nb in {
+            let dirty = diff_paths(heap, old, buffer.bytes(wb));
+            let moving = diff_paths(heap, old, buffer.bytes(nb));
+            borrow dirty as &db in {
+                borrow moving as &mb in {
+                    buffer.drop(heap, carried);
+                    carried = common(heap, buffer.bytes(db), buffer.bytes(mb));
+                    if keep && !discard {
+                        borrow carried as &xb in {
+                            buffer.drop(heap, blocked);
+                            blocked = buffer.append(heap, buffer.empty(heap, 0), buffer.bytes(xb));
+                        }
+                    } else if !discard {
+                        buffer.drop(heap, blocked);
+                        blocked = buffer.append(heap, buffer.empty(heap, 0), buffer.bytes(db));
+                    }
+                }
+            }
+            buffer.drop(heap, dirty);
+            buffer.drop(heap, moving);
+            var clear = false;
+            borrow blocked as &xb in {
+                clear = len(buffer.bytes(xb)) == 0;
+            }
+            if clear && !dry {
+                let (ms, me) = apply_moves(heap, root, vcs, scratch, old, buffer.bytes(nb));
+                code = ms;
+                errno = me;
+                if code == 0 {
+                    borrow head as &hb in {
+                        let he0 = vcsstore.put_whole(heap, vcs, "HEAD", buffer.bytes(hb));
+                        if he0 != 0 {
+                            code = 10;
+                            errno = he0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, work);
+    buffer.drop(heap, want);
+    buffer.drop(heap, head);
+    var empty_blocked = false;
+    borrow blocked as &xb in {
+        empty_blocked = len(buffer.bytes(xb)) == 0;
+    }
+    if !empty_blocked {
+        buffer.drop(heap, change);
+        buffer.drop(heap, branch);
+        buffer.drop(heap, carried);
+        return vcsstore.Object { bytes: blocked, status: 32, errno: 0 };
+    }
+    buffer.drop(heap, blocked);
+    if code != 0 {
+        buffer.drop(heap, change);
+        buffer.drop(heap, branch);
+        buffer.drop(heap, carried);
+        return failure(heap, code, errno);
+    }
+    var answer = failure(heap, 0, 0);
+    borrow branch as &bb in {
+        borrow change as &cb in {
+            borrow carried as &kb in {
+                let (old1, os1, oe1) = vcsstore.parts(answer);
+                buffer.drop(heap, old1);
+                if discard {
+                    answer = vcsstore.Object { bytes: document(heap, buffer.bytes(bb), buffer.bytes(cb), buffer.bytes(kb), dry), status: 0, errno: 0 };
+                } else {
+                    answer = vcsstore.Object { bytes: document(heap, buffer.bytes(bb), buffer.bytes(cb), "", dry), status: 0, errno: 0 };
+                }
+            }
+        }
+    }
+    buffer.drop(heap, branch);
+    buffer.drop(heap, change);
+    buffer.drop(heap, carried);
+    return answer;
+}
+
+// `switch`: see the header. `now` is the Unix time in seconds, for the lock's stamp and the log line of a created branch.
+pub fn switch_command[&h, &r, &d, &s, &t](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], target: &t [byte], create: bool, detach: bool, keep: bool, discard: bool, dry: bool, now: int) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    var held = false;
+    if !dry {
+        let (ls, le, made) = vcsstore.take_lock(heap, vcs, "lock", now);
+        held = made;
+        if ls != 0 {
+            var text = buffer.empty(heap, 0);
+            if ls == 15 {
+                let read = vcsstore.read_text(heap, vcs, "lock");
+                let (t0, rs2, re2) = vcsstore.parts(read);
+                buffer.drop(heap, text);
+                text = t0;
+            }
+            return vcsstore.Object { bytes: text, status: ls, errno: le };
+        }
+    }
+    // HEAD's change and tree.
+    var answer = failure(heap, 0, 0);
+    let at = vcsrepo.head_change(heap, vcs);
+    let (cur, cs, ce) = vcsstore.parts(at);
+    if cs != 0 && cs != 2 {
+        buffer.drop(heap, cur);
+        let (old0, os0, oe0) = vcsstore.parts(answer);
+        buffer.drop(heap, old0);
+        answer = failure(heap, cs, ce);
+    } else {
+        var tree = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+        borrow cur as &cb in {
+            if cs == 0 && len(buffer.bytes(cb)) > 0 {
+                let (old0, os0, oe0) = vcsstore.parts(tree);
+                buffer.drop(heap, old0);
+                tree = vcsrestore.tree_of(heap, vcs, scratch, buffer.bytes(cb));
+            }
+        }
+        let (old, ts, te) = vcsstore.parts(tree);
+        if ts != 0 {
+            buffer.drop(heap, old);
+            let (old0, os0, oe0) = vcsstore.parts(answer);
+            buffer.drop(heap, old0);
+            answer = failure(heap, ts, te);
+        } else {
+            borrow old as &ob in {
+                borrow cur as &kb in {
+                    let (old0, os0, oe0) = vcsstore.parts(answer);
+                    buffer.drop(heap, old0);
+                    answer = move_to(heap, root, vcs, scratch, buffer.bytes(ob), target, buffer.bytes(kb), create, detach, keep, discard, dry, now);
+                }
+            }
+            buffer.drop(heap, old);
+        }
+        buffer.drop(heap, cur);
+    }
+    if held {
+        dir_remove(vcs, "lock");
+    }
+    return answer;
+}

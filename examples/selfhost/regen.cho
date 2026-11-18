@@ -2,8 +2,8 @@ edition 7;
 module selfhost.regen;
 
 // regen.cho -- the generated modules of the command line that hold text: `guidelines.cho` (`AGENTS.md`), `stdorder.cho` (`std/std.files`) and
-// `stdsource.cho` (`std/*.cho`), written by cancho (`docs/removing-rust.md` phase 2; the Rust generators of `tests/conformance/selfhost/statics.rs` are
-// the oracle this is checked against, and go when the Rust tests do).
+// `stdsource.cho` (`std/*.cho`), written by cancho (`docs/removing-rust.md` phase 2; the Rust generators of `statics.rs` were
+// the oracle this was checked against; they are gone, and `tests/commands/regen.sh` runs `--check`).
 //
 //     cancho run examples/selfhost/regen.cho examples/selfhost/{filewrite,walk,clibase,...}.cho --std -- [--check]
 //

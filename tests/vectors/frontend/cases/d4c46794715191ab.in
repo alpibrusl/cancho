@@ -1,0 +1,12 @@
+  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(ffi);
+ release(fs);
+ release(io);
+  var n = 0;
+ borrow mut heap as &!h in { let buffer = box_slice(h, 4, byte_of(0));
+ let back = unbox(h, buffer);
+ n = 0;
+ } release(heap);
+ return n;
+ } 

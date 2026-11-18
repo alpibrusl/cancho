@@ -1,0 +1,37 @@
+{
+  "command": "export-git",
+  "commits": 5,
+  "compared_with_import": 5,
+  "dry_run": true,
+  "equal": 0,
+  "mismatches": [
+    {
+      "change": "5c0812a252cbd0be53bfe3d9e13e588d91c1a0c4775bfa9fd49aab26e27ebe2f",
+      "exported": "860e892780142dab2c4eb7a48a36bea00c08859c",
+      "original": "b49853c350a5dce81b6d269673183fdf7bff8747"
+    },
+    {
+      "change": "90e23e70bf39b93947b90eeda7baaf8f5436542a105ada0aa716f86d1e1ca98c",
+      "exported": "5fae325343132a78cf7b3ff6d7694528ef62dd37",
+      "original": "ab592bbba1505d6ff9d046913b900b2d21498989"
+    },
+    {
+      "change": "4b5800100848aaca722385cc1eb42e36a4592aaaaff138240127a7f3e3dcc367",
+      "exported": "dd117197e5739fb7e4f34b82fe70b3d4fc7c69a0",
+      "original": "771f9bc4d553380f6bd00b8fd3a11a8761d1ba90"
+    },
+    {
+      "change": "e68a664bf9ecfe64ec3aa84a549b53c5c856d362bbabc57d7d01ded1fae8d60d",
+      "exported": "6ae50ecee8259f2c6dff26f7459ea579f36d208f",
+      "original": "47afc77a85f3e419f74359a3152eb24c6e1a6dc8"
+    },
+    {
+      "change": "893aae7e119ef0d9aaa75bc177a022a9f0185476e92395f32fd6d3fa217cca0c",
+      "exported": "2d598cad32439d76512723080f0b498b15781efa",
+      "original": "9333ce4189c9b9071bda73bc4a4cd9f9d3d9c424"
+    }
+  ],
+  "objects_written": 0,
+  "ok": true,
+  "refs": []
+}

@@ -1,0 +1,3 @@
+ok a_saved_finding_replays
+GAP: print writes 1.0e200 as a number of 201 digits, which the reader of the compiler in cancho refuses (a float literal of more than 120 significant digits); the Rust printer wrote the same text and its reader took it
+ok mutants_never_crash_the_compiler

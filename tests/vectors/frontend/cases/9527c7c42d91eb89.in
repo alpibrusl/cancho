@@ -1,0 +1,3 @@
+edition 5;
+struct Conn { a: int }
+fn main(world: World) -> [] int {  return 0; }

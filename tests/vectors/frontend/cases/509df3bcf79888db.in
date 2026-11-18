@@ -1,0 +1,1 @@
+fn f(t: (int, int)) -> [] int { let (a, b) = t; let (a, c) = (b, a); return a + b + c + t.0 + t.1; }

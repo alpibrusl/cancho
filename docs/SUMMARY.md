@@ -37,6 +37,7 @@
 - [Directory handles](directory-handles.md)
 - [Removing a directory, making and reading a link](directory-links.md)
 - [Routing `cancho vcs` through the command line in cancho](vcs-routing.md)
+- [Writing the working copy from cancho (`materialize`, `remove_path`)](vcs-worktree.md)
 - [Directory listing](directory-listing.md)
 - [Processes](processes.md)
 - [Foreign authority](foreign-authority.md)

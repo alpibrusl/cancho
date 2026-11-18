@@ -1,0 +1,2 @@
+fn w[&a, &b where a <= b](x: &a int, y: &b int) -> [] &a int { return x; }
+fn f[&r](q: &r int) -> [] int { var pad = 7; var pad2 = 8; var x = 1; borrow x as &p in { return *w(q, p); } return 0; }

@@ -1,0 +1,8 @@
+{
+  "command": "switch",
+  "ok": false,
+  "refused": {
+    "message": "there is no change to branch from yet",
+    "tag": "bad-revision"
+  }
+}

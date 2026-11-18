@@ -1,0 +1,39 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": " ",
+              "text": "module a;\n"
+            },
+            {
+              "op": "-",
+              "text": "pub fn twice(n: int) -> [] int { return n + n + 0; }\n"
+            },
+            {
+              "op": "-",
+              "text": "pub fn thrice(n: int) -> [] int { return n * 3; }\n"
+            },
+            {
+              "op": "+",
+              "text": "pub fn twice( {\n"
+            }
+          ],
+          "new_lines": 2,
+          "new_start": 1,
+          "old_lines": 3,
+          "old_start": 1
+        }
+      ],
+      "path": "a.cho",
+      "status": "modified"
+    }
+  ],
+  "from": "HEAD",
+  "ok": true,
+  "to": "working copy"
+}

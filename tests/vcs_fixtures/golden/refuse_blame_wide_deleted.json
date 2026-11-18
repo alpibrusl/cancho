@@ -1,0 +1,8 @@
+{
+  "command": "blame",
+  "ok": false,
+  "refused": {
+    "message": "`a.cho` is not in a6d9f88da9b5",
+    "tag": "path-not-found"
+  }
+}

@@ -1,0 +1,2 @@
+struct S[T: val] { a: T }
+struct U { a: S[int] }

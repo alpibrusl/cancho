@@ -1,0 +1,11 @@
+//~ ERROR is an enum; its payload is read by matching on it
+    // inserted 71
+//~ RULE match-on-a-non-enum
+
+enum Shape { Circle(int) }
+
+    // inserted 93
+fn main() -> [] int {
+    let s = Shape::Circle(1);
+    return s.x;
+}

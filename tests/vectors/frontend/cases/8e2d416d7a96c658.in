@@ -1,0 +1,41 @@
+{
+  "items": [
+    {
+      "kind": "static",
+      "public": true,
+      "name": "t",
+      "ty": {
+        "kind": "slice",
+        "inner": {
+          "name": "int"
+        }
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": null,
+            "value": 1
+          }
+        }
+      ]
+    },
+    {
+      "kind": "",
+      "public": false,
+      "name": "u",
+      "ty": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "int",
+            "value": 2
+          }
+        }
+      ]
+    }
+  ]
+}

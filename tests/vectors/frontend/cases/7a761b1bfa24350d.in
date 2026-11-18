@@ -1,0 +1,2 @@
+edition 5;
+fn f[&r](d: &!r [byte]) -> [] int { return copy_into(d, "abc"); }

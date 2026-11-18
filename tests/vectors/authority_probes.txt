@@ -1,0 +1,461 @@
+##@@ fs_remove
+edition 10;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    let tmp = narrow(fs, "/tmp");
+    borrow tmp as &t in {
+        match fs_remove(t, "/tmp/cancho-probe") {
+            Done::Ok(d) => {
+                code = 0;
+            }
+            Done::Failed(e) => {
+                code = 1;
+            }
+        }
+    }
+    release(tmp);
+    return code;
+}
+##@@ fs_rename
+edition 10;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    let tmp = narrow(fs, "/tmp");
+    borrow tmp as &t in {
+        match fs_rename(t, "/tmp/cancho-probe", "/tmp/cancho-probe2") {
+            Done::Ok(d) => {
+                code = 0;
+            }
+            Done::Failed(e) => {
+                code = 1;
+            }
+        }
+    }
+    release(tmp);
+    return code;
+}
+##@@ open_dir
+edition 10;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    let tmp = narrow(fs, "/tmp");
+    borrow tmp as &t in {
+        match open_dir(t, "/tmp") {
+            DirOpened::Ok(d) => {
+                dir_close(d);
+            }
+            DirOpened::Failed(e) => {
+                code = 1;
+            }
+        }
+    }
+    release(tmp);
+    return code;
+}
+##@@ open_read
+edition 10;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    let tmp = narrow(fs, "/tmp");
+    borrow tmp as &t in {
+        match open_read(t, "/tmp/cancho-probe") {
+            Opened::Ok(f) => {
+                file_close(f);
+            }
+            Opened::Failed(e) => {
+                code = 1;
+            }
+        }
+    }
+    release(tmp);
+    return code;
+}
+##@@ open_write
+edition 10;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    let tmp = narrow(fs, "/tmp");
+    borrow tmp as &t in {
+        match open_write(t, "/tmp/cancho-probe") {
+            Opened::Ok(f) => {
+                file_close(f);
+            }
+            Opened::Failed(e) => {
+                code = 1;
+            }
+        }
+    }
+    release(tmp);
+    return code;
+}
+##@@ open_append
+edition 10;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    let tmp = narrow(fs, "/tmp");
+    borrow tmp as &t in {
+        match open_append(t, "/tmp/cancho-probe") {
+            Opened::Ok(f) => {
+                file_close(f);
+            }
+            Opened::Failed(e) => {
+                code = 1;
+            }
+        }
+    }
+    release(tmp);
+    return code;
+}
+##@@ open_new
+edition 10;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    let tmp = narrow(fs, "/tmp");
+    borrow tmp as &t in {
+        match open_new(t, "/tmp/cancho-probe") {
+            Opened::Ok(f) => {
+                file_close(f);
+            }
+            Opened::Failed(e) => {
+                code = 1;
+            }
+        }
+    }
+    release(tmp);
+    return code;
+}
+##@@ open_rw
+edition 10;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    let tmp = narrow(fs, "/tmp");
+    borrow tmp as &t in {
+        match open_rw(t, "/tmp/cancho-probe") {
+            Opened::Ok(f) => {
+                file_close(f);
+            }
+            Opened::Failed(e) => {
+                code = 1;
+            }
+        }
+    }
+    release(tmp);
+    return code;
+}
+##@@ tcp_listen_on
+edition 10;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    let local = narrow(net, "127.0.0.1");
+    borrow local as &n in {
+        match tcp_listen_on(n, "127.0.0.1", 0, 8, 0) {
+            Listening::Ok(l) => {
+                listener_close(l);
+            }
+            Listening::Failed(e) => {
+                code = 1;
+            }
+        }
+    }
+    release(local);
+    return code;
+}
+##@@ tcp_connect
+edition 10;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    let local = narrow(net, "127.0.0.1");
+    borrow local as &n in {
+        match tcp_connect(n, "127.0.0.1", 1) {
+            Dialed::Ok(c) => {
+                conn_close(c);
+            }
+            Dialed::Failed(e) => {
+                code = 1;
+            }
+        }
+    }
+    release(local);
+    return code;
+}
+##@@ udp_bind
+edition 10;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    borrow net as &nb in {
+        match udp_bind(nb, 0, 0) {
+            UdpOpened::Ok(ua) => {
+                code = udp_close(ua);
+            }
+            UdpOpened::Failed(reason) => {
+                code = 2;
+            }
+        }
+    }
+    release(net);
+    return code;
+}
+##@@ exec_spawn
+edition 10;
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(tty);
+    var code = 0;
+    let program = narrow(exec, "/usr/bin/true");
+    borrow program as &x in {
+        match exec_spawn(x, "/usr/bin/true", "", "", Stdio::Null, Stdio::Null, Stdio::Null) {
+            Spawned::Ok(child) => {
+                match child_wait(child) {
+                    Exited::Code(n) => {
+                        code = n;
+                    }
+                    Exited::Signaled(s) => {
+                        code = 100;
+                    }
+                    Exited::Failed(e) => {
+                        code = 101;
+                    }
+                }
+            }
+            Spawned::Failed(e) => {
+                code = 1;
+            }
+        }
+    }
+    release(program);
+    return code;
+}
+##@@ generic_tuple
+edition 10;
+
+fn second[A: val, B: val](a: A, b: B) -> [] B {
+    return b;
+}
+
+fn pass[T](x: T) -> [] T {
+    return x;
+}
+
+fn size[&r](b: &r Box[[int]]) -> [] int {
+    return len(contents(b));
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    code = second((1, 2), 5);
+    release(heap);
+    return code;
+}
+##@@ generic_box
+edition 10;
+
+fn second[A: val, B: val](a: A, b: B) -> [] B {
+    return b;
+}
+
+fn pass[T](x: T) -> [] T {
+    return x;
+}
+
+fn size[&r](b: &r Box[[int]]) -> [] int {
+    return len(contents(b));
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    var pool = heap;
+    borrow mut pool as &!h in {
+        let b = pass(box(h, 7));
+        code = unbox(h, b);
+    }
+    release(pool);
+    return code;
+}
+##@@ generic_run
+edition 10;
+
+fn second[A: val, B: val](a: A, b: B) -> [] B {
+    return b;
+}
+
+fn pass[T](x: T) -> [] T {
+    return x;
+}
+
+fn size[&r](b: &r Box[[int]]) -> [] int {
+    return len(contents(b));
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    var code = 0;
+    var pool = heap;
+    borrow mut pool as &!h in {
+        let b = pass(box_slice(h, 4, 0));
+        borrow b as &r in {
+            code = size(r);
+        }
+        unbox_slice(h, b);
+    }
+    release(pool);
+    return code;
+}

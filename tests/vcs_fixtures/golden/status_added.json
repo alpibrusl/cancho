@@ -1,0 +1,17 @@
+{
+  "branch": "main",
+  "changes": [
+    {
+      "path": "sub/deep/new.txt",
+      "state": "added"
+    },
+    {
+      "path": "top.txt",
+      "state": "added"
+    }
+  ],
+  "clean": false,
+  "command": "status",
+  "head": "3040523562703c1827c42fd30efbb299fc90ed35a1482d7d5def42ae60a28a9e",
+  "ok": true
+}

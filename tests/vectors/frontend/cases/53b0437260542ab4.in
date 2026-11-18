@@ -1,0 +1,1 @@
+fn f(io: Io) -> [] int { region a { let s = alloc_slice[a](2, io); } return 0; }

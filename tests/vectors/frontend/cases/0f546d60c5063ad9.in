@@ -1,0 +1,1 @@
+fn f() -> [] int { var t = 0; region a { region b { let s = alloc_slice[a](2, 4); t = s[0]; } } return t; }

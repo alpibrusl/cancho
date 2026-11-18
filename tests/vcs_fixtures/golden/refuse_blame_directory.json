@@ -1,0 +1,8 @@
+{
+  "command": "blame",
+  "ok": false,
+  "refused": {
+    "message": "`sub` is not in d27ccf50506d",
+    "tag": "path-not-found"
+  }
+}

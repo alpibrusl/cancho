@@ -1,0 +1,1 @@
+fn f[T: val, &r](s: &!r [T], v: T) -> [] int { s[0] = v; return 0; }

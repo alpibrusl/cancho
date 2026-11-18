@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "kind": "static",
+      "public": false,
+      "name": null,
+      "ty": {},
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "call",
+            "name": "alloc_free",
+            "args": []
+          }
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "public": true,
+      "name": "U",
+      "ty": {
+        "kind": "slice",
+        "inner": {
+          "name": "byte"
+        }
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "str",
+            "value": "a\\b\n\t\u0000\""
+          }
+        }
+      ]
+    }
+  ]
+}

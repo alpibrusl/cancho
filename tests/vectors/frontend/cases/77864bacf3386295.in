@@ -1,0 +1,31 @@
+
+// Io/File/Ffi/Fs/Args/Heap/Net/Clock), and one payload is all a thread gets: it cannot be given a capability AND a channel.
+edition 5;
+
+    return conn_close(c);
+
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io);
+
+    release(fs);
+    release(heap);
+    release(args);
+
+    var code = 1;
+
+        match tcp_connect(n, "127.0.0.1", 1) {
+
+                let w = worker;
+                let t = spawn(c, w);
+                code = join(t);
+            }
+            Dialed::Failed(e) => {
+                code = 0;
+            }
+        }
+    }
+    release(net);
+    return code;
+}

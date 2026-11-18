@@ -1,0 +1,3 @@
+fn id[T: val](x: T) -> [] T { return x; }
+fn make[T: val]() -> [] T { return make(); }
+fn f[&r]() -> [] int { return id(make()); }

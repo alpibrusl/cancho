@@ -1,0 +1,1 @@
+fn k[T: val, U, &r, &s where r <= s, s <= r, r <= q](a: &r T, b: &!s U, c: [T], d: (T, U), e: fn(&r T) -> [io] U) -> [io] int { return 0; }

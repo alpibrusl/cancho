@@ -1,0 +1,30 @@
+{
+  "items": [
+    {
+      "kind": "struct",
+      "public": false,
+      "name": "P",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "fields": [
+        null
+      ]
+    },
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "P"
+      },
+      "body": 4294967296
+    }
+  ]
+}

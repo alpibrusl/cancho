@@ -1,0 +1,2 @@
+fn say[&j](io: &!j Io) -> [io_write] int { return putchar(io, 65); }
+fn f[&i](io: &!i Io) -> [io_write] int { let a = say(io); return getchar(io); }

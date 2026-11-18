@@ -1,0 +1,13 @@
+  fn read_config[&f, &b](fs: &f Fs("/tmp/app"), into: &!b [byte]) -> [] int { return fs_read(fs, "/tmp/app/config", into);
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(ffi);
+ release(io);
+  let app = narrow(fs, "/tmp/app");
+ var read = 0;
+ region a { let buffer = alloc_slice[a](16, byte_of(0));
+ borrow app as &f in { read = read_config(f, buffer);
+ } } release(app);
+ return read;
+ } 

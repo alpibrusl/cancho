@@ -1,0 +1,1 @@
+fn f[&r, &s](x: &r int) -> [] int { return len(x); }

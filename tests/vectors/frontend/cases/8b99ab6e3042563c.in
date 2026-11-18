@@ -1,0 +1,5 @@
+static fl: [float] {
+    let t = alloc_slice[static](2, 1.5);
+    return t;
+}
+fn f() -> [] float { return fl[1]; }

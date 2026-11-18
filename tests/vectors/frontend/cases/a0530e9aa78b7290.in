@@ -1,0 +1,27 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": null,
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "float"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "float",
+            "bits": 9218868437227405311
+          }
+        }
+      ]
+    }
+  ]
+}

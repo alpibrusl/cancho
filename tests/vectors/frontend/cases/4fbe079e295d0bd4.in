@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { let b = byte_of(65); return 1; }

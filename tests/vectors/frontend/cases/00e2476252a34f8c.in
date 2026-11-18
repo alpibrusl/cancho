@@ -1,0 +1,13 @@
+module std.signals;
+   pub fn sighup() -> [] int { return 1;
+ }  pub fn sigint() -> [] int { return 2;
+ }  pub fn sigquit() -> [] int { return 4;
+ }  pub fn sigterm() -> [] int { return 8;
+ }  pub fn sigusr1() -> [] int { return 16;
+ }  pub fn sigusr2() -> [] int { return 32;
+ }  pub fn sigalrm() -> [] int { return 64;
+ }  pub fn sigwinch() -> [] int { return 128;
+ }  pub fn stop_signals() -> [] int { return 2 | 4 | 8;
+ }  pub fn has(mask: int, bits: int) -> [] bool { return mask & bits == bits;
+ }  pub fn any(mask: int, bits: int) -> [] bool { return mask & bits != 0;
+ } 

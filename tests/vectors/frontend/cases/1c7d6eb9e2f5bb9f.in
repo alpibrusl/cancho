@@ -1,0 +1,2 @@
+extern fn g[&f, &r, &i, &h](ffi: &f Ffi("libc"), fs: &r Fs("/tmp")) -> [ffi("libc"), fs_read("/tmp"), fs_write("/tmp"), file_read, file_write, dir_read, dir_write] int;
+fn main(world: World) -> [] int {  return 0; }

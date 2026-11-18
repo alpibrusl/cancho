@@ -1,0 +1,33 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [
+        {
+          "name": "io_write"
+        },
+        {
+          "name": "ffi",
+          "argument": "libc"
+        },
+        {
+          "name": "fs_read",
+          "argument": "x\n"
+        }
+      ],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        4294967296
+      ]
+    }
+  ]
+}

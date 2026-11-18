@@ -1,0 +1,47 @@
+{
+  "command": "diff",
+  "files": [
+    {
+      "binary": false,
+      "hunks": [
+        {
+          "lines": [
+            {
+              "op": "-",
+              "text": "# notes\n"
+            },
+            {
+              "op": "-",
+              "text": "one\n"
+            },
+            {
+              "op": "-",
+              "text": "2\n"
+            },
+            {
+              "op": "-",
+              "text": "three\n"
+            },
+            {
+              "op": "+",
+              "text": "a.cho"
+            }
+          ],
+          "new_lines": 1,
+          "new_start": 1,
+          "old_lines": 4,
+          "old_start": 1
+        }
+      ],
+      "mode": {
+        "new": "120000",
+        "old": "100644"
+      },
+      "path": "notes.md",
+      "status": "modified"
+    }
+  ],
+  "from": "HEAD",
+  "ok": true,
+  "to": "working copy"
+}

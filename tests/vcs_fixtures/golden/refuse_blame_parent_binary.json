@@ -1,0 +1,8 @@
+{
+  "command": "blame",
+  "ok": false,
+  "refused": {
+    "message": "`bt.txt` is not text",
+    "tag": "binary-file"
+  }
+}

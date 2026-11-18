@@ -1,0 +1,12 @@
+// jsonprinter.cho -- `cancho print --output json`, written in cancho: the program (issue #485).
+//
+// Reads a source file on standard input, parses it with `ast.cho` and writes the tree as JSON (`jsonprint.cho`), or `ERR rule-tag start
+// end` if the parser refuses it. The oracle is `cancho print --output json`.
+//
+//     cancho run examples/selfhost/jsonprinter.cho examples/selfhost/driver.cho ... --std < f.cho
+
+import selfhost.driver;
+
+fn main(world: World) -> [] int {
+    return driver.drive(world, 7, false);
+}

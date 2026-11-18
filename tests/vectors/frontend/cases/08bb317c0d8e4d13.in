@@ -1,0 +1,1 @@
+{"items": [{"kind": "struct", "name": "S", "mode": "res", "generics": ["T"], "bounds": ["val"], "fields": [{"name": "x", "ty": {"name": "T"}}]}]}

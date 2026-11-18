@@ -1,0 +1,15 @@
+{
+  "imports": [
+    {
+      "as": "console"
+    },
+    {
+      "path": "a.b.c",
+      "as": "d"
+    },
+    {
+      "path": "x.y"
+    }
+  ],
+  "items": []
+}

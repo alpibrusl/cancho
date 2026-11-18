@@ -1,0 +1,3 @@
+ok the_programs_were_all_split_out
+ok the_compiler_in_cancho_builds_programs_that_do_what_the_rust_ones_do
+programs built both ways: 655, 102 of them trap

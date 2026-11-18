@@ -13,7 +13,7 @@
 // and checks that the answers are the same number and the tapes the same
 // ints, all of them, written or not. It prints `ok <documents> <accepted>
 // <refused>` and exits 0, or `differ <index> <what>` and exits 1.
-// `conformance/json.rs` feeds it the seed documents, a mutated corpus and the
+// `tests/commands/json.sh` feeds it the seed documents, a mutated corpus and the
 // edge cases the JSON test suites are made of.
 import std.buffer;
 import std.io;

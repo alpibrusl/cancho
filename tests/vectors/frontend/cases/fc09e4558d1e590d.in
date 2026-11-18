@@ -1,0 +1,1 @@
+fn f() -> [] int { 1 + 2; true; 1.5; return 1; }

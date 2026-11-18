@@ -1,0 +1,2 @@
+struct P[T] { a: T }
+struct S { a: P[int, int] }

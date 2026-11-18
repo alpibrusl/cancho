@@ -754,7 +754,9 @@ fn identity_list[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte], tok
         let d = contents(db);
         identity.layout(d, tokens, items);
         buffer.drop(heap, out);
-        if which == 2 {
+        if which == 7 {
+            out = identity.declared(heap, st, text, d);
+        } else if which == 2 {
             out = identity.published(heap, st, text, d);
         } else if which == 1 {
             out = identity.pairs(heap, st, text, d);
@@ -828,13 +830,13 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
             at = header_end(raw, at) + n;
             f = f + 1;
         }
-        if mode >= 3 && mode != 9 && mode != 11 && mode != 13 && mode != 14 && mode != 15 && mode != 16 {
+        if mode >= 3 && mode != 9 && mode != 11 && mode != 13 && mode != 14 && mode != 15 && mode != 16 && mode != 20 {
             // A string literal is one token and as many bytes, and its code is the bytes again, spelt out: the room the code is written in is
             // counted by the token, so it is raised by the length of the text.
             tokens = tokens + len(text) / 50;
         }
         var size = ast.size_for(tokens, files);
-        if mode == 9 || mode == 13 || mode == 14 || mode == 15 || mode == 16 {
+        if mode == 9 || mode == 13 || mode == 14 || mode == 15 || mode == 16 || mode == 20 {
             // The identities only need the room the printer works floats out in.
             size = size + ast.const_region() + ast.inst_region();
         } else if mode >= 3 && mode != 11 {
@@ -843,7 +845,7 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
         let state = box_slice(heap, size, 0);
         borrow mut state as &!b in {
             let st = contents(b);
-            if mode == 9 || mode == 13 || mode == 14 || mode == 15 || mode == 16 {
+            if mode == 9 || mode == 13 || mode == 14 || mode == 15 || mode == 16 || mode == 20 {
                 ast.layout(st, tokens, files);
                 st[62] = ast.size_for(tokens, files);
             } else if mode >= 3 && mode != 11 {
@@ -890,7 +892,7 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                     written = identity.modules(heap, st, text);
                     status = 0;
                 }
-            } else if mode == 13 || mode == 14 || mode == 15 {
+            } else if mode == 13 || mode == 14 || mode == 15 || mode == 20 {
                 // The functions of the program with the identity of each signature (`identity.listing`), for `satisfy`; or, for a store being checked, the signature and the body of each.
                 if ast.parse(st, text) != 0 {
                     status = 1;

@@ -35,7 +35,7 @@ ok tour.json has "fs_read"
 ok tour.json has "labs"
 ok tour.json has "never_touches": [
 ok tour.json has "other programs"
-ok the narrowing survives
+ok the narrowing survives, and says it is a lexical prefix
 ok an unnarrowed label carries an explicit null
 ok tour touches the filesystem, so it cannot be proven out of reach
 ok the human form is unchanged by the flag

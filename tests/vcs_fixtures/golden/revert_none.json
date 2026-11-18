@@ -1,0 +1,8 @@
+{
+  "command": "revert",
+  "ok": false,
+  "refused": {
+    "message": "`revert` takes one change",
+    "tag": "bad-argument"
+  }
+}

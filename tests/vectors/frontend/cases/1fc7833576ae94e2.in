@@ -1,0 +1,39 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [
+        {
+          "name": "a",
+          "ty": {
+            "name": "int"
+          }
+        }
+      ],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "binary",
+            "op": "+",
+            "lhs": {
+              "kind": "name",
+              "name": "a"
+            },
+            "rhs": "x"
+          }
+        }
+      ]
+    }
+  ]
+}

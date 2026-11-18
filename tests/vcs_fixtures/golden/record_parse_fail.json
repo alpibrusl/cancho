@@ -1,0 +1,16 @@
+{
+  "command": "record",
+  "ok": false,
+  "refused": {
+    "diagnostics": [
+      {
+        "message": "expected an identifier, found `{`",
+        "rule": "type-mismatch"
+      }
+    ],
+    "message": "a.cho: type-mismatch: expected an identifier, found `{`",
+    "path": "a.cho",
+    "rule": "type-mismatch",
+    "tag": "gate-failed"
+  }
+}

@@ -1,0 +1,2 @@
+enum E { A, B(int), C(int, bool) }
+fn f[&r](e: &r E) -> [] int { match e { E::A => { return 1; } E::B(x) => { return x; } E::C(x, y) => { return 2; } } }

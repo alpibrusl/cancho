@@ -1,0 +1,103 @@
+#### print000 nonl
+fn f(a: int, b: int, c: int) -> [] int { return (a + b) * c - (a - (b - c)) / (a % b); }
+#### print001 nonl
+fn f(a: int, b: int, c: int) -> [] int { return a << b >> c | a ^ b & c; }
+#### print002 nonl
+fn f(a: bool, b: bool, c: bool) -> [] bool { return a && b || c && !(a || b); }
+#### print003 nonl
+fn f(a: int) -> [] int { return -(a / 10) + -(-a) + ~a + *a; }
+#### print004 nonl
+fn f() -> [] int { return -(5) + -5 + -(0x10) - (-9223372036854775808); }
+#### print005 nonl
+fn f() -> [] float { return -(1.5) + -1.5 + 2.5 - (-0.0); }
+#### print006 nonl
+fn f(a: int) -> [] int { return ((a)) + (((a + 1))); }
+#### print007 nonl
+fn f(a: [int]) -> [] int { return a[1] + a[(1 + 2)] + (a)[0] + a[0..2][1..2][0]; }
+#### print008 nonl
+fn f(t: (int, (int, int))) -> [] int { return t.1.0 + (1).2 + (1.5).0; }
+#### print009 nonl
+fn f(t: int) -> [] (int,) { return (t,); }
+#### print010 nonl
+fn f(t: int) -> [] (int, int) { return (t, t); }
+#### print011 nonl
+fn f(t: int) -> [] () { return (); }
+#### print012 nonl
+struct P { x: int, y: int }
+fn f(p: P) -> [] int { if (P { x: 1, y: 2 }).x == 1 { return 1; } else if p.x == 2 { return 2; } else { return 3; } }
+#### print013 nonl
+struct P { x: int }
+fn f() -> [] int { while (P { x: 1 }).x < 3 { return 1; } return 0; }
+#### print014 nonl
+struct P { x: int }
+fn f() -> [] int { match (P { x: 1 }).x { } return 0; }
+#### print015 nonl
+struct P { x: int }
+fn f() -> [] int { if (P { x: 1 }).x + 1 == 2 { return 1; } return 0; }
+#### print016 nonl
+struct P { x: int }
+fn f() -> [] P { return P { }; }
+#### print017 nonl
+enum E { A, B(int), C(int, [int]) }
+fn f(e: E) -> [] int { match e { E::A => { return 0; } E::B(x) => { return x; } E::C(_, y) => { return y[0]; } } }
+#### print018 nonl
+enum E[T] { A, B(T) }
+fn f(e: E[int]) -> [] int { match e { E::A => { } E::B(_) => { } } return 0; }
+#### print019 nonl
+fn f(a: int) -> [] int { if a == 1 { return 1; } else if a == 2 { return 2; } else if a == 3 { return 3; } return 0; }
+#### print020 nonl
+fn f(a: int) -> [] int { if a == 1 { return 1; } else { if a == 2 { return 2; } } return 0; }
+#### print021 nonl
+fn f(a: int) -> [] int { if a == 1 { return 1; } else { if a == 2 { return 2; } return 3; } }
+#### print022 nonl
+fn f(a: int) -> [] int { if a == 1 { } else { } return 0; }
+#### print023 nonl
+fn f[T, U: val, &r, &q where r <= q](a: &r T, b: &!q U) -> [] int { return 0; }
+#### print024 nonl
+fn f[&r](a: &r [byte]) -> [io] int { return 0; }
+#### print025 nonl
+fn f[T: val](a: T) -> [] T { return a; }
+#### print026 nonl
+fn f[&r, T, &q](a: T) -> [heap, ffi("libc"), io_write] int { return 0; }
+#### print027 nonl
+fn f(g: fn(int, [byte]) -> [io, fs_read("/etc")] int) -> [] int { return g(1, "x"); }
+#### print028 nonl
+extern fn puts(s: [byte]) -> [ffi("libc")] int;
+extern fn g[&r](x: &r int) -> [] int;
+#### print029 nonl
+pub struct S[T] { a: T, b: [T], }
+pub res struct R { a: int }
+val struct V { a: int }
+res enum Q { A(R) }
+pub val enum W { A }
+#### print030 nonl
+static T: [int] { return alloc_free(); }
+pub static U: [byte] { return "a\\b\n\t\0\""; }
+#### print031 nonl
+fn f() -> [] int { let (a, b) = g(); let S { x, y } = h(); let q.S { x } = h(); let T { } = h(); return a; }
+#### print032 nonl
+fn f() -> [] int { var x: int = 1; let y: (int, [byte]) = (1, "s"); x = y.0; a[1] = 2; return x; }
+#### print033 nonl
+fn f(h: &!r Heap) -> [heap] int { borrow mut h as &!r2 in { borrow x as &r3 in { } } region r { let p = alloc[r](1); let q = alloc_slice[r](4, 0); } defer g(); return 0; }
+#### print034 nonl
+fn f(c: Ffi("libc"), d: Map[Ffi("a"), int], e: Ffi("a", "b")) -> [] int { return 0; }
+#### print035 nonl
+module a.b.c;
+import std.io;
+import x.y as z;
+import p.q as q;
+fn f() -> [] int { return q.g(a.B::C(1), E::D); }
+#### print036 nonl
+import std.io;
+fn f() -> [] int { return 0; }
+
+
+fn g() -> [] int { return 1; }
+#### print037 nonl
+fn f() -> [] int { return 1_000 + 0x_ff + 0b1010 + 0o17 + 'a' + '\n' + 007; }
+#### print038 nonl
+fn f() -> [] float { return 1e5 + 1E-5 + 1_0.5_0 + 0.1 + 100000000000000000000.0 + 0.000001 + 1e-7 + 12345.678e2; }
+#### print039 nonl
+fn f() -> [] f32 { return 0.1f32 + 1e10f32 + 16777217.0f32 + 3.4028235e38f32 + 1e-45f32 + 5f32; }
+#### print040 nonl
+fn f() -> [] int { return a.b.c(1)(2).d[3].e; }

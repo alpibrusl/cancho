@@ -1,0 +1,71 @@
+edition 9;
+
+import std.io as console;
+
+// Bytes for tests/commands/front_end_names.sh (the BLAKE3 check): a message of N bytes made by the xorshift64 generator
+//
+//     seed = 0x2545f4914f6cdd1d;  for each byte: seed ^= seed << 13; seed ^= seed >> 7 (logical); seed ^= seed << 17; byte = seed & 255
+//
+// which is the one the Rust test of the port used to make its messages (each message started from the seed again, here).
+//
+//     xorshift_bytes N
+
+fn number[&b](b: &b [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(b) && int_of(b[i]) >= '0' && int_of(b[i]) <= '9' {
+        n = n * 10 + (int_of(b[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn emit[&i](io: &!i Io, total: int) -> [io_write] int {
+    var seed = 0x2545_f491_4f6c_dd1d;
+    // the mask that makes `>> 7` logical whether or not the shift of an int keeps the sign
+    let keep = (1 << 57) - 1;
+    region r {
+        let chunk = alloc_slice[r](4096, byte_of(0));
+        var from = 0;
+        while from < total {
+            var size = 4096;
+            if from + size > total {
+                size = total - from;
+            }
+            var j = 0;
+            while j < size {
+                seed = seed ^ seed << 13;
+                seed = seed ^ seed >> 7 & keep;
+                seed = seed ^ seed << 17;
+                chunk[j] = byte_of(seed & 255);
+                j = j + 1;
+            }
+            console.write_all(io, chunk[0..size]);
+            from = from + size;
+        }
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(ffi);
+    release(fs);
+    release(heap);
+    var status = 64;
+    borrow mut io as &!i in {
+        borrow args as &a in {
+            if arg_count(a) >= 2 {
+                status = emit(i, number(arg(a, 1)));
+            }
+        }
+    }
+    release(args);
+    release(io);
+    return status;
+}

@@ -1,0 +1,2 @@
+fn g[T, &q](x: &q T) -> [] int { return 1; }
+fn f[&r, &s](p: &r int) -> [] int { return g(p); }

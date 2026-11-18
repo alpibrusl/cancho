@@ -1,0 +1,2 @@
+fn id2[&a](x: &a int, y: &a int) -> [] &a int { return x; }
+fn f[&r]() -> [] int { var x = 1; var y = 2; var z = 3; borrow x as &p in { borrow y as &q in { let a = 1; } borrow z as &w in { let c = id2(q, w); return 0; } } }

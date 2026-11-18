@@ -1,0 +1,1 @@
+fn f[&r, &s where r <= s](p: &s int) -> [] &r int { return p; }

@@ -31,6 +31,10 @@ rn src held
 echo "src=$(read_of "$root/src") held=$(read_of "$root/held")"
 if [ "$(inode "$root/held")" = "$held" ]; then echo "same inode"; else echo "DIFFERENT inode"; fi
 
+echo "== the same name on both sides: refused with EEXIST (macOS's RENAME_EXCL alone answers success there, so the runtime asks first), the file stays; a missing name is ENOENT"
+rn held held nothing nothing
+echo "held=$(read_of "$root/held")"
+
 echo "== a destination that is a link, dangling or not, is a name that is taken: the link stays and nothing is written through it"
 ln -s ../outside/target.txt "$root/link"
 ln -s ../outside/absent.txt "$root/dangling"

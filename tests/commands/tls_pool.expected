@@ -1,0 +1,8 @@
+ok an engine with fewer work areas than slots serves every connection (the driver builds)
+ok every slot has an area: nothing can be refused, and nothing is (8 slots, 8 areas)
+ok fewer areas than slots: the pool bounds the handshakes in progress (8 slots, 3 areas)
+ok one area: a record half fed holds it, a second connection that needs it waits and is served once it is back (8 slots, 1 area)
+ok resting: an idle connection keeps its area until another needs one, its core there and nothing else (every slot an area; one area for all)
+ok one slot, one area; and other seeds, so the sizes and the pieces differ (1/1, 5/2, 16/4)
+ok server tickets and resumption, and a client engine with a client identity: the ticket randomness, the saved tickets and the identity's hedge are cleared with the rest (3 runs)
+ok a server that requires client certificates: a verified connection gives its area back and keeps its leaf, the peer_ calls answer from it; a failure, a socket's end, a drop and the slot's next connection leave nothing of it (3 runs)

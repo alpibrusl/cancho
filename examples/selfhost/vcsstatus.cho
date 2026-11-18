@@ -24,19 +24,19 @@ pub fn tag(status: int) -> [] &static [byte] {
 // ---- status ------------------------------------------------------------------------------------------------------------------
 
 // What HEAD says: the branch (without `heads/`) in `bytes` and `has_branch` true, or HEAD detached; the change HEAD is at in `head` (empty if the branch has none).
-res struct HeadInfo {
+pub res struct HeadInfo {
     branch: buffer.Buffer,
     has_branch: bool,
     head: buffer.Buffer,
     status: int,
 }
 
-fn head_parts(h: HeadInfo) -> [] (buffer.Buffer, bool, buffer.Buffer, int) {
+pub fn head_parts(h: HeadInfo) -> [] (buffer.Buffer, bool, buffer.Buffer, int) {
     let HeadInfo { branch, has_branch, head, status } = h;
     return (branch, has_branch, head, status);
 }
 
-fn head_info[&h, &d](heap: &!h Heap, vcs: &d Dir) -> [heap, dir_read, dir_write, file_read] HeadInfo {
+pub fn head_info[&h, &d](heap: &!h Heap, vcs: &d Dir) -> [heap, dir_read, dir_write, file_read] HeadInfo {
     let read = vcsstore.read_text(heap, vcs, "HEAD");
     let (text, status, errno) = vcsstore.parts(read);
     var branch = buffer.empty(heap, 0);

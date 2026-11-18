@@ -1,0 +1,7 @@
+  res struct Ticket { fd: int }  fn close(f: Ticket) -> [] int { let Ticket { fd } = f;
+ return fd;
+ }  fn same[&p](a: &p Ticket, b: &p Ticket) -> [] int { return 0;
+ }  fn unrelated(x: Ticket, y: Ticket) -> [] int { borrow x as &a in { borrow y as &b in { let n = same(a, b);
+ } } return close(x) + close(y);
+ }  fn main() -> [] int { return 0;
+ } 

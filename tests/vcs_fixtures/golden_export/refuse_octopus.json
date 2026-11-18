@@ -1,0 +1,8 @@
+{
+  "command": "export-git",
+  "ok": false,
+  "refused": {
+    "message": "change 460546f2b4e0f84647bdc0e12d1a9703e15d1f0a6c0eeeba6870f3d7df9a3c96: bad tree or parents",
+    "tag": "object-corrupt"
+  }
+}

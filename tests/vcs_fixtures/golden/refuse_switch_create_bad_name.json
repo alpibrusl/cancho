@@ -1,0 +1,8 @@
+{
+  "command": "switch",
+  "ok": false,
+  "refused": {
+    "message": "`heads/bad name` is not a ref name",
+    "tag": "bad-ref-name"
+  }
+}

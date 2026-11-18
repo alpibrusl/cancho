@@ -1,0 +1,247 @@
+edition 12;
+module selfhost.gitparse;
+
+// gitparse.cho -- what `import-git` reads out of git's objects (`docs/vcs-routing.md` section 16; the Rust is `parse_commit`, `parse_tree` and the tag peeling of
+// `crates/cancho-vcs/src/gitread.rs` and `bridge.rs`): a commit's tree, parents, headers and message, a tree's entries, and the object an annotated tag names.
+// Everything is read from untrusted bytes: each function answers a status instead of trapping.
+//
+// And the table that finds an object by its id: `table` holds four ints for each slot (the id as three ints, then the value plus one, 0 for a slot that is empty),
+// and `mask` is the number of slots less one, a power of two less one.
+
+import std.buffer;
+import std.bytes;
+import std.utf8;
+import selfhost.gitread;
+
+// ---- the table of ids --------------------------------------------------------------------------------------------------------
+
+// How many ints a table for `objects` ids needs: a power of two of slots of at least twice as many, four ints each.
+pub fn table_ints(objects: int) -> [] int {
+    var slots = 1024;
+    while slots < 2 * objects + 16 {
+        slots = slots * 2;
+    }
+    return 4 * slots;
+}
+
+fn slot_of[&t, &i](table: &t [int], mask: int, id: &i [byte]) -> [] int {
+    let k0 = gitread.be64(id, 0);
+    let k1 = gitread.be64(id, 8);
+    let k2 = gitread.be32(id, 16);
+    var s = gitread.be32(id, 0) & mask;
+    while table[4 * s + 3] != 0 {
+        if table[4 * s] == k0 && table[4 * s + 1] == k1 && table[4 * s + 2] == k2 {
+            return s;
+        }
+        s = s + 1 & mask;
+    }
+    return s;
+}
+
+// What was put for `id` (20 bytes), or -1.
+pub fn table_get[&t, &i](table: &t [int], mask: int, id: &i [byte]) -> [] int {
+    let s = slot_of(table, mask, id);
+    return table[4 * s + 3] - 1;
+}
+
+pub fn table_put[&t, &i](table: &!t [int], mask: int, id: &i [byte], value: int) -> [] int {
+    let s = slot_of(table, mask, id);
+    table[4 * s] = gitread.be64(id, 0);
+    table[4 * s + 1] = gitread.be64(id, 8);
+    table[4 * s + 2] = gitread.be32(id, 16);
+    table[4 * s + 3] = value + 1;
+    return s;
+}
+
+// ---- commits -----------------------------------------------------------------------------------------------------------------
+
+// The 20 bytes of the id `text` (trimmed of white space, 40 digits) or an empty buffer.
+fn id_of_line[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    if !utf8.is_valid(text) {
+        return buffer.empty(heap, 0);
+    }
+    var a = 0;
+    while a < len(text) && int_of(text[a]) <= 32 {
+        a = a + 1;
+    }
+    var z = len(text);
+    while z > a && int_of(text[z - 1]) <= 32 {
+        z = z - 1;
+    }
+    return gitread.unhex_id(heap, text[a..z]);
+}
+
+pub res struct Commit {
+    tree: buffer.Buffer,
+    parents: buffer.Buffer,
+    headers_at: int,
+    head_end: int,
+    message_at: int,
+    status: int,
+}
+
+pub fn commit_parts(c: Commit) -> [] (buffer.Buffer, buffer.Buffer, int, int, int, int) {
+    let Commit { tree, parents, headers_at, head_end, message_at, status } = c;
+    return (tree, parents, headers_at, head_end, message_at, status);
+}
+
+// `parse_commit`: the header lines end at the first blank line (`head_end` is just after the newline that ends the last of them, or the whole body when there is
+// no blank line, and `message_at` is after the blank line, or the end). `tree` is the 20 bytes of the first `tree` line that holds an id, `parents` the 20 bytes
+// of each `parent` line before the first header that is neither, `headers_at` where that first other header starts (`head_end` when there is none). `status` 0 ok,
+// 1 `bad parent line`, 2 `commit without a tree`.
+pub fn commit_parse[&h, &b](heap: &!h Heap, body: &b [byte]) -> [heap] Commit {
+    var split = 0 - 1;
+    var k = 0;
+    while k + 1 < len(body) && split < 0 {
+        if body[k] == byte_of(10) && body[k + 1] == byte_of(10) {
+            split = k;
+        }
+        k = k + 1;
+    }
+    var head_end = len(body);
+    var message_at = len(body);
+    if split >= 0 {
+        head_end = split + 1;
+        message_at = split + 2;
+    }
+    var tree = buffer.empty(heap, 0);
+    var have_tree = false;
+    var parents = buffer.empty(heap, 0);
+    var headers_at = 0 - 1;
+    var status = 0;
+    var pos = 0;
+    while pos < head_end && status == 0 {
+        var end = pos;
+        while end < head_end && body[end] != byte_of(10) {
+            end = end + 1;
+        }
+        if end < head_end {
+            end = end + 1;
+        }
+        let line = body[pos..end];
+        if !have_tree && bytes.starts_with(line, "tree ") {
+            let id = id_of_line(heap, line[5..len(line)]);
+            borrow id as &ib in {
+                if len(buffer.bytes(ib)) == 20 {
+                    buffer.drop(heap, tree);
+                    tree = buffer.append(heap, buffer.empty(heap, 20), buffer.bytes(ib));
+                    have_tree = true;
+                }
+            }
+            buffer.drop(heap, id);
+        } else if headers_at < 0 && bytes.starts_with(line, "parent ") {
+            let id = id_of_line(heap, line[7..len(line)]);
+            borrow id as &ib in {
+                if len(buffer.bytes(ib)) == 20 {
+                    parents = buffer.append(heap, parents, buffer.bytes(ib));
+                } else {
+                    status = 1;
+                }
+            }
+            buffer.drop(heap, id);
+        } else if headers_at < 0 {
+            headers_at = pos;
+        }
+        pos = end;
+    }
+    if status == 0 && !have_tree {
+        status = 2;
+    }
+    if headers_at < 0 {
+        headers_at = head_end;
+    }
+    return Commit { tree: tree, parents: parents, headers_at: headers_at, head_end: head_end, message_at: message_at, status: status };
+}
+
+// ---- trees -------------------------------------------------------------------------------------------------------------------
+
+// `text` as an octal number the way Rust's `u32::from_str_radix(.., 8)` reads one (an optional `+`, then at least one digit, no more than a `u32`), or -1.
+pub fn mode_parse[&t](text: &t [byte]) -> [] int {
+    if !utf8.is_valid(text) {
+        return 0 - 1;
+    }
+    var at = 0;
+    if len(text) > 0 && text[0] == byte_of(43) {
+        at = 1;
+    }
+    if at >= len(text) {
+        return 0 - 1;
+    }
+    var v = 0;
+    while at < len(text) {
+        let c = int_of(text[at]);
+        if c < 48 || c > 55 {
+            return 0 - 1;
+        }
+        v = v * 8 + c - 48;
+        if v > 4294967295 {
+            return 0 - 1;
+        }
+        at = at + 1;
+    }
+    return v;
+}
+
+// Whether the tree body is well formed: 0 ok, 1 `bad tree entry`, 2 `bad tree mode`, 3 `truncated tree`.
+pub fn tree_check[&b](body: &b [byte]) -> [] int {
+    var p = 0;
+    while p < len(body) {
+        var sp = p;
+        while sp < len(body) && body[sp] != byte_of(32) {
+            sp = sp + 1;
+        }
+        if sp >= len(body) {
+            return 1;
+        }
+        if mode_parse(body[p..sp]) < 0 {
+            return 2;
+        }
+        var nul = sp;
+        while nul < len(body) && body[nul] != byte_of(0) {
+            nul = nul + 1;
+        }
+        if nul >= len(body) {
+            return 1;
+        }
+        if nul + 21 > len(body) {
+            return 3;
+        }
+        p = nul + 21;
+    }
+    return 0;
+}
+
+// The entry that starts at `p` of a tree body `tree_check` accepted: the mode, and in `at` the offsets of its name (start and end), its id and the next entry.
+pub fn tree_entry[&b, &s](body: &b [byte], p: int, at: &!s [int]) -> [] int {
+    var sp = p;
+    while body[sp] != byte_of(32) {
+        sp = sp + 1;
+    }
+    var nul = sp;
+    while body[nul] != byte_of(0) {
+        nul = nul + 1;
+    }
+    at[0] = sp + 1;
+    at[1] = nul;
+    at[2] = nul + 1;
+    at[3] = nul + 21;
+    return mode_parse(body[p..sp]);
+}
+
+// ---- annotated tags ----------------------------------------------------------------------------------------------------------
+
+// The 20 bytes of the object a tag body names on its first line (`object ` and 40 digits), or an empty buffer.
+pub fn tag_target[&h, &b](heap: &!h Heap, body: &b [byte]) -> [heap] buffer.Buffer {
+    var end = 0;
+    while end < len(body) && body[end] != byte_of(10) {
+        end = end + 1;
+    }
+    var line = body[0..end];
+    if len(line) > 0 && line[len(line) - 1] == byte_of(13) {
+        line = line[0..len(line) - 1];
+    }
+    if !bytes.starts_with(line, "object ") {
+        return buffer.empty(heap, 0);
+    }
+    return gitread.unhex_id(heap, line[7..len(line)]);
+}

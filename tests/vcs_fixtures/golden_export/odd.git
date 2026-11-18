@@ -1,0 +1,45 @@
+./
+./HEAD 4289624258:21
+./config 3299449894:66
+./objects/
+./objects/09/
+./objects/09/26d247120d6667758d6573618f437b5cad1a50 1000680637:78
+./objects/2a/
+./objects/2a/87d7c6f5c0b885bd334b0d1028d7cfe29ce7ff 71911061:221
+./objects/3e/
+./objects/3e/ac62ec484a0c75051647a9b46e74cc30e292bc 1729177348:21
+./objects/48/
+./objects/48/f328c9bc6a741939d3ccd92cda78a37b718eb2 4245925186:178
+./objects/58/
+./objects/58/7be6b4c3f93f93c489c0111bba5596147a26cb 4283258550:20
+./objects/65/
+./objects/65/cd8a60ca396cd54d9a9dcb186106424f9baa4a 3696409894:21
+./objects/68/
+./objects/68/010f679f7c4d37ff577bbcf01e3ee07dc1ae8c 5622427:221
+./objects/72/
+./objects/72/30a912b026b663a5b722ee99e8ba1c1bca13b0 1968879024:78
+./objects/81/
+./objects/81/9d99378ee35c11439a0bf5c22b623a9928d2dd 3639309874:21
+./objects/ab/
+./objects/ab/69b4abf3bb84d4e268bd42d84e4a9a5e242bd3 4021694248:48
+./objects/b4/
+./objects/b4/2db0c30a493afc3bd72bc1cac1e040be06260d 538013152:179
+./objects/bc/
+./objects/bc/60c8336b530b9bf6fe4c9b1cd65c9b3da66d67 620902242:221
+./objects/ce/
+./objects/ce/3204b8d1affa9cf7ee370c041b14fa3f6e20c9 2033483632:78
+./objects/e1/
+./objects/e1/b46012bd91c559625e9ac30b44a942028123cf 2638615079:169
+./objects/e8/
+./objects/e8/57f1eefa55700169152f1ddb1ec479778cb68b 1770042119:164
+./objects/tmp/
+./refs/
+./refs/heads/
+./refs/heads/br1 2235519228:41
+./refs/heads/br2 3192581021:41
+./refs/heads/br3 1417344075:41
+./refs/heads/main 3980501647:41
+./refs/heads/nobreak 1125376371:41
+./refs/heads/nonutf8 416214764:41
+./refs/heads/upper 3366312482:41
+./refs/tags/

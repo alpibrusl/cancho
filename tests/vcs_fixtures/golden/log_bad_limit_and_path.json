@@ -1,0 +1,8 @@
+{
+  "command": "log",
+  "ok": false,
+  "refused": {
+    "message": "`--limit` is a count",
+    "tag": "bad-argument"
+  }
+}

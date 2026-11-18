@@ -4,7 +4,7 @@
 > *(read)* is from the source or a design document; *(measured)* was run on 2026-11-05 on macOS arm64 with the
 > compiler of `main` (c7435d6e). The rule behind it: new features are written in `examples/selfhost`, the Rust compiler is
 > being deprecated, so **no new Rust**, and a missing primitive stops the work with an issue instead of a fallback to Rust.
-> The Rust V1 (`crates/cancho-vcs`, `crates/cancho/src/vcs_*.rs`) and its pinned JSON (`crates/cancho/tests/vcs_pins/`)
+> The Rust V1 (`crates/cancho-vcs`, `crates/cancho/src/vcs_*.rs`) and its pinned JSON (`tests/vcs_fixtures/pins/`)
 > are the oracle. A Rust V2 (merge, `resolve`, `replay`, a gate that resolves modules outside the tree, deflate and delta
 > packs; branch `claude/vcs-v2-db1c7e`, PR #682, closed unmerged) exists only as a **reference for algorithms and
 > measurements**: its R3 numbers (82 historical merges, 700 random pairs, against `git merge-tree`) are the oracle for the
@@ -124,7 +124,7 @@ command wrote:
 | b2 | `vcschange.cho`: the change object (JSON in V1's field order, written and read) | **built**, below; refs, `HEAD` and `refs/*.log` move to b3 |
 | b3 | `vcsstore.cho`: **built**, below: refs, `HEAD`, the log; the store on disk: write an object atomically (temporary name, `file_sync`, `dir_rename`, `dir_sync`), read one and re-hash it; the ref compare-and-swap under a lock file; `init` | next; needs the primitives that exist, not the five of the issues |
 | b4a | `vcsrepo.cho`: HEAD and the resolution of a revision (`HEAD`, `@`, id, branch, tag, prefix, `~N`) | **built**, below |
-| b4b | `vcsrepo.cho`: the history of a change; the documents of `log` and `show` (sorted-key pretty JSON), and the refusal document of `bad-revision` | **built**, below; without the `log` filters and `show --patch` |
+| b4b | `vcsrepo.cho`: the history of a change; the documents of `log` and `show` (sorted-key pretty JSON), and the refusal document of `bad-revision` | **built**, below; the `log` filters and `show --patch` came with R11 (`vcs-routing.md` §13) |
 | b4c | `vcsscan.cho` and `status`: the working copy scanned against HEAD's tree | **built**, below; a symbolic link is refused until #685 (`readlink`) |
 | b4d-1 | `vcsdiff.cho`: the histogram line diff and the anchored edits (`derive_edits`, `apply_edits`) a change records | **built**, below |
 | b4d-2 | `record` (snapshot of the working copy to a tree and a change; `--no-gate`, and the gate when slice d lands) | next |
@@ -183,7 +183,7 @@ Six mutants (the order of the frontier, a state name, the `--limit 0` rule, an i
 `log --limit 0` lists one change, as the Rust command does (it stops after pushing a row).
 
 One bug found by the check and fixed: `show` parsed the change into its scratch space twice but read it once, and answered from zeros (a trap). It showed as exit 132 on every `show` of a change with a tree, and
-a debugging harness of mine had also trapped on a relative path through `..`, which an `Fs` traps on (the checks pass absolute paths). **Not done:** `log --path|--intent|--session|--issue|--author`, `show --patch`, the
+a debugging harness of mine had also trapped on a relative path through `..`, which an `Fs` traps on (the checks pass absolute paths). **Not done** (the `log` filters and `show --patch` were built in R11, `vcs-routing.md` §13): the
 refusals other than `bad-revision` as documents (they are printed as `refused TAG`); the history keeps its set of reached changes as a list (quadratic; not measured at scale).
 
 **b4c, measured.** `vcsscan.cho` is `Repo::scan` and `Ignore` on a directory handle: it lists each directory (`std.dirs`), skips what `.canchoignore` says (all four kinds of rule) and `.cancho`/`.git` at the top, reads and
@@ -248,7 +248,7 @@ a store the Rust command wrote, not a command.
    (section 4) lists one asker each; the answer for #685 is the same seven commands, but they are one asker, `cancho vcs`.
 2. **#687 (exit at a chosen point) is probably not needed. [read]** The crash test (`vcs_repo.rs:356`, `397`) runs a command once per failpoint and treats exit code 137 as
    "the failpoint fired". A cancho program that reaches the same point with `trap()` ends by a signal, which `spawn_capture` already reports in `code` (`gate.md` G4), and the test
-   can ask "ended by a signal" where it asked "ended 137". What is lost is the number 137. The issue should be answered by the first crash test (slice 3 of section 5), not built first.
+   can ask "ended by a signal" where it asked "ended 137". What is lost is the number 137. The issue should be answered by the first crash test (slice 3 of section 5), not built first. **Answered (2026-11-17, `docs/gate.md` G4 wave 4):** not by a trap and not by a failpoint but by `kill -9` from outside, `tests/commands/vcs_crash.sh`; it found three bugs that a kill at a write boundary would not have.
 3. **#688 (process id) is cosmetic. [read]** A lock file holds `pid time` and the pid only appears in the refusal and in `unlock`'s report. The pinned test writes the lock by
    hand with pid 99999 (`vcs_repo.rs:238`), so the native command only has to read one. Without a primitive the lock a native command writes would carry a pid it cannot know;
    that is a visible difference to say, not a blocker.
@@ -261,5 +261,5 @@ That is checked by the first routed command, `init`, and it is the one place thi
 
 **Order this suggests (replaces the order of section 5, items 2 to 5, for what is left; step (2) is designed in [`vcs-routing.md`](vcs-routing.md)).** (1) Answer #684 and #685 (and the `realpath` of item 4): they are the only thing that
 stops seven commands. (2) Route `log`, `show`, `status` (no-link trees), `branch` and `init` from `cli.cho` so the repository form exists as a command, with parity tests that run
-the pinned JSON of `crates/cancho/tests/vcs_pins/` against it. (3) The git bridge, which waits on no primitive. (4) `record` and the gate. (5) `switch`, `restore`, `revert`,
+the pinned JSON of `tests/vcs_fixtures/pins/` against it. (3) The git bridge, which waits on no primitive. (4) `record` and the gate. (5) `switch`, `restore`, `revert`,
 `apply` once #684 and #685 land. (6) The crash test, answering #687 by trapping. (7) Mark the Rust `vcs` deprecated.

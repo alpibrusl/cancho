@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { let g: float = float_of(3); return 1; }

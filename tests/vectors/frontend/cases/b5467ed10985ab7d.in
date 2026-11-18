@@ -1,0 +1,1 @@
+extern fn g[T](x: T) -> [] int;

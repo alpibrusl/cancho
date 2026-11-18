@@ -1,0 +1,88 @@
+edition 9;
+module selfhost.gitdry;
+
+// gitdry.cho -- the dry run of `import-git` without the command line: `gitdry /ABS/GIT/DIR /ABS/REPOSITORY` prints what the command says (a tool of the checks of R14).
+
+import std.buffer;
+import std.dirs;
+import std.io as console;
+import selfhost.vcsgit;
+import selfhost.vcsstore;
+
+fn run[&h, &i, &a, &f](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs("")) -> [heap, io_write, err_write, args, fs_read(""), dir_read, dir_write, file_read] int {
+    if arg_count(args) < 3 {
+        console.error_all(io, "usage: gitdry /ABS/GIT/DIR /ABS/REPOSITORY\n");
+        return 2;
+    }
+    let git = arg(args, 1);
+    let repo = arg(args, 2);
+    var code = 0;
+    match open_dir(fs, "/") {
+        DirOpened::Ok(r0) => {
+            var root = r0;
+            borrow root as &rd in {
+                match dirs.enter(rd, repo[1..len(repo)]) {
+                    DirOpened::Ok(p0) => {
+                        var proot = p0;
+                        borrow proot as &prd in {
+                            match vcsstore.enter_vcs(prd) {
+                                DirOpened::Ok(v0) => {
+                                    var vcs = v0;
+                                    borrow vcs as &vd in {
+                                        let answer = vcsgit.import_command(heap, rd, vd, git[1..len(git)]);
+                                        let (doc, status, errno) = vcsstore.parts(answer);
+                                        borrow doc as &db in {
+                                            buffer.write(io, db);
+                                        }
+                                        buffer.drop(heap, doc);
+                                        code = status;
+                                    }
+                                    dir_close(vcs);
+                                }
+                                DirOpened::Failed(e) => {
+                                    console.error_all(io, "no .cancho/vcs\n");
+                                    code = 3;
+                                }
+                            }
+                        }
+                        dir_close(proot);
+                    }
+                    DirOpened::Failed(e) => {
+                        console.error_all(io, "no repository\n");
+                        code = 3;
+                    }
+                }
+            }
+            dir_close(root);
+        }
+        DirOpened::Failed(e) => {
+            code = 3;
+        }
+    }
+    return code;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(tty);
+    release(ffi);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow fs as &f in {
+                    status = run(h, i, a, f);
+                }
+            }
+        }
+    }
+    release(fs);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

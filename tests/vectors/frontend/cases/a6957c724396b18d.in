@@ -1,0 +1,1 @@
+fn f() -> [] int { if a { } if b { x(); } else { y(); } if c { } else if d { } else { } while e { f(); } return -1 + !a * ~b + *c; }

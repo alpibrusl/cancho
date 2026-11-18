@@ -1,0 +1,158 @@
+fetch net-sockets/.cancho-vcs	ok	=1
+fetch net-sockets/.cancho-vcs	files	=1 2233336042-69 3802202760-3206
+fetch http-response/.cancho-vcs	ok	=1
+fetch http-response/.cancho-vcs	files	=2 3994467818-138 2816128042-5682
+fetch x509/.cancho-vcs/x509_verify	ok	=1
+fetch x509/.cancho-vcs/x509_verify	files	=3 2503562222-207 449914463-98160
+fetch tls/.cancho-vcs/tls_hello	ok	=1
+fetch tls/.cancho-vcs/tls_hello	files	=4 3022462283-276 191791121-143700
+bad store: as it is	ok	=1
+bad store: as it is	files	=1 2233336042-69 3802202760-3206
+bad store: a blob that is not what its name says	ok	=0
+bad store: a blob that is not what its name says	files	=0
+bad store: a blob that is not there	ok	=0
+bad store: a blob that is not there	files	=0
+bad store: a body that is not the one the manifest says	ok	=0
+bad store: a body that is not the one the manifest says	files	=0
+bad store: a signature that its source does not produce	ok	=0
+bad store: a signature that its source does not produce	files	=0
+bad store: a name published twice, the signature that sorts last being no longer produced	ok	=0
+bad store: a name published twice, the signature that sorts last being no longer produced	files	=0
+bad store: a manifest that is not JSON	ok	=0
+bad store: a manifest that is not JSON	files	=0
+bad store: a manifest with nothing in it	ok	=0
+bad store: a manifest with nothing in it	files	=0
+bad store: a store that requires itself	ok	=0
+bad store: a store that requires itself	files	=0
+dependency: install	status	=0
+dependency: install	out	=installed socks (d056296a5723): 1 file(s)|
+dependency: install	err1	=
+dependency: install	toml	=[package]|name = "p"||[dependencies.socks]|git = "file://WORK/good"|rev = "REV"|path = "packages/net-sockets/.cancho-vcs"||[[bin]]|name = "a"|sources = ["src"]||[[test]]|name = "t"|sources = ["tests"]|
+dependency: install	files	=1 2233336042-69 3802202760-3206
+dependency: install	built	=no
+dependency: install over a file an older install left	status	=0
+dependency: install over a file an older install left	out	=installed socks (d056296a5723): 1 file(s)|
+dependency: install over a file an older install left	err1	=
+dependency: install over a file an older install left	toml	=[package]|name = "p"||[dependencies.socks]|git = "file://WORK/good"|rev = "REV"|path = "packages/net-sockets/.cancho-vcs"||[[bin]]|name = "a"|sources = ["src"]||[[test]]|name = "t"|sources = ["tests"]|
+dependency: install over a file an older install left	files	=1 2233336042-69 3802202760-3206
+dependency: install over a file an older install left	built	=no
+dependency: build	status	=0
+dependency: build	out	=installed socks (d056296a5723): 1 file(s)|built DIR/build/a|
+dependency: build	err1	=
+dependency: build	toml	=[package]|name = "p"||[dependencies.socks]|git = "file://WORK/good"|rev = "REV"|path = "packages/net-sockets/.cancho-vcs"||[[bin]]|name = "a"|sources = ["src"]||[[test]]|name = "t"|sources = ["tests"]|
+dependency: build	files	=1 2233336042-69 3802202760-3206
+dependency: build	built	=yes
+dependency: test	status	=0
+dependency: test	out	=installed socks (d056296a5723): 1 file(s)|== test t|running 1 test|test test_one ... ok||test result: ok. 1 passed; 0 failed|
+dependency: test	err1	=
+dependency: test	toml	=[package]|name = "p"||[dependencies.socks]|git = "file://WORK/good"|rev = "REV"|path = "packages/net-sockets/.cancho-vcs"||[[bin]]|name = "a"|sources = ["src"]||[[test]]|name = "t"|sources = ["tests"]|
+dependency: test	files	=1 2233336042-69 3802202760-3206
+dependency: test	built	=no
+dependency: a directory that is not in the commit	status	=3
+dependency: a directory that is not in the commit	out	=
+dependency: a directory that is not in the commit	err1	=commit REV of `file://WORK/good` has no directory `packages/nowhere`|
+dependency: a directory that is not in the commit	toml	=[package]|name = "p"||[dependencies.socks]|git = "file://WORK/good"|rev = "REV"|path = "packages/nowhere"||[[bin]]|name = "a"|sources = ["src"]||[[test]]|name = "t"|sources = ["tests"]|
+dependency: a directory that is not in the commit	files	=0
+dependency: a directory that is not in the commit	built	=no
+dependency: a store with nothing in it	status	=1
+dependency: a store with nothing in it	out	=
+dependency: a store with nothing in it	err1	=dependency `socks`: nothing is published at `packages/net-sockets/.cancho-vcs` in file://WORK/empty (d84fbe4c0c91)|
+dependency: a store with nothing in it	toml	=[package]|name = "p"||[dependencies.socks]|git = "file://WORK/empty"|rev = "REV"|path = "packages/net-sockets/.cancho-vcs"||[[bin]]|name = "a"|sources = ["src"]||[[test]]|name = "t"|sources = ["tests"]|
+dependency: a store with nothing in it	files	=0
+dependency: a store with nothing in it	built	=no
+add: a revision	status	=0
+add: a revision	out	=installed socks (2de79ff586c9): 1 file(s)|added socks (2de79ff586c9) to cancho.toml|
+add: a revision	err1	=
+add: a revision	toml	=# a comment|[package]|name = "p"||[dependencies.socks]|git = "file://WORK/good"|rev = "REV"|path = "packages/net-sockets/.cancho-vcs"|
+add: a revision	files	=1 2233336042-69 3802202760-3206
+add: a revision	built	=no
+add: a tag	status	=0
+add: a tag	out	=v1 is REV|installed socks (2de79ff586c9): 1 file(s)|added socks (2de79ff586c9) to cancho.toml|
+add: a tag	err1	=
+add: a tag	toml	=# a comment|[package]|name = "p"||[dependencies.socks]|git = "file://WORK/good"|rev = "REV"|path = "packages/net-sockets/.cancho-vcs"|
+add: a tag	files	=1 2233336042-69 3802202760-3206
+add: a tag	built	=no
+add: the head	status	=0
+add: the head	out	=HEAD is REV|installed socks (2de79ff586c9): 1 file(s)|added socks (2de79ff586c9) to cancho.toml|
+add: the head	err1	=
+add: the head	toml	=# a comment|[package]|name = "p"||[dependencies.socks]|git = "file://WORK/good"|rev = "REV"|path = "packages/net-sockets/.cancho-vcs"|
+add: the head	files	=1 2233336042-69 3802202760-3206
+add: the head	built	=no
+add: a name taken	status	=1
+add: a name taken	out	=
+add: a name taken	err1	=`cancho.toml` already has a dependency `socks`; edit its `rev` to move it|
+add: a name taken	toml	=# a comment|[package]|name = "p"||[dependencies.socks]|git = "file://WORK/good"|rev = "REV"|path = "packages/net-sockets/.cancho-vcs"|
+add: a name taken	files	=1 2233336042-69 3802202760-3206
+add: a name taken	built	=no
+add: a directory that is not in the commit	status	=3
+add: a directory that is not in the commit	out	=HEAD is REV|
+add: a directory that is not in the commit	err1	=commit REV of `file://WORK/good` has no directory `nowhere`|
+add: a directory that is not in the commit	toml	=# a comment|[package]|name = "p"|
+add: a directory that is not in the commit	files	=0
+add: a directory that is not in the commit	built	=no
+add: a directory that is not a store	status	=1
+add: a directory that is not a store	out	=HEAD is REV|
+add: a directory that is not a store	err1	=`packages/stores` in file://WORK/good is not a store; it holds stores at: packages/stores/a, packages/stores/b. Pick one with --path|
+add: a directory that is not a store	toml	=# a comment|[package]|name = "p"|
+add: a directory that is not a store	files	=0
+add: a directory that is not a store	built	=no
+add: a revision that is not a hash	status	=1
+add: a revision that is not a hash	out	=
+add: a revision that is not a hash	err1	=origin `rev` must be a full commit hash (40 or 64 lowercase hex digits), found `abc`; a branch or tag name moves, so a lock never holds one|
+add: a revision that is not a hash	toml	=# a comment|[package]|name = "p"|
+add: a revision that is not a hash	files	=0
+add: a revision that is not a hash	built	=no
+add: a ref that is not there	status	=3
+add: a ref that is not there	out	=
+add: a ref that is not there	err1	=`file://WORK/good` has no ref `nope`|
+add: a ref that is not there	toml	=# a comment|[package]|name = "p"|
+add: a ref that is not there	files	=0
+add: a ref that is not there	built	=no
+add: a store with nothing in it	status	=1
+add: a store with nothing in it	out	=
+add: a store with nothing in it	err1	=dependency `socks`: nothing is published at `packages/net-sockets/.cancho-vcs` in file://WORK/empty (d891177d24a4)|
+add: a store with nothing in it	toml	=# a comment|[package]|name = "p"|
+add: a store with nothing in it	files	=0
+add: a store with nothing in it	built	=no
+add: a url with a quote in it	status	=2
+add: a url with a quote in it	out	=
+add: a url with a quote in it	err1	=the git url cannot contain a quote, a backslash or a control character|
+add: a url with a quote in it	toml	=# a comment|[package]|name = "p"|
+add: a url with a quote in it	files	=0
+add: a url with a quote in it	built	=no
+add: a path with a backslash in it	status	=2
+add: a path with a backslash in it	out	=
+add: a path with a backslash in it	err1	=the path cannot contain a quote, a backslash or a control character|
+add: a path with a backslash in it	toml	=# a comment|[package]|name = "p"|
+add: a path with a backslash in it	files	=0
+add: a path with a backslash in it	built	=no
+add: --rev and --ref	status	=2
+add: --rev and --ref	out	=
+add: --rev and --ref	err1	=give `--rev` or `--ref`, not both|
+add: --rev and --ref	toml	=# a comment|[package]|name = "p"|
+add: --rev and --ref	files	=0
+add: --rev and --ref	built	=no
+add: a name that is not one	status	=2
+add: a name that is not one	out	=
+add: a name that is not one	err1	=`a b` is not a dependency name (letters, digits, `-`, `_`, `.`)|
+add: a name that is not one	toml	=# a comment|[package]|name = "p"|
+add: a name that is not one	files	=0
+add: a name that is not one	built	=no
+add: no url	status	=2
+add: no url	out	=
+add: no url	err1	=`add` needs a name and a git url: `cancho add <name> <git-url>`|
+add: no url	toml	=# a comment|[package]|name = "p"|
+add: no url	files	=0
+add: no url	built	=no
+add: an option that is not one	status	=2
+add: an option that is not one	out	=
+add: an option that is not one	err1	=unknown option `--nope`|
+add: an option that is not one	toml	=# a comment|[package]|name = "p"|
+add: an option that is not one	files	=0
+add: an option that is not one	built	=no
+add: no project	status	=1
+add: no project	out	=
+add: no project	err1	=no `cancho.toml` in `DIR` or any directory above it (docs/package-system.md §8)|
+add: no project	toml	=
+add: no project	files	=0
+add: no project	built	=no

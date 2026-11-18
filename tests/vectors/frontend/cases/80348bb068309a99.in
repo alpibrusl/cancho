@@ -1,0 +1,5 @@
+module m;
+fn f() -> [] int { return 0; }
+module n;
+import q;
+fn g() -> [] int { return 1; }

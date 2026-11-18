@@ -1,0 +1,2 @@
+edition 2; // the edition
+fn f() -> [] int { return 0; }

@@ -1,0 +1,2 @@
+fn make[T: val]() -> [] T { return make(); }
+fn f[&r]() -> [] int { let x = make(); return 1; }

@@ -1,0 +1,21 @@
+ res struct Ticket { fd: int, }  fn open(fd: int) -> [] Ticket { return Ticket { fd: fd };
+ }  fn touch(f: Ticket) -> [] Ticket { let Ticket { fd } = f;
+ return Ticket { fd: fd + 2 };
+ }  fn close(f: Ticket) -> [] int { let Ticket { fd } = f;
+ return fd;
+ }  fn run[&i](io: &!i Io) -> [io_write] int { let straight = open(7);
+ putchar(io, '0' + close(straight));
+  let threaded = open(7);
+ putchar(io, '0' + close(touch(threaded)));
+  putchar(io, 10);
+ return 0;
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(fs);
+ release(ffi);
+ var status = 0;
+ borrow mut io as &!i in { status = run(i);
+ } release(io);
+ return status;
+ } 

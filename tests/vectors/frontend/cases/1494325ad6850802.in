@@ -1,0 +1,3 @@
+pub enum E[T] { A, B(int, T), C(&r [byte]) }
+val enum F { X }
+res enum G { Y(int) }

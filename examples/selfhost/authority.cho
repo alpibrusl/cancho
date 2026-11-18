@@ -334,6 +334,12 @@ fn canonical_set[&h](heap: &!h Heap, set: buffer.Buffer) -> [heap] buffer.Buffer
     return out;
 }
 
+// `lexical_path`: the label's argument is a text prefix of a path, and a link inside it leads out (`docs/authority.md` section 2.3, issue 762). `fs_read(p)` and `fs_write(p)` are; a `Dir` handle follows no link, and
+// its report has no path to be one about.
+fn lexical_path[&n](name: &n [byte]) -> [] bool {
+    return bytes.equal(name, "fs_read") || bytes.equal(name, "fs_write");
+}
+
 // `bounds_its_domain`: `ffi` does not, `net_out` and `net_in` do not when their argument is empty (or there is none); every other label does.
 fn bounds_its_domain[&n, &a](name: &n [byte], has: bool, arg: &a [byte]) -> [] bool {
     if bytes.equal(name, "ffi") {
@@ -767,10 +773,14 @@ fn data[&h, &q, &w](heap: &!h Heap, c: &q Plan, wasi: &w [byte]) -> [heap] buffe
         }
         b = buffer.append(heap, b, ", \"bounded\": ");
         if bounds_its_domain(key[0..cut], has, key[cut + 2..len(key)]) {
-            b = buffer.append(heap, b, "true }");
+            b = buffer.append(heap, b, "true");
         } else {
-            b = buffer.append(heap, b, "false }");
+            b = buffer.append(heap, b, "false");
         }
+        if lexical_path(key[0..cut]) {
+            b = buffer.append(heap, b, ", \"confinement\": \"lexical\"");
+        }
+        b = buffer.append(heap, b, " }");
         if end + 1 < len(all) {
             b = buffer.push(heap, b, byte_of(','));
         }

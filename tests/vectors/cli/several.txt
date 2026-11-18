@@ -1,0 +1,236 @@
+#### g00f0 nonl
+fn main(world: World) -> [] int { return 0; }
+#### g00f1 nonl
+fn helper() -> [] int { return 1; }
+#### g01f0 nonl
+module a;
+import a;
+fn f() -> [] int { return 1; }
+#### g01f1 nonl
+module a;
+fn g() -> [] int { return 2; }
+#### g02f0 nonl
+module a;
+struct T { x: int }
+#### g02f1 nonl
+module a;
+struct T { y: int }
+#### g03f0 nonl
+module a;
+struct T { x: int }
+#### g03f1 nonl
+module b;
+struct T { y: int }
+#### g04f0 nonl
+module a;
+pub struct T { x: int }
+#### g04f1 nonl
+module b;
+import a;
+struct U { t: a.T }
+#### g05f0 nonl
+module a;
+struct T { x: int }
+#### g05f1 nonl
+module b;
+import a;
+struct U { t: a.T }
+#### g06f0 nonl
+module a.b;
+struct T { x: int }
+#### g06f1 nonl
+module a.b;
+import a.b as q;
+struct U { t: q.T }
+#### g07f0 nonl
+edition 2;
+struct S { n: Net }
+#### g07f1 nonl
+struct S { n: Net }
+#### g08f0 nonl
+struct S { n: Net }
+#### g08f1 nonl
+edition 2;
+struct S { n: Net }
+#### g09f0
+edition 9;
+#### g09f1 nonl
+fn f() -> [] int { return 1; }
+#### g10f0 nonl
+fn f() -> [] int { return 1; }
+#### g10f1
+edition 9;
+#### g11f0 nonl
+fn f() -> [] int { return 1x; }
+#### g11f1 nonl
+fn g() -> [] int { return 1; }
+#### g12f0 nonl
+fn f() -> [] int { return 1; }
+#### g12f1 nonl
+fn g() -> [] int { return 1x; }
+#### g13f0 nonl
+fn f() -> [] int { return 1; }
+#### g13f1 nonl
+fn f() -> [] int { return 2; }
+#### g14f0 nonl
+module m;
+fn f() -> [] int { return 1; }
+#### g14f1 nonl
+module m;
+fn f() -> [] int { return 2; }
+#### g15f0 nonl
+import zzz;
+#### g15f1 nonl
+module zzz;
+#### g16f0 nonl
+module zzz;
+#### g16f1 nonl
+import zzz;
+#### g17f0 nonl
+#### g17f1 nonl
+#### g17f2 nonl
+#### g18f0 nonl
+module m;
+#### g18f1 nonl
+#### g18f2 nonl
+struct S { a: Nope }
+#### g19f0 nonl
+struct S { a: T }
+#### g19f1 nonl
+struct T { a: S }
+#### g20f0 nonl
+module a;
+extern fn g[&f](f: &f Ffi("libc")) -> [ffi("libc")] int;
+#### g20f1 nonl
+module b;
+extern fn g[&f](f: &f Ffi("libc")) -> [ffi("libc")] int;
+#### g21f0 nonl
+extern fn g[&f](f: &f Ffi("libc")) -> [] int;
+#### g21f1 nonl
+fn f() -> [] int { return 1; }
+#### g22f0 nonl
+module a;
+fn g() -> [] int { return 1; }
+#### g22f1 nonl
+module b;
+import a;
+fn f() -> [] int { return a.g(); }
+#### g23f0 nonl
+module a;
+pub fn g() -> [] int { return 1; }
+#### g23f1 nonl
+module b;
+import a;
+fn f() -> [] int { return a.g(); }
+#### g24f0 nonl
+module a;
+pub fn g(x: int) -> [] int { return x; }
+#### g24f1 nonl
+module b;
+import a;
+fn f() -> [] int { return a.g(true); }
+#### g25f0 nonl
+module a;
+pub fn g[&r](x: &r int) -> [] int { return *x; }
+#### g25f1 nonl
+module b;
+import a;
+fn f[&q](p: &q int) -> [] int { return a.g(p); }
+#### g26f0 nonl
+module a;
+fn g[&r](x: &r int) -> [] int { return *x; }
+#### g26f1 nonl
+module b;
+import a;
+fn f[&q](p: &q int) -> [] int { return a.g(p); }
+#### g27f0 nonl
+fn f() -> [] int { return g(); }
+#### g27f1 nonl
+fn g() -> [] int { return 1; }
+#### g28f0 nonl
+fn f() -> [] int { return g(); }
+#### g28f1 nonl
+module m;
+fn g() -> [] int { return 1; }
+#### g29f0 nonl
+fn g() -> [] int { return 1; }
+#### g29f1 nonl
+extern fn g[&f](f: &f Ffi("libc")) -> [ffi("libc")] int;
+#### g30f0 nonl
+module a;
+pub enum E { A, B(int) }
+#### g30f1 nonl
+module b;
+import a;
+fn f() -> [] int { let e = a.E::B(1); match e { a.E::A => { return 1; } a.E::B(x) => { return x; } } }
+#### g31f0 nonl
+module a;
+enum E { A, B(int) }
+#### g31f1 nonl
+module b;
+import a;
+fn f() -> [] int { let e = a.E::A; return 1; }
+#### g32f0 nonl
+module a;
+pub enum E { A, B(int) }
+pub enum F { A }
+#### g32f1 nonl
+module b;
+import a;
+fn f(e: a.E) -> [] int { match e { a.F::A => { return 1; } _ => { return 2; } } }
+#### g33f0 nonl
+module a;
+pub enum E { A, B(int) }
+#### g33f1 nonl
+module b;
+import a;
+fn f(e: a.E) -> [] int { match e { E::A => { return 1; } _ => { return 2; } } }
+#### g34f0 nonl
+module a;
+pub enum E { A, B(int) }
+#### g34f1 nonl
+module b;
+import a;
+fn f(e: a.E) -> [] int { match e { z.E::A => { return 1; } _ => { return 2; } } }
+#### g35f0 nonl
+module a;
+pub fn id[T: val](x: T) -> [] T { return x; }
+#### g35f1 nonl
+module b;
+import a;
+fn f() -> [] int { return a.id(3); }
+#### g36f0 nonl
+module a;
+fn id[T: val](x: T) -> [] T { return x; }
+#### g36f1 nonl
+module b;
+import a;
+fn f() -> [] int { return a.id(3); }
+#### g37f0 nonl
+module a;
+pub fn id[T: val](x: T) -> [] T { return x; }
+#### g37f1 nonl
+module b;
+import a;
+fn f() -> [] bool { return a.id(3); }
+#### g38f0 nonl
+module a;
+pub fn make[T: val]() -> [] T { return make(); }
+#### g38f1 nonl
+module b;
+import a;
+fn f() -> [] int { return a.make(); }
+#### g39f0 nonl
+module a;
+pub fn id[&q](x: &q int) -> [] &q int { return x; }
+#### g39f1 nonl
+module b;
+import a;
+fn f() -> [] int { var v = 1; borrow v as &p in { return *a.id(p); } return 0; }
+#### g40f0 nonl
+module a;
+pub fn id[&q](x: &q int) -> [] &q int { return x; }
+#### g40f1 nonl
+module b;
+import a;
+fn f(o: &r int) -> [] &r int { var v = 1; borrow v as &p in { return a.id(p); } return o; }

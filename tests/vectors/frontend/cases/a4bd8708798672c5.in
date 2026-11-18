@@ -1,0 +1,6 @@
+FILE 61
+module a;
+pub fn id[&q](x: &q int) -> [] &q int { return x; }FILE 111
+module b;
+import a;
+fn f(o: &r int) -> [] &r int { var v = 1; borrow v as &p in { return a.id(p); } return o; }

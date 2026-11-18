@@ -1,0 +1,2 @@
+fn g() -> [] int { return 1; }
+fn f() -> [] int { let h = g; return 1; }

@@ -1,0 +1,42 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [],
+      "bounds": [],
+      "regions": [
+        "r"
+      ],
+      "outlives": [],
+      "params": [
+        {
+          "name": "a",
+          "ty": {
+            "kind": "ref",
+            "unique": false,
+            "region": "r",
+            "inner": {
+              "kind": "slice",
+              "inner": {
+                "name": "byte"
+              }
+            }
+          }
+        }
+      ],
+      "effects": [
+        {
+          "name": "io"
+        }
+      ],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        ""
+      ]
+    }
+  ]
+}

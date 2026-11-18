@@ -1,0 +1,37 @@
+ok the_command_line_in_cancho_writes_the_agent_guidelines
+--help: exit 0 out 1838222475 err 4294967295 file 
+-h: exit 0 out 1838222475 err 4294967295 file 
+help: exit 0 out 1838222475 err 4294967295 file 
+introspect: exit 0 out 2729961194 err 4294967295 file 
+introspect --output json: exit 0 out 1218317630 err 4294967295 file 
+introspect --output=table: exit 0 out 1112370716 err 4294967295 file 
+introspect --output text: exit 0 out 2729961194 err 4294967295 file 
+introspect extra --output=json: exit 0 out 1218317630 err 4294967295 file 
+skill: exit 0 out 1867387072 err 4294967295 file 
+skill --output json: exit 0 out 2446437784 err 4294967295 file 
+skill --output=table: exit 0 out 1867387072 err 4294967295 file 
+skill out.md: exit 0 out 2426419078 err 4294967295 file 1867387072
+skill --output json out.md: exit 0 out 3763478603 err 4294967295 file 1867387072
+skill --output table out.md: exit 0 out 2426419078 err 4294967295 file 1867387072
+skill out.md --output text: exit 0 out 2426419078 err 4294967295 file 1867387072
+introspect --output: exit 2 out 4294967295 err 3451564664 file 
+introspect --output bogus: exit 2 out 4294967295 err 985204365 file 
+skill --output=bogus: exit 2 out 4294967295 err 985204365 file 
+skill --output: exit 2 out 4294967295 err 3451564664 file 
+skill --output json QUOTED: exit 0 out 443956992 err 4294967295 file 1867387072
+ok the_command_line_in_cancho_answers_help_and_the_command_tree_like_cancho
+ok the_command_line_in_cancho_reads_a_path_with_dot_dot_like_cancho
+exit 1
+  err: t.cho: error: no `main` function
+exit 1
+  out: {
+  out:   "refused": [
+  out:     {
+  out:       "rule": "program-shape",
+  out:       "message": "t.cho: error: no `main` function",
+  out:       "explanation": "A program has one `main` taking the `World` and returning `int`, and a file declares at most one module, first.",
+  out:       "position": null
+  out:     }
+  out:   ]
+  out: }
+ok the_command_line_in_cancho_words_a_program_with_no_main_like_cancho

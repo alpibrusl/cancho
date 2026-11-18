@@ -1,0 +1,3 @@
+struct P { x: int, // x end y: int, }  enum E { A, // first B(int), }  fn f(e: E) -> [] int { match e { E::A => { return 0;
+ // zero } E::B(n) => { return n;
+ } } } 

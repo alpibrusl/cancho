@@ -1,0 +1,2 @@
+enum E { A, B(int), C(int, [int]) }
+fn f(e: E) -> [] int { match e { E::A => { return 0; } E::B(x) => { return x; } E::C(_, y) => { return y[0]; } } }

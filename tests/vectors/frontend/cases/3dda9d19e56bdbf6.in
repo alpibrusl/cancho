@@ -1,0 +1,43 @@
+{
+  "items": [
+    {
+      "kind": "struct",
+      "public": false,
+      "name": "Point",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "fields": [
+        {
+          "name": "x",
+          "ty": {
+            "name": "int"
+          }
+        },
+        {
+          "name": "x",
+          "ty": {
+            "name": "bool"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        "x"
+      ]
+    }
+  ]
+}

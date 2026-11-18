@@ -1,0 +1,2 @@
+edition 5;
+fn f[&r]() -> [] int { return index_of_byte(3, byte_of(7)); }

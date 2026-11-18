@@ -1,0 +1,8 @@
+{
+  "command": "apply",
+  "ok": false,
+  "refused": {
+    "message": "the old text of an edit is not in `./notes.md`",
+    "tag": "anchor-not-found"
+  }
+}

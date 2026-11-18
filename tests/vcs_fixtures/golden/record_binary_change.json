@@ -1,0 +1,23 @@
+{
+  "branch": "main",
+  "change": "d654589eee6bf9d658edd0c4b2970854ede33b945a216f523b529c3c676316e9",
+  "command": "record",
+  "decls": [],
+  "dry_run": false,
+  "edits": 0,
+  "gate": {
+    "checked": [],
+    "ran": true
+  },
+  "intent": null,
+  "ok": true,
+  "parents": [
+    "d22698c885da3c3486ec27042efe3514e0b3e5b63c6af61b636f13acc82d9bcc"
+  ],
+  "recorded": true,
+  "touched": [
+    "bin.dat"
+  ],
+  "tree": "048820273a92b1009325108b0e0096e0546b824a5add5ca0cba6c6b6cdbeabd4",
+  "unchanged": false
+}

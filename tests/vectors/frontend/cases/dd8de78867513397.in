@@ -1,0 +1,3 @@
+pub res struct S[T] { a: T, }
+val enum E[T: val] { A(T), B, }
+res enum F { X }

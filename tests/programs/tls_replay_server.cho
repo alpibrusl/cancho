@@ -1,0 +1,290 @@
+edition 5;
+
+import std.buffer;
+import std.io;
+
+// The server half of `tests/commands/tls.sh`'s "sixty-four connections on one thread" check (it was a Rust thread in `conformance/tls.rs`): a TCP server that answers each connection with what a
+// real TLS server said to the same ClientHello, recorded in `tests/vectors/tls/streams.txt` (`scripts/tls_liar.py --streams`).
+//
+//     tls_replay_server PORT COUNT [cut] < streams.txt
+//
+// Standard input is the recording: one line a stream, `<ClientHello> <server flight> <reply> <length> <sha256>`, the first three in hex (`#` lines are comments). For each of COUNT connections, one
+// after the other: read the first record (the ClientHello), find the stream that answers it, send its flight, read until two records of type 23 (the client's Finished and its request) have come, send the
+// reply and read until the client closes. With `cut` the reply is sent without its last 24 bytes (close_notify's record) and the connection is closed at once, so the client sees the end of the
+// socket before any close_notify. Prints `ready` when it listens and `served N` at the end (N is the connections whose stream was found and whose reply was sent); exit 0 whatever N is.
+
+fn number[&s](s: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(s) {
+        n = n * 10 + int_of(s[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+fn hexval(c: int) -> [] int {
+    if c >= 97 {
+        return c - 87;
+    }
+    return c - 48;
+}
+
+// Does the hex text spell exactly these bytes?
+fn spells[&t, &d](text: &t [byte], data: &d [byte]) -> [] bool {
+    if len(text) != 2 * len(data) {
+        return false;
+    }
+    var k = 0;
+    while k < len(data) {
+        if hexval(int_of(text[2 * k])) * 16 + hexval(int_of(text[2 * k + 1])) != int_of(data[k]) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+fn record_size[&g](got: &!g [byte]) -> [] int {
+    return 5 + int_of(got[3]) * 256 + int_of(got[4]);
+}
+
+// Reads until `got` holds a whole record; answers the bytes held, or -1 when the peer ended first.
+fn fill_record[&c, &g](conn: &!c Conn, got: &!g [byte], held: int) -> [conn_read] int {
+    var n = held;
+    while true {
+        if n >= 5 && n >= record_size(got) {
+            return n;
+        }
+        match conn_read(conn, got[n..len(got)]) {
+            Received::Data(k) => {
+                n = n + k;
+            }
+            Received::End => {
+                return 0 - 1;
+            }
+            Received::Again => {
+            }
+            Received::Failed(e) => {
+                return 0 - 1;
+            }
+        }
+    }
+    return 0 - 1;
+}
+
+// Drops the first record; answers the bytes still held.
+fn take_record[&g](got: &!g [byte], held: int) -> [] int {
+    let size = record_size(got);
+    var k = 0;
+    while k < held - size {
+        got[k] = got[k + size];
+        k = k + 1;
+    }
+    return held - size;
+}
+
+// Sends the bytes the hex text spells, all but its last `less`.
+fn send_hex[&c, &t, &o](conn: &!c Conn, text: &t [byte], out: &!o [byte], less: int) -> [conn_write] bool {
+    let n = len(text) / 2 - less;
+    var k = 0;
+    while k < n {
+        out[k] = byte_of(hexval(int_of(text[2 * k])) * 16 + hexval(int_of(text[2 * k + 1])) & 255);
+        k = k + 1;
+    }
+    var sent = 0;
+    while sent < n {
+        match conn_write(conn, out[sent..n]) {
+            Sent::Wrote(w) => {
+                sent = sent + w;
+            }
+            Sent::Again => {
+            }
+            Sent::Failed(e) => {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// One connection; 1 when it was answered.
+fn serve_one[&c, &a, &x, &g, &o](conn: &!c Conn, all: &a [byte], idx: &!x [int], lines: int, got: &!g [byte], out: &!o [byte], cut: bool) -> [conn_read, conn_write] int {
+    var held = fill_record(conn, got, 0);
+    if held < 0 {
+        return 0;
+    }
+    var which = 0 - 1;
+    var l = 0;
+    while l < lines {
+        if spells(all[idx[6 * l]..idx[6 * l + 1]], got[0..record_size(got)]) {
+            which = l;
+        }
+        l = l + 1;
+    }
+    if which < 0 {
+        return 0;
+    }
+    held = take_record(got, held);
+    if !send_hex(conn, all[idx[6 * which + 2]..idx[6 * which + 3]], out, 0) {
+        return 0;
+    }
+    var encrypted = 0;
+    while encrypted < 2 {
+        held = fill_record(conn, got, held);
+        if held < 0 {
+            return 0;
+        }
+        if got[0] == byte_of(23) {
+            encrypted = encrypted + 1;
+        }
+        held = take_record(got, held);
+    }
+    var less = 0;
+    if cut {
+        less = 24;
+    }
+    if !send_hex(conn, all[idx[6 * which + 4]..idx[6 * which + 5]], out, less) {
+        return 0;
+    }
+    if !cut {
+        var going = true;
+        while going {
+            match conn_read(conn, got[0..len(got)]) {
+                Received::Data(k) => {
+                }
+                Received::End => {
+                    going = false;
+                }
+                Received::Again => {
+                }
+                Received::Failed(e) => {
+                    going = false;
+                }
+            }
+        }
+    }
+    return 1;
+}
+
+// Finds the three hex fields of each data line of `all`: six numbers a line (start and end of each) in `idx`; answers the number of lines.
+fn index_lines[&a, &x](all: &a [byte], idx: &!x [int]) -> [] int {
+    var lines = 0;
+    var p = 0;
+    while p < len(all) {
+        var q = p;
+        while q < len(all) && all[q] != byte_of(10) {
+            q = q + 1;
+        }
+        if all[p] != byte_of('#') && q > p {
+            var f = 0;
+            var s = p;
+            var at = p;
+            while at <= q && f < 3 {
+                if at == q || all[at] == byte_of(' ') {
+                    idx[6 * lines + 2 * f] = s;
+                    idx[6 * lines + 2 * f + 1] = at;
+                    s = at + 1;
+                    f = f + 1;
+                }
+                at = at + 1;
+            }
+            lines = lines + 1;
+        }
+        p = q + 1;
+    }
+    return lines;
+}
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(fs);
+    release(clock);
+    var status = 2;
+    borrow mut io as &!i in {
+        borrow args as &g in {
+            if arg_count(g) < 3 {
+                io.error_all(i, "usage: tls_replay_server PORT COUNT [cut] < streams.txt\n");
+            } else {
+                let port = number(arg(g, 1));
+                let count = number(arg(g, 2));
+                let cut = arg_count(g) >= 4 && len(arg(g, 3)) == 3;
+                borrow mut heap as &!h in {
+                    var all = buffer.empty(h, 65536);
+                    all = read_stdin(h, i, all);
+                    let idxb = box_slice(h, 6 * 256, 0);
+                    let gotb = box_slice(h, 65536, byte_of(0));
+                    let outb = box_slice(h, 131072, byte_of(0));
+                    borrow mut idxb as &!xw in {
+                        borrow mut gotb as &!gw in {
+                            borrow mut outb as &!ow in {
+                                borrow all as &ab in {
+                                    let lines = index_lines(buffer.bytes(ab), contents(xw));
+                                    borrow net as &nn in {
+                                        match tcp_listen(nn, port, 128, 0) {
+                                            Listening::Ok(l) => {
+                                                var listener = l;
+                                                borrow mut listener as &!lh in {
+                                                    io.write_all(i, "ready\n");
+                                                    flush_out(i);
+                                                    var served = 0;
+                                                    var n = 0;
+                                                    while n < count {
+                                                        match tcp_accept(lh) {
+                                                            Accepted::Ok(c0) => {
+                                                                var c = c0;
+                                                                borrow mut c as &!ch in {
+                                                                    served = served + serve_one(ch, buffer.bytes(ab), contents(xw), lines, contents(gw), contents(ow), cut);
+                                                                }
+                                                                conn_close(c);
+                                                                n = n + 1;
+                                                            }
+                                                            Accepted::Again => {
+                                                            }
+                                                            Accepted::Failed(e) => {
+                                                                n = count;
+                                                            }
+                                                        }
+                                                    }
+                                                    io.write_all(i, "served ");
+                                                    io.print_int(i, served);
+                                                    io.newline(i);
+                                                    status = 0;
+                                                }
+                                                listener_close(listener);
+                                            }
+                                            Listening::Failed(e) => {
+                                                io.error_all(i, "tls_replay_server: cannot listen\n");
+                                                status = 3;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    unbox_slice(h, idxb);
+                    unbox_slice(h, gotb);
+                    unbox_slice(h, outb);
+                    buffer.drop(h, all);
+                }
+            }
+        }
+    }
+    release(net);
+    release(args);
+    release(io);
+    release(heap);
+    return status;
+}
