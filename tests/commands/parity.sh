@@ -44,7 +44,8 @@ end
 
 begin every_builtin_of_the_rust_front_end_is_named_by_the_compiler_in_cancho
 # The tables are generated from the Rust ones, so naming a builtin there says nothing; the code is elsewhere.
-same "$(wc -l < tests/builtins.golden | tr -d ' ')" 187 "tests/builtins.golden has 187 builtins"
+# 187 are the builtins of the Rust crates; a builtin that only the compiler in cancho has is appended after them (docs/builtin-tables.md): dir_nlink is the 188th.
+same "$(wc -l < tests/builtins.golden | tr -d ' ')" 188 "tests/builtins.golden has 188 builtins"
 _sources=
 for _f in $D/*.cho; do
     case $_f in $D/tables.cho | $D/builtins.cho | $D/runtime.cho) ;; *) _sources="$_sources $_f" ;; esac
