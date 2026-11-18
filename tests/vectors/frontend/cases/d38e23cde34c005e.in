@@ -1,0 +1,1 @@
+fn f[&r, &s](p: &r [int]) -> [] int { let q: &r [bool] = p; return 1; }

@@ -1,0 +1,41 @@
+{
+  "imports": [
+    {
+      "path": "selfhost.driver"
+    }
+  ],
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [
+        {
+          "name": "world",
+          "ty": {
+            "name": "World"
+          }
+        }
+      ],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "call",
+            "qualifier": "driver",
+            "name": "drive",
+            "args": -1
+          }
+        }
+      ]
+    }
+  ]
+}

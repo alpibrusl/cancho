@@ -1,0 +1,1 @@
+fn f[&r](x: &r int) -> [] int { var y = 1; y = y + *x; borrow x as &s in { region t { let p = alloc[t](1); let q = alloc_slice[s](2, 3); } } borrow mut y as &!u in { } return y; }

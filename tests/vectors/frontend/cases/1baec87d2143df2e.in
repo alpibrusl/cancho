@@ -1,0 +1,14 @@
+
+//~ RULE capability-not-narrowable
+
+
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(heap); release(args);
+    let wide = narrow(fs, "/etc/pg");
+    let (a, b) = narrow(wide, "/etc/pg/a", "/etc/pg");
+    release(a); release(b);
+    return 0;
+}

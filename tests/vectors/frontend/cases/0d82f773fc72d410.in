@@ -1,0 +1,2 @@
+struct U { }
+fn f[&r]() -> [] int { let p = U { }; return 0; }

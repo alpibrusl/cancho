@@ -1,0 +1,1 @@
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"float"}, "body": [{"kind":"return","value":{"kind":"float","bits":18446744073709551616}}]}]}

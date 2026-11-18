@@ -1,0 +1,7 @@
+  res struct Ticket { fd: int, }  fn open(n: int) -> [] Ticket { return Ticket { fd: n };
+ }  fn close(f: Ticket) -> [] int { let Ticket { fd } = f;
+ return fd;
+ }  fn main() -> [] int { let f = open(3);
+ region a { let p = alloc[a](f);
+ } return 0;
+ } 

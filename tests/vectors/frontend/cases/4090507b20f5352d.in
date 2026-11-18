@@ -1,0 +1,44 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "f",
+      "generics": [
+        "T"
+      ],
+      "bounds": [
+        null
+      ],
+      "regions": [],
+      "outlives": [],
+      "params": [
+        {
+          "name": "x",
+          "ty": {
+            "name": "T",
+            "args": [
+              {
+                "name": "int"
+              }
+            ]
+          }
+        }
+      ],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "int",
+            "value": 0
+          }
+        }
+      ]
+    },
+    null
+  ]
+}

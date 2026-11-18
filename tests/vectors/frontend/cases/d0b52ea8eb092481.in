@@ -1,0 +1,1 @@
+fn f(a: byte, b: byte) -> [] bool { return a && b; }

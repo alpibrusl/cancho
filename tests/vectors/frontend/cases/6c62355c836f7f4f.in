@@ -1,0 +1,2 @@
+edition 6;
+fn f[&r]() -> [] int { let x = f32_of(1.0); return 1; }

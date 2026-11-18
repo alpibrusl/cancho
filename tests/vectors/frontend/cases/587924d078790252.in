@@ -1,0 +1,11 @@
+  val struct Wrap[T] { held: T, }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(ffi);
+ release(fs);
+ release(io);
+  var n = 0;
+ borrow mut heap as &!h in { let w = Wrap { held: box(h, 41) };
+ n = 1;
+ } release(heap);
+ return n - 1;
+ } 

@@ -1,0 +1,9 @@
+//~ ERROR `Point` has no field `z`
+//~ RULE unknown-name
+
+
+
+
+    let p = Point { x: 1, y: 2 };
+    return p.z;
+}

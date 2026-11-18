@@ -1,0 +1,37 @@
+{
+  "items": [
+    {
+      "kind": "enum",
+      "public": false,
+      "name": "Shape",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "variants": [
+        {
+          "name": "Circle",
+          "payload": [
+            {
+              "name": "int"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": null
+    }
+  ]
+}

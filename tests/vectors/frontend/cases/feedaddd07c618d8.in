@@ -1,0 +1,2 @@
+fn t() -> [] int { return 1; }
+static t: [int] { return 1; }

@@ -1,0 +1,4 @@
+module a.b.c;  
+import std.io;  
+import std.buffer as b;  
+fn f() -> [] int { return 1; }  

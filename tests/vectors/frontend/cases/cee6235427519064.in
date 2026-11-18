@@ -1,0 +1,1 @@
+extern fn g[&f, &r, &i, &h](ffi: &f Ffi("libc"), io: &!i Io) -> [ffi("libc"), io_write] int;

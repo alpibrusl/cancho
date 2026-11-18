@@ -1,0 +1,2 @@
+enum E { A, B(int) }
+fn f[&r]() -> [] int { var z0 = 0; borrow z0 as &w0 in { } region w1 { } var e = E::A; borrow e as &p in { match p { E::A => { return 1; } E::B(n) => { return *n; } } } }

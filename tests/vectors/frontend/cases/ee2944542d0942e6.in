@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { var pad = 7; var pad2 = 8; var x = 1; borrow mut x as &!p in { let y = x; return nope; } return 0; }

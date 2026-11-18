@@ -1,0 +1,1 @@
+fn f() -> [] int { borrow mut x as &r in { } }

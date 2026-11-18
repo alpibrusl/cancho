@@ -1,0 +1,2 @@
+edition 5;
+fn f() -> [] int { let a = conn_attach(3); return 1; }

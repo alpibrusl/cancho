@@ -1,0 +1,39 @@
+{
+  "items": [
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": -1,
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "let",
+          "mutable": false,
+          "name": "x",
+          "ty": {
+            "name": "int"
+          },
+          "value": {
+            "kind": "bool",
+            "value": true
+          }
+        },
+        {
+          "kind": "return",
+          "value": {
+            "kind": 18446744073709551616,
+            "name": "x"
+          }
+        }
+      ]
+    }
+  ]
+}

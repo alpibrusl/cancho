@@ -1,0 +1,1 @@
+{"items": [{"kind": "enum", "name": "E", "variants": [{"name": "A"}, {"name": "B", "payload": [{"name": "int"}]}]}]}

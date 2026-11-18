@@ -1,0 +1,10 @@
+  fn flip(pair: (int, bool)) -> [] (int, bool) { return pair;
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(ffi);
+ release(fs);
+ release(heap);
+ release(io);
+  let flipped = flip((true, 1));
+ return flipped.0;
+ } 

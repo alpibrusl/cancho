@@ -1,0 +1,1 @@
+fn f() -> [] int { y = 2; return 1; }

@@ -1,0 +1,321 @@
+== net-sockets/.cancho-vcs: resolve, the store
+step 1: vcs resolve <root>/packages/net-sockets/.cancho-vcs
+  exit 0
+  out| 10 declaration(s) across 1 file(s) at `<root>/packages/net-sockets/.cancho-vcs` still resolve exactly as published
+  err: (nothing)
+  file ./a.lock 1670522609 2827
+== net-sockets/.cancho-vcs: resolve, its lock
+step 1: vcs resolve --lock a.lock <root>/packages/net-sockets/.cancho-vcs
+  exit 0
+  out| 10 declaration(s) across 1 file(s) at `<root>/packages/net-sockets/.cancho-vcs` still resolve exactly as published
+  err: (nothing)
+  file ./a.lock 1670522609 2827
+== net-sockets/.cancho-vcs: fetch
+step 1: vcs fetch --lock a.lock --store <root>/packages/net-sockets/.cancho-vcs -o out
+  exit 0
+  out| fetched out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho
+  err: (nothing)
+  file ./a.lock 1670522609 2827
+  file ./out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+== net-sockets/.cancho-vcs: fetch into a directory that is there
+step 1: vcs fetch --lock a.lock --store <root>/packages/net-sockets/.cancho-vcs -o out/
+  exit 0
+  out| fetched out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho
+  err: (nothing)
+  file ./a.lock 1670522609 2827
+  file ./out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+  file ./out/old 2364325333 4
+== http-response/.cancho-vcs: resolve, the store
+step 1: vcs resolve <root>/packages/http-response/.cancho-vcs
+  exit 0
+  out| 2 declaration(s) across 1 file(s) at `<root>/packages/http-response/.cancho-vcs` still resolve exactly as published, plus 1 file(s) verified transitively through its own `requires/`
+  err: (nothing)
+  file ./a.lock 48583359 588
+== http-response/.cancho-vcs: resolve, its lock
+step 1: vcs resolve --lock a.lock <root>/packages/http-response/.cancho-vcs
+  exit 0
+  out| 2 declaration(s) across 1 file(s) at `<root>/packages/http-response/.cancho-vcs` still resolve exactly as published, plus 1 file(s) verified transitively through its own `requires/`
+  err: (nothing)
+  file ./a.lock 48583359 588
+== http-response/.cancho-vcs: fetch
+step 1: vcs fetch --lock a.lock --store <root>/packages/http-response/.cancho-vcs -o out
+  exit 0
+  out| fetched out/1230e7090783b33feff02ce041feba369db4b87f577a0c58fbfa3a06aeb0c07c.cho
+  out| fetched out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho
+  err: (nothing)
+  file ./a.lock 48583359 588
+  file ./out/1230e7090783b33feff02ce041feba369db4b87f577a0c58fbfa3a06aeb0c07c.cho 2397366418 2476
+  file ./out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+== http-response/.cancho-vcs: fetch into a directory that is there
+step 1: vcs fetch --lock a.lock --store <root>/packages/http-response/.cancho-vcs -o out/
+  exit 0
+  out| fetched out/1230e7090783b33feff02ce041feba369db4b87f577a0c58fbfa3a06aeb0c07c.cho
+  out| fetched out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho
+  err: (nothing)
+  file ./a.lock 48583359 588
+  file ./out/1230e7090783b33feff02ce041feba369db4b87f577a0c58fbfa3a06aeb0c07c.cho 2397366418 2476
+  file ./out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+  file ./out/old 2364325333 4
+== x509/.cancho-vcs/x509_verify: resolve, the store
+step 1: vcs resolve <root>/packages/x509/.cancho-vcs/x509_verify
+  exit 0
+  out| 55 declaration(s) across 1 file(s) at `<root>/packages/x509/.cancho-vcs/x509_verify` still resolve exactly as published, plus 2 file(s) verified transitively through its own `requires/`
+  err: (nothing)
+  file ./a.lock 2541794527 15756
+== x509/.cancho-vcs/x509_verify: resolve, its lock
+step 1: vcs resolve --lock a.lock <root>/packages/x509/.cancho-vcs/x509_verify
+  exit 0
+  out| 55 declaration(s) across 1 file(s) at `<root>/packages/x509/.cancho-vcs/x509_verify` still resolve exactly as published, plus 2 file(s) verified transitively through its own `requires/`
+  err: (nothing)
+  file ./a.lock 2541794527 15756
+== x509/.cancho-vcs/x509_verify: fetch
+step 1: vcs fetch --lock a.lock --store <root>/packages/x509/.cancho-vcs/x509_verify -o out
+  exit 0
+  out| fetched out/2c93327d4796c8761ebfe3769b633e87ade07d12ae0f58f74fa0fdaf505d6b96.cho
+  out| fetched out/eb70b128f5070752408d0bfd9937850bfbf92050b3a4e9671ce1a8d58dac6f0f.cho
+  out| fetched out/fea7a74f2c05297d86b5e73ca13b02598108af63682a47df5dce8a8e9f4dd9fe.cho
+  out| note: these files import `std`; build the consumer with `--std`
+  err: (nothing)
+  file ./a.lock 2541794527 15756
+  file ./out/2c93327d4796c8761ebfe3769b633e87ade07d12ae0f58f74fa0fdaf505d6b96.cho 965567575 35315
+  file ./out/eb70b128f5070752408d0bfd9937850bfbf92050b3a4e9671ce1a8d58dac6f0f.cho 313796755 18135
+  file ./out/fea7a74f2c05297d86b5e73ca13b02598108af63682a47df5dce8a8e9f4dd9fe.cho 3603830086 44710
+== x509/.cancho-vcs/x509_verify: fetch into a directory that is there
+step 1: vcs fetch --lock a.lock --store <root>/packages/x509/.cancho-vcs/x509_verify -o out/
+  exit 0
+  out| fetched out/2c93327d4796c8761ebfe3769b633e87ade07d12ae0f58f74fa0fdaf505d6b96.cho
+  out| fetched out/eb70b128f5070752408d0bfd9937850bfbf92050b3a4e9671ce1a8d58dac6f0f.cho
+  out| fetched out/fea7a74f2c05297d86b5e73ca13b02598108af63682a47df5dce8a8e9f4dd9fe.cho
+  out| note: these files import `std`; build the consumer with `--std`
+  err: (nothing)
+  file ./a.lock 2541794527 15756
+  file ./out/2c93327d4796c8761ebfe3769b633e87ade07d12ae0f58f74fa0fdaf505d6b96.cho 965567575 35315
+  file ./out/eb70b128f5070752408d0bfd9937850bfbf92050b3a4e9671ce1a8d58dac6f0f.cho 313796755 18135
+  file ./out/fea7a74f2c05297d86b5e73ca13b02598108af63682a47df5dce8a8e9f4dd9fe.cho 3603830086 44710
+  file ./out/old 2364325333 4
+== tls/.cancho-vcs/tls_hello: resolve, the store
+step 1: vcs resolve <root>/packages/tls/.cancho-vcs/tls_hello
+  exit 0
+  out| 45 declaration(s) across 1 file(s) at `<root>/packages/tls/.cancho-vcs/tls_hello` still resolve exactly as published, plus 3 file(s) verified transitively through its own `requires/`
+  err: (nothing)
+  file ./a.lock 306472534 12965
+== tls/.cancho-vcs/tls_hello: resolve, its lock
+step 1: vcs resolve --lock a.lock <root>/packages/tls/.cancho-vcs/tls_hello
+  exit 0
+  out| 45 declaration(s) across 1 file(s) at `<root>/packages/tls/.cancho-vcs/tls_hello` still resolve exactly as published, plus 3 file(s) verified transitively through its own `requires/`
+  err: (nothing)
+  file ./a.lock 306472534 12965
+== tls/.cancho-vcs/tls_hello: fetch
+step 1: vcs fetch --lock a.lock --store <root>/packages/tls/.cancho-vcs/tls_hello -o out
+  exit 0
+  out| fetched out/fc8c882384626803a2f33a2cfe213572760e0463a04db0f7cf9a4e2255fe7353.cho
+  out| fetched out/c8f575ad2585c5b2e57d9cbab0281f989b3e0eb1090fd13c7f7d15d59c9fd5d5.cho
+  out| fetched out/e98264d398e06e076a47040dba5cc37e8e4e4dd7598f0d2d526c70a9e65bd333.cho
+  out| fetched out/fea7a74f2c05297d86b5e73ca13b02598108af63682a47df5dce8a8e9f4dd9fe.cho
+  out| note: these files import `std`; build the consumer with `--std`
+  err: (nothing)
+  file ./a.lock 306472534 12965
+  file ./out/c8f575ad2585c5b2e57d9cbab0281f989b3e0eb1090fd13c7f7d15d59c9fd5d5.cho 3715866785 36643
+  file ./out/e98264d398e06e076a47040dba5cc37e8e4e4dd7598f0d2d526c70a9e65bd333.cho 1453761474 33535
+  file ./out/fc8c882384626803a2f33a2cfe213572760e0463a04db0f7cf9a4e2255fe7353.cho 1175401082 28812
+  file ./out/fea7a74f2c05297d86b5e73ca13b02598108af63682a47df5dce8a8e9f4dd9fe.cho 3603830086 44710
+== tls/.cancho-vcs/tls_hello: fetch into a directory that is there
+step 1: vcs fetch --lock a.lock --store <root>/packages/tls/.cancho-vcs/tls_hello -o out/
+  exit 0
+  out| fetched out/fc8c882384626803a2f33a2cfe213572760e0463a04db0f7cf9a4e2255fe7353.cho
+  out| fetched out/c8f575ad2585c5b2e57d9cbab0281f989b3e0eb1090fd13c7f7d15d59c9fd5d5.cho
+  out| fetched out/e98264d398e06e076a47040dba5cc37e8e4e4dd7598f0d2d526c70a9e65bd333.cho
+  out| fetched out/fea7a74f2c05297d86b5e73ca13b02598108af63682a47df5dce8a8e9f4dd9fe.cho
+  out| note: these files import `std`; build the consumer with `--std`
+  err: (nothing)
+  file ./a.lock 306472534 12965
+  file ./out/c8f575ad2585c5b2e57d9cbab0281f989b3e0eb1090fd13c7f7d15d59c9fd5d5.cho 3715866785 36643
+  file ./out/e98264d398e06e076a47040dba5cc37e8e4e4dd7598f0d2d526c70a9e65bd333.cho 1453761474 33535
+  file ./out/fc8c882384626803a2f33a2cfe213572760e0463a04db0f7cf9a4e2255fe7353.cho 1175401082 28812
+  file ./out/fea7a74f2c05297d86b5e73ca13b02598108af63682a47df5dce8a8e9f4dd9fe.cho 3603830086 44710
+  file ./out/old 2364325333 4
+== resolve, two pins
+step 1: vcs resolve --lock a.lock <root>/packages/net-sockets/.cancho-vcs
+  exit 0
+  out| 2 declaration(s) across 1 file(s) at `<root>/packages/net-sockets/.cancho-vcs` still resolve exactly as published
+  err: (nothing)
+  file ./a.lock 674903401 581
+== fetch, two pins
+step 1: vcs fetch --lock a.lock --store <root>/packages/net-sockets/.cancho-vcs -o deeper/out
+  exit 0
+  out| fetched deeper/out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho
+  err: (nothing)
+  file ./a.lock 674903401 581
+  file ./deeper/out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+== resolve, an empty lock
+step 1: vcs resolve --lock a.lock <root>/packages/net-sockets/.cancho-vcs
+  exit 0
+  out| nothing locked at `a.lock`; nothing to resolve
+  err: (nothing)
+  file ./a.lock 1226093241 19
+== fetch, an empty lock
+step 1: vcs fetch --lock a.lock --store <root>/packages/net-sockets/.cancho-vcs -o out
+  exit 0
+  out| nothing locked at `a.lock`; nothing to fetch
+  err: (nothing)
+  file ./a.lock 1226093241 19
+== resolve, no lock file
+step 1: vcs resolve --lock absent.lock <root>/packages/net-sockets/.cancho-vcs
+  exit 0
+  out| nothing locked at `absent.lock`; nothing to resolve
+  err: (nothing)
+== fetch, no lock file
+step 1: vcs fetch --lock absent.lock --store <root>/packages/net-sockets/.cancho-vcs -o out
+  exit 0
+  out| nothing locked at `absent.lock`; nothing to fetch
+  err: (nothing)
+== resolve, a lock that is not JSON
+step 1: vcs resolve --lock a.lock <root>/packages/net-sockets/.cancho-vcs
+  exit 3
+  out: (nothing)
+  err| cannot read lock file at `a.lock`
+  file ./a.lock 1915305904 1
+== fetch, a lock that is not JSON
+step 1: vcs fetch --lock a.lock --store <root>/packages/net-sockets/.cancho-vcs -o out
+  exit 3
+  out: (nothing)
+  err| cannot read lock file at `a.lock`
+  file ./a.lock 1915305904 1
+== resolve, a pin that is not published
+step 1: vcs resolve --lock a.lock <root>/packages/net-sockets/.cancho-vcs
+  exit 1
+  out: (nothing)
+  err: (nothing)
+  file ./a.lock 1328066941 174
+== fetch, a pin that is not published
+step 1: vcs fetch --lock a.lock --store <root>/packages/net-sockets/.cancho-vcs -o out
+  exit 1
+  out: (nothing)
+  err: (nothing)
+  file ./a.lock 1328066941 174
+== resolve, a store with nothing in it
+step 1: vcs resolve st
+  exit 0
+  out| nothing published at `st`; nothing to resolve
+  err: (nothing)
+  file ./st/manifest.json 1226093241 19
+== resolve, no store directory
+step 1: vcs resolve absent
+  exit 0
+  out| nothing published at `absent`; nothing to resolve
+  err: (nothing)
+== resolve, a lock with no origin and no store
+step 1: vcs resolve --lock a.lock
+  exit 2
+  out: (nothing)
+  err| this lock has no origin, so the store must be named: add `--store <dir>`
+  file ./a.lock 674903401 581
+== fetch, a lock with no origin and no store
+step 1: vcs fetch --lock a.lock -o out
+  exit 2
+  out: (nothing)
+  err| this lock has no origin, so the store must be named: add `--store <dir>`
+  file ./a.lock 674903401 581
+== resolve, nothing
+step 1: vcs resolve 
+  exit 2
+  out: (nothing)
+  err| `vcs resolve` needs a store directory
+== resolve, two stores
+step 1: vcs resolve a b
+  exit 2
+  out: (nothing)
+  err| `vcs resolve` takes exactly one store directory, found a second argument `b`
+== resolve, an option
+step 1: vcs resolve --bogus
+  exit 2
+  out: (nothing)
+  err| unknown option `--bogus`
+== resolve, --lock last
+step 1: vcs resolve --lock
+  exit 2
+  out: (nothing)
+  err| `--lock` needs a path
+== resolve, --store
+step 1: vcs resolve --store x
+  exit 2
+  out: (nothing)
+  err| unknown option `--store`
+== fetch, nothing
+step 1: vcs fetch 
+  exit 2
+  out: (nothing)
+  err| `vcs fetch` needs `--lock <file>`
+== fetch, no -o
+step 1: vcs fetch --lock a.lock
+  exit 2
+  out: (nothing)
+  err| `vcs fetch` needs `-o <dir>`
+  file ./a.lock 1226093241 19
+== fetch, no --lock
+step 1: vcs fetch -o out
+  exit 2
+  out: (nothing)
+  err| `vcs fetch` needs `--lock <file>`
+== fetch, a word
+step 1: vcs fetch word
+  exit 2
+  out: (nothing)
+  err| `vcs fetch` takes no positional arguments, found `word`
+== fetch, an option
+step 1: vcs fetch --bogus
+  exit 2
+  out: (nothing)
+  err| unknown option `--bogus`
+== fetch, --lock last
+step 1: vcs fetch --lock
+  exit 2
+  out: (nothing)
+  err| `--lock` needs a path
+== fetch, --store last
+step 1: vcs fetch --store
+  exit 2
+  out: (nothing)
+  err| `--store` needs a path
+== fetch, -o last
+step 1: vcs fetch -o
+  exit 2
+  out: (nothing)
+  err| `-o` needs a path
+== resolve, a source changed
+step 1: vcs resolve <work>/tampered
+  exit 1
+  out: (nothing)
+  err: (nothing)
+== fetch, a source changed
+step 1: vcs fetch --lock a.lock --store <work>/tampered -o out
+  exit 1
+  out: (nothing)
+  err: (nothing)
+  file ./a.lock 1670522609 2827
+== resolve, a source gone
+step 1: vcs resolve <work>/tampered
+  exit 1
+  out: (nothing)
+  err: (nothing)
+== resolve, by the origin
+step 1: vcs resolve --lock a.lock
+  exit 0
+  out| 10 declaration(s) across 1 file(s) at `<work>/cache/git/<rev:repository>/packages/net-sockets/.cancho-vcs` still resolve exactly as published
+  err: (nothing)
+  file ./a.lock 3635701877 2963
+== fetch, by the origin
+step 1: vcs fetch --lock a.lock -o out
+  exit 0
+  out| fetched out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho
+  err: (nothing)
+  file ./a.lock 3635701877 2963
+  file ./out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+== fetch, by the origin, the store named
+step 1: vcs fetch --lock a.lock --store <root>/packages/net-sockets/.cancho-vcs -o out
+  exit 0
+  out| fetched out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho
+  err: (nothing)
+  file ./a.lock 3635701877 2963
+  file ./out/a866a9e192bdb76efc851af60ad95122c36f04f0b6fb7dfa9146a8cf9095f067.cho 3802202760 3206
+ok vcs_fetch_and_resolve_in_cancho_check_a_store_like_cancho_vcs

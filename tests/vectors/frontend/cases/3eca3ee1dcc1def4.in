@@ -1,0 +1,1 @@
+fn f[&i](a: &i Args) -> [args] int { let s = arg(a, 0); return len(s); }

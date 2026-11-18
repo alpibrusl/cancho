@@ -1,0 +1,1 @@
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"match","scrutinee":{"kind":"name","name":"e"},"arms":[{"pattern":{"kind":"variant","name":"E","variant":"A","bindings":[5]},"body":[]}]}]}]}

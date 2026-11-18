@@ -1,0 +1,10 @@
+//~ ERROR type `Point` is declared twice
+//~ RULE duplicate-declaration
+
+struct Point { x: int } // end 47
+    // inserted 37
+struct Point { y: int }
+
+fn main() -> [] int {
+    return 0;
+}

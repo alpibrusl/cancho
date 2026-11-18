@@ -1,0 +1,42 @@
+{
+  "items": [
+    {
+      "kind": "enum",
+      "public": false,
+      "name": "A",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "variants": [
+        {},
+        {
+          "name": "One",
+          "payload": []
+        }
+      ]
+    },
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "int",
+            "value": 0
+          }
+        }
+      ]
+    }
+  ]
+}

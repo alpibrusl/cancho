@@ -1,0 +1,17 @@
+  edition 5;
+  fn worker(net: Net("")) -> [] int { var code = 1;
+ borrow net as &n in { match tcp_connect(n, "127.0.0.1", 1) { Dialed::Ok(c) => { conn_close(c);
+ } Dialed::Failed(e) => { code = 0;
+ } } } release(net);
+ return code;
+ }  fn main(world: World) -> [conc] int { let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+ release(ffi);
+ release(fs);
+ release(args);
+ release(clock);
+ release(heap);
+ release(io);
+ let w = worker;
+ let h = spawn(net, w);
+ return join(h);
+ } 

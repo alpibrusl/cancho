@@ -1,0 +1,43 @@
+{
+  "items": [
+    {
+      "kind": "static",
+      "public": false,
+      "name": "limit",
+      "ty": {
+        "name": "int"
+      },
+      "body": [
+        {
+          "kind": "return",
+          "value": {
+            "kind": "int",
+            "value": 4096
+          }
+        }
+      ]
+    },
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [
+        {
+          "name": "world",
+          "ty": {
+            "name": "World"
+          }
+        }
+      ],
+      "effects": [],
+      "ret": {
+        "name": "int"
+      },
+      "body": "bogus"
+    }
+  ]
+}

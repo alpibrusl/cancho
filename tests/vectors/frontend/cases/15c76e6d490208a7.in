@@ -1,0 +1,2 @@
+fn g() -> [fs_read("/x")] int { return 1; }
+fn f[&i](io: &!i Io) -> [io_write] int { let a = g(); return putchar(io, 65); }

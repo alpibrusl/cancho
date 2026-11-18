@@ -1,0 +1,2 @@
+edition 5;
+fn f() -> [] int { let p = poller_new(); return 1; }

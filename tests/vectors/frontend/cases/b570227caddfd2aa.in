@@ -1,0 +1,12 @@
+// formatter.cho -- `cancho fmt`, written in cancho: the program (issue #485).
+//
+// Reads two files on standard input, as `FILE <length>` and the bytes: a source file and the text the canonical printer
+// (`printer.cho`) wrote for it. Writes the source formatted (`formatting.cho`), or the line `CANNOT ...`. The oracle is `cancho fmt`.
+//
+//     cancho run examples/selfhost/formatter.cho examples/selfhost/driver.cho ... --std < both
+
+import selfhost.driver;
+
+fn main(world: World) -> [] int {
+    return driver.drive(world, 6, false);
+}

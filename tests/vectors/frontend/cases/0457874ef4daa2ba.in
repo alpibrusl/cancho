@@ -1,0 +1,7 @@
+fn f() -> [] int {
+
+    let x = 1;
+
+    return x;
+
+}

@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { var b = true; borrow b as &p in { if *p { return 1; } } return 0; }

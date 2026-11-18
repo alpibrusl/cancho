@@ -1,0 +1,5 @@
+FILE 29
+module a;
+struct T { x: int }FILE 29
+module b;
+struct T { y: int }

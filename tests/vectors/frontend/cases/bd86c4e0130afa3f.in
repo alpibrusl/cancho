@@ -1,0 +1,19 @@
+ import std.io;
+  fn both[&i](io: &!i Io) -> [io_write, err_write] int { io.write_all(io, "data two\n");
+ return write_err(io, "second complaint\n");
+ }  fn quiet_on_stdout[&i](io: &!i Io) -> [err_write] int { return io.error_all(io, "through std.io\n");
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(fs);
+ release(ffi);
+  borrow mut io as &!i in { write_bytes(i, "data one\n");
+ write_err(i, "first complaint\n");
+ both(i);
+ io.write_all(i, "data three\n");
+ quiet_on_stdout(i);
+  region a { let nothing = alloc_slice[a](0, byte_of(0));
+ write_err(i, nothing);
+ } }  release(io);
+ return 0;
+ } 

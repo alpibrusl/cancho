@@ -16,6 +16,7 @@ enum {
   CREATE_MODE
 };
 #define EINVAL 22
+#define EEXIST 17 /* the same number on Linux and macOS */
 #if DARWIN
 #define AT_REMOVEDIR 0x80
 #else
@@ -94,6 +95,14 @@ void cancho_dir_rename(const i64 *dir, const u8 *from, i64 flen, const u8 *to, i
   int fd = (int)*dir, r;
   if (!fresh) {
     r = renameat(fd, (const char *)a, fd, (const char *)b);
+  } else if (flen == tlen && __builtin_memcmp(a, b, (unsigned long)flen) == 0) {
+    /* The same name: Linux's RENAME_NOREPLACE refuses (the name exists), macOS's RENAME_EXCL answers success. Both refuse here. */
+    u8 st[160];
+    r = fstatat(fd, (const char *)a, st, (int)P(AT_NOFOLLOW));
+    if (r == 0) {
+      dirrt_triple(out, -1, EEXIST);
+      return;
+    }
   } else {
 #if DARWIN
     r = renameatx_np(fd, (const char *)a, fd, (const char *)b, (unsigned)P(NOREPLACE));

@@ -1,0 +1,2 @@
+struct S { a: Box[S] }
+fn main(world: World) -> [] int {  return 0; }

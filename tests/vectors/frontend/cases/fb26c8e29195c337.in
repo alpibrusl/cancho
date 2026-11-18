@@ -1,0 +1,5 @@
+FILE 66
+module a;
+extern fn g[&f](f: &f Ffi("libc")) -> [ffi("libc")] int;FILE 66
+module b;
+extern fn g[&f](f: &f Ffi("libc")) -> [ffi("libc")] int;

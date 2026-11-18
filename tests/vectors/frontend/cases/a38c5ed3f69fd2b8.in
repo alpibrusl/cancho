@@ -1,0 +1,2 @@
+edition 5;
+fn f[&r](x: &r Read) -> [] int { return 1; }

@@ -1,0 +1,2 @@
+edition 5;
+fn f(d: Done) -> [] int { return 1; }

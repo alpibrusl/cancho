@@ -1,0 +1,2 @@
+struct P { a: int }
+fn f[T: val](x: T, p: P) -> [] int { return p.a; }

@@ -1,0 +1,10 @@
+  fn complain[&i](io: &!i Io) -> [io_write] int { return write_err(io, "on the wrong stream\n");
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(ffi);
+ release(fs);
+ release(heap);
+  borrow mut io as &!i in { complain(i);
+ } release(io);
+ return 0;
+ } 

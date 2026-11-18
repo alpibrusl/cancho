@@ -1,0 +1,18 @@
+edition 7;
+ module selfhost.filewrite;
+   pub fn write_all[&w, &b](file: &!w File, bytes: &b [byte]) -> [file_write] int { var at = 0;
+ while at < len(bytes) { match file_write(file, bytes[at..len(bytes)]) { Done::Ok(n) => { at = at + n;
+ } Done::Failed(e) => { return e;
+ } } } return 0;
+ }  pub fn store[&f, &p, &b](fs: &f Fs(""), path: &p [byte], bytes: &b [byte]) -> [fs_write(""), file_write] int { var at = 1;
+ var refused = len(path) >= 4096;
+ while at < len(path) && !refused { if path[at] == byte_of('.') && path[at - 1] == byte_of('.') { refused = true;
+ } at = at + 1;
+ } if refused { return 22;
+ } match open_write(fs, path) { Opened::Ok(file) => { var written = file;
+ var status = 0;
+ borrow mut written as &!w in { status = write_all(w, bytes);
+ } file_close(written);
+ return status;
+ } Opened::Failed(e) => { return e;
+ } } } 

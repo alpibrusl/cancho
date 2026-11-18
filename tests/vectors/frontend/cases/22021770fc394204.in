@@ -1,0 +1,2 @@
+import nothing.here;
+fn main(world: World) -> [] int {  return 0; }

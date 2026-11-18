@@ -1,0 +1,10 @@
+ struct Conn { fd: int, }  enum Sent { Wrote(int), Lost, }  fn conn_read(c: Conn) -> [] int { return c.fd;
+ }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(io);
+ release(ffi);
+ release(fs);
+ release(heap);
+ release(args);
+ let c = Conn { fd: 7 };
+ return conn_read(c) - 7;
+ } 

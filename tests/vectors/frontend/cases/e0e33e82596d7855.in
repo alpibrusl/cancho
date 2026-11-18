@@ -1,0 +1,4 @@
+FILE 32
+fn f() -> [] int { return g(); }FILE 40
+module m;
+fn g() -> [] int { return 1; }

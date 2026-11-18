@@ -1,0 +1,39 @@
+{
+  "items": [
+    {
+      "kind": "struct",
+      "public": false,
+      "name": "Node",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "fields": [
+        {
+          "name": "value",
+          "ty": {
+            "name": "int"
+          }
+        },
+        {
+          "name": "next",
+          "ty": {
+            "name": "Node"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "fn",
+      "public": false,
+      "name": "main",
+      "generics": [],
+      "bounds": [],
+      "regions": [],
+      "outlives": [],
+      "params": [],
+      "effects": [],
+      "ret": {},
+      "body": null
+    }
+  ]
+}

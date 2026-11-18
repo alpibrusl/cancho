@@ -1,0 +1,2 @@
+pub extern fn getpid[&f](ffi: &f Ffi("libc")) -> [ffi("libc")] int;
+ 

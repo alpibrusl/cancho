@@ -1,0 +1,2 @@
+fn g[&a](x: &a int, y: &a int) -> [] int { return *x + *y; }
+fn f[&r, &s](p: &r int) -> [] int { return g(p, p); }

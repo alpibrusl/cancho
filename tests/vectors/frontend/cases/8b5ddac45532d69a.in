@@ -1,0 +1,1 @@
+fn f(p: P, q: q.P) -> [] int { let P { y, x, y2 } = p; let q.P { z, a } = q; return x + y + a + z + y2; }

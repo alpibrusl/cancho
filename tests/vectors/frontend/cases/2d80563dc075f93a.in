@@ -1,0 +1,11 @@
+  fn peek[&h, &b](h: &!h File, into: &!b [byte]) -> [] int { match file_read(h, into) { Read::Got(n) => { return n;
+ } Read::End => { return 0;
+ } Read::Failed(e) => { return e;
+ } } }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(ffi);
+ release(heap);
+ release(io);
+ release(fs);
+ return 0;
+ } 

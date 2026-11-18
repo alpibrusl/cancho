@@ -1,0 +1,1 @@
+fn f[&r, &s]() -> [] bool { return "hi"[0] == "ho"[1]; }

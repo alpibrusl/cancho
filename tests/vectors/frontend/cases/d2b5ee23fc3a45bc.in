@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { var z0 = 0; borrow z0 as &w0 in { } region w1 { } if true { region a { return 1; } } return 0; }

@@ -1,0 +1,19 @@
+{
+  "module": "selfhost.sha1sum",
+  "imports": [
+    {
+      "path": "std.io",
+      "as": "console"
+    },
+    {
+      "path": "std.buffer"
+    },
+    {
+      "path": "selfhost.sha1"
+    },
+    {
+      "path": "selfhost.lexcore",
+      "as": "lc"
+    }
+  ]
+}

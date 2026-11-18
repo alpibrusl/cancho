@@ -1,0 +1,1 @@
+fn f(g: fn(int, [byte]) -> [io, fs_read("/etc")] int) -> [] int { return g(1, "x"); }

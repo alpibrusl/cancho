@@ -1,0 +1,2 @@
+fn g[&q](s: &q [byte]) -> [] int { return len(s); }
+fn f[&r, &s]() -> [] int { return g("abc"); }

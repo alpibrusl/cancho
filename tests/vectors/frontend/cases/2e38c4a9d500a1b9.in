@@ -1,0 +1,4 @@
+  edition 3;
+  fn main() -> [] int { if null_ptr() + null_ptr() == null_ptr() { return 0;
+ } return 1;
+ } 

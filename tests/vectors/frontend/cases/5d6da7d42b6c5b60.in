@@ -1,0 +1,2 @@
+fn g() -> [] int { return 1; }
+extern fn g[&f, &r, &i, &h](ffi: &f Ffi("libc")) -> [ffi("libc")] int;

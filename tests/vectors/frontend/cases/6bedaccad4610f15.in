@@ -1,0 +1,2 @@
+fn pick[T: val](a: T, b: T) -> [] T { return a; }
+fn f[&r]() -> [] int { return pick(1, true); }

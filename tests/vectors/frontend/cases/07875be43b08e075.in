@@ -1,0 +1,3 @@
+fn id[T: val](x: T) -> [] T { return x; }
+struct P { a: int }
+fn f[&r](p: P) -> [] int { return id(p).a; }

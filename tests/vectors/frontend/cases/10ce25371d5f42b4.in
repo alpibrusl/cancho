@@ -1,0 +1,2 @@
+edition 5;
+fn f[&r](c: &r Clock) -> [] int { let d = fork_clock(c); return 1; }

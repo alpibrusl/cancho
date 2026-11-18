@@ -1,0 +1,3 @@
+pub val struct P[T, U: val] { x: T, y: (U, int), z: [byte], w: &r Q[T, Ffi("a")] }
+res struct R { }
+struct S { a: int }

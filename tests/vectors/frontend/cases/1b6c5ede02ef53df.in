@@ -1,0 +1,2 @@
+static t: [S] { return 1; }
+struct S { a: int }

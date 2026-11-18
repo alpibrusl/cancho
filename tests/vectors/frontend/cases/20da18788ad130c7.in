@@ -1,0 +1,1 @@
+fn f(t: (int, (int, int))) -> [] int { return t.1.0 + (1).2 + (1.5).0; }

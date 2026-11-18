@@ -1,0 +1,2 @@
+fn id[T: val](x: T) -> [] T { return x; }
+fn f[&r]() -> [] int { let b: float = id(1.5); return 1; }

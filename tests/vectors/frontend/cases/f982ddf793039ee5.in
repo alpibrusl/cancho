@@ -1,0 +1,20 @@
+//~ ERROR assigning to `t` would discard the `res` value it still holds;
+//~ RULE linear-value-unconsumed
+
+res struct Ticket { fd: int }
+
+fn open(fd: int) -> [] Ticket {
+    return Ticket { fd: fd };
+}
+
+fn close(t: Ticket) -> [] int {
+    let Ticket { fd } = t;
+    return fd;
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    var t = open(1);
+    t = open(2);
+    return close(t);
+}

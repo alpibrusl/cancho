@@ -1,0 +1,37 @@
+{
+  "items": [
+    {
+      "kind": "struct",
+      "public": false,
+      "name": "Point",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "fields": [
+        {
+          "name": "x",
+          "ty": {
+            "name": "int"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "public": false,
+      "name": "Point",
+      "mode": null,
+      "generics": [],
+      "bounds": [],
+      "fields": [
+        {
+          "name": "y",
+          "ty": {
+            "name": "int"
+          }
+        }
+      ]
+    },
+    []
+  ]
+}

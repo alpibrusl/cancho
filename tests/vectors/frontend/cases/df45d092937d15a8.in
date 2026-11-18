@@ -1,0 +1,1 @@
+fn f[&r, &s](p: &r int, q: &r int) -> [] bool { return p == q; }

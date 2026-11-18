@@ -1,0 +1,1 @@
+fn f() -> [] int { match e { _ => { } E::A => { } q.E::B(a, _) => { } E::C() => { } } return 0; }

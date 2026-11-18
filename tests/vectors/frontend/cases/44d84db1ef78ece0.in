@@ -1,0 +1,4 @@
+FILE 19
+struct S { n: Net }FILE 30
+edition 2;
+struct S { n: Net }

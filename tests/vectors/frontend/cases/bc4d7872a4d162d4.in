@@ -1,0 +1,1 @@
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"destructure","name":"S","fields":["a",5],"value":{"kind":"name","name":"s"}}]}]}

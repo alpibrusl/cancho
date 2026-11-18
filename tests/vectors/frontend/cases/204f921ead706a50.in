@@ -1,0 +1,1 @@
+fn f[&r]() -> [] int { var z0 = 0; borrow z0 as &w0 in { } region w1 { } var x = 1; borrow mut x as &!p in { *p = true; } }

@@ -1,0 +1,1 @@
+fn f[&i](io: &!i Io) -> [bogus, io_write] int { return putchar(io, 65); }

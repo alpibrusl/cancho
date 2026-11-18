@@ -1,0 +1,6 @@
+    // inserted 66
+fn f() -> [] int {
+    return 0;
+}
+import a.b;
+import c.d;

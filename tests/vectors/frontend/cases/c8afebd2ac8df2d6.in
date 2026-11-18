@@ -1,0 +1,3 @@
+fn g[&q](x: &q int) -> [] &q int { return x; }
+fn h[&q](x: &q int) -> [] int { return *x; }
+fn f[&r, &s](p: &r int) -> [] int { return h(g(p)); }

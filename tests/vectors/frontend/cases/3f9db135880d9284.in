@@ -1,0 +1,1 @@
+{"items": [{"kind": "fn", "name": "f", "params": [], "ret": {"name":"int"}, "body": [{"kind":"return","value":{"kind":"unary","op":"?","operand":{"kind":"int","value":1}}}]}]}

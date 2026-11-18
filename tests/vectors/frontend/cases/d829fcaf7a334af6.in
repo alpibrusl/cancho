@@ -1,0 +1,11 @@
+  enum Pair { One(int), Two(int, int), }  fn leak[&q](fallback: &q int) -> [] &q int { var p = Pair::One(7);
+ borrow p as &r in { match r { Pair::One(a) => { return a;
+ } Pair::Two(a, b) => { return b;
+ } } } }  fn main(world: World) -> [] int { let Split { io, ffi, fs, heap, args } = split(world);
+ release(args);
+ release(heap);
+ release(fs);
+ release(ffi);
+ release(io);
+ return 0;
+ } 

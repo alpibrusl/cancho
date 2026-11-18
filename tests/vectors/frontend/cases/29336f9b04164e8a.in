@@ -1,0 +1,16 @@
+//~ ERROR performs `exec_detached`, which its row
+//~ RULE effect-not-declared
+
+// `docs/processes.md` §4.11: letting a child go is what lets it outlive the
+// program, and a function that does so has to say it in its row.
+
+edition 9;
+fn drop_it(child: Child) -> [] int {
+    return child_release(child);
+}
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(net); release(clock); release(signals); release(tty);
+    release(exec);
+    return 0;
+}

@@ -1,0 +1,14 @@
+//~ ERROR a path prefix extends at a `/`
+//~ RULE capability-not-narrowable
+
+// `/tmpevil` shares bytes with `/tmp` and is the directory next door (`docs/filesystem.md` section 1.1): each literal is checked with `extends_path`, in the multi-literal form too.
+// (`docs/narrowing-into-several.md` section 5.)
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io); release(ffi); release(heap); release(args);
+    let tmp = narrow(fs, "/tmp");
+    let (a, b) = narrow(tmp, "/tmp/a", "/tmpevil");
+    release(a); release(b);
+    return 0;
+}

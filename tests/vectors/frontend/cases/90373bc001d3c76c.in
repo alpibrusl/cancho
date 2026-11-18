@@ -1,0 +1,2 @@
+edition 5;
+struct S { a: f32 }

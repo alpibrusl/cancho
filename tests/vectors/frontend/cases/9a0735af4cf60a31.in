@@ -1,0 +1,2 @@
+struct S { a: int }
+fn f() -> [] int { let x: S = 1; return 1; }

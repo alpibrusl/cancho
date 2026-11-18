@@ -1,0 +1,2 @@
+fn w[T: val, &a, &b where a <= b](x: &a T, y: &b T) -> [] T { return *x; }
+fn f[&r, &s where r <= s](p: &r int, q: &s int) -> [] int { return w(p, q); }

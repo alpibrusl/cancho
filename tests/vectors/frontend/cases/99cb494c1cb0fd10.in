@@ -1,0 +1,2 @@
+struct P { x: int, y: int }
+fn f[&r](p: &r P) -> [] int { let b: bool = p.x; return 0; }

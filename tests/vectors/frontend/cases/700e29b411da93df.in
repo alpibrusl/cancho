@@ -1,0 +1,1 @@
+fn f() -> [] float { return 1; }

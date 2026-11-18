@@ -1,0 +1,13 @@
+  edition 5;
+  fn main(world: World) -> [heap] int { let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+ release(ffi);
+ release(fs);
+ release(args);
+ release(net);
+ release(clock);
+ release(io);
+ borrow heap as &h in { let child = fork_heap(h);
+ release(child);
+ } release(heap);
+ return 0;
+ } 

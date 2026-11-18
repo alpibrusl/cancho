@@ -1,0 +1,6 @@
+FILE 31
+module a.b;
+struct T { x: int }FILE 48
+module a.b;
+import a.b as q;
+struct U { t: q.T }

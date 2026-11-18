@@ -1,0 +1,1 @@
+fn f[&r, &s](x: int) -> [] int { x[0] = 1; return 1; }

@@ -1,0 +1,2 @@
+edition 1;
+fn f(a: Net) -> [] int { return 1; }

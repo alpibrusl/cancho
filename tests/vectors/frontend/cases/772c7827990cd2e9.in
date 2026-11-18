@@ -1,0 +1,18 @@
+{
+  "module": "a.b.c",
+  "imports": [
+    {
+      "path": "std.io"
+    },
+    {
+      "path": "x.y",
+      "as": "z"
+    },
+    {
+      "path": "p.q"
+    }
+  ],
+  "items": [
+    -1
+  ]
+}

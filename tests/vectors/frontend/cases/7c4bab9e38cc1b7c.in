@@ -1,0 +1,5 @@
+FILE 40
+module m;
+fn f() -> [] int { return 1; }FILE 40
+module m;
+fn f() -> [] int { return 2; }

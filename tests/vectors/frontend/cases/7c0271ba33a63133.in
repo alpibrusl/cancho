@@ -1,0 +1,3 @@
+fn id[T: val](x: T) -> [] T { return x; }
+enum E { A, B }
+fn f[&r](e: E) -> [] int { match id(e) { E::A => { return 1; } E::B => { return 2; } } }

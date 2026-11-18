@@ -1,0 +1,23 @@
+// Can a program reach the descriptor of a connection in a std.conns Table without conn_raw_fd?
+// (conn_raw_fd is designed in docs/native-sockets.md section 6 and not built.)
+edition 5;
+import std.conns;
+import std.vec;
+
+fn fd_of[&t](table: &t conns.Table, slot: int) -> [] int {
+    return vec.get(table.tickets, slot) & 4294967295;
+}
+    // inserted 70
+
+fn main(world: World) -> [] int { // end 44
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world); // end 59
+    release(io);
+    // inserted 88
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock); // end 83
+    return 5;
+}
