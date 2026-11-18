@@ -291,8 +291,8 @@ step 1: vcs sync
 step 1: vcs sync --std
   exit 0
   out| semantic diff against the committed index:
-  out|   1179 declaration(s) added
-  out| 1179 operation record(s) appended to ./.cancho/ops
+  out|   1180 declaration(s) added
+  out| 1180 operation record(s) appended to ./.cancho/ops
   err: (nothing)
 step 2: vcs sync --std
   exit 0
@@ -302,13 +302,13 @@ step 3: vcs sync
   exit 0
   out| semantic diff against the committed index:
   out|   1 body change(s)
-  out|   1178 declaration(s) removed
-  out| 1179 operation record(s) appended to ./.cancho/ops
+  out|   1179 declaration(s) removed
+  out| 1180 operation record(s) appended to ./.cancho/ops
   err: (nothing)
 step 4: vcs sync --std --check
   exit 1
   out| semantic diff against the committed index:
-  out|   1178 declaration(s) added
+  out|   1179 declaration(s) added
   out|   1 body change(s)
   err: (nothing)
   file ./.cancho/ids.txt 1077434543 144
@@ -424,7 +424,6 @@ step 4: vcs sync --std --check
   file ./.cancho/ops/0ba30c6ee3bda24be947b81d554c4b7d15784f7997b7f7f39fb1e309dba6177b.json 3517517636 332
   file ./.cancho/ops/0bbd9d19d9da1248d683c4cc18edd6fb43287d94d4295d5d569b36d915301eda.json 4253147601 332
   file ./.cancho/ops/0bdc6421145c03a93a2e7296161f5efeb63a7f48ab675501c47ae8999711438c.json 3048321049 321
-  file ./.cancho/ops/0bec3495fc94590dfe09069a3913f9cf2efe1a9b14ac5d5b871b90982c6d85e5.json 2461731386 321
   file ./.cancho/ops/0bf3f1585a3f785cf774e1c6a7ec6ffad80492afdaf2674e9fd4b3dfff43438a.json 4078415578 321
   file ./.cancho/ops/0bf69cbba3db9706a9e9d3cbbdf84e3604aafbdd5983349fde9e253549f16756.json 4045798913 321
   file ./.cancho/ops/0bf727df2876c85883a3a98f65d8f5942a28bb8e06e424a2aab2626dfe14704b.json 4140316697 321
@@ -930,6 +929,7 @@ step 4: vcs sync --std --check
   file ./.cancho/ops/420a10228090953ae8d212192f87e3d689344a953925f38ee9ed2f9970407ed8.json 2431741633 321
   file ./.cancho/ops/420e8f63f7bdb7f59972522cebe4ce815edfc4a26f7440c10efeb888e77aba52.json 911009639 321
   file ./.cancho/ops/4210efd040ab8c717a1bca138f232396dcf7310bdba0e2f0937fb0158158ed14.json 684247698 321
+  file ./.cancho/ops/4212ddf36a0cc1a0b8f3d37851833ade7f266c4a82c250353b42cb59e83a6d55.json 1080405067 321
   file ./.cancho/ops/4223e590cab34b49da1685858104de49edce66a23981fe127d543a1319ff1712.json 3774126440 332
   file ./.cancho/ops/4239af07ce70a0c01de7a809dd4bac4f0babd410eaaf2e7a33d754e53216bcc6.json 1179765032 332
   file ./.cancho/ops/4243a3032b7fa66d10cea30cd657c67ae49579fe8fcefc9efb5a21b2e69f2849.json 1683746148 321
@@ -1015,6 +1015,7 @@ step 4: vcs sync --std --check
   file ./.cancho/ops/4989117541364643180a735b92da129f53e2120abbcd91fcfacc6a1c283a3c44.json 924978132 321
   file ./.cancho/ops/49989fcf4353518bcdb278954b24339a3d75a8d72315ba0a1b3ecb2226c8c4b3.json 1040743364 332
   file ./.cancho/ops/49b191b8fced5a8c3ff6a5a8f94a18240370a988ee8613397dc5bf187b5ec72b.json 779477930 332
+  file ./.cancho/ops/49bd4f2a990f6fdb54c71f27837c3d60a94c9043662280442d5c3e81abb4a4d3.json 2619810083 332
   file ./.cancho/ops/49d0b04ace0f9dc9664937220f27a0881d4b14a4eab73365c09b0fbaafd84570.json 3585102560 332
   file ./.cancho/ops/49ee3783304b4954ef26a1826ed96f93546dae4b665eb3fd310b9333e1f01c35.json 2873199992 332
   file ./.cancho/ops/4a1622ca14082519949d0376707b1c22f3f22373d0911aeb3fb85068b7ca63fa.json 1278090508 332
@@ -1183,6 +1184,7 @@ step 4: vcs sync --std --check
   file ./.cancho/ops/5deb56fb7cd53a9d57710556085fe28d9a4c7957a499069689d4178f4029a1ea.json 3757043267 332
   file ./.cancho/ops/5e675ea41c34d02da2cce31de54fc87e7dc5d9a42c8b1ef6ae5321722f85e71e.json 2742608120 321
   file ./.cancho/ops/5edb085b7be5bd37a169723b1ea9fc72e9da219eb4ccb03d30794648e8cecb82.json 640700309 321
+  file ./.cancho/ops/5ef80cb35dde42d7172e6b5269e92399fa1652ffc884823cf20e5e8436f4d1ae.json 1704497672 332
   file ./.cancho/ops/5f32eed820ffae9d50413fde1819ef61228e6694e030c5dd944004188c6bf595.json 1481653659 321
   file ./.cancho/ops/5f43fc7502c1a79e9ab00aca656ebdf1e682cf961b34bdc538c1d29d3856ea33.json 1392087601 332
   file ./.cancho/ops/5f4b29d60d0a47ccdeb10f15a59f564d83873c6ac395b0b19aa2db5a50894d49.json 3525850567 332
@@ -1438,6 +1440,7 @@ step 4: vcs sync --std --check
   file ./.cancho/ops/7af3a2e68f02674e9a90a806586573bec93e9d23cefbcabcaa94f35bbe37e410.json 10437364 321
   file ./.cancho/ops/7af8f26e8995e7fb64438ae09e4e4e679695492f35ed95b61ab700f8b09452e9.json 1983098630 321
   file ./.cancho/ops/7b121eb248412c0895c7c6ec49d8a767033d4daf384aafee94a91d0323cd97b4.json 1278624773 332
+  file ./.cancho/ops/7b4ee495c8a054b68b5d5228e4ec80b96416ae0ad060bb81e62e939b40137f1d.json 120997432 321
   file ./.cancho/ops/7b67c344eefe810ebddac9a2e1361b77a7fe98e51bb8a6a7df8cc577123325ad.json 145279730 321
   file ./.cancho/ops/7b84c37087ebecaf17041b0feb868fd305a4b673ba70321397594b8c6b13c5ab.json 4126782974 332
   file ./.cancho/ops/7b92f1b44e1bb7260b6afeff83ed033edbfbbb1f5e371f2dcd03c540ac6c38b5.json 186682898 321
@@ -2410,7 +2413,6 @@ step 4: vcs sync --std --check
   file ./.cancho/ops/e7f7a87e8a9c63ce64e11fb32f3e35e580edd4e59f13f83c21dd6ec9581f7e33.json 1894880836 321
   file ./.cancho/ops/e7ff97a834941f944defca9cb3f50c9efaadb55d0791f0278e4a6e12394cb030.json 1072760699 321
   file ./.cancho/ops/e817eda14cc00fa264b3ccc0f04adc6fd9714cf854dd622cd6cca8af267677d5.json 4060382593 321
-  file ./.cancho/ops/e81c43036c736eadeda3ac873b29c9b622171cf00ac464f73824c2fbcf900492.json 737604522 332
   file ./.cancho/ops/e830d0714cebce7d3af4ce97ec0e76a7e8496fb42bf9b7d50391339f2788ef53.json 224238286 332
   file ./.cancho/ops/e899e31026d0964a07bb605e5e3916edf58e86f98e3638f9f95aa33c8d808891.json 2193624575 321
   file ./.cancho/ops/e8cfa3a7756077ea546984687ac80f0ed737ff7fd48c73a8c4cf01ec5bcec853.json 1842934237 332
