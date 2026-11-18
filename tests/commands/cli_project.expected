@@ -181,43 +181,43 @@ pin other, ignored: 0 note: this project was written for cancho 0123456789abcdef
 pin own: 0 
 ok the_command_line_in_cancho_says_its_version_and_checks_the_pin_like_cancho
 assert check --std: exit 0 out 4294967295 err 4294967295
-assert ids --std: exit 0 out 563735359 err 4294967295
+assert ids --std: exit 0 out 2922173502 err 4294967295
 assert build --std: exit 0
 assert run: exit 0 out 1191613487
 bitwise check --std: exit 0 out 4294967295 err 4294967295
-bitwise ids --std: exit 0 out 1289004870 err 4294967295
+bitwise ids --std: exit 0 out 1621437663 err 4294967295
 bitwise build --std: exit 0
 bitwise run: exit 0 out 4187076113
 bytes_library check --std: exit 0 out 4294967295 err 4294967295
-bytes_library ids --std: exit 0 out 3635061309 err 4294967295
+bytes_library ids --std: exit 0 out 2009916853 err 4294967295
 bytes_library build --std: exit 0
 bytes_library run: exit 0 out 3215563497
 collections check --std: exit 0 out 4294967295 err 4294967295
-collections ids --std: exit 0 out 1649974312 err 4294967295
+collections ids --std: exit 0 out 2953270065 err 4294967295
 collections build --std: exit 0
 collections run: exit 0 out 3524647948
 crc_check_values check --std: exit 0 out 4294967295 err 4294967295
-crc_check_values ids --std: exit 0 out 4093371317 err 4294967295
+crc_check_values ids --std: exit 0 out 3130225452 err 4294967295
 crc_check_values build --std: exit 0
 crc_check_values run: exit 0 out 470118258
 flags check --std: exit 0 out 4294967295 err 4294967295
-flags ids --std: exit 0 out 1853201569 err 4294967295
+flags ids --std: exit 0 out 3051235948 err 4294967295
 flags build --std: exit 0
 flags run: exit 0 out 4294967295
 floating_point check --std: exit 0 out 4294967295 err 4294967295
-floating_point ids --std: exit 0 out 3637247099 err 4294967295
+floating_point ids --std: exit 0 out 1061203001 err 4294967295
 floating_point build --std: exit 0
 floating_point run: exit 0 out 136841971
 math_floats check --std: exit 0 out 4294967295 err 4294967295
-math_floats ids --std: exit 0 out 3918260543 err 4294967295
+math_floats ids --std: exit 0 out 4260535469 err 4294967295
 math_floats build --std: exit 0
 math_floats run: exit 0 out 2329874702
 linalg_hand_checked check --std: exit 0 out 4294967295 err 4294967295
-linalg_hand_checked ids --std: exit 0 out 3842895183 err 4294967295
+linalg_hand_checked ids --std: exit 0 out 2274577309 err 4294967295
 linalg_hand_checked build --std: exit 0
 linalg_hand_checked run: exit 0 out 2366358789
 ed25519 check --std: exit 0 out 4294967295 err 4294967295
-ed25519 ids --std: exit 0 out 1851087182 err 4294967295
+ed25519 ids --std: exit 0 out 2380674318 err 4294967295
 ed25519 build --std: exit 0
 ed25519 run: exit 0 out 1946124422
 assert check without --std: exit 1
