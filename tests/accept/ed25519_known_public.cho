@@ -1,0 +1,80 @@
+// `docs/ed25519.md` §7: `ed25519.sign_with_public` signs with a public key the caller already has.
+// Five lines: its signature equals `sign`'s (1); it verifies under the key (1); a public key that is not the
+// seed's makes a signature that verifies under neither key (0, 0); a public key of the wrong length is -1 (printed
+// as 1 when so).
+//~ STDOUT 1
+//~ STDOUT 1
+//~ STDOUT 0
+//~ STDOUT 0
+//~ STDOUT 1
+//~ EXIT 0
+
+import std.io;
+import std.ed25519;
+
+fn flag[&i](io: &!i Io, yes: bool) -> [io_write] int {
+    if yes {
+        putchar(io, 49);
+    } else {
+        putchar(io, 48);
+    }
+    io.newline(io);
+    return 0;
+}
+
+fn run[&i](io: &!i Io) -> [io_write] int {
+    region r {
+        let seed = alloc_slice[r](32, byte_of(0));
+        let other = alloc_slice[r](32, byte_of(0));
+        var n = 0;
+        while n < 32 {
+            seed[n] = byte_of(n);
+            other[n] = byte_of(n + 100);
+            n = n + 1;
+        }
+        let msg = "the commit id";
+        let pk = alloc_slice[r](32, byte_of(0));
+        ed25519.public_key_from_seed(seed, pk);
+        let pk2 = alloc_slice[r](32, byte_of(0));
+        ed25519.public_key_from_seed(other, pk2);
+
+        let a = alloc_slice[r](64, byte_of(0));
+        let b = alloc_slice[r](64, byte_of(0));
+        ed25519.sign(seed, msg, a);
+        ed25519.sign_with_public(seed, pk, msg, b);
+        var same = true;
+        n = 0;
+        while n < 64 {
+            if int_of(a[n]) != int_of(b[n]) {
+                same = false;
+            }
+            n = n + 1;
+        }
+        flag(io, same);
+        flag(io, ed25519.verify(pk, msg, b) == 1);
+
+        let c = alloc_slice[r](64, byte_of(0));
+        ed25519.sign_with_public(seed, pk2, msg, c);
+        flag(io, ed25519.verify(pk, msg, c) == 1);
+        flag(io, ed25519.verify(pk2, msg, c) == 1);
+
+        let d = alloc_slice[r](64, byte_of(0));
+        flag(io, ed25519.sign_with_public(seed, pk[0..31], msg, d) == 0 - 1);
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(args);
+    release(heap);
+    release(fs);
+    release(ffi);
+
+    borrow mut io as &!i in {
+        run(i);
+    }
+
+    release(io);
+    return 0;
+}

@@ -629,6 +629,22 @@ pub fn public_key_from_seed[&seed, &o](seed: &seed [byte], o: &!o [byte]) -> [] 
 // detached signature into `o`: `R_enc || S`, RFC 8032 §5.1.6.
 pub fn sign[&seed, &msg, &o](seed: &seed [byte], msg: &msg [byte], o: &!o [byte]) -> [] int {
     region r {
+        let pk = alloc_slice[r](32, byte_of(0));
+        public_key_from_seed(seed, pk);
+        sign_with_public(seed, pk, msg, o);
+    }
+    return 0;
+}
+
+// `sign`, for a caller that already has the public key of `seed` (from `public_key_from_seed`, once): the
+// base-point multiplication that derives it is a third of a signature (`docs/ed25519.md` §7). `pk` is trusted,
+// not checked: a `pk` that is not the key of `seed` makes a signature that `verify` refuses under either key
+// (the hash `k` binds `pk`), and one of the wrong length returns `-1` with `o` untouched.
+pub fn sign_with_public[&seed, &pk, &msg, &o](seed: &seed [byte], pk: &pk [byte], msg: &msg [byte], o: &!o [byte]) -> [] int {
+    if len(pk) != 32 {
+        return 0 - 1;
+    }
+    region r {
         let h = alloc_slice[r](64, byte_of(0));
         crypto.sha512(seed, h);
         let a = alloc_slice[r](32, byte_of(0));
@@ -636,11 +652,6 @@ pub fn sign[&seed, &msg, &o](seed: &seed [byte], msg: &msg [byte], o: &!o [byte]
         clamp(a);
         let prefix = alloc_slice[r](32, byte_of(0));
         bn_copy_into(prefix, h[32..64]);
-
-        let point_a = alloc_slice[r](64, 0);
-        point_scalarmult_base(point_a, a);
-        let pk = alloc_slice[r](32, byte_of(0));
-        point_pack(point_a, pk);
 
         // `SHA-512(prefix || msg)` and, below, `SHA-512(R || A || msg)`,
         // streamed rather than concatenated: a copy of `msg` in this

@@ -1,7 +1,7 @@
 // `docs/x25519.md` §6: how fast `std.ed25519` signs and verifies, and
 // `std.x25519` computes, before and after the field module.
 //
-//     ed25519_bench <op> <rounds>      op: 0 sign, 1 verify, 2 x25519
+//     ed25519_bench <op> <rounds>      op: 0 sign, 1 verify, 2 x25519, 3 sign_with_public
 //
 // Each round feeds the previous result into the next, so no round can
 // be skipped; prints one byte of the last result. Timing is done from
@@ -39,6 +39,10 @@ fn run[&i](io: &!i Io, op: int, rounds: int) -> [io_write] int {
                 last = int_of(sig[0]);
             } else if op == 1 {
                 last = last + ed25519.verify(pk, msg, sig);
+            } else if op == 3 {
+                ed25519.sign_with_public(seed, pk, msg, sig);
+                msg[0] = sig[0];
+                last = int_of(sig[0]);
             } else {
                 x25519.scalarmult(seed, u, out);
                 u[0] = out[0];
