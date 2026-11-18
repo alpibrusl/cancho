@@ -6,6 +6,3 @@
 
 
 
-http 5
-http_fetch_nb 30
-conn_peer 6
