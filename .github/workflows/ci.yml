@@ -98,16 +98,15 @@ jobs:
       matrix:
         include:
           - name: tls-perf
-            compiler: rust
-          - name: tls-perf (compiler in cancho)
-            compiler: auto
-    env:
-      CANCHO_COMPILER: ${{ matrix.compiler }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compiler
-        run: cargo build --release -p cancho
+      # The compiler in cancho, built from the seed: no Rust. The baseline in `benches/tls_baseline.json` is the code the Rust compiler
+      # wrote; the compiler in cancho is within 1.05 of it (docs/bootstrap.md), well inside the 1.3 the guard allows.
+      - name: Compiler (from the seed)
+        run: |
+          scripts/build-standalone.sh --seed --out "$RUNNER_TEMP/standalone" --rev "$(git rev-parse HEAD)"
+          mkdir -p target/release && cp "$RUNNER_TEMP/standalone/cancho" target/release/cancho
 
       - name: Valgrind, which counts the instructions the guard compares
         run: |
