@@ -181,7 +181,7 @@ datagram's is.
 
 **Built.** `conn_peer(&Conn, &![byte]) -> [] int` (edition 5, both backends, no row; refused on WASI, so the builtin count is 134
 and the refused count 59, `os_tables.rs` and `wasm.md` moved with it), `std/addr.cho` (new; pure), `conns.peer` in
-`std/conns.cho`, `crates/cancho/tests/conformance/conn_peer.rs`, and in `examples/tls_echo/front.cho`: `peer=` on every
+`std/conns.cho`, `tests/commands/conn_peer.sh` and `tests/commands/conn_peer_sock.sh`, and in `examples/tls_echo/front.cho`: `peer=` on every
 connection line, `--per-address`, `--per-address-rate`. Nothing in `packages/` changed (no package store to republish; `python3
 scripts/publish_packages.py --check` says so). The IPv4-mapped normalisation, the `/32` and `/64` key, the canonical text and the
 parser are in `std/addr.cho`; none of it needs the compiler.

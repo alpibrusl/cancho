@@ -34,8 +34,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-mod conn_peer;
-
 mod http;
 mod http_fetch_nb;
 mod json;

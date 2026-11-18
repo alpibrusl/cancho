@@ -1,0 +1,238 @@
+edition 6;
+import std.addr;
+import std.conns;
+import std.io;
+import conn_peer_connect;
+
+// conn_peer_sock.tmpl -- the two cases of `docs/conn-peer.md` that need a socket the program cannot make with its own builtins, in one process so that nothing races (docs/gate.md, G4 wave 6; they were
+// tests of conformance/conn_peer.rs). PORT is substituted. argv[1] is `darwin` or `linux` (the layouts of a socket address and the numbers of the options differ, and a program cannot ask), argv[2] the case.
+//
+// `close` is the same without the option, a close that sends a FIN: `read end`, and the peer is kept. `reset`: the program's own listener on PORT; `Ffi("libc")`, which the program holds for this one purpose, dials it and closes the connection with `SO_LINGER` set to a zero timeout, so the kernel sends a reset
+// instead of a FIN. Then the program takes the connection, reads it, and asks for its peer. Prints `read end|failed|data|again`, then `slot 0 peer ...` or `slot 0 none <errno>`.
+// `v6`: a dual-stack AF_INET6 socket on PORT+1, `dup2`d over the listener's descriptor 3 (the lowest free one in a fresh process) before the first `accept`; three clients dial it from ::1, 127.0.0.1 and ::1.
+// Prints a line `slot <n> peer <address>:<port> key <family> <bits>` for each.
+
+extern fn socket[&f](ffi: &f Ffi("libc"), domain: int, kind: int, proto: int) -> [ffi("libc")] c_int;
+extern fn setsockopt[&f, &v](ffi: &f Ffi("libc"), fd: int, level: int, name: int, value: &v [byte]) -> [ffi("libc")] c_int;
+extern fn close[&f](ffi: &f Ffi("libc"), fd: int) -> [ffi("libc")] c_int;
+extern fn dup2[&f](ffi: &f Ffi("libc"), old: int, new: int) -> [ffi("libc")] c_int;
+
+fn say[&i](io: &!i Io, s: &static [byte]) -> [io_write] int {
+    io.write_all(io, s);
+    match flush_out(io) {
+        Done::Ok(n) => { return 0; }
+        Done::Failed(e) => { return e; }
+    }
+}
+
+fn take[&h, &l](heap: &!h Heap, table: conns.Table, listener: &!l Listener) -> [heap, conn_accept] (conns.Table, int) {
+    match tcp_accept(listener) {
+        Accepted::Ok(c) => { return conns.put(heap, table, c); }
+        Accepted::Again => { return (table, 0 - 2); }
+        Accepted::Failed(e) => { return (table, 0 - 3); }
+    }
+}
+
+// `slot <n> peer <address>:<port> key <family> <bits>`, or `slot <n> none <errno>`.
+fn show[&i, &t](io: &!i Io, tb: &!t conns.Table, slot: int) -> [io_write] int {
+    io.write_all(io, "slot ");
+    io.print_int(io, slot);
+    match conns.peer(tb, slot) {
+        conns.Peered::Known(p) => {
+            region r {
+                let buf = alloc_slice[r](64, byte_of(0));
+                let k = addr.text_port(p, buf);
+                io.write_all(io, " peer ");
+                io.write_all(io, buf[0..k]);
+                let key = addr.key(p);
+                io.write_all(io, " key ");
+                io.print_int(io, addr.key_family(key));
+                io.write_all(io, " ");
+                io.print_int(io, addr.key_bits(key));
+            }
+        }
+        conns.Peered::Unavailable(e) => {
+            io.write_all(io, " none ");
+            io.print_int(io, e);
+        }
+    }
+    io.newline(io);
+    say(io, "");
+    return 0;
+}
+
+// A sockaddr_in (16 bytes) for 127.0.0.1:port. BSD has a length byte and a one-byte family; Linux a two-byte family.
+fn sockaddr4[&b](buf: &!b [byte], mac: int, port: int) -> [] int {
+    if mac == 1 {
+        buf[0] = byte_of(16);
+        buf[1] = byte_of(2);
+    } else {
+        buf[0] = byte_of(2);
+    }
+    buf[2] = byte_of(port / 256);
+    buf[3] = byte_of(port % 256);
+    buf[4] = byte_of(127);
+    buf[7] = byte_of(1);
+    return 16;
+}
+
+// A sockaddr_in6 (28 bytes) for [::]:port, or [::1]:port when `loop` is 1.
+fn sockaddr6[&b](buf: &!b [byte], mac: int, port: int, loop: int) -> [] int {
+    if mac == 1 {
+        buf[0] = byte_of(28);
+        buf[1] = byte_of(30);
+    } else {
+        buf[0] = byte_of(10);
+    }
+    buf[2] = byte_of(port / 256);
+    buf[3] = byte_of(port % 256);
+    if loop == 1 {
+        buf[23] = byte_of(1);
+    }
+    return 28;
+}
+
+// The client of the reset case: dial 127.0.0.1:port, and close with SO_LINGER {on, 0}. 0, or the number of the call that failed.
+fn reset_client[&f](ffi: &f Ffi("libc"), mac: int, port: int, plain: int) -> [ffi("libc")] int {
+    let fd = socket(ffi, 2, 1, 0);
+    if fd < 0 { return 1; }
+    var status = 0;
+    region r {
+        let sa = alloc_slice[r](16, byte_of(0));
+        let n = sockaddr4(sa, mac, port);
+        if conn_peer_connect.dial(ffi, fd, sa) != 0 { status = 2; }
+        let linger = alloc_slice[r](8, byte_of(0));
+        linger[0] = byte_of(1);
+        var level = 1;
+        var name = 13;
+        if mac == 1 {
+            level = 65535;
+            name = 128;
+        }
+        if plain == 0 && setsockopt(ffi, fd, level, name, linger) != 0 { status = 3; }
+    }
+    close(ffi, fd);
+    return status;
+}
+
+// The dual-stack socket of the v6 case, on `port`, and three clients: ::1, 127.0.0.1, ::1. 0, or the number of the call that failed.
+fn dual_stack[&f](ffi: &f Ffi("libc"), mac: int, port: int) -> [ffi("libc")] int {
+    var af6 = 10;
+    var v6only = 26;
+    if mac == 1 {
+        af6 = 30;
+        v6only = 27;
+    }
+    let s = socket(ffi, af6, 1, 0);
+    if s < 0 { return 1; }
+    var status = 0;
+    region r {
+        let off = alloc_slice[r](4, byte_of(0));
+        if setsockopt(ffi, s, 41, v6only, off) != 0 { status = 2; }
+        let sa = alloc_slice[r](28, byte_of(0));
+        let n = sockaddr6(sa, mac, port, 0);
+        if conn_peer_connect.bind_to(ffi, s, sa) != 0 { status = 3; }
+    }
+    if status != 0 { return status; }
+    if conn_peer_connect.listen_on(ffi, s, 16) != 0 { return 4; }
+    if dup2(ffi, s, 3) != 3 { return 5; }
+    var k = 0;
+    while k < 3 {
+        var c = 0;
+        region r2 {
+            if k == 1 {
+                c = socket(ffi, 2, 1, 0);
+                let sa4 = alloc_slice[r2](16, byte_of(0));
+                let n4 = sockaddr4(sa4, mac, port);
+                if conn_peer_connect.dial(ffi, c, sa4) != 0 { status = 6; }
+            } else {
+                c = socket(ffi, af6, 1, 0);
+                let sa6 = alloc_slice[r2](28, byte_of(0));
+                let n6 = sockaddr6(sa6, mac, port, 1);
+                if conn_peer_connect.dial(ffi, c, sa6) != 0 { status = 7; }
+            }
+        }
+        k = k + 1;
+    }
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals } = split(world);
+    release(fs); release(clock); release(signals);
+    var mac = 0;
+    var v6 = 0;
+    var plain = 0;
+    borrow args as &a in {
+        if arg_count(a) >= 3 {
+            if len(arg(a, 1)) == 6 { mac = 1; }
+            if arg(a, 2)[0] == byte_of(118) { v6 = 1; }
+            if arg(a, 2)[0] == byte_of(99) { plain = 1; }
+        }
+    }
+    release(args);
+    var h = heap;
+    var o = io;
+    let bound = narrow(net, "PORT");
+    let libc = narrow(ffi, "libc");
+    borrow mut o as &!i in {
+    borrow mut h as &!hh in {
+        borrow bound as &n in {
+            match tcp_listen(n, PORT, 64, 0) {
+                Listening::Ok(l) => {
+                    var listener = l;
+                    var status = 0;
+                    borrow libc as &f in {
+                        if v6 == 1 {
+                            status = dual_stack(f, mac, PORT + 1);
+                        } else {
+                            status = reset_client(f, mac, PORT, plain);
+                        }
+                    }
+                    borrow mut listener as &!lh in {
+                        if status != 0 {
+                            say(i, "setup failed\n");
+                            io.print_int(i, status);
+                            io.newline(i);
+                        } else {
+                            var table = conns.empty(hh, 4);
+                            if v6 == 1 {
+                                var k = 0;
+                                while k < 3 {
+                                    let (t, slot) = take(hh, table, lh);
+                                    table = t;
+                                    borrow mut table as &!tb in { show(i, tb, slot); }
+                                    k = k + 1;
+                                }
+                            } else {
+                                let (t, slot) = take(hh, table, lh);
+                                table = t;
+                                borrow mut table as &!tb in {
+                                    region r {
+                                        let buf = alloc_slice[r](16, byte_of(0));
+                                        match conns.read(tb, slot, buf) {
+                                            Received::Data(k) => { say(i, "read data\n"); }
+                                            Received::End => { say(i, "read end\n"); }
+                                            Received::Again => { say(i, "read again\n"); }
+                                            Received::Failed(e) => { say(i, "read failed\n"); }
+                                        }
+                                    }
+                                    show(i, tb, slot);
+                                }
+                            }
+                            conns.drop(hh, table);
+                        }
+                    }
+                    listener_close(listener);
+                }
+                Listening::Failed(e) => { say(i, "listen failed\n"); }
+            }
+        }
+    }
+    }
+    release(libc);
+    release(bound);
+    release(o);
+    release(h);
+    return 0;
+}

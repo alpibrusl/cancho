@@ -1,0 +1,3 @@
+ok a connection that closed normally still has a peer, address and port
+ok a connection that the client reset has none, and the kernel says why (ENOTCONN on Linux, EINVAL on macOS)
+ok an IPv6 peer is read, and an IPv4 one on the same dual-stack socket is the IPv4 address
