@@ -36,9 +36,7 @@ use std::process::{Command, Stdio};
 
 mod conn_peer;
 
-mod http;
 mod http_fetch_nb;
-mod json;
 
 mod tls_support;
 // The TLS files moved to `tests/commands` (G4, wave 4); `http_fetch_nb` still names these three modules.
