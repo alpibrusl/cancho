@@ -34,9 +34,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-mod http;
 mod http_fetch_nb;
-mod json;
 
 mod tls_support;
 // The TLS files moved to `tests/commands` (G4, wave 4); `http_fetch_nb` still names these three modules.

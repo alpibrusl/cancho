@@ -1,5 +1,6 @@
 // `docs/http.md` §5.1: `std.http.dechunk`, checked against a second decoder
-// written independently in `conformance/http.rs`.
+// written independently in Rust, whose answers are recorded in
+// `tests/vectors/http_dechunk.expected` (`tests/commands/http.sh`).
 //
 // Reads frames from standard input -- a decimal length, a newline, then that
 // many bytes -- and prints one line per frame, decoding into 256 bytes of room:
