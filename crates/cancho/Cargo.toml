@@ -13,7 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 cancho-syntax.workspace = true
-cancho-ir.workspace = true
 cancho-types.workspace = true
 cancho-id.workspace = true
 cancho-vcs.workspace = true

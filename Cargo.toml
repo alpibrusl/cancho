@@ -4,7 +4,6 @@ members = [
     "crates/cancho-syntax",
     "crates/cancho-types",
     "crates/cancho-id",
-    "crates/cancho-ir",
     "crates/cancho-vcs",
     "crates/cancho",
 ]
@@ -20,5 +19,4 @@ publish = false
 cancho-syntax = { path = "crates/cancho-syntax" }
 cancho-types = { path = "crates/cancho-types" }
 cancho-id = { path = "crates/cancho-id" }
-cancho-ir = { path = "crates/cancho-ir" }
 cancho-vcs = { path = "crates/cancho-vcs" }

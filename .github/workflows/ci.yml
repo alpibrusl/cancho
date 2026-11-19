@@ -362,14 +362,13 @@ jobs:
           # The full history: the replay reads every distinct revision of
           # every tracked .cho, which a shallow clone does not have.
           fetch-depth: 0
-      - name: Toolchain versions
+      # Today's compiler is the one in cancho, built from the seed (no Rust): the Rust front end (`cancho-ir`) is deleted (docs/removing-rust.md, Phase 5).
+      - name: Compiler (from the seed)
         run: |
-          cargo --version
-          rustc --version --verbose
+          scripts/build-standalone.sh --seed --out "$RUNNER_TEMP/standalone" --rev "$(git rev-parse HEAD)"
+          mkdir -p target/release && cp "$RUNNER_TEMP/standalone/cancho" target/release/cancho
       - name: The plateau — every revision reads or its debt is explained
-        run: |
-          cargo build --release -p cancho
-          python3 scripts/history.py --explain
+        run: python3 scripts/history.py --explain
 
   # docs/vcs.md §8 + #403: the store rides inside git. Once `.cancho/ids.txt`
   # is committed, a PR that changes what a declaration *is* — not the text,
@@ -381,13 +380,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Toolchain versions
+      - name: Compiler (from the seed)
         run: |
-          cargo --version
-          rustc --version --verbose
+          scripts/build-standalone.sh --seed --out "$RUNNER_TEMP/standalone" --rev "$(git rev-parse HEAD)"
+          mkdir -p target/release && cp "$RUNNER_TEMP/standalone/cancho" target/release/cancho
       - name: The semantic index matches the source (cancho vcs sync --check)
         run: |
-          cargo build --release -p cancho
           if [ -f .cancho/ids.txt ]; then
             ./target/release/cancho vcs sync --dir . --check
           else

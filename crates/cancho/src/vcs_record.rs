@@ -35,93 +35,21 @@ pub(crate) fn intent(p: &Parsed) -> Option<Intent> {
     })
 }
 
-/// Every module a tree declares, as `module path -> files`, so an import
-/// can be followed to the files that declare it (`docs/modules.md`).
-fn module_index(repo: &Repo, tree: &Tree) -> VcsResult<BTreeMap<String, Vec<String>>> {
-    let mut index: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for e in tree.entries().iter().filter(|e| e.path.ends_with(".cho")) {
-        let Ok(text) = String::from_utf8(entry_bytes(repo, e)?) else { continue };
-        let Ok(ast) = cancho_syntax::parse(&text) else { continue };
-        for m in &ast.modules {
-            let name: Vec<&str> = m.path.iter().map(|s| ast.name_of(*s)).collect();
-            index.entry(name.join(".")).or_default().push(e.path.clone());
-        }
+/// The built-in gate was `cancho check` of every `.cho` file a change adds or modifies (`cancho_vcs::check_candidate`); the Rust front
+/// it ran (`cancho-ir`) is deleted (`docs/removing-rust.md`, Phase 5, step 3), so this binary cannot answer it. A change that touches
+/// a `.cho` file is refused (`gate-unavailable`), not waved through; `--no-gate` records it unchecked, and the compiler in cancho
+/// (`examples/selfhost/clivcsrepo.cho`) gates it.
+fn gate(_repo: &Repo, tree: &Tree, paths: &[String]) -> VcsResult<Vec<String>> {
+    match paths.iter().find(|p| p.ends_with(".cho") && tree.get(p).is_some()) {
+        None => Ok(Vec::new()),
+        Some(path) => Err(Refusal::new(
+            "gate-unavailable",
+            format!(
+                "{path}: this binary has no type checker any more (`cancho-ir` is deleted); record with the compiler in cancho, or pass --no-gate"
+            ),
+        )
+        .with(json!({"path": path}))),
     }
-    Ok(index)
-}
-
-/// Check the `.cho` files a change adds or modifies. Each is checked as the
-/// program it belongs to: itself, the files of the tree that declare the
-/// modules it imports (transitively), and the standard library when it
-/// imports that. The first failure is the refusal, tagged with its rule.
-fn gate(repo: &Repo, tree: &Tree, paths: &[String]) -> VcsResult<Vec<String>> {
-    let mut checked = Vec::new();
-    let mut index: Option<BTreeMap<String, Vec<String>>> = None;
-    for path in paths.iter().filter(|p| p.ends_with(".cho")) {
-        if tree.get(path).is_none() {
-            continue;
-        }
-        let mut files: BTreeMap<String, String> = BTreeMap::new();
-        let mut queue = vec![path.clone()];
-        let mut with_std = false;
-        while let Some(p) = queue.pop() {
-            if files.contains_key(&p) {
-                continue;
-            }
-            let Some(entry) = tree.get(&p) else { continue };
-            let text = String::from_utf8(entry_bytes(repo, entry)?)
-                .map_err(|_| gate_failed(&p, "program-shape", "the file is not UTF-8"))?;
-            let ast = cancho_syntax::parse(&text)
-                .map_err(|d| gate_failed(&p, d.rule.tag(), &d.message))?;
-            for m in &ast.modules {
-                for i in &m.imports {
-                    let segs: Vec<&str> = i.path.iter().map(|s| ast.name_of(*s)).collect();
-                    if segs.first() == Some(&"std") {
-                        with_std = true;
-                        continue;
-                    }
-                    if index.is_none() {
-                        index = Some(module_index(repo, tree)?);
-                    }
-                    // The longest prefix of the import that names a module.
-                    for n in (1..=segs.len()).rev() {
-                        if let Some(found) =
-                            index.as_ref().and_then(|ix| ix.get(&segs[..n].join(".")))
-                        {
-                            queue.extend(found.iter().cloned());
-                            break;
-                        }
-                    }
-                }
-            }
-            files.insert(p, text);
-        }
-        let mut program: Vec<(String, String)> = files.into_iter().collect();
-        if with_std {
-            program.extend(crate::vcs_cli::std_texts());
-        }
-        let refs: Vec<(&str, &str)> =
-            program.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-        if let Err(diags) = cancho_vcs::check_candidate(&refs) {
-            let first = diags.first();
-            let rule = first.map_or("internal".to_owned(), |d| d.rule.to_string());
-            let message = first.map_or(String::new(), |d| d.message.clone());
-            let all: Vec<Value> = diags
-                .iter()
-                .map(|d| json!({"rule": d.rule.to_string(), "message": d.message}))
-                .collect();
-            return Err(Refusal::new("gate-failed", format!("{path}: {rule}: {message}"))
-                .with(json!({"path": path, "rule": rule, "diagnostics": all})));
-        }
-        checked.push(path.clone());
-    }
-    Ok(checked)
-}
-
-fn gate_failed(path: &str, rule: &str, message: &str) -> Refusal {
-    Refusal::new("gate-failed", format!("{path}: {rule}: {message}")).with(
-        json!({"path": path, "rule": rule, "diagnostics": [{"rule": rule, "message": message}]}),
-    )
 }
 
 /// Declarations and edit operations of the move from `old` to `new`.

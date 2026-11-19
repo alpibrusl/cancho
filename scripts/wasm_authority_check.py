@@ -21,7 +21,7 @@ usage: wasm_authority_check.py CANCHO [files...]
        (default: tests/accept/*.cho and tests/programs/*.cho)
 
 Needs what `cancho --help` says `--target` needs. CI has none of it; the table's
-internal consistency is tested in `cancho-ir` and runs in CI.
+internal consistency was tested by the Rust crate `cancho-ir` (deleted, `docs/removing-rust.md`, Phase 5).
 """
 import concurrent.futures, glob, json, os, subprocess, sys, tempfile
 
