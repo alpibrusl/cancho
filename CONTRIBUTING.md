@@ -64,8 +64,9 @@ follows it** or the gap is written down. That means a new or changed:
   sequential, and the check that raises it;
 - **builtin, prelude type or effect label**: the tables regenerate with
   `UPDATE_SELFHOST_TABLES=1 cargo test -p cancho-ir selfhost_tables`, and the code for it goes in `examples/selfhost`;
-- **runtime support or code generation** (`crates/cancho-codegen-llvm`): the same text in `examples/selfhost/runtime*`
-  and `runtime/` (`runtime/make.sh`), and the backend's behaviour in `emit.cho`;
+- **runtime support or code generation**: the text in `examples/selfhost/runtime*` (the `.ll` and `.c` files under `runtime/` are
+  sources now, with `regen.cho` embedding them in `runtime.cho`) and the backend's behaviour in `emit.cho`; the Rust LLVM backend that once
+  wrote them is deleted (`docs/removing-rust.md`, Phase 5);
 - **fixture** in `tests/reject/` or `tests/accept/`: it is built through the compiler in cancho by stage `walk` of the gate.
 
 What checks this, in order of how early it fails:

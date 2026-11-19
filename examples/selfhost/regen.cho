@@ -340,8 +340,8 @@ fn runtime_module[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, fs_read(""), 
     r = dual(heap, fs, r, "\n// The camera verbs (`runtime/camera.c`).\npub fn camera_text(darwin: bool) -> [] &static [byte] {\n    if darwin {\n        return \"", "runtime/camera_darwin.ll", "runtime/camera_linux.ll");
     r = put(heap, r, "\n// The thread that reaps a released child (`runtime/process.ll`).\npub fn process_text() -> [] &static [byte] {\n    return \"");
     r = file(heap, fs, r, "runtime/process.ll");
-    r = dual(heap, fs, r, "\";\n}\n\n// The per-thread stack of region chunks (`cancho-codegen-llvm`'s `region_cache`).\npub fn region_text(darwin: bool) -> [] &static [byte] {\n    if darwin {\n        return \"", "runtime/region_darwin.ll", "runtime/region_linux.ll");
-    r = put(heap, r, "\n// The hardware AES and GHASH functions, written by `cancho-codegen-llvm` for each target: `target` is 1 for\n// Darwin on aarch64, 2 for Linux on aarch64, 0 for Linux on x86-64.\npub fn crypto_text(target: int) -> [] &static [byte] {\n    if target == 1 {\n        return \"");
+    r = dual(heap, fs, r, "\";\n}\n\n// The per-thread stack of region chunks (`runtime/region_*.ll`, once written by `cancho-codegen-llvm`).\npub fn region_text(darwin: bool) -> [] &static [byte] {\n    if darwin {\n        return \"", "runtime/region_darwin.ll", "runtime/region_linux.ll");
+    r = put(heap, r, "\n// The hardware AES and GHASH functions, once written by `cancho-codegen-llvm` for each target, now kept by hand: `target` is 1 for\n// Darwin on aarch64, 2 for Linux on aarch64, 0 for Linux on x86-64.\npub fn crypto_text(target: int) -> [] &static [byte] {\n    if target == 1 {\n        return \"");
     r = file(heap, fs, r, "runtime/crypto_aarch64_darwin.ll");
     r = put(heap, r, "\";\n    }\n    if target == 2 {\n        return \"");
     r = file(heap, fs, r, "runtime/crypto_aarch64_linux.ll");

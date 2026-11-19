@@ -79,19 +79,14 @@ options:
     -o <output>     where to write the result (default: the first input's stem)
     --emit exe|obj  emit a linked executable (default) or a bare object file
     --std           make the standard library's source available
-    --compiler <exe>  (build) which compiler builds the program. By default the one written in cancho (built once, from sources
-                      compiled into this binary, and cached) writes the code, after the Rust front end has checked the
-                      program; one that has no code for something, or fails, hands that build to the Rust compiler. `rust` asks for
-                      the Rust compiler alone; `auto` for the one in cancho alone, with what it refuses, and no fallback; a path for
-                      that compiler. `CANCHO_COMPILER` says the same for every build; WebAssembly is the
-                      Rust compiler's
+    --compiler <exe>  (build) which compiler builds the program: the path of a `cancho` written in cancho
+                      (`scripts/build-standalone.sh`), or `CANCHO_COMPILER`. This binary writes no code itself any more
+                      (`docs/removing-rust.md`, Phase 5), so naming none is refused, and so are `rust` and `auto`
     --output json   `check` and `authority` as data rather than prose
     --backend llvm
                     which backend generates code (default: llvm, since #127).
-                    `llvm` is `cancho-codegen-llvm` (docs/llvm-backend.md):
-                    every program this repository tracks builds on it, and
-                    anything outside that is refused with an ordinary located
-                    error, not a crash.
+                    `llvm` is the only one, written by the compiler in cancho
+                    (docs/llvm-backend.md); accepted, and ignored here.
     --target <triple>
                     generate code for another target (`--backend llvm` only;
                     docs/wasm.md). Only `wasm32-wasip1` is built so far: it
@@ -121,10 +116,9 @@ status is unchanged -- 1 for a refused program -- and `check` reports
 every independent refusal rather than the first. See
 docs/agent-errors.md.
 
-`check` also generates the code and discards it, so a program it
-accepts is one `build` can compile. If the compiler itself fails, that
-is a refusal with rule `internal`, at the function it failed on. See
-docs/internal-errors.md.
+`check` stops after the front end: it no longer generates the code and
+discards it (the Rust backend that did is gone, docs/removing-rust.md),
+so a program it accepts is not yet known to build.
 
 `test` runs every `fn test_*` in the files named, one process each, and
 exits 4 if any failed. A test answers 0 to pass; `std.test`'s `assert`
@@ -255,19 +249,11 @@ enum Emit {
     Obj,
 }
 
-/// What `build` generates code with and for: the backend, and the target
-/// triple when it is not the host's (`docs/wasm.md`).
+/// What `build` generates code for: the target triple when it is not the host's (`docs/wasm.md`). The backend is no
+/// longer a choice: the Rust code generators are gone (`docs/removing-rust.md`, Phase 5).
 #[derive(Clone, Copy)]
 struct Codegen<'a> {
-    backend: Backend,
     target: Option<&'a Triple>,
-}
-
-/// Which backend generates code. Cranelift was the other one; it went with `cancho-codegen`
-/// (`docs/removing-rust.md`, Phase 5), so `llvm` is the only one.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Backend {
-    Llvm,
 }
 
 /// Strip a leading `--output FORMAT` (or `--output=FORMAT`) from `args`,
@@ -328,9 +314,9 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
             Ok(ExitCode::SUCCESS)
         }
         "check" => {
-            let Invocation { inputs, with_std, json, backend, target, .. } =
+            let Invocation { inputs, with_std, json, target, .. } =
                 parse_args(&args[1..], false, false)?;
-            check_program(&inputs, with_std, json, backend, target.as_ref())
+            check_program(&inputs, with_std, json, target.as_ref())
         }
         // The one command that reads no program: it is a contract with
         // whoever is about to write one.
@@ -448,7 +434,6 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
                 output,
                 emit,
                 with_std,
-                backend,
                 target,
                 link_libs,
                 link_paths,
@@ -462,14 +447,14 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
                 &output,
                 emit,
                 with_std,
-                Codegen { backend, target: target.as_ref() },
+                Codegen { target: target.as_ref() },
                 &link_libs,
                 &link_paths,
             )?;
             Ok(ExitCode::SUCCESS)
         }
         "run" => {
-            let Invocation { inputs, with_std, backend, target, link_libs, link_paths, .. } =
+            let Invocation { inputs, with_std, target, link_libs, link_paths, .. } =
                 parse_args(&args[1..], false, true)?;
             let dir = scratch::private_temp_dir("cancho-run")
                 .map_err(|e| environment(format!("cannot create a temporary directory: {e}")))?;
@@ -480,26 +465,11 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
                 &exe,
                 Emit::Exe,
                 with_std,
-                Codegen { backend, target: target.as_ref() },
+                Codegen { target: target.as_ref() },
                 &link_libs,
                 &link_paths,
             )
             .and_then(|()| match target.as_ref() {
-                Some(triple) if is_wasm(triple) => {
-                    let runtime =
-                        std::env::var("WASMTIME").unwrap_or_else(|_| "wasmtime".to_owned());
-                    // A WASI module gets no directory unless it is handed one,
-                    // which is the point; `WASMTIME_FLAGS` (e.g. `--dir=.`) is
-                    // how a run grants one, so the grant is written where it
-                    // is made.
-                    let flags = std::env::var("WASMTIME_FLAGS").unwrap_or_default();
-                    Command::new(&runtime)
-                        .arg("run")
-                        .args(flags.split_whitespace())
-                        .arg(&exe)
-                        .status()
-                        .map_err(|e| environment(format!("cannot run `{runtime}`: {e}")))
-                }
                 Some(triple) => Err(environment(format!(
                     "`run` cannot execute a `{triple}` program on this host; use `build`"
                 ))),
@@ -552,8 +522,6 @@ struct Invocation {
     /// `--output json` (`docs/authority.md` §3): the report as data rather
     /// than as prose, for a consumer that checks it against a grant.
     json: bool,
-    /// `--backend` (`docs/llvm-backend.md` §4).
-    backend: Backend,
     /// `--target` (`docs/wasm.md`): the triple to generate code for, if not the host's.
     target: Option<Triple>,
     /// `-l <name>` (`docs/foreign-linking.md` §3): libraries to link
@@ -576,7 +544,6 @@ fn parse_args(
     let mut emit = Emit::Exe;
     let mut with_std = false;
     let mut json = false;
-    let mut backend = Backend::Llvm;
     let mut target: Option<Triple> = None;
     let mut link_libs = Vec::new();
     let mut link_paths = Vec::new();
@@ -607,18 +574,16 @@ fn parse_args(
                 Some(other) => return Err(usage(format!("unknown output form `{other}`"))),
                 None => return Err(usage("`--output` needs a form")),
             },
-            "--backend" => {
-                backend = match it.next().map(String::as_str) {
-                    Some("cranelift") => {
-                        return Err(usage(
-                            "`--backend cranelift` is retired with the Rust compiler's Cranelift backend (`docs/removing-rust.md` D2); the only backend is `llvm`",
-                        ));
-                    }
-                    Some("llvm") => Backend::Llvm,
-                    Some(other) => return Err(usage(format!("unknown backend `{other}`"))),
-                    None => return Err(usage("`--backend` needs a name")),
-                };
-            }
+            "--backend" => match it.next().map(String::as_str) {
+                Some("cranelift") => {
+                    return Err(usage(
+                        "`--backend cranelift` is retired with the Rust compiler's Cranelift backend (`docs/removing-rust.md` D2); the only backend is `llvm`",
+                    ));
+                }
+                Some("llvm") => {}
+                Some(other) => return Err(usage(format!("unknown backend `{other}`"))),
+                None => return Err(usage("`--backend` needs a name")),
+            },
             "--target" => {
                 let value = it.next().ok_or_else(|| usage("`--target` needs a triple"))?;
                 target = Some(
@@ -651,18 +616,7 @@ fn parse_args(
     if inputs.is_empty() {
         return Err(usage("no input file given"));
     }
-    Ok(Invocation {
-        inputs,
-        output,
-        emit,
-        with_std,
-        json,
-        backend,
-        target,
-        link_libs,
-        link_paths,
-        compiler,
-    })
+    Ok(Invocation { inputs, output, emit, with_std, json, target, link_libs, link_paths, compiler })
 }
 
 fn default_output(input: &Path, emit: Emit) -> PathBuf {
@@ -790,24 +744,17 @@ fn check_program(
     inputs: &[PathBuf],
     with_std: bool,
     json: bool,
-    backend_kind: Backend,
     target: Option<&Triple>,
 ) -> Result<ExitCode, Failure> {
-    // `docs/internal-errors.md` §3: the backend runs here too, and its
-    // object is thrown away, so a program `check` accepts is a program
-    // `build` can generate code for. Before, `check` stopped after
-    // lowering and answered an empty list for a program `build` refused.
+    // The front end only: the Rust backend that used to generate code here and throw it away is gone (`docs/removing-rust.md`,
+    // Phase 5), so `check` no longer says whether `build` can generate code for the program; the compiler in cancho does.
     let refusals = match compile_reporting(inputs, with_std) {
         // What the target cannot do is answered first and without a code
         // generator, so it needs no wasm toolchain and says where it is.
         Ok((program, _)) if !target_refusals(&program, target).is_empty() => {
             target_refusals(&program, target)
         }
-        Ok((program, _)) => match backend(&program, inputs, backend_kind, target) {
-            Ok(_) => Vec::new(),
-            Err(BackendFailure::Refusals(refusals)) => refusals,
-            Err(BackendFailure::Environment(message)) => return Err(environment(message)),
-        },
+        Ok(_) => Vec::new(),
         Err(refusals) => refusals,
     };
     if !json {
@@ -967,90 +914,6 @@ fn compile_reporting(
     }
 
     Ok((program, map))
-}
-
-/// Generate the object code, or say why the compiler could not.
-///
-/// `docs/internal-errors.md`. Every failure here is the compiler's: the
-/// program was already accepted. So it is reported as a refusal with
-/// rule `internal`, at the declaration of the function whose code
-/// failed, with the backend's own words kept as the cause. A panic in
-/// the backend is caught per function by `cancho-codegen`; the default
-/// hook, which would print Rust's "thread 'main' panicked at", is
-/// silenced for the duration and put back.
-///
-/// `Backend::Llvm` never panics by design (`cancho-codegen-llvm` returns
-/// `CodegenError` for everything its first slice does not lower), but the
-/// same catch applies to it too: a bug there should read as `internal`,
-/// not as a crash, exactly like a bug in `cancho-codegen` does.
-///
-/// A bug is not the only way this backend fails now that it is the
-/// default: `Backend::Llvm` shells out to a real `clang`, so a host
-/// missing one is not cancho's bug, it is the environment's
-/// (`CodegenError::environment`). `BackendFailure` keeps that apart from
-/// an ordinary refusal so a caller reports exit 3, not 1.
-fn backend(
-    program: &cancho_ir::Program,
-    inputs: &[PathBuf],
-    backend_kind: Backend,
-    target: Option<&Triple>,
-) -> Result<Vec<u8>, BackendFailure> {
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let result = match backend_kind {
-        Backend::Llvm => match target {
-            Some(triple) => {
-                cancho_codegen_llvm::compile_object_for(program, "main", triple.clone())
-            }
-            None => cancho_codegen_llvm::compile_object(program, "main"),
-        },
-    };
-    std::panic::set_hook(hook);
-    result.map_err(|e| {
-        if e.environment {
-            BackendFailure::Environment(e.message.clone())
-        } else {
-            BackendFailure::Refusals(vec![internal_refusal(program, &e, inputs)])
-        }
-    })
-}
-
-enum BackendFailure {
-    /// The compiler's own bug, reported as it always was: rule
-    /// `internal`, exit 1, located at the function that failed.
-    Refusals(Vec<Refusal>),
-    /// The host's, not cancho's: `--backend llvm` could not reach a
-    /// real `clang`. Exit 3 (`docs/llvm-backend.md`).
-    Environment(String),
-}
-
-fn internal_refusal(
-    program: &cancho_ir::Program,
-    e: &cancho_codegen_llvm::CodegenError,
-    inputs: &[PathBuf],
-) -> Refusal {
-    match e.function.and_then(|index| program.funcs.get(index)) {
-        Some(func) => Refusal {
-            rule: Rule::Internal,
-            message: format!(
-                "the compiler failed to generate code for `{}`; this is a bug in cancho, not in \
-                 the program ({})",
-                func.name, e.message
-            ),
-            span: Some(func.span),
-        },
-        // Nothing to point at, and nothing is invented (§2).
-        None => Refusal {
-            rule: Rule::Internal,
-            message: format!(
-                "{}: error: the compiler failed to generate code; this is a bug in cancho, not \
-                 in the program ({})",
-                inputs.first().map(|p| p.display().to_string()).unwrap_or_default(),
-                e.message
-            ),
-            span: None,
-        },
-    }
 }
 
 /// Print every unit's content hash.
@@ -1474,24 +1337,10 @@ fn print_ids(inputs: &[PathBuf], with_std: bool) -> Result<(), Failure> {
     }
 }
 
-/// The Rust compiler is deprecated: the compiler written in cancho is the standard one (`docs/self-hosting.md`), and
-/// the Rust code generators will be removed once it writes code for everything they do. Said once per run, on standard
-/// error, whenever a build still goes through the Rust compiler; `CANCHO_NO_DEPRECATION_WARNING=1` silences it.
-fn warn_rust_compiler_deprecated(why: &str) {
-    static SAID: std::sync::Once = std::sync::Once::new();
-    if std::env::var_os("CANCHO_NO_DEPRECATION_WARNING").is_some() {
-        return;
-    }
-    SAID.call_once(|| {
-        eprintln!(
-            "warning: building with the Rust compiler, which is deprecated ({why}); the compiler written in cancho is the standard one"
-        );
-    });
-}
-
-/// Build a program with the compiler this run chooses (`selfhost_build::choose`): the one written in cancho by default,
-/// with the Rust front end checking first for now, or the Rust one when it is asked for or the build is one the other does
-/// not write code for.
+/// Build a program with the compiler this run names (`selfhost_build::choose`): the one written in cancho, as an executable
+/// (`--compiler <exe>`, `CANCHO_COMPILER`). The Rust code generators are gone (`docs/removing-rust.md`, Phase 5), so nothing
+/// else can write code: a build that names no compiler, or `rust`, or a target the compiler in cancho does not write code
+/// for, is refused here with a message that says what to name.
 fn build(
     inputs: &[PathBuf],
     output: &Path,
@@ -1501,148 +1350,24 @@ fn build(
     link_libs: &[String],
     link_paths: &[String],
 ) -> Result<(), Failure> {
-    match selfhost_build::choose(codegen.target) {
-        selfhost_build::Choice::Rust => {
-            let why = "it was asked for (`--compiler rust`, `CANCHO_COMPILER=rust`) or the target is one the compiler in cancho does not write code for";
-            warn_rust_compiler_deprecated(why);
-            build_with_rust(inputs, output, emit, with_std, codegen, link_libs, link_paths)
-        }
-        selfhost_build::Choice::Cancho { compiler, rust_checks_first, fall_back } => {
-            let built = selfhost_build::build(selfhost_build::Job {
-                compiler: &compiler,
-                inputs,
-                output,
-                emit,
-                with_std,
-                target: codegen.target,
-                link_libs,
-                link_paths,
-                rust_checks_first,
-            })?;
-            match built {
-                selfhost_build::Built::Done => Ok(()),
-                // The default never refuses a valid program for want of code, or for a bug of the new compiler: the Rust
-                // one builds it. Named on its own (`--compiler`, `CANCHO_COMPILER`), the compiler in cancho says what it
-                // cannot do.
-                selfhost_build::Built::NoCode(_) if fall_back => {
-                    warn_rust_compiler_deprecated(
-                        "the compiler in cancho has no code for something in this program",
-                    );
-                    build_with_rust(inputs, output, emit, with_std, codegen, link_libs, link_paths)
-                }
-                selfhost_build::Built::Broke(why) if fall_back => {
-                    eprintln!(
-                        "note: the compiler in cancho could not build this ({}); building it with the Rust compiler",
-                        why.message.lines().next().unwrap_or("")
-                    );
-                    warn_rust_compiler_deprecated(
-                        "the compiler in cancho could not build this program",
-                    );
-                    build_with_rust(inputs, output, emit, with_std, codegen, link_libs, link_paths)
-                }
-                selfhost_build::Built::NoCode(failure) | selfhost_build::Built::Broke(failure) => {
-                    Err(failure)
-                }
-            }
-        }
-    }
-}
-
-pub(crate) fn build_with_rust(
-    inputs: &[PathBuf],
-    output: &Path,
-    emit: Emit,
-    with_std: bool,
-    codegen: Codegen<'_>,
-    link_libs: &[String],
-    link_paths: &[String],
-) -> Result<(), Failure> {
-    let Codegen { backend: backend_kind, target } = codegen;
-    let program = compile_to_ir(inputs, with_std)?;
-    let gaps = target_refusals(&program, target);
-    if !gaps.is_empty() {
-        let text: Vec<String> = match parse_program(inputs, with_std) {
-            Ok((_, map)) => gaps.iter().map(|r| r.render(&map)).collect(),
-            Err(_) => gaps.iter().map(|r| r.message.clone()).collect(),
-        };
-        return Err(refused(text.join("\n\n")));
-    }
-    // A compiler bug in the backend is a refusal with rule `internal`,
-    // exit 1, located at the function (`docs/internal-errors.md` §2).
-    // Since `--backend llvm` became the default, a *host* missing
-    // `clang` is not that -- it is exit 3, the environment, same as any
-    // other missing tool.
-    let object =
-        backend(&program, inputs, backend_kind, target).map_err(|failure| match failure {
-            BackendFailure::Refusals(refusals) => {
-                let text: Vec<String> = match parse_program(inputs, with_std) {
-                    Ok((_, map)) => refusals.iter().map(|r| r.render(&map)).collect(),
-                    Err(_) => refusals.iter().map(|r| r.message.clone()).collect(),
-                };
-                refused(text.join("\n\n"))
-            }
-            BackendFailure::Environment(message) => environment(message),
-        })?;
-
-    match emit {
-        Emit::Obj => std::fs::write(output, &object)
-            .map_err(|e| environment(format!("cannot write `{}`: {e}", output.display()))),
-        Emit::Exe => {
-            let object_path = output.with_extension("o");
-            std::fs::write(&object_path, &object).map_err(|e| {
-                environment(format!("cannot write `{}`: {e}", object_path.display()))
-            })?;
-            let result = match target {
-                Some(triple) if is_wasm(triple) => link_wasm(&object_path, output, triple),
-                _ => link(&object_path, output, link_libs, link_paths),
-            };
-            let _ = std::fs::remove_file(&object_path);
-            result
-        }
-    }
-}
-
-/// Is this triple one of WebAssembly's (`docs/wasm.md`)?
-fn is_wasm(triple: &Triple) -> bool {
-    matches!(
-        triple.architecture,
-        target_lexicon::Architecture::Wasm32 | target_lexicon::Architecture::Wasm64
-    )
-}
-
-/// Link a WebAssembly command with `wasm-ld` against a wasi-libc sysroot.
-///
-/// No C compiler driver in the way: the object and `-lc`. **Not `crt1-command.o`**: the
-/// module defines `_start` itself (`wasi_entry`), so that the command line is fetched only
-/// by a program that reads it (`docs/wasm.md`, W2c).
-/// `WASI_SYSROOT` names the sysroot (the one that holds `lib/<triple>/`),
-/// `WASM_LD` the linker. A missing one is the environment's fault, exit 3,
-/// and the message says which variable to set.
-fn link_wasm(object: &Path, output: &Path, triple: &Triple) -> Result<(), Failure> {
-    let sysroot = std::env::var("WASI_SYSROOT").map_err(|_| {
-        environment(format!(
-            "`--target {triple}` needs `WASI_SYSROOT`, a wasi-libc sysroot (the directory that \
-             holds `lib/{triple}/libc.a`)"
-        ))
+    let compiler = selfhost_build::choose(codegen.target)?;
+    let built = selfhost_build::build(selfhost_build::Job {
+        compiler: &compiler,
+        inputs,
+        output,
+        emit,
+        with_std,
+        target: codegen.target,
+        link_libs,
+        link_paths,
     })?;
-    let lib = Path::new(&sysroot).join("lib").join(triple.to_string());
-    let ld = std::env::var("WASM_LD").unwrap_or_else(|_| "wasm-ld".to_owned());
-    let status = Command::new(&ld)
-        // A call whose type disagrees with the definition is, to `wasm-ld`,
-        // a warning that swaps in a trap: the program links and dies at run
-        // time. Fatal, so it is a build failure here instead.
-        .arg("--fatal-warnings")
-        .arg(object)
-        .arg(format!("-L{}", lib.display()))
-        .arg("-lc")
-        .arg("-o")
-        .arg(output)
-        .status()
-        .map_err(|e| environment(format!("cannot run the linker `{ld}`: {e}")))?;
-    if !status.success() {
-        return Err(environment(format!("the linker `{ld}` failed with {status}")));
+    match built {
+        selfhost_build::Built::Done => Ok(()),
+        // The compiler in cancho says what it cannot do; there is no other compiler to hand the build to.
+        selfhost_build::Built::NoCode(failure) | selfhost_build::Built::Broke(failure) => {
+            Err(failure)
+        }
     }
-    Ok(())
 }
 
 /// Link with the platform C toolchain.

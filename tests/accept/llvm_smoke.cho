@@ -7,7 +7,7 @@
 // §5, before this fixture's PR corrected it) but turns out to need checked
 // arithmetic, bounds-checked indexing and string-literal data -- none of
 // which this slice lowers. This fixture is what the doc's original bullet
-// list actually describes, and `crates/cancho-codegen-llvm`'s own test
+// list actually describes, and `crates/cancho-codegen-llvm` (deleted in docs/removing-rust.md Phase 5, in git history)'s own test
 // builds it through `--backend llvm` and checks its output against the
 // Cranelift path's, which this file's ordinary place in `tests/accept/`
 // already checks against the directives below.

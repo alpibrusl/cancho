@@ -6,7 +6,7 @@
 #   --out DIR      where the result goes: DIR/cancho (stage 2) and DIR/stages/ (the three stages, for inspection)
 #   --rev COMMIT   the commit the binary reports and a pinned project is compared with (scripts/stamp-version.sh)
 #   --host TRIPLE  the host triple `--version` reports (default: from uname)
-#   --cancho0      stage 0, a `cancho` that already exists (a Rust build, or any earlier one)
+#   --cancho0      stage 0, a `cancho` written in cancho that already exists (an earlier stage 2, a release). A Rust build cannot be one: it writes no code since docs/removing-rust.md Phase 5
 #   --seed         stage 0 is the seed: `cancho0` built by clang from seed/<target>.ll.gz (scripts/seed-build.sh, docs/seed.md). The default when no --cancho0
 #                  is given, so a checkout with `clang` and nothing else builds the compiler.
 #

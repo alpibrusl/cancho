@@ -8,9 +8,8 @@
 The harnesses are `tests/programs/fuzz_<harness>.cho`: der, chain, messages,
 client and flight, and the server's (docs/tls-server.md §7): hello, the
 ClientHello parser, server, the whole server from `serve`, and clientauth (§13.11), the client's Certificate and
-CertificateVerify. Each named one is built with `afl-clang-fast` as the LLVM
-backend's `CLANG` and the linker `CC` (so every edge is instrumented and
-nothing in the compiler changes), seeded from `scripts/fuzz_corpus.py seeds`
+CertificateVerify. Each named one is built with `afl-clang-fast` as the compiler's
+`--clang` (so every edge is instrumented and nothing in the compiler changes), seeded from `scripts/fuzz_corpus.py seeds`
 and from the committed corpus in `tests/vectors/fuzz/<harness>/`, and run
 for its seconds, all of them at once, one core each. A run already under
 `<work>` is resumed, so a campaign can be split across invocations.
@@ -20,8 +19,8 @@ and hangs. `--minimize` replaces `tests/vectors/fuzz/<harness>/` with
 `afl-cmin`'s minimum of the queue. Exit status 1 if any harness has a crash
 or a hang.
 
-Needs `afl++` (`apt-get install afl++`) and a release build of the compiler
-(`cargo build --release -p cancho`), or `CANCHO` naming one.
+Needs `afl++` (`apt-get install afl++`) and a compiler written in cancho
+(`scripts/build-standalone.sh --seed`) at `target/release/cancho`, or `CANCHO` naming one.
 """
 import os
 import shutil
@@ -55,15 +54,17 @@ ENV = dict(os.environ, AFL_SKIP_CPUFREQ="1", AFL_NO_UI="1",
 def compiler():
     exe = os.environ.get("CANCHO") or os.path.join(ROOT, "target/release/cancho")
     if not os.path.exists(exe):
-        raise SystemExit("build the compiler first: cargo build --release -p cancho")
+        raise SystemExit("build the compiler first: scripts/build-standalone.sh --seed")
     return exe
 
 
 def build(work, harness):
     out = os.path.join(work, f"fuzz_{harness}")
-    env = dict(os.environ, CLANG="afl-clang-fast", CC="afl-clang-fast", AFL_QUIET="1")
+    # The compiler in cancho has no environment to read, so the instrumenting clang is named with `--clang` (an absolute path).
+    afl = shutil.which("afl-clang-fast") or sys.exit("afl-clang-fast is not on PATH (apt-get install afl++)")
+    env = dict(os.environ, AFL_QUIET="1")
     files = [os.path.join(ROOT, f) for f in [f"tests/programs/fuzz_{harness}.cho"] + FILES.get(harness, SHARED + PACKAGES)]
-    subprocess.run([compiler(), "build", "--std", *files, "-o", out], env=env, check=True)
+    subprocess.run([compiler(), "build", "--std", *files, "--clang", afl, "-o", out], env=env, check=True)
     return out
 
 

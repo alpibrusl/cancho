@@ -5,7 +5,6 @@ members = [
     "crates/cancho-types",
     "crates/cancho-id",
     "crates/cancho-ir",
-    "crates/cancho-codegen-llvm",
     "crates/cancho-vcs",
     "crates/cancho",
 ]
@@ -22,5 +21,4 @@ cancho-syntax = { path = "crates/cancho-syntax" }
 cancho-types = { path = "crates/cancho-types" }
 cancho-id = { path = "crates/cancho-id" }
 cancho-ir = { path = "crates/cancho-ir" }
-cancho-codegen-llvm = { path = "crates/cancho-codegen-llvm" }
 cancho-vcs = { path = "crates/cancho-vcs" }

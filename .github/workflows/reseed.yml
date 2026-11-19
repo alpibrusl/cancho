@@ -26,11 +26,9 @@ jobs:
             target: linux-aarch64
     steps:
       - uses: actions/checkout@v4
-      - run: cargo build --release -p cancho
-      - name: Reseed from the Rust stage 0
+      - name: Reseed from the committed seed (stage 0 is no longer a Rust build, docs/removing-rust.md)
         run: |
-          rm -f seed/*linux*
-          scripts/reseed.sh --cancho0 target/release/cancho --out reseed-out
+          scripts/reseed.sh --out reseed-out
           mkdir -p seed-written && cp seed/*linux* seed-written/
       - name: Reseed again from the seed alone
         run: |

@@ -330,6 +330,10 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "declare {i64, i1} @llvm.sadd.with.overflow.i64(i64, i64)\n");
     emit.str(st, "declare {i64, i1} @llvm.ssub.with.overflow.i64(i64, i64)\n");
     emit.str(st, "declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
+    // `add_carry` and `sub_borrow` (wordcode.cho) call the unsigned ones. Apple's clang declares an intrinsic it finds undeclared; LLVM on Linux refuses
+    // the module ("use of undefined value '@llvm.uadd.with.overflow.i64'"), which the first fuzz build on Linux with this compiler found.
+    emit.str(st, "declare {i64, i1} @llvm.uadd.with.overflow.i64(i64, i64)\n");
+    emit.str(st, "declare {i64, i1} @llvm.usub.with.overflow.i64(i64, i64)\n");
     emit.str(st, "declare void @llvm.trap()\n");
     // Every trap is one instruction on each target, as the Rust backend writes it, so that a program stops with the same
     // signal (SIGILL) whichever compiler built it: `llvm.trap` is `brk` on arm64, which is SIGTRAP.

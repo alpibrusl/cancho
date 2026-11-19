@@ -2,7 +2,7 @@ module selfhost.cryptocode;
 
 // cryptocode.cho -- the call sites of the hardware AES and carry-less-multiply builtins (`docs/crypto-builtins.md`
 // §3, §4; `docs/gcm-wide.md` §4): each checks its lengths, trapping as an index out of bounds does, then calls the
-// function the module carries (`runtime/crypto_*.ll`, written by `cancho-codegen-llvm`). Arguments are the last `n`
+// function the module carries (`runtime/crypto_*.ll`, written by `cancho-codegen-llvm` (deleted in docs/removing-rust.md Phase 5, in git history)). Arguments are the last `n`
 // entries of the argument stack, a slice being a pointer and a length.
 
 import selfhost.emit;

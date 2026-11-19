@@ -260,7 +260,7 @@ fn describe(status: &std::process::ExitStatus) -> String {
 }
 
 pub fn cmd_test(args: &[String]) -> Result<ExitCode, Failure> {
-    let crate::Invocation { inputs, with_std, backend, target, link_libs, link_paths, .. } =
+    let crate::Invocation { inputs, with_std, target, link_libs, link_paths, .. } =
         parse_args(args, false, true)?;
     if target.is_some() {
         // `test` runs each program on this host; a foreign target is not wired up
@@ -281,7 +281,7 @@ pub fn cmd_test(args: &[String]) -> Result<ExitCode, Failure> {
 
     let dir = crate::scratch::private_temp_dir("cancho-test")
         .map_err(|e| environment(format!("cannot create a temporary directory: {e}")))?;
-    let result = run_all(&dir, &inputs, &tests, with_std, backend, &link_libs, &link_paths);
+    let result = run_all(&dir, &inputs, &tests, with_std, &link_libs, &link_paths);
     let _ = std::fs::remove_dir_all(&dir);
     result
 }
@@ -291,7 +291,6 @@ pub(crate) fn run_all(
     inputs: &[PathBuf],
     tests: &[Test],
     with_std: bool,
-    backend: crate::Backend,
     link_libs: &[String],
     link_paths: &[String],
 ) -> Result<ExitCode, Failure> {
@@ -306,7 +305,7 @@ pub(crate) fn run_all(
         &exe,
         Emit::Exe,
         with_std,
-        crate::Codegen { backend, target: None },
+        crate::Codegen { target: None },
         link_libs,
         link_paths,
     )?;

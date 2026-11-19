@@ -609,10 +609,10 @@ fn render_runtime(dir: &std::path::Path) -> String {
          return \"{camera_linux}\";\n}}\n\n\
          // The thread that reaps a released child (`runtime/process.ll`).\n\
          pub fn process_text() -> [] &static [byte] {{\n    return \"{process}\";\n}}\n\n\
-         // The per-thread stack of region chunks (`cancho-codegen-llvm`'s `region_cache`).\n\
+         // The per-thread stack of region chunks (`runtime/region_*.ll`, once written by `cancho-codegen-llvm`).\n\
          pub fn region_text(darwin: bool) -> [] &static [byte] {{\n    if darwin {{\n        return \"{region_darwin}\";\n    }}\n    \
          return \"{region_linux}\";\n}}\n\n\
-         // The hardware AES and GHASH functions, written by `cancho-codegen-llvm` for each target: `target` is 1 for\n\
+         // The hardware AES and GHASH functions, once written by `cancho-codegen-llvm` for each target, now kept by hand: `target` is 1 for\n\
          // Darwin on aarch64, 2 for Linux on aarch64, 0 for Linux on x86-64.\n\
          pub fn crypto_text(target: int) -> [] &static [byte] {{\n    if target == 1 {{\n        return \"{crypto_arm_darwin}\";\n    }}\n    \
          if target == 2 {{\n        return \"{crypto_arm_linux}\";\n    }}\n    return \"{crypto_x86}\";\n}}\n\n\

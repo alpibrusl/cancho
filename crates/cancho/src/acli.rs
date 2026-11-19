@@ -145,7 +145,7 @@ fn cmd_check() -> CommandInfo {
     .add_option(
         "backend",
         "enum[llvm]",
-        "which backend generates the code check discards",
+        "which backend (only llvm; accepted and ignored)",
         Some(json!("llvm")),
     )
     .add_option(

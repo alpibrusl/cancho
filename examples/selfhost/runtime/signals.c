@@ -2,7 +2,7 @@
  * written in cancho.
  *
  * SOURCE of `signals_linux.ll` and `signals_darwin.ll` (see `net.c` for how they are made and used). It does what
- * `cancho-codegen-llvm`'s `body/signals.rs` does: on Linux `pthread_sigmask` blocks the set and a `signalfd` reads it;
+ * `cancho-codegen-llvm` (deleted in docs/removing-rust.md Phase 5, in git history)'s `body/signals.rs` does: on Linux `pthread_sigmask` blocks the set and a `signalfd` reads it;
  * on Darwin each signal is ignored and a `kqueue` watches it. The handle is the kernel's mask in the high 32 bits
  * over the descriptor in the low 32. `cancho_signal_state` is two words the module defines: the mask of every signal
  * a live claim holds, and the number of threads spawned and not yet joined.

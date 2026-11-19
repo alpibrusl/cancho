@@ -56,13 +56,6 @@ jobs:
           cargo test --workspace --exclude cancho
           cargo test -p cancho --bins
 
-      # The milestone in one line: build the smoke program and run it.
-      - name: Smoke — cancho build hello.cho && ./hello
-        run: |
-          cargo run --quiet -p cancho -- build examples/hello.cho -o hello
-          ./hello
-          test "$(./hello)" = "Hello, world!"
-
   # docs/gate.md, step G2: the gate without Rust. `scripts/gate.sh` builds the compiler from the committed seed (no Rust, only clang) and runs the stages
   # that need no `cargo`: fmt, the files budget, the seed's hash and the reject goldens. G5: this is the check a change is judged by (CONTRIBUTING.md); the Rust jobs above stay while Rust crates remain on disk.
   gate:
@@ -145,7 +138,8 @@ jobs:
             android-libboringssl-dev python3-cryptography afl++ mosquitto-clients libssl-dev curl
       - name: Compiler, and the many-connection client
         run: |
-          cargo build --release -p cancho
+          scripts/build-standalone.sh --seed --out "$RUNNER_TEMP/standalone" --rev "$(git rev-parse HEAD)"
+          mkdir -p target/release && cp "$RUNNER_TEMP/standalone/cancho" target/release/cancho
           ./target/release/cancho build --std tests/programs/tls_many.cho \
             packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server,saved}.cho \
             packages/x509/{verify,names,x509,key}.cho \
@@ -176,7 +170,8 @@ jobs:
             android-libboringssl-dev python3-cryptography afl++ mosquitto-clients libssl-dev curl
       - name: Compiler, and the server
         run: |
-          cargo build --release -p cancho
+          scripts/build-standalone.sh --seed --out "$RUNNER_TEMP/standalone" --rev "$(git rev-parse HEAD)"
+          mkdir -p target/release && cp "$RUNNER_TEMP/standalone/cancho" target/release/cancho
           echo "127.0.0.1 srv.example other.example a.wild.example" | sudo tee -a /etc/hosts
           ./target/release/cancho build --std tests/programs/tls_serve.cho \
             packages/tls/{tls,record,message,slot,cident,client12,client,hello,identity,clientauth,ticket,server,saved}.cho \
@@ -233,7 +228,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nginx python3-cryptography libssl-dev curl gcc libwolfssl-dev
       - name: Compiler
-        run: cargo build --release -p cancho
+        run: |
+          scripts/build-standalone.sh --seed --out "$RUNNER_TEMP/standalone" --rev "$(git rev-parse HEAD)"
+          mkdir -p target/release && cp "$RUNNER_TEMP/standalone/cancho" target/release/cancho
       - name: The TLS echo example (docs/tls-server.md §11)
         run: |
           ./target/release/cancho build --std examples/tls_echo/{tls_echo,echo,front,identity}.cho \
@@ -317,7 +314,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Compiler
-        run: cargo build --release -p cancho
+        run: |
+          scripts/build-standalone.sh --seed --out "$RUNNER_TEMP/standalone" --rev "$(git rev-parse HEAD)"
+          mkdir -p target/release && cp "$RUNNER_TEMP/standalone/cancho" target/release/cancho
       - name: The mutants (docs/http-server.md §11.5, docs/http-client.md §9, docs/http-server.md §12.13)
         run: |
           # A mutant that crashes dumps a core, and on a runner every dump starts `apport`: dozens of them at once, and the job's
@@ -344,7 +343,8 @@ jobs:
           rustc --version --verbose
       - name: The committed contract is satisfied (cancho satisfy)
         run: |
-          cargo build --release -p cancho
+          scripts/build-standalone.sh --seed --out "$RUNNER_TEMP/standalone" --rev "$(git rev-parse HEAD)"
+          mkdir -p target/release && cp "$RUNNER_TEMP/standalone/cancho" target/release/cancho
           ./target/release/cancho satisfy tests/satisfy/max.contract.cho tests/satisfy/max.candidate.cho --std
 
   # docs/hash-stability.md §7's plateau rule, as a checked property (#405):
