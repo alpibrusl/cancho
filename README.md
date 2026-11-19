@@ -27,9 +27,9 @@ not read `$CLANG`, which the Rust build does). The sha256 detects a damaged
 or mismatched download; it does not authenticate who published it, since the
 script and the archive both come from GitHub.
 
-What this build does not have: `--backend cranelift` and WASI targets
+What this build does not have: WASI targets
 (`--target wasm32-…`). The `cancho-rust-<commit>-<target>` asset of the same
-release is the Rust build, which has both
+release is the Rust build, which has them
 (`docs/standalone-cancho.md`).
 
 ## An example
@@ -116,7 +116,7 @@ tracks what landed, what's next, and what each slice found out.
 ## Building
 
 Using cancho does not need this section (see Install). To work on the
-compiler, or to get the Rust build (Cranelift, WASI):
+compiler, or to get the Rust build (WASI):
 
 ```sh
 git clone https://github.com/alpibrusl/cancho
@@ -132,7 +132,6 @@ reproduce itself byte for byte (`docs/standalone-cancho.md`).
 
 Green on **linux-x86_64**, **linux-aarch64** and **darwin-aarch64**. `--backend llvm` is the
 default codegen path (LLVM via `clang`, no new build dependency);
-`--backend cranelift` (the Rust build only) is faster to iterate on and used the same way.
 
 A project that pins a compiler (`cancho.toml`) installs the prebuilt one for
 that commit instead of building it:
@@ -146,10 +145,10 @@ It still needs `clang` and `cc` at build time (`docs/package-system.md` §9).
 ### The compiler's whole surface
 
 ```sh
-cancho build <file.cho>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
-cancho check <file.cho>... [--std] [--output json] [--backend cranelift|llvm]   # refuse, or say nothing
-cancho run   <file.cho>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...   # build, run, exit with the program's status
-cancho test  <file.cho>... [--std] [--backend cranelift|llvm]   # run every `fn test_*`, one process each; exit 4 if one failed
+cancho build <file.cho>... [-o <output>] [--emit exe|obj] [--std] [--backend llvm] [-l <name>]... [-L <path>]...
+cancho check <file.cho>... [--std] [--output json] [--backend llvm]   # refuse, or say nothing
+cancho run   <file.cho>... [--std] [--backend llvm] [-l <name>]... [-L <path>]...   # build, run, exit with the program's status
+cancho test  <file.cho>... [--std] [--backend llvm]   # run every `fn test_*`, one process each; exit 4 if one failed
 cancho satisfy <contract.cho> <candidate.cho> [--std]   # a contract's tests call the candidate; the verdict names the SigId
 cancho ids   <file.cho>... [--std]    # each declaration's content hash
 cancho authority <file.cho>... [--std] [--output json] [--target <triple>]  # what it can reach

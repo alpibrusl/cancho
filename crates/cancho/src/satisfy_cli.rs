@@ -109,7 +109,7 @@ pub fn cmd_satisfy(args: &[String]) -> Result<ExitCode, Failure> {
         &[contract, candidate],
         &tests,
         with_std,
-        crate::Backend::Cranelift,
+        crate::Backend::Llvm,
         &[],
         &[],
     );

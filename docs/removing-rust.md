@@ -12,7 +12,7 @@ claim below that turns out false is corrected here, in place.
 | `crates/cancho` `src/` | ~17,000 (60k with tests) | the command line, `selfhost_build.rs`, `build.rs` (generates the tables the compiler embeds) | `examples/selfhost/cli.cho` (77 files, built, §39 of `cli-in-cancho.md`) |
 | `crates/cancho/tests/` | ~42,600 in the 109 files of `conformance/`, plus `files.rs`, `fuzz.rs`, `vcs_repo.rs` | **the oracle**: conformance, parity, `files.rs` (the 2,000-line ceiling), fuzz, the `selfhost` parity tests | `cancho test` over the same programs, or a Rust shell kept on purpose (decision D3 below) |
 | `cancho-syntax`, `-types`, `-id`, `-ir` | ~35,000 | lexer, parser, checker, identities, IR | `lexer.cho`, `parser.cho`, `checker.cho`, `ids.cho`, `emit.cho` and the rest of `examples/selfhost` |
-| `cancho-codegen` | ~9,700 | Cranelift backend | nothing: retired (#666, D6) |
+| `cancho-codegen` | ~9,700 | Cranelift backend | deleted (Phase 5, step 1): retired (#666, D6) |
 | `cancho-codegen-llvm` | ~15,000 | LLVM text backend | `emit.cho`, `builder.cho` |
 | `cancho-vcs` | ~5,300 | V1 repository store | #680 (the native port; blocked on #684 to #688) |
 
@@ -100,6 +100,8 @@ is set, which is done once, with `publish`, for that last release.
 **Phase 5: delete the crates**, in this order, each a PR with the §4 gates (D2, amended 2026-11-10: no WebAssembly port to wait for, so only the open pull requests and the gates of §4 order them): `cancho-codegen` (Cranelift), `cancho-codegen-llvm`, `cancho-ir`,
 `cancho-syntax`, `cancho-types`, `cancho-id`, `cancho-vcs`, then `crates/cancho` and the workspace `Cargo.toml`, `Cargo.lock`,
 `rust-toolchain.toml`, `rustfmt.toml`, `benches/` if Rust.
+
+*Phase 5, step 1: `cancho-codegen` is deleted (2026-11-19).* Measured on this machine, clean `cargo build --release -p cancho`: before 20.3 s wall (2m00s CPU), after 11.1 s (1m11s); workspace crates 8 to 7; packages in `Cargo.lock` 133 to 92 (Cranelift, regalloc2, wasmtime-math and their dependencies); 10,607 lines removed in net (9,778 of them in the crate's `src/`). What moved rather than went: `CodegenError` (the type the LLVM backend returns) now lives in `cancho-codegen-llvm`, and `host_triple()` is `Triple::host()`. What the Rust binary lost, and how it fails now: `--backend cranelift` is a usage error (exit 2) naming D2, `cancho layout` is refused (exit 1) pointing at the compiler in cancho (`layoutrep.cho` has it; the Rust one measured with Cranelift's leaf counts), `cancho satisfy` and `cancho test` generate through LLVM. The Rust-only CLI tests that drove Cranelift's `internal` refusal were removed with it (the LLVM path's `internal` rule is still exercised by `cancho-codegen-llvm`'s tests and the compiler in cancho). `scripts/backend_compare.py` is deleted; `scripts/history.py --explain`, `scripts/kdf_mutants.py` and `benches/word_scan/run.py` use LLVM only. `--target wasm32-*` still goes through `cancho-codegen-llvm` and leaves with it. The seed and `scripts/seed-build.sh` do not read any of this: they build no Rust.
 
 **Phase 6: the move (§6).**
 

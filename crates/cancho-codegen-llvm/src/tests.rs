@@ -1246,7 +1246,7 @@ fn errno_is_translated_on_wasi_and_only_there() {
 /// value whenever there was no overflow (what the intrinsic leaves unspecified
 /// otherwise).
 fn smul_differential(definition: &str, tag: &str) -> std::process::Output {
-    let host = cancho_codegen::host_triple();
+    let host = Triple::host();
     let module = format!(
         r#"target triple = "{host}"
 

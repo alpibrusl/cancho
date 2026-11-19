@@ -8,7 +8,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-cancho-codegen.workspace = true
 cancho-ir.workspace = true
 cancho-types.workspace = true
 target-lexicon = "0.13.5"

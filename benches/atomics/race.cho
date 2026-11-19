@@ -8,7 +8,7 @@
 // 400,000,000) and `L` if some were. Measured: `L` on every run, both backends, arm64 macOS and x86-64 Linux.
 // The control (join the first thread before spawning the second) prints `E`.
 //
-// Run: cancho run benches/atomics/race.cho --backend cranelift     (and --backend llvm)
+// Run: cancho run benches/atomics/race.cho --backend llvm
 
 edition 6;
 

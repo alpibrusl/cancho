@@ -110,7 +110,7 @@ fn cmd_build() -> CommandInfo {
     .add_option("std", "bool", "make the standard library's source available", None)
     .add_option(
         "backend",
-        "enum[cranelift|llvm]",
+        "enum[llvm]",
         "which backend generates code",
         Some(json!("llvm")),
     )
@@ -144,7 +144,7 @@ fn cmd_check() -> CommandInfo {
     .add_option("output", "enum[json]", "report every independent refusal as structured data", None)
     .add_option(
         "backend",
-        "enum[cranelift|llvm]",
+        "enum[llvm]",
         "which backend generates the code check discards",
         Some(json!("llvm")),
     )
@@ -176,7 +176,7 @@ fn cmd_run() -> CommandInfo {
     .add_option("std", "bool", "make the standard library's source available", None)
     .add_option(
         "backend",
-        "enum[cranelift|llvm]",
+        "enum[llvm]",
         "which backend generates code",
         Some(json!("llvm")),
     )
@@ -213,7 +213,7 @@ fn cmd_test() -> CommandInfo {
     .add_option("std", "bool", "make the standard library's source available", None)
     .add_option(
         "backend",
-        "enum[cranelift|llvm]",
+        "enum[llvm]",
         "which backend generates code",
         Some(json!("llvm")),
     )

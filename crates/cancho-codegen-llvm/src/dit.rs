@@ -150,7 +150,7 @@ long cancho_test_dit(void) {
         }
         let dir = std::env::temp_dir().join(format!("cancho-dit-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("a temporary directory");
-        let host = cancho_codegen::host_triple();
+        let host = target_lexicon::Triple::host();
         // As the backend builds: `clang` makes the object, `cc` links.
         let object =
             crate::run_clang(&module(&host.to_string()), &host).expect("clang compiles it");

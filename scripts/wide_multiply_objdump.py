@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The object code of `mul_wide`, `add_carry` and `sub_borrow` (docs/wide-multiply.md §5).
 
-    python3 scripts/wide_multiply_objdump.py target/release/cancho [--target <triple>] [--backend llvm|cranelift]
+    python3 scripts/wide_multiply_objdump.py target/release/cancho [--target <triple>] [--backend llvm]
 
 Builds `tests/programs/wide_multiply_ct.cho` to an object, disassembles it, and checks
 that `words` (the three builtins and nothing else) is straight-line code: no branch, no
