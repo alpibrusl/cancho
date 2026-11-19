@@ -62,8 +62,7 @@ follows it** or the gap is written down. That means a new or changed:
 
 - **rule** (`crates/cancho-syntax/src/rules.rs`): a number and a name in `examples/selfhost/rules.cho`, numbers
   sequential, and the check that raises it;
-- **builtin, prelude type or effect label**: the tables regenerate with
-  `UPDATE_SELFHOST_TABLES=1 cargo test -p cancho-ir selfhost_tables`, and the code for it goes in `examples/selfhost`;
+- **builtin, prelude type or effect label**: the tables are checked-in data (`scripts/builtin_tables.py check|append`; the Rust test that generated them is deleted, `docs/removing-rust.md` Phase 5), and the code for it goes in `examples/selfhost`;
 - **runtime support or code generation**: the text in `examples/selfhost/runtime*` (the `.ll` and `.c` files under `runtime/` are
   sources now, with `regen.cho` embedding them in `runtime.cho`) and the backend's behaviour in `emit.cho`; the Rust LLVM backend that once
   wrote them is deleted (`docs/removing-rust.md`, Phase 5);
@@ -99,12 +98,10 @@ When a file gets close, split it **by concern**, not by size:
 
 - `lib.rs` is the table of contents. It holds the crate's documentation,
   its `mod` declarations, its public re-exports and its entry points,
-  and little else. `cancho-ir` is the example: `ir.rs` is the IR,
-  `defs.rs` the declarations, `function.rs` one function at a time, and
-  `lower/` the walk over a body.
+  and little else. `cancho-syntax` is the example: `ast.rs` is the tree,
+  `parser.rs` the grammar, and `rules.rs` the refusals.
 - **A large `impl` can be split across child modules.** Children see
-  their parent's private fields, so `lower/stmt.rs`, `lower/memory.rs`
-  and `lower/expr.rs` each hold part of `impl FnLowering` without making
+  their parent's private fields, so `parser/*.rs` each hold part of the parser without making
   anything more visible.
 - **Unit tests live in their own files**, beside the code. They are
   declared with `#[cfg(test)] #[path = "tests/…"] mod …;` so a test's
@@ -123,9 +120,7 @@ When a file gets close, split it **by concern**, not by size:
 
 - **Visibility is as narrow as it can be.** Crate-internal items are
   `pub(crate)`, and the public API is what `lib.rs` re-exports.
-- **Imports are explicit in new code.** The modules split out of
-  `cancho-ir` start with `use crate::*;` because the split was a pure
-  move out of one namespace. New modules name what they use.
+- **Imports are explicit in new code.** New modules name what they use.
 - **Every refusal has a rule tag** (`cancho_syntax::Rule`), a located
   span where one exists, and a fixture under `tests/reject/` that
   reaches it (`every_rule_has_a_fixture`).
