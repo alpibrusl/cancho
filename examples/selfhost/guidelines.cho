@@ -426,9 +426,8 @@ fn print_9[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "* **`Fs(\"/data\")` bounds the text of a path, not the files it reaches.** A symbolic link inside `/data` that points\n");
     b = buffer.append(heap, b, "  outside it is followed by the operation, and so is a hard link, and the report still says `fs_read(\"/data\")`.\n");
     b = buffer.append(heap, b, "  Measured: both were read. If the directory must hold against links, open it once with `open_dir` and read beneath\n");
-    b = buffer.append(heap, b, "  the handle (§3.7): that refuses a symbolic link and is reported as `dir_read`. A hard link is another name for the same\n");
-    b = buffer.append(heap, b, "  file, so no open flag can refuse it; `dirs.confined` (`packages/confined`, edition 12) asks `dir_nlink` first and refuses a file that has more\n");
-    b = buffer.append(heap, b, "  than one name. Keep untrusted writers out of the directory all the same: the question and the open are two calls.\n");
+    b = buffer.append(heap, b, "  the handle (§3.7): that refuses a symbolic link and is reported as `dir_read`. It does not refuse a hard link, which\n");
+    b = buffer.append(heap, b, "  is another name for the same file; keep untrusted writers out of the directory.\n");
     b = buffer.append(heap, b, "* Do not write your own `starts_with` over the bound. It will agree with the runtime until the first `/opt/xevil`,\n");
     b = buffer.append(heap, b, "  `a/../b` or 4096-byte path. `docs/processes.md` §4.13 has the rule.\n");
     b = buffer.append(heap, b, "\n");
@@ -453,12 +452,12 @@ fn print_9[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "        Opened::Ok(file) => {\n");
     b = buffer.append(heap, b, "            var f = file;\n");
     b = buffer.append(heap, b, "            borrow mut f as &!h in {\n");
+    b = buffer.append(heap, b, "                match file_read(h, into) {\n");
     return b;
 }
 
 fn print_10[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "                match file_read(h, into) {\n");
     b = buffer.append(heap, b, "                    Read::Got(n) => {\n");
     b = buffer.append(heap, b, "                        got = n;\n");
     b = buffer.append(heap, b, "                    }\n");
@@ -498,12 +497,12 @@ fn print_10[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "                                }\n");
     b = buffer.append(heap, b, "                            }\n");
     b = buffer.append(heap, b, "                        }\n");
+    b = buffer.append(heap, b, "                        unbox_slice(h, buf);\n");
     return b;
 }
 
 fn print_11[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "                        unbox_slice(h, buf);\n");
     b = buffer.append(heap, b, "                    }\n");
     b = buffer.append(heap, b, "                }\n");
     b = buffer.append(heap, b, "                dir_close(held);\n");
@@ -519,7 +518,7 @@ fn print_11[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "```\n");
     b = buffer.append(heap, b, "\n");
-    b = buffer.append(heap, b, "A hard link is the one thing this does not refuse: it is another name for a file that is already inside the directory, so no open flag can tell. `dir_nlink(dir, name)` (edition 12, the compiler in cancho only) answers how many names a file has: ask it about the last component before opening, and refuse more than one. `packages/confined/confined.cho` is that walk (`dirs.confined.open_file`, same signature as `std.dirs.open_file`; name the file on the command line beside your program). The question and the open are two calls, so a link made between them is not seen: keep untrusted writers out of the directory.\n");
+    b = buffer.append(heap, b, "A hard link is the one thing this does not refuse: it is another name for a file that is already inside the directory, so no open flag can tell. Keep untrusted writers out of the directory.\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "* **Programs** (edition 9). `exec_spawn_under(exec, dir, \"worker.sh\", args, env, stdin, stdout, stderr)` starts the program the name names *in that directory*, which is also the child's working directory. It needs the `Exec` that\n");
     b = buffer.append(heap, b, "  bounds nothing (a narrowed one is `capability-misused`: a run-time directory cannot be shown to lie under a literal), and its row is `exec_under`, so the report says \"programs of a directory I was given\" and not `exec(\"\")`. The name\n");
@@ -543,12 +542,12 @@ fn print_11[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "fn main(world: World) -> [] int {\n");
     b = buffer.append(heap, b, "    let Split { io, ffi, fs, heap, args } = split(world);\n");
+    b = buffer.append(heap, b, "    release(io); release(ffi); release(fs); release(heap); release(args);\n");
     return b;
 }
 
 fn print_12[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "    release(io); release(ffi); release(fs); release(heap); release(args);\n");
     b = buffer.append(heap, b, "    return 0;\n");
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "```\n");
@@ -588,12 +587,12 @@ fn print_12[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "> table was not, which is exactly why the wrong thing survived in it. It\n");
     b = buffer.append(heap, b, "> is now.\n");
     b = buffer.append(heap, b, "\n");
+    b = buffer.append(heap, b, "| | |\n");
     return b;
 }
 
 fn print_13[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "| | |\n");
     b = buffer.append(heap, b, "|---|---|\n");
     b = buffer.append(heap, b, "| **An arena is one 64 KiB chunk (65,536 bytes: 8,192 `int`s or 65,536 `byte`s in all), and exhaustion traps** | Not an error — SIGILL, with a line on stderr naming the cause; a constant size past the chunk is refused at `check` (`region-chunk-exceeded`, `docs/region-limit.md`). **Big data goes on the heap, in a `box_slice`.** `examples/cut/` sized a line buffer to what fit beside its bitmap, and `line-reading.md` §2 is what that cost: a longer line was silently truncated and the program answered the wrong field. **Use `std.buffer` on the heap when the size is not known** |\n");
     b = buffer.append(heap, b, "| **`alloc_slice` already yields a reference** | A slice *is* a reference. `borrow mut` on one is a reference to a reference, and the refusal says `expected [byte], found &!a [byte]` |\n");
@@ -633,12 +632,12 @@ fn print_13[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "        // number needed, with an argument that can be read.\n");
     b = buffer.append(heap, b, "        room[0] = byte_of('0' + size % 10);\n");
     b = buffer.append(heap, b, "    }\n");
+    b = buffer.append(heap, b, "    release(heap);\n");
     return b;
 }
 
 fn print_14[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "    release(heap);\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "    if facts(2.0) < 0.0 {\n");
     b = buffer.append(heap, b, "        return size;\n");
@@ -678,12 +677,12 @@ fn print_14[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "import std.json;\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "// Read `age` from a request body; answer `{\"next_age\":N}`, or `{\"error\":...}`.\n");
+    b = buffer.append(heap, b, "fn reply[&h, &s](heap: &!h Heap, body: &s [byte]) -> [heap] buffer.Buffer {\n");
     return b;
 }
 
 fn print_15[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "fn reply[&h, &s](heap: &!h Heap, body: &s [byte]) -> [heap] buffer.Buffer {\n");
     b = buffer.append(heap, b, "    var w = json.writer(heap, 64);\n");
     b = buffer.append(heap, b, "    region a {\n");
     b = buffer.append(heap, b, "        let tape = alloc_slice[a](json.tape_len(body), 0);\n");
@@ -723,12 +722,12 @@ fn print_15[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "you `match` on the id, so there is no handler registry:\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "```cancho\n");
+    b = buffer.append(heap, b, "import std.buffer;\n");
     return b;
 }
 
 fn print_16[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "import std.buffer;\n");
     b = buffer.append(heap, b, "import std.http;\n");
     b = buffer.append(heap, b, "import std.route;\n");
     b = buffer.append(heap, b, "\n");
@@ -768,12 +767,12 @@ fn print_16[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "    let Split { io, ffi, fs, heap, args } = split(world);\n");
     b = buffer.append(heap, b, "    release(ffi); release(fs); release(args); release(io);\n");
     b = buffer.append(heap, b, "    borrow mut heap as &!h in {\n");
+    b = buffer.append(heap, b, "        var router = route.empty(h);\n");
     return b;
 }
 
 fn print_17[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "        var router = route.empty(h);\n");
     b = buffer.append(heap, b, "        router = route.add(h, router, \"GET\", \"/users/:id\", 1);\n");
     b = buffer.append(heap, b, "        borrow router as &r in {\n");
     b = buffer.append(heap, b, "            let ok = handle(h, r, \"GET /users/42 HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n\");\n");
@@ -813,12 +812,12 @@ fn print_17[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "```cancho\n");
     b = buffer.append(heap, b, "import std.option;\n");
+    b = buffer.append(heap, b, "import std.result;\n");
     return b;
 }
 
 fn print_18[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "import std.result;\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "fn halve(n: int) -> [] result.Result[int, &static [byte]] {\n");
     b = buffer.append(heap, b, "    if n < 0 {\n");
@@ -858,12 +857,12 @@ fn print_18[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "fn halved_or_zero(n: int) -> [] int {\n");
+    b = buffer.append(heap, b, "    match halve(n) {\n");
     return b;
 }
 
 fn print_19[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "    match halve(n) {\n");
     b = buffer.append(heap, b, "        result.Result::Ok(v) => { return v; }\n");
     b = buffer.append(heap, b, "        result.Result::Err(_) => { return 0; }\n");
     b = buffer.append(heap, b, "    }\n");
@@ -903,12 +902,12 @@ fn print_19[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "    var found = 0 - 1;\n");
     b = buffer.append(heap, b, "    while i < len(s) && found < 0 {\n");
     b = buffer.append(heap, b, "        if int_of(s[i]) == c {\n");
+    b = buffer.append(heap, b, "            found = i;\n");
     return b;
 }
 
 fn print_20[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "            found = i;\n");
     b = buffer.append(heap, b, "        }\n");
     b = buffer.append(heap, b, "        i = i + 1;\n");
     b = buffer.append(heap, b, "    }\n");
@@ -948,12 +947,12 @@ fn print_20[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "element with `int_of`, and build with `append`, `push` and `push_nat`:\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "```cancho\n");
+    b = buffer.append(heap, b, "import std.buffer;\n");
     return b;
 }
 
 fn print_21[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "import std.buffer;\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "fn is_digit(c: int) -> [] bool {\n");
     b = buffer.append(heap, b, "    return c >= 48 && c <= 57;\n");
@@ -993,12 +992,12 @@ fn print_21[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "A byte compared with an integer literal is the refusal a model meets first:\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "```cancho-refused\n");
+    b = buffer.append(heap, b, "//~ RULE type-mismatch\n");
     return b;
 }
 
 fn print_22[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "//~ RULE type-mismatch\n");
     b = buffer.append(heap, b, "fn is_zero[&r](s: &r [byte]) -> [] bool {\n");
     b = buffer.append(heap, b, "    return s[0] == 48;\n");
     b = buffer.append(heap, b, "}\n");
@@ -1038,12 +1037,12 @@ fn print_22[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "    return got;\n");
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "```\n");
+    b = buffer.append(heap, b, "\n");
     return b;
 }
 
 fn print_23[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "```cancho\n");
     b = buffer.append(heap, b, "import std.buffer;\n");
     b = buffer.append(heap, b, "\n");
@@ -1083,12 +1082,12 @@ fn print_23[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "```cancho\n");
     b = buffer.append(heap, b, "edition 7;\n");
+    b = buffer.append(heap, b, "fn copy_of[&h, &r](heap: &!h Heap, s: &r [byte]) -> [heap] Box[[byte]] {\n");
     return b;
 }
 
 fn print_24[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "fn copy_of[&h, &r](heap: &!h Heap, s: &r [byte]) -> [heap] Box[[byte]] {\n");
     b = buffer.append(heap, b, "    let b = box_slice(heap, len(s), byte_of(0));\n");
     b = buffer.append(heap, b, "    borrow mut b as &!w in {\n");
     b = buffer.append(heap, b, "        copy_into(contents(w), s);\n");
@@ -1128,12 +1127,12 @@ fn print_24[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "    let b = box_slice(heap, len(s), byte_of(0));\n");
     b = buffer.append(heap, b, "    borrow mut b as &!w in {\n");
     b = buffer.append(heap, b, "        copy_into(contents(w), s);\n");
+    b = buffer.append(heap, b, "    }\n");
     return b;
 }
 
 fn print_25[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "    }\n");
     b = buffer.append(heap, b, "    return b;\n");
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "\n");
@@ -1173,12 +1172,12 @@ fn print_25[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "    return n - 5;\n");
     b = buffer.append(heap, b, "}\n");
     b = buffer.append(heap, b, "```\n");
+    b = buffer.append(heap, b, "\n");
     return b;
 }
 
 fn print_26[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "**A list of strings is `List[Box[Box[[byte]]]]`, one `Box` more than it looks\n");
     b = buffer.append(heap, b, "like it needs.** A plain `List[Box[[byte]]]` type-checks and then fails to\n");
     b = buffer.append(heap, b, "compile once it is walked through a reference (the compiler cannot bind a\n");
@@ -1218,12 +1217,12 @@ fn print_26[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "        list.List::Cons(_, rest) => { return 1 + count(contents(rest)); }\n");
     b = buffer.append(heap, b, "    }\n");
     b = buffer.append(heap, b, "}\n");
+    b = buffer.append(heap, b, "\n");
     return b;
 }
 
 fn print_27[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     var b = out;
-    b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "fn main(world: World) -> [] int {\n");
     b = buffer.append(heap, b, "    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);\n");
     b = buffer.append(heap, b, "    release(ffi); release(fs); release(args); release(io); release(net); release(clock); release(signals); release(exec); release(heap);\n");
