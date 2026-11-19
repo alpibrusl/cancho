@@ -11,7 +11,7 @@
 # Stages: fmt (`cancho fmt --check`), files (scripts/files-budget.cho: no source file over 2,000
 # lines), seed (scripts/seed-build.sh against the committed seed: the hash matches and clang builds it), walk (tests/run.cho: every fixture of
 # tests/accept and every example built and run, every fixture of tests/reject refused by its rule; `--selfhost`, since the compiler is the one in cancho), reject
-# (scripts/reject_golden.py check against tests/reject.golden), tests (every `cancho test` run listed in tests/cancho-tests.txt, with the number of tests it must pass; the scripts of
+# (scripts/reject-golden.cho check against tests/reject.golden), tests (every `cancho test` run listed in tests/cancho-tests.txt, with the number of tests it must pass; the scripts of
 # tests/commands run through tests/commands/script_tests.cho, which are what the Rust conformance suite was, G4).
 # Run from anywhere; it works from the root of the repository. Exit status: 0 if every stage ran and passed, 1 if one failed, 2 for a bad call.
 set -u
@@ -103,7 +103,10 @@ fi
 
 if wanted reject; then
   stage "reject: the rules each program of tests/reject is refused by"
-  python3 scripts/reject_golden.py check "$cancho" || fail reject
+  scratch=$(mktemp -d "${TMPDIR:-/tmp}/gate-reject.XXXXXX") || exit 2
+  "$cancho" build scripts/reject-golden.cho tests/support/harness.cho --std -o "$scratch/reject-golden" || { rm -rf "$scratch"; fail reject; }
+  "$scratch/reject-golden" check "$cancho" || { rm -rf "$scratch"; fail reject; }
+  rm -rf "$scratch"
 fi
 
 stage "ok"

@@ -1,6 +1,6 @@
 # tests/reject.golden: what `cancho check --output json` says about each program of tests/reject.
 # file<TAB>rule<TAB>line:column<TAB>message. Recorded from the Rust front end (2026-11-05, main 4fafbef2).
-# scripts/reject_golden.py check CANCHO compares; do not regenerate from the compiler under test.
+# scripts/reject-golden.cho check CANCHO compares; do not regenerate from the compiler under test.
 and_on_ints.cho	type-mismatch	5:8	expected `bool`, found `int`
 annotation_mismatch.cho	type-mismatch	5:18	expected `int`, found `bool`
 arena_holds_res.cho	mode-bound-violated	31:26	`Ticket` is `res`, and an arena holds `val` data only: releasing one reclaims memory and runs nothing, so a linear obligation put inside would be dropped rather than discharged

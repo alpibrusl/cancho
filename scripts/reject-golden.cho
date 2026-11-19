@@ -1,0 +1,581 @@
+edition 7;
+module reject_golden;
+
+// reject-golden.cho -- record or check the reject goldens (`docs/removing-rust.md` phase 1b, #488, #491; `docs/gate.md`, the port of `scripts/reject_golden.py`). Build it with the harness
+// (`cancho run` takes no arguments for the program) and run it from the root of the repository:
+//
+//     cancho build scripts/reject-golden.cho tests/support/harness.cho --std -o EXE
+//     EXE record CANCHO            # rewrite tests/reject.golden from CANCHO's `check --output json`
+//     EXE check CANCHO             # the rules CANCHO refuses each program by (as a multiset) against tests/reject.golden; exit 1 on a difference
+//     EXE check CANCHO --exact     # also line:column and message (the Rust front end's wording; the compiler in cancho differs by design)
+//
+// tests/reject.golden has one line per refusal: file, rule, line:column (`-` for none), message (tab separated; `\\`, `\n`, `\t` escaped). It was recorded once from the Rust front end,
+// so that the answer no longer depends on that compiler existing. `check` with the `cancho` written in cancho is the test that it still gives the same rule. Re-record only when a refusal
+// is changed on purpose, in the PR that changes it, saying why. A program whose `check --output json` prints no JSON is recorded as `NAME<TAB>NOJSON<TAB>exitN`; a program with a
+// `//~ TARGET T` line is checked with `--target T`.
+//
+// `check` compares rules only, by decision (#491, 2026-11-05): the compiler in cancho says the rule's sentence (#479) and reports some positions at another column than the Rust front
+// end. Programs in tests/reject.known (`name  # reason`) are skipped: they cannot be refused yet by a compiler with no WebAssembly target (#486). It prints how many programs differ in
+// position, as a count. A difference is one line, `name: golden [..], got [..]`; the exit status is 1 for any, 2 for a bad call.
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import std.io as console;
+import std.json;
+import harness;
+
+// The three lines `record` writes before the refusals.
+fn header() -> [] &static [byte] {
+    return "# tests/reject.golden: what `cancho check --output json` says about each program of tests/reject.\n# file<TAB>rule<TAB>line:column<TAB>message. Recorded from the Rust front end (2026-11-05, main 4fafbef2).\n# scripts/reject-golden.cho check CANCHO compares; do not regenerate from the compiler under test.\n";
+}
+
+// ---- the refusals of the compiler under test -------------------------------------------------------------------------------------------------------------------
+
+// `text` and `s`, a backslash, a newline and a tab escaped.
+fn push_escaped[&h, &s](heap: &!h Heap, text: buffer.Buffer, s: &s [byte]) -> [heap] buffer.Buffer {
+    var out = text;
+    var k = 0;
+    while k < len(s) {
+        let c = s[k];
+        if c == byte_of('\\') {
+            out = buffer.append(heap, out, "\\\\");
+        } else if c == byte_of('\n') {
+            out = buffer.append(heap, out, "\\n");
+        } else if c == byte_of('\t') {
+            out = buffer.append(heap, out, "\\t");
+        } else {
+            out = buffer.push(heap, out, c);
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// The string at node `i`, decoded and escaped, added to `out`.
+fn push_string[&h, &s, &t](heap: &!h Heap, out: buffer.Buffer, src: &s [byte], tape: &t [int], i: int) -> [heap] buffer.Buffer {
+    let n = json.string_length(src, tape, i);
+    if n <= 0 {
+        return out;
+    }
+    var b = out;
+    let room = box_slice(heap, n, byte_of(0));
+    var decoded = room;
+    borrow mut decoded as &!dw in {
+        let c = contents(dw);
+        let wrote = json.string_into(src, tape, i, c);
+        var k = 0;
+        while k < wrote {
+            let one = c[k];
+            if one == byte_of('\\') {
+                b = buffer.append(heap, b, "\\\\");
+            } else if one == byte_of('\n') {
+                b = buffer.append(heap, b, "\\n");
+            } else if one == byte_of('\t') {
+                b = buffer.append(heap, b, "\\t");
+            } else {
+                b = buffer.push(heap, b, one);
+            }
+            k = k + 1;
+        }
+    }
+    unbox_slice(heap, decoded);
+    return b;
+}
+
+// `name<TAB>NOJSON<TAB>exitN\n`.
+fn no_json[&h, &n](heap: &!h Heap, out: buffer.Buffer, name: &n [byte], code: int) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, name);
+    b = buffer.append(heap, b, "\tNOJSON\texit");
+    if code < 0 {
+        b = buffer.push(heap, b, byte_of('-'));
+        b = buffer.push_nat(heap, b, 0 - code);
+    } else {
+        b = buffer.push_nat(heap, b, code);
+    }
+    return buffer.push(heap, b, byte_of('\n'));
+}
+
+// The rows `check --output json` printed in `stdout` (a document with a `refused` array), added to `out`; false, and nothing added, when it is not one.
+fn rows_of_json[&h, &n, &s](heap: &!h Heap, out: buffer.Buffer, name: &n [byte], src: &s [byte]) -> [heap] (buffer.Buffer, bool) {
+    var b = out;
+    var good = false;
+    let tape = box_slice(heap, json.tape_len(src), 0);
+    var owned = tape;
+    borrow mut owned as &!tw in {
+        let t = contents(tw);
+        let nodes = json.parse(src, t);
+        if nodes >= 0 && json.is_object(t, 0) {
+            let refused = json.get(src, t, 0, "refused");
+            if json.is_array(t, refused) {
+                good = true;
+                var k = 0;
+                while k < json.count(t, refused) {
+                    let r = json.at(t, refused, k);
+                    b = buffer.append(heap, b, name);
+                    b = buffer.push(heap, b, byte_of('\t'));
+                    b = push_string(heap, b, src, t, json.get(src, t, r, "rule"));
+                    b = buffer.push(heap, b, byte_of('\t'));
+                    let position = json.get(src, t, r, "position");
+                    if json.is_object(t, position) {
+                        b = buffer.push_nat(heap, b, json.to_int(src, t, json.get(src, t, position, "line")));
+                        b = buffer.push(heap, b, byte_of(':'));
+                        b = buffer.push_nat(heap, b, json.to_int(src, t, json.get(src, t, position, "column")));
+                    } else {
+                        b = buffer.push(heap, b, byte_of('-'));
+                    }
+                    b = buffer.push(heap, b, byte_of('\t'));
+                    b = push_string(heap, b, src, t, json.get(src, t, r, "message"));
+                    b = buffer.push(heap, b, byte_of('\n'));
+                    k = k + 1;
+                }
+            }
+        }
+    }
+    unbox_slice(heap, owned);
+    return (b, good);
+}
+
+// The first `//~ TARGET T` line of `source`: its `T`, trimmed, in `target`; whether there is one.
+fn target_of[&h, &s](heap: &!h Heap, source: &s [byte]) -> [heap] (buffer.Buffer, bool) {
+    var target = buffer.empty(heap, 16);
+    var found = false;
+    let lines = bytes.count_byte(source, 10) + 1;
+    var n = 1;
+    while n <= lines && !found {
+        let line = bytes.field(source, 10, n);
+        if bytes.starts_with(line, "//~ TARGET ") {
+            target = buffer.append(heap, target, bytes.trim(line[11..len(line)]));
+            found = true;
+        }
+        n = n + 1;
+    }
+    return (target, found);
+}
+
+// One program of tests/reject: `cancho check PATH --output json [--target T]` and what it said, as rows added to `out`.
+fn refusals_of[&h, &x, &c, &f, &b, &p, &n](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte], path: &p [byte], name: &n [byte], acc: buffer.Buffer) -> [heap, exec(""), clock, poll, fs_read(""), file_read] buffer.Buffer {
+    var rows = acc;
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, path);
+    var command = harness.word(heap, buffer.empty(heap, 64), "check");
+    command = harness.word(heap, command, path);
+    command = harness.word(heap, command, "--output");
+    command = harness.word(heap, command, "json");
+    borrow data as &db in {
+        let (target, found) = target_of(heap, buffer.bytes(db));
+        if found {
+            command = harness.word(heap, command, "--target");
+            borrow target as &tb in {
+                command = harness.word(heap, command, buffer.bytes(tb));
+            }
+        }
+        buffer.drop(heap, target);
+    }
+    buffer.drop(heap, data);
+    let harness.Ended { out, err, kind, code } = harness.spawn_capture(heap, exec, clock, bin, command, "", "PATH=/usr/bin:/bin\0");
+    var written = false;
+    borrow out as &sb in {
+        let (more, good) = rows_of_json(heap, rows, name, buffer.bytes(sb));
+        rows = more;
+        written = good;
+    }
+    if !written {
+        rows = no_json(heap, rows, name, code);
+    }
+    buffer.drop(heap, out);
+    buffer.drop(heap, err);
+    return rows;
+}
+
+// Every program of tests/reject, sorted by name, refused or not: the rows `record` writes.
+fn refusals[&h, &x, &c, &f, &b](heap: &!h Heap, exec: &x Exec(""), clock: &c Clock, fs: &f Fs(""), bin: &b [byte]) -> [heap, exec(""), clock, poll, fs_read(""), file_read, dir_read] buffer.Buffer {
+    var rows = buffer.empty(heap, 65536);
+    match open_dir(fs, "tests/reject") {
+        DirOpened::Failed(reason) => {
+        }
+        DirOpened::Ok(opened) => {
+            var dir = opened;
+            borrow dir as &dh in {
+                let names = dirs.list(heap, dh, 100000);
+                borrow names as &nb in {
+                    var at = 0;
+                    while at < dirs.count(nb) {
+                        let name = dirs.name(nb, at);
+                        if dirs.kind(nb, at) == dirs.kind_file() && bytes.ends_with(name, ".cho") && !bytes.starts_with(name, ".") {
+                            let path = harness.joined(heap, "tests/reject", name);
+                            borrow path as &pb in {
+                                rows = refusals_of(heap, exec, clock, fs, bin, buffer.bytes(pb), name, rows);
+                            }
+                            buffer.drop(heap, path);
+                        }
+                        at = at + 1;
+                    }
+                }
+                dirs.drop(heap, names);
+            }
+            dir_close(dir);
+        }
+    }
+    return rows;
+}
+
+// ---- the tables ------------------------------------------------------------------------------------------------------------------------------------------------
+
+// The end of the line that starts at `from`: the index of its newline, or the length of the text.
+fn line_end[&t](text: &t [byte], from: int) -> [] int {
+    var e = from;
+    while e < len(text) && text[e] != byte_of('\n') {
+        e = e + 1;
+    }
+    return e;
+}
+
+// Whether a line of a table is a row (not blank, not a comment).
+fn is_row[&t](line: &t [byte]) -> [] bool {
+    return len(line) > 0 && line[0] != byte_of('#');
+}
+
+// `list` (one item per line, sorted bytewise) with `item` added in its place; a `unique` list leaves an item it already has.
+fn insert_sorted[&h, &t](heap: &!h Heap, list: buffer.Buffer, item: &t [byte], unique: bool) -> [heap] buffer.Buffer {
+    var at = 0;
+    var dup = false;
+    borrow list as &lb in {
+        let text = buffer.bytes(lb);
+        var pos = 0;
+        var placed = false;
+        at = len(text);
+        while pos < len(text) && !placed {
+            let e = line_end(text, pos);
+            let order = bytes.compare(text[pos..e], item);
+            if order == 0 {
+                dup = true;
+            }
+            if order > 0 {
+                at = pos;
+                placed = true;
+            }
+            pos = e + 1;
+        }
+    }
+    if unique && dup {
+        return list;
+    }
+    var out = buffer.empty(heap, 64);
+    borrow list as &lb in {
+        let text = buffer.bytes(lb);
+        out = buffer.append(heap, out, text[0..at]);
+        out = buffer.append(heap, out, item);
+        out = buffer.push(heap, out, byte_of('\n'));
+        out = buffer.append(heap, out, text[at..len(text)]);
+    }
+    buffer.drop(heap, list);
+    return out;
+}
+
+// The field `column` (1 is the file) of the rows of `text`, sorted, one per line: all the rows if `everything`, else the rows of the file `name`; `unique` keeps each value once.
+fn gather[&h, &t, &n](heap: &!h Heap, text: &t [byte], name: &n [byte], column: int, everything: bool, unique: bool) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    var pos = 0;
+    while pos < len(text) {
+        let e = line_end(text, pos);
+        let row = text[pos..e];
+        if is_row(row) && (everything || bytes.equal(bytes.field(row, 9, 1), name)) {
+            out = insert_sorted(heap, out, bytes.field(row, 9, column), unique);
+        }
+        pos = e + 1;
+    }
+    return out;
+}
+
+// Whether `text` has `row` among its rows.
+fn has_row[&t, &r](text: &t [byte], row: &r [byte]) -> [] bool {
+    var pos = 0;
+    while pos < len(text) {
+        let e = line_end(text, pos);
+        let line = text[pos..e];
+        if is_row(line) && bytes.equal(line, row) {
+            return true;
+        }
+        pos = e + 1;
+    }
+    return false;
+}
+
+// `out` and `prefix row` for each row of `from` that `other` does not have.
+fn missing_rows[&h, &f, &o, &p](heap: &!h Heap, out: buffer.Buffer, from: &f [byte], other: &o [byte], prefix: &p [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    var pos = 0;
+    while pos < len(from) {
+        let e = line_end(from, pos);
+        let row = from[pos..e];
+        if is_row(row) && !has_row(other, row) {
+            b = buffer.append(heap, b, prefix);
+            b = buffer.append(heap, b, row);
+            b = buffer.push(heap, b, byte_of('\n'));
+        }
+        pos = e + 1;
+    }
+    return b;
+}
+
+// The names tests/reject.known lists: the text before a `#`, trimmed, one per line, sorted, once each.
+fn known_names[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 64);
+    var pos = 0;
+    while pos < len(text) {
+        let e = line_end(text, pos);
+        let line = text[pos..e];
+        var stop = 0;
+        while stop < len(line) && line[stop] != byte_of('#') {
+            stop = stop + 1;
+        }
+        let head = bytes.trim(line[0..stop]);
+        if len(head) > 0 {
+            out = insert_sorted(heap, out, head, true);
+        }
+        pos = e + 1;
+    }
+    return out;
+}
+
+// The sorted lines of `list` as a Python-style list of strings: `['a', 'b']`.
+fn listed[&h, &t](heap: &!h Heap, out: buffer.Buffer, list: &t [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.push(heap, out, byte_of('['));
+    var pos = 0;
+    while pos < len(list) {
+        let e = line_end(list, pos);
+        if pos > 0 {
+            b = buffer.append(heap, b, ", ");
+        }
+        b = buffer.push(heap, b, byte_of('\''));
+        b = buffer.append(heap, b, list[pos..e]);
+        b = buffer.push(heap, b, byte_of('\''));
+        pos = e + 1;
+    }
+    return buffer.push(heap, b, byte_of(']'));
+}
+
+// `check`: what differs between the rules the golden says and the rules the compiler gave, program by program; false when something does.
+fn compare_rules[&h, &w, &g, &k](heap: &!h Heap, want: &w [byte], got: &g [byte], known_text: &k [byte]) -> [heap] (buffer.Buffer, bool) {
+    var report = buffer.empty(heap, 256);
+    var moved = 0;
+    var programs = 0;
+    let known = known_names(heap, known_text);
+    let names = gather(heap, want, "", 1, true, true);
+    var skipped = 0;
+    borrow known as &kb in {
+        skipped = bytes.count_byte(buffer.bytes(kb), 10);
+        borrow names as &nb in {
+            let all = buffer.bytes(nb);
+            var pos = 0;
+            while pos < len(all) {
+                let e = line_end(all, pos);
+                let name = all[pos..e];
+                programs = programs + 1;
+                if !has_row(buffer.bytes(kb), name) {
+                    let rw = gather(heap, want, name, 2, false, false);
+                    let rg = gather(heap, got, name, 2, false, false);
+                    borrow rw as &rwb in {
+                        borrow rg as &rgb in {
+                            if !bytes.equal(buffer.bytes(rwb), buffer.bytes(rgb)) {
+                                report = buffer.append(heap, report, name);
+                                report = buffer.append(heap, report, ": golden ");
+                                report = listed(heap, report, buffer.bytes(rwb));
+                                report = buffer.append(heap, report, ", got ");
+                                report = listed(heap, report, buffer.bytes(rgb));
+                                report = buffer.push(heap, report, byte_of('\n'));
+                            } else {
+                                let pw = gather(heap, want, name, 3, false, false);
+                                let pg = gather(heap, got, name, 3, false, false);
+                                borrow pw as &pwb in {
+                                    borrow pg as &pgb in {
+                                        if !bytes.equal(buffer.bytes(pwb), buffer.bytes(pgb)) {
+                                            moved = moved + 1;
+                                        }
+                                    }
+                                }
+                                buffer.drop(heap, pw);
+                                buffer.drop(heap, pg);
+                            }
+                        }
+                    }
+                    buffer.drop(heap, rw);
+                    buffer.drop(heap, rg);
+                }
+                pos = e + 1;
+            }
+        }
+    }
+    buffer.drop(heap, known);
+    buffer.drop(heap, names);
+    var same = true;
+    var clean = false;
+    borrow report as &rb in {
+        clean = buffer.size(rb) == 0;
+    }
+    if clean {
+        var line = buffer.append(heap, report, "ok: ");
+        line = buffer.push_nat(heap, line, programs - skipped);
+        line = buffer.append(heap, line, " programs refused by the same rules (");
+        line = buffer.push_nat(heap, line, skipped);
+        line = buffer.append(heap, line, " known, ");
+        line = buffer.push_nat(heap, line, moved);
+        line = buffer.append(heap, line, " at another position)\n");
+        report = line;
+    } else {
+        same = false;
+    }
+    return (report, same);
+}
+
+// How many rows `text` has.
+fn count_rows[&t](text: &t [byte]) -> [] int {
+    var n = 0;
+    var pos = 0;
+    while pos < len(text) {
+        let e = line_end(text, pos);
+        if is_row(text[pos..e]) {
+            n = n + 1;
+        }
+        pos = e + 1;
+    }
+    return n;
+}
+
+// `check --exact`: every row of the golden the compiler did not give (`- row`), then every row it gave that the golden does not have (`+ row`).
+fn compare_exact[&h, &w, &g](heap: &!h Heap, want: &w [byte], got: &g [byte]) -> [heap] (buffer.Buffer, bool) {
+    var report = missing_rows(heap, buffer.empty(heap, 256), want, got, "- ");
+    report = missing_rows(heap, report, got, want, "+ ");
+    var clean = false;
+    borrow report as &rb in {
+        clean = buffer.size(rb) == 0;
+    }
+    if clean {
+        var line = buffer.append(heap, report, "ok: ");
+        line = buffer.push_nat(heap, line, count_rows(got));
+        line = buffer.append(heap, line, " refusals agree exactly\n");
+        return (line, true);
+    }
+    return (report, false);
+}
+
+// ---- the command -----------------------------------------------------------------------------------------------------------------------------------------------
+
+// A file's text, and 1 if it could not be read.
+fn load[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] (buffer.Buffer, int) {
+    let harness.Contents { data, failed } = harness.read_file(heap, fs, path);
+    return (data, failed);
+}
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), fs_write(""), file_read, dir_read] int {
+    let usage = "usage: reject-golden record CANCHO | check CANCHO [--exact]\n";
+    if arg_count(args) < 3 || arg_count(args) > 4 {
+        console.error_all(io, usage);
+        return 2;
+    }
+    let mode = arg(args, 1);
+    let bin = arg(args, 2);
+    let recording = bytes.equal(mode, "record");
+    var exact = false;
+    if arg_count(args) == 4 {
+        exact = bytes.equal(arg(args, 3), "--exact");
+        if !exact {
+            console.error_all(io, usage);
+            return 2;
+        }
+    }
+    if !recording && !bytes.equal(mode, "check") {
+        console.error_all(io, usage);
+        return 2;
+    }
+    let got = refusals(heap, exec, clock, fs, bin);
+    var status = 0;
+    if recording {
+        var text = buffer.append(heap, buffer.empty(heap, 65536), header());
+        borrow got as &gb in {
+            text = buffer.append(heap, text, buffer.bytes(gb));
+            var said = buffer.append(heap, buffer.empty(heap, 32), "recorded ");
+            said = buffer.push_nat(heap, said, count_rows(buffer.bytes(gb)));
+            said = buffer.append(heap, said, " refusals\n");
+            borrow text as &tb in {
+                let wrote = fs_write(fs, "tests/reject.golden", buffer.bytes(tb));
+                if wrote != buffer.size(tb) {
+                    console.error_all(io, "cannot write tests/reject.golden\n");
+                    status = 1;
+                }
+            }
+            if status == 0 {
+                borrow said as &sd in {
+                    buffer.write(io, sd);
+                }
+            }
+            buffer.drop(heap, said);
+        }
+        buffer.drop(heap, text);
+    } else {
+        let (want, want_failed) = load(heap, fs, "tests/reject.golden");
+        let (known_text, known_failed) = load(heap, fs, "tests/reject.known");
+        if want_failed != 0 || known_failed != 0 {
+            console.error_all(io, "cannot read tests/reject.golden or tests/reject.known\n");
+            status = 2;
+        } else {
+            borrow want as &wb in {
+                borrow got as &gb in {
+                    borrow known_text as &kb in {
+                        if exact {
+                            let (report, same) = compare_exact(heap, buffer.bytes(wb), buffer.bytes(gb));
+                            borrow report as &rp in {
+                                buffer.write(io, rp);
+                            }
+                            buffer.drop(heap, report);
+                            if !same {
+                                status = 1;
+                            }
+                        } else {
+                            let (report, same) = compare_rules(heap, buffer.bytes(wb), buffer.bytes(gb), buffer.bytes(kb));
+                            borrow report as &rp in {
+                                buffer.write(io, rp);
+                            }
+                            buffer.drop(heap, report);
+                            if !same {
+                                status = 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, want);
+        buffer.drop(heap, known_text);
+    }
+    buffer.drop(heap, got);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}
