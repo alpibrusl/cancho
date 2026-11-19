@@ -605,7 +605,13 @@ pub fn probe_transcript[&h, &x, &c, &f, &b, &m, &k, &n, &q, &s, &e](heap: &!h He
                 var exe = buffer.append(heap, buffer.empty(heap, 64), buffer.bytes(sb));
                 exe = buffer.append(heap, exe, "/probe");
                 var build = word(heap, buffer.empty(heap, 64), "build");
-                build = word(heap, build, probe);
+                // `probe` is one path, or several separated by NUL (a program and the package beside it).
+                let sources = bytes.count_byte(probe, 0) + 1;
+                var which = 1;
+                while which <= sources {
+                    build = word(heap, build, bytes.field(probe, 0, which));
+                    which = which + 1;
+                }
                 build = word(heap, build, "--std");
                 build = word(heap, build, "-o");
                 borrow exe as &xb in {

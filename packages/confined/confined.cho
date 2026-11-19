@@ -1,0 +1,64 @@
+edition 12;
+module dirs.confined;
+
+// `dirs.confined` -- `std.dirs.open_file`, and a refusal of a file that has more than one name. A package, not a `std` module: it needs `dir_nlink`, which only
+// the compiler in cancho has, and `--std` is read by the Rust front end too. Name this file on the command line beside the program: `cancho build main.cho confined.cho`.
+//
+// `docs/directory-nlink.md`. `std.dirs.open_file` follows no symbolic link, but a hard link is not one: it is another name for a file that may
+// lie anywhere, so no open flag can tell it from the file it names, and a program that reads a name that came from outside could be led out of
+// its directory by one. `dir_nlink` (edition 12) says how many names a file has. This is the same walk with that question asked about the
+// last component before it is opened: a regular file with one name is opened as before, a file with more is refused with `EMLINK` (31).
+//
+// Two limits, both in the document. The check and the open are two calls on one name, so a hard link made between them is not seen; keep
+// untrusted writers out of the directory. And a file with two names for good reasons (a package manager's store, a backup tool) is refused
+// too: use `std.dirs.open_file` for those.
+
+import std.dirs;
+
+// What a name with more than one file behind it answers.
+pub fn emlink() -> [] int {
+    return 31;
+}
+
+// Open `path` for reading beneath `dir`, following no link and refusing a file with more than one name.
+pub fn open_file[&d, &p](dir: &d Dir, path: &p [byte]) -> [dir_read] Opened {
+    if len(path) == 0 {
+        return Opened::Failed(dirs.einval());
+    }
+    let k = index_of_byte(path, byte_of('/'));
+    if k < 0 {
+        match dir_nlink(dir, path) {
+            Done::Ok(links) => {
+                if links > 1 {
+                    return Opened::Failed(emlink());
+                }
+            }
+            Done::Failed(reason) => {
+                return Opened::Failed(reason);
+            }
+        }
+        return dir_open_read(dir, path);
+    }
+    match dir_enter(dir, path[0..k]) {
+        DirOpened::Ok(sub) => {
+            var held = sub;
+            // A `res` variable cannot be overwritten while it may hold a file, so the placeholder is consumed before the answer lands.
+            var out = Opened::Failed(dirs.einval());
+            borrow held as &h in {
+                match out {
+                    Opened::Ok(unused) => {
+                        file_close(unused);
+                    }
+                    Opened::Failed(unused) => {
+                    }
+                }
+                out = open_file(h, path[k + 1..len(path)]);
+            }
+            dir_close(held);
+            return out;
+        }
+        DirOpened::Failed(reason) => {
+            return Opened::Failed(reason);
+        }
+    }
+}

@@ -1,0 +1,61 @@
+edition 7;
+module directory_nlink_test;
+
+// directory_nlink.cho -- `dir_nlink`, the number of names a file has (`docs/directory-nlink.md`): the one fact a program needs to refuse a hard link, which no open flag can.
+// `tests/probes/directory_nlink_probe.cho` prints `NAME COUNT` for a plain file, two names of one file, a file with three names, a symbolic link (its own count), a missing name and
+// two names that are not one component; `directory_nlink.sh` makes the tree and runs the probe; `directory_nlink.expected` is what that must print.
+//
+//     cancho build tests/commands/directory_nlink.cho tests/support/harness.cho --std -o EXE && EXE CANCHO [--compiler NAME] [--cache DIR]
+//
+// Run from the root of the repository. Prints `ok: directory_nlink` or what is wrong, and exits 0 or 1. One backend (LLVM) and one compiler: the compiler in cancho.
+
+import std.buffer;
+import std.io as console;
+import harness;
+
+fn run[&h, &i, &a, &x, &c, &f](heap: &!h Heap, io: &!i Io, args: &a Args, exec: &x Exec(""), clock: &c Clock, fs: &f Fs("")) -> [heap, io_write, err_write, args, exec(""), clock, poll, fs_read(""), file_read] int {
+    if arg_count(args) < 2 {
+        console.error_all(io, "usage: directory_nlink CANCHO [--compiler NAME] [--cache DIR]\n");
+        return 2;
+    }
+    let report = harness.probe_transcript(heap, exec, clock, fs, arg(args, 1), harness.option(args, "--compiler"), harness.option(args, "--cache"), "directory_nlink", "tests/probes/directory_nlink_probe.cho", "tests/commands/directory_nlink.sh", "tests/commands/directory_nlink.expected", buffer.empty(heap, 64));
+    var status = 0;
+    borrow report as &rb in {
+        if len(buffer.bytes(rb)) > 0 {
+            console.error_all(io, buffer.bytes(rb));
+            status = 1;
+        } else {
+            console.write_all(io, "ok: directory_nlink\n");
+        }
+    }
+    buffer.drop(heap, report);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(net);
+    release(signals);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &a in {
+                borrow exec as &x in {
+                    borrow clock as &c in {
+                        borrow fs as &f in {
+                            status = run(h, i, a, x, c, f);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    release(fs);
+    release(exec);
+    release(clock);
+    release(args);
+    release(heap);
+    release(io);
+    return status;
+}

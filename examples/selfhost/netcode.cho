@@ -126,7 +126,7 @@ pub fn canonical(number: int) -> [] int {
 
 // Does the call need the support for directories?
 pub fn needs_dirs(which: int) -> [] bool {
-    return which >= 54 && which <= 69 && which != 63 || which == 139 || which == 140 || which == 145 || which == 146 || which == 147;
+    return which >= 54 && which <= 69 && which != 63 || which == 139 || which == 140 || which == 145 || which == 146 || which == 147 || which == 148;
 }
 
 // The constants a call pushes after its arguments.
@@ -150,7 +150,7 @@ pub fn extras[&s](st: &!s [int], which: int) -> [] int {
         emit.push_arg(st, 1, true, which - 55, 0 - 1);
     } else if which == 59 || which == 60 {
         emit.push_arg(st, 1, true, which - 59, 0 - 1);
-    } else if which == 68 {
+    } else if which == 68 || which == 148 {
         emit.push_arg(st, 1, true, 0, 0 - 1);
     } else if which == 69 {
         emit.push_arg(st, 7, false, 0, 0 - 1);
@@ -200,7 +200,7 @@ pub fn arity(which: int) -> [] int {
     if which == 33 || which == 37 || which == 59 || which == 60 || which == 139 || which == 140 || which == 146 || which == 147 {
         return 3;
     }
-    if which == 32 || which == 34 || which == 39 || which == 40 || which >= 54 && which <= 58 || which == 61 || which == 65 || which == 67 || which == 68 || which == 145 {
+    if which == 32 || which == 34 || which == 39 || which == 40 || which >= 54 && which <= 58 || which == 61 || which == 65 || which == 67 || which == 68 || which == 145 || which == 148 {
         return 2;
     }
     if which == 48 {
@@ -234,7 +234,7 @@ pub fn slots(which: int) -> [] int {
     if which == 67 {
         return 5;
     }
-    if which >= 36 && which <= 40 || which >= 54 && which <= 62 || which == 64 || which == 68 || which == 69 || which == 139 || which == 140 || which == 145 || which == 146 || which == 147 {
+    if which >= 36 && which <= 40 || which >= 54 && which <= 62 || which == 64 || which == 68 || which == 69 || which == 139 || which == 140 || which == 145 || which == 146 || which == 147 || which == 148 {
         return 3;
     }
     return 0;
@@ -284,7 +284,7 @@ pub fn enum_name(which: int) -> [] &static [byte] {
     if which >= 56 && which <= 58 || which == 140 {
         return "Opened";
     }
-    if which >= 59 && which <= 62 || which == 68 || which == 69 || which == 139 || which == 145 || which == 146 || which == 147 {
+    if which >= 59 && which <= 62 || which == 68 || which == 69 || which == 139 || which == 145 || which == 146 || which == 147 || which == 148 {
         return "Done";
     }
     if which == 64 {
@@ -459,6 +459,9 @@ pub fn function(which: int) -> [] &static [byte] {
     }
     if which == 68 || which == 69 {
         return "cancho_dir_mode";
+    }
+    if which == 148 {
+        return "cancho_dir_nlink";
     }
     if which == 32 {
         return "cancho_net_bind";

@@ -1,0 +1,8 @@
+plain 1
+twin 2
+twin2 2
+three 3
+link 1
+missing err 2
+.. err 22
+sub/x err 22

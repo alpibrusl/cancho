@@ -185,3 +185,4 @@ child_release
 child_pid
 exec_spawn_under
 exec_spawn_detached_under
+dir_nlink
