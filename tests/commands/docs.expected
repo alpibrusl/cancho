@@ -5,8 +5,8 @@ ok no broken link
 ok the surface block lists the subcommands
 ok the README and --help agree
 == the agent guidelines compile as written
-GAP: block15 cannot be judged by the compiler in cancho
-checked blocks: 26 (16 accepted, 10 refused)
+GAP: block16 cannot be judged by the compiler in cancho
+checked blocks: 27 (17 accepted, 10 refused)
 ok at least five checked blocks
 == agent-guidelines prints the file
 ok the embedded guidelines are the file
