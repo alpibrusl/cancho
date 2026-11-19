@@ -10,7 +10,7 @@
 //! shelling out to `clang` buys more than a linker.
 //!
 //! A failure returns `(Option<usize>, String)` -- the function index and a
-//! message -- exactly the shape [`cancho_codegen::CodegenError`] wants,
+//! message -- exactly the shape [`crate::CodegenError`] wants,
 //! without this crate depending on Cranelift to build it.
 //!
 //! `mem2reg` is not automatic: it runs as part of `clang`'s standard `-O1+`

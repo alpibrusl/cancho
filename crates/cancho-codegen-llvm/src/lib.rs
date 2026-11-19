@@ -264,10 +264,34 @@
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use cancho_codegen::CodegenError;
 use cancho_ir::{Arm, BinOp, Builtin, Callee, Expr, Func, Place, Program, Slot, Stmt};
 use cancho_types::{DefId, Type};
 use target_lexicon::Triple;
+
+/// Code generation failed (`docs/internal-errors.md`).
+///
+/// A bug in the compiler, not in the program, except for one case: `clang` not being on the host at all.
+/// `environment` is `true` for exactly that case, so the CLI can tell "cancho has a bug" from "the host
+/// is missing a tool" (`docs/llvm-backend.md`). `function` lets the CLI locate the `internal` case at the
+/// function's declaration; it is `None` for a failure outside any one function and for `environment`.
+/// (Moved here from the deleted `cancho-codegen`.)
+#[derive(Debug)]
+pub struct CodegenError {
+    /// The index into `Program::funcs` of the function being generated.
+    pub function: Option<usize>,
+    /// The tool's own text, or the panic's: what a bug report needs.
+    pub message: String,
+    /// `true` when the host's environment is what failed (a missing tool), not cancho's code generation.
+    pub environment: bool,
+}
+
+impl std::fmt::Display for CodegenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CodegenError {}
 
 mod body;
 mod crypto;
@@ -282,7 +306,7 @@ use emit::*;
 
 /// Compile a program to the bytes of a native object file for the host.
 pub fn compile_object(program: &Program, entry: &str) -> Result<Vec<u8>, CodegenError> {
-    compile_object_for(program, entry, cancho_codegen::host_triple())
+    compile_object_for(program, entry, Triple::host())
 }
 
 /// Compile a program to the bytes of an object file for an explicit target.

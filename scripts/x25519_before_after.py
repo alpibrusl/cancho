@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """X25519 before and after #381 (docs/wide-multiply.md §10.4), on one machine, interleaved.
 
-    python3 scripts/x25519_before_after.py <cancho binary> [--backend llvm|cranelift] [--runs 7] [--rounds 2000] [--taskset 4-5]
+    python3 scripts/x25519_before_after.py <cancho binary> [--backend llvm] [--runs 7] [--rounds 2000] [--taskset 4-5]
 
 "Before" is `std/x25519.cho` as it was before it moved onto `std.field25519_51`: taken from git (the parent of the commit that
 removed `import std.field25519;` from it), built as a local module `x25519old` over the unchanged `std.field25519`, with the same

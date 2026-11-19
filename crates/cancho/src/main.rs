@@ -23,9 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use target_lexicon::Triple;
 
-use cancho_ir::TypeInfo;
 use cancho_syntax::{Ast, Rule, SourceFile, SourceMap};
-use cancho_types::{DefId, Type};
 use foreign_report::{Attribution, ForeignReach};
 
 mod acli;
@@ -50,10 +48,10 @@ const USAGE: &str = "\
 cancho — the bootstrap compiler for the cancho systems dialect
 
 usage:
-    cancho build <file.cho>... [-o <output>] [--emit exe|obj] [--std] [--backend cranelift|llvm] [--target <triple>] [-l <name>]... [-L <path>]... [--compiler <exe>]
-    cancho check <file.cho>... [--std] [--output json] [--backend cranelift|llvm] [--target <triple>]
-    cancho run   <file.cho>... [--std] [--backend cranelift|llvm] [--target <triple>] [-l <name>]... [-L <path>]...
-    cancho test  <file.cho>... [--std] [--backend cranelift|llvm] [-l <name>]... [-L <path>]...
+    cancho build <file.cho>... [-o <output>] [--emit exe|obj] [--std] [--backend llvm] [--target <triple>] [-l <name>]... [-L <path>]... [--compiler <exe>]
+    cancho check <file.cho>... [--std] [--output json] [--backend llvm] [--target <triple>]
+    cancho run   <file.cho>... [--std] [--backend llvm] [--target <triple>] [-l <name>]... [-L <path>]...
+    cancho test  <file.cho>... [--std] [--backend llvm] [-l <name>]... [-L <path>]...
     cancho satisfy <contract.cho> <candidate.cho> [--std]
     cancho fmt   <file.cho|dir>... [--check]
     cancho ids   <file.cho>... [--std]
@@ -85,15 +83,15 @@ options:
                       compiled into this binary, and cached) writes the code, after the Rust front end has checked the
                       program; one that has no code for something, or fails, hands that build to the Rust compiler. `rust` asks for
                       the Rust compiler alone; `auto` for the one in cancho alone, with what it refuses, and no fallback; a path for
-                      that compiler. `CANCHO_COMPILER` says the same for every build; `--backend cranelift` and WebAssembly are the
+                      that compiler. `CANCHO_COMPILER` says the same for every build; WebAssembly is the
                       Rust compiler's
     --output json   `check` and `authority` as data rather than prose
-    --backend cranelift|llvm
+    --backend llvm
                     which backend generates code (default: llvm, since #127).
                     `llvm` is `cancho-codegen-llvm` (docs/llvm-backend.md):
                     every program this repository tracks builds on it, and
                     anything outside that is refused with an ordinary located
-                    error, not a crash. `cranelift` is unaffected either way.
+                    error, not a crash.
     --target <triple>
                     generate code for another target (`--backend llvm` only;
                     docs/wasm.md). Only `wasm32-wasip1` is built so far: it
@@ -265,12 +263,10 @@ struct Codegen<'a> {
     target: Option<&'a Triple>,
 }
 
-/// Which backend generates code (`docs/llvm-backend.md` §4: purely
-/// additive, so `Cranelift` is every existing invocation's behaviour
-/// unchanged).
+/// Which backend generates code. Cranelift was the other one; it went with `cancho-codegen`
+/// (`docs/removing-rust.md`, Phase 5), so `llvm` is the only one.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Backend {
-    Cranelift,
     Llvm,
 }
 
@@ -309,7 +305,7 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
                 "cancho {} (rev {}, host {})",
                 env!("CARGO_PKG_VERSION"),
                 project::COMPILER_REV,
-                cancho_codegen::host_triple()
+                Triple::host()
             );
             Ok(ExitCode::SUCCESS)
         }
@@ -437,11 +433,11 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
             print_authority(&inputs, with_std, json, target.as_ref())?;
             Ok(ExitCode::SUCCESS)
         }
-        "layout" => {
-            let Invocation { inputs, with_std, .. } = parse_args(&args[1..], false, false)?;
-            print_layout(&inputs, with_std)?;
-            Ok(ExitCode::SUCCESS)
-        }
+        // `cancho layout` is the compiler in cancho's (`layoutrep.cho`); the Rust one measured with the
+        // Cranelift leaf counts, which went with `cancho-codegen` (`docs/removing-rust.md`, Phase 5).
+        "layout" => Err(refused(
+            "`cancho layout` is no longer written by the Rust compiler (the Cranelift backend it measured with is retired, `docs/removing-rust.md` D2); use the compiler in cancho",
+        )),
         // `docs/package-system.md` §8: the project file.
         "install" => project::cmd_install(&args[1..]),
         "add" => project::cmd_add(&args[1..]),
@@ -460,11 +456,6 @@ fn run(args: &[String]) -> Result<ExitCode, Failure> {
                 ..
             } = parse_args(&args[1..], true, true)?;
             let output = output.unwrap_or_else(|| default_output(&inputs[0], emit));
-            if compiler.is_some() && backend == Backend::Cranelift {
-                return Err(usage(
-                    "`--compiler` names a compiler that writes LLVM IR; it cannot be combined with `--backend cranelift`",
-                ));
-            }
             selfhost_build::set_flag(compiler);
             build(
                 &inputs,
@@ -618,7 +609,11 @@ fn parse_args(
             },
             "--backend" => {
                 backend = match it.next().map(String::as_str) {
-                    Some("cranelift") => Backend::Cranelift,
+                    Some("cranelift") => {
+                        return Err(usage(
+                            "`--backend cranelift` is retired with the Rust compiler's Cranelift backend (`docs/removing-rust.md` D2); the only backend is `llvm`",
+                        ));
+                    }
                     Some("llvm") => Backend::Llvm,
                     Some(other) => return Err(usage(format!("unknown backend `{other}`"))),
                     None => return Err(usage("`--backend` needs a name")),
@@ -655,9 +650,6 @@ fn parse_args(
 
     if inputs.is_empty() {
         return Err(usage("no input file given"));
-    }
-    if target.is_some() && backend == Backend::Cranelift {
-        return Err(usage("`--target` needs `--backend llvm`: Cranelift emits for the host only"));
     }
     Ok(Invocation {
         inputs,
@@ -987,8 +979,6 @@ fn compile_reporting(
 /// hook, which would print Rust's "thread 'main' panicked at", is
 /// silenced for the duration and put back.
 ///
-/// `docs/llvm-backend.md` §4: `--backend` is purely additive, so
-/// `Backend::Cranelift` is this function's old, only behaviour, unchanged.
 /// `Backend::Llvm` never panics by design (`cancho-codegen-llvm` returns
 /// `CodegenError` for everything its first slice does not lower), but the
 /// same catch applies to it too: a bug there should read as `internal`,
@@ -1008,7 +998,6 @@ fn backend(
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let result = match backend_kind {
-        Backend::Cranelift => cancho_codegen::compile_object(program, "main"),
         Backend::Llvm => match target {
             Some(triple) => {
                 cancho_codegen_llvm::compile_object_for(program, "main", triple.clone())
@@ -1037,7 +1026,7 @@ enum BackendFailure {
 
 fn internal_refusal(
     program: &cancho_ir::Program,
-    e: &cancho_codegen::CodegenError,
+    e: &cancho_codegen_llvm::CodegenError,
     inputs: &[PathBuf],
 ) -> Refusal {
     match e.function.and_then(|index| program.funcs.get(index)) {
@@ -1096,103 +1085,6 @@ fn escaped(value: &str) -> String {
         }
     }
     out
-}
-
-/// `cancho authority <file>` — what a program can do
-/// (`docs/authority.md`).
-///
-/// The surface is the union of the declared rows of everything `main`
-/// reaches, and that needs no new analysis: pass 2 already emits exactly
-/// what `main` reaches (`standard-library.md` §5.2), so `Program::funcs`
-/// *is* the reachable set and every `Func` carries its row. The same
-/// reachability that decides what goes in the binary decides what the
-/// binary can do, which is the reason these are one number rather than
-/// two.
-///
-/// Rows are exact in both directions (§7.3), so this is precise rather
-/// than conservative: a label here is an effect the program performs on
-/// some path, not one it might.
-/// `cancho layout` — what each declared type costs in memory
-/// (`docs/layout.md` §4).
-///
-/// A report rather than a flag, because there is nothing to turn on: §2
-/// of that document measured the layout and deliberately did not change
-/// it. What the report is *for* is the trigger — when `size` and
-/// `packed` differ on a program someone cares about, the deferral stops
-/// being right, and this is how that gets noticed rather than
-/// remembered.
-fn print_layout(inputs: &[PathBuf], with_std: bool) -> Result<(), Failure> {
-    let program = compile_to_ir(inputs, with_std)?;
-    let triple = cancho_codegen::host_triple();
-
-    // The prelude's eight -- `World`, the five capabilities, `Box` and
-    // `Split` -- are not types the program declared, and a report about
-    // a program's memory should not open with eight rows of zero.
-    const PRELUDE: usize = cancho_ir::PRELUDE_SPLIT + 1;
-
-    let mut rows: Vec<(String, cancho_codegen::Layout)> = Vec::new();
-    for (index, info) in program.types.iter().enumerate().skip(PRELUDE) {
-        let (name, members): (&String, Vec<&Type>) = match info {
-            TypeInfo::Struct { name, fields } => (name, fields.iter().map(|(_, t)| t).collect()),
-            TypeInfo::Enum { name, variants } => {
-                (name, variants.iter().flat_map(|(_, p)| p.iter()).collect())
-            }
-        };
-        // A generic declaration has no one layout -- `Pair[int, bool]`
-        // and `Pair[bool, int]` are two -- so it is skipped rather than
-        // measured at a substitution nobody wrote. Reporting each
-        // instantiation instead would mean reporting names the source
-        // does not contain, which is a worse answer than saying nothing.
-        if members.iter().any(|t| mentions_parameter(t)) {
-            continue;
-        }
-        let ty = Type::Named(DefId(index as u32), Vec::new());
-        rows.push((name.clone(), cancho_codegen::layout_of(&ty, &program, &triple)));
-    }
-
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
-    let written = (|| -> io::Result<()> {
-        writeln!(
-            out,
-            "{:<24} {:>6} {:>7} {:>8} {:>8}",
-            "type", "leaves", "size", "packed", "stride"
-        )?;
-        for (name, layout) in &rows {
-            writeln!(
-                out,
-                "{:<24} {:>6} {:>7} {:>8} {:>8}",
-                name, layout.leaves, layout.size, layout.packed, layout.stride
-            )?;
-        }
-        // The one line that is the point of the report.
-        let savings: u32 = rows.iter().map(|(_, l)| l.size.saturating_sub(l.packed)).sum();
-        if savings > 0 {
-            writeln!(
-                out,
-                "\npacking would save {savings} bytes per copy across these types (`docs/layout.md` §2)"
-            )?;
-        }
-        out.flush()
-    })();
-
-    match written {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
-        Err(e) => Err(environment(format!("cannot write to stdout: {e}"))),
-    }
-}
-
-/// Does this type mention a generic parameter, at any depth?
-fn mentions_parameter(ty: &Type) -> bool {
-    match ty {
-        Type::Param(_) => true,
-        Type::Named(_, args) => args.iter().any(mentions_parameter),
-        Type::Slice(inner) => mentions_parameter(inner),
-        Type::Ref { inner, .. } => mentions_parameter(inner),
-        Type::Tuple(parts) => parts.iter().any(mentions_parameter),
-        _ => false,
-    }
 }
 
 /// Whether a label bounds what it authorises.
@@ -1256,6 +1148,10 @@ fn untouched_domains(labels: &[String]) -> Vec<&'static str> {
     .collect()
 }
 
+/// `cancho authority <file>` — what a program can do
+/// (`docs/authority.md`): the union of the declared rows of everything `main`
+/// reaches. `Program::funcs` *is* the reachable set (`standard-library.md` §5.2),
+/// and every `Func` carries its row, so this is exact in both directions (§7.3).
 fn print_authority(
     inputs: &[PathBuf],
     with_std: bool,
@@ -1605,13 +1501,9 @@ fn build(
     link_libs: &[String],
     link_paths: &[String],
 ) -> Result<(), Failure> {
-    match selfhost_build::choose(codegen.backend == Backend::Cranelift, codegen.target) {
+    match selfhost_build::choose(codegen.target) {
         selfhost_build::Choice::Rust => {
-            let why = if codegen.backend == Backend::Cranelift {
-                "the Cranelift backend is the Rust compiler's"
-            } else {
-                "it was asked for (`--compiler rust`, `CANCHO_COMPILER=rust`) or the target is one the compiler in cancho does not write code for"
-            };
+            let why = "it was asked for (`--compiler rust`, `CANCHO_COMPILER=rust`) or the target is one the compiler in cancho does not write code for";
             warn_rust_compiler_deprecated(why);
             build_with_rust(inputs, output, emit, with_std, codegen, link_libs, link_paths)
         }
@@ -1782,77 +1674,4 @@ fn link(
         return Err(environment(format!("the linker `{cc}` failed with {status}")));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A checked program whose function `seven` is then broken in the IR,
-    /// the way `docs/internal-errors.md` §5 describes: the body changes and
-    /// the signature does not, so the failure is `seven`'s own.
-    fn broken(body: cancho_ir::Stmt) -> (cancho_ir::Program, cancho_syntax::Span) {
-        let source = "fn seven() -> [] int { return 7; }\n\
-                      fn main(world: World) -> [] int { release(world); return seven() - 7; }\n";
-        let ast = cancho_syntax::parse(source).expect("should parse");
-        let mut program = cancho_ir::lower(&ast).expect("should lower");
-        let seven = program.funcs.iter_mut().find(|f| f.name == "seven").expect("`seven`");
-        seven.body = vec![body];
-        let span = seven.span;
-        (program, span)
-    }
-
-    fn refusal_for(body: cancho_ir::Stmt) -> (Refusal, cancho_syntax::Span) {
-        let (program, span) = broken(body);
-        let failure = backend(&program, &[PathBuf::from("seven.cho")], Backend::Cranelift, None)
-            .expect_err("the backend should refuse");
-        let BackendFailure::Refusals(mut refusals) = failure else {
-            panic!("Cranelift has no environment failure mode; expected a refusal");
-        };
-        assert_eq!(refusals.len(), 1, "code generation stops at the first failure");
-        (refusals.remove(0), span)
-    }
-
-    /// §2: a verifier failure is an `internal` refusal, located at the
-    /// declaration of the function whose code failed, saying whose bug it
-    /// is and keeping Cranelift's own words.
-    #[test]
-    fn a_backend_failure_is_a_located_internal_refusal() {
-        let (refusal, span) = refusal_for(cancho_ir::Stmt::Return(cancho_ir::Expr::Bool(true)));
-        assert_eq!(refusal.rule, Rule::Internal);
-        assert_eq!(refusal.span, Some(span), "it points at `seven`'s declaration");
-        assert!(refusal.message.contains("`seven`"), "{}", refusal.message);
-        assert!(
-            refusal.message.contains("a bug in cancho, not in the program"),
-            "{}",
-            refusal.message
-        );
-        assert!(refusal.message.contains("Verifier"), "{}", refusal.message);
-    }
-
-    /// §4: a panic in the backend is the same refusal, carrying the
-    /// panic's message, and the compiler does not unwind out of `backend`.
-    #[test]
-    fn a_backend_panic_is_a_located_internal_refusal() {
-        let (refusal, span) = refusal_for(cancho_ir::Stmt::Return(cancho_ir::Expr::Call {
-            callee: cancho_ir::Callee::Builtin(cancho_ir::Builtin::Len),
-            args: vec![cancho_ir::Expr::Int(0)],
-        }));
-        assert_eq!(refusal.rule, Rule::Internal);
-        assert_eq!(refusal.span, Some(span));
-        assert!(refusal.message.contains("`len` is lowered as `Expr::Len`"), "{}", refusal.message);
-    }
-
-    /// The rendered form is an ordinary located diagnostic, like every
-    /// other refusal: file, line and column, then the source line.
-    #[test]
-    fn an_internal_refusal_renders_where_the_function_is() {
-        let source = "fn seven() -> [] int { return 7; }\n\
-                      fn main(world: World) -> [] int { release(world); return seven() - 7; }\n";
-        let mut map = cancho_syntax::SourceMap::new();
-        assert_eq!(map.add("seven.cho", source), 0, "one file, based at zero like the parse");
-        let (refusal, _) = refusal_for(cancho_ir::Stmt::Return(cancho_ir::Expr::Bool(true)));
-        let text = refusal.render(&map);
-        assert!(text.starts_with("seven.cho:1:1: error: the compiler failed"), "{text}");
-    }
 }

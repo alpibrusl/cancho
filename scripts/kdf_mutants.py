@@ -135,9 +135,8 @@ def evidence():
 
 
 def run(compiler, sources, driver_src, work, cases, checks):
-    """On both backends: LLVM's SHA-256 is the CPU's instructions where it has them, Cranelift's the software path, and
-    a mutant of either path is killed only by the backend that runs it (docs/sha256-builtin.md §7)."""
-    for backend, rounds in (("llvm", "1000"), ("cranelift", "200")):
+    """On LLVM, the only backend left (Cranelift's software SHA-256 path went with it; docs/sha256-builtin.md §7)."""
+    for backend, rounds in (("llvm", "1000"),):
         dead, why = run_one(compiler, sources, driver_src, work, cases, checks, backend, rounds)
         if dead is not False:
             return dead, [f"{backend}: {w}" for w in why]

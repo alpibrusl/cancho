@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """docs/word-scan.md section 5: build scan.cho once per kernel and backend, run each binary, report per pass.
 
-    python3 benches/word_scan/run.py [--size BYTES] [--runs N] [--backend llvm|cranelift]... [--cancho PATH] [--prefix CMD]
+    python3 benches/word_scan/run.py [--size BYTES] [--runs N] [--backend llvm]... [--cancho PATH] [--prefix CMD]
 
 Instructions and cycles are the counter of the whole process (fill included), taken from `perf stat` on Linux and
 `/usr/bin/time -l` on macOS; kernel 0 only fills, so (kernel - kernel 0) / 3 is one pass. Milliseconds are the process's
@@ -56,7 +56,7 @@ def main():
     source = open(os.path.join(HERE, "scan.cho")).read()
     prefix = shlex.split(a.prefix)
     tmp = tempfile.mkdtemp(prefix="word-scan-")
-    for backend in a.backend or ["llvm", "cranelift"]:
+    for backend in a.backend or ["llvm"]:
         print(f"== {backend}, {a.size} bytes, median of {a.runs} rounds ({platform.machine()})")
         exes = []
         for k in range(10):

@@ -16,7 +16,6 @@ cancho-syntax.workspace = true
 cancho-ir.workspace = true
 cancho-types.workspace = true
 cancho-id.workspace = true
-cancho-codegen.workspace = true
 cancho-codegen-llvm.workspace = true
 cancho-vcs.workspace = true
 serde = { version = "1", features = ["derive"] }

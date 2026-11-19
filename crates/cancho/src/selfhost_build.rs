@@ -321,15 +321,14 @@ pub fn set_flag(flag: Option<PathBuf>) {
 /// Which compiler builds this program: the one named by `--compiler`, else by `CANCHO_COMPILER` (`rust` for the Rust one,
 /// `auto` for the one in cancho built from this binary's own sources, or a path); and when nothing is named, the one
 /// written in cancho for a build that goes through LLVM for a host it writes code for, and the Rust one for the rest
-/// (the Cranelift backend, WebAssembly).
-pub fn choose(cranelift: bool, target: Option<&Triple>) -> Choice {
+/// (WebAssembly).
+pub fn choose(target: Option<&Triple>) -> Choice {
     let named =
         FLAG.get().cloned().or_else(|| std::env::var_os("CANCHO_COMPILER").map(PathBuf::from));
     match named {
         Some(name) if name == Path::new("rust") => Choice::Rust,
-        Some(_) if cranelift => Choice::Rust,
         Some(compiler) => Choice::Cancho { compiler, rust_checks_first: false, fall_back: false },
-        None if cranelift || target_line(target).is_err() => Choice::Rust,
+        None if target_line(target).is_err() => Choice::Rust,
         None => Choice::Cancho {
             compiler: PathBuf::from("auto"),
             rust_checks_first: RUST_CHECKS_FIRST,

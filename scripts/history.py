@@ -39,9 +39,8 @@ property: a failing rule not listed with a reason in the committed
 exemption file is exit 1, so is a listed rule that fails more revisions
 than its recorded count, and so is a listed rule that no longer fails at
 all (stale). A rule that fails fewer revisions than recorded is reported
-so the count can be lowered. Under `--explain` the replay uses
-`--backend cranelift`, so the instrument depends on no host toolchain
-beyond Rust; `--migrate` and `--alias` keep the default backend.
+so the count can be lowered. Under `--explain` the replay uses the
+default backend, as `--migrate` and `--alias` do (Cranelift, which it once forced, is retired).
 """
 
 import argparse
@@ -258,7 +257,7 @@ def main():
     # first cell that is not a rule name is a typo the check below will
     # surface as an exemption that never fires.
     exemptions: dict[str, tuple[int, str]] = {}
-    backend = "cranelift" if options.explain else None
+    backend = None
     if options.explain:
         list_path = ROOT / "docs" / "stability-exemptions.md"
         if not list_path.exists():
