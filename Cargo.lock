@@ -109,7 +109,6 @@ version = "0.0.0"
 dependencies = [
  "acli",
  "blake3",
- "cancho-codegen-llvm",
  "cancho-id",
  "cancho-ir",
  "cancho-syntax",
@@ -120,16 +119,6 @@ dependencies = [
  "target-lexicon",
  "tempfile",
  "toml",
-]
-
-[[package]]
-name = "cancho-codegen-llvm"
-version = "0.0.0"
-dependencies = [
- "cancho-ir",
- "cancho-syntax",
- "cancho-types",
- "target-lexicon",
 ]
 
 [[package]]

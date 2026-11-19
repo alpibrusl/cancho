@@ -292,7 +292,6 @@ crates/cancho-syntax    lexer, canonical-shaped AST, parser
 crates/cancho-types     the type vocabulary: representation and unification
 crates/cancho-ir        resolution, type checking, monomorphisation; the IR
 crates/cancho-codegen   Cranelift lowering, native object emission
-crates/cancho-codegen-llvm  the LLVM backend, --backend llvm (default)
 crates/cancho-id        canonical encoding and content hashes
 crates/cancho-vcs       content-addressed operation log (vcs.md)
 crates/cancho           the CLI

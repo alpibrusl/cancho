@@ -14,7 +14,7 @@ use serde::Deserialize;
 use crate::vcs_cli::fetch_verified;
 use crate::vcs_dir::lock_of_all;
 use crate::vcs_origin;
-use crate::{Backend, Emit, Failure, environment, refused, usage};
+use crate::{Emit, Failure, environment, refused, usage};
 
 /// The commit this compiler was built from (`build.rs`).
 pub const COMPILER_REV: &str = env!("CANCHO_REV_STAMP");
@@ -326,15 +326,7 @@ pub fn cmd_build(args: &[String]) -> Result<ExitCode, Failure> {
             std::fs::create_dir_all(parent)
                 .map_err(|e| environment(format!("cannot create `{}`: {e}", parent.display())))?;
         }
-        crate::build(
-            &inputs,
-            &out,
-            Emit::Exe,
-            bin.std,
-            crate::Codegen { backend: Backend::Llvm, target: None },
-            &[],
-            &[],
-        )?;
+        crate::build(&inputs, &out, Emit::Exe, bin.std, crate::Codegen { target: None }, &[], &[])?;
         println!("built {}", out.display());
     }
     Ok(ExitCode::SUCCESS)

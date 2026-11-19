@@ -12,7 +12,7 @@
 // on any host, `EBADF`, with no real socket and no live connection
 // needed. `crates/cancho/tests/conformance/backends.rs` runs this
 // fixture through both backends and checks they agree;
-// `crates/cancho-codegen-llvm/src/tests.rs` checks the LLVM path
+// `crates/cancho-codegen-llvm/src/tests.rs` (deleted in docs/removing-rust.md Phase 5, in git history) checks the LLVM path
 // directly, self-contained.
 //~ EXIT 0
 

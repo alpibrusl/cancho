@@ -104,15 +104,7 @@ pub fn cmd_satisfy(args: &[String]) -> Result<ExitCode, Failure> {
     }
     let dir = crate::scratch::private_temp_dir("cancho-satisfy")
         .map_err(|e| environment(format!("cannot create a temporary directory: {e}")))?;
-    let run = crate::test_cli::run_all(
-        &dir,
-        &[contract, candidate],
-        &tests,
-        with_std,
-        crate::Backend::Llvm,
-        &[],
-        &[],
-    );
+    let run = crate::test_cli::run_all(&dir, &[contract, candidate], &tests, with_std, &[], &[]);
     let _ = std::fs::remove_dir_all(&dir);
     let code = run?;
 

@@ -4,7 +4,7 @@
 #
 #   scripts/seed-ir-fixed-point.sh CANCHO0 [OUTDIR]
 #
-# CANCHO0 is a Rust-built `cancho` (stage 0). Stage 1 is built by it, stage 2
+# CANCHO0 is a `cancho` that already exists (stage 0: the seed's, from scripts/seed-build.sh). Stage 1 is built by it, stage 2
 # by stage 1, stage 3 by stage 2; the IR clang is handed is captured for the
 # last two. Exits 0 only if IR(stage 1 builds) == IR(stage 2 builds), and a
 # binary built from that IR alone equals stage 3. Prints sha256 and sizes.

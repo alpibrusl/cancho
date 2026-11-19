@@ -4,7 +4,7 @@ module selfhost.emit;
 //
 // Stage 4 of the self-hosting port (`docs/self-hosting.md` section 6): the checker already visits
 // every expression in the order it runs and knows its type, so it writes LLVM IR as it goes, the
-// text the Rust backend writes (`cancho-codegen-llvm`), and `clang` does the rest. The Rust
+// text the Rust backend writes (`cancho-codegen-llvm` (deleted in docs/removing-rust.md Phase 5, in git history)), and `clang` does the rest. The Rust
 // compiler is the oracle here as everywhere, compared by what the programs do and not by the
 // text: both are built from the same source, run, and must agree.
 //

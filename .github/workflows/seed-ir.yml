@@ -22,9 +22,8 @@ jobs:
             target: linux-x86_64
     steps:
       - uses: actions/checkout@v4
-      - run: cargo build --release -p cancho
-      - name: IR fixed point
-        run: scripts/seed-ir-fixed-point.sh target/release/cancho seed-ir-out 2>&1 | tee seed-ir.txt; exit "${PIPESTATUS[0]}"
+      - name: IR fixed point (stage 0 is the seed, no Rust)
+        run: scripts/seed-ir-fixed-point.sh "$(scripts/seed-build.sh --out seed-ir-seed)" seed-ir-out 2>&1 | tee seed-ir.txt; exit "${PIPESTATUS[0]}"
         shell: bash
       - uses: actions/upload-artifact@v4
         if: always()

@@ -7,7 +7,7 @@ GHASH on blocks read as big-endian integers (the reflected order, no bit
 reversal), with the powers of H each times x^-1 so that no product needs a
 shift, products summed unreduced, and one reduction by shifts of 64-bit lanes
 for the sum (the Linux kernel's `ghash-clmulni-intel` sequence): the steps
-`crates/cancho-codegen-llvm/src/crypto/ghash.rs` emits as LLVM IR. It checks
+`crates/cancho-codegen-llvm/src/crypto/ghash.rs` (deleted in docs/removing-rust.md Phase 5, in git history) emits as LLVM IR. It checks
 300 random single products and an eight-block aggregation against the
 bit-by-bit algorithm. Prints `ok`; an assertion fails otherwise.
 """
