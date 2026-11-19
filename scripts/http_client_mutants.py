@@ -19,6 +19,7 @@ import os
 import signal
 import subprocess
 import sys
+import shutil
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -658,13 +659,16 @@ def run(exe, texts, name):
     """`cancho test` on the (mutated) sources. A run that hangs past LIMIT seconds is killed, with the test program it started
     (a mutant that makes a loop endless is caught by the tests not finishing), and answers `Ran(4, ..)`."""
     with tempfile.TemporaryDirectory() as d:
+        # `slot.cho` first, copied: `cancho test` writes its runner beside the first file, and a run killed here leaves it there.
+        slot = os.path.join(d, "slot.cho")
+        shutil.copy(SLOT, slot)
         paths = []
         for key, fname in ((W, "wire.cho"), (C, "client.cho")):
             path = os.path.join(d, fname)
             with open(path, "w") as f:
                 f.write(texts[key])
             paths.append(path)
-        p = subprocess.Popen([exe, "test", "--std", SLOT] + paths + TESTS, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        p = subprocess.Popen([exe, "test", "--std", slot] + paths + TESTS, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                              start_new_session=True)
         waited = 0.0
         while True:
