@@ -48,7 +48,7 @@ mirrors". The CI job (§8) installs the same packages, on `ubuntu-latest`.
 
 ### 3.1 The fuzzer: AFL++, with no change to the compiler
 
-The LLVM backend compiles through `clang`, named by the `CLANG` environment variable, and links with `cc`, named by `CC`
+The LLVM backend compiles through `clang`, named by the `CLANG` environment variable (**corrected:** only the retired Rust backend read it; the compiler in cancho takes `--clang PATH`, `docs/removing-rust.md`), and links with `cc`, named by `CC`
 (`crates/cancho-codegen-llvm/src/lib.rs`, `crates/cancho/src/main.rs`). Setting both to `afl-clang-fast` instruments
 every edge of a cancho program. Measured on `examples/hello.cho`: the instrumented binary runs, and `afl-showmap` reports its
 edges. Nothing in the compiler changes, and the code fuzzed is the code shipped: the same IR, through the same `-O2`.
