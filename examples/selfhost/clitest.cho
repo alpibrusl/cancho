@@ -222,9 +222,17 @@ pub fn test_files[&h, &i, &a, &f, &x, &c, &t, &l, &s, &k](heap: &!h Heap, io: &!
         var exe = buffer.empty(heap, 64);
         if status == 0 {
             borrow names as &nm in {
-                exe = buffer.append(heap, exe, clibase.stem(clibase.name_at(buffer.bytes(nm), 0)));
+                // Beside the first file (not in the working directory), and numbered by the time: two `cancho test` runs at once, as the mutation scripts make,
+                // must not write one executable and one `.ll`.
+                let first = clibase.name_at(buffer.bytes(nm), 0);
+                var upto = len(first);
+                if upto > 4 && lc.spells(first, upto - 4, upto, ".cho") {
+                    upto = upto - 4;
+                }
+                exe = buffer.append(heap, exe, first[0..upto]);
             }
-            exe = buffer.append(heap, exe, ".cancho-test");
+            exe = buffer.append(heap, exe, ".cancho-test.");
+            exe = buffer.push_nat(heap, exe, clock_unix_ms(clock));
             if !host_given {
                 borrow exe as &ep in {
                     var note = buffer.append(heap, buffer.empty(heap, len(buffer.bytes(ep)) + 8), buffer.bytes(ep));
