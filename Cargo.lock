@@ -109,7 +109,6 @@ version = "0.0.0"
 dependencies = [
  "acli",
  "blake3",
- "cancho-types",
  "cancho-vcs",
  "serde",
  "serde_json",
@@ -117,10 +116,6 @@ dependencies = [
  "tempfile",
  "toml",
 ]
-
-[[package]]
-name = "cancho-types"
-version = "0.0.0"
 
 [[package]]
 name = "cancho-vcs"

@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/cancho-types",
     "crates/cancho-vcs",
     "crates/cancho",
 ]
@@ -14,5 +13,4 @@ license = "EUPL-1.2"
 publish = false
 
 [workspace.dependencies]
-cancho-types = { path = "crates/cancho-types" }
 cancho-vcs = { path = "crates/cancho-vcs" }
