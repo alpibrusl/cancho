@@ -1,8 +1,6 @@
 //! The declaration view of a `.cho` file for `diff`, `record` and `blame`
 //! (`docs/vcs-cli.md` section 4): what `cancho ids` reports per declaration,
-//! compared across two versions of a file. A file that does not parse has
-//! no declaration view; it is a text file to every command, and the gate
-//! (not this module) is what refuses it.
+//! compared across two versions of a file. There is none now (see `decls_of`).
 
 use std::collections::BTreeMap;
 
@@ -10,22 +8,10 @@ use cancho_vcs::DeclChange;
 
 pub(crate) type Decls = BTreeMap<String, (String, String)>;
 
-pub(crate) fn decls_of(source: &str) -> Option<Decls> {
-    let ast = cancho_syntax::parse(source).ok()?;
-    let ids = cancho_id::identify(&ast);
-    let mut out = Decls::new();
-    for f in &ids.functions {
-        let key = if f.module.is_empty() {
-            format!("fn {}", f.name)
-        } else {
-            format!("fn {}.{}", f.module, f.name)
-        };
-        out.insert(key, (f.sig.to_hex(), f.body.to_hex()));
-    }
-    for t in &ids.types {
-        out.insert(format!("type {}", t.name), (t.id.to_hex(), t.id.to_hex()));
-    }
-    Some(out)
+/// No declaration view: the Rust binary has no parser or identity encoder any more (`cancho-syntax` and `cancho-id` are
+/// deleted, `docs/removing-rust.md` Phase 5), so every file is a text file to `diff`, `record` and `blame`.
+pub(crate) fn decls_of(_source: &str) -> Option<Decls> {
+    None
 }
 
 /// Declaration changes from `old` to `new` (a missing side is an empty file).

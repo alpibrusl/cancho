@@ -3,9 +3,9 @@
 # (examples/selfhost/lexer.cho) or the parser (examples/selfhost/parser.cho).
 # usage: diff.sh ORACLE_BIN PORT_BIN file...
 #
-# The oracles are examples of cancho-syntax, and the ports are built with lexcore.cho (the parser and the checker with the modules they share):
+# The oracles were examples of cancho-syntax (deleted), and the ports are built with lexcore.cho (the parser and the checker with the modules they share):
 #
-#   cargo build -p cancho-syntax --example dump_tokens --example dump_ast
+#   (the oracles, `dump_tokens` and `dump_ast`, were examples of `cancho-syntax`, deleted: `docs/removing-rust.md`, Phase 5; the answers they gave are in tests/vectors/frontend/)
 #   cancho build examples/selfhost/lexer.cho examples/selfhost/lexcore.cho --std -o lexer
 #   MODS='driver listing pass1 ast kinds lexcore tables'   # examples/selfhost/<name>.cho
 #   cancho build examples/selfhost/parser.cho $(for m in $MODS; do echo examples/selfhost/$m.cho; done) --std -o parser

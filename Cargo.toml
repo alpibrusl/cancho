@@ -1,9 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/cancho-syntax",
     "crates/cancho-types",
-    "crates/cancho-id",
     "crates/cancho-vcs",
     "crates/cancho",
 ]
@@ -16,7 +14,5 @@ license = "EUPL-1.2"
 publish = false
 
 [workspace.dependencies]
-cancho-syntax = { path = "crates/cancho-syntax" }
 cancho-types = { path = "crates/cancho-types" }
-cancho-id = { path = "crates/cancho-id" }
 cancho-vcs = { path = "crates/cancho-vcs" }
