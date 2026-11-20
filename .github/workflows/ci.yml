@@ -50,11 +50,10 @@ jobs:
         if: runner.os == 'Linux'
         run: command -v strace || (sudo apt-get update && sudo apt-get install -y strace)
 
-      # Every test of the Rust crates (the conformance suite is gone: its tests are scripts of tests/commands, run by scripts/gate.sh).
+      # Every test of the Rust crate (the conformance suite is gone: its tests are scripts of tests/commands, run by scripts/gate.sh). `cancho` is the
+      # only crate of the workspace, so `--workspace --exclude cancho` would select nothing and cargo refuses it.
       - name: Tests
-        run: |
-          cargo test --workspace --exclude cancho
-          cargo test -p cancho --bins
+        run: cargo test -p cancho --bins
 
   # docs/gate.md, step G2: the gate without Rust. `scripts/gate.sh` builds the compiler from the committed seed (no Rust, only clang) and runs the stages
   # that need no `cargo`: fmt, the files budget, the seed's hash and the reject goldens. G5: this is the check a change is judged by (CONTRIBUTING.md); the Rust jobs above stay while Rust crates remain on disk.

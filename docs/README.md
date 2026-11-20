@@ -290,7 +290,6 @@ than restated here: [`overflow-cost.md`](overflow-cost.md),
 ```
 crates/cancho-ir        resolution, type checking, monomorphisation; the IR
 crates/cancho-codegen   Cranelift lowering, native object emission
-crates/cancho-vcs       content-addressed operation log (vcs.md)
 crates/cancho           the CLI
 std/                     the standard library, as Lex source
 examples/                programs meant to be read
