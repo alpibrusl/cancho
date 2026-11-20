@@ -109,8 +109,6 @@ version = "0.0.0"
 dependencies = [
  "acli",
  "blake3",
- "cancho-id",
- "cancho-syntax",
  "cancho-types",
  "cancho-vcs",
  "serde",
@@ -121,18 +119,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cancho-id"
-version = "0.0.0"
-dependencies = [
- "blake3",
- "cancho-syntax",
-]
-
-[[package]]
-name = "cancho-syntax"
-version = "0.0.0"
-
-[[package]]
 name = "cancho-types"
 version = "0.0.0"
 
@@ -141,8 +127,6 @@ name = "cancho-vcs"
 version = "0.0.0"
 dependencies = [
  "blake3",
- "cancho-id",
- "cancho-syntax",
  "ed25519-dalek",
  "hex",
  "serde",

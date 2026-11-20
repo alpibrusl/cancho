@@ -60,7 +60,7 @@ The compiler is also being written in cancho (`examples/selfhost`, epic #491, `d
 compiler is its oracle. **A change to what the compiler accepts, refuses or emits is not done until the compiler in cancho
 follows it** or the gap is written down. That means a new or changed:
 
-- **rule** (`crates/cancho-syntax/src/rules.rs`): a number and a name in `examples/selfhost/rules.cho`, numbers
+- **rule** (`crates/cancho-syntax/src/rules.rs` before it was deleted; now `examples/selfhost/rules.cho` alone): a number and a name in `examples/selfhost/rules.cho`, numbers
   sequential, and the check that raises it;
 - **builtin, prelude type or effect label**: the tables are checked-in data (`scripts/builtin_tables.py check|append`; the Rust test that generated them is deleted, `docs/removing-rust.md` Phase 5), and the code for it goes in `examples/selfhost`;
 - **runtime support or code generation**: the text in `examples/selfhost/runtime*` (the `.ll` and `.c` files under `runtime/` are
@@ -98,8 +98,8 @@ When a file gets close, split it **by concern**, not by size:
 
 - `lib.rs` is the table of contents. It holds the crate's documentation,
   its `mod` declarations, its public re-exports and its entry points,
-  and little else. `cancho-syntax` is the example: `ast.rs` is the tree,
-  `parser.rs` the grammar, and `rules.rs` the refusals.
+  and little else. `examples/selfhost` follows it: `ast.cho` is the tree,
+  `parser.cho` the grammar, and `rules.cho` the refusals.
 - **A large `impl` can be split across child modules.** Children see
   their parent's private fields, so `parser/*.rs` each hold part of the parser without making
   anything more visible.

@@ -1,34 +1,23 @@
 //! `docs/vcs.md` §8's own acceptance for this slice: an `AddFunction`/
 //! `ModifyBody` op built from a real cancho program's *actual*
-//! `cancho-id` hashes, not invented strings — checked by hand against
+//! `cancho ids` hashes, not invented strings — checked by hand against
 //! `cancho ids`' own output before anything is built on top of this.
 
 use std::collections::BTreeSet;
 
-use cancho_id::identify;
-use cancho_syntax::parse;
 use cancho_vcs::{Operation, OperationKind};
 
-const SOURCE: &str = "fn f(a: int, b: int) -> [] int { return a + b; }";
-
-fn sig_and_stage(source: &str, name: &str) -> (String, String) {
-    let ast = parse(source).expect("this fixture parses");
-    let identities = identify(&ast);
-    let f = identities.function(name).expect("the fixture declares this function");
-    (f.sig.to_hex(), f.body.to_hex())
-}
+// The identities `cancho ids` wrote for `fn f(a: int, b: int) -> [] int { return a + b; }` when the Rust `cancho-id`
+// computed them (the compiler in cancho writes the same ones, `tests/commands/front_end_names.sh`): literals now, the
+// crate that computed them being deleted (`docs/removing-rust.md`, Phase 5).
+const SIG: &str = "c5e38ed91492e3078e8d7e85a77c385480a24650e3255b24fd28a602b77474b8";
+const BODY: &str = "85d54e8737a3e94e2356d09c1878ebe47deb28b3840d98bf675ff97602c589ce";
+// The body of the same function with `a - b`: a different hash under the same signature.
+const BODY_MINUS: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 #[test]
 fn an_add_function_op_hashes_the_real_cancho_id_hashes() {
-    let (sig_id, stage_id) = sig_and_stage(SOURCE, "f");
-
-    // Checked directly against `cancho ids /tmp/sig_check.cho`'s own CLI
-    // output on this exact source: `c5e38ed9...77474b8` (sig) and
-    // `85d54e87...c589ce` (body) -- `sig_and_stage` above calls the same
-    // `cancho_id::identify` the CLI does, so this pins that the two paths
-    // agree rather than assuming it.
-    assert_eq!(sig_id, "c5e38ed91492e3078e8d7e85a77c385480a24650e3255b24fd28a602b77474b8");
-    assert_eq!(stage_id, "85d54e8737a3e94e2356d09c1878ebe47deb28b3840d98bf675ff97602c589ce");
+    let (sig_id, stage_id) = (SIG.to_owned(), BODY.to_owned());
 
     let mut effects = BTreeSet::new();
     effects.insert("io_write".to_string());
@@ -61,7 +50,7 @@ fn an_add_function_op_hashes_the_real_cancho_id_hashes() {
 
 #[test]
 fn parent_order_does_not_change_the_op_id() {
-    let (sig_id, stage_id) = sig_and_stage(SOURCE, "f");
+    let (sig_id, stage_id) = (SIG.to_owned(), BODY.to_owned());
     let kind = OperationKind::ModifyBody {
         sig_id,
         from_stage_id: stage_id.clone(),
@@ -76,7 +65,7 @@ fn parent_order_does_not_change_the_op_id() {
 
 #[test]
 fn a_different_edition_is_a_different_operation() {
-    let (sig_id, stage_id) = sig_and_stage(SOURCE, "f");
+    let (sig_id, stage_id) = (SIG.to_owned(), BODY.to_owned());
     let kind =
         OperationKind::AddFunction { sig_id, stage_id, effects: BTreeSet::new(), in_file: None };
 
@@ -93,19 +82,24 @@ fn a_different_edition_is_a_different_operation() {
 
 #[test]
 fn two_functions_with_different_bodies_get_different_stage_ids() {
-    let (sig_a, stage_a) = sig_and_stage("fn f(a: int, b: int) -> [] int { return a + b; }", "f");
-    let (sig_b, stage_b) = sig_and_stage("fn f(a: int, b: int) -> [] int { return a - b; }", "f");
-
-    // Same signature (same parameter and return types), different body.
-    assert_eq!(sig_a, sig_b, "the signature does not depend on the body");
-    assert_ne!(stage_a, stage_b, "the body hash is exactly what changed");
-
+    assert_ne!(BODY, BODY_MINUS);
     let modify = Operation::new(
-        OperationKind::ModifyBody { sig_id: sig_a, from_stage_id: stage_a, to_stage_id: stage_b },
+        OperationKind::ModifyBody {
+            sig_id: SIG.to_owned(),
+            from_stage_id: BODY.to_owned(),
+            to_stage_id: BODY_MINUS.to_owned(),
+        },
         1,
         [],
     );
-    // No assertion beyond "this constructs and hashes" -- the interesting
-    // claim is the one above, that the two `StageId`s actually differ.
-    let _ = modify.op_id();
+    let same = Operation::new(
+        OperationKind::ModifyBody {
+            sig_id: SIG.to_owned(),
+            from_stage_id: BODY.to_owned(),
+            to_stage_id: BODY.to_owned(),
+        },
+        1,
+        [],
+    );
+    assert_ne!(modify.op_id(), same.op_id());
 }
