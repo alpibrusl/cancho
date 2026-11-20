@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/cancho-vcs",
     "crates/cancho",
 ]
 
@@ -11,6 +10,3 @@ edition = "2024"
 rust-version = "1.85"
 license = "EUPL-1.2"
 publish = false
-
-[workspace.dependencies]
-cancho-vcs = { path = "crates/cancho-vcs" }

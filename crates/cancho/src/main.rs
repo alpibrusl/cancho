@@ -1,8 +1,8 @@
 //! The Rust remainder of the cancho CLI (`docs/removing-rust.md`, Phase 5).
 //!
 //! It lexes, parses, checks and writes no code any more: every command that read a program is answered by the compiler
-//! written in cancho (`scripts/build-standalone.sh`). What is left is `vcs` (the operation log), `agent-guidelines`,
-//! `introspect`, `skill` and `--version`, until the crates that carry them go too.
+//! written in cancho (`scripts/build-standalone.sh`), and so is `vcs` (its crate is deleted). What is left is `agent-guidelines`,
+//! `introspect`, `skill` and `--version`, until this crate goes too.
 //!
 //! Exit codes are semantic, as they are across the rest of the ecosystem:
 //!
@@ -23,32 +23,25 @@ use std::process::ExitCode;
 use target_lexicon::Triple;
 
 mod acli;
-mod vcs_args;
 mod vcs_cli;
-mod vcs_decl;
-mod vcs_git;
-mod vcs_record;
-mod vcs_repo;
 
 const USAGE: &str = "\
 cancho — the Rust remainder of the cancho CLI
 
 usage:
-    cancho vcs <subcommand> ...
     cancho agent-guidelines
     cancho introspect [--output json]
     cancho skill [--output json] [<out-file>]
     cancho --version
 
 Every command that reads a program (`build`, `run`, `test`, `check`, `fmt`, `print`, `ingest`, `ids`, `authority`,
-`satisfy`, `layout`, `install`, `add`) is answered by the compiler written in cancho (`scripts/build-standalone.sh`);
+`satisfy`, `layout`, `install`, `add`, `vcs`) is answered by the compiler written in cancho (`scripts/build-standalone.sh`);
 this binary refuses them (exit 2). See docs/removing-rust.md.
 
 `agent-guidelines` prints AGENTS.md. `introspect` prints the command tree as JSON (ACLI spec §1.2) and `skill` a
 generated agentskills.io SKILL.md. See docs/agent-cli.md.
 ";
 
-const EXIT_REFUSED: u8 = 1;
 const EXIT_USAGE: u8 = 2;
 const EXIT_ENVIRONMENT: u8 = 3;
 
@@ -161,7 +154,7 @@ const AGENT_GUIDELINES: &str = include_str!("../../../AGENTS.md");
 fn retired(command: &str) -> Failure {
     Failure {
         message: format!(
-            "`cancho {command}` is no longer answered by the Rust binary: it has no lexer, parser or checker (`docs/removing-rust.md`, Phase 5); use the compiler in cancho (`scripts/build-standalone.sh`)"
+            "`cancho {command}` is no longer answered by the Rust binary: it has no front end and no repository store (`docs/removing-rust.md`, Phase 5); use the compiler in cancho (`scripts/build-standalone.sh`)"
         ),
         code: EXIT_USAGE,
     }
