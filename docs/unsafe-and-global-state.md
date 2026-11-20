@@ -46,7 +46,7 @@ rest:
 
 None is in a crate a user's program is compiled by; all are libc calls that Rust's standard library has no safe form for, in
 test code. **Enforced from here on:** `#![forbid(unsafe_code)]` is the first item of the root of `cancho`, `cancho-codegen`,
-`cancho-codegen-llvm`, `cancho-id`, `cancho-ir`, `cancho-syntax`, `cancho-types` and `cancho-vcs`. The integration tests are
+`cancho-codegen-llvm`, `cancho-id`, `cancho-ir`, `cancho-syntax`, `cancho-types` (the last four since deleted) and `cancho-vcs`. The integration tests are
 separate crates and are not covered; a new `unsafe` there needs its `// SAFETY:` line, which every one above already has or is
 a `safe fn` declaration.
 

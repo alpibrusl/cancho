@@ -288,7 +288,6 @@ than restated here: [`overflow-cost.md`](overflow-cost.md),
 ## Layout
 
 ```
-crates/cancho-types     the type vocabulary: representation and unification
 crates/cancho-ir        resolution, type checking, monomorphisation; the IR
 crates/cancho-codegen   Cranelift lowering, native object emission
 crates/cancho-vcs       content-addressed operation log (vcs.md)
