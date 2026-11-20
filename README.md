@@ -22,15 +22,15 @@ That installs the latest release into `~/.local/bin` (Linux x86-64 and
 aarch64, macOS on Apple silicon). `install.sh <commit> [prefix]` installs
 the one a project pins. Building a program needs `clang` 15 or newer and
 `cc`; on a machine whose `clang` is older or not the first on `PATH`, name
-one with `cancho build … --clang /absolute/path/to/clang` (this build does
-not read `$CLANG`, which the Rust build does). The sha256 detects a damaged
+one with `cancho build … --clang /absolute/path/to/clang` (this build
+does not read `$CLANG`). The sha256 detects a damaged
 or mismatched download; it does not authenticate who published it, since the
 script and the archive both come from GitHub.
 
 What this build does not have: WASI targets
-(`--target wasm32-…`). The `cancho-rust-<commit>-<target>` asset of the same
-release is the Rust build, which has them
-(`docs/standalone-cancho.md`).
+(`--target wasm32-…`). Only the Rust build had them; it was deleted
+(`docs/removing-rust.md`, Phase 5), and the last `cancho-rust-<commit>-<target>`
+release assets stay downloadable (`docs/standalone-cancho.md`).
 
 ## An example
 
@@ -116,19 +116,18 @@ tracks what landed, what's next, and what each slice found out.
 ## Building
 
 Using cancho does not need this section (see Install). To work on the
-compiler, or to get the Rust build (WASI):
+compiler you need `clang` 15 or newer and nothing else:
 
 ```sh
 git clone https://github.com/alpibrusl/cancho
 cd cancho
-cargo test --workspace   # the whole gate: fmt, clippy and every test
-cargo build --release -p cancho   # the Rust build, target/release/cancho
+scripts/gate.sh   # the whole gate: builds the compiler from the seed, then every check
 ```
 
-The `cancho` of a release is built by `scripts/build-standalone.sh`: the
-Rust build compiles the command line written in cancho
-(`examples/selfhost/cli.cho`), which compiles itself twice more and must
-reproduce itself byte for byte (`docs/standalone-cancho.md`).
+The `cancho` of a release is built by `scripts/build-standalone.sh`: `clang`
+builds the committed seed (`seed/`), which compiles the command line written
+in cancho (`examples/selfhost/cli.cho`), which compiles itself twice more and
+must reproduce itself byte for byte (`docs/standalone-cancho.md`).
 
 Green on **linux-x86_64**, **linux-aarch64** and **darwin-aarch64**. `--backend llvm` is the
 default codegen path (LLVM via `clang`, no new build dependency);

@@ -37,7 +37,7 @@ def compiler() -> pathlib.Path:
         exe = ROOT / "target" / profile / "cancho"
         if exe.exists():
             return exe
-    sys.exit("build the compiler first: cargo build --release")
+    sys.exit("build the compiler first: scripts/build-standalone.sh --seed --rev $(git rev-parse HEAD) --out target/release")
 
 
 def shell(command: list[str]) -> None:

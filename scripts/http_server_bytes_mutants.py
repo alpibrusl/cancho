@@ -12,7 +12,7 @@ tests can reach is in EQUIVALENT with the argument, and must survive. Exit statu
 `old` text does not occur exactly once, or a mutant fails to build (a mutant that does not compile proves nothing). A run that hangs for 45 seconds (the tests take 3) counts as killed.
 
 The socket path's own tests (`conformance/api.rs`, `http_server.rs`) are not run here: they need a listener and take
-minutes. They run, unchanged, with the rest of `cargo test`.
+minutes. They run, unchanged, with the rest of the gate (`scripts/gate.sh`).
 """
 import concurrent.futures
 import os

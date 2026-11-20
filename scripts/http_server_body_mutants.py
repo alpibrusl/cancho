@@ -12,9 +12,9 @@ It is copied to a scratch directory and the two test files of `tests/packages/ht
 is run first and must pass. A mutant that changes nothing the tests can reach is in EQUIVALENT with the argument, and must
 survive. Exit status 1 if a mutant survives, an `old` text does not occur exactly once, or a mutant fails to build.
 
-The socket path (`step`, `settle`, `wait`) is exercised by `conformance/http_server_upload.rs`, which builds a server program
+The socket path (`step`, `settle`, `wait`) is exercised by `tests/commands/http_server_upload.sh`, which builds a server program
 and takes minutes; the mutants of the lines only that path runs are marked SOCKET and are checked by running that test
-(`--socket`, which needs `cargo`).
+(`--socket`: the script is run against the mutant, and its transcript must differ from `http_server_upload.expected`).
 """
 import concurrent.futures
 import os
@@ -293,7 +293,7 @@ EQUIVALENT = {
 
 # Mutants of the lines only the socket path runs (`step`, `settle`, `wait`, `serve_events`): checked with
 # `--socket`, which builds `tests/programs/server_upload.cho` against the mutated source and runs the
-# four tests of `conformance/http_server_upload.rs` (the `HTTP_SERVER_SOURCE` variable names the source).
+# script `tests/commands/http_server_upload.sh` (the `HTTP_SERVER_SOURCE` variable names the source).
 SOCKET = [
     ("step: a length body is read past its end", "        match conns.read(tab, k, bf[base + st[p]..base + st[p] + room]) {", "        match conns.read(tab, k, bf[base + st[p]..base + size]) {"),
     ("step: a full buffer that could be reclaimed closes the connection", "    } else if readable(core, k) == 0 {\n        // No room to read into.", "    } else if st[p] >= size {\n        // No room to read into."),
@@ -378,7 +378,7 @@ def judge(job):
 
 
 def judge_socket(job):
-    name, old, new, source = job
+    exe, name, old, new, source = job
     text, n = mutate(source, old, new)
     if text is None:
         return name, "BAD", f"`old` occurs {n} times"
@@ -386,8 +386,10 @@ def judge_socket(job):
         path = os.path.join(d, "server.cho")
         with open(path, "w") as f:
             f.write(text)
+        scratch = os.path.join(d, "scratch")
+        os.mkdir(scratch)
         env = dict(os.environ, HTTP_SERVER_SOURCE=path)
-        p = subprocess.Popen(["cargo", "test", "--release", "-p", "cancho", "--test", "conformance", "http_server_upload"], cwd=ROOT, env=env,
+        p = subprocess.Popen(["sh", "tests/commands/http_server_upload.sh", exe, scratch], cwd=ROOT, env=env,
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
         try:
             out, _ = p.communicate(timeout=300)
@@ -395,11 +397,11 @@ def judge_socket(job):
             os.killpg(p.pid, signal.SIGKILL)
             p.communicate()
             return name, "killed", ""
-    if p.returncode == 0:
+    with open(os.path.join(ROOT, "tests/commands/http_server_upload.expected")) as f:
+        expected = f.read()
+    if p.returncode == 0 and out == expected:
         return name, "SURVIVED", ""
-    if "test result: FAILED" in out or "panicked" in out:
-        return name, "killed", ""
-    return name, "NOBUILD", out[-300:]
+    return name, "killed", ""
 
 
 def main():
@@ -425,7 +427,7 @@ def main():
     results = []
     if socket_mode:
         chosen = [m for m in SOCKET if only is None or only in m[0]]
-        for name, verdict, detail in map(judge_socket, [(n, o, w, source) for n, o, w in chosen]):
+        for name, verdict, detail in map(judge_socket, [(exe, n, o, w, source) for n, o, w in chosen]):
             results.append((name, verdict))
             print(f"{verdict:10} {name}" + (f"   {detail}" if detail and verdict != "killed" else ""), flush=True)
     else:

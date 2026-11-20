@@ -27,7 +27,3 @@ latest: exit 0
 cancho 0.0.0 (rev 0123456789abcdef0123456789abcdef01234567, host fake)
 nightly: exit 2
 no release: exit 5
-== the Rust build is packaged as cancho-rust
-package exit 0
-cancho-rust asset made
-bad asset name: exit 2

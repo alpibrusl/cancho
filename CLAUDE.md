@@ -5,10 +5,8 @@ and [`AGENTS.md`](AGENTS.md) before writing cancho programs. The rules
 that matter most:
 
 - **The gate:** `scripts/gate.sh` (stages fmt, files, seed, walk,
-  tests, reject), passing, before anything is called done. While Rust
-  crates remain on disk, also `cargo fmt --all --check`,
-  `cargo clippy --all-targets -- -D warnings` and
-  `cargo test --workspace`.
+  tests, reject), passing, before anything is called done. It is the
+  only gate: there is no Rust in the repository any more.
 - **Design before code**, in `docs/`, with claims measured. A claim that
   turns out false is corrected in place, in the document that made it.
 - **No source file over 2,000 lines** (stage `files` of the gate, `scripts/files-budget.cho`).

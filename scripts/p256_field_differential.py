@@ -7,7 +7,7 @@
 
 With `--vectors` it does not run the driver: it writes the cases and Python's answers (one
 `case | answer` a line) for `tests/commands/p256.cho`, which runs them
-through the driver in `cargo test`.
+through the driver in the gate (`scripts/gate.sh`).
 
 Every operation, `K` (the public key of a scalar, against affine addition in Python) and `W`
 (the wNAF of a scalar, digit for digit against Python's) on random operands and on the edges that

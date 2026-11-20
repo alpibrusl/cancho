@@ -37,7 +37,7 @@ STORE = ".cancho-vcs"
 def compiler():
     exe = os.environ.get("CANCHO") or os.path.join(ROOT, "target/release/cancho")
     if not os.path.exists(exe):
-        raise SystemExit("build the compiler first: cargo build --release -p cancho")
+        raise SystemExit("build the compiler first: scripts/build-standalone.sh --seed --rev $(git rev-parse HEAD) --out target/release")
     return exe
 
 

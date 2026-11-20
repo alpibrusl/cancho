@@ -57,7 +57,7 @@ def main():
     args = parser.parse_args()
 
     if not BIN.exists():
-        print(f"build it first: cargo build --release   ({BIN} is missing)", file=sys.stderr)
+        print(f"build it first: scripts/build-standalone.sh --seed --rev $(git rev-parse HEAD) --out target/release   ({BIN} is missing)", file=sys.stderr)
         return 1
 
     operators = calls = pure = functions = 0
