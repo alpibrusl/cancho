@@ -102,7 +102,7 @@ fn document[&h, &i, &a, &d, &s](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: 
         command = "log";
         let (old, os, oe) = vcsstore.parts(answer);
         buffer.drop(heap, old);
-        answer = vcsrepo.log_command(heap, vcs, scratch, spec, have, limit);
+        answer = vcsrepo.log_command(heap, vcs, scratch, spec, have, limit, 0, "", "", "", "", "");
     } else {
         let (old, os, oe) = vcsstore.parts(answer);
         buffer.drop(heap, old);
