@@ -53,7 +53,7 @@ fresh dup
 files=$(grep -v '^$' compiler/cancho.files | grep -v '^cli.cho$' | grep -v '^ids.cho$' | sed 's#^#compiler/#')
 # shellcheck disable=SC2086
 "$cancho" build compiler/ids.cho $files --std -o "$d/ids" > "$d/build.txt" 2>&1 || fail "the identity program did not build: $(head -c 300 "$d/build.txt")"
-find examples std packages -name '*.cho' -not -path '*/.cancho-vcs/*' | LC_ALL=C sort > "$d/files.txt"
+find examples compiler std packages -name '*.cho' -not -path '*/.cancho-vcs/*' | LC_ALL=C sort > "$d/files.txt"
 total=$(wc -l < "$d/files.txt" | tr -d ' ')
 [ "$total" -gt 50 ] || fail "the walk should have found the whole suite, found $total"
 : > "$d/entries.txt"

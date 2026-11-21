@@ -2,7 +2,7 @@
 # $1 is the compiler, $2 a scratch directory; run from the root of the repository. Everything is asked of the commands (`print`, `ingest`, `ids`) and nothing else.
 
 print_dirs="tests/accept tests/reject examples examples/wordfreq examples/buffer examples/slab examples/modular examples/serve examples/fetch examples/report examples/collect packages/net-sockets packages/net-connect packages/agent-wire packages/http-request packages/http-response packages/x509 packages/tls benches examples/base64 examples/sort examples/seek benches/three std"
-json_dirs="tests/accept tests/reject examples std packages/net-sockets packages/net-connect packages/agent-wire packages/http-request packages/http-response"
+json_dirs="tests/accept tests/reject examples compiler std packages/net-sockets packages/net-connect packages/agent-wire packages/http-request packages/http-response"
 
 # files DIRS: the `.cho` files directly in each directory (the extension filter keeps a multi-file example out of the single-file walks), in order.
 files() { for d in $1; do ls "$d"/*.cho 2> /dev/null; done | sort; }

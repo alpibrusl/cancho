@@ -31,7 +31,7 @@ unframe() {
 }
 
 # corpus: the programs of the repository, one path a line, in the order of the bytes of the names.
-corpus() { LC_ALL=C find std examples packages tests/accept tests/reject tests/programs -name '*.cho' -not -path '*/.cancho-vcs/*' | LC_ALL=C sort; }
+corpus() { LC_ALL=C find std examples compiler packages tests/accept tests/reject tests/programs -name '*.cho' -not -path '*/.cancho-vcs/*' | LC_ALL=C sort; }
 
 # edge_files: the edge programs written out under $work/edge (the names are `edge/NAME.cho`, relative to $work).
 edge_files() {

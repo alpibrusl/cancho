@@ -1,7 +1,7 @@
 # Stability exemptions
 
 `docs/hash-stability.md` §7's plateau rule, as a checked property: every
-historical revision of every `.cho` file under `std/` and `examples/`
+historical revision of every `.cho` file under `std/`, `examples/` and `compiler/`
 must type-check under today's compiler, **or** its failing rule appears
 here with a reason. `scripts/history.py --explain` enforces it — an
 unlisted failing rule is a red CI run; so is a listed rule that fails
