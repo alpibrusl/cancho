@@ -1,5 +1,5 @@
 # store.sh -- the script of tests/commands/script_tests.cho for the four tests of conformance/selfhost/store.rs (deleted; docs/gate.md, G4 wave 4): the package stores fetched, refused, installed and
-# added by the compiler in cancho (`cancho install`, `cancho add`: examples/selfhost/clistore.cho, cliorigin.cho) as the Rust `cancho install` and `cancho add` did. $1 is the compiler, $2 a scratch
+# added by the compiler in cancho (`cancho install`, `cancho add`: compiler/clistore.cho, cliorigin.cho) as the Rust `cancho install` and `cancho add` did. $1 is the compiler, $2 a scratch
 # directory; run from the root of the repository.
 #
 # Each case builds a git repository (`file://`, one commit, the date and the author fixed) that holds a copy of `packages/` or of a changed copy of `packages/net-sockets`, a project that depends on

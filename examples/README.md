@@ -28,7 +28,7 @@ cargo run -p cancho -- run examples/tour.cho --std
 | [`buffer/`](buffer/) | A growable byte buffer, written as a library |
 | [`slab/`](slab/) | Shared ownership, as far as this language reaches |
 | [`modular/`](modular/) | Two modules and a root |
-| [`selfhost/`](selfhost/) | The cancho lexer and parser, written in cancho, checked against the Rust ones |
+| [`compiler/`](../compiler/) | The cancho lexer and parser, written in cancho, checked against the Rust ones |
 | [`cut/`](cut/) | `cut -d -f`, ported to **ask** what a string library needs |
 | [`wordfreq/`](wordfreq/) | The capstone: three files, every capability doing real work |
 
@@ -265,8 +265,8 @@ not establish.
 
 ```sh
 cargo build -p cancho-syntax --example dump_tokens --example dump_ast
-cargo run -p cancho -- build examples/selfhost/parser.cho $(for m in driver listing pass1 ast kinds lexcore tables; do echo examples/selfhost/$m.cho; done) --std -o /tmp/parser
-sh examples/selfhost/diff.sh target/debug/examples/dump_ast /tmp/parser examples/hello.cho tests/accept/*.cho
+cargo run -p cancho -- build compiler/parser.cho $(for m in driver listing pass1 ast kinds lexcore tables; do echo compiler/$m.cho; done) --std -o /tmp/parser
+sh compiler/diff.sh target/debug/examples/dump_ast /tmp/parser examples/hello.cho tests/accept/*.cho
 # identical: 105  different: 0
 ```
 

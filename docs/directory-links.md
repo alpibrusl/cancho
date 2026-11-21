@@ -100,11 +100,11 @@ dir_readlink(dir: &Dir, name: &[byte], out: &![byte]) -> [dir_read] Linked     /
 **Edition: the latest open one (12 today)** **[choice]**, for the reason `editions.md` §6.4 gives for every builtin added since edition 7: they are names a program may declare
 for itself, and the earlier editions are closed. No `Split` field changes, so no new edition is needed (`editions.md` §6.2). To confirm against the file before code.
 
-**In the compiler in cancho** (`dir_mkdir` is the pattern): `examples/selfhost/runtime/dirs.c` (a function each, as `cancho_dir_mkdir` is), the regenerated `dirs_linux.ll`,
+**In the compiler in cancho** (`dir_mkdir` is the pattern): `compiler/runtime/dirs.c` (a function each, as `cancho_dir_mkdir` is), the regenerated `dirs_linux.ll`,
 `dirs_darwin.ll` and `runtime.cho` (`runtime/make.sh`), `codes.cho` (the call numbers: 139 and 140 are `dir_mkdir` and `dir_open_new_mode`), `netcode.cho` (the runtime
 function each calls), and the type of `Linked`.
 
-**In Rust, the part that has no way around it.** `examples/selfhost/tables.cho` is **generated** from `cancho-ir` by `selfhost_tables` (`cancho-ir/src/tests/selfhost_tables.rs`,
+**In Rust, the part that has no way around it.** `compiler/tables.cho` is **generated** from `cancho-ir` by `selfhost_tables` (`cancho-ir/src/tests/selfhost_tables.rs`,
 `UPDATE_SELFHOST_TABLES=1`) **[read]**: the builtin's name, edition, label and signature are read from `builtin.rs` and `builtin_signature.rs`. So a new builtin is, today, a
 registration in `cancho-ir` (the enum variant, its name, its edition at `builtin.rs:1498`'s kind of table, its label, its signature) whether or not the Rust compiler ever
 lowers it; for `dir_mkdir` that is 7 sites in `cancho-ir`, plus `target.rs`'s WASI table, plus the two code generators (the LLVM one and the Cranelift one, each with a `dirs.rs` and an `expr.rs`) **[read, counted by grep]**.
@@ -172,7 +172,7 @@ NUL check, Darwin, and a NUL in a target or a name (an argument cannot hold one)
 
 **Slice 3a, the scan (2026-11-11, Linux x86-64).** `vcsscan.cho` (edition 12 now, for `dir_readlink`) makes a link a tree line of mode `120000` whose blob is the target text, with the
 Rust `scan`'s refusals: a target that is not UTF-8 is `path-unsupported` (31), and `vcsobj.check_path` applies to the link's path. Status 30 (`symlink`) is no longer answered. A buffer of 4,096
-bytes is never filled (a target is at most 4,095), so the fill check of `dir_readlink` cannot refuse a real link. `examples/selfhost/vcsstatus_check.sh` replaces its one "a link is refused" case
+bytes is never filled (a target is at most 4,095), so the fill check of `dir_readlink` cannot refuse a real link. `compiler/vcsstatus_check.sh` replaces its one "a link is refused" case
 with twelve states of a working copy with links, compared byte for byte with the Rust `cancho vcs status`: a new link, recorded and clean, a changed target, a link to a directory, a dangling link,
 a relative target, a link below a directory, a 500-byte target, a link replaced by a file and back, a file replaced by a link, a link to a directory replaced by a directory, a deleted dangling link,
 `.canchoignore` skipping a link, and a target that is not UTF-8 (`path-unsupported` from both). All 31 checks of the script pass. **Mutant:** the mode written as `100644` fails nine of them.

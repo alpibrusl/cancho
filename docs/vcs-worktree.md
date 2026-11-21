@@ -21,7 +21,7 @@ the two functions that *write* one, which `switch`, `restore`, `revert`, `apply`
 
 ## 3. Design **[choice]**
 
-**W1. One new module, `examples/selfhost/vcsworktree.cho`** (edition 12), two public functions on a `&Dir` of the working-copy root, answers in `vcsstore`'s status
+**W1. One new module, `compiler/vcsworktree.cho`** (edition 12), two public functions on a `&Dir` of the working-copy root, answers in `vcsstore`'s status
 convention, as `(status, errno)` (0 ok, 10 io with the errno, 31 `path-unsupported` for `check_path`). The caller reads the blob first, so a blob that cannot be read
 refuses before the working copy is touched, as in Rust:
 
@@ -54,7 +54,7 @@ errno on a parent is also quiet, as in Rust (`fs::remove_dir(...).is_err()` brea
 ## 4. What it is checked by
 
 Neither function is a command, so Rust's `Repo::materialize` has no command-line oracle of its own; its oracle is the commands that call it. `vcsstorectl.cho` gains
-`materialize ROOT PATH` (the entry of HEAD's tree at `PATH`) and `remove-path ROOT PATH`. `examples/selfhost/vcsworktree_check.sh` makes a repository with the Rust command, then
+`materialize ROOT PATH` (the entry of HEAD's tree at `PATH`) and `remove-path ROOT PATH`. `compiler/vcsworktree_check.sh` makes a repository with the Rust command, then
 for each case makes two copies of the working copy, runs **Rust `cancho vcs restore PATH`** in one and the controller in the other, and compares the two trees entry by entry
 (kind, mode, size, bytes, link target; `find` and `stat`). Cases: a file changed, deleted and recreated; a new executable and one losing its bit; a file where a directory
 was, and the reverse (with contents); a link where a file was and the reverse; a link in the middle of the path (a link to a directory replaced by a real one: the target
@@ -71,7 +71,7 @@ when clearing; the empty-parent loop not stopping at the root (run against a scr
 ## 6. Built and measured (2026-11-11, Linux x86-64)
 
 `vcsworktree.cho` (edition 12: `dir_symlink`), `vcsscan.skips` ignores a name ending `.cancho-tmp-0`, and `vcsstorectl.cho` has `restore ROOT PATH`.
-`examples/selfhost/vcsworktree_check.sh` runs **27 checks**, all passing: 21 cases against Rust `cancho vcs restore` (tree equal entry by entry and both succeed or both
+`compiler/vcsworktree_check.sh` runs **27 checks**, all passing: 21 cases against Rust `cancho vcs restore` (tree equal entry by entry and both succeed or both
 fail), 4 refusals (`..`, absolute, `.cancho/HEAD`, an empty component: exit 1 and the working copy untouched), a path nothing names, and the scan skipping a left-over
 temporary file. The older scripts that build `vcsstorectl` still pass (`vcsstatus` 31, `vcsrepo` 31, `vcsstore` 26, `vcslog` 51), and `vcsscan.line_end` is public so
 `vcsstorectl` does not copy it (the duplication guard caught the copy).
@@ -88,7 +88,7 @@ umask applies to the mode of a new file (the same under `022`, which is all the 
 
 Everything above ran on Linux x86-64 only. A session on Apple silicon has three jobs, in this order; none needs more than what is already in `main`.
 
-1. **Run the five scripts there**, each as `sh examples/selfhost/NAME_check.sh target/release/cancho` after `cargo build --release -p cancho`: `vcsstatus` (31 checks),
+1. **Run the five scripts there**, each as `sh compiler/<name>_check.sh target/release/cancho` after `cargo build --release -p cancho`: `vcsstatus` (31 checks),
    `vcsrepo` (31), `vcsstore` (26), `vcslog` (51) and `vcsworktree` (27). They use only `find`, `sort`, `cksum`, `readlink`, `cp -a`, `head -c` and `mktemp -d`; if one is
    missing a flag on macOS, fix the script, not the check. A failure there is the first measurement of Darwin for these modules.
 2. **(Done, §8.) Measure what §9 of `directory-links.md` and §5 above list as not measured**: the value of `AT_REMOVEDIR` and `ENOTEMPTY` and the `ELOOP` of `dir_enter` on a link (the
@@ -102,7 +102,7 @@ Everything above ran on Linux x86-64 only. A session on Apple silicon has three 
 
 ## 8. Darwin (2026-11-11, macOS 26.2, Apple silicon, `main` at 51524d20)
 
-**The five scripts, each `sh examples/selfhost/NAME_check.sh target/release/cancho`, no script changed:** `vcsstatus` 31 ok, `vcsrepo` 31, `vcsstore` 26, `vcslog` 51, `vcsworktree` 27, all exit 0 (the counts of §7). None needed a BSD flag fixed.
+**The five scripts, each `sh compiler/<name>_check.sh target/release/cancho`, no script changed:** `vcsstatus` 31 ok, `vcsrepo` 31, `vcsstore` 26, `vcslog` 51, `vcsworktree` 27, all exit 0 (the counts of §7). None needed a BSD flag fixed.
 **`tests/commands/vcs_repo.sh`: 81 of 81 with the standalone `cancho` that `scripts/gate.sh` builds from the committed seed**, output identical to `vcs_repo.expected`. Run with the Rust `target/release/cancho` it
 prints 4 `FAILS` lines (`log --path`, `show --patch` exit 0, not 2), because the Rust command implements them: the script tests the command line in cancho, which is what `$1` has to be.
 **The kernel side** (`directory-links.md` §10, `probe.c`, `probe2.c`): `AT_REMOVEDIR` 0x80, `ENOTEMPTY` 66, `ENAMETOOLONG` 63, `ELOOP` 62; renaming a file over a file, over a link (to a file, to a directory, dangling) replaces it and follows

@@ -80,7 +80,7 @@ with one rule and three checks:
 - **The rule (the bootstrap rule).** The compiler's sources may use a language feature, a builtin or a standard-library function only when the
   committed seed already compiles it. A change that needs a newer compiler than the seed is two pull requests: the compiler change, then the
   reseed, and only then the code that uses it.
-- **Check 1, every pull request that touches `examples/selfhost/`, `std/` or `cancho.files`:** the chain from the committed seed builds stage
+- **Check 1, every pull request that touches `compiler/`, `std/` or `cancho.files`:** the chain from the committed seed builds stage
   1, 2 and 3, and stage 2 equals stage 3 (S4). This is what catches a use of a feature the seed lacks.
 - **Check 2, every pull request that touches `seed/`:** the hash matches, and **the IR written by the stage-2 compiler of the same sources
   equals the IR in `seed/`** (a seed that is a fixed point of its own sources, not only of itself). Without this a seed could be anything.

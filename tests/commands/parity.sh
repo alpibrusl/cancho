@@ -1,13 +1,13 @@
 # parity.sh -- the script of tests/commands/script_tests.cho for three tests of `conformance/selfhost/parity.rs` (deleted): what the Rust crates had that the compiler in cancho
-# (examples/selfhost) does not know about yet cannot go unnoticed. The catalogues are tests/rules.golden (the tag of every refusal rule) and tests/builtins.golden (the name of every builtin),
+# (compiler) does not know about yet cannot go unnoticed. The catalogues are tests/rules.golden (the tag of every refusal rule) and tests/builtins.golden (the name of every builtin),
 # recorded from `cancho_syntax::Rule::ALL` and `cancho_ir::Builtin::ALL` on 2026-11-17 (the test that held the two files equal to the crates, `rules_and_builtins_are_the_goldens`, went with
-# them: the two files are the record now). A rule or a builtin that no source of examples/selfhost names fails here until the compiler in cancho has it, or the name is listed in
+# them: the two files are the record now). A rule or a builtin that no source of compiler names fails here until the compiler in cancho has it, or the name is listed in
 # tests/unported_rules.txt or tests/unported_builtins.txt with the reason; and a listed name that has been ported fails until its line is taken out, so the lists only shrink.
 # $1 is the compiler (unused), $2 a scratch directory; run from the root of the repository.
 work=$2
 . tests/commands/script_lib.sh
 
-D=examples/selfhost
+D=compiler
 
 # listed FILE: the names a list holds: a line is a name, then perhaps a `#` and why.
 listed() { sed 's/#.*//' "$1" | awk 'NF { print $1 }' | sort -u; }

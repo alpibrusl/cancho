@@ -4,7 +4,7 @@
 // the identity of every declaration (`identity.cho`): `type name hash`, and for each function `sig name hash` and `body name hash`. It does not
 // check the program first, as `cancho ids` does: what runs the two in turn is the command line.
 //
-//     cancho run examples/selfhost/ids.cho examples/selfhost/driver.cho ... --std < stream
+//     cancho run compiler/ids.cho compiler/driver.cho ... --std < stream
 
 import selfhost.driver;
 

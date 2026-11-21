@@ -6,7 +6,7 @@ Status: **design; nothing here is built.** Written before the code, as `CONTRIBU
 
 ## 1. What a person gets today **[measured]**
 
-The command line in cancho (`examples/selfhost/cli.cho`, built from `cancho.files` by the compiler in cancho) and the Rust `cancho`, run in the same repository: one the Rust command made with
+The command line in cancho (`compiler/cli.cho`, built from `cancho.files` by the compiler in cancho) and the Rust `cancho`, run in the same repository: one the Rust command made with
 `vcs init` and one `vcs record`.
 
 | `vcs …` | the Rust command | the command line in cancho |

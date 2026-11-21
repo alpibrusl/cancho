@@ -2,7 +2,7 @@
 # to a fixed point, the builder builds itself with no help, the file list of the standalone build is the import closure of the command line, and the standalone build reproduces itself.
 # $1 is the compiler (it builds the first compiler and the first builder, and is the stage 0 of `scripts/build-standalone.sh`), $2 a scratch directory; run from the root of the repository.
 # There was no oracle but the compiler itself: the Rust tests compared the compiler in cancho built by Rust with the compiler in cancho built by itself, and here the first one is built by `$1`.
-# Needs `clang` ($CLANG names another). `BOOTSTRAP_REGENERATE=1` writes examples/selfhost/cancho.files instead of comparing with it.
+# Needs `clang` ($CLANG names another). `BOOTSTRAP_REGENERATE=1` writes compiler/cancho.files instead of comparing with it.
 cancho=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 work=$2
 . tests/commands/script_lib.sh
@@ -17,7 +17,7 @@ esac
 
 # The program the compiler compiles: the `std` modules it imports, then its own, then its root, as `FILE <length>` lines and the files (the stream `driver.cho` reads).
 modules="lexcore tables runtime kinds rules ast pass1 foreign builtins signatures types prims scope effects emit consteval instances floats floatcode fold threadcode codes externcode netcode platform wordcode cryptocode ex lookup atoms filecode narrowing allocs binops exprs body listing checker floatprint sink filewrite formatting jsonprint jsonread ingest blake3 identity printing prune testscan layoutrep authwasi version authority satisfytext driver"
-own=$root/examples/selfhost
+own=$root/compiler
 # own_source ROOT-MODULE OUT
 own_source() {
     {
@@ -70,7 +70,7 @@ same "$?" 42 "what the third builder built exits 42"
 end
 rm -f "$work/b1" "$work/b2" "$work/b3" "$work/b2.ll" "$work/b3.ll" "$work/made"
 
-# 3. The files of the command line in cancho, `examples/selfhost/cancho.files`: `cli.cho` and everything it imports, by the `module` line of each file (a file without one is named by its stem).
+# 3. The files of the command line in cancho, `compiler/cancho.files`: `cli.cho` and everything it imports, by the `module` line of each file (a file without one is named by its stem).
 # `scripts/build-standalone.sh` reads the list, so it must be the closure: a module added to the command line and not to the list would be built by nobody.
 begin the_file_list_of_the_standalone_build_is_the_import_closure_of_cli
 (cd "$own" && awk '
@@ -92,7 +92,7 @@ begin the_file_list_of_the_standalone_build_is_the_import_closure_of_cli
         for (f in seen) print f
     }' *.cho | LC_ALL=C sort) > "$work/closure.txt"
 if [ -n "${BOOTSTRAP_REGENERATE:-}" ]; then cp "$work/closure.txt" "$own/cancho.files"; fi
-cmp -s "$work/closure.txt" "$own/cancho.files" || fail "examples/selfhost/cancho.files is not the import closure of cli.cho: run this script with BOOTSTRAP_REGENERATE=1 and commit the result ($(diff "$work/closure.txt" "$own/cancho.files" | head -4 | tr '\n' '|'))"
+cmp -s "$work/closure.txt" "$own/cancho.files" || fail "compiler/cancho.files is not the import closure of cli.cho: run this script with BOOTSTRAP_REGENERATE=1 and commit the result ($(diff "$work/closure.txt" "$own/cancho.files" | head -4 | tr '\n' '|'))"
 [ "$(wc -l < "$work/closure.txt" | tr -d ' ')" -gt 70 ] || fail "only $(wc -l < "$work/closure.txt" | tr -d ' ') files in the closure"
 end
 echo "files in the closure of cli: $(wc -l < "$work/closure.txt" | tr -d ' ')"

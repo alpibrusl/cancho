@@ -206,7 +206,7 @@ different", which a port read from the wrong bytes also satisfies (it now requir
 seconds).
 
 **Found.** Adding builtins and types moved four things that pin counts, each corrected in place: the generated
-`examples/selfhost/tables.cho` (regenerated with `UPDATE_SELFHOST_TABLES=1`), the WASI refused set (48 to 55,
+`compiler/tables.cho` (regenerated with `UPDATE_SELFHOST_TABLES=1`), the WASI refused set (48 to 55,
 `docs/wasm.md`), the checker's label count (26 to 28: `udp_recv`, `udp_send`), and the type and builtin counts in
 `docs/self-hosting.md`. The datagram builtins are refused on WASI as sockets are.
 

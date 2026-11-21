@@ -173,7 +173,7 @@ the result and the ratios of times as "several times", not as the second digit. 
 Edition 9, opened for these five names (edition 8 is the serial-port capability, `tty.md`). `editions.md` section 6.4 closes edition 7 (the freeze: a name added to a closed
 edition could shadow a name a program declared for itself), and `popcount` and `trailing_zeros` are the names a program
 writes by hand before the language has them. Previous builtins of this kind (`float_of_bits`, `dir_rename_new`) joined
-the then-latest edition because no file in the repository declared the name; here `examples/selfhost/ast.cho` has a local
+the then-latest edition because no file in the repository declared the name; here `compiler/ast.cho` has a local
 variable named `leading_zeros`: these names are in use, so a new edition is the safe choice. Costs, all one-off: the parser's range
 (`1..=9`, its message, the cancho-written parser's `value > 9`), `Builtin::since`, the selfhost tables regenerated, and
 `tests/reject/unknown_edition.cho` moving to edition 10. `Split` is unchanged.
@@ -182,7 +182,7 @@ variable named `leading_zeros`: these names are in use, so a new edition is the 
 declares it (`editions.md` section 6.3); nothing here declares `edition 9` except the new fixtures. Checked, not assumed:
 every `.cho` file under `tests/accept`, `tests/programs`, `examples`, `std`, `packages` and `benches` that exists on
 `origin/main` was given to `cancho ids --std` by an `origin/main` build and by this build, and the outputs compared: 226
-files that either build accepts, 224 byte-identical and 2 different, `examples/selfhost/tables.cho` and `builtins.cho`,
+files that either build accepts, 224 byte-identical and 2 different, `compiler/tables.cho` and `builtins.cho`,
 the generated files whose text this change rewrites on purpose; another 146 are refused by both (modules that need their
 siblings), so they were not compared. The golden-hash tests of `tests/commands/identity.sh` pass.
 

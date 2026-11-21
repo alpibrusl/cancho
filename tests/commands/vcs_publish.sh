@@ -6,8 +6,8 @@ work=$2
 . tests/commands/vcs_lib.sh
 root=$(pwd)
 
-# The hash a blob is named by is BLAKE3 of its text: a cancho program computes it (examples/selfhost/blake3sum.cho).
-"$cancho" build examples/selfhost/blake3sum.cho examples/selfhost/blake3.cho examples/selfhost/lexcore.cho --std -o "$work/b3sum" > "$work/b3build.txt" 2>&1 || { echo "FAILS the BLAKE3 program did not build"; cat "$work/b3build.txt"; }
+# The hash a blob is named by is BLAKE3 of its text: a cancho program computes it (compiler/blake3sum.cho).
+"$cancho" build compiler/blake3sum.cho compiler/blake3.cho compiler/lexcore.cho --std -o "$work/b3sum" > "$work/b3build.txt" 2>&1 || { echo "FAILS the BLAKE3 program did not build"; cat "$work/b3build.txt"; }
 
 # The one-module libraries of the dependency checks: leaf_fn returns $2.
 leaf() { printf 'module %s.leaf;\npub fn leaf_fn() -> [] int { return %s; }\n' "$1" "$2" > "$3"; }

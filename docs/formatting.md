@@ -115,11 +115,11 @@ real files in turn and formats what is left.
 
 ## 6. Written in cancho
 
-`examples/selfhost/formatting.cho` is the aligner and the placing of §2.2 and §2.3 written in cancho (#485), a port of `format.rs`, driven by mode 6 of
+`compiler/formatting.cho` is the aligner and the placing of §2.2 and §2.3 written in cancho (#485), a port of `format.rs`, driven by mode 6 of
 the driver and the root `formatter.cho`. It reads two files on standard input, as `FILE <length>` and the bytes: the source, and the text the printer
 (`printer.cho`, mode 4) wrote for it, and writes the formatted source, or the line `CANNOT <sentence>` with the sentence `format.rs` gives
 (`line 5: an import after the first declaration; ...`). Run on its own it does **not** do the checks of §4: they need the printer run on the result,
-which belongs to what runs the printer and the formatter in turn: `examples/selfhost/cli.cho` (`docs/cli-in-cancho.md` §7) does, and runs the three
+which belongs to what runs the printer and the formatter in turn: `compiler/cli.cho` (`docs/cli-in-cancho.md` §7) does, and runs the three
 checks itself.
 
 **Measured (Linux x86-64, debug `cancho`).** `selfhost::the_formatter_in_cancho_agrees_with_the_rust_formatter` compares it with `cancho_syntax::format`

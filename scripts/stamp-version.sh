@@ -1,5 +1,5 @@
 #!/bin/sh
-# Write examples/selfhost/version.cho for a release build: the commit this command line is built from and the machine it is built on.
+# Write compiler/version.cho for a release build: the commit this command line is built from and the machine it is built on.
 #
 #   scripts/stamp-version.sh COMMIT [HOST]
 #
@@ -7,7 +7,7 @@
 #   HOST    the host triple `--version` prints (default: from `uname -sm`: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu or aarch64-apple-darwin)
 #
 # VERSION_CHO names another file to write (a test stamps a copy).
-# The version is read from the `crate_version` of the committed examples/selfhost/version.cho (it was the crate's `Cargo.toml` until the crates were deleted, docs/removing-rust.md Phase 5); change it there. Anything that is not a commit is refused:
+# The version is read from the `crate_version` of the committed compiler/version.cho (it was the crate's `Cargo.toml` until the crates were deleted, docs/removing-rust.md Phase 5); change it there. Anything that is not a commit is refused:
 # a stamp that a typo makes wrong would make every pinned project refuse (or, worse, accept) this compiler.
 set -eu
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -31,12 +31,12 @@ fi
 case $host in
   *[!0-9a-z_.-]*|'') echo "not a host triple: $host" >&2; exit 2 ;;
 esac
-version=$(awk '/fn crate_version/ { f = 1 } f && /return "/ { gsub(/^.*return "|".*$/, ""); print; exit }' "$here/examples/selfhost/version.cho")
+version=$(awk '/fn crate_version/ { f = 1 } f && /return "/ { gsub(/^.*return "|".*$/, ""); print; exit }' "$here/compiler/version.cho")
 case $version in
   [0-9]*) ;;
-  *) echo "no version in examples/selfhost/version.cho" >&2; exit 3 ;;
+  *) echo "no version in compiler/version.cho" >&2; exit 3 ;;
 esac
-out=${VERSION_CHO:-$here/examples/selfhost/version.cho}
+out=${VERSION_CHO:-$here/compiler/version.cho}
 cat > "$out" <<EOF
 edition 7;
 module selfhost.version;

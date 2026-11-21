@@ -23,7 +23,7 @@ nothing here has been reproduced by anyone outside the project, and the authors 
 ### E6, E7 (measured on a fresh clone at 8d996b0, 2026-10-14)
 
 - `AGENTS.md`: 944 lines, 5,024 words, 33,406 bytes. Keywords of the lexer: `fn let var if else while return defer true false struct enum match res extern module import pub val borrow region as in mut where`, and `_`. CLI: `add agent-guidelines authority build check fmt ids ingest install introspect layout print run satisfy skill test vcs` and `--version`.
-- Workspace: `cancho` 46,407 lines, `cancho-ir` 20,950, `cancho-codegen-llvm` 13,848, `cancho-syntax` 9,016, `cancho-codegen` (Cranelift) 8,460, `cancho-id` 2,433, `cancho-vcs` 1,900, `cancho-types` 803. 814 `.cho` files in the repository, among them the compiler written in cancho (`examples/selfhost`).
+- Workspace: `cancho` 46,407 lines, `cancho-ir` 20,950, `cancho-codegen-llvm` 13,848, `cancho-syntax` 9,016, `cancho-codegen` (Cranelift) 8,460, `cancho-id` 2,433, `cancho-vcs` 1,900, `cancho-types` 803. 814 `.cho` files in the repository, among them the compiler written in cancho (`compiler`).
 - Direct external crates: acli, blake3, cranelift-codegen/-frontend/-module/-native/-object, ed25519-dalek, hex, httparse, object, serde, serde_json, target-lexicon, tempfile, toml. Outside the repository: `clang` and `cc`; `wasm-ld` and a wasi sysroot for the wasm target.
 
 ### E12 failure classes (second pass, 365 step runs, 122 failed)

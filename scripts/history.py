@@ -129,7 +129,7 @@ def lay_out(work, blob, path, commit):
         put("main.cho", EMPTY_MAIN)
         return files, target, []
     # An example is not checked beside every file of its directory: a
-    # directory can hold several programs (`examples/selfhost` has a dozen,
+    # directory can hold several programs (`compiler` has a dozen,
     # each importing `driver`; `examples/tls_nb/gaps` one per gap), and
     # laying them side by side collides. `with_imports` adds, from the same
     # commit, the file that declared each module the program imports, as

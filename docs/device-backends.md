@@ -7,7 +7,7 @@
 > (a Raspberry Pi 5; identical), so the camera verbs run there; the ALSA numbers are x86_64 only. Targets other than these are
 > **not measured**: on them the open answers `Failed(ENODEV)` and no ioctl is emitted.
 >
-> **The compiler in cancho writes the camera verbs too** (`examples/selfhost/runtime/camera.c`, built into `camera_linux.ll` and
+> **The compiler in cancho writes the camera verbs too** (`compiler/runtime/camera.c`, built into `camera_linux.ll` and
 > `camera_darwin.ll` by `runtime/make.sh`; builtins 141-144 in `codes.cho`, `netcode.cho`): the same walk, as C over byte offsets.
 > Microphone and speaker are **retired** with the Rust compiler (decision 2026-11-17, #665): the compiler in cancho will not write them, and `Capture` and `Playback` leave the language when the Rust compiler is deleted.
 

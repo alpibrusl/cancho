@@ -126,7 +126,7 @@ scripts/gate.sh   # the whole gate: builds the compiler from the seed, then ever
 
 The `cancho` of a release is built by `scripts/build-standalone.sh`: `clang`
 builds the committed seed (`seed/`), which compiles the command line written
-in cancho (`examples/selfhost/cli.cho`), which compiles itself twice more and
+in cancho (`compiler/cli.cho`), which compiles itself twice more and
 must reproduce itself byte for byte (`docs/standalone-cancho.md`).
 
 Green on **linux-x86_64**, **linux-aarch64** and **darwin-aarch64**. `--backend llvm` is the

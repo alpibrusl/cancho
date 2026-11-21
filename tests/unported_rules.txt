@@ -1,4 +1,4 @@
-# The refusals of the Rust front end that `examples/selfhost` has no number or name for yet, with why. A rule the Rust
+# The refusals of the Rust front end that `compiler` has no number or name for yet, with why. A rule the Rust
 # crates gain is not in `rules.cho`, so `parity::every_rule_of_the_rust_front_end_is_known_to_the_compiler_in_cancho` fails until
 # the compiler in cancho knows it or the rule is listed here with the issue that will. Take a line out when the rule is
 # ported (the test insists). Tracked in #512 unless it says otherwise.

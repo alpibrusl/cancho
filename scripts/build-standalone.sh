@@ -10,7 +10,7 @@
 #   --seed         stage 0 is the seed: `cancho0` built by clang from seed/<target>.ll.gz (scripts/seed-build.sh, docs/seed.md). The default when no --cancho0
 #                  is given, so a checkout with `clang` and nothing else builds the compiler.
 #
-# Stage 0 is the seed (or the `cancho` given by --cancho0). Stage 1 is the command line in cancho (examples/selfhost/cancho.files, stamped) built by stage 0 with the compiler in cancho.
+# Stage 0 is the seed (or the `cancho` given by --cancho0). Stage 1 is the command line in cancho (compiler/cancho.files, stamped) built by stage 0 with the compiler in cancho.
 # Stage 2 is the same files built by stage 1, and stage 3 by stage 2, each under the name `cancho` in a directory of its own (the object file's name is in the
 # executable). Stage 2 must equal stage 3 byte for byte, or this fails: a compiler that does not reproduce itself is not shipped. Stage 2 is what is
 # installed. Stage 1 differs from stage 2 (it was linked by stage 0's driver) and is not compared.
@@ -40,8 +40,8 @@ VERSION_CHO="$out/stamped/version.cho" sh "$here/scripts/stamp-version.sh" "$rev
 files=
 while IFS= read -r name; do
   [ -n "$name" ] || continue
-  if [ "$name" = version.cho ]; then files="$files $out/stamped/version.cho"; else files="$files $here/examples/selfhost/$name"; fi
-done < "$here/examples/selfhost/cancho.files"
+  if [ "$name" = version.cho ]; then files="$files $out/stamped/version.cho"; else files="$files $here/compiler/$name"; fi
+done < "$here/compiler/cancho.files"
 
 # The seed compiler (like every later stage) takes `--clang PATH`; a Rust stage 0 does not, so the flag is added only for the seed.
 clang=$(command -v "${CLANG:-clang}") || { echo "build-standalone: no ${CLANG:-clang} on PATH" >&2; exit 2; }

@@ -1,7 +1,7 @@
 # duplication.sh -- the script of tests/commands/script_tests.cho that was crates/cancho/tests/conformance/duplication.rs (docs/gate.md G4, wave 4; docs/next-phase.md section 4): no function body is duplicated, verbatim, in a
 # different file. Each file is parsed and identified on its own, no `--std` and no import resolution, which is what makes the check correct: docs/canonical-ast.md section 4.2 encodes a call to a name declared in the same
 # file as the hash of that declaration and a call to anything else as the literal name, so two files that call the same builtins the same way still collide, and two files whose functions read alike but reach two different
-# local declarations hash apart. The identities are those of `examples/selfhost/ids.cho` (the identity module of the compiler in cancho; `cancho ids` checks the program first, so it refuses a file that imports `std`), built here
+# local declarations hash apart. The identities are those of `compiler/ids.cho` (the identity module of the compiler in cancho; `cancho ids` checks the program first, so it refuses a file that imports `std`), built here
 # with the compiler under test. The floor of two statements (docs/next-phase.md section 4) is counted on the canonical form of `cancho print`: a line that ends in `;`, and a line that opens an `if`, `while`, `match`, `borrow`
 # or `region`. $1 is the compiler, $2 a scratch directory; run from the root of the repository.
 cancho=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
@@ -50,9 +50,9 @@ statements() {
 begin no_function_body_is_duplicated_across_files
 fresh dup
 # The program that says the identities, built once.
-files=$(grep -v '^$' examples/selfhost/cancho.files | grep -v '^cli.cho$' | grep -v '^ids.cho$' | sed 's#^#examples/selfhost/#')
+files=$(grep -v '^$' compiler/cancho.files | grep -v '^cli.cho$' | grep -v '^ids.cho$' | sed 's#^#compiler/#')
 # shellcheck disable=SC2086
-"$cancho" build examples/selfhost/ids.cho $files --std -o "$d/ids" > "$d/build.txt" 2>&1 || fail "the identity program did not build: $(head -c 300 "$d/build.txt")"
+"$cancho" build compiler/ids.cho $files --std -o "$d/ids" > "$d/build.txt" 2>&1 || fail "the identity program did not build: $(head -c 300 "$d/build.txt")"
 find examples std packages -name '*.cho' -not -path '*/.cancho-vcs/*' | LC_ALL=C sort > "$d/files.txt"
 total=$(wc -l < "$d/files.txt" | tr -d ' ')
 [ "$total" -gt 50 ] || fail "the walk should have found the whole suite, found $total"

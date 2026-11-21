@@ -1,6 +1,6 @@
 # A second backend, and how it would actually get built
 
-> **Note (2026-11-19, Phase 5):** `crates/cancho-codegen-llvm`, the Rust crate this log builds and names throughout, is deleted (`docs/removing-rust.md`): the LLVM text is written by the compiler in cancho (`examples/selfhost/emit.cho`), and the Rust `cancho` binary writes no code. The crate's files and tests are in git history; every path `crates/cancho-codegen-llvm/...` below is the history of what was built, not a live file.
+> **Note (2026-11-19, Phase 5):** `crates/cancho-codegen-llvm`, the Rust crate this log builds and names throughout, is deleted (`docs/removing-rust.md`): the LLVM text is written by the compiler in cancho (`compiler/emit.cho`), and the Rust `cancho` binary writes no code. The crate's files and tests are in git history; every path `crates/cancho-codegen-llvm/...` below is the history of what was built, not a live file.
 
 > **Note (2026-11, G4 wave 3):** `crates/cancho/tests/conformance/backends.rs`, which this log names throughout, is gone: Cranelift is retired, so "the two backends agree" has nothing to compare, and what each of its tests built is checked by the accept and examples walks of `tests/run.cho` (the fixtures state their output in `//~ STDOUT`) or, for `benches/`, sockets and the clock, by `tests/commands/backends.sh` (`docs/gate.md`). The references below are the history of the tests, not live ones.
 

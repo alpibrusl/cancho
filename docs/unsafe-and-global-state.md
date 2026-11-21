@@ -120,7 +120,7 @@ Cranelift, `internal global` in the LLVM text); everything the language calls a 
 | `cancho_region_key` | `pthread_key_t` + 1, or 0 for "no key" | process (the key); **per thread** (the stack it names) | 0 | `main`, once, before any cancho code | `region` entry and exit |
 | `cancho_hw_cache`, `cancho_hw_sha_cache` (LLVM) | 0 unknown, 1 no, 2 yes: does the CPU have AES/PMULL, SHA | process | 0 | the probe, **atomic** monotonic store | the same, atomic monotonic load |
 | `cancho_out_buf`, `cancho_in_buf` and their cursors (WASI) | the console's buffers | process | 0 | the console builtins | the same. WASI has no threads (`spawn` is refused there), so these are single-threaded |
-| `@cancho_signal_state`, `@cancho_argc`, `@cancho_argv` (`examples/selfhost/runtime.ll`) | the same three, in the runtime the compiler in cancho links | process | 0 | as above | as above |
+| `@cancho_signal_state`, `@cancho_argc`, `@cancho_argv` (`compiler/runtime.ll`) | the same three, in the runtime the compiler in cancho links | process | 0 | as above | as above |
 
 `cancho test` runs **one process per test** (`docs/testing.md` §3, §5), `cancho run` one process per run, and no generated code
 runs inside the compiler's process (there is no JIT; `grep -rn 'cranelift_jit\|libloading\|dlopen' crates` finds nothing). So
@@ -165,7 +165,7 @@ through the compiler in cancho; 23, 14 and 34 on LLVM through the Rust compiler.
 code generator, and `conn_attach` spends the ticket with one compare-and-swap (`atomic_cas`, `cmpxchg`,
 `__atomic_compare_exchange_n`) and `conn_detach` bumps with an atomic add, all sequentially consistent: of any number of
 threads redeeming one ticket exactly one finds the epoch it checked. **Mutant:** the compare-and-swap replaced by the old
-store (Cranelift) fails the test. The runtime of the compiler in cancho is `examples/selfhost/runtime/net.c`, regenerated with
+store (Cranelift) fails the test. The runtime of the compiler in cancho is `compiler/runtime/net.c`, regenerated with
 `make.sh` into `net_linux.ll` and `net_darwin.ll` (clang writes `@lexs_*` as plain `global` now; the two lines were put back
 to `common global`, which the program's own definition relies on). aarch64 is measured by CI only.
 

@@ -1,5 +1,5 @@
 # front_end_syntax.sh -- the script of tests/commands/script_tests.cho for five tests of `conformance/selfhost.rs` (deleted): the lexer, the parser, the printer, the JSON printer and the
-# formatter of examples/selfhost against the Rust front end (cancho-syntax). The oracle ran once and its answers are in tests/vectors/frontend/ (tests/commands/frontend_lib.sh says how):
+# formatter of compiler against the Rust front end (cancho-syntax). The oracle ran once and its answers are in tests/vectors/frontend/ (tests/commands/frontend_lib.sh says how):
 # each port, built by the compiler under test, is fed every program of the corpus (std/, examples/, packages/, tests/accept, tests/reject, tests/programs, and the edge cases of the Rust
 # tests, now files of tests/vectors/frontend/cases/) and must answer what the oracle did, by digest. $1 is the compiler, $2 a scratch directory; run from the root of the repository.
 cancho=$1

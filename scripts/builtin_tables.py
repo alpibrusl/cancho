@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The builtin tables of the compiler in cancho, owned by `examples/selfhost` (cancho#487, third box).
+"""The builtin tables of the compiler in cancho, owned by `compiler` (cancho#487, third box).
 
 Until this script, `builtins.cho`, `signatures.cho` and `tables.cho` were generated from the Rust crates by
 `crates/cancho-ir/src/tests/selfhost_tables.rs`. They are now checked-in data that this script reads, checks and extends. It does not need

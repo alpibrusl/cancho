@@ -135,7 +135,7 @@ half-built AST.
 
 ## 6. `print --output json` written in cancho
 
-`examples/selfhost/jsonprint.cho` is `ast_to_json` and the writer of `json.rs` written in cancho (#485), a port that reads the tree `ast.cho`
+`compiler/jsonprint.cho` is `ast_to_json` and the writer of `json.rs` written in cancho (#485), a port that reads the tree `ast.cho`
 builds and, for what the tree keeps only as tokens (effect rows, a declaration's `[T, &r where ..]`, destructuring and match patterns), the
 tokens, as `printing.cho` does. Driver mode 7, root `jsonprinter.cho`; a refusal of the parser is the line `ERR rule from to`.
 

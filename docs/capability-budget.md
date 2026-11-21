@@ -309,7 +309,7 @@ So the claim, plainly:
    literal-only code (§4.1), which needs a loop-trip analysis the compiler lacks and
    should wait for an asker whose program it would catch.
 5. **Edition and the compiler in cancho.** A new capability is an edition and a `split`
-   field (`editions.md` §7), and `examples/selfhost` must follow (`CONTRIBUTING.md`).
+   field (`editions.md` §7), and `compiler` must follow (`CONTRIBUTING.md`).
 
 **What would falsify it.** (a) A probe where two `&!` copies of a `Qpu` each hold a *private*
 counter, so the bound is the sum of copies: then the counter cannot live in the value.

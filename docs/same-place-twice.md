@@ -278,7 +278,7 @@ twice", that is a one-line change and an open question (§7).
 
 **The compiler in cancho.** `.github/pull_request_template.md` asks
 whether a change alters what the compiler refuses. This one does, so
-`examples/selfhost` would need to implement the rule or list the gap in
+`compiler` would need to implement the rule or list the gap in
 `reject_gaps.txt`. That is real work and is not counted in the 100 lines
 above.
 

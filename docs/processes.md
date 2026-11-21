@@ -14,7 +14,7 @@
 > | 5 | `exec_spawn_in` (§4.10), `std.process.channels_with_errors` and **`capture_both`** (§7.2) | `builtin.rs`, `std/process.cho`; `processes.rs`, `capture.rs` | yes |
 > | 6 (edition 9) | `exec_spawn_detached`, `child_pid`, `child_release` and the label `exec_detached` (§4.11, #524) | `builtin.rs`; `process_release.rs` | yes |
 > | 6 (edition 9) | `child_kill_group` (§4.12, #533), and `capture` using it | `builtin.rs`, `std/process.cho`; `tests/commands/process_group.cho` | yes |
-> | 6 (edition 9) | `exec_spawn_detached_under` (§4.15, #562): a worker found beneath a `Dir` that leads a group of its own | `builtin.rs`, `lower/process.rs`, `examples/selfhost/`; `tests/commands/spawn_detached_under.cho` | yes |
+> | 6 (edition 9) | `exec_spawn_detached_under` (§4.15, #562): a worker found beneath a `Dir` that leads a group of its own | `builtin.rs`, `lower/process.rs`, `compiler/`; `tests/commands/spawn_detached_under.cho` | yes |
 | 6 (edition 9) | `exec_covers` and `fs_covers` (§4.13, #535): is this path inside the bound, by the rule the operations trap on | `builtin.rs`, `memory.rs`/`fs.rs` of both backends; `tests/commands/path_covers.cho` | yes |
 >
 > What is still only designed or open is §9, and only that. *Corrected (#536):* this line used to say "slices 0 to 2
@@ -766,7 +766,7 @@ behind process runs on. A caller that wants it stopped holds the `Child` itself 
 `child_wait`.
 
 **Both backends, and the compiler in cancho.** Cranelift and LLVM emit the call as `child_kill`'s with the pid negated
-and the guard above (`child_kill(args, group)` in each). The compiler in cancho (`examples/selfhost`) has it as
+and the guard above (`child_kill(args, group)` in each). The compiler in cancho (`compiler`) has it as
 builtin 138, `cancho_child_kill_group` in `runtime.ll`; `tables.cho`, `builtins.cho` and `signatures.cho` are
 regenerated, so it is not in `unported_builtins.txt`. WebAssembly refuses it as it does the other process builtins
 (`tests/reject/child_kill_group_on_wasi.cho`). No new rule: `child_kill_group_is_edition_nine` is `not-a-function`
@@ -865,7 +865,7 @@ is `capability-misused` (`exec_covers_not_an_exec.cho`, `fs_covers_not_an_fs.cho
 (`exec_covers_arity.cho`).
 
 **The compiler in cancho.** `exec_covers` and `fs_covers` are calls 14 and 15 of `capability_call` in
-`examples/selfhost/exprs.cho`; the tables are regenerated, `runtime.ll` and `runtime.cho` carry
+`compiler/exprs.cho`; the tables are regenerated, `runtime.ll` and `runtime.cho` carry
 `cancho_path_covers`, and nothing is added to `unported_builtins.txt`, `reject_gaps.txt` or the known differences. To
 make room (`exprs.cho` was 1,998 lines against a ceiling of 2,000) the dozen `is_word` ifs that chose the call moved
 to `filecode.capability_which`, unchanged apart from being a function, and `atoms.push_prefix`, which marks "performed

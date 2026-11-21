@@ -1,4 +1,4 @@
-# cli_origin.sh -- the script of tests/commands/script_tests.cho for `conformance/selfhost/origin.rs` (deleted): the origin cache in cancho (`examples/selfhost/cliorigin.cho`,
+# cli_origin.sh -- the script of tests/commands/script_tests.cho for `conformance/selfhost/origin.rs` (deleted): the origin cache in cancho (`compiler/cliorigin.cho`,
 # `docs/cli-in-cancho.md` section 22) makes the checkout that the Rust code (`vcs_origin.rs`, reached through `cancho add`) made. $1 is the compiler, $2 a scratch directory; run from the root of the
 # repository. The oracle was the Rust `cancho add DEP URL --rev R --path P`; it was run once on the same repository (2026-11-17) and its answers are in the transcript: the tree of each checkout, the
 # directories the cache holds, and for each refusal the sentence the Rust command said, which the command in cancho's first line of standard error must be part of (`rust said`). The two commits have
@@ -13,8 +13,8 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_DATE=2026-01
 begin the_origin_cache_in_cancho_makes_the_checkout_the_rust_code_makes
 git_() { git -c user.email=a@b -c user.name=n -c commit.gpgsign=false "$@"; }
 # The tool: cliorigin.cho run on its own, built by the compiler under test with the files of the command line (cancho.files, less cli.cho).
-files=$root/examples/selfhost/origincheck.cho
-while read -r f; do [ -n "$f" ] && [ "$f" != cli.cho ] && files="$files $root/examples/selfhost/$f"; done < examples/selfhost/cancho.files
+files=$root/compiler/origincheck.cho
+while read -r f; do [ -n "$f" ] && [ "$f" != cli.cho ] && files="$files $root/compiler/$f"; done < compiler/cancho.files
 if ! "$cancho" build $files --std -o "$work/origincheck" > "$work/build.txt" 2>&1; then fail "origincheck did not build: $(head -c 300 "$work/build.txt")"; end; exit 0; fi
 tool=$work/origincheck
 

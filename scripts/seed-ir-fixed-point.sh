@@ -14,7 +14,7 @@ OUT=${2:-seed-ir-out}
 mkdir -p "$OUT/s1" "$OUT/s2" "$OUT/s3" "$OUT/r"
 OUT=$(cd "$OUT" && pwd)
 CLANG=$(command -v clang)
-files=$(sed 's|^|examples/selfhost/|' examples/selfhost/cancho.files | tr '\n' ' ')
+files=$(sed 's|^|compiler/|' compiler/cancho.files | tr '\n' ' ')
 # cancho runs clang with an empty environment, so the tag is the -o directory.
 cat > "$OUT/clangwrap.sh" <<W
 #!/bin/sh

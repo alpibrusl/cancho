@@ -134,7 +134,7 @@ if [ "$nfind" != 0 ]; then
 fi
 # The gap the fuzzer found and the mutants are excused from, said deterministically (not by whether a mutant of this run hit it): the printer writes 1.0e200 as a 201-digit number, and the compiler in cancho's reader
 # refuses a float literal of more than 120 significant digits, so the printed text does not read back (the Rust printer wrote the same text and its reader took it). Found by this script on 2026-11-17; a gap of
-# examples/selfhost to close (docs/gate.md G4, wave 3 found the same for `ids`). When it closes, this line becomes `ok` and the transcript says so.
+# compiler to close (docs/gate.md G4, wave 3 found the same for `ids`). When it closes, this line becomes `ok` and the transcript says so.
 printf 'fn f() -> [] float {\n    return 1.0e200;\n}\n' > "$work/big.cho"
 "$cancho" print "$work/big.cho" > "$work/big.printed.cho" 2> /dev/null
 if "$cancho" print --output json "$work/big.printed.cho" > /dev/null 2>&1; then

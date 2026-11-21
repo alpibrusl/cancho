@@ -1,6 +1,6 @@
 # `dir_nlink`: how many names a file has, so a program can refuse a hard link
 
-> **Status: built, in the compiler in cancho only.** Edition 12. `dir_nlink` and `dirs.confined` exist in `examples/selfhost` and `packages/confined`; the Rust compiler does not
+> **Status: built, in the compiler in cancho only.** Edition 12. `dir_nlink` and `dirs.confined` exist in `compiler` and `packages/confined`; the Rust compiler does not
 > know them (no Rust was written for this; `builtin-tables.md` says how the builtin was added). Measured on macOS aarch64: the command tests
 > `directory_nlink` and `confined` pass, and the standalone `cancho` built from these sources reproduces itself (stage 2 equals stage 3). **Not measured: Linux.**
 > The `st_nlink` offsets for Linux x86-64 and aarch64 come from the system headers' layouts, as the `st_mode` ones do, and are exercised by CI.

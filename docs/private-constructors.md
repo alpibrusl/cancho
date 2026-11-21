@@ -110,7 +110,7 @@ and `benches/` (the `.cancho-vcs` snapshot copies excluded):
 * The heaviest is `std.buffer.Buffer`: **153** places in **31** programs,
   because a `res` value is consumed by destructuring it, and `Buffer`
   programs do so. `std.conns.Table` (3) and `std.route.Router` (2) are the
-  other `std` types; the rest are in `examples/selfhost`.
+  other `std` types; the rest are in `compiler`.
 * **28** `pub` structs are **not** constructed or destructured from outside
   their module at all.
 

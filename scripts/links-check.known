@@ -1,0 +1,12 @@
+# References scripts/links-check.cho (L2) would refuse that this repository cannot satisfy. One per line, `DOCUMENT TARGET  # reason`.
+# The list may only shrink: a line goes when its reference is corrected, and none is added for a path of this repository.
+docs/ROADMAP.md examples/pg-browser  # cancho-sheets' example, in another repository
+docs/http.md examples/pg-browser  # cancho-sheets' example, in another repository
+docs/http-server.md examples/users  # cancho-web's example, in another repository
+docs/narrowing-into-several.md examples/psql_tls.cho  # cancho-pg's example, in another repository
+docs/parallelism.md examples/users_threads/users_threads.cho  # cancho-web's example, in another repository
+docs/self-hosting.md examples/users_threads  # cancho-web's example, in another repository
+docs/package-system.md examples/fetch/net.lock  # an example that was never committed here (the lock files it names are not in examples/fetch)
+docs/gate.md examples/decay  # a program written without its `.cho` (`examples/decay.cho` is there)
+docs/self-hosting.md examples/dump_tokens.rs  # an example of cancho-syntax, a Rust crate deleted in docs/removing-rust.md Phase 5
+docs/self-hosting.md examples/dump_ast.rs  # an example of cancho-syntax, a Rust crate deleted in docs/removing-rust.md Phase 5

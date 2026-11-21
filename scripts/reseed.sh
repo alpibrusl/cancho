@@ -33,7 +33,7 @@ if [ -z "$c0" ]; then
   c0=$("$here/scripts/seed-build.sh" --out "$out/seed" --target "$target")
 fi
 cd "$here"
-files=$(sed 's|^|examples/selfhost/|' examples/selfhost/cancho.files | tr '\n' ' ')
+files=$(sed 's|^|compiler/|' compiler/cancho.files | tr '\n' ' ')
 # cancho runs clang with an empty environment, so the wrapper names the capture
 # after the directory of the -o argument.
 cat > "$out/clangwrap.sh" <<W

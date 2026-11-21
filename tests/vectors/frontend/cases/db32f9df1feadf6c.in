@@ -10,7 +10,7 @@
 
 //
 
-//     cancho run examples/selfhost/ids.cho examples/selfhost/driver.cho ... --std < stream
+//     cancho run compiler/ids.cho compiler/driver.cho ... --std < stream
 
 
 
