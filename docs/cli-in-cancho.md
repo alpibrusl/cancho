@@ -155,8 +155,8 @@ path and `null` otherwise). The module is 1,453 lines. `cli.cho` parses `--outpu
 a bad form or a missing one with the message, a blank line and the usage on the standard error, status 2, and, for `skill PATH`, writes the file
 and says `Skill file written to PATH`.
 
-Until the Rust binary is gone the module is derived from it; after that it is the source, and the tree of commands is edited in it (or
-the module is made from a table in cancho: open).
+The Rust binary is gone (`removing-rust.md`, Phase 5), so the module is the source, and the tree of commands is edited in it (or
+the module is made from a table in cancho: open); no generator exists, and `statics.rs`'s test of it was deleted with the crate.
 
 **Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_answers_help_and_the_command_tree_like_cancho` runs 20 command lines on
 both (`--help`, `-h`, `help`; `introspect` in the three forms, `=` and separate, with a stray argument; `skill` in the three forms, with and

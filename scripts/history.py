@@ -270,7 +270,7 @@ def main():
     parser.add_argument("--explain", action="store_true")
     options = parser.parse_args()
     if not BIN.exists():
-        sys.exit("build first: cargo build --release")
+        sys.exit("build first: scripts/build-standalone.sh --seed --rev $(git rev-parse HEAD) --out target/release")
 
     # The exemption list: one `rule | count | reason` row a line of the table in
     # `docs/stability-exemptions.md`, read from the committed file so the

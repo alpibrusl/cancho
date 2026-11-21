@@ -1,4 +1,4 @@
-# Bootstrap compiler build output (the v0 compiler is hosted in Rust)
+# Where scripts put the compiler (`scripts/build-standalone.sh --out target/release`); there is no Cargo any more
 /target
 **/*.rs.bk
 Cargo.lock.bak

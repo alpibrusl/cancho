@@ -144,14 +144,4 @@ run "http://127.0.0.1:9" "$work/latest/other" > /dev/null 2>&1
 echo "no release: exit $?"
 [ -e "$work/latest/other/.local" ] && echo "installed something anyway"
 
-echo "== the Rust build is packaged as cancho-rust"
-fake "$work/rust/build" "$(version_line $rev)"
-CANCHO_BIN=$work/rust/build/cancho CANCHO_ASSET=cancho-rust "$root/scripts/package-release.sh" "$target" "$work/rust/dist" > /dev/null
-echo "package exit $?"
-[ -f "$work/rust/dist/cancho-rust-$rev-$target.tar.gz" ] && echo "cancho-rust asset made"
-[ -e "$work/rust/dist/cancho-$rev-$target.tar.gz" ] && echo "the standalone name was made too"
-CANCHO_BIN=$work/rust/build/cancho CANCHO_ASSET=../x "$root/scripts/package-release.sh" "$target" "$work/rust/dist2" > /dev/null 2>&1
-echo "bad asset name: exit $?"
-[ -e "$work/rust/dist2" ] && echo "wrote something anyway"
-
 exit 0

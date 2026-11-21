@@ -25,14 +25,8 @@ scripts of `tests/commands`, which build and run real programs) and
 `reject`. `scripts/gate.sh --only STAGE` runs one. `docs/gate.md` says what
 each stage replaced and how it was measured.
 
-While Rust crates remain on disk (`docs/removing-rust.md`), the Rust
-side also has its own checks:
-
-```sh
-cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
-cargo test --workspace
-```
+That is the whole gate: there is no Rust left in the repository to check
+(`docs/removing-rust.md`, Phase 5). Needing `clang` is all it takes.
 
 ---
 
@@ -56,9 +50,9 @@ cargo test --workspace
 
 ## The compiler in cancho
 
-The compiler is also being written in cancho (`examples/selfhost`, epic #491, `docs/self-hosting.md`), and the Rust
-compiler is its oracle. **A change to what the compiler accepts, refuses or emits is not done until the compiler in cancho
-follows it** or the gap is written down. That means a new or changed:
+The compiler is written in cancho (`examples/selfhost`, epic #491, `docs/self-hosting.md`); the Rust compiler that was its oracle
+is deleted, and its recorded answers (`tests/vectors/`) are the oracle now. **A change to what the compiler accepts, refuses or emits
+is not done until the sources, the recorded answers and the docs follow it.** That means a new or changed:
 
 - **rule** (`crates/cancho-syntax/src/rules.rs` before it was deleted; now `examples/selfhost/rules.cho` alone): a number and a name in `examples/selfhost/rules.cho`, numbers
   sequential, and the check that raises it;

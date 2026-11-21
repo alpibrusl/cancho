@@ -19,10 +19,6 @@ on:
         description: "Publish a release tagged cancho-<this commit's full hash> (otherwise build and smoke-test only)"
         type: boolean
         default: false
-      rust_backup:
-        description: "Also build the Rust compiler and ship it as cancho-rust-* (Cranelift and WASI; docs/removing-rust.md phase 4: set it once, for the last release before the crates are deleted)"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -46,13 +42,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No longer stage 0: the release is built from the seed (docs/seed.md S5), with no Rust. The Rust build is shipped, as `cancho-rust-…`,
-      # for Cranelift and WASI, only when `rust_backup` is set: once, for the last release before the crates are deleted (docs/removing-rust.md
-      # phases 4 and 5); it is the last thing here that needs Rust.
-      - name: Build the Rust compiler (the backup asset only)
-        if: inputs.rust_backup
-        run: cargo build --release -p cancho
-
       # The compiler's output is LLVM IR with opaque pointers, which clang 15 introduced; the 22.04 image's default is 14.
       - name: A clang that can read it (22.04 only)
         if: matrix.os == 'ubuntu-22.04'
@@ -69,9 +58,6 @@ jobs:
       - name: Package
         run: |
           CANCHO_BIN="$RUNNER_TEMP/standalone/cancho" scripts/package-release.sh ${{ matrix.target }} dist
-          if [ "${{ inputs.rust_backup }}" = "true" ]; then
-            CANCHO_ASSET=cancho-rust scripts/package-release.sh ${{ matrix.target }} dist
-          fi
 
       # What a consumer does, on the asset a consumer gets: install it by its hash, from a directory standing in for the
       # release, with no Rust and no cache around it, and build with it. `--std` is the library carried in the binary.
@@ -115,4 +101,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "cancho $GITHUB_SHA" \
-            --notes "Prebuilt cancho for commit $GITHUB_SHA, built by cancho from the seed (docs/standalone-cancho.md). A release with cancho-rust-* assets also carries the Rust build, for Cranelift and WASI. Install: curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh"
+            --notes "Prebuilt cancho for commit $GITHUB_SHA, built by cancho from the seed (docs/standalone-cancho.md). Install: curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh"

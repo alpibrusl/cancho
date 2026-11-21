@@ -72,7 +72,7 @@ def build(tmp: pathlib.Path, name: str) -> tuple[pathlib.Path, pathlib.Path]:
     """The cancho build and the C build of one program."""
     compiler = ROOT / "target" / "release" / "cancho"
     if not compiler.exists():
-        sys.exit(f"build it first: cargo build --release   ({compiler} is missing)")
+        sys.exit(f"build it first: scripts/build-standalone.sh --seed --rev $(git rev-parse HEAD) --out target/release   ({compiler} is missing)")
     ls = tmp / name
     subprocess.run(
         [str(compiler), "build", "--std", str(GAME / f"{name}.cho"), "-o", str(ls)],
