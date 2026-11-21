@@ -93,19 +93,19 @@ ERR unknown-name 2350 2367
 ERR unknown-name 2526 2543
 ## s 79ea28521f1bd748 ERR:unknown-name examples/seek/seek.cho
 ERR unknown-name 1462 1480
-## s 7f9cc647b99f3503 ERR:unknown-name examples/selfhost/allocs.cho
+## s 7f9cc647b99f3503 ERR:unknown-name compiler/allocs.cho
 ERR unknown-name 213 233
-## s cda4d909803aeb2b ERR:unknown-name examples/selfhost/ast.cho
+## s cda4d909803aeb2b ERR:unknown-name compiler/ast.cho
 ERR unknown-name 2185 2215
-## s 97c16a58126a1c6a ERR:unknown-name examples/selfhost/atoms.cho
+## s 97c16a58126a1c6a ERR:unknown-name compiler/atoms.cho
 ERR unknown-name 258 288
-## s 46a1eb9659a55068 ERR:unknown-name examples/selfhost/authority.cho
+## s 46a1eb9659a55068 ERR:unknown-name compiler/authority.cho
 ERR unknown-name 520 538
-## s eaaa688a1060a87d ERR:unknown-name examples/selfhost/authwasi.cho
+## s eaaa688a1060a87d ERR:unknown-name compiler/authwasi.cho
 ERR unknown-name 324 341
-## s 95220fe6eb53a8b6 ERR:unknown-name examples/selfhost/binops.cho
+## s 95220fe6eb53a8b6 ERR:unknown-name compiler/binops.cho
 ERR unknown-name 229 249
-## s eea29a914935b773 ok examples/selfhost/blake3.cho
+## s eea29a914935b773 ok compiler/blake3.cho
 fn 1188 1234 OK
 fn 1240 1288 OK
 fn 1290 1682 OK
@@ -120,17 +120,17 @@ fn 5693 6096 OK
 fn 6215 6665 OK
 fn 6704 8099 OK
 fn 8201 9478 OK
-## s 03a8aff56c90f989 ERR:unknown-name examples/selfhost/blake3sum.cho
+## s 03a8aff56c90f989 ERR:unknown-name compiler/blake3sum.cho
 ERR unknown-name 279 304
-## s bd1da86fcc154212 ERR:unknown-name examples/selfhost/bodies.cho
+## s bd1da86fcc154212 ERR:unknown-name compiler/bodies.cho
 ERR unknown-name 450 473
-## s ff1f2a980a589be8 ERR:unknown-name examples/selfhost/bodies_files.cho
+## s ff1f2a980a589be8 ERR:unknown-name compiler/bodies_files.cho
 ERR unknown-name 526 549
-## s 2f610b364f3240a9 ERR:unknown-name examples/selfhost/body.cho
+## s 2f610b364f3240a9 ERR:unknown-name compiler/body.cho
 ERR unknown-name 1836 1866
-## s 3290927f92202e45 ERR:unknown-name examples/selfhost/builder.cho
+## s 3290927f92202e45 ERR:unknown-name compiler/builder.cho
 ERR unknown-name 797 815
-## s 517571b4bd1e662f ok examples/selfhost/builtins.cho
+## s 517571b4bd1e662f ok compiler/builtins.cho
 fn 7445 7751 OK
 fn 8796 8842 OK
 fn 8844 9159 OK
@@ -149,88 +149,88 @@ fn 26312 26388 OK
 fn 26394 26470 OK
 fn 26476 26613 OK
 fn 26717 26787 OK
-## s 6066c37d4bff1583 ERR:unknown-name examples/selfhost/census.cho
+## s 6066c37d4bff1583 ERR:unknown-name compiler/census.cho
 ERR unknown-name 423 446
-## s 9cca98374f893647 ERR:unknown-name examples/selfhost/check.cho
+## s 9cca98374f893647 ERR:unknown-name compiler/check.cho
 ERR unknown-name 1003 1026
-## s a2fbac76463cab6f ERR:unknown-name examples/selfhost/check_files.cho
+## s a2fbac76463cab6f ERR:unknown-name compiler/check_files.cho
 ERR unknown-name 344 367
-## s 40f2e99de19499c5 ERR:unknown-name examples/selfhost/checker.cho
+## s 40f2e99de19499c5 ERR:unknown-name compiler/checker.cho
 ERR unknown-name 353 373
-## s 730aac11625c22c0 ERR:unknown-name examples/selfhost/cli.cho
+## s 730aac11625c22c0 ERR:unknown-name compiler/cli.cho
 ERR unknown-name 830 848
-## s 24771ed7fd0ba715 ERR:unknown-name examples/selfhost/clibase.cho
+## s 24771ed7fd0ba715 ERR:unknown-name compiler/clibase.cho
 ERR unknown-name 315 333
-## s 7457cb71a070f542 ERR:unknown-name examples/selfhost/clidir.cho
+## s 7457cb71a070f542 ERR:unknown-name compiler/clidir.cho
 ERR unknown-name 666 684
-## s 48c3281106353f95 ERR:unknown-name examples/selfhost/clifetch.cho
+## s 48c3281106353f95 ERR:unknown-name compiler/clifetch.cho
 ERR unknown-name 554 572
-## s 8ffa25b328cf36af ERR:unknown-name examples/selfhost/clifmt.cho
+## s 8ffa25b328cf36af ERR:unknown-name compiler/clifmt.cho
 ERR unknown-name 298 316
-## s 9513cfe571e869f8 ERR:unknown-name examples/selfhost/clilock.cho
+## s 9513cfe571e869f8 ERR:unknown-name compiler/clilock.cho
 ERR unknown-name 644 662
-## s eba5036e4e582f3e ERR:unknown-name examples/selfhost/cliorigin.cho
+## s eba5036e4e582f3e ERR:unknown-name compiler/cliorigin.cho
 ERR unknown-name 889 907
-## s 2af0c8ded2dbb9cc ERR:unknown-name examples/selfhost/cliprog.cho
+## s 2af0c8ded2dbb9cc ERR:unknown-name compiler/cliprog.cho
 ERR unknown-name 345 363
-## s 1d7889413158b623 ERR:unknown-name examples/selfhost/cliproject.cho
+## s 1d7889413158b623 ERR:unknown-name compiler/cliproject.cho
 ERR unknown-name 463 481
-## s 695af80651ca30d9 ERR:unknown-name examples/selfhost/clipublish.cho
+## s 695af80651ca30d9 ERR:unknown-name compiler/clipublish.cho
 ERR unknown-name 660 678
-## s a4866c03bacf79a9 ERR:unknown-name examples/selfhost/clistore.cho
+## s a4866c03bacf79a9 ERR:unknown-name compiler/clistore.cho
 ERR unknown-name 1305 1323
-## s eec5ab38d3536160 ERR:unknown-name examples/selfhost/clisync.cho
+## s eec5ab38d3536160 ERR:unknown-name compiler/clisync.cho
 ERR unknown-name 596 614
-## s cd4bb593afa47292 ERR:unknown-name examples/selfhost/clitest.cho
+## s cd4bb593afa47292 ERR:unknown-name compiler/clitest.cho
 ERR unknown-name 280 298
-## s 548b9bee5c10e480 ERR:unknown-name examples/selfhost/clivcs.cho
+## s 548b9bee5c10e480 ERR:unknown-name compiler/clivcs.cho
 ERR unknown-name 330 348
-## s 7c8c905d86e2d407 ERR:unknown-name examples/selfhost/clivcsgit.cho
+## s 7c8c905d86e2d407 ERR:unknown-name compiler/clivcsgit.cho
 ERR unknown-name 432 450
-## s be57e99e2a971ecb ERR:unknown-name examples/selfhost/clivcsopts.cho
+## s be57e99e2a971ecb ERR:unknown-name compiler/clivcsopts.cho
 ERR unknown-name 266 284
-## s ff5dbbe5d3e70f0e ERR:unknown-name examples/selfhost/clivcsout.cho
+## s ff5dbbe5d3e70f0e ERR:unknown-name compiler/clivcsout.cho
 ERR unknown-name 324 342
-## s 28ae1785f44e0a0a ERR:unknown-name examples/selfhost/clivcsrepo.cho
+## s 28ae1785f44e0a0a ERR:unknown-name compiler/clivcsrepo.cho
 ERR unknown-name 2250 2268
-## s fe08f097fae64c02 ERR:unknown-name examples/selfhost/codes.cho
+## s fe08f097fae64c02 ERR:unknown-name compiler/codes.cho
 ERR unknown-name 299 329
-## s 4b20411c77b70f60 ERR:unknown-name examples/selfhost/commandtree.cho
+## s 4b20411c77b70f60 ERR:unknown-name compiler/commandtree.cho
 ERR unknown-name 321 339
-## s c73d428a92939847 ERR:unknown-name examples/selfhost/compile.cho
+## s c73d428a92939847 ERR:unknown-name compiler/compile.cho
 ERR unknown-name 521 544
-## s f7fffb06c3427834 ERR:unknown-name examples/selfhost/compiler.cho
+## s f7fffb06c3427834 ERR:unknown-name compiler/compiler.cho
 ERR unknown-name 410 433
-## s d8c096149898d090 ERR:unknown-name examples/selfhost/consteval.cho
+## s d8c096149898d090 ERR:unknown-name compiler/consteval.cho
 ERR unknown-name 1083 1103
-## s 8fc3659918f6ab7d ERR:unknown-name examples/selfhost/cryptocode.cho
+## s 8fc3659918f6ab7d ERR:unknown-name compiler/cryptocode.cho
 ERR unknown-name 454 475
-## s 065191ac3789656a ERR:unknown-name examples/selfhost/diagnose.cho
+## s 065191ac3789656a ERR:unknown-name compiler/diagnose.cho
 ERR unknown-name 717 735
-## s 8ab9710ea7363b80 ERR:unknown-name examples/selfhost/driver.cho
+## s 8ab9710ea7363b80 ERR:unknown-name compiler/driver.cho
 ERR unknown-name 1894 1919
-## s ee7766b954d273b7 ERR:unknown-name examples/selfhost/effects.cho
+## s ee7766b954d273b7 ERR:unknown-name compiler/effects.cho
 ERR unknown-name 859 879
-## s 093ff18b238eeabf ERR:unknown-name examples/selfhost/emit.cho
+## s 093ff18b238eeabf ERR:unknown-name compiler/emit.cho
 ERR unknown-name 1032 1052
-## s cedcb0a6a67812fc ERR:unknown-name examples/selfhost/ex.cho
+## s cedcb0a6a67812fc ERR:unknown-name compiler/ex.cho
 ERR unknown-name 174 194
-## s ce1c4abcb089b986 ERR:unknown-name examples/selfhost/exprs.cho
+## s ce1c4abcb089b986 ERR:unknown-name compiler/exprs.cho
 ERR unknown-name 241 271
-## s 6748ac74e61e5566 ERR:unknown-name examples/selfhost/externcode.cho
+## s 6748ac74e61e5566 ERR:unknown-name compiler/externcode.cho
 ERR unknown-name 627 657
-## s ee24b6548eae5c3c ERR:unknown-name examples/selfhost/filecode.cho
+## s ee24b6548eae5c3c ERR:unknown-name compiler/filecode.cho
 ERR unknown-name 377 398
-## s fff9c3d5f573e17f ok examples/selfhost/filewrite.cho
+## s fff9c3d5f573e17f ok compiler/filewrite.cho
 fn 237 590 OK
 fn 664 1561 OK
-## s 8069e3419451b53e ERR:unknown-name examples/selfhost/floatcode.cho
+## s 8069e3419451b53e ERR:unknown-name compiler/floatcode.cho
 ERR unknown-name 197 218
-## s 02fc6d5c61cc862b ERR:unknown-name examples/selfhost/floatprint.cho
+## s 02fc6d5c61cc862b ERR:unknown-name compiler/floatprint.cho
 ERR unknown-name 940 961
-## s e4f2915f17453540 ERR:unknown-name examples/selfhost/floats.cho
+## s e4f2915f17453540 ERR:unknown-name compiler/floats.cho
 ERR unknown-name 801 821
-## s 5a2c694a7f82f8c3 ok examples/selfhost/fold.cho
+## s 5a2c694a7f82f8c3 ok compiler/fold.cho
 fn 142 200 OK
 fn 206 273 OK
 fn 588 718 OK
@@ -240,91 +240,91 @@ fn 1362 1509 OK
 fn 1691 1781 OK
 fn 1787 1863 OK
 fn 1907 3053 OK
-## s 32e599b3cad84896 ERR:unknown-name examples/selfhost/foreign.cho
+## s 32e599b3cad84896 ERR:unknown-name compiler/foreign.cho
 ERR unknown-name 1436 1466
-## s 268f7a8fe383578a ERR:unknown-name examples/selfhost/formatter.cho
+## s 268f7a8fe383578a ERR:unknown-name compiler/formatter.cho
 ERR unknown-name 438 461
-## s 94197de961527744 ERR:unknown-name examples/selfhost/formatting.cho
+## s 94197de961527744 ERR:unknown-name compiler/formatting.cho
 ERR unknown-name 1224 1242
-## s d2e5bb0cf6f2d310 ERR:unknown-name examples/selfhost/gitcheck.cho
+## s d2e5bb0cf6f2d310 ERR:unknown-name compiler/gitcheck.cho
 ERR unknown-name 492 510
-## s fd073afbceee97ca ERR:unknown-name examples/selfhost/gitdry.cho
+## s fd073afbceee97ca ERR:unknown-name compiler/gitdry.cho
 ERR unknown-name 206 224
-## s 4bd7a3aaabedf354 ERR:unknown-name examples/selfhost/gitidtab.cho
+## s 4bd7a3aaabedf354 ERR:unknown-name compiler/gitidtab.cho
 ERR unknown-name 705 729
-## s 58325ff76fb747c8 ERR:unknown-name examples/selfhost/gitidtab_test.cho
+## s 58325ff76fb747c8 ERR:unknown-name compiler/gitidtab_test.cho
 ERR unknown-name 118 143
-## s a9211d4cd503a0da ERR:unknown-name examples/selfhost/gitout.cho
+## s a9211d4cd503a0da ERR:unknown-name compiler/gitout.cho
 ERR unknown-name 394 412
-## s ff7e8b102356f546 ERR:unknown-name examples/selfhost/gitout_test.cho
+## s ff7e8b102356f546 ERR:unknown-name compiler/gitout_test.cho
 ERR unknown-name 318 336
-## s 98275176398cbf98 ERR:unknown-name examples/selfhost/gitparse.cho
+## s 98275176398cbf98 ERR:unknown-name compiler/gitparse.cho
 ERR unknown-name 698 716
-## s 6f59d60276c426f5 ERR:unknown-name examples/selfhost/gitread.cho
+## s 6f59d60276c426f5 ERR:unknown-name compiler/gitread.cho
 ERR unknown-name 1209 1227
-## s 78dd9bd3d899acbd ERR:unknown-name examples/selfhost/guidelines.cho
+## s 78dd9bd3d899acbd ERR:unknown-name compiler/guidelines.cho
 ERR unknown-name 324 342
-## s a83e4d850f3b2d12 ok examples/selfhost/hex.cho
+## s a83e4d850f3b2d12 ok compiler/hex.cho
 fn 264 480 OK
-## s 5d9d691bbdc81b68 ERR:unknown-name examples/selfhost/identity.cho
+## s 5d9d691bbdc81b68 ERR:unknown-name compiler/identity.cho
 ERR unknown-name 1796 1821
-## s 250909f383441c61 ERR:unknown-name examples/selfhost/ids.cho
+## s 250909f383441c61 ERR:unknown-name compiler/ids.cho
 ERR unknown-name 559 582
-## s 43865c3e520e8bb8 ERR:unknown-name examples/selfhost/ingest.cho
+## s 43865c3e520e8bb8 ERR:unknown-name compiler/ingest.cho
 ERR unknown-name 1245 1275
-## s 5322b6fcd9de79bf ERR:unknown-name examples/selfhost/ingester.cho
+## s 5322b6fcd9de79bf ERR:unknown-name compiler/ingester.cho
 ERR unknown-name 460 483
-## s 9e0acbebebed3b5d ERR:unknown-name examples/selfhost/instances.cho
+## s 9e0acbebebed3b5d ERR:unknown-name compiler/instances.cho
 ERR unknown-name 1403 1423
-## s 2a48067e0a096bc0 ERR:unknown-name examples/selfhost/jsonprint.cho
+## s 2a48067e0a096bc0 ERR:unknown-name compiler/jsonprint.cho
 ERR unknown-name 979 1004
-## s 9fc309dff810eb4d ERR:unknown-name examples/selfhost/jsonprinter.cho
+## s 9fc309dff810eb4d ERR:unknown-name compiler/jsonprinter.cho
 ERR unknown-name 418 441
-## s 02c3f47b3931bad8 ERR:unknown-name examples/selfhost/jsonread.cho
+## s 02c3f47b3931bad8 ERR:unknown-name compiler/jsonread.cho
 ERR unknown-name 1406 1436
-## s d217a62be0205abb ERR:unknown-name examples/selfhost/jsonwrite.cho
+## s d217a62be0205abb ERR:unknown-name compiler/jsonwrite.cho
 ERR unknown-name 391 409
-## s 201b10d2d7704793 ok examples/selfhost/kinds.cho
+## s 201b10d2d7704793 ok compiler/kinds.cho
 fn 992 3611 OK
-## s 3a669ac8f7b3cbf1 ERR:unknown-name examples/selfhost/layoutrep.cho
+## s 3a669ac8f7b3cbf1 ERR:unknown-name compiler/layoutrep.cho
 ERR unknown-name 948 966
-## s a800ad83589f8d28 ERR:unknown-name examples/selfhost/lexcore.cho
+## s a800ad83589f8d28 ERR:unknown-name compiler/lexcore.cho
 ERR unknown-name 711 729
-## s e922964219eaca8c ERR:unknown-name examples/selfhost/lexer.cho
+## s e922964219eaca8c ERR:unknown-name compiler/lexer.cho
 ERR unknown-name 911 936
-## s 8f5b8c5dc4c29a7c ERR:unknown-name examples/selfhost/listing.cho
+## s 8f5b8c5dc4c29a7c ERR:unknown-name compiler/listing.cho
 ERR unknown-name 1740 1765
-## s c7fdb42755647096 ERR:unknown-name examples/selfhost/lookup.cho
+## s c7fdb42755647096 ERR:unknown-name compiler/lookup.cho
 ERR unknown-name 231 261
-## s 913cecf9221b96fe ERR:unknown-name examples/selfhost/narrowing.cho
+## s 913cecf9221b96fe ERR:unknown-name compiler/narrowing.cho
 ERR unknown-name 682 702
-## s 5f57ac1abb0a8b43 ERR:unknown-name examples/selfhost/netcode.cho
+## s 5f57ac1abb0a8b43 ERR:unknown-name compiler/netcode.cho
 ERR unknown-name 454 471
-## s a82a3ed21f9380cc ERR:unknown-name examples/selfhost/origincheck.cho
+## s a82a3ed21f9380cc ERR:unknown-name compiler/origincheck.cho
 ERR unknown-name 425 443
-## s 17b840fb4abd43ee ERR:unknown-name examples/selfhost/parser.cho
+## s 17b840fb4abd43ee ERR:unknown-name compiler/parser.cho
 ERR unknown-name 713 736
-## s 17a8e570a1d14f9d ERR:unknown-name examples/selfhost/parser_files.cho
+## s 17a8e570a1d14f9d ERR:unknown-name compiler/parser_files.cho
 ERR unknown-name 346 369
-## s fe241da473f3d628 ERR:unknown-name examples/selfhost/pass1.cho
+## s fe241da473f3d628 ERR:unknown-name compiler/pass1.cho
 ERR unknown-name 1199 1229
-## s 8b82a27f38ac51c8 ERR:unknown-name examples/selfhost/platform.cho
+## s 8b82a27f38ac51c8 ERR:unknown-name compiler/platform.cho
 ERR unknown-name 517 538
-## s b1b221191faec6a5 ERR:unknown-name examples/selfhost/prims.cho
+## s b1b221191faec6a5 ERR:unknown-name compiler/prims.cho
 ERR unknown-name 370 390
-## s 2d4b64f9583d5c45 ERR:unknown-name examples/selfhost/printer.cho
+## s 2d4b64f9583d5c45 ERR:unknown-name compiler/printer.cho
 ERR unknown-name 419 442
-## s 636f5e509e191a44 ERR:unknown-name examples/selfhost/printing.cho
+## s 636f5e509e191a44 ERR:unknown-name compiler/printing.cho
 ERR unknown-name 727 748
-## s 6495b6d400b463d1 ERR:unknown-name examples/selfhost/projfile.cho
+## s 6495b6d400b463d1 ERR:unknown-name compiler/projfile.cho
 ERR unknown-name 1269 1287
-## s f0ec0d8c68f49218 ERR:unknown-name examples/selfhost/prune.cho
+## s f0ec0d8c68f49218 ERR:unknown-name compiler/prune.cho
 ERR unknown-name 1127 1145
-## s bbc62625d5f432fb ERR:unknown-name examples/selfhost/regen.cho
+## s bbc62625d5f432fb ERR:unknown-name compiler/regen.cho
 ERR unknown-name 825 843
-## s a83d9d89bf81824f ERR:unknown-name examples/selfhost/rules.cho
+## s a83d9d89bf81824f ERR:unknown-name compiler/rules.cho
 ERR unknown-name 333 363
-## s bbce5f82eb1d3b1c ok examples/selfhost/runtime.cho
+## s bbce5f82eb1d3b1c ok compiler/runtime.cho
 fn 346 22795 OK
 fn 22893 273056 OK
 fn 273120 378831 OK
@@ -335,11 +335,11 @@ fn 459046 460967 OK
 fn 461056 467626 OK
 fn 467810 706369 OK
 fn 706471 713406 OK
-## s 7821b98f12ba0786 ERR:unknown-name examples/selfhost/satisfytext.cho
+## s 7821b98f12ba0786 ERR:unknown-name compiler/satisfytext.cho
 ERR unknown-name 380 398
-## s f2152a0142f0d9c6 ERR:unknown-name examples/selfhost/scope.cho
+## s f2152a0142f0d9c6 ERR:unknown-name compiler/scope.cho
 ERR unknown-name 359 389
-## s cb1a6fd52fadcdc8 ok examples/selfhost/sha1.cho
+## s cb1a6fd52fadcdc8 ok compiler/sha1.cho
 fn 850 896 OK
 fn 902 941 OK
 fn 943 1024 OK
@@ -351,22 +351,22 @@ fn 2721 2989 OK
 fn 3028 3235 OK
 fn 3340 3965 OK
 fn 4091 4506 OK
-## s d1fd19062805d86a ERR:unknown-name examples/selfhost/sha1_test.cho
+## s d1fd19062805d86a ERR:unknown-name compiler/sha1_test.cho
 ERR unknown-name 527 547
-## s 667ec705eeb41b17 ERR:unknown-name examples/selfhost/sha1sum.cho
+## s 667ec705eeb41b17 ERR:unknown-name compiler/sha1sum.cho
 ERR unknown-name 342 367
-## s dff86410b3213a19 ok examples/selfhost/signatures.cho
+## s dff86410b3213a19 ok compiler/signatures.cho
 fn 22486 22550 OK
 fn 22762 22838 OK
-## s 2fe7c977d54628c4 ERR:unknown-name examples/selfhost/sink.cho
+## s 2fe7c977d54628c4 ERR:unknown-name compiler/sink.cho
 ERR unknown-name 679 704
-## s 3a1995625a2bebae ERR:unknown-name examples/selfhost/stdorder.cho
+## s 3a1995625a2bebae ERR:unknown-name compiler/stdorder.cho
 ERR unknown-name 327 345
-## s bebb5d8ecba320c9 ERR:unknown-name examples/selfhost/stdsource.cho
+## s bebb5d8ecba320c9 ERR:unknown-name compiler/stdsource.cho
 ERR unknown-name 310 328
-## s 6fcd62e2c27460ca ERR:unknown-name examples/selfhost/storecheck.cho
+## s 6fcd62e2c27460ca ERR:unknown-name compiler/storecheck.cho
 ERR unknown-name 722 740
-## s 78d3f6824fa63f98 ok examples/selfhost/tables.cho
+## s 78d3f6824fa63f98 ok compiler/tables.cho
 fn 693 740 OK
 fn 746 790 OK
 fn 796 844 OK
@@ -401,77 +401,77 @@ fn 24226 24270 OK
 fn 24272 33754 OK
 fn 38374 38515 OK
 fn 38521 38672 OK
-## s 4aa693bdd276393e ERR:unknown-name examples/selfhost/testscan.cho
+## s 4aa693bdd276393e ERR:unknown-name compiler/testscan.cho
 ERR unknown-name 791 809
-## s 0d5c712c7d4f0a5f ERR:unknown-name examples/selfhost/threadcode.cho
+## s 0d5c712c7d4f0a5f ERR:unknown-name compiler/threadcode.cho
 ERR unknown-name 532 553
-## s aa33554433abbfba ERR:unknown-name examples/selfhost/types.cho
+## s aa33554433abbfba ERR:unknown-name compiler/types.cho
 ERR unknown-name 1215 1235
-## s 346f1f1e56835eda ERR:unknown-name examples/selfhost/vcsapply.cho
+## s 346f1f1e56835eda ERR:unknown-name compiler/vcsapply.cho
 ERR unknown-name 1887 1905
-## s 92db02bcdc028fcb ERR:unknown-name examples/selfhost/vcsblame.cho
+## s 92db02bcdc028fcb ERR:unknown-name compiler/vcsblame.cho
 ERR unknown-name 1197 1215
-## s f9963f8aaa783640 ERR:unknown-name examples/selfhost/vcschange.cho
+## s f9963f8aaa783640 ERR:unknown-name compiler/vcschange.cho
 ERR unknown-name 1921 1939
-## s fffb15a5b405f8ca ERR:unknown-name examples/selfhost/vcschange_test.cho
+## s fffb15a5b405f8ca ERR:unknown-name compiler/vcschange_test.cho
 ERR unknown-name 728 746
-## s fabc9dbd11f870e7 ERR:unknown-name examples/selfhost/vcsdecl.cho
+## s fabc9dbd11f870e7 ERR:unknown-name compiler/vcsdecl.cho
 ERR unknown-name 1228 1246
-## s cb5dff5f1b698ddd ERR:unknown-name examples/selfhost/vcsdiff.cho
+## s cb5dff5f1b698ddd ERR:unknown-name compiler/vcsdiff.cho
 ERR unknown-name 1315 1333
-## s f43c6a4574b3a498 ERR:unknown-name examples/selfhost/vcsdiff_test.cho
+## s f43c6a4574b3a498 ERR:unknown-name compiler/vcsdiff_test.cho
 ERR unknown-name 347 365
-## s 7b5ecc584884857e ERR:unknown-name examples/selfhost/vcsdiffdoc.cho
+## s 7b5ecc584884857e ERR:unknown-name compiler/vcsdiffdoc.cho
 ERR unknown-name 995 1013
-## s dbc5cd0c42f7c1c0 ERR:unknown-name examples/selfhost/vcsdifftool.cho
+## s dbc5cd0c42f7c1c0 ERR:unknown-name compiler/vcsdifftool.cho
 ERR unknown-name 366 391
-## s ac2af36aacbae12c ERR:unknown-name examples/selfhost/vcsgit.cho
+## s ac2af36aacbae12c ERR:unknown-name compiler/vcsgit.cho
 ERR unknown-name 1105 1123
-## s 5a2168bea45958e2 ERR:unknown-name examples/selfhost/vcsgitout.cho
+## s 5a2168bea45958e2 ERR:unknown-name compiler/vcsgitout.cho
 ERR unknown-name 1084 1102
-## s 5bd943acf0a5748b ERR:unknown-name examples/selfhost/vcsgitput.cho
+## s 5bd943acf0a5748b ERR:unknown-name compiler/vcsgitput.cho
 ERR unknown-name 1090 1108
-## s 0bf439042ec6f88d ERR:unknown-name examples/selfhost/vcsgitw.cho
+## s 0bf439042ec6f88d ERR:unknown-name compiler/vcsgitw.cho
 ERR unknown-name 753 771
-## s 05bebd44f1ae7b65 ERR:unknown-name examples/selfhost/vcsgitw_test.cho
+## s 05bebd44f1ae7b65 ERR:unknown-name compiler/vcsgitw_test.cho
 ERR unknown-name 309 327
-## s b23494df9f5a7e79 ERR:unknown-name examples/selfhost/vcsid.cho
+## s b23494df9f5a7e79 ERR:unknown-name compiler/vcsid.cho
 ERR unknown-name 513 538
-## s 3f71907b64e6651d ERR:unknown-name examples/selfhost/vcsobj.cho
+## s 3f71907b64e6651d ERR:unknown-name compiler/vcsobj.cho
 ERR unknown-name 1376 1394
-## s 1db0d89a74241be0 ERR:unknown-name examples/selfhost/vcsobj_test.cho
+## s 1db0d89a74241be0 ERR:unknown-name compiler/vcsobj_test.cho
 ERR unknown-name 597 615
-## s 411e0b32a21edbdc ERR:unknown-name examples/selfhost/vcsrecord.cho
+## s 411e0b32a21edbdc ERR:unknown-name compiler/vcsrecord.cho
 ERR unknown-name 1835 1853
-## s 0b0ac9af563e3aaf ERR:unknown-name examples/selfhost/vcsrepo.cho
+## s 0b0ac9af563e3aaf ERR:unknown-name compiler/vcsrepo.cho
 ERR unknown-name 1314 1332
-## s e26b1b8cdceea1c0 ERR:unknown-name examples/selfhost/vcsrestore.cho
+## s e26b1b8cdceea1c0 ERR:unknown-name compiler/vcsrestore.cho
 ERR unknown-name 1544 1562
-## s 5d9871c30cca0608 ERR:unknown-name examples/selfhost/vcsrevert.cho
+## s 5d9871c30cca0608 ERR:unknown-name compiler/vcsrevert.cho
 ERR unknown-name 1279 1297
-## s e4aa24f55faf0813 ERR:unknown-name examples/selfhost/vcsscan.cho
+## s e4aa24f55faf0813 ERR:unknown-name compiler/vcsscan.cho
 ERR unknown-name 1513 1531
-## s 65bccc02ab930c39 ERR:unknown-name examples/selfhost/vcsstatus.cho
+## s 65bccc02ab930c39 ERR:unknown-name compiler/vcsstatus.cho
 ERR unknown-name 595 613
-## s e0ce80e1895366d4 ERR:unknown-name examples/selfhost/vcsstore.cho
+## s e0ce80e1895366d4 ERR:unknown-name compiler/vcsstore.cho
 ERR unknown-name 1726 1744
-## s 3d2ceb86c73cb938 ERR:unknown-name examples/selfhost/vcsstorectl.cho
+## s 3d2ceb86c73cb938 ERR:unknown-name compiler/vcsstorectl.cho
 ERR unknown-name 1618 1643
-## s 7c700f6078730682 ERR:unknown-name examples/selfhost/vcsswitch.cho
+## s 7c700f6078730682 ERR:unknown-name compiler/vcsswitch.cho
 ERR unknown-name 1729 1747
-## s a588eaa81df38b59 ERR:unknown-name examples/selfhost/vcsunlock.cho
+## s a588eaa81df38b59 ERR:unknown-name compiler/vcsunlock.cho
 ERR unknown-name 1162 1180
-## s 970f36ec1fe4b37f ERR:unknown-name examples/selfhost/vcsverify.cho
+## s 970f36ec1fe4b37f ERR:unknown-name compiler/vcsverify.cho
 ERR unknown-name 1145 1163
-## s d2f544cf7deebeaa ERR:unknown-name examples/selfhost/vcsworktree.cho
+## s d2f544cf7deebeaa ERR:unknown-name compiler/vcsworktree.cho
 ERR unknown-name 1586 1604
-## s ca08c4905f480520 ok examples/selfhost/version.cho
+## s ca08c4905f480520 ok compiler/version.cho
 fn 456 519 OK
 fn 525 580 OK
 fn 586 642 OK
-## s 0c126c27b8b8738a ERR:unknown-name examples/selfhost/walk.cho
+## s 0c126c27b8b8738a ERR:unknown-name compiler/walk.cho
 ERR unknown-name 536 554
-## s 051346351ea2efdc ERR:unknown-name examples/selfhost/wordcode.cho
+## s 051346351ea2efdc ERR:unknown-name compiler/wordcode.cho
 ERR unknown-name 492 513
 ## s c520ee45db3fd601 ERR:unknown-name examples/serve/serve.cho
 ERR unknown-name 2570 2587
@@ -6482,31 +6482,31 @@ fn 3533 3748 OK
 fn 3750 5983 OK
 ## l 3e2073074b6aefc8 ERR:unknown-name examples/ocpp_ws/ws.cho
 ERR unknown-name 59 71
-## l 7f9cc647b99f3503 ERR:unknown-name examples/selfhost/allocs.cho
+## l 7f9cc647b99f3503 ERR:unknown-name compiler/allocs.cho
 ERR unknown-name 213 233
-## l bd1da86fcc154212 ERR:unknown-name examples/selfhost/bodies.cho
+## l bd1da86fcc154212 ERR:unknown-name compiler/bodies.cho
 ERR unknown-name 450 473
-## l 40f2e99de19499c5 ERR:unknown-name examples/selfhost/checker.cho
+## l 40f2e99de19499c5 ERR:unknown-name compiler/checker.cho
 ERR unknown-name 353 373
-## l 2af0c8ded2dbb9cc ERR:unknown-name examples/selfhost/cliprog.cho
+## l 2af0c8ded2dbb9cc ERR:unknown-name compiler/cliprog.cho
 ERR unknown-name 428 448
-## l be57e99e2a971ecb ERR:unknown-name examples/selfhost/clivcsopts.cho
+## l be57e99e2a971ecb ERR:unknown-name compiler/clivcsopts.cho
 ERR unknown-name 303 333
-## l 8fc3659918f6ab7d ERR:unknown-name examples/selfhost/cryptocode.cho
+## l 8fc3659918f6ab7d ERR:unknown-name compiler/cryptocode.cho
 ERR unknown-name 454 475
-## l ee24b6548eae5c3c ERR:unknown-name examples/selfhost/filecode.cho
+## l ee24b6548eae5c3c ERR:unknown-name compiler/filecode.cho
 ERR unknown-name 377 398
-## l 94197de961527744 ERR:unknown-name examples/selfhost/formatting.cho
+## l 94197de961527744 ERR:unknown-name compiler/formatting.cho
 ERR unknown-name 1243 1273
-## l 6f59d60276c426f5 ERR:unknown-name examples/selfhost/gitread.cho
+## l 6f59d60276c426f5 ERR:unknown-name compiler/gitread.cho
 ERR unknown-name 1298 1323
-## l 2a48067e0a096bc0 ERR:unknown-name examples/selfhost/jsonprint.cho
+## l 2a48067e0a096bc0 ERR:unknown-name compiler/jsonprint.cho
 ERR unknown-name 1005 1035
-## l 8f5b8c5dc4c29a7c ERR:unknown-name examples/selfhost/listing.cho
+## l 8f5b8c5dc4c29a7c ERR:unknown-name compiler/listing.cho
 ERR unknown-name 1766 1796
-## l 8b82a27f38ac51c8 ERR:unknown-name examples/selfhost/platform.cho
+## l 8b82a27f38ac51c8 ERR:unknown-name compiler/platform.cho
 ERR unknown-name 517 538
-## l bbce5f82eb1d3b1c ok examples/selfhost/runtime.cho
+## l bbce5f82eb1d3b1c ok compiler/runtime.cho
 fn 346 22795 OK
 fn 22893 273056 OK
 fn 273120 378831 OK
@@ -6517,16 +6517,16 @@ fn 459046 460967 OK
 fn 461056 467626 OK
 fn 467810 706369 OK
 fn 706471 713406 OK
-## l 3a1995625a2bebae ok examples/selfhost/stdorder.cho
+## l 3a1995625a2bebae ok compiler/stdorder.cho
 fn 347 841 OK
 fn 847 980 OK
-## l 92db02bcdc028fcb ERR:unknown-name examples/selfhost/vcsblame.cho
+## l 92db02bcdc028fcb ERR:unknown-name compiler/vcsblame.cho
 ERR unknown-name 1251 1276
-## l ac2af36aacbae12c ERR:unknown-name examples/selfhost/vcsgit.cho
+## l ac2af36aacbae12c ERR:unknown-name compiler/vcsgit.cho
 ERR unknown-name 1176 1201
-## l 411e0b32a21edbdc ERR:unknown-name examples/selfhost/vcsrecord.cho
+## l 411e0b32a21edbdc ERR:unknown-name compiler/vcsrecord.cho
 ERR unknown-name 1906 1929
-## l 7c700f6078730682 ERR:unknown-name examples/selfhost/vcsswitch.cho
+## l 7c700f6078730682 ERR:unknown-name compiler/vcsswitch.cho
 ERR unknown-name 1783 1809
 ## l 0e27f7e920956de8 ERR:unknown-name examples/slab/main.cho
 ERR unknown-name 1799 1804

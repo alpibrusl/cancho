@@ -12,7 +12,7 @@ the second **before** releasing, and to keep the Rust code in the repository as 
 ## 1. What was run
 
 On `main` at `c73f4ea0`, `x86_64-unknown-linux-gnu`. The command line in cancho was built as the tests build it, from the closure of
-`examples/selfhost/cli.cho` (75 of the 94 files in the directory), with the compiler in cancho alone:
+`compiler/cli.cho` (75 of the 94 files in the directory), with the compiler in cancho alone:
 
 ```sh
 CANCHO_COMPILER=auto cancho build <the 75 files> --std -o cancho-cho      # 35 s; 2,348,376 bytes
@@ -50,7 +50,7 @@ writes (`docs/wasm.md`, W0.2–W2c: `size_t` at every call site, an inline check
 cancho has not been given. Porting them is a later release (§6); the Rust binary stays in the repository, built by `cargo build --release -p
 cancho`, and is what a project that needs either uses until then.
 
-**D2. `--version` is stamped into the build, not read at run time.** **[choice]** A generated module `examples/selfhost/version.cho` holds the
+**D2. `--version` is stamped into the build, not read at run time.** **[choice]** A generated module `compiler/version.cho` holds the
 commit and the host; the repository carries the unstamped form (`rev` is `unknown`, the word `crates/cancho/build.rs` uses when there is no git checkout and no `CANCHO_REV`) so that every test builds without a script, and the release
 build writes the real one (`scripts/stamp-version.sh COMMIT HOST`) before it compiles. An unstamped binary reports `rev unknown`, and a project
 that pins a compiler is refused by it unless `--ignore-compiler-rev` is given, as a Rust binary built outside a git checkout without
@@ -67,7 +67,7 @@ both are given. **[measured, slice 2]** A program of 808,893 bytes of literals (
 first standalone release, after which it is the one built by cancho; the Rust binary moves to `cancho-rust-<commit>-<target>.tar.gz`. **[choice]**
 
 **D5. The first binary is built by the Rust one, the second by the first, and the third must equal the second.** A standalone `cancho` cannot be built from nothing. The release
-build (`scripts/build-standalone.sh`) is: stage 0, the Rust `cancho` (`cargo build --release -p cancho`); stage 1, the 77 files of `examples/selfhost/cancho.files` (the import closure of
+build (`scripts/build-standalone.sh`) is: stage 0, the Rust `cancho` (`cargo build --release -p cancho`); stage 1, the 77 files of `compiler/cancho.files` (the import closure of
 `cli.cho`, stamped) built by stage 0 with the compiler in cancho; stage 2, the same files built by stage 1; stage 3, built by stage 2. The build fails unless stage 2 and stage 3 are the same
 bytes, and stage 2 is what is shipped. **[measured, slice 4]** (Linux x86-64, `env -i`, clang the only tool around): each stage takes 33 s and is 3.1 MB; **stage 1 differs from stage 2**
 (3,136,648 against 3,138,248 bytes: stage 1 was linked by stage 0's driver, stage 2 by the command line in cancho's own builder) **and stage 2 equals stage 3** once both are built under the

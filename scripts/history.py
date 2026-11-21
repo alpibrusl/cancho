@@ -2,7 +2,7 @@
 """Replay this repository's own past through today's compiler.
 
 `docs/editions.md` §2 is what these numbers mean. Every distinct revision
-of every `.cho` file under `std/` and `examples/` is checked by one
+of every `.cho` file under `std/`, `examples/` and `compiler/` is checked by one
 binary, today's, so anything that fails is the language having moved.
 
 A library file is checked beside today's other library files and a
@@ -84,8 +84,8 @@ def generated(blob):
 def revisions():
     """(blob, path) -> the oldest commit that has it."""
     seen = {}
-    for commit in reversed(git("log", "--format=%H", "--", "std", "examples").split()):
-        for line in git("ls-tree", "-r", commit, "--", "std", "examples").splitlines():
+    for commit in reversed(git("log", "--format=%H", "--", "std", "examples", "compiler").split()):
+        for line in git("ls-tree", "-r", commit, "--", "std", "examples", "compiler").splitlines():
             meta, path = line.split("\t")
             blob = meta.split()[2]
             if path.endswith(".cho") and (blob, path) not in seen:
@@ -129,7 +129,7 @@ def lay_out(work, blob, path, commit):
         put("main.cho", EMPTY_MAIN)
         return files, target, []
     # An example is not checked beside every file of its directory: a
-    # directory can hold several programs (`examples/selfhost` has a dozen,
+    # directory can hold several programs (`compiler` has a dozen,
     # each importing `driver`; `examples/tls_nb/gaps` one per gap), and
     # laying them side by side collides. `with_imports` adds, from the same
     # commit, the file that declared each module the program imports, as
@@ -159,7 +159,7 @@ def declaring(commit, module, near=""):
     importing it was built with at the time, as CI names them on the
     `cancho build` line."""
     pattern = "^module " + re.escape(module) + ";"
-    out = git("grep", "-l", "-E", pattern, commit, "--", "packages", "examples")
+    out = git("grep", "-l", "-E", pattern, commit, "--", "packages", "examples", "compiler")
     paths = [line.split(":", 1)[1] for line in out.splitlines() if ":" in line]
     paths = [p for p in paths if p.endswith(".cho") and "/.cancho-vcs" not in p]
     # A package wins over an example that happens to declare the same name

@@ -1,7 +1,7 @@
-# The builtin tables, owned by `examples/selfhost`
+# The builtin tables, owned by `compiler`
 
 > **Status: built** (cancho#487, third box). The three builtin tables of the compiler in cancho are checked-in data that `scripts/builtin_tables.py` checks and extends, and
-> `runtime.cho` is made from the `.ll` files by `examples/selfhost/regen.cho` (in cancho). `builtin_tables.py` is the one Python script this adds; it needs no Rust. The first builtin added this way is `dir_nlink`
+> `runtime.cho` is made from the `.ll` files by `compiler/regen.cho` (in cancho). `builtin_tables.py` is the one Python script this adds; it needs no Rust. The first builtin added this way is `dir_nlink`
 > ([`directory-nlink.md`](directory-nlink.md)).
 
 ## 1. What changed
@@ -12,7 +12,7 @@ test from `runtime.ll` and `runtime/*.ll`. Now:
 
 - the three tables are the source of truth. Their headers say so. The generator test is `#[ignore]`d (it would overwrite a builtin that only the compiler in cancho has) and
   goes with the crate (`removing-rust.md` phase 5);
-- `runtime.cho` is that test's `render_runtime`, now a function of `examples/selfhost/regen.cho` (the others it writes are `guidelines.cho`, `stdorder.cho` and `stdsource.cho`): on the inputs of the day it wrote the same bytes (all of `runtime.cho` but its three header lines), and `tests/commands/regen.sh` runs its `--check`;
+- `runtime.cho` is that test's `render_runtime`, now a function of `compiler/regen.cho` (the others it writes are `guidelines.cho`, `stdorder.cho` and `stdsource.cho`): on the inputs of the day it wrote the same bytes (all of `runtime.cho` but its three header lines), and `tests/commands/regen.sh` runs its `--check`;
 - `tests/builtins.golden` is the list of every builtin, in order. the Rust test that held it equal to `Builtin::ALL` is gone, so it is the record: `tests/commands/parity.sh` requires its 187 Rust builtins plus the ones only the compiler in cancho has, which follow.
 
 ## 2. The format, and why a script and not a generator
@@ -36,7 +36,7 @@ names in order; the signature stream decodes builtin by builtin with no gap; the
 2. The code the compiler writes for it: a number in `codes.cho` (`lc.spells`), and its handling in `netcode.cho` (arguments, result, which runtime function).
 3. The runtime function, in `runtime/*.c`; `runtime/make.sh` makes the `.ll` files (it also rewrites `net_*.ll` with this machine's clang: restore those if the diff is only noise);
    per-target constants go in `platform.cho` (appended to the end of `cancho_plat`, and to the `enum` in `dirs.c`).
-4. Run `regen` (build `examples/selfhost/regen.cho` with `filewrite.cho --std`, run it from the root with no argument), so `runtime.cho` follows the `.ll` files.
+4. Run `regen` (build `compiler/regen.cho` with `filewrite.cho --std`, run it from the root with no argument), so `runtime.cho` follows the `.ll` files.
 5. A command test in `tests/commands` and its probe in `tests/probes` (not `tests/programs`, which holds what every front end accepts), a reject fixture for the edition gate
    and its lines in `tests/reject.golden` and, while the message differs from the expected wording, `tests/vectors/cli/message_gaps.txt`.
 6. `scripts/build-standalone.sh`: the compiler must reproduce itself (stage 2 equals stage 3).

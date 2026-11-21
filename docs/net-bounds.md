@@ -117,7 +117,7 @@ and should: it is a report lie, not a vocabulary gap.
    report opens with `UNBOUNDED: this program holds the network without narrowing it.` The four examples that hold the
    network unnarrowed on purpose (`http_fetch_nb`, `tls_echo`, `tls_echo_fixed`, `https_hello`: the operator names the
    hosts and ports) now pin `bounded: false` with the reason, which is what they always were; gates in
-   `tests/commands/net_bounds.cho` (moved from `conformance/net_bounds.rs`, G4 wave 2). *Corrected 2026-11-09:* the compiler in cancho (`examples/selfhost`) does have `authority`
+   `tests/commands/net_bounds.cho` (moved from `conformance/net_bounds.rs`, G4 wave 2). *Corrected 2026-11-09:* the compiler in cancho (`compiler`) does have `authority`
    (`cancho authority --std [--output json] FILE`, same text and JSON as the Rust one on these programs), and the command test runs it.
 2. **§2.2** on the existing single `Net`: several children from one
    `narrow`, mirroring the `Fs` shape and its gates.
@@ -130,7 +130,7 @@ and should: it is a report lie, not a vocabulary gap.
    `narrow`: narrowing `127.0.0.1:80` to `127.0.0.1:8080` was accepted before this fix and widened the port; it is now
    `capability-not-narrowable`. (The first version of this step used whole-string prefix and was wrong both ways.) The host
    half stays a prefix until step 3A makes it exact (edition 10). Rust lowering in `crates/cancho-ir/src/lower/narrow.rs`, the compiler in cancho
-   in `examples/selfhost/narrowing.cho`; fixtures `tests/accept/narrow_many_net.cho`,
+   in `compiler/narrowing.cho`; fixtures `tests/accept/narrow_many_net.cho`,
    `tests/accept/narrow_many_net_ports.cho`, `tests/reject/narrow_many_net_{nested,equal}_bounds.cho`, `tests/reject/narrow_net_widens_port.cho`; `tests/reject/narrow_many_on_net.cho` (which asserted the
    refusal this step removes) is deleted.
 3. **§2.3, then §2.1**, in editions. Edition 7 and 9 were closed or taken (`editions.md` §6.4), so the number is **10**.
@@ -138,7 +138,7 @@ and should: it is a report lie, not a vocabulary gap.
      empty host half still admits every name (the unnarrowed root, and `:9`); `*.suffix` admits exactly one more label
      (`x.suffix`, not `x.y.suffix`, not `suffix`); every other host admits only itself. The edition travels as a flag on
      the nodes (`Expr::Connect`/`TcpConnect`'s `exact_host`), both Rust emitters (`cancho-codegen`, `cancho-codegen-llvm`) check it, and the compiler in
-     cancho marks an edition-10 dial bound with a leading byte 1 that `examples/selfhost/runtime/net.c` reads (no
+     cancho marks an edition-10 dial bound with a leading byte 1 that `compiler/runtime/net.c` reads (no
      bound begins with it; the runtime was regenerated with `runtime/make.sh`, and `common` kept on the two `lexs_*`
      globals clang 18 would turn into plain ones). Narrowing follows: from edition 10 a `Net` child is narrower than its
      parent by `net_contains` with exact hosts, so `127.0.0.1:9` cannot narrow to `127.0.0.10:9` or to `*.0.0.1:9`,

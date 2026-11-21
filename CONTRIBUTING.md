@@ -17,8 +17,8 @@ scripts/gate.sh
 ```
 
 It builds a compiler from the committed seed (no Rust, only clang) and
-runs six stages: `fmt` (`cancho fmt --check`), `files` (the file budget
-below), `seed` (the committed seed matches its hash and builds), `walk`
+runs seven stages: `fmt` (`cancho fmt --check`), `files` (the file budget
+below), `links` (every relative link and `examples/`, `compiler/` path in the documents exists), `seed` (the committed seed matches its hash and builds), `walk`
 (`tests/run.cho` over `tests/accept`, `tests/reject` and `examples`),
 `tests` (the `cancho test` runs of `tests/cancho-tests.txt` and the
 scripts of `tests/commands`, which build and run real programs) and
@@ -50,21 +50,21 @@ That is the whole gate: there is no Rust left in the repository to check
 
 ## The compiler in cancho
 
-The compiler is written in cancho (`examples/selfhost`, epic #491, `docs/self-hosting.md`); the Rust compiler that was its oracle
+The compiler is written in cancho (`compiler`, epic #491, `docs/self-hosting.md`); the Rust compiler that was its oracle
 is deleted, and its recorded answers (`tests/vectors/`) are the oracle now. **A change to what the compiler accepts, refuses or emits
 is not done until the sources, the recorded answers and the docs follow it.** That means a new or changed:
 
-- **rule** (`crates/cancho-syntax/src/rules.rs` before it was deleted; now `examples/selfhost/rules.cho` alone): a number and a name in `examples/selfhost/rules.cho`, numbers
+- **rule** (`crates/cancho-syntax/src/rules.rs` before it was deleted; now `compiler/rules.cho` alone): a number and a name in `compiler/rules.cho`, numbers
   sequential, and the check that raises it;
-- **builtin, prelude type or effect label**: the tables are checked-in data (`scripts/builtin_tables.py check|append`; the Rust test that generated them is deleted, `docs/removing-rust.md` Phase 5), and the code for it goes in `examples/selfhost`;
-- **runtime support or code generation**: the text in `examples/selfhost/runtime*` (the `.ll` and `.c` files under `runtime/` are
+- **builtin, prelude type or effect label**: the tables are checked-in data (`scripts/builtin_tables.py check|append`; the Rust test that generated them is deleted, `docs/removing-rust.md` Phase 5), and the code for it goes in `compiler`;
+- **runtime support or code generation**: the text in `compiler/runtime*` (the `.ll` and `.c` files under `runtime/` are
   sources now, with `regen.cho` embedding them in `runtime.cho`) and the backend's behaviour in `emit.cho`; the Rust LLVM backend that once
   wrote them is deleted (`docs/removing-rust.md`, Phase 5);
 - **fixture** in `tests/reject/` or `tests/accept/`: it is built through the compiler in cancho by stage `walk` of the gate.
 
 What checks this, in order of how early it fails:
 
-1. `tests/commands/parity.sh` fails when Rust has a rule or a builtin that no source of `examples/selfhost` names. List it in
+1. `tests/commands/parity.sh` fails when Rust has a rule or a builtin that no source of `compiler` names. List it in
    `tests/unported_rules.txt` (or `tests/unported_builtins.txt`) with the issue that will port it, or port it.
 2. Stage `walk` of `scripts/gate.sh` fails when a program of `tests/reject/` is refused by another rule than the one it declares
    (`//~ RULE`) by the compiler in cancho, unless it is in `tests/reject.known`; a listed one that now agrees fails until the line is
@@ -92,7 +92,7 @@ When a file gets close, split it **by concern**, not by size:
 
 - `lib.rs` is the table of contents. It holds the crate's documentation,
   its `mod` declarations, its public re-exports and its entry points,
-  and little else. `examples/selfhost` follows it: `ast.cho` is the tree,
+  and little else. `compiler` follows it: `ast.cho` is the tree,
   `parser.cho` the grammar, and `rules.cho` the refusals.
 - **A large `impl` can be split across child modules.** Children see
   their parent's private fields, so `parser/*.rs` each hold part of the parser without making

@@ -55,5 +55,5 @@ Not measured here: the compressor against zlib on inputs larger than 20 MB; the 
 
 1. cancho-tools: `import std.flate`, delete `tools/archive/flate.cho`, use `std.crc` for the CRC (its `stream.cho` and `zip.cho` call
    `flate.crc_fill`, `crc_update` and `crc32`), and move its pin to a cancho that has this module. Not done: that is a change in another repository.
-2. `cancho vcs` (#680, `examples/selfhost`): the object store on `std.flate`, in place of the `zlib.cho` of #690.
+2. `cancho vcs` (#680, `compiler`): the object store on `std.flate`, in place of the `zlib.cho` of #690.
 3. The slow I/O (`slurp`, `buffer.write`): about 70 MB/s on this machine, measured here, not investigated.

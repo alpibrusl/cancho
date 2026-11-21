@@ -9,13 +9,13 @@ root=$(pwd)
 # `every_tracked_program_formats_and_is_formatted` ran `fmt --check` over ten paths. Stage 1 of scripts/gate.sh (`fmt`) runs the same command over the same ten, so the test is that stage; what is checked here is that the
 # stage still names them all, which is the one way the two could part.
 begin every_tracked_program_formats_and_is_formatted
-corpus="std examples packages tests/accept tests/programs tests/run.cho tests/support tests/commands scripts benches"
+corpus="std examples compiler packages tests/accept tests/programs tests/run.cho tests/support tests/commands scripts benches"
 n=0
 for p in $corpus; do
     n=$((n + 1))
     [ -e "$root/$p" ] || fail "$p is not there"
 done
-same "$n" 10 "the corpus has ten paths"
+same "$n" 11 "the corpus has eleven paths"
 grep -q "fmt --check $corpus" scripts/gate.sh || fail "stage fmt of scripts/gate.sh does not run fmt --check over $corpus"
 end
 

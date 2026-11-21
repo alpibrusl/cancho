@@ -11,9 +11,9 @@
 // the half of the Rust checker this is a port of; `tests/conformance/selfhost.rs` compares them
 // over every program in the repository.
 //
-//     cancho run examples/selfhost/check.cho examples/selfhost/driver.cho examples/selfhost/listing.cho \
-//         examples/selfhost/pass1.cho examples/selfhost/ast.cho examples/selfhost/kinds.cho \
-//         examples/selfhost/lexcore.cho examples/selfhost/tables.cho --std < f.cho
+//     cancho run compiler/check.cho compiler/driver.cho compiler/listing.cho \
+//         compiler/pass1.cho compiler/ast.cho compiler/kinds.cho \
+//         compiler/lexcore.cho compiler/tables.cho --std < f.cho
 
 import selfhost.driver;
 

@@ -330,9 +330,9 @@ done
 build_stamped() {
     rm -rf "$work/stamped-$3"
     mkdir -p "$work/stamped-$3"
-    if [ "$1" = unknown ]; then _vc=examples/selfhost/version.cho; else VERSION_CHO=$work/stamped-$3/version.cho sh scripts/stamp-version.sh "$1" "$2" || return 1; _vc=$work/stamped-$3/version.cho; fi
+    if [ "$1" = unknown ]; then _vc=compiler/version.cho; else VERSION_CHO=$work/stamped-$3/version.cho sh scripts/stamp-version.sh "$1" "$2" || return 1; _vc=$work/stamped-$3/version.cho; fi
     _files=
-    while read -r f; do [ -n "$f" ] || continue; if [ "$f" = version.cho ]; then _files="$_files $_vc"; else _files="$_files examples/selfhost/$f"; fi; done < examples/selfhost/cancho.files
+    while read -r f; do [ -n "$f" ] || continue; if [ "$f" = version.cho ]; then _files="$_files $_vc"; else _files="$_files compiler/$f"; fi; done < compiler/cancho.files
     "$cancho" build $_files --std -o "$work/$3" > "$work/build-$3.txt" 2>&1 || { fail "building the compiler stamped $1: $(head -c 300 "$work/build-$3.txt")"; return 1; }
 }
 pin_project() { # PIN

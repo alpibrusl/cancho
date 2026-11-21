@@ -2,7 +2,7 @@
 
 > **Status: slice 1 of #680 (the primitives audit); no code yet.** Written before the code (`CONTRIBUTING.md`).
 > *(read)* is from the source or a design document; *(measured)* was run on 2026-11-05 on macOS arm64 with the
-> compiler of `main` (c7435d6e). The rule behind it: new features are written in `examples/selfhost`, the Rust compiler is
+> compiler of `main` (c7435d6e). The rule behind it: new features are written in `compiler`, the Rust compiler is
 > being deprecated, so **no new Rust**, and a missing primitive stops the work with an issue instead of a fallback to Rust.
 > The Rust V1 (`crates/cancho-vcs`, `crates/cancho/src/vcs_*.rs`) and its pinned JSON (`tests/vcs_fixtures/pins/`)
 > are the oracle. A Rust V2 (merge, `resolve`, `replay`, a gate that resolves modules outside the tree, deflate and delta
@@ -24,13 +24,13 @@
 | List a directory, sorted bytewise; kind, size, mtime without opening; mode bits (the exec bit) | yes | `std.dirs.list`, `dir_stat`, `dir_mode`, `dir_own_mode` (`directory-listing.md` §3.5) |
 | Advisory lock | yes | `file_lock` |
 | The clock | yes | `clock_unix_ms` (needs `Clock`) |
-| BLAKE3, SHA-256/384/512, HMAC, Ed25519 | yes | `examples/selfhost/blake3.cho`; `std.crypto` (`sha256`, `sha512`), `std.hmac`, `std.ed25519` |
+| BLAKE3, SHA-256/384/512, HMAC, Ed25519 | yes | `compiler/blake3.cho`; `std.crypto` (`sha256`, `sha512`), `std.hmac`, `std.ed25519` |
 | Parse JSON | yes | `std.json` (a tape; no writer) |
-| Write JSON as `serde_json::to_vec_pretty` | yes, selfhost | `examples/selfhost/jsonwrite.cho` (the `vcs` files, `cli-in-cancho.md` §28) |
+| Write JSON as `serde_json::to_vec_pretty` | yes, selfhost | `compiler/jsonwrite.cho` (the `vcs` files, `cli-in-cancho.md` §28) |
 | Parse, check, identify, format a program held in memory | yes, but as whole-process modes | `driver.drive(world, mode, ..)` reads the program as a stream on standard input (`check_files.cho`, `ids.cho`, `clifmt.cho`) |
 | Arguments | yes | the `Args` capability; the CLI is `selfhost.cli*`, `clivcs.cho` is the publish side |
 | Run another program (the gate does not need one) | yes | `Exec` |
-| **SHA-1** (git object ids, V1's `import-git`/`export-git`) | **no** | a library, `examples/selfhost/sha1.cho`; no compiler change |
+| **SHA-1** (git object ids, V1's `import-git`/`export-git`) | **no** | a library, `compiler/sha1.cho`; no compiler change |
 | **zlib inflate** (reading git objects) | **no** | a library: `std.flate` (#691) |
 | **zlib deflate** (git export writes stored blocks; the store may compress) | **no** | a library: `std.flate` (#691), which compresses; stored blocks first, LZ77 and Huffman when R4 asks |
 | Histogram diff, anchored edits, diff3, declaration merge, canonical JSON of a change | **no** | libraries, the Rust V1/V2 as the algorithm |
@@ -44,7 +44,7 @@
 ## 2. Measured
 
 Throughput decides whether the V1 `import-git` of `cancho` (826.9 MiB of objects, `docs/vcs-cli.md` R4) is bearable in
-cancho code. BLAKE3, `blake3sum` built from `examples/selfhost/blake3.cho` with the Rust compiler, 20 MB of random
+cancho code. BLAKE3, `blake3sum` built from `compiler/blake3.cho` with the Rust compiler, 20 MB of random
 bytes, standard input: **0.69 s wall, 0.40 s user (about 50 MB/s of hashing)**, which puts the 826.9 MiB at about 17 s. `std.crypto.sha256` over 20 MB in memory: **0.33 s
 wall (about 60 MB/s)**.
 
@@ -65,7 +65,7 @@ the one cancho-tools' `archive` already had (410 MB/s, a table for the short cod
 Correctness of `sha1.cho`, against independent implementations: `hashlib` for 19 sizes from 0 to 1,000,003 bytes (every size around a block: 55, 56,
 57, 63, 64, 65, 119, 120, 121, 127, 128, 129), and a table of the lengths 0 to 130, each whole and cut at every point, in `sha1_test.cho`, with the
 FIPS 180-4 vectors and a git blob (`ce01362...`). A mutant (a round constant) fails all four tests. It passes under the compiler in cancho alone
-(`CANCHO_COMPILER=auto`). `examples/selfhost/test.sh` runs the tests.
+(`CANCHO_COMPILER=auto`). `compiler/test.sh` runs the tests.
 
 ## 3. What the missing primitives block, and what does not
 
@@ -152,7 +152,7 @@ which is what `log` and `show` print).
 **b3, measured.** `vcsstore.cho` is `object.rs`/`refs.rs` on a `Dir` handle (edition 9: `dir_enter`, `dir_mkdir`, `dir_open_new_mode`, `dir_rename_new`, `file_sync`,
 `dir_sync`, `dir_open_append`, `dir_remove`), with no path spent and no program run: `init`, `put`, `get` (hashed again: `object-corrupt`, `object-missing`, `bad-id`),
 `read_ref`, and `update_ref` (compare-and-swap under `NAME.lock`, the `NAME.log` line, `ref-moved` naming the winner, `lock-held` that is never broken). The tests are a
-script, `examples/selfhost/vcsstore_check.sh`, because a `cancho test` is given a heap and an io and no file system; it builds `vcsstorectl.cho` and uses the Rust command
+script, `compiler/vcsstore_check.sh`, because a `cancho test` is given a heap and an io and no file system; it builds `vcsstorectl.cho` and uses the Rust command
 as the oracle: **26 checks, all passing** (also with the compiler in cancho alone). The Rust command recorded a store of **387 objects** (std and docs of this tree, a 70 KB random
 file, an empty one, a one-byte one): `get` reads every one back byte for byte; `put` of every one into a fresh store makes an object directory that is `diff -r`-identical
 (names, bytes, mode 644); `init` makes the Rust layout and the same `HEAD` and `format` bytes; the Rust `vcs log` still reads the store after cancho moved its ref; ten
@@ -164,7 +164,7 @@ Differences from the Rust command, on purpose (header of the file): the temporar
 is no process id (#688); no crash failpoints (#687), so the kill-at-every-write test of V1 is not reproduced here. **Not measured:** the speed of `put`/`get` (the path is
 `open`/`write`/`fsync`/`rename`, so a store of many small objects is bound by `fsync`, as the Rust one is: 94 s for the 826.9 MiB import).
 
-**b4a, measured.** `vcsrepo.cho` resolves a revision as `repo.rs` does. `examples/selfhost/vcsrepo_check.sh` records six changes with the Rust command, a branch (`side`) and a tag (`v1`)
+**b4a, measured.** `vcsrepo.cho` resolves a revision as `repo.rs` does. `compiler/vcsrepo_check.sh` records six changes with the Rust command, a branch (`side`) and a tag (`v1`)
 at the third (V1 has no `tag` command: a tag is a ref file), and compares, for 26 revisions (`HEAD`, `@`, `HEAD~1` to `~99`, `main`, `heads/main`, `main~2`, `side`, `tags/v1`, `v1`, `v1~1`, the
 full id, prefixes of 8, 6 and 5 digits, a name that does not exist, empty, `HEAD~`, `HEAD~x`, `HEAD~-1`, `..`, `heads/..`, and an ambiguous prefix), the change the Rust `show REV` names
 (or the refusal tag) with what `vcsrepo.resolve` answers: **31 checks, all passing**, also with the compiler in cancho alone; an empty repository has no `HEAD` change in both. The check
@@ -173,7 +173,7 @@ does not exist and passed vacuously). Four mutants (the prefix length, the `~` c
 tag, which is all a command prints. The prefix search reads one fan-out directory; the ambiguous case was fabricated with two empty files named like changes.
 
 **b4b, measured.** `vcsrepo.cho` walks the history as `repo.rs` does (the greatest `(time, id)` of what has been reached, a parent only once its child was taken) and prints the `log` and `show`
-documents as `serde_json::to_string_pretty` prints them: keys in byte order, `[]` for an empty array, a refusal as `{command, ok: false, refused: {candidates?, message, tag}}`. `examples/selfhost/vcslog_check.sh`
+documents as `serde_json::to_string_pretty` prints them: keys in byte order, `[]` for an empty array, a refusal as `{command, ok: false, refused: {candidates?, message, tag}}`. `compiler/vcslog_check.sh`
 builds five repositories with the Rust command and compares standard output **and exit status, byte for byte**, with `vcsstorectl log|show`: **51 checks, all passing**, also with the compiler in cancho alone.
 The repositories: (A) four changes with declarations, an anchored edit, a gate attestation, a model, a session, an issue, a prompt with quotes, a backslash, a tab, a newline and non-ASCII letters, an empty
 model, two authors, a mode change, a deletion and an edit; (B) a history that forks, read from the branch, from `HEAD~n` and with `--limit`; (C) one change that adds about 400 files and a 70 KB one (`show` is 7,561
@@ -188,7 +188,7 @@ refusals other than `bad-revision` as documents (they are printed as `refused TA
 
 **b4c, measured.** `vcsscan.cho` is `Repo::scan` and `Ignore` on a directory handle: it lists each directory (`std.dirs`), skips what `.canchoignore` says (all four kinds of rule) and `.cancho`/`.git` at the top, reads and
 names each file by its blob id with the mode from its execute bits (`dir_mode`), and sorts the lines by path (a merge sort: the order of names is not the order of paths, `a.b` < `a/b` < `a0`). `vcsrepo.status_command`
-diffs that against HEAD's tree and prints the `status` document (`branch` is `null` when HEAD is detached, `head` is `null` before the first change). `examples/selfhost/vcsstatus_check.sh` compares standard output and
+diffs that against HEAD's tree and prints the `status` document (`branch` is `null` when HEAD is detached, `head` is `null` before the first change). `compiler/vcsstatus_check.sh` compares standard output and
 exit status with the Rust `vcs status` for the states of a working copy below: an empty repository, new files before any change, clean, modified/deleted/added, a mode change (also from the execute bit of "others" only, 0645),
 paths that sort differently from names, binary and 100 KB files, an empty directory, every kind of `.canchoignore` rule with comments, blank lines and a trimmed rule, `.git` at the top and in a subdirectory, a detached
 HEAD, and about 400 files clean and then changed; and the tag of the refusals for a file over 16 MiB and a name with a newline: **20 checks, all passing**, also with the compiler in cancho alone. Six mutants (the
@@ -202,7 +202,7 @@ there is a `readlink` (#685). A name that is not UTF-8 is not refused here (the 
 
 **b4d-1, measured.** `record` writes, with each change, the anchored edits that turn every modified text file of its parent into the new one, and they are hashed into the change's id, so the line diff under them has to
 be the Rust one hunk for hunk. `vcsdiff.cho` is `diff_text.rs` (the histogram algorithm of `git diff --histogram`, with the limits of 200,000 lines and of 64 occurrences) and `anchor.rs`. The lines of the two
-texts are numbered together (a merge sort by bytes) so the diff works on integers. `examples/selfhost/vcsdiff_check.py` has the Rust command record a text file again and again (texts of 0 to 300 lines drawn
+texts are numbered together (a merge sort by bytes) so the diff works on integers. `compiler/vcsdiff_check.py` has the Rust command record a text file again and again (texts of 0 to 300 lines drawn
 from alphabets of 3 to 400 lines, so lines repeat; random insertions, deletions, replacements, duplications, swaps and blocks; a missing final newline; blank lines; and eight scripted histories in which one line
 occurs 60 to 67 times, either side of the limit of 64) and compares the edits `show` prints for each change with the ones `vcsdifftool` derives from the same two texts: **943 pairs of texts, 0 differences** (254 of
 them the whole-file fallback, which is the rule when anchors overlap); and 229 more with the boundary histories. `vcsdiff_test.cho` has 3 more tests (what `apply_edits` refuses, the texts that get no edits, results
@@ -221,7 +221,7 @@ Status: **read, not run.** From `main` at `ce2f1ac` plus the Rust sources named;
 compiler in cancho does not have, which are stopped by which of #684 to #688, and which are not stopped by a primitive at all. Section 3 listed what the
 primitives block in general; this section goes command by command, and corrects three of its claims.
 
-**Where the port stands (read).** `examples/selfhost` has 4,606 lines of `vcs*.cho` (`vcsobj`, `vcsstore`, `vcsrepo`, `vcsscan`, `vcschange`, `vcsdiff`, `sha1`, and
+**Where the port stands (read).** `compiler` has 4,606 lines of `vcs*.cho` (`vcsobj`, `vcsstore`, `vcsrepo`, `vcsscan`, `vcschange`, `vcsdiff`, `sha1`, and
 `std.flate`). **None of the 15 commands is reachable from `cancho vcs`.** `cli.cho` routes `vcs log`, `lock`, `fetch`, `resolve`, `publish` and `sync` (the registry side) and
 nothing else; `vcsstorectl.cho` is a test command ("Not a user command", its own header) that the `vcs*_check.sh` scripts build. So "built" below means a library checked against
 a store the Rust command wrote, not a command.

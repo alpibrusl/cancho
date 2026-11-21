@@ -1,0 +1,349 @@
+edition 7;
+module links_check;
+
+// links-check.cho -- every relative link and every repository path a document names exists (`docs/removing-rust.md` section 6, Phase 6; `docs/gate.md`, stage `links`).
+// Run from the root of the repository:
+//
+//     cancho run scripts/links-check.cho --std
+//
+// The documents are the `.md` files of the root and every `.md` file beneath `docs/`. Two things in them are checked, and each refusal has a rule tag:
+//
+//   L1  a relative markdown link `[text](target)` whose target (without its `#fragment`) is not a file or directory, resolved against the directory of the document
+//       (`http`, `mailto:`, `#fragment` and `/absolute` targets are not relative and are left alone);
+//   L2  a path that starts with `examples/` or `compiler/` (where the byte before it is not part of a longer path, so `tests/examples/x` is not one) and is not a file or
+//       directory of the repository. The path ends at the first byte that cannot be in one; a path followed by `*`, `{`, `<` or `$` names a family, and its directory is checked.
+//
+// A violation is written as `DOCUMENT:LINE: RULE target`, and the exit status is 1. Hidden directories and `target` are not entered.
+
+import std.buffer;
+import std.bytes;
+import std.dirs;
+import std.io as console;
+
+// Whether `c` can be in a path of the repository as a document writes it.
+fn path_byte(c: int) -> [] bool {
+    return bytes.is_alpha(c) || bytes.is_digit(c) || c == '_' || c == '.' || c == '/' || c == '-';
+}
+
+// Whether `path` is a file or a directory.
+fn exists[&f, &p](fs: &f Fs(""), path: &p [byte]) -> [fs_read("")] bool {
+    if len(path) == 0 {
+        return true;
+    }
+    // `Fs` traps on a path with `..` in it (even `...`, as in a document that writes `](...)`): such a path is named, not opened.
+    if bytes.find(path, "..") >= 0 {
+        return false;
+    }
+    match open_read(fs, path) {
+        Opened::Ok(opened) => {
+            file_close(opened);
+            return true;
+        }
+        Opened::Failed(reason) => {
+        }
+    }
+    match open_dir(fs, path) {
+        DirOpened::Ok(opened) => {
+            dir_close(opened);
+            return true;
+        }
+        DirOpened::Failed(reason) => {
+        }
+    }
+    return false;
+}
+
+// `directory/name`, or `name` for the root (`""`).
+fn joined[&h, &d, &n](heap: &!h Heap, directory: &d [byte], name: &n [byte]) -> [heap] buffer.Buffer {
+    var path = buffer.empty(heap, len(directory) + len(name) + 1);
+    if len(directory) > 0 {
+        path = buffer.push(heap, buffer.append(heap, path, directory), byte_of('/'));
+    }
+    return buffer.append(heap, path, name);
+}
+
+// All of the file at `path`, or an empty buffer if it cannot be read.
+fn read_all[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, fs_read(""), file_read] buffer.Buffer {
+    var out = buffer.empty(heap, 4096);
+    match open_read(fs, path) {
+        Opened::Failed(reason) => {
+            return out;
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var chunk = buffer.empty(heap, 65536);
+            borrow mut file as &!handle in {
+                var going = true;
+                while going {
+                    borrow mut chunk as &!c in {
+                        match file_read(handle, buffer.room(c)) {
+                            Read::Got(n) => {
+                                buffer.filled(c, n);
+                                out = buffer.append(heap, out, buffer.bytes(c));
+                                buffer.clear(c);
+                            }
+                            Read::End => {
+                                going = false;
+                            }
+                            Read::Failed(reason) => {
+                                going = false;
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, chunk);
+            file_close(file);
+        }
+    }
+    return out;
+}
+
+// `DOCUMENT:LINE: RULE target` added to `out`.
+fn violation[&h, &d, &t, &g, &w, &k](heap: &!h Heap, known: &k [byte], out: buffer.Buffer, document: &d [byte], text: &t [byte], at: int, rule: &g [byte], target: &w [byte]) -> [heap] buffer.Buffer {
+    // A reference `scripts/links-check.known` lists, `DOCUMENT TARGET  # reason`, is not one.
+    var key = buffer.append(heap, buffer.empty(heap, 128), document);
+    key = buffer.push(heap, key, byte_of(' '));
+    key = buffer.append(heap, key, target);
+    key = buffer.append(heap, key, "  #");
+    var listed = false;
+    borrow key as &kb in {
+        listed = bytes.find(known, buffer.bytes(kb)) >= 0;
+    }
+    buffer.drop(heap, key);
+    if listed {
+        return out;
+    }
+    var b = buffer.append(heap, out, document);
+    b = buffer.push(heap, b, byte_of(':'));
+    b = buffer.push_nat(heap, b, bytes.count_byte(text[0..at], '\n') + 1);
+    b = buffer.append(heap, b, ": ");
+    b = buffer.append(heap, b, rule);
+    b = buffer.push(heap, b, byte_of(' '));
+    b = buffer.append(heap, b, target);
+    return buffer.append(heap, b, " does not exist\n");
+}
+
+// The directory `dir` with `target` beneath it, as a path from the root, with its `.` and `..` components taken out (`Fs` is not handed a path with one). A `..` above the
+// root leaves the path `../`, which names nothing.
+fn resolved[&h, &d, &t](heap: &!h Heap, dir: &d [byte], target: &t [byte]) -> [heap] buffer.Buffer {
+    var acc = buffer.append(heap, buffer.empty(heap, len(dir) + len(target) + 2), dir);
+    var from = 0;
+    var escaped = false;
+    while from <= len(target) && !escaped {
+        var to = from;
+        while to < len(target) && target[to] != byte_of('/') {
+            to = to + 1;
+        }
+        let part = target[from..to];
+        if len(part) == 0 || bytes.equal(part, ".") {
+        } else if bytes.equal(part, "..") {
+            var size = 0;
+            borrow acc as &sb in {
+                size = buffer.size(sb);
+            }
+            if size == 0 {
+                escaped = true;
+            } else {
+                var cut = size - 1;
+                borrow acc as &ab in {
+                    while cut > 0 && buffer.bytes(ab)[cut] != byte_of('/') {
+                        cut = cut - 1;
+                    }
+                }
+                var shorter = buffer.empty(heap, size + len(target));
+                borrow acc as &ab in {
+                    shorter = buffer.append(heap, shorter, buffer.bytes(ab)[0..cut]);
+                }
+                buffer.drop(heap, acc);
+                acc = shorter;
+            }
+        } else {
+            var filled = 0;
+            borrow acc as &sb in {
+                filled = buffer.size(sb);
+            }
+            if filled > 0 {
+                acc = buffer.push(heap, acc, byte_of('/'));
+            }
+            acc = buffer.append(heap, acc, part);
+        }
+        from = to + 1;
+    }
+    if escaped {
+        buffer.drop(heap, acc);
+        return buffer.append(heap, buffer.empty(heap, 4), "../");
+    }
+    return acc;
+}
+
+// The violations of one document: `text` is what it says, `dir` the directory it is in.
+fn check_text[&h, &f, &d, &r, &t, &k](heap: &!h Heap, fs: &f Fs(""), known: &k [byte], document: &d [byte], dir: &r [byte], text: &t [byte], found: buffer.Buffer) -> [heap, fs_read("")] buffer.Buffer {
+    var out = found;
+    var i = 0;
+    while i < len(text) {
+        let rest = text[i..len(text)];
+        if bytes.starts_with(rest, "](") {
+            // L1: the target ends at `)` or a blank (a link may carry a title).
+            var e = i + 2;
+            while e < len(text) && text[e] != byte_of(')') && !bytes.is_blank(int_of(text[e])) {
+                e = e + 1;
+            }
+            var target = text[i + 2..e];
+            let hash = bytes.find(target, "#");
+            if hash >= 0 {
+                target = target[0..hash];
+            }
+            // Only what is written like a path is a link: cancho code has `](n: int)` and `](...)` in it, and prose has `](x, y)`.
+            var plain = len(target) > 0;
+            var dotted = false;
+            var lettered = false;
+            var j = 0;
+            while j < len(target) {
+                let c = int_of(target[j]);
+                if !path_byte(c) {
+                    plain = false;
+                }
+                if c == '.' || c == '/' {
+                    dotted = true;
+                }
+                if bytes.is_alpha(c) {
+                    lettered = true;
+                }
+                j = j + 1;
+            }
+            let skip = !plain || !dotted || !lettered || bytes.starts_with(target, "http") || bytes.starts_with(target, "mailto:") || bytes.starts_with(target, "/") || bytes.find(target, "://") >= 0;
+            if !skip {
+                let path = resolved(heap, dir, target);
+                borrow path as &pb in {
+                    // A path that climbs out of the repository names nothing, and `Fs` refuses to be handed one: it is a violation without being opened.
+                    if bytes.starts_with(buffer.bytes(pb), "../") || !exists(fs, buffer.bytes(pb)) {
+                        out = violation(heap, known, out, document, text, i, "L1", target);
+                    }
+                }
+                buffer.drop(heap, path);
+            }
+            i = i + 2;
+        } else if (bytes.starts_with(rest, "examples/") || bytes.starts_with(rest, "compiler/")) && (i == 0 || !path_byte(int_of(text[i - 1]))) {
+            // L2: the longest run of path bytes, without the dots and dashes that end a sentence.
+            var e = i;
+            while e < len(text) && path_byte(int_of(text[e])) {
+                e = e + 1;
+            }
+            var family = false;
+            if e < len(text) {
+                let next = int_of(text[e]);
+                family = next == '*' || next == '{' || next == '<' || next == '$';
+            }
+            while e > i && (text[e - 1] == byte_of('.') || text[e - 1] == byte_of('-')) {
+                e = e - 1;
+                family = false;
+            }
+            if family {
+                while e > i && text[e - 1] != byte_of('/') {
+                    e = e - 1;
+                }
+            }
+            var target = text[i..e];
+            if len(target) > 0 && target[len(target) - 1] == byte_of('/') {
+                target = target[0..len(target) - 1];
+            }
+            if !exists(fs, target) {
+                out = violation(heap, known, out, document, text, i, "L2", target);
+            }
+            if e > i {
+                i = e;
+            } else {
+                i = i + 1;
+            }
+        } else {
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// The directory at `path`, where the root (`""`) is `.`.
+fn open_here[&f, &p](fs: &f Fs(""), path: &p [byte]) -> [fs_read("")] DirOpened {
+    if len(path) == 0 {
+        return open_dir(fs, ".");
+    }
+    return open_dir(fs, path);
+}
+
+// The documents of the directory at `path` (`""` is the root, opened as `.`), and of its subdirectories when `deep`.
+fn walk[&h, &f, &p, &k](heap: &!h Heap, fs: &f Fs(""), known: &k [byte], path: &p [byte], deep: bool, found: buffer.Buffer) -> [heap, fs_read(""), dir_read, file_read] buffer.Buffer {
+    var out = found;
+    match open_here(fs, path) {
+        DirOpened::Failed(reason) => {
+            return buffer.append(heap, out, "cannot read a directory\n");
+        }
+        DirOpened::Ok(opened) => {
+            var dir = opened;
+            borrow dir as &d in {
+                let names = dirs.list(heap, d, 1000000);
+                borrow names as &n in {
+                    var k = 0;
+                    while k < dirs.count(n) {
+                        let name = dirs.name(n, k);
+                        let kind = dirs.kind(n, k);
+                        let sub = joined(heap, path, name);
+                        borrow sub as &s in {
+                            if kind == dirs.kind_directory() {
+                                if deep && !bytes.equal(name, "target") && !bytes.starts_with(name, ".") {
+                                    out = walk(heap, fs, known, buffer.bytes(s), true, out);
+                                }
+                            } else if bytes.ends_with(name, ".md") {
+                                let text = read_all(heap, fs, buffer.bytes(s));
+                                borrow text as &tb in {
+                                    out = check_text(heap, fs, known, buffer.bytes(s), path, buffer.bytes(tb), out);
+                                }
+                                buffer.drop(heap, text);
+                            }
+                        }
+                        buffer.drop(heap, sub);
+                        k = k + 1;
+                    }
+                }
+                dirs.drop(heap, names);
+            }
+            dir_close(dir);
+        }
+    }
+    return out;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec } = split(world);
+    release(ffi);
+    release(args);
+    release(net);
+    release(clock);
+    release(signals);
+    release(exec);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow fs as &f in {
+                let list = read_all(h, f, "scripts/links-check.known");
+                var found = buffer.empty(h, 1024);
+                borrow list as &lb in {
+                    found = walk(h, f, buffer.bytes(lb), "", false, found);
+                    found = walk(h, f, buffer.bytes(lb), "docs", true, found);
+                }
+                buffer.drop(h, list);
+                borrow found as &fb in {
+                    if buffer.size(fb) > 0 {
+                        status = 1;
+                        buffer.write(i, fb);
+                    }
+                }
+                buffer.drop(h, found);
+            }
+        }
+    }
+    release(fs);
+    release(heap);
+    release(io);
+    return status;
+}

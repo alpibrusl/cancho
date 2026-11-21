@@ -3,7 +3,7 @@
 // Reads JSON on standard input (what `jsonprinter.cho` writes) and writes the canonical text of the program it stands for, or `ERR rule-tag
 // start end` with a span in the JSON if it is refused (`ingest-json`, `ingest-node`, `ingest-arity`). The oracle is `cancho ingest`.
 //
-//     cancho run examples/selfhost/ingester.cho examples/selfhost/driver.cho ... --std < f.json
+//     cancho run compiler/ingester.cho compiler/driver.cho ... --std < f.json
 
 import selfhost.driver;
 

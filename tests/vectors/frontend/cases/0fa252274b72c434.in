@@ -5,9 +5,9 @@
 // listing `crates/cancho-syntax/examples/dump_ast.rs` writes from the Rust AST, or the one line
 
 //
-//     cancho run examples/selfhost/parser.cho examples/selfhost/driver.cho examples/selfhost/listing.cho \
-//         examples/selfhost/pass1.cho examples/selfhost/ast.cho examples/selfhost/kinds.cho \
-//         examples/selfhost/lexcore.cho examples/selfhost/tables.cho --std < f.cho
+//     cancho run compiler/parser.cho compiler/driver.cho compiler/listing.cho \
+//         compiler/pass1.cho compiler/ast.cho compiler/kinds.cho \
+//         compiler/lexcore.cho compiler/tables.cho --std < f.cho
 
 import selfhost.driver;
 

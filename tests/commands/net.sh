@@ -56,8 +56,8 @@ end
 
 begin the_network_programs_are_counted
 # docs/net.md section 5: the files that declare the socket functions, inbound (bind, listen, accept) and outbound (connect, sendto, getaddrinfo).
-inbound=$(find examples std tests/accept packages -name '*.cho' -not -path '*/.cancho-vcs/*' | sort | xargs grep -lE '^[[:space:]]*(pub[[:space:]]+)?extern fn[[:space:]]+(bind|listen|accept)[[:space:]]*[[(]' | tr '\n' ' ')
-outbound=$(find examples std tests/accept packages -name '*.cho' -not -path '*/.cancho-vcs/*' | sort | xargs grep -lE '^[[:space:]]*(pub[[:space:]]+)?extern fn[[:space:]]+(connect|sendto|getaddrinfo)[[:space:]]*[[(]' | tr '\n' ' ')
+inbound=$(find examples compiler std tests/accept packages -name '*.cho' -not -path '*/.cancho-vcs/*' | sort | xargs grep -lE '^[[:space:]]*(pub[[:space:]]+)?extern fn[[:space:]]+(bind|listen|accept)[[:space:]]*[[(]' | tr '\n' ' ')
+outbound=$(find examples compiler std tests/accept packages -name '*.cho' -not -path '*/.cancho-vcs/*' | sort | xargs grep -lE '^[[:space:]]*(pub[[:space:]]+)?extern fn[[:space:]]+(connect|sendto|getaddrinfo)[[:space:]]*[[(]' | tr '\n' ' ')
 same "$inbound" "packages/net-sockets/sockets.cho " "the files that declare bind, listen or accept"
 same "$outbound" "packages/net-connect/connect.cho " "the files that declare connect, sendto or getaddrinfo"
 end

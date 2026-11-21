@@ -8,7 +8,7 @@ name: seed-chain
 on:
   pull_request:
     paths:
-      - examples/selfhost/**
+      - compiler/**
       - std/**
       - seed/**
       - scripts/build-standalone.sh

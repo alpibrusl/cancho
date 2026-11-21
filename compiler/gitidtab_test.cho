@@ -1,0 +1,137 @@
+module selfhost.gitidtab_test;
+
+// gitidtab_test.cho -- tests of `gitidtab.cho`, run by `compiler/test.sh`.
+
+import selfhost.gitidtab;
+
+// A key made of `n`: 20 bytes, the first four the hash bits, so that many keys fall in the same slot when `spread` is false.
+fn make_key[&k](key: &!k [byte], n: int, spread: bool) -> [] int {
+    var i = 0;
+    while i < 20 {
+        key[i] = byte_of((n * 31 + i * 7 + n / 256 * 13) % 256);
+        i = i + 1;
+    }
+    key[18] = byte_of(n / 256);
+    key[19] = byte_of(n % 256);
+    if !spread {
+        key[0] = byte_of(0);
+        key[1] = byte_of(0);
+        key[2] = byte_of(0);
+        key[3] = byte_of(0);
+        key[4] = byte_of(n / 256);
+        key[5] = byte_of(n % 256);
+    }
+    return 0;
+}
+
+fn fill_id[&k](id: &!k [byte], n: int) -> [] int {
+    var i = 0;
+    while i < 20 {
+        id[i] = byte_of((n + i * 11) % 256);
+        i = i + 1;
+    }
+    id[0] = byte_of(200 + n % 50);
+    id[8] = byte_of(255);
+    return 0;
+}
+
+pub fn test_every_key_finds_its_own_record[&h](heap: &!h Heap) -> [heap] int {
+    var code = 0;
+    var spread = 0;
+    while spread < 2 {
+        let count = 3000;
+        let ints = gitidtab.ints(count);
+        let mask = ints / 8 - 1;
+        let tab = box_slice(heap, ints, 0);
+        let key = box_slice(heap, 20, byte_of(0));
+        let id = box_slice(heap, 20, byte_of(0));
+        let back = box_slice(heap, 20, byte_of(0));
+        borrow mut tab as &!tb in {
+            borrow mut key as &!kb in {
+                borrow mut id as &!ib in {
+                    borrow mut back as &!bb in {
+                        let t = contents(tb);
+                        let k = contents(kb);
+                        let i2 = contents(ib);
+                        let b2 = contents(bb);
+                        var n = 0;
+                        while n < count {
+                            make_key(k, n, spread == 1);
+                            if gitidtab.tag(t, mask, k) != 0 {
+                                code = 1;
+                            }
+                            gitidtab.put(t, mask, k, 1 + n % 3, n * 5);
+                            fill_id(i2, n);
+                            gitidtab.set_id(t, mask, k, i2);
+                            n = n + 1;
+                        }
+                        n = 0;
+                        while n < count {
+                            make_key(k, n, spread == 1);
+                            if gitidtab.tag(t, mask, k) != 1 + n % 3 || gitidtab.number(t, mask, k) != n * 5 {
+                                code = 2;
+                            }
+                            gitidtab.id_of(t, mask, k, b2);
+                            fill_id(i2, n);
+                            var j = 0;
+                            while j < 20 {
+                                if int_of(b2[j]) != int_of(i2[j]) {
+                                    code = 3;
+                                }
+                                j = j + 1;
+                            }
+                            n = n + 1;
+                        }
+                        make_key(k, count + 7, spread == 1);
+                        if gitidtab.tag(t, mask, k) != 0 {
+                            code = 4;
+                        }
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, tab);
+        unbox_slice(heap, key);
+        unbox_slice(heap, id);
+        unbox_slice(heap, back);
+        if code != 0 {
+            return code;
+        }
+        spread = spread + 1;
+    }
+    return 0;
+}
+
+pub fn test_putting_a_key_again_keeps_its_id[&h](heap: &!h Heap) -> [heap] int {
+    let ints = gitidtab.ints(4);
+    let mask = ints / 8 - 1;
+    let tab = box_slice(heap, ints, 0);
+    let key = box_slice(heap, 20, byte_of(9));
+    let id = box_slice(heap, 20, byte_of(77));
+    let back = box_slice(heap, 20, byte_of(0));
+    var code = 0;
+    borrow mut tab as &!tb in {
+        borrow mut key as &!kb in {
+            borrow mut id as &!ib in {
+                borrow mut back as &!bb in {
+                    let t = contents(tb);
+                    let k = contents(kb);
+                    let i2 = contents(ib);
+                    let b2 = contents(bb);
+                    gitidtab.put(t, mask, k, 1, 5);
+                    gitidtab.set_id(t, mask, k, i2);
+                    gitidtab.put(t, mask, k, 2, 6);
+                    gitidtab.id_of(t, mask, k, b2);
+                    if gitidtab.tag(t, mask, k) != 2 || gitidtab.number(t, mask, k) != 6 || int_of(b2[0]) != 77 || int_of(b2[19]) != 77 {
+                        code = 1;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, tab);
+    unbox_slice(heap, key);
+    unbox_slice(heap, id);
+    unbox_slice(heap, back);
+    return code;
+}

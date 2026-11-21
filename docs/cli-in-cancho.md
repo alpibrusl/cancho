@@ -7,7 +7,7 @@ ones claimed.
 ## 1. What is left of the Rust binary
 
 `crates/cancho/src/` is about 5,800 lines of Rust around the libraries. The
-libraries that did the work now exist in cancho (`examples/selfhost`): the lexer,
+libraries that did the work now exist in cancho (`compiler`): the lexer,
 parser, checker, emitter, printer, formatter, JSON printer, JSON ingester,
 BLAKE3 and the identities. What is still Rust is the **dispatch**: argument
 parsing, reading files and directories, calling the right mode, and turning the
@@ -29,7 +29,7 @@ unchanged (460 of 460 inputs the same).
 
 ## 3. The program
 
-`examples/selfhost/cli.cho`, a module `selfhost.cli` with a `main` that takes the
+`compiler/cli.cho`, a module `selfhost.cli` with a `main` that takes the
 world, reads the arguments, and calls one function per command:
 
 | command | what it does | needs |
@@ -78,7 +78,7 @@ differential test is `crates/cancho/tests/conformance/selfhost.rs`.
 
 ## 7. Slice 1: `fmt FILE...` (built)
 
-`examples/selfhost/cli.cho` is a root program (`main(world)`) that takes `Args`, `Fs` and the heap. For each file named after `fmt` it
+`compiler/cli.cho` is a root program (`main(world)`) that takes `Args`, `Fs` and the heap. For each file named after `fmt` it
 reads the file (`open_read`, `file_read` into a buffer), parses and prints it **in memory** through the sink (§2), runs the formatter
 (`formatting.cho`) on the source and the printed text, runs the three checks of `docs/formatting.md` section 4 on the result, and
 writes the file if it changed (`open_write`, `file_write`). Output and status are `cancho fmt`'s: `formatted PATH` (or, under
@@ -102,7 +102,7 @@ leaves the status 0; `--check` writes the file) each make 1,580 of the 5,050 run
 
 ## 8. Slice 2: directories
 
-`examples/selfhost/walk.cho` finds the files a command is given: a path that is a file is that file; a directory is every `.cho` file
+`compiler/walk.cho` finds the files a command is given: a path that is a file is that file; a directory is every `.cho` file
 beneath it, in bytewise order of name within each directory, skipping names that start with a dot, descending into directories (a link to
 one is followed, as `Path::is_dir` does, by trying `open_dir` on it). It uses `std.dirs.list` over a directory handle. `cli.cho fmt`
 collects every path first and then formats them in order, and stops at the first environment error (a file it cannot read or write), as
@@ -112,7 +112,7 @@ collects every path first and then formats them in order, and stops at the first
 directory, a `.dot.cho`, a `notes.txt`, a `Q.CHO`, a directory called `x.cho`, names that differ in case and punctuation, a file that does
 not parse, a link to a directory, an empty directory) and runs both commands on it four ways (`--check` on several roots, a root with a
 trailing `/`, an empty directory, and a rewriting run through the link): standard output, exit status and every file afterwards are
-the same. It then runs both with `--check` over `std`, `examples/selfhost`, `packages` and `tests/accept`. Four mutants (no skip of dotted
+the same. It then runs both with `--check` over `std`, `compiler`, `packages` and `tests/accept`. Four mutants (no skip of dotted
 names; every file taken whatever its extension; links not followed; a `/` always added) are each killed. Not the same: a message on the
 standard error for an unreadable directory, which `cancho fmt` words and this does not (it is a file it then fails to read).
 
@@ -135,7 +135,7 @@ mutants (the JSON form never chosen; a refusal not reported; the status not set)
 ## 10. Slice 4: `agent-guidelines`
 
 `cli.cho agent-guidelines` writes `AGENTS.md`, as the Rust binary does (which embeds it with `include_str!`). A cancho program has no
-such embedding, so `examples/selfhost/guidelines.cho` is **generated**: one `buffer.append` a line of the file, in parts of forty
+such embedding, so `compiler/guidelines.cho` is **generated**: one `buffer.append` a line of the file, in parts of forty
 lines (the text is built in a buffer, so that the same module serves a file and the standard output). A string literal is one line (`docs/strings.md` §4), so the text is written as it is, line by line, with `\\`, `\"`, `\n`, `\r` and
 `\t` the only escapes. The test `selfhost::statics::guidelines_module_is_the_text_of_agents_md` regenerates the module from `AGENTS.md` and fails
 if the committed file differs; run it with `CANCHO_REGENERATE=1` to write the file again. The module is 1,165 lines for a file of 1,024:
@@ -147,7 +147,7 @@ with the file (37,734 bytes), and checks that an argument is a usage error (stat
 ## 11. Slice 5: `--help`, `introspect`, `skill`
 
 These three write text that the Rust binary gets from its usage string and from the ACLI library's tree of commands (`src/acli.rs`).
-`examples/selfhost/commandtree.cho` holds that text, **generated** the way `guidelines.cho` is (§10) by the test
+`compiler/commandtree.cho` holds that text, **generated** the way `guidelines.cho` is (§10) by the test
 `selfhost::statics::command_tree_module_is_what_cancho_says`, which runs the Rust binary and fails if the committed module differs
 (`CANCHO_REGENERATE=1` writes it): the usage (10,150 bytes), `introspect` in its three forms (text 12,937 bytes, JSON 20,125, table 12,954),
 and `skill` (text and table are the same 14,686 bytes; JSON 15,301, cut where the path goes, since `skill --output json PATH` answers the
@@ -174,7 +174,7 @@ of the build) is not here: it is a property of the build, not of a text; §36 st
 
 `cli.cho check [--output json] [--host H] FILE...` checks a program of several files and writes its code and throws it away, as `cancho check`
 does (the backend runs there too): it is the build of the compiler in cancho (`driver.run_many`, mode 5), whose answer is a status, a rule
-and an offset into the files laid end to end. `examples/selfhost/diagnose.cho` turns the offset into a file, a line and a column (counted in
+and an offset into the files laid end to end. `compiler/diagnose.cho` turns the offset into a file, a line and a column (counted in
 characters, as `SourceFile::line_col` does) and renders it: the text of `Diagnostic::render` (the path, line, column, a sentence, the line
 of the source and a caret under it, as wide as the span and no wider than the line) or the entry of the `refused` array. `--output json` of an
 accepted program is `{"refused": []}`, as Rust writes it. Exit status 0, 1 for a refusal, 2 for a bad command line or a file that cannot be read.
@@ -197,7 +197,7 @@ another refusal first); 8 cannot be judged (exit 3); and 1 is a refusal the chec
 same place, source line and caret. The counts move with the repository's programs; the test asserts the shape (the same rule and file always, at most
 one program in twenty with another place), not these numbers.
 
-**A trap found by this.** `examples/selfhost/runtime.cho` (a 650,000-byte string literal) made the build in cancho trap (an illegal instruction):
+**A trap found by this.** `compiler/runtime.cho` (a 650,000-byte string literal) made the build in cancho trap (an illegal instruction):
 `emit.put` wrote past the end of its buffer, and past the end of the state when the literal was long enough. It counts a byte past the end and
 does not write it (`overflowed` is how the answer is known to be no good), and the room for the code is raised by the length of the text.
 
@@ -627,7 +627,7 @@ values each (twelve refusals: status 2 and the sentence), the two accepted spell
 
 ## 39. Slice 19: the standalone build (`docs/standalone-cancho.md` D5)
 
-`examples/selfhost/cancho.files` lists the 77 files of this command line (the import closure of `cli.cho`; `selfhost::bootstrap::the_file_list_of_the_standalone_build_is_the_import_closure_of_cli` fails if
+`compiler/cancho.files` lists the 77 files of this command line (the import closure of `cli.cho`; `selfhost::bootstrap::the_file_list_of_the_standalone_build_is_the_import_closure_of_cli` fails if
 it differs, and `CANCHO_REGENERATE=1` writes it). `scripts/build-standalone.sh --out DIR --rev COMMIT [--host TRIPLE] [--cancho0 PATH | --seed]` (stage 0 is the seed of `docs/seed.md` unless `--cancho0` names a `cancho`) stamps `version.cho` (§36) and builds the files three times,
 as D5 says, and installs stage 2 as `DIR/cancho` only if stage 3 is the same bytes.
 

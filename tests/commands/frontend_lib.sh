@@ -1,4 +1,4 @@
-# frontend_lib.sh -- what the scripts that replay the Rust front end's recorded answers through the ports of examples/selfhost share (front_end_syntax.sh, front_end_names.sh,
+# frontend_lib.sh -- what the scripts that replay the Rust front end's recorded answers through the ports of compiler share (front_end_syntax.sh, front_end_names.sh,
 # front_end_checks.sh). Not a test of its own: a script sources it after tests/commands/script_lib.sh (`begin`, `end`, `fail`, `same`):   . tests/commands/frontend_lib.sh
 #
 # The oracle was the Rust crates (cancho-syntax, cancho-ir, cancho-id, the blake3 crate). It ran once, on 2026-11-17, over the corpus the Rust tests used, and what it said is in
@@ -23,19 +23,19 @@ sha() { $shacmd "$@"; }
 size() { wc -c < "$1" | tr -d ' '; }
 lines_of() { wc -l < "$1" | tr -d ' '; }
 
-# port NAME ROOT [FILE...]: the port ROOT.cho of examples/selfhost built by the compiler under test as $work/NAME, with the FILEs given or else the files of
-# examples/selfhost/cancho.files less cli.cho (what a front-end program is).
+# port NAME ROOT [FILE...]: the port ROOT.cho of compiler built by the compiler under test as $work/NAME, with the FILEs given or else the files of
+# compiler/cancho.files less cli.cho (what a front-end program is).
 port() {
     _name=$1
     _root=$2
     shift 2
     _files=
     if [ $# -gt 0 ]; then
-        for _f in "$@"; do _files="$_files examples/selfhost/$_f"; done
+        for _f in "$@"; do _files="$_files compiler/$_f"; done
     else
-        _files="examples/selfhost/$_root.cho"
-        for _f in $(cat examples/selfhost/cancho.files); do
-            [ "$_f" = cli.cho ] || [ "$_f" = "$_root.cho" ] || _files="$_files examples/selfhost/$_f"
+        _files="compiler/$_root.cho"
+        for _f in $(cat compiler/cancho.files); do
+            [ "$_f" = cli.cho ] || [ "$_f" = "$_root.cho" ] || _files="$_files compiler/$_f"
         done
     fi
     # shellcheck disable=SC2086

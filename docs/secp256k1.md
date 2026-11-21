@@ -10,7 +10,7 @@ secp256k1 is `y^2 = x^3 + 7` over p = 2^256 - 2^32 - 977, with a prime group ord
 ECDSA on it over a Keccak-256 digest and identifies the signer by *recovering* the public key from `(r, s, v)`, so recovery is part of the job.
 
 A package and not `std/` **[choice]**: a `std` module is also named in `crates/cancho/src/main.rs`'s embedded list and in the self-hosting
-tables (`examples/selfhost/stdorder.cho`, `stdsource.cho`), and the bar for `std` is two askers (`docs/standard-library.md`). `packages/x509`
+tables (`compiler/stdorder.cho`, `stdsource.cho`), and the bar for `std` is two askers (`docs/standard-library.md`). `packages/x509`
 (`x509_key`) is the precedent for a crypto module outside `std`. If a second asker appears it moves.
 
 ## 2. Design

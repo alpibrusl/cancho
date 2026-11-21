@@ -301,7 +301,7 @@ empty.
 
 ## 9. Written in cancho
 
-`examples/selfhost/identity.cho` is `cancho-id`'s `identify` written in cancho (#485), with `blake3.cho` for the hash, and prints what `cancho ids`
+`compiler/identity.cho` is `cancho-id`'s `identify` written in cancho (#485), with `blake3.cho` for the hash, and prints what `cancho ids`
 prints (`docs/self-hosting.md` row 5ah). The encoder is the one of §4, fed to the hasher a byte at a time, and the rules of §5 and the decisions
 the Rust file records are kept where they are quirks: the types are hashed twice, the first time with no declared name known, so that a type that
 names another is hashed with the other's first-pass hash; a name declared twice in a module answers with the last declaration; an effect row is
