@@ -261,23 +261,9 @@ had.
 `docs/porting.md` is the report, including §6 on what one small port does
 not establish.
 
-### `selfhost/` — the front end, written in itself
+### `selfhost/` — moved: it is `compiler/` now
 
-```sh
-cargo build -p cancho-syntax --example dump_tokens --example dump_ast
-cargo run -p cancho -- build compiler/parser.cho $(for m in driver listing pass1 ast kinds lexcore tables; do echo compiler/$m.cho; done) --std -o /tmp/parser
-sh compiler/diff.sh target/debug/examples/dump_ast /tmp/parser examples/hello.cho tests/accept/*.cho
-# identical: 105  different: 0
-```
-
-`lexcore.cho` is the cancho tokeniser, `lexer.cho` prints its tokens, `ast.cho` parses them into a
-syntax tree, `parser.cho` prints the tree and `check.cho` runs the first half of the checker
-(`pass1.cho`) over it, all in cancho, as stages 1 and 2 of the staged port in
-`docs/self-hosting.md` §6. Each reads a source file on standard input and prints what
-the Rust front end makes of it (`dump_tokens.rs`, `dump_ast.rs` in `cancho-syntax`
-are the oracles), so the check is `diff`. `fuzz.py` adds hostile edge cases and
-mutants; `tests/conformance/selfhost.rs` runs both ports over every program in the
-repository in CI.
+The front end, then the whole compiler, written in itself, started here as a staged port and left this directory in Phase 6 of `docs/removing-rust.md` (2026-11-21): it is `compiler/` at the top of the repository, and it is the compiler. The Rust front end it was once diffed against (`dump_tokens`, `dump_ast`) was deleted in Phase 5; what holds the compiler in place now is the fixed point (stage 2 equals stage 3) and `scripts/gate.sh`. `docs/self-hosting.md` §6 tells the staged port, `docs/porting.md` is the report, and `docs/seed.md` is how the compiler is built with no compiler.
 
 ### `cut/` — the port written to find out what was missing
 
