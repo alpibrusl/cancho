@@ -1,5 +1,7 @@
 # Bootstrap and self-hosting
 
+> **Note (2026-11-22):** this page was written while the compiler was being moved into cancho. That is done: the compiler is [`compiler/`](../compiler), built from the committed seed with `clang` alone, and the Rust compiler is deleted ([`removing-rust.md`](removing-rust.md)). What follows is the record of the stages; where it says the Rust compiler is the check, it describes the time it was written.
+
 cancho's compiler started in Rust, because Cranelift is a Rust library and the first
 milestone had to prove a code generator. It is now being written in cancho, stage by
 stage, with the Rust compiler as the check each stage is held to. This page says where

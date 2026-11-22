@@ -1,6 +1,6 @@
 # The guide
 
-`README.md` is a thin pointer. This is where the depth lives: what the
+`README.md` is the first page: what cancho is, how to install it, what is built and what is not. This is where the depth lives: what the
 language is, why it's built this way, what exists, and an index of
 every design document. History — what shipped when, and what each
 slice found, including corrections — is [`ROADMAP.md`](ROADMAP.md).
@@ -66,13 +66,18 @@ combines:
 | **Types** | `int` `byte` `bool` `float` (and `f32` from edition 6), structs, enums with exhaustive `match`, tuples, generics with `[T: val]` bounds | [`floating-point.md`](floating-point.md), [`tuples.md`](tuples.md) |
 | **Defined behaviour** | Checked arithmetic that traps, left-to-right evaluation, every C hole named and closed | [`defined-behaviour.md`](defined-behaviour.md) |
 | **Threads** | Compiler-provided `spawn`/`join`, never crossing the C ABI; one pointer-width payload today; atomics designed, not built | [`threads.md`](threads.md), [`atomics.md`](atomics.md) |
+| [`thread-payloads.md`](thread-payloads.md) | Threads that carry more than one value: what `threads.md` §2's single-leaf slice left | design |
 | **Program identity** | `cancho ids` — per-declaration content hashes, checked against golden fixtures | [`canonical-ast.md`](canonical-ast.md), [`hash-stability.md`](hash-stability.md) |
 | **A content-addressed op log** | `cancho vcs publish`/`log` — every declaration as a typed, gated operation | [`vcs.md`](vcs.md), [`vcs-publish.md`](vcs-publish.md) |
 | **Compile time** | Pure calls on constant arguments folded; `static` items whose bodies run during compilation | [`compile-time-data.md`](compile-time-data.md) |
 | **I/O** | The console in three directions, file handles as linear resources, bulk reads and writes, a `Net` capability for sockets | [`file-handles.md`](file-handles.md), [`bulk-io.md`](bulk-io.md), [`net.md`](net.md) |
+| [`large-files.md`](large-files.md) | Files larger than memory: `file_size`, `file_read_at`, and whether to map | design; nothing built |
 | **Refusals** | Every rule carries a stable tag; `check --output json` reports every independent one as data | [`agent-errors.md`](agent-errors.md), [`refusals-by-example.md`](refusals-by-example.md) |
 | **Standard library** | Written in cancho, including shortest round-trip float printing and a UTF-8 decoder | [`standard-library.md`](standard-library.md) |
-| **Two backends** | Cranelift (dev) and LLVM (release, **default**) — an opt-in second backend became the default once nothing it refused had an asker left | [`llvm-backend.md`](llvm-backend.md) |
+| **One backend** | LLVM, through `clang`, for Linux (x86-64, aarch64) and macOS (Apple silicon). Cranelift and WebAssembly left with the Rust build ([`removing-rust.md`](removing-rust.md) D2) | [`llvm-backend.md`](llvm-backend.md), [`standalone-cancho.md`](standalone-cancho.md) |
+| [`wasm.md`](wasm.md) | A `wasm32-wasip1` target through the LLVM backend | retired with the Rust build (2026-11-19) |
+| **A compiler that builds itself** | The compiler is written in cancho, built from a committed seed of LLVM IR with `clang` alone, and reproduces itself byte for byte; no Rust in the build or the gate | [`seed.md`](seed.md), [`standalone-cancho.md`](standalone-cancho.md), [`removing-rust.md`](removing-rust.md), [`gate.md`](gate.md) |
+| **Packages** | Eleven in `packages/` (TLS 1.3 client and server, X.509, secp256k1, HTTP client and server, sockets), resolved by hash, closure included | [`package-system.md`](package-system.md) |
 
 What is **not** there yet, and why, is [`ROADMAP.md`](ROADMAP.md).
 
@@ -248,7 +253,7 @@ cost. What each project contributed, traced to the document that used it:
 | Metaprogramming | Hygienic deterministic `comptime` — **no** textual or proc macros | Macros break stable content-addressing |
 | Generics | Monomorphised | Zero-cost, matches Rust's codegen |
 | FFI | Explicit, capability-gated | C's effects must not be invisible |
-| Backend | LLVM by default, Cranelift for fast dev builds | Reuse; own backend only if zero-C becomes a goal |
+| Backend | LLVM through `clang` (Cranelift retired with the Rust build) | Reuse; own backend only if zero-C becomes a goal |
 
 Taken from Lex's design, long ago: examples-as-tests, `[budget]`, effect declarations as
 the function's contract.
@@ -260,9 +265,9 @@ the function's contract.
   Rust's implementation cost and abandoning totality — the failure mode this
   design exists to avoid.
 - **Not self-hosting-first.** The compiler started in Rust, as a starting
-  point, not an end-state; it is now being written in cancho itself, stage by
-  stage, with the Rust compiler as the check at each one
-  ([`self-hosting.md`](self-hosting.md)).
+  point, not an end-state. It was moved into cancho stage by stage, with the
+  Rust compiler as the check at each one, and the Rust was deleted in 2026-11
+  ([`removing-rust.md`](removing-rust.md), [`self-hosting.md`](self-hosting.md)).
 
 ---
 
@@ -272,7 +277,7 @@ Linearity and effects are erased at compile time; generics monomorphise.
 The gap to C is a backend question, not a price of ownership: Rust sits
 within 4% of C on the same kernels
 ([`against-c-and-rust.md`](against-c-and-rust.md)), and once the overflow
-trap and a vectorising backend (`--backend llvm`, now the default) are
+trap and a vectorising backend (LLVM, the only backend now) are
 both in place, this language measures statistically indistinguishable
 from C on the one kernel checked directly against it.
 
@@ -288,21 +293,27 @@ than restated here: [`overflow-cost.md`](overflow-cost.md),
 ## Layout
 
 ```
-crates/cancho-ir        resolution, type checking, monomorphisation; the IR
-crates/cancho-codegen   Cranelift lowering, native object emission
-crates/cancho           the CLI
-std/                     the standard library, as Lex source
-examples/                programs meant to be read
-packages/                published cancho-vcs packages (package-system.md)
-tests/accept             fixtures that must compile and run
-tests/reject             fixtures that must be refused, each stating why
-benches/                 checked/wrapping pairs; what the overflow trap costs
-scripts/bench.py         runs them and prints the table
-docs/                    this directory
+compiler/      the compiler and the `cancho` command line, in cancho: lexer, parser,
+               checker (its rules are in rules.cho), authority and identity, the LLVM
+               emitter (emit.cho), the CLI (cli*.cho), the op-log store (vcs*.cho);
+               cancho.files lists what the standalone binary is built from
+compiler/runtime/  the runtime as LLVM IR text, made into runtime.cho by regen.cho
+std/           the standard library, in cancho
+seed/          the committed seed: the compiler's LLVM IR, per target, and its sha256
+examples/      programs meant to be read
+packages/      published packages, resolved by hash (package-system.md)
+tests/accept   fixtures that must compile and run
+tests/reject   fixtures that must be refused, each stating why
+tests/commands the command-line tests, run by tests/commands/script_tests.cho
+benches/       checked/wrapping pairs; what the overflow trap costs
+scripts/       gate.sh, build-standalone.sh, reseed.sh, install.sh, and the measurement scripts
+docs/          this directory
 ```
 
-Everything a program can be refused for is refused in `cancho-ir`, so the
-backend has no error path for a *program* — only for the environment. Each
+A program is refused with a stable rule tag by the checker, and a refusal
+is data (`check --output json`). When the compiler has no code for a
+construct it answers status 3, "cannot judge the program", which is not a
+refusal ([`removing-rust.md`](removing-rust.md), Phase 5, step 3). Each
 fixture declares its own expectation in its header (`//~ STDOUT`, `//~
 EXIT`, `//~ ERROR`), so adding a rule to the language means adding a
 fixture.
@@ -318,9 +329,9 @@ not repeated here; a doc's own header carries its own detail.
 | Doc | Purpose | Status |
 |---|---|---|
 | [`linearity-and-effects.md`](linearity-and-effects.md) | Core type-system rules: linear/affine ownership, capability-typed effects, how they unify | settled and built ([#2](https://github.com/alpibrusl/cancho/issues/2)) |
-| [`bootstrap.md`](bootstrap.md) | Where self-hosting stands and how to use the compiler in cancho; below it, what M0 settled (host language, file extension, the M0 surface) | current; history below |
-| [`removing-rust.md`](removing-rust.md) | The plan to remove the Rust crates and make the compiler in cancho the repository's main code (epic #491): decisions, gates, phases, layout | design |
-| [`gate.md`](gate.md) | Phase 3 of the removal: the gate without `cargo` (one script, its stages, how the 850 Rust conformance tests move to `cancho test`), with the steps G1 to G5 | design |
+| [`bootstrap.md`](bootstrap.md) | Where self-hosting stands and how to use the compiler in cancho; below it, what M0 settled (host language, file extension, the M0 surface) | built; the record of the stages below |
+| [`removing-rust.md`](removing-rust.md) | The plan to remove the Rust crates and make the compiler in cancho the repository's main code (epic #491): decisions, gates, phases, layout | done on `main` (2026-11-22); the record of each step |
+| [`gate.md`](gate.md) | Phase 3 of the removal: the gate without `cargo` (one script, its stages, how the 850 Rust conformance tests moved to `cancho test`), with the steps G1 to G5 | built: `scripts/gate.sh` is what `main` requires |
 | [`canonical-ast.md`](canonical-ast.md) | AST shape, canonicalisation, per-unit identity (`cancho ids`) | written and built |
 | `memory-model.md` | Regions/arenas, escape, the escape hatches | not written — settled piecemeal by `heap.md`/`sharing.md`; nothing left to write on its own |
 | [`strings.md`](strings.md) | A string is bytes, not an encoding; `byte` as storage | settled and built |
@@ -367,7 +378,9 @@ not repeated here; a doc's own header carries its own detail.
 | [`narrowing-into-several.md`](narrowing-into-several.md) | Why a program that reads two unrelated files (`/dev/urandom` and a CA bundle) holds `Fs("")` and reports `fs_read("")`: narrowing consumes, so one `Fs` makes one chain. Options weighed (a set of paths, a remainder, a fork from a borrow, lending a root narrower, directory handles); recommended: `narrow(fs, "a", "b")` answers a tuple of children, for `Fs` and `Exec`, with no report change. Found a latent row bug: `Label::covers` compared path labels by byte prefix; fixed in PR #359 | built (PR #364; the `covers` fix first, PR #359); all six questions decided as proposed 2026-10-07; found by cancho-pg#14; `examples/tls_echo_fixed` is the payoff |
 | [`websocket-spike.md`](websocket-spike.md) | A WebSocket/OCPP connection layer on cancho against the `lex` runtime: 10,000 connections, measured, plus the gaps found and the `cancho-cache`-for-Redis question | measured: 80 MB and 0% idle CPU at 10,000 connections (the runtime's thread-per-connection stand-in saturates a core near 1,500); the service-level gaps are listed in §10 |
 | [`formatting.md`](formatting.md) | `cancho fmt`: the canonical layout with comments, blank lines and literal spellings kept | built; refuses, rather than risks, a file it cannot reproduce |
-| [`cli-in-cancho.md`](cli-in-cancho.md) | the `cancho` executable written in cancho: dispatch, files, exit codes | design; the printer sink is built |
+| [`cli-in-cancho.md`](cli-in-cancho.md) | the `cancho` executable written in cancho: dispatch, files, exit codes | built (slices 1 to 19; §14 to §40 add the later ones) |
+| [`builtin-tables.md`](builtin-tables.md) | The builtin tables, owned by `compiler`: how a builtin is added with no Rust | built (cancho#487) |
+| [`directory-nlink.md`](directory-nlink.md) | `dir_nlink`: how many names a file has, so a program can refuse a hard link | built in the compiler in cancho (edition 12); measured on macOS aarch64, not on Linux |
 | [`testing.md`](testing.md) | `trap()` and `std.test`'s `assert` — what a program needed to state "this must be true" at all | `trap()`, `std.test`, and `cancho test` are built; no per-test timeout, no message on a failed assertion |
 | [`satisfy.md`](satisfy.md) | The spec-to-implementation loop: a contract is a `.cho` file whose tests call the candidate; satisfaction is `check` plus `test` composed, with the verdict and the recomputed `SigId` answered (#406) | built; the first contract (`tests/satisfy/`) is CI-checked |
 | [`slicing.md`](slicing.md) | `s[a..b]`, half-open and trapping | settled and built |
@@ -402,9 +415,12 @@ not repeated here; a doc's own header carries its own detail.
 | [`agent-errors.md`](agent-errors.md) | Refusals a machine can read: stable rule tags, `check --output json` | settled and built |
 | [`diagnostic-messages.md`](diagnostic-messages.md) | The specific refusal message in the compiler in cancho (383 of 384 corpus messages are the rule's sentence there) | design, not built |
 | [`refusals-by-example.md`](refusals-by-example.md) | A walkthrough of 13 refusals, one rule tag per chapter: the refused program, what the compiler says, the correction; checked by a test | built |
-| [`standalone-cancho.md`](standalone-cancho.md) | A `cancho` built by cancho: what the command line in cancho lacks (measured), the decisions for the first standalone release, the slices, installing | design |
+| [`standalone-cancho.md`](standalone-cancho.md) | A `cancho` built by cancho: what the command line in cancho lacks (measured), the decisions for the first standalone release, the slices, installing | built; release 0.1.0 |
+| [`seed.md`](seed.md) | The seed: building the compiler in cancho with no Rust: what is committed, how it is written and checked, how often it is renewed | built |
 | [`structured-ingest.md`](structured-ingest.md) | The AST as JSON and back: `cancho print --output json` and `cancho ingest`, the ingest path an agent writes | built |
 | [`tty.md`](tty.md) | `Tty`, the serial-port capability (#422 T1): both measured termios ABIs, the surface, the labels — design |
+| [`camera.md`](camera.md) | Camera: a capability for video capture devices (#647, T1) | design; nothing built |
+| [`audio.md`](audio.md) | Audio: capabilities for sound capture and playback (#660, T1) | design; nothing built |
 | [`crc.md`](crc.md) | `std.crc`: CRC-16/XMODEM, CRC-32/IEEE and two CRC-64s (XZ, and Redis's Jones), and the two-halves design | built |
 | [`flate.md`](flate.md) | `std.flate`: DEFLATE, gzip and zlib in cancho (moved from cancho-tools' `archive`; the second asker is `cancho vcs`), with what was measured | built |
 | [`linalg.md`](linalg.md) | `std.linalg`: dot, axpy, gemv, gemm, Cholesky, LU with pivoting and Householder least squares on flat row-major slices; measured against numpy | built |
@@ -417,8 +433,9 @@ not repeated here; a doc's own header carries its own detail.
 | [`capability-budget.md`](capability-budget.md) | A numeric budget on a capability (a quantum `Qpu(backend, shots)`) for #612, asked for by cancho-quantum: what `cancho authority` prints for a count (measured: nothing, a loop of 3 and of 7 print the same), narrowing a number (a ratchet, with a sum rule for splits), what the compiler can refuse (a literal over the bound) and what only a counter and a supervisor can; the honest claim is a declared bound, not a proof | proposed — nothing built |
 | [`check-cost.md`](check-cost.md) | The price of every check this language emits | measured — corrects `overflow-cost.md` and `gpu.md` |
 | [`poison.md`](poison.md) | A per-lane flag instead of a trap, on a vector ISA | measured — depends on the check |
-| [`backend-limits.md`](backend-limits.md) | What Cranelift can and cannot be asked for | an audit, checked against source |
-| [`llvm-backend.md`](llvm-backend.md) | A second backend, `--backend llvm` | **complete, and the default** |
+| [`backend-limits.md`](backend-limits.md) | What Cranelift can and cannot be asked for | an audit, checked against source (Cranelift is retired) |
+| [`device-backends.md`](device-backends.md) | The device verbs' backend walk: what both Rust backends had to agree on for the camera and audio verbs | a record; the Rust backends are deleted |
+| [`llvm-backend.md`](llvm-backend.md) | The LLVM backend, and how it was built | **complete; the only backend** |
 | [`effect-polymorphism.md`](effect-polymorphism.md) | Whether an effect row can be polymorphic | a documented no, counted by reading |
 | [`hash-stability.md`](hash-stability.md) | How often a content hash actually moves | measured — the plateau `vcs.md` needed |
 | [`stability-exemptions.md`](stability-exemptions.md) | The plateau rule as a checked property: every historical `.cho` revision that fails today's compiler, by rule, with a reason and a count; `scripts/history.py --explain` and the `stability-plateau` CI job fail on any increase | built; measured baseline 210 revisions, 140 failing (67%) |
@@ -431,6 +448,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`emitted-checks.md`](emitted-checks.md) | The price list, read out of the binary | an audit; found a real compiler bug |
 | [`flags.md`](flags.md) | `std.flags`: a cursor, not a `getopt_long` table | settled and built |
 | [`first-page.md`](first-page.md) | What a reader of `README.md` actually learns | measured, and acted on — this guide is the result |
+| [`ci-speed.md`](ci-speed.md) | Whether a build cache speeds the CI jobs: it does not, so the jobs are split instead | measured |
 | [`under-a-grant.md`](under-a-grant.md) | Whether a `lex-os` grant can decide a cancho authority report | measured — filesystem is enforceable; network and exec are not |
 | [`net.md`](net.md) | `Net`: sockets, taken out of libc | settled and built |
 | [`related-work.md`](related-work.md) | What cancho took from Cyclone, Koka, Rust, Vale, Zig, Lex, Austral | written |
@@ -465,6 +483,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`tls-hooks.md`](tls-hooks.md) | The pure TLS backend in `cancho-hooks` (#210): the two interfaces are not the same (an adapter is needed), one source cannot carry both capability rows (no effect polymorphism), the pure client has no resumption, and "no `Ffi` at all" cannot hold because hooks also holds `libc`; the build, the tests on both backends, the measurements | design |
 | [`tls-resumption.md`](tls-resumption.md) | TLS 1.3 resumption for `packages/tls`: the full handshake's 2.8 ms is two X25519 and two ECDSA verifications (measured); PSK with (EC)DHE removes the verifications and keeps forward secrecy, about 1.2 ms; eight rules bound the hazard that a resumed session skips verification. Built: resumes against OpenSSL, Go, rustls, wolfSSL, nginx and GnuTLS; a resumed connection measured at half a full one's CPU | built |
 | [`tls-server.md`](tls-server.md) | A TLS 1.3 server for `packages/tls`, for `cancho-mqtt` and `cancho-gateway`: constant-time ECDSA P-256 signing first (`ecdsa-sign.md`, built), then the server handshake with SNI, ALPN and HelloRetryRequest (built: interop with OpenSSL, curl, Go, wolfSSL and mosquitto, a lying client of 110 cases, a differential against `openssl s_server`, fuzzing and mutants; a full handshake measured at 3.5 to 4 ms of CPU on X25519 or P-256 (6 ms on P-384), 17 to 20 times OpenSSL's); then `examples/tls_echo`, the server the broker and the gateway copy (§11: handshakes bounded in progress and a second, delayed not refused; reload on `SIGHUP`; close_notify on stop; 3.0 ms a handshake on an M4 and 5.5 ms on x86-64; no foreign code); session tickets (§12, #394); **client certificates (§13): modes off, optional and required, a trust store of its own that is never the system bundle and is replaced at run time, the CertificateRequest, the client's chain verified for `clientAuth` and its CertificateVerify (P-256, P-384, RSA-PSS, Ed25519), the verified identity given to the program per slot, no slot memory; interop with OpenSSL, curl, Go, wolfSSL and mosquitto, a lying client of 78 connections, a differential against `openssl s_server`, a fuzz harness, 202 mutants; a client certificate costs 1.7 to 4.2 ms of the server's CPU on an M4**; TLS 1.2 as a later step | steps 1 to 5 built; not independently reviewed |
+| [`tls-assurance.md`](tls-assurance.md) | The assembled TLS stack under test: fuzzing, interop, differential, timing and resource bounds (#208) | design |
 | [`tls-memory.md`](tls-memory.md) | Memory per TLS connection (#383, of #378): measured at 50 to 10,000 connections on arm64 and x86-64 beside OpenSSL's server (an established idle `tls_echo` connection is 119 KiB, OpenSSL's 14 to 49); where the slot's 263 KiB and the 119 KiB are (the work area `std.ecdh` needs is 75 KiB of integers every handshake writes, and nothing is released); six ways out, and the one chosen: a small core per slot, and the handshake's scratch and the record buffers leased from a pool of work areas | built, measured: an established idle `tls_echo` connection 17 KiB (from 119), 4.5 KiB of it the engine's; §11: one whose client presented a verified certificate 19 KiB (from 126: #398 kept the leaf in the work area), the leaf in a 2 KiB room a slot |
 | [`ecdsa-sign.md`](ecdsa-sign.md) | `std.ecdsa_sign`: ECDSA P-256 signing in constant time on `std.ecdh`'s ladder, RFC 6979's nonce hedged with the caller's randomness, a signature verified before it is given out; and `packages/x509`'s `x509_key`, P-256 private keys from PKCS#8 and SEC 1 PEM. Step 1 of `tls-server.md` | built; not independently reviewed |
 | [`secp256k1.md`](secp256k1.md) | `packages/secp256k1`: ECDSA on secp256k1 with public-key recovery, for `cancho-chain`'s EVM signing; `std.bigmod` registers and the complete a = 0 formulas, RFC 6979 nonce (hedged with the caller's randomness), low s, `r \|\| s \|\| recid`; 3,237 checks equal to libsecp256k1 and python-ecdsa (signatures byte for byte), 36 of 38 mutants killed and 2 unreachable by any input | built; not independently reviewed; constant time not yet measured |
@@ -474,7 +493,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`unsafe-and-global-state.md`](unsafe-and-global-state.md) | #587, prompted by the PHP release of 2026-10-21 (an out-of-memory failure leaving half-made state; per-request state outliving its memory): every `unsafe` (0 in the compiler, now `forbid`den; 14 in test libc calls), every global (2 in the compiler, 9 kinds in a generated program), failed allocation swept under `ulimit -v` on three code generators (finished or trapped, never a bad pointer), what a trap leaves. Found: the shared-temp-directory races of `run`/`test`/`satisfy` and the LLVM backend (fixed) and the LLVM object that carried its temporary's name (fixed); two thread-unsafe socket tables (filed #593, #594) | audited; 3 fixes, 2 filed; mutants listed |
 | [`region-chunk-cache.md`](region-chunk-cache.md) | A1 of #378 and #375, one mechanism: every `region` was a 64 KiB `malloc` and `free`, and glibc trimmed and regrew its heap for nearly each (112 `brk` calls a full TLS server handshake, 136 a resumed one, measured; 0.7 µs a pair on macOS and serialised across threads). Each thread keeps the chunks its regions give back, at most 16 (1 MiB), last in first out, which is the region stack (regions nest strictly); the bytes a region used are cleared when it ends; a thread's chunks are freed when it ends; the same runtime on both backends, a global on WASI. Options measured or argued (`mallopt` is glibc-only and changes every allocation), hazards (secrets, threads, memory), gates stated first. **As built:** 9 `brk` calls in a whole server run; a full TLS server handshake 34.6% cheaper (1.86 times OpenSSL's cycles on x86-64), a resumed one 55.8% (1.04 times OpenSSL's resumed: T5 met for the server; the client's 1.21, not met); 16 threads on macOS 0.04 s where 8.8 | built on both backends and WASI; counted under `strace` and an `LD_PRELOAD` shim; 14 of 14 mutants killed |
 | [`p256-fast.md`](p256-fast.md) | #380 (of #378): faster P-256 -- where the time goes (field operations are 93-98% of every operation, a `bigmod.mul` is 115 ns of which 55% is checked arithmetic), then a ten-limb 28-bit field with straight-line generated kernels and the NIST prime's form, a fixed-base table for k·G as a `static`, wNAF verification; §11, a table for a key that verifies many signatures (the server's own, B2; a client's P-256 trust anchors, B3): four runs of 65 wNAF digits sharing 64 doublings, 10,305 bytes a key, once per engine and key; a verification 2.1 times cheaper (2.26 times fewer instructions), a full server handshake 24% fewer instructions (1.46 times `s_server`), a client's 18% (1.41 times `tconn`); §12, P-384 measured (8 to 17 times OpenSSL) and decided: its verification is worth it, on #381's field; §13 its multiplications on `mul_wide` (#381), four 64-bit limbs measured and not chosen | built; gates in §8, §11.6 and §13.3; not independently reviewed |
-| [`self-hosting.md`](self-hosting.md) | Whether cancho could host its own toolchain | run; decided not yet — no asker |
+| [`self-hosting.md`](self-hosting.md) | Whether cancho could host its own toolchain | run; the answer changed: the compiler is in cancho and the Rust is deleted ([`removing-rust.md`](removing-rust.md)) |
 | [`agent-cli.md`](agent-cli.md) | `cancho introspect`/`skill`: the CLI surface as data, imported from `lex-lang`'s ACLI integration | built; found a false-familiarity bug in the process (`-o`/`-l`/`-L` would have rendered as `--o`/`--l`/`--L`) |
 | [`next-phase.md`](next-phase.md) | Replacing episodic duplication/staleness hunts with a mechanical check, argued from `MANIFESTO.md` and three of this session's own mistakes | §3's real instance (10 examples duplicating `std.io`) migrated, 7 of them (§3.1 has the three exceptions); §4's own standing check, the actual proposal, not built yet |
 

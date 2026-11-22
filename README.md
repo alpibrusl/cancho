@@ -5,32 +5,38 @@
 A **native systems language in which resource ownership and authority are
 part of the program's type-level contract.** Ownership and capability-typed
 effects are one system rather than two: a value is consumed exactly once,
-and reaching the outside world — the console, a file, a foreign library —
-requires holding a capability for it, checked at compile time.
+and reaching the outside world — the console, a file, a socket, a foreign
+library — requires holding a capability for it, checked at compile time.
+
+**Version 0.1.0.** The compiler is written in cancho. It is built from a
+committed seed of LLVM IR with `clang` alone, reproduces itself byte for
+byte, and no part of the repository's build or gate needs Rust. It writes
+code for Linux (x86-64 and aarch64) and macOS (Apple silicon).
 
 ## Install
 
-You do not need Rust. A release is a `cancho` built by cancho, one file,
-checked against its published sha256 and against the commit it reports:
+A release is a `cancho` built by cancho, one file of about 1.2 MB, checked
+against its published sha256 and against the commit it reports:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh
 cancho --version
 ```
 
-That installs the latest release into `~/.local/bin` (Linux x86-64 and
-aarch64, macOS on Apple silicon). `install.sh <commit> [prefix]` installs
-the one a project pins. Building a program needs `clang` 15 or newer and
-`cc`; on a machine whose `clang` is older or not the first on `PATH`, name
-one with `cancho build … --clang /absolute/path/to/clang` (this build
-does not read `$CLANG`). The sha256 detects a damaged
-or mismatched download; it does not authenticate who published it, since the
+That installs the latest release into `~/.local/bin`. `install.sh <commit>
+[prefix]` installs the one a project pins. Building a program needs `clang`
+15 or newer and `cc`; on a machine whose `clang` is older or not the first
+on `PATH`, name one with `cancho build … --clang /absolute/path/to/clang`
+(this build does not read `$CLANG`). The sha256 detects a damaged or
+mismatched download; it does not authenticate who published it, since the
 script and the archive both come from GitHub.
 
-What this build does not have: WASI targets
-(`--target wasm32-…`). Only the Rust build had them; it was deleted
-(`docs/removing-rust.md`, Phase 5), and the last `cancho-rust-<commit>-<target>`
-release assets stay downloadable (`docs/standalone-cancho.md`).
+What this build does not have: Cranelift (`--backend cranelift`) and
+WebAssembly (`--target wasm32-…`). Only the Rust build had them, it was
+deleted ([`docs/removing-rust.md`](docs/removing-rust.md), Phase 5), and
+the last release that has them, with the `cancho-rust-<commit>-<target>`
+assets, stays downloadable
+([`docs/standalone-cancho.md`](docs/standalone-cancho.md)).
 
 ## An example
 
@@ -60,11 +66,41 @@ still a linear value, so forgetting to release one does not compile.
 `greet`'s signature says `[io_write]` because it was handed a borrowed
 `&!i Io`; a function nothing was given cannot print however much it
 wants to, and `main`'s own row is `[]` even though it prints, because it
-*owns* the capability rather than borrowing one. Run it:
+*owns* the capability rather than borrowing one. Save it as `greet.cho` and
+run it:
 
 ```sh
-cancho run examples/tour.cho --std
+cancho run greet.cho --std      # Hello, cancho
 ```
+
+There is a longer tour in [`examples/tour.cho`](examples/tour.cho), and
+`cancho agent-guidelines` prints [`AGENTS.md`](AGENTS.md), the one page for
+writing cancho in a hurry.
+
+## What it is for
+
+A program that must be shown to do only what it is allowed to do, by
+something other than its author's say-so:
+
+- **`cancho authority`** says what a program can reach — the union of what
+  everything `main` reaches performs, from the same reachability that
+  decides what goes in the binary, so it is precise rather than
+  conservative. `--output json` gives the report as data and **fails
+  closed**: a program that reaches foreign code is `"bounded": false` and
+  names the symbols
+  ([`docs/authority.md`](docs/authority.md),
+  [`docs/foreign-authority.md`](docs/foreign-authority.md)).
+- **`cancho ids`** gives every declaration a content hash that does not
+  move when it is renamed or reformatted, and `cancho vcs` keeps a
+  content-addressed log of them; a dependency is a hash
+  ([`docs/canonical-ast.md`](docs/canonical-ast.md),
+  [`docs/package-system.md`](docs/package-system.md)).
+- **`cancho check --output json`** answers every refusal as data: a stable
+  rule tag, a position, a sentence. A refusal is a result an agent can act
+  on, not prose to scrape ([`docs/agent-errors.md`](docs/agent-errors.md)).
+- **`cancho satisfy`** is the spec-to-implementation loop: a contract is a
+  file whose `fn test_*` call a candidate, and the verdict names the
+  candidate's identity ([`docs/satisfy.md`](docs/satisfy.md)).
 
 ## What's deliberately not here
 
@@ -78,40 +114,58 @@ cancho run examples/tour.cho --std
   overloading resolved by inference, no ambient authority: `Io {}` does
   not compile, and the only capability a program ever has is the one
   `main` was handed.
+- **No undefined behaviour.** Checked arithmetic that traps, left-to-right
+  evaluation, deterministic layout: every place C leaves behaviour open is
+  named and closed ([`docs/defined-behaviour.md`](docs/defined-behaviour.md)).
 - **No textual or proc macros.** They break stable, content-addressable
   identity — a design commitment kept from the day this project started,
   not added on later.
 
-And honestly, **not a usable language yet**: real dependencies now
-resolve end to end (`cancho vcs publish`/`lock`/`fetch`,
-`docs/package-system.md`) — `packages/net-sockets/`,
-`packages/net-connect/`, `packages/agent-wire/`, `packages/
-http-request/`, and `packages/http-response/` are five real published
-packages (`packages/` also holds `http-server`, `tls` and `x509`), and `examples/fetch/fetch.cho` depends on two of them at once,
-composed with no new tooling. **A dependency's own dependencies resolve
-too now**
-(`docs/package-system.md` §4.6): `packages/http-request/` itself needs
-`net.sockets`, and `vcs publish --requires`/`vcs resolve`/`vcs fetch`
-walk that closure recursively, refusing a cycle or a diamond conflict
-rather than guessing — a claim this paragraph made and got wrong once
-already, corrected here the way `ROADMAP.md` requires. There is still
-no manifest, and no human-readable version string at all: a hash is the
-only thing actually depended on. The effect vocabulary keeps growing, and
-every addition since editions.md landed has been edition-gated and
-additive by construction, so a file that does not opt into the edition
-that adds a feature cannot be broken by it: 39% of this repository's own
-historical revisions do not type-check under today's build
-(`docs/hash-stability.md` §2, re-measured), most of it a closed debt from
-one pre-editions rename — but that figure moved since the last time this
-paragraph was corrected (37%, then thought to have stopped climbing), and
-the honest reading now is that it grew again and not everything in that
-growth has been individually explained yet. `c_ptr` lets `SSL_CTX *` and
-similar opaque handles
-type-check, and `-l`/`-L` (`docs/foreign-linking.md`) let `build` link
-a library beyond libc, so a real TLS handshake compiles and runs
-today (`examples/tls_client/`).
-[The roadmap](https://alpibrusl.github.io/cancho/ROADMAP.html)
-tracks what landed, what's next, and what each slice found out.
+## Where it stands
+
+Everything below was measured on 2026-11-22, on `main`, unless a document
+is cited.
+
+- **The compiler** is [`compiler/`](compiler/): 143 files, about 70,900
+  lines of cancho (its own tests included), and about 16,500 lines of LLVM
+  IR text in [`compiler/runtime/`](compiler/runtime). The standard library
+  is [`std/`](std/), 47 files, about 23,100 lines, also cancho.
+- **No Rust.** `crates/`, `Cargo.toml` and the toolchain files are gone;
+  no workflow has a `cargo` step. The one exception is optional: the Rust
+  halves of two benchmarks and the `rustls` peers of the TLS interop
+  scripts, which skip when `rustc` or `cargo` is missing.
+- **It reproduces itself.** `clang` builds the committed seed
+  ([`seed/`](seed/), [`docs/seed.md`](docs/seed.md)); the seed builds the
+  compiler; that compiler builds itself twice more and the last two must be
+  identical. The release workflow does this on all three targets.
+- **The gate** is [`scripts/gate.sh`](scripts/gate.sh), written in cancho
+  and shell: formatting, a file-size budget, a link check, every fixture of
+  [`tests/accept`](tests/accept) built and run, about 400 fixtures of
+  [`tests/reject`](tests/reject) each refused by the rule it names, and the
+  compiler's own tests. Its design is [`docs/gate.md`](docs/gate.md).
+- **Packages**: [`packages/`](packages/) holds eleven, among them a TLS 1.3
+  client and server (written in cancho, with no C library, and **not
+  independently reviewed**: [`docs/tls-server.md`](docs/tls-server.md)),
+  X.509, secp256k1, an HTTP client and a server, and the sockets they stand
+  on. Dependencies resolve end to end by hash, a
+  dependency's own dependencies included
+  ([`docs/package-system.md`](docs/package-system.md)).
+- **History still reads.** Replaying every historical revision of `std/`,
+  `examples/` and `compiler/` through today's compiler: 983 revisions, 964
+  read, 16 do not, 3 cannot be judged by it. Each failure is listed with a
+  reason in [`docs/stability-exemptions.md`](docs/stability-exemptions.md),
+  and the CI job fails if a rule starts failing more revisions than its
+  recorded count ([`docs/hash-stability.md`](docs/hash-stability.md) §2).
+  Features arrive by *edition*, additively, so a file that does not opt in
+  cannot be broken by one.
+
+And honestly, **pre-1.0**: the language is still growing (the roadmap says
+what landed, what is next and what each slice found out:
+[`docs/ROADMAP.md`](https://alpibrusl.github.io/cancho/ROADMAP.html)), there
+is no human-readable version string for a dependency — a hash is the only
+thing actually depended on — and the compiler writes code for two operating
+systems and two architectures, not more. The first release built without
+Rust, `0.1.0`, is the one this page describes.
 
 ## Building
 
@@ -125,12 +179,10 @@ scripts/gate.sh   # the whole gate: builds the compiler from the seed, then ever
 ```
 
 The `cancho` of a release is built by `scripts/build-standalone.sh`: `clang`
-builds the committed seed (`seed/`), which compiles the command line written
-in cancho (`compiler/cli.cho`), which compiles itself twice more and
-must reproduce itself byte for byte (`docs/standalone-cancho.md`).
-
-Green on **linux-x86_64**, **linux-aarch64** and **darwin-aarch64**. `--backend llvm` is the
-default codegen path (LLVM via `clang`, no new build dependency);
+builds the committed seed, which compiles the command line written in
+cancho ([`compiler/cli.cho`](compiler/cli.cho)), which compiles itself twice
+more and must reproduce itself byte for byte
+([`docs/standalone-cancho.md`](docs/standalone-cancho.md)).
 
 A project that pins a compiler (`cancho.toml`) installs the prebuilt one for
 that commit instead of building it:
@@ -139,18 +191,19 @@ that commit instead of building it:
 scripts/install.sh <commit> [prefix]   # sha256 and the reported commit are both checked
 ```
 
-It still needs `clang` and `cc` at build time (`docs/package-system.md` §9).
+It still needs `clang` and `cc` at build time
+([`docs/package-system.md`](docs/package-system.md) §9).
 
 ### The compiler's whole surface
 
 ```sh
-cancho build <file.cho>... [-o <output>] [--emit exe|obj] [--std] [--backend llvm] [-l <name>]... [-L <path>]...
-cancho check <file.cho>... [--std] [--output json] [--backend llvm]   # refuse, or say nothing
-cancho run   <file.cho>... [--std] [--backend llvm] [-l <name>]... [-L <path>]...   # build, run, exit with the program's status
-cancho test  <file.cho>... [--std] [--backend llvm]   # run every `fn test_*`, one process each; exit 4 if one failed
+cancho build <file.cho>... [-o <output>] [--emit exe|obj] [--std] [-l <name>]... [-L <path>]... [--clang <path>]
+cancho check <file.cho>... [--std] [--output json]   # refuse, or say nothing
+cancho run   <file.cho>... [--std] [-l <name>]... [-L <path>]...   # build, run, exit with the program's status
+cancho test  <file.cho>... [--std] [-l <name>]... [-L <path>]...   # run every `fn test_*`, one process each; exit 4 if one failed
 cancho satisfy <contract.cho> <candidate.cho> [--std]   # a contract's tests call the candidate; the verdict names the SigId
 cancho ids   <file.cho>... [--std]    # each declaration's content hash
-cancho authority <file.cho>... [--std] [--output json] [--target <triple>]  # what it can reach
+cancho authority <file.cho>... [--std] [--output json]  # what it can reach
 cancho layout    <file.cho>... [--std]  # what every leaf costs, and what packing would save
 cancho fmt   <file.cho|dir>... [--check]   # canonical layout, comments kept; --check exits 1 if anything would change
 cancho print <file.cho> [--output json]  # the unit, as canonical text or as the JSON an agent reads
@@ -164,19 +217,20 @@ cancho build [--bin <name>] [--ignore-compiler-rev]  # with no files: install, t
 cancho test  [--test <name>] [--ignore-compiler-rev]  # with no files: install, then run the [[test]] sets of cancho.toml
 cancho vcs publish [--store <dir>] [--std] [--requires <lock>[:<dep-store>]]... <file.cho>  # log every declaration as an operation
 cancho vcs publish [--store <root>] [--std] --dir <dir>  # a library of several files, one store each, in dependency order
+cancho vcs sync [--dir <dir>] [--std] [--check]  # write a directory's sorted identity index (.cancho/ids.txt); --check writes nothing and exits 1 on a semantic change
 cancho vcs log     [--store <dir>]            # what a store already has
 cancho vcs resolve [--lock <file>] [<store-dir>]  # re-check every pin under today's compiler
 cancho vcs lock (--store <dir> | --git <url> (--rev <hash> | --ref <name>) [--path <dir>]) -o <file> (--all | <name>...)  # pin names to a dependency's hash
 cancho vcs fetch --lock <file> [--store <dir>] -o <dir>  # verify a lock, write its sources to disk
+cancho --version
 ```
 
 This block is checked against `--help` in both directions by a test
-(`the_readme_commands_still_work`), so it cannot drift silently.
+(`tests/commands/docs.sh`), so a command cannot be added or removed
+without it. The flags are not checked that way: where `--help` and this
+block differ on a flag, the block says what the compiler does today.
 
-`authority` is the one worth trying on something you did not write —
-it's the union of what everything `main` reaches performs, computed
-from the same reachability that decides what goes in the binary, so
-it's precise rather than conservative:
+`authority` is the one worth trying on something you did not write:
 
 ```sh
 $ cancho authority examples/tally.cho --std
@@ -185,16 +239,21 @@ performs
     io_write
 never touches
     the filesystem
+    the network
     the heap
     the command line
+    signals
+    other programs
     foreign code
+provably pure (2 of 6)
+    is_blank
+    width
 ```
 
-`--output json` gives the same report as data and **fails closed**: its
-first field is `"bounded"`, `false` for any program that reaches foreign
-code, and the second is `"unbounded_by"`: exactly which foreign symbols,
-as `scope:symbol` (`docs/foreign-authority.md`). Exit codes are semantic throughout: `0` success, `1` refused with
-a located diagnostic, `2` the command line was wrong, `3` the
+`--output json` gives the same report as data; its first field is
+`"bounded"` and its second `"unbounded_by"`, exactly which foreign symbols,
+as `scope:symbol`. Exit codes are semantic throughout: `0` success, `1`
+refused with a located diagnostic, `2` the command line was wrong, `3` the
 environment failed, and (`test` only) `4` a test failed.
 
 ## Docs

@@ -1,5 +1,7 @@
 # The gate without Rust
 
+> **Note (2026-11-22):** the gate is [`scripts/gate.sh`](../scripts/gate.sh) and it is what `main` requires (`gate (linux-x86_64)` and `gate (darwin-aarch64)`); the steps below were taken, one pull request each ([`removing-rust.md`](removing-rust.md), Phases 3 and 5). The sentence below that says nothing changes the gate yet is the state at the time of writing.
+
 Phase 3 of [`removing-rust.md`](removing-rust.md) (decision D3): what "done" means for a change once `cargo` is gone, and the order in which
 the checks that run under `cargo` move. Nothing here changes the gate yet; each step below is its own PR, and the documents that name the
 gate (`CLAUDE.md`, `CONTRIBUTING.md`, `AGENTS.md`) change **in the PR that makes the new gate required**, not before.

@@ -1,5 +1,7 @@
 # A `cancho` built by cancho: the first standalone release
 
+> **Note (2026-11-22):** built. The first release made without Rust is `cancho-a8c5bc3bacc5221ad9f8492790b7b4df7d9ddf10` (version 0.1.0); how the decisions below were carried out, with what was measured at each step, is [`removing-rust.md`](removing-rust.md). The status line below is the state at the time of writing.
+
 Status: **design; nothing here is built.** Written before the code, as `CONTRIBUTING.md` asks. What was run to write it is in §1 and is the only
 measurement in the document; everything after it is a **[choice]**, a **[measure]** (a later slice must measure it) or a **[read]** (taken from
 the named file, not re-run).

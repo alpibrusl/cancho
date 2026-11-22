@@ -1,5 +1,7 @@
 # WebAssembly target
 
+> **Note (2026-11-19, Phase 5):** retired. The `wasm32-*` target went with the Rust crate it was built in; the compiler in cancho writes code for Linux and macOS only ([`removing-rust.md`](removing-rust.md), D2). The last release that has it is the one with the `cancho-rust-*` assets.
+
 A `wasm32-wasip1` (later `wasip2`) target for `cancho`, through the existing
 LLVM backend. **Not a new backend**: `cancho-codegen-llvm` already emits
 textual IR and shells out to `clang -target <triple>`; wasm is one more triple
