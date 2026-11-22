@@ -449,6 +449,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`emitted-checks.md`](emitted-checks.md) | The price list, read out of the binary | an audit; found a real compiler bug |
 | [`flags.md`](flags.md) | `std.flags`: a cursor, not a `getopt_long` table | settled and built |
 | [`first-page.md`](first-page.md) | What a reader of `README.md` actually learns | measured, and acted on — this guide is the result |
+| [`status.md`](status.md) | Where the project stands, moved off the front page | figures dated 2026-11-22, not re-measured |
 | [`ci-speed.md`](ci-speed.md) | Whether a build cache speeds the CI jobs: it does not, so the jobs are split instead | measured |
 | [`under-a-grant.md`](under-a-grant.md) | Whether a `lex-os` grant can decide a cancho authority report | measured — filesystem is enforceable; network and exec are not |
 | [`net.md`](net.md) | `Net`: sockets, taken out of libc | settled and built |
