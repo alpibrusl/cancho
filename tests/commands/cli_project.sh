@@ -436,7 +436,7 @@ for command in build check run test; do
         if [ $command = build ]; then extra="-o $work/nc/out"; else extra=; fi
         ( cd "$work/nc" && "$cancho" $command p.cho $flagvalue $extra > o.txt 2> e.txt; echo $? > s.txt )
         same "$(cat "$work/nc/s.txt")" 2 "$command $flagvalue (cancho only)"
-        grep -qF "\`$flagvalue\` is not in this build of cancho" "$work/nc/e.txt" && grep -qF 'cancho-rust' "$work/nc/e.txt" || fail "$command $flagvalue says: $(head -c 200 "$work/nc/e.txt")"
+        grep -qF "\`$flagvalue\` is not in this build of cancho" "$work/nc/e.txt" && ! grep -qiw 'rust' "$work/nc/e.txt" || fail "$command $flagvalue says: $(head -c 200 "$work/nc/e.txt")"
     done
 done
 # What it does carry: the LLVM backend, and the machine's own triple (as the Rust command takes it).

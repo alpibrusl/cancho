@@ -171,7 +171,7 @@ pub fn show[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, i
 // this command line lacks (`docs/standalone-cancho.md` D1). A `--target` that spells the host this build was stamped with is the machine's own and is not refused.
 pub fn not_in_this_build[&h, &i, &f, &v](heap: &!h Heap, io: &!i Io, flag: &f [byte], value: &v [byte]) -> [heap, err_write] int {
     var m = buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.empty(heap, 256), "`"), flag), " ");
-    m = buffer.append(heap, buffer.append(heap, m, value), "` is not in this build of cancho, which writes code for the machine it runs on with the LLVM backend; the Rust build has it (`cargo build --release -p cancho`, or the `cancho-rust` release asset; docs/standalone-cancho.md D1)");
+    m = buffer.append(heap, buffer.append(heap, m, value), "` is not in this build of cancho, which writes code for the machine it runs on with the LLVM backend (docs/standalone-cancho.md D1)");
     var status = 0;
     borrow m as &mb in {
         status = usage_error(heap, io, buffer.bytes(mb));

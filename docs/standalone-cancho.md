@@ -111,8 +111,8 @@ Pinned by `release::install_with_no_commit_installs_the_latest_release_and_check
 That was the wrong layer: a rule tag names a refusal of a *program* by the checker (`rules.rs`, `check --output json`), and `--backend cranelift` is a refusal of a *flag*, like every
 flag this command line lacks, which is a usage error (status 2) with the sentence said and the usage printed. They are therefore sentences, not rules, and the test that pins them is a
 conformance test of the command line: `selfhost::cli::the_command_line_in_cancho_says_what_this_build_does_not_carry`. The sentence is
-"`FLAG VALUE` is not in this build of cancho, which writes code for the machine it runs on with the LLVM backend; the Rust build has it (`cargo build --release -p cancho`, or the
-`cancho-rust` release asset; docs/standalone-cancho.md D1)". `--target` is accepted when it spells the host this build was stamped with (the Rust command takes the host's own triple
+"`FLAG VALUE` is not in this build of cancho, which writes code for the machine it runs on with the LLVM backend (docs/standalone-cancho.md D1)". (Until 0.1.0 it went on to
+point at the Rust build, which no longer exists; corrected on 2026-11-22.) `--target` is accepted when it spells the host this build was stamped with (the Rust command takes the host's own triple
 too) and refused otherwise; an unstamped build does not know its host, so it refuses every triple.
 
 ## 5. Installing
