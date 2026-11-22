@@ -1,8 +1,11 @@
 # Pinning the compiler by version
 
-Status: **design, not built.** Nothing in this document is measured yet except
-what §1 reads from the source; each claim about behaviour after the change is a
-prediction, to be replaced by a measurement when the slices below land.
+Status: **slice 2 built** (the pin form, `main` at `0.1.1-dev`); slices 3 and 4
+are not. §3 is measured by `tests/commands/cli_project.sh`: a `-dev` build
+refuses `cancho = "0.1.0"` (and says which version it is), accepts it with
+`--ignore-compiler-rev`, a release build accepts the pin that names it and
+refuses another, and a project file whose pin is `N.N`, `N.N.N.N`, `vN.N.N`,
+`N.N.N-dev` or empty is refused at load. §4 is still open.
 
 ## 1. What there is
 

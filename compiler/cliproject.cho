@@ -310,13 +310,18 @@ fn check_compiler[&h, &i, &r](heap: &!h Heap, io: &!i Io, recs: &r [byte], ignor
         stop = stop + 1;
     }
     let want = recs[from..stop];
-    if bytes.equal(want, version.rev()) {
+    let release = projfile.release_ok(want);
+    if release && bytes.equal(want, version.crate_version()) || !release && bytes.equal(want, version.rev()) {
         return 0;
     }
     if ignore {
         var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 128), "note: this project was written for cancho "), want);
         m = buffer.append(heap, m, "; this is ");
-        m = buffer.append(heap, m, version.rev());
+        if release {
+            m = buffer.append(heap, m, version.crate_version());
+        } else {
+            m = buffer.append(heap, m, version.rev());
+        }
         m = buffer.append(heap, m, " (--ignore-compiler-rev)");
         borrow m as &mb in {
             say_error(heap, io, buffer.bytes(mb), "", "");
@@ -325,7 +330,10 @@ fn check_compiler[&h, &i, &r](heap: &!h Heap, io: &!i Io, recs: &r [byte], ignor
         return 0;
     }
     var m = buffer.append(heap, buffer.append(heap, buffer.empty(heap, 256), "this project was written for cancho "), want);
-    if bytes.equal(version.rev(), "unknown") {
+    if release {
+        m = buffer.append(heap, m, ", and this compiler is ");
+        m = buffer.append(heap, m, version.crate_version());
+    } else if bytes.equal(version.rev(), "unknown") {
         m = buffer.append(heap, m, ", and this compiler does not know which commit it was built from, so it cannot be checked (build it from a git checkout, or with CANCHO_REV set)");
     } else {
         m = buffer.append(heap, m, ", and this compiler is ");
