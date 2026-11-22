@@ -14,9 +14,9 @@ and are not equal. `.text` (1,777,376 bytes), `.rodata`, `.eh_frame`, the dynami
 25,106 bytes) and nothing else does: both have 2,371 symbols, and the names that differ are 2,010 numbered functions `lexs_<n>` (the first four numbers, 5, 11, 17 and 21, agree and later ones shift), 66 static
 initialisers `sinit<n>` and the six `sd<n>` globals of statics, which the three modules added. I did not check whether the order of the symbols also differs. `readelf -s`, `nm` and a comparison of the sections by name show it.
 
-**[read]** `examples/selfhost/emit.cho:1800`: a function is `define <ret> @lexs_<n>(`, "`n` the function's node, which no other function shares" (and `i<n>` for an instance of a generic one); `prune.cho` keys
+**[read]** `compiler/emit.cho:1800`: a function is `define <ret> @lexs_<n>(`, "`n` the function's node, which no other function shares" (and `i<n>` for an instance of a generic one); `prune.cho` keys
 on that spelling; a `static` is `@sd<n>` with an initialiser `@sinit<n>`, `n` "the item's node" (`emit.cho:1218`). A node number counts nodes over the whole program, so adding modules renames the functions and statics that come after them. The Rust emitter has the same
-spelling (`crates/cancho-codegen-llvm/src/emit.rs`).
+spelling (`crates/cancho-codegen-llvm/src/emit.rs` (deleted in Phase 5, 2026-11-19)).
 
 **Consequence.** The same program is not the same executable when the set of packages around it changes; a gate that wants "adding these dependencies changes nothing" (cancho-ml's W2) cannot ask the files.
 The siblings compare everything but the symbol and string tables, which needs a parser of ELF and of Mach-O in a Python script (`scripts/check_web_pin.py`, cancho-ml). It is also part of why a build is not
@@ -51,10 +51,10 @@ refused as the literal bounds are (`docs/net-bounds.md` section 2.2). **Removes:
 
 ## 3. The compiler in cancho accepts a `res` value overwritten through `&!`
 
-**Already tracked as #733** (opened 2026-11-08 from the same cancho-table program); the evidence below was added there on 2026-11-13, with a minimal repro that needs nothing from cancho-table, verified against the Rust compiler, and the place in `examples/selfhost/body.cho` (the `r.x = v` branch, about lines 899 to 943, which never notes the overwrite of a `res` field; compare `scope.assign_slot`, `scope.cho:549`). The compiler in cancho also writes invalid IR for the heap variant (`store {} %t/, ptr %t2`).
+**Already tracked as #733** (opened 2026-11-08 from the same cancho-table program); the evidence below was added there on 2026-11-13, with a minimal repro that needs nothing from cancho-table, verified against the Rust compiler, and the place in `compiler/body.cho` (the `r.x = v` branch, about lines 899 to 943, which never notes the overwrite of a `res` field; compare `scope.assign_slot`, `scope.cho:549`). The compiler in cancho also writes invalid IR for the heap variant (`store {} %t/, ptr %t2`).
 
 **[measured, 2026-11-13, `51524d2`]** `scripts/spikes/join/s8/n1_table_into_job.cho` of cancho-table: a worker lent a job by `&!` builds a table (`res`) and assigns it to a field of the job. The Rust compiler refuses it
-(`the value overwritten here is res (JTab), so it cannot be discarded`, rule `linear-value-unconsumed`, `crates/cancho-ir/src/linear.rs`, the `Discard` event). The compiler written in cancho **accepts it, and builds a
+(`the value overwritten here is res (JTab), so it cannot be discarded`, rule `linear-value-unconsumed`, `crates/cancho-ir/src/linear.rs` (deleted in Phase 5, 2026-11-19), the `Discard` event). The compiler written in cancho **accepts it, and builds a
 program** (exit 0). Its checker has the rule (`tables.cho` lists `linear-value-unconsumed`) and does not raise it for this assignment. The second program of the pair, `n2_table_as_result`, is refused by both.
 
 **Consequence.** The Rust compiler is the only oracle for this refusal, and `docs/removing-rust.md` removes it. cancho-table's premise test (`Premise`) asked it with `CANCHO_COMPILER=rust`; with no Rust it has a strong form that needs a
