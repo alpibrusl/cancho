@@ -201,15 +201,10 @@ the state at the time of writing (`bootstrap.md`, `standalone-cancho.md`,
 `gate.md`, `seed.md`, `wasm.md`, `device-backends.md`), the form
 `llvm-backend.md` already used; none was rewritten.
 
-**One finding the rewrite did not fix, because it is code and not prose:** the
-0.1.0 binary's own `--help` still describes the Rust build. Its `build` line
-offers `--backend cranelift|llvm`, `--target <triple>` and `--compiler <exe>`
-(`--compiler` is an unknown option; the first two are as above), and the text
-of `--compiler` says the program is "checked by the Rust front end" and handed
-"to the Rust compiler". The refusal of `--backend cranelift` tells the reader
-to run `cargo build --release -p cancho`. The command tree is
-`compiler/commandtree.cho` (hand-edited since Phase 5), so the fix is a change
-there and in the refusal's text, with the recorded transcripts that pin them
-(`cli_small.expected`) renewed, and it reaches users with the next release. The
-README's command block says what the compiler does, and the test of §5 compares
-command names only, so the two differ on flags until that is done.
+**One finding the rewrite first left open, since fixed (2026-11-22):** the
+0.1.0 binary's own `--help` described the Rust build (`--backend
+cranelift|llvm`, a `--compiler <exe>` that file-mode `build` does not accept,
+text about "the Rust front end", and a refusal that sent the reader to `cargo
+build --release -p cancho`). The command tree and the refusal's text in
+`compiler/commandtree.cho` and `compiler/clibase.cho` now say what the compiler
+does, with `cli_small.expected` renewed; it reaches users with the next release.
