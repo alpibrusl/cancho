@@ -10,7 +10,7 @@ library — requires holding a capability for it, checked at compile time.
 
 **Version 0.1.0.** The compiler is written in cancho. It is built from a
 committed seed of LLVM IR with `clang` alone, reproduces itself byte for
-byte, and no part of the repository's build or gate needs Rust. It writes
+byte. It writes
 code for Linux (x86-64 and aarch64) and macOS (Apple silicon).
 
 ## Install
@@ -32,11 +32,8 @@ mismatched download; it does not authenticate who published it, since the
 script and the archive both come from GitHub.
 
 What this build does not have: Cranelift (`--backend cranelift`) and
-WebAssembly (`--target wasm32-…`). Only the Rust build had them, it was
-deleted ([`docs/removing-rust.md`](docs/removing-rust.md), Phase 5), and
-the last release that has them, with the `cancho-rust-<commit>-<target>`
-assets, stays downloadable
-([`docs/standalone-cancho.md`](docs/standalone-cancho.md)).
+WebAssembly (`--target wasm32-…`); it writes code with LLVM, for the
+machine it runs on ([`docs/standalone-cancho.md`](docs/standalone-cancho.md)).
 
 ## An example
 
@@ -130,10 +127,9 @@ is cited.
   lines of cancho (its own tests included), and about 16,500 lines of LLVM
   IR text in [`compiler/runtime/`](compiler/runtime). The standard library
   is [`std/`](std/), 47 files, about 23,100 lines, also cancho.
-- **No Rust.** `crates/`, `Cargo.toml` and the toolchain files are gone;
-  no workflow has a `cargo` step. The one exception is optional: the Rust
-  halves of two benchmarks and the `rustls` peers of the TLS interop
-  scripts, which skip when `rustc` or `cargo` is missing.
+- **Optional comparisons.** The Rust halves of two benchmarks and the
+  `rustls` peers of the TLS interop scripts skip when `rustc` or `cargo`
+  is missing; nothing else needs them.
 - **It reproduces itself.** `clang` builds the committed seed
   ([`seed/`](seed/), [`docs/seed.md`](docs/seed.md)); the seed builds the
   compiler; that compiler builds itself twice more and the last two must be
@@ -164,8 +160,8 @@ what landed, what is next and what each slice found out:
 [`docs/ROADMAP.md`](https://alpibrusl.github.io/cancho/ROADMAP.html)), there
 is no human-readable version string for a dependency — a hash is the only
 thing actually depended on — and the compiler writes code for two operating
-systems and two architectures, not more. The first release built without
-Rust, `0.1.0`, is the one this page describes.
+systems and two architectures, not more. Release `0.1.0` is the one this page
+describes.
 
 ## Building
 
