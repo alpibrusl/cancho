@@ -245,10 +245,12 @@ pub fn variant_generic[&s, &x](st: &!s [int], text: &x [byte], id: int, item: in
         types.set_hint(st, 0);
         if ast.ok(st) {
             scope.expect(st, text, scope.node_val(st, want, whole), v.ty, ast.nstart(st, arg), ast.nend(st, arg));
-            emit.push_arg(st, v.ty, v.known, v.value, v.reg);
-        }
-        if types.is_slice_ref(st, v.ty) {
-            return ex.skip(st, from, to);
+            if types.is_slice_ref(st, v.ty) {
+                // A run of bytes waits as the one value an aggregate holds it as (`ex.put`), `{ ptr, i64 }`.
+                emit.push_arg(st, v.ty, false, 0, emit.pack_slice(st, v.reg, v.reg2 < 0, v.value, v.reg2));
+            } else {
+                emit.push_arg(st, v.ty, v.known, v.value, v.reg);
+            }
         }
         arg = ast.next(st, arg);
         want = ast.next(st, want);

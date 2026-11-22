@@ -1,0 +1,73 @@
+// A variant of a generic enum whose payload is a run of bytes: `Result::Err("empty")` in a function that
+// answers `Result[int, &static [byte]]`, the shape a parser's refusal has. The payload is two values in the
+// code (a pointer and a length) and waits, packed as one, until the enum's parameters are solved.
+//
+// The compiler in cancho had no code for it (`variant_generic` answered `skip` for a slice payload), so
+// every program that returned a message in a `Result` was one it could not judge.
+//~ EXIT 0
+import std.result;
+import std.option;
+import std.bytes;
+
+fn parse(n: int) -> [] result.Result[int, &static [byte]] {
+    if n == 0 {
+        return result.Result::Err("empty");
+    }
+    if n < 0 {
+        return result.Result::Err("negative number");
+    }
+    return result.Result::Ok(n * 2);
+}
+
+fn name_of(n: int) -> [] option.Option[&static [byte]] {
+    if n == 1 {
+        return option.Option::Some("one");
+    }
+    return option.Option::None;
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    var bad = 0;
+    match parse(21) {
+        result.Result::Ok(v) => {
+            if v != 42 {
+                bad = bad + 1;
+            }
+        }
+        result.Result::Err(_) => {
+            bad = bad + 2;
+        }
+    }
+    match parse(0) {
+        result.Result::Ok(_) => {
+            bad = bad + 4;
+        }
+        result.Result::Err(e) => {
+            if !bytes.equal(e, "empty") {
+                bad = bad + 8;
+            }
+        }
+    }
+    match parse(0 - 3) {
+        result.Result::Ok(_) => {
+            bad = bad + 16;
+        }
+        result.Result::Err(e) => {
+            if len(e) != 15 || !bytes.equal(e, "negative number") {
+                bad = bad + 32;
+            }
+        }
+    }
+    match name_of(1) {
+        option.Option::Some(s) => {
+            if !bytes.equal(s, "one") {
+                bad = bad + 64;
+            }
+        }
+        option.Option::None => {
+            bad = bad + 64;
+        }
+    }
+    return bad;
+}
