@@ -582,7 +582,7 @@ Measured: the differential test of the corpus now runs each program four ways (b
 
 ## 36. Slice 16: `--version` and the compiler pin (`docs/standalone-cancho.md` D2)
 
-`version.cho` holds three functions, the crate version, the commit and the host triple, and the repository carries them unstamped (`0.0.0`, `unknown`, `unknown`: the word
+`version.cho` holds three functions, the crate version, the commit and the host triple, and the repository carries them unstamped (`0.1.0`, `unknown`, `unknown`: the word
 `crates/cancho/build.rs` uses without a git checkout and without `CANCHO_REV`). `scripts/stamp-version.sh COMMIT [HOST]` writes the real ones before a release build
 (`VERSION_CHO=FILE` writes another file, as the tests do); it refuses a commit that is not 40 or 64 lowercase hex digits (with `-dirty` allowed after it) and a host that is not
 a triple. `cli.cho --version` and `-V` print `cancho VERSION (rev COMMIT, host HOST)` and exit 0, byte for byte the line of the Rust command.

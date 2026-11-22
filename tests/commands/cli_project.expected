@@ -174,8 +174,8 @@ compiler pin ignored: exit 0
   err: note: this project was written for cancho 0000000000000000000000000000000000000000; this is REV (--ignore-compiler-rev)
   files: ./build/a ./cancho.toml ./src/main.cho ./tests/t.cho 
 ok the_command_line_in_cancho_works_in_a_project_like_cancho
---version: cancho 0.0.0 (rev REV, host HOST)
--V: cancho 0.0.0 (rev REV, host HOST)
+--version: cancho 0.1.0 (rev REV, host HOST)
+-V: cancho 0.1.0 (rev REV, host HOST)
 pin other: 1 this project was written for cancho 0123456789abcdef0123456789abcdef01234567, and this compiler is REV; install that compiler, change `[package] cancho` after checking the sources against this one, or pass --ignore-compiler-rev
 pin other, ignored: 0 note: this project was written for cancho 0123456789abcdef0123456789abcdef01234567; this is REV (--ignore-compiler-rev)
 pin own: 0 
