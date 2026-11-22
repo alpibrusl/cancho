@@ -77,7 +77,8 @@ combines:
 | **One backend** | LLVM, through `clang`, for Linux (x86-64, aarch64) and macOS (Apple silicon). Cranelift and WebAssembly left with the Rust build ([`removing-rust.md`](removing-rust.md) D2) | [`llvm-backend.md`](llvm-backend.md), [`standalone-cancho.md`](standalone-cancho.md) |
 | [`wasm.md`](wasm.md) | A `wasm32-wasip1` target through the LLVM backend | retired with the Rust build (2026-11-19) |
 | **A compiler that builds itself** | The compiler is written in cancho, built from a committed seed of LLVM IR with `clang` alone, and reproduces itself byte for byte; no Rust in the build or the gate | [`seed.md`](seed.md), [`standalone-cancho.md`](standalone-cancho.md), [`removing-rust.md`](removing-rust.md), [`gate.md`](gate.md) |
-| **Packages** | Eleven in `packages/` (TLS 1.3 client and server, X.509, secp256k1, HTTP client and server, sockets), resolved by hash, closure included | [`package-system.md`](package-system.md) |
+| **Packages** | Eleven in `packages/` (TLS 1.3 client and server, X.509, secp256k1, HTTP client and server, sockets), resolved by hash, closure included | [`compiler-pin.md`](compiler-pin.md) | Pinning the compiler by release version (`cancho = "0.1.1"`) as well as by commit; how `-dev` builds keep a version pin exact; the slices to move the sibling repositories | design, not built |
+| [`package-system.md`](package-system.md) |
 
 What is **not** there yet, and why, is [`ROADMAP.md`](ROADMAP.md).
 

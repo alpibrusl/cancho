@@ -331,6 +331,9 @@ build_stamped() {
     rm -rf "$work/stamped-$3"
     mkdir -p "$work/stamped-$3"
     if [ "$1" = unknown ]; then _vc=compiler/version.cho; else VERSION_CHO=$work/stamped-$3/version.cho sh scripts/stamp-version.sh "$1" "$2" || return 1; _vc=$work/stamped-$3/version.cho; fi
+    if [ -n "${CRATE_VERSION:-}" ]; then # a release: the crate version without `-dev`, the first `return` of version.cho
+        awk -v v="$CRATE_VERSION" 'done == 0 && /return "/ { sub(/"[^"]*"/, "\"" v "\""); done = 1 } { print }' "$_vc" > "$work/stamped-$3/release.cho" && _vc=$work/stamped-$3/release.cho
+    fi
     _files=
     while read -r f; do [ -n "$f" ] || continue; if [ "$f" = version.cho ]; then _files="$_files $_vc"; else _files="$_files compiler/$f"; fi; done < compiler/cancho.files
     "$cancho" build $_files --std -o "$work/$3" > "$work/build-$3.txt" 2>&1 || { fail "building the compiler stamped $1: $(head -c 300 "$work/build-$3.txt")"; return 1; }
@@ -355,6 +358,14 @@ case $rev in
     *-dirty | unknown) echo "pin own: 0 " ;;
     *) pin_project "$rev"; echo "pin own: $(asked "$cancho" install)" ;;
 esac
+# A pin that is a release version (docs/compiler-pin.md): this tree is a `-dev` build, which no release version names.
+crate=$(printf '%s' "$version_line" | sed 's/^cancho \([^ ]*\) .*/\1/')
+pin_project "0.1.0"; echo "pin release, dev build: $(asked "$cancho" install)"
+pin_project "0.1.0"; echo "pin release, dev build, ignored: $(asked "$cancho" install --ignore-compiler-rev)"
+pin_project "$crate"; echo "pin the dev version: $(asked "$cancho" install)"
+for bad in 1.2 1.2.3.4 1..2 .1.2 1.2. 1.2.x v1.2.3 ""; do
+    pin_project "$bad"; echo "pin '$bad': $(asked "$cancho" install)"
+done
 pin_project "$other"
 asked "$cancho" install > "$work/pin-refused.txt"
 grep -qF "and this compiler is $rev" "$work/pin/e.txt" || fail "the refusal does not say which commit this compiler is: $(cat "$work/pin/e.txt")"
@@ -370,6 +381,15 @@ if build_stamped "$wrong" "$host" wrong; then
         *-dirty | unknown) ;;
         *) pin_project "$rev"; same "$(asked "$work/wrong" install | sed 's/ .*//')" 1 "a compiler stamped with another commit must refuse a project pinned to this one" ;;
     esac
+fi
+# A release build (its version has no `-dev`) accepts the pin that names it, and refuses another version.
+CRATE_VERSION=0.1.1; built=0; build_stamped "$rev" "$host" released && built=1; CRATE_VERSION=
+if [ "$built" = 1 ]; then
+    "$work/released" --version | grep -qF 'cancho 0.1.1 (rev' || fail "a release build's line: $("$work/released" --version)"
+    pin_project "0.1.1"; same "$(asked "$work/released" install | sed 's/ .*//')" 0 "a release build must accept the pin that names its version"
+    pin_project "0.1.2"; r=$(asked "$work/released" install)
+    same "${r%% *}" 1 "a release build must refuse another version"
+    grep -qF 'and this compiler is 0.1.1' "$work/pin/e.txt" || fail "the refusal for a version does not say this compiler's version: $(cat "$work/pin/e.txt")"
 fi
 # Unstamped, as the repository carries it: the line says `unknown`, and a pinned project cannot be checked.
 if build_stamped unknown unknown plain; then
