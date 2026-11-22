@@ -174,3 +174,42 @@ would meet in code rather than in agreement.
 |---|---|
 | `every_documentation_link_resolves` | every local link in `README.md`, `AGENTS.md` and `docs/` points at a file that exists — run by hand at the end of every slice until now, which is the wrong place for it |
 | `the_readme_commands_still_work` | the commands the first page shows a reader are commands the compiler still has |
+
+---
+
+## 6. The rewrite at 0.1.0 (2026-11-22)
+
+The first release built without Rust was the occasion to read the first
+page against the tree again. Two pages were rewritten, `README.md` and this
+directory's `README.md` (the book's landing page), by §3's rules: the thesis
+first, what exists as a table, the status said plainly, no new claim that was
+not measured or cited. What the old pages said that was no longer true, each
+checked against the tree and the 0.1.0 binary on macOS aarch64:
+
+| The old page said | What is true | Measured by |
+|---|---|---|
+| "39% of this repository's own historical revisions do not type-check", from `hash-stability.md` §2 at #163 | the plateau job replays 983 revisions of `std/`, `examples/` and `compiler/`: 964 read, 16 do not, 3 cannot be judged, all 16 listed with a reason in `stability-exemptions.md` | `scripts/history.py --explain` on `main` after the move (CI run 44926794060). The two figures are different instruments (about 195 revisions with the Rust checker then: 76 is 39%; 983 with the compiler in cancho now); the old one stays in `hash-stability.md` as dated |
+| "There is still no manifest" | `cancho.toml` exists, with `install`, `add`, and `build`/`test` with no files | `cancho --help`; `docs/package-system.md` |
+| the `authority` example showed an abbreviated report | the report also says `the network`, `signals`, `other programs` and lists the `provably pure` functions | `cancho authority examples/tally.cho --std`, 0.1.0 |
+| "Two backends": Cranelift and LLVM | LLVM only: `--backend cranelift` and `--target wasm32-*` are refused with status 2; `--backend llvm` and the host triple are accepted | the 0.1.0 binary |
+| the layout listed `crates/` | `crates/` is deleted; the layout is `compiler/`, `std/`, `seed/` and the rest | `git ls-tree` |
+| "Not self-hosting-first … is now being written in cancho" | written, built from a seed, and the Rust is deleted | `removing-rust.md`, Phases 5 and 6 |
+| the index lacked eleven documents, among them `seed.md` | indexed, with the status each states | a loop over `docs/*.md` against the index |
+
+Six documents carry a dated note at the top where their own status line was
+the state at the time of writing (`bootstrap.md`, `standalone-cancho.md`,
+`gate.md`, `seed.md`, `wasm.md`, `device-backends.md`), the form
+`llvm-backend.md` already used; none was rewritten.
+
+**One finding the rewrite did not fix, because it is code and not prose:** the
+0.1.0 binary's own `--help` still describes the Rust build. Its `build` line
+offers `--backend cranelift|llvm`, `--target <triple>` and `--compiler <exe>`
+(`--compiler` is an unknown option; the first two are as above), and the text
+of `--compiler` says the program is "checked by the Rust front end" and handed
+"to the Rust compiler". The refusal of `--backend cranelift` tells the reader
+to run `cargo build --release -p cancho`. The command tree is
+`compiler/commandtree.cho` (hand-edited since Phase 5), so the fix is a change
+there and in the refusal's text, with the recorded transcripts that pin them
+(`cli_small.expected`) renewed, and it reaches users with the next release. The
+README's command block says what the compiler does, and the test of §5 compares
+command names only, so the two differ on flags until that is done.

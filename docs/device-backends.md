@@ -1,5 +1,7 @@
 # The device verbs' backend walk
 
+> **Note (2026-11-19, Phase 5):** the two Rust backends this walk names, `cancho-codegen` and `cancho-codegen-llvm`, are deleted ([`removing-rust.md`](removing-rust.md)); the walk is kept as the record of how they agreed.
+
 > **Status: the walk both backends implement** for `docs/camera.md` §3 and `docs/audio.md` §3. It exists so Cranelift
 > (`crates/cancho-codegen/src/body/camera.rs`, `audio.rs`) and LLVM (`crates/cancho-codegen-llvm/src/body/camera.rs`,
 > `audio.rs`) cannot disagree, as `cancho_ir::device` does for the numbers. Every number is in `cancho_ir::device`

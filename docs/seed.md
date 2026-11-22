@@ -1,5 +1,7 @@
 # The seed: building the compiler in cancho with no Rust
 
+> **Note (2026-11-22):** built. [`seed/`](../seed) holds the committed seed for three targets, `scripts/reseed.sh` writes it, and the `reseed` workflow runs it on the Linux targets; the last reseed is #808. A reseed is a pull request that changes only `seed/`, as §5 says. The status line below is the state at the time of writing.
+
 Status: **design, written before any `seed/` directory exists.** Phase 1a of [`removing-rust.md`](removing-rust.md) (epic
 [#491](https://github.com/alpibrusl/cancho/issues/491), issue #488). Numbers marked *measured* come from one run on macOS aarch64 on
 2026-11-05 (the tree of #697, stage 0 a debug Rust build); everything else is a decision proposed here. A claim that turns out false is
