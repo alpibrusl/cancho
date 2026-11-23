@@ -833,7 +833,12 @@ pub fn slice_codable[&s](st: &!s [int], ty: int) -> [] bool {
 
 // May a run hold this: a scalar, or a struct, an enum or a tuple, one aggregate in the code?
 pub fn element_ok[&s](st: &!s [int], e: int) -> [] bool {
-    return types.is_plain(e) || aggregate_codable(st, e) && !types.is_slice_ref(st, e);
+    return types.is_plain(e) || aggregate_codable(st, e) && !types.is_slice_ref(st, e) || run_of_plain(st, e);
+}
+
+// A shared reference to a run of scalars (`&r [byte]`), which a run may hold as the pair it is in an aggregate (`ex.put`): a `Vec[&s [byte]]`.
+pub fn run_of_plain[&s](st: &!s [int], e: int) -> [] bool {
+    return types.is_slice_ref(st, e) && !types.ref_unique(st, e) && types.is_plain(types.element_of(st, e));
 }
 
 // A value of this type has code: a struct or an enum of scalars, one aggregate in the code.
@@ -1103,7 +1108,14 @@ pub fn lower_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fres
     let inner = ast.get(st, ty, 6);
     var referent = 0;
     if ast.is_kind(st, inner, kinds.NK::TSlice) {
-        let element = element_type(st, ast.get(st, inner, 6));
+        var element = element_type(st, ast.get(st, inner, 6));
+        if element == 0 && ast.is_kind(st, ast.get(st, inner, 6), kinds.NK::TRef) {
+            // `&v [&s [byte]]`: a run of runs of scalars, each a pointer and a length.
+            let held = lower_type(st, text, ast.get(st, inner, 6), dp, fresh);
+            if held != 0 && run_of_plain(st, held) {
+                element = held;
+            }
+        }
         if element != 0 {
             referent = types.make_slice(st, element);
         }
