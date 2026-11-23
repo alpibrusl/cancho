@@ -1,0 +1,167 @@
+edition 7;
+module selfhost.cliedges;
+
+// cliedges.cho -- `cancho ids --edges` (`docs/cli-in-cancho.md` section 13): what `identity.edges` found of each declaration, as JSON, with the file and the lines it is
+// at and the text of its signature. A declaration of the library in this binary (`--std`) is not listed; one that is referred to is still named.
+
+import std.buffer;
+import std.bytes;
+import selfhost.lexcore as lc;
+import selfhost.diagnose;
+import selfhost.clibase;
+
+// Where the reading of `laid` is: the file, the byte the file starts at, the byte reached and its line.
+struct Cursor {
+    file: int,
+    start: int,
+    pos: int,
+    line: int,
+}
+
+// The cursor at `offset`. Going on from where it is when `offset` is not before it, so that the declarations of a program, which come in order, cost one reading of the text.
+fn seek[&l, &n](laid: &l [byte], lens: &n [int], c: Cursor, offset: int) -> [] Cursor {
+    var file = c.file;
+    var start = c.start;
+    var pos = c.pos;
+    var line = c.line;
+    if offset < pos {
+        file = 0;
+        start = 0;
+        pos = 0;
+        line = 1;
+    }
+    while file + 1 < len(lens) && offset >= start + lens[file] + 1 {
+        start = start + lens[file] + 1;
+        file = file + 1;
+        pos = start;
+        line = 1;
+    }
+    while pos < offset && pos < len(laid) {
+        if lc.at(laid, pos) == '\n' {
+            line = line + 1;
+        }
+        pos = pos + 1;
+    }
+    return Cursor { file: file, start: start, pos: pos, line: line };
+}
+
+// The first NUL of `rec` at `at` or after.
+fn nul[&r](rec: &r [byte], at: int) -> [] int {
+    if at >= len(rec) {
+        return len(rec);
+    }
+    let k = bytes.find(rec[at..len(rec)], "\0");
+    if k < 0 {
+        return len(rec);
+    }
+    return at + k;
+}
+
+// The number written in decimal from `at` to the NUL.
+fn nat[&r](rec: &r [byte], at: int) -> [] int {
+    var n = 0;
+    var k = at;
+    while k < len(rec) && lc.at(rec, k) != 0 {
+        n = n * 10 + (lc.at(rec, k) - '0');
+        k = k + 1;
+    }
+    return n;
+}
+
+fn member[&h, &w](heap: &!h Heap, out: buffer.Buffer, key: &static [byte], word: &w [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, "\"");
+    b = buffer.append(heap, b, key);
+    b = buffer.append(heap, b, "\":");
+    return diagnose.json_string(heap, b, word);
+}
+
+fn number[&h](heap: &!h Heap, out: buffer.Buffer, key: &static [byte], n: int) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, out, ",\"");
+    b = buffer.append(heap, b, key);
+    b = buffer.append(heap, b, "\":");
+    return buffer.push_nat(heap, b, n);
+}
+
+// The JSON of the records `rec` (`identity.edges`) of the program whose files are named `names` and laid end to end in `laid`, `lens` bytes each.
+pub fn render[&h, &r, &y, &l, &n](heap: &!h Heap, rec: &r [byte], names: &y [byte], laid: &l [byte], lens: &n [int]) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buffer.empty(heap, len(rec) * 2 + 64), "{\n  \"declarations\": [");
+    var c = Cursor { file: 0, start: 0, pos: 0, line: 1 };
+    var shown = 0;
+    var at = 0;
+    while at < len(rec) {
+        let kind_to = nul(rec, at);
+        let module_to = nul(rec, kind_to + 1);
+        let name_to = nul(rec, module_to + 1);
+        let public_to = nul(rec, name_to + 1);
+        let from_to = nul(rec, public_to + 1);
+        let sig_to = nul(rec, from_to + 1);
+        let end_to = nul(rec, sig_to + 1);
+        let from = nat(rec, public_to + 1);
+        let signature_end = nat(rec, from_to + 1);
+        let to = nat(rec, sig_to + 1);
+        c = seek(laid, lens, c, from);
+        let path = clibase.name_at(names, c.file);
+        let listed = !(len(path) > 6 && lc.spells(path, 0, 6, "<std>/"));
+        if listed {
+            if shown > 0 {
+                out = buffer.push(heap, out, byte_of(','));
+            }
+            shown = shown + 1;
+            out = buffer.append(heap, out, "\n    {");
+            out = member(heap, out, "kind", rec[at..kind_to]);
+            out = buffer.push(heap, out, byte_of(','));
+            out = member(heap, out, "module", rec[kind_to + 1..module_to]);
+            out = buffer.push(heap, out, byte_of(','));
+            out = member(heap, out, "name", rec[module_to + 1..name_to]);
+            if nat(rec, name_to + 1) != 0 {
+                out = buffer.append(heap, out, ",\"pub\":true,");
+            } else {
+                out = buffer.append(heap, out, ",\"pub\":false,");
+            }
+            out = member(heap, out, "file", path);
+            out = number(heap, out, "line", c.line);
+            c = seek(laid, lens, c, to);
+            out = number(heap, out, "end_line", c.line);
+            out = buffer.push(heap, out, byte_of(','));
+            var signature = buffer.empty(heap, 64);
+            if nat(rec, name_to + 1) != 0 {
+                signature = buffer.append(heap, signature, "pub ");
+            }
+            if from <= signature_end && signature_end <= len(laid) {
+                signature = buffer.append(heap, signature, laid[from..signature_end]);
+            }
+            borrow signature as &sg in {
+                out = member(heap, out, "signature", buffer.bytes(sg));
+            }
+            buffer.drop(heap, signature);
+            out = buffer.append(heap, out, ",\"refers\":[");
+        }
+        at = end_to + 1;
+        var first = true;
+        while at < len(rec) && lc.at(rec, at) != '\n' {
+            let ref_module_to = nul(rec, at + 1);
+            let ref_name_to = nul(rec, ref_module_to + 1);
+            if listed {
+                if !first {
+                    out = buffer.push(heap, out, byte_of(','));
+                }
+                first = false;
+                if lc.at(rec, at) == 'f' {
+                    out = buffer.append(heap, out, "{\"kind\":\"fn\",");
+                } else {
+                    out = buffer.append(heap, out, "{\"kind\":\"type\",");
+                }
+                out = member(heap, out, "module", rec[at + 1..ref_module_to]);
+                out = buffer.push(heap, out, byte_of(','));
+                out = member(heap, out, "name", rec[ref_module_to + 1..ref_name_to]);
+                out = buffer.push(heap, out, byte_of('}'));
+            }
+            at = ref_name_to + 1;
+        }
+        if listed {
+            out = buffer.append(heap, out, "]}");
+        }
+        at = at + 1;
+    }
+    return buffer.append(heap, out, "\n  ]\n}\n");
+}

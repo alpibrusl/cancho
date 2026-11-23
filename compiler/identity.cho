@@ -15,7 +15,8 @@ module selfhost.identity;
 //   0 the module being hashed, 1 the table of types that names are looked up in (-1 for none), 2 the table of signatures,
 //   3 how many binders are in scope, 4 how many regions, 5 how many type parameters, 6 how many regions the declaration has,
 //   7 the size of a table, 8 the size of a stack, 9 how many `where` clauses, 10 how many labels of an effect row,
-//   16 to 23 the hash just made, 24 to 31 where the stacks are, 32 to 34 where the tables are, 64 the hasher (`blake3.size()`)
+//   11 how many declarations the one being read refers to and 12 whether they are being noted (`edges`), 16 to 23 the hash just made,
+//   24 to 31 where the stacks are, 32 to 34 where the tables are, 35 where the references noted are, 64 the hasher (`blake3.size()`)
 //
 // A table has an entry of 12 slots for each name: whether it is used, the module, the token of the name, and the hash (8 words). Names are
 // compared by their text. Like the Rust `HashMap`, a name that is written twice in a module keeps the hash of the last.
@@ -32,7 +33,7 @@ import std.buffer;
 
 // How many integers `d` needs for a program of `tokens` tokens and `items` items.
 pub fn size_for(tokens: int, items: int) -> [] int {
-    return 64 + blake3.size() + 8 * (tokens + 16) + 3 * 12 * table_size(items) + 64;
+    return 64 + blake3.size() + 9 * (tokens + 16) + 3 * 12 * table_size(items) + 64;
 }
 
 fn table_size(items: int) -> [] int {
@@ -49,6 +50,8 @@ pub fn layout[&j](d: &!j [int], tokens: int, items: int) -> [] int {
         at = at + c;
         k = k + 1;
     }
+    d[35] = at;
+    at = at + c;
     k = 0;
     while k < 3 {
         d[32 + k] = at;
@@ -377,6 +380,25 @@ fn entry[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], table: int, h
     return 0 - 1;
 }
 
+// The declaration with the entry `at` of a table is one the declaration being read refers to: noted once, when they are being noted.
+fn note[&j](d: &!j [int], at: int) -> [] int {
+    if d[12] == 0 {
+        return 0;
+    }
+    var k = 0;
+    while k < d[11] {
+        if d[d[35] + k] == at {
+            return 0;
+        }
+        k = k + 1;
+    }
+    if d[11] < d[8] - 1 {
+        d[d[35] + d[11]] = at;
+        d[11] = d[11] + 1;
+    }
+    return 0;
+}
+
 // The hash just made is the entry for the name.
 fn record[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], table: int, home: int, name: int) -> [] int {
     let at = entry(st, text, d, table, home, name, true);
@@ -633,6 +655,7 @@ fn encode_type[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], id: int
         let m = resolve(st, text, d[0], ast.get(st, id, 4));
         let at = entry(st, text, d, d[1], m, name, false);
         if at >= 0 {
+            note(d, at);
             put_tag(d, t_free());
             put_hash(d, at + 3);
         } else {
@@ -830,6 +853,7 @@ fn qualified_name[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], qual
     let m = resolve(st, text, d[0], qualifier);
     let at = entry(st, text, d, d[2], m, name, false);
     if at >= 0 {
+        note(d, at);
         put_tag(d, t_free());
         return put_hash(d, at + 3);
     }
@@ -842,6 +866,7 @@ fn type_reference[&s, &x, &j](st: &!s [int], text: &x [byte], d: &!j [int], qual
     let m = resolve(st, text, d[0], qualifier);
     let at = entry(st, text, d, d[1], m, name, false);
     if at >= 0 {
+        note(d, at);
         put_tag(d, t_free());
         return put_hash(d, at + 3);
     }
@@ -1437,8 +1462,12 @@ pub fn decoded_text[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int
 
 // The module of the declaration `id` (its path, with the dots, and empty for the root), a NUL, its name, and a NUL, added to `out`.
 fn module_and_name[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int], text: &x [byte], id: int) -> [heap] buffer.Buffer {
+    return unit_and_name(heap, out, st, text, ast.get(st, id, 13), ast.get(st, id, 4));
+}
+
+// The same of the module `unit` and the name at the token `name`.
+fn unit_and_name[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int], text: &x [byte], unit: int, name: int) -> [heap] buffer.Buffer {
     var b = out;
-    let unit = ast.get(st, id, 13);
     if unit > 0 {
         let first = ast.module_first(st, unit);
         var n = 0;
@@ -1451,7 +1480,7 @@ fn module_and_name[&h, &s, &x](heap: &!h Heap, out: buffer.Buffer, st: &!s [int]
         }
     }
     b = buffer.push(heap, b, byte_of(0));
-    b = buffer.append(heap, b, text[ast.tstart(st, ast.get(st, id, 4))..ast.tend(st, ast.get(st, id, 4))]);
+    b = buffer.append(heap, b, text[ast.tstart(st, name)..ast.tend(st, name)]);
     return buffer.push(heap, b, byte_of(0));
 }
 
@@ -1640,6 +1669,81 @@ pub fn listing[&h, &s, &x, &j](heap: &!h Heap, st: &!s [int], text: &x [byte], d
         }
         id = ast.next(st, id);
     }
+    st[63] = 0;
+    return out;
+}
+
+fn nat_and_nul[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    return buffer.push(heap, buffer.push_nat(heap, out, n), byte_of(0));
+}
+
+// What each declaration refers to (`cancho ids --edges`, `docs/cli-in-cancho.md` section 13): for each type, function, foreign function and static of the program, in the order they
+// are declared, `kind` (`type`, `fn`, `extern` or `static`), a NUL, the module's path with the dots (empty for the root), a NUL, `name`, a NUL, `1` if it is `pub` and `0` if not, a NUL, the
+// byte it starts at, a NUL, the byte its signature ends at (its end, for a type and a foreign function), a NUL, the byte it ends at, a NUL; then for each type, function and foreign function
+// it names, in the order they are first named, `t` (a type) or `f`, the module, a NUL, the name, and a NUL; and a newline. They are the names the identities are made of: a type in a
+// signature, a field or a body, and a function called or passed. A static, a parameter and a local are not among them. Empty, with `st[63]` 1, if a floating-point literal of the program is
+// one whose bits are not worked out.
+pub fn edges[&h, &s, &x, &j](heap: &!h Heap, st: &!s [int], text: &x [byte], d: &!j [int]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 256);
+    if !floats.all_literals_ok(st, text) {
+        st[63] = 1;
+        return out;
+    }
+    hash_all(st, text, d);
+    d[12] = 1;
+    var id = st[15];
+    while id >= 0 {
+        d[11] = 0;
+        var kind = "";
+        var signature_end = ast.nend(st, id);
+        if ast.is_kind(st, id, kinds.NK::IStruct) {
+            kind = "type";
+            hash_struct(st, text, d, id);
+        } else if ast.is_kind(st, id, kinds.NK::IEnum) {
+            kind = "type";
+            hash_enum(st, text, d, id);
+        } else if ast.is_kind(st, id, kinds.NK::IFn) {
+            kind = "fn";
+            signature_end = ast.nend(st, ast.get(st, id, 10));
+            hash_signature(st, text, d, id);
+            hash_body(st, text, d, id);
+        } else if ast.is_kind(st, id, kinds.NK::IExtern) {
+            kind = "extern";
+            hash_extern(st, text, d, id);
+        } else if ast.is_kind(st, id, kinds.NK::IStatic) {
+            kind = "static";
+            signature_end = ast.nend(st, ast.get(st, id, 6));
+            hash_static_type(st, text, d, id);
+            hash_static_body(st, text, d, id);
+        }
+        if len(kind) > 0 {
+            out = buffer.push(heap, buffer.append(heap, out, kind), byte_of(0));
+            out = module_and_name(heap, out, st, text, id);
+            if ast.is_kind(st, id, kinds.NK::IExtern) {
+                // A foreign function has no `pub`.
+                out = nat_and_nul(heap, out, 0);
+            } else {
+                out = nat_and_nul(heap, out, ast.get(st, id, 5));
+            }
+            out = nat_and_nul(heap, out, ast.nstart(st, id));
+            out = nat_and_nul(heap, out, signature_end);
+            out = nat_and_nul(heap, out, ast.nend(st, id));
+            var k = 0;
+            while k < d[11] {
+                let at = d[d[35] + k];
+                if at >= d[34] {
+                    out = buffer.push(heap, out, byte_of('f'));
+                } else {
+                    out = buffer.push(heap, out, byte_of('t'));
+                }
+                out = unit_and_name(heap, out, st, text, d[at + 1], d[at + 2]);
+                k = k + 1;
+            }
+            out = buffer.push(heap, out, byte_of('\n'));
+        }
+        id = ast.next(st, id);
+    }
+    d[12] = 0;
     st[63] = 0;
     return out;
 }

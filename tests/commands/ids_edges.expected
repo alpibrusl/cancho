@@ -1,0 +1,25 @@
+== ids --edges
+{
+  "declarations": [
+    {"kind":"type","module":"shapes","name":"Pair","pub":true,"file":"shapes.cho","line":3,"end_line":6,"signature":"pub struct Pair {\n    a: int,\n    b: int,\n}","refers":[]},
+    {"kind":"type","module":"shapes","name":"Shape","pub":true,"file":"shapes.cho","line":8,"end_line":11,"signature":"pub enum Shape {\n    Dot,\n    Box(Pair),\n}","refers":[{"kind":"type","module":"shapes","name":"Pair"}]},
+    {"kind":"fn","module":"shapes","name":"twice","pub":true,"file":"shapes.cho","line":14,"end_line":16,"signature":"pub fn twice(x: int) -> [] int","refers":[]},
+    {"kind":"fn","module":"shapes","name":"area","pub":true,"file":"shapes.cho","line":18,"end_line":27,"signature":"pub fn area(s: Shape) -> [] int","refers":[{"kind":"type","module":"shapes","name":"Shape"},{"kind":"fn","module":"shapes","name":"twice"}]},
+    {"kind":"static","module":"","name":"squares","pub":false,"file":"main.cho","line":4,"end_line":8,"signature":"static squares: [int]","refers":[{"kind":"fn","module":"shapes","name":"twice"}]},
+    {"kind":"extern","module":"","name":"labs","pub":false,"file":"main.cho","line":10,"end_line":10,"signature":"extern fn labs[&f](ffi: &f Ffi(\"libc\"), n: int) -> [ffi(\"libc\")] int;","refers":[]},
+    {"kind":"fn","module":"","name":"down","pub":false,"file":"main.cho","line":12,"end_line":17,"signature":"fn down(n: int) -> [] int","refers":[{"kind":"fn","module":"","name":"down"}]},
+    {"kind":"fn","module":"","name":"helper","pub":false,"file":"main.cho","line":19,"end_line":21,"signature":"fn helper(p: shapes.Pair) -> [] int","refers":[{"kind":"type","module":"shapes","name":"Pair"},{"kind":"fn","module":"shapes","name":"area"},{"kind":"type","module":"shapes","name":"Shape"},{"kind":"fn","module":"shapes","name":"twice"},{"kind":"fn","module":"std.math","name":"max"}]},
+    {"kind":"fn","module":"","name":"main","pub":false,"file":"main.cho","line":23,"end_line":29,"signature":"fn main() -> [] int","refers":[{"kind":"type","module":"shapes","name":"Pair"},{"kind":"fn","module":"","name":"helper"},{"kind":"fn","module":"","name":"down"}]}
+  ]
+}
+status 0
+== the flag before the files, and the lines of ids without it are as they were
+status 0
+ok the same answer
+type Pair
+type Shape
+type Buffer
+== a refused program: no JSON
+status 1 bytes 0
+== --edges is of ids only
+status 2
