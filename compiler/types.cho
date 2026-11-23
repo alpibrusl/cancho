@@ -392,7 +392,7 @@ pub fn node_type[&s](st: &!s [int], node: int, ctx: int) -> [] int {
         var referent = 0;
         if ast.is_kind(st, inner, kinds.NK::TSlice) {
             let element = node_type(st, ast.get(st, inner, 6), ctx);
-            if is_plain(element) || is_named(st, element) || is_tuple(st, element) || is_tvar(st, element) {
+            if is_plain(element) || is_named(st, element) || is_tuple(st, element) || is_tvar(st, element) || is_slice_ref(st, element) {
                 referent = make_slice(st, element);
             }
         } else {
@@ -469,7 +469,7 @@ pub fn node_type[&s](st: &!s [int], node: int, ctx: int) -> [] int {
         let arg = ast.get(st, node, 6);
         if ast.is_kind(st, arg, kinds.NK::TSlice) {
             let element = node_type(st, ast.get(st, arg, 6), ctx);
-            if is_plain(element) || is_named(st, element) || is_tuple(st, element) || is_tvar(st, element) {
+            if is_plain(element) || is_named(st, element) || is_tuple(st, element) || is_tvar(st, element) || is_slice_ref(st, element) {
                 return make_boxslice(st, element);
             }
             return 0;

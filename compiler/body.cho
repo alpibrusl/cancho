@@ -891,7 +891,8 @@ fn stmt[&s, &x](st: &!s [int], text: &x [byte], id: int, ret: int) -> [] int {
                     ex.skip(st, from, to);
                 } else {
                     let address = emit.element_address(st, e, b.reg, b.reg2 < 0, b.value, b.reg2, i.known, i.value, i.reg);
-                    emit.store_through(st, e, found.known, found.value, found.reg, address);
+                    let w = ex.stored(st, found);
+                    emit.store_through(st, e, w.known, w.value, w.reg, address);
                 }
             }
             return 0;

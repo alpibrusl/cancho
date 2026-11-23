@@ -123,10 +123,11 @@ pub fn finish_slice[&s, &x](st: &!s [int], text: &x [byte], from: int, to: int, 
             return ex.skip(st, from, to);
         }
         var p = 0;
+        let w = ex.stored(st, f);
         if in_static {
-            p = emit.heap_run(st, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+            p = emit.heap_run(st, f.ty, c.known, c.value, c.reg, w.known, w.value, w.reg);
         } else {
-            p = emit.alloc_slice(st, arena, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+            p = emit.alloc_slice(st, arena, f.ty, c.known, c.value, c.reg, w.known, w.value, w.reg);
         }
         if c.known {
             return ex.in_slice(result, p, 0 - 1, c.value);
@@ -186,6 +187,7 @@ pub fn finish_box_slice[&s](st: &!s [int], from: int, to: int, fill: int, c: ex.
     }
     effects.perform_named(st, "heap");
     let boxed = types.make_boxslice(st, f.ty);
-    let p = emit.heap_run(st, f.ty, c.known, c.value, c.reg, f.known, f.value, f.reg);
+    let w = ex.stored(st, f);
+    let p = emit.heap_run(st, f.ty, c.known, c.value, c.reg, w.known, w.value, w.reg);
     return ex.in_reg(boxed, emit.make_box(st, boxed, p, c.known, c.value, c.reg));
 }

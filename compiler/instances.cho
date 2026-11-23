@@ -107,6 +107,11 @@ fn encode[&s](st: &!s [int], ty: int) -> [] bool {
     if types.is_prelude(st, t) {
         return put_code(st, 25) && put_code(st, types.prelude_index(st, t)) && put_code(st, types.prelude_lit_tok(st, t) + 1);
     }
+    if types.is_slice_ref(st, t) && !types.ref_unique(st, t) {
+        // `&r [byte]` as a type argument (`Vec[&s [byte]]`, `id("abc")`): a pointer and a length whatever the region, so the region is not
+        // part of the instance (`decode` gives it `any_region`, as a reference held by a declaration has).
+        return put_code(st, 26) && encode(st, types.element_of(st, t));
+    }
     return false;
 }
 
@@ -163,6 +168,10 @@ fn decode[&s](st: &!s [int], at: int) -> [] int {
             return types.make_prelude_lit(st, index, lit - 1);
         }
         return types.make_prelude(st, index);
+    }
+    if code == 26 {
+        let element = decode(st, at + 1);
+        return types.make_ref(st, false, types.any_region(), types.make_slice(st, element));
     }
     return 0;
 }

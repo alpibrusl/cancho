@@ -1,0 +1,93 @@
+// A run of bytes as a type argument: `id("abc")`, a generic struct that holds one, a boxed run of them, and
+// `Vec[&s [byte]]` (a list of names). In the code such a value is a pointer and a length whatever its region, so an
+// instance is the same for every region, and a run or an aggregate holds it as the pair `{ ptr, i64 }`.
+//
+// The compiler in cancho had no code for any of the four: an instance had no code for a reference as its
+// argument (`instances.encode`), `Box[[T]]` and `&[T]` were not types at a run of bytes, and a run could not hold one.
+//~ EXIT 0
+import std.vec;
+import std.bytes;
+
+struct Named[T: val] {
+    name: T,
+    n: int,
+}
+
+fn id[T: val](x: T) -> [] T {
+    return x;
+}
+
+// A run of runs, read through a shared reference.
+fn longest[&v, &s](names: &v [&s [byte]]) -> [] int {
+    var best = 0;
+    var i = 0;
+    while i < len(names) {
+        if len(names[i]) > best {
+            best = len(names[i]);
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+fn boxed[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var b = box_slice(heap, 3, "ab");
+    borrow mut b as &!w in {
+        let s = contents(w);
+        s[1] = "kitten";
+        if len(s[0]) != 2 || len(s[1]) != 6 || !bytes.equal(s[2], "ab") {
+            bad = 1;
+        }
+        if longest(s) != 6 {
+            bad = bad + 2;
+        }
+    }
+    if unbox_slice(heap, b) != 3 {
+        bad = bad + 4;
+    }
+    return bad;
+}
+
+// Room for one, so the pushes grow it: `reserve` copies the runs into a bigger one.
+fn listed[&h](heap: &!h Heap) -> [heap] int {
+    var bad = 0;
+    var l = vec.empty(heap, 1, "");
+    l = vec.push(heap, l, "sitting");
+    l = vec.push(heap, l, "mitten");
+    l = vec.push(heap, l, "kitchen");
+    borrow l as &lb in {
+        if vec.size(lb) != 3 {
+            bad = 1;
+        }
+        if !bytes.equal(vec.get(lb, 0), "sitting") || !bytes.equal(vec.get(lb, 1), "mitten") || len(vec.get(lb, 2)) != 7 {
+            bad = bad + 2;
+        }
+    }
+    if vec.drop(heap, l) != 3 {
+        bad = bad + 4;
+    }
+    return bad;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(args);
+    var bad = 0;
+    let s = id("abc");
+    if !bytes.equal(s, "abc") {
+        bad = 1;
+    }
+    let p = Named { name: "seven", n: 7 };
+    if len(p.name) != 5 || p.n != 7 {
+        bad = bad + 2;
+    }
+    borrow mut heap as &!h in {
+        bad = bad + 8 * boxed(h) + 64 * listed(h);
+    }
+    release(heap);
+    return bad;
+}
