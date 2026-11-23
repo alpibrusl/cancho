@@ -21,6 +21,7 @@ import std.io as console;
 import selfhost.lexcore as lc;
 import selfhost.clibase;
 import selfhost.clivcsgit;
+import selfhost.clivcsmore;
 import selfhost.clivcsout;
 import selfhost.clivcsopts as opts;
 import selfhost.cliproject;
@@ -749,28 +750,6 @@ fn verify_in[&h, &i, &d, &p, &k](heap: &!h Heap, io: &!i Io, vcs: &d Dir, found:
     return code;
 }
 
-// The place of the last `--KEY VALUE` or `--KEY=VALUE` in the words after the command: the argument and the offset into it, or -1 and 0.
-fn named[&a, &k](args: &a Args, key: &k [byte]) -> [args] (int, int) {
-    var at = 0 - 1;
-    var off = 0;
-    var n = 3;
-    while n < arg_count(args) {
-        let word = arg(args, n);
-        if bytes.equal(word, key) {
-            if n + 1 < arg_count(args) {
-                at = n + 1;
-                off = 0;
-            }
-            n = n + 1;
-        } else if len(word) > len(key) + 1 && bytes.equal(word[0..len(key)], key) && lc.at(word, len(key)) == '=' {
-            at = n;
-            off = len(key) + 1;
-        }
-        n = n + 1;
-    }
-    return (at, off);
-}
-
 // The `gate-failed` refusal: `detail` is the path, a NUL, the rule's tag, a NUL, its sentence.
 fn gate_refusal[&h, &d](heap: &!h Heap, detail: &d [byte]) -> [heap] buffer.Buffer {
     let first = bytes.find(detail, "\0");
@@ -821,7 +800,7 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
             positional = true;
         } else if bytes.equal(word, "--") {
             plain_only = true;
-        } else if bytes.find(word, "=") < 0 && (bytes.equal(word, "--output") || bytes.equal(word, "--repo") || bytes.equal(word, "--expect") || bytes.equal(word, "--author") || bytes.equal(word, "--time") || bytes.equal(word, "--intent-prompt") || bytes.equal(word, "--intent-model") || bytes.equal(word, "--intent-session") || bytes.equal(word, "--intent-issue")) {
+        } else if bytes.find(word, "=") < 0 && (bytes.equal(word, "--output") || bytes.equal(word, "--repo") || bytes.equal(word, "--key") || bytes.equal(word, "--expect") || bytes.equal(word, "--author") || bytes.equal(word, "--time") || bytes.equal(word, "--intent-prompt") || bytes.equal(word, "--intent-model") || bytes.equal(word, "--intent-session") || bytes.equal(word, "--intent-issue")) {
             n = n + 1;
         }
         if positional {
@@ -858,13 +837,13 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
     let now = clock_unix_ms(clock) / 1000;
     var time = now;
     var bad_time = false;
-    let (time_at, time_off) = named(args, "--time");
+    let (time_at, time_off) = opts.named(args, "--time");
     if time_at >= 0 {
         let (valid, t) = vcsrecord.time_of(opts.value_of(args, time_at, time_off));
         bad_time = !valid;
         time = t;
     }
-    let (author_at, author_off) = named(args, "--author");
+    let (author_at, author_off) = opts.named(args, "--author");
     var author = buffer.append(heap, buffer.empty(heap, 64), "cancho <cancho@localhost>");
     if author_at >= 0 {
         buffer.drop(heap, author);
@@ -875,19 +854,19 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
     var session = buffer.empty(heap, 0);
     var issue = buffer.empty(heap, 0);
     var has_intent = false;
-    let (prompt_at, prompt_off) = named(args, "--intent-prompt");
+    let (prompt_at, prompt_off) = opts.named(args, "--intent-prompt");
     if prompt_at >= 0 {
         has_intent = true;
         prompt = buffer.append(heap, prompt, opts.value_of(args, prompt_at, prompt_off));
-        let (model_at, model_off) = named(args, "--intent-model");
+        let (model_at, model_off) = opts.named(args, "--intent-model");
         if model_at >= 0 {
             model = buffer.append(heap, model, opts.value_of(args, model_at, model_off));
         }
-        let (session_at, session_off) = named(args, "--intent-session");
+        let (session_at, session_off) = opts.named(args, "--intent-session");
         if session_at >= 0 {
             session = buffer.append(heap, session, opts.value_of(args, session_at, session_off));
         }
-        let (issue_at, issue_off) = named(args, "--intent-issue");
+        let (issue_at, issue_off) = opts.named(args, "--intent-issue");
         if issue_at >= 0 {
             issue = buffer.append(heap, issue, opts.value_of(args, issue_at, issue_off));
         }
@@ -898,44 +877,55 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
     }
     let no_gate = clivcsout.flagged(args, "--no-gate");
     let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
-    borrow mut scratch as &!s in {
-        borrow selected as &sb in {
-            borrow author as &ab in {
-                borrow prompt as &pb in {
-                    borrow model as &mb in {
-                        borrow session as &nb in {
-                            borrow issue as &ib in {
-                                borrow expect as &eb in {
-                                    let answer = vcsrecord.record_command(heap, io, root, vcs, contents(s), buffer.bytes(sb), buffer.bytes(ab), has_intent, buffer.bytes(pb), buffer.bytes(mb), buffer.bytes(nb), buffer.bytes(ib), buffer.bytes(eb), options.dry, no_gate, bad_time, time, now);
-                                    let (doc, status, errno) = vcsstore.parts(answer);
-                                    if status == 15 {
-                                        var lock = buffer.append(heap, buffer.empty(heap, len(rootpath) + 24), rootpath);
-                                        lock = buffer.append(heap, lock, "/.cancho/vcs/lock");
-                                        borrow doc as &db in {
-                                            borrow lock as &lb in {
-                                                code = lock_held(heap, io, "record", buffer.bytes(lb), buffer.bytes(db), now);
+    let signing = clivcsmore.signer(heap, io, args, vcs, "record");
+    let (seed, signer_status, signer_code) = vcsstore.parts(signing);
+    borrow seed as &zb in {
+        if signer_status != 0 {
+            code = signer_code;
+        } else {
+            borrow mut scratch as &!s in {
+                borrow selected as &sb in {
+                    borrow author as &ab in {
+                        borrow prompt as &pb in {
+                            borrow model as &mb in {
+                                borrow session as &nb in {
+                                    borrow issue as &ib in {
+                                        borrow expect as &eb in {
+                                            let answer = vcsrecord.record_command(heap, io, root, vcs, contents(s), buffer.bytes(sb), buffer.bytes(ab), has_intent, buffer.bytes(pb), buffer.bytes(mb), buffer.bytes(nb), buffer.bytes(ib), buffer.bytes(eb), options.dry, no_gate, bad_time, time, now, buffer.bytes(zb));
+                                            let (doc, status, errno) = vcsstore.parts(answer);
+                                            if status == 15 {
+                                                var lock = buffer.append(heap, buffer.empty(heap, len(rootpath) + 24), rootpath);
+                                                lock = buffer.append(heap, lock, "/.cancho/vcs/lock");
+                                                borrow doc as &db in {
+                                                    borrow lock as &lb in {
+                                                        code = lock_held(heap, io, "record", buffer.bytes(lb), buffer.bytes(db), now);
+                                                    }
+                                                }
+                                                buffer.drop(heap, lock);
+                                                buffer.drop(heap, doc);
+                                            } else if status == 51 {
+                                                borrow doc as &db in {
+                                                    let said = gate_refusal(heap, buffer.bytes(db));
+                                                    borrow said as &sd in {
+                                                        buffer.write(io, sd);
+                                                    }
+                                                    buffer.drop(heap, said);
+                                                }
+                                                code = 1;
+                                                buffer.drop(heap, doc);
+                                            } else if status == 61 {
+                                                code = clivcsout.refused(heap, io, "record", "the branch moves only to a change signed by a trusted key: pass `--key NAME`", "unsigned-change");
+                                                buffer.drop(heap, doc);
+                                            } else if status == 52 {
+                                                code = clivcsout.refused(heap, io, "record", "`--time` is unix seconds", "bad-argument");
+                                                buffer.drop(heap, doc);
+                                            } else if status == 50 {
+                                                code = clivcsout.refused(heap, io, "record", "the repository is empty and so is the working copy", "nothing-to-record");
+                                                buffer.drop(heap, doc);
+                                            } else {
+                                                code = clivcsout.answered(heap, io, "record", vcsstore.Object { bytes: doc, status: status, errno: errno }, buffer.bytes(eb));
                                             }
                                         }
-                                        buffer.drop(heap, lock);
-                                        buffer.drop(heap, doc);
-                                    } else if status == 51 {
-                                        borrow doc as &db in {
-                                            let said = gate_refusal(heap, buffer.bytes(db));
-                                            borrow said as &sd in {
-                                                buffer.write(io, sd);
-                                            }
-                                            buffer.drop(heap, said);
-                                        }
-                                        code = 1;
-                                        buffer.drop(heap, doc);
-                                    } else if status == 52 {
-                                        code = clivcsout.refused(heap, io, "record", "`--time` is unix seconds", "bad-argument");
-                                        buffer.drop(heap, doc);
-                                    } else if status == 50 {
-                                        code = clivcsout.refused(heap, io, "record", "the repository is empty and so is the working copy", "nothing-to-record");
-                                        buffer.drop(heap, doc);
-                                    } else {
-                                        code = clivcsout.answered(heap, io, "record", vcsstore.Object { bytes: doc, status: status, errno: errno }, buffer.bytes(eb));
                                     }
                                 }
                             }
@@ -945,6 +935,7 @@ fn record_in[&h, &i, &a, &r, &d, &p, &c, &k](heap: &!h Heap, io: &!i Io, args: &
             }
         }
     }
+    buffer.drop(heap, seed);
     buffer.drop(heap, author);
     buffer.drop(heap, prompt);
     buffer.drop(heap, model);
@@ -979,13 +970,13 @@ fn revert_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Ar
     let now = clock_unix_ms(clock) / 1000;
     var time = now;
     var bad_time = false;
-    let (time_at, time_off) = named(args, "--time");
+    let (time_at, time_off) = opts.named(args, "--time");
     if time_at >= 0 {
         let (valid, t) = vcsrecord.time_of(opts.value_of(args, time_at, time_off));
         bad_time = !valid;
         time = t;
     }
-    let (author_at, author_off) = named(args, "--author");
+    let (author_at, author_off) = opts.named(args, "--author");
     var author = buffer.append(heap, buffer.empty(heap, 64), "cancho <cancho@localhost>");
     if author_at >= 0 {
         buffer.drop(heap, author);
@@ -996,19 +987,19 @@ fn revert_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Ar
     var session = buffer.empty(heap, 0);
     var issue = buffer.empty(heap, 0);
     var has_intent = false;
-    let (prompt_at, prompt_off) = named(args, "--intent-prompt");
+    let (prompt_at, prompt_off) = opts.named(args, "--intent-prompt");
     if prompt_at >= 0 {
         has_intent = true;
         prompt = buffer.append(heap, prompt, opts.value_of(args, prompt_at, prompt_off));
-        let (model_at, model_off) = named(args, "--intent-model");
+        let (model_at, model_off) = opts.named(args, "--intent-model");
         if model_at >= 0 {
             model = buffer.append(heap, model, opts.value_of(args, model_at, model_off));
         }
-        let (session_at, session_off) = named(args, "--intent-session");
+        let (session_at, session_off) = opts.named(args, "--intent-session");
         if session_at >= 0 {
             session = buffer.append(heap, session, opts.value_of(args, session_at, session_off));
         }
-        let (issue_at, issue_off) = named(args, "--intent-issue");
+        let (issue_at, issue_off) = opts.named(args, "--intent-issue");
         if issue_at >= 0 {
             issue = buffer.append(heap, issue, opts.value_of(args, issue_at, issue_off));
         }
@@ -1020,59 +1011,70 @@ fn revert_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Ar
     let no_gate = clivcsout.flagged(args, "--no-gate");
     var code = 0;
     let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
-    borrow mut scratch as &!s in {
-        borrow author as &ab in {
-            borrow prompt as &pb in {
-                borrow model as &mb in {
-                    borrow session as &nb in {
-                        borrow issue as &ib in {
-                            borrow expect as &eb in {
-                                let answer = vcsrevert.revert_command(heap, io, root, vcs, contents(s), spec, buffer.bytes(ab), has_intent, buffer.bytes(pb), buffer.bytes(mb), buffer.bytes(nb), buffer.bytes(ib), buffer.bytes(eb), options.dry, no_gate, bad_time, time, now);
-                                let (doc, status, errno) = vcsstore.parts(answer);
-                                if status == 15 {
-                                    var lock = buffer.append(heap, buffer.empty(heap, len(rootpath) + 24), rootpath);
-                                    lock = buffer.append(heap, lock, "/.cancho/vcs/lock");
-                                    borrow doc as &db in {
-                                        borrow lock as &lb in {
-                                            code = lock_held(heap, io, "revert", buffer.bytes(lb), buffer.bytes(db), now);
+    let signing = clivcsmore.signer(heap, io, args, vcs, "revert");
+    let (seed, signer_status, signer_code) = vcsstore.parts(signing);
+    borrow seed as &zb in {
+        if signer_status != 0 {
+            code = signer_code;
+        } else {
+            borrow mut scratch as &!s in {
+                borrow author as &ab in {
+                    borrow prompt as &pb in {
+                        borrow model as &mb in {
+                            borrow session as &nb in {
+                                borrow issue as &ib in {
+                                    borrow expect as &eb in {
+                                        let answer = vcsrevert.revert_command(heap, io, root, vcs, contents(s), spec, buffer.bytes(ab), has_intent, buffer.bytes(pb), buffer.bytes(mb), buffer.bytes(nb), buffer.bytes(ib), buffer.bytes(eb), options.dry, no_gate, bad_time, time, now, buffer.bytes(zb));
+                                        let (doc, status, errno) = vcsstore.parts(answer);
+                                        if status == 15 {
+                                            var lock = buffer.append(heap, buffer.empty(heap, len(rootpath) + 24), rootpath);
+                                            lock = buffer.append(heap, lock, "/.cancho/vcs/lock");
+                                            borrow doc as &db in {
+                                                borrow lock as &lb in {
+                                                    code = lock_held(heap, io, "revert", buffer.bytes(lb), buffer.bytes(db), now);
+                                                }
+                                            }
+                                            buffer.drop(heap, lock);
+                                            buffer.drop(heap, doc);
+                                        } else if status == 51 {
+                                            borrow doc as &db in {
+                                                let said = gate_refusal(heap, buffer.bytes(db));
+                                                borrow said as &sd in {
+                                                    buffer.write(io, sd);
+                                                }
+                                                buffer.drop(heap, said);
+                                            }
+                                            code = 1;
+                                            buffer.drop(heap, doc);
+                                        } else if status == 61 {
+                                            code = clivcsout.refused(heap, io, "revert", "the branch moves only to a change signed by a trusted key: pass `--key NAME`", "unsigned-change");
+                                            buffer.drop(heap, doc);
+                                        } else if status == 52 {
+                                            code = clivcsout.refused(heap, io, "revert", "`--time` is unix seconds", "bad-argument");
+                                            buffer.drop(heap, doc);
+                                        } else if status == 53 {
+                                            code = clivcsout.refused(heap, io, "revert", "only a change with exactly one parent can be reverted in V1 (merges come with V2)", "revert-unsupported");
+                                            buffer.drop(heap, doc);
+                                        } else if status == 54 || status == 55 {
+                                            borrow doc as &db in {
+                                                var message = "record or restore the working copy before a revert";
+                                                var tag = "dirty-working-copy";
+                                                if status == 55 {
+                                                    message = "later changes touched the same paths";
+                                                    tag = "revert-conflict";
+                                                }
+                                                let said = paths_refusal(heap, "revert", message, buffer.bytes(db), tag);
+                                                borrow said as &sd in {
+                                                    buffer.write(io, sd);
+                                                }
+                                                buffer.drop(heap, said);
+                                            }
+                                            code = 1;
+                                            buffer.drop(heap, doc);
+                                        } else {
+                                            code = clivcsout.answered(heap, io, "revert", vcsstore.Object { bytes: doc, status: status, errno: errno }, spec);
                                         }
                                     }
-                                    buffer.drop(heap, lock);
-                                    buffer.drop(heap, doc);
-                                } else if status == 51 {
-                                    borrow doc as &db in {
-                                        let said = gate_refusal(heap, buffer.bytes(db));
-                                        borrow said as &sd in {
-                                            buffer.write(io, sd);
-                                        }
-                                        buffer.drop(heap, said);
-                                    }
-                                    code = 1;
-                                    buffer.drop(heap, doc);
-                                } else if status == 52 {
-                                    code = clivcsout.refused(heap, io, "revert", "`--time` is unix seconds", "bad-argument");
-                                    buffer.drop(heap, doc);
-                                } else if status == 53 {
-                                    code = clivcsout.refused(heap, io, "revert", "only a change with exactly one parent can be reverted in V1 (merges come with V2)", "revert-unsupported");
-                                    buffer.drop(heap, doc);
-                                } else if status == 54 || status == 55 {
-                                    borrow doc as &db in {
-                                        var message = "record or restore the working copy before a revert";
-                                        var tag = "dirty-working-copy";
-                                        if status == 55 {
-                                            message = "later changes touched the same paths";
-                                            tag = "revert-conflict";
-                                        }
-                                        let said = paths_refusal(heap, "revert", message, buffer.bytes(db), tag);
-                                        borrow said as &sd in {
-                                            buffer.write(io, sd);
-                                        }
-                                        buffer.drop(heap, said);
-                                    }
-                                    code = 1;
-                                    buffer.drop(heap, doc);
-                                } else {
-                                    code = clivcsout.answered(heap, io, "revert", vcsstore.Object { bytes: doc, status: status, errno: errno }, spec);
                                 }
                             }
                         }
@@ -1081,6 +1083,7 @@ fn revert_in[&h, &i, &a, &r, &d, &p, &k](heap: &!h Heap, io: &!i Io, args: &a Ar
             }
         }
     }
+    buffer.drop(heap, seed);
     unbox_slice(heap, scratch);
     buffer.drop(heap, author);
     buffer.drop(heap, prompt);
@@ -1654,7 +1657,7 @@ fn import_prepare[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args,
 // Whether `cancho vcs SUB` is this module's: `init`, `show`, `branch`, `status` and `restore` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
 pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read] bool {
     let sub = arg(args, 2);
-    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") || bytes.equal(sub, "apply") || bytes.equal(sub, "record") || bytes.equal(sub, "revert") || bytes.equal(sub, "diff") || bytes.equal(sub, "blame") || bytes.equal(sub, "verify") || bytes.equal(sub, "unlock") {
+    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") || bytes.equal(sub, "apply") || bytes.equal(sub, "record") || bytes.equal(sub, "revert") || bytes.equal(sub, "diff") || bytes.equal(sub, "blame") || bytes.equal(sub, "verify") || bytes.equal(sub, "unlock") || bytes.equal(sub, "attest") || bytes.equal(sub, "attestations") || bytes.equal(sub, "keys") {
         return true;
     }
     if bytes.equal(sub, "import-git") || bytes.equal(sub, "export-git") {
@@ -1733,6 +1736,15 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
     } else if bytes.equal(verb, "export-git") {
         which = 15;
         name = "export-git";
+    } else if bytes.equal(verb, "attest") {
+        which = 16;
+        name = "attest";
+    } else if bytes.equal(verb, "attestations") {
+        which = 17;
+        name = "attestations";
+    } else if bytes.equal(verb, "keys") {
+        which = 18;
+        name = "keys";
     }
     let options = opts.options_of(heap, io, args, which);
     if options.bad != 0 {
@@ -1803,6 +1815,12 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                                 } else {
                                                     code = clivcsgit.import_write_in(heap, io, args, fs, rd, vd, buffer.bytes(cb), options, clock);
                                                 }
+                                            } else if which == 16 {
+                                                code = clivcsmore.attest_in(heap, io, args, fs, rd, vd, buffer.bytes(cb), options, clock);
+                                            } else if which == 17 {
+                                                code = clivcsmore.attestations_in(heap, io, args, vd, options);
+                                            } else if which == 18 {
+                                                code = clivcsmore.keys_in(heap, io, args, fs, vd, buffer.bytes(cb), options, clock);
                                             } else if which == 13 {
                                                 code = verify_in(heap, io, vd, buffer.bytes(pb), clock);
                                             } else if which == 12 {

@@ -26,6 +26,7 @@ import selfhost.rules;
 import selfhost.stdorder;
 import selfhost.stdsource;
 import selfhost.vcsapply;
+import selfhost.vcsattest;
 import selfhost.vcschange;
 import selfhost.vcsdecl;
 import selfhost.vcsobj;
@@ -451,7 +452,7 @@ fn check_program[&h, &i, &r, &d, &s, &t, &p](heap: &!h Heap, io: &!i Io, root: &
 }
 
 // The gate over the touched `.cho` files that are in `tree`: the paths checked (one to a line) with status 0; or 51 with `PATH`, a NUL, and what `check_program` says.
-fn gate[&h, &i, &r, &d, &s, &t, &p](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], touched: &p [byte]) -> [heap, io_write, dir_read, dir_write, file_read] vcsstore.Object {
+pub fn gate[&h, &i, &r, &d, &s, &t, &p](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], touched: &p [byte]) -> [heap, io_write, dir_read, dir_write, file_read] vcsstore.Object {
     var checked = buffer.empty(heap, 0);
     var ixb = buffer.empty(heap, 0);
     var ixh = false;
@@ -761,7 +762,7 @@ fn store_blob[&h, &r, &d, &s, &l](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scr
 }
 
 // Under the lock: HEAD read again, the blobs, the tree and the change stored, and the branch (or a detached HEAD) moved to the change. 0, or the refusal's status (14 with the current id in `bytes`).
-fn store[&h, &r, &d, &s, &t, &q, &c, &i, &b, &e, &x, &y](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], diffs: &q [byte], change: &c [byte], tree_id: &x [byte], change_id: &y [byte], head_id: &i [byte], has_branch: bool, branch: &b [byte], expect: &e [byte], note: &static [byte], now: int) -> [heap, dir_read, dir_write, file_read, file_write] vcsstore.Object {
+fn store[&h, &r, &d, &s, &t, &q, &c, &i, &b, &e, &x, &y, &g, &z](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], diffs: &q [byte], change: &c [byte], tree_id: &x [byte], change_id: &y [byte], head_id: &i [byte], has_branch: bool, branch: &b [byte], expect: &e [byte], note: &static [byte], now: int, checked: &g [byte], gated: bool, time: int, seed: &z [byte]) -> [heap, dir_read, dir_write, file_read, file_write] vcsstore.Object {
     var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
     let again = vcsstatus.head_info(heap, vcs);
     let (b2, hb2, id2, s2) = vcsstatus.head_parts(again);
@@ -821,6 +822,14 @@ fn store[&h, &r, &d, &s, &t, &q, &c, &i, &b, &e, &x, &y](heap: &!h Heap, root: &
         code = ps;
         errno = pe;
     }
+    // A signed change: its attestation is in the store before the branch moves to it (`vcsattest.cho`).
+    if code == 0 && len(seed) == 32 {
+        let signed = vcsattest.checked(heap, vcs, scratch, change_id, checked, gated, time, seed, now + k + 2);
+        let (aid, ps, pe) = vcsstore.parts(signed);
+        buffer.drop(heap, aid);
+        code = ps;
+        errno = pe;
+    }
     if code == 0 {
         if has_branch {
             var name = buffer.append(heap, buffer.empty(heap, len(branch) + 8), "heads/");
@@ -861,10 +870,22 @@ fn store[&h, &r, &d, &s, &t, &q, &c, &i, &b, &e, &x, &y](heap: &!h Heap, root: &
 }
 
 // The rest of `record` once the new tree differs from HEAD's: the gate, the declarations and edits, the change, and (unless `dry`) the storing.
-pub fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], touched: &p [byte], diffs: &q [byte], head_id: &e [byte], has_branch: bool, branch: &b [byte], author: &a [byte], has_intent: bool, prompt: &m [byte], model: &n [byte], session: &u [byte], issue: &w [byte], expect: &x [byte], dry: bool, no_gate: bool, bad_time: bool, revert: bool, prompt_raw: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, file_read, file_write] vcsstore.Object {
+pub fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x, &z](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], touched: &p [byte], diffs: &q [byte], head_id: &e [byte], has_branch: bool, branch: &b [byte], author: &a [byte], has_intent: bool, prompt: &m [byte], model: &n [byte], session: &u [byte], issue: &w [byte], expect: &x [byte], dry: bool, no_gate: bool, bad_time: bool, revert: bool, prompt_raw: bool, time: int, now: int, seed: &z [byte]) -> [heap, io_write, dir_read, dir_write, file_read, file_write] vcsstore.Object {
     var note = "record";
     if revert {
         note = "revert";
+    }
+    // A branch that asks for a signature (`keys require`) does not move without a key.
+    if has_branch && len(seed) != 32 {
+        let refname = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(branch) + 8), "heads/"), branch);
+        var asked = false;
+        borrow refname as &rn in {
+            asked = vcsattest.required(heap, vcs, buffer.bytes(rn));
+        }
+        buffer.drop(heap, refname);
+        if asked {
+            return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 61, errno: 0 };
+        }
     }
     var checked = buffer.empty(heap, 0);
     if !no_gate {
@@ -929,7 +950,9 @@ pub fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x](h
                     if !dry {
                         let (old, os, oe) = vcsstore.parts(stored);
                         buffer.drop(heap, old);
-                        stored = store(heap, root, vcs, scratch, tree, diffs, buffer.bytes(cb), buffer.bytes(tb), buffer.bytes(ib), head_id, has_branch, branch, expect, note, now);
+                        borrow checked as &kb2 in {
+                            stored = store(heap, root, vcs, scratch, tree, diffs, buffer.bytes(cb), buffer.bytes(tb), buffer.bytes(ib), head_id, has_branch, branch, expect, note, now, buffer.bytes(kb2), !no_gate, time, seed);
+                        }
                     }
                     let (sb, ss, se) = vcsstore.parts(stored);
                     let (old, os, oe) = vcsstore.parts(answer);
@@ -963,7 +986,7 @@ pub fn changed[&h, &i, &r, &d, &s, &t, &p, &q, &e, &b, &a, &m, &n, &u, &w, &x](h
 }
 
 // `record`: see the header. `time` is the change's own time; `now` the Unix time in seconds, for the lock's stamp and the ref's log.
-pub fn record_command[&h, &i, &r, &d, &s, &x, &a, &p, &m, &n, &u, &e](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], selected: &x [byte], author: &a [byte], has_intent: bool, prompt: &p [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &e [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, file_read, file_write] vcsstore.Object {
+pub fn record_command[&h, &i, &r, &d, &s, &x, &a, &p, &m, &n, &u, &e, &z](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], selected: &x [byte], author: &a [byte], has_intent: bool, prompt: &p [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &e [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int, seed: &z [byte]) -> [heap, io_write, dir_read, dir_write, file_read, file_write] vcsstore.Object {
     let head = vcsstatus.head_info(heap, vcs);
     let (branch, has_branch, head_id, hstatus) = vcsstatus.head_parts(head);
     var head_tree = buffer.empty(heap, 0);
@@ -1022,7 +1045,7 @@ pub fn record_command[&h, &i, &r, &d, &s, &x, &a, &p, &m, &n, &u, &e](heap: &!h 
                     borrow tree as &tb in {
                         borrow touched as &pb in {
                             borrow diffs as &qb in {
-                                answer = changed(heap, io, root, vcs, scratch, buffer.bytes(tb), buffer.bytes(pb), buffer.bytes(qb), buffer.bytes(ib), has_branch, buffer.bytes(bb), author, has_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, false, false, time, now);
+                                answer = changed(heap, io, root, vcs, scratch, buffer.bytes(tb), buffer.bytes(pb), buffer.bytes(qb), buffer.bytes(ib), has_branch, buffer.bytes(bb), author, has_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, false, false, time, now, seed);
                             }
                         }
                     }

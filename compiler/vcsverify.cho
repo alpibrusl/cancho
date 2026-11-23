@@ -6,7 +6,7 @@ module selfhost.vcsverify;
 //   verify_command(heap, vcs, vcspath, scratch, now)
 //
 // Every object of the store is read and checked: its name is an id, it hashes to it, a tree parses and has every blob it names, a change parses and has its tree and its parents. Every ref and HEAD must name a change
-// the store has. Answered: `{command, locks, objects, ok, refs, sound, tmp_garbage}`; or, when anything is wrong, a refusal with `problems` (each `{object, tag}`), `objects` and the tag of the first problem
+// the store has. Every chain of attestations must hold (each link there, hashing to its name, of the change, its signature its key's: `chain-broken`), and a ref that asks for a signature must be at a change a trusted key signed (`unsigned-change`). Answered: `{command, locks, objects, ok, refs, sound, tmp_garbage}`; or, when anything is wrong, a refusal with `problems` (each `{object, tag}`), `objects` and the tag of the first problem
 // (`object-missing`, else `object-corrupt`), answered as a complete document with status 50. `locks` are those of `unlock` (not removed); `tmp_garbage` how many entries `tmp/` has.
 // **Known differences:** the ids of a kind are sorted by directory, then name (the same as sorted whole when every directory name has two characters, as the store's do); a ref that does not hold a change id is
 // refused with the tag but not the words of the Rust command (which names the ref).
@@ -18,6 +18,7 @@ import std.utf8;
 import selfhost.jsonread;
 import selfhost.jsonwrite;
 import selfhost.vcsapply;
+import selfhost.vcsattest;
 import selfhost.vcschange;
 import selfhost.vcsobj;
 import selfhost.vcsrepo;
@@ -26,21 +27,21 @@ import selfhost.vcsunlock;
 
 // ---- the problems ------------------------------------------------------------------------------------------------------------
 
-// The problems so far: their elements of the `problems` array, how many, the text of the first and whether its tag is `object-missing`.
+// The problems so far: their elements of the `problems` array, how many, the text of the first and the tag of the first: 0 `object-corrupt`, 1 `object-missing`, 2 `chain-broken`, 3 `unsigned-change`.
 res struct Found {
     items: buffer.Buffer,
     count: int,
     first: buffer.Buffer,
-    missing: bool,
+    kind: int,
 }
 
 fn no_problems[&h](heap: &!h Heap) -> [heap] Found {
-    return Found { items: buffer.empty(heap, 0), count: 0, first: buffer.empty(heap, 0), missing: false };
+    return Found { items: buffer.empty(heap, 0), count: 0, first: buffer.empty(heap, 0), kind: 0 };
 }
 
 // `found` and the problem `text` with `tag`.
 fn problem[&h, &t](heap: &!h Heap, found: Found, tag: &static [byte], text: &t [byte]) -> [heap] Found {
-    let Found { items, count, first, missing } = found;
+    let Found { items, count, first, kind } = found;
     var b = items;
     if count > 0 {
         b = buffer.push(heap, b, byte_of(44));
@@ -50,13 +51,20 @@ fn problem[&h, &t](heap: &!h Heap, found: Found, tag: &static [byte], text: &t [
     b = jsonwrite.string(heap, vcsrepo.member(heap, b, 4, false, "tag"), tag);
     b = buffer.push(heap, jsonwrite.newline(heap, b, 3), byte_of(125));
     var f = first;
-    var m = missing;
+    var m = kind;
     if count == 0 {
         buffer.drop(heap, f);
         f = buffer.append(heap, buffer.empty(heap, len(text)), text);
-        m = bytes.equal(tag, "object-missing");
+        m = 0;
+        if bytes.equal(tag, "object-missing") {
+            m = 1;
+        } else if bytes.equal(tag, "chain-broken") {
+            m = 2;
+        } else if bytes.equal(tag, "unsigned-change") {
+            m = 3;
+        }
     }
-    return Found { items: b, count: count + 1, first: f, missing: m };
+    return Found { items: b, count: count + 1, first: f, kind: m };
 }
 
 // `A B C D E`: the five pieces as one text.
@@ -439,10 +447,13 @@ fn check_kind[&h, &d, &s, &k](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], f
 
 // ---- the command -------------------------------------------------------------------------------------------------------------
 
-// The `objects` member: the three counts.
-fn counts_member[&h](heap: &!h Heap, out: buffer.Buffer, levels: int, blobs: int, trees: int, changes: int) -> [heap] buffer.Buffer {
+// The `objects` member: the three counts, and how many attestations the chains hold when there are any.
+fn counts_member[&h](heap: &!h Heap, out: buffer.Buffer, levels: int, blobs: int, trees: int, changes: int, attestations: int) -> [heap] buffer.Buffer {
     var b = buffer.push(heap, out, byte_of(123));
-    b = buffer.push_nat(heap, vcsrepo.member(heap, b, levels + 1, true, "blob"), blobs);
+    if attestations > 0 {
+        b = buffer.push_nat(heap, vcsrepo.member(heap, b, levels + 1, true, "attestation"), attestations);
+    }
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, levels + 1, attestations == 0, "blob"), blobs);
     b = buffer.push_nat(heap, vcsrepo.member(heap, b, levels + 1, false, "change"), changes);
     b = buffer.push_nat(heap, vcsrepo.member(heap, b, levels + 1, false, "tree"), trees);
     return buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(125));
@@ -538,8 +549,27 @@ pub fn verify_command[&h, &d, &p, &s](heap: &!h Heap, vcs: &d Dir, vcspath: &p [
         }
         buffer.drop(heap, hid);
     }
+    // The attestations: every chain, and every ref that asks for a signature (`vcsattest.cho`).
+    let (chain_problems, attestations) = vcsattest.check_all(heap, vcs, scratch);
+    borrow chain_problems as &cp in {
+        let lines = buffer.bytes(cp);
+        var at = 0;
+        while at < len(lines) {
+            var end = at;
+            while end < len(lines) && lines[end] != byte_of(10) {
+                end = end + 1;
+            }
+            if lines[at] == byte_of(117) {
+                found = problem(heap, found, "unsigned-change", lines[at + 2..end]);
+            } else {
+                found = problem(heap, found, "chain-broken", lines[at + 2..end]);
+            }
+            at = end + 1;
+        }
+    }
+    buffer.drop(heap, chain_problems);
     if code != 0 {
-        let Found { items, count, first, missing } = found;
+        let Found { items, count, first, kind } = found;
         buffer.drop(heap, items);
         buffer.drop(heap, first);
         if code == 3 {
@@ -568,12 +598,16 @@ pub fn verify_command[&h, &d, &p, &s](heap: &!h Heap, vcs: &d Dir, vcspath: &p [
         return vcsrepo.failed(heap, code);
     }
     buffer.drop(heap, bad);
-    let Found { items, count, first, missing } = found;
+    let Found { items, count, first, kind } = found;
     var doc = buffer.empty(heap, 0);
     if count > 0 {
         var tag = "object-corrupt";
-        if missing {
+        if kind == 1 {
             tag = "object-missing";
+        } else if kind == 2 {
+            tag = "chain-broken";
+        } else if kind == 3 {
+            tag = "unsigned-change";
         }
         var message = buffer.append(heap, buffer.empty(heap, 64), "");
         message = buffer.push_nat(heap, message, count);
@@ -588,7 +622,7 @@ pub fn verify_command[&h, &d, &p, &s](heap: &!h Heap, vcs: &d Dir, vcspath: &p [
         borrow message as &mb in {
             b = jsonwrite.string(heap, vcsrepo.member(heap, b, 2, true, "message"), buffer.bytes(mb));
         }
-        b = counts_member(heap, vcsrepo.member(heap, b, 2, false, "objects"), 2, blobs, trees, changes);
+        b = counts_member(heap, vcsrepo.member(heap, b, 2, false, "objects"), 2, blobs, trees, changes, attestations);
         b = buffer.push(heap, vcsrepo.member(heap, b, 2, false, "problems"), byte_of(91));
         borrow items as &ib in {
             b = buffer.append(heap, b, buffer.bytes(ib));
@@ -632,7 +666,7 @@ pub fn verify_command[&h, &d, &p, &s](heap: &!h Heap, vcs: &d Dir, vcspath: &p [
         b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(93));
     }
     buffer.drop(heap, locks);
-    b = counts_member(heap, vcsrepo.member(heap, b, 1, false, "objects"), 1, blobs, trees, changes);
+    b = counts_member(heap, vcsrepo.member(heap, b, 1, false, "objects"), 1, blobs, trees, changes, attestations);
     b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "true");
     b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, false, "refs"), refs);
     b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "sound"), "true");

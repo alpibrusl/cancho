@@ -1,0 +1,291 @@
+| {
+|   "attestation": "<id>",
+|   "change": "<id>",
+|   "command": "attest",
+|   "gate": "check",
+|   "ok": true,
+|   "signed": false,
+|   "status": 0
+| }
+| {
+|   "attestations": [
+|     {
+|       "command": "cancho check a.cho",
+|       "compiler": "<compiler>",
+|       "gate": "check",
+|       "id": "<id>",
+|       "key": null,
+|       "output": "<id>",
+|       "status": 0,
+|       "time": 200,
+|       "trusted": false
+|     }
+|   ],
+|   "change": "<id>",
+|   "command": "attestations",
+|   "ok": true,
+|   "signed": false
+| }
+| {
+|   "command": "verify",
+|   "locks": [],
+|   "objects": {
+|     "attestation": 1,
+|     "blob": 1,
+|     "change": 1,
+|     "tree": 1
+|   },
+|   "ok": true,
+|   "refs": 1,
+|   "sound": true,
+|   "tmp_garbage": 0
+| }
+ok a_change_is_attested_by_the_built_in_gate
+| {
+|   "attestation": "<id>",
+|   "change": "<id>",
+|   "command": "attest",
+|   "gate": "tests",
+|   "ok": true,
+|   "signed": false,
+|   "status": 0
+| }
+| {
+|   "attestations": [
+|     {
+|       "command": "",
+|       "compiler": "<compiler>",
+|       "gate": "authority",
+|       "id": "<id>",
+|       "key": null,
+|       "output": "<id>",
+|       "status": 3,
+|       "time": 301,
+|       "trusted": false
+|     },
+|     {
+|       "command": "sh scripts/gate.sh --skip seed",
+|       "compiler": "<compiler>",
+|       "gate": "tests",
+|       "id": "<id>",
+|       "key": null,
+|       "output": "<id>",
+|       "status": 0,
+|       "time": 300,
+|       "trusted": false
+|     }
+|   ],
+|   "change": "<id>",
+|   "command": "attestations",
+|   "ok": true,
+|   "signed": false
+| }
+ok another_gate_is_recorded_as_the_caller_says
+| {
+|   "command": "keys",
+|   "key": "<the key of RFC 8032 test 1>",
+|   "name": "agent",
+|   "ok": true
+| }
+| {
+|   "attestation": "<id>",
+|   "change": "<id>",
+|   "command": "attest",
+|   "gate": "check",
+|   "ok": true,
+|   "signed": true,
+|   "status": 0
+| }
+| {
+|   "attestation": "<id>",
+|   "change": "<id>",
+|   "command": "keys",
+|   "gate": "sign",
+|   "ok": true,
+|   "signed": true,
+|   "status": 0
+| }
+| {
+|   "attestations": [
+|     {
+|       "command": "cancho vcs keys sign",
+|       "compiler": "<compiler>",
+|       "gate": "sign",
+|       "id": "<id>",
+|       "key": "<the key of RFC 8032 test 1>",
+|       "output": "<id>",
+|       "status": 0,
+|       "time": 401,
+|       "trusted": true
+|     },
+|     {
+|       "command": "cancho check a.cho",
+|       "compiler": "<compiler>",
+|       "gate": "check",
+|       "id": "<id>",
+|       "key": "<the key of RFC 8032 test 1>",
+|       "output": "<id>",
+|       "status": 0,
+|       "time": 400,
+|       "trusted": true
+|     }
+|   ],
+|   "change": "<id>",
+|   "command": "attestations",
+|   "ok": true,
+|   "signed": true
+| }
+ok a_key_signs_and_the_signature_is_checked
+| {
+|   "command": "verify",
+|   "ok": false,
+|   "refused": {
+|     "message": "1 problem(s); first: \"attestation <id> (of change <id>) does not match its id\"",
+|     "objects": {
+|       "attestation": 1,
+|       "blob": 2,
+|       "change": 1,
+|       "tree": 1
+|     },
+|     "problems": [
+|       {
+|         "object": "attestation <id> (of change <id>) does not match its id",
+|         "tag": "chain-broken"
+|       }
+|     ],
+|     "tag": "chain-broken"
+|   }
+| }
+| {
+|   "command": "verify",
+|   "ok": false,
+|   "refused": {
+|     "message": "1 problem(s); first: \"attestation <id>: the signature is not its key's\"",
+|     "objects": {
+|       "blob": 2,
+|       "change": 1,
+|       "tree": 1
+|     },
+|     "problems": [
+|       {
+|         "object": "attestation <id>: the signature is not its key's",
+|         "tag": "chain-broken"
+|       }
+|     ],
+|     "tag": "chain-broken"
+|   }
+| }
+| {
+|   "command": "verify",
+|   "ok": false,
+|   "refused": {
+|     "message": "1 problem(s); first: \"attestation <id> (of change <id>) is not in the store\"",
+|     "objects": {
+|       "attestation": 1,
+|       "blob": 2,
+|       "change": 1,
+|       "tree": 1
+|     },
+|     "problems": [
+|       {
+|         "object": "attestation <id> (of change <id>) is not in the store",
+|         "tag": "chain-broken"
+|       }
+|     ],
+|     "tag": "chain-broken"
+|   }
+| }
+| {
+|   "command": "verify",
+|   "ok": false,
+|   "refused": {
+|     "message": "1 problem(s); first: \"attestation <id> is of another change than <id>\"",
+|     "objects": {
+|       "attestation": 2,
+|       "blob": 3,
+|       "change": 2,
+|       "tree": 2
+|     },
+|     "problems": [
+|       {
+|         "object": "attestation <id> is of another change than <id>",
+|         "tag": "chain-broken"
+|       }
+|     ],
+|     "tag": "chain-broken"
+|   }
+| }
+ok a_broken_chain_is_named_by_its_first_broken_link
+| {
+|   "command": "keys",
+|   "ok": true,
+|   "required": "heads/main"
+| }
+| {
+|   "command": "verify",
+|   "ok": false,
+|   "refused": {
+|     "message": "1 problem(s); first: \"change <id> (ref heads/main) has no signature by a trusted key\"",
+|     "objects": {
+|       "blob": 1,
+|       "change": 1,
+|       "tree": 1
+|     },
+|     "problems": [
+|       {
+|         "object": "change <id> (ref heads/main) has no signature by a trusted key",
+|         "tag": "unsigned-change"
+|       }
+|     ],
+|     "tag": "unsigned-change"
+|   }
+| }
+| {
+|   "command": "record",
+|   "ok": false,
+|   "refused": {
+|     "message": "the branch moves only to a change signed by a trusted key: pass `--key NAME`",
+|     "tag": "unsigned-change"
+|   }
+| }
+| {
+|   "attestations": [
+|     {
+|       "command": "cancho check a.cho",
+|       "compiler": "<compiler>",
+|       "gate": "check",
+|       "id": "<id>",
+|       "key": "<the key of RFC 8032 test 1>",
+|       "output": "<id>",
+|       "status": 0,
+|       "time": 600,
+|       "trusted": true
+|     }
+|   ],
+|   "change": "<id>",
+|   "command": "attestations",
+|   "ok": true,
+|   "signed": true
+| }
+| {
+|   "command": "keys",
+|   "ok": true,
+|   "trusted": "<the key of RFC 8032 test 1>"
+| }
+ok a_branch_that_asks_for_a_signature_moves_only_with_one
+| {
+|   "command": "attest",
+|   "ok": false,
+|   "refused": {
+|     "message": "a.cho: unknown-name: The name is not in scope, or the thing it is read out of does not have it.",
+|     "tag": "gate-failed"
+|   }
+| }
+| {
+|   "attestations": [],
+|   "change": "<id>",
+|   "command": "attestations",
+|   "ok": true,
+|   "signed": false
+| }
+ok what_attest_refuses

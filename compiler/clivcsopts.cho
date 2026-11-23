@@ -57,7 +57,7 @@ pub fn usage[&h, &i, &w](heap: &!h Heap, io: &!i Io, before: &static [byte], wha
     return status;
 }
 
-// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show`, 3 for `branch`, 4 for `status`, 5 for `restore`, 6 for `switch`, 7 for `apply`, 8 for `unlock`, 9 for `record`, 10 for `revert`, 11 for `diff`, 12 for `blame`, 13 for `verify`, 14 for `import-git` and 15 for `export-git`.
+// The words after `cancho vcs COMMAND`: `command` is 0 for `init`, 1 for `log`, 2 for `show`, 3 for `branch`, 4 for `status`, 5 for `restore`, 6 for `switch`, 7 for `apply`, 8 for `unlock`, 9 for `record`, 10 for `revert`, 11 for `diff`, 12 for `blame`, 13 for `verify`, 14 for `import-git` and 15 for `export-git`, 16 for `attest`, 17 for `attestations` and 18 for `keys`.
 pub fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command: int) -> [heap, err_write, args] Options {
     var bad = 0;
     var repo_at = 0 - 1;
@@ -129,6 +129,12 @@ pub fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command
                 takes = 1;
             } else if (command == 9 || command == 10) && (bytes.equal(key, "--expect") || bytes.equal(key, "--author") || bytes.equal(key, "--time") || bytes.equal(key, "--intent-prompt") || bytes.equal(key, "--intent-model") || bytes.equal(key, "--intent-session") || bytes.equal(key, "--intent-issue")) {
                 takes = 1;
+            } else if (command == 9 || command == 10 || command == 16 || command == 18) && (bytes.equal(key, "--key") || bytes.equal(key, "--time")) {
+                takes = 7;
+            } else if command == 16 && (bytes.equal(key, "--gate") || bytes.equal(key, "--status") || bytes.equal(key, "--command") || bytes.equal(key, "--output-file")) {
+                takes = 7;
+            } else if command == 18 && bytes.equal(key, "--seed-file") {
+                takes = 7;
             } else if (command == 9 || command == 10) && (bytes.equal(key, "--all") || bytes.equal(key, "--no-gate")) {
                 takes = 6;
             } else if command == 1 && (bytes.equal(key, "--intent") || bytes.equal(key, "--session") || bytes.equal(key, "--issue") || bytes.equal(key, "--path") || bytes.equal(key, "--author")) {
@@ -172,7 +178,9 @@ pub fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command
                         off = 0;
                     }
                 }
-                if bad == 0 {
+                if bad == 0 && takes == 7 {
+                    // Read from the words themselves (`named`): `--key`, `--gate` and the others of `attest` and `keys`.
+                } else if bad == 0 {
                     if takes == 2 {
                         if bytes.equal(key, "--intent") {
                             intent_at = at;
@@ -223,6 +231,28 @@ pub fn options_of[&h, &i, &a](heap: &!h Heap, io: &!i Io, args: &a Args, command
 }
 
 // The value at argument `at`, from `off`.
+// The place of the last `--KEY VALUE` or `--KEY=VALUE` in the words after the command: the argument and the offset into it, or -1 and 0.
+pub fn named[&a, &k](args: &a Args, key: &k [byte]) -> [args] (int, int) {
+    var at = 0 - 1;
+    var off = 0;
+    var n = 3;
+    while n < arg_count(args) {
+        let word = arg(args, n);
+        if bytes.equal(word, key) {
+            if n + 1 < arg_count(args) {
+                at = n + 1;
+                off = 0;
+            }
+            n = n + 1;
+        } else if len(word) > len(key) + 1 && bytes.equal(word[0..len(key)], key) && lc.at(word, len(key)) == '=' {
+            at = n;
+            off = len(key) + 1;
+        }
+        n = n + 1;
+    }
+    return (at, off);
+}
+
 pub fn value_of[&a](args: &a Args, at: int, off: int) -> [args] &a [byte] {
     let text = arg(args, at);
     return text[off..len(text)];

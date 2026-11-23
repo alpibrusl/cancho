@@ -24,6 +24,7 @@ clisync.cho
 clitest.cho
 clivcs.cho
 clivcsgit.cho
+clivcsmore.cho
 clivcsopts.cho
 clivcsout.cho
 clivcsrepo.cho
@@ -84,6 +85,7 @@ testscan.cho
 threadcode.cho
 types.cho
 vcsapply.cho
+vcsattest.cho
 vcsblame.cho
 vcschange.cho
 vcsdecl.cho

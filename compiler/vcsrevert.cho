@@ -257,7 +257,7 @@ fn bring[&h, &r, &d, &s, &t, &q](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scra
 // ---- the command -------------------------------------------------------------------------------------------------------------
 
 // The change `target` with its parent's tree text `parent_tree`, its own `target_tree`, HEAD's `head_tree` and `head_id`: the undoing and what follows.
-fn undone[&h, &i, &r, &d, &s, &t, &a, &b, &c, &e, &f, &g, &p, &k, &m, &n, &u, &x](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], target: &t [byte], subject: &a [byte], parent_tree: &b [byte], target_tree: &c [byte], head_tree: &e [byte], head_id: &f [byte], has_branch: bool, branch: &g [byte], author: &p [byte], has_user_intent: bool, prompt: &k [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &x [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+fn undone[&h, &i, &r, &d, &s, &t, &a, &b, &c, &e, &f, &g, &p, &k, &m, &n, &u, &x, &z](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], target: &t [byte], subject: &a [byte], parent_tree: &b [byte], target_tree: &c [byte], head_tree: &e [byte], head_id: &f [byte], has_branch: bool, branch: &g [byte], author: &p [byte], has_user_intent: bool, prompt: &k [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &x [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int, seed: &z [byte]) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
     let (sets, drops, touched, conflicts) = undo(heap, parent_tree, target_tree, head_tree);
     var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
     var conflicted = false;
@@ -313,7 +313,7 @@ fn undone[&h, &i, &r, &d, &s, &t, &a, &b, &c, &e, &f, &g, &p, &k, &m, &n, &u, &x
                 borrow t2 as &tb in {
                     borrow diffs as &fb in {
                         borrow words as &wb in {
-                            let stored = vcsrecord.changed(heap, io, root, vcs, scratch, buffer.bytes(nb), buffer.bytes(tb), buffer.bytes(fb), head_id, has_branch, branch, author, true, buffer.bytes(wb), model, session, issue, expect, dry, no_gate, bad_time, true, !has_user_intent, time, now);
+                            let stored = vcsrecord.changed(heap, io, root, vcs, scratch, buffer.bytes(nb), buffer.bytes(tb), buffer.bytes(fb), head_id, has_branch, branch, author, true, buffer.bytes(wb), model, session, issue, expect, dry, no_gate, bad_time, true, !has_user_intent, time, now, seed);
                             let (cid, ss, se) = vcsstore.parts(stored);
                             let (old, os, oe) = vcsstore.parts(answer);
                             buffer.drop(heap, old);
@@ -356,7 +356,7 @@ fn undone[&h, &i, &r, &d, &s, &t, &a, &b, &c, &e, &f, &g, &p, &k, &m, &n, &u, &x
 }
 
 // HEAD read, the working copy checked against it, and the trees of the change and its parent read.
-fn prepared[&h, &i, &r, &d, &s, &t, &a, &b, &c, &p, &k, &m, &n, &u, &x](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], target: &t [byte], subject: &a [byte], parent: &b [byte], tree_id: &c [byte], author: &p [byte], has_user_intent: bool, prompt: &k [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &x [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+fn prepared[&h, &i, &r, &d, &s, &t, &a, &b, &c, &p, &k, &m, &n, &u, &x, &z](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], target: &t [byte], subject: &a [byte], parent: &b [byte], tree_id: &c [byte], author: &p [byte], has_user_intent: bool, prompt: &k [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &x [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int, seed: &z [byte]) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
     let head = vcsstatus.head_info(heap, vcs);
     let (branch, has_branch, head_id, hs) = vcsstatus.head_parts(head);
     var code = hs;
@@ -417,7 +417,7 @@ fn prepared[&h, &i, &r, &d, &s, &t, &a, &b, &c, &p, &k, &m, &n, &u, &x](heap: &!
                         borrow head_tree as &htb in {
                             borrow head_id as &ib in {
                                 borrow branch as &bb in {
-                                    answer = undone(heap, io, root, vcs, scratch, target, subject, buffer.bytes(ptb), buffer.bytes(ttb), buffer.bytes(htb), buffer.bytes(ib), has_branch, buffer.bytes(bb), author, has_user_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, time, now);
+                                    answer = undone(heap, io, root, vcs, scratch, target, subject, buffer.bytes(ptb), buffer.bytes(ttb), buffer.bytes(htb), buffer.bytes(ib), has_branch, buffer.bytes(bb), author, has_user_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, time, now, seed);
                                 }
                             }
                         }
@@ -436,7 +436,7 @@ fn prepared[&h, &i, &r, &d, &s, &t, &a, &b, &c, &p, &k, &m, &n, &u, &x](heap: &!
 }
 
 // `revert`: see the header.
-pub fn revert_command[&h, &i, &r, &d, &s, &p, &a, &m, &n, &u, &e, &o](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], spec: &p [byte], author: &a [byte], has_user_intent: bool, prompt: &o [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &e [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+pub fn revert_command[&h, &i, &r, &d, &s, &p, &a, &m, &n, &u, &e, &o, &z](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], spec: &p [byte], author: &a [byte], has_user_intent: bool, prompt: &o [byte], model: &m [byte], session: &n [byte], issue: &u [byte], expect: &e [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int, seed: &z [byte]) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
     let resolved = vcsrepo.resolve(heap, vcs, scratch, spec);
     let (target, rs, re) = vcsstore.parts(resolved);
     if rs != 0 {
@@ -462,7 +462,7 @@ pub fn revert_command[&h, &i, &r, &d, &s, &p, &a, &m, &n, &u, &e, &o](heap: &!h 
                     borrow parent as &pb in {
                         borrow tree_id as &ib in {
                             borrow subject as &sb in {
-                                answer = prepared(heap, io, root, vcs, scratch, buffer.bytes(tb), buffer.bytes(sb), buffer.bytes(pb), buffer.bytes(ib), author, has_user_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, time, now);
+                                answer = prepared(heap, io, root, vcs, scratch, buffer.bytes(tb), buffer.bytes(sb), buffer.bytes(pb), buffer.bytes(ib), author, has_user_intent, prompt, model, session, issue, expect, dry, no_gate, bad_time, time, now, seed);
                             }
                         }
                     }
