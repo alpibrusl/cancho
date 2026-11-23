@@ -963,6 +963,9 @@ pub fn show_document[&h, &d, &s, &i, &p](heap: &!h Heap, vcs: &d Dir, scratch: &
                         b = emit_files(heap, member(heap, b, 1, false, "files"), 1, buffer.bytes(ob), buffer.bytes(nb));
                         b = emit_intent(heap, member(heap, b, 1, false, "intent"), 1, m, src);
                         b = buffer.append(heap, member(heap, b, 1, false, "ok"), "true");
+                        if len(vcschange.origin_of(m, src)) > 0 {
+                            b = quoted(heap, member(heap, b, 1, false, "origin"), vcschange.origin_of(m, src));
+                        }
                         b = emit_parents(heap, member(heap, b, 1, false, "parents"), 1, m, src);
                         if has_patch {
                             b = buffer.append(heap, member(heap, b, 1, false, "patch"), patch);
