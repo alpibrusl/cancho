@@ -1,0 +1,844 @@
+edition 12;
+module selfhost.vcsattest;
+
+// vcsattest.cho -- the attestations of `cancho vcs` (`docs/vcs-cli.md` section 11): what was checked on a change, by which compiler, with what result, and who says so.
+//
+// An attestation is an object of kind `attestation`, one line of JSON in a fixed order, which is what is hashed and what is signed:
+//
+//   {"change":C,"gate":S,"command":S,"status":N,"output":H,"compiler":S,"time":N,"previous":P[,"key":K,"signature":G]}
+//
+// `change` is the change it speaks of, `gate` the name of what ran (`check`, `tests`, `authority`, `sign`, ...), `command` the command line with its arguments, `status` its exit status, `output` the
+// blob id of what it wrote, `compiler` the version and commit of the `cancho` that wrote the record, `previous` the attestation of the same change that was the last before this one (empty for the
+// first). `key` is an Ed25519 public key and `signature` its signature, both as lowercase hexadecimal digits, over the bytes of the record up to and including the key, closed with `}`.
+//
+// The attestations of a change are a chain: `refs/attest/CHANGE` holds the last one, moved by compare-and-swap as every ref is (`vcsstore.update_ref`), and each names the one before it. A change is
+// not rewritten to carry them (its id does not move), so an attestation can be added after the change exists, by another gate or another key.
+//
+// The keys of a repository are in `.cancho/vcs/keys`: `NAME.key` (the 32-byte seed as 64 digits, mode 0600), `trusted` (a public key and a name to a line) and `required` (a ref to a line: a ref that
+// moves only to a change with a signature by a trusted key). They are files of the store, not of the tree: whoever can write the store can change them (section 11 says what that is worth).
+//
+// A status of this module: 60 `chain-broken`, 61 `unsigned-change`, 62 `key-not-found`, 63 `key-exists`, 64 `bad-argument`; the others are `vcsstore.tag`'s.
+
+import std.buffer;
+import std.bytes;
+import std.ed25519;
+import selfhost.filewrite;
+import selfhost.jsonread;
+import selfhost.jsonwrite;
+import selfhost.vcschange;
+import selfhost.vcsobj;
+import selfhost.vcsrepo;
+import selfhost.vcsstore;
+import selfhost.version;
+
+// The rule tag of a status.
+pub fn tag(status: int) -> [] &static [byte] {
+    if status == 60 {
+        return "chain-broken";
+    }
+    if status == 61 {
+        return "unsigned-change";
+    }
+    if status == 62 {
+        return "key-not-found";
+    }
+    if status == 63 {
+        return "key-exists";
+    }
+    if status == 64 {
+        return "bad-argument";
+    }
+    return vcsrepo.tag(status);
+}
+
+// ---- digits ------------------------------------------------------------------------------------------------------------------
+
+// `raw` as lowercase hexadecimal digits, two to a byte, appended to `out`.
+pub fn hex[&h, &t](heap: &!h Heap, out: buffer.Buffer, raw: &t [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    var i = 0;
+    while i < len(raw) {
+        let v = int_of(raw[i]);
+        b = buffer.push(heap, b, "0123456789abcdef"[v >> 4]);
+        b = buffer.push(heap, b, "0123456789abcdef"[v & 15]);
+        i = i + 1;
+    }
+    return b;
+}
+
+// Whether `text` is `n` lowercase hexadecimal digits.
+pub fn is_hex[&t](text: &t [byte], n: int) -> [] bool {
+    if len(text) != n {
+        return false;
+    }
+    var i = 0;
+    while i < n {
+        let c = int_of(text[i]);
+        if !(c >= 48 && c <= 57 || c >= 97 && c <= 102) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// The bytes the digits `text` (which `is_hex` accepted, twice as many as `out` has bytes) spell, into `out`.
+fn unhex[&t, &o](text: &t [byte], out: &!o [byte]) -> [] int {
+    var i = 0;
+    while i < len(out) {
+        var v = 0;
+        var k = 0;
+        while k < 2 {
+            let c = int_of(text[2 * i + k]);
+            if c <= 57 {
+                v = v * 16 + (c - 48);
+            } else {
+                v = v * 16 + (c - 87);
+            }
+            k = k + 1;
+        }
+        out[i] = byte_of(v);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// ---- writing a record --------------------------------------------------------------------------------------------------------
+
+// What this `cancho` calls itself in a record: the version and the commit it was built from.
+pub fn compiler[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.empty(heap, 64), version.crate_version());
+    return buffer.append(heap, buffer.push(heap, b, byte_of(32)), version.rev());
+}
+
+// The record up to `previous`, not closed.
+fn body[&h, &c, &g, &m, &o, &v, &p](heap: &!h Heap, change: &c [byte], gate: &g [byte], command: &m [byte], status: int, output: &o [byte], by: &v [byte], time: int, previous: &p [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, buffer.empty(heap, 512), "{\"change\":");
+    b = jsonwrite.string(heap, b, change);
+    b = jsonwrite.string(heap, buffer.append(heap, b, ",\"gate\":"), gate);
+    b = jsonwrite.string(heap, buffer.append(heap, b, ",\"command\":"), command);
+    b = vcschange.number(heap, buffer.append(heap, b, ",\"status\":"), status);
+    b = jsonwrite.string(heap, buffer.append(heap, b, ",\"output\":"), output);
+    b = jsonwrite.string(heap, buffer.append(heap, b, ",\"compiler\":"), by);
+    b = vcschange.number(heap, buffer.append(heap, b, ",\"time\":"), time);
+    return jsonwrite.string(heap, buffer.append(heap, b, ",\"previous\":"), previous);
+}
+
+// The public key of the seed `seed` (32 bytes), as 64 digits appended to `out`.
+pub fn public_hex[&h, &s](heap: &!h Heap, out: buffer.Buffer, seed: &s [byte]) -> [heap] buffer.Buffer {
+    var b = out;
+    region r {
+        let pk = alloc_slice[r](32, byte_of(0));
+        ed25519.public_key_from_seed(seed, pk);
+        b = hex(heap, b, pk);
+    }
+    return b;
+}
+
+// `open` (a record up to `previous`) closed: as it is when `seed` is empty, else with the key of `seed` and its signature over the record up to the key.
+fn sealed[&h, &s](heap: &!h Heap, open: buffer.Buffer, seed: &s [byte]) -> [heap] buffer.Buffer {
+    if len(seed) != 32 {
+        return buffer.push(heap, open, byte_of(125));
+    }
+    var b = public_hex(heap, buffer.append(heap, open, ",\"key\":\""), seed);
+    b = buffer.push(heap, b, byte_of(34));
+    var message = buffer.empty(heap, 0);
+    borrow b as &bb in {
+        message = buffer.push(heap, buffer.append(heap, message, buffer.bytes(bb)), byte_of(125));
+    }
+    var digits = buffer.empty(heap, 128);
+    region r {
+        let sig = alloc_slice[r](64, byte_of(0));
+        borrow message as &mb in {
+            ed25519.sign(seed, buffer.bytes(mb), sig);
+        }
+        digits = hex(heap, digits, sig);
+    }
+    buffer.drop(heap, message);
+    b = buffer.append(heap, b, ",\"signature\":\"");
+    borrow digits as &db in {
+        b = buffer.append(heap, b, buffer.bytes(db));
+    }
+    buffer.drop(heap, digits);
+    return buffer.append(heap, b, "\"}");
+}
+
+// ---- reading a record --------------------------------------------------------------------------------------------------------
+
+// The member `name` of the record when it is a string, or -1.
+fn text_id[&j, &x, &k](jm: &!j [int], src: &x [byte], name: &k [byte]) -> [] int {
+    let id = vcschange.field(jm, src, jm[1], name);
+    if id >= 0 && jsonread.kind(jm, id) == jsonread.k_string() {
+        return id;
+    }
+    return 0 - 1;
+}
+
+// The member `name` of the record when it is a whole number, or -1.
+fn whole_id[&j, &x, &k](jm: &!j [int], src: &x [byte], name: &k [byte]) -> [] int {
+    let id = vcschange.field(jm, src, jm[1], name);
+    if id >= 0 && jsonread.kind(jm, id) == jsonread.k_int() {
+        return id;
+    }
+    return 0 - 1;
+}
+
+// The text of the string member `name` of a record `read` accepted, as it is written (escapes included).
+pub fn part[&j, &x, &k](jm: &!j [int], src: &x [byte], name: &k [byte]) -> [] &x [byte] {
+    let id = vcschange.field(jm, src, jm[1], name);
+    return src[jsonread.start(jm, id) + 1..jsonread.end(jm, id) - 1];
+}
+
+// The number member `name` of a record `read` accepted.
+pub fn count[&j, &x, &k](jm: &!j [int], src: &x [byte], name: &k [byte]) -> [] int {
+    return jsonread.first(jm, vcschange.field(jm, src, jm[1], name));
+}
+
+// Whether the signature of the record `src` (its key the string `k`) is the key's over the record up to the key.
+fn signature_holds[&j, &x](jm: &!j [int], src: &x [byte], k: int) -> [] bool {
+    var ok = 0;
+    let upto = jsonread.end(jm, k);
+    region r {
+        let pk = alloc_slice[r](32, byte_of(0));
+        let sig = alloc_slice[r](64, byte_of(0));
+        unhex(part(jm, src, "key"), pk);
+        unhex(part(jm, src, "signature"), sig);
+        let message = alloc_slice[r](upto + 1, byte_of(125));
+        var i = 0;
+        while i < upto {
+            message[i] = src[i];
+            i = i + 1;
+        }
+        ok = ed25519.verify(pk, message, sig);
+    }
+    return ok == 1;
+}
+
+// Parse `src` into `jm` (`jsonread.size_for(src)` integers) and check it is a record of this module, byte for byte as `body` and `sealed` write one: 0 when it is and has no signature, 1 when it has
+// one that holds, 2 when it is not a record, 3 when its signature does not hold.
+pub fn read[&j, &x](jm: &!j [int], src: &x [byte]) -> [] int {
+    if len(src) > 16384 || jsonread.read(jm, src) != 0 {
+        return 2;
+    }
+    if jsonread.kind(jm, jm[1]) != jsonread.k_object() {
+        return 2;
+    }
+    let p = text_id(jm, src, "previous");
+    if text_id(jm, src, "change") < 0 || text_id(jm, src, "gate") < 0 || text_id(jm, src, "command") < 0 || text_id(jm, src, "output") < 0 || text_id(jm, src, "compiler") < 0 || p < 0 {
+        return 2;
+    }
+    if whole_id(jm, src, "status") < 0 || whole_id(jm, src, "time") < 0 {
+        return 2;
+    }
+    if !vcsobj.is_id(part(jm, src, "change")) || !vcsobj.is_id(part(jm, src, "output")) {
+        return 2;
+    }
+    let before = part(jm, src, "previous");
+    if len(before) != 0 && !vcsobj.is_id(before) {
+        return 2;
+    }
+    let k = vcschange.field(jm, src, jm[1], "key");
+    if k < 0 {
+        if jsonread.end(jm, p) + 1 != len(src) {
+            return 2;
+        }
+        return 0;
+    }
+    let s = text_id(jm, src, "signature");
+    if text_id(jm, src, "key") < 0 || s < 0 {
+        return 2;
+    }
+    if !is_hex(part(jm, src, "key"), 64) || !is_hex(part(jm, src, "signature"), 128) {
+        return 2;
+    }
+    if jsonread.start(jm, k) != jsonread.end(jm, p) + 7 || jsonread.start(jm, s) != jsonread.end(jm, k) + 13 || jsonread.end(jm, s) + 1 != len(src) {
+        return 2;
+    }
+    if !signature_holds(jm, src, k) {
+        return 3;
+    }
+    return 1;
+}
+
+// ---- the keys ----------------------------------------------------------------------------------------------------------------
+
+// Whether `line` is the first word of one of the lines of `lines` (a word ends at a space or at the line's end).
+pub fn listed[&l, &w](lines: &l [byte], word: &w [byte]) -> [] bool {
+    var at = 0;
+    while at < len(lines) {
+        var end = at;
+        while end < len(lines) && lines[end] != byte_of(10) {
+            end = end + 1;
+        }
+        var stop = at;
+        while stop < end && lines[stop] != byte_of(32) {
+            stop = stop + 1;
+        }
+        if len(word) > 0 && bytes.equal(lines[at..stop], word) {
+            return true;
+        }
+        at = end + 1;
+    }
+    return false;
+}
+
+// The file `name` of `.cancho/vcs/keys` (`trusted`, `required`, `NAME.key`): its text, or nothing when it is not there.
+pub fn policy[&h, &d, &n](heap: &!h Heap, vcs: &d Dir, name: &n [byte]) -> [heap, dir_read, dir_write, file_read] buffer.Buffer {
+    var out = buffer.empty(heap, 0);
+    match vcsstore.walk(vcs, "keys", false) {
+        DirOpened::Ok(k0) => {
+            var kd = k0;
+            borrow kd as &kr in {
+                let read = vcsstore.read_text(heap, kr, name);
+                let (text, status, errno) = vcsstore.parts(read);
+                buffer.drop(heap, out);
+                out = text;
+            }
+            dir_close(kd);
+        }
+        DirOpened::Failed(e) => {
+        }
+    }
+    return out;
+}
+
+// `line` and a newline added to the file `name` of `.cancho/vcs/keys`, unless its first word is listed there: 0, or the errno.
+pub fn add_line[&h, &d, &n, &l](heap: &!h Heap, vcs: &d Dir, name: &n [byte], line: &l [byte]) -> [heap, dir_read, dir_write, file_read, file_write] int {
+    var text = policy(heap, vcs, name);
+    var have = false;
+    var stop = 0;
+    while stop < len(line) && line[stop] != byte_of(32) {
+        stop = stop + 1;
+    }
+    borrow text as &tb in {
+        have = listed(buffer.bytes(tb), line[0..stop]);
+    }
+    var errno = 0;
+    if !have {
+        text = buffer.push(heap, buffer.append(heap, text, line), byte_of(10));
+        match vcsstore.walk(vcs, "keys", true) {
+            DirOpened::Ok(k0) => {
+                var kd = k0;
+                borrow kd as &kr in {
+                    borrow text as &tb in {
+                        errno = vcsstore.put_whole(heap, kr, name, buffer.bytes(tb));
+                    }
+                }
+                dir_close(kd);
+            }
+            DirOpened::Failed(e) => {
+                errno = e;
+                if errno == 0 {
+                    errno = 1;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, text);
+    return errno;
+}
+
+// Whether a key may be called `name`: 1 to 64 letters, digits, `-` and `_`.
+pub fn key_name[&n](name: &n [byte]) -> [] bool {
+    if len(name) == 0 || len(name) > 64 {
+        return false;
+    }
+    var i = 0;
+    while i < len(name) {
+        let c = int_of(name[i]);
+        if !(c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122 || c == 45 || c == 95) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `NAME.key`.
+fn key_file[&h, &n](heap: &!h Heap, name: &n [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(name) + 4), name), ".key");
+}
+
+// The seed of the key `name`, 32 bytes: status 0; 62 when there is no such key or its file is not 64 digits.
+pub fn seed_of[&h, &d, &n](heap: &!h Heap, vcs: &d Dir, name: &n [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    var seed = buffer.empty(heap, 32);
+    var status = 62;
+    if key_name(name) {
+        let file = key_file(heap, name);
+        borrow file as &fb in {
+            let text = policy(heap, vcs, buffer.bytes(fb));
+            borrow text as &tb in {
+                let digits = vcsstore.trimmed(buffer.bytes(tb));
+                if is_hex(digits, 64) {
+                    region r {
+                        let raw = alloc_slice[r](32, byte_of(0));
+                        unhex(digits, raw);
+                        seed = buffer.append(heap, seed, raw);
+                    }
+                    status = 0;
+                }
+            }
+            buffer.drop(heap, text);
+        }
+        buffer.drop(heap, file);
+    }
+    return vcsstore.Object { bytes: seed, status: status, errno: 0 };
+}
+
+// A new key `name` whose seed is the 64 digits `digits`, written to `NAME.key` (mode 0600, which must not be there) and its public key added to `trusted`. The public key as digits and status 0; 63
+// when the key is there already; 64 for a name or a seed that is not one; 10 and the errno.
+pub fn new_key[&h, &d, &n, &s](heap: &!h Heap, vcs: &d Dir, name: &n [byte], digits: &s [byte]) -> [heap, dir_read, dir_write, file_read, file_write] vcsstore.Object {
+    if !key_name(name) || !is_hex(digits, 64) {
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 64, errno: 0 };
+    }
+    var status = 0;
+    var errno = 0;
+    let file = key_file(heap, name);
+    var text = buffer.push(heap, buffer.append(heap, buffer.empty(heap, 65), digits), byte_of(10));
+    match vcsstore.walk(vcs, "keys", true) {
+        DirOpened::Ok(k0) => {
+            var kd = k0;
+            borrow kd as &kr in {
+                borrow file as &fb in {
+                    match dir_open_new_mode(kr, buffer.bytes(fb), 384) {
+                        Opened::Ok(opened) => {
+                            var f = opened;
+                            borrow mut f as &!fw in {
+                                borrow text as &tb in {
+                                    errno = filewrite.write_all(fw, buffer.bytes(tb));
+                                }
+                            }
+                            file_close(f);
+                            if errno != 0 {
+                                status = 10;
+                            }
+                        }
+                        Opened::Failed(e) => {
+                            if e == 17 {
+                                status = 63;
+                            } else {
+                                status = 10;
+                                errno = e;
+                            }
+                        }
+                    }
+                }
+            }
+            dir_close(kd);
+        }
+        DirOpened::Failed(e) => {
+            status = 10;
+            errno = e;
+        }
+    }
+    buffer.drop(heap, file);
+    buffer.drop(heap, text);
+    var public = buffer.empty(heap, 64);
+    if status == 0 {
+        region r {
+            let raw = alloc_slice[r](32, byte_of(0));
+            unhex(digits, raw);
+            public = public_hex(heap, public, raw);
+        }
+        var line = buffer.empty(heap, 0);
+        borrow public as &pb in {
+            line = buffer.append(heap, buffer.push(heap, buffer.append(heap, line, buffer.bytes(pb)), byte_of(32)), name);
+        }
+        borrow line as &lb in {
+            errno = add_line(heap, vcs, "trusted", buffer.bytes(lb));
+        }
+        buffer.drop(heap, line);
+        if errno != 0 {
+            status = 10;
+        }
+    }
+    return vcsstore.Object { bytes: public, status: status, errno: errno };
+}
+
+// ---- the chain ---------------------------------------------------------------------------------------------------------------
+
+// `attest/CHANGE`: the ref that holds the last attestation of a change.
+fn chain_ref[&h, &c](heap: &!h Heap, change: &c [byte]) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.append(heap, buffer.empty(heap, 72), "attest/"), change);
+}
+
+// A new attestation of `change`, after the last one it has: stored, and the chain's ref moved to it (tried again when another writer moved it first). `seed` is the signer's seed, or empty for no
+// signature; `output` a blob id; `time` the record's time and `now` the time of the ref's log. The attestation's id and status 0; or the store's refusal.
+pub fn add[&h, &d, &s, &c, &g, &m, &o, &k](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], change: &c [byte], gate: &g [byte], command: &m [byte], status: int, output: &o [byte], time: int, seed: &k [byte], now: int) -> [heap, dir_read, dir_write, file_read, file_write] vcsstore.Object {
+    let name = chain_ref(heap, change);
+    let by = compiler(heap);
+    var id = buffer.empty(heap, 64);
+    var code = 14;
+    var errno = 0;
+    var tries = 0;
+    while tries < 4 && code == 14 {
+        var previous = buffer.empty(heap, 64);
+        var kind = vcsstore.expect_absent();
+        borrow name as &nb in {
+            let read = vcsstore.read_ref(heap, vcs, buffer.bytes(nb));
+            let (pid, ps, pe) = vcsstore.parts(read);
+            code = ps;
+            errno = pe;
+            if ps == 0 {
+                buffer.drop(heap, previous);
+                previous = pid;
+                kind = vcsstore.expect_id();
+            } else {
+                buffer.drop(heap, pid);
+                if ps == 2 {
+                    code = 0;
+                }
+            }
+        }
+        if code == 0 {
+            var record = buffer.empty(heap, 0);
+            borrow previous as &pb in {
+                borrow by as &vb in {
+                    buffer.drop(heap, record);
+                    record = sealed(heap, body(heap, change, gate, command, status, output, buffer.bytes(vb), time, buffer.bytes(pb)), seed);
+                }
+            }
+            borrow record as &rb in {
+                let put = vcsstore.put(heap, vcs, scratch, "attestation", buffer.bytes(rb), now + tries);
+                let (aid, ps, pe) = vcsstore.parts(put);
+                buffer.drop(heap, id);
+                id = aid;
+                code = ps;
+                errno = pe;
+            }
+            buffer.drop(heap, record);
+        }
+        if code == 0 {
+            errno = 0;
+            borrow name as &nb in {
+                borrow previous as &pb in {
+                    borrow id as &ib in {
+                        let moved = vcsstore.update_ref(heap, vcs, buffer.bytes(nb), kind, buffer.bytes(pb), buffer.bytes(ib), "attest", now);
+                        let (current, us, ue) = vcsstore.parts(moved);
+                        buffer.drop(heap, current);
+                        code = us;
+                        errno = ue;
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, previous);
+        tries = tries + 1;
+    }
+    buffer.drop(heap, name);
+    buffer.drop(heap, by);
+    return vcsstore.Object { bytes: id, status: code, errno: errno };
+}
+
+// The attestation of the built-in gate on `change`: `paths` are the files it checked, one to a line (`gate` is `check`, the command `cancho check` and the paths, the output the blob id of `paths`);
+// when not `gated`, a `sign` record of a change recorded with `--no-gate`. See `add`.
+pub fn checked[&h, &d, &s, &c, &p, &k](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], change: &c [byte], paths: &p [byte], gated: bool, time: int, seed: &k [byte], now: int) -> [heap, dir_read, dir_write, file_read, file_write] vcsstore.Object {
+    var gate = "sign";
+    var command = buffer.append(heap, buffer.empty(heap, 64 + len(paths)), "cancho vcs record --no-gate");
+    if gated {
+        gate = "check";
+        buffer.drop(heap, command);
+        command = buffer.append(heap, buffer.empty(heap, 64 + len(paths)), "cancho check");
+        var at = 0;
+        while at < len(paths) {
+            var end = at;
+            while end < len(paths) && paths[end] != byte_of(10) {
+                end = end + 1;
+            }
+            command = buffer.append(heap, buffer.push(heap, command, byte_of(32)), paths[at..end]);
+            at = end + 1;
+        }
+    }
+    let output = vcsobj.object_id(heap, scratch, "blob", paths, buffer.empty(heap, 64));
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    borrow command as &mb in {
+        borrow output as &ob in {
+            let (old, os, oe) = vcsstore.parts(answer);
+            buffer.drop(heap, old);
+            answer = add(heap, vcs, scratch, change, gate, buffer.bytes(mb), 0, buffer.bytes(ob), time, seed, now);
+        }
+    }
+    buffer.drop(heap, command);
+    buffer.drop(heap, output);
+    return answer;
+}
+
+// What the chain of a change is: its links as the members of a JSON array (at `levels + 1`), how many, whether one of them is signed by a trusted key, and what is wrong with the first link that is
+// not sound (nothing when all are).
+pub res struct Chain {
+    items: buffer.Buffer,
+    links: int,
+    vouched: bool,
+    broken: buffer.Buffer,
+}
+
+pub fn chain_parts(c: Chain) -> [] (buffer.Buffer, int, bool, buffer.Buffer) {
+    let Chain { items, links, vouched, broken } = c;
+    return (items, links, vouched, broken);
+}
+
+// `A B C D`: the four pieces as one text.
+fn join4[&h, &a, &b, &c, &d](heap: &!h Heap, p1: &a [byte], p2: &b [byte], p3: &c [byte], p4: &d [byte]) -> [heap] buffer.Buffer {
+    var t = buffer.append(heap, buffer.empty(heap, len(p1) + len(p2) + len(p3) + len(p4)), p1);
+    t = buffer.append(heap, t, p2);
+    t = buffer.append(heap, t, p3);
+    return buffer.append(heap, t, p4);
+}
+
+// One link of the document: the record `src` (`id`), which `read` answered `state` for.
+fn link[&h, &j, &x, &i](heap: &!h Heap, out: buffer.Buffer, levels: int, first: bool, jm: &!j [int], src: &x [byte], id: &i [byte], state: int, trusted: bool) -> [heap] buffer.Buffer {
+    var b = out;
+    if !first {
+        b = buffer.push(heap, b, byte_of(44));
+    }
+    b = buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(123));
+    b = vcsrepo.quoted(heap, vcsrepo.member(heap, b, levels + 1, true, "command"), part(jm, src, "command"));
+    b = vcsrepo.quoted(heap, vcsrepo.member(heap, b, levels + 1, false, "compiler"), part(jm, src, "compiler"));
+    b = vcsrepo.quoted(heap, vcsrepo.member(heap, b, levels + 1, false, "gate"), part(jm, src, "gate"));
+    b = vcsrepo.quoted(heap, vcsrepo.member(heap, b, levels + 1, false, "id"), id);
+    b = vcsrepo.member(heap, b, levels + 1, false, "key");
+    if state == 1 {
+        b = vcsrepo.quoted(heap, b, part(jm, src, "key"));
+    } else {
+        b = buffer.append(heap, b, "null");
+    }
+    b = vcsrepo.quoted(heap, vcsrepo.member(heap, b, levels + 1, false, "output"), part(jm, src, "output"));
+    b = vcschange.number(heap, vcsrepo.member(heap, b, levels + 1, false, "status"), count(jm, src, "status"));
+    b = vcschange.number(heap, vcsrepo.member(heap, b, levels + 1, false, "time"), count(jm, src, "time"));
+    b = vcsrepo.member(heap, b, levels + 1, false, "trusted");
+    if trusted {
+        b = buffer.append(heap, b, "true");
+    } else {
+        b = buffer.append(heap, b, "false");
+    }
+    return buffer.push(heap, jsonwrite.newline(heap, b, levels), byte_of(125));
+}
+
+// The chain of `change`, the last attestation first, each link read, hashed again and checked. `trusted` is the text of `keys/trusted`.
+pub fn chain[&h, &d, &s, &c, &t](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], change: &c [byte], trusted: &t [byte], levels: int) -> [heap, dir_read, dir_write, file_read] Chain {
+    var items = buffer.empty(heap, 0);
+    var broken = buffer.empty(heap, 0);
+    var links = 0;
+    var vouched = false;
+    var id = buffer.empty(heap, 64);
+    let name = chain_ref(heap, change);
+    borrow name as &nb in {
+        let read = vcsstore.read_ref(heap, vcs, buffer.bytes(nb));
+        let (head, hs, he) = vcsstore.parts(read);
+        if hs == 0 {
+            buffer.drop(heap, id);
+            id = head;
+        } else {
+            buffer.drop(heap, head);
+            if hs != 2 {
+                buffer.drop(heap, broken);
+                broken = join4(heap, "the chain of change ", change, ": its ref does not hold an id", "");
+            }
+        }
+    }
+    buffer.drop(heap, name);
+    var going = true;
+    while going {
+        var next = buffer.empty(heap, 64);
+        borrow id as &ib in {
+            let at = buffer.bytes(ib);
+            if len(at) == 0 || links >= 4096 {
+                going = false;
+            } else {
+                let got = vcsstore.get(heap, vcs, scratch, "attestation", at);
+                let (data, gs, ge) = vcsstore.parts(got);
+                if gs != 0 {
+                    going = false;
+                    buffer.drop(heap, broken);
+                    if gs == 11 {
+                        broken = join4(heap, "attestation ", at, " (of change ", change);
+                        broken = buffer.append(heap, broken, ") is not in the store");
+                    } else {
+                        broken = join4(heap, "attestation ", at, " (of change ", change);
+                        broken = buffer.append(heap, broken, ") does not match its id");
+                    }
+                } else {
+                    borrow data as &db in {
+                        let src = buffer.bytes(db);
+                        let jm = box_slice(heap, jsonread.size_for(src), 0);
+                        borrow mut jm as &!w in {
+                            let m = contents(w);
+                            let state = read(m, src);
+                            if state == 2 {
+                                going = false;
+                                buffer.drop(heap, broken);
+                                broken = join4(heap, "attestation ", at, " is not an attestation", "");
+                            } else if state == 3 {
+                                going = false;
+                                buffer.drop(heap, broken);
+                                broken = join4(heap, "attestation ", at, ": the signature is not its key's", "");
+                            } else if !bytes.equal(part(m, src, "change"), change) {
+                                going = false;
+                                buffer.drop(heap, broken);
+                                broken = join4(heap, "attestation ", at, " is of another change than ", change);
+                            } else {
+                                var known = false;
+                                if state == 1 {
+                                    known = listed(trusted, part(m, src, "key"));
+                                }
+                                if known {
+                                    vouched = true;
+                                }
+                                items = link(heap, items, levels + 1, links == 0, m, src, at, state, known);
+                                links = links + 1;
+                                next = buffer.append(heap, next, part(m, src, "previous"));
+                            }
+                        }
+                        unbox_slice(heap, jm);
+                    }
+                }
+                buffer.drop(heap, data);
+            }
+        }
+        buffer.drop(heap, id);
+        id = next;
+    }
+    buffer.drop(heap, id);
+    return Chain { items: items, links: links, vouched: vouched, broken: broken };
+}
+
+// Whether `change` has an attestation signed by a trusted key in a chain with no broken link.
+pub fn vouched_for[&h, &d, &s, &c](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], change: &c [byte]) -> [heap, dir_read, dir_write, file_read] bool {
+    let trusted = policy(heap, vcs, "trusted");
+    var ok = false;
+    borrow trusted as &tb in {
+        let (items, links, vouched, broken) = chain_parts(chain(heap, vcs, scratch, change, buffer.bytes(tb), 0));
+        borrow broken as &bb in {
+            ok = vouched && len(buffer.bytes(bb)) == 0;
+        }
+        buffer.drop(heap, items);
+        buffer.drop(heap, broken);
+    }
+    buffer.drop(heap, trusted);
+    return ok;
+}
+
+// Whether the ref `name` (`heads/main`) moves only to a change that is vouched for.
+pub fn required[&h, &d, &n](heap: &!h Heap, vcs: &d Dir, name: &n [byte]) -> [heap, dir_read, dir_write, file_read] bool {
+    let lines = policy(heap, vcs, "required");
+    var yes = false;
+    borrow lines as &lb in {
+        yes = listed(buffer.bytes(lb), name);
+    }
+    buffer.drop(heap, lines);
+    return yes;
+}
+
+// Every chain of the store and every required ref, checked for `verify`: the problems, one to a line (`c` for `chain-broken` or `u` for `unsigned-change`, a space, the text), and how many
+// attestations the chains hold.
+pub fn check_all[&h, &d, &s](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int]) -> [heap, dir_read, dir_write, file_read] (buffer.Buffer, int) {
+    var problems = buffer.empty(heap, 0);
+    var total = 0;
+    let trusted = policy(heap, vcs, "trusted");
+    let listing = vcsstore.list_refs(heap, vcs, "attest");
+    let (lines, ls, le) = vcsstore.parts(listing);
+    if ls != 0 {
+        problems = buffer.append(heap, problems, "c a ref of refs/attest does not hold an id\n");
+    } else {
+        borrow lines as &lb in {
+            borrow trusted as &tb in {
+                let text = buffer.bytes(lb);
+                var at = 0;
+                while at < len(text) {
+                    var end = at;
+                    while end < len(text) && text[end] != byte_of(10) {
+                        end = end + 1;
+                    }
+                    let sp = bytes.find(text[at..end], " ");
+                    if sp > 7 {
+                        let (items, links, vouched, broken) = chain_parts(chain(heap, vcs, scratch, text[at + 7..at + sp], buffer.bytes(tb), 0));
+                        total = total + links;
+                        borrow broken as &bb in {
+                            if len(buffer.bytes(bb)) > 0 {
+                                problems = buffer.push(heap, buffer.append(heap, buffer.append(heap, problems, "c "), buffer.bytes(bb)), byte_of(10));
+                            }
+                        }
+                        buffer.drop(heap, items);
+                        buffer.drop(heap, broken);
+                    }
+                    at = end + 1;
+                }
+            }
+        }
+    }
+    buffer.drop(heap, lines);
+    buffer.drop(heap, trusted);
+    let wanted = policy(heap, vcs, "required");
+    borrow wanted as &wb in {
+        let text = buffer.bytes(wb);
+        var at = 0;
+        while at < len(text) {
+            var end = at;
+            while end < len(text) && text[end] != byte_of(10) {
+                end = end + 1;
+            }
+            let name = text[at..end];
+            let read = vcsstore.read_ref(heap, vcs, name);
+            let (id, rs, re) = vcsstore.parts(read);
+            if rs == 0 {
+                borrow id as &ib in {
+                    if !vouched_for(heap, vcs, scratch, buffer.bytes(ib)) {
+                        let said = join4(heap, "u change ", buffer.bytes(ib), " (ref ", name);
+                        borrow said as &sb in {
+                            problems = buffer.append(heap, buffer.append(heap, problems, buffer.bytes(sb)), ") has no signature by a trusted key\n");
+                        }
+                        buffer.drop(heap, said);
+                    }
+                }
+            }
+            buffer.drop(heap, id);
+            at = end + 1;
+        }
+    }
+    buffer.drop(heap, wanted);
+    return (problems, total);
+}
+
+// `{"attestations": [..], "change": C, "command": "attestations", "ok": true, "signed": B}`, or the refusal 60 with what is wrong with the first broken link.
+pub fn list_command[&h, &d, &s, &c](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], change: &c [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    let trusted = policy(heap, vcs, "trusted");
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    borrow trusted as &tb in {
+        let (items, links, vouched, broken) = chain_parts(chain(heap, vcs, scratch, change, buffer.bytes(tb), 1));
+        var bad = false;
+        borrow broken as &bb in {
+            bad = len(buffer.bytes(bb)) > 0;
+        }
+        let (old, os, oe) = vcsstore.parts(answer);
+        buffer.drop(heap, old);
+        if bad {
+            buffer.drop(heap, items);
+            answer = vcsstore.Object { bytes: broken, status: 60, errno: 0 };
+        } else {
+            buffer.drop(heap, broken);
+            var b = vcsrepo.member(heap, buffer.push(heap, buffer.empty(heap, 512), byte_of(123)), 1, true, "attestations");
+            if links == 0 {
+                b = buffer.append(heap, b, "[]");
+            } else {
+                b = buffer.push(heap, b, byte_of(91));
+                borrow items as &ib in {
+                    b = buffer.append(heap, b, buffer.bytes(ib));
+                }
+                b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(93));
+            }
+            buffer.drop(heap, items);
+            b = vcsrepo.quoted(heap, vcsrepo.member(heap, b, 1, false, "change"), change);
+            b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "command"), "\"attestations\"");
+            b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "true");
+            b = vcsrepo.member(heap, b, 1, false, "signed");
+            if vouched {
+                b = buffer.append(heap, b, "true");
+            } else {
+                b = buffer.append(heap, b, "false");
+            }
+            answer = vcsstore.Object { bytes: buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n"), status: 0, errno: 0 };
+        }
+    }
+    buffer.drop(heap, trusted);
+    return answer;
+}

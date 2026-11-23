@@ -1,6 +1,6 @@
 # `cancho vcs` as a complete version-control CLI, agents first
 
-> **Status: slice V1 (a local repository, section 9) is built; V2 onward is design.** Written before the code (`CONTRIBUTING.md`). A claim marked
+> **Status: slice V1 (a local repository, section 9) is built, and so are attestations and keys (section 11); the rest of V2 onward is design.** Written before the code (`CONTRIBUTING.md`). A claim marked
 > *(measured)* was measured on the date given, in the repository named; a claim marked *(read)* was read
 > from the source; one marked *(designed)* is a proposal that a slice below must measure before it stands.
 > The first draft of this document assumed that a typed-AST store could stand in for git on a code
@@ -107,7 +107,7 @@ cannot be recorded. Hunk-level recording is not offered; a change is made of who
 | replay | `replay <change> --onto <ref>` | re-applies a change's **operations** (not its text) onto another base and gates the result; the agent's answer to cherry-pick and rebase; reports `exact` (same tree) or `moved` |
 | share | `remote {add,list}`, `push`, `pull`, `fetch` | section 7 |
 | bridge | `export-git <dir>`, `mirror <git-url>` | section 7; one-way, derived |
-| keep | `verify` (re-hash everything, check the attestation chain), `gc`, `keys {new,sign}` | `verify` is the single command that says the store is sound |
+| keep | `verify` (re-hash everything, check the attestation chain), `gc`, `keys {new,sign}`, `attest`, `attestations` (section 11) | `verify` is the single command that says the store is sound |
 
 Not offered, on purpose, and said so: staging area and `add -p`, interactive rebase, stash (a branch and
 `switch --keep` do it), submodules, hooks (the gate is the hook), `reflog` (refs have an append-only
@@ -266,8 +266,8 @@ Refusal tags built in V1, each reached by `crates/cancho/tests/vcs_repo.rs`: `no
 `bad-revision`, `revert-conflict`, `revert-unsupported`, `git-unreadable`; also built, with a test of the
 library only or none yet: `bad-argument`, `path-unsupported`, `tree-invalid`, `binary-file`, `path-not-found`,
 `decl-not-found`, `submodule-unsupported`, `mode-unsupported`. An I/O failure is `io-error` and exits 3, not 1.
-Not yet built (V2 onward): `conflicts-open`, `merge-gate-failed`, `rename-edit`, `chain-broken`, `unsigned-change`,
-`intent-missing`, `remote-unreachable`, `remote-diverged`. The first list was *(designed)*: `not-a-repository`, `path-escapes`,
+Not yet built (V2 onward): `conflicts-open`, `merge-gate-failed`, `rename-edit`,
+`intent-missing`, `remote-unreachable`, `remote-diverged` (`chain-broken` and `unsigned-change` are built: section 11). The first list was *(designed)*: `not-a-repository`, `path-escapes`,
 `file-too-large`, `gate-failed`, `ref-moved`, `ref-protected`, `dirty-working-copy`, `lock-held`, `conflicts-open`,
 `merge-gate-failed`, `rename-edit`, `object-corrupt`, `chain-broken`, `unsigned-change`, `intent-missing`
 (only on a ref that requires it), `remote-unreachable`, `remote-diverged`.
@@ -281,9 +281,89 @@ Not yet built (V2 onward): `conflicts-open`, `merge-gate-failed`, `rename-edit`,
 * It does not run on its own authority: like every cancho program it is checked for the effects it uses, and
   the CLI performs file and (V3 onward) network effects only, never starts another program.
 * V1 is built; R1 did not show its scope to be wrong. Not built, said plainly: `merge`, `conflicts`, `resolve`,
-  `replay`, `tag`, `reset-ref`, `gc`, `keys`, remotes, `clone`, signatures and attestation chains on changes,
+  `replay`, `tag`, `reset-ref`, `gc`, remotes, `clone` (`keys`, signatures and attestation chains are built: section 11),
   `.cho` body-level diff, hunk-level recording, format-aware merge layers, compression. `switch` and `restore`
   work on whole files; `blame` follows first parents only; the histogram diff falls back to one replacement
   when no line occurs 64 times or fewer. `.canchoignore` supports names, `dir/`, `*suffix` and path prefixes
   only. Edit operations are derived at `record` and not for imported changes. A kill leaves a lock that
   `verify` reports and `unlock` removes (a pid-liveness check needs `unsafe` or another program).
+
+## 11. Attestations and keys *(built, #817)*
+
+Section 3 said a change carries `attestations`, "the ids of the gate results that let it exist", and section 4 listed
+`verify` ("check the attestation chain") and `keys {new,sign}`. What `record` writes into a change *(read, 0.1.0)* is one
+string, `gate:cancho-check:ok:N`: that the built-in gate ran over N files, with no compiler, no output, no time and nobody's
+name on it. That string stays as it is (a change's bytes, and so its id, do not move). What this section adds is beside the
+change, not in it.
+
+**The record.** An attestation is an object of its own kind (`objects/attestation/`), one line of JSON in a fixed order,
+which is what is hashed and what is signed:
+
+```
+{"change":C,"gate":S,"command":S,"status":N,"output":H,"compiler":S,"time":N,"previous":P[,"key":K,"signature":G]}
+```
+
+`change` is the change it speaks of; `gate` a name (`check`, `tests`, `authority`, `sign`, any word of letters, digits, `-`
+and `_`); `command` the command line with its arguments; `status` its exit status; `output` the blob id of what it wrote;
+`compiler` the version and commit of the `cancho` that wrote the record; `previous` the attestation of the same change
+that came before (empty for the first). `key` is an Ed25519 public key and `signature` its signature (`std.ed25519`), as
+lowercase hexadecimal digits, over the bytes of the record up to and including the key, closed with `}`. A record is read
+back only if it is byte for byte what the writer writes: nothing may follow `previous` but the key, and nothing the key but
+the signature, so there is no part of a signed record the signature does not cover.
+
+**Why the change is not rewritten.** The attestation names the change, so it cannot be part of what the change's id is
+made of; and the gates that matter most run after the change exists (R2: this repository's gate is 18 minutes). So the
+attestations of a change are a **chain** beside it: the ref `refs/attest/CHANGE` holds the last one, each names the one
+before, and the ref moves by compare-and-swap with its log, as every ref does (two writers attesting the same change: one
+is retried on the other's link; read from the code, not exercised by a test). A chain per change, not one log for the repository, so that two stores
+that hold the same change can exchange its attestations without one order to agree on (remotes are V3; not built).
+
+**Commands.** `attest [REV]` runs the built-in gate again on the change (the `.cho` files it changed against its first
+parent, checked in its tree) and records it; a tree that does not check is `gate-failed` and nothing is recorded.
+`attest [REV] --gate NAME --status N [--command TEXT] [--output-file FILE]` records what another gate said: **the command
+runs no program** (section 10), so the status and the output are what the caller gives it, and the record is the caller's
+claim; the output file is stored as a blob, so `output` names bytes the store has. A status that is not 0 is recorded as it
+is: that a gate failed is also a fact about a change. `attestations [REV]` lists the chain, the last first, each with its
+key and whether the key is trusted. `--key NAME` on `attest`, `record` and `revert` signs; `keys sign [REV] --key NAME`
+adds a `sign` record, the key's holder vouching for the change with no gate.
+
+**Keys.** `keys new NAME` writes `.cancho/vcs/keys/NAME.key` (the 32-byte seed as 64 digits, mode 0600; from
+`/dev/urandom`, or from `--seed-file`) and adds the public key to `keys/trusted`; `keys trust KEY` adds another's;
+`keys require BRANCH` adds the branch to `keys/required`; `keys list` shows both lists.
+
+**A branch that asks for a signature.** `record` and `revert` on a branch of `keys/required` are refused `unsigned-change`
+without `--key` (a dry run too). With one, the signed attestation of the built-in gate is stored after the change and
+**before** the branch moves, so a required branch is never at a change the store has no signature for; a kill between the
+two leaves an attestation of a change no ref names, which is garbage and not a wrong head.
+
+**`verify`.** Every chain is walked from its ref: each link must be in the store, hash to its name, be a record, be of the
+chain's change, and, when signed, carry a signature that is its key's. The first link that fails is named with the tag
+`chain-broken`. Every branch of `keys/required` must be at a change with a signature by a key of `keys/trusted` in a
+sound chain, or the problem is `unsigned-change`. `objects.attestation` counts the links read (left out when there are
+none, so the document of a store with no attestation is what it was).
+
+**What this is worth, and what it is not.**
+
+* The keys and the two lists are files of the store, not of the tree. Whoever can write `.cancho/vcs` can add a key to
+  `trusted` or take a branch out of `required`. So `required` protects against an agent that forgets, and a signature
+  proves who holds a key **to a reader who brings their own `trusted` list**; it does not protect a store from someone
+  with write access to it. A policy in the tree, itself signed, is the stronger form and is not built.
+* A chain that lost its **last** links cannot be told from one that never had them: nothing outside the chain says how
+  long it was. The ref's log (`refs/attest/CHANGE.log`) has a line per move and is not checked. A transparency log or a
+  witness was not asked for.
+* An attestation of a gate this command did not run is a claim. It says what the signer says ran; a reader who needs more
+  runs the gate.
+* The authority report is recorded as any other gate (`--gate authority --output-file report.txt`); two changes whose
+  reports differ have records whose `output` differs, and nothing here reads the two and says *widened*. Not built.
+* `branch create` and `switch --create` do not ask for a signature: a required branch can be made at an unsigned change,
+  and `verify` then says so.
+* `show` and `log` do not print the chain; `attestations` does. `import-git` makes none.
+
+**Measured** *(2026-11-23, macOS arm64, the store of `tests/commands/vcs_attest.sh`)*: a signed record is about 600 bytes;
+`attest --key`, `attestations` and `verify` of a store with five attestations each take under 20 ms wall. The public key
+`keys new` prints for the secret key of RFC 8032 section 7.1 test 1 is the one the RFC gives (the test checks it), and a
+record edited after signing, re-hashed and put in the chain is refused (`the signature is not its key's`).
+
+Refusal tags built here, each reached by `tests/commands/vcs_attest.sh`: `chain-broken` (a record that does not hash to
+its name, a signature that is not its key's, a link that is missing, a link of another change), `unsigned-change`,
+`key-not-found`, `key-exists`; and `gate-failed`, `bad-argument`, `bad-ref-name`, `bad-revision` from these commands.

@@ -1,0 +1,586 @@
+edition 12;
+module selfhost.clivcsmore;
+
+// clivcsmore.cho -- the commands of `cancho vcs` that came after `clivcsrepo.cho` reached its size: the attestations and the keys (`docs/vcs-cli.md` section 11, `vcsattest.cho`).
+//
+//   attest [REV] [--key NAME] [--time T]                                         the built-in gate (the check of the `.cho` files the change touched) run again on the change, and recorded
+//   attest [REV] --gate NAME --status N [--command TEXT] [--output-file FILE]    what another gate said, recorded as the caller gives it (this command runs no program)
+//   attestations [REV]                                                           the chain of a change, the last first
+//   keys new NAME [--seed-file FILE] | keys list | keys trust KEY | keys require BRANCH | keys sign [REV] --key NAME
+//
+// Every command answers one JSON document; a refusal is `{"command", "ok": false, "refused": {"message", "tag"}}` and exit 1.
+
+import std.buffer;
+import std.bytes;
+import selfhost.clibase;
+import selfhost.clivcsopts as opts;
+import selfhost.clivcsout;
+import selfhost.cliproject;
+import selfhost.jsonwrite;
+import selfhost.vcsattest;
+import selfhost.vcsobj;
+import selfhost.vcsrecord;
+import selfhost.vcsrepo;
+import selfhost.vcsstore;
+import selfhost.vcsswitch;
+
+// `before`, `what` and `after` as the message of a refusal of `command` with `tag`, said.
+fn refuse[&h, &i, &c, &w, &t](heap: &!h Heap, io: &!i Io, command: &c [byte], before: &static [byte], what: &w [byte], after: &static [byte], tag: &t [byte]) -> [heap, io_write] int {
+    var message = buffer.append(heap, buffer.append(heap, buffer.append(heap, buffer.empty(heap, 96), before), what), after);
+    var code = 1;
+    borrow message as &mb in {
+        code = clivcsout.refused(heap, io, command, buffer.bytes(mb), tag);
+    }
+    buffer.drop(heap, message);
+    return code;
+}
+
+// The seed of the key `--key NAME` names: 32 bytes, or nothing when the option is not given (status 0); or the refusal said (status 1, the exit status in `errno`).
+pub fn signer[&h, &i, &a, &d, &c](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir, command: &c [byte]) -> [heap, io_write, args, dir_read, dir_write, file_read] vcsstore.Object {
+    let (at, off) = opts.named(args, "--key");
+    if at < 0 {
+        return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    }
+    let name = opts.value_of(args, at, off);
+    let found = vcsattest.seed_of(heap, vcs, name);
+    let (seed, status, errno) = vcsstore.parts(found);
+    if status == 0 {
+        return vcsstore.Object { bytes: seed, status: 0, errno: 0 };
+    }
+    buffer.drop(heap, seed);
+    let code = refuse(heap, io, command, "this repository has no key `", name, "` (`cancho vcs keys new NAME` makes one)", "key-not-found");
+    return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: code };
+}
+
+// The change `spec` names (HEAD when it is empty): its id and status 0, or the refusal said (status 1, the exit status in `errno`).
+fn change_of[&h, &i, &d, &s, &c, &p](heap: &!h Heap, io: &!i Io, vcs: &d Dir, scratch: &!s [int], command: &c [byte], spec: &p [byte]) -> [heap, io_write, dir_read, dir_write, file_read] vcsstore.Object {
+    var found = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    let (none, ns, ne) = vcsstore.parts(found);
+    buffer.drop(heap, none);
+    if len(spec) == 0 {
+        found = vcsrepo.resolve(heap, vcs, scratch, "HEAD");
+    } else {
+        found = vcsrepo.resolve(heap, vcs, scratch, spec);
+    }
+    let (id, status, errno) = vcsstore.parts(found);
+    if status == 0 {
+        return vcsstore.Object { bytes: id, status: 0, errno: 0 };
+    }
+    var code = 1;
+    if len(spec) == 0 {
+        code = clivcsout.answered(heap, io, command, vcsstore.Object { bytes: id, status: status, errno: errno }, "HEAD");
+    } else {
+        code = clivcsout.answered(heap, io, command, vcsstore.Object { bytes: id, status: status, errno: errno }, spec);
+    }
+    return vcsstore.Object { bytes: buffer.empty(heap, 0), status: 1, errno: code };
+}
+
+// The time `--time T` gives, or `now`: the time and whether it is one.
+fn time_given[&a](args: &a Args, now: int) -> [args] (int, bool) {
+    let (at, off) = opts.named(args, "--time");
+    if at < 0 {
+        return (now, true);
+    }
+    let (valid, t) = vcsrecord.time_of(opts.value_of(args, at, off));
+    return (t, valid);
+}
+
+// What `add` answered, said: `{"attestation", "change", "command", "gate", "ok": true, "signed", "status"}`, or the store's refusal.
+fn attested[&h, &i, &m, &c, &g](heap: &!h Heap, io: &!i Io, command: &m [byte], answer: vcsstore.Object, change: &c [byte], gate: &g [byte], status: int, signed: bool) -> [heap, io_write] int {
+    let (id, code, errno) = vcsstore.parts(answer);
+    if code != 0 {
+        return clivcsout.answered(heap, io, command, vcsstore.Object { bytes: id, status: code, errno: errno }, "");
+    }
+    var b = vcsrepo.member(heap, buffer.push(heap, buffer.empty(heap, 320), byte_of(123)), 1, true, "attestation");
+    borrow id as &ib in {
+        b = vcsrepo.quoted(heap, b, buffer.bytes(ib));
+    }
+    buffer.drop(heap, id);
+    b = vcsrepo.quoted(heap, vcsrepo.member(heap, b, 1, false, "change"), change);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, false, "command"), command);
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, false, "gate"), gate);
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "true");
+    b = vcsrepo.member(heap, b, 1, false, "signed");
+    if signed {
+        b = buffer.append(heap, b, "true");
+    } else {
+        b = buffer.append(heap, b, "false");
+    }
+    b = buffer.push_nat(heap, vcsrepo.member(heap, b, 1, false, "status"), status);
+    clibase.show(heap, io, buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n"));
+    return 0;
+}
+
+// The built-in gate run on the change `id` (the `.cho` files it changed against its first parent, checked in its tree), and its attestation.
+fn attest_check[&h, &i, &r, &d, &s, &c, &k](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], id: &c [byte], time: int, seed: &k [byte], now: int) -> [heap, io_write, dir_read, dir_write, file_read, file_write] int {
+    let (old, new, status) = vcsrepo.change_trees(heap, vcs, scratch, id);
+    var code = 0;
+    if status != 0 {
+        code = clivcsout.answered(heap, io, "attest", vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: 0 }, "");
+    } else {
+        borrow old as &ob in {
+            borrow new as &nb in {
+                let (tree, touched, diffs) = vcsrecord.merge(heap, buffer.bytes(ob), buffer.bytes(nb), "\n");
+                buffer.drop(heap, tree);
+                buffer.drop(heap, diffs);
+                borrow touched as &tb in {
+                    let ran = vcsrecord.gate(heap, io, root, vcs, scratch, buffer.bytes(nb), buffer.bytes(tb));
+                    let (text, gs, ge) = vcsstore.parts(ran);
+                    borrow text as &xb in {
+                        if gs != 0 {
+                            var message = buffer.empty(heap, len(buffer.bytes(xb)) + 8);
+                            let detail = buffer.bytes(xb);
+                            var at = 0;
+                            while at < len(detail) {
+                                if detail[at] == byte_of(0) {
+                                    message = buffer.append(heap, message, ": ");
+                                } else {
+                                    message = buffer.push(heap, message, detail[at]);
+                                }
+                                at = at + 1;
+                            }
+                            borrow message as &mb in {
+                                code = clivcsout.refused(heap, io, "attest", buffer.bytes(mb), "gate-failed");
+                            }
+                            buffer.drop(heap, message);
+                        } else {
+                            code = attested(heap, io, "attest", vcsattest.checked(heap, vcs, scratch, id, buffer.bytes(xb), true, time, seed, now), id, "check", 0, len(seed) == 32);
+                        }
+                    }
+                    buffer.drop(heap, text);
+                }
+                buffer.drop(heap, touched);
+            }
+        }
+    }
+    buffer.drop(heap, old);
+    buffer.drop(heap, new);
+    return code;
+}
+
+// What a gate this command did not run said of the change `id`, recorded: `--gate NAME --status N [--command TEXT] [--output-file FILE]`. The output is stored as a blob, so the record's `output`
+// names bytes the store has.
+fn attest_said[&h, &i, &a, &f, &d, &s, &c, &w, &k](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), vcs: &d Dir, scratch: &!s [int], id: &c [byte], cwd: &w [byte], gate: &a [byte], time: int, seed: &k [byte], now: int) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, file_read, file_write] int {
+    if !vcsattest.key_name(gate) {
+        return refuse(heap, io, "attest", "a gate's name is letters, digits, `-` and `_`, not `", gate, "`", "bad-argument");
+    }
+    let (status_at, status_off) = opts.named(args, "--status");
+    var status = 0 - 1;
+    if status_at >= 0 {
+        status = opts.count_of(opts.value_of(args, status_at, status_off));
+    }
+    if status < 0 || status > 255 {
+        return refuse(heap, io, "attest", "`--gate ", gate, "` needs `--status N`, the exit status of what ran (0 to 255)", "bad-argument");
+    }
+    var command = buffer.empty(heap, 0);
+    let (command_at, command_off) = opts.named(args, "--command");
+    if command_at >= 0 {
+        command = buffer.append(heap, command, opts.value_of(args, command_at, command_off));
+    }
+    var output = buffer.empty(heap, 0);
+    var trouble = 0;
+    let (file_at, file_off) = opts.named(args, "--output-file");
+    if file_at >= 0 {
+        let full = cliproject.beneath(heap, cwd, opts.value_of(args, file_at, file_off));
+        borrow full as &fb in {
+            let read = clibase.read_file(heap, fs, buffer.bytes(fb));
+            let clibase.Contents { bytes, failed } = read;
+            buffer.drop(heap, output);
+            output = bytes;
+            trouble = failed;
+        }
+        buffer.drop(heap, full);
+    }
+    var code = 0;
+    var too_long = false;
+    borrow command as &mb in {
+        too_long = len(buffer.bytes(mb)) > 4096;
+    }
+    if trouble != 0 {
+        code = refuse(heap, io, "attest", "cannot read ", opts.value_of(args, file_at, file_off), "", "io-error");
+        code = 3;
+    } else if too_long {
+        code = refuse(heap, io, "attest", "`--command` is at most 4096 bytes", "", "", "bad-argument");
+    } else {
+        borrow output as &ob in {
+            let put = vcsstore.put(heap, vcs, scratch, "blob", buffer.bytes(ob), now);
+            let (blob, ps, pe) = vcsstore.parts(put);
+            if ps != 0 {
+                code = clivcsout.answered(heap, io, "attest", vcsstore.Object { bytes: blob, status: ps, errno: pe }, "");
+            } else {
+                borrow blob as &bb in {
+                    borrow command as &mb in {
+                        code = attested(heap, io, "attest", vcsattest.add(heap, vcs, scratch, id, gate, buffer.bytes(mb), status, buffer.bytes(bb), time, seed, now + 1), id, gate, status, len(seed) == 32);
+                    }
+                }
+                buffer.drop(heap, blob);
+            }
+        }
+    }
+    buffer.drop(heap, command);
+    buffer.drop(heap, output);
+    return code;
+}
+
+// `attest`: see the header.
+pub fn attest_in[&h, &i, &a, &f, &r, &d, &w, &k](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), root: &r Dir, vcs: &d Dir, cwd: &w [byte], options: opts.Options, clock: &k Clock) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, file_read, file_write, clock] int {
+    if options.positionals > 1 {
+        return clivcsout.refused(heap, io, "attest", "`attest` takes at most one change", "bad-argument");
+    }
+    let now = clock_unix_ms(clock) / 1000;
+    let (time, valid) = time_given(args, now);
+    if !valid {
+        return clivcsout.refused(heap, io, "attest", "`--time` is unix seconds", "bad-argument");
+    }
+    let (gate_at, gate_off) = opts.named(args, "--gate");
+    var builtin = gate_at < 0;
+    if gate_at >= 0 {
+        builtin = bytes.equal(opts.value_of(args, gate_at, gate_off), "check");
+    }
+    if builtin {
+        let (s_at, s_off) = opts.named(args, "--status");
+        let (c_at, c_off) = opts.named(args, "--command");
+        let (o_at, o_off) = opts.named(args, "--output-file");
+        if s_at >= 0 || c_at >= 0 || o_at >= 0 {
+            return clivcsout.refused(heap, io, "attest", "the gate `check` is run by this command: it takes no `--status`, `--command` or `--output-file`", "bad-argument");
+        }
+    }
+    let signing = signer(heap, io, args, vcs, "attest");
+    let (seed, signer_status, signer_code) = vcsstore.parts(signing);
+    if signer_status != 0 {
+        buffer.drop(heap, seed);
+        return signer_code;
+    }
+    var code = 0;
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    borrow mut scratch as &!sw in {
+        let s = contents(sw);
+        var named = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+        let (none, ns, ne) = vcsstore.parts(named);
+        buffer.drop(heap, none);
+        if options.positionals == 1 {
+            named = change_of(heap, io, vcs, s, "attest", arg(args, options.rev_at));
+        } else {
+            named = change_of(heap, io, vcs, s, "attest", "");
+        }
+        let (id, status, errno) = vcsstore.parts(named);
+        if status != 0 {
+            code = errno;
+        } else {
+            borrow id as &ib in {
+                borrow seed as &kb in {
+                    if builtin {
+                        code = attest_check(heap, io, root, vcs, s, buffer.bytes(ib), time, buffer.bytes(kb), now);
+                    } else {
+                        code = attest_said(heap, io, args, fs, vcs, s, buffer.bytes(ib), cwd, opts.value_of(args, gate_at, gate_off), time, buffer.bytes(kb), now);
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, id);
+    }
+    unbox_slice(heap, scratch);
+    buffer.drop(heap, seed);
+    return code;
+}
+
+// `attestations [REV]`: the chain of the change, or `chain-broken` and what is wrong with the first link that is.
+pub fn attestations_in[&h, &i, &a, &d](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir, options: opts.Options) -> [heap, io_write, args, dir_read, dir_write, file_read] int {
+    if options.positionals > 1 {
+        return clivcsout.refused(heap, io, "attestations", "`attestations` takes at most one change", "bad-argument");
+    }
+    var code = 0;
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    borrow mut scratch as &!sw in {
+        let s = contents(sw);
+        var named = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+        let (none, ns, ne) = vcsstore.parts(named);
+        buffer.drop(heap, none);
+        if options.positionals == 1 {
+            named = change_of(heap, io, vcs, s, "attestations", arg(args, options.rev_at));
+        } else {
+            named = change_of(heap, io, vcs, s, "attestations", "");
+        }
+        let (id, status, errno) = vcsstore.parts(named);
+        if status != 0 {
+            code = errno;
+        } else {
+            borrow id as &ib in {
+                let listed = vcsattest.list_command(heap, vcs, s, buffer.bytes(ib));
+                let (doc, ls, le) = vcsstore.parts(listed);
+                if ls == 60 {
+                    borrow doc as &db in {
+                        code = clivcsout.refused(heap, io, "attestations", buffer.bytes(db), "chain-broken");
+                    }
+                    buffer.drop(heap, doc);
+                } else {
+                    code = clivcsout.answered(heap, io, "attestations", vcsstore.Object { bytes: doc, status: ls, errno: le }, "");
+                }
+            }
+        }
+        buffer.drop(heap, id);
+    }
+    unbox_slice(heap, scratch);
+    return code;
+}
+
+// ---- keys --------------------------------------------------------------------------------------------------------------------
+
+// 32 bytes of the system's randomness (`/dev/urandom`) as 64 digits, or nothing when it cannot be read.
+fn fresh_seed[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, fs_read(""), file_read] buffer.Buffer {
+    var raw = buffer.empty(heap, 64);
+    match open_read(fs, "/dev/urandom") {
+        Opened::Failed(reason) => {
+        }
+        Opened::Ok(opened) => {
+            var file = opened;
+            var chunk = buffer.empty(heap, 32);
+            borrow mut file as &!handle in {
+                var going = true;
+                var turns = 0;
+                while going && turns < 64 {
+                    var got = 0;
+                    borrow mut chunk as &!c in {
+                        match file_read(handle, buffer.room(c)) {
+                            Read::Got(n) => {
+                                got = n;
+                                buffer.filled(c, n);
+                            }
+                            Read::End => {
+                                going = false;
+                            }
+                            Read::Failed(reason) => {
+                                going = false;
+                            }
+                        }
+                    }
+                    if got > 0 {
+                        borrow chunk as &c in {
+                            raw = buffer.append(heap, raw, buffer.bytes(c));
+                        }
+                        borrow mut chunk as &!c in {
+                            buffer.clear(c);
+                        }
+                    }
+                    borrow raw as &rb in {
+                        if buffer.size(rb) >= 32 {
+                            going = false;
+                        }
+                    }
+                    turns = turns + 1;
+                }
+            }
+            file_close(file);
+            buffer.drop(heap, chunk);
+        }
+    }
+    var digits = buffer.empty(heap, 64);
+    borrow raw as &rb in {
+        if buffer.size(rb) >= 32 {
+            digits = vcsattest.hex(heap, digits, buffer.bytes(rb)[0..32]);
+        }
+    }
+    buffer.drop(heap, raw);
+    return digits;
+}
+
+// `keys new NAME [--seed-file FILE]`: the seed is the 64 digits the file holds, or 32 bytes of the system's randomness.
+fn keys_new[&h, &i, &a, &f, &d, &w](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), vcs: &d Dir, cwd: &w [byte], name: &a [byte]) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, file_read, file_write] int {
+    var digits = buffer.empty(heap, 0);
+    let (file_at, file_off) = opts.named(args, "--seed-file");
+    if file_at >= 0 {
+        let full = cliproject.beneath(heap, cwd, opts.value_of(args, file_at, file_off));
+        borrow full as &fb in {
+            let read = clibase.read_file(heap, fs, buffer.bytes(fb));
+            let clibase.Contents { bytes, failed } = read;
+            borrow bytes as &bb in {
+                digits = buffer.append(heap, digits, vcsstore.trimmed(buffer.bytes(bb)));
+            }
+            buffer.drop(heap, bytes);
+        }
+        buffer.drop(heap, full);
+    } else {
+        buffer.drop(heap, digits);
+        digits = fresh_seed(heap, fs);
+    }
+    var code = 0;
+    borrow digits as &db in {
+        let made = vcsattest.new_key(heap, vcs, name, buffer.bytes(db));
+        let (public, status, errno) = vcsstore.parts(made);
+        if status == 63 {
+            code = refuse(heap, io, "keys", "this repository has a key `", name, "` already", "key-exists");
+        } else if status == 64 {
+            code = refuse(heap, io, "keys", "a key's name is letters, digits, `-` and `_`, and a seed is 64 lowercase hexadecimal digits: `", name, "` could not be made", "bad-argument");
+        } else if status != 0 {
+            code = clivcsout.answered(heap, io, "keys", vcsstore.Object { bytes: buffer.empty(heap, 0), status: status, errno: errno }, "");
+        } else {
+            var b = buffer.append(heap, vcsrepo.member(heap, buffer.push(heap, buffer.empty(heap, 256), byte_of(123)), 1, true, "command"), "\"keys\"");
+            borrow public as &pb in {
+                b = vcsrepo.quoted(heap, vcsrepo.member(heap, b, 1, false, "key"), buffer.bytes(pb));
+            }
+            b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, false, "name"), name);
+            b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "true");
+            clibase.show(heap, io, buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n"));
+        }
+        buffer.drop(heap, public);
+    }
+    buffer.drop(heap, digits);
+    return code;
+}
+
+// `keys list`: the refs that ask for a signature and the keys that are trusted.
+fn keys_list[&h, &i, &d](heap: &!h Heap, io: &!i Io, vcs: &d Dir) -> [heap, io_write, dir_read, dir_write, file_read] int {
+    let required = vcsattest.policy(heap, vcs, "required");
+    let trusted = vcsattest.policy(heap, vcs, "trusted");
+    var b = buffer.append(heap, vcsrepo.member(heap, buffer.push(heap, buffer.empty(heap, 256), byte_of(123)), 1, true, "command"), "\"keys\"");
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "true");
+    borrow required as &rb in {
+        b = vcsswitch.string_array(heap, vcsrepo.member(heap, b, 1, false, "required"), buffer.bytes(rb), 1);
+    }
+    b = vcsrepo.member(heap, b, 1, false, "trusted");
+    borrow trusted as &tb in {
+        let text = buffer.bytes(tb);
+        if len(text) == 0 {
+            b = buffer.append(heap, b, "[]");
+        } else {
+            b = buffer.push(heap, b, byte_of(91));
+            var at = 0;
+            while at < len(text) {
+                var end = at;
+                while end < len(text) && text[end] != byte_of(10) {
+                    end = end + 1;
+                }
+                var stop = at;
+                while stop < end && text[stop] != byte_of(32) {
+                    stop = stop + 1;
+                }
+                if at > 0 {
+                    b = buffer.push(heap, b, byte_of(44));
+                }
+                b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(123));
+                b = jsonwrite.string(heap, vcsrepo.member(heap, b, 3, true, "key"), text[at..stop]);
+                b = vcsrepo.member(heap, b, 3, false, "name");
+                if stop < end {
+                    b = jsonwrite.string(heap, b, text[stop + 1..end]);
+                } else {
+                    b = buffer.append(heap, b, "null");
+                }
+                b = buffer.push(heap, jsonwrite.newline(heap, b, 2), byte_of(125));
+                at = end + 1;
+            }
+            b = buffer.push(heap, jsonwrite.newline(heap, b, 1), byte_of(93));
+        }
+    }
+    buffer.drop(heap, required);
+    buffer.drop(heap, trusted);
+    clibase.show(heap, io, buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n"));
+    return 0;
+}
+
+// `keys trust KEY` and `keys require BRANCH`: one line added to `trusted` or to `required` (`what`), said as `{"command": "keys", "ok": true, WHAT: VALUE}`.
+fn keys_add[&h, &i, &d, &v](heap: &!h Heap, io: &!i Io, vcs: &d Dir, what: &static [byte], value: &v [byte]) -> [heap, io_write, dir_read, dir_write, file_read, file_write] int {
+    let errno = vcsattest.add_line(heap, vcs, what, value);
+    if errno != 0 {
+        return clivcsout.answered(heap, io, "keys", vcsstore.Object { bytes: buffer.empty(heap, 0), status: 10, errno: errno }, "");
+    }
+    var b = buffer.append(heap, vcsrepo.member(heap, buffer.push(heap, buffer.empty(heap, 256), byte_of(123)), 1, true, "command"), "\"keys\"");
+    b = buffer.append(heap, vcsrepo.member(heap, b, 1, false, "ok"), "true");
+    b = jsonwrite.string(heap, vcsrepo.member(heap, b, 1, false, what), value);
+    clibase.show(heap, io, buffer.append(heap, jsonwrite.newline(heap, b, 0), "}\n"));
+    return 0;
+}
+
+// `keys sign [REV] --key NAME`: the key's holder vouches for the change, with a `sign` attestation.
+fn keys_sign[&h, &i, &a, &d, &k](heap: &!h Heap, io: &!i Io, args: &a Args, vcs: &d Dir, options: opts.Options, clock: &k Clock) -> [heap, io_write, args, dir_read, dir_write, file_read, file_write, clock] int {
+    let now = clock_unix_ms(clock) / 1000;
+    let (time, valid) = time_given(args, now);
+    if !valid {
+        return clivcsout.refused(heap, io, "keys", "`--time` is unix seconds", "bad-argument");
+    }
+    let signing = signer(heap, io, args, vcs, "keys");
+    let (seed, signer_status, signer_code) = vcsstore.parts(signing);
+    if signer_status != 0 {
+        buffer.drop(heap, seed);
+        return signer_code;
+    }
+    var keyed = false;
+    borrow seed as &kb in {
+        keyed = buffer.size(kb) == 32;
+    }
+    if !keyed {
+        buffer.drop(heap, seed);
+        return clivcsout.refused(heap, io, "keys", "`keys sign` needs `--key NAME`", "bad-argument");
+    }
+    var code = 0;
+    let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+    borrow mut scratch as &!sw in {
+        let s = contents(sw);
+        var named = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+        let (none, ns, ne) = vcsstore.parts(named);
+        buffer.drop(heap, none);
+        if options.positionals >= 2 {
+            named = change_of(heap, io, vcs, s, "keys", arg(args, options.name_at));
+        } else {
+            named = change_of(heap, io, vcs, s, "keys", "");
+        }
+        let (id, status, errno) = vcsstore.parts(named);
+        if status != 0 {
+            code = errno;
+        } else {
+            let nothing = vcsobj.object_id(heap, s, "blob", "", buffer.empty(heap, 64));
+            borrow id as &ib in {
+                borrow seed as &kb in {
+                    borrow nothing as &nb in {
+                        code = attested(heap, io, "keys", vcsattest.add(heap, vcs, s, buffer.bytes(ib), "sign", "cancho vcs keys sign", 0, buffer.bytes(nb), time, buffer.bytes(kb), now), buffer.bytes(ib), "sign", 0, true);
+                    }
+                }
+            }
+            buffer.drop(heap, nothing);
+        }
+        buffer.drop(heap, id);
+    }
+    unbox_slice(heap, scratch);
+    buffer.drop(heap, seed);
+    return code;
+}
+
+// `keys new|list|trust|require|sign`: see the header.
+pub fn keys_in[&h, &i, &a, &f, &d, &w, &k](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), vcs: &d Dir, cwd: &w [byte], options: opts.Options, clock: &k Clock) -> [heap, io_write, args, fs_read(""), dir_read, dir_write, file_read, file_write, clock] int {
+    if options.positionals < 1 {
+        return clivcsout.refused(heap, io, "keys", "`keys` takes `new NAME`, `list`, `trust KEY`, `require BRANCH` or `sign [REV] --key NAME`", "bad-argument");
+    }
+    let verb = arg(args, options.rev_at);
+    if bytes.equal(verb, "list") && options.positionals == 1 {
+        return keys_list(heap, io, vcs);
+    }
+    if bytes.equal(verb, "sign") && options.positionals <= 2 {
+        return keys_sign(heap, io, args, vcs, options, clock);
+    }
+    if options.positionals != 2 {
+        return refuse(heap, io, "keys", "`keys ", verb, "` is not `new NAME`, `list`, `trust KEY`, `require BRANCH` or `sign [REV] --key NAME`", "bad-argument");
+    }
+    let value = arg(args, options.name_at);
+    if bytes.equal(verb, "new") {
+        return keys_new(heap, io, args, fs, vcs, cwd, value);
+    }
+    if bytes.equal(verb, "trust") {
+        if !vcsattest.is_hex(value, 64) {
+            return refuse(heap, io, "keys", "a public key is 64 lowercase hexadecimal digits, not `", value, "`", "bad-argument");
+        }
+        return keys_add(heap, io, vcs, "trusted", value);
+    }
+    if bytes.equal(verb, "require") {
+        var name = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(value) + 8), "heads/"), value);
+        var code = 0;
+        borrow name as &nb in {
+            if vcsstore.check_ref_name(buffer.bytes(nb)) {
+                code = keys_add(heap, io, vcs, "required", buffer.bytes(nb));
+            } else {
+                code = refuse(heap, io, "keys", "`", value, "` is not a branch name", "bad-ref-name");
+            }
+        }
+        buffer.drop(heap, name);
+        return code;
+    }
+    return refuse(heap, io, "keys", "`keys ", verb, "` is not `new NAME`, `list`, `trust KEY`, `require BRANCH` or `sign [REV] --key NAME`", "bad-argument");
+}

@@ -189,7 +189,7 @@ pub fn status_corrupt() -> [] int {
 }
 
 // The value of the member `name` of the object `obj` of `jm`, or -1.
-fn field[&j, &x, &k](jm: &!j [int], src: &x [byte], obj: int, name: &k [byte]) -> [] int {
+pub fn field[&j, &x, &k](jm: &!j [int], src: &x [byte], obj: int, name: &k [byte]) -> [] int {
     if jsonread.kind(jm, obj) != jsonread.k_object() {
         return 0 - 1;
     }
