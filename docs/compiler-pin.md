@@ -1,11 +1,13 @@
 # Pinning the compiler by version
 
-Status: **slice 2 built** (the pin form, `main` at `0.1.1-dev`); slices 3 and 4
+Status: **slice 2 built** (the pin form, `main` at `0.1.1-dev`) and the tooling of
+slice 3 (`install.sh <version>`, the release workflow); the release itself and slice 4
 are not. §3 is measured by `tests/commands/cli_project.sh`: a `-dev` build
 refuses `cancho = "0.1.0"` (and says which version it is), accepts it with
 `--ignore-compiler-rev`, a release build accepts the pin that names it and
 refuses another, and a project file whose pin is `N.N`, `N.N.N.N`, `vN.N.N`,
-`N.N.N-dev` or empty is refused at load. §4 is still open.
+`N.N.N-dev` or empty is refused at load. §4.1 is decided; `install.sh <version>` is measured by `tests/commands/release.sh`, the
+workflow's two refusals only when it publishes (a pull request cannot run them).
 
 ## 1. What there is
 
@@ -47,18 +49,22 @@ that closes it:
   a hash pin and no version pin, and a version pin names a release.
 
 Two commits can still both report `0.1.0` only if someone releases without
-bumping; the release workflow should refuse that (a tag for a version that
-already has one). This part is not built, and whether the workflow already
-refuses it has not been checked.
+bumping; the release workflow refuses that (a tag for a version that already
+has one), see §4.1.
 
-## 4. What is not decided
+## 4. What was not decided
 
-1. **Finding a release from a version.** Release assets are named by commit
-   (`cancho-<hash>-<target>.tar.gz`, `scripts/install.sh <commit>`). A project's
-   CI that reads `cancho = "0.1.1"` needs the commit. Candidates: a second tag
-   `v0.1.1` on the release, which `install.sh` accepts in place of a commit; or
-   the release notes. Choose after looking at what `install.sh` can resolve
-   without a new network dependency.
+1. **Finding a release from a version** (decided). The release workflow, when it publishes, also
+   makes the release `v<version>` with one asset, `commit`, holding the full hash, and
+   `scripts/install.sh 0.1.1` reads it (`CANCHO_VERSIONS` names another place) and then does
+   what it does for a hash: the published sha256, the commit the binary reports, and now the
+   version it reports. Chosen over the release notes (they are prose to parse) and over a
+   second tag alone (a tag says a commit, but `install.sh` reaches releases by asset URL, and
+   a tag URL is not one). No new host: the same `releases/download` the assets are on. The
+   workflow refuses to publish a commit whose `version.cho` holds a `-dev` version, and a
+   version that already has a release (the tag `v<version>` exists), which is the check
+   §3 asks for. A release that was made before this (0.1.0) has no `v0.1.0` and is found by
+   its hash.
 2. **Whether the hash form should warn** when it equals a released commit. Not
    needed to ship; noted.
 
@@ -70,7 +76,7 @@ refuses it has not been checked.
    refused for another version, refused for a `-dev` build, hash form
    unchanged, `unknown` build says so. Renew `tests/commands/*.expected` and
    `docs/cli-in-cancho.md`.
-3. `0.1.1` released (needs the owner's go-ahead; it is outward-facing).
+3. `0.1.1` released (the owner gave the go-ahead 2026-11-23; it is outward-facing).
 4. Each `cancho-*` repository that has a pin moves to `cancho = "0.1.1"` in a
    PR of its own, after building and testing with that compiler; those that have
    no `cancho.toml` are listed and decided one by one, since adding a pin is a

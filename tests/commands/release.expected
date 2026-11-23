@@ -27,3 +27,12 @@ latest: exit 0
 cancho 0.0.0 (rev 0123456789abcdef0123456789abcdef01234567, host fake)
 nightly: exit 2
 no release: exit 5
+== install by version reads the commit of the release and checks the binary for it
+by version: exit 0
+cancho 0.1.1 (rev 0123456789abcdef0123456789abcdef01234567, host fake)
+version the binary does not report: exit 4: 1 refusal said
+no such release: exit 5
+bad version: exit 2
+bad version: exit 2
+bad version: exit 2
+bad version: exit 2

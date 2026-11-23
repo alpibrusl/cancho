@@ -92,6 +92,24 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - uses: actions/checkout@v4
+      # A release is a version too (docs/compiler-pin.md): `cancho = "0.1.1"` names the commit that has this version and no other. So the commit must
+      # hold a release's version (never `-dev`), and a version already released is refused: `gh release create` fails on a tag that exists. The release
+      # `v<version>` carries one asset, `commit`, the hash `install.sh <version>` reads, and is made first so that a refusal leaves nothing behind.
+      - name: The version of this commit, released once
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/.*return "\([0-9]*\.[0-9]*\.[0-9]*\(-[a-z]*\)\{0,1\}\)";.*/\1/p' compiler/version.cho | head -n 1)
+          case $version in
+            ''|*-*) echo "refusing to publish: compiler/version.cho holds '$version', not a release version (N.N.N)" >&2; exit 1 ;;
+          esac
+          printf '%s\n' "$GITHUB_SHA" > commit
+          gh release create "v$version" commit \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "cancho $version" \
+            --notes "cancho $version is the commit $GITHUB_SHA: the release cancho-$GITHUB_SHA has the binaries. Install: curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh -s $version"
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}

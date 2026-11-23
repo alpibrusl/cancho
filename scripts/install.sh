@@ -1,16 +1,18 @@
 #!/bin/sh
 # Install a prebuilt cancho compiler (docs/package-system.md §9).
 #
-#   install.sh [<commit> [prefix]]
+#   install.sh [<commit>|<version> [prefix]]
 #
 #   <commit>  the full commit hash, the value of `cancho = "..."` in cancho.toml;
 #             left out, the latest release (the tag GitHub redirects `releases/latest` to, `cancho-<commit>`)
+#   <version> a release, `0.1.1`, also a value of `cancho = "..."`: the commit is read from the `commit` asset of the release `v<version>`
 #   prefix    default $HOME/.local; the binary lands in <prefix>/bin/cancho
 #
 #   curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh
 #
 # Environment:
 #   CANCHO_REPO_URL  where `releases/latest` is asked (default https://github.com/alpibrusl/cancho); only used with no <commit>
+#   CANCHO_VERSIONS  base URL of the `commit` asset of a version (default https://github.com/alpibrusl/cancho/releases/download/v<version>); only used with a <version>
 #   CANCHO_RELEASES  base URL of the release assets
 #                     (default https://github.com/alpibrusl/cancho/releases/download/<commit>;
 #                     a release's tag is `cancho-<commit>`: GitHub refuses a tag that is a bare 40 or 64 hex digits)
@@ -31,7 +33,20 @@ if [ "$#" -eq 0 ]; then
 else
   rev=$1
 fi
-[ -n "$rev" ] || { echo "usage: install.sh [<commit> [prefix]]" >&2; exit 2; }
+# A release version, `0.1.1`: the value `cancho = "0.1.1"` takes in cancho.toml (docs/compiler-pin.md). The release `v0.1.1` carries one small asset, `commit`,
+# the full hash it was released at; what that names is then held to the same checks as a commit given by hand, and the binary must report the version too.
+version=
+case $rev in
+  [0-9]*.[0-9]*.[0-9]*)
+    case $rev in *[!0-9.]*|*..*|.*|*.) echo "not a release version: $rev" >&2; exit 2 ;; esac
+    version=$rev
+    vbase=${CANCHO_VERSIONS:-https://github.com/alpibrusl/cancho/releases/download/v$version}
+    named=$(curl --fail --silent --show-error --location "$vbase/commit") ||
+      { echo "no release $version at $vbase/commit" >&2; exit 5; }
+    rev=$(printf '%s' "$named" | tr -d ' \n')
+    ;;
+esac
+[ -n "$rev" ] || { echo "usage: install.sh [<commit>|<version> [prefix]]" >&2; exit 2; }
 prefix=${2:-$HOME/.local}
 case $rev in
   *[!0-9a-f]*|'') echo "not a full commit hash: $rev" >&2; exit 2 ;;
@@ -62,6 +77,10 @@ else got=$(shasum -a 256 "$work/$name.tar.gz" | cut -d' ' -f1); fi
 tar -C "$work" -xzf "$work/$name.tar.gz"
 reported=$("$work/$name/bin/cancho" --version | sed -n 's/.*(rev \([0-9a-f]*\),.*/\1/p')
 [ "$reported" = "$rev" ] || { echo "the binary reports rev '$reported', not $rev" >&2; exit 4; }
+if [ -n "$version" ]; then
+  reported_version=$("$work/$name/bin/cancho" --version | sed -n 's/^cancho \([^ ]*\) .*/\1/p')
+  [ "$reported_version" = "$version" ] || { echo "the binary reports version '$reported_version', not $version" >&2; exit 4; }
+fi
 
 mkdir -p "$prefix/bin"
 cp "$work/$name/bin/cancho" "$prefix/bin/cancho.new"
