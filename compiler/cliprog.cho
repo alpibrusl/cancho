@@ -26,6 +26,7 @@ import selfhost.version;
 import selfhost.testscan;
 import selfhost.satisfytext;
 import selfhost.clibase;
+import selfhost.cliedges;
 
 // The program `tool` started with the arguments in `list` (each followed by a NUL) and waited for, its standard output (or, with `err`,
 // its standard error) written to the file at `log`: its exit status, 128 and the signal if it was killed, or 255 if it did not run.
@@ -317,7 +318,7 @@ pub fn files_of_args[&h, &a](heap: &!h Heap, args: &a Args, build: bool, run: bo
         let word = arg(args, n);
         if clibase.takes_value(word, build) {
             n = n + 1;
-        } else if !(run && bytes.equal(word, "--stdin")) && !bytes.equal(word, "--std") {
+        } else if !(run && bytes.equal(word, "--stdin")) && !bytes.equal(word, "--std") && !bytes.equal(word, "--edges") {
             names = buffer.append(heap, buffer.append(heap, names, word), "\0");
         }
         n = n + 1;
@@ -419,6 +420,7 @@ pub fn load_files[&h, &i, &f, &s, &e, &m](heap: &!h Heap, io: &!i Io, fs: &f Fs(
 // names (linux, darwin or linux-aarch64; the default is linux): a program cannot ask what it runs on.
 pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock, ids: bool, layout: bool, build: bool, run: bool, authority: int) -> [heap, io_read, io_write, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec(""), clock, poll] int {
     var json = false;
+    var edges = false;
     var forward = false;
     var host = 0;
     var wasi = 0;
@@ -438,6 +440,8 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             } else {
                 return clibase.usage_error(heap, io, "`--output` needs a form: json (of `check`)");
             }
+        } else if ids && bytes.equal(word, "--edges") {
+            edges = true;
         } else if bytes.equal(word, "--host") {
             n = n + 1;
             host_given = true;
@@ -604,8 +608,27 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                 }
             }
             driver.discard(heap, built);
-            if status == 0 && ids {
+            if status == 0 && ids && !edges {
                 status = driver.discard(heap, driver.run_many(heap, io, buffer.bytes(r), 9, host));
+            }
+            if status == 0 && edges {
+                // What each declaration refers to (mode 21), with the places worked out here, where the files are.
+                let found = driver.run_many(heap, io, buffer.bytes(r), 21, host);
+                borrow found as &fb in {
+                    status = fb.status;
+                    if status == 0 {
+                        borrow laid as &lt in {
+                            borrow mut lens as &!lb in {
+                                borrow names as &nm in {
+                                    clibase.show(heap, io, cliedges.render(heap, buffer.bytes(fb.ir), buffer.bytes(nm), buffer.bytes(lt), contents(lb)));
+                                }
+                            }
+                        }
+                    } else {
+                        console.error_all(io, "CANNOT a floating-point literal of more than 120 significant digits: its bits are not worked out\n");
+                    }
+                }
+                driver.discard(heap, found);
             }
         }
     }

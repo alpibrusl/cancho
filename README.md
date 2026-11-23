@@ -66,6 +66,7 @@ cancho run   <file.cho>... [--std] [-l <name>]... [-L <path>]...   # build, run,
 cancho test  <file.cho>... [--std] [-l <name>]... [-L <path>]...   # run every `fn test_*`, one process each; exit 4 if one failed
 cancho satisfy <contract.cho> <candidate.cho> [--std]   # a contract's tests call the candidate; the verdict names the SigId
 cancho ids   <file.cho>... [--std]    # each declaration's content hash
+cancho ids   <file.cho>... [--std] --edges   # as JSON: what each declaration refers to, its file, lines and signature
 cancho authority <file.cho>... [--std] [--output json]  # what it can reach
 cancho layout    <file.cho>... [--std]  # what every leaf costs, and what packing would save
 cancho fmt   <file.cho|dir>... [--check]   # canonical layout, comments kept; --check exits 1 if anything would change

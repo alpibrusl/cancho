@@ -212,6 +212,16 @@ compiler in cancho has no code for (its `skip`) is let through, since an identit
 command adds them (`STD` in `main.rs`, kept as `stdorder.cho`, **generated** by `selfhost::statics::std_order_module_is_the_std_table_of_cancho`, which also
 fails if `std/` and the table differ). The identities, and so the lines, do not depend on where the files were.
 
+**`--edges`** (cancho#816; not a command of the Rust `cancho`, so nothing to compare it with). After the same check, mode 21 (`identity.edges`) goes over each declaration
+as the identities do and notes each name that is answered by the hash of a declaration: a type in a signature, a field or a body, and a function that is
+called or passed. `cliedges.cho` writes them as JSON, one object for each type, function, foreign function and static in the order they are declared:
+`kind` (`type`, `fn`, `extern`, `static`), `module` (empty for the root), `name`, `pub`, `file`, `line`, `end_line`, `signature` (the source text up to the body;
+the whole text for a type and a foreign function) and `refers`, a list of `{kind, module, name}` with `kind` `type` or `fn`, each once, in the order they are
+first named. A declaration of the library carried in this binary (`--std`) is not listed, and is named when it is referred to. What it does not say: a use of
+a static, of a field or of a variant by name (they are not names an identity is made of), and the callers (the same table read the other way; the reader
+inverts it). The use it was made for is an agent that is shown the declarations it is to change, what they refer to and what refers to them, and the
+signatures of the rest (`cancho-code`, `docs/repo-patch.md`). Test: `tests/commands/ids_edges.sh`.
+
 **Measured (Linux x86-64).** `selfhost::cli::the_command_line_in_cancho_writes_the_identities_like_cancho_ids` runs `ids` of both on the 908 programs of
 `check` above, and, for every tenth, with the library: 182 runs write lines (26 of them with the library, 767,106 bytes of it), 813 refuse, and the lines
 are the same byte for byte, the status the same. Four refusals the checker in cancho does not make are named in the test: `g17_conn_payload.cho`
