@@ -1,0 +1,827 @@
+edition 12;
+module selfhost.vcsreplay;
+
+// vcsreplay.cho -- the `replay` command of `cancho vcs` (`docs/vcs-cli.md` section 12): a recorded change applied again, by its operations, to the tree of another branch.
+//
+//   replay_command(heap, io, root, vcs, scratch, spec, onto, author, expect, dry, no_gate, bad_time, time, now, seed)
+//
+// The change `spec` names (which must have exactly one parent) is read as the move from its parent's tree P to its own tree X, and applied to the tree O of the branch `onto`, one path at a time:
+//
+//   O has what P had             the path becomes what X has (a file added, removed, changed, its mode)
+//   O has what X has             nothing to do
+//   a `.cho` file, all three     each declaration the change added, removed or changed (the `decls` it recorded) is put into O's text when O's declaration is what P's was, skipped when it is
+//                                already what X's is, and is a conflict otherwise
+//   another text file, all three the anchored edits the change recorded for the path (`edits`), each applied where its `old` occurs exactly once
+//   anything else                a conflict
+//
+// The new tree goes through the path of `record` (`vcsrecord.changed`: the gate, the declarations and edits of the new move, the store, the move of the branch by compare-and-swap), with the intent
+// and the author of the change replayed and `"origin"` naming it. When `onto` is the branch HEAD is on, the working copy must be clean and is brought to the new tree; otherwise it is not touched.
+// Nothing here depends on the time of day or on the order of a directory: the same change on the same branch head, with the same `--time`, is the same bytes.
+//
+// The answer is `vcsstore.Object`: the document in `bytes`, status 0; or 50 with a whole refusal document (`replay-conflict`, `anchor-not-found`, `anchor-ambiguous`: the path, the declaration, the
+// three texts and the intent); or 70 `replay-unsupported` (no parent, or two), 54 `dirty-working-copy` (the paths), 18 `bad-revision` (`onto` is not a branch), and those of `vcsrecord`.
+
+import std.buffer;
+import std.bytes;
+import std.utf8;
+import selfhost.driver;
+import selfhost.jsonread;
+import selfhost.jsonwrite;
+import selfhost.vcschange;
+import selfhost.vcsobj;
+import selfhost.vcsrecord;
+import selfhost.vcsrepo;
+import selfhost.vcsrevert;
+import selfhost.vcsscan;
+import selfhost.vcsstatus;
+import selfhost.vcsstore;
+import selfhost.vcsswitch;
+
+// The tag of a status: this module's (70) and `vcsrevert.tag`'s.
+pub fn tag(status: int) -> [] &static [byte] {
+    if status == 70 {
+        return "replay-unsupported";
+    }
+    return vcsrevert.tag(status);
+}
+
+// ---- the declarations of a text ----------------------------------------------------------------------------------------------
+
+// Where the declarations of the `.cho` text `text` are: for each function and type, `KEY`, a NUL, the byte it starts at, a NUL, the byte it ends at, and a newline, in the order they are declared;
+// and whether the text parses. The key is the one a change records (`vcsdecl.cho`): `fn MODULE.NAME` (`fn NAME` in the root module) or `type NAME`.
+fn spans[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte]) -> [heap, io_write] (buffer.Buffer, bool) {
+    var raw = buffer.append(heap, buffer.empty(heap, len(text) + 24), "FILE ");
+    raw = buffer.push_nat(heap, raw, len(text));
+    raw = buffer.push(heap, raw, byte_of(10));
+    raw = buffer.append(heap, raw, text);
+    var out = buffer.empty(heap, 0);
+    var ok = false;
+    borrow raw as &rb in {
+        let built = driver.run_many(heap, io, buffer.bytes(rb), 21, 0);
+        let driver.Built { ir, status, rule, from, to, more } = built;
+        buffer.drop(heap, more);
+        if status == 0 {
+            ok = true;
+            borrow ir as &ib in {
+                let recs = buffer.bytes(ib);
+                var at = 0;
+                while at < len(recs) {
+                    let end = vcsscan.line_end(recs, at);
+                    let rec = recs[at..end];
+                    // kind, module, name, pub, from, signature end, to: seven fields, each ended by a NUL.
+                    let kind = rec[0..cut_at(rec, 0)];
+                    if bytes.equal(kind, "fn") || bytes.equal(kind, "type") {
+                        let module_from = cut_at(rec, 0) + 1;
+                        let module_to = cut_at(rec, 1);
+                        let name_to = cut_at(rec, 2);
+                        out = buffer.push(heap, buffer.append(heap, out, kind), byte_of(32));
+                        if bytes.equal(kind, "fn") && module_to > module_from {
+                            out = buffer.push(heap, buffer.append(heap, out, rec[module_from..module_to]), byte_of(46));
+                        }
+                        out = buffer.push(heap, buffer.append(heap, out, rec[module_to + 1..name_to]), byte_of(0));
+                        // The compiler says where `fn` or `type` is; a declaration starts at its `pub` when it has one.
+                        var start = nat_of(rec[cut_at(rec, 3) + 1..cut_at(rec, 4)]);
+                        var back = start;
+                        while back > 0 && back <= len(text) && text[back - 1] == byte_of(32) {
+                            back = back - 1;
+                        }
+                        if back >= 3 && back < start && bytes.equal(text[back - 3..back], "pub") && (back == 3 || text[back - 4] == byte_of(10) || text[back - 4] == byte_of(32)) {
+                            start = back - 3;
+                        }
+                        out = buffer.push(heap, buffer.push_nat(heap, out, start), byte_of(0));
+                        out = buffer.push(heap, buffer.append(heap, out, rec[cut_at(rec, 5) + 1..cut_at(rec, 6)]), byte_of(10));
+                    }
+                    at = end + 1;
+                }
+            }
+        }
+        buffer.drop(heap, ir);
+    }
+    buffer.drop(heap, raw);
+    return (out, ok);
+}
+
+// Where the NUL that ends field `n` (counting from 0) of `rec` is; the length of `rec` when it has no such field.
+fn cut_at[&r](rec: &r [byte], n: int) -> [] int {
+    var seen = 0;
+    var i = 0;
+    while i < len(rec) {
+        if rec[i] == byte_of(0) {
+            if seen == n {
+                return i;
+            }
+            seen = seen + 1;
+        }
+        i = i + 1;
+    }
+    return len(rec);
+}
+
+// The number written in decimal at the start of `text`: its digits, up to the first byte that is not one.
+fn nat_of[&t](text: &t [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) && int_of(text[i]) >= 48 && int_of(text[i]) <= 57 {
+        n = n * 10 + (int_of(text[i]) - 48);
+        i = i + 1;
+    }
+    return n;
+}
+
+// Where the declaration `key` is in the text whose spans are `lines`: the byte it starts at and the one it ends at, or -1 and -1.
+fn span_of[&l, &k](lines: &l [byte], key: &k [byte]) -> [] (int, int) {
+    var at = 0;
+    while at < len(lines) {
+        let end = vcsscan.line_end(lines, at);
+        let line = lines[at..end];
+        let a = cut_at(line, 0);
+        if bytes.equal(line[0..a], key) {
+            let b = cut_at(line, 1);
+            return (nat_of(line[a + 1..b]), nat_of(line[b + 1..len(line)]));
+        }
+        at = end + 1;
+    }
+    return (0 - 1, 0 - 1);
+}
+
+// The text of the declaration at `from..to` of `text`; nothing when `from` is negative or the span is not in the text.
+fn piece[&t](text: &t [byte], from: int, to: int) -> [] &t [byte] {
+    if from < 0 || to < from || to > len(text) {
+        return text[0..0];
+    }
+    return text[from..to];
+}
+
+// ---- the refusal -------------------------------------------------------------------------------------------------------------
+
+// `{"command": "replay", "ok": false, "refused": {"base", "change", "declaration", "intent", "message", "onto", "path", "tag"}}`: `base` is the text the change was made from, `change` what it made of
+// it and `onto` what the branch has, of the declaration (or, for an anchored edit, `base` the text the edit looks for and `change` what it puts there; `onto` is null). A text that is not there is null.
+fn conflict[&h, &j, &x, &p, &k, &a, &b, &c](heap: &!h Heap, jm: &!j [int], src: &x [byte], rule: &static [byte], message: &static [byte], path: &p [byte], declaration: &k [byte], base: &a [byte], has_base: bool, made: &b [byte], has_made: bool, ours: &c [byte], has_ours: bool) -> [heap] buffer.Buffer {
+    var d = buffer.push(heap, buffer.empty(heap, 512), byte_of(123));
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, true, "command"), "\"replay\"");
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "ok"), "false");
+    d = buffer.push(heap, vcsrepo.member(heap, d, 1, false, "refused"), byte_of(123));
+    d = vcsrepo.member(heap, d, 2, true, "base");
+    if has_base {
+        d = jsonwrite.string(heap, d, base);
+    } else {
+        d = buffer.append(heap, d, "null");
+    }
+    d = vcsrepo.member(heap, d, 2, false, "change");
+    if has_made {
+        d = jsonwrite.string(heap, d, made);
+    } else {
+        d = buffer.append(heap, d, "null");
+    }
+    d = vcsrepo.member(heap, d, 2, false, "declaration");
+    if len(declaration) > 0 {
+        d = jsonwrite.string(heap, d, declaration);
+    } else {
+        d = buffer.append(heap, d, "null");
+    }
+    d = vcsrepo.emit_intent(heap, vcsrepo.member(heap, d, 2, false, "intent"), 2, jm, src);
+    d = jsonwrite.string(heap, vcsrepo.member(heap, d, 2, false, "message"), message);
+    d = vcsrepo.member(heap, d, 2, false, "onto");
+    if has_ours {
+        d = jsonwrite.string(heap, d, ours);
+    } else {
+        d = buffer.append(heap, d, "null");
+    }
+    d = jsonwrite.string(heap, vcsrepo.member(heap, d, 2, false, "path"), path);
+    d = jsonwrite.string(heap, vcsrepo.member(heap, d, 2, false, "tag"), rule);
+    d = buffer.push(heap, jsonwrite.newline(heap, d, 1), byte_of(125));
+    return buffer.append(heap, jsonwrite.newline(heap, d, 0), "}\n");
+}
+
+// ---- one file ----------------------------------------------------------------------------------------------------------------
+
+// What replaying one file gave: the new text (status 0), or a refusal document (status 50), or the store's status.
+res struct Replayed {
+    text: buffer.Buffer,
+    status: int,
+}
+
+// `text` with the bytes `from..to` replaced by `with`.
+fn spliced[&h, &t, &w](heap: &!h Heap, text: &t [byte], from: int, to: int, put: &w [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, buffer.empty(heap, len(text) + len(put)), text[0..from]);
+    out = buffer.append(heap, out, put);
+    return buffer.append(heap, out, text[to..len(text)]);
+}
+
+// The declarations the change (`jm`, `src`) recorded for `path`, put into the branch's text `ours`: `base` is the text the change was made from and `made` what it made.
+fn replay_decls[&h, &i, &j, &x, &p, &a, &b, &c](heap: &!h Heap, io: &!i Io, jm: &!j [int], src: &x [byte], path: &p [byte], base: &a [byte], made: &b [byte], ours: &c [byte]) -> [heap, io_write] Replayed {
+    let (base_spans, base_ok) = spans(heap, io, base);
+    let (made_spans, made_ok) = spans(heap, io, made);
+    var text = buffer.append(heap, buffer.empty(heap, len(ours) + 64), ours);
+    var refusal = buffer.empty(heap, 0);
+    var refused = false;
+    var applied = 0;
+    if !base_ok || !made_ok {
+        refused = true;
+        buffer.drop(heap, refusal);
+        refusal = conflict(heap, jm, src, "replay-conflict", "the file does not parse in the change or in its parent, so its declarations cannot be told apart", path, "", "", false, "", false, "", false);
+    }
+    let total = vcschange.list_count(jm, src, "decls");
+    var n = 0;
+    while n < total && !refused {
+        if bytes.equal(vcschange.list_item(jm, src, "decls", n, "path"), path) {
+            // A name a change records is a key with no escape in it (letters, digits, `_`, `.` and one space).
+            let key = vcschange.list_item(jm, src, "decls", n, "name");
+            var ours_spans = buffer.empty(heap, 0);
+            var ours_ok = false;
+            borrow text as &tb in {
+                let (s, good) = spans(heap, io, buffer.bytes(tb));
+                buffer.drop(heap, ours_spans);
+                ours_spans = s;
+                ours_ok = good;
+            }
+            var next = buffer.empty(heap, 0);
+            var replaced = false;
+            borrow text as &tb in {
+                borrow base_spans as &bs in {
+                    borrow made_spans as &ms in {
+                        borrow ours_spans as &os in {
+                            let now = buffer.bytes(tb);
+                            let (bf, bt) = span_of(buffer.bytes(bs), key);
+                            let (mf, mt) = span_of(buffer.bytes(ms), key);
+                            let (of, ot) = span_of(buffer.bytes(os), key);
+                            let was = piece(base, bf, bt);
+                            let want = piece(made, mf, mt);
+                            let have = piece(now, of, ot);
+                            if !ours_ok {
+                                refused = true;
+                                buffer.drop(heap, refusal);
+                                refusal = conflict(heap, jm, src, "replay-conflict", "the file does not parse on the branch, so its declarations cannot be told apart", path, key, was, bf >= 0, want, mf >= 0, "", false);
+                            } else if mf >= 0 && of >= 0 && bytes.equal(have, want) || mf < 0 && of < 0 {
+                                // The branch already has what the change made of this declaration.
+                            } else if bf >= 0 && of >= 0 && bytes.equal(have, was) || bf < 0 && of < 0 {
+                                replaced = true;
+                                buffer.drop(heap, next);
+                                if mf < 0 {
+                                    // Removed: the declaration and the newline after it.
+                                    var upto = ot;
+                                    if upto < len(now) && now[upto] == byte_of(10) {
+                                        upto = upto + 1;
+                                    }
+                                    // And the empty line before it, when one would be left on each side.
+                                    var start = of;
+                                    if start >= 2 && now[start - 1] == byte_of(10) && now[start - 2] == byte_of(10) && (upto >= len(now) || now[upto] == byte_of(10)) {
+                                        start = start - 1;
+                                    }
+                                    next = spliced(heap, now, start, upto, "");
+                                } else if of < 0 {
+                                    // Added: at the end of the file, after an empty line.
+                                    next = buffer.append(heap, buffer.empty(heap, len(now) + len(want) + 2), now);
+                                    if len(now) > 0 && now[len(now) - 1] != byte_of(10) {
+                                        next = buffer.push(heap, next, byte_of(10));
+                                    }
+                                    if len(now) > 0 && !(len(now) >= 2 && now[len(now) - 1] == byte_of(10) && now[len(now) - 2] == byte_of(10)) {
+                                        next = buffer.push(heap, next, byte_of(10));
+                                    }
+                                    next = buffer.push(heap, buffer.append(heap, next, want), byte_of(10));
+                                } else {
+                                    next = spliced(heap, now, of, ot, want);
+                                }
+                            } else {
+                                refused = true;
+                                buffer.drop(heap, refusal);
+                                refusal = conflict(heap, jm, src, "replay-conflict", "the branch changed this declaration too", path, key, was, bf >= 0, want, mf >= 0, have, of >= 0);
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, ours_spans);
+            if replaced {
+                buffer.drop(heap, text);
+                text = next;
+                applied = applied + 1;
+            } else {
+                buffer.drop(heap, next);
+            }
+        }
+        n = n + 1;
+    }
+    buffer.drop(heap, base_spans);
+    buffer.drop(heap, made_spans);
+    if refused {
+        buffer.drop(heap, text);
+        return Replayed { text: refusal, status: 50 };
+    }
+    buffer.drop(heap, refusal);
+    return Replayed { text: text, status: 0 };
+}
+
+// How many times `old` occurs in `text`, counting matches that do not overlap, from the left; and where the first is.
+fn occurrences[&t, &o](text: &t [byte], old: &o [byte]) -> [] (int, int) {
+    var count = 0;
+    var first = 0 - 1;
+    var at = 0;
+    while len(old) > 0 && at + len(old) <= len(text) {
+        let found = bytes.find(text[at..len(text)], old);
+        if found < 0 {
+            at = len(text);
+        } else {
+            if count == 0 {
+                first = at + found;
+            }
+            count = count + 1;
+            at = at + found + len(old);
+        }
+    }
+    return (count, first);
+}
+
+// The string `part` of item `n` of the list `edits` of the change, decoded.
+fn edit_text[&h, &j, &x, &q](heap: &!h Heap, jm: &!j [int], src: &x [byte], n: int, part: &q [byte]) -> [heap] buffer.Buffer {
+    return vcschange.list_text(heap, jm, src, "edits", n, part);
+}
+
+// The anchored edits the change recorded for `path`, applied in order to the branch's text `ours`, each where its `old` occurs exactly once.
+fn replay_edits[&h, &j, &x, &p, &c](heap: &!h Heap, jm: &!j [int], src: &x [byte], path: &p [byte], ours: &c [byte]) -> [heap] Replayed {
+    var text = buffer.append(heap, buffer.empty(heap, len(ours) + 64), ours);
+    var refusal = buffer.empty(heap, 0);
+    var refused = false;
+    var applied = 0;
+    let total = vcschange.list_count(jm, src, "edits");
+    var n = 0;
+    while n < total && !refused {
+        let place = edit_text(heap, jm, src, n, "path");
+        var mine = false;
+        borrow place as &wb in {
+            mine = bytes.equal(buffer.bytes(wb), path);
+        }
+        buffer.drop(heap, place);
+        if mine {
+            let old = edit_text(heap, jm, src, n, "old");
+            let new = edit_text(heap, jm, src, n, "new");
+            var next = buffer.empty(heap, 0);
+            borrow text as &tb in {
+                borrow old as &ob in {
+                    borrow new as &nb in {
+                        let (count, first) = occurrences(buffer.bytes(tb), buffer.bytes(ob));
+                        if count == 1 {
+                            buffer.drop(heap, next);
+                            next = spliced(heap, buffer.bytes(tb), first, first + len(buffer.bytes(ob)), buffer.bytes(nb));
+                        } else {
+                            refused = true;
+                            buffer.drop(heap, refusal);
+                            if count == 0 {
+                                refusal = conflict(heap, jm, src, "anchor-not-found", "the text this edit replaces is not in the file on the branch", path, "", buffer.bytes(ob), true, buffer.bytes(nb), true, "", false);
+                            } else {
+                                refusal = conflict(heap, jm, src, "anchor-ambiguous", "the text this edit replaces occurs more than once in the file on the branch", path, "", buffer.bytes(ob), true, buffer.bytes(nb), true, "", false);
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, old);
+            buffer.drop(heap, new);
+            if !refused {
+                buffer.drop(heap, text);
+                text = next;
+                applied = applied + 1;
+            } else {
+                buffer.drop(heap, next);
+            }
+        }
+        n = n + 1;
+    }
+    if !refused && applied == 0 {
+        refused = true;
+        buffer.drop(heap, refusal);
+        refusal = conflict(heap, jm, src, "replay-conflict", "the branch changed this file too, and the change records no edit of it to apply", path, "", "", false, "", false, "", false);
+    }
+    if refused {
+        buffer.drop(heap, text);
+        return Replayed { text: refusal, status: 50 };
+    }
+    buffer.drop(heap, refusal);
+    return Replayed { text: text, status: 0 };
+}
+
+// The text of the blob `blob`, which must be UTF-8: status 0, or the store's status, or 3 for bytes that are not text.
+fn text_of[&h, &d, &s, &b](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], blob: &b [byte]) -> [heap, dir_read, dir_write, file_read] vcsstore.Object {
+    let got = vcsstore.get(heap, vcs, scratch, "blob", blob);
+    let (data, status, errno) = vcsstore.parts(got);
+    var good = false;
+    borrow data as &db in {
+        good = utf8.is_valid(buffer.bytes(db));
+    }
+    if status == 0 && !good {
+        return vcsstore.Object { bytes: data, status: 3, errno: 0 };
+    }
+    return vcsstore.Object { bytes: data, status: status, errno: errno };
+}
+
+// ---- the trees ---------------------------------------------------------------------------------------------------------------
+
+// Whether the entry of `path` in the tree `x` (at `i`, none when negative) is the one in `y` (at `j`): the same mode and blob, or neither there.
+fn same_entry[&a, &b](x: &a [byte], i: int, y: &b [byte], j: int) -> [] bool {
+    if i < 0 || j < 0 {
+        return i < 0 && j < 0;
+    }
+    return bytes.equal(vcsobj.entry_mode(x, i), vcsobj.entry_mode(y, j)) && bytes.equal(vcsobj.entry_blob(x, i), vcsobj.entry_blob(y, j));
+}
+
+// Whether the entry at `i` of `tree` is a file (not a link).
+fn is_file[&t](tree: &t [byte], i: int) -> [] bool {
+    return i >= 0 && !bytes.equal(vcsobj.entry_mode(tree, i), "120000");
+}
+
+// What the replay of every path gave: the entries to set in the branch's tree (tree lines, in the order of the paths), the paths to drop, and status 0; or a status with what it carries in `sets`.
+res struct Moved {
+    sets: buffer.Buffer,
+    drops: buffer.Buffer,
+    status: int,
+    errno: int,
+}
+
+// One path the change touched, replayed in the branch's tree `ours`: `parent` and `target` are the trees the change was made from and made. A file whose text is rewritten is stored as a blob.
+fn replay_path[&h, &i, &d, &s, &j, &x, &a, &b, &c, &p](heap: &!h Heap, io: &!i Io, vcs: &d Dir, scratch: &!s [int], jm: &!j [int], src: &x [byte], moved: Moved, parent: &a [byte], target: &b [byte], ours: &c [byte], path: &p [byte], nonce: int) -> [heap, io_write, dir_read, dir_write, file_read, file_write] Moved {
+    let Moved { sets, drops, status, errno } = moved;
+    var out_sets = sets;
+    var out_drops = drops;
+    var code = status;
+    var why = errno;
+    let pi = vcsobj.tree_find(parent, path);
+    let ti = vcsobj.tree_find(target, path);
+    let oi = vcsobj.tree_find(ours, path);
+    if same_entry(ours, oi, target, ti) {
+        // The branch already has what the change made of this path.
+    } else if same_entry(ours, oi, parent, pi) {
+        if ti < 0 {
+            out_drops = buffer.push(heap, buffer.append(heap, out_drops, path), byte_of(10));
+        } else {
+            out_sets = buffer.append(heap, out_sets, target[ti..vcsscan.line_end(target, ti) + 1]);
+        }
+    } else if is_file(parent, pi) && is_file(target, ti) && is_file(ours, oi) {
+        let base = text_of(heap, vcs, scratch, vcsobj.entry_blob(parent, pi));
+        let made = text_of(heap, vcs, scratch, vcsobj.entry_blob(target, ti));
+        let mine = text_of(heap, vcs, scratch, vcsobj.entry_blob(ours, oi));
+        let (base_text, bs, be) = vcsstore.parts(base);
+        let (made_text, ms, me) = vcsstore.parts(made);
+        let (mine_text, os, oe) = vcsstore.parts(mine);
+        if bs != 0 || ms != 0 || os != 0 {
+            if bs == 3 || ms == 3 || os == 3 {
+                code = 50;
+                buffer.drop(heap, out_sets);
+                out_sets = conflict(heap, jm, src, "replay-conflict", "the branch changed this file too, and it is not text", path, "", "", false, "", false, "", false);
+            } else {
+                code = bs;
+                why = be;
+                if code == 0 {
+                    code = ms;
+                    why = me;
+                }
+                if code == 0 {
+                    code = os;
+                    why = oe;
+                }
+            }
+        } else {
+            var done = Replayed { text: buffer.empty(heap, 0), status: 0 };
+            borrow base_text as &bb in {
+                borrow made_text as &mb in {
+                    borrow mine_text as &ob in {
+                        let Replayed { text, status } = done;
+                        buffer.drop(heap, text);
+                        if bytes.ends_with(path, ".cho") {
+                            done = replay_decls(heap, io, jm, src, path, buffer.bytes(bb), buffer.bytes(mb), buffer.bytes(ob));
+                        } else {
+                            done = replay_edits(heap, jm, src, path, buffer.bytes(ob));
+                        }
+                    }
+                }
+            }
+            let Replayed { text, status } = done;
+            if status != 0 {
+                code = status;
+                buffer.drop(heap, out_sets);
+                out_sets = text;
+            } else {
+                borrow text as &xb in {
+                    let put = vcsstore.put(heap, vcs, scratch, "blob", buffer.bytes(xb), nonce);
+                    let (blob, ps, pe) = vcsstore.parts(put);
+                    if ps != 0 {
+                        code = ps;
+                        why = pe;
+                    } else {
+                        // The mode the change gave the file, the new text's blob.
+                        out_sets = buffer.push(heap, buffer.append(heap, out_sets, vcsobj.entry_mode(target, ti)), byte_of(32));
+                        borrow blob as &lb in {
+                            out_sets = buffer.push(heap, buffer.append(heap, out_sets, buffer.bytes(lb)), byte_of(32));
+                        }
+                        out_sets = buffer.push(heap, buffer.append(heap, out_sets, path), byte_of(10));
+                    }
+                    buffer.drop(heap, blob);
+                }
+                buffer.drop(heap, text);
+            }
+        }
+        buffer.drop(heap, base_text);
+        buffer.drop(heap, made_text);
+        buffer.drop(heap, mine_text);
+    } else {
+        code = 50;
+        buffer.drop(heap, out_sets);
+        out_sets = conflict(heap, jm, src, "replay-conflict", "the change and the branch both added, removed or linked this path", path, "", "", false, "", false, "", false);
+    }
+    return Moved { sets: out_sets, drops: out_drops, status: code, errno: why };
+}
+
+// Every path the change touched (the difference between `parent` and `target`), replayed in the branch's tree `ours`.
+fn replay_tree[&h, &i, &d, &s, &j, &x, &a, &b, &c](heap: &!h Heap, io: &!i Io, vcs: &d Dir, scratch: &!s [int], jm: &!j [int], src: &x [byte], parent: &a [byte], target: &b [byte], ours: &c [byte], now: int) -> [heap, io_write, dir_read, dir_write, file_read, file_write] Moved {
+    let (tree, touched, diffs) = vcsrecord.merge(heap, parent, target, "\n");
+    buffer.drop(heap, tree);
+    buffer.drop(heap, diffs);
+    var moved = Moved { sets: buffer.empty(heap, 0), drops: buffer.empty(heap, 0), status: 0, errno: 0 };
+    borrow touched as &tb in {
+        let paths = buffer.bytes(tb);
+        var at = 0;
+        var k = 0;
+        var going = true;
+        while at < len(paths) && going {
+            let end = vcsscan.line_end(paths, at);
+            moved = replay_path(heap, io, vcs, scratch, jm, src, moved, parent, target, ours, paths[at..end], now + k);
+            let Moved { sets, drops, status, errno } = moved;
+            going = status == 0;
+            moved = Moved { sets: sets, drops: drops, status: status, errno: errno };
+            k = k + 1;
+            at = end + 1;
+        }
+    }
+    buffer.drop(heap, touched);
+    return moved;
+}
+
+// ---- the command -------------------------------------------------------------------------------------------------------------
+
+// `{"change", "command": "replay", "dry_run", "ok": true, "onto", "replayed", "result", "touched", "unchanged"}`: `result` is `exact` when the new tree is the tree of the change replayed, else `moved`.
+fn document[&h, &c, &r, &o, &t](heap: &!h Heap, change: &c [byte], replayed: &r [byte], onto: &o [byte], exact: bool, touched: &t [byte], dry: bool, unchanged: bool) -> [heap] buffer.Buffer {
+    var d = buffer.push(heap, buffer.empty(heap, 256), byte_of(123));
+    d = vcsrepo.quoted(heap, vcsrepo.member(heap, d, 1, true, "change"), change);
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "command"), "\"replay\"");
+    d = vcsrepo.member(heap, d, 1, false, "dry_run");
+    if dry {
+        d = buffer.append(heap, d, "true");
+    } else {
+        d = buffer.append(heap, d, "false");
+    }
+    d = buffer.append(heap, vcsrepo.member(heap, d, 1, false, "ok"), "true");
+    d = jsonwrite.string(heap, vcsrepo.member(heap, d, 1, false, "onto"), onto);
+    d = vcsrepo.quoted(heap, vcsrepo.member(heap, d, 1, false, "replayed"), replayed);
+    d = vcsrepo.member(heap, d, 1, false, "result");
+    if exact {
+        d = buffer.append(heap, d, "\"exact\"");
+    } else {
+        d = buffer.append(heap, d, "\"moved\"");
+    }
+    d = vcsswitch.string_array(heap, vcsrepo.member(heap, d, 1, false, "touched"), touched, 1);
+    d = vcsrepo.member(heap, d, 1, false, "unchanged");
+    if unchanged {
+        d = buffer.append(heap, d, "true");
+    } else {
+        d = buffer.append(heap, d, "false");
+    }
+    return buffer.append(heap, jsonwrite.newline(heap, d, 0), "}\n");
+}
+
+// The paths of the working copy that differ from HEAD's tree `head_tree`, one to a line (nothing when it is clean), or the scan's status.
+fn dirty_paths[&h, &r, &s, &t](heap: &!h Heap, root: &r Dir, scratch: &!s [int], head_tree: &t [byte]) -> [heap, dir_read, file_read] vcsstore.Object {
+    let scanned = vcsscan.scan(heap, root, scratch);
+    let (work, ws, we) = vcsstore.parts(scanned);
+    if ws != 0 {
+        return vcsstore.Object { bytes: work, status: ws, errno: we };
+    }
+    var dirty = buffer.empty(heap, 0);
+    borrow work as &wb in {
+        let (t1, t2, t3) = vcsrecord.merge(heap, head_tree, buffer.bytes(wb), "\n");
+        buffer.drop(heap, t1);
+        buffer.drop(heap, t3);
+        buffer.drop(heap, dirty);
+        dirty = t2;
+    }
+    buffer.drop(heap, work);
+    return vcsstore.Object { bytes: dirty, status: 0, errno: 0 };
+}
+
+// The change `target` (its bytes `src`, read into `jm`; its tree `target_tree` and its parent's `parent_tree`) replayed on the branch `onto`, which is at `onto_id` with the tree `ours`. `at_head` says
+// the branch is the one HEAD is on.
+fn replayed[&h, &i, &r, &d, &s, &j, &x, &t, &a, &b, &c, &e, &g, &p, &u, &z](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], jm: &!j [int], src: &x [byte], target: &t [byte], parent_tree: &a [byte], target_tree: &b [byte], ours: &c [byte], onto_id: &e [byte], onto: &g [byte], at_head: bool, author: &p [byte], expect: &u [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int, seed: &z [byte]) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    let moved = replay_tree(heap, io, vcs, scratch, jm, src, parent_tree, target_tree, ours, now);
+    let Moved { sets, drops, status, errno } = moved;
+    if status != 0 {
+        buffer.drop(heap, drops);
+        return vcsstore.Object { bytes: sets, status: status, errno: errno };
+    }
+    var tree = buffer.empty(heap, 0);
+    borrow sets as &sb in {
+        borrow drops as &db in {
+            buffer.drop(heap, tree);
+            tree = vcsrevert.rebuild(heap, ours, buffer.bytes(sb), buffer.bytes(db));
+        }
+    }
+    buffer.drop(heap, sets);
+    buffer.drop(heap, drops);
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    borrow tree as &tb in {
+        let new_tree = buffer.bytes(tb);
+        let exact = bytes.equal(new_tree, target_tree);
+        let (old, os, oe) = vcsstore.parts(answer);
+        buffer.drop(heap, old);
+        if bytes.equal(new_tree, ours) {
+            answer = vcsstore.Object { bytes: document(heap, onto_id, target, onto, exact, "", dry, true), status: 0, errno: 0 };
+        } else {
+            let (nt, touched, diffs) = vcsrecord.merge(heap, ours, new_tree, "\n");
+            var who = vcschange.author_text(heap, jm, src);
+            if len(author) > 0 {
+                buffer.drop(heap, who);
+                who = buffer.append(heap, buffer.empty(heap, len(author)), author);
+            }
+            let model = vcschange.intent_text(heap, jm, src, "model");
+            let session = vcschange.intent_text(heap, jm, src, "session");
+            let issue = vcschange.intent_text(heap, jm, src, "issue");
+            var how = 3;
+            if at_head {
+                how = 2;
+            }
+            borrow nt as &nb in {
+                borrow touched as &pb in {
+                    borrow diffs as &fb in {
+                        borrow who as &wb in {
+                            borrow model as &mb in {
+                                borrow session as &eb in {
+                                    borrow issue as &ib in {
+                                        let stored = vcsrecord.changed(heap, io, root, vcs, scratch, buffer.bytes(nb), buffer.bytes(pb), buffer.bytes(fb), onto_id, true, onto, buffer.bytes(wb), vcschange.has_intent(jm, src), vcschange.intent_part(jm, src, "prompt"), buffer.bytes(mb), buffer.bytes(eb), buffer.bytes(ib), expect, dry, no_gate, bad_time, how, true, time, now, seed, target);
+                                        let (cid, ss, se) = vcsstore.parts(stored);
+                                        if ss != 0 {
+                                            answer = vcsstore.Object { bytes: cid, status: ss, errno: se };
+                                        } else {
+                                            var brought = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+                                            if at_head && !dry {
+                                                let (e0, s0, r0) = vcsstore.parts(brought);
+                                                buffer.drop(heap, e0);
+                                                brought = vcsrevert.bring(heap, root, vcs, scratch, buffer.bytes(nb), buffer.bytes(fb), now);
+                                            }
+                                            let (bb, bs, be) = vcsstore.parts(brought);
+                                            if bs != 0 {
+                                                buffer.drop(heap, cid);
+                                                answer = vcsstore.Object { bytes: bb, status: bs, errno: be };
+                                            } else {
+                                                buffer.drop(heap, bb);
+                                                borrow cid as &cb in {
+                                                    answer = vcsstore.Object { bytes: document(heap, buffer.bytes(cb), target, onto, exact, buffer.bytes(pb), dry, false), status: 0, errno: 0 };
+                                                }
+                                                buffer.drop(heap, cid);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            buffer.drop(heap, nt);
+            buffer.drop(heap, touched);
+            buffer.drop(heap, diffs);
+            buffer.drop(heap, who);
+            buffer.drop(heap, model);
+            buffer.drop(heap, session);
+            buffer.drop(heap, issue);
+        }
+    }
+    buffer.drop(heap, tree);
+    return answer;
+}
+
+// The trees read and the working copy checked, then `replayed`: `data` is the bytes of the change `target`.
+fn prepared[&h, &i, &r, &d, &s, &x, &t, &g, &p, &u, &z](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], data: &x [byte], target: &t [byte], onto: &g [byte], author: &p [byte], expect: &u [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int, seed: &z [byte]) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    var refname = buffer.append(heap, buffer.append(heap, buffer.empty(heap, len(onto) + 8), "heads/"), onto);
+    var onto_id = buffer.empty(heap, 64);
+    var code = 0;
+    var errno = 0;
+    borrow refname as &rn in {
+        let read = vcsstore.read_ref(heap, vcs, buffer.bytes(rn));
+        let (id, rs, re) = vcsstore.parts(read);
+        buffer.drop(heap, onto_id);
+        onto_id = id;
+        code = rs;
+        errno = re;
+        if rs == 2 || rs == 16 {
+            // `onto` names no branch: 18, told from a bad CHANGE by the errno.
+            code = 18;
+            errno = 77;
+        }
+    }
+    buffer.drop(heap, refname);
+    let head = vcsstatus.head_info(heap, vcs);
+    let (branch, has_branch, head_id, hs) = vcsstatus.head_parts(head);
+    var at_head = false;
+    borrow branch as &bb in {
+        at_head = has_branch && bytes.equal(buffer.bytes(bb), onto);
+    }
+    buffer.drop(heap, branch);
+    buffer.drop(heap, head_id);
+    var ours = buffer.empty(heap, 0);
+    if code == 0 {
+        borrow onto_id as &ob in {
+            let (tree_id, parent_id, ls) = vcsrepo.change_links(heap, vcs, scratch, buffer.bytes(ob));
+            code = ls;
+            if ls == 0 {
+                borrow tree_id as &tb in {
+                    let tt = vcsrepo.tree_text(heap, vcs, scratch, buffer.bytes(tb));
+                    let (text, ts, te) = vcsstore.parts(tt);
+                    buffer.drop(heap, ours);
+                    ours = text;
+                    code = ts;
+                    errno = te;
+                }
+            }
+            buffer.drop(heap, tree_id);
+            buffer.drop(heap, parent_id);
+        }
+    }
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: code, errno: errno };
+    if code == 0 && at_head {
+        borrow ours as &ob in {
+            let (old, os, oe) = vcsstore.parts(answer);
+            buffer.drop(heap, old);
+            let checked = dirty_paths(heap, root, scratch, buffer.bytes(ob));
+            let (paths, ds, de) = vcsstore.parts(checked);
+            var dirty = false;
+            borrow paths as &pb in {
+                dirty = ds == 0 && len(buffer.bytes(pb)) > 0;
+            }
+            if dirty {
+                answer = vcsstore.Object { bytes: paths, status: 54, errno: 0 };
+                code = 54;
+            } else {
+                buffer.drop(heap, paths);
+                answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: ds, errno: de };
+                code = ds;
+            }
+        }
+    }
+    if code == 0 {
+        let jm = box_slice(heap, jsonread.size_for(data), 0);
+        borrow mut jm as &!w in {
+            let m = contents(w);
+            let (old, os, oe) = vcsstore.parts(answer);
+            buffer.drop(heap, old);
+            if vcschange.read(m, data) != 0 {
+                answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 3, errno: 0 };
+            } else if vcschange.parent_count(m, data) != 1 {
+                answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 70, errno: 0 };
+            } else {
+                let (parent_tree, target_tree, ts) = vcsrepo.change_trees(heap, vcs, scratch, target);
+                if ts != 0 {
+                    answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: ts, errno: 0 };
+                } else {
+                    borrow parent_tree as &pt in {
+                        borrow target_tree as &tt in {
+                            borrow ours as &ob in {
+                                borrow onto_id as &ib in {
+                                    answer = replayed(heap, io, root, vcs, scratch, m, data, target, buffer.bytes(pt), buffer.bytes(tt), buffer.bytes(ob), buffer.bytes(ib), onto, at_head, author, expect, dry, no_gate, bad_time, time, now, seed);
+                                }
+                            }
+                        }
+                    }
+                }
+                buffer.drop(heap, parent_tree);
+                buffer.drop(heap, target_tree);
+            }
+        }
+        unbox_slice(heap, jm);
+    }
+    buffer.drop(heap, onto_id);
+    buffer.drop(heap, ours);
+    return answer;
+}
+
+// `replay`: see the header. `author` is empty for the author of the change replayed.
+pub fn replay_command[&h, &i, &r, &d, &s, &p, &g, &a, &u, &z](heap: &!h Heap, io: &!i Io, root: &r Dir, vcs: &d Dir, scratch: &!s [int], spec: &p [byte], onto: &g [byte], author: &a [byte], expect: &u [byte], dry: bool, no_gate: bool, bad_time: bool, time: int, now: int, seed: &z [byte]) -> [heap, io_write, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+    let resolved = vcsrepo.resolve(heap, vcs, scratch, spec);
+    let (target, rs, re) = vcsstore.parts(resolved);
+    if rs != 0 {
+        return vcsstore.Object { bytes: target, status: rs, errno: re };
+    }
+    var answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: 0, errno: 0 };
+    borrow target as &tb in {
+        let got = vcsstore.get(heap, vcs, scratch, "change", buffer.bytes(tb));
+        let (data, gs, ge) = vcsstore.parts(got);
+        let (old, os, oe) = vcsstore.parts(answer);
+        buffer.drop(heap, old);
+        if gs != 0 {
+            answer = vcsstore.Object { bytes: buffer.empty(heap, 0), status: gs, errno: ge };
+        } else {
+            borrow data as &db in {
+                answer = prepared(heap, io, root, vcs, scratch, buffer.bytes(db), buffer.bytes(tb), onto, author, expect, dry, no_gate, bad_time, time, now, seed);
+            }
+        }
+        buffer.drop(heap, data);
+    }
+    buffer.drop(heap, target);
+    return answer;
+}

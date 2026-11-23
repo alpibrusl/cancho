@@ -1657,7 +1657,7 @@ fn import_prepare[&h, &i, &a, &f, &c](heap: &!h Heap, io: &!i Io, args: &a Args,
 // Whether `cancho vcs SUB` is this module's: `init`, `show`, `branch`, `status` and `restore` are; `log` is unless `--store` is named or no repository is in reach of the current directory (the Rust command's rule: `Repo::exists_at(".")`).
 pub fn routes[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), clock: &c Clock) -> [heap, err_write, args, fs_read(""), exec(""), clock, poll, dir_read, dir_write, file_read] bool {
     let sub = arg(args, 2);
-    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") || bytes.equal(sub, "apply") || bytes.equal(sub, "record") || bytes.equal(sub, "revert") || bytes.equal(sub, "diff") || bytes.equal(sub, "blame") || bytes.equal(sub, "verify") || bytes.equal(sub, "unlock") || bytes.equal(sub, "attest") || bytes.equal(sub, "attestations") || bytes.equal(sub, "keys") {
+    if bytes.equal(sub, "init") || bytes.equal(sub, "show") || bytes.equal(sub, "branch") || bytes.equal(sub, "status") || bytes.equal(sub, "restore") || bytes.equal(sub, "switch") || bytes.equal(sub, "apply") || bytes.equal(sub, "record") || bytes.equal(sub, "revert") || bytes.equal(sub, "diff") || bytes.equal(sub, "blame") || bytes.equal(sub, "verify") || bytes.equal(sub, "unlock") || bytes.equal(sub, "attest") || bytes.equal(sub, "attestations") || bytes.equal(sub, "keys") || bytes.equal(sub, "replay") {
         return true;
     }
     if bytes.equal(sub, "import-git") || bytes.equal(sub, "export-git") {
@@ -1745,6 +1745,9 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
     } else if bytes.equal(verb, "keys") {
         which = 18;
         name = "keys";
+    } else if bytes.equal(verb, "replay") {
+        which = 19;
+        name = "replay";
     }
     let options = opts.options_of(heap, io, args, which);
     if options.bad != 0 {
@@ -1821,6 +1824,8 @@ pub fn command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args: &a Args
                                                 code = clivcsmore.attestations_in(heap, io, args, vd, options);
                                             } else if which == 18 {
                                                 code = clivcsmore.keys_in(heap, io, args, fs, vd, buffer.bytes(cb), options, clock);
+                                            } else if which == 19 {
+                                                code = clivcsmore.replay_in(heap, io, args, rd, vd, options, clock);
                                             } else if which == 13 {
                                                 code = verify_in(heap, io, vd, buffer.bytes(pb), clock);
                                             } else if which == 12 {

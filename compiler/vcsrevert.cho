@@ -128,7 +128,7 @@ fn undo[&h, &a, &b, &c](heap: &!h Heap, parent: &a [byte], target: &b [byte], he
 }
 
 // HEAD's tree with the entries `sets` put in (tree lines, sorted) and the paths `drops` taken out.
-fn rebuild[&h, &c, &s, &d](heap: &!h Heap, head: &c [byte], sets: &s [byte], drops: &d [byte]) -> [heap] buffer.Buffer {
+pub fn rebuild[&h, &c, &s, &d](heap: &!h Heap, head: &c [byte], sets: &s [byte], drops: &d [byte]) -> [heap] buffer.Buffer {
     var out = buffer.empty(heap, len(head) + len(sets) + 1);
     var i = 0;
     var k = 0;
@@ -220,7 +220,7 @@ fn tree_at[&h, &d, &s, &i](heap: &!h Heap, vcs: &d Dir, scratch: &!s [int], id: 
 }
 
 // The working copy brought to `tree` from HEAD's: the differences `diffs` (see `vcsrecord.merge`), under the lock. 0, or the status and errno.
-fn bring[&h, &r, &d, &s, &t, &q](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], diffs: &q [byte], now: int) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
+pub fn bring[&h, &r, &d, &s, &t, &q](heap: &!h Heap, root: &r Dir, vcs: &d Dir, scratch: &!s [int], tree: &t [byte], diffs: &q [byte], now: int) -> [heap, dir_read, dir_write, dir_symlink, file_read, file_write] vcsstore.Object {
     let (ls, le, made) = vcsstore.take_lock(heap, vcs, "lock", now);
     if ls != 0 {
         var text = buffer.empty(heap, 0);
@@ -313,7 +313,7 @@ fn undone[&h, &i, &r, &d, &s, &t, &a, &b, &c, &e, &f, &g, &p, &k, &m, &n, &u, &x
                 borrow t2 as &tb in {
                     borrow diffs as &fb in {
                         borrow words as &wb in {
-                            let stored = vcsrecord.changed(heap, io, root, vcs, scratch, buffer.bytes(nb), buffer.bytes(tb), buffer.bytes(fb), head_id, has_branch, branch, author, true, buffer.bytes(wb), model, session, issue, expect, dry, no_gate, bad_time, true, !has_user_intent, time, now, seed);
+                            let stored = vcsrecord.changed(heap, io, root, vcs, scratch, buffer.bytes(nb), buffer.bytes(tb), buffer.bytes(fb), head_id, has_branch, branch, author, true, buffer.bytes(wb), model, session, issue, expect, dry, no_gate, bad_time, 1, !has_user_intent, time, now, seed, "");
                             let (cid, ss, se) = vcsstore.parts(stored);
                             let (old, os, oe) = vcsstore.parts(answer);
                             buffer.drop(heap, old);

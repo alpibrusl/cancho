@@ -1,0 +1,169 @@
+| {
+|   "change": "<id>",
+|   "command": "replay",
+|   "dry_run": false,
+|   "ok": true,
+|   "onto": "main",
+|   "replayed": "<id>",
+|   "result": "moved",
+|   "touched": [
+|     "a.cho"
+|   ],
+|   "unchanged": false
+| }
+| {
+|   "change": "<id>",
+|   "command": "replay",
+|   "dry_run": false,
+|   "ok": true,
+|   "onto": "main",
+|   "replayed": "<id>",
+|   "result": "moved",
+|   "touched": [],
+|   "unchanged": true
+| }
+ok a_change_goes_onto_a_branch_that_did_not_touch_its_files
+| {
+|   "change": "<id>",
+|   "command": "replay",
+|   "dry_run": false,
+|   "ok": true,
+|   "onto": "other",
+|   "replayed": "<id>",
+|   "result": "exact",
+|   "touched": [
+|     "a.cho"
+|   ],
+|   "unchanged": false
+| }
+ok a_replay_onto_the_change_s_own_parent_is_exact
+| {
+|   "change": "<id>",
+|   "command": "replay",
+|   "dry_run": false,
+|   "ok": true,
+|   "onto": "main",
+|   "replayed": "<id>",
+|   "result": "moved",
+|   "touched": [
+|     "a.cho"
+|   ],
+|   "unchanged": false
+| }
+ok a_declaration_goes_into_a_file_the_branch_changed_too
+| {
+|   "command": "replay",
+|   "ok": false,
+|   "refused": {
+|     "base": "pub fn twice(n: int) -> [] int {\n    return n + n;\n}",
+|     "change": "pub fn twice(n: int) -> [] int {\n    return n * 2;\n}",
+|     "declaration": "fn a.twice",
+|     "intent": {
+|       "model": "m1",
+|       "prompt": "twice by multiplying",
+|       "session": "s1"
+|     },
+|     "message": "the branch changed this declaration too",
+|     "onto": "pub fn twice(n: int) -> [] int {\n    return n << 1;\n}",
+|     "path": "a.cho",
+|     "tag": "replay-conflict"
+|   }
+| }
+ok a_declaration_the_branch_changed_too_is_a_conflict_with_both_bodies
+| {
+|   "change": "<id>",
+|   "command": "replay",
+|   "dry_run": false,
+|   "ok": true,
+|   "onto": "main",
+|   "replayed": "<id>",
+|   "result": "moved",
+|   "touched": [
+|     "a.cho"
+|   ],
+|   "unchanged": false
+| }
+ok a_declaration_is_added_and_one_is_removed
+| {
+|   "change": "<id>",
+|   "command": "replay",
+|   "dry_run": false,
+|   "ok": true,
+|   "onto": "main",
+|   "replayed": "<id>",
+|   "result": "moved",
+|   "touched": [
+|     "notes.md"
+|   ],
+|   "unchanged": false
+| }
+ok an_anchored_edit_goes_into_a_text_the_branch_changed_too
+| {
+|   "command": "replay",
+|   "ok": false,
+|   "refused": {
+|     "base": "two\n",
+|     "change": "TWO\n",
+|     "declaration": null,
+|     "intent": {
+|       "model": "m1",
+|       "prompt": "two, louder",
+|       "session": "s1"
+|     },
+|     "message": "the text this edit replaces is not in the file on the branch",
+|     "onto": null,
+|     "path": "notes.md",
+|     "tag": "anchor-not-found"
+|   }
+| }
+| {
+|   "command": "replay",
+|   "ok": false,
+|   "refused": {
+|     "base": "two\n",
+|     "change": "TWO\n",
+|     "declaration": null,
+|     "intent": {
+|       "model": "m1",
+|       "prompt": "two, louder",
+|       "session": "s1"
+|     },
+|     "message": "the text this edit replaces occurs more than once in the file on the branch",
+|     "onto": null,
+|     "path": "notes.md",
+|     "tag": "anchor-ambiguous"
+|   }
+| }
+ok an_anchor_that_is_gone_or_twice_there_is_refused
+| {
+|   "command": "replay",
+|   "ok": false,
+|   "refused": {
+|     "message": "record or restore the working copy before a replay onto the branch it is on; changed: notes.md",
+|     "tag": "dirty-working-copy"
+|   }
+| }
+| {
+|   "change": "<id>",
+|   "command": "replay",
+|   "dry_run": true,
+|   "ok": true,
+|   "onto": "main",
+|   "replayed": "<id>",
+|   "result": "exact",
+|   "touched": [
+|     "a.cho"
+|   ],
+|   "unchanged": false
+| }
+ok what_replay_refuses
+| {
+|   "command": "replay",
+|   "ok": false,
+|   "refused": {
+|     "message": "a.cho: not-a-function: The name in call position is not a function in this program: a local binding is a value, not something to call.",
+|     "tag": "gate-failed"
+|   }
+| }
+ok a_replay_that_does_not_check_is_refused_by_the_gate
+ok the_same_replay_is_the_same_bytes

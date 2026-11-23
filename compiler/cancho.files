@@ -97,6 +97,7 @@ vcsgitput.cho
 vcsgitw.cho
 vcsobj.cho
 vcsrecord.cho
+vcsreplay.cho
 vcsrepo.cho
 vcsrestore.cho
 vcsrevert.cho

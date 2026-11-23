@@ -7,6 +7,7 @@ module selfhost.clivcsmore;
 //   attest [REV] --gate NAME --status N [--command TEXT] [--output-file FILE]    what another gate said, recorded as the caller gives it (this command runs no program)
 //   attestations [REV]                                                           the chain of a change, the last first
 //   keys new NAME [--seed-file FILE] | keys list | keys trust KEY | keys require BRANCH | keys sign [REV] --key NAME
+//   replay CHANGE --onto BRANCH [--expect REV] [--author A] [--time T] [--key NAME] [--no-gate] [--dry-run]   a change applied again to another branch (section 12, `vcsreplay.cho`)
 //
 // Every command answers one JSON document; a refusal is `{"command", "ok": false, "refused": {"message", "tag"}}` and exit 1.
 
@@ -20,6 +21,7 @@ import selfhost.jsonwrite;
 import selfhost.vcsattest;
 import selfhost.vcsobj;
 import selfhost.vcsrecord;
+import selfhost.vcsreplay;
 import selfhost.vcsrepo;
 import selfhost.vcsstore;
 import selfhost.vcsswitch;
@@ -33,6 +35,21 @@ fn refuse[&h, &i, &c, &w, &t](heap: &!h Heap, io: &!i Io, command: &c [byte], be
     }
     buffer.drop(heap, message);
     return code;
+}
+
+// `detail` (fields ended by NULs: a path, a rule, its sentence; or paths ended by newlines) as one message, a NUL made `: `.
+fn joined[&h, &t](heap: &!h Heap, detail: &t [byte]) -> [heap] buffer.Buffer {
+    var message = buffer.empty(heap, len(detail) + 8);
+    var at = 0;
+    while at < len(detail) {
+        if detail[at] == byte_of(0) {
+            message = buffer.append(heap, message, ": ");
+        } else {
+            message = buffer.push(heap, message, detail[at]);
+        }
+        at = at + 1;
+    }
+    return message;
 }
 
 // The seed of the key `--key NAME` names: 32 bytes, or nothing when the option is not given (status 0); or the refusal said (status 1, the exit status in `errno`).
@@ -128,17 +145,7 @@ fn attest_check[&h, &i, &r, &d, &s, &c, &k](heap: &!h Heap, io: &!i Io, root: &r
                     let (text, gs, ge) = vcsstore.parts(ran);
                     borrow text as &xb in {
                         if gs != 0 {
-                            var message = buffer.empty(heap, len(buffer.bytes(xb)) + 8);
-                            let detail = buffer.bytes(xb);
-                            var at = 0;
-                            while at < len(detail) {
-                                if detail[at] == byte_of(0) {
-                                    message = buffer.append(heap, message, ": ");
-                                } else {
-                                    message = buffer.push(heap, message, detail[at]);
-                                }
-                                at = at + 1;
-                            }
+                            let message = joined(heap, buffer.bytes(xb));
                             borrow message as &mb in {
                                 code = clivcsout.refused(heap, io, "attest", buffer.bytes(mb), "gate-failed");
                             }
@@ -583,4 +590,88 @@ pub fn keys_in[&h, &i, &a, &f, &d, &w, &k](heap: &!h Heap, io: &!i Io, args: &a 
         return code;
     }
     return refuse(heap, io, "keys", "`keys ", verb, "` is not `new NAME`, `list`, `trust KEY`, `require BRANCH` or `sign [REV] --key NAME`", "bad-argument");
+}
+
+// ---- replay ------------------------------------------------------------------------------------------------------------------
+
+// `replay CHANGE --onto BRANCH [--expect REV] [--author A] [--time T] [--key NAME] [--no-gate] [--dry-run]` (`vcsreplay.replay_command`, `docs/vcs-cli.md` section 12).
+pub fn replay_in[&h, &i, &a, &r, &d, &k](heap: &!h Heap, io: &!i Io, args: &a Args, root: &r Dir, vcs: &d Dir, options: opts.Options, clock: &k Clock) -> [heap, io_write, args, dir_read, dir_write, dir_symlink, file_read, file_write, clock] int {
+    let (onto_at, onto_off) = opts.named(args, "--onto");
+    if options.positionals != 1 || onto_at < 0 {
+        return clivcsout.refused(heap, io, "replay", "`replay` takes one change and `--onto BRANCH`", "bad-argument");
+    }
+    let spec = arg(args, options.rev_at);
+    let onto = opts.value_of(args, onto_at, onto_off);
+    let now = clock_unix_ms(clock) / 1000;
+    let (time, valid) = time_given(args, now);
+    var author = buffer.empty(heap, 0);
+    let (author_at, author_off) = opts.named(args, "--author");
+    if author_at >= 0 {
+        author = buffer.append(heap, author, opts.value_of(args, author_at, author_off));
+    }
+    var expect = buffer.empty(heap, 0);
+    let (expect_at, expect_off) = opts.named(args, "--expect");
+    if expect_at >= 0 {
+        expect = buffer.append(heap, expect, opts.value_of(args, expect_at, expect_off));
+    }
+    let no_gate = clivcsout.flagged(args, "--no-gate");
+    let signing = signer(heap, io, args, vcs, "replay");
+    let (seed, signer_status, signer_code) = vcsstore.parts(signing);
+    var code = signer_code;
+    if signer_status == 0 {
+        let scratch = box_slice(heap, vcsobj.scratch_size(), 0);
+        borrow mut scratch as &!sw in {
+            borrow author as &ab in {
+                borrow expect as &eb in {
+                    borrow seed as &kb in {
+                        let answer = vcsreplay.replay_command(heap, io, root, vcs, contents(sw), spec, onto, buffer.bytes(ab), buffer.bytes(eb), options.dry, no_gate, !valid, time, now, buffer.bytes(kb));
+                        let (doc, status, errno) = vcsstore.parts(answer);
+                        if status == 51 {
+                            borrow doc as &db in {
+                                let message = joined(heap, buffer.bytes(db));
+                                borrow message as &mb in {
+                                    code = clivcsout.refused(heap, io, "replay", buffer.bytes(mb), "gate-failed");
+                                }
+                                buffer.drop(heap, message);
+                            }
+                            buffer.drop(heap, doc);
+                        } else if status == 52 {
+                            code = clivcsout.refused(heap, io, "replay", "`--time` is unix seconds", "bad-argument");
+                            buffer.drop(heap, doc);
+                        } else if status == 54 {
+                            borrow doc as &db in {
+                                let paths = joined(heap, buffer.bytes(db));
+                                borrow paths as &pb in {
+                                    code = refuse(heap, io, "replay", "record or restore the working copy before a replay onto the branch it is on; changed: ", vcsstore.trimmed(buffer.bytes(pb)), "", "dirty-working-copy");
+                                }
+                                buffer.drop(heap, paths);
+                            }
+                            buffer.drop(heap, doc);
+                        } else if status == 61 {
+                            code = clivcsout.refused(heap, io, "replay", "the branch moves only to a change signed by a trusted key: pass `--key NAME`", "unsigned-change");
+                            buffer.drop(heap, doc);
+                        } else if status == 70 {
+                            code = clivcsout.refused(heap, io, "replay", "only a change with exactly one parent can be replayed", "replay-unsupported");
+                            buffer.drop(heap, doc);
+                        } else if status == 14 {
+                            borrow doc as &db in {
+                                code = refuse(heap, io, "replay", "the branch is not where it was expected: it is at ", buffer.bytes(db), "", "ref-moved");
+                            }
+                            buffer.drop(heap, doc);
+                        } else if status == 18 && errno == 77 {
+                            code = refuse(heap, io, "replay", "`", onto, "` is not a branch", "bad-revision");
+                            buffer.drop(heap, doc);
+                        } else {
+                            code = clivcsout.answered(heap, io, "replay", vcsstore.Object { bytes: doc, status: status, errno: errno }, spec);
+                        }
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, scratch);
+    }
+    buffer.drop(heap, seed);
+    buffer.drop(heap, author);
+    buffer.drop(heap, expect);
+    return code;
 }

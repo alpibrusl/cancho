@@ -4,7 +4,7 @@ module selfhost.vcschange;
 // is what is hashed, so the writer must be byte for byte the one of `crates/cancho-vcs/src/change.rs` (serde_json, no spaces):
 //
 //   {"tree":T,"parents":[P,..],"author":A,"time":N,"tz":Z[,"intent":{"prompt":S[,"model":S][,"session":S][,"issue":S]}]
-//    [,"decls":[{"path":S,"name":S,"kind":S},..]][,"edits":[{"path":S,"old":S,"new":S},..]][,"attestations":[S,..]]}
+//    [,"decls":[{"path":S,"name":S,"kind":S},..]][,"edits":[{"path":S,"old":S,"new":S},..]][,"attestations":[S,..]][,"origin":C]}
 //
 // An optional part is left out when it is empty, so adding a part later does not change the id of an old change. The `git` part (what a git commit
 // has that a change must keep to get the same git id) is the bridge's: `git_member` writes it, after the lists and before `close`
@@ -162,6 +162,11 @@ fn bytes_value[&h, &t](heap: &!h Heap, out: buffer.Buffer, text: &t [byte]) -> [
         at = at + 1;
     }
     return buffer.append(heap, b, "\"}");
+}
+
+// `,"origin":ID`: the change a `replay` applied again to make this one (`vcsreplay.cho`); after the lists, before the `git` part.
+pub fn origin[&h, &i](heap: &!h Heap, out: buffer.Buffer, id: &i [byte]) -> [heap] buffer.Buffer {
+    return jsonwrite.string(heap, buffer.append(heap, out, ",\"origin\":"), id);
 }
 
 // `,"git":{"headers":B,"message":B}`: what a git commit has that a change must keep (the header lines after the last `parent`, and the message).
@@ -540,6 +545,30 @@ fn decoded[&h, &j, &x](heap: &!h Heap, jm: &!j [int], src: &x [byte], id: int) -
         i = i + 1;
     }
     return out;
+}
+
+// The string `part` of item `n` of the list `name`, decoded; empty when it is not a string.
+pub fn list_text[&h, &j, &x, &k, &q](heap: &!h Heap, jm: &!j [int], src: &x [byte], name: &k [byte], n: int, part: &q [byte]) -> [heap] buffer.Buffer {
+    var item = jsonread.first(jm, field(jm, src, jm[1], name));
+    var k = 0;
+    while k < n && item >= 0 {
+        item = jsonread.next(jm, item);
+        k = k + 1;
+    }
+    let id = field(jm, src, item, part);
+    if !is_text(jm, id) {
+        return buffer.empty(heap, 0);
+    }
+    return decoded(heap, jm, src, id);
+}
+
+// The change a replay applied again to make this one (64 digits), or nothing.
+pub fn origin_of[&j, &x](jm: &!j [int], src: &x [byte]) -> [] &x [byte] {
+    let id = field(jm, src, jm[1], "origin");
+    if !is_id_text(jm, src, id) {
+        return src[0..0];
+    }
+    return raw(jm, src, id);
 }
 
 // The author, decoded.

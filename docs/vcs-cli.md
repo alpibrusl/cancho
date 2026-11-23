@@ -1,6 +1,6 @@
 # `cancho vcs` as a complete version-control CLI, agents first
 
-> **Status: slice V1 (a local repository, section 9) is built, and so are attestations and keys (section 11); the rest of V2 onward is design.** Written before the code (`CONTRIBUTING.md`). A claim marked
+> **Status: slice V1 (a local repository, section 9) is built, and so are attestations and keys (section 11) and `replay` (section 12); the rest of V2 onward is design.** Written before the code (`CONTRIBUTING.md`). A claim marked
 > *(measured)* was measured on the date given, in the repository named; a claim marked *(read)* was read
 > from the source; one marked *(designed)* is a proposal that a slice below must measure before it stands.
 > The first draft of this document assumed that a typed-AST store could stand in for git on a code
@@ -104,7 +104,7 @@ cannot be recorded. Hunk-level recording is not offered; a change is made of who
 | undo | `revert <change>`, `restore <paths> [--from <change>]`, `reset-ref <ref> --expect <id> --to <change>` | `revert` records a new change that undoes one; nothing rewrites history, there is no `rebase` (a replay is `replay`, below) |
 | branch | `branch {list,create,delete}`, `switch <ref>`, `tag` | `switch` refuses over uncommitted changes unless `--keep` (carry) or `--discard` |
 | combine | `merge <ref>`, `conflicts`, `resolve <path\|decl> --take {ours,theirs,base} \| --with <file>`, `merge --abort` | section 6 |
-| replay | `replay <change> --onto <ref>` | re-applies a change's **operations** (not its text) onto another base and gates the result; the agent's answer to cherry-pick and rebase; reports `exact` (same tree) or `moved` |
+| replay | `replay <change> --onto <ref>` (built: section 12) | re-applies a change's **operations** (not its text) onto another base and gates the result; the agent's answer to cherry-pick and rebase; reports `exact` (same tree) or `moved` |
 | share | `remote {add,list}`, `push`, `pull`, `fetch` | section 7 |
 | bridge | `export-git <dir>`, `mirror <git-url>` | section 7; one-way, derived |
 | keep | `verify` (re-hash everything, check the attestation chain), `gc`, `keys {new,sign}`, `attest`, `attestations` (section 11) | `verify` is the single command that says the store is sound |
@@ -281,7 +281,7 @@ Not yet built (V2 onward): `conflicts-open`, `merge-gate-failed`, `rename-edit`,
 * It does not run on its own authority: like every cancho program it is checked for the effects it uses, and
   the CLI performs file and (V3 onward) network effects only, never starts another program.
 * V1 is built; R1 did not show its scope to be wrong. Not built, said plainly: `merge`, `conflicts`, `resolve`,
-  `replay`, `tag`, `reset-ref`, `gc`, remotes, `clone` (`keys`, signatures and attestation chains are built: section 11),
+  `tag`, `reset-ref`, `gc`, remotes, `clone` (`keys`, signatures and attestation chains are built: section 11; `replay`: section 12),
   `.cho` body-level diff, hunk-level recording, format-aware merge layers, compression. `switch` and `restore`
   work on whole files; `blame` follows first parents only; the histogram diff falls back to one replacement
   when no line occurs 64 times or fewer. `.canchoignore` supports names, `dir/`, `*suffix` and path prefixes
@@ -367,3 +367,72 @@ record edited after signing, re-hashed and put in the chain is refused (`the sig
 Refusal tags built here, each reached by `tests/commands/vcs_attest.sh`: `chain-broken` (a record that does not hash to
 its name, a signature that is not its key's, a link that is missing, a link of another change), `unsigned-change`,
 `key-not-found`, `key-exists`; and `gate-failed`, `bad-argument`, `bad-ref-name`, `bad-revision` from these commands.
+
+## 12. Replay *(built, #818)*
+
+Section 4 designed `replay <change> --onto <ref>`: the agent's answer to cherry-pick and rebase, applying a change's
+**operations** and not its text. Several agents start from one base; one lands; the others are on a stale base. This is
+the one-writer step of the merge of section 6 (#520), built before it.
+
+**What a change's operations are** *(read)*. For a text file that is not `.cho`, the anchored edits it recorded
+(`edits`: `{path, old, new}`, section 3). For a `.cho` file, the declarations it recorded as added, removed or changed
+(`decls`: `{path, name, kind}`); the record names the declaration and holds no text, so the text of a declaration is
+read from the trees: the change's own, and its parent's.
+
+**The command.** `replay CHANGE --onto BRANCH [--expect REV] [--author A] [--time T] [--key NAME] [--no-gate] [--dry-run]`.
+The change must have exactly one parent (`replay-unsupported` otherwise). With P the parent's tree, X the change's and O
+the branch's, each path that differs between P and X is taken in the order of its bytes:
+
+| the branch's path | what happens |
+|---|---|
+| is what P had (or absent in both) | it becomes what X has: added, removed, changed, its mode |
+| is what X has | nothing |
+| a `.cho` file in all three | each recorded declaration is put into O's text when O's declaration is byte for byte what P's was (or absent in both), skipped when it is already what X's is, and is `replay-conflict` otherwise. A changed declaration replaces the old one where it is; an added one goes to the end of the file after an empty line; a removed one goes with the newline after it |
+| another text file in all three | the recorded edits of the path, in order, each where its `old` occurs exactly once: `anchor-not-found`, `anchor-ambiguous` |
+| anything else (added or removed on one side and changed on the other, a link, bytes that are not text, a file with no recorded operation) | `replay-conflict` |
+
+The new tree then goes through the path of `record`: the gate (`gate-failed`), the declarations and edits of the new
+move, the store, and the branch moved by compare-and-swap from where it was read (`ref-moved`; `--expect` as for
+`record`). The new change has **one parent, the branch's head**, the **intent and the author of the change replayed**
+(`--author` replaces the author), and a new member, `"origin": CHANGE`, which `show` prints. The issue asked that "its
+parents say where it came from"; a second parent would make the replayed change's own history an ancestor of the branch,
+which a replay is exactly not, so where it came from is said by `origin` and the parents say only where it is.
+
+The answer says `result`: `exact` when the new tree is X (the branch was at P), else `moved`; and `unchanged` when the
+branch already had everything (nothing is recorded, so a replay run twice records once).
+
+**The working copy.** When `BRANCH` is the branch HEAD is on, the working copy must be clean (`dirty-working-copy`) and
+is brought to the new tree. Otherwise it is not read or written: an agent replays onto `main` from its own branch
+without leaving it.
+
+**A conflict is a document, not a marker.** `replay-conflict`, `anchor-not-found` and `anchor-ambiguous` answer
+`{"path", "declaration", "base", "change", "onto", "intent", "message", "tag"}`: for a declaration, `base` is its text
+in P, `change` in X and `onto` on the branch (null where it is not there); for an edit, `base` is the text it looks for
+and `change` what it puts there. `intent` is the whole intent of the change. Nothing is written to any file.
+
+**Deterministic.** Nothing reads the time of day or the order of a directory: the same change on the same branch head
+with the same `--time` is the same change id (the test copies a repository and replays in both).
+
+**Measured** *(2026-11-23, macOS arm64, the two-file repository of `tests/commands/vcs_replay.sh`)*: a replay of one
+declaration into a file the branch changed too, with the gate, is under 10 ms wall. Not measured: a real repository, and
+how often a replay of a real stale change ends clean, in a conflict, or refused by the gate (R3 asks the same of merges).
+
+**What it does not do.**
+
+* **What a change did outside its declarations is not carried** when the branch changed the same `.cho` file: an
+  `import` it added, a comment between declarations, the order of the declarations. The gate then usually refuses the
+  result (a missing import is `unknown-name`); a comment is silently not there. A comment directly above a declaration
+  stays as the branch has it, since a declaration starts at its `pub`, `fn` or `type`.
+* Only `fn` and `type` declarations are operations (what a change records); a `static` or a foreign function changed
+  in a file the branch also changed is not carried, with the same consequence.
+* Declarations are compared as bytes, so a branch that only reformatted a declaration conflicts.
+* An imported change (`import-git`) has no recorded operations; it replays only onto a branch that did not touch its
+  files.
+* A change with two parents, or none, is not replayed. A range of changes is one `replay` each, in order.
+* `--dry-run` moves no ref and writes no change, **but stores the blobs of the files it rewrote** (objects no change
+  names), because the gate reads a tree from the store. `gc` is not built.
+* One change is replayed onto one branch; `replay` does not open the conflict for `resolve` (section 6, not built).
+
+Refusal tags built here, each reached by `tests/commands/vcs_replay.sh`: `replay-conflict`, `replay-unsupported`; and
+`anchor-not-found`, `anchor-ambiguous`, `gate-failed`, `dirty-working-copy`, `ref-moved`, `bad-revision`,
+`bad-argument` from this command.
