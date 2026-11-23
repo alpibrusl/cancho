@@ -358,11 +358,10 @@ case $rev in
     *-dirty | unknown) echo "pin own: 0 " ;;
     *) pin_project "$rev"; echo "pin own: $(asked "$cancho" install)" ;;
 esac
-# A pin that is a release version (docs/compiler-pin.md): this tree is a `-dev` build, which no release version names.
-crate=$(printf '%s' "$version_line" | sed 's/^cancho \([^ ]*\) .*/\1/')
-pin_project "0.1.0"; echo "pin release, dev build: $(asked "$cancho" install)"
-pin_project "0.1.0"; echo "pin release, dev build, ignored: $(asked "$cancho" install --ignore-compiler-rev)"
-pin_project "$crate"; echo "pin the dev version: $(asked "$cancho" install)"
+# A pin that is a release version (docs/compiler-pin.md) other than this compiler's own is refused, and `--ignore-compiler-rev` lets it through; a `-dev` version is not a pin at all, whatever tree this is.
+pin_project "0.1.0"; echo "pin release, another version: $(asked "$cancho" install)"
+pin_project "0.1.0"; echo "pin release, another version, ignored: $(asked "$cancho" install --ignore-compiler-rev)"
+pin_project "0.1.1-dev"; echo "pin a dev version: $(asked "$cancho" install)"
 for bad in 1.2 1.2.3.4 1..2 .1.2 1.2. 1.2.x v1.2.3 ""; do
     pin_project "$bad"; echo "pin '$bad': $(asked "$cancho" install)"
 done
