@@ -9,25 +9,16 @@
 @cancho_bare_free = internal global ptr null
 declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)
 
-; A chunk of 64 KiB: one given back earlier, or the next of the memory; none left is a trap.
-define internal ptr @cancho_region_take() {
+; The next `bytes` (a multiple of 16) of the memory the link names; past its end is a trap.
+define internal ptr @cancho_bare_bump(i64 %bytes) {
 entry:
-  %f = load ptr, ptr @cancho_bare_free
-  %none = icmp eq ptr %f, null
-  br i1 %none, label %fresh, label %pop
-pop:
-  %link = load ptr, ptr %f
-  store ptr %link, ptr @cancho_bare_free
-  store ptr null, ptr %f
-  ret ptr %f
-fresh:
   %n0 = load i64, ptr @cancho_bare_next
   %unset = icmp eq i64 %n0, 0
   %first = ptrtoint ptr @__cancho_heap_start to i64
   %up = add i64 %first, 15
   %aligned = and i64 %up, -16
   %n = select i1 %unset, i64 %aligned, i64 %n0
-  %e = add i64 %n, 65536
+  %e = add i64 %n, %bytes
   %lim = ptrtoint ptr @__cancho_heap_end to i64
   %wrapped = icmp ult i64 %e, %n
   %over = icmp ugt i64 %e, %lim
@@ -41,6 +32,44 @@ ok:
   %p = inttoptr i64 %n to ptr
   ret ptr %p
 }
+
+; A chunk of 64 KiB: one given back earlier, or the next of the memory.
+define internal ptr @cancho_region_take() {
+entry:
+  %f = load ptr, ptr @cancho_bare_free
+  %none = icmp eq ptr %f, null
+  br i1 %none, label %fresh, label %pop
+pop:
+  %link = load ptr, ptr %f
+  store ptr %link, ptr @cancho_bare_free
+  store ptr null, ptr %f
+  ret ptr %f
+fresh:
+  %p = call ptr @cancho_bare_bump(i64 65536)
+  ret ptr %p
+}
+
+; What a `static` is made in, once, before `main`: zeroed memory that is never given back. This is the only caller
+; a program for this target has; the heap (`malloc`, `free`) is not here.
+define ptr @calloc(i64 %count, i64 %size) {
+entry:
+  %m = call {i64, i1} @llvm.umul.with.overflow.i64(i64 %count, i64 %size)
+  %bytes = extractvalue {i64, i1} %m, 0
+  %carry = extractvalue {i64, i1} %m, 1
+  %up = add i64 %bytes, 15
+  %rounded = and i64 %up, -16
+  %wrapped = icmp ult i64 %rounded, %bytes
+  %bad = or i1 %carry, %wrapped
+  br i1 %bad, label %fail, label %ok
+fail:
+  call void @cancho_trap()
+  unreachable
+ok:
+  %p = call ptr @cancho_bare_bump(i64 %rounded)
+  call void @llvm.memset.p0.i64(ptr %p, i8 0, i64 %rounded, i1 false)
+  ret ptr %p
+}
+declare {i64, i1} @llvm.umul.with.overflow.i64(i64, i64)
 
 ; The chunk is cleared as far as it was used, and kept for the next region.
 define internal void @cancho_region_give(ptr %base, ptr %end) {

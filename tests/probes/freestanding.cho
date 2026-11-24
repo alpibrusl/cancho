@@ -1,7 +1,10 @@
 edition 5;
 
-// freestanding.cho -- a program for no system (`docs/freestanding.md`): a region, a slice filled and read, and one foreign function that stands for the hardware.
+// freestanding.cho -- a program for no system (`docs/freestanding.md`): a region, a slice filled and read, a function of the library, and one foreign function that
+// stands for the hardware. It is built with `--std`: the library brings modules that open files and sockets, and none of their support may reach the module.
 // tests/commands/freestanding.sh builds it for `aarch64-none-elf` and reads what the module calls.
+import std.math;
+
 extern fn probe_out[&f](ffi: &f Ffi("probe"), v: int) -> [ffi("probe")] int;
 
 fn fill[&f](p: &f Ffi("probe")) -> [ffi("probe")] int {
@@ -13,7 +16,7 @@ fn fill[&f](p: &f Ffi("probe")) -> [ffi("probe")] int {
             s[i] = i * 3;
             i = i + 1;
         }
-        last = s[63];
+        last = s[63] + truncate(math.cos(0.0));
     }
     return probe_out(p, last);
 }

@@ -53,7 +53,11 @@ measures. The two section flags let `--gc-sections` drop a function the program 
 ## 4. The runtime: `compiler/runtime/bare.ll`
 
 For target 3 the driver writes **none** of the hosted support (`runtime.ll`, `os_*.ll`: files, processes, `errno`), not the
-`cancho_write_bytes` that calls `fwrite`, and not `region_*.ll`. It writes the two globals the C `main` stores its arguments in, and
+`cancho_write_bytes` that calls `fwrite`, not `region_*.ll`, and none of the modules a hosted program gets for what it uses
+(directories, sockets, signals, processes, serial ports, the camera, the hardware AES). *(Corrected, the day it was written: the
+last group was first left in. A program built with `--std` got the directory and socket support because the library mentions
+them, 45 undefined functions of a libc, though the program called none. cancho-os found it on its first `import std.math`; the
+probe of the test is built with `--std` since.)* It writes the two globals the C `main` stores its arguments in, and
 `bare.ll`:
 
 - **Regions.** A chunk is 64 KiB, as everywhere. `cancho_region_take` answers one that was given back, or the next of the memory
@@ -64,6 +68,8 @@ For target 3 the driver writes **none** of the hosted support (`runtime.ll`, `os
 - **`memset`, `memcpy`, `memmove`, `memchr`.** LLVM calls the first three for a fill or a copy it does not write in line, on every
   target, whether or not the program names them; `memchr` is what the byte search calls. Each is a loop, marked `"no-builtins"`:
   without that the loop of `memset` is recognised as a fill and compiled into a call of `memset`.
+- **`calloc`, for statics only.** A `static` is made once, before `main`, in zeroed memory that is never given back; `std.math`
+  has some. So `calloc` is defined: the next bytes of the same memory, cleared. `malloc` and `free` are not: there is no heap (§7).
 - **The arena's own trap says nothing.** On a hosted target a region that is full writes a sentence on the standard error before it
   traps. There is no standard error here; it traps.
 
@@ -93,7 +99,7 @@ The entry is still `main(world)`, called by the C `main(argc, argv)` the driver 
 
 `tests/commands/freestanding.sh` (four checks) builds `tests/probes/freestanding.cho`, a region, a slice and one foreign function:
 
-- the module for target 3 calls, and does not define, exactly `probe_out`; it has one `udf #0xc11f`, the external heap symbol and its
+- the module for target 3, built with `--std` and calling `math.cos`, calls and does not define exactly `probe_out`; it has one `udf #0xc11f`, the external heap symbol and its
   own `memset`;
 - **the same program for this machine calls `malloc`**, so the first check is one that can fail: it reads a list that is a libc
   when the runtime is the hosted one;

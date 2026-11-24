@@ -15,7 +15,7 @@ calls_undefined() {
 }
 
 begin a_module_for_no_system_calls_nothing_but_the_programs_own_foreign_function
-if "$cancho" build tests/probes/freestanding.cho --target aarch64-none-elf --emit ll -o "$work/bare.ll" > "$work/ll.txt" 2>&1; then
+if "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf --emit ll -o "$work/bare.ll" > "$work/ll.txt" 2>&1; then
     same "$(calls_undefined "$work/bare.ll")" "probe_out " "what the module calls and does not define"
     same "$(grep -c 'udf #0xc11f' "$work/bare.ll")" 1 "the trap is aarch64's"
     same "$(grep -c '^@__cancho_heap_start = external global' "$work/bare.ll")" 1 "the heap is the link's"
@@ -27,7 +27,7 @@ end
 
 # The same program for the machine this runs on calls a libc: the check above can fail.
 begin the_same_module_for_this_machine_calls_a_libc
-if "$cancho" build tests/probes/freestanding.cho --emit ll -o "$work/host.ll" > "$work/hostll.txt" 2>&1; then
+if "$cancho" build tests/probes/freestanding.cho --std --emit ll -o "$work/host.ll" > "$work/hostll.txt" 2>&1; then
     case " $(calls_undefined "$work/host.ll")" in
         *" malloc "*) ;;
         *) fail "the hosted module does not call malloc: $(calls_undefined "$work/host.ll")" ;;
@@ -39,7 +39,7 @@ fi
 end
 
 begin an_object_for_no_system_is_an_elf_for_aarch64
-if "$cancho" build tests/probes/freestanding.cho --target aarch64-none-elf --emit obj -o "$work/bare.o" > "$work/obj.txt" 2>&1; then
+if "$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf --emit obj -o "$work/bare.o" > "$work/obj.txt" 2>&1; then
     # The four bytes of the magic, then (at 18) the machine: 183, AArch64, little-endian.
     same "$(od -An -tx1 -N4 "$work/bare.o" | tr -d ' \n')" "7f454c46" "the magic"
     same "$(od -An -tx1 -j18 -N2 "$work/bare.o" | tr -d ' \n')" "b700" "the machine"
@@ -49,9 +49,9 @@ fi
 end
 
 begin a_program_for_no_system_is_not_linked_by_the_compiler
-"$cancho" build tests/probes/freestanding.cho --target aarch64-none-elf -o "$work/bare.out" > "$work/exe.txt" 2>&1
+"$cancho" build tests/probes/freestanding.cho --std --target aarch64-none-elf -o "$work/bare.out" > "$work/exe.txt" 2>&1
 same "$?" 2 "the status without --emit"
 same "$(head -1 "$work/exe.txt")" '`--target aarch64-none-elf` makes an object file or a module, which the program'"'"'s own link script places: add `--emit obj` or `--emit ll`' "what it says"
-"$cancho" run tests/probes/freestanding.cho --target aarch64-none-elf > "$work/run.txt" 2>&1
+"$cancho" run tests/probes/freestanding.cho --std --target aarch64-none-elf > "$work/run.txt" 2>&1
 same "$?" 2 "the status of run"
 end

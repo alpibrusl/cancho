@@ -345,7 +345,11 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     }
     emit.str(st, "\", \"\"()\n  unreachable\n}\n");
     emit.str(st, "declare i32 @putchar(i32)\n");
-    emit.str(st, "declare ptr @malloc(i64)\ndeclare ptr @calloc(i64, i64)\ndeclare void @free(ptr)\n");
+    emit.str(st, "declare ptr @malloc(i64)\ndeclare void @free(ptr)\n");
+    if st[61] != 3 {
+        // (Where there is no system `calloc` is defined, by `runtime.bare_text`: a `static` is made with it.)
+        emit.str(st, "declare ptr @calloc(i64, i64)\n");
+    }
     if st[61] != 3 {
         // With no system under the program (target 3, `docs/freestanding.md`) these two are defined, by `runtime.bare_text`.
         emit.str(st, "declare ptr @memmove(ptr, ptr, i64)\ndeclare ptr @memchr(ptr, i32, i64)\n");
@@ -468,16 +472,19 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     if entry != 0 {
         shim(st, entry_item);
     }
-    if st[55] & 4 != 0 {
+    // What follows is support that calls a system (the hardware AES is here too: it is written for the three hosted targets). None of it is written where there is
+    // none (target 3, `docs/freestanding.md` section 4), whatever the program's library mentions: `--std` brings modules that open directories and sockets, and a
+    // program that calls none of them must not carry their support.
+    if st[61] != 3 && st[55] & 4 != 0 {
         // A program that asks for the hardware AES has the functions for its target.
         emit.str(st, runtime.crypto_text(st[61]));
     }
-    if st[55] & 2 != 0 {
+    if st[61] != 3 && st[55] & 2 != 0 {
         // A program that opens a directory has the support for them, and the constants of its target.
         emit.str(st, runtime.dirs_text(st[61] == 1));
         platform.print(st);
     }
-    if st[55] & 64 != 0 {
+    if st[61] != 3 && st[55] & 64 != 0 {
         // A program that lets a child go has the thread that reaps it.
         emit.str(st, runtime.process_text());
     }
@@ -488,19 +495,19 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
         // A program that opens a region has the stack of chunks its thread keeps for them.
         emit.str(st, runtime.region_text(st[61] == 1));
     }
-    if st[55] & 128 != 0 {
+    if st[61] != 3 && st[55] & 128 != 0 {
         // A program that opens a camera has the verbs for it.
         emit.str(st, runtime.camera_text(st[61] == 1));
     }
-    if st[55] & 16 != 0 {
+    if st[61] != 3 && st[55] & 16 != 0 {
         // A program that opens a serial port has the verbs for it.
         emit.str(st, runtime.tty_text(st[61] == 1));
     }
-    if st[55] & 8 != 0 {
+    if st[61] != 3 && st[55] & 8 != 0 {
         // A program that claims signals has the support for them.
         emit.str(st, runtime.signals_text(st[61] == 1));
     }
-    if st[55] & 1 != 0 {
+    if st[61] != 3 && st[55] & 1 != 0 {
         // A program that opens a socket or reads the clock has the support for them.
         emit.str(st, runtime.net_text(st[61] == 1));
     }
