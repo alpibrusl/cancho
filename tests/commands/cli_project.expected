@@ -174,14 +174,14 @@ compiler pin ignored: exit 0
   err: note: this project was written for cancho 0000000000000000000000000000000000000000; this is REV (--ignore-compiler-rev)
   files: ./build/a ./cancho.toml ./src/main.cho ./tests/t.cho 
 ok the_command_line_in_cancho_works_in_a_project_like_cancho
---version: cancho 0.1.1-dev (rev REV, host HOST)
--V: cancho 0.1.1-dev (rev REV, host HOST)
+--version: cancho 0.1.1 (rev REV, host HOST)
+-V: cancho 0.1.1 (rev REV, host HOST)
 pin other: 1 this project was written for cancho 0123456789abcdef0123456789abcdef01234567, and this compiler is REV; install that compiler, change `[package] cancho` after checking the sources against this one, or pass --ignore-compiler-rev
 pin other, ignored: 0 note: this project was written for cancho 0123456789abcdef0123456789abcdef01234567; this is REV (--ignore-compiler-rev)
 pin own: 0 
-pin release, dev build: 1 this project was written for cancho 0.1.0, and this compiler is 0.1.1-dev; install that compiler, change `[package] cancho` after checking the sources against this one, or pass --ignore-compiler-rev
-pin release, dev build, ignored: 0 note: this project was written for cancho 0.1.0; this is 0.1.1-dev (--ignore-compiler-rev)
-pin the dev version: 1 `DIR/cancho.toml`: [package] cancho: must be a full commit hash (40 or 64 lowercase hex digits) or a release version (N.N.N), found `0.1.1-dev`
+pin release, another version: 1 this project was written for cancho 0.1.0, and this compiler is 0.1.1; install that compiler, change `[package] cancho` after checking the sources against this one, or pass --ignore-compiler-rev
+pin release, another version, ignored: 0 note: this project was written for cancho 0.1.0; this is 0.1.1 (--ignore-compiler-rev)
+pin a dev version: 1 `DIR/cancho.toml`: [package] cancho: must be a full commit hash (40 or 64 lowercase hex digits) or a release version (N.N.N), found `0.1.1-dev`
 pin '1.2': 1 `DIR/cancho.toml`: [package] cancho: must be a full commit hash (40 or 64 lowercase hex digits) or a release version (N.N.N), found `1.2`
 pin '1.2.3.4': 1 `DIR/cancho.toml`: [package] cancho: must be a full commit hash (40 or 64 lowercase hex digits) or a release version (N.N.N), found `1.2.3.4`
 pin '1..2': 1 `DIR/cancho.toml`: [package] cancho: must be a full commit hash (40 or 64 lowercase hex digits) or a release version (N.N.N), found `1..2`

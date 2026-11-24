@@ -6,7 +6,7 @@ module selfhost.version;
 // the word `crates/cancho/build.rs` uses when there is no git checkout and no `CANCHO_REV`.
 
 pub fn crate_version() -> [] &static [byte] {
-    return "0.1.1-dev";
+    return "0.1.1";
 }
 
 pub fn rev() -> [] &static [byte] {
