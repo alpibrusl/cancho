@@ -255,7 +255,7 @@ pub fn test_files[&h, &i, &a, &f, &x, &c, &t, &l, &s, &k](heap: &!h Heap, io: &!
                     }
                     if status == 0 {
                         borrow exe as &ep in {
-                            status = cliprog.make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(ep), clang, false);
+                            status = cliprog.make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(ep), clang, false, false);
                             if status == 0 {
                                 status = run_tests(heap, io, exec, clock, buffer.bytes(ep), tests);
                                 fs_remove(fs, buffer.bytes(ep));

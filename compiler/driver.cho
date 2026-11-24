@@ -345,13 +345,26 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     }
     emit.str(st, "\", \"\"()\n  unreachable\n}\n");
     emit.str(st, "declare i32 @putchar(i32)\n");
-    emit.str(st, "declare ptr @malloc(i64)\ndeclare ptr @calloc(i64, i64)\ndeclare void @free(ptr)\n");
-    emit.str(st, "declare ptr @memmove(ptr, ptr, i64)\ndeclare ptr @memchr(ptr, i32, i64)\n");
+    emit.str(st, "declare ptr @malloc(i64)\ndeclare void @free(ptr)\n");
+    if st[61] != 3 {
+        // (Where there is no system `calloc` is defined, by `runtime.bare_text`: a `static` is made with it.)
+        emit.str(st, "declare ptr @calloc(i64, i64)\n");
+    }
+    if st[61] != 3 {
+        // With no system under the program (target 3, `docs/freestanding.md`) these two are defined, by `runtime.bare_text`.
+        emit.str(st, "declare ptr @memmove(ptr, ptr, i64)\ndeclare ptr @memchr(ptr, i32, i64)\n");
+    }
     emit.str(st, "declare i32 @pthread_create(ptr, ptr, ptr, ptr)\ndeclare i32 @pthread_join(ptr, ptr)\n");
     emit.str(st, "declare double @llvm.sqrt.f64(double)\ndeclare float @llvm.sqrt.f32(float)\n");
     emit.str(st, "declare i32 @getchar()\ndeclare i64 @write(i32, ptr, i64)\n\n");
-    emit.str(st, runtime.errno_location(st[61] == 1));
-    emit.str(st, runtime.text());
+    if st[61] == 3 {
+        // No system under the program: none of the support that calls one (files, processes, `errno`) is written, so the object names no function of a
+        // libc (`docs/freestanding.md` section 4). What is left of it is where the C `main` puts its two arguments.
+        emit.str(st, "@cancho_argc = global i64 0\n@cancho_argv = global ptr null\n");
+    } else {
+        emit.str(st, runtime.errno_location(st[61] == 1));
+        emit.str(st, runtime.text());
+    }
     // An arena is one chunk of 64 KiB, all of it the region's (how much is used is kept beside the chunk, as the Rust backend's bump pointer), taken from the thread's
     // stack of chunks (`region_text`) and given back to it whole; a request past the chunk traps, as the Rust compiler's
     // does.
@@ -359,7 +372,12 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     emit.str(st, "define ptr @cancho_arena_alloc(ptr %head, i64 %bytes) {\nentry:\n  %chunk = load ptr, ptr %head\n  %usedp = getelementptr i8, ptr %head, i64 8\n  %used = load i64, ptr %usedp\n");
     emit.str(st, "  %up = add i64 %bytes, 7\n  %rounded = and i64 %up, -8\n  %next = add i64 %used, %rounded\n");
     emit.str(st, "  %wrapped = icmp ult i64 %next, %used\n  %over = icmp ugt i64 %next, 65536\n  %bad = or i1 %wrapped, %over\n");
-    emit.str(st, "  br i1 %bad, label %fail, label %ok\nfail:\n  %said = call i64 @write(i32 2, ptr @cancho_region_msg, i64 130)\n  call void @cancho_trap()\n  unreachable\nok:\n");
+    emit.str(st, "  br i1 %bad, label %fail, label %ok\nfail:\n");
+    if st[61] != 3 {
+        // Said on the standard error, where there is one.
+        emit.str(st, "  %said = call i64 @write(i32 2, ptr @cancho_region_msg, i64 130)\n");
+    }
+    emit.str(st, "  call void @cancho_trap()\n  unreachable\nok:\n");
     emit.str(st, "  store i64 %next, ptr %usedp\n  %at = getelementptr i8, ptr %chunk, i64 %used\n  ret ptr %at\n}\n\n");
     var item = st[15];
     var entry = 0;
@@ -454,36 +472,42 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     if entry != 0 {
         shim(st, entry_item);
     }
-    if st[55] & 4 != 0 {
+    // What follows is support that calls a system (the hardware AES is here too: it is written for the three hosted targets). None of it is written where there is
+    // none (target 3, `docs/freestanding.md` section 4), whatever the program's library mentions: `--std` brings modules that open directories and sockets, and a
+    // program that calls none of them must not carry their support.
+    if st[61] != 3 && st[55] & 4 != 0 {
         // A program that asks for the hardware AES has the functions for its target.
         emit.str(st, runtime.crypto_text(st[61]));
     }
-    if st[55] & 2 != 0 {
+    if st[61] != 3 && st[55] & 2 != 0 {
         // A program that opens a directory has the support for them, and the constants of its target.
         emit.str(st, runtime.dirs_text(st[61] == 1));
         platform.print(st);
     }
-    if st[55] & 64 != 0 {
+    if st[61] != 3 && st[55] & 64 != 0 {
         // A program that lets a child go has the thread that reaps it.
         emit.str(st, runtime.process_text());
     }
-    if st[55] & 32 != 0 {
+    if st[61] == 3 {
+        // No system: the chunks of the regions and the fills and copies are the program's own (`runtime/bare.ll`).
+        emit.str(st, runtime.bare_text());
+    } else if st[55] & 32 != 0 {
         // A program that opens a region has the stack of chunks its thread keeps for them.
         emit.str(st, runtime.region_text(st[61] == 1));
     }
-    if st[55] & 128 != 0 {
+    if st[61] != 3 && st[55] & 128 != 0 {
         // A program that opens a camera has the verbs for it.
         emit.str(st, runtime.camera_text(st[61] == 1));
     }
-    if st[55] & 16 != 0 {
+    if st[61] != 3 && st[55] & 16 != 0 {
         // A program that opens a serial port has the verbs for it.
         emit.str(st, runtime.tty_text(st[61] == 1));
     }
-    if st[55] & 8 != 0 {
+    if st[61] != 3 && st[55] & 8 != 0 {
         // A program that claims signals has the support for them.
         emit.str(st, runtime.signals_text(st[61] == 1));
     }
-    if st[55] & 1 != 0 {
+    if st[61] != 3 && st[55] & 1 != 0 {
         // A program that opens a socket or reads the clock has the support for them.
         emit.str(st, runtime.net_text(st[61] == 1));
     }
@@ -493,13 +517,16 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     if st[61] == 1 {
         stream = "@__stdoutp";
     }
-    if st[55] & 1 == 0 {
+    if st[61] != 3 {
+        // (Not where there is no system: there is no standard output to write to.)
+        if st[55] & 1 == 0 {
+            emit.str(st, stream);
+            emit.str(st, " = external global ptr, align 8\n");
+        }
+        emit.str(st, "define i64 @cancho_write_bytes(ptr %p, i64 %n) {\nentry:\n  %out = load ptr, ptr ");
         emit.str(st, stream);
-        emit.str(st, " = external global ptr, align 8\n");
+        emit.str(st, ", align 8\n  %w = call i64 @fwrite(ptr %p, i64 1, i64 %n, ptr %out)\n  ret i64 %n\n}\n\n");
     }
-    emit.str(st, "define i64 @cancho_write_bytes(ptr %p, i64 %n) {\nentry:\n  %out = load ptr, ptr ");
-    emit.str(st, stream);
-    emit.str(st, ", align 8\n  %w = call i64 @fwrite(ptr %p, i64 1, i64 %n, ptr %out)\n  ret i64 %n\n}\n\n");
     emit.str(st, "; left out: ");
     emit.nat(st, left_out);
     emit.str(st, "\n");

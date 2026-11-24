@@ -11,7 +11,7 @@ fn usage_0[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "cancho — the bootstrap compiler for the cancho systems dialect\n");
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "usage:\n");
-    b = buffer.append(heap, b, "    cancho build <file.cho>... [-o <output>] [--emit exe|obj] [--std] [--backend llvm] [--target <triple>] [-l <name>]... [-L <path>]... [--clang <path>]\n");
+    b = buffer.append(heap, b, "    cancho build <file.cho>... [-o <output>] [--emit exe|obj|ll] [--std] [--backend llvm] [--target <triple>] [-l <name>]... [-L <path>]... [--clang <path>]\n");
     b = buffer.append(heap, b, "    cancho check <file.cho>... [--std] [--output json] [--backend llvm] [--target <triple>]\n");
     b = buffer.append(heap, b, "    cancho run   <file.cho>... [--std] [--backend llvm] [--target <triple>] [-l <name>]... [-L <path>]...\n");
     b = buffer.append(heap, b, "    cancho test  <file.cho>... [--std] [--backend llvm] [-l <name>]... [-L <path>]...\n");
@@ -40,7 +40,7 @@ fn usage_0[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "\n");
     b = buffer.append(heap, b, "options:\n");
     b = buffer.append(heap, b, "    -o <output>     where to write the result (default: the first input's stem)\n");
-    b = buffer.append(heap, b, "    --emit exe|obj  emit a linked executable (default) or a bare object file\n");
+    b = buffer.append(heap, b, "    --emit exe|obj|ll  emit a linked executable (default), a bare object file, or the LLVM module with no clang\n");
     b = buffer.append(heap, b, "    --std           make the standard library's source available\n");
     b = buffer.append(heap, b, "    --clang <path>  (build) the clang that compiles the generated LLVM IR and links it (default: /usr/bin/clang)\n");
     return b;
@@ -52,8 +52,8 @@ fn usage_1[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     b = buffer.append(heap, b, "    --backend llvm  the backend that generates code; `llvm` is the only one in this build (docs/llvm-backend.md).\n");
     b = buffer.append(heap, b, "                    A program it cannot compile is refused with an ordinary located error, not a crash.\n");
     b = buffer.append(heap, b, "    --target <triple>\n");
-    b = buffer.append(heap, b, "                    must be the triple of the machine this binary runs on: `build`, `check` and `run`\n");
-    b = buffer.append(heap, b, "                    write code for that machine and refuse any other triple. `authority --target`\n");
+    b = buffer.append(heap, b, "                    the triple of the machine this binary runs on, or `aarch64-none-elf` (`build --emit obj|ll`\n                    and `check`: a program with no system under it, docs/freestanding.md); `build`, `check` and `run`\n");
+    b = buffer.append(heap, b, "                    refuse any other triple. `authority --target`\n");
     b = buffer.append(heap, b, "                    also takes `wasm32-wasip1`, `wasm32-wasip2`, `wasm32-wasi` or `wasm32-wasip1-threads`\n");
     b = buffer.append(heap, b, "                    and reports the WASI imports a module for it may make (docs/wasm.md).\n");
     b = buffer.append(heap, b, "    -l <name>       link `lib<name>` at the final link step (`build`/`run`\n");

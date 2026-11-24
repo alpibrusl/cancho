@@ -60,7 +60,7 @@ No garbage collector, no destructors, no exceptions. No borrow checker (borrowin
 ### The compiler's whole surface
 
 ```sh
-cancho build <file.cho>... [-o <output>] [--emit exe|obj] [--std] [-l <name>]... [-L <path>]... [--clang <path>]
+cancho build <file.cho>... [-o <output>] [--emit exe|obj|ll] [--std] [--target aarch64-none-elf] [-l <name>]... [-L <path>]... [--clang <path>]
 cancho check <file.cho>... [--std] [--output json]   # refuse, or say nothing
 cancho run   <file.cho>... [--std] [-l <name>]... [-L <path>]...   # build, run, exit with the program's status
 cancho test  <file.cho>... [--std] [-l <name>]... [-L <path>]...   # run every `fn test_*`, one process each; exit 4 if one failed
