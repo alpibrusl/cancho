@@ -233,7 +233,7 @@ Open questions, each with the measurement that closes it:
   gate as built follows imports to the modules the tree declares and adds `std` when imported; of all 182 `.cho`
   files of `cancho-forge`, touched by a comment, 168 pass and 14 are still refused `unknown-name` because they
   import packages that `cancho.toml` installs (`http_client`, `tls`, `http.server`) and are not in the tree.
-  Those need project-dependency resolution (V2) or `--no-gate`. The cost: `record --dry-run` of one forge file
+  Those need project-dependency resolution (V2) or `--no-gate`. *Corrected 2026-11-24:* "follows imports" was true of the Rust command and not of the command in cancho that replaced it: that one followed the imports of a file that declares a module and **not of a file that declares none** (a test file, a program's `main`), so it checked such a file alone and refused it `unknown-name` for any import, of `std` or of the tree, although `cancho check` accepts it. No test had a file without a module (the goldens of `tests/commands/vcs_repo.sh` all declare one). Found by cancho-forge publishing a model's change with a test file; fixed (`identity.modules` lists the root module's imports for the gate), with three cases in that script. The cost: `record --dry-run` of one forge file
   is 0.06 s wall (release). The heavier-gate and asynchronous-attestation parts of R2 are not built or measured.
 * **R3: how often does a clean declaration merge fail the gate?** Take the 59 merge commits of `cancho-forge`
   (the PR merges) and replay each as a declaration merge; count conflicts and

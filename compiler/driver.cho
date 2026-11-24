@@ -890,12 +890,12 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                     status = identities(heap, io, st, text, tokens);
                 }
             } else if mode == 16 {
-                // The modules the file declares and what each imports (`identity.modules`), for `vcs publish --dir`.
+                // The modules the file declares and what each imports (`identity.modules`), for `vcs publish --dir`; with 8 added to the target (as mode 19 reads its flag), the root module too, for the gate of `vcs record`.
                 if ast.parse(st, text) != 0 {
                     status = 1;
                 } else {
                     buffer.drop(heap, written);
-                    written = identity.modules(heap, st, text);
+                    written = identity.modules(heap, st, text, target / 8 == 1);
                     status = 0;
                 }
             } else if mode == 13 || mode == 14 || mode == 15 || mode == 20 || mode == 21 {
