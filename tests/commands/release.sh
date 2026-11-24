@@ -144,4 +144,30 @@ run "http://127.0.0.1:9" "$work/latest/other" > /dev/null 2>&1
 echo "no release: exit $?"
 [ -e "$work/latest/other/.local" ] && echo "installed something anyway"
 
+
+echo "== install by version reads the commit of the release and checks the binary for it"
+# A release `v0.1.1` is a directory with one file, `commit`; the binary packaged for it says it is 0.1.1.
+fake "$work/byver/build" "cancho 0.1.1 (rev $rev, host fake)"
+package "$work/byver/build/cancho" "$work/byver/dist" > /dev/null || echo "package failed"
+mkdir -p "$work/byver/versions/v0.1.1" "$work/byver/versions/v0.1.2"
+echo "$rev" > "$work/byver/versions/v0.1.1/commit"
+echo "$rev" > "$work/byver/versions/v0.1.2/commit"
+byver() { CANCHO_VERSIONS="file://$work/byver/versions/v$1" CANCHO_RELEASES="file://$work/byver/dist" "$root/scripts/install.sh" "$1" "$2"; } # VERSION PREFIX
+byver 0.1.1 "$work/byver/prefix" > /dev/null 2>&1
+echo "by version: exit $?"
+"$work/byver/prefix/bin/cancho" --version
+# The commit a version names is checked like any other, and so is the version the binary reports: 0.1.2 names the same commit, whose binary says 0.1.1.
+byver 0.1.2 "$work/byver/other" > /dev/null 2> "$work/byver/err"
+echo "version the binary does not report: exit $?: $(grep -c "reports version '0.1.1', not 0.1.2" "$work/byver/err") refusal said"
+[ -e "$work/byver/other" ] && echo "installed something anyway"
+# A version nobody released is a place with no release (5); what is not a version, `-dev` included, is a command line that is wrong (2). Nothing is installed.
+byver 0.9.9 "$work/byver/other" > /dev/null 2>&1
+echo "no such release: exit $?"
+for bad in 0.1.1-dev 0.1.x 1..2 0.1.1.; do
+    byver "$bad" "$work/byver/other" > /dev/null 2>&1
+    echo "bad version: exit $?"
+done
+[ -e "$work/byver/other" ] && echo "installed something anyway"
+
+
 exit 0
