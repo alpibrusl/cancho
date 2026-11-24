@@ -416,6 +416,7 @@ not repeated here; a doc's own header carries its own detail.
 | [`agent-errors.md`](agent-errors.md) | Refusals a machine can read: stable rule tags, `check --output json` | settled and built |
 | [`diagnostic-messages.md`](diagnostic-messages.md) | The specific refusal message in the compiler in cancho (383 of 384 corpus messages are the rule's sentence there) | design, not built |
 | [`refusals-by-example.md`](refusals-by-example.md) | A walkthrough of 13 refusals, one rule tag per chapter: the refused program, what the compiler says, the correction; checked by a test | built |
+| [`freestanding.md`](freestanding.md) | A program with no system under it: `--target aarch64-none-elf`, `--emit ll`, and a runtime with no libc (regions from the memory the link names). What a kernel written in cancho needed, measured on one | built |
 | [`standalone-cancho.md`](standalone-cancho.md) | A `cancho` built by cancho: what the command line in cancho lacks (measured), the decisions for the first standalone release, the slices, installing | built; release 0.1.0 |
 | [`seed.md`](seed.md) | The seed: building the compiler in cancho with no Rust: what is committed, how it is written and checked, how often it is renewed | built |
 | [`structured-ingest.md`](structured-ingest.md) | The AST as JSON and back: `cancho print --output json` and `cancho ingest`, the ingest path an agent writes | built |

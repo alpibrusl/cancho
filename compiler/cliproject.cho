@@ -1095,7 +1095,7 @@ fn build_files[&h, &i, &a, &f, &x, &l, &s, &o, &k](heap: &!h Heap, io: &!i Io, a
                     }
                 }
                 if status == 0 {
-                    status = cliprog.make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), out, clang, false);
+                    status = cliprog.make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), out, clang, false, false);
                 }
             }
             driver.discard(heap, built);

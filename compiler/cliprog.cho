@@ -107,7 +107,7 @@ pub fn detect_host[&h, &x, &f, &p](heap: &!h Heap, exec: &x Exec(""), fs: &f Fs(
 
 // The module `ir` made into the executable (or, `obj`, the object file) at `out`, by `clang`: the text is written to `out.ll`, `clang` reads
 // it with the libraries and the paths after `-l` and `-L` in the arguments, and what is left over is taken away. 0, or 3 with what `clang` said.
-pub fn make_binary[&h, &i, &a, &f, &x, &r, &o, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), ir: &r [byte], out: &o [byte], clang: &c [byte], obj: bool) -> [heap, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec("")] int {
+pub fn make_binary[&h, &i, &a, &f, &x, &r, &o, &c](heap: &!h Heap, io: &!i Io, args: &a Args, fs: &f Fs(""), exec: &x Exec(""), ir: &r [byte], out: &o [byte], clang: &c [byte], obj: bool, bare: bool) -> [heap, err_write, args, fs_read(""), fs_write(""), file_read, file_write, exec("")] int {
     var ll = buffer.append(heap, buffer.empty(heap, len(out) + 8), out);
     ll = buffer.append(heap, ll, ".ll");
     var log = buffer.append(heap, buffer.empty(heap, len(out) + 16), out);
@@ -127,6 +127,11 @@ pub fn make_binary[&h, &i, &a, &f, &x, &r, &o, &c](heap: &!h Heap, io: &!i Io, a
                 list = buffer.push(heap, list, byte_of(0));
                 if obj {
                     list = buffer.append(heap, list, "-c\0");
+                }
+                if bare {
+                    // No system under the program (`docs/freestanding.md` section 3): the triple, no access that is not aligned (before a kernel turns
+                    // its MMU on, one is a fault), and a section for each function so that the link drops what the program does not reach.
+                    list = buffer.append(heap, list, "--target=aarch64-none-elf\0-mstrict-align\0-ffunction-sections\0-fdata-sections\0");
                 }
                 var n = 2;
                 while n + 1 < arg_count(args) {
@@ -427,6 +432,7 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
     var host_given = false;
     var out_at = 0 - 1;
     var obj = false;
+    var ll = false;
     var clang_at = 0 - 1;
     var std_dir = 0 - 1;
     var files = 0;
@@ -478,8 +484,10 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             n = n + 1;
             if n < arg_count(args) && bytes.equal(arg(args, n), "obj") {
                 obj = true;
+            } else if n < arg_count(args) && bytes.equal(arg(args, n), "ll") && !run {
+                ll = true;
             } else if n >= arg_count(args) || !bytes.equal(arg(args, n), "exe") {
-                return clibase.usage_error(heap, io, "`--emit` needs exe or obj");
+                return clibase.usage_error(heap, io, "`--emit` needs exe, obj or ll");
             }
         } else if build && (bytes.equal(word, "-l") || bytes.equal(word, "-L")) {
             n = n + 1;
@@ -511,7 +519,11 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             if n >= arg_count(args) {
                 return clibase.usage_error(heap, io, "`--target` needs a triple");
             }
-            if !(bytes.equal(arg(args, n), version.host()) && !bytes.equal(version.host(), "unknown")) {
+            if bytes.equal(arg(args, n), "aarch64-none-elf") && !run {
+                // No system under the program (`docs/freestanding.md`): target 3 of the driver.
+                host = 3;
+                host_given = true;
+            } else if !(bytes.equal(arg(args, n), version.host()) && !bytes.equal(version.host(), "unknown")) {
                 return clibase.not_in_this_build(heap, io, "--target", arg(args, n));
             }
         } else if len(word) > 0 && lc.at(word, 0) == '-' {
@@ -523,6 +535,9 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
     }
     if files == 0 {
         return clibase.usage_error(heap, io, "no file given");
+    }
+    if build && host == 3 && !obj && !ll {
+        return clibase.usage_error(heap, io, "`--target aarch64-none-elf` makes an object file or a module, which the program's own link script places: add `--emit obj` or `--emit ll`");
     }
     let loaded = load_program(heap, io, args, fs, build, run, std_dir, "", "");
     let Loaded { names, raw, laid, lens, count, read_status } = loaded;
@@ -538,6 +553,9 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
             }
             if obj {
                 target = buffer.append(heap, target, ".o");
+            }
+            if ll {
+                target = buffer.append(heap, target, ".ll");
             }
             if run {
                 // The program `run` makes is next to where it is run, and taken away.
@@ -591,7 +609,15 @@ pub fn program_command[&h, &i, &a, &f, &x, &c](heap: &!h Heap, io: &!i Io, args:
                         clang = arg(args, clang_at);
                     }
                     borrow target as &tp in {
-                        status = make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(tp), clang, obj);
+                        if ll {
+                            // `--emit ll`: the module as the compiler wrote it, and no clang.
+                            if filewrite.store(fs, buffer.bytes(tp), buffer.bytes(b.ir)) != 0 {
+                                clibase.complain(heap, io, buffer.bytes(tp), "cannot write the file");
+                                status = 3;
+                            }
+                        } else {
+                            status = make_binary(heap, io, args, fs, exec, buffer.bytes(b.ir), buffer.bytes(tp), clang, obj, host == 3);
+                        }
                         if status == 0 && run {
                             var input = buffer.empty(heap, 0);
                             if forward {

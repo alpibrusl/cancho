@@ -1,0 +1,36 @@
+edition 5;
+
+// freestanding.cho -- a program for no system (`docs/freestanding.md`): a region, a slice filled and read, and one foreign function that stands for the hardware.
+// tests/commands/freestanding.sh builds it for `aarch64-none-elf` and reads what the module calls.
+extern fn probe_out[&f](ffi: &f Ffi("probe"), v: int) -> [ffi("probe")] int;
+
+fn fill[&f](p: &f Ffi("probe")) -> [ffi("probe")] int {
+    var last = 0;
+    region r {
+        let s = alloc_slice[r](64, 0);
+        var i = 0;
+        while i < len(s) {
+            s[i] = i * 3;
+            i = i + 1;
+        }
+        last = s[63];
+    }
+    return probe_out(p, last);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(io);
+    release(fs);
+    release(heap);
+    release(args);
+    release(net);
+    release(clock);
+    let probe = narrow(ffi, "probe");
+    var status = 0;
+    borrow probe as &p in {
+        status = fill(p);
+    }
+    release(probe);
+    return status;
+}
