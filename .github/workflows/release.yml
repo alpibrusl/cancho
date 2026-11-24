@@ -88,11 +88,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      # After the checkout, which cleans the workspace: before it, `dist` is gone when the release is made.
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - uses: actions/checkout@v4
       # A release is a version too (docs/compiler-pin.md): `cancho = "0.1.1"` names the commit that has this version and no other. So the commit must
       # hold a release's version (never `-dev`), and a version already released is refused: `gh release create` fails on a tag that exists. The release
       # `v<version>` carries one asset, `commit`, the hash `install.sh <version>` reads, and is made first so that a refusal leaves nothing behind.
