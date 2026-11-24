@@ -165,7 +165,8 @@ fn blob_text[&h, &r, &d, &s, &b, &p](heap: &!h Heap, root: &r Dir, vcs: &d Dir, 
 }
 
 // What the compiler's `modules` (mode 16) says of a file: for each module it declares, its name, a NUL, each import, a NUL, and a newline. False when the file does not parse.
-fn modules_of[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte]) -> [heap, io_write] (buffer.Buffer, bool) {
+// With `root`, the first line is the root module's, its name empty: the imports of a file that declares no module.
+fn modules_of[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte], root: bool) -> [heap, io_write] (buffer.Buffer, bool) {
     var raw = buffer.append(heap, buffer.empty(heap, len(text) + 24), "FILE ");
     raw = buffer.push_nat(heap, raw, len(text));
     raw = buffer.push(heap, raw, byte_of(10));
@@ -173,7 +174,11 @@ fn modules_of[&h, &i, &x](heap: &!h Heap, io: &!i Io, text: &x [byte]) -> [heap,
     var lines = buffer.empty(heap, 0);
     var ok = false;
     borrow raw as &rb in {
-        let built = driver.run_many(heap, io, buffer.bytes(rb), 16, 0);
+        var with_root = 0;
+        if root {
+            with_root = 8;
+        }
+        let built = driver.run_many(heap, io, buffer.bytes(rb), 16, with_root);
         let driver.Built { ir, status, rule, from, to, more } = built;
         buffer.drop(heap, more);
         if status == 0 {
@@ -215,7 +220,7 @@ fn module_index[&h, &i, &r, &d, &s, &t](heap: &!h Heap, io: &!i Io, root: &r Dir
             if st == 0 {
                 borrow text as &tb in {
                     if utf8.is_valid(buffer.bytes(tb)) {
-                        let (lines, ok) = modules_of(heap, io, buffer.bytes(tb));
+                        let (lines, ok) = modules_of(heap, io, buffer.bytes(tb), false);
                         if ok {
                             borrow lines as &lb in {
                                 let all = buffer.bytes(lb);
@@ -334,7 +339,7 @@ fn closure[&h, &i, &r, &d, &s, &t, &p](heap: &!h Heap, io: &!i Io, root: &r Dir,
                         if !utf8.is_valid(buffer.bytes(tb)) {
                             status = 51;
                         } else {
-                            let (lines, ok) = modules_of(heap, io, buffer.bytes(tb));
+                            let (lines, ok) = modules_of(heap, io, buffer.bytes(tb), true);
                             if ok {
                                 borrow lines as &lb in {
                                     let all = buffer.bytes(lb);

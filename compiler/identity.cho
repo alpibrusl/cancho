@@ -1750,9 +1750,14 @@ pub fn edges[&h, &s, &x, &j](heap: &!h Heap, st: &!s [int], text: &x [byte], d: 
 
 // The modules the program declares (not the root): for each, its path with the dots and a NUL, then the path of each of its imports with the dots (an `as` left out) and a NUL, and a newline.
 // What `vcs publish --dir` reads off a file to put the files of a directory in the order of their imports (`docs/cli-in-cancho.md` section 33).
-pub fn modules[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte]) -> [heap] buffer.Buffer {
+// With `root`, the root module comes first, as a line with an empty path: what a file that declares no module imports (a test file, a program's `main`), which the gate of
+// `vcs record` follows as it follows the imports of a declared module.
+pub fn modules[&h, &s, &x](heap: &!h Heap, st: &!s [int], text: &x [byte], root: bool) -> [heap] buffer.Buffer {
     var out = buffer.empty(heap, 64);
     var m = 1;
+    if root {
+        m = 0;
+    }
     while m < st[11] {
         let first = ast.module_first(st, m);
         var n = 0;

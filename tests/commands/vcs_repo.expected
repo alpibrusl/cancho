@@ -576,6 +576,12 @@ ok record: imports: no lock left
 ok record: std
 ok record: std: the store is as the Rust command left it
 ok record: std: no lock left
+ok record: a file with no module that imports one of the tree (exit 0)
+ok record: a file with no module: it is recorded and was checked
+ok record: a file with no module: no lock left
+ok record: a file with no module that imports std and one of the tree (exit 0)
+ok record: a file with no module that does not check (exit 1)
+ok record: a file with no module that does not check is gate-failed, by its own fault
 ok record: binary
 ok record: binary: the store is as the Rust command left it
 ok record: binary: no lock left
