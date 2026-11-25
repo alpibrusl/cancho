@@ -13,6 +13,8 @@ import selfhost.kinds;
 import selfhost.rules;
 import selfhost.types;
 import selfhost.netcode;
+import selfhost.mmio;
+import selfhost.pass1;
 
 // Where the bytes of the literal in token `tok` start and end, between its quotes; none is the empty string.
 fn first[&s](st: &!s [int], tok: int) -> [] int {
@@ -245,11 +247,16 @@ pub fn refused_pair[&s, &x](st: &!s [int], text: &x [byte], path: bool, a: int, 
 
 // The capabilities `narrow` accepts, by the name of their prelude type; and the three that narrow into several.
 pub fn narrows[&s](st: &!s [int], index: int) -> [] bool {
-    return index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || is_net(st, index) || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || is_device(st, index);
+    return index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || is_net(st, index) || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || is_device(st, index) || is_mmio(st, index);
 }
 
 pub fn narrows_many[&s](st: &!s [int], index: int) -> [] bool {
-    return index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Exec") || is_net(st, index);
+    return index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Exec") || is_net(st, index) || is_mmio(st, index);
+}
+
+// `Mmio`, bounded by ranges of addresses (`docs/mmio.md` 3, `mmio.cho`).
+pub fn is_mmio[&s](st: &!s [int], index: int) -> [] bool {
+    return index == netcode.prelude_named("Mmio");
 }
 
 // `Net`, and the two halves of it from edition 11 (`docs/net-bounds.md` 3): bounded by the same `host:port` text.
@@ -457,13 +464,52 @@ pub fn refused[&s, &x](st: &!s [int], text: &x [byte], cty: int, lit: int, nargs
     if is_signals(st, index) && refused_signals(st, text, now, ast.get(st, lit, 4), from, to) {
         return 1;
     }
+    if is_mmio(st, index) && refused_ranges(st, text, now, lit, nargs) {
+        return 1;
+    }
     return 0;
+}
+
+// The literals of a `narrow` of an `Mmio` (`docs/mmio.md` 3): each is a bound, every address of it is one the capability
+// holds, it is not the bound the capability has already, and no two share an address. True if refused, at the literal.
+fn refused_ranges[&s, &x](st: &!s [int], text: &x [byte], now: int, lit: int, nargs: int) -> [] bool {
+    var at = lit;
+    var seen = 0;
+    while seen < nargs - 1 {
+        let t = ast.get(st, at, 4);
+        if escaped(st, text, t) || size(st, t) == 0 || !mmio.valid(text, first(st, t), last(st, t)) || !mmio.inside(text, first(st, now), last(st, now), first(st, t), last(st, t)) || equal(st, text, now, t) {
+            ast.fail(st, rules.r_capability_not_narrowable(), ast.nstart(st, at), ast.nend(st, at));
+            return true;
+        }
+        var other = ast.next(st, at);
+        var j = seen + 1;
+        while j < nargs - 1 {
+            let u = ast.get(st, other, 4);
+            if mmio.overlap(text, first(st, t), last(st, t), first(st, u), last(st, u)) {
+                ast.fail(st, rules.r_capability_not_narrowable(), ast.nstart(st, other), ast.nend(st, other));
+                return true;
+            }
+            other = ast.next(st, other);
+            j = j + 1;
+        }
+        at = ast.next(st, at);
+        seen = seen + 1;
+    }
+    // Each literal is kept as the first of the program spelled the same: the type of what `narrow` makes is that token (`types.unify`).
+    at = lit;
+    seen = 0;
+    while seen < nargs - 1 {
+        ast.put(st, at, 4, pass1.first_spelled(st, text, ast.get(st, at, 4)));
+        at = ast.next(st, at);
+        seen = seen + 1;
+    }
+    return false;
 }
 
 // A capability whose only consumer is `release`: the root authorities, which are not taken apart and not destroyed by
 // anything else (`released_only`).
 pub fn released_only[&s](st: &!s [int], index: int) -> [] bool {
-    return index == netcode.prelude_named("World") || index == netcode.prelude_named("Io") || index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Heap") || index == netcode.prelude_named("Args") || is_net(st, index) || index == netcode.prelude_named("Clock") || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || is_device(st, index);
+    return index == netcode.prelude_named("World") || index == netcode.prelude_named("Io") || index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Heap") || index == netcode.prelude_named("Args") || is_net(st, index) || index == netcode.prelude_named("Clock") || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || is_device(st, index) || is_mmio(st, index);
 }
 
 // ---------------------------------------------------------------- listeners ---

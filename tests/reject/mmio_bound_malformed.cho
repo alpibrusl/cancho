@@ -1,0 +1,16 @@
+//~ ERROR `0x1000-0x2000` is not a bound: a bound is `lo..hi` ranges of lower-case hexadecimal addresses
+//~ RULE capability-not-narrowable
+// `docs/mmio.md` 3: the literal of an `Mmio` type is a bound, checked where it is written.
+edition 13;
+
+fn peek[&m](m: &m Mmio("0x1000-0x2000")) -> [] int {
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker);
+    release(mmio);
+    return 0;
+}

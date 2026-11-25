@@ -1,0 +1,45 @@
+edition 13;
+
+// mmio.cho -- hardware reached through an `Mmio` (`docs/mmio.md`): the capability `split` gives is cut into two that share no address, a driver is lent one of them
+// and can reach nothing else, and the row of each function says which addresses it touches. tests/commands/mmio.sh builds it for `aarch64-none-elf` and reads the
+// module and the authority report.
+
+// A UART on either of two boards: one type for both, so one driver.
+fn uart_put[&m](uart: &!m Mmio("0x3f201000..0x3f201090,0xfe201000..0xfe201090"), base: int, c: int) -> [mmio("0x3f201000..0x3f201090,0xfe201000..0xfe201090")] int {
+    while mmio_read32(uart, base + 24) & 32 != 0 {
+    }
+    return mmio_write32(uart, base, c);
+}
+
+fn tick[&m](timer: &m Mmio("0x40000040..0x40000050")) -> [mmio("0x40000040..0x40000050")] int {
+    return mmio_read64(timer, 1073741888) + mmio_read8(timer, 1073741896);
+}
+
+fn main(world: World) -> [mmio("0x3f201000..0x3f201090,0xfe201000..0xfe201090"), mmio("0x40000040..0x40000050")] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(out);
+    release(ports);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(camera);
+    release(mic);
+    release(speaker);
+    let (uart, timer) = narrow(mmio, "0x3f201000..0x3f201090,0xfe201000..0xfe201090", "0x40000040..0x40000050");
+    var n = 0;
+    borrow timer as &t in {
+        n = tick(t);
+    }
+    borrow mut uart as &!u in {
+        uart_put(u, 1059061760, 65 + n % 2);
+    }
+    release(uart);
+    release(timer);
+    return 0;
+}

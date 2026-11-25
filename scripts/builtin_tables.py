@@ -23,7 +23,7 @@ then its position; 16 a literal type; 17 `c_ptr`. `show` decodes one so a person
 import argparse, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SELF = os.path.join(ROOT, "examples", "selfhost")
+SELF = os.path.join(ROOT, "compiler")
 FILES = {k: os.path.join(SELF, k + ".cho") for k in ("tables", "builtins", "signatures")}
 GOLDEN = os.path.join(ROOT, "tests", "builtins.golden")
 

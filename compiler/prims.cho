@@ -80,6 +80,10 @@ pub fn decode[&s](st: &!s [int], fields: bool, at: int, fresh: int, behind: bool
         if !ok {
             return 0;
         }
+        if st[40] != 0 && index == tables.prelude_mmio() && n == 0 {
+            // The `Mmio` a builtin takes is one of any bound.
+            return types.make_prelude_lit(st, index, 0 - 2);
+        }
         if st[40] != 0 && index != tables.prelude_box() {
             // In compile mode a resource is a value, and a capability narrowed to a literal is its type.
             return types.make_prelude(st, index);

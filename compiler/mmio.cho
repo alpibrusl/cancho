@@ -1,0 +1,157 @@
+module selfhost.mmio;
+
+// mmio.cho -- the bound of an `Mmio` (`docs/mmio.md` 3): the addresses a holder may read and write, as the literal of the type.
+//
+// A bound is one or more ranges separated by commas, each `lo..hi`, `hi` not included: `"0x3f201000..0x3f201090"`. An address
+// is `0x` and up to fifteen lower-case hexadecimal digits with no zero in front (`0x0` is zero). Each range holds at least one
+// address, and each starts after the one before it ends, with at least one address between them, so that a set of addresses
+// has one spelling and two bounds are the same set exactly when they are the same text. The empty literal is every address:
+// the `Mmio` that `split` gives.
+//
+// Everything here reads `text[from..to]`, the literal between its quotes, and nothing else.
+
+// The value of a hexadecimal digit, lower case only (one spelling), or -1.
+fn hex(c: int) -> [] int {
+    if c >= 'a' && c <= 'f' {
+        return c - 87;
+    }
+    if c < '0' || c > '9' {
+        return 0 - 1;
+    }
+    return c - '0';
+}
+
+// Where the address written at `at` ends, or -1 if none is written there.
+fn address_end[&x](text: &x [byte], at: int, to: int) -> [] int {
+    if at + 3 > to || int_of(text[at]) != '0' || int_of(text[at + 1]) != 'x' {
+        return 0 - 1;
+    }
+    var i = at + 2;
+    while i < to && hex(int_of(text[i])) >= 0 {
+        i = i + 1;
+    }
+    let digits = i - at - 2;
+    if digits < 1 || digits > 15 || digits > 1 && int_of(text[at + 2]) == '0' {
+        return 0 - 1;
+    }
+    return i;
+}
+
+fn address[&x](text: &x [byte], at: int, end: int) -> [] int {
+    var v = 0;
+    var i = at + 2;
+    while i < end {
+        v = v * 16 + hex(int_of(text[i]));
+        i = i + 1;
+    }
+    return v;
+}
+
+// The bound, read once from the left. With `want` negative: how many ranges it has (none for the empty literal), or -1 if it
+// is not a bound. Else the first address of range `want`, or with `past` the first address after it; -1 if there is none.
+fn scan[&x](text: &x [byte], from: int, to: int, want: int, past: bool) -> [] int {
+    var n = 0;
+    var i = from;
+    var floor = 0 - 1;
+    while i < to {
+        let a = address_end(text, i, to);
+        if a < 0 || a + 2 > to || int_of(text[a]) != '.' || int_of(text[a + 1]) != '.' {
+            return 0 - 1;
+        }
+        let b = address_end(text, a + 2, to);
+        if b < 0 {
+            return 0 - 1;
+        }
+        let lo = address(text, i, a);
+        let hi = address(text, a + 2, b);
+        if lo >= hi || lo <= floor {
+            return 0 - 1;
+        }
+        if n == want {
+            if past {
+                return hi;
+            }
+            return lo;
+        }
+        n = n + 1;
+        floor = hi;
+        i = b;
+        if i < to {
+            if int_of(text[i]) != ',' || i + 1 == to {
+                return 0 - 1;
+            }
+            i = i + 1;
+        }
+    }
+    if want >= 0 {
+        return 0 - 1;
+    }
+    return n;
+}
+
+// How many ranges the bound has: 0 for the empty literal, -1 for what is not a bound.
+pub fn count[&x](text: &x [byte], from: int, to: int) -> [] int {
+    return scan(text, from, to, 0 - 1, false);
+}
+
+pub fn low[&x](text: &x [byte], from: int, to: int, k: int) -> [] int {
+    return scan(text, from, to, k, false);
+}
+
+pub fn high[&x](text: &x [byte], from: int, to: int, k: int) -> [] int {
+    return scan(text, from, to, k, true);
+}
+
+pub fn valid[&x](text: &x [byte], from: int, to: int) -> [] bool {
+    return count(text, from, to) >= 0;
+}
+
+// Is every address of the bound `text[inf..int]` one of `text[of..ot]`? The empty literal holds every address, and is inside
+// nothing but itself.
+pub fn inside[&x](text: &x [byte], of: int, ot: int, inf: int, int: int) -> [] bool {
+    if of == ot {
+        return true;
+    }
+    let inner = count(text, inf, int);
+    let outer = count(text, of, ot);
+    if inner <= 0 {
+        return false;
+    }
+    var i = 0;
+    while i < inner {
+        var held = false;
+        var k = 0;
+        while k < outer {
+            if low(text, of, ot, k) <= low(text, inf, int, i) && high(text, inf, int, i) <= high(text, of, ot, k) {
+                held = true;
+            }
+            k = k + 1;
+        }
+        if !held {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Do the two bounds share an address?
+pub fn overlap[&x](text: &x [byte], af: int, at: int, bf: int, bt: int) -> [] bool {
+    if af == at || bf == bt {
+        return true;
+    }
+    let na = count(text, af, at);
+    let nb = count(text, bf, bt);
+    var i = 0;
+    while i < na {
+        var k = 0;
+        while k < nb {
+            if low(text, af, at, i) < high(text, bf, bt, k) && low(text, bf, bt, k) < high(text, af, at, i) {
+                return true;
+            }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return false;
+}

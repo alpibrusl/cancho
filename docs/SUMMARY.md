@@ -155,6 +155,7 @@
 - [The LLVM backend](llvm-backend.md)
 - [WebAssembly target](wasm.md)
 - [No system: a bare-metal target](freestanding.md)
+- [The memory of the machine, by address: `Mmio`](mmio.md)
 - [Every emitted check, priced](emitted-checks.md)
 - [Whether cancho can run on a GPU](gpu.md)
 - [The constant folder against the backend](differential.md)

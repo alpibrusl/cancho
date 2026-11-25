@@ -1,0 +1,20 @@
+//~ ERROR expected `&Mmio("0x1000..0x2000")`, found `&Mmio("0x1800..0x1900")`
+//~ RULE type-mismatch
+// `docs/mmio.md` 3: two `Mmio` are one type when they hold the same addresses. A function lent sixteen registers cannot pass for one lent a page, whose checks are the page.
+edition 13;
+
+fn page[&m](m: &m Mmio("0x1000..0x2000")) -> [mmio("0x1000..0x2000")] int {
+    return mmio_read8(m, 4096);
+}
+
+fn few[&m](m: &m Mmio("0x1800..0x1900")) -> [mmio("0x1000..0x2000")] int {
+    return page(m);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker);
+    release(mmio);
+    return 0;
+}

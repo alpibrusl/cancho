@@ -1,0 +1,16 @@
+//~ ERROR `few` performs `mmio("0x1800..0x1900")`, which its row does not declare
+//~ RULE effect-not-declared
+// `docs/mmio.md` 5: the row says which addresses, exactly. This one names addresses the function was never lent.
+edition 13;
+
+fn few[&m](m: &m Mmio("0x1800..0x1900")) -> [mmio("0x5000..0x6000")] int {
+    return mmio_read8(m, 6144);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker);
+    release(mmio);
+    return 0;
+}

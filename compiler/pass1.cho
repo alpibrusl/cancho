@@ -24,6 +24,7 @@ import selfhost.ast;
 import selfhost.rules;
 import selfhost.kinds;
 import selfhost.tables;
+import selfhost.mmio;
 
 pub fn user_base() -> [] int {
     return 100000;
@@ -465,6 +466,27 @@ fn is_res[&s](st: &!s [int], bits: int, scope: int) -> [] bool {
     return false;
 }
 
+// The first string literal of the program spelled as the one in token `tok` is, which is `tok` if none is ahead of it.
+pub fn first_spelled[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] int {
+    let n = ast.tend(st, tok) - ast.tstart(st, tok);
+    var p = 0;
+    while p < tok {
+        if is_code(st, p, lc.Tok::Str) && ast.tend(st, p) - ast.tstart(st, p) == n {
+            var same = true;
+            var i = 0;
+            while i < n && same {
+                same = int_of(text[ast.tstart(st, p) + i]) == int_of(text[ast.tstart(st, tok) + i]);
+                i = i + 1;
+            }
+            if same {
+                return p;
+            }
+        }
+        p = p + 1;
+    }
+    return tok;
+}
+
 // Is the scope a type is narrowed to well formed (`parse_scope`): library names, each
 // letters, digits and `_.+-`, separated by commas, none empty and none twice?
 fn scope_valid[&s, &x](st: &!s [int], text: &x [byte], lit: int) -> [] bool {
@@ -655,6 +677,17 @@ fn resolve_name[&s, &x](st: &!s [int], text: &x [byte], id: int, unit_of: int, e
             ast.fail(st, rules.r_foreign_scope(), from, to);
             return 0;
         }
+    }
+    // The bound an `Mmio` is written with has to be one (`docs/mmio.md` 3).
+    if found == tables.prelude_mmio() && nargs >= 1 && ast.is_kind(st, ast.get(st, id, 6), kinds.NK::TLit) {
+        // And not the empty one: every address is what `split` gives `main`, and no signature can ask for it. The literal is then
+        // kept as the first one of the program spelled the same, so that two types are the same bound when they keep the same token.
+        let lit = ast.get(st, ast.get(st, id, 6), 4);
+        if ast.tend(st, lit) - ast.tstart(st, lit) == 2 || !mmio.valid(text, ast.tstart(st, lit) + 1, ast.tend(st, lit) - 1) {
+            ast.fail(st, rules.r_capability_not_narrowable(), from, to);
+            return 0;
+        }
+        ast.put(st, ast.get(st, id, 6), 4, first_spelled(st, text, lit));
     }
     if nargs != def_arity(st, found) {
         ast.fail(st, rules.r_arity_mismatch(), from, to);
