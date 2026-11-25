@@ -1,6 +1,6 @@
 # The builtin tables, owned by `compiler`
 
-> **Status: built** (cancho#487, third box). The three builtin tables of the compiler in cancho are checked-in data that `scripts/builtin_tables.py` checks and extends, and
+> **Status: built** (cancho#487, third box). The three builtin tables of the compiler in cancho are checked-in data that `scripts/builtin_tables.py` checks and extends (it reads them in `compiler/`; it still pointed at the directory the compiler was in before, and could not run, until the six `mmio_*` builtins of [`mmio.md`](mmio.md) were added with it), and
 > `runtime.cho` is made from the `.ll` files by `compiler/regen.cho` (in cancho). `builtin_tables.py` is the one Python script this adds; it needs no Rust. The first builtin added this way is `dir_nlink`
 > ([`directory-nlink.md`](directory-nlink.md)).
 

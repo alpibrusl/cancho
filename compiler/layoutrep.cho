@@ -27,7 +27,8 @@ fn prelude_leaves() -> [] &static [byte] {
     return "1330011133333130033001313134500111343413400130000130130130";
 }
 
-// The leaves of the prelude type of index `i`: 0 for the capabilities and for what is before `File`.
+// The leaves of the prelude type of index `i`: 0 for the capabilities and for what is before `File`. (The table ends at edition 12's `Split`: `Mmio` and edition 13's
+// `Split`, 66 and 67, are capabilities, nothing in memory, and the report is the one the recorded answers of tests/vectors/cli/layout.txt hold it to.)
 fn prelude_leaf_count(i: int) -> [] int {
     if i < 8 || i > 65 {
         return 0;

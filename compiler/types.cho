@@ -976,6 +976,11 @@ pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
         return 0;
     }
     if is_prelude(st, expected) && is_prelude(st, found) && slot(st, expected, 1) == slot(st, found, 1) {
+        // Two `Mmio` are one type when they hold the same addresses, which is the same literal (`docs/mmio.md` 3: every literal is kept as the first token spelled
+        // so). A builtin takes any (-1, `prims.decode`).
+        if slot(st, expected, 1) == tables.prelude_mmio() && slot(st, expected, 3) != slot(st, found, 3) && slot(st, expected, 3) >= 0 && slot(st, found, 3) >= 0 {
+            return 1;
+        }
         return 0;
     }
     if is_boxslice(st, expected) && is_boxslice(st, found) {

@@ -1,0 +1,13 @@
+//~ ERROR unknown type `Mmio`
+//~ RULE unknown-name
+// `docs/mmio.md` 6: `Mmio`, the `mmio` field of `Split` and the six builtins are absent before edition 13; an edition-12 file may declare the names for itself.
+edition 12;
+
+fn peek[&m](m: &m Mmio("0x1000..0x2000")) -> [] int {
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

@@ -1,0 +1,16 @@
+//~ ERROR expected `&!Mmio`, found `&Mmio("0x1800..0x1900")`
+//~ RULE type-mismatch
+// `docs/mmio.md` 4: a write takes the capability by a unique reference.
+edition 13;
+
+fn poke[&m](m: &m Mmio("0x1800..0x1900")) -> [mmio("0x1800..0x1900")] int {
+    return mmio_write32(m, 6144, 1);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker);
+    release(mmio);
+    return 0;
+}

@@ -1,0 +1,16 @@
+//~ ERROR `Mmio("")` is every address, which only `split` gives: a signature names the addresses it is lent
+//~ RULE capability-not-narrowable
+// `docs/mmio.md` 3: no function can ask for the whole of the hardware; `main` holds it and cuts it.
+edition 13;
+
+fn peek[&m](m: &m Mmio("")) -> [mmio("")] int {
+    return mmio_read8(m, 4096);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker);
+    release(mmio);
+    return 0;
+}

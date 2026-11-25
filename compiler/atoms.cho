@@ -273,3 +273,28 @@ pub fn plain_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
     st[31] = 0 - 1;
     return good;
 }
+
+// A read or a write through an `Mmio` (`docs/mmio.md`; the numbers are `codes.mmio_code`'s), its arguments pushed: the capability, which is nothing in the code,
+// the address and, for a write, the value. It performs `mmio` with the bound the capability of type `cap` was narrowed to, and that bound is what the code checks.
+pub fn mmio_builtin[&s, &x](st: &!s [int], text: &x [byte], id: int, written: int, cap: int) -> [] ex.Ex {
+    effects.mark_arg(st);
+    effects.followed(st, effects.note_call(st, text, id, cap));
+    let lit = types.prelude_lit_tok(st, types.ref_inner(st, cap));
+    var from = 0;
+    var to = 0;
+    if lit >= 0 {
+        from = ast.tstart(st, lit) + 1;
+        to = ast.tend(st, lit) - 1;
+    }
+    var width = 8;
+    if written == 150 || written == 153 {
+        width = 1;
+    } else if written == 151 || written == 154 {
+        width = 4;
+    }
+    let r = wordcode.mmio(st, text, from, to, width, written >= 153, st[61] == 3);
+    if written >= 153 {
+        return ex.constant(0);
+    }
+    return ex.in_reg(1, r);
+}

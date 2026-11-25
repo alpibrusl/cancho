@@ -7,6 +7,7 @@ module selfhost.wordcode;
 // Every function reads its arguments from the last `n` entries of the argument stack (a slice is two) and drops them.
 
 import selfhost.emit;
+import selfhost.mmio;
 
 fn line[&s](st: &!s [int], text: &static [byte]) -> [] int {
     let n = emit.start(st);
@@ -337,4 +338,134 @@ pub fn add_carry[&s](st: &!s [int], ty: int, sub: bool) -> [] int {
     emit.str(st, " to i64\n");
     done(st, 3);
     return pair(st, ty, v2, out);
+}
+
+// `a or b` of two `i1` temporaries.
+fn either[&s](st: &!s [int], a: int, b: int) -> [] int {
+    let r = emit.start(st);
+    emit.str(st, "or i1 ");
+    emit.temp(st, a);
+    emit.str(st, ", ");
+    emit.temp(st, b);
+    emit.str(st, "\n");
+    return r;
+}
+
+fn bits[&s](st: &!s [int], width: int) -> [] int {
+    emit.str(st, "i");
+    return emit.nat(st, 8 * width);
+}
+
+// `mmio_read8/32/64(m, address)` and `mmio_write8/32/64(m, address, value)` (`docs/mmio.md` 4): one volatile load or store of `width` bytes at the address, after the
+// checks. It traps unless the address is a multiple of the width, the `width` bytes at it are inside one range of the bound `text[from..to]` (the empty bound is every
+// address) and, for a write, the value is one the width holds. The capability is the first of the arguments and is nothing in the code. On a target with a system under
+// the program (`bare` false) there is no address to reach, and it traps. Answers the temporary of what was read; nothing for a write.
+pub fn mmio[&s, &x](st: &!s [int], text: &x [byte], from: int, to: int, width: int, write: bool, bare: bool) -> [] int {
+    var n = 2;
+    if write {
+        n = 3;
+    }
+    var bad = 0;
+    if !bare {
+        bad = line(st, "icmp eq i64 0, 0");
+    } else {
+        let low = emit.start(st);
+        emit.str(st, "and i64 ");
+        emit.last_operand(st, n, 1);
+        emit.str(st, ", ");
+        emit.nat(st, width - 1);
+        emit.str(st, "\n");
+        bad = emit.start(st);
+        emit.str(st, "icmp ne i64 ");
+        emit.temp(st, low);
+        emit.str(st, ", 0\n");
+        let ranges = mmio.count(text, from, to);
+        if ranges > 0 {
+            var held = line(st, "icmp ne i64 0, 0");
+            var k = 0;
+            while k < ranges {
+                let lo = mmio.low(text, from, to, k);
+                let room = mmio.high(text, from, to, k) - lo - width;
+                if room >= 0 {
+                    let off = emit.start(st);
+                    emit.str(st, "sub i64 ");
+                    emit.last_operand(st, n, 1);
+                    emit.str(st, ", ");
+                    emit.nat(st, lo);
+                    emit.str(st, "\n");
+                    let here = emit.start(st);
+                    emit.str(st, "icmp ule i64 ");
+                    emit.temp(st, off);
+                    emit.str(st, ", ");
+                    emit.nat(st, room);
+                    emit.str(st, "\n");
+                    held = either(st, held, here);
+                }
+                k = k + 1;
+            }
+            let outside = emit.start(st);
+            emit.str(st, "xor i1 ");
+            emit.temp(st, held);
+            emit.str(st, ", true\n");
+            bad = either(st, bad, outside);
+        }
+        if write && width < 8 {
+            let wide = emit.start(st);
+            emit.str(st, "icmp ugt i64 ");
+            emit.last_operand(st, n, 2);
+            if width == 1 {
+                emit.str(st, ", 255\n");
+            } else {
+                emit.str(st, ", 4294967295\n");
+            }
+            bad = either(st, bad, wide);
+        }
+    }
+    emit.trap_if(st, bad);
+    let place = emit.start(st);
+    emit.str(st, "inttoptr i64 ");
+    emit.last_operand(st, n, 1);
+    emit.str(st, " to ptr\n");
+    var result = 0 - 1;
+    if write {
+        var value = 0 - 1;
+        if width < 8 {
+            value = emit.start(st);
+            emit.str(st, "trunc i64 ");
+            emit.last_operand(st, n, 2);
+            emit.str(st, " to ");
+            bits(st, width);
+            emit.str(st, "\n");
+        }
+        emit.str(st, "  store volatile ");
+        bits(st, width);
+        emit.str(st, " ");
+        if value >= 0 {
+            emit.temp(st, value);
+        } else {
+            emit.last_operand(st, n, 2);
+        }
+        emit.str(st, ", ptr ");
+        emit.temp(st, place);
+    } else {
+        result = emit.start(st);
+        emit.str(st, "load volatile ");
+        bits(st, width);
+        emit.str(st, ", ptr ");
+        emit.temp(st, place);
+    }
+    emit.str(st, ", align ");
+    emit.nat(st, width);
+    emit.str(st, "\n");
+    if !write && width < 8 {
+        let narrow = result;
+        result = emit.start(st);
+        emit.str(st, "zext ");
+        bits(st, width);
+        emit.str(st, " ");
+        emit.temp(st, narrow);
+        emit.str(st, " to i64\n");
+    }
+    done(st, n);
+    return result;
 }

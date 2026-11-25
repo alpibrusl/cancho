@@ -6,7 +6,7 @@ module selfhost.builtins;
 // `scripts/builtin_tables.py check` verifies it and `append` adds a builtin. Do not run the Rust generator over it.
 
 static builtin_region_counts: [int] {
-    let t = alloc_slice[static](188, 0);
+    let t = alloc_slice[static](194, 0);
     t[0] = 1;
     t[1] = 2;
     t[2] = 2;
@@ -104,6 +104,12 @@ static builtin_region_counts: [int] {
     t[176] = 2;
     t[184] = 1;
     t[187] = 2;
+    t[188] = 1;
+    t[189] = 1;
+    t[190] = 1;
+    t[191] = 1;
+    t[192] = 1;
+    t[193] = 1;
     return t;
 }
 
@@ -183,7 +189,7 @@ static builtin_effect_stream: [int] {
 }
 
 static builtin_effect_starts: [int] {
-    let t = alloc_slice[static](188, 0);
+    let t = alloc_slice[static](194, 0);
     t[1] = 1;
     t[2] = 2;
     t[3] = 3;
@@ -371,11 +377,17 @@ static builtin_effect_starts: [int] {
     t[185] = 69;
     t[186] = 70;
     t[187] = 72;
+    t[188] = 73;
+    t[189] = 73;
+    t[190] = 73;
+    t[191] = 73;
+    t[192] = 73;
+    t[193] = 73;
     return t;
 }
 
 static builtin_effect_counts: [int] {
-    let t = alloc_slice[static](188, 0);
+    let t = alloc_slice[static](194, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -529,7 +541,7 @@ fn arm_chars() -> [] &static [byte] {
 }
 
 static prelude_arm_counts: [int] {
-    let t = alloc_slice[static](66, 0);
+    let t = alloc_slice[static](68, 0);
     t[9] = 2;
     t[10] = 3;
     t[16] = 2;
@@ -559,7 +571,7 @@ static prelude_arm_counts: [int] {
 }
 
 static prelude_arm_firsts: [int] {
-    let t = alloc_slice[static](66, 0);
+    let t = alloc_slice[static](68, 0);
     t[10] = 2;
     t[11] = 5;
     t[12] = 5;
@@ -616,6 +628,8 @@ static prelude_arm_firsts: [int] {
     t[63] = 58;
     t[64] = 58;
     t[65] = 60;
+    t[66] = 60;
+    t[67] = 60;
     return t;
 }
 
@@ -814,11 +828,11 @@ static arm_type_starts: [int] {
 }
 
 fn field_chars() -> [] &static [byte] {
-    return "ioffifsheapargsioffifsheapargsnetioffifsheapargsnetclockioffifsheapargsnetclocksignalsioffifsheapargsnetclocksignalsexecioffifsheapargsnetclocksignalsexecttyioffifsheapargsoutportsclocksignalsexecttyioffifsheapargsoutportsclocksignalsexecttycameramicspeaker";
+    return "ioffifsheapargsioffifsheapargsnetioffifsheapargsnetclockioffifsheapargsnetclocksignalsioffifsheapargsnetclocksignalsexecioffifsheapargsnetclocksignalsexecttyioffifsheapargsoutportsclocksignalsexecttyioffifsheapargsoutportsclocksignalsexecttycameramicspeakerioffifsheapargsoutportsclocksignalsexecttycameramicspeakermmio";
 }
 
 static prelude_field_counts: [int] {
-    let t = alloc_slice[static](66, 0);
+    let t = alloc_slice[static](68, 0);
     t[7] = 5;
     t[12] = 6;
     t[24] = 7;
@@ -827,11 +841,12 @@ static prelude_field_counts: [int] {
     t[50] = 10;
     t[55] = 11;
     t[65] = 14;
+    t[67] = 15;
     return t;
 }
 
 static prelude_field_firsts: [int] {
-    let t = alloc_slice[static](66, 0);
+    let t = alloc_slice[static](68, 0);
     t[8] = 5;
     t[9] = 5;
     t[10] = 5;
@@ -890,11 +905,13 @@ static prelude_field_firsts: [int] {
     t[63] = 56;
     t[64] = 56;
     t[65] = 56;
+    t[66] = 70;
+    t[67] = 70;
     return t;
 }
 
 static field_name_starts: [int] {
-    let t = alloc_slice[static](70, 0);
+    let t = alloc_slice[static](85, 0);
     t[1] = 2;
     t[2] = 5;
     t[3] = 7;
@@ -964,11 +981,26 @@ static field_name_starts: [int] {
     t[67] = 241;
     t[68] = 247;
     t[69] = 250;
+    t[70] = 257;
+    t[71] = 259;
+    t[72] = 262;
+    t[73] = 264;
+    t[74] = 268;
+    t[75] = 272;
+    t[76] = 275;
+    t[77] = 280;
+    t[78] = 285;
+    t[79] = 292;
+    t[80] = 296;
+    t[81] = 299;
+    t[82] = 305;
+    t[83] = 308;
+    t[84] = 315;
     return t;
 }
 
 static field_name_lens: [int] {
-    let t = alloc_slice[static](70, 0);
+    let t = alloc_slice[static](85, 0);
     t[0] = 2;
     t[1] = 3;
     t[2] = 2;
@@ -1039,11 +1071,26 @@ static field_name_lens: [int] {
     t[67] = 6;
     t[68] = 3;
     t[69] = 7;
+    t[70] = 2;
+    t[71] = 3;
+    t[72] = 2;
+    t[73] = 4;
+    t[74] = 4;
+    t[75] = 3;
+    t[76] = 5;
+    t[77] = 5;
+    t[78] = 7;
+    t[79] = 4;
+    t[80] = 3;
+    t[81] = 6;
+    t[82] = 3;
+    t[83] = 7;
+    t[84] = 4;
     return t;
 }
 
 static field_type_starts: [int] {
-    let t = alloc_slice[static](70, 0);
+    let t = alloc_slice[static](85, 0);
     t[1] = 3;
     t[2] = 7;
     t[3] = 11;
@@ -1113,11 +1160,26 @@ static field_type_starts: [int] {
     t[67] = 238;
     t[68] = 242;
     t[69] = 246;
+    t[70] = 404;
+    t[71] = 407;
+    t[72] = 411;
+    t[73] = 415;
+    t[74] = 418;
+    t[75] = 421;
+    t[76] = 425;
+    t[77] = 429;
+    t[78] = 432;
+    t[79] = 436;
+    t[80] = 440;
+    t[81] = 444;
+    t[82] = 448;
+    t[83] = 452;
+    t[84] = 456;
     return t;
 }
 
 static field_types: [int] {
-    let t = alloc_slice[static](404, 0);
+    let t = alloc_slice[static](460, 0);
     t[0] = 13;
     t[1] = 1;
     t[3] = 13;
@@ -1465,10 +1527,65 @@ static field_types: [int] {
     t[400] = 63;
     t[402] = 1;
     t[403] = 1;
+    t[404] = 13;
+    t[405] = 1;
+    t[407] = 13;
+    t[408] = 2;
+    t[409] = 1;
+    t[410] = 16;
+    t[411] = 13;
+    t[412] = 3;
+    t[413] = 1;
+    t[414] = 16;
+    t[415] = 13;
+    t[416] = 4;
+    t[418] = 13;
+    t[419] = 6;
+    t[421] = 13;
+    t[422] = 53;
+    t[423] = 1;
+    t[424] = 16;
+    t[425] = 13;
+    t[426] = 54;
+    t[427] = 1;
+    t[428] = 16;
+    t[429] = 13;
+    t[430] = 23;
+    t[432] = 13;
+    t[433] = 27;
+    t[434] = 1;
+    t[435] = 16;
+    t[436] = 13;
+    t[437] = 37;
+    t[438] = 1;
+    t[439] = 16;
+    t[440] = 13;
+    t[441] = 49;
+    t[442] = 1;
+    t[443] = 16;
+    t[444] = 13;
+    t[445] = 56;
+    t[446] = 1;
+    t[447] = 16;
+    t[448] = 13;
+    t[449] = 59;
+    t[450] = 1;
+    t[451] = 16;
+    t[452] = 13;
+    t[453] = 62;
+    t[454] = 1;
+    t[455] = 16;
+    t[456] = 13;
+    t[457] = 66;
+    t[458] = 1;
+    t[459] = 16;
     return t;
 }
 
 pub fn split_for(edition: int) -> [] int {
+    if edition >= 13 {
+        return 67;
+    }
     if edition >= 12 {
         return 65;
     }

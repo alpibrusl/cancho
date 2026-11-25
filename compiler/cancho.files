@@ -63,6 +63,7 @@ layoutrep.cho
 lexcore.cho
 listing.cho
 lookup.cho
+mmio.cho
 narrowing.cho
 netcode.cho
 pass1.cho

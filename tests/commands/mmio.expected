@@ -1,0 +1,4 @@
+ok a_read_or_a_write_is_one_volatile_access_of_its_width
+ok an_access_is_checked_against_each_range_of_the_bound
+ok the_report_names_the_addresses_and_nothing_else
+ok under_a_system_an_access_traps
