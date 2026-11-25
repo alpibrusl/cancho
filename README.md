@@ -53,6 +53,13 @@ cancho --version
 
 One file of about 1.2 MB in `~/.local/bin`, checked against its published sha256 and the commit it reports (that detects a damaged download; it does not authenticate who published it). Building a program needs `clang` 15 or newer and `cc`; name another with `cancho build ... --clang /path/to/clang`. To work on the compiler: `scripts/gate.sh` ([`docs/status.md`](docs/status.md) section 3).
 
+### On a Raspberry Pi
+
+Two different things, and only the first is known to work.
+
+- **The compiler, on a Pi running Linux.** A Pi 4 or Pi 5 with the 64-bit Raspberry Pi OS is Linux on aarch64, which the release is built for. `sudo apt install clang`, then the install line above. The 32-bit OS has no build.
+- **A program with no Linux under it.** `cancho build --target aarch64-none-elf --emit obj` writes an object with no libc in it ([`docs/freestanding.md`](docs/freestanding.md)), and hardware is reached through two capabilities, [`Mmio`](docs/mmio.md) and [`Cpu`](docs/cpu.md). [cancho-os](https://github.com/alpibrusl/cancho-os) is a kernel built this way; its README has the steps to put it on a Pi 4's SD card. It boots in QEMU as a Pi 3 and a Pi 4 and **has not been tried on a real board yet**. The target is on `main` and is not in release 0.1.1: build the compiler from a checkout with `sh scripts/build-standalone.sh --out DIR --rev $(git rev-parse HEAD)`, which needs only `clang`.
+
 ## Deliberately not here
 
 No garbage collector, no destructors, no exceptions. No borrow checker (borrowing is lexical). No implicit conversions and no ambient authority. No undefined behaviour ([`docs/defined-behaviour.md`](docs/defined-behaviour.md)). No macros, which would break stable content-addressed identity.

@@ -14,6 +14,16 @@ edited — `ROADMAP.md` says which.
 
 ---
 
+## On a Raspberry Pi
+
+- **To write cancho on one:** a Pi 4 or Pi 5 with the 64-bit Raspberry Pi OS is Linux on aarch64. Install `clang` and run the install
+  line of the first page.
+- **To run cancho with no Linux under it:** [`freestanding.md`](freestanding.md) is the target, [`mmio.md`](mmio.md) and
+  [`cpu.md`](cpu.md) are how a program reaches hardware. [cancho-os](https://github.com/alpibrusl/cancho-os) is the kernel that asked
+  for them, and its README has the steps for a Pi 4's SD card. It boots in QEMU; no real board has run it yet.
+
+---
+
 ## Where this came from
 
 cancho began as the lower-level sibling of **Lex**, a high-level, interpreted
