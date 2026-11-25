@@ -522,6 +522,57 @@ pub fn set_within[&s, &x](st: &!s [int], text: &x [byte], inner: int, outer: int
     return true;
 }
 
+// The token after the label of a row that starts at token `p`: past its name and, where it carries one, its argument.
+fn label_end[&s](st: &!s [int], p: int) -> [] int {
+    var q = p + 1;
+    if is_code(st, q, lc.Tok::LParen) {
+        while !is_code(st, q, lc.Tok::RParen) {
+            q = q + 1;
+        }
+        q = q + 1;
+    }
+    return q;
+}
+
+// Is every label of the row whose `[` is the token `inner` a label of the row at `outer`, name and argument spelled the same?
+fn row_within[&s, &x](st: &!s [int], text: &x [byte], inner: int, outer: int) -> [] bool {
+    var p = inner + 1;
+    while !is_code(st, p, lc.Tok::RBracket) {
+        let end = label_end(st, p);
+        var held = false;
+        var q = outer + 1;
+        while !held && !is_code(st, q, lc.Tok::RBracket) {
+            let stop = label_end(st, q);
+            if stop - q == end - p {
+                held = true;
+                var k = 0;
+                while k < end - p && held {
+                    held = ast.same(st, text, p + k, q + k);
+                    k = k + 1;
+                }
+            }
+            q = stop;
+            if is_code(st, q, lc.Tok::Comma) {
+                q = q + 1;
+            }
+        }
+        if !held {
+            return false;
+        }
+        p = end;
+        if is_code(st, p, lc.Tok::Comma) {
+            p = p + 1;
+        }
+    }
+    return true;
+}
+
+// Do two rows say the same (`docs/function-signatures.md` 2.3)? A row is a set of labels, written in any order, and a label with an
+// argument is the label of that argument and no other: what the Rust front end compared as data (`FnLabel`).
+pub fn same_row[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int) -> [] bool {
+    return a == b || row_within(st, text, a, b) && row_within(st, text, b, a);
+}
+
 // The token a capability's literal is kept as (`docs/capability-literals.md` 3): the first string literal of the program that says the same. That is the same
 // spelling, except for `Ffi` and `Signals`, whose literal is a set of names written in any order (`docs/foreign-authority.md` 5.2, `docs/signals.md`): the
 // first that names the same set.

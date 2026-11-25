@@ -1619,6 +1619,18 @@ pub fn thread_call[&s, &x](st: &!s [int], text: &x [byte], id: int, spawning: bo
         return ex.skip(st, from, to);
     }
     let item = types.fnval_item(st, f.ty);
+    // The thread runs `f` on the payload, so `f` takes one thing and it is the payload's type (`docs/function-signatures.md` 4).
+    if ast.get(st, item, 8) != 1 {
+        ast.fail(st, rules.r_arity_mismatch(), ast.nstart(st, arg), ast.nend(st, arg));
+        return ex.nothing();
+    }
+    scope.expect(st, text, types.fnptr_param(st, types.fnval_signature(st, f.ty), 0), payload.ty, ast.nstart(st, ast.get(st, id, 6)), ast.nend(st, ast.get(st, id, 6)));
+    if ast.ok(st) && !types.where_holds(st, text, f.ty) {
+        ast.fail(st, rules.r_reference_escapes_region(), ast.nstart(st, arg), ast.nend(st, arg));
+    }
+    if !ast.ok(st) {
+        return ex.nothing();
+    }
     // `body` only runs because this call caused it to: what its row says is performed here, less what the borrowed capabilities of
     // the function being checked already authorise (the Rust checker's `spawn`, `docs/threads.md` 2).
     effects.perform_call(st, text, item);

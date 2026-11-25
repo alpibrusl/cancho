@@ -1,0 +1,17 @@
+//~ ERROR expected `fn(&!i Io, int) -> [] int`, found `fn(&!i Io, int) -> [io_write] int`
+//~ RULE type-mismatch
+// `docs/function-signatures.md` 2.3: the rows of two function types are compared too, not only a named function's with a type's. `outer` holds a function that writes and passes it on to
+// `inner`, whose `f` writes nothing; the two types had their parameters and results compared and their rows not.
+
+fn inner[&i](io: &!i Io, f: fn(&!i Io, int) -> [] int, x: int) -> [] int {
+    return f(io, x);
+}
+
+fn outer[&i](io: &!i Io, f: fn(&!i Io, int) -> [io_write] int, x: int) -> [] int {
+    return inner(io, f, x);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

@@ -1,0 +1,19 @@
+//~ ERROR expected `fn(int) -> [] int`, found `fn(bool) -> [] int`
+//~ RULE type-mismatch
+// `docs/function-signatures.md` 2: a function named where a function type is wanted is the type its signature writes. `apply` calls its `f` with an `int`, and `takes_bool` reads a `bool`.
+
+fn takes_bool(b: bool) -> [] int {
+    if b {
+        return 1;
+    }
+    return 0;
+}
+
+fn apply(f: fn(int) -> [] int, x: int) -> [] int {
+    return f(x);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return apply(takes_bool, 5);
+}

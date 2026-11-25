@@ -528,9 +528,11 @@ pub fn env_arg[&s](st: &!s [int], k: int) -> [] int {
     return st[st[62] + ast.const_region() + 3 + k];
 }
 
-// A function used as a value (`let w = worker;`), in the code only: the function's item. A pointer.
-pub fn make_fnval[&s](st: &!s [int], item: int) -> [] int {
-    return make(st, fnval_kind(), item, 0, 0);
+// A function used as a value (`let w = worker;`): the function's item, and its signature as the function type it is one of
+// (`docs/function-signatures.md` 2), its region parameters made variables where the value is taken (`regions` is the first); the signature is 0 when it
+// has more parameters than a function type holds. A pointer.
+pub fn make_fnval[&s](st: &!s [int], item: int, signature: int, regions: int) -> [] int {
+    return make(st, fnval_kind(), item, signature, regions);
 }
 
 pub fn is_fnval[&s](st: &!s [int], ty: int) -> [] bool {
@@ -541,15 +543,19 @@ pub fn fnval_item[&s](st: &!s [int], ty: int) -> [] int {
     return slot(st, ty, 1);
 }
 
-// A function held in a parameter or a name by its type, `fn(A, B) -> R`: a pointer. Its result, how many
-// parameters it has (up to three), and the parameters (the one, or a tuple of them). Only the code is written
-// for it, in a function that has no type parameters.
-pub fn make_fnptr[&s](st: &!s [int], ret: int, n: int, a: int, b: int, c: int) -> [] int {
+pub fn fnval_signature[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 2);
+}
+
+// A function held in a parameter or a name by its type, `fn(A, B) -> [row] R`: a pointer. Its result, how many
+// parameters it has (up to three) beside the `[` of its row (a token, which is how two rows are compared), and the parameters
+// (the one, or a tuple of them). Only the code is written for it, in a function that has no type parameters.
+pub fn make_fnptr[&s](st: &!s [int], ret: int, n: int, a: int, b: int, c: int, row: int) -> [] int {
     var packed = a;
     if n > 1 {
         packed = make_tuple(st, n, a, b, c);
     }
-    return make(st, fnptr_kind(), ret, n, packed);
+    return make(st, fnptr_kind(), ret, n + 4 * row, packed);
 }
 
 pub fn is_fnptr[&s](st: &!s [int], ty: int) -> [] bool {
@@ -561,11 +567,15 @@ pub fn fnptr_ret[&s](st: &!s [int], ty: int) -> [] int {
 }
 
 pub fn fnptr_count[&s](st: &!s [int], ty: int) -> [] int {
-    return slot(st, ty, 2);
+    return slot(st, ty, 2) % 4;
+}
+
+pub fn fnptr_row[&s](st: &!s [int], ty: int) -> [] int {
+    return slot(st, ty, 2) / 4;
 }
 
 pub fn fnptr_param[&s](st: &!s [int], ty: int, k: int) -> [] int {
-    if slot(st, ty, 2) == 1 {
+    if fnptr_count(st, ty) == 1 {
         return slot(st, ty, 3);
     }
     return tuple_part(st, slot(st, ty, 3), k);
@@ -910,10 +920,26 @@ pub fn escaping_block[&s](st: &!s [int], ty: int, scope: int) -> [] int {
     return 0 - 1;
 }
 
+// Do the regions the function value `ty` was given for keep what the `where` clauses of its function ask (`docs/function-signatures.md` 2.5)? A call
+// shows this of the regions its arguments solved, and a function passed as a value is called by one that cannot. A region nothing has solved yet keeps nothing.
+pub fn where_holds[&s, &x](st: &!s [int], text: &x [byte], ty: int) -> [] bool {
+    let dp = ast.get(st, fnval_item(st, ty), 6);
+    let base = slot(st, ty, 3);
+    var k = 0;
+    while pass1.nth_outlive(st, dp, k) >= 0 {
+        let inner = pass1.nth_outlive(st, dp, k);
+        if !outlives(st, text, resolve_region(st, base + pass1.param_index(st, text, dp, true, inner + 2)), resolve_region(st, base + pass1.param_index(st, text, dp, true, inner))) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
 // What unifying two types came to: 0 they are the same, 1 they mismatch (a `type-mismatch`),
-// 2 their regions are different (a `region-mismatch`). A free region variable is bound to the
-// region it meets.
-pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
+// 2 their regions are different (a `region-mismatch`), 3 a type that holds itself, 4 a function whose `where` clauses the regions
+// it is given for do not keep (a `reference-escapes-region`, as at a call). A free region variable is bound to the region it meets.
+pub fn unify[&s, &x](st: &!s [int], text: &x [byte], want: int, got: int) -> [] int {
     let expected = shallow(st, want);
     let found = shallow(st, got);
     if is_tvar(st, expected) || is_tvar(st, found) {
@@ -945,10 +971,10 @@ pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
         if !unify_regions(st, slot(st, expected, 2), slot(st, found, 2)) {
             return 2;
         }
-        return unify(st, ref_inner(st, expected), ref_inner(st, found));
+        return unify(st, text, ref_inner(st, expected), ref_inner(st, found));
     }
     if is_slice(st, expected) && is_slice(st, found) {
-        return unify(st, slice_element(st, expected), slice_element(st, found));
+        return unify(st, text, slice_element(st, expected), slice_element(st, found));
     }
     if is_named(st, expected) && is_named(st, found) && named_item(st, expected) == named_item(st, found) {
         // The same declaration: its arguments, where it has any.
@@ -957,7 +983,7 @@ pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
             let x = named_arg(st, expected, k);
             let y = named_arg(st, found, k);
             if x != 0 && y != 0 {
-                let r = unify(st, x, y);
+                let r = unify(st, text, x, y);
                 if r != 0 {
                     return r;
                 }
@@ -969,21 +995,30 @@ pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
     if is_param(st, expected) && is_param(st, found) && slot(st, expected, 1) == slot(st, found, 1) {
         return 0;
     }
-    if is_fnptr(st, expected) && (is_fnval(st, found) || is_fnptr(st, found) && fnptr_count(st, expected) == fnptr_count(st, found)) {
-        // A function named where a function of a type is wanted: the code is written for programs the Rust
-        // compiler has accepted, so the signatures are not compared.
-        if is_fnptr(st, found) {
-            var k = 0;
-            while k < fnptr_count(st, expected) {
-                let r = unify(st, fnptr_param(st, expected, k), fnptr_param(st, found, k));
-                if r != 0 {
-                    return r;
-                }
-                k = k + 1;
-            }
-            return unify(st, fnptr_ret(st, expected), fnptr_ret(st, found));
+    if is_fnptr(st, expected) && (is_fnval(st, found) || is_fnptr(st, found)) {
+        // A function where a function of a type is wanted (`docs/function-signatures.md` 2): a named one is the type its signature
+        // writes. The same number of parameters and the same row, which is written and never solved; the parameters and
+        // the result are unified, neither way a coercion.
+        var given = found;
+        if is_fnval(st, found) {
+            given = fnval_signature(st, found);
         }
-        return 0;
+        if given == 0 || fnptr_count(st, expected) != fnptr_count(st, given) || !pass1.same_row(st, text, fnptr_row(st, expected), fnptr_row(st, given)) {
+            return 1;
+        }
+        var k = 0;
+        while k < fnptr_count(st, expected) {
+            let r = unify(st, text, fnptr_param(st, expected, k), fnptr_param(st, given, k));
+            if r != 0 {
+                return r;
+            }
+            k = k + 1;
+        }
+        let r = unify(st, text, fnptr_ret(st, expected), fnptr_ret(st, given));
+        if r == 0 && is_fnval(st, found) && !where_holds(st, text, found) {
+            return 4;
+        }
+        return r;
     }
     if is_prelude(st, expected) && is_prelude(st, found) && slot(st, expected, 1) == slot(st, found, 1) {
         // A capability narrowed to a literal is its own type (`docs/capability-literals.md` 2): two are one type when their literals are spelled the same, which is
@@ -996,18 +1031,18 @@ pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
         return 0;
     }
     if is_boxslice(st, expected) && is_boxslice(st, found) {
-        return unify(st, boxslice_element(st, expected), boxslice_element(st, found));
+        return unify(st, text, boxslice_element(st, expected), boxslice_element(st, found));
     }
     if is_thread(st, expected) && is_thread(st, found) {
-        return unify(st, thread_result(st, expected), thread_result(st, found));
+        return unify(st, text, thread_result(st, expected), thread_result(st, found));
     }
     if is_box(st, expected) && is_box(st, found) {
-        return unify(st, box_inner(st, expected), box_inner(st, found));
+        return unify(st, text, box_inner(st, expected), box_inner(st, found));
     }
     if is_tuple(st, expected) && is_tuple(st, found) && tuple_size(st, expected) == tuple_size(st, found) {
         var k = 0;
         while k < tuple_size(st, expected) {
-            let r = unify(st, tuple_part(st, expected, k), tuple_part(st, found, k));
+            let r = unify(st, text, tuple_part(st, expected, k), tuple_part(st, found, k));
             if r != 0 {
                 return r;
             }
@@ -1027,6 +1062,9 @@ fn report[&s](st: &!s [int], status: int, from: int, to: int) -> [] int {
     }
     if status == 3 {
         ast.fail(st, rules.r_infinite_type(), from, to);
+    }
+    if status == 4 {
+        ast.fail(st, rules.r_reference_escapes_region(), from, to);
     }
     return status;
 }
@@ -1064,8 +1102,8 @@ pub fn expect_type[&s, &x](st: &!s [int], text: &x [byte], want: int, got: int, 
             if lent_narrower(st, text, shallow(st, ref_inner(st, expected)), shallow(st, ref_inner(st, found))) {
                 return 0;
             }
-            return report(st, unify(st, ref_inner(st, expected), ref_inner(st, found)), from, to);
+            return report(st, unify(st, text, ref_inner(st, expected), ref_inner(st, found)), from, to);
         }
     }
-    return report(st, unify(st, expected, found), from, to);
+    return report(st, unify(st, text, expected, found), from, to);
 }

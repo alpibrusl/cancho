@@ -157,6 +157,7 @@
 - [No system: a bare-metal target](freestanding.md)
 - [The memory of the machine, by address: `Mmio`](mmio.md)
 - [A capability's literal is part of its type](capability-literals.md)
+- [A function passed as a value is held to the type it is passed for](function-signatures.md)
 - [Every emitted check, priced](emitted-checks.md)
 - [Whether cancho can run on a GPU](gpu.md)
 - [The constant folder against the backend](differential.md)

@@ -1,0 +1,16 @@
+//~ ERROR expected `bool`, found `int`
+//~ RULE type-mismatch
+// `docs/function-signatures.md` 4: the thread runs the function on the payload, so the payload is held to the function's parameter, as the Rust front end held it (`docs/threads.md` 2).
+
+fn takes_bool(b: bool) -> [] int {
+    if b {
+        return 1;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [conc] int {
+    release(world);
+    let t = spawn(5, takes_bool);
+    return join(t);
+}

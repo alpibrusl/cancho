@@ -1,0 +1,21 @@
+//~ ERROR expected `fn(&!r [byte]) -> [] int`, found `fn(&r [byte]) -> [] int`
+//~ RULE type-mismatch
+// `docs/function-signatures.md` 2.2: the parameters are unified, not coerced. A `&!` passes for a `&` at a call, where the argument is a value; inside a function type the two are different types,
+// as the referent of a reference is.
+
+fn first[&r](s: &r [byte]) -> [] int {
+    return len(s);
+}
+
+fn apply[&r](s: &!r [byte], f: fn(&!r [byte]) -> [] int) -> [] int {
+    return f(s);
+}
+
+fn user[&r](s: &!r [byte]) -> [] int {
+    return apply(s, first);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

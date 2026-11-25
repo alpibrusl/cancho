@@ -1,0 +1,16 @@
+//~ ERROR expected `fn(int) -> [] int`, found `fn(int, int) -> [] int`
+//~ RULE type-mismatch
+// `docs/function-signatures.md` 2.2: a function of two parameters is not a function of one. It is a mismatch of types and not of arity, as the Rust front end had it: no call is written here.
+
+fn add(x: int, y: int) -> [] int {
+    return x + y;
+}
+
+fn apply(f: fn(int) -> [] int, x: int) -> [] int {
+    return f(x);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return apply(add, 5);
+}

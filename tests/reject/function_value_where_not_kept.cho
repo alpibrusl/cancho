@@ -1,0 +1,24 @@
+//~ ERROR `p` does not outlive `q`, which `longer` requires of its regions (`where b <= a`)
+//~ RULE reference-escapes-region
+// `docs/function-signatures.md` 2.5: `longer` may answer its first argument as a `&b` because its callers show that `a` outlives `b`. `choose` calls it through `f` and can show nothing, so the one
+// that passes `longer` shows it, of the regions the type of `f` names. `user` has no `where` to show it with: called directly, `longer(x, y)` is refused here by the same rule.
+
+fn longer[&a, &b where b <= a](x: &a [byte], y: &b [byte]) -> [] &b [byte] {
+    if len(x) > len(y) {
+        return x;
+    }
+    return y;
+}
+
+fn choose[&p, &q](x: &p [byte], y: &q [byte], f: fn(&p [byte], &q [byte]) -> [] &q [byte]) -> [] &q [byte] {
+    return f(x, y);
+}
+
+fn user[&p, &q](x: &p [byte], y: &q [byte]) -> [] int {
+    return len(choose(x, y, longer));
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return user("abcd", "ab");
+}

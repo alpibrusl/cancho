@@ -191,8 +191,20 @@ fs_widened.cho	capability-not-narrowable	24:17	`/tmp/app` cannot be narrowed to 
 fs_wider_parameter.cho	type-mismatch	20:18	expected `&Fs("/tmp/x/a")`, found `&Fs("/tmp/x/a/b")`
 fs_without_capability.cho	capability-misused	28:28	`&!i Io` is not a borrowed `Fs`; reading or writing a file is reached through the capability that names the path it may touch
 function_as_value.cho	no-function-values	18:13	`helper` cannot be a value; only a written function with no type parameters can (`docs/function-values.md` §4.2)
+function_value_annotated.cho	type-mismatch	14:32	expected `fn(int) -> [] int`, found `fn(bool) -> [] int`
 function_value_compared.cho	operator-type-mismatch	22:8	`fn(int) -> [] int` cannot be compared with `==` (`int`, `byte`, `bool`, `float`, `f32` and `c_ptr` can)
+function_value_other_count.cho	type-mismatch	15:18	expected `fn(int) -> [] int`, found `fn(int, int) -> [] int`
+function_value_other_label_argument.cho	type-mismatch	34:29	expected `fn(&m Fs("/tmp/x/a")) -> [fs_read("/tmp/x/a/b")] int`, found `fn(&m Fs("/tmp/x/a")) -> [fs_read("/tmp/x/a")] int`
+function_value_other_parameter.cho	type-mismatch	18:18	expected `fn(int) -> [] int`, found `fn(bool) -> [] int`
+function_value_other_result.cho	type-mismatch	15:18	expected `fn(int) -> [] int`, found `fn(int) -> [] bool`
+function_value_passed_on_other_row.cho	type-mismatch	11:22	expected `fn(&!i Io, int) -> [] int`, found `fn(&!i Io, int) -> [io_write] int`
+function_value_row_narrower.cho	type-mismatch	22:22	expected `fn(&!i Io, int) -> [io_write] int`, found `fn(&!i Io, int) -> [] int`
 function_value_row_undeclared.cho	effect-not-declared	15:1	`call_it` performs `io_write`, which its row [] does not declare; narrow the body or widen the row
+function_value_row_wider.cho	type-mismatch	23:22	expected `fn(&!i Io, int) -> [] int`, found `fn(&!i Io, int) -> [io_write] int`
+function_value_shared_for_unique.cho	type-mismatch	15:21	expected `fn(&!r [byte]) -> [] int`, found `fn(&r [byte]) -> [] int`
+function_value_two_regions.cho	region-mismatch	16:35	`b` and `a` are different regions, and neither outlives the other
+function_value_where_not_kept.cho	reference-escapes-region	18:29	`p` does not outlive `q`, which `longer` requires of its regions (`where b <= a`)
+function_value_wider_capability.cho	type-mismatch	34:29	expected `fn(&m Fs("/tmp/x/a/b")) -> [fs_read("/tmp/x/a/b")] int`, found `fn(&m Fs("/tmp/x/a")) -> [fs_read("/tmp/x/a")] int`
 function_value_wrong_arity.cho	arity-mismatch	14:12	`h` takes 1 argument, but 2 were given
 function_value_wrong_type.cho	type-mismatch	14:14	expected `int`, found `bool`
 generic_argument_type_mismatch.cho	type-mismatch	16:23	expected `int`, found `bool`
@@ -325,9 +337,11 @@ socket_builtins_are_edition_five.cho	not-a-function	19:15	`tcp_listen` is not a 
 socket_handle_forged.cho	capability-misused	19:13	`Conn` is a capability and has no literal form; authority comes from the `World` the runtime hands `main`, and from nowhere else
 socket_handle_taken_apart.cho	linear-value-taken-apart	9:5	`Conn` owns an open descriptor and is ended by `conn_close`, not by being taken apart
 socket_handle_unclosed.cho	linear-value-unconsumed	18:9	`l` is still live at the end of this block; nothing consumes it
+spawn_function_two_parameters.cho	arity-mismatch	11:22	`spawn`'s `body` must take exactly one parameter (the payload), but it takes 2
 spawn_handle_escapes_borrow.cho	reference-escapes-region	25:16	this returns a reference into `r`, which is a `borrow` block in this function; a reference may not outlive its region
 spawn_on_wasi.cho	unsupported-on-target	19:1	`main` uses `spawn`, and threads do not exist on `wasm32-wasip1`: WASI preview 1 has no threads (wasi-threads is experimental) (docs/wasm.md)
 spawn_owned_capability_reused.cho	linear-use-after-move	31:13	`io` has already been consumed; a `res` value is used exactly once
+spawn_payload_other_type.cho	type-mismatch	14:19	expected `bool`, found `int`
 spawn_payload_type_not_supported.cho	thread-payload-type	23:19	`spawn`'s payload has type `Point`, which cannot cross to a real thread yet
 spawn_same_unique_twice.cho	borrow-conflict	22:24	the `&!` reference `r` reaches is lent to a thread that has not been joined, so it cannot be used again here; a `&!` is the only way to write its object, and two threads writing through copies of it race. Join the first thread before using it again
 spawn_two_copies_of_unique.cho	borrow-conflict	28:24	the `&!` reference `r` reaches is lent to a thread that has not been joined, so it cannot be used again here; a `&!` is the only way to write its object, and two threads writing through copies of it race. Join the first thread before using it again

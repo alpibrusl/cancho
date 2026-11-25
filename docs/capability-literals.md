@@ -201,11 +201,11 @@ library it lacks, three ways, and the root lent): the compiler in cancho now say
 
 ## 6. What this does not close
 
-- **A function passed as a value is not compared with the type it is passed for.** `types.unify` accepts any named function where a
-  `fn(...)` type is wanted ("the signatures are not compared"), so a function over `Fs("/tmp/x/a")` can be handed to one that calls it
-  with an `Fs("/tmp/x/a/b")`. Measured after this change: accepted, and it opens the file. It is not a matter of literals: the same
-  compiler accepts a `fn(bool) -> int` where a `fn(int) -> int` is wanted. It is a gap of its own in the checker written in cancho,
-  wider than this one, and the hole of section 1 stays reachable through it until it is closed.
+- **A function passed as a value is held to the type it is passed for**, and this hole is no longer reachable through one
+  ([`function-signatures.md`](function-signatures.md)). *(Corrected in place: this item said `types.unify` accepts any named function
+  where a `fn(...)` type is wanted, so that a function over `Fs("/tmp/x/a")` could be handed to one that calls it with an
+  `Fs("/tmp/x/a/b")`, and that the same compiler accepts a `fn(bool) -> int` where a `fn(int) -> int` is wanted. Both were measured
+  true after this change and are `type-mismatch` since that one.)*
 - **A row is not held to its argument**, except for `mmio` ([`mmio.md`](mmio.md) section 5). A function may still declare
   `fs_read("/a")` while holding `Fs("/b")`.
 - **Lending a narrower view of a borrowed path** (section 2.2).

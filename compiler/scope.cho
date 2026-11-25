@@ -1128,7 +1128,7 @@ pub fn lower_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fres
     return types.make_ref(st, ast.get(st, ty, 4) != 0, area, referent);
 }
 
-// `fn(A, B) -> R` written for a function without type parameters: up to three parameters.
+// `fn(A, B) -> [row] R` written for a function without type parameters: up to three parameters, and the row by its `[`.
 fn fn_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: int) -> [] int {
     let n = ast.get(st, ty, 6);
     if st[31] >= 0 || n > 3 {
@@ -1158,7 +1158,7 @@ fn fn_type[&s, &x](st: &!s [int], text: &x [byte], ty: int, dp: int, fresh: int)
     if ret == 0 {
         return 0;
     }
-    return types.make_fnptr(st, ret, n, a, b, c);
+    return types.make_fnptr(st, ret, n, a, b, c, ast.get(st, ty, 4));
 }
 
 // `expect_type`: `found` is usable where `expected` is wanted, or a refusal at the span.

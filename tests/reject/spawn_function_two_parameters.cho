@@ -1,0 +1,13 @@
+//~ ERROR `spawn`'s `body` must take exactly one parameter (the payload), but it takes 2
+//~ RULE arity-mismatch
+// `docs/function-signatures.md` 4: a thread is given one payload, so the function it runs takes one parameter.
+
+fn add(x: int, y: int) -> [] int {
+    return x + y;
+}
+
+fn main(world: World) -> [conc] int {
+    release(world);
+    let t = spawn(5, add);
+    return join(t);
+}

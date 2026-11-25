@@ -311,5 +311,6 @@ one, rather than a real program in the existing corpus.
 | `tests/reject/function_as_value.cho` | §4.2's own condition: a **generic** function has no address until its type arguments are known, so it cannot be a value (`no-function-values`) |
 | `tests/reject/function_value_wrong_arity.cho` / `function_value_wrong_type.cho` | A call through a value is checked against the value's own type exactly as a named call is |
 | `tests/reject/function_value_row_undeclared.cho` | The row travels with the type and is checked against the *caller's* row the same way a named call's is (`effect-not-declared`) |
+| `tests/reject/function_value_other_parameter.cho` and the thirteen beside it | §4.2's "checked through exactly like a named call", from the side the checker written in cancho had left open: a function passed for a type its signature does not write was accepted until [`function-signatures.md`](function-signatures.md), which lists them |
 | `tests/reject/function_value_compared.cho` | §4.2 gives a function value no identity to compare; `==`/`!=` stay exactly the scalar list they always were |
 | `tests/reject/call_a_local_binding.cho` | The mirror: a local binding whose type is *not* `fn(...)` still cannot be called (`not-a-function`) |
