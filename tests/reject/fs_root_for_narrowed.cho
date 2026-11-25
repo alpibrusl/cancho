@@ -1,0 +1,18 @@
+//~ ERROR expected `&Fs("/tmp/x")`, found `&Fs("")`
+//~ RULE type-mismatch
+// `docs/capability-literals.md` 2: the rule is the same literal, in both directions. A function that holds every file lends `/tmp/x` by narrowing to it, where the program says so, and not by passing what it holds
+// for less.
+edition 5;
+
+fn wants[&c](c: &c Fs("/tmp/x")) -> [] int {
+    return 0;
+}
+
+fn lends[&c](c: &c Fs("")) -> [] int {
+    return wants(c);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

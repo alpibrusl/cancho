@@ -30,6 +30,10 @@ pub fn prelude_mmio() -> [] int {
     return 66;
 }
 
+pub fn prelude_signals() -> [] int {
+    return 27;
+}
+
 pub fn prelude_cpu() -> [] int {
     return 68;
 }

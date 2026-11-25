@@ -156,6 +156,7 @@
 - [WebAssembly target](wasm.md)
 - [No system: a bare-metal target](freestanding.md)
 - [The memory of the machine, by address: `Mmio`](mmio.md)
+- [A capability's literal is part of its type](capability-literals.md)
 - [The processor's own registers: `Cpu`](cpu.md)
 - [Every emitted check, priced](emitted-checks.md)
 - [Whether cancho can run on a GPU](gpu.md)

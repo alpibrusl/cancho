@@ -1,0 +1,17 @@
+//~ ERROR expected `&Tty("/dev")`, found `&Tty("/dev/ttyUSB0")`
+//~ RULE type-mismatch
+// `docs/capability-literals.md` 2: a function lent one serial port cannot pass for one lent every device under `/dev`.
+edition 8;
+
+fn wants[&c](c: &c Tty("/dev")) -> [] int {
+    return 0;
+}
+
+fn lends[&c](c: &c Tty("/dev/ttyUSB0")) -> [] int {
+    return wants(c);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

@@ -80,8 +80,8 @@ pub fn decode[&s](st: &!s [int], fields: bool, at: int, fresh: int, behind: bool
         if !ok {
             return 0;
         }
-        if st[40] != 0 && index == tables.prelude_mmio() && n == 0 {
-            // The `Mmio` a builtin takes is one of any bound.
+        if !fields && behind && n == 0 && index != tables.prelude_box() && tables.prelude_arity(index) == 1 {
+            // The capability a builtin borrows is one of any literal (`docs/capability-literals.md` 2.4); a field of `Split` is the one with none.
             return types.make_prelude_lit(st, index, 0 - 2);
         }
         if st[40] != 0 && index != tables.prelude_box() {

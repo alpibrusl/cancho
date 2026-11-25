@@ -1,0 +1,17 @@
+//~ ERROR expected `&Net("example.com:443")`, found `&Net("example.com:80")`
+//~ RULE type-mismatch
+// `docs/capability-literals.md` 2: two `Net` are one type when their bounds are spelled the same. A function lent port 80 cannot pass for one lent port 443.
+edition 5;
+
+fn wants[&c](c: &c Net("example.com:443")) -> [] int {
+    return 0;
+}
+
+fn lends[&c](c: &c Net("example.com:80")) -> [] int {
+    return wants(c);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

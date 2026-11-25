@@ -1,0 +1,17 @@
+//~ ERROR expected `&Fs("")`, found `&Fs("/tmp/x")`
+//~ RULE type-mismatch
+// `docs/capability-literals.md` 2: `Fs("")` is the capability `split` gives, which bounds nothing. A function lent `/tmp/x` cannot pass for one lent every file.
+edition 5;
+
+fn wants[&c](c: &c Fs("")) -> [] int {
+    return 0;
+}
+
+fn lends[&c](c: &c Fs("/tmp/x")) -> [] int {
+    return wants(c);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}
