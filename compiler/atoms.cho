@@ -108,6 +108,44 @@ pub fn is_heap_ref[&s](st: &!s [int], ty: int) -> [] bool {
     return types.is_ref(st, ty) && types.ref_unique(st, ty) && types.is_prelude(st, types.ref_inner(st, ty)) && types.prelude_index(st, types.ref_inner(st, ty)) == scope.heap_index();
 }
 
+// The type a function is when it is used as a value (`docs/function-signatures.md` 2): its parameters, its result and its row as its
+// signature writes them, each region parameter a variable made here, as at a call, which the type the value is given for
+// solves. A function of more parameters than a function type holds has no such type, and none can want it.
+fn value_type[&s, &x](st: &!s [int], text: &x [byte], item: int) -> [] int {
+    let dp = ast.get(st, item, 6);
+    let n = ast.get(st, item, 8);
+    if n > 3 {
+        return types.make_fnval(st, item, 0, 0 - 1);
+    }
+    var fresh = 0 - 1;
+    var made = 0;
+    while made < pass1.count_params(st, dp, true) {
+        let r = types.fresh_region(st);
+        if made == 0 {
+            fresh = r;
+        }
+        made = made + 1;
+    }
+    var a = 0;
+    var b = 0;
+    var c = 0;
+    var k = 0;
+    var param = ast.get(st, item, 7);
+    while param >= 0 {
+        let t = scope.lower_type(st, text, ast.get(st, param, 5), dp, fresh);
+        if k == 0 {
+            a = t;
+        } else if k == 1 {
+            b = t;
+        } else {
+            c = t;
+        }
+        k = k + 1;
+        param = ast.next(st, param);
+    }
+    return types.make_fnval(st, item, types.make_fnptr(st, scope.lower_type(st, text, ast.get(st, item, 10), dp, fresh), n, a, b, c, ast.get(st, item, 9)), fresh);
+}
+
 pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
     let from = ast.nstart(st, id);
     let to = ast.nend(st, id);
@@ -157,7 +195,7 @@ pub fn name_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
                 if !plain_function(st, text, it) {
                     return ex.skip(st, from, to);
                 }
-                return ex.in_reg(types.make_fnval(st, it), threadcode.function_pointer(st, it));
+                return ex.in_reg(value_type(st, text, it), threadcode.function_pointer(st, it));
             }
             it = ast.next(st, it);
         }

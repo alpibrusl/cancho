@@ -151,9 +151,11 @@ the bound).
 - **`Mmio` over the program's own memory is the program's risk.** cancho-os holds its translation tables and reads its own code this
   way, at addresses its link script fixes. A bound that covered a region's chunks would let a write go behind the checker's back; the
   language cannot see the link script. The kernel's bounds are listed in one place, in `main`, for that reason.
-- **A function passed as a value is not compared with the type it is passed for**, so a bound can still be evaded through one
-  ([`capability-literals.md`](capability-literals.md) section 6). *(Corrected in place: this line said the other capabilities' literals
-  were not part of their type, which that document closed.)*
+- *(Corrected in place, twice: this line said the other capabilities' literals were not part of their type, which
+  [`capability-literals.md`](capability-literals.md) closed; then that a function passed as a value is not compared with the type it is
+  passed for, so that a bound could still be evaded through one, which [`function-signatures.md`](function-signatures.md) closed. A
+  function over `Mmio("0x1000..0x2000")` passed for a `fn(&m Mmio("0x1800..0x1900")) -> ...` was accepted before that change and is
+  `type-mismatch` since, measured.)*
 
 ## 9. Where it is
 

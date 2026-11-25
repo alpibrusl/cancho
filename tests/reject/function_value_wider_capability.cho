@@ -1,0 +1,38 @@
+//~ ERROR expected `fn(&m Fs("/tmp/x/a/b")) -> [fs_read("/tmp/x/a/b")] int`, found `fn(&m Fs("/tmp/x/a")) -> [fs_read("/tmp/x/a")] int`
+//~ RULE type-mismatch
+// `docs/function-signatures.md` 1: the hole `docs/capability-literals.md` left open. `main` lends `/tmp/x/a/b`; `wide` is written for `/tmp/x/a` and its checks are against that, so called
+// through `f` it opened `/tmp/x/a/other.txt`, outside what was lent.
+edition 5;
+
+fn wide[&m](fs: &m Fs("/tmp/x/a")) -> [fs_read("/tmp/x/a")] int {
+    match open_read(fs, "/tmp/x/a/other.txt") {
+        Opened::Ok(f) => {
+            file_close(f);
+            return 1;
+        }
+        Opened::Failed(e) => {
+            return 0;
+        }
+    }
+}
+
+fn through[&m](fs: &m Fs("/tmp/x/a/b"), f: fn(&m Fs("/tmp/x/a/b")) -> [fs_read("/tmp/x/a/b")] int) -> [fs_read("/tmp/x/a/b")] int {
+    return f(fs);
+}
+
+fn main(world: World) -> [fs_read("/tmp/x/a/b")] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(net);
+    release(clock);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    let n = narrow(fs, "/tmp/x/a/b");
+    var status = 0;
+    borrow n as &r in {
+        status = through(r, wide);
+    }
+    release(n);
+    return status;
+}

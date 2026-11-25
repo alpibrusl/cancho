@@ -1,0 +1,38 @@
+//~ ERROR expected `fn(&m Fs("/tmp/x/a")) -> [fs_read("/tmp/x/a/b")] int`, found `fn(&m Fs("/tmp/x/a")) -> [fs_read("/tmp/x/a")] int`
+//~ RULE type-mismatch
+// `docs/function-signatures.md` 2.3: a label with an argument is the label of that argument. The capabilities are the same type here and the rows are not: `through` says it reads under
+// `/tmp/x/a/b`, and what it calls reads under `/tmp/x/a`.
+edition 5;
+
+fn wide[&m](fs: &m Fs("/tmp/x/a")) -> [fs_read("/tmp/x/a")] int {
+    match open_read(fs, "/tmp/x/a/other.txt") {
+        Opened::Ok(f) => {
+            file_close(f);
+            return 1;
+        }
+        Opened::Failed(e) => {
+            return 0;
+        }
+    }
+}
+
+fn through[&m](fs: &m Fs("/tmp/x/a"), f: fn(&m Fs("/tmp/x/a")) -> [fs_read("/tmp/x/a/b")] int) -> [fs_read("/tmp/x/a/b")] int {
+    return f(fs);
+}
+
+fn main(world: World) -> [fs_read("/tmp/x/a/b")] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(net);
+    release(clock);
+    release(io);
+    release(ffi);
+    release(heap);
+    release(args);
+    let n = narrow(fs, "/tmp/x/a");
+    var status = 0;
+    borrow n as &r in {
+        status = through(r, wide);
+    }
+    release(n);
+    return status;
+}

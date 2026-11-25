@@ -1,0 +1,56 @@
+//~ EXIT 7
+
+// `docs/function-signatures.md` 2: what a function passed as a value is held to, from the side of what is still accepted. The value is taken anew each time the function is named, so `first`
+// is given for `&a` and then for `&b` (2.4); a row is a set, so `[err_write, io_write]` is the row `[io_write, err_write]` (2.3); and a function with a `where` clause is given for regions
+// that keep it (2.5).
+
+fn first[&r](s: &r [byte]) -> [] int {
+    return len(s);
+}
+
+fn apply[&r](s: &r [byte], f: fn(&r [byte]) -> [] int) -> [] int {
+    return f(s);
+}
+
+fn both[&a, &b](s: &a [byte], t: &b [byte]) -> [] int {
+    return apply(s, first) + apply(t, first);
+}
+
+fn say[&i, &r](io: &!i Io, s: &r [byte]) -> [io_write, err_write] int {
+    write_bytes(io, s);
+    write_err(io, s);
+    return len(s);
+}
+
+fn twice[&i, &r](io: &!i Io, s: &r [byte], f: fn(&!i Io, &r [byte]) -> [err_write, io_write] int) -> [err_write, io_write] int {
+    return f(io, s);
+}
+
+fn longer[&a, &b where b <= a](x: &a [byte], y: &b [byte]) -> [] &b [byte] {
+    if len(x) > len(y) {
+        return x;
+    }
+    return y;
+}
+
+fn choose[&p, &q](x: &p [byte], y: &q [byte], f: fn(&p [byte], &q [byte]) -> [] &q [byte]) -> [] &q [byte] {
+    return f(x, y);
+}
+
+fn kept[&p, &q where q <= p](x: &p [byte], y: &q [byte]) -> [] int {
+    return len(choose(x, y, longer));
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    var n = both("ab", "c") + kept("abcd", "ab");
+    borrow mut io as &!i in {
+        n = n + twice(i, "", say);
+    }
+    release(io);
+    return n;
+}

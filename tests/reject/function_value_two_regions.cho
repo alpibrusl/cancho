@@ -1,0 +1,22 @@
+//~ ERROR `b` and `a` are different regions, and neither outlives the other
+//~ RULE region-mismatch
+// `docs/function-signatures.md` 2.4: the region parameters of a function become variables where the value is taken, and the first type it is given for solves them. `f` is a function over `&a`
+// after the first `apply`. Naming `first` at each call takes a value each time, and is accepted.
+
+fn first[&r](s: &r [byte]) -> [] int {
+    return len(s);
+}
+
+fn apply[&r](s: &r [byte], f: fn(&r [byte]) -> [] int) -> [] int {
+    return f(s);
+}
+
+fn user[&a, &b](s: &a [byte], t: &b [byte]) -> [] int {
+    let f = first;
+    return apply(s, f) + apply(t, f);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return user("ab", "c");
+}

@@ -1,0 +1,26 @@
+//~ ERROR expected `fn(&!i Io, int) -> [io_write] int`, found `fn(&!i Io, int) -> [] int`
+//~ RULE type-mismatch
+// `docs/function-signatures.md` 2.3: a row is exact in both directions, as a function's own is (`docs/linearity-and-effects.md` 7.3). A function that performs nothing is not one that
+// performs `io_write`: the authority report of `apply` would say the program writes where it cannot.
+
+fn quiet[&i](io: &!i Io, x: int) -> [] int {
+    return x;
+}
+
+fn apply[&i](io: &!i Io, f: fn(&!i Io, int) -> [io_write] int, x: int) -> [io_write] int {
+    return f(io, x);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    var r = 0;
+    borrow mut io as &!i in {
+        r = apply(i, quiet, 5);
+    }
+    release(io);
+    return r;
+}
