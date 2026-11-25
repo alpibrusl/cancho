@@ -140,6 +140,7 @@ exec_spawn_under_not_an_exec.cho	capability-misused	8:28	`&x Fs("")` is not a bo
 exec_spawn_under_on_wasi.cho	unsupported-on-target	9:1	`start` uses `exec_spawn`, and processes and pipes do not exist on `wasm32-wasip1`: WASI has no processes and no `pipe` (docs/wasm.md)
 exec_spawn_under_undeclared.cho	effect-not-declared	7:1	`start` performs `exec_under`, which its row [] does not declare; narrow the body or widen the row
 exec_widened.cho	capability-not-narrowable	12:17	`/opt/tools` cannot be narrowed to `/opt`: a capability is attenuated, never widened, and a program must not be able to grant itself what it was not given
+exec_wider_parameter.cho	type-mismatch	11:18	expected `&Exec("/usr/bin")`, found `&Exec("/usr/bin/true")`
 exec_without_capability.cho	capability-misused	12:22	`Io` is not a borrowed `Exec`; a program is started through the capability that names which programs may be
 f32_cannot_be_redeclared.cho	builtin-redeclared	9:1	`f32` is a built-in type and cannot be redeclared
 f32_conversions_are_edition_six.cho	not-a-function	19:13	`f32_of` is not a function in this program
@@ -155,6 +156,8 @@ f32_plus_int.cho	type-mismatch	20:17	expected `f32`, found `int`
 f32_suffix_needs_a_point.cho	unexpected-character	21:14	unexpected character in an integer literal
 f32_type_is_edition_six.cho	unknown-name	18:12	unknown type `f32`
 f32_where_float_is_expected.cho	type-mismatch	20:18	expected `float`, found `f32`
+ffi_lent_a_library_it_lacks.cho	type-mismatch	11:18	expected `&Ffi("libc,libm")`, found `&Ffi("libc")`
+ffi_root_lent.cho	type-mismatch	11:18	expected `&Ffi("libc")`, found `&Ffi("")`
 ffi_without_capability.cho	effect-not-declared	12:1	`labs` declares `ffi("libc")` but holds no capability that authorises it; a foreign call is reached through the capability that names its library
 field_access_on_an_enum.cho	match-on-a-non-enum	8:12	`Shape` is an enum; its payload is read by matching on it, not with `.`
 field_on_a_non_struct.cho	unknown-name	6:12	`int` has no fields
@@ -180,9 +183,12 @@ fs_covers_is_edition_nine.cho	not-a-function	9:12	`fs_covers` is not a function 
 fs_covers_is_edition_nine.cho	arity-mismatch	13:5	`Split` has 7 fields, but this pattern names 8; destructuring takes the whole value apart
 fs_covers_not_an_fs.cho	capability-misused	8:22	`&x Exec("/bin")` is not a borrowed `Fs`; reading or writing a file is reached through the capability that names the path it may touch
 fs_effect_undeclared.cho	effect-not-declared	13:1	`read_config` performs `fs_read("/tmp/app")`, which its row [] does not declare; narrow the body or widen the row
+fs_narrowed_for_root.cho	type-mismatch	11:18	expected `&Fs("")`, found `&Fs("/tmp/x")`
 fs_owned_prefix_covers_sibling.cho	effect-not-declared	18:1	`owner` performs `fs_read("/tmpevil")`, which its row [] does not declare; narrow the body or widen the row
+fs_root_for_narrowed.cho	type-mismatch	12:18	expected `&Fs("/tmp/x")`, found `&Fs("")`
 fs_sibling_prefix.cho	capability-not-narrowable	22:20	`/tmp` cannot be narrowed to `/tmpevil`: a path prefix extends at a `/`, and `/tmpevil` is a different name that merely starts with the same bytes
 fs_widened.cho	capability-not-narrowable	24:17	`/tmp/app` cannot be narrowed to `/tmp`: a capability is attenuated, never widened, and a program must not be able to grant itself what it was not given
+fs_wider_parameter.cho	type-mismatch	20:18	expected `&Fs("/tmp/x/a")`, found `&Fs("/tmp/x/a/b")`
 fs_without_capability.cho	capability-misused	28:28	`&!i Io` is not a borrowed `Fs`; reading or writing a file is reached through the capability that names the path it may touch
 function_as_value.cho	no-function-values	18:13	`helper` cannot be a value; only a written function with no type parameters can (`docs/function-values.md` §4.2)
 function_value_compared.cho	operator-type-mismatch	22:8	`fn(int) -> [] int` cannot be compared with `==` (`int`, `byte`, `bool`, `float`, `f32` and `c_ptr` can)
@@ -258,6 +264,7 @@ narrow_ports_widens.cho	capability-not-narrowable	20:13	`5353` cannot be narrowe
 narrow_without_a_literal.cho	arity-mismatch	10:13	`narrow` takes a capability and one or more literals, but no literal was given
 negate_a_bool.cho	operator-type-mismatch	5:13	`bool` cannot be negated (`int`, `float` and `f32` can)
 nested_tuple_pattern.cho	pattern-shape	22:10	a pattern does not nest; bind the inner tuple to a name here and take it apart in the next statement
+net_other_bound_parameter.cho	type-mismatch	11:18	expected `&Net("example.com:443")`, found `&Net("example.com:80")`
 no_ambient_capability.cho	capability-misused	14:14	`Io` is a capability and has no literal form; authority comes from the `World` the runtime hands `main`, and from nowhere else
 no_main.cho	program-shape	-	tests/reject/no_main.cho: error: no `main` function
 not_on_int.cho	type-mismatch	5:9	expected `bool`, found `int`
@@ -266,11 +273,13 @@ opaque_pointer_arithmetic.cho	operator-type-mismatch	13:8	`c_ptr` has no arithme
 opaque_pointer_coerces_to_nothing.cho	type-mismatch	14:18	expected `int`, found `c_ptr`
 opaque_pointer_is_not_a_general_type.cho	unknown-name	13:17	unknown type `c_ptr`
 ordering_on_bool.cho	operator-type-mismatch	5:8	`bool` has no ordering (`int`, `float` and `f32` do)
+out_other_bound_parameter.cho	type-mismatch	11:18	expected `&Out("example.com:443")`, found `&Out("example.com:80")`
 oversized_literal.cho	literal-out-of-range	5:12	integer literal does not fit in `int` (64-bit signed)
 pattern_from_another_enum.cho	unknown-name	8:5	expected a variant of `A`, found one of `B`
 pattern_wrong_arity.cho	arity-mismatch	7:5	`Shape::Rect` carries 2 values, but the pattern binds 1
 poller_add_child_effect_undeclared.cho	effect-not-declared	8:1	`watch` performs `poll`, which its row [] does not declare; narrow the body or widen the row
 poller_add_child_is_edition_seven.cho	not-a-function	11:12	`poller_add_child` is not a function in this program
+ports_other_bound_parameter.cho	type-mismatch	11:18	expected `&Ports("8080")`, found `&Ports("9090")`
 rc_clone_from_a_borrow.cho	type-mismatch	30:23	expected `Box[Cell]`, found `&r Box[Cell]`
 rc_cloned_twice.cho	linear-use-after-move	38:63	`held` has already been consumed; a `res` value is used exactly once
 rc_declared_val.cho	mode-bound-violated	27:1	`Rc` is declared `val`, but it holds `Box[Cell]`, which is `res`
@@ -307,6 +316,7 @@ shadow_a_live_parameter.cho	linear-value-unconsumed	22:5	`t` still holds a `res`
 shadow_over_live_res.cho	linear-value-unconsumed	27:9	`held` still holds a `res` value; shadowing it here would put that value out of reach with its obligation undischarged. Consume it first
 shadow_over_live_res_destructured.cho	linear-value-unconsumed	31:9	`left` still holds a `res` value; shadowing it here would put that value out of reach with its obligation undischarged. Consume it first
 signal_not_claimable.cho	signal-not-claimable	15:35	`KILL` cannot be caught: the kernel does not let a program have it. The signals a program may claim are ALRM, HUP, INT, QUIT, TERM, USR1, USR2, WINCH
+signals_other_set_parameter.cho	type-mismatch	11:18	expected `&Signals("INT,TERM")`, found `&Signals("INT")`
 slice_bound_is_not_an_int.cho	type-mismatch	20:24	expected `int`, found `bool`
 slice_escapes_its_region.cho	reference-escapes-region	23:23	`r` does not outlive `static`, so a reference valid for the first cannot be used where the second is expected
 slice_holds_res.cho	mode-bound-violated	27:41	`Ticket` is `res`, and an arena holds `val` data only: the fill is copied into every element, and a linear value cannot be copied at all
@@ -346,6 +356,7 @@ struct_used_as_enum.cho	not-an-enum	7:13	`Point` is a struct, not an enum
 tcp_listen_on_is_edition_nine.cho	not-a-function	10:15	`tcp_listen_on` is not a function in this program
 truncate_of_an_f32.cho	type-mismatch	18:22	expected `float`, found `f32`
 tty_narrow_widens.cho	capability-not-narrowable	20:18	`/dev/serial` cannot be narrowed to `/dev/ttyACM0`: a capability is attenuated, never widened, and a program must not be able to grant itself what it was not given
+tty_wider_parameter.cho	type-mismatch	11:18	expected `&Tty("/dev")`, found `&Tty("/dev/ttyUSB0")`
 tuple_arity_mismatch.cho	arity-mismatch	23:5	this tuple has 3 components, but the pattern names 2; destructuring takes the whole value apart
 tuple_index_past_the_end.cho	unknown-name	18:12	this tuple has 2 components, so there is no `.2`; they are numbered from 0
 tuple_leaked.cho	linear-value-unconsumed	21:9	`pair` is still live at the end of this block; nothing consumes it

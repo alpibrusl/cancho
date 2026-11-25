@@ -55,17 +55,19 @@ that:
 More than one range in a bound is for one driver on several machines: cancho-os boots one image on two boards whose UART is at two
 addresses, and its console is `Mmio("0x3f201000..0x3f201048,0xfe201000..0xfe201048")`, one type, one driver.
 
-**The fourth row is new for the compiler, and only `Mmio` has it.** Unifying two prelude types compares their index and not their
-literal. The check a builtin makes is written from the type at the call (section 4), so the type has to be right. Each `Mmio` literal
-is therefore kept as the first string token of the program spelled the same (`pass1.first_spelled`), and `types.unify` compares the
+**The fourth row was new for the compiler when `Mmio` was built.** Unifying two prelude types compared their index and not their
+literal. The check a builtin makes is written from the type at the call (section 4), so the type has to be right. Each literal is
+therefore kept as the first string token of the program spelled the same (`pass1.first_spelled`), and `types.unify` compares the
 tokens.
 
-**The other capabilities do not have it yet, and for them it is a hole.** Measured while building this, with this compiler and an
-edition-5 program: `main` narrows `Fs` to `/tmp/cancho-hw/hole/a/b` and lends it to a function declared to take
-`&Fs("/tmp/cancho-hw/hole/a")`; the program is accepted, and that function opens `/tmp/cancho-hw/hole/a/other.txt`, outside what it
-was lent, and reads it. The same shape is refused for `Mmio` (`tests/reject/mmio_wider_parameter.cho`). Closing it for `Fs`, `Net`,
-`Exec` and the devices is the same mechanism and a change of its own, with the programs of the repository as its measurement; it is not
-done here.
+**For the other capabilities it was a hole, and this section said so; it is closed.** *(Corrected in place: this paragraph read "the
+other capabilities do not have it yet", and "only `Mmio` has it" above.)* Measured while building `Mmio`, with an edition-5 program:
+`main` narrows `Fs` to `/tmp/cancho-hw/hole/a/b` and lends it to a function declared to take `&Fs("/tmp/cancho-hw/hole/a")`; the
+program was accepted, and that function opened `/tmp/cancho-hw/hole/a/other.txt`, outside what it was lent, and read it.
+[`capability-literals.md`](capability-literals.md) is the change that closed it for `Fs`, `Net`, `Out`, `Ports`, `Exec`, `Signals`,
+`Ffi` and the devices, by the same mechanism, with the programs of the repository as its measurement. One thing differs from `Mmio`:
+for the others `("")` in a signature is the capability `split` gives, where `Mmio("")` cannot be written (the fifth row), so the
+`Mmio` of `split` is lent to no function before it is narrowed.
 
 ## 4. The six builtins
 
@@ -150,7 +152,9 @@ the bound).
 - **`Mmio` over the program's own memory is the program's risk.** cancho-os holds its translation tables and reads its own code this
   way, at addresses its link script fixes. A bound that covered a region's chunks would let a write go behind the checker's back; the
   language cannot see the link script. The kernel's bounds are listed in one place, in `main`, for that reason.
-- **The other capabilities' literals are still not part of their type**, which is a hole for them (section 3).
+- **A function passed as a value is not compared with the type it is passed for**, so a bound can still be evaded through one
+  ([`capability-literals.md`](capability-literals.md) section 6). *(Corrected in place: this line said the other capabilities' literals
+  were not part of their type, which that document closed.)*
 
 ## 9. Where it is
 
@@ -159,7 +163,7 @@ the bound).
 | the bound: its grammar, inside, overlap | `compiler/mmio.cho` |
 | the tables: type 66, `Split` 67, builtins 188 to 193 | `compiler/tables.cho`, `builtins.cho`, `signatures.cho` (`scripts/builtin_tables.py`) |
 | `narrow` | `narrowing.refused_ranges` |
-| the literal of a type, and its one token | `pass1.cho` (`first_spelled`), `types.unify` |
+| the literal of a type, and its one token | `pass1.cho` (`first_same`, `first_spelled`), `types.unify` ([`capability-literals.md`](capability-literals.md)) |
 | the code | `wordcode.mmio`, `atoms.mmio_builtin` |
 | the row | `effects.mmio_inexact` |
 | tests | `tests/commands/mmio.sh`, `tests/probes/mmio.cho`, nine `tests/reject/mmio_*.cho` |

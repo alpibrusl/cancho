@@ -1,0 +1,17 @@
+//~ ERROR expected `&Ffi("libc,libm")`, found `&Ffi("libc")`
+//~ RULE type-mismatch
+// `docs/capability-literals.md` 2: and `docs/foreign-authority.md` 5.2: an `Ffi` is lent to a function that wants some of its libraries, never to one that wants a library it lacks.
+edition 5;
+
+fn wants[&c](c: &c Ffi("libc,libm")) -> [] int {
+    return 0;
+}
+
+fn lends[&c](c: &c Ffi("libc")) -> [] int {
+    return wants(c);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

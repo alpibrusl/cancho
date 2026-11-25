@@ -1,0 +1,26 @@
+//~ ERROR expected `&Fs("/tmp/x/a")`, found `&Fs("/tmp/x/a/b")`
+//~ RULE type-mismatch
+// `docs/capability-literals.md` 2: a capability narrowed to a literal is its own type. A function lent `/tmp/x/a/b` cannot pass for one lent `/tmp/x/a`, whose checks are against `/tmp/x/a`: it would open
+// `/tmp/x/a/other.txt`, outside what it was lent, which is the hole this rule closes.
+edition 5;
+
+fn wants[&c](c: &c Fs("/tmp/x/a")) -> [fs_read("/tmp/x/a")] int {
+    match open_read(c, "/tmp/x/a/other.txt") {
+        Opened::Ok(f) => {
+            file_close(f);
+            return 1;
+        }
+        Opened::Failed(e) => {
+            return 0;
+        }
+    }
+}
+
+fn lends[&c](c: &c Fs("/tmp/x/a/b")) -> [fs_read("/tmp/x/a")] int {
+    return wants(c);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

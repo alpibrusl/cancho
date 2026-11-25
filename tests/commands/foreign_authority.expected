@@ -109,11 +109,11 @@ rule foreign-scope
 == a capability is lent narrower and never wider
 libc,libm lent to libc: accepted
 libm,libc lent to libc,libm: accepted
-libc lent to libm: GAP: accepted, the Rust checker said refused
-libc lent to libc,libm: GAP: accepted, the Rust checker said refused
-libc,libm lent to libssl: GAP: accepted, the Rust checker said refused
+libc lent to libm: refused
+libc lent to libc,libm: refused
+libc,libm lent to libssl: refused
 libc,libm,libssl lent to libm,libssl: accepted
-GAP: the root is lent and the rule is 'linear-value-unconsumed', the Rust checker said type-mismatch
+rule type-mismatch
 == rows stay exact per library
 GAP: accepted, the Rust checker refused it ()
 GAP: accepted, the Rust checker refused it ()

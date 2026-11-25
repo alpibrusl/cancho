@@ -1,0 +1,17 @@
+//~ ERROR expected `&Ports("8080")`, found `&Ports("9090")`
+//~ RULE type-mismatch
+// `docs/capability-literals.md` 2: two `Ports` are one type when their bounds are spelled the same. A function that may listen on 9090 cannot pass for one that may listen on 8080.
+edition 11;
+
+fn wants[&c](c: &c Ports("8080")) -> [] int {
+    return 0;
+}
+
+fn lends[&c](c: &c Ports("9090")) -> [] int {
+    return wants(c);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

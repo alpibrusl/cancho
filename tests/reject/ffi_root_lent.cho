@@ -1,0 +1,17 @@
+//~ ERROR expected `&Ffi("libc")`, found `&Ffi("")`
+//~ RULE type-mismatch
+// `docs/capability-literals.md` 2: and `docs/foreign-authority.md` 5.2: the `Ffi` that `split` gives is not lent as a library. A program says which libraries it calls by narrowing.
+edition 5;
+
+fn wants[&c](c: &c Ffi("libc")) -> [] int {
+    return 0;
+}
+
+fn lends[&c](c: &c Ffi("")) -> [] int {
+    return wants(c);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

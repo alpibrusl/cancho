@@ -467,6 +467,14 @@ pub fn refused[&s, &x](st: &!s [int], text: &x [byte], cty: int, lit: int, nargs
     if is_mmio(st, index) && refused_ranges(st, text, now, lit, nargs) {
         return 1;
     }
+    // Each literal is kept as the first of the program that says the same: the type of what `narrow` makes is that token (`docs/capability-literals.md` 3).
+    var at = lit;
+    var seen = 0;
+    while seen < nargs - 1 && ast.is_kind(st, at, kinds.NK::EStr) {
+        ast.put(st, at, 4, pass1.first_same(st, text, index, ast.get(st, at, 4)));
+        at = ast.next(st, at);
+        seen = seen + 1;
+    }
     return 0;
 }
 
@@ -492,14 +500,6 @@ fn refused_ranges[&s, &x](st: &!s [int], text: &x [byte], now: int, lit: int, na
             other = ast.next(st, other);
             j = j + 1;
         }
-        at = ast.next(st, at);
-        seen = seen + 1;
-    }
-    // Each literal is kept as the first of the program spelled the same: the type of what `narrow` makes is that token (`types.unify`).
-    at = lit;
-    seen = 0;
-    while seen < nargs - 1 {
-        ast.put(st, at, 4, pass1.first_spelled(st, text, ast.get(st, at, 4)));
         at = ast.next(st, at);
         seen = seen + 1;
     }

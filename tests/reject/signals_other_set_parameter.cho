@@ -1,0 +1,17 @@
+//~ ERROR expected `&Signals("INT,TERM")`, found `&Signals("INT")`
+//~ RULE type-mismatch
+// `docs/capability-literals.md` 2: two `Signals` are one type when they claim the same signals. A function lent `INT` cannot pass for one lent `INT` and `TERM`.
+edition 6;
+
+fn wants[&c](c: &c Signals("INT,TERM")) -> [] int {
+    return 0;
+}
+
+fn lends[&c](c: &c Signals("INT")) -> [] int {
+    return wants(c);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

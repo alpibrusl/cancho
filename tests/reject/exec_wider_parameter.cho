@@ -1,0 +1,17 @@
+//~ ERROR expected `&Exec("/usr/bin")`, found `&Exec("/usr/bin/true")`
+//~ RULE type-mismatch
+// `docs/capability-literals.md` 2: a function lent one program cannot pass for one lent a directory of them.
+edition 9;
+
+fn wants[&c](c: &c Exec("/usr/bin")) -> [] int {
+    return 0;
+}
+
+fn lends[&c](c: &c Exec("/usr/bin/true")) -> [] int {
+    return wants(c);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

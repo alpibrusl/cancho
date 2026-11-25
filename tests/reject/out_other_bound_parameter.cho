@@ -1,0 +1,17 @@
+//~ ERROR expected `&Out("example.com:443")`, found `&Out("example.com:80")`
+//~ RULE type-mismatch
+// `docs/capability-literals.md` 2: two `Out` are one type when their bounds are spelled the same. A function that may dial port 80 cannot pass for one that may dial port 443.
+edition 11;
+
+fn wants[&c](c: &c Out("example.com:443")) -> [] int {
+    return 0;
+}
+
+fn lends[&c](c: &c Out("example.com:80")) -> [] int {
+    return wants(c);
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

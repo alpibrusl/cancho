@@ -487,6 +487,59 @@ pub fn first_spelled[&s, &x](st: &!s [int], text: &x [byte], tok: int) -> [] int
     return tok;
 }
 
+// Is every name of the set written in the literal `inner` (names separated by commas) one of the set in `outer`?
+pub fn set_within[&s, &x](st: &!s [int], text: &x [byte], inner: int, outer: int) -> [] bool {
+    let end = ast.tend(st, inner) - 1;
+    let limit = ast.tend(st, outer) - 1;
+    var i = ast.tstart(st, inner) + 1;
+    while i <= end {
+        var j = i;
+        while j < end && int_of(text[j]) != 44 {
+            j = j + 1;
+        }
+        var held = false;
+        var a = ast.tstart(st, outer) + 1;
+        while a <= limit && !held {
+            var b = a;
+            while b < limit && int_of(text[b]) != 44 {
+                b = b + 1;
+            }
+            if b - a == j - i {
+                held = true;
+                var k = 0;
+                while k < j - i && held {
+                    held = int_of(text[a + k]) == int_of(text[i + k]);
+                    k = k + 1;
+                }
+            }
+            a = b + 1;
+        }
+        if !held {
+            return false;
+        }
+        i = j + 1;
+    }
+    return true;
+}
+
+// The token a capability's literal is kept as (`docs/capability-literals.md` 3): the first string literal of the program that says the same. That is the same
+// spelling, except for `Ffi` and `Signals`, whose literal is a set of names written in any order (`docs/foreign-authority.md` 5.2, `docs/signals.md`): the
+// first that names the same set.
+pub fn first_same[&s, &x](st: &!s [int], text: &x [byte], index: int, tok: int) -> [] int {
+    if index != tables.prelude_ffi() && index != tables.prelude_signals() {
+        return first_spelled(st, text, tok);
+    }
+    let n = ast.tend(st, tok) - ast.tstart(st, tok);
+    var p = 0;
+    while p < tok {
+        if is_code(st, p, lc.Tok::Str) && ast.tend(st, p) - ast.tstart(st, p) == n && set_within(st, text, tok, p) && set_within(st, text, p, tok) {
+            return p;
+        }
+        p = p + 1;
+    }
+    return tok;
+}
+
 // Is the scope a type is narrowed to well formed (`parse_scope`): library names, each
 // letters, digits and `_.+-`, separated by commas, none empty and none twice?
 fn scope_valid[&s, &x](st: &!s [int], text: &x [byte], lit: int) -> [] bool {
@@ -687,7 +740,11 @@ fn resolve_name[&s, &x](st: &!s [int], text: &x [byte], id: int, unit_of: int, e
             ast.fail(st, rules.r_capability_not_narrowable(), from, to);
             return 0;
         }
-        ast.put(st, ast.get(st, id, 6), 4, first_spelled(st, text, lit));
+    }
+    // The literal a capability is written with is kept as the first one of the program spelled the same, so that two types are the same
+    // bound when they keep the same token (`docs/capability-literals.md` 3).
+    if found >= 0 && found < user_base() && nargs == 1 && ast.is_kind(st, ast.get(st, id, 6), kinds.NK::TLit) {
+        ast.put(st, ast.get(st, id, 6), 4, first_same(st, text, found, ast.get(st, ast.get(st, id, 6), 4)));
     }
     if nargs != def_arity(st, found) {
         ast.fail(st, rules.r_arity_mismatch(), from, to);

@@ -326,6 +326,16 @@ pub fn prelude_lit_tok[&s](st: &!s [int], ty: int) -> [] int {
     return slot(st, ty, 3) - 1;
 }
 
+// What two capabilities of one kind are compared by (`unify`): the literal slot, with the literal of two quotes read as none. `split` gives `Fs` with no literal
+// and a signature can only write `Fs("")`, and both bound nothing (`docs/capability-literals.md` 2).
+fn bound_key[&s](st: &!s [int], ty: int) -> [] int {
+    let t = slot(st, ty, 3);
+    if t > 0 && ast.tend(st, t - 1) - ast.tstart(st, t - 1) == 2 {
+        return 0;
+    }
+    return t;
+}
+
 // The index in `tables.cho` of a prelude type.
 pub fn prelude_index[&s](st: &!s [int], ty: int) -> [] int {
     return slot(st, ty, 1);
@@ -976,9 +986,11 @@ pub fn unify[&s](st: &!s [int], want: int, got: int) -> [] int {
         return 0;
     }
     if is_prelude(st, expected) && is_prelude(st, found) && slot(st, expected, 1) == slot(st, found, 1) {
-        // Two `Mmio` are one type when they hold the same addresses, which is the same literal (`docs/mmio.md` 3: every literal is kept as the first token spelled
-        // so). A builtin takes any (-1, `prims.decode`).
-        if slot(st, expected, 1) == tables.prelude_mmio() && slot(st, expected, 3) != slot(st, found, 3) && slot(st, expected, 3) >= 0 && slot(st, found, 3) >= 0 {
+        // A capability narrowed to a literal is its own type (`docs/capability-literals.md` 2): two are one type when their literals are spelled the same, which is
+        // the same token (3). A builtin takes any (-1, `prims.decode`).
+        let a = bound_key(st, expected);
+        let b = bound_key(st, found);
+        if a != b && a >= 0 && b >= 0 {
             return 1;
         }
         return 0;
@@ -1019,6 +1031,18 @@ fn report[&s](st: &!s [int], status: int, from: int, to: int) -> [] int {
     return status;
 }
 
+// The one coercion between capability types (`docs/foreign-authority.md` 5.2, `docs/capability-literals.md` 2.3): a reference to an `Ffi` over several
+// libraries is accepted where a reference to one over some of them is wanted. Never from the root, which has no literal.
+fn lent_narrower[&s, &x](st: &!s [int], text: &x [byte], expected: int, found: int) -> [] bool {
+    if !is_prelude(st, expected) || !is_prelude(st, found) || slot(st, expected, 1) != tables.prelude_ffi() || slot(st, found, 1) != tables.prelude_ffi() {
+        return false;
+    }
+    if bound_key(st, expected) <= 0 || bound_key(st, found) <= 0 {
+        return false;
+    }
+    return pass1.set_within(st, text, slot(st, expected, 3) - 1, slot(st, found, 3) - 1);
+}
+
 // `expect_type`: `found` is usable where `expected` is wanted. Equality, with two coercions on
 // top and no others: a reference whose region outlives the expected one is accepted, and a
 // unique reference where a shared one is expected, never the reverse. The referent is invariant.
@@ -1035,6 +1059,9 @@ pub fn expect_type[&s, &x](st: &!s [int], text: &x [byte], want: int, got: int, 
                 unify_regions(st, wanted, given);
             } else if !outlives(st, text, given, wanted) {
                 ast.fail(st, rules.r_reference_escapes_region(), from, to);
+                return 0;
+            }
+            if lent_narrower(st, text, shallow(st, ref_inner(st, expected)), shallow(st, ref_inner(st, found))) {
                 return 0;
             }
             return report(st, unify(st, ref_inner(st, expected), ref_inner(st, found)), from, to);
