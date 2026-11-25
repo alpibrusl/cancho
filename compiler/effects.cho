@@ -352,11 +352,11 @@ fn same_literal[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int) -> [] bo
 }
 
 // The token of the literal of the `k`th `mmio("...")` of the row whose `[` is the token `open`, or -1 when the row has no more.
-fn mmio_in_row[&s, &x](st: &!s [int], text: &x [byte], open: int, k: int) -> [] int {
+fn mmio_in_row[&s, &x](st: &!s [int], text: &x [byte], label: int, open: int, k: int) -> [] int {
     var seen = 0;
     var p = open + 1;
     while !pass1.is_code(st, p, lc.Tok::RBracket) {
-        let named = lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "mmio");
+        let named = lc.spells(text, ast.tstart(st, p), ast.tend(st, p), arg_label_name(label));
         p = p + 1;
         if pass1.is_code(st, p, lc.Tok::LParen) {
             if named && pass1.is_code(st, p + 1, lc.Tok::Str) {
@@ -378,15 +378,15 @@ fn mmio_in_row[&s, &x](st: &!s [int], text: &x [byte], open: int, k: int) -> [] 
 }
 
 // Does `fn_item` own what discharges `mmio` of the bound in token `lit`: a `World`, or an `Mmio` of that bound?
-fn mmio_owned[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, lit: int) -> [] bool {
+fn mmio_owned[&s, &x](st: &!s [int], text: &x [byte], label: int, fn_item: int, lit: int) -> [] bool {
     var owned = ast.get(st, fn_item, 7);
     while owned >= 0 {
         let ty = ast.get(st, owned, 5);
         if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 {
-            if ast.get(st, ty, 9) == 0 {
+            if ast.get(st, ty, 9) == 0 || label == 9 && ast.get(st, ty, 9) == tables.prelude_cpu() {
                 return true;
             }
-            if ast.get(st, ty, 9) == tables.prelude_mmio() && ast.get(st, ty, 7) == 1 && ast.is_kind(st, ast.get(st, ty, 6), kinds.NK::TLit) && same_literal(st, text, ast.get(st, ast.get(st, ty, 6), 4), lit) {
+            if label == 8 && ast.get(st, ty, 9) == tables.prelude_mmio() && ast.get(st, ty, 7) == 1 && ast.is_kind(st, ast.get(st, ty, 6), kinds.NK::TLit) && same_literal(st, text, ast.get(st, ast.get(st, ty, 6), 4), lit) {
                 return true;
             }
         }
@@ -398,18 +398,18 @@ fn mmio_owned[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, lit: int) ->
 // `mmio` is exact with its argument (`docs/mmio.md` 5): every bound the body of `fn_item` reached hardware through, itself or by the row of a function it calls, is
 // an `mmio("...")` of its row spelled the same, unless the function owns what discharges it; and every `mmio("...")` of the row is one the body performed. True if
 // refused. The bounds performed are the rows `instances.note_label` keeps, so nothing is judged where there are none (`st[40]` is 0).
-fn mmio_inexact[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to: int) -> [] bool {
+fn mmio_inexact[&s, &x](st: &!s [int], text: &x [byte], label: int, fn_item: int, from: int, to: int) -> [] bool {
     if st[40] == 0 {
         return false;
     }
     let open = ast.get(st, fn_item, 9);
     var row = 0;
     while row < instances.label_rows(st) {
-        if instances.label_item(st, row) == fn_item && instances.label_name(st, row) == 8 && !mmio_owned(st, text, fn_item, instances.label_literal(st, row)) {
+        if instances.label_item(st, row) == fn_item && instances.label_name(st, row) == label && !mmio_owned(st, text, label, fn_item, instances.label_literal(st, row)) {
             var declared = false;
             var k = 0;
-            while mmio_in_row(st, text, open, k) >= 0 {
-                if same_literal(st, text, mmio_in_row(st, text, open, k), instances.label_literal(st, row)) {
+            while mmio_in_row(st, text, label, open, k) >= 0 {
+                if same_literal(st, text, mmio_in_row(st, text, label, open, k), instances.label_literal(st, row)) {
                     declared = true;
                 }
                 k = k + 1;
@@ -422,11 +422,11 @@ fn mmio_inexact[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int,
         row = row + 1;
     }
     var k = 0;
-    while mmio_in_row(st, text, open, k) >= 0 {
+    while mmio_in_row(st, text, label, open, k) >= 0 {
         var performed = false;
         row = 0;
         while row < instances.label_rows(st) {
-            if instances.label_item(st, row) == fn_item && instances.label_name(st, row) == 8 && same_literal(st, text, mmio_in_row(st, text, open, k), instances.label_literal(st, row)) {
+            if instances.label_item(st, row) == fn_item && instances.label_name(st, row) == label && same_literal(st, text, mmio_in_row(st, text, label, open, k), instances.label_literal(st, row)) {
                 performed = true;
             }
             row = row + 1;
@@ -446,7 +446,8 @@ fn mmio_inexact[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int,
 // written: not every builtin records what it performs there yet, so a row that says more may be right,
 // and only the refusal that cannot be wrong is made.
 pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to: int, authority: int, both: bool) -> [] int {
-    if mmio_inexact(st, text, fn_item, from, to) {
+    // (8 `mmio`, with the bound; 9 `cpu`, with the register or the instruction: `docs/cpu.md` 4.)
+    if mmio_inexact(st, text, 8, fn_item, from, to) || mmio_inexact(st, text, 9, fn_item, from, to) {
         return 0;
     }
     let declared = row_mask(st, text, fn_item);
@@ -570,6 +571,9 @@ pub fn arg_label_name(i: int) -> [] &static [byte] {
     if i == 8 {
         return "mmio";
     }
+    if i == 9 {
+        return "cpu";
+    }
     return "tty_open";
 }
 
@@ -646,6 +650,13 @@ pub fn note_call[&s, &x](st: &!s [int], text: &x [byte], id: int, cap: int) -> [
     return ok;
 }
 
+// The function being checked performs `cpu` with the name in the string token `lit` (`atoms.cpu_builtin`).
+pub fn note_cpu[&s](st: &!s [int], lit: int) -> [] int {
+    mark_arg(st);
+    followed(st, st[64] >= 0 && instances.note_label(st, st[64], 9, lit));
+    return 0;
+}
+
 // The labels with an argument in the row whose `[` is the token `open`, kept for the function being checked. True if every one was kept.
 pub fn note_row_args[&s, &x](st: &!s [int], text: &x [byte], open: int) -> [] bool {
     if st[64] < 0 {
@@ -656,7 +667,7 @@ pub fn note_row_args[&s, &x](st: &!s [int], text: &x [byte], open: int) -> [] bo
     while !pass1.is_code(st, p, lc.Tok::RBracket) {
         var found = 0 - 1;
         var i = 0;
-        while i < 9 {
+        while i < 10 {
             if lc.spells(text, ast.tstart(st, p), ast.tend(st, p), arg_label_name(i)) {
                 found = i;
             }

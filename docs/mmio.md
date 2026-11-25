@@ -141,8 +141,7 @@ the bound).
 
 ## 8. What this does not do
 
-- **A system register is not memory.** `msr` and `mrs` name the register in the instruction; they stay foreign until there is a rule
-  for them.
+- **A system register is not memory.** `msr` and `mrs` name the register in the instruction. *(Built since: [`cpu.md`](cpu.md).)*
 - **No barrier builtins.** The kernel's one sequence that needs them (turning translation on) is in its assembly with the registers.
 - **Nothing proves a bound is the right device.** `0x3f201000` is the UART because a datasheet says so. What is proved is that the
   function touches nothing else.

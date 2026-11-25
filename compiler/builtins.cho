@@ -6,7 +6,7 @@ module selfhost.builtins;
 // `scripts/builtin_tables.py check` verifies it and `append` adds a builtin. Do not run the Rust generator over it.
 
 static builtin_region_counts: [int] {
-    let t = alloc_slice[static](194, 0);
+    let t = alloc_slice[static](197, 0);
     t[0] = 1;
     t[1] = 2;
     t[2] = 2;
@@ -110,6 +110,9 @@ static builtin_region_counts: [int] {
     t[191] = 1;
     t[192] = 1;
     t[193] = 1;
+    t[194] = 2;
+    t[195] = 2;
+    t[196] = 2;
     return t;
 }
 
@@ -189,7 +192,7 @@ static builtin_effect_stream: [int] {
 }
 
 static builtin_effect_starts: [int] {
-    let t = alloc_slice[static](194, 0);
+    let t = alloc_slice[static](197, 0);
     t[1] = 1;
     t[2] = 2;
     t[3] = 3;
@@ -383,11 +386,14 @@ static builtin_effect_starts: [int] {
     t[191] = 73;
     t[192] = 73;
     t[193] = 73;
+    t[194] = 73;
+    t[195] = 73;
+    t[196] = 73;
     return t;
 }
 
 static builtin_effect_counts: [int] {
-    let t = alloc_slice[static](194, 0);
+    let t = alloc_slice[static](197, 0);
     t[0] = 1;
     t[1] = 1;
     t[2] = 1;
@@ -541,7 +547,7 @@ fn arm_chars() -> [] &static [byte] {
 }
 
 static prelude_arm_counts: [int] {
-    let t = alloc_slice[static](68, 0);
+    let t = alloc_slice[static](70, 0);
     t[9] = 2;
     t[10] = 3;
     t[16] = 2;
@@ -571,7 +577,7 @@ static prelude_arm_counts: [int] {
 }
 
 static prelude_arm_firsts: [int] {
-    let t = alloc_slice[static](68, 0);
+    let t = alloc_slice[static](70, 0);
     t[10] = 2;
     t[11] = 5;
     t[12] = 5;
@@ -630,6 +636,8 @@ static prelude_arm_firsts: [int] {
     t[65] = 60;
     t[66] = 60;
     t[67] = 60;
+    t[68] = 60;
+    t[69] = 60;
     return t;
 }
 
@@ -828,11 +836,11 @@ static arm_type_starts: [int] {
 }
 
 fn field_chars() -> [] &static [byte] {
-    return "ioffifsheapargsioffifsheapargsnetioffifsheapargsnetclockioffifsheapargsnetclocksignalsioffifsheapargsnetclocksignalsexecioffifsheapargsnetclocksignalsexecttyioffifsheapargsoutportsclocksignalsexecttyioffifsheapargsoutportsclocksignalsexecttycameramicspeakerioffifsheapargsoutportsclocksignalsexecttycameramicspeakermmio";
+    return "ioffifsheapargsioffifsheapargsnetioffifsheapargsnetclockioffifsheapargsnetclocksignalsioffifsheapargsnetclocksignalsexecioffifsheapargsnetclocksignalsexecttyioffifsheapargsoutportsclocksignalsexecttyioffifsheapargsoutportsclocksignalsexecttycameramicspeakerioffifsheapargsoutportsclocksignalsexecttycameramicspeakermmioioffifsheapargsoutportsclocksignalsexecttycameramicspeakermmiocpu";
 }
 
 static prelude_field_counts: [int] {
-    let t = alloc_slice[static](68, 0);
+    let t = alloc_slice[static](70, 0);
     t[7] = 5;
     t[12] = 6;
     t[24] = 7;
@@ -842,11 +850,12 @@ static prelude_field_counts: [int] {
     t[55] = 11;
     t[65] = 14;
     t[67] = 15;
+    t[69] = 16;
     return t;
 }
 
 static prelude_field_firsts: [int] {
-    let t = alloc_slice[static](68, 0);
+    let t = alloc_slice[static](70, 0);
     t[8] = 5;
     t[9] = 5;
     t[10] = 5;
@@ -907,11 +916,13 @@ static prelude_field_firsts: [int] {
     t[65] = 56;
     t[66] = 70;
     t[67] = 70;
+    t[68] = 85;
+    t[69] = 85;
     return t;
 }
 
 static field_name_starts: [int] {
-    let t = alloc_slice[static](85, 0);
+    let t = alloc_slice[static](101, 0);
     t[1] = 2;
     t[2] = 5;
     t[3] = 7;
@@ -996,11 +1007,27 @@ static field_name_starts: [int] {
     t[82] = 305;
     t[83] = 308;
     t[84] = 315;
+    t[85] = 319;
+    t[86] = 321;
+    t[87] = 324;
+    t[88] = 326;
+    t[89] = 330;
+    t[90] = 334;
+    t[91] = 337;
+    t[92] = 342;
+    t[93] = 347;
+    t[94] = 354;
+    t[95] = 358;
+    t[96] = 361;
+    t[97] = 367;
+    t[98] = 370;
+    t[99] = 377;
+    t[100] = 381;
     return t;
 }
 
 static field_name_lens: [int] {
-    let t = alloc_slice[static](85, 0);
+    let t = alloc_slice[static](101, 0);
     t[0] = 2;
     t[1] = 3;
     t[2] = 2;
@@ -1086,11 +1113,27 @@ static field_name_lens: [int] {
     t[82] = 3;
     t[83] = 7;
     t[84] = 4;
+    t[85] = 2;
+    t[86] = 3;
+    t[87] = 2;
+    t[88] = 4;
+    t[89] = 4;
+    t[90] = 3;
+    t[91] = 5;
+    t[92] = 5;
+    t[93] = 7;
+    t[94] = 4;
+    t[95] = 3;
+    t[96] = 6;
+    t[97] = 3;
+    t[98] = 7;
+    t[99] = 4;
+    t[100] = 3;
     return t;
 }
 
 static field_type_starts: [int] {
-    let t = alloc_slice[static](85, 0);
+    let t = alloc_slice[static](101, 0);
     t[1] = 3;
     t[2] = 7;
     t[3] = 11;
@@ -1175,11 +1218,27 @@ static field_type_starts: [int] {
     t[82] = 448;
     t[83] = 452;
     t[84] = 456;
+    t[85] = 460;
+    t[86] = 463;
+    t[87] = 467;
+    t[88] = 471;
+    t[89] = 474;
+    t[90] = 477;
+    t[91] = 481;
+    t[92] = 485;
+    t[93] = 488;
+    t[94] = 492;
+    t[95] = 496;
+    t[96] = 500;
+    t[97] = 504;
+    t[98] = 508;
+    t[99] = 512;
+    t[100] = 516;
     return t;
 }
 
 static field_types: [int] {
-    let t = alloc_slice[static](460, 0);
+    let t = alloc_slice[static](519, 0);
     t[0] = 13;
     t[1] = 1;
     t[3] = 13;
@@ -1579,10 +1638,67 @@ static field_types: [int] {
     t[457] = 66;
     t[458] = 1;
     t[459] = 16;
+    t[460] = 13;
+    t[461] = 1;
+    t[463] = 13;
+    t[464] = 2;
+    t[465] = 1;
+    t[466] = 16;
+    t[467] = 13;
+    t[468] = 3;
+    t[469] = 1;
+    t[470] = 16;
+    t[471] = 13;
+    t[472] = 4;
+    t[474] = 13;
+    t[475] = 6;
+    t[477] = 13;
+    t[478] = 53;
+    t[479] = 1;
+    t[480] = 16;
+    t[481] = 13;
+    t[482] = 54;
+    t[483] = 1;
+    t[484] = 16;
+    t[485] = 13;
+    t[486] = 23;
+    t[488] = 13;
+    t[489] = 27;
+    t[490] = 1;
+    t[491] = 16;
+    t[492] = 13;
+    t[493] = 37;
+    t[494] = 1;
+    t[495] = 16;
+    t[496] = 13;
+    t[497] = 49;
+    t[498] = 1;
+    t[499] = 16;
+    t[500] = 13;
+    t[501] = 56;
+    t[502] = 1;
+    t[503] = 16;
+    t[504] = 13;
+    t[505] = 59;
+    t[506] = 1;
+    t[507] = 16;
+    t[508] = 13;
+    t[509] = 62;
+    t[510] = 1;
+    t[511] = 16;
+    t[512] = 13;
+    t[513] = 66;
+    t[514] = 1;
+    t[515] = 16;
+    t[516] = 13;
+    t[517] = 68;
     return t;
 }
 
 pub fn split_for(edition: int) -> [] int {
+    if edition >= 14 {
+        return 69;
+    }
     if edition >= 13 {
         return 67;
     }

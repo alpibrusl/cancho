@@ -1,0 +1,16 @@
+//~ ERROR the register of `cpu_read` is written as a string literal: it is part of the instruction
+//~ RULE capability-misused
+// `docs/cpu.md` 3: the name is in the instruction and in the row, so it is known when the program is compiled.
+edition 14;
+
+fn any[&c, &n](cpu: &c Cpu, name: &n [byte]) -> [] int {
+    return cpu_read(cpu, name);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker); release(mmio);
+    release(cpu);
+    return 0;
+}

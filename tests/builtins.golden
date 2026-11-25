@@ -192,3 +192,6 @@ mmio_read64
 mmio_write8
 mmio_write32
 mmio_write64
+cpu_read
+cpu_write
+cpu_do

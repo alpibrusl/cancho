@@ -277,6 +277,9 @@ pub fn plain_function[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [
 // A read or a write through an `Mmio` (`docs/mmio.md`; the numbers are `codes.mmio_code`'s), its arguments pushed: the capability, which is nothing in the code,
 // the address and, for a write, the value. It performs `mmio` with the bound the capability of type `cap` was narrowed to, and that bound is what the code checks.
 pub fn mmio_builtin[&s, &x](st: &!s [int], text: &x [byte], id: int, written: int, cap: int) -> [] ex.Ex {
+    if written >= 156 {
+        return cpu_builtin(st, text, id, written);
+    }
     effects.mark_arg(st);
     effects.followed(st, effects.note_call(st, text, id, cap));
     let lit = types.prelude_lit_tok(st, types.ref_inner(st, cap));
@@ -297,4 +300,41 @@ pub fn mmio_builtin[&s, &x](st: &!s [int], text: &x [byte], id: int, written: in
         return ex.constant(0);
     }
     return ex.in_reg(1, r);
+}
+
+// `cpu_read(cpu, "reg")` (156), `cpu_write(cpu, "reg", v)` (157) and `cpu_do(cpu, "what")` (158) (`docs/cpu.md`), the arguments pushed: the capability, the name (a
+// pointer and a length the code does not use) and, for a write, the value. The name is a string literal, since it is part of the instruction: a register is a letter and
+// then letters, digits and `_` (the assembler knows which exist); an instruction is one of `wfi`, `isb` and `tlbi_vmalle1`. It performs `cpu` with that name.
+pub fn cpu_builtin[&s, &x](st: &!s [int], text: &x [byte], id: int, written: int) -> [] ex.Ex {
+    let name = ast.next(st, ast.get(st, id, 6));
+    var good = ast.is_kind(st, name, kinds.NK::EStr);
+    var from = 0;
+    var to = 0;
+    if good {
+        from = ast.tstart(st, ast.get(st, name, 4)) + 1;
+        to = ast.tend(st, ast.get(st, name, 4)) - 1;
+        if written == 158 {
+            good = lc.spells(text, from, to, "wfi") || lc.spells(text, from, to, "isb") || lc.spells(text, from, to, "tlbi_vmalle1");
+        } else {
+            good = to > from && to - from <= 32 && int_of(text[from]) >= 'a' && int_of(text[from]) <= 'z';
+            var i = from;
+            while i < to {
+                let c = int_of(text[i]);
+                if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
+                    good = false;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    if !good {
+        ast.fail(st, rules.r_capability_misused(), ast.nstart(st, name), ast.nend(st, name));
+        return ex.nothing();
+    }
+    effects.note_cpu(st, ast.get(st, name, 4));
+    let r = wordcode.cpu(st, text, from, to, written - 156, st[61] == 3);
+    if written == 156 {
+        return ex.in_reg(1, r);
+    }
+    return ex.constant(0);
 }

@@ -469,3 +469,41 @@ pub fn mmio[&s, &x](st: &!s [int], text: &x [byte], from: int, to: int, width: i
     done(st, n);
     return result;
 }
+
+// `cpu_read` (0), `cpu_write` (1) and `cpu_do` (2) (`docs/cpu.md` 3), for the name `text[from..to]`, which `atoms.cpu_builtin` has held to its letters: one `mrs`; one
+// `msr` and the `isb` that makes it hold for the next instruction; or the instruction (`tlbi_vmalle1` is the flush, the wait for it and the `isb`). The arguments are the
+// capability, the name (two operands, unused) and, for a write, the value. Where the machine is not a bare AArch64 (`bare` false) there is no such register to reach, and
+// it traps. Answers the temporary of what was read; nothing otherwise.
+pub fn cpu[&s, &x](st: &!s [int], text: &x [byte], from: int, to: int, kind: int, bare: bool) -> [] int {
+    var n = 3;
+    if kind == 1 {
+        n = 4;
+    }
+    var result = 0 - 1;
+    if !bare {
+        stop(st);
+        if kind == 0 {
+            // (What a read answers is never a number known when the program is compiled, on any target.)
+            result = line(st, "add i64 0, 0");
+        }
+    } else if kind == 0 {
+        result = emit.start(st);
+        emit.str(st, "call i64 asm sideeffect \"mrs $0, ");
+        emit.slice(st, text, from, to);
+        emit.str(st, "\", \"=r\"()\n");
+    } else if kind == 1 {
+        emit.str(st, "  call void asm sideeffect \"msr ");
+        emit.slice(st, text, from, to);
+        emit.str(st, ", $0\\0Aisb\", \"r\"(i64 ");
+        emit.last_operand(st, n, 3);
+        emit.str(st, ")\n");
+    } else if to - from == 3 {
+        emit.str(st, "  call void asm sideeffect \"");
+        emit.slice(st, text, from, to);
+        emit.str(st, "\", \"\"()\n");
+    } else {
+        emit.str(st, "  call void asm sideeffect \"tlbi vmalle1\\0Adsb nsh\\0Aisb\", \"\"()\n");
+    }
+    done(st, n);
+    return result;
+}
