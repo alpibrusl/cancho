@@ -63,6 +63,13 @@ constant_trap_on_a_dead_branch.cho
 consume_in_loop.cho
 contents_escapes_its_borrow.cho
 copy_into_is_edition_five.cho
+cpu_instruction_unknown.cho
+cpu_is_edition_fourteen.cho
+cpu_name_is_a_literal.cho
+cpu_name_is_one_word.cho
+cpu_row_names_another_register.cho
+cpu_row_through_a_call.cho
+cpu_write_through_shared.cho
 defer_consumes_twice.cho
 defer_leaks_its_value.cho
 defer_on_a_frozen_value.cho

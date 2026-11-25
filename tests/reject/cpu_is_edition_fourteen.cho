@@ -1,0 +1,13 @@
+//~ ERROR unknown type `Cpu`
+//~ RULE unknown-name
+// `docs/cpu.md` 5: `Cpu`, the `cpu` field of `Split` and the three builtins are absent before edition 14; an edition-13 file may declare the names for itself.
+edition 13;
+
+fn id[&c](cpu: &c Cpu) -> [] int {
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    release(world);
+    return 0;
+}

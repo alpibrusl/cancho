@@ -116,7 +116,8 @@ MMU and a trap; on the day this was written it also booted on `-M raspi4b`, from
 - **No rule for a hosted builtin on this target** (§5). Until there is one, the failure is clang's.
 - **No heap.** `box`, `box_slice` and `std.buffer` call `malloc`. A kernel that wants them needs an allocator over the same memory
   as the regions; no program has asked.
-- **No system registers, no interrupt entry.** *(Corrected: memory by address is built since, [`mmio.md`](mmio.md), edition 13: a
+- **No interrupt entry.** *(Corrected again: system registers are built too, [`cpu.md`](cpu.md), edition 14, and cancho-os calls no
+  foreign function.)* What follows is the earlier state. *(Corrected: memory by address is built since, [`mmio.md`](mmio.md), edition 13: a
   capability whose type names the address ranges, so that `authority` lists what a driver touches.)* cancho-os reached the hardware
   through eleven foreign functions of one or two instructions, written in assembly; the six that took an address are gone and five
   remain (the system registers, `wfi`, the TLB).

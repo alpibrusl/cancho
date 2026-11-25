@@ -1,0 +1,16 @@
+//~ ERROR `id` performs `cpu("midr_el1")`, which its row does not declare
+//~ RULE effect-not-declared
+// `docs/cpu.md` 4: the row names each register a function reaches, exactly. This one reads the identity of the processor and says it reads the system control register.
+edition 14;
+
+fn id[&c](cpu: &c Cpu) -> [cpu("sctlr_el1")] int {
+    return cpu_read(cpu, "midr_el1");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker); release(mmio);
+    release(cpu);
+    return 0;
+}

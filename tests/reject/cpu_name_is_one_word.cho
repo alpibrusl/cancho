@@ -1,0 +1,16 @@
+//~ ERROR `midr_el1; wfi` is not the name of a register: a letter, then letters, digits and `_`
+//~ RULE capability-misused
+// `docs/cpu.md` 3: the name goes into the assembly of the instruction, so it is held to the letters a register has.
+edition 14;
+
+fn sly[&c](cpu: &c Cpu) -> [cpu("midr_el1; wfi")] int {
+    return cpu_read(cpu, "midr_el1; wfi");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker); release(mmio);
+    release(cpu);
+    return 0;
+}

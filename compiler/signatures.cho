@@ -6,7 +6,7 @@ module selfhost.signatures;
 // `scripts/builtin_tables.py check` verifies it and `append` adds a builtin. Do not run the Rust generator over it.
 
 static builtin_sigs: [int] {
-    let t = alloc_slice[static](1624, 0);
+    let t = alloc_slice[static](1661, 0);
     t[1] = 2;
     t[2] = 11;
     t[4] = 13;
@@ -1171,11 +1171,39 @@ static builtin_sigs: [int] {
     t[1621] = 1;
     t[1622] = 1;
     t[1623] = 1;
+    t[1625] = 2;
+    t[1626] = 10;
+    t[1628] = 13;
+    t[1629] = 68;
+    t[1631] = 10;
+    t[1632] = 1;
+    t[1633] = 12;
+    t[1634] = 2;
+    t[1635] = 1;
+    t[1637] = 3;
+    t[1638] = 11;
+    t[1640] = 13;
+    t[1641] = 68;
+    t[1643] = 10;
+    t[1644] = 1;
+    t[1645] = 12;
+    t[1646] = 2;
+    t[1647] = 1;
+    t[1648] = 1;
+    t[1650] = 2;
+    t[1651] = 11;
+    t[1653] = 13;
+    t[1654] = 68;
+    t[1656] = 10;
+    t[1657] = 1;
+    t[1658] = 12;
+    t[1659] = 2;
+    t[1660] = 1;
     return t;
 }
 
 static builtin_sig_starts: [int] {
-    let t = alloc_slice[static](194, 0);
+    let t = alloc_slice[static](197, 0);
     t[1] = 9;
     t[2] = 21;
     t[3] = 33;
@@ -1369,6 +1397,9 @@ static builtin_sig_starts: [int] {
     t[191] = 1594;
     t[192] = 1604;
     t[193] = 1614;
+    t[194] = 1624;
+    t[195] = 1636;
+    t[196] = 1649;
     return t;
 }
 

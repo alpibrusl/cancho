@@ -1,0 +1,16 @@
+//~ ERROR `eret` is not an instruction `cpu_do` performs: `wfi`, `isb` or `tlbi_vmalle1`
+//~ RULE capability-misused
+// `docs/cpu.md` 3: `cpu_do` performs one of three instructions, none of which leaves the function.
+edition 14;
+
+fn leave[&c](cpu: &!c Cpu) -> [cpu("eret")] int {
+    return cpu_do(cpu, "eret");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker); release(mmio);
+    release(cpu);
+    return 0;
+}
