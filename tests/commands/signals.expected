@@ -20,7 +20,6 @@ ok only a narrowed borrowed Signals can claim
 ok the signal names are edition six
 GAP: owned root: the Rust compiler answers refused, the compiler in cancho says accepted
 GAP: unordered: the Rust compiler answers signal-not-claimable, the compiler in cancho says accepted
-GAP: row exact: the Rust compiler answers accepted, the compiler in cancho says effect-declared-not-performed
 ok the claim is linear and its rows are exact
 ok the authority report names the set and is bounded
 ok the text report says what is claimed and what is not
