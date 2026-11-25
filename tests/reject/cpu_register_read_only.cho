@@ -1,0 +1,16 @@
+//~ ERROR `midr_el1` is read only
+//~ RULE capability-misused
+// `docs/cpu.md` 3: the table says which registers are read only, and a write of one is refused.
+edition 14;
+
+fn forge[&c](cpu: &!c Cpu) -> [cpu("midr_el1")] int {
+    return cpu_write(cpu, "midr_el1", 0);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker); release(mmio);
+    release(cpu);
+    return 0;
+}

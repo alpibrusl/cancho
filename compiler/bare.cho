@@ -1,0 +1,138 @@
+module selfhost.bare;
+
+// bare.cho -- what a machine with no system under the program has and has not (`docs/freestanding.md` 5, `docs/cpu.md` 3).
+//
+// Two questions, both asked of a name:
+//   - does this builtin need a system (a libc, a kernel) to do what it does? On the bare target the code for it would call a
+//     function nobody defines, so the call is refused (`unsupported-on-target`) if the program reaches it;
+//   - is this the name of a system register of AArch64, and may it be read, or written?
+//
+// A builtin that needs a system leaves a line `; needs-system FROM TO` in the function being written, the place of the call in
+// the source. `prune.cho` leaves out the functions nothing calls, lines and all, so a line that is still in the module after it
+// is a call the program reaches, and that is the one refused. A library function the program never calls refuses nothing.
+
+import selfhost.lexcore as lc;
+import selfhost.ast;
+import selfhost.rules;
+import selfhost.emit;
+
+// Does builtin number `b` (its place in `tables.builtin_name`) need a system? What does not: the capabilities themselves
+// (`split`, `release`, `narrow`, the forks), the slices and the bits, the arithmetic, the floats, `null_ptr`, `trap`, `Mmio` and
+// `Cpu`. Everything else does: the streams (0 to 5), the block ciphers and hashes, whose support is not written for this target
+// (23 to 27, 31 to 35), and from 52 on the files, the heap, the arguments, the network, the clock, the devices, the
+// directories, the processes and the threads.
+pub fn needs_system(b: int) -> [] bool {
+    if b <= 5 {
+        return true;
+    }
+    if b <= 22 || b >= 28 && b <= 30 || b >= 36 && b <= 51 {
+        return false;
+    }
+    if b == 177 || b == 180 || b >= 188 {
+        return false;
+    }
+    return true;
+}
+
+// The call at `from..to` is of builtin `b`: on the bare target (3), and if it needs a system, the line that says so is written.
+pub fn note[&s](st: &!s [int], b: int, from: int, to: int) -> [] int {
+    if st[61] != 3 || !needs_system(b) {
+        return 0;
+    }
+    emit.str(st, "; needs-system ");
+    emit.int(st, from);
+    emit.str(st, " ");
+    emit.int(st, to);
+    emit.str(st, "\n");
+    return 0;
+}
+
+fn number[&r](ir: &r [byte], at: int) -> [] int {
+    var n = 0;
+    var p = at;
+    while lc.is_digit(lc.at(ir, p)) {
+        n = n * 10 + lc.at(ir, p) - '0';
+        p = p + 1;
+    }
+    return n;
+}
+
+// The module `ir`, after the functions nothing calls were left out: the first such line still in it is refused, and 1; 0 if
+// there is none.
+pub fn refuse[&s, &r](st: &!s [int], ir: &r [byte]) -> [] int {
+    var at = 0;
+    while at + 15 < len(ir) {
+        if lc.at(ir, at) == ';' && lc.spells(ir, at, at + 15, "; needs-system ") {
+            let from = number(ir, at + 15);
+            var p = at + 15;
+            while lc.is_digit(lc.at(ir, p)) {
+                p = p + 1;
+            }
+            ast.fail(st, rules.r_unsupported_on_target(), from, number(ir, p + 1));
+            return 1;
+        }
+        while at < len(ir) && lc.at(ir, at) != 10 {
+            at = at + 1;
+        }
+        at = at + 1;
+    }
+    return 0;
+}
+
+// The system registers of AArch64 a program may name, each with a space before and after it. Every one is a name clang's
+// assembler has for a plain ARMv8-A core, which `tests/commands/cpu.sh` checks by building a read or a write of each.
+
+// Read and written.
+fn both() -> [] &static [byte] {
+    return " sctlr_el1 actlr_el1 cpacr_el1 ttbr0_el1 ttbr1_el1 tcr_el1 esr_el1 far_el1 afsr0_el1 afsr1_el1 mair_el1 amair_el1 vbar_el1 contextidr_el1 tpidr_el1 tpidr_el0 tpidrro_el0 par_el1 spsr_el1 elr_el1 sp_el0 sp_el1 spsel daif nzcv fpcr fpsr csselr_el1 mdscr_el1 osdlr_el1 mdccint_el1 cntkctl_el1 cntfrq_el0 cntp_tval_el0 cntp_ctl_el0 cntp_cval_el0 cntv_tval_el0 cntv_ctl_el0 cntv_cval_el0 cntps_tval_el1 cntps_ctl_el1 cntps_cval_el1 cntvoff_el2 cnthctl_el2 cnthp_tval_el2 cnthp_ctl_el2 cnthp_cval_el2 sctlr_el2 actlr_el2 hcr_el2 mdcr_el2 cptr_el2 hstr_el2 hacr_el2 ttbr0_el2 tcr_el2 vttbr_el2 vtcr_el2 esr_el2 far_el2 hpfar_el2 afsr0_el2 afsr1_el2 mair_el2 amair_el2 vbar_el2 tpidr_el2 spsr_el2 elr_el2 sp_el2 vpidr_el2 vmpidr_el2 dacr32_el2 ifsr32_el2 fpexc32_el2 sctlr_el3 actlr_el3 scr_el3 cptr_el3 mdcr_el3 ttbr0_el3 tcr_el3 esr_el3 far_el3 afsr0_el3 afsr1_el3 mair_el3 amair_el3 vbar_el3 tpidr_el3 spsr_el3 elr_el3 pmcr_el0 pmcntenset_el0 pmcntenclr_el0 pmovsclr_el0 pmovsset_el0 pmselr_el0 pmccntr_el0 pmccfiltr_el0 pmxevtyper_el0 pmxevcntr_el0 pmuserenr_el0 pmintenset_el1 pmintenclr_el1 icc_pmr_el1 icc_bpr0_el1 icc_bpr1_el1 icc_ctlr_el1 icc_sre_el1 icc_igrpen0_el1 icc_igrpen1_el1 icc_sre_el2 ";
+}
+
+// Read only.
+fn read_only() -> [] &static [byte] {
+    return " midr_el1 mpidr_el1 revidr_el1 aidr_el1 currentel ctr_el0 dczid_el0 ccsidr_el1 clidr_el1 isr_el1 rvbar_el1 cntpct_el0 cntvct_el0 mdccsr_el0 oslsr_el1 pmceid0_el0 pmceid1_el0 id_pfr0_el1 id_pfr1_el1 id_dfr0_el1 id_afr0_el1 id_mmfr0_el1 id_mmfr1_el1 id_mmfr2_el1 id_mmfr3_el1 id_isar0_el1 id_isar1_el1 id_isar2_el1 id_isar3_el1 id_isar4_el1 id_isar5_el1 mvfr0_el1 mvfr1_el1 mvfr2_el1 id_aa64pfr0_el1 id_aa64pfr1_el1 id_aa64dfr0_el1 id_aa64dfr1_el1 id_aa64afr0_el1 id_aa64afr1_el1 id_aa64isar0_el1 id_aa64isar1_el1 id_aa64mmfr0_el1 id_aa64mmfr1_el1 id_aa64mmfr2_el1 icc_iar0_el1 icc_iar1_el1 icc_hppir0_el1 icc_hppir1_el1 icc_rpr_el1 ";
+}
+
+// Written only.
+fn write_only() -> [] &static [byte] {
+    return " oslar_el1 pmswinc_el0 icc_eoir0_el1 icc_eoir1_el1 icc_dir_el1 icc_sgi0r_el1 icc_sgi1r_el1 icc_asgi1r_el1 ";
+}
+
+// Is `text[from..to]` one of the names of `list`?
+fn listed[&x](text: &x [byte], from: int, to: int, list: &static [byte]) -> [] bool {
+    let n = to - from;
+    var at = 0;
+    while at + n + 2 <= len(list) {
+        if int_of(list[at]) == 32 && int_of(list[at + n + 1]) == 32 {
+            var k = 0;
+            while k < n && int_of(list[at + 1 + k]) == int_of(text[from + k]) {
+                k = k + 1;
+            }
+            if k == n {
+                return true;
+            }
+        }
+        at = at + 1;
+    }
+    return false;
+}
+
+// Is `text[from..to]` a register that may be written (`write`) or read (not)?
+pub fn register[&x](text: &x [byte], from: int, to: int, write: bool) -> [] bool {
+    if to <= from {
+        return false;
+    }
+    var i = from;
+    while i < to {
+        if int_of(text[i]) == 32 {
+            return false;
+        }
+        i = i + 1;
+    }
+    if listed(text, from, to, both()) {
+        return true;
+    }
+    if write {
+        return listed(text, from, to, write_only());
+    }
+    return listed(text, from, to, read_only());
+}

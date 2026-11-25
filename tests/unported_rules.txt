@@ -3,4 +3,3 @@
 # the compiler in cancho knows it or the rule is listed here with the issue that will. Take a line out when the rule is
 # ported (the test insists). Tracked in #512 unless it says otherwise.
 internal                          # the Rust compiler's own failure (docs/internal-errors.md); the compiler in cancho has its own (#479)
-unsupported-on-target             # targets the compiler in cancho does not write code for (WebAssembly, #486)

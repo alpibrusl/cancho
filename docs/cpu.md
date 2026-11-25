@@ -40,9 +40,11 @@ fn uptime[&c](cpu: &c Cpu) -> [cpu("cntfrq_el0"), cpu("cntvct_el0")] int {
 | `cpu_write(cpu, "reg", v)` | `(&!Cpu, literal, int) -> int` (0) | `msr reg, x` and `isb` |
 | `cpu_do(cpu, "what")` | `(&!Cpu, literal) -> int` (0) | `wfi`; `isb`; or, for `tlbi_vmalle1`, `tlbi vmalle1`, `dsb nsh`, `isb` |
 
-- **The name is held to its letters.** It is written into the assembly of the instruction, so a register is a lower-case letter and
-  then lower-case letters, digits and `_`, at most 32, and nothing else can be put there. Anything but a string literal, or a name
-  with another character, is refused (`capability-misused`).
+- **The name is one of a table.** It is written into the assembly of the instruction, so it must be a register: one of the 171
+  `compiler/bare.cho` lists, in three lists, read and written (113), read only (50) and written only (8). Anything but a string
+  literal, a name that is not in the table (`"midr_el9"`), a write of a read-only register (`"midr_el1"`) and a read of a
+  write-only one are refused (`capability-misused`), where they are written. *(Corrected: until this table the name was held only
+  to its letters, and whether it existed was the assembler's word, section 7.)*
 - **`cpu_do` performs one of three instructions**, none of which leaves the function. There is no `eret`, no `svc`, no `brk`.
 - **A write is followed by `isb`**, so that it holds for the next statement. A sequence that wants several writes and one barrier
   pays for the others; the kernel has one such sequence, of four writes, run once.
@@ -91,9 +93,12 @@ with the registers read through the capability.
 
 ## 7. What this does not do
 
-- **Whether a register exists is the assembler's word.** A name with the right letters that is no register (`"midr_el9"`) passes the
-  checker and fails in `clang`, with clang's message and no rule tag. A table of every register of the architecture would close that;
-  it is several hundred names.
+- **The table is not the architecture.** *(Corrected: this said that whether a register exists was the assembler's word, and that a
+  wrong name failed in `clang` with no rule tag. The table of section 3 closes that.)* It has the registers of a plain ARMv8-A core
+  at the three exception levels, the generic timer, the performance monitors and the system-register interface of the interrupt
+  controller: 171 names. A register that is real and not listed (pointer authentication keys, SVE, the debug breakpoints, anything
+  after ARMv8.0) is refused like one that does not exist, and is added by a line in `compiler/bare.cho`; a test builds a read or a
+  write of every name listed, so a name clang does not have cannot be added.
 - **One architecture.** The names are AArch64's. Another target gets the trap until it has its own instructions.
 - **Nothing proves a value is a sane one.** `cpu_write(cpu, "sctlr_el1", 0)` is the MMU off, and the row says exactly that it may.
 - **Not every instruction.** `cpu_do` knows three. Exception return, the system-instruction forms of cache maintenance and the other
@@ -106,7 +111,7 @@ with the registers read through the capability.
 | | |
 |---|---|
 | the tables: type 68, `Split` 69, builtins 194 to 196 | `compiler/tables.cho`, `builtins.cho`, `signatures.cho` |
-| the name, and the label | `atoms.cpu_builtin`, `effects.note_cpu` |
+| the name, and the label | `atoms.cpu_builtin`, `bare.register`, `effects.note_cpu` |
 | the code | `wordcode.cpu` |
 | the row | `effects.mmio_inexact`, label 9 |
-| tests | `tests/commands/cpu.sh`, `tests/probes/cpu.cho`, seven `tests/reject/cpu_*.cho` |
+| tests | `tests/commands/cpu.sh`, `tests/probes/cpu.cho`, `cpu_registers.cho`, ten `tests/reject/cpu_*.cho` |

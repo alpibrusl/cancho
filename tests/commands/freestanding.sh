@@ -55,3 +55,26 @@ same "$(head -1 "$work/exe.txt")" '`--target aarch64-none-elf` makes an object f
 "$cancho" run tests/probes/freestanding.cho --std --target aarch64-none-elf > "$work/run.txt" 2>&1
 same "$?" 2 "the status of run"
 end
+
+# A builtin that needs a system (docs/freestanding.md 5). In a function nothing calls it is left out with the function; reached, it is refused by a rule, where it is written,
+# and not by clang at a name the program never wrote.
+begin a_builtin_that_needs_a_system_is_refused_only_if_the_program_reaches_it
+if "$cancho" build tests/probes/bare_hosted.cho --target aarch64-none-elf --emit ll -o "$work/unreached.ll" > "$work/unreached.txt" 2>&1; then
+    same "$(calls_undefined "$work/unreached.ll")" "" "what the module calls and does not define"
+    same "$(grep -c 'needs-system' "$work/unreached.ll")" 0 "the note went with the function"
+else
+    fail "with the call not reached, the build said: $(head -c 300 "$work/unreached.txt")"
+fi
+sed 's/^    release(io);$/    borrow mut io as \&!i in { say(i, 65); }\
+    release(io);/' tests/probes/bare_hosted.cho > "$work/reached.cho"
+same "$(grep -c 'say(i, 65)' "$work/reached.cho")" 1 "the call was written in"
+"$cancho" build "$work/reached.cho" --target aarch64-none-elf --emit obj -o "$work/reached.o" > "$work/reached.txt" 2>&1
+same "$?" 1 "the status with the call reached"
+same "$(head -1 "$work/reached.txt" | sed 's/^[^:]*:\([0-9]*:[0-9]*\): error: \(The program reaches something this target cannot do\).*/\1 \2/')" "7:12 The program reaches something this target cannot do" "where and what"
+same "$(ls "$work" | grep -c '^reached.o$')" 0 "no object is written"
+"$cancho" check "$work/reached.cho" --target aarch64-none-elf --output json 2> /dev/null | grep -c '"rule": "unsupported-on-target"' > "$work/tagged.txt"
+same "$(cat "$work/tagged.txt")" 1 "check says it with the rule's tag"
+if ! "$cancho" build "$work/reached.cho" -o "$work/reached" > "$work/reachedhost.txt" 2>&1; then
+    fail "for this machine the same program is refused: $(head -c 300 "$work/reachedhost.txt")"
+fi
+end

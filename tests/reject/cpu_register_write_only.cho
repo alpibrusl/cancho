@@ -1,0 +1,16 @@
+//~ ERROR `icc_eoir1_el1` is write only
+//~ RULE capability-misused
+// `docs/cpu.md` 3: the table says which registers are write only, and a read of one is refused.
+edition 14;
+
+fn peek[&c](cpu: &c Cpu) -> [cpu("icc_eoir1_el1")] int {
+    return cpu_read(cpu, "icc_eoir1_el1");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker); release(mmio);
+    release(cpu);
+    return 0;
+}
