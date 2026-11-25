@@ -17,6 +17,7 @@ assign_to_let.cho	assign-to-immutable	6:5	`x` is immutable; declare it with `var
 assign_to_param.cho	assign-to-immutable	5:5	`n` is immutable; declare it with `var` to assign to it
 assign_while_frozen.cho	borrow-conflict	13:9	`c` is borrowed by an enclosing `borrow`, so it cannot be assigned to here
 assignment_type_mismatch.cho	type-mismatch	6:9	expected `int`, found `bool`
+bare_needs_a_system.cho	unsupported-on-target	9:12	`putchar` needs a system, and `aarch64-none-elf` has none
 binding_repeated_in_pattern.cho	duplicate-declaration	7:5	`w` is bound twice in this pattern
 bitwise_on_a_bool.cho	type-mismatch	17:8	expected `int`, found `bool`
 bitwise_on_a_byte.cho	type-mismatch	18:15	expected `int`, found `byte`
@@ -70,6 +71,9 @@ cpu_instruction_unknown.cho	capability-misused	7:24	`eret` is not an instruction
 cpu_is_edition_fourteen.cho	unknown-name	6:19	unknown type `Cpu`
 cpu_name_is_a_literal.cho	capability-misused	7:26	the register of `cpu_read` is written as a string literal: it is part of the instruction
 cpu_name_is_one_word.cho	capability-misused	7:26	`midr_el1; wfi` is not the name of a register: a letter, then letters, digits and `_`
+cpu_register_read_only.cho	capability-misused	7:27	`midr_el1` is read only
+cpu_register_unknown.cho	capability-misused	7:26	`midr_el9` is not a system register this compiler knows
+cpu_register_write_only.cho	capability-misused	7:26	`icc_eoir1_el1` is write only
 cpu_row_names_another_register.cho	effect-not-declared	6:1	`id` performs `cpu("midr_el1")`, which its row does not declare
 cpu_row_through_a_call.cho	effect-not-declared	10:1	`outer` performs `cpu("midr_el1")`, which its row does not declare
 cpu_write_through_shared.cho	type-mismatch	7:22	expected `&!Cpu`, found `&Cpu`

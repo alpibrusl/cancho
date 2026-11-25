@@ -48,6 +48,7 @@ import selfhost.jsonread;
 import selfhost.ingest;
 import selfhost.identity;
 import selfhost.prune;
+import selfhost.bare;
 import selfhost.testscan;
 import selfhost.layoutrep;
 import selfhost.authority;
@@ -904,10 +905,15 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                 if status == 0 {
                     let whole = prune.run(heap, module_bytes(heap, st));
                     borrow whole as &w in {
-                        buffer.write(io, w);
+                        // A machine with no system: a builtin that needs one, still reached, is the refusal (`bare.cho`).
+                        status = bare.refuse(st, buffer.bytes(w));
+                        if status == 0 {
+                            buffer.write(io, w);
+                        }
                     }
                     buffer.drop(heap, whole);
-                } else {
+                }
+                if status != 0 {
                     status = refusal(io, st);
                 }
             } else if mode == 9 {
@@ -992,7 +998,11 @@ pub fn run_many[&h, &i, &x](heap: &!h Heap, io: &!i Io, raw: &x [byte], mode: in
                 if status == 0 {
                     buffer.drop(heap, written);
                     written = prune.run(heap, module_bytes(heap, st));
-                } else {
+                    borrow written as &w in {
+                        status = bare.refuse(st, buffer.bytes(w));
+                    }
+                }
+                if status != 0 {
                     rule = st[3];
                     from = st[4];
                     to = st[5];

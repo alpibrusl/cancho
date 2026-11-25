@@ -85,11 +85,21 @@ __cancho_heap_end = 0x3c000000;
 What is checked is the language: ownership, regions, effects, bounds, overflow. All of it compiles for target 3, because none of it
 calls a system.
 
-What needs a system does not, and **is not refused by a rule yet**: a builtin whose code calls the hosted runtime (`putchar`,
-`write_bytes`, the files, the sockets, the processes, the clock, `box` and the rest of the heap, `spawn`) leaves a call to a
-function the module does not define, and clang refuses the module (`use of undefined value '@cancho_open'`) with status 3. That is
-a located error from the wrong tool. The rule that exists for this, `unsupported-on-target`, is raised today only by
-`authority --target wasm32-*`; raising it from `build` for target 3 is the next slice (§7).
+What needs a system does not, and **is refused by a rule** (`unsupported-on-target`), where the call is written: a builtin whose
+code calls the hosted runtime (`putchar`, `write_bytes`, the files, the sockets, the processes, the clock, `box` and the rest of the
+heap, `spawn`, and the ciphers and hashes, whose support is not written for this target). `bare.needs_system` says which, by the
+builtin's number: of the 197, 47 do not need one (the capabilities, the slices, the bits, the arithmetic, the floats, `Mmio`, `Cpu`).
+
+- **Only a call the program reaches is refused.** The checker writes every function of every module the program imports, so a
+  library with one function that prints would refuse every program that imports it. Instead the call leaves a line in the function
+  being written (`; needs-system FROM TO`, the place in the source); `prune.cho` then leaves out the functions nothing calls, lines
+  and all, and a line still in the module is the refusal. `build` and `check` both say it, since `check` writes the code too.
+- **Measured.** Every single-file program of `tests/probes`, `tests/accept` and `examples` (158), built with
+  `--std --target aarch64-none-elf --emit obj` by the compiler at this commit: 138 refused by the rule, 14 built with no undefined
+  function, 3 built and call a foreign function of their own, 3 do not build for this machine either. None reaches clang with a name
+  it does not define. Before the rule the 138 were clang's (`use of undefined value '@cancho_open'`, status 3).
+
+*(Corrected: this section said the rule was not raised, and that the failure was a located error from the wrong tool.)*
 
 The entry is still `main(world)`, called by the C `main(argc, argv)` the driver writes; a boot stub calls `main(0, 0)`. The
 `World` is whole: `split` hands out an `Io` and an `Fs` that nothing can be done with. A `World` that says what the machine has
@@ -113,7 +123,7 @@ MMU and a trap; on the day this was written it also booted on `-M raspi4b`, from
 
 ## 7. What this does not do
 
-- **No rule for a hosted builtin on this target** (§5). Until there is one, the failure is clang's.
+- **A foreign function is not looked at.** *(Corrected: this item said there was no rule for a hosted builtin on this target; there is, §5.)* An `extern fn` is the program's own, and whether the link has it is the link's.
 - **No heap.** `box`, `box_slice` and `std.buffer` call `malloc`. A kernel that wants them needs an allocator over the same memory
   as the regions; no program has asked.
 - **No interrupt entry.** *(Corrected again: system registers are built too, [`cpu.md`](cpu.md), edition 14, and cancho-os calls no

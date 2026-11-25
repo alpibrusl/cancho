@@ -1,0 +1,22 @@
+//~ ERROR `putchar` needs a system, and `aarch64-none-elf` has none
+//~ RULE unsupported-on-target
+//~ TARGET aarch64-none-elf
+// `docs/freestanding.md` 5: a builtin whose code calls a libc or a kernel is refused when the program is for a machine with neither, if the program reaches the call.
+// The same file passes `cancho check` with no `--target`: it is a property of the target, not of the program.
+edition 14;
+
+fn say[&i](io: &!i Io, c: int) -> [io_write] int {
+    return putchar(io, c);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker); release(mmio);
+    release(cpu);
+    borrow mut io as &!i in {
+        say(i, 65);
+    }
+    release(io);
+    return 0;
+}

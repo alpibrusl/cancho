@@ -44,3 +44,15 @@ else
     fail "the build for this machine said: $(head -c 300 "$work/hosted.txt")"
 fi
 end
+
+# The table of registers (`compiler/bare.cho`) is the compiler's word on which exist. The assembler's is asked here: a probe reads or writes each one, and builds.
+begin every_register_the_compiler_lists_is_one_the_assembler_has
+sed -n 's/^    return " \(.*\) ";$/\1/p' compiler/bare.cho | tr ' ' '\n' | LC_ALL=C sort > "$work/listed.txt"
+grep '^fn all' tests/probes/cpu_registers.cho | grep -o 'cpu("[a-z0-9_]*")' | sed 's/cpu("\(.*\)")/\1/' | LC_ALL=C sort > "$work/probed.txt"
+same "$(cmp -s "$work/listed.txt" "$work/probed.txt"; echo $?)" 0 "the probe names every register of the table and no other"
+same "$(wc -l < "$work/listed.txt" | tr -d ' ')" 171 "how many there are"
+same "$(LC_ALL=C uniq -d "$work/listed.txt" | wc -l | tr -d ' ')" 0 "none is listed twice"
+if ! "$cancho" build tests/probes/cpu_registers.cho --target aarch64-none-elf --emit obj -o "$work/regs.o" > "$work/regs.txt" 2>&1; then
+    fail "the assembler said: $(grep -m1 'error' "$work/regs.txt" | head -c 300)"
+fi
+end

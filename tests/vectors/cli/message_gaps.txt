@@ -67,6 +67,9 @@ cpu_instruction_unknown.cho
 cpu_is_edition_fourteen.cho
 cpu_name_is_a_literal.cho
 cpu_name_is_one_word.cho
+cpu_register_read_only.cho
+cpu_register_unknown.cho
+cpu_register_write_only.cho
 cpu_row_names_another_register.cho
 cpu_row_through_a_call.cho
 cpu_write_through_shared.cho

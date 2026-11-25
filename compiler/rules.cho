@@ -249,6 +249,11 @@ pub fn r_thread_payload_type() -> [] int {
     return 59;
 }
 
+// A builtin that needs a system, reached by a program built for a machine with none (`bare.cho`).
+pub fn r_unsupported_on_target() -> [] int {
+    return 57;
+}
+
 pub fn rule_tag(r: int) -> [] &static [byte] {
     if r < 3 {
         return lc.rule_name(r);
@@ -414,6 +419,9 @@ pub fn rule_tag(r: int) -> [] &static [byte] {
     }
     if r == 56 {
         return "signal-not-claimable";
+    }
+    if r == 57 {
+        return "unsupported-on-target";
     }
     if r == 59 {
         return "thread-payload-type";

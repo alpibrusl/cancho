@@ -35,6 +35,7 @@ import selfhost.filecode;
 import selfhost.narrowing;
 import selfhost.allocs;
 import selfhost.binops;
+import selfhost.bare;
 
 // ---------------------------------------------------------- expressions ---
 
@@ -1692,6 +1693,7 @@ pub fn call_expr[&s, &x](st: &!s [int], text: &x [byte], id: int) -> [] ex.Ex {
         let named = prims.builtin_at(st, text, callee, st[23]);
         if named >= 0 {
             effects.perform(st, named);
+            bare.note(st, named, from, to);
         }
     }
     // `release(world)` ends a capability: no code, and `0` if the answer is wanted.

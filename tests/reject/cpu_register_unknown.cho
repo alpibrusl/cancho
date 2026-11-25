@@ -1,0 +1,16 @@
+//~ ERROR `midr_el9` is not a system register this compiler knows
+//~ RULE capability-misused
+// `docs/cpu.md` 3: the name is looked up in the table of registers (`compiler/bare.cho`), so one that does not exist is refused here and not by the assembler.
+edition 14;
+
+fn who[&c](cpu: &c Cpu) -> [cpu("midr_el9")] int {
+    return cpu_read(cpu, "midr_el9");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker); release(mmio);
+    release(cpu);
+    return 0;
+}
