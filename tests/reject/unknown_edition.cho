@@ -1,4 +1,4 @@
-//~ ERROR unknown edition 14; the only editions today are 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 and 13
+//~ ERROR unknown edition 15; the only editions today are 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 and 14
 //~ RULE unknown-edition
 
 // `docs/editions.md` §6.1, §7.
@@ -15,9 +15,10 @@
 // (`docs/word-scan.md`); edition 10 adds exact host matching
 // in a `Net` bound (`docs/net-bounds.md` §2.3); edition 11 splits `Net` into
 // `Out` and `Ports` (`docs/net-bounds.md` §3); edition 12 adds the camera, microphone and speaker; edition 13 adds `Mmio`,
-// the memory of the machine by address (`docs/mmio.md`). There is nothing later than that yet to opt into.
+// the memory of the machine by address (`docs/mmio.md`); edition 14 adds `Cpu`, the processor's own registers
+// (`docs/cpu.md`). There is nothing later than that yet to opt into.
 
-edition 14;
+edition 15;
 
 fn main(world: World) -> [] int {
     let Split { io, ffi, fs, heap, args } = split(world);

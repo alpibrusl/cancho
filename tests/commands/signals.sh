@@ -237,7 +237,6 @@ gap_not_signals=accepted
 gap_by_value=linear-use-after-move
 gap_owned_root=accepted
 gap_unordered=accepted
-gap_row_exact=effect-declared-not-performed
 
 begin "every unclaimable signal is refused with its rule"
 # The Rust test also read the reason out of the message ("cannot be caught", "a fault, not a request", "not claimable (yet)"); the compiler in cancho says the sentence of the rule, so only the tag is compared.
@@ -321,6 +320,8 @@ fn claim(sig: Signals("TERM")) -> [] int {
 # The set in a row is the set in the capability's type, exactly.
 row() { printf 'edition 6;\nfn claim[&s](sig: &s Signals("INT,TERM")) -> [signals("%s")] int { match signals_watch(sig) { Watching::Ok(w) => { return signals_close(w); } Watching::Failed(e) => { return e; } } }\n%s\n' "$1" "$main_only"; }
 row "INT,TERM" > "$work/src.cho"; want_rule "row exact" accepted
+# And a row that names no set, on a function that only borrows the claim, says less than the body does (#638: the helper was once refused with its exact row and accepted with an empty one).
+row "INT,TERM" | sed 's/\[signals("INT,TERM")\]/[]/' > "$work/src.cho"; want_rule "row empty" effect-not-declared
 for wrong in INT TERM HUP,INT,TERM TERM,INT; do
     row "$wrong" > "$work/src.cho"; _got=$(rule_of)
     case $_got in effect-not-declared | effect-declared-not-performed) ;; *) fail "row $wrong: $_got" ;; esac

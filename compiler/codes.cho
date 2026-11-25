@@ -494,7 +494,7 @@ pub fn crypto_code[&x](text: &x [byte], from: int, to: int) -> [] int {
 }
 
 // The reads and writes of an `Mmio` (`docs/mmio.md`), which `exprs.mmio_call` writes through `wordcode.cho`: 150 `mmio_read8`, 151 `mmio_read32`, 152 `mmio_read64`,
-// 153 `mmio_write8`, 154 `mmio_write32`, 155 `mmio_write64`; 0 for another name.
+// 153 `mmio_write8`, 154 `mmio_write32`, 155 `mmio_write64`; and 156 `cpu_read`, 157 `cpu_write`, 158 `cpu_do`; 0 for another name.
 pub fn mmio_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     if lc.spells(text, from, to, "mmio_read8") {
         return 150;
@@ -513,6 +513,16 @@ pub fn mmio_code[&x](text: &x [byte], from: int, to: int) -> [] int {
     }
     if lc.spells(text, from, to, "mmio_write64") {
         return 155;
+    }
+    // The system registers and instructions of a `Cpu` (`docs/cpu.md`), through the same door.
+    if lc.spells(text, from, to, "cpu_read") {
+        return 156;
+    }
+    if lc.spells(text, from, to, "cpu_write") {
+        return 157;
+    }
+    if lc.spells(text, from, to, "cpu_do") {
+        return 158;
     }
     return 0;
 }

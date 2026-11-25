@@ -1256,7 +1256,12 @@ fn check_item[&s, &x](st: &!s [int], text: &x [byte], fn_item: int) -> [] int {
             // capability discharges is a question of which paths it covers, so only a function owning none is judged here.
             ast.fail(st, rules.r_effect_not_declared(), from, to);
         }
-        effects.check(st, text, fn_item, from, to, authority, !emit.on(st) || !effects.untracked(st));
+        if ast.ok(st) && emit.on(st) && !owns {
+            effects.signals_exact(st, text, fn_item, from, to);
+        }
+        if ast.ok(st) {
+            effects.check(st, text, fn_item, from, to, authority, !emit.on(st) || !effects.untracked(st));
+        }
         effects.record(st, fn_item);
     }
     if ast.ok(st) && !terminates(st, ast.get(st, fn_item, 11), ast.get(st, fn_item, 12)) {
