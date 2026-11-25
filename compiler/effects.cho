@@ -352,11 +352,11 @@ fn same_literal[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int) -> [] bo
 }
 
 // The token of the literal of the `k`th `mmio("...")` of the row whose `[` is the token `open`, or -1 when the row has no more.
-fn mmio_in_row[&s, &x](st: &!s [int], text: &x [byte], open: int, k: int) -> [] int {
+fn mmio_in_row[&s, &x](st: &!s [int], text: &x [byte], label: int, open: int, k: int) -> [] int {
     var seen = 0;
     var p = open + 1;
     while !pass1.is_code(st, p, lc.Tok::RBracket) {
-        let named = lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "mmio");
+        let named = lc.spells(text, ast.tstart(st, p), ast.tend(st, p), arg_label_name(label));
         p = p + 1;
         if pass1.is_code(st, p, lc.Tok::LParen) {
             if named && pass1.is_code(st, p + 1, lc.Tok::Str) {
@@ -378,15 +378,15 @@ fn mmio_in_row[&s, &x](st: &!s [int], text: &x [byte], open: int, k: int) -> [] 
 }
 
 // Does `fn_item` own what discharges `mmio` of the bound in token `lit`: a `World`, or an `Mmio` of that bound?
-fn mmio_owned[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, lit: int) -> [] bool {
+fn mmio_owned[&s, &x](st: &!s [int], text: &x [byte], label: int, fn_item: int, lit: int) -> [] bool {
     var owned = ast.get(st, fn_item, 7);
     while owned >= 0 {
         let ty = ast.get(st, owned, 5);
         if ast.is_kind(st, ty, kinds.NK::TName) && ast.get(st, ty, 8) == 2 {
-            if ast.get(st, ty, 9) == 0 {
+            if ast.get(st, ty, 9) == 0 || label == 9 && ast.get(st, ty, 9) == tables.prelude_cpu() {
                 return true;
             }
-            if ast.get(st, ty, 9) == tables.prelude_mmio() && ast.get(st, ty, 7) == 1 && ast.is_kind(st, ast.get(st, ty, 6), kinds.NK::TLit) && same_literal(st, text, ast.get(st, ast.get(st, ty, 6), 4), lit) {
+            if label == 8 && ast.get(st, ty, 9) == tables.prelude_mmio() && ast.get(st, ty, 7) == 1 && ast.is_kind(st, ast.get(st, ty, 6), kinds.NK::TLit) && same_literal(st, text, ast.get(st, ast.get(st, ty, 6), 4), lit) {
                 return true;
             }
         }
@@ -398,18 +398,18 @@ fn mmio_owned[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, lit: int) ->
 // `mmio` is exact with its argument (`docs/mmio.md` 5): every bound the body of `fn_item` reached hardware through, itself or by the row of a function it calls, is
 // an `mmio("...")` of its row spelled the same, unless the function owns what discharges it; and every `mmio("...")` of the row is one the body performed. True if
 // refused. The bounds performed are the rows `instances.note_label` keeps, so nothing is judged where there are none (`st[40]` is 0).
-fn mmio_inexact[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to: int) -> [] bool {
+fn mmio_inexact[&s, &x](st: &!s [int], text: &x [byte], label: int, fn_item: int, from: int, to: int) -> [] bool {
     if st[40] == 0 {
         return false;
     }
     let open = ast.get(st, fn_item, 9);
     var row = 0;
     while row < instances.label_rows(st) {
-        if instances.label_item(st, row) == fn_item && instances.label_name(st, row) == 8 && !mmio_owned(st, text, fn_item, instances.label_literal(st, row)) {
+        if instances.label_item(st, row) == fn_item && instances.label_name(st, row) == label && !mmio_owned(st, text, label, fn_item, instances.label_literal(st, row)) {
             var declared = false;
             var k = 0;
-            while mmio_in_row(st, text, open, k) >= 0 {
-                if same_literal(st, text, mmio_in_row(st, text, open, k), instances.label_literal(st, row)) {
+            while mmio_in_row(st, text, label, open, k) >= 0 {
+                if same_literal(st, text, mmio_in_row(st, text, label, open, k), instances.label_literal(st, row)) {
                     declared = true;
                 }
                 k = k + 1;
@@ -422,11 +422,11 @@ fn mmio_inexact[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int,
         row = row + 1;
     }
     var k = 0;
-    while mmio_in_row(st, text, open, k) >= 0 {
+    while mmio_in_row(st, text, label, open, k) >= 0 {
         var performed = false;
         row = 0;
         while row < instances.label_rows(st) {
-            if instances.label_item(st, row) == fn_item && instances.label_name(st, row) == 8 && same_literal(st, text, mmio_in_row(st, text, open, k), instances.label_literal(st, row)) {
+            if instances.label_item(st, row) == fn_item && instances.label_name(st, row) == label && same_literal(st, text, mmio_in_row(st, text, label, open, k), instances.label_literal(st, row)) {
                 performed = true;
             }
             row = row + 1;
@@ -446,7 +446,8 @@ fn mmio_inexact[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int,
 // written: not every builtin records what it performs there yet, so a row that says more may be right,
 // and only the refusal that cannot be wrong is made.
 pub fn check[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to: int, authority: int, both: bool) -> [] int {
-    if mmio_inexact(st, text, fn_item, from, to) {
+    // (8 `mmio`, with the bound; 9 `cpu`, with the register or the instruction: `docs/cpu.md` 4.)
+    if mmio_inexact(st, text, 8, fn_item, from, to) || mmio_inexact(st, text, 9, fn_item, from, to) {
         return 0;
     }
     let declared = row_mask(st, text, fn_item);
@@ -570,6 +571,9 @@ pub fn arg_label_name(i: int) -> [] &static [byte] {
     if i == 8 {
         return "mmio";
     }
+    if i == 9 {
+        return "cpu";
+    }
     return "tty_open";
 }
 
@@ -646,6 +650,13 @@ pub fn note_call[&s, &x](st: &!s [int], text: &x [byte], id: int, cap: int) -> [
     return ok;
 }
 
+// The function being checked performs `cpu` with the name in the string token `lit` (`atoms.cpu_builtin`).
+pub fn note_cpu[&s](st: &!s [int], lit: int) -> [] int {
+    mark_arg(st);
+    followed(st, st[64] >= 0 && instances.note_label(st, st[64], 9, lit));
+    return 0;
+}
+
 // The labels with an argument in the row whose `[` is the token `open`, kept for the function being checked. True if every one was kept.
 pub fn note_row_args[&s, &x](st: &!s [int], text: &x [byte], open: int) -> [] bool {
     if st[64] < 0 {
@@ -656,7 +667,7 @@ pub fn note_row_args[&s, &x](st: &!s [int], text: &x [byte], open: int) -> [] bo
     while !pass1.is_code(st, p, lc.Tok::RBracket) {
         var found = 0 - 1;
         var i = 0;
-        while i < 9 {
+        while i < 10 {
             if lc.spells(text, ast.tstart(st, p), ast.tend(st, p), arg_label_name(i)) {
                 found = i;
             }
@@ -689,17 +700,100 @@ pub fn perform_extern[&s, &x](st: &!s [int], text: &x [byte], it: int) -> [] int
     return 0;
 }
 
-// The call watches a set of signals: it performs `signals` with the set the capability of type `cap` was narrowed to (which a claim has to write canonically, so the literal is the set).
+// The call watches a set of signals: it performs `signals` with the set the capability of type `cap` was narrowed to (which a claim has to write canonically, so the literal is the set). It is a
+// label with an argument like a path's or an address's (`atoms.push_prefix`), so the function is marked the same way: a row that declares `signals("...")` is not refused as saying more than the body
+// does, and an empty row on a function that owns no capability is refused as saying less (#638).
 pub fn note_signals[&s](st: &!s [int], cap: int) -> [] int {
-    if st[64] < 0 {
-        return 0;
-    }
+    mark_arg(st);
+    var ok = st[64] >= 0;
     var inner = cap;
     if types.is_ref(st, inner) {
         inner = types.ref_inner(st, inner);
     }
-    if types.is_prelude(st, inner) && types.prelude_lit_tok(st, inner) >= 0 {
-        instances.note_label(st, st[64], 5, types.prelude_lit_tok(st, inner));
+    if ok && types.is_prelude(st, inner) && types.prelude_lit_tok(st, inner) >= 0 {
+        ok = instances.note_label(st, st[64], 5, types.prelude_lit_tok(st, inner));
+    }
+    followed(st, ok);
+    return 0;
+}
+
+// Do the tokens `a` and `b` spell the same bytes?
+fn same_token[&s, &x](st: &!s [int], text: &x [byte], a: int, b: int) -> [] bool {
+    let n = ast.tend(st, a) - ast.tstart(st, a);
+    if ast.tend(st, b) - ast.tstart(st, b) != n {
+        return false;
+    }
+    var i = 0;
+    while i < n {
+        if text[ast.tstart(st, a) + i] != text[ast.tstart(st, b) + i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// The literal of the `k`-th `signals("...")` of the row whose `[` is the token `open` (counting from 0), or `0 - 1` when the row has no more.
+fn row_signals[&s, &x](st: &!s [int], text: &x [byte], open: int, k: int) -> [] int {
+    var seen = 0;
+    var p = open + 1;
+    while !pass1.is_code(st, p, lc.Tok::RBracket) {
+        if lc.spells(text, ast.tstart(st, p), ast.tend(st, p), "signals") && pass1.is_code(st, p + 1, lc.Tok::LParen) && pass1.is_code(st, p + 2, lc.Tok::Str) {
+            if seen == k {
+                return p + 2;
+            }
+            seen = seen + 1;
+        }
+        p = p + 1;
+    }
+    return 0 - 1;
+}
+
+// `signals("...")` is exact in the row of `fn_item`, a function that owns no capability (`docs/signals.md` section 3: the set in a row is the set in the capability's type): every set the body
+// watched, or a function it called declares, is a `signals` of the row with the same literal (`effect-not-declared`), and every `signals` of the row is one of those
+// (`effect-declared-not-performed`; not asked of a function that called through a function value or performed a label that was not followed). Judged only where the labels with an argument are kept.
+pub fn signals_exact[&s, &x](st: &!s [int], text: &x [byte], fn_item: int, from: int, to: int) -> [] int {
+    if st[40] == 0 {
+        return 0;
+    }
+    let open = ast.get(st, fn_item, 9);
+    let rows = instances.label_rows(st);
+    var k = 0;
+    while k < rows {
+        if instances.label_item(st, k) == fn_item && instances.label_name(st, k) == 5 && instances.label_literal(st, k) >= 0 {
+            var found = false;
+            var j = 0;
+            while row_signals(st, text, open, j) >= 0 {
+                if same_token(st, text, row_signals(st, text, open, j), instances.label_literal(st, k)) {
+                    found = true;
+                }
+                j = j + 1;
+            }
+            if !found {
+                ast.fail(st, rules.r_effect_not_declared(), from, to);
+                return 0;
+            }
+        }
+        k = k + 1;
+    }
+    if has(st, st[54], 56) || has(st, st[54], 58) {
+        return 0;
+    }
+    var j = 0;
+    while row_signals(st, text, open, j) >= 0 {
+        var found = false;
+        k = 0;
+        while k < rows {
+            if instances.label_item(st, k) == fn_item && instances.label_name(st, k) == 5 && instances.label_literal(st, k) >= 0 && same_token(st, text, row_signals(st, text, open, j), instances.label_literal(st, k)) {
+                found = true;
+            }
+            k = k + 1;
+        }
+        if !found {
+            ast.fail(st, rules.r_effect_declared_not_performed(), from, to);
+            return 0;
+        }
+        j = j + 1;
     }
     return 0;
 }

@@ -509,7 +509,7 @@ fn refused_ranges[&s, &x](st: &!s [int], text: &x [byte], now: int, lit: int, na
 // A capability whose only consumer is `release`: the root authorities, which are not taken apart and not destroyed by
 // anything else (`released_only`).
 pub fn released_only[&s](st: &!s [int], index: int) -> [] bool {
-    return index == netcode.prelude_named("World") || index == netcode.prelude_named("Io") || index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Heap") || index == netcode.prelude_named("Args") || is_net(st, index) || index == netcode.prelude_named("Clock") || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || is_device(st, index) || is_mmio(st, index);
+    return index == netcode.prelude_named("World") || index == netcode.prelude_named("Io") || index == netcode.prelude_named("Ffi") || index == netcode.prelude_named("Fs") || index == netcode.prelude_named("Heap") || index == netcode.prelude_named("Args") || is_net(st, index) || index == netcode.prelude_named("Clock") || index == netcode.prelude_named("Signals") || index == netcode.prelude_named("Exec") || is_device(st, index) || is_mmio(st, index) || index == netcode.prelude_named("Cpu");
 }
 
 // ---------------------------------------------------------------- listeners ---

@@ -1,0 +1,45 @@
+edition 14;
+
+// cpu.cho -- the processor's own registers, reached through a `Cpu` (`docs/cpu.md`): each function's row names the registers and instructions it uses, one label each,
+// and nothing here is foreign. tests/commands/cpu.sh builds it for `aarch64-none-elf` and reads the module and the authority report.
+
+// How long the machine has been up, in timer units: two registers, read only.
+fn uptime[&c](cpu: &c Cpu) -> [cpu("cntfrq_el0"), cpu("cntvct_el0")] int {
+    return cpu_read(cpu, "cntvct_el0") / cpu_read(cpu, "cntfrq_el0");
+}
+
+// Arm the timer and sleep until it fires.
+fn nap[&c](cpu: &!c Cpu, ticks: int) -> [cpu("cntv_tval_el0"), cpu("cntv_ctl_el0"), cpu("wfi")] int {
+    cpu_write(cpu, "cntv_tval_el0", ticks);
+    cpu_write(cpu, "cntv_ctl_el0", 1);
+    return cpu_do(cpu, "wfi");
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(io);
+    release(ffi);
+    release(fs);
+    release(heap);
+    release(args);
+    release(out);
+    release(ports);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(camera);
+    release(mic);
+    release(speaker);
+    release(mmio);
+    var up = 0;
+    borrow cpu as &c in {
+        up = uptime(c);
+    }
+    borrow mut cpu as &!c in {
+        nap(c, 1000);
+        cpu_do(c, "tlbi_vmalle1");
+    }
+    release(cpu);
+    return up % 2;
+}

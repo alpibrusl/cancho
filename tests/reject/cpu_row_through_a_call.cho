@@ -1,0 +1,20 @@
+//~ ERROR `outer` performs `cpu("midr_el1")`, which its row does not declare
+//~ RULE effect-not-declared
+// `docs/cpu.md` 4: what a callee reaches, its caller reaches. A row cannot hide a register behind a call.
+edition 14;
+
+fn id[&c](cpu: &c Cpu) -> [cpu("midr_el1")] int {
+    return cpu_read(cpu, "midr_el1");
+}
+
+fn outer[&c](cpu: &c Cpu) -> [] int {
+    return id(cpu);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker); release(mmio);
+    release(cpu);
+    return 0;
+}

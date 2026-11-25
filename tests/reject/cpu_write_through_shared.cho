@@ -1,0 +1,16 @@
+//~ ERROR expected `&!Cpu`, found `&Cpu`
+//~ RULE type-mismatch
+// `docs/cpu.md` 3: a write takes the capability by a unique reference.
+edition 14;
+
+fn off[&c](cpu: &c Cpu) -> [cpu("sctlr_el1")] int {
+    return cpu_write(cpu, "sctlr_el1", 0);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(io); release(ffi); release(fs); release(heap); release(args); release(out); release(ports); release(clock);
+    release(signals); release(exec); release(tty); release(camera); release(mic); release(speaker); release(mmio);
+    release(cpu);
+    return 0;
+}

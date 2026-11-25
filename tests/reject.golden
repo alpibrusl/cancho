@@ -66,6 +66,13 @@ constant_trap_on_a_dead_branch.cho	constant-traps	23:21	this divides by zero; th
 consume_in_loop.cho	linear-value-unconsumed	17:5	`f` is consumed inside this loop; the next iteration would use it again
 contents_escapes_its_borrow.cho	reference-escapes-region	25:16	this returns a reference into `r`, which is a `borrow` block in this function; a reference may not outlive its region
 copy_into_is_edition_five.cho	not-a-function	21:13	`copy_into` is not a function in this program
+cpu_instruction_unknown.cho	capability-misused	7:24	`eret` is not an instruction `cpu_do` performs: `wfi`, `isb` or `tlbi_vmalle1`
+cpu_is_edition_fourteen.cho	unknown-name	6:19	unknown type `Cpu`
+cpu_name_is_a_literal.cho	capability-misused	7:26	the register of `cpu_read` is written as a string literal: it is part of the instruction
+cpu_name_is_one_word.cho	capability-misused	7:26	`midr_el1; wfi` is not the name of a register: a letter, then letters, digits and `_`
+cpu_row_names_another_register.cho	effect-not-declared	6:1	`id` performs `cpu("midr_el1")`, which its row does not declare
+cpu_row_through_a_call.cho	effect-not-declared	10:1	`outer` performs `cpu("midr_el1")`, which its row does not declare
+cpu_write_through_shared.cho	type-mismatch	7:22	expected `&!Cpu`, found `&Cpu`
 defer_consumes_twice.cho	linear-use-after-move	32:17	`f` has already been consumed; a `res` value is used exactly once
 defer_leaks_its_value.cho	linear-value-unconsumed	22:11	the value this `defer` produced is `res` (`Ticket`), so it cannot be discarded; name the function that consumes it
 defer_on_a_frozen_value.cho	borrow-conflict	30:21	`f` is frozen by an enclosing `borrow`, so it cannot be moved or consumed here
@@ -383,7 +390,7 @@ ungrounded_effect_label.cho	effect-declared-not-performed	11:1	`weird` declares 
 uninferable_type_argument.cho	ambiguous-type	12:13	cannot tell what `T` is in this call to `make`; it is not determined by the arguments
 unique_borrow_of_frozen.cho	borrow-conflict	15:9	`c` is already borrowed by an enclosing `borrow`, so it cannot be borrowed uniquely here
 unknown_character.cho	unexpected-character	13:14	unexpected character `@`
-unknown_edition.cho	unknown-edition	20:1	unknown edition 14; the only editions today are 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 and 13
+unknown_edition.cho	unknown-edition	21:1	unknown edition 15; the only editions today are 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 and 14
 unknown_escape.cho	unknown-escape	22:19	`\\q` is not an escape; a string literal takes `\\n`, `\\r`, `\\t`, `\\\\`, `\\"` and `\\0`
 unknown_type.cho	unknown-name	4:17	unknown type `i32`
 unknown_variant.cho	unknown-name	11:12	`Shape` has no variant `Blob`
