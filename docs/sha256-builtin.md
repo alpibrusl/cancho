@@ -135,6 +135,9 @@ both backends, and how a vector meets checked arithmetic.
 - **Cranelift**: `hw_sha256()` is the constant false and the two builtins trap, as the AES ones do (`crypto-builtins.md` §5).
 - **WebAssembly, and LLVM on any target but x86-64 and aarch64 Linux or Darwin**: the same, from the LLVM backend. The builtins
   are on WASI's side of the line (`docs/wasm.md`): they need no host, and a WASI program that calls `hw_sha256()` gets false.
+- **No system (`--target aarch64-none-elf`)**: the same again, `hw_sha256()` false and the two builtins a trap, though the
+  processor may have the instructions: there is no system to ask ([`freestanding.md`](freestanding.md) §8, which also corrects
+  the first state of that target, where the three were refused and `std.crypto`'s SHA-256 with them).
 - **`std.crypto`** branches on `hw_sha256()` where it compresses: `compress_bytes` (whole blocks straight from the caller's
   `data`, one `sha256_blocks` call for all of them) and `compress_block` (the partial block, `sha256_block_words`). Otherwise
   the software compression, unchanged. Which path runs is a question about the CPU, not the data.

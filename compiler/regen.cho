@@ -344,7 +344,9 @@ fn runtime_module[&h, &f](heap: &!h Heap, fs: &f Fs("")) -> [heap, fs_read(""), 
     r = put(heap, r, "\n// The runtime of a program with no system under it (`runtime/bare.ll`, docs/freestanding.md): the chunks of the regions from the memory the link names, and the fills and copies LLVM calls.\npub fn bare_text() -> [] &static [byte] {\n    return \"");
     r = file(heap, fs, r, "runtime/bare.ll");
     r = put(heap, r, "\";\n}\n");
-    r = put(heap, r, "\n// The hardware AES and GHASH functions, once written by `cancho-codegen-llvm` for each target, now kept by hand: `target` is 1 for\n// Darwin on aarch64, 2 for Linux on aarch64, 0 for Linux on x86-64.\npub fn crypto_text(target: int) -> [] &static [byte] {\n    if target == 1 {\n        return \"");
+    r = put(heap, r, "\n// The hardware AES and GHASH functions, once written by `cancho-codegen-llvm` for each target, now kept by hand: `target` is 1 for\n// Darwin on aarch64, 2 for Linux on aarch64, 0 for Linux on x86-64, and 3 for no system, where they answer no and trap (`docs/freestanding.md` 8).\npub fn crypto_text(target: int) -> [] &static [byte] {\n    if target == 3 {\n        return \"");
+    r = file(heap, fs, r, "runtime/crypto_bare.ll");
+    r = put(heap, r, "\";\n    }\n    if target == 1 {\n        return \"");
     r = file(heap, fs, r, "runtime/crypto_aarch64_darwin.ll");
     r = put(heap, r, "\";\n    }\n    if target == 2 {\n        return \"");
     r = file(heap, fs, r, "runtime/crypto_aarch64_linux.ll");

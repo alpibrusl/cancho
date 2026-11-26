@@ -78,3 +78,31 @@ if ! "$cancho" build "$work/reached.cho" -o "$work/reached" > "$work/reachedhost
     fail "for this machine the same program is refused: $(head -c 300 "$work/reachedhost.txt")"
 fi
 end
+
+# SHA-256 and HMAC-SHA-256 (docs/freestanding.md 8). `std.crypto` asks `hw_sha256()` before it compresses; with no system the answer is no and the software path is taken. The
+# hardware functions are in the module all the same, since the branch is written: there they are a trap, and nothing with the processor's SHA instructions.
+begin sha256_and_hmac_for_no_system_take_the_software_path_and_call_nothing
+if "$cancho" build tests/probes/bare_sha256.cho --std --target aarch64-none-elf --emit ll -o "$work/sha.ll" > "$work/sha.txt" 2>&1; then
+    same "$(calls_undefined "$work/sha.ll")" "probe_out " "what the module calls and does not define"
+    same "$(grep -c 'needs-system' "$work/sha.ll")" 0 "nothing in it needs a system"
+    same "$(grep -A2 '^define internal i8 @cancho_hw_sha256()' "$work/sha.ll" | grep -c '^  ret i8 0$')" 1 "hw_sha256() answers no"
+    same "$(grep -A2 '^define internal void @cancho_sha256_blocks(' "$work/sha.ll" | grep -c 'call void @cancho_trap()')" 1 "the hardware path, reached anyway, traps"
+    same "$(grep -c 'target-features' "$work/sha.ll")" 0 "no function asks for an instruction set"
+else
+    fail "--emit ll said: $(head -c 300 "$work/sha.txt")"
+fi
+if "$cancho" build tests/probes/bare_sha256.cho --std --target aarch64-none-elf --emit obj -o "$work/sha.o" > "$work/shaobj.txt" 2>&1; then
+    same "$(od -An -tx1 -j18 -N2 "$work/sha.o" | tr -d ' \n')" "b700" "the machine of the object"
+else
+    fail "--emit obj said: $(head -c 300 "$work/shaobj.txt")"
+fi
+# The same program for this machine has the hardware path, so the two checks above that read the functions can fail.
+if "$cancho" build tests/probes/bare_sha256.cho --std --emit ll -o "$work/shahost.ll" > "$work/shahost.txt" 2>&1; then
+    same "$(grep -A2 '^define internal i8 @cancho_hw_sha256()' "$work/shahost.ll" | grep -c '^  ret i8 0$')" 0 "for this machine hw_sha256() asks the processor"
+    case "$(grep -c 'target-features' "$work/shahost.ll")" in
+        0) fail "the hosted module has no function with an instruction set" ;;
+    esac
+else
+    fail "--emit ll for this machine said: $(head -c 300 "$work/shahost.txt")"
+fi
+end

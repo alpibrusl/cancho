@@ -18,14 +18,15 @@ import selfhost.emit;
 
 // Does builtin number `b` (its place in `tables.builtin_name`) need a system? What does not: the capabilities themselves
 // (`split`, `release`, `narrow`, the forks), the slices and the bits, the arithmetic, the floats, `null_ptr`, `trap`, `Mmio` and
-// `Cpu`. Everything else does: the streams (0 to 5), the block ciphers and hashes, whose support is not written for this target
-// (23 to 27, 31 to 35), and from 52 on the files, the heap, the arguments, the network, the clock, the devices, the
-// directories, the processes and the threads.
+// `Cpu`, and the hardware ciphers and hashes (23 to 27, 31 to 35): what they call is in the module, `runtime/crypto_bare.ll`,
+// where the two questions answer no and the rest trap (`docs/freestanding.md` 8). Everything else does: the streams (0 to 5),
+// and from 52 on the files, the heap, the arguments, the network, the clock, the devices, the directories, the processes and
+// the threads.
 pub fn needs_system(b: int) -> [] bool {
     if b <= 5 {
         return true;
     }
-    if b <= 22 || b >= 28 && b <= 30 || b >= 36 && b <= 51 {
+    if b <= 51 {
         return false;
     }
     if b == 177 || b == 180 || b >= 188 {

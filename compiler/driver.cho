@@ -473,13 +473,14 @@ fn build_module[&s, &x](st: &!s [int], text: &x [byte]) -> [] int {
     if entry != 0 {
         shim(st, entry_item);
     }
-    // What follows is support that calls a system (the hardware AES is here too: it is written for the three hosted targets). None of it is written where there is
-    // none (target 3, `docs/freestanding.md` section 4), whatever the program's library mentions: `--std` brings modules that open directories and sockets, and a
-    // program that calls none of them must not carry their support.
-    if st[61] != 3 && st[55] & 4 != 0 {
-        // A program that asks for the hardware AES has the functions for its target.
+    if st[55] & 4 != 0 {
+        // A program that asks for the hardware AES or SHA-256 has the functions for its target. Where there is no system (target 3) they call nothing: the
+        // questions answer no and the rest trap (`docs/freestanding.md` section 8).
         emit.str(st, runtime.crypto_text(st[61]));
     }
+    // What follows is support that calls a system. None of it is written where there is
+    // none (target 3, `docs/freestanding.md` section 4), whatever the program's library mentions: `--std` brings modules that open directories and sockets, and a
+    // program that calls none of them must not carry their support.
     if st[61] != 3 && st[55] & 2 != 0 {
         // A program that opens a directory has the support for them, and the constants of its target.
         emit.str(st, runtime.dirs_text(st[61] == 1));

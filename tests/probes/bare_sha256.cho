@@ -1,0 +1,50 @@
+edition 14;
+
+// bare_sha256.cho -- SHA-256 and HMAC-SHA-256 on a machine with no system (`docs/freestanding.md` 8): `std.crypto` asks `hw_sha256()` before it compresses, and there the
+// answer is no, so the software path is the one taken and nothing of a system is reached. One foreign function stands for the hardware, and carries a byte of each digest
+// out so that neither is dead. tests/commands/freestanding.sh builds it for `aarch64-none-elf` and reads what the module calls.
+import std.crypto;
+import std.hmac;
+
+extern fn probe_out[&f](ffi: &f Ffi("probe"), v: int) -> [ffi("probe")] int;
+
+fn digests[&f](p: &f Ffi("probe")) -> [ffi("probe")] int {
+    var seen = 0;
+    region r {
+        let key = alloc_slice[r](32, byte_of(7));
+        // More than one block, so the whole blocks and the partial one are both compressed.
+        let message = alloc_slice[r](80, byte_of(97));
+        let digest = alloc_slice[r](32, byte_of(0));
+        crypto.sha256(message, digest);
+        seen = int_of(digest[0]);
+        hmac.sha256(key, message, digest);
+        seen = seen * 256 + int_of(digest[0]);
+    }
+    return probe_out(p, seen);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, out, ports, clock, signals, exec, tty, camera, mic, speaker, mmio, cpu } = split(world);
+    release(io);
+    release(fs);
+    release(heap);
+    release(args);
+    release(out);
+    release(ports);
+    release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
+    release(camera);
+    release(mic);
+    release(speaker);
+    release(mmio);
+    release(cpu);
+    let probe = narrow(ffi, "probe");
+    var status = 0;
+    borrow probe as &p in {
+        status = digests(p);
+    }
+    release(probe);
+    return status;
+}
