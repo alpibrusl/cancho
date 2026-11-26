@@ -1,6 +1,6 @@
 # A backend of cancho's own
 
-> **Status: designed; the contract and the flag are built, no backend is** (epic #840, task N0). What exists: this document,
+> **Status: designed; the contract and the flag are built, no backend is** (epic #840, task N0, #858). What exists: this document,
 > `scripts/ll-census.cho` (the count as a program), `tests/native/subset.txt` (what the compiler may write, by name),
 > `tests/commands/native_subset.sh` (the gate's test of both) and `--backend llvm|native`, where `native` is refused by a new
 > rule, `unsupported-by-backend`. There is no reader, no encoder and no code generator: those are N1 to N15, each an issue.
