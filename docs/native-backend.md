@@ -1,6 +1,6 @@
 # A backend of cancho's own
 
-> **Status: the contract, the flag and the reader are built; no code generator is** (epic #840; N0 in #858, N1 in the pull request that adds
+> **Status: the contract, the flag and the reader are built; no code generator is** (epic #840; N0 in #858, N1 in #860, which adds
 > section 10). What exists: `scripts/ll-census.cho` and `tests/native/subset.txt` (what the compiler may write, by name), the reader
 > and its printer (`compiler/native/`, section 10), `--backend roundtrip` (every program a test of the reader) and `--backend native`,
 > which reads the module with vectors refused and then refuses the program by `unsupported-by-backend`, since nothing can yet write
